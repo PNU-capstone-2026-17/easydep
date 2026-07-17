@@ -57,7 +57,7 @@ you> exit
 
 ## 클라우드 지식베이스 (graphkb / capacitykb / costkb)
 
-에이전트가 클라우드 질문에 **추측 대신 근거**로 답하도록, 지식베이스 세 개를 **축별로 분리**해
+에이전트가 클라우드 질문에 **추측 대신 근거**로 답하도록, 지식베이스 네 개를 **축별로 분리**해
 제공합니다. 축이 다르면 패키지도 다릅니다.
 
 | 패키지 | 축 | 에이전트 도구 |
@@ -65,14 +65,17 @@ you> exit
 | `graphkb/` | **의존성** — 무엇이 무엇을 필요로 하나 | `kb_creation_order`, `kb_deletion_impact`, `kb_equivalent_types`, `kb_describe_type`, `kb_search_types`, `kb_rank_types` |
 | `capacitykb/` | **용량·제약** — 무엇이 허용되나 / 한도 / 바꿀 수 있나 | `cap_check_value`, `cap_property_limits`, `cap_immutable_properties`, `cap_allowed_values`, `cap_service_quota` |
 | `costkb/` | **스펙·가격** — 무엇을 살 수 있고 얼마인가 | `cost_recommend_specs`, `cost_estimate_monthly` |
+| `perfkb/` | **성능** — 그게 실제로 얼마나 빠른가 | `perf_instance_profile`, `perf_compare`, `perf_specs_by_ebs_baseline` |
 
-세 KB는 코드가 분리돼 있지만 `graphkb`/`capacitykb`는 **같은 타입 id 규약**
-(`aws::AWS::EC2::Subnet`)을 써서 조인할 수 있고, 다운로드 캐시만 `kbcommon/`으로 공유합니다.
-**어느 KB도 `nim_agent`를 import하지 않습니다** (단방향: 에이전트 → KB).
+네 KB는 코드가 분리돼 있지만 `graphkb`/`capacitykb`는 **같은 타입 id 규약**
+(`aws::AWS::EC2::Subnet`)을 써서 조인할 수 있고, `costkb`/`perfkb`는 **같은 스펙 id**
+(`aws+us-east-1+t3.medium`)로 조인합니다. 다운로드·덤프 리더 같은 공용 인프라는 `kbcommon/`이
+담당합니다. **KB끼리 서로 import하지 않고, 어느 KB도 `nim_agent`를 import하지 않습니다**
+(단방향: 에이전트 → KB).
 
 **성격 차이에 주의하세요:**
-- `graphkb`·`capacitykb` = 공개 스키마에서 추출한 **규칙**. 레코드마다 **근거(evidence)와
-  신뢰도(confidence)**가 붙어 확실한 정보와 추정을 구분합니다.
+- `graphkb`·`capacitykb`·`perfkb` = 공개 스키마·API에서 추출한 **규칙/신호**. 레코드마다
+  **근거(evidence)와 신뢰도(confidence)**가 붙어 확실한 정보와 추정을 구분합니다.
 - `costkb` = **카탈로그**. 번들 36건(손 큐레이션)으로 빌드 없이 항상 동작하고,
   `costkb build`를 돌리면 **cb-tumblebug 스펙 DB의 미러**(73,083건 · 10개 프로바이더 ·
   163개 리전)로 넓어집니다.
@@ -187,6 +190,7 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | 무엇이 무엇을 필요로 하나 (순서·영향·동치) | `graphkb` (`kb_*`) |
 | 무엇이 허용되나 / 한도 / 바꿀 수 있나 | `capacitykb` (`cap_*`) |
 | 무엇을 살 수 있고 얼마인가 | `costkb` (`cost_*`) — `--tumblebug`으로 켜면 `recommend_vm_spec`이 **같은 축**의 라이브 소스로 합류 |
+| 그게 실제로 얼마나 빠른가 | `perfkb` (`perf_*`) — 추천에 버스트·구세대 경고를 자동 부착. **프로바이더 간 비교 불가** |
 | 지금 무엇이 떠 있나 / 실제로 만들기 | cb-tumblebug MCP 전용 (`--tumblebug` 없으면 답할 수 없는 축) |
 
 > 4번 축이 "현재 상태"가 아니라 **"현재 상태·실행"**인 이유: `create_infra_dynamic`은 조회가
@@ -204,7 +208,8 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `nim_agent/verbose.py` | verbose 모드 — 스트리밍 이벤트 요약 + 기본 max_turns |
 | `nim_agent/graph_tools.py` | 의존성 KB 질의 도구 (`kb_*`) |
 | `nim_agent/capacity_tools.py` | 용량·제약 KB 질의 도구 (`cap_*`) |
-| `nim_agent/cost_tools.py` | 스펙·가격 KB 질의 도구 (`cost_*`) + 계획 게이트 |
+| `nim_agent/cost_tools.py` | 스펙·가격 KB 질의 도구 (`cost_*`) + 계획 게이트 + perfkb 경고 조인 |
+| `nim_agent/perf_tools.py` | 성능 특성 KB 질의 도구 (`perf_*`) |
 | `nim_agent/session.py` | 요청 단위 상태 — 계획 게이트의 근거 |
 | `nim_agent/tumblebug_mcp.py` | cb-tumblebug MCP 헬퍼 (옵트인 — `--tumblebug`) |
 | `graphkb/` | 리소스 타입 **의존성** 지식베이스 (파서·모델·질의·Neo4j 적재) |
@@ -221,7 +226,7 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 ## 테스트
 
 ```bash
-uv run pytest        # 373개, 전부 오프라인 (fixture 기반)
+uv run pytest        # 443개, 전부 오프라인 (fixture 기반)
 ```
 
 `costkb` 테스트는 `tests/conftest.py`가 `output_dir`을 빈 임시 디렉터리로 고정해 **항상 번들

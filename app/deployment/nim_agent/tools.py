@@ -18,6 +18,7 @@ from .capacity_tools import CAPACITY_TOOLS
 from .catalog import catalog_as_text, get_task
 from .cost_tools import COST_TOOLS
 from .graph_tools import GRAPHKB_TOOLS
+from .perf_tools import PERF_TOOLS
 from .session import SessionState
 
 
@@ -93,7 +94,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 
 
 # 에이전트에 등록할 로컬 도구 목록
-# (의존성 그래프 + 용량·제약 + 스펙·가격 지식베이스 질의 도구 포함).
+# (의존성 그래프 + 용량·제약 + 스펙·가격 + 성능 특성 지식베이스 질의 도구 포함).
 LOCAL_TOOLS: list[Tool] = [
     list_tasks,
     get_task_detail,
@@ -102,4 +103,5 @@ LOCAL_TOOLS: list[Tool] = [
     *COST_TOOLS,
     *GRAPHKB_TOOLS,
     *CAPACITY_TOOLS,
+    *PERF_TOOLS,
 ]

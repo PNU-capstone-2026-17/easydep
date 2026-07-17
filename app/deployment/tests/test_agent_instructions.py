@@ -47,12 +47,22 @@ def test_kb_queries_skip_planning() -> None:
     assert "record_plan 없이 바로" in kb_section
 
 
-def test_all_four_axes_are_routed() -> None:
+def test_all_axes_are_routed() -> None:
     axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
     assert "kb_* 도구" in axes  # 관계
     assert "cap_* 도구" in axes  # 용량·제약
     assert "cost_* 도구" in axes  # 스펙·가격
+    assert "perf_* 도구" in axes  # 성능 특성
     assert "cb-tumblebug MCP 전용" in axes  # 현재 상태·실행
+
+
+def test_cross_provider_perf_comparison_is_declared_impossible() -> None:
+    """ACU는 Azure만·클럭은 AWS만이라 프로바이더 간 성능 비교는 축이 없다.
+    도구로 답하지 말고 불가능하다고 말하도록 지시돼 있어야 한다."""
+    axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
+    perf_axis = axes.split("4. **성능 특성**")[1].split("5. **현재 상태·실행**")[0]
+    assert "프로바이더 간 성능 비교는 불가능" in perf_axis
+    assert "같은 프로바이더만" in perf_axis
 
 
 def test_mcp_spec_recommendation_is_same_axis_not_a_different_one() -> None:
@@ -62,7 +72,7 @@ def test_mcp_spec_recommendation_is_same_axis_not_a_different_one() -> None:
     다른 축인 것처럼 서술했다.
     """
     axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
-    cost_axis, mcp_axis = axes.split("4. **현재 상태·실행**")
+    cost_axis, mcp_axis = axes.split("5. **현재 상태·실행**")
     assert "recommend_vm_spec" in cost_axis  # 같은 축 안에서 대안으로 언급
     assert "같은 스펙" in cost_axis  # costkb가 그 카탈로그의 미러라 문자 그대로 같다
     assert "recommend_vm_spec" not in mcp_axis  # 4번 축의 도구가 아니다
@@ -72,7 +82,7 @@ def test_missing_mcp_axis_is_declined_not_substituted() -> None:
     """MCP가 기본으로 꺼졌으므로 4번 축은 보통 답할 수 없다 —
     지식베이스나 검색으로 메우면 없는 배포 상태를 지어내게 된다."""
     axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
-    mcp_axis = axes.split("4. **현재 상태·실행**")[1]
+    mcp_axis = axes.split("5. **현재 상태·실행**")[1]
     assert "답할 수 없다고 사용자에게 알리세요" in mcp_axis
     assert "메우려 하지 마세요" in mcp_axis
 
