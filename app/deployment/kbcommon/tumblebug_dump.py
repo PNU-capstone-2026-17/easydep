@@ -1,10 +1,18 @@
-"""cb-tumblebug `assets.dump.gz`에서 `spec_infos` 행을 읽는다.
+"""cb-tumblebug `assets.dump.gz`에서 `spec_infos` 행을 읽는다 (KB 패키지 공유).
+
+## 왜 kbcommon에 있나
+
+이 파일은 어떤 KB에도 속하지 않는 **인프라**다 — 전부 "tumblebug 덤프에서 spec_infos 행을
+읽는 법"이지 그 행으로 무엇을 하는가(가격/성능)가 아니다. `costkb`(가격 컬럼)와
+`perfkb`(details 컬럼)가 **같은 테이블의 다른 컬럼**을 보므로 둘 다 이 리더가 필요하다.
+`fetch_cached`가 여기 있는 것과 같은 이유다 — 여러 KB가 공유하는 건 kbcommon에 둔다.
+(원래 `costkb/parsers/dump.py`에 있었으나 perfkb가 두 번째 소비자가 되면서 승격했다.)
 
 덤프는 **PostgreSQL custom format**(v1.15-0, gzip, PG 16.14)이라 `psql`이 아니라
 `pg_restore` 계열 파서가 필요하다. 여기서는 `pgdumplib`(BSD-3)를 쓴다.
 
-**선택적 의존성**: 빌드 안 해도 번들 36건으로 동작하므로 기본 설치를 무겁게 하지 않는다.
-`uv sync --extra costkb` (graphkb의 neo4j extra와 같은 관례).
+**선택적 의존성**: 빌드할 때만 필요하다. `uv sync --extra costkb`(또는 `--extra perfkb`) —
+둘 다 `pgdumplib`를 끌어온다. graphkb의 neo4j extra와 같은 관례.
 
 **탈출구**: pgdumplib이 미래 덤프 버전에서 깨지면 `--rows-file`로 우회한다 —
     docker run --rm -v "$PWD:/d" postgres:16-alpine \
@@ -35,8 +43,8 @@ _COPY_COLUMNS = re.compile(r"\(([^)]*)\)\s+FROM\s+stdin", re.IGNORECASE)
 _MISSING_DEP = (
     "pgdumplib이 설치되어 있지 않습니다. cb-tumblebug 덤프는 PostgreSQL custom format이라 "
     "전용 파서가 필요합니다.\n"
-    "  uv sync --extra costkb   (또는 uv add pgdumplib)\n"
-    "빌드를 건너뛰어도 번들 36건으로는 계속 동작합니다."
+    "  uv sync --extra costkb   (또는 --extra perfkb / uv add pgdumplib)\n"
+    "costkb는 빌드를 건너뛰어도 번들 36건으로 계속 동작합니다."
 )
 
 
@@ -88,7 +96,7 @@ def iter_spec_rows(dump_path: Path) -> Iterator[dict]:
             "pgdumplib이 이 덤프 버전을 지원하지 않을 수 있습니다. 우회 방법:\n"
             '  docker run --rm -v "$PWD:/d" postgres:16-alpine \\\n'
             f"    pg_restore --data-only -t {TABLE} -f - /d/assets.dump > rows.copy\n"
-            "  python -m costkb build --rows-file rows.copy"
+            "  python -m costkb build --rows-file rows.copy   (또는 perfkb)"
         ) from exc
 
     print(

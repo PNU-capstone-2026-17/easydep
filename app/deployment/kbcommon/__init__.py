@@ -1,9 +1,12 @@
-"""지식베이스 패키지들이 공유하는 최소 유틸.
+"""지식베이스 패키지들이 공유하는 인프라.
 
-`graphkb`(리소스 의존성)와 `capacitykb`(리소스 용량·제약)는 서로 독립적인
-지식 차원이라 코드를 섞지 않는다. 다만 **같은 공개 스키마 소스**
-(CloudFormation zip, bicep types, KCC CRD 등)를 내려받으므로,
-다운로드 캐시만 이 패키지를 통해 공유한다.
+각 KB(graphkb·capacitykb·costkb·perfkb)는 서로 독립적인 지식 차원이라 **서로 import하지
+않는다**. 다만 어느 KB에도 속하지 않는 공용 인프라는 여기 모아 공유한다:
+
+- `fetch.py`         — 공개 스키마 다운로드 + 로컬 캐시 (CFN zip, bicep types, KCC CRD 등)
+- `tumblebug_dump.py` — cb-tumblebug 덤프에서 spec_infos 행 읽기 (costkb·perfkb가 공유)
+
+"KB가 아니라 인프라이고, 둘 이상이 쓰면 여기로" — 이 규칙이 KB 간 단방향 규약을 지켜준다.
 """
 
 from __future__ import annotations

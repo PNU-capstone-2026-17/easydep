@@ -5,18 +5,12 @@
     python -m perfkb coverage
     python -m perfkb show --provider aws --spec t3.medium
 
-## 덤프 리더를 costkb에서 빌려 쓴다 (의도된 결합)
+## 덤프 리더는 kbcommon에서 온다
 
-`costkb/parsers/dump.py`는 이름과 달리 cost 지식이 0이다 — 전부 "tumblebug 덤프에서
-spec_infos 행을 읽는 법"이라 사실상 인프라다. perfkb는 **같은 테이블의 다른 컬럼**을
-보므로 그 리더가 그대로 필요하다.
-
-규약상으로는 `kbcommon`에 올리는 게 맞다(kbcommon의 존재 이유가 "같은 공개 스키마 소스를
-공유"다). 다만 소비자가 둘뿐이라 지금은 승격하지 않고 빌려 쓴다. **셋째 소비자가 생기거나
-costkb가 dump.py의 시그니처를 바꿔야 할 때 kbcommon으로 올린다.**
-
-빌려 쓰는 건 **행 리더뿐이고 데이터 모델이 아니다** — perfkb는 costkb의 레코드나 스키마를
-전혀 모른다. 조인은 도구 계층에서 `id`로 한다.
+`kbcommon/tumblebug_dump.py`가 spec_infos 행을 읽는다. costkb(가격 컬럼)와 perfkb
+(details 컬럼)가 **같은 테이블의 다른 컬럼**을 보므로 둘 다 그 리더를 공유한다 —
+`fetch_cached`가 kbcommon에 있는 것과 같은 이유다. perfkb는 costkb를 import하지 않는다
+(KB 간 단방향 규약). 조인은 도구 계층에서 `id`로 한다.
 """
 
 from __future__ import annotations
@@ -65,8 +59,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    # costkb의 덤프 리더를 빌려 쓴다 — 이유는 모듈 docstring 참고.
-    from costkb.parsers import dump as dump_reader
+    from kbcommon import tumblebug_dump as dump_reader
 
     from perfkb.parsers.build import build_dataset, format_audit
 

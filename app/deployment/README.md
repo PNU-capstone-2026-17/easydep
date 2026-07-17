@@ -210,9 +210,11 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `graphkb/` | 리소스 타입 **의존성** 지식베이스 (파서·모델·질의·Neo4j 적재) |
 | `capacitykb/` | 리소스 **용량·제약** 지식베이스 (파서·모델·질의·산문 추출) |
 | `costkb/` | 인스턴스 **스펙·가격** 지식베이스 (cb-tumblebug 미러 빌드·번들 폴백·조회) |
-| `costkb/parsers/dump.py` | `assets.dump.gz`(PostgreSQL custom dump) → `spec_infos` 행 |
-| `costkb/parsers/tumblebug.py` | 행 → 레코드 **순수 투영** (미러 충실도 규칙이 여기 있음) |
-| `kbcommon/` | 세 KB가 공유하는 다운로드 캐시 |
+| `costkb/parsers/tumblebug.py` | 행 → 가격 레코드 **순수 투영** (미러 충실도 규칙이 여기 있음) |
+| `perfkb/` | 인스턴스 **성능 특성** 지식베이스 (버스트·세대·클럭·EBS·ACU) |
+| `perfkb/parsers/details.py` | `spec_infos.details`(Go `%v` 포맷) → 성능 신호 |
+| `kbcommon/` | KB 공유 인프라 — 다운로드 캐시(`fetch.py`) + 덤프 리더(`tumblebug_dump.py`) |
+| `kbcommon/tumblebug_dump.py` | `assets.dump.gz`(PostgreSQL custom dump) → `spec_infos` 행 (costkb·perfkb 공유) |
 | `document/` | 요구사항 브리프 + 비전문가용 해설서 + 수동 테스트 질의집 |
 | `main.py` | 대화형 루프 진입점 |
 

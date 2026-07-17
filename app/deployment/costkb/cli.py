@@ -71,7 +71,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    from costkb.parsers import dump as dump_reader
+    from kbcommon import tumblebug_dump as dump_reader
+
     from costkb.parsers.tumblebug import build_dataset, format_audit
 
     if args.rows_file:
