@@ -634,6 +634,9 @@ costkb = [
 neo4j = [
     { name = "neo4j" },
 ]
+perfkb = [
+    { name = "pgdumplib" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -648,10 +651,11 @@ requires-dist = [
     { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=5.28" },
     { name = "openai-agents", specifier = ">=0.18.2" },
     { name = "pgdumplib", marker = "extra == 'costkb'", specifier = ">=4" },
+    { name = "pgdumplib", marker = "extra == 'perfkb'", specifier = ">=4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "pyyaml", specifier = ">=6" },
 ]
-provides-extras = ["neo4j", "costkb"]
+provides-extras = ["neo4j", "costkb", "perfkb"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "perfkb 인스턴스 성능 데이터셋",
+  "type": "object",
+  "required": ["_note", "specs"],
+  "properties": {
+    "_note": {
+      "type": "string",
+      "description": "파일 단위 출처·한계 고지. 프로바이더 간 비교 불가 등."
+    },
+    "specs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/spec"}
+    }
+  },
+  "$defs": {
+    "spec": {
+      "type": "object",
+      "required": ["id", "provider", "specName"],
+      "description": "성능 신호가 없는 스펙은 레코드 자체가 없다. 필드 부재 = '모른다'.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "costkb 조인 키 (aws+us-east-1+t3.medium)"
+        },
+        "provider": {"enum": ["aws", "azure", "gcp"]},
+        "specName": {"type": "string"},
+
+        "sustainedCpu": {
+          "type": "object",
+          "description": "상시 CPU 성능이 보장되나. 프로바이더마다 다른 메커니즘에서 오므로 근거를 함께 담는다.",
+          "required": ["value", "evidence", "confidence"],
+          "properties": {
+            "value": {"type": "boolean"},
+            "note": {"type": ["string", "null"]},
+            "evidence": {
+              "enum": ["aws-burstable-field", "gcp-shared-cpu-field", "azure-family-name"]
+            },
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+          },
+          "additionalProperties": false
+        },
+
+        "currentGeneration": {"type": "boolean"},
+        "clockGHz": {"type": "number", "exclusiveMinimum": 0},
+        "threadsPerCore": {"type": "number", "exclusiveMinimum": 0},
+        "bareMetal": {"type": "boolean"},
+
+        "networkPerformance": {
+          "type": "string",
+          "description": "AWS 원문 유지 ('Up to 5 Gigabit' | '25 Gigabit')"
+        },
+        "networkIsBurst": {
+          "type": "boolean",
+          "description": "'Up to'로 시작하면 true — 광고 대역폭이 버스트라는 뜻"
+        },
+
+        "ebsBaselineMbps": {
+          "type": "number",
+          "description": "지속 가능한 EBS 대역폭. Maximum이 아니라 이 값이 진짜 성능이다."
+        },
+        "ebsMaxMbps": {"type": "number"},
+        "ebsBaselineIops": {"type": "number"},
+        "ebsMaxIops": {"type": "number"},
+
+        "acu": {
+          "type": "number",
+          "description": "Azure Compute Units. Azure 내부에서만 비교 가능하며 37.7%만 채워져 있다."
+        },
+        "diskIops": {"type": "number"},
+        "cachedDiskIops": {"type": "number"},
+        "acceleratedNetworking": {"type": "boolean"},
+        "premiumIO": {"type": "boolean"},
+        "family": {"type": "string"},
+
+        "maxPersistentDisks": {"type": "number"},
+        "maxPersistentDiskGB": {"type": "number"},
+        "vendorDescription": {
+          "type": "string",
+          "description": "GCP 벤더 설명 ('Efficient Instance, 8 vCPUs, 64 GB RAM')"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
