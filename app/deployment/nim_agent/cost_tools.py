@@ -22,8 +22,18 @@ from agents import RunContextWrapper, function_tool
 
 from costkb import agent_api
 from costkb.agent_api import HOURS_PER_MONTH
+from perfkb import agent_api as perf_api
 
 from .session import SessionState
+
+
+def _perf_annotate(spec: dict) -> str | None:
+    """추천 후보에 성능 경고를 붙인다 — costkb×perfkb 조인 지점.
+
+    여기(도구 계층)에서 조인하므로 두 KB는 서로 import하지 않는다. perfkb가 빌드되지
+    않았거나 번들 스펙(id 없음)이면 조용히 None을 준다(fail-open).
+    """
+    return perf_api.recommend_warning(spec.get("id"))
 
 _PLAN_REQUIRED = (
     "먼저 record_plan으로 계획을 기록하세요. 클라우드 리소스 산정은 구성요소별 사이징 → "
@@ -50,6 +60,9 @@ def cost_recommend_specs(
 ) -> str:
     """요구사항을 만족하는 VM 스펙 후보와 시간당 단가를 추천한다(크레덴셜 불필요).
 
+    성능 지식베이스(perfkb)가 빌드돼 있으면 후보에 성능 경고가 함께 붙습니다 —
+    버스트 인스턴스나 구세대처럼 **가격만 보면 놓치는** 함정을 짚어줍니다.
+
     **record_plan으로 계획을 먼저 기록해야 실행됩니다.**
 
     Args:
@@ -73,7 +86,8 @@ def cost_recommend_specs(
         f"arch={arch or 'any'}, sort={sort_by}"
     )
     return agent_api.recommend_specs(
-        vcpu_min, mem_min_gib, provider, region, sort_by, limit, architecture=arch
+        vcpu_min, mem_min_gib, provider, region, sort_by, limit,
+        architecture=arch, annotate=_perf_annotate,
     )
 
 

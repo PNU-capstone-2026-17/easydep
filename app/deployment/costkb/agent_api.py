@@ -9,6 +9,7 @@ graphkb/capacitykb의 agent_api와 같은 관례: 예외 대신 에이전트가 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from costkb.dataset import (
@@ -69,6 +70,7 @@ def recommend_specs(
     *,
     architecture: str | None = DEFAULT_ARCHITECTURE,
     output_dir: Path | str | None = None,
+    annotate: Callable[[dict], str | None] | None = None,
 ) -> str:
     """요구사항을 만족하는 VM 스펙 후보를 **시간당 단가까지만** 텍스트로 반환한다.
 
@@ -76,6 +78,12 @@ def recommend_specs(
     그러면 모델이 월 비용을 이미 손에 쥔 상태가 되어 `estimate_monthly_cost` 도구가
     불필요해 보인다 — 실측으로 5회 중 5회 도구를 건너뛰고 직접 암산했다. 제거 후 5/5 호출.
     (사람이 읽는 `costkb/cli.py`의 표는 월 비용을 계속 보여준다 — 거기엔 다음 도구가 없다.)
+
+    Args:
+        annotate: 각 후보 스펙 dict를 받아 한 줄 주석(경고 등)을 반환하는 선택적 콜백.
+            None을 반환하면 주석을 안 붙인다. **costkb는 이 주석이 무엇인지 모른다** —
+            성능 경고(perfkb) 조인을 도구 계층에서 끼워넣기 위한 확장점일 뿐이다.
+            KB끼리 import하지 않는 규약을 지키면서 축을 잇는 방법이다.
     """
     results = filter_specs(
         vcpu_min,
@@ -93,7 +101,13 @@ def recommend_specs(
             f"다음과 같으니 조건을 조정하세요:\n{coverage_text(output_dir)}"
         )
 
-    lines = [_describe(spec) for spec in results]
+    lines = []
+    for spec in results:
+        line = _describe(spec)
+        note = annotate(spec) if annotate is not None else None
+        if note:
+            line += f"\n    ⚠ {note}"
+        lines.append(line)
     text = "추천 후보(온디맨드 정가, 시간당 단가):\n" + "\n".join(lines)
 
     unpriced = count_unpriced(
