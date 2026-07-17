@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scenfit/costkb/schema.json",
+  "title": "costkb instance spec / price dataset",
+  "description": "cb-tumblebug spec_infos 테이블의 투영. 번들 36건(손 큐레이션)과 빌드 산출물이 같은 스키마를 쓴다.",
+  "type": "object",
+  "required": ["_note", "specs"],
+  "additionalProperties": false,
+  "properties": {
+    "_note": {
+      "type": "string",
+      "minLength": 1,
+      "description": "파일 단위 출처·한계 고지. 레코드별 evidence를 대신한다."
+    },
+    "specs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["provider", "region", "specName", "vCPU", "memGiB", "hourlyUSD"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Tumblebug 키 {provider}+{region}+{spec}. MCP 정렬의 근거. 번들 36건엔 없음."
+          },
+          "provider": {
+            "enum": ["aws", "azure", "gcp", "tencent", "alibaba", "ibm", "ncp", "kt", "nhn", "openstack"],
+            "description": "cb-tumblebug이 아는 10개 프로바이더. 새 값이 오면 검증 실패시켜 조용한 드리프트를 막는다."
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Tumblebug 표기. AWS는 CSP와 우연히 일치하나 NCP는 'KR' 등으로 다르다."
+          },
+          "specName": { "type": "string", "minLength": 1, "description": "CSP 원본 이름 (csp_spec_name)" },
+          "vCPU": { "type": "integer", "minimum": 1 },
+          "memGiB": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Tumblebug 기준값(미러). 필터·판정에 쓴다 — 라이브 MCP와 일치시키기 위함."
+          },
+          "memGiBActual": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "보정값(표시용). 상위 CB-Spider 버그로 gcp/azure의 memGiB가 실제보다 2.4% 낮아 ×1.024로 복원한 값. 나머지 프로바이더는 memGiB와 같다."
+          },
+          "hourlyUSD": {
+            "type": ["number", "null"],
+            "exclusiveMinimum": 0,
+            "description": "cost_per_hour. 0과 음수는 '가격 미상'이므로 null (0은 무료가 아니다)."
+          },
+          "architecture": {
+            "type": ["string", "null"],
+            "description": "x86_64 | arm64 | arm64_mac | x86_64_mac. MCP가 기본으로 x86_64를 주입하므로 미러에 필요."
+          },
+          "infraType": { "type": ["string", "null"] },
+          "diskSizeGB": { "type": ["number", "null"] },
+          "acceleratorType": { "type": ["string", "null"] },
+          "acceleratorModel": { "type": ["string", "null"] },
+          "acceleratorCount": { "type": ["integer", "null"] },
+          "acceleratorMemoryGB": { "type": ["number", "null"] },
+          "family": {
+            "enum": ["burstable", "general", "compute", "memory"],
+            "description": "spec_infos에 없는 필드 — 번들 36건에만 존재한다."
+          }
+        }
+      }
+    }
+  }
+}

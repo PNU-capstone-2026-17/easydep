@@ -1,0 +1,229 @@
+{
+  "description": "코어 타입 ↔ 벤더 네이티브 타입 동치 매핑 (사람 검수 완료). 1차 근거: cb-spider 드라이버 소스 (cloud-control-manager/cloud-driver/drivers/{aws,azure,gcp}/resources/). 등가물이 없는 조합(sshKey/gcp, customImage/aws·gcp, spec/image/mci 전체)은 항목을 만들지 않는다.",
+  "mappings": [
+    {
+      "core": "vNet",
+      "provider": "aws",
+      "target": "AWS::EC2::VPC",
+      "confidence": 0.95,
+      "note": "aws VPCHandler.go: ec2.CreateVpc (IGW/RouteTable 번들 생성 포함)",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "azure",
+      "target": "Microsoft.Network/virtualNetworks",
+      "confidence": 0.95,
+      "note": "azure VPCHandler.go: armnetwork.VirtualNetworksClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "gcp",
+      "target": "ComputeNetwork",
+      "confidence": 0.95,
+      "note": "gcp VPCHandler.go: Networks.Insert (AutoCreateSubnetworks=false)",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "aws",
+      "target": "AWS::EC2::Subnet",
+      "confidence": 0.95,
+      "note": "aws VPCHandler.go: ec2.CreateSubnet",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "azure",
+      "target": "Microsoft.Network/virtualNetworks/subnets",
+      "confidence": 0.95,
+      "note": "azure VPCHandler.go: armnetwork.SubnetsClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "gcp",
+      "target": "ComputeSubnetwork",
+      "confidence": 0.95,
+      "note": "gcp VPCHandler.go: Subnetworks.Insert (regional)",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "aws",
+      "target": "AWS::EC2::SecurityGroup",
+      "confidence": 0.95,
+      "note": "aws SecurityHandler.go: ec2.CreateSecurityGroup + Authorize*Ingress/Egress",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "azure",
+      "target": "Microsoft.Network/networkSecurityGroups",
+      "confidence": 0.95,
+      "note": "azure SecurityHandler.go: armnetwork.SecurityGroupsClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "gcp",
+      "target": "ComputeFirewall",
+      "confidence": 0.7,
+      "note": "gcp SecurityHandler.go: Firewalls.Insert — 규칙별 방화벽 1:N 생성 + TargetTag 네트워크 태그 관례. 단일 리소스 동치가 아님",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "aws",
+      "target": "AWS::EC2::KeyPair",
+      "confidence": 0.95,
+      "note": "aws KeyPairHandler.go: ec2.CreateKeyPair",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "azure",
+      "target": "Microsoft.Compute/sshPublicKeys",
+      "confidence": 0.9,
+      "note": "azure KeyPairHandler.go: armcompute.SSHPublicKeysClient.Create (개인키는 로컬 생성)",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "aws",
+      "target": "AWS::EC2::Instance",
+      "confidence": 0.95,
+      "note": "aws VMHandler.go: ec2.RunInstances",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "azure",
+      "target": "Microsoft.Compute/virtualMachines",
+      "confidence": 0.95,
+      "note": "azure VMHandler.go: armcompute.VirtualMachinesClient.BeginCreateOrUpdate (NIC/공인IP 번들)",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "gcp",
+      "target": "ComputeInstance",
+      "confidence": 0.95,
+      "note": "gcp VMHandler.go: Instances.Insert",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "aws",
+      "target": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "confidence": 0.8,
+      "note": "aws NLBHandler.go: elbv2 CreateLoadBalancer(Type=network) + TargetGroup/Listener 번들",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "azure",
+      "target": "Microsoft.Network/loadBalancers",
+      "confidence": 0.85,
+      "note": "azure NLBHandler.go: armnetwork.LoadBalancersClient.BeginCreateOrUpdate (+공인IP)",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "gcp",
+      "target": "ComputeForwardingRule",
+      "confidence": 0.7,
+      "note": "gcp NLBHandler.go: ForwardingRules.Insert + TargetPools/HttpHealthChecks 번들 (legacy target-pool 방식)",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "aws",
+      "target": "AWS::EKS::Cluster",
+      "confidence": 0.95,
+      "note": "aws ClusterHandler.go: eks.CreateCluster",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "azure",
+      "target": "Microsoft.ContainerService/managedClusters",
+      "confidence": 0.95,
+      "note": "azure ClusterHandler.go: armcontainerservice.ManagedClustersClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "gcp",
+      "target": "ContainerCluster",
+      "confidence": 0.95,
+      "note": "gcp ClusterHandler.go: container/v1 Projects.Locations.Clusters.Create",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "aws",
+      "target": "AWS::EKS::Nodegroup",
+      "confidence": 0.95,
+      "note": "aws ClusterHandler.go: eks.CreateNodegroup",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "azure",
+      "target": "Microsoft.ContainerService/managedClusters/agentPools",
+      "confidence": 0.95,
+      "note": "azure ClusterHandler.go: armcontainerservice.AgentPoolsClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "gcp",
+      "target": "ContainerNodePool",
+      "confidence": 0.95,
+      "note": "gcp ClusterHandler.go: Clusters.NodePools.Create",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "aws",
+      "target": "AWS::EC2::Volume",
+      "confidence": 0.95,
+      "note": "aws DiskHandler.go: ec2.CreateVolume",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "azure",
+      "target": "Microsoft.Compute/disks",
+      "confidence": 0.95,
+      "note": "azure DiskHandler.go: armcompute.DisksClient.BeginCreateOrUpdate",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "gcp",
+      "target": "ComputeDisk",
+      "confidence": 0.95,
+      "note": "gcp DiskHandler.go: Disks.Insert",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "azure",
+      "target": "Microsoft.Compute/images",
+      "confidence": 0.9,
+      "note": "azure MyImageHandler.go: armcompute.ImagesClient.BeginCreateOrUpdate (Generalize 후). AWS는 CFN에 AMI 리소스 타입이 없어 항목 제외",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "gcp",
+      "target": "ComputeMachineImage",
+      "confidence": 0.9,
+      "note": "gcp MyImageHandler.go: MachineImages.Insert — KCC v1.153.0에 ComputeMachineImage kind 존재 확인 (suggest-mapping 후보에서 검수 반영)",
+      "status": "confirmed"
+    }
+  ]
+}

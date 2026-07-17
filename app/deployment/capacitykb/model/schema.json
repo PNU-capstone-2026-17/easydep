@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scenfit/capacitykb/schema.json",
+  "title": "capacitykb resource capacity / constraint records",
+  "type": "object",
+  "required": ["constraints", "quotas"],
+  "additionalProperties": false,
+  "properties": {
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type_id", "property", "kind", "value", "conditional", "evidence", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "type_id": { "type": "string", "minLength": 1 },
+          "property": { "type": "string", "minLength": 1 },
+          "kind": {
+            "enum": [
+              "min", "max", "min_length", "max_length", "min_items", "max_items",
+              "pattern", "enum", "default", "required", "mutability"
+            ]
+          },
+          "value": {},
+          "value_type": { "type": ["string", "null"] },
+          "unit": { "type": ["string", "null"] },
+          "conditional": { "type": "boolean" },
+          "note": { "type": ["string", "null"] },
+          "evidence": {
+            "enum": [
+              "cfn-schema", "cfn-description", "bicep-type", "bicep-flags",
+              "crd-schema", "crd-description", "swagger-field", "curated", "heuristic"
+            ]
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "mutability" } }, "required": ["kind"] },
+            "then": {
+              "properties": {
+                "value": { "enum": ["create_only", "conditional_create_only", "read_only"] }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "required" } }, "required": ["kind"] },
+            "then": { "properties": { "value": { "const": true } } }
+          }
+        ]
+      }
+    },
+    "quotas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["provider", "name", "source_doc", "evidence", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "scope": { "type": ["string", "null"] },
+          "default": { "type": ["number", "string", "null"] },
+          "maximum": { "type": ["number", "string", "null"] },
+          "unit": { "type": ["string", "null"] },
+          "type_id": { "type": ["string", "null"] },
+          "source_doc": { "type": "string", "minLength": 1 },
+          "note": { "type": ["string", "null"] },
+          "evidence": { "enum": ["azure-limits-doc", "curated", "heuristic"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

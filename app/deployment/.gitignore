@@ -1,0 +1,15 @@
+# 환경 변수 / 시크릿
+.env
+
+# uv / 가상환경
+.venv/
+
+# Python 캐시
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 지식베이스 빌드 산출물 / 다운로드 캐시
+# 재배포하지 않고 각자 원본에서 빌드한다 (costkb는 특히 상위 CSP 데이터라 중요).
+output/
+.cache/

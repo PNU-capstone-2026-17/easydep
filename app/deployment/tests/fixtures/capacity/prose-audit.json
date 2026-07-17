@@ -1,0 +1,148 @@
+{
+  "description": "산문(description)에서만 얻은 범위 제약 전수 목록. 사람이 25개 전부 육안 검토해 승인한 스냅샷이다. 빌드 결과가 이 목록과 달라지면 정규식이 바뀐 것이므로 재검토 후 갱신할 것. (스키마 값과 겹치는 항목은 R1이 걸러 여기 없다.)",
+  "approved": {
+    "aws::AWS::ApiGatewayV2::Integration.TimeoutInMillis": {
+      "conditional": true,
+      "min": 50,
+      "max": 30000
+    },
+    "aws::AWS::AppStream::Stack.UserSetting/MaximumLength": {
+      "conditional": false,
+      "min": 1,
+      "max": 20971520
+    },
+    "aws::AWS::EC2::LaunchTemplate.Ebs/Throughput": {
+      "conditional": false,
+      "min": 125,
+      "max": 2000
+    },
+    "aws::AWS::EC2::Volume.Iops": {
+      "conditional": true,
+      "min": 100,
+      "max": 256000
+    },
+    "aws::AWS::EC2::Volume.Size": {
+      "conditional": true,
+      "min": 1,
+      "max": 65536
+    },
+    "aws::AWS::EC2::Volume.Throughput": {
+      "conditional": false,
+      "min": 125,
+      "max": 2000
+    },
+    "aws::AWS::ECS::DaemonTaskDefinition.HealthCheck/Interval": {
+      "conditional": false,
+      "min": 5,
+      "max": 300
+    },
+    "aws::AWS::ECS::DaemonTaskDefinition.HealthCheck/Retries": {
+      "conditional": false,
+      "min": 1,
+      "max": 10
+    },
+    "aws::AWS::ECS::DaemonTaskDefinition.HealthCheck/StartPeriod": {
+      "conditional": false,
+      "min": 0,
+      "max": 300
+    },
+    "aws::AWS::ECS::DaemonTaskDefinition.HealthCheck/Timeout": {
+      "conditional": false,
+      "min": 2,
+      "max": 60
+    },
+    "aws::AWS::ECS::TaskDefinition.HealthCheck/Interval": {
+      "conditional": false,
+      "min": 5,
+      "max": 300
+    },
+    "aws::AWS::ECS::TaskDefinition.HealthCheck/Retries": {
+      "conditional": false,
+      "min": 1,
+      "max": 10
+    },
+    "aws::AWS::ECS::TaskDefinition.HealthCheck/StartPeriod": {
+      "conditional": false,
+      "min": 0,
+      "max": 300
+    },
+    "aws::AWS::ECS::TaskDefinition.HealthCheck/Timeout": {
+      "conditional": false,
+      "min": 2,
+      "max": 60
+    },
+    "aws::AWS::Glue::Crawler.S3Target/SampleSize": {
+      "conditional": false,
+      "min": 1,
+      "max": 249
+    },
+    "aws::AWS::Lambda::Function.Timeout": {
+      "conditional": false,
+      "max": 900
+    },
+    "aws::AWS::Lightsail::Container.HealthCheckConfig/IntervalSeconds": {
+      "conditional": false,
+      "min": 5,
+      "max": 300
+    },
+    "aws::AWS::Lightsail::Container.HealthCheckConfig/TimeoutSeconds": {
+      "conditional": false,
+      "min": 2,
+      "max": 60
+    },
+    "aws::AWS::RDS::DBCluster.BacktrackWindow": {
+      "conditional": false,
+      "max": 259200
+    },
+    "aws::AWS::RDS::DBCluster.BackupRetentionPeriod": {
+      "conditional": false,
+      "max": 35
+    },
+    "aws::AWS::RDS::DBCluster.ScalingConfiguration/SecondsBeforeTimeout": {
+      "conditional": false,
+      "min": 60,
+      "max": 600
+    },
+    "aws::AWS::RDS::DBCluster.ScalingConfiguration/SecondsUntilAutoPause": {
+      "conditional": false,
+      "min": 300,
+      "max": 86400
+    },
+    "aws::AWS::RDS::DBInstance.AutomaticBackupReplicationRetentionPeriod": {
+      "conditional": false,
+      "max": 35
+    },
+    "aws::AWS::RDS::DBInstance.BackupRetentionPeriod": {
+      "conditional": false,
+      "max": 35
+    },
+    "aws::AWS::RDS::DBInstance.Iops": {
+      "conditional": false,
+      "min": 1000
+    },
+    "aws::AWS::RDS::DBInstance.PromotionTier": {
+      "conditional": false,
+      "max": 15
+    },
+    "aws::AWS::Redshift::Cluster.ManualSnapshotRetentionPeriod": {
+      "conditional": false,
+      "max": 3653
+    },
+    "aws::AWS::Redshift::Cluster.SnapshotCopyRetentionPeriod": {
+      "conditional": false,
+      "min": 1
+    },
+    "aws::AWS::RedshiftServerless::Namespace.FinalSnapshotRetentionPeriod": {
+      "conditional": false,
+      "max": 3653
+    },
+    "aws::AWS::S3::Bucket.Tiering/Days": {
+      "conditional": true,
+      "min": 90
+    },
+    "aws::AWS::SQS::Queue.ReceiveMessageWaitTimeSeconds": {
+      "conditional": false,
+      "max": 20
+    }
+  }
+}

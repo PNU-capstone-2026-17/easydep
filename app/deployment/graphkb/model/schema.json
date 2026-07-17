@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scenfit/graphkb/schema.json",
+  "title": "graphkb dependency graph",
+  "type": "object",
+  "required": ["nodes", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "layer", "provider", "kind", "display_name", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "layer": { "enum": ["core", "vendor"] },
+          "provider": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "display_name": { "type": "string", "minLength": 1 },
+          "source": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "to", "type", "via_property", "required", "cardinality", "evidence", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "from": { "type": "string", "minLength": 1 },
+          "to": { "type": "string", "minLength": 1 },
+          "type": { "enum": ["references", "contained_in", "equivalent_to"] },
+          "via_property": { "type": "string" },
+          "required": { "type": "boolean" },
+          "cardinality": { "enum": ["one", "many"] },
+          "evidence": {
+            "enum": [
+              "relationshipRef", "cdk-oob", "swagger-field", "heuristic",
+              "arm-id", "arm-hierarchy", "bicep-ref", "kcc-ref", "cb-spider-driver"
+            ]
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}
