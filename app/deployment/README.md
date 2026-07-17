@@ -213,7 +213,7 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `costkb/parsers/dump.py` | `assets.dump.gz`(PostgreSQL custom dump) → `spec_infos` 행 |
 | `costkb/parsers/tumblebug.py` | 행 → 레코드 **순수 투영** (미러 충실도 규칙이 여기 있음) |
 | `kbcommon/` | 세 KB가 공유하는 다운로드 캐시 |
-| `document/` | 요구사항 브리프 + 비전문가용 해설서 |
+| `document/` | 요구사항 브리프 + 비전문가용 해설서 + 수동 테스트 질의집 |
 | `main.py` | 대화형 루프 진입점 |
 
 ## 테스트
@@ -226,3 +226,7 @@ uv run pytest        # 373개, 전부 오프라인 (fixture 기반)
 36건**을 봅니다 — 그러지 않으면 `costkb build`를 한 번 돌린 개발자에게만 테스트가 깨집니다.
 미러 투영은 `spec_infos` 모양의 행 dict fixture로 `test_costkb_projection.py`가 따로 검증합니다
 (덤프 34 MB 다운로드 불필요).
+
+**pytest가 못 잡는 것** — "모델이 실제로 도구를 부르는가"는 자동 검사로 고정하기 어렵습니다.
+그건 [`document/kb-test-queries.md`](document/kb-test-queries.md)의 질의집으로 손으로 확인합니다
+(축별 스모크 · 교차 축 · 함정 질의 · 체크리스트). **모델을 바꿨다면 여기부터 돌려보세요.**
