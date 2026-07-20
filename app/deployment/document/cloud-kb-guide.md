@@ -6,12 +6,12 @@
 
 **세 지식베이스는 각각 다른 질문에 답합니다.** 이 문서도 그 순서로 읽으면 됩니다.
 
-| 축 | 패키지 | 답하는 질문 | 이 문서에서 |
-|---|---|---|---|
-| **의존성** | `graphkb` | 무엇이 무엇을 필요로 하나 (조립 순서) | 1~12장 |
-| **용량·제약** | `capacitykb` | 무엇이 허용되나 / 한도 / 바꿀 수 있나 | 13장 |
-| **스펙·가격** | `costkb` | 무엇을 살 수 있고 얼마인가 | 14장 |
-| **성능** | `perfkb` | 그게 실제로 얼마나 빠른가 | 15장 |
+| 축                   | 패키지         | 답하는 질문                           | 이 문서에서 |
+| -------------------- | -------------- | ------------------------------------- | ----------- |
+| **의존성**     | `graphkb`    | 무엇이 무엇을 필요로 하나 (조립 순서) | 1~12장      |
+| **용량·제약** | `capacitykb` | 무엇이 허용되나 / 한도 / 바꿀 수 있나 | 13장        |
+| **스펙·가격** | `costkb`     | 무엇을 살 수 있고 얼마인가            | 14장        |
+| **성능**       | `perfkb`     | 그게 실제로 얼마나 빠른가             | 15장        |
 
 처음 읽는다면 1~4장(배경과 용어)을 먼저 보시고, 특정 축이 궁금하면 위 표에서 바로
 해당 장으로 건너뛰어도 됩니다. 전체 요약만 원하면 마지막 17장을 보세요.
@@ -51,12 +51,12 @@
 
 먼저 이 프로젝트에 계속 나오는 개념들을 정리합니다.
 
-| 용어 | 뜻 | 비유 |
-|---|---|---|
-| **클라우드(Cloud)** | 아마존(AWS), 마이크로소프트(Azure), 구글(GCP) 같은 회사가 자기네 데이터센터의 컴퓨터를 인터넷으로 빌려주는 서비스 | 발전기를 직접 사는 대신 전기를 사서 쓰는 것 |
-| **CSP** | Cloud Service Provider. 위의 클라우드 제공 회사들을 부르는 말 | 전력 회사 (한전, 민간 발전사…) |
-| **리소스(Resource)** | 클라우드에서 빌려 쓰는 부품 하나하나. 가상 서버, 네트워크, 저장소 등 | 가구 조립 부품 (판자, 나사, 선반) |
-| **리소스 타입(Type)** | 리소스의 "종류". 이 프로젝트가 다루는 건 개별 부품이 아니라 부품의 **종류** 간 관계 | "M6 나사"라는 규격 자체 (내 책상에 박힌 나사 1개가 아니라) |
+| 용어                        | 뜻                                                                                                                | 비유                                                       |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| **클라우드(Cloud)**   | 아마존(AWS), 마이크로소프트(Azure), 구글(GCP) 같은 회사가 자기네 데이터센터의 컴퓨터를 인터넷으로 빌려주는 서비스 | 발전기를 직접 사는 대신 전기를 사서 쓰는 것                |
+| **CSP**               | Cloud Service Provider. 위의 클라우드 제공 회사들을 부르는 말                                                     | 전력 회사 (한전, 민간 발전사…)                            |
+| **리소스(Resource)**  | 클라우드에서 빌려 쓰는 부품 하나하나. 가상 서버, 네트워크, 저장소 등                                              | 가구 조립 부품 (판자, 나사, 선반)                          |
+| **리소스 타입(Type)** | 리소스의 "종류". 이 프로젝트가 다루는 건 개별 부품이 아니라 부품의**종류** 간 관계                          | "M6 나사"라는 규격 자체 (내 책상에 박힌 나사 1개가 아니라) |
 
 ### 이 프로젝트에 등장하는 대표 리소스 타입들
 
@@ -238,22 +238,22 @@ graphkb/
 
 ### 관계의 세 종류 (`type`)
 
-| 종류 | 뜻 | 예 |
-|---|---|---|
-| `references` (참조) | A 신청서에 B의 ID를 적는 칸이 있음 → B가 먼저 필요 | VM 신청서의 "서브넷 ID" 칸 |
-| `contained_in` (포함) | A는 B **안에** 들어가는 존재 | 서브넷은 VPC 안에 포함됨 (101동은 단지 안에) |
-| `equivalent_to` (동치) | 서로 다른 회사 용어지만 같은 것 (Phase 2 예정) | 중립 vNet = AWS VPC |
+| 종류                     | 뜻                                                  | 예                                           |
+| ------------------------ | --------------------------------------------------- | -------------------------------------------- |
+| `references` (참조)    | A 신청서에 B의 ID를 적는 칸이 있음 → B가 먼저 필요 | VM 신청서의 "서브넷 ID" 칸                   |
+| `contained_in` (포함)  | A는 B**안에** 들어가는 존재                   | 서브넷은 VPC 안에 포함됨 (101동은 단지 안에) |
+| `equivalent_to` (동치) | 서로 다른 회사 용어지만 같은 것 (Phase 2 예정)      | 중립 vNet = AWS VPC                          |
 
 ### 근거와 신뢰도 (`evidence`, `confidence`) — 이 지도의 정직함 장치
 
 모든 화살표에는 **"내가 왜 이렇게 판단했는지"** 와 **"얼마나 자신 있는지"** 를 남깁니다.
 
-| evidence | 무슨 근거? | confidence |
-|---|---|---|
-| `relationshipRef` | AWS 공식 각주에 명시됨 | 1.0 (확실) |
-| `swagger-field` | Tumblebug 신청서의 알려진 칸 이름 | 1.0 (확실) |
-| `cdk-oob` | AWS CDK 팀이 관리하는 별도 관계 목록 | 0.9 (거의 확실) |
-| `heuristic` | 칸 이름을 보고 추측 (아래 7절) | 0.5~0.6 (추측) |
+| evidence            | 무슨 근거?                           | confidence      |
+| ------------------- | ------------------------------------ | --------------- |
+| `relationshipRef` | AWS 공식 각주에 명시됨               | 1.0 (확실)      |
+| `swagger-field`   | Tumblebug 신청서의 알려진 칸 이름    | 1.0 (확실)      |
+| `cdk-oob`         | AWS CDK 팀이 관리하는 별도 관계 목록 | 0.9 (거의 확실) |
+| `heuristic`       | 칸 이름을 보고 추측 (아래 7절)       | 0.5~0.6 (추측)  |
 
 *비유: 지도에 "실측한 길"은 실선으로, "주민 증언으로 추정한 길"은 점선으로
 그려두는 것. 나중에 지도를 쓰는 쪽(AI)이 점선을 믿을지 말지 선택할 수 있습니다.*
@@ -293,6 +293,7 @@ AWS 쪽은 양식이 1,630개나 되고, 공식 각주가 부실해서 **세 가
    *비유: 택배 상자에 "김치"라고 적혀 있으면 열어보지 않아도 내용물을 짐작하는 것.*
 
    추측이므로 오답 방지 장치를 달았습니다:
+
    - 이름과 일치하는 타입이 **정확히 하나일 때만** 화살표를 긋습니다 (애매하면 포기).
    - 신뢰도를 낮게(0.5~0.6) 적어, 확실한 정보와 섞이지 않게 합니다.
    - 같은 관계가 여러 방법으로 발견되면 **신뢰도 높은 근거 하나만** 남깁니다.
@@ -366,12 +367,12 @@ python -m graphkb export --format dot --graph output/core-graph.json
 
 ## 10. 설계 과정에서 내린 주요 결정들
 
-| 결정 | 이유 |
-|---|---|
+| 결정                                   | 이유                                                                                                                           |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | Tumblebug 명세서를 v0.11.8 버전에 고정 | 최신 개발 버전은 용어가 대거 바뀌는 중이라, 오늘 만든 지도와 내일 만든 지도가 달라질 수 있음. 검증된 버전에 고정해 재현성 확보 |
-| 추측(휴리스틱)을 기본으로 켬 | AWS 공식 각주가 1,630개 중 26개에만 있어서, 추측 없이는 지도가 거의 백지가 됨. 대신 신뢰도 표기로 구분 |
-| 그래프 전문 라이브러리(networkx) 안 씀 | 노드 수천 개 수준에서는 기본 파이썬만으로 충분. 외부 의존성을 줄여 유지보수 부담 감소 |
-| 다운로드 캐시 사용 | 매번 수 MB를 다시 받지 않도록. `--refresh` 옵션으로 강제 갱신 가능 |
+| 추측(휴리스틱)을 기본으로 켬           | AWS 공식 각주가 1,630개 중 26개에만 있어서, 추측 없이는 지도가 거의 백지가 됨. 대신 신뢰도 표기로 구분                         |
+| 그래프 전문 라이브러리(networkx) 안 씀 | 노드 수천 개 수준에서는 기본 파이썬만으로 충분. 외부 의존성을 줄여 유지보수 부담 감소                                          |
+| 다운로드 캐시 사용                     | 매번 수 MB를 다시 받지 않도록.`--refresh` 옵션으로 강제 갱신 가능                                                            |
 
 ---
 
@@ -451,14 +452,14 @@ python -m graphkb suggest-mapping          # 매핑 후보 생성 (사람 검수
 이 저장소의 AI 에이전트(`nim_agent`)에 5개의 도구를 새로 등록했습니다.
 에이전트가 대화 중 필요하면 알아서 호출합니다:
 
-| 도구 | 답하는 질문 | 비유 |
-|---|---|---|
-| `kb_creation_order` | "X를 만들려면 뭐부터?" | 조립 설명서의 순서 페이지 |
-| `kb_deletion_impact` | "X를 지우면 뭐가 무너지나?" | 젠가에서 이 블록 빼도 되나 |
-| `kb_equivalent_types` | "AWS의 VPC가 Azure에선 뭐지?" | 번역 사전 찾아보기 |
-| `kb_describe_type` | "X는 정확히 뭘 참조하지?" | 부품 상세 스펙 카드 |
-| `kb_search_types` | "서브넷 관련 타입 다 보여줘" | 지도 색인에서 검색 |
-| `kb_rank_types` | "**전체 중** 의존성이 가장 큰 타입은?" | 지도 전체를 놓고 보는 통계 |
+| 도구                    | 답하는 질문                                  | 비유                       |
+| ----------------------- | -------------------------------------------- | -------------------------- |
+| `kb_creation_order`   | "X를 만들려면 뭐부터?"                       | 조립 설명서의 순서 페이지  |
+| `kb_deletion_impact`  | "X를 지우면 뭐가 무너지나?"                  | 젠가에서 이 블록 빼도 되나 |
+| `kb_equivalent_types` | "AWS의 VPC가 Azure에선 뭐지?"                | 번역 사전 찾아보기         |
+| `kb_describe_type`    | "X는 정확히 뭘 참조하지?"                    | 부품 상세 스펙 카드        |
+| `kb_search_types`     | "서브넷 관련 타입 다 보여줘"                 | 지도 색인에서 검색         |
+| `kb_rank_types`       | "**전체 중** 의존성이 가장 큰 타입은?" | 지도 전체를 놓고 보는 통계 |
 
 **`kb_rank_types`를 왜 따로 뒀나** — 앞의 5개는 전부 **타입 하나씩** 물어보는 도구입니다.
 "AWS 전체에서 의존성이 가장 큰 타입은?" 같은 질문을 이 도구들로 풀려면 1,631개를 하나씩
@@ -517,10 +518,10 @@ Neo4j 안에서는 노드가 `(:ResourceType {id, layer, provider, ...})`,
 (`nim_agent/tumblebug_mcp.py`, `main.py --tumblebug`으로 켭니다 — 기본은 꺼져 있고
 이유는 14-7절), graphkb와 역할이 겹치지 않도록 분담을 정리했습니다:
 
-| 질문 종류 | 담당 | 예 |
-|---|---|---|
-| **정적 지식** (타입 간 규칙) | graphkb 도구 | "VM을 만들려면 뭐가 먼저 필요해?" |
-| **동적 상태** (지금 떠 있는 것들) | Tumblebug MCP | "지금 내 VM 목록과 상태 보여줘" |
+| 질문 종류                               | 담당          | 예                                |
+| --------------------------------------- | ------------- | --------------------------------- |
+| **정적 지식** (타입 간 규칙)      | graphkb 도구  | "VM을 만들려면 뭐가 먼저 필요해?" |
+| **동적 상태** (지금 떠 있는 것들) | Tumblebug MCP | "지금 내 VM 목록과 상태 보여줘"   |
 
 *비유: graphkb는 "요리책"(레시피·순서), MCP는 "냉장고 안 확인"(지금 뭐가 있나).*
 에이전트의 자연스러운 작업 흐름은 둘을 조합합니다:
@@ -543,12 +544,12 @@ Neo4j 안에서는 노드가 `(:ResourceType {id, layer, provider, ...})`,
 지식 차원이 늘어날 때 한 폴더에 다 넣으면 유지보수가 무너집니다. 그래서 축마다
 패키지를 나누고, **겹치는 것(다운로드 캐시)만** 공유합니다.
 
-| 패키지 | 답하는 질문 | 비유 |
-|---|---|---|
-| `graphkb/` | 무엇이 무엇을 필요로 하나 | 조립 **순서** |
-| `capacitykb/` | 무엇이 허용되나 / 한도 / 변경 가능성 | 부품 **규격표** |
-| `costkb/` | 무엇을 살 수 있고 얼마인가 | **가격표** |
-| `kbcommon/` | (공유) 다운로드 캐시 | 공용 창고 |
+| 패키지          | 답하는 질문                          | 비유                 |
+| --------------- | ------------------------------------ | -------------------- |
+| `graphkb/`    | 무엇이 무엇을 필요로 하나            | 조립**순서**   |
+| `capacitykb/` | 무엇이 허용되나 / 한도 / 변경 가능성 | 부품**규격표** |
+| `costkb/`     | 무엇을 살 수 있고 얼마인가           | **가격표**     |
+| `kbcommon/`   | (공유) 다운로드 캐시                 | 공용 창고            |
 
 지식베이스들은 코드가 완전히 분리돼 있지만 **같은 이름표 규약**
 (`aws::AWS::EC2::Subnet`)을 써서, 필요할 때 서로 이어 붙일 수 있습니다.
@@ -573,8 +574,7 @@ Neo4j 안에서는 노드가 `(:ResourceType {id, layer, provider, ...})`,
 
 그래서 설명문에서 숫자를 뽑아내는 **9개 규칙**을 만들었는데, 여기엔 함정이 있었습니다.
 
-**함정 1 — 범위처럼 생긴 비율**: RDS의 `Iops` 설명에 `"Must be a multiple
-between 1 and 50 of the storage amount"`가 있는데, 이건 범위가 아니라 **비율**입니다.
+**함정 1 — 범위처럼 생긴 비율**: RDS의 `Iops` 설명에 `"Must be a multiple between 1 and 50 of the storage amount"`가 있는데, 이건 범위가 아니라 **비율**입니다.
 순진하게 읽으면 "최대 50"이 되어, 실제로 유효한 `Iops: 3000` 설정을 **거부**하게 됩니다.
 *→ 방어: "비율/증분/예시" 같은 단어가 있는 줄은 무시(veto) + 같은 설명 안에서
 하한이 상한을 넘으면(1000 > 50) 통째로 버리는 **이중 그물**.*
@@ -584,8 +584,7 @@ between 1 and 50 of the storage amount"`가 있는데, 이건 범위가 아니�
 멀쩡한 값을 "잘못된 값"이라고 우기게 됩니다.
 *→ 방어: 허용값 목록은 문서가 `Valid Values:` 라고 **명시한 한 줄**에서만 뽑음.*
 
-**함정 3 — 범위 밖의 특수값**: SQS는 `"integer from 1 to 20"`이라면서 `"0을 지정하면
-짧은 폴링"`이라고 덧붙입니다. `-1 = 무제한` 같은 것도 있죠. 하한을 그대로 믿으면
+**함정 3 — 범위 밖의 특수값**: SQS는 `"integer from 1 to 20"`이라면서 `"0을 지정하면 짧은 폴링"`이라고 덧붙입니다. `-1 = 무제한` 같은 것도 있죠. 하한을 그대로 믿으면
 유효한 `0`을 거부합니다.
 *→ 방어: 특수값 신호가 보이면 **하한을 아예 기록하지 않음**.*
 
@@ -612,11 +611,11 @@ between 1 and 50 of the storage amount"`가 있는데, 이건 범위가 아니�
 
 값을 판정할 때는 신뢰도 0.8 이상만 씁니다. 결과는 셋 중 하나입니다:
 
-| 결과 | 뜻 |
-|---|---|
-| **불가** | 확실한 제약을 위반 |
+| 결과                | 뜻                                                        |
+| ------------------- | --------------------------------------------------------- |
+| **불가**      | 확실한 제약을 위반                                        |
 | **판정 보류** | 확실한 제약은 없지만 참고 정보상 벗어남 → 문서 확인 권함 |
-| **가능** | 확실한 제약을 실제로 검사했고 통과 |
+| **가능**      | 확실한 제약을 실제로 검사했고 통과                        |
 
 "판정 보류"가 왜 필요하냐면 — EBS 100TB를 물었을 때 확정 제약이 없다고 **"가능"**이라
 답하면 거짓말이 되기 때문입니다. 모르는 건 모른다고 해야 합니다.
@@ -652,11 +651,11 @@ python -m capacitykb query --quota subnet
 
 ### 14-1. 다른 두 KB와 성격이 다르다
 
-| | graphkb · capacitykb | costkb |
-|---|---|---|
-| 정체 | 공개 스키마에서 뽑은 **규칙** | **카탈로그** (가격표) |
-| 근거 표시 | 레코드마다 evidence·confidence | 파일 단위 고지(`_note`) 하나 |
-| 만드는 법 | `build`가 있어야 동작 | 번들 36건으로 **빌드 없이도** 동작<br>(`build`하면 73,083건으로 넓어짐) |
+|           | graphkb · capacitykb              | costkb                                                                     |
+| --------- | ---------------------------------- | -------------------------------------------------------------------------- |
+| 정체      | 공개 스키마에서 뽑은**규칙** | **카탈로그** (가격표)                                                |
+| 근거 표시 | 레코드마다 evidence·confidence    | 파일 단위 고지(`_note`) 하나                                             |
+| 만드는 법 | `build`가 있어야 동작            | 번들 36건으로**빌드 없이도** 동작(`build`하면 73,083건으로 넓어짐) |
 
 **왜 costkb엔 신뢰도를 안 넣었나**: capacitykb에서 신뢰도는 "스키마 필드(1.0)냐 설명문
 추출(0.6)이냐"를 구분하려고 있었고, 실제로 그 값으로 판정을 걸렀습니다. costkb는 한 파일이
@@ -681,6 +680,7 @@ python -m capacitykb query --quota subnet
 *비유: 지식(백과사전)이 그걸 읽는 사람(에이전트)을 참조하면 안 됩니다.*
 
 그래서 **가로가 아니라 세로로 잘랐습니다**:
+
 - `costkb/` ← 데이터와 순수 로직만 (에이전트를 모름)
 - `nim_agent/cost_tools.py` ← 도구 껍데기와 계획 게이트 (에이전트에 남음)
 
@@ -692,12 +692,12 @@ capacitykb가 이미 쓰던 구조와 똑같습니다.
 깨집니다.** MCP의 `recommend_vm_spec`이 costkb와 **똑같은 질문**("이 요구사항에 맞는
 인스턴스 뭐가 있고 얼마야?")에 답하기 때문입니다.
 
-| | costkb | MCP `recommend_vm_spec` |
-|---|---|---|
-| 전제 | **없음** — 항상 동작 | 서버 구동 + 클라우드 자격증명 |
-| 스펙 데이터 | 같은 표(미러) | 같은 표(원본) |
-| 가격 | 스냅샷 — 시간이 지나면 낡음 | **라이브** |
-| 역할 | **기본 경로** | 라이브 가격이 필요할 때 옵트인 |
+|             | costkb                       | MCP`recommend_vm_spec`       |
+| ----------- | ---------------------------- | ------------------------------ |
+| 전제        | **없음** — 항상 동작  | 서버 구동 + 클라우드 자격증명  |
+| 스펙 데이터 | 같은 표(미러)                | 같은 표(원본)                  |
+| 가격        | 스냅샷 — 시간이 지나면 낡음 | **라이브**               |
+| 역할        | **기본 경로**          | 라이브 가격이 필요할 때 옵트인 |
 
 즉 **다른 축이 아니라 같은 축의 두 소스**입니다. 왜 하필 costkb만 겹치냐면, 구조적인
 이유가 있습니다:
@@ -748,9 +748,9 @@ mib := int(mb * 1000 / 1024)   // 1024로 두 번 나눠야 하는데 한 번만
 갖게 됩니다. 그런데 **라이브 MCP는 여전히 62.5로 필터링합니다.** 사용자가 "메모리 64 GiB
 이상"으로 물으면:
 
-| | 우리(직접 소스) | 라이브 MCP |
-|---|---|---|
-| n2-highmem-8을 | 64 → **포함** | 62.5 → **제외** |
+|                | 우리(직접 소스)     | 라이브 MCP            |
+| -------------- | ------------------- | --------------------- |
+| n2-highmem-8을 | 64 →**포함** | 62.5 →**제외** |
 
 **같은 질문에 두 경로가 다른 답을 냅니다.** 더 정확한 데이터가 오히려 불일치를 만든 겁니다.
 
@@ -809,13 +809,13 @@ alibaba    n= 2,494  정수 99.2%  bug  0.0%
 costkb: 73,083건 (가격 있음 68,705 / 94.0%) → output/tumblebug-cost.json
 ```
 
-| | 전 (번들) | 후 (미러) |
-|---|---|---|
-| 레코드 | 36 | **73,083** |
-| 프로바이더 | 3 | **10** |
-| 리전 | 4 | **163** |
-| vCPU 최대 | 8 | **896** |
-| 메모리 최대 | 32 GiB | **32,000 GiB** |
+|             | 전 (번들) | 후 (미러)            |
+| ----------- | --------- | -------------------- |
+| 레코드      | 36        | **73,083**     |
+| 프로바이더  | 3         | **10**         |
+| 리전        | 4         | **163**        |
+| vCPU 최대   | 8         | **896**        |
+| 메모리 최대 | 32 GiB    | **32,000 GiB** |
 
 예전엔 빈손이던 질의가 이제 답을 냅니다 — `vCPU≥64, 메모리≥256 GiB, AWS` →
 `m6a.16xlarge (ap-south-1) $1.78/h`.
@@ -945,11 +945,11 @@ costkb 미러를 만들 때(14장) cb-tumblebug의 `spec_infos` 표에서 **가�
 
 세 클라우드의 "상시 성능 안 보장" 사정이 **서로 다른 개념**입니다:
 
-| | 왜 상시 보장 안 되나 | 어떻게 알아냈나 |
-|---|---|---|
-| AWS t계열 | CPU 크레딧 소진 | 명시 필드 (확실) |
-| GCP 공유코어 | vCPU를 남과 나눠 씀 | 명시 필드 (확실) |
-| Azure B계열 | 크레딧 모델 | **이름이 B로 시작**(추론, 덜 확실) |
+|              | 왜 상시 보장 안 되나 | 어떻게 알아냈나                          |
+| ------------ | -------------------- | ---------------------------------------- |
+| AWS t계열    | CPU 크레딧 소진      | 명시 필드 (확실)                         |
+| GCP 공유코어 | vCPU를 남과 나눠 씀  | 명시 필드 (확실)                         |
+| Azure B계열  | 크레딧 모델          | **이름이 B로 시작**(추론, 덜 확실) |
 
 그래서 레코드마다 "상시 보장?"이라는 결론과 함께 **왜 그렇게 판단했는지·얼마나 확실한지**를
 같이 담습니다(graphkb·capacitykb의 근거·신뢰도와 같은 방식). Azure 판정은 이름 추론이라
@@ -1087,16 +1087,16 @@ python -m perfkb coverage           # 무엇을 알고 무엇을 모르는지
 고정 ref는 **`kbcommon/sources.py` 한 곳**에서 관리한다. 같은 소스를 두 KB가 쓰는 경우
 (S1·S3)가 있어서, 각자 상수를 들고 있으면 한쪽만 갱신됐을 때 조용히 다른 세계를 본다.
 
-| # | 소스 | 고정 | 쓰는 KB | 라이선스 |
-|---|---|---|---|---|
-| S1 | AWS CloudFormation 리소스 스키마 | ⚠️ **`digest`** (고정 불가) | graphkb, capacitykb | AWS 공개 스키마 |
-| S2 | AWS CDK OOB 관계 | ✅ `tag` `@aws-cdk/aws-service-spec@v0.1.196` | graphkb | Apache-2.0 |
-| S3 | Azure Bicep 타입 정의 | ✅ `commit` `ef7421bb…` | graphkb, capacitykb | MIT |
-| S4 | Azure 서비스 한도 문서 | ✅ `commit` `355bbdc3…` | capacitykb(쿼터) | CC-BY-4.0 |
-| S5 | GCP Config Connector CRD | ✅ `tag` `v1.153.0` | graphkb | Apache-2.0 |
-| S6 | cb-tumblebug Swagger | ✅ `tag` `v0.11.8` | graphkb(코어) | Apache-2.0 |
-| S7 | cb-tumblebug 자산 덤프 | ✅ `tag` `v0.12.25` | costkb, perfkb | Apache-2.0 |
-| S8 | CB-Spider 드라이버 소스 | — 번들 스냅샷(`core_vendor_map.json`) | graphkb(매핑) | Apache-2.0 |
+| #  | 소스                             | 고정                                             | 쓰는 KB             | 라이선스        |
+| -- | -------------------------------- | ------------------------------------------------ | ------------------- | --------------- |
+| S1 | AWS CloudFormation 리소스 스키마 | ⚠️**`digest`** (고정 불가)             | graphkb, capacitykb | AWS 공개 스키마 |
+| S2 | AWS CDK OOB 관계                 | ✅`tag` `@aws-cdk/aws-service-spec@v0.1.196` | graphkb             | Apache-2.0      |
+| S3 | Azure Bicep 타입 정의            | ✅`commit` `ef7421bb…`                      | graphkb, capacitykb | MIT             |
+| S4 | Azure 서비스 한도 문서           | ✅`commit` `355bbdc3…`                      | capacitykb(쿼터)    | CC-BY-4.0       |
+| S5 | GCP Config Connector CRD         | ✅`tag` `v1.153.0`                           | graphkb             | Apache-2.0      |
+| S6 | cb-tumblebug Swagger             | ✅`tag` `v0.11.8`                            | graphkb(코어)       | Apache-2.0      |
+| S7 | cb-tumblebug 자산 덤프           | ✅`tag` `v0.12.25`                           | costkb, perfkb      | Apache-2.0      |
+| S8 | CB-Spider 드라이버 소스          | — 번들 스냅샷(`core_vendor_map.json`)         | graphkb(매핑)       | Apache-2.0      |
 
 **고정 방식 세 가지** — 소스 성격에 맞춰 쓴다.
 
@@ -1262,6 +1262,7 @@ Iops:       "... Valid ranges: + gp3: ``3,000``(*default*)``- 80,000`` IOPS
 (`capacitykb/prose.py`, `evidence: cfn-description`)를 따로 만들었다.
 
 당연히 이건 **깨지기 쉽다.** 그래서 두 겹으로 막았다:
+
 - 신뢰도를 낮게(0.6~0.8) 주고, 판정에 쓸지를 임계선으로 거른다
 - 틀리더라도 **느슨한 쪽으로만** 틀리게 한다(fail-open) — 잘못 막는 것보다 침묵이 낫다
 
@@ -1425,6 +1426,7 @@ instanceTemplateRef:
 ```
 
 두 가지를 읽는다:
+
 1. **필드 이름** — `instanceTemplateRef` → `~Ref` 접미사 → 참조 필드
 2. **설명문** — `Allowed value: The 'selfLink' field of a 'ComputeInstanceTemplate' resource.`
    여기서 대상 타입 이름 `ComputeInstanceTemplate`을 **직접 꺼낸다**
@@ -1461,6 +1463,7 @@ AWS와 달리 **설명문이 대상 타입을 명시**해준다. 그래서 정�
 ```
 
 읽는 방법:
+
 - `model.TbVNetReq` → 코어 타입 `vNet` (파서에 매핑표가 하드코딩돼 있다)
 - `subnetInfoList`가 `model.TbSubnetReq`를 `$ref`로 품고 있다 → **`subnet`은 `vNet` 안에 있다**
   (`contained_in`)
@@ -1531,6 +1534,7 @@ namespace      = 'system'
 ```
 
 여기서 뽑은 값이 성능 판정이 된다:
+
 - `BurstablePerformanceSupported: true` → "상시 CPU 성능 **미보장**"(버스트 인스턴스)
   `evidence: aws-burstable-field`, 신뢰도 1.0 — AWS가 명시한 필드라서
 - `CurrentGeneration: false` → "구세대"
@@ -1580,12 +1584,12 @@ namespace      = 'system'
 
 ### 18-3. 산출물 스키마
 
-| KB | 스키마 파일 | 최상위 | 레코드 필드 |
-|---|---|---|---|
-| graphkb | `graphkb/model/schema.json` | `{nodes, edges}` | node: `id, layer, provider, kind, display_name, source`<br>edge: `from, to, type, via_property, required, cardinality, evidence, confidence` |
-| capacitykb | `capacitykb/model/schema.json` | `{constraints, quotas}` | constraint: `type_id, property, kind, value, value_type, unit, conditional, note, evidence, confidence`<br>quota: `provider, name, scope, default, maximum, unit, type_id, source_doc, note, evidence, confidence` |
-| costkb | `costkb/schema.json` | `{_note, specs}` | `id, provider, region, specName, vCPU, memGiB, memGiBActual, hourlyUSD, architecture, infraType, diskSizeGB, accelerator*` |
-| perfkb | `perfkb/schema.json` | `{_note, specs}` | `id, provider, specName, sustainedCpu{value,note,evidence,confidence}, currentGeneration, clockGHz, networkPerformance, networkIsBurst, ebs*, acu, diskIops, maxPersistentDisk*` |
+| KB         | 스키마 파일                      | 최상위                    | 레코드 필드                                                                                                                                                                                                       |
+| ---------- | -------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| graphkb    | `graphkb/model/schema.json`    | `{nodes, edges}`        | node:`id, layer, provider, kind, display_name, source`edge: `from, to, type, via_property, required, cardinality, evidence, confidence`                                                                       |
+| capacitykb | `capacitykb/model/schema.json` | `{constraints, quotas}` | constraint:`type_id, property, kind, value, value_type, unit, conditional, note, evidence, confidence`quota: `provider, name, scope, default, maximum, unit, type_id, source_doc, note, evidence, confidence` |
+| costkb     | `costkb/schema.json`           | `{_note, specs}`        | `id, provider, region, specName, vCPU, memGiB, memGiBActual, hourlyUSD, architecture, infraType, diskSizeGB, accelerator*`                                                                                      |
+| perfkb     | `perfkb/schema.json`           | `{_note, specs}`        | `id, provider, specName, sustainedCpu{value,note,evidence,confidence}, currentGeneration, clockGHz, networkPerformance, networkIsBurst, ebs*, acu, diskIops, maxPersistentDisk*`                                |
 
 `id` 규약 — graphkb·capacitykb는 `{provider}::{타입명}`(예: `aws::AWS::EC2::Volume`),
 costkb·perfkb는 Tumblebug 키 `{provider}+{region}+{spec}`. 앞의 둘이 조인 키를 공유하는 것이
@@ -1596,23 +1600,23 @@ costkb·perfkb는 Tumblebug 키 `{provider}+{region}+{spec}`. 앞의 둘이 조�
 각 근거 라벨과 현재 붙는 신뢰도는 아래와 같다. **다만 이 수치들은 근거가 없다는 것이
 2026-07-20 감사에서 확인됐고, 재설계 대상이다**(§18-5).
 
-| KB | evidence | confidence | 의미 |
-|---|---|---|---|
-| graphkb | `relationshipRef` | 1.0 | CFN 스키마가 명시한 참조 |
-| | `arm-hierarchy` | 1.0 | ARM 경로 계층(구조적 사실) |
-| | `kcc-ref` | 0.9 / 1.0 | CRD `*Ref` 필드 |
-| | `cdk-oob` | 0.9 | CDK가 손으로 모은 관계 |
-| | `bicep-ref` | 0.8 | 속성 타입 **이름**이 리소스 타입과 일치 |
-| | `heuristic` | 0.5 / 0.6 | `*Id`/`*Arn` 접미사 추론(같은 서비스면 0.6) |
-| | `cb-spider-driver` | 0.7~0.95 | 사람 검수 매핑 |
-| capacitykb | `cfn-schema` | 1.0 | 스키마 필드 직접 |
-| | `bicep-flags` / `bicep-type` | 1.0 | Bicep 플래그·타입 |
-| | `azure-limits-doc` | 0.7 / 0.9 | 문서 표(각주·비수치면 0.7) |
-| | `cfn-description` | 0.6 / 0.7 / 0.8 | **산문에서 정규식 추출** |
-| perfkb | `aws-burstable-field` | 1.0 | `BurstablePerformanceSupported` 필드 |
-| | `gcp-shared-cpu-field` | 1.0 | `IsSharedCpu` 필드 |
-| | `azure-family-name` | 0.8 | family가 `standardB`로 시작하는지 (**이름 추론**) |
-| costkb | (없음) | — | 미러라 출처가 파일 단위로 균일 → `_note` 하나 |
+| KB         | evidence                         | confidence      | 의미                                                     |
+| ---------- | -------------------------------- | --------------- | -------------------------------------------------------- |
+| graphkb    | `relationshipRef`              | 1.0             | CFN 스키마가 명시한 참조                                 |
+|            | `arm-hierarchy`                | 1.0             | ARM 경로 계층(구조적 사실)                               |
+|            | `kcc-ref`                      | 0.9 / 1.0       | CRD`*Ref` 필드                                         |
+|            | `cdk-oob`                      | 0.9             | CDK가 손으로 모은 관계                                   |
+|            | `bicep-ref`                    | 0.8             | 속성 타입**이름**이 리소스 타입과 일치             |
+|            | `heuristic`                    | 0.5 / 0.6       | `*Id`/`*Arn` 접미사 추론(같은 서비스면 0.6)          |
+|            | `cb-spider-driver`             | 0.7~0.95        | 사람 검수 매핑                                           |
+| capacitykb | `cfn-schema`                   | 1.0             | 스키마 필드 직접                                         |
+|            | `bicep-flags` / `bicep-type` | 1.0             | Bicep 플래그·타입                                       |
+|            | `azure-limits-doc`             | 0.7 / 0.9       | 문서 표(각주·비수치면 0.7)                              |
+|            | `cfn-description`              | 0.6 / 0.7 / 0.8 | **산문에서 정규식 추출**                           |
+| perfkb     | `aws-burstable-field`          | 1.0             | `BurstablePerformanceSupported` 필드                   |
+|            | `gcp-shared-cpu-field`         | 1.0             | `IsSharedCpu` 필드                                     |
+|            | `azure-family-name`            | 0.8             | family가`standardB`로 시작하는지 (**이름 추론**) |
+| costkb     | (없음)                           | —              | 미러라 출처가 파일 단위로 균일 →`_note` 하나          |
 
 ### 18-5. 왜 신뢰도를 재설계하는가 (실측)
 
