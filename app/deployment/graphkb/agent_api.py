@@ -15,6 +15,7 @@ from pathlib import Path
 
 from graphkb.model import Graph
 from graphkb.query import (
+    _dependency_edges,
     dependency_chain_detail,
     dependents,
     equivalents,
@@ -69,29 +70,64 @@ def creation_order(
     required_only: bool = False,
     output_dir: Path | str = DEFAULT_OUTPUT_DIR,
 ) -> str:
-    """리소스 타입 생성에 필요한 선행 타입 체인을 위상순 텍스트로 반환한다."""
+    """생성 순서를 **필수와 선택으로 나눠** 텍스트로 반환한다.
+
+    예전에는 필수·선택을 섞어 전방 폐포를 통째로 위상정렬했다. 그러면 선택적 연결까지
+    다 따라가느라 관계없는 타입 수십 개가 딸려 들어와 뒤엉킨다 — `S3::BucketPolicy`가
+    15단계에 순환 3그룹으로 나왔고, 실제 답은 "저장소 먼저, 정책 나중" 두 단계였다.
+
+    그렇다고 필수만 보여줄 수도 없다. 스키마상 `required`가 아닌 실질 의존이 많아서
+    **469개 타입이 "선행 리소스 없음"**이 되는데, `APS::Scraper`처럼 실제로는 구역·
+    작업공간이 필요한 것들이라 명백한 거짓말이다. 뒤엉킨 답보다 나쁘다.
+
+    그래서 둘 다 낸다:
+    - **필수 체인** — 위상순. 순서를 강제하는 것만이라 깨끗하다(평균 1.8단계, 순환 4종).
+    - **직접 선택 의존** — 순서 없이 목록. 전이 폐포가 아니라 1홉만 본다
+      (평균 0.3개·중앙값 0이라 답을 늘리지 않는다).
+    """
     graph = load_merged(output_dir)
     if graph is None:
         return _MISSING_MESSAGE
     node, error = _resolve(graph, resource_type)
     if node is None:
         return error
-    result = dependency_chain_detail(graph, node.id, required_only=required_only)
-    if len(result.ordered) == 1:
-        return f"{node.id} 는 선행 리소스 타입이 없습니다. 바로 생성할 수 있습니다."
 
-    lines = [f"{node.id} 생성에 필요한 선행 체인 (먼저 만들 것부터):"]
-    for i, step in enumerate(result.steps, start=1):
-        if not step.cyclic:
-            item = step.nodes[0]
-            suffix = " ← 대상" if item.id == node.id else ""
-            lines.append(f"{i}. {item.id}{suffix}")
-            continue
-        # 순환 그룹은 한 단계로 묶어 보여준다 — 이 안의 순서는 스키마로 정할 수 없다.
-        lines.append(f"{i}. (아래 {len(step.nodes)}개는 서로 참조해 순서를 정할 수 없습니다)")
-        for item in step.nodes:
-            suffix = " ← 대상" if item.id == node.id else ""
-            lines.append(f"   - {item.id}{suffix}")
+    result = dependency_chain_detail(graph, node.id, required_only=True)
+    required_ids = {n.id for n in result.ordered}
+    optional = sorted(
+        {
+            edge.to_id
+            for edge in _dependency_edges(graph)
+            if edge.from_id == node.id and not edge.required
+            and edge.to_id not in required_ids
+        }
+    )
+
+    if len(result.ordered) == 1 and (required_only or not optional):
+        return (
+            f"{node.id} 는 반드시 먼저 만들어야 하는 선행 리소스가 없습니다. "
+            "바로 생성할 수 있습니다."
+        )
+
+    lines: list[str] = []
+    if len(result.ordered) == 1:
+        # 목록을 찍지 않는다 — 대상 자기 자신뿐이라 "1. 대상"은 정보가 아니다.
+        lines.append(f"{node.id} — 스키마상 반드시 먼저 있어야 하는 것은 없습니다.")
+    else:
+        lines.append(f"{node.id} 생성에 반드시 먼저 있어야 하는 것 (이 순서대로):")
+        for i, step in enumerate(result.steps, start=1):
+            if not step.cyclic:
+                item = step.nodes[0]
+                suffix = " ← 대상" if item.id == node.id else ""
+                lines.append(f"{i}. {item.id}{suffix}")
+                continue
+            # 순환 그룹은 한 단계로 묶는다 — 이 안의 순서는 스키마로 정할 수 없다.
+            lines.append(
+                f"{i}. (아래 {len(step.nodes)}개는 서로 참조해 순서를 정할 수 없습니다)"
+            )
+            for item in step.nodes:
+                suffix = " ← 대상" if item.id == node.id else ""
+                lines.append(f"   - {item.id}{suffix}")
 
     if result.has_cycle:
         # 경고를 **반환 문자열에** 넣는다. 예전엔 stderr로만 나가서, 이 텍스트를 읽는
@@ -102,6 +138,12 @@ def creation_order(
             "선후를 정할 수 없으니, 실제 생성 시에는 참조를 나중에 채우거나"
             "(예: 생성 후 업데이트) 순환을 끊는 방식을 검토하세요."
         )
+
+    if optional and not required_only:
+        lines.append(
+            f"\n함께 쓸 수 있는 것 ({len(optional)}개, 선택이라 순서를 강제하지 않습니다):"
+        )
+        lines.extend(f"- {t}" for t in optional)
     return "\n".join(lines)
 
 

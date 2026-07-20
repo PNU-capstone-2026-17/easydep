@@ -224,3 +224,61 @@ def test_equivalent_to_ignored_for_ordering() -> None:
     graph.add_edge(edge("core::vNet", "aws::AWS::EC2::VPC", type_="equivalent_to"))
     assert [n.id for n in dependency_chain(graph, "core::vNet")] == ["core::vNet"]
     assert dependents(graph, "aws::AWS::EC2::VPC") == []
+
+
+# --- creation_order: 필수와 선택을 나눠 보여준다 (2026-07-21) ---
+
+
+def _order_graph() -> Graph:
+    """정책은 저장소가 필수, 저장소는 접근점이 선택 — 실제 S3 모양."""
+    graph = Graph()
+    for nid in ("aws::Bucket", "aws::Policy", "aws::AccessPoint", "aws::LogGroup"):
+        graph.add_node(node(nid))
+    graph.add_edge(edge("aws::Policy", "aws::Bucket", required=True))
+    graph.add_edge(edge("aws::Bucket", "aws::AccessPoint", required=False))
+    graph.add_edge(edge("aws::Bucket", "aws::LogGroup", required=False))
+    return graph
+
+
+def test_creation_order_orders_only_the_required_chain(monkeypatch, tmp_path) -> None:
+    """필수만 위상정렬한다 — 선택까지 섞으면 무관한 타입이 딸려와 뒤엉킨다.
+
+    실측: S3::BucketPolicy가 15단계에 순환 3그룹으로 나왔는데 실제 답은 2단계였다.
+    """
+    from graphkb import agent_api
+
+    monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
+    text = agent_api.creation_order("aws::Policy")
+
+    assert "1. aws::Bucket" in text
+    assert "2. aws::Policy ← 대상" in text
+    # 저장소의 선택 의존(접근점·로그그룹)은 정책의 순서에 끼어들지 않는다
+    assert "aws::AccessPoint" not in text
+
+
+def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
+    """필수가 없다고 "바로 만들 수 있다"고 하면 거짓말이 된다.
+
+    스키마상 required가 아닌 실질 의존이 많아 469개 타입이 그렇게 된다 —
+    APS::Scraper는 실제로 구역·작업공간이 필요한데도 필수 체인이 자기뿐이다.
+    """
+    from graphkb import agent_api
+
+    monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
+    text = agent_api.creation_order("aws::Bucket")
+
+    assert "반드시 먼저 있어야 하는 것은 없습니다" in text
+    assert "함께 쓸 수 있는 것 (2개" in text
+    assert "aws::AccessPoint" in text and "aws::LogGroup" in text
+    # 대상 자신만 있는 목록은 정보가 아니므로 찍지 않는다
+    assert "1. aws::Bucket" not in text
+
+
+def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) -> None:
+    from graphkb import agent_api
+
+    monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
+    text = agent_api.creation_order("aws::Bucket", required_only=True)
+
+    assert "바로 생성할 수 있습니다" in text
+    assert "aws::AccessPoint" not in text
