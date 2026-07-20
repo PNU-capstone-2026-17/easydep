@@ -130,6 +130,23 @@ uv run python -m costkb build --rows-file rows.tsv  # pg_restore 우회 경로
 > graphkb/capacitykb는 산출물이 없으면 도구가 빌드 명령을 안내합니다. 자세한 설명(비전문가용)은
 > [`document/cloud-kb-guide.md`](document/cloud-kb-guide.md) 참고.
 
+지식베이스 **사이**의 정합성은 빌드와 분리된 명령으로 확인합니다 (단방향 규약상 어느
+빌드에도 넣을 수 없어, 완성된 산출물을 데이터로 읽습니다):
+
+```bash
+uv run python -m kbcommon verify
+```
+
+### 문서 어디부터 읽나
+
+| 문서 | 무엇 |
+|---|---|
+| [`cloud-kb-guide.md`](document/cloud-kb-guide.md) | 전체 해설 — 출처(§18)·안전장치(§19)·남은 설계 질문(§20) |
+| [`dependency-extraction.md`](document/dependency-extraction.md) | 의존성을 어떻게 알아냈나 (문외한용, 예시 중심) |
+| [`session-2026-07-21.md`](document/session-2026-07-21.md) | **최근 작업 기록 + 다음 과제** — 이어서 작업한다면 여기부터 |
+| [`kb-data-audit-2026-07-20.md`](document/kb-data-audit-2026-07-20.md) | 데이터 결함 전수 감사 + 재조사 결과 |
+| [`kb-test-queries.md`](document/kb-test-queries.md) | 손으로 확인하는 질의집 |
+
 ## 클라우드 리소스/비용 산정 (cloud_sizing)
 
 앱 요구사항을 주면 에이전트가 **리소스 사이징 → VM 스펙 추천 → 월 비용 추정**을 수행합니다.
@@ -220,6 +237,10 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `perfkb/parsers/details.py` | `spec_infos.details`(Go `%v` 포맷) → 성능 신호 |
 | `kbcommon/` | KB 공유 인프라 — 다운로드 캐시(`fetch.py`) + 덤프 리더(`tumblebug_dump.py`) |
 | `kbcommon/tumblebug_dump.py` | `assets.dump.gz`(PostgreSQL custom dump) → `spec_infos` 행 (costkb·perfkb 공유) |
+| `kbcommon/invariants.py` | 레코드 **간** 정합성 검사 (쓰기 관문에서 돈다) |
+| `kbcommon/basis.py` | 근거의 성격 — 사실(stated)인가 짐작(inferred)인가 |
+| `kbcommon/type_ids.py` | KB 사이 조인 키 정규화 (Azure 표기 흔들림 흡수) |
+| `graphkb/reviewed/` | **사람이 채운 표** — 프로그램이 못 푸는 것을 손으로 적는다 |
 | `document/` | 요구사항 브리프 + 비전문가용 해설서 + 수동 테스트 질의집 |
 | `main.py` | 대화형 루프 진입점 |
 
