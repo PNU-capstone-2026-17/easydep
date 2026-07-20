@@ -4,7 +4,6 @@
     "source": "cfn-schema",
     "sha256": "83b88800e04bb5cfc85bbf7eb261623998bccfe2a25920094c4adf268eb09e47"
   },
-
   "rejected": [
     {
       "to": "aws::AWS::Lambda::Version",
@@ -28,7 +27,6 @@
       "reason": "위 CodeConnections와 같은 이유. 같은 설명문을 쓴다.",
       "reviewed": "2026-07-20"
     },
-
     {
       "from": "aws::AWS::QuickSight::Analysis",
       "to": "aws::AWS::Cases::Field",
@@ -70,9 +68,74 @@
       "reason": "위 Analysis와 같은 이유.",
       "reviewed": "2026-07-20",
       "edges": 24
+    },
+    {
+      "to": "aws::AWS::ResilienceHubV2::System",
+      "reason": "SpekeKeyProvider/SystemIds는 DRM 암호화 시스템 ID다(설명문 'The system IDs to include in key requests'). MediaPackage 콘텐츠 보호용이지 ResilienceHub의 시스템과 무관하다.",
+      "reviewed": "2026-07-20",
+      "edges": 9
+    },
+    {
+      "to": "aws::AWS::IoTTwinMaker::Entity",
+      "reason": "EntityId의 실제 용례가 전부 다르다 — Evidently는 기능 플래그 대상, OpenSearch는 SAML IdP 식별자, Pinpoint는 SMS 발신 등록 ID, VerifiedPermissions는 정책 주체다. IoTTwinMaker의 엔티티가 아니다.",
+      "reviewed": "2026-07-20",
+      "edges": 6
+    },
+    {
+      "to": "aws::AWS::SES::Tenant",
+      "reason": "TenantId는 전부 **Microsoft 365 / Azure AD 테넌트** ID다(설명문 'The identifier of your Microsoft 365 tenant', 'The Microsoft Entra ID tenant ID', 'Azure AD tenant ID'). SES 테넌트와 무관하다.",
+      "reviewed": "2026-07-20",
+      "edges": 4
+    },
+    {
+      "from": "aws::AWS::Kendra::DataSource",
+      "to": "aws::AWS::Organizations::Organization",
+      "reason": "WorkDocsConfiguration/OrganizationId는 WorkDocs 조직이지 AWS Organizations의 조직이 아니다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::SES::ReceiptRule",
+      "to": "aws::AWS::Organizations::Organization",
+      "reason": "WorkmailAction/OrganizationArn은 WorkMail 조직이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::Synthetics::Canary",
+      "to": "aws::AWS::MediaTailor::SourceLocation",
+      "reason": "Code/SourceLocationArn은 카나리 스크립트가 있는 S3 위치다. MediaTailor의 소스 로케이션(광고 삽입용 콘텐츠 출처)과 무관하다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::DevOpsAgent::Association",
+      "to": "aws::AWS::SNS::Subscription",
+      "reason": "Configuration/Azure/SubscriptionId는 설명문이 'Azure subscription ID'다. SNS 구독이 아니다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::FIS::ExperimentTemplate",
+      "to": "aws::AWS::SageMaker::Action",
+      "reason": "Actions/ActionId는 장애 주입 실험이 수행할 동작의 ID다. SageMaker의 Action(계보 추적 개체)과 무관하다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "to": "aws::AWS::QBusiness::Plugin",
+      "reason": "QuickSight PluginVisual의 PluginArn은 QuickSight에 등록한 커스텀 시각화 플러그인이다. QuickSight 플러그인에 해당하는 CFN 타입이 없어서 QBusiness::Plugin이 유일 매칭으로 걸렸다.",
+      "reviewed": "2026-07-20",
+      "edges": 3
+    },
+    {
+      "to": "aws::AWS::ServiceCatalogAppRegistry::ResourceAssociation",
+      "reason": "EventBridge Connection의 ConnectivityParameters/ResourceParameters/ResourceAssociationArn은 VPC Lattice 리소스 연결이다. ServiceCatalog AppRegistry의 리소스 연결이 아니다.",
+      "reviewed": "2026-07-20",
+      "edges": 2
+    },
+    {
+      "from": "aws::AWS::BedrockAgentCore::OnlineEvaluationConfig",
+      "to": "aws::AWS::SecurityHub::Insight",
+      "reason": "Insights/InsightId는 Bedrock 평가 결과의 인사이트다. SecurityHub의 인사이트가 아니다.",
+      "reviewed": "2026-07-20"
     }
   ],
-
   "confirmed": [
     {
       "to": "aws::AWS::IAM::Role",
@@ -164,7 +227,6 @@
       "reviewed": "2026-07-20",
       "edges": 9
     },
-
     {
       "to": "aws::AWS::Connect::Instance",
       "reason": "InstanceArn/InstanceId. 출발이 전부 Connect 서비스 안이고, 컨택센터 인스턴스에 딸린 부품들이다.",
@@ -218,8 +280,24 @@
       "reason": "FolderId. 출발이 전부 QuickSight 안이다.",
       "reviewed": "2026-07-20",
       "edges": 5
+    },
+    {
+      "evidence": "relationshipRef",
+      "reason": "AWS가 스키마에 relationshipRef로 직접 선언한 관계다. 짐작이 아니라 사실이므로 근거 단위로 확인한다.",
+      "reviewed": "2026-07-20",
+      "edges": 87
+    },
+    {
+      "evidence": "cdk-oob",
+      "reason": "AWS CDK 팀이 손으로 모아 공개한 관계 목록이다. 우리 짐작이 아니라 다른 사람의 검수 결과이고, via_property가 실재하지 않는 경우가 0%임을 전수로 확인했다.",
+      "reviewed": "2026-07-20",
+      "edges": 1191
+    },
+    {
+      "evidence": "heuristic",
+      "reason": "이름 추론 엣지 전체. 확인한 방법: (1) 대상별 상위 30종을 원본 설명문·용례를 열어 개별 판단, (2) 서비스를 넘는 것 전수(약 110개)를 하나씩 설명문과 대조 — 위 rejected 목록이 그 결과다, (3) 같은 서비스 안에서만 오가는 것은 서비스 16종을 표본으로 확인했고 ContactFlowModuleId→ContactFlowModule, SchemaArn→Schema처럼 전부 이름과 용법이 일치했다. 같은 서비스 안에서는 '후보가 유일할 때만 채택' 규칙이 잘 동작한다 — 부품 이름이 그 서비스 맥락에서 구체적이기 때문이다. ※ (3)은 표본 판단이므로 전수 개별 확인은 아니다.",
+      "reviewed": "2026-07-20"
     }
   ],
-
   "added": []
 }

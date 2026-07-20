@@ -79,6 +79,7 @@ def _match(entry: dict, edge: Edge) -> bool:
         {"from": …, "to": …, "via_property": …} → 그 칸 하나
         {"to": …, "type": "references"}         → 그 대상을 **참조**하는 것만
                                                   (계층 contained_in은 건드리지 않음)
+        {"evidence": "relationshipRef"}         → 그 근거로 만들어진 것 전부
 
     대상 하나를 판단하면 수십 쌍이 한 번에 정리된다 — `RoleArn`이 권한을 가리키는지는
     출발 부품이 무엇이든 답이 같기 때문이다. 예외는 `rejected`가 `confirmed`를
@@ -88,7 +89,8 @@ def _match(entry: dict, edge: Edge) -> bool:
     엣지 9개가 진짜 계층 1개 + 인라인 설정 오탐 8개였다. 대상만 적으면 계층까지 죽는다.
     """
     for field, value in (("from", edge.from_id), ("to", edge.to_id),
-                         ("type", edge.type), ("via_property", edge.via_property)):
+                         ("type", edge.type), ("evidence", edge.evidence),
+                         ("via_property", edge.via_property)):
         wanted = entry.get(field)
         if wanted is not None and wanted != value:
             return False

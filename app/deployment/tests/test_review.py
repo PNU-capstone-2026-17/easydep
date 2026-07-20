@@ -143,9 +143,11 @@ def test_shipped_review_entries_all_carry_a_reason() -> None:
     for section in ("rejected", "confirmed", "added"):
         for entry in review[section]:
             assert entry.get("reason"), f"{section}에 이유 없는 항목: {entry}"
-            # from/to/via_property 중 최소 하나는 있어야 한다 — 셋 다 없으면
-            # "모든 엣지"에 해당해 그래프가 통째로 사라진다.
-            assert any(entry.get(k) for k in ("from", "to", "via_property")), entry
+            # 대조 조건이 최소 하나는 있어야 한다 — 전부 없으면 "모든 엣지"에
+            # 해당해서, rejected면 그래프가 통째로 사라진다.
+            assert any(
+                entry.get(k) for k in ("from", "to", "type", "evidence", "via_property")
+            ), entry
     for entry in review["added"]:
         assert entry.get("from") and entry.get("to"), f"추가는 대상을 특정해야 한다: {entry}"
 
@@ -183,3 +185,32 @@ def test_rejecting_one_pair_under_a_confirmed_target(graph, tmp_path) -> None:
     b_edges = {e.via_property: e for e in graph.edges if e.to_id == "aws::B"}
     assert set(b_edges) == {"AnotherPath"}
     assert b_edges["AnotherPath"].reviewed is True
+
+
+def test_matching_on_evidence_covers_a_whole_source(graph, tmp_path) -> None:
+    """근거 종류로도 판단할 수 있다.
+
+    AWS가 스키마에 직접 선언한 것(relationshipRef)이나 CDK 팀이 손으로 모은 것
+    (cdk-oob)은 우리 짐작이 아니라 남의 검수 결과다. 개별로 보는 대신 "이 출처는
+    믿을 만한가"를 한 번 판단하는 게 맞다.
+    """
+    graph.add_edge(_edge("aws::A", "aws::C", "Declared", evidence="relationshipRef",
+                         confidence=1.0))
+    path = _write(tmp_path, {"confirmed": [{"evidence": "relationshipRef",
+                                            "reason": "AWS가 직접 선언"}]})
+    apply_review(graph, "aws", path=path)
+
+    by_ev = {(e.evidence, e.via_property): e for e in graph.edges}
+    assert by_ev[("relationshipRef", "Declared")].reviewed is True
+    assert by_ev[("heuristic", "OnePath")].reviewed is False
+
+
+def test_review_never_matches_everything_by_accident(graph, tmp_path) -> None:
+    """조건이 하나도 없는 항목은 그래프를 통째로 지운다 — 실수로 그러면 안 된다.
+
+    이 동작 자체는 막지 않는다(의도적으로 쓸 수 있다). 대신 실제 검수 파일에
+    그런 항목이 없다는 것은 test_shipped_review_entries_all_carry_a_reason이 지킨다.
+    """
+    path = _write(tmp_path, {"rejected": [{"reason": "조건 없음"}]})
+    apply_review(graph, "aws", path=path)
+    assert not graph.edges
