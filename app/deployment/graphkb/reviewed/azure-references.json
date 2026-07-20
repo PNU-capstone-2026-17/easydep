@@ -1,7 +1,7 @@
 {
  "_note": "참조 껍데기 → 대상 타입. 형식과 이유는 graphkb/parsers/review.py의 load_reference_map 참고. Common 접두사는 벗겨서 적는다.",
  "reviewed_against": {"source": "bicep-types-az", "sha256": "c90274582b17335428b31cbbb27287b694b9093c493ae5f4e704d95bd200cd97"},
- "_reviewed": "2026-07-21 — 껍데기 158종 전수. 미결 125종/841곳 → 2종/6곳.",
+ "_reviewed": "2026-07-21 — 껍데기 158종 전수 판정. 미결 0. 마지막 2종은 소스가 직접 답했다: interconnectGroups/subgroups는 실재하는 타입이고, NvaInVnetSubnetReferenceProperties.id에는 description이 'Resource Uri of Subnet'으로 붙어 있다.",
 
  "not_a_reference": [
   "ApplicationGatewayIPConfiguration",
@@ -261,6 +261,8 @@
   "SubResource@expressRouteCircuitPeering": "Microsoft.Network/expressRouteCircuits/peerings",
   "SubResource@peerExpressRouteCircuitPeering": "Microsoft.Network/expressRouteCircuits/peerings",
   "SubResource@interconnectGroup": "Microsoft.Network/interconnectGroups",
+  "SubResource@subgroups": "Microsoft.Network/interconnectGroups/subgroups",
+  "NvaInVnetSubnetReferenceProperties@subnet": "Microsoft.Network/virtualNetworks/subnets",
   "SubResource@workspaceId": "Microsoft.OperationalInsights/workspaces",
 
   "ApiEntityReference@subnet": "Microsoft.Network/virtualNetworks/subnets",

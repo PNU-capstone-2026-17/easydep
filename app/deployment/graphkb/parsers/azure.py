@@ -403,8 +403,12 @@ def build(
             f"확인 표시 {review_stats['confirmed']}, 추가 {review_stats['added']}"
         )
 
-    if UNRESOLVED_REFS:
-        pending = output.parent / "azure-unresolved-refs.json"
+    pending = output.parent / "azure-unresolved-refs.json"
+    if not UNRESOLVED_REFS:
+        # 다 풀렸으면 지운다. 남겨 두면 **낡은 목록이 사실처럼 읽힌다** —
+        # 파일이 없는 것이 "미결 없음"이고, 있으면 항상 이번 빌드의 결과다.
+        pending.unlink(missing_ok=True)
+    else:
         pending.write_text(
             json.dumps(
                 {"resolved": {k: None for k, _ in UNRESOLVED_REFS.most_common()}},
