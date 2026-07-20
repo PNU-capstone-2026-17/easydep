@@ -21,6 +21,7 @@ DCL 기반 CRD는 description이 generic이라 1번 없이는 대상을 알 수 
 
 from __future__ import annotations
 
+import collections
 import json
 import re
 import sys
@@ -31,6 +32,7 @@ import yaml
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
 from graphkb.parsers.review import apply_review, check_freshness
+from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source_set
 from kbcommon.sources import SOURCES
 
@@ -48,6 +50,9 @@ DEFAULT_SERVICES: tuple[str, ...] = ()  # 빈 튜플 = 전체
 SOURCE = "kcc-crd"
 
 _REF_FIELD = re.compile(r"^(\w+?)Refs?$")
+# KCC 종류 이름의 모양: 대문자로 시작하는 PascalCase (ComputeNetwork, IAMServiceAccount).
+# 소문자로 시작하면 산문 속 영어 단어이지 종류가 아니다.
+_KIND_NAME = re.compile(r"[A-Z][A-Za-z0-9]{2,}")
 # 대상 필드까지 잡는 패턴 — 앞 백틱이 "대상의 어느 값을 쓰나"다.
 _DESC_WITH_FIELD = re.compile(r"Allowed value: The `(\w+)` field of an? `(\w+)` resource")
 _DESC_PATTERNS = (
@@ -57,6 +62,11 @@ _DESC_PATTERNS = (
     re.compile(r"reference to an? (?:GCP )?(\w+)\b"),
 )
 _MAX_DEPTH = 24
+
+# 설명문에서 대상 이름을 뽑았지만 실재하는 KCC 종류가 아니어서 버린 것들.
+# **침묵시키지 않는다** — 정규식이 "externally" 같은 부사를 종류로 읽은 것(오탐)과
+# KCC가 아직 안 만든 진짜 리소스(수집 공백)가 섞여 있고, 둘은 대응이 다르다.
+UNKNOWN_DESC_TARGETS: collections.Counter = collections.Counter()
 
 
 def _node(kind: str) -> Node:
@@ -126,6 +136,31 @@ def _resolve_target(
     if mapped:
         return mapped[0], "kcc-ref", 1.0, mapped[1]
 
+    # 설명문에서 뽑은 이름은 **실재하는 종류인지 확인한다.** 정규식이 잡아낸 단어가
+    # 곧 KCC 종류라는 보장이 없다 — 소문자 "service"를 종류로 읽어 `gcp::service`라는
+    # 없는 노드를 만든 적이 있다(진짜 대상은 IAMServiceAccount였고, 같은 이름의 필드
+    # 46개 중 45개는 이미 그리로 갔다). sm_index 경로는 출처가 확실해서 그대로 믿고,
+    # 짐작 경로는 이미 known_kinds를 확인한다 — 이 경로만 빠져 있었다.
+    def as_kind(name: str) -> str | None:
+        """설명문에서 뽑은 낱말이 KCC 종류 이름인가.
+
+        정규식이 잡아낸 단어가 곧 종류라는 보장이 없다. 실제로 `externally`(67곳),
+        `parent`, `private`, `service`가 종류로 읽혀 있었고, 그중 소문자 `service`는
+        `gcp::service`라는 없는 부품까지 만들었다(진짜 대상은 IAMServiceAccount).
+
+        판별 기준은 **KCC의 작명 규칙**이다 — 종류 이름은 예외 없이 PascalCase다.
+        산문 속 소문자 낱말은 종류가 아니라 그냥 영어 단어다. 이건 취향으로 고른
+        금지어 목록이 아니라 소스 자체의 성질이다.
+
+        CRD를 안 받은 종류라도 이름 모양이 맞으면 관계는 남긴다. `ComputeInstanceTemplate`
+        처럼 스키마가 없어도 "이게 있어야 한다"는 사실 자체가 답이 되기 때문이다.
+        """
+        if not name or not _KIND_NAME.fullmatch(name):
+            if name:
+                UNKNOWN_DESC_TARGETS[name] += 1
+            return None
+        return name
+
     props = ref_schema.get("properties") or {}
     texts = [
         ref_schema.get("description") or "",
@@ -135,12 +170,12 @@ def _resolve_target(
     for text in texts:
         # 첫 패턴만 대상 필드를 함께 준다 ("The `selfLink` field of a `X` resource").
         field_match = _DESC_WITH_FIELD.search(text)
-        if field_match:
-            return field_match.group(2), "kcc-ref", 0.9, field_match.group(1)
+        if field_match and (found := as_kind(field_match.group(2))):
+            return found, "kcc-ref", 0.9, field_match.group(1)
         for pattern in _DESC_PATTERNS:
             match = pattern.search(text)
-            if match:
-                return match.group(1), "kcc-ref", 0.9, ""
+            if match and (found := as_kind(match.group(1))):
+                return found, "kcc-ref", 0.9, ""
 
     if heuristics:
         base = _REF_FIELD.match(field_name)
@@ -348,8 +383,20 @@ def build(
             f"gcp: CRD {len(crds)}개, servicemapping {len(servicemappings)}개 로드"
         )
 
+    UNKNOWN_DESC_TARGETS.clear()
     graph = parse_crds(crds, servicemappings=servicemappings, heuristics=heuristics)
     graph.provenance = [describe_source_set(read_paths, "kcc-crd")]
+
+    if UNKNOWN_DESC_TARGETS:
+        top = ", ".join(
+            f"{name}×{n}" for name, n in UNKNOWN_DESC_TARGETS.most_common(6)
+        )
+        print(
+            f"· 설명문이 가리킨 이름 {len(UNKNOWN_DESC_TARGETS)}종"
+            f"({sum(UNKNOWN_DESC_TARGETS.values())}곳)이 실재하는 KCC 종류가 아니라"
+            f" 관계를 만들지 않았습니다: {top}",
+            file=sys.stderr,
+        )
 
     stale = check_freshness("gcp", graph.provenance)
     if stale:
@@ -361,7 +408,7 @@ def build(
             f"확인 표시 {review_stats['confirmed']}, 추가 {review_stats['added']}"
         )
 
-    graph.save(output)
+    announce(graph.save(output), "graphkb/gcp")
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:
         by_evidence[edge.evidence] = by_evidence.get(edge.evidence, 0) + 1

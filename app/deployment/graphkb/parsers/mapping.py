@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from graphkb.model import Edge, Graph, Node
+from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source
 
 SOURCE = "cb-spider-mapping"
@@ -158,7 +159,7 @@ def build(output: Path, *, mapping_file: Path | None = None) -> Graph:
     # 사람이 손으로 고치는 파일이라 오히려 버전 추적이 더 필요하다.
     source_path = mapping_file or Path(__file__).with_name("core_vendor_map.json")
     graph.provenance = [describe_source(source_path, "cb-spider-map")]
-    graph.save(output)
+    announce(graph.save(output), "graphkb/mapping")
     confirmed = sum(1 for m in mappings if m.get("status") == "confirmed")
     print(
         f"mapping: 매핑 {confirmed}건 → 노드 {len(graph.nodes)}개, "

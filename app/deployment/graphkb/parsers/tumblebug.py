@@ -17,6 +17,7 @@ from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source
 
 DEFAULT_SWAGGER_URL = (
@@ -247,7 +248,7 @@ def build(
     spec = json.loads(path.read_text(encoding="utf-8"))
     graph = parse_swagger(spec, heuristics=heuristics)
     graph.provenance = [describe_source(path, "tumblebug-swagger")]
-    graph.save(output)
+    announce(graph.save(output), "graphkb/tumblebug")
     print(
         f"tumblebug: 노드 {len(graph.nodes)}개, 엣지 {len(graph.edges)}개 → {output}"
     )

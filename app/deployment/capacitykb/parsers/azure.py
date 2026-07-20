@@ -26,6 +26,7 @@ from capacitykb.model import CapacitySet, Constraint
 from kbcommon.fetch import describe_source_set, fetch_cached
 from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
+from kbcommon.type_ids import AzureTypeIndex, make_type_id, read_azure_index
 
 # graphkb/parsers/azure.py와 **같은 커밋**을 봐야 한다 (kbcommon/sources.py에서 관리).
 DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
@@ -48,41 +49,21 @@ _INTEGER_KEYWORDS = {"minValue": "min", "maxValue": "max"}
 _ARRAY_KEYWORDS = {"minLength": "min_items", "maxLength": "max_items"}
 
 
-def _is_preview(version: str) -> bool:
-    return "preview" in version.lower()
-
-
-def _version_better(candidate: str, current: str) -> bool:
-    """비-preview 우선, 같은 등급이면 사전순(날짜형이라 사전순=시간순) 최신."""
-    if _is_preview(candidate) != _is_preview(current):
-        return _is_preview(current)
-    return candidate > current
-
-
 def select_latest(index: dict) -> dict[str, tuple[str, str]]:
     """index.json에서 타입별 최신 안정 버전을 고른다.
-
-    index.json에는 같은 타입이 대소문자 변형으로 중복 등재돼 있어
-    (virtualNetworks vs virtualnetworks) 소문자 키로 합친다.
 
     Returns:
         {타입명: (버전, types.json 상대경로)}
     """
-    by_lower: dict[str, tuple[str, str, str]] = {}
-    for key, ref in index.get("resources", {}).items():
-        type_name, _, version = key.partition("@")
-        rel_path = ref.get("$ref", "").split("#")[0]
-        if not type_name or not version or not rel_path:
-            continue
-        lowered = type_name.lower()
-        current = by_lower.get(lowered)
-        if current is None or _version_better(version, current[0]):
-            by_lower[lowered] = (version, rel_path, type_name)
-    return {name: (version, rel_path) for version, rel_path, name in by_lower.values()}
+    return read_azure_index(index).latest
 
 
 def extract_constraints(
-    capacity: CapacitySet, types_arr: list[dict], *, stats: Counter | None = None
+    capacity: CapacitySet,
+    types_arr: list[dict],
+    *,
+    stats: Counter | None = None,
+    type_index: AzureTypeIndex | None = None,
 ) -> None:
     """types.json 한 파일에서 제약 레코드를 뽑아 capacity에 더한다."""
     counters = stats if stats is not None else Counter()
@@ -187,7 +168,11 @@ def extract_constraints(
         body_ref = entry.get("body")
         if not isinstance(name, str) or not isinstance(body_ref, dict):
             continue
-        type_id = f"azure::{name.split('@')[0]}"
+        # **대표 표기로 정규화한 뒤** id를 만든다. types.json은 API 버전마다
+        # 표기가 달라서(Microsoft.Compute vs microsoft.Compute) 그대로 쓰면
+        # 같은 타입이 두 개의 id로 갈리고 graphkb와 조인이 깨진다.
+        bare = name.split("@")[0]
+        type_id = type_index.type_id(bare) if type_index else make_type_id("azure", bare)
         index, body = deref(body_ref)
         walk(type_id, body, "", depth=0, visited=frozenset({index}))
 
@@ -211,7 +196,8 @@ def build(
     """인덱스/타입 파일을 받아 파싱하고 output에 저장한 뒤 결과를 반환한다."""
     index_path = _fetch_relative(base_url, "index.json", refresh=refresh)
     index = json.loads(index_path.read_text(encoding="utf-8"))
-    latest = select_latest(index)
+    type_index = read_azure_index(index)
+    latest = type_index.latest
 
     wanted = {p.lower() for p in providers}
     rel_paths = sorted(
@@ -233,7 +219,7 @@ def build(
             print(f"경고: types.json 처리 실패, 건너뜀 — {rel_path}: {exc}", file=sys.stderr)
             continue
         read_paths.append(types_path)
-        extract_constraints(capacity, types_arr, stats=stats)
+        extract_constraints(capacity, types_arr, stats=stats, type_index=type_index)
 
     capacity.provenance = [describe_source_set(read_paths, "bicep-types-az")]
     announce(capacity.save(output), "capacitykb/azure")

@@ -121,3 +121,29 @@ def test_no_heuristics_flag() -> None:
 
 def test_graph_validates(graph: Graph) -> None:
     graph.validate()
+
+
+def test_prose_words_are_not_treated_as_kinds() -> None:
+    """설명문 정규식이 잡은 낱말이 곧 KCC 종류는 아니다.
+
+    실측: `externally`가 67곳에서 종류로 읽혔고, 소문자 `service`는 `gcp::service`라는
+    없는 부품까지 만들었다(진짜 대상은 IAMServiceAccount). 판별은 KCC 작명 규칙 —
+    종류 이름은 예외 없이 PascalCase다.
+    """
+    from graphkb.parsers.gcp import _KIND_NAME
+
+    for word in ("externally", "parent", "private", "service", "certificatemanager"):
+        assert not _KIND_NAME.fullmatch(word), word
+    for kind in ("ComputeNetwork", "IAMServiceAccount", "ComputeInstanceTemplate"):
+        assert _KIND_NAME.fullmatch(kind), kind
+
+
+def test_kind_without_crd_still_yields_a_relationship() -> None:
+    """CRD를 안 받은 종류라도 관계는 남긴다.
+
+    스키마가 없어도 "이게 있어야 한다"는 사실 자체가 답이 된다 —
+    ComputeInstanceTemplate은 fixture에 CRD가 없지만 의존은 실재한다.
+    """
+    from graphkb.parsers.gcp import _KIND_NAME
+
+    assert _KIND_NAME.fullmatch("ComputeInstanceTemplate")

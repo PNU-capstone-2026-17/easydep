@@ -184,6 +184,15 @@
       "cardinality": "many",
       "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
       "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::WorkstationConfig",
+      "to": "gcp::IAMServiceAccount",
+      "via_property": "encryptionKey.serviceAccountRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "위에서 지운 오탐의 올바른 대상. serviceAccountRef 46건 중 45건이 이미 IAMServiceAccount로 간다.",
+      "reviewed": "2026-07-21"
     }
   ],
   "notes": [

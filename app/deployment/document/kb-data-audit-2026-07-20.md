@@ -85,6 +85,22 @@ graph:    azure::microsoft.Compute/cloudServices/roleInstances/networkInterfaces
 질의 시점에 조인할 수 있다"는 명시적 규약이 깨진 지점이다. 지금은 2건이지만 원인이
 "한쪽에만 정규화가 있다"라 Azure 스키마가 갱신될 때마다 재발한다.
 
+> **해결 (2026-07-21, R3)** — 규칙을 `kbcommon/type_ids.py` 한 곳에 두고 두 파서가
+> 함께 쓴다. 실은 capacitykb에도 같은 로직(`select_latest`)이 **복사돼 있었는데 정작
+> id를 만들 때 쓰이지 않았다** — 함수는 두 벌, 적용은 한 곳이었다.
+>
+> 표기가 갈리는 원인은 Azure 자신이다. ARM 타입명은 대소문자를 안 가려서 **API
+> 버전마다 다르게 적혀 있고**(2025-03-01은 `Microsoft.Compute`, 2025-07-01은
+> `microsoft.Compute`), index.json 전체에서 그런 타입이 **71종**이다. 문자열만 보고
+> 옳은 표기를 고를 수 없으므로 순수 함수로는 정규화가 불가능하다 — 대신 모든 KB가
+> 같은 index.json에서 같은 규칙(소문자로 묶고 최신 안정 버전의 표기를 대표로)으로
+> 대표를 고른다. 소스에 핀이 박혀 있어 이 선택은 빌드마다 재현된다.
+>
+> 결과: `capacity-joins-graph` 1,913건 전부 통과, azure-capacity 6,607 → 6,587
+> (갈려 있던 id가 합쳐지며 중복 레코드 20건 소멸), graphkb 산출물은 **불변**.
+> 재발 방지로 `no-casing-duplicate-ids`·`edges-point-at-real-nodes` 불변식을
+> graphkb 쓰기 관문에 걸었다.
+
 같은 뿌리의 다른 증상: Azure 네임스페이스 표기가 5곳에서 갈리고(`Microsoft.Insights` 27
 vs `microsoft.insights` 7 등, 소수 표기 노드 14개), `contained_in` 2,223건 중 **14건**이
 "자식 id = 부모 id + `/세그먼트`" 규칙을 위반한다. perfkb는 Azure `id`만 specName을
@@ -319,8 +335,9 @@ IOPS 역전, ACU 극단값, threadsPerCore), 필드 조합 모순 0건(`networkI
 1. ~~**빌드 시점 불변식 계층**~~ — ✅ **2026-07-21 R2 완료.** `kbcommon/invariants.py`
    (검사 얼개·공용 검사) + KB별 `invariants.py` + `python -m kbcommon verify`(KB 간).
    6종 전부 걸었고 고칠 수 있는 것은 고쳤다 — 위 §1-(1) 표 참조.
-2. **id 정규화 단일화** — `kbcommon`으로 승격하고 모든 KB가 같은 함수를 쓴다.
-   크로스 KB 조인율 어서션(capacitykb 전 `type_id`가 graphkb 노드에 존재)을 빌드에 건다.
+2. ~~**id 정규화 단일화**~~ — ✅ **2026-07-21 R3 완료.** `kbcommon/type_ids.py`
+   (`read_azure_index` / `AzureTypeIndex.type_id`)를 두 파서가 함께 쓴다. 조인율
+   어서션은 `python -m kbcommon verify`가 걸며 1,913건 전부 통과한다.
 3. **evidence당 등급 하나** — 어서션으로 강제한다. 위반이 곧 라벨 세분화 필요 신호다.
 4. **센티널 정규화 일원화** — `hourlyUSD`의 `<=0 → null` 규칙을 `diskSizeGB`·
    `acceleratorMemoryGB`에도 적용. 스키마 `exclusiveMinimum`으로 재유입을 막는다.

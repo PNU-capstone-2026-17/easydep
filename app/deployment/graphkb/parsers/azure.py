@@ -31,8 +31,10 @@ from pathlib import Path
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
 from graphkb.parsers.review import apply_review, check_freshness, load_reference_map
+from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source_set
 from kbcommon.sources import SOURCES
+from kbcommon.type_ids import read_azure_index
 
 # 고정 ref는 kbcommon/sources.py 한 곳에서 관리한다 — 같은 소스를 capacitykb도 쓰므로
 # 양쪽이 따로 들고 있으면 조용히 다른 커밋을 보게 된다.
@@ -63,17 +65,6 @@ def _node(type_name: str) -> Node:
     )
 
 
-def _is_preview(version: str) -> bool:
-    return "preview" in version.lower()
-
-
-def _version_better(candidate: str, current: str) -> bool:
-    """비-preview 우선, 같은 등급이면 사전순(날짜형이라 사전순=시간순) 최신."""
-    if _is_preview(candidate) != _is_preview(current):
-        return _is_preview(current)
-    return candidate > current
-
-
 def _singular_candidates(segment: str) -> set[str]:
     """복수형 타입 세그먼트("subnets")의 단수 후보들("subnet")을 생성한다."""
     lowered = segment.lower()
@@ -93,24 +84,11 @@ def parse_index(index: dict) -> tuple[Graph, dict[str, tuple[str, str]]]:
     Returns:
         (그래프, {타입명: (버전, types.json 상대경로)}) 튜플.
     """
-    # index.json에는 같은 타입이 대소문자 변형으로 중복 등재돼 있다
-    # (예: virtualNetworks/subnets vs virtualnetworks/subnets) —
-    # 소문자 키로 dedupe하고 최신 버전의 표기를 대표로 쓴다.
-    by_lower: dict[str, tuple[str, str, str]] = {}  # lower → (version, rel_path, 표기)
-    for key, ref in index.get("resources", {}).items():
-        type_name, _, version = key.partition("@")
-        rel_path = ref.get("$ref", "").split("#")[0]
-        if not type_name or not version or not rel_path:
-            continue
-        lowered = type_name.lower()
-        current = by_lower.get(lowered)
-        if current is None or _version_better(version, current[0]):
-            by_lower[lowered] = (version, rel_path, type_name)
-
-    latest: dict[str, tuple[str, str]] = {
-        name: (version, rel_path) for version, rel_path, name in by_lower.values()
-    }
-    lower_to_name = {name.lower(): name for name in latest}
+    # 대표 표기를 고르는 규칙은 **capacitykb와 같아야 한다** — 아니면 같은 타입이
+    # 두 id로 갈려 조인이 깨진다. 그래서 규칙은 kbcommon에 한 벌만 둔다.
+    type_index = read_azure_index(index)
+    latest = type_index.latest
+    lower_to_name = type_index.by_lower
 
     graph = Graph()
     for type_name in latest:
@@ -424,7 +402,7 @@ def build(
             file=sys.stderr,
         )
 
-    graph.save(output)
+    announce(graph.save(output), "graphkb/azure")
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:
         by_evidence[edge.evidence] = by_evidence.get(edge.evidence, 0) + 1

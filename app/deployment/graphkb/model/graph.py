@@ -207,12 +207,19 @@ class Graph:
         """직렬화 결과를 번들 스키마로 검증한다. 위반 시 ValidationError."""
         jsonschema.validate(self.to_dict(), _schema())
 
-    def save(self, path: Path) -> None:
-        """검증 후 JSON으로 저장한다."""
-        self.validate()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
-        path.write_text(payload + "\n", encoding="utf-8")
+    def save(self, path: Path):
+        """검증 후 원자적으로 저장한다.
+
+        스키마(레코드 하나의 형태)와 불변식(레코드 사이의 정합성)을 둘 다 통과해야
+        쓴다 — capacitykb·costkb·perfkb와 같은 관문이다.
+
+        Returns:
+            불변식 결과. `report` 등급 위반은 **호출자가 알려야 한다.**
+        """
+        from graphkb.invariants import INVARIANTS
+        from kbcommon.artifact import write_dataset
+
+        return write_dataset(path, self.to_dict(), _schema(), INVARIANTS)
 
     @classmethod
     def load(cls, path: Path) -> Graph:

@@ -25,6 +25,7 @@ from pathlib import Path
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
 from graphkb.parsers.review import apply_review, check_freshness
+from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source
 from kbcommon.sources import SOURCES
 
@@ -370,7 +371,7 @@ def build(
             f"추가 {stats['added']}"
         )
 
-    graph.save(output)
+    announce(graph.save(output), "graphkb/cfn")
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:
         by_evidence[edge.evidence] = by_evidence.get(edge.evidence, 0) + 1
