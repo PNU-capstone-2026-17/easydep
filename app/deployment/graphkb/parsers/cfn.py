@@ -37,6 +37,27 @@ DEFAULT_OOB_URL = SOURCES["cdk-oob"].url
 SOURCE = "cloudformation-registry"
 
 _ID_PROP = re.compile(r"^(\w+?)(Id|Ids|Arn|Arns)$")
+
+# 이름 추론을 **금지**하는 총칭 베이스.
+#
+# "후보가 유일하면 채택"이라는 규칙은 이름이 구체적일 때만 성립한다. 총칭 단어는
+# 마침 어느 한 서비스에만 리소스로 존재하면 유일 매칭이 되어버린다:
+#
+#     FieldId    → AWS::Cases::Field       (QuickSight 차트의 내부 필드 식별자)
+#     VersionId  → AWS::Lambda::Version    (CloudFormation 훅·모듈의 버전)
+#     TypeId     → AWS::Cassandra::Type    (ACMPCA 인증서 템플릿 종류)
+#
+# 경로 버그를 고치자 QuickSight 한 타입에서만 `FieldId` 오탐이 421곳으로 번져
+# 이 방어가 필수가 됐다. **이름으로 긍정하지 않을 뿐, 다른 근거는 그대로 통과한다** —
+# relationshipRef·cdk-oob가 같은 속성에 진짜 관계를 선언했다면 그건 살아남는다.
+_GENERIC_BASES = frozenset(
+    {
+        "field", "version", "type", "name", "key", "group", "policy", "target",
+        "source", "destination", "resource", "config", "rule", "item", "object",
+        "value", "state", "status", "action", "event", "job", "task", "template",
+        "alias", "stage", "domain", "table", "index", "entity", "member", "owner",
+    }
+)
 _MAX_DEPTH = 32
 _COMBINATORS = ("anyOf", "oneOf", "allOf")
 
@@ -52,11 +73,23 @@ def _node(type_name: str, source: str = SOURCE) -> Node:
 
 
 def _top_property_names(pointer_list: list[str] | None) -> set[str]:
-    """readOnlyProperties 같은 "/properties/Name" 포인터에서 최상위 이름 추출."""
+    """`/properties/Name` **정확히 그 깊이**의 포인터에서만 이름을 뽑는다.
+
+    이 집합은 "이 최상위 속성 전체를 건너뛴다"에 쓰이므로, 더 깊은 포인터를 넣으면
+    안 된다. 실측 사고:
+
+        AWS::Batch::ComputeEnvironment
+          readOnlyProperties: ["/properties/ComputeResources/Ec2Configuration/*/BatchImageStatus"]
+
+    `BatchImageStatus` 하나가 읽기 전용인데 `ComputeResources` **서브트리 전체**가
+    배제돼, 그 아래 `LaunchTemplate/LaunchTemplateId`(→ EC2::LaunchTemplate) 같은
+    실제 참조가 통째로 사라졌다. 예전에는 definitions를 따로 순회해서 우회로가
+    있었기 때문에 이 버그가 드러나지 않았다.
+    """
     names = set()
     for pointer in pointer_list or []:
         parts = pointer.split("/")
-        if len(parts) >= 3 and parts[1] == "properties":
+        if len(parts) == 3 and parts[1] == "properties":
             names.add(parts[2])
     return names
 
@@ -94,7 +127,10 @@ def _resolve_heuristic(
     match = _ID_PROP.match(prop_name)
     if match is None:
         return None
-    candidates = type_index.get(match.group(1).lower(), [])
+    base = match.group(1).lower()
+    if base in _GENERIC_BASES:
+        return None
+    candidates = type_index.get(base, [])
     if len(candidates) == 1:
         target = candidates[0]
     else:
@@ -139,21 +175,58 @@ def _extract_schema_edges(
             )
         )
 
-    def visit(node: dict, path: tuple[str, ...], in_array: bool, required: bool, depth: int) -> None:
+    definitions = schema.get("definitions") or {}
+
+    def visit(
+        node: dict,
+        path: tuple[str, ...],
+        in_array: bool,
+        required: bool,
+        depth: int,
+        seen: frozenset[str],
+    ) -> None:
         if depth > _MAX_DEPTH or not isinstance(node, dict):
             return
         ref = node.get("relationshipRef")
         if isinstance(ref, dict):
             emit_ref(ref, path, in_array, required)
+
+        # `$ref`를 **경로를 유지한 채** 따라간다. 예전에는 definitions를 빈 경로로
+        # 따로 순회해서, 중첩 속성이 마치 루트 속성인 것처럼 기록됐다
+        # (`Settings/MongoDbSettings/CertificateArn` → `CertificateArn`).
+        # 실측 결과 heuristic 486/1,102·relationshipRef 18/59의 via_property가
+        # 실재하지 않는 경로였다. via_property는 "이 의존을 만들려면 어느 속성을
+        # 채워야 하는가"를 답하는 필드라, 틀리면 그 값으로 템플릿을 만드는 쪽이 전부 깨진다.
+        target_ref = node.get("$ref")
+        if isinstance(target_ref, str):
+            name = target_ref.rsplit("/", 1)[-1]
+            if name not in seen and isinstance(definitions.get(name), dict):
+                visit(
+                    definitions[name], path, in_array, required, depth + 1, seen | {name}
+                )
+
         for comb in _COMBINATORS:
             subs = node.get(comb)
             if isinstance(subs, list):
                 for sub in subs:
                     if isinstance(sub, dict):
-                        visit(sub, path, in_array, required, depth + 1)
+                        visit(sub, path, in_array, required, depth + 1, seen)
         items = node.get("items")
         if isinstance(items, dict):
-            visit(items, path, True, required, depth + 1)
+            visit(items, path, True, required, depth + 1, seen)
+
+        # 맵 타입(`{"patternProperties": {"^.+$": {"$ref": ...}}}`)도 따라간다.
+        # 실측 253개 스키마가 이 모양이고, 안 따라가면 AppConfig::Extension의
+        # `Actions` 아래 RoleArn처럼 실재하는 참조를 통째로 놓친다.
+        # 키 이름은 정규식이라 경로에 넣을 수 없어 부모 경로를 그대로 물려준다.
+        for maps in ("patternProperties", "additionalProperties"):
+            sub = node.get(maps)
+            if isinstance(sub, dict):
+                values = sub.values() if maps == "patternProperties" else [sub]
+                for value in values:
+                    if isinstance(value, dict):
+                        visit(value, path, True, required, depth + 1, seen)
+
         required_here = node.get("required")
         required_set = set(required_here) if isinstance(required_here, list) else set()
         properties = node.get("properties")
@@ -165,7 +238,7 @@ def _extract_schema_edges(
                     continue  # 생성 출력 속성은 순서 제약이 아님
                 prop_path = path + (prop_name,)
                 prop_required = required and prop_name in required_set
-                visit(prop, prop_path, in_array, prop_required, depth + 1)
+                visit(prop, prop_path, in_array, prop_required, depth + 1, seen)
                 if heuristics and not _has_relationship_ref(prop):
                     resolved = _resolve_heuristic(prop_name, service, type_index)
                     if resolved is not None:
@@ -184,12 +257,9 @@ def _extract_schema_edges(
                             )
                         )
 
-    # 루트(properties)와 definitions를 각각 순회. $ref는 해석하지 않는다 —
-    # relationshipRef는 구체 프로퍼티 객체에 직접 붙으므로 두 트리를 훑으면 충분.
-    visit(schema, (), False, True, 0)
-    for definition in (schema.get("definitions") or {}).values():
-        if isinstance(definition, dict):
-            visit(definition, (), False, False, 0)
+    # 루트에서만 출발한다. definitions는 `$ref`를 통해서만 도달하므로 경로가 보존되고,
+    # 어디서도 참조되지 않는 definition은 실제 속성이 아니므로 자연히 빠진다.
+    visit(schema, (), False, True, 0, frozenset())
 
 
 def _apply_oob(graph: Graph, oob: dict, schemas_by_type: dict[str, dict]) -> None:

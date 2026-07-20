@@ -190,3 +190,114 @@ def test_dedup_prefers_higher_confidence(graph: Graph) -> None:
 
 def test_graph_validates(graph: Graph) -> None:
     graph.validate()
+
+
+# --- 경로 보존·순회 범위 회귀 (2026-07-20) ---
+#
+# 예전 파서는 루트를 훑은 뒤 `definitions`를 **빈 경로로 다시** 순회했다. 그래서
+# 중첩 속성이 마치 루트 속성인 것처럼 기록됐고(실측: heuristic 486/1,102 ·
+# relationshipRef 18/59가 실재하지 않는 경로), readOnly 필터도 우회됐다.
+
+
+def _one(schemas: list[dict], *, heuristics: bool = True) -> Graph:
+    return parse_schemas(schemas, oob=None, heuristics=heuristics)
+
+
+def test_ref_keeps_the_real_property_path() -> None:
+    """`$ref`를 따라가되 **경로를 유지**한다.
+
+    via_property는 "이 의존을 만들려면 어느 속성을 채우나"를 답하는 필드다.
+    틀린 경로가 실리면 그 값으로 템플릿을 만드는 쪽이 전부 깨진다.
+    """
+    schema = {
+        "typeName": "AWS::Test::Thing",
+        "properties": {"Config": {"$ref": "#/definitions/Config"}},
+        "definitions": {
+            "Config": {"properties": {"VpcId": {"type": "string"}}}
+        },
+    }
+    graph = _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}])
+    vias = [e.via_property for e in graph.edges if e.to_id == "aws::AWS::EC2::VPC"]
+    assert vias == ["Config/VpcId"], f"경로가 보존되지 않았다: {vias}"
+
+
+def test_unreferenced_definition_produces_no_edge() -> None:
+    """어디서도 참조되지 않는 definition은 실제 속성이 아니므로 엣지를 만들지 않는다."""
+    schema = {
+        "typeName": "AWS::Test::Thing",
+        "properties": {"Name": {"type": "string"}},
+        "definitions": {"Unused": {"properties": {"VpcId": {"type": "string"}}}},
+    }
+    graph = _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}])
+    assert not [e for e in graph.edges if e.to_id == "aws::AWS::EC2::VPC"]
+
+
+def test_pattern_properties_are_traversed() -> None:
+    """맵 타입(`patternProperties`)도 따라간다 — 실측 253개 스키마가 이 모양이다."""
+    schema = {
+        "typeName": "AWS::Test::Thing",
+        "properties": {
+            "Actions": {
+                "type": "object",
+                "patternProperties": {"^.+$": {"$ref": "#/definitions/Action"}},
+            }
+        },
+        "definitions": {"Action": {"properties": {"VpcId": {"type": "string"}}}},
+    }
+    graph = _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}])
+    assert [e.to_id for e in graph.edges] == ["aws::AWS::EC2::VPC"]
+
+
+def test_nested_readonly_pointer_does_not_skip_whole_property() -> None:
+    """`/properties/A/B/C`가 읽기 전용이어도 **A 전체**를 건너뛰면 안 된다.
+
+    실측 사고: AWS::Batch::ComputeEnvironment의
+    `/properties/ComputeResources/Ec2Configuration/*/BatchImageStatus` 때문에
+    `ComputeResources` 서브트리가 통째로 배제돼 LaunchTemplate 참조가 사라졌다.
+    """
+    schema = {
+        "typeName": "AWS::Test::Thing",
+        "properties": {"Compute": {"$ref": "#/definitions/Compute"}},
+        "definitions": {"Compute": {"properties": {"VpcId": {"type": "string"}}}},
+        "readOnlyProperties": ["/properties/Compute/Nested/Status"],
+    }
+    graph = _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}])
+    assert [e.via_property for e in graph.edges] == ["Compute/VpcId"]
+
+    # 반대로 정확히 `/properties/Compute`면 여전히 통째로 건너뛴다
+    schema["readOnlyProperties"] = ["/properties/Compute"]
+    assert not _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}]).edges
+
+
+def test_generic_base_names_never_infer_a_target() -> None:
+    """총칭 이름은 이름만으로 대상을 단정하지 않는다.
+
+    "후보가 유일하면 채택"은 이름이 구체적일 때만 성립한다. 경로 버그를 고치자
+    QuickSight 한 타입에서 `FieldId → AWS::Cases::Field` 오탐이 421곳으로 번졌다.
+    """
+    schema = {
+        "typeName": "AWS::QuickSight::Analysis",
+        "properties": {"FieldId": {"type": "string"}, "VersionId": {"type": "string"}},
+    }
+    others = [
+        {"typeName": "AWS::Cases::Field", "properties": {}},
+        {"typeName": "AWS::Lambda::Version", "properties": {}},
+    ]
+    assert not [e for e in _one([schema, *others]).edges if e.evidence == "heuristic"]
+
+
+def test_generic_name_block_does_not_touch_declared_relationships() -> None:
+    """이름으로 긍정하지 않을 뿐, **선언된 관계는 그대로 통과**한다."""
+    schema = {
+        "typeName": "AWS::QuickSight::Analysis",
+        "properties": {
+            "FieldId": {
+                "type": "string",
+                "relationshipRef": {"typeName": "AWS::Cases::Field"},
+            }
+        },
+    }
+    graph = _one([schema, {"typeName": "AWS::Cases::Field", "properties": {}}])
+    assert [(e.evidence, e.via_property) for e in graph.edges] == [
+        ("relationshipRef", "FieldId")
+    ]
