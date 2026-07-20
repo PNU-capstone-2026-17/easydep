@@ -38,7 +38,12 @@ from kbcommon.sources import SOURCES
 DEFAULT_TAG = SOURCES["kcc-crd"].pin
 RAW_BASE = "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-config-connector"
 API_BASE = "https://api.github.com/repos/GoogleCloudPlatform/k8s-config-connector"
-DEFAULT_SERVICES = ("compute", "container")
+# 기본은 **전체 서비스**다. compute·container만 받던 시절에는 부품 95개 중 14개가
+# 빈 껍데기였다 — 엣지가 가리켜서 노드만 생기고 CRD를 안 읽어 아무것도 모르는 상태.
+# "디스크가 KMS 키를 필요로 한다"는 알지만 "KMS 키는 무엇을 필요로 하나"에서 끊겼다.
+# 전체를 받으면 부품 538개·관계 844개가 되고 잃는 관계는 없다(실측).
+# 특정 서비스만 원하면 --services로 좁힌다.
+DEFAULT_SERVICES: tuple[str, ...] = ()  # 빈 튜플 = 전체
 
 SOURCE = "kcc-crd"
 
@@ -293,19 +298,19 @@ def build(
             elif doc.get("kind") == "ServiceMapping":
                 servicemappings.append(doc)
     else:
-        wanted = {s.lower() for s in services}
+        wanted = {s.lower() for s in services}  # 비어 있으면 아래에서 전체 통과
         files = _list_config_files(tag, refresh=refresh)
         crd_files = [
             f
             for f in files
             if f.startswith("crds/resources/")
-            and (_crd_service(f) or "") in wanted
+            and (not wanted or (_crd_service(f) or "") in wanted)
         ]
         sm_files = [
             f
             for f in files
             if f.startswith("servicemappings/")
-            and Path(f).stem.lower() in wanted
+            and (not wanted or Path(f).stem.lower() in wanted)
         ]
         for rel in crd_files:
             path = fetch_cached(

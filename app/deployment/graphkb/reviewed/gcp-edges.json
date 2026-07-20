@@ -1,15 +1,43 @@
 {
-  "description": "GCP 의존성 엣지 사람 검수 결과. 엣지 203개(kcc-ref 194 + heuristic 9) 전수 검수 완료. 형식은 graphkb/parsers/review.py 참조.",
+  "description": "GCP 의존성 엣지 사람 검수 결과. KCC 전체 136개 서비스(510 CRD) 기준. 형식은 graphkb/parsers/review.py 참조.",
   "reviewed_against": {
     "source": "kcc-crd",
-    "sha256": "0643900a4f6742db60d442239bcb1e681c84450bb92b8e949f7e846785c7e948"
+    "sha256": "3229656a0425015af944babfd127b55654864c1e2ce7a7e10af04f799df87df0",
+    "note": "전체 136개 서비스(510 CRD) 기준. 범위를 바꾸면 이 해시가 달라져 빌드가 경고한다."
   },
-  "rejected": [],
+  "rejected": [
+    {
+      "to": "gcp::MonitoringMonitoredProject",
+      "evidence": "heuristic",
+      "reason": "projectRef의 설명문은 'The Project that this resource belongs to'로, 부품이 속한 GCP 프로젝트를 뜻한다. 이름 추론이 '~project로 끝나는 kind' 중 같은 서비스인 MonitoringMonitoredProject를 골라버렸다(MonitoringMonitoredProject는 모니터링 범위에 포함시킬 프로젝트를 등록하는 별개 부품이다). 아래 added에서 올바른 대상 Project로 다시 넣었다.",
+      "reviewed": "2026-07-20",
+      "edges": 10
+    },
+    {
+      "to": "gcp::NetworkServicesEdgeCacheService",
+      "evidence": "heuristic",
+      "reason": "serviceRef의 설명문이 'The URL of a BackendService to route traffic to. Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 '~service로 끝나는' 같은 서비스 kind를 골라 EdgeCacheService가 됐다. added에서 ComputeBackendService로 다시 넣었다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
+    },
+    {
+      "to": "gcp::AccessContextManagerServicePerimeterResource",
+      "evidence": "heuristic",
+      "reason": "resourceRef의 설명문이 'The GCP resource to set the IAM policy on (e.g. organization, project...)'로 특정 부품이 아니라 임의의 GCP 리소스를 가리킨다. IAMPolicy·IAMAuditConfig 등이 대상을 런타임에 정하는 칸이라 타입 수준 관계로 표현할 수 없다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
+    }
+  ],
   "confirmed": [
     {
-      "reason": "GCP 엣지 203개 전수 확인. 근거가 셋 다 강하다 — (1) 143개는 구글이 servicemapping 파일에 '이 부품의 이 칸은 저 부품을 가리킨다'를 표로 명시한 것이라 추론이 0이다. (2) 51개는 CRD 설명문이 대상 이름을 백틱으로 정확히 적어준 것이고, 51개 중 50개가 설명문과 일치함을 대조했다(1개는 설명문이 비어 대조 불가하나 필드명 targetServiceAccountRefs가 대상 IAMServiceAccount와 맞는다). (3) 9개는 이름 추론인데 전수를 눈으로 봤고 targetHTTPProxyRef→ComputeTargetHTTPProxy처럼 전부 정확했다. 대상 kind가 노드에 없는 경우도 0건이다.",
-      "reviewed": "2026-07-20",
-      "edges": 203
+      "evidence": "kcc-ref",
+      "reason": "구글이 준 것만 쓴 관계다. 713개 중 대부분은 servicemapping 파일(39개)이 '이 부품의 이 칸은 저 부품을 가리킨다'를 표로 명시한 것이고, 나머지는 CRD 설명문이 대상 이름을 백틱으로 정확히 적어준 것이다. 확대 전 51개를 설명문과 대조해 50개 일치를 확인했고(1개는 설명문이 비어 대조 불가), 대상 kind가 노드에 없는 경우는 0건이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "evidence": "heuristic",
+      "reason": "이름 추론 130개를 대상별로 전수 확인했다. 필드명과 대상 kind가 거의 그대로 대응한다(serviceAccountRef→IAMServiceAccount, cryptoKeyRef→KMSCryptoKey, secretRef→SecretManagerSecret, logSinkRef→LoggingLogSink …). KCC는 참조 필드가 `~Ref`로 끝나는 규약이라 후보 자체가 참조로 한정되고, kind 이름이 서비스 접두사를 달고 있어 충돌이 적다. 틀린 것 셋은 위 rejected로 뺐다 — 전부 필드명이 총칭(projectRef·serviceRef·resourceRef)일 때 같은 서비스 안의 동명 부품이 골라진 경우다.",
+      "reviewed": "2026-07-20"
     }
   ],
   "added": [
@@ -20,6 +48,141 @@
       "required": true,
       "cardinality": "one",
       "reason": "CRD 설명문에 'Allowed value: The Google Cloud resource name of a `ComputeFirewallPolicy` resource'로 대상이 명시돼 있는데, 파서가 아는 문구 형태('The `selfLink` field of a `X` resource')와 달라서 못 읽었다. 이름부터 '연결'인 부품이 관계 0개였던 원인이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "columnLayout.columns.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "gridLayout.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "mosaicLayout.tiles.widget.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "rowLayout.rows.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringGroup",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringMetricDescriptor",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringServiceLevelObjective",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringService",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringUptimeCheckConfig",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesGRPCRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesHTTPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesHTTPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.requestMirrorPolicy.destination.serviceRef",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesTCPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesTLSRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
       "reviewed": "2026-07-20"
     }
   ],

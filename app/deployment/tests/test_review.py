@@ -137,17 +137,24 @@ def test_freshness_warns_when_the_source_moved() -> None:
     assert moved is not None and "다시 확인" in moved
 
 
-def test_shipped_review_entries_all_carry_a_reason() -> None:
-    """왜 그렇게 판단했는지 없는 항목은 다음 사람이 다시 볼 수 없다."""
-    review = load_review("aws")
+@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
+def test_shipped_review_entries_are_well_formed(provider) -> None:
+    """실제 검수 파일 **전부**를 검사한다.
+
+    aws만 보던 시절에 gcp 파일의 confirmed 항목이 대조 조건 없이 들어가 있었고,
+    그게 **모든 엣지를 무조건 확인 처리**하고 있었다. 수집 범위를 넓혔을 때
+    새로 생긴 짐작 121개까지 "사람이 확인함"으로 표시될 뻔했다.
+    """
+    review = load_review(provider)
     for section in ("rejected", "confirmed", "added"):
         for entry in review[section]:
-            assert entry.get("reason"), f"{section}에 이유 없는 항목: {entry}"
-            # 대조 조건이 최소 하나는 있어야 한다 — 전부 없으면 "모든 엣지"에
-            # 해당해서, rejected면 그래프가 통째로 사라진다.
+            assert entry.get("reason"), f"{provider} {section}에 이유 없는 항목: {entry}"
+            # 대조 조건이 최소 하나는 있어야 한다. 전부 없으면 "모든 엣지"에
+            # 해당해서, rejected면 그래프가 통째로 사라지고 confirmed면 검수하지
+            # 않은 것까지 확인됐다고 거짓말한다.
             assert any(
                 entry.get(k) for k in ("from", "to", "type", "evidence", "via_property")
-            ), entry
+            ), f"{provider}: 대조 조건이 없는 항목 — {entry}"
     for entry in review["added"]:
         assert entry.get("from") and entry.get("to"), f"추가는 대상을 특정해야 한다: {entry}"
 
