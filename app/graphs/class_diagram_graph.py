@@ -9,7 +9,6 @@ from app.nodes.class_diagram import (
     feedback_class_diagram,
     convert_to_class_diagram_code,
     extract_class_elements,
-    revise_class_diagram,
     validate_class_diagram_syntax,
 )
 from app.schemas.architecture_state import ArchitectureState
@@ -43,7 +42,6 @@ def build_class_diagram_graph():
     builder.add_node("convert_to_class_diagram_code", convert_to_class_diagram_code)
     builder.add_node("feedback_class_diagram", feedback_class_diagram)
     builder.add_node("validate_class_diagram_syntax", validate_class_diagram_syntax)
-    builder.add_node("revise_class_diagram", revise_class_diagram)
 
     builder.add_edge(START, "extract_class_elements")
     builder.add_edge("extract_class_elements", "convert_to_class_diagram_code")
@@ -56,8 +54,7 @@ def build_class_diagram_graph():
             "end": END,
         },
     )
-    builder.add_edge("feedback_class_diagram", "revise_class_diagram")
-    builder.add_edge("revise_class_diagram", "validate_class_diagram_syntax")
+    builder.add_edge("feedback_class_diagram", "validate_class_diagram_syntax")
 
     return builder.compile()
 

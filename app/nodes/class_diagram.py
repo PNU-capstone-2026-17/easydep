@@ -138,15 +138,3 @@ def validate_class_diagram_syntax(state: ArchitectureState) -> ArchitectureState
     }
 
 
-def revise_class_diagram(state: ArchitectureState) -> ArchitectureState:
-    """
-    변경된 클래스 다이어그램 내용을 DB에 적용(저장)하는 역할을 수행합니다.
-    (현재는 Mock으로 로그를 출력하고 DB 반영 상태를 True로 설정합니다)
-    """
-    puml_text = state.get("class_diagram_puml", "").strip()
-    
-    if puml_text:
-        # TODO: 실제 DB 연동 로직 (예: ORM을 통한 저장)
-        print("[DB Apply] 클래스 다이어그램 변경 사항이 DB에 저장되었습니다.")
-        
-    return {"class_diagram_saved_to_db": True}
