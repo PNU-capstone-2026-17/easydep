@@ -11,8 +11,8 @@ outputs/
 # PlantUML tool, downloaded separately (17MB binary).
 plantuml.jar
 
-# Local-only working material. These files still exist on disk; they are just
-# not part of the repository.
+# Scratch files and report material, kept out of the project. Listed so they
+# cannot be committed by accident if they reappear here.
 error.puml
 test.py
 main.py
