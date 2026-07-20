@@ -5,9 +5,6 @@
 __pycache__/
 *.py[cod]
 
-# Generated artifacts and diagram render cache (rebuilt from MySQL on demand).
-outputs/
-
 # PlantUML tool, downloaded separately (17MB binary).
 plantuml.jar
 

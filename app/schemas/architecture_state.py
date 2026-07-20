@@ -12,10 +12,6 @@ class ArchitectureState(TypedDict, total=False):
 
     extracted_bce_classes: dict[str, Any]
     class_diagram_puml: str
-    class_diagram_output_path: str
-    plantuml_jar_path: str
-    class_diagram_feedback_requested: bool
-    class_diagram_requested_feedback: str
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]
 

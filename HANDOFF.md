@@ -56,7 +56,25 @@ e.g. `artifact_elements` (version, element kind, name) and `element_links`
 (from element, to element, relation). That stays correct across revisions and
 gives a per-version view of the graph.
 
-`.env` keys: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`.
+`.env` keys: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`,
+`PLANTUML_JAR_PATH`.
+
+### Workflow state
+
+`ArchitectureState` is an in-request working buffer, not a store. Every request
+rebuilds it from MySQL through `load_state(app_id)`, and the result is written
+back with `save_stage`. It holds only what has to travel between steps: the BCE
+elements handed from extraction to conversion, the artifact being built (which
+is not in the database yet), and the validation result (which the database and
+the API response both consume).
+
+Class diagram generation runs through `class_diagram_graph`:
+extract → convert → validate, looping back through a repair node until the
+diagram compiles. The other stages call their node function directly and then
+go through the same revision loop in `server.py`.
+
+The whole-run endpoint and `architecture_artifact_graph` were removed; the UI
+drives one stage at a time.
 
 API (all state now comes from the database):
 
@@ -71,11 +89,19 @@ GET  /api/apps/{app_id}/stages/{stage}/versions/{n}
 GET  /api/apps/{app_id}/stages/{stage}/image.{png|svg}  rendered on demand
 ```
 
-Diagram images are NOT stored in the database. They are re-rendered from the
-stored PlantUML text into `outputs/{app_id}/`, which is a disposable cache.
-That directory is per-app on purpose: previously every user shared filenames
-like `outputs/bce_class_diagram.puml` and concurrent sessions overwrote each
-other. The public `/outputs` static mount was removed for the same reason.
+### Nothing is written to disk
+
+MySQL is the only store. PlantUML is driven entirely through `-pipe`:
+
+- syntax checking uses `-syntax -pipe`, reading the source from stdin
+  (`app/services/plantuml_error.py`)
+- images are rendered with `-pipe -tpng` / `-tsvg` straight to bytes and
+  streamed back by the image endpoint (`render_plantuml`)
+
+So there is no `outputs/` directory, no render cache to go stale, and no shared
+filenames for concurrent users to overwrite. The jar location comes from
+`PLANTUML_JAR_PATH`; it is deployment config, not per-request data, so it is no
+longer carried in the request body or in the workflow state.
 
 The frontend keeps the app_id in `localStorage` and restores artifacts from the
 database on load.
