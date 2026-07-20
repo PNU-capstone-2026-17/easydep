@@ -6,14 +6,14 @@
 핵심 사실 (실측):
 - ARM 타입명은 계층적이다: "Microsoft.Network/virtualNetworks/subnets"는
   virtualNetworks의 자식 → 이름만으로 contained_in 엣지를 얻는다
-  (evidence=arm-hierarchy, 정의상 확실하므로 confidence 1.0).
+  (evidence=arm-hierarchy — 이름의 구조라 원본이 명시한 것과 같다).
 - swagger의 arm-id 참조 메타데이터는 bicep 타입 생성 과정에서 소실된다.
   대신 프로퍼티 타입이 다른 리소스의 인라인 객체(예: "CommonSubnet")로
   $ref 연결되는 구조가 남으므로, ObjectType 이름을 정규화(Common 접두사 제거,
   단수/복수 보정)해 리소스 타입과 유일 매칭되면 참조 엣지로 본다
-  (evidence=bicep-ref, confidence 0.8).
+  (evidence=bicep-ref — 짐작이며 검수표로 확정한다).
 - 그 외 `*Id` 문자열 프로퍼티는 CFN과 같은 속성명 휴리스틱으로 보강한다
-  (evidence=heuristic, confidence 0.6).
+  (evidence=heuristic — 짐작).
 
 전체 노드/계층은 index.json 한 파일로 커버하고, 참조 엣지는 용량 문제로
 선택된 프로바이더(기본: network/compute/containerservice)의 types.json만
@@ -106,7 +106,6 @@ def parse_index(index: dict) -> tuple[Graph, dict[str, tuple[str, str]]]:
                     required=True,
                     cardinality="one",
                     evidence="arm-hierarchy",
-                    confidence=1.0,
                 )
             )
     return graph, latest
@@ -216,7 +215,7 @@ def extract_references(
             UNRESOLVED_REFS[f"{bare}@{prop_name}"] += 1
         return hit, False
 
-    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, confidence: float, target_property: str = "", reviewed: bool = False) -> None:
+    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, target_property: str = "", reviewed: bool = False) -> None:
         if to_type == from_type or to_type.startswith(from_type + "/"):
             # 자기 자신 / 인라인 자식 목록은 계층(contained_in)으로 이미 표현됨
             return
@@ -230,7 +229,6 @@ def extract_references(
                 required=required,
                 cardinality="many" if many else "one",
                 evidence=evidence,
-                confidence=confidence,
                 target_property=target_property,
                 reviewed=reviewed,
             )
@@ -303,7 +301,7 @@ def extract_references(
                     target, decided = resolve_target(resolved_entry, prop_name)
                     if target is not None:
                         emit(from_type, target, via, required=prop_required, many=many,
-                             evidence="bicep-ref", confidence=0.8, target_property="id",
+                             evidence="bicep-ref", target_property="id",
                              reviewed=decided)
                         continue  # 참조 경계에서 멈춤 — 대상 내부는 대상 자신의 것
 
@@ -312,7 +310,7 @@ def extract_references(
                 if match and resolved_entry.get("$type") in ("StringType", "StringLiteralType"):
                     target = target_index.get(match.group(1).lower())
                     if target is not None:
-                        emit(from_type, target, via, required=prop_required, many=many, evidence="heuristic", confidence=0.6)
+                        emit(from_type, target, via, required=prop_required, many=many, evidence="heuristic")
                         continue
 
             if idx not in visited:

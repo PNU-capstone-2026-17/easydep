@@ -73,7 +73,9 @@ def build_graph(mappings: list[dict]) -> Graph:
                 required=False,
                 cardinality="one",
                 evidence="cb-spider-driver",
-                confidence=float(entry.get("confidence", 0.9)),
+                # 드라이버 코드를 사람이 읽고 만든 매핑이라 짐작이지만, `status:
+                # confirmed`인 것만 그래프에 들어오므로 검수된 짐작이다.
+                reviewed=True,
             )
         )
     return graph
@@ -143,7 +145,6 @@ def suggest(core_graph: Graph, vendor_graphs: dict[str, Graph]) -> list[dict]:
                             "core": core_node.display_name,
                             "provider": provider,
                             "target": vendor_node.display_name,
-                            "confidence": 0.5,
                             "note": "이름 유사도 휴리스틱 후보 — 사람 검수 필요",
                             "status": "candidate",
                         }

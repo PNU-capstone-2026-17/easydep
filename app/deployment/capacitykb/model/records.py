@@ -20,6 +20,8 @@ from typing import Any, Literal
 
 import jsonschema
 
+from kbcommon.basis import basis_of, is_fact
+
 ConstraintKind = Literal[
     "min",
     "max",
@@ -52,16 +54,31 @@ class Constraint:
     kind: str
     value: Any
     evidence: str
-    confidence: float
+
+    basis: str = ""
+    """**원본이 그렇게 적었는가(`stated`), 우리가 짐작했는가(`inferred`).**
+
+    evidence 라벨에서 정해지므로 비워 두면 채워진다(`kbcommon/basis.py`).
+    예전의 `confidence`(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다.
+    """
+
     value_type: str | None = None
     unit: str | None = None
     conditional: bool = False
     note: str | None = None
 
+    def __post_init__(self) -> None:
+        if not self.basis:
+            object.__setattr__(self, "basis", basis_of(self.evidence))
+
     @property
     def key(self) -> tuple[str, str, str]:
-        """중복 판정 키. 같은 키면 confidence가 높은 쪽만 남긴다."""
+        """중복 판정 키. 같은 키면 **사실인 쪽**을 남긴다."""
         return (self.type_id, self.property, self.kind)
+
+    @property
+    def is_fact(self) -> bool:
+        return is_fact(self.basis)
 
     def to_dict(self) -> dict:
         return {
@@ -74,7 +91,7 @@ class Constraint:
             "conditional": self.conditional,
             "note": self.note,
             "evidence": self.evidence,
-            "confidence": self.confidence,
+            "basis": self.basis,
         }
 
     @classmethod
@@ -85,7 +102,7 @@ class Constraint:
             kind=data["kind"],
             value=data["value"],
             evidence=data["evidence"],
-            confidence=data["confidence"],
+            basis=data.get("basis", ""),
             value_type=data.get("value_type"),
             unit=data.get("unit"),
             conditional=data.get("conditional", False),
@@ -101,7 +118,10 @@ class Quota:
     name: str
     source_doc: str
     evidence: str
-    confidence: float
+
+    basis: str = ""
+    """근거의 성격. evidence에서 정해진다 — `kbcommon/basis.py` 참고."""
+
     scope: str | None = None
     default: float | str | None = None
     maximum: float | str | None = None
@@ -109,9 +129,17 @@ class Quota:
     type_id: str | None = None
     note: str | None = None
 
+    def __post_init__(self) -> None:
+        if not self.basis:
+            object.__setattr__(self, "basis", basis_of(self.evidence))
+
     @property
     def key(self) -> tuple[str, str | None, str]:
         return (self.provider, self.scope, self.name)
+
+    @property
+    def is_fact(self) -> bool:
+        return is_fact(self.basis)
 
     def to_dict(self) -> dict:
         return {
@@ -125,7 +153,7 @@ class Quota:
             "source_doc": self.source_doc,
             "note": self.note,
             "evidence": self.evidence,
-            "confidence": self.confidence,
+            "basis": self.basis,
         }
 
     @classmethod
@@ -135,7 +163,7 @@ class Quota:
             name=data["name"],
             source_doc=data["source_doc"],
             evidence=data["evidence"],
-            confidence=data["confidence"],
+            basis=data.get("basis", ""),
             scope=data.get("scope"),
             default=data.get("default"),
             maximum=data.get("maximum"),
@@ -147,7 +175,7 @@ class Quota:
 
 @dataclass
 class CapacitySet:
-    """제약/쿼터 레코드 컨테이너. 같은 키는 confidence 높은 쪽을 유지한다."""
+    """제약/쿼터 레코드 컨테이너. 같은 키는 **사실인 쪽**을 유지한다."""
 
     constraints: list[Constraint] = field(default_factory=list)
     quotas: list[Quota] = field(default_factory=list)
@@ -163,12 +191,16 @@ class CapacitySet:
     )
 
     def add_constraint(self, constraint: Constraint) -> None:
-        """제약을 추가한다. 중복 키는 confidence 높은 쪽만 남긴다."""
+        """제약을 추가한다. 중복 키는 **사실인 쪽**만 남긴다.
+
+        예전엔 confidence가 높은 쪽이었는데 그 숫자는 정의가 없어 우열이 임의였다.
+        지금 기준은 하나다 — 원본이 명시한 것이 짐작을 이긴다.
+        """
         existing = self._c_index.get(constraint.key)
         if existing is None:
             self._c_index[constraint.key] = len(self.constraints)
             self.constraints.append(constraint)
-        elif constraint.confidence > self.constraints[existing].confidence:
+        elif constraint.is_fact and not self.constraints[existing].is_fact:
             self.constraints[existing] = constraint
 
     def add_quota(self, quota: Quota) -> None:
@@ -176,7 +208,7 @@ class CapacitySet:
         if existing is None:
             self._q_index[quota.key] = len(self.quotas)
             self.quotas.append(quota)
-        elif quota.confidence > self.quotas[existing].confidence:
+        elif quota.is_fact and not self.quotas[existing].is_fact:
             self.quotas[existing] = quota
 
     def has_constraint(self, type_id: str, prop: str, kind: str) -> bool:

@@ -24,7 +24,6 @@ def graph() -> Graph:
             required=True,
             cardinality="one",
             evidence="swagger-field",
-            confidence=1.0,
         )
     )
     g.add_edge(
@@ -36,7 +35,6 @@ def graph() -> Graph:
             required=True,
             cardinality="one",
             evidence="heuristic",
-            confidence=0.6,
         )
     )
     return g
@@ -63,5 +61,5 @@ def test_dot_contains_expected_lines(graph: Graph, tmp_path) -> None:
     assert text.startswith("digraph graphkb {")
     assert '"core::subnet" -> "core::vNet"' in text
     assert "shape=box" in text  # 코어 노드
-    assert "style=dashed" in text  # confidence < 1.0 (heuristic)
+    assert "style=dashed" in text  # 짐작(heuristic)은 점선
     assert "color=gray" in text  # contained_in

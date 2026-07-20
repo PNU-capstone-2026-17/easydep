@@ -31,7 +31,6 @@ def edge(from_id: str, to_id: str, *, type_: str = "references", required: bool 
         required=required,
         cardinality="one",
         evidence="swagger-field",
-        confidence=1.0,
     )
 
 
@@ -62,7 +61,6 @@ def output_dir(tmp_path) -> Path:
             required=False,
             cardinality="one",
             evidence="cb-spider-driver",
-            confidence=0.95,
         )
     )
     mapping.add_edge(
@@ -74,7 +72,6 @@ def output_dir(tmp_path) -> Path:
             required=False,
             cardinality="one",
             evidence="cb-spider-driver",
-            confidence=0.95,
         )
     )
     mapping.save(tmp_path / "mapping-graph.json")

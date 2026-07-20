@@ -14,6 +14,8 @@ from typing import Literal
 
 import jsonschema
 
+from kbcommon.basis import basis_of, is_fact
+
 NodeLayer = Literal["core", "vendor"]
 EdgeType = Literal["references", "contained_in", "equivalent_to"]
 Cardinality = Literal["one", "many"]
@@ -70,7 +72,16 @@ class Edge:
     required: bool
     cardinality: Cardinality
     evidence: str
-    confidence: float
+
+    basis: str = ""
+    """**원본이 그렇게 적었는가(`stated`), 우리가 짐작했는가(`inferred`).**
+
+    evidence 라벨에서 정해지므로 손으로 넘길 필요가 없다 — 비워 두면 채워진다.
+    라벨 하나에 성격 하나가 규칙이고, 갈리면 라벨을 쪼갠다(`kbcommon/basis.py`).
+
+    예전의 `confidence`(0.5~1.0)를 대신한다. 그 숫자는 척도의 정의가 없어서
+    0.9와 0.95의 차이를 아무도 답할 수 없었고, 실제로 쓰이는 건 임계값 하나뿐이었다.
+    """
 
     target_property: str = ""
     """대상 부품이 돌려주는 값 중 **어느 것을 가져다 쓰는가.**
@@ -100,10 +111,19 @@ class Edge:
     검수 목록은 `graphkb/reviewed/*.json`에 있고 빌드가 마지막에 적용한다.
     """
 
+    def __post_init__(self) -> None:
+        if not self.basis:
+            object.__setattr__(self, "basis", basis_of(self.evidence))
+
     @property
     def key(self) -> tuple[str, str, str, str]:
-        """중복 판정 키. 같은 키의 엣지는 confidence가 높은 쪽만 남긴다."""
+        """중복 판정 키. 같은 키면 **사실인 쪽**을 남긴다."""
         return (self.from_id, self.to_id, self.type, self.via_property)
+
+    @property
+    def is_fact(self) -> bool:
+        """사실로 취급할 수 있는가 — 원본이 명시했거나 사람이 확인했거나."""
+        return is_fact(self.basis, self.reviewed)
 
     def to_dict(self) -> dict:
         # 직렬화 키는 브리프 스키마의 "from"/"to" (파이썬 예약어 회피용 필드명 변환)
@@ -115,7 +135,7 @@ class Edge:
             "required": self.required,
             "cardinality": self.cardinality,
             "evidence": self.evidence,
-            "confidence": self.confidence,
+            "basis": self.basis,
         }
         if self.target_property:
             out["target_property"] = self.target_property
@@ -133,7 +153,7 @@ class Edge:
             required=data["required"],
             cardinality=data["cardinality"],
             evidence=data["evidence"],
-            confidence=data["confidence"],
+            basis=data.get("basis", ""),
             target_property=data.get("target_property", ""),
             reviewed=bool(data.get("reviewed", False)),
         )
@@ -161,14 +181,19 @@ class Graph:
         self.nodes.setdefault(node.id, node)
 
     def add_edge(self, edge: Edge) -> None:
-        """엣지를 추가한다. self-loop는 거부, 중복 키는 confidence 높은 쪽 유지."""
+        """엣지를 추가한다. self-loop는 거부, 중복 키는 **사실인 쪽**을 남긴다.
+
+        예전엔 confidence가 높은 쪽을 남겼는데, 그 숫자는 정의가 없어서 우열이
+        사실상 임의였다. 지금은 기준이 하나다 — 원본이 명시했거나 사람이 확인한
+        것이 짐작을 이긴다. 둘 다 사실이거나 둘 다 짐작이면 먼저 온 것을 둔다.
+        """
         if edge.from_id == edge.to_id:
             return
         existing = self._edge_index.get(edge.key)
         if existing is None:
             self._edge_index[edge.key] = len(self.edges)
             self.edges.append(edge)
-        elif edge.confidence > self.edges[existing].confidence:
+        elif edge.is_fact and not self.edges[existing].is_fact:
             self.edges[existing] = edge
 
     def merge(self, other: Graph) -> None:

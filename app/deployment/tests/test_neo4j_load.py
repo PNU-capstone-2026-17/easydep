@@ -29,7 +29,6 @@ def make_graph() -> Graph:
             required=False,
             cardinality="one",
             evidence="cb-spider-driver",
-            confidence=0.95,
         )
     )
     return graph
@@ -44,7 +43,7 @@ def test_script_merges_nodes_and_edges() -> None:
     script = cypher_script(make_graph())
     assert "MERGE (n:ResourceType {id: 'core::vNet'})" in script
     assert "MERGE (a)-[r:EQUIVALENT_TO {via_property: ''}]->(b)" in script
-    assert "r.confidence = 0.95" in script
+    assert 'r.basis = "inferred"' in script
     assert "r.required = false" in script
 
 

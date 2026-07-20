@@ -45,7 +45,7 @@ DEFINITION_TYPES: dict[str, str] = {
     "model.TbImageReq": "image",
 }
 
-# 참조 필드명 → 대상 코어 타입 (명시 매핑: evidence=swagger-field, confidence=1.0)
+# 참조 필드명 → 대상 코어 타입 (명시 매핑: evidence=swagger-field)
 FIELD_TARGETS: dict[str, str] = {
     "vNetId": "vNet",
     "subnetId": "subnet",
@@ -102,7 +102,7 @@ def parse_swagger(spec: dict, *, heuristics: bool = False) -> Graph:
     Args:
         spec: 파싱된 swagger/OpenAPI 문서.
         heuristics: True면 명시 매핑에 없는 *Id(s) 필드도 suffix 규칙으로
-            추정한다 (evidence=heuristic, confidence=0.6).
+            추정한다 (evidence=heuristic).
     """
     schemas = _schemas(spec)
     graph = Graph()
@@ -177,7 +177,6 @@ def _walk_definition(
                     required=required,
                     cardinality="many" if many else "one",
                     evidence="swagger-field",
-                    confidence=1.0,
                 )
             )
             continue
@@ -197,7 +196,6 @@ def _walk_definition(
                         required=True,
                         cardinality="one",
                         evidence="swagger-field",
-                        confidence=1.0,
                     )
                 )
             elif ref_name in schemas and ref_name not in visited and depth < _MAX_DEPTH:
@@ -231,7 +229,6 @@ def _walk_definition(
                             required=required,
                             cardinality="many" if many else "one",
                             evidence="heuristic",
-                            confidence=0.6,
                         )
                     )
 

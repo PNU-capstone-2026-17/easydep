@@ -17,6 +17,7 @@ from capacitykb.query import (
     limits_for,
     resolve_type,
 )
+from kbcommon.basis import describe
 
 DEFAULT_OUTPUT_DIR = Path("output")
 CAPACITY_FILES = ("aws-capacity.json", "azure-capacity.json", "azure-quota.json")
@@ -81,7 +82,7 @@ def _describe(constraint) -> str:
     tags = []
     if constraint.conditional:
         tags.append("조건부")
-    tags.append(f"근거 {constraint.evidence}, 신뢰도 {constraint.confidence}")
+    tags.append(f"근거 {constraint.evidence}, {describe(constraint.basis)}")
     suffix = f" ({', '.join(tags)})"
     note = f"\n    ※ {constraint.note}" if constraint.note else ""
     return f"  - {constraint.property}: {text}{suffix}{note}"
@@ -216,6 +217,6 @@ def service_quota(
         note = f" ※ {quota.note}" if quota.note else ""
         lines.append(
             f"  - [{quota.provider}] {quota.name}: {detail} "
-            f"(출처 {quota.source_doc}, 신뢰도 {quota.confidence}){note}"
+            f"(출처 {quota.source_doc}, {describe(quota.basis)}){note}"
         )
     return "\n".join(lines)

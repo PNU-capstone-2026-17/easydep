@@ -10,7 +10,7 @@
 - 노드: (:ResourceType {id, layer, provider, kind, display_name, source})
   + id 유니크 제약.
 - 관계: REFERENCES / CONTAINED_IN / EQUIVALENT_TO
-  {via_property, required, cardinality, evidence, confidence}.
+  {via_property, required, cardinality, evidence, basis}.
   관계 MERGE 키는 (양 끝, 타입, via_property) — Edge.key와 동일한 중복 기준.
 """
 
@@ -43,7 +43,7 @@ def _edge_merge(rel_type: str) -> str:
         "MATCH (a:ResourceType {id: row.`from`}), (b:ResourceType {id: row.`to`}) "
         f"MERGE (a)-[r:{rel_type} {{via_property: row.via_property}}]->(b) "
         "SET r.required = row.required, r.cardinality = row.cardinality, "
-        "r.evidence = row.evidence, r.confidence = row.confidence"
+        "r.evidence = row.evidence, r.basis = row.basis"
     )
 
 
@@ -74,7 +74,7 @@ def cypher_script(graph: Graph) -> str:
             f"SET r.required = {required}, "
             f"r.cardinality = {_quote(edge.cardinality)}, "
             f"r.evidence = {_quote(edge.evidence)}, "
-            f"r.confidence = {edge.confidence};"
+            f'r.basis = "{edge.basis}";'
         )
     return "\n".join(lines) + "\n"
 

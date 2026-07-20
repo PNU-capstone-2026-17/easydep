@@ -1,8 +1,13 @@
 """제약/쿼터 질의: 값 판정, 한도 조회, 불변 속성, 쿼터 검색.
 
-**신뢰도 필터가 핵심이다.** 산문에서 추출한 제약(0.6~0.8)은 참고용으로는 쓸모
-있지만 값을 거부하는 근거로 쓰기엔 약하다. 그래서 `check_value`는 기본
-`min_confidence=0.8` 이상만 판정에 쓰고, 그 아래는 "참고" 목록으로 따로 돌려준다.
+**사실과 짐작을 가르는 것이 핵심이다.** 산문에서 뽑은 제약은 참고로는 쓸모 있지만
+값을 **거부하는** 근거로 쓰기엔 약하다. 그래서 `check_value`는 사실(원본이 명시했거나
+사람이 확인한 것)만으로 판정하고, 짐작은 "참고" 목록으로 따로 돌려준다.
+
+예전에는 `min_confidence=0.8` 임계값이었는데, 그 선이 실제로 가른 것은
+`cfn-description` 158건뿐이었고 그중 115건이 **정확히 0.8**이라 상수를 0.81로만
+바꿔도 결과가 뒤집히는 상태였다. 지금 기준은 임의의 숫자가 아니라 "원본이 그렇게
+적었는가"다.
 """
 
 from __future__ import annotations
@@ -11,10 +16,7 @@ import re
 from dataclasses import dataclass
 
 from capacitykb.model import CapacitySet, Constraint, Quota
-
-# 값 판정에 쓸 최소 신뢰도. 조건부 envelope(0.6)는 참고로만 표시한다.
-CHECK_MIN_CONFIDENCE = 0.8
-
+from kbcommon.basis import describe
 
 def resolve_type(capacity: CapacitySet, name: str) -> str:
     """이름으로 타입 id를 찾는다.
@@ -45,14 +47,14 @@ def limits_for(
     type_id: str,
     *,
     prop: str | None = None,
-    min_confidence: float = 0.0,
+    facts_only: bool = False,
 ) -> list[Constraint]:
-    """타입(또는 특정 프로퍼티)의 제약을 신뢰도 내림차순으로 반환한다."""
+    """타입(또는 특정 프로퍼티)의 제약을 반환한다. 사실이 먼저 온다."""
     found = (
         capacity.for_property(type_id, prop) if prop else capacity.for_type(type_id)
     )
-    filtered = [c for c in found if c.confidence >= min_confidence]
-    return sorted(filtered, key=lambda c: (c.property, -c.confidence, c.kind))
+    filtered = [c for c in found if c.is_fact] if facts_only else found
+    return sorted(filtered, key=lambda c: (c.property, not c.is_fact, c.kind))
 
 
 def immutable_properties(capacity: CapacitySet, type_id: str) -> list[Constraint]:
@@ -105,7 +107,7 @@ def _violation(constraint: Constraint, value, label: str) -> str:
     note = f" — {constraint.note}" if constraint.note else ""
     return (
         f"{constraint.property}: {value}{unit}는 {label} {constraint.value}{unit}을(를) "
-        f"벗어남 (근거 {constraint.evidence}, 신뢰도 {constraint.confidence}){note}"
+        f"벗어남 (근거 {constraint.evidence}, {describe(constraint.basis)}){note}"
     )
 
 
@@ -115,19 +117,19 @@ def check_value(
     prop: str,
     value,
     *,
-    min_confidence: float = CHECK_MIN_CONFIDENCE,
+    facts_only: bool = True,
 ) -> CheckResult:
     """프로퍼티에 넣으려는 값이 허용 범위인지 판정한다.
 
-    신뢰도가 `min_confidence` 미만인 제약은 판정에 쓰지 않고 advisories로 돌려준다
-    (산문 추출값으로 유효한 배포를 막지 않기 위함).
+    **짐작으로는 값을 거부하지 않는다.** 산문에서 뽑은 제약은 advisories로만 돌려준다 —
+    잘못 막는 것이 침묵보다 나쁘다는 원칙(fail-open)이 여기에도 적용된다.
     """
     violations: list[str] = []
     advisories: list[str] = []
     checked = 0
 
     for constraint in capacity.for_property(type_id, prop):
-        weak = constraint.confidence < min_confidence
+        weak = facts_only and not constraint.is_fact
         breached = False
         label = ""
         if constraint.kind == "min" and isinstance(value, (int, float)):

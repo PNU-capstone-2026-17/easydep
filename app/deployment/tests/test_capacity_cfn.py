@@ -52,7 +52,7 @@ def test_golden_lambda_timeout_min_from_schema(capacity: CapacitySet) -> None:
     found = find(capacity, LAMBDA, "Timeout", "min")
     assert found.value == 1
     assert found.evidence == "cfn-schema"
-    assert found.confidence == 1.0
+    assert found.basis == "stated"
 
 
 def test_golden_ephemeral_storage_size_from_definition(capacity: CapacitySet) -> None:
@@ -68,7 +68,7 @@ def test_golden_subnet_required_and_immutable(capacity: CapacitySet) -> None:
     mutability = find(capacity, SUBNET, "VpcId", "mutability")
     assert mutability.value == "create_only"
     assert mutability.evidence == "cfn-schema"
-    assert mutability.confidence == 1.0
+    assert mutability.basis == "stated"
     assert find(capacity, SUBNET, "CidrBlock", "mutability").value == "create_only"
 
 
@@ -101,21 +101,21 @@ def test_prose_lambda_timeout_max(capacity: CapacitySet) -> None:
     found = find(capacity, LAMBDA, "Timeout", "max")
     assert found.value == 900
     assert found.evidence == "cfn-description"
-    assert found.confidence == 0.8
+    assert found.basis == "inferred"
     assert found.unit == "seconds"
 
 
 def test_prose_volume_throughput_range(capacity: CapacitySet) -> None:
     assert find(capacity, VOLUME, "Throughput", "min").value == 125
     assert find(capacity, VOLUME, "Throughput", "max").value == 2000
-    assert find(capacity, VOLUME, "Throughput", "max").confidence == 0.8
+    assert find(capacity, VOLUME, "Throughput", "max").basis == "inferred"
 
 
 def test_prose_volume_size_conditional_envelope(capacity: CapacitySet) -> None:
     found = find(capacity, VOLUME, "Size", "max")
     assert found.value == 65536
     assert found.conditional is True
-    assert found.confidence == 0.6
+    assert found.basis == "inferred"
     assert found.unit == "GiB"
     assert "gp3" in found.note
 

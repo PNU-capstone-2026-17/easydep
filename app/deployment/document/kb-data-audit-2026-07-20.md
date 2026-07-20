@@ -338,7 +338,7 @@ IOPS 역전, ACU 극단값, threadsPerCore), 필드 조합 모순 0건(`networkI
 2. ~~**id 정규화 단일화**~~ — ✅ **2026-07-21 R3 완료.** `kbcommon/type_ids.py`
    (`read_azure_index` / `AzureTypeIndex.type_id`)를 두 파서가 함께 쓴다. 조인율
    어서션은 `python -m kbcommon verify`가 걸며 1,913건 전부 통과한다.
-3. **evidence당 등급 하나** — 어서션으로 강제한다. 위반이 곧 라벨 세분화 필요 신호다.
+3. ~~**evidence당 등급 하나**~~ — ✅ **2026-07-21 R4 완료.** 예상대로 위반이 라벨 세분화 신호였다: `kcc-ref`→`kcc-description`, `azure-limits-doc`→`azure-limits-note`로 쪼갰고 `one-basis-per-evidence`가 error 등급으로 재발을 막는다.
 4. **센티널 정규화 일원화** — `hourlyUSD`의 `<=0 → null` 규칙을 `diskSizeGB`·
    `acceleratorMemoryGB`에도 적용. 스키마 `exclusiveMinimum`으로 재유입을 막는다.
 5. **커버리지를 데이터에 기록** — 산출물마다 `{types_in_graph, types_covered,

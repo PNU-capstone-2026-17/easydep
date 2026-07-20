@@ -20,7 +20,7 @@
           "value",
           "conditional",
           "evidence",
-          "confidence"
+          "basis"
         ],
         "additionalProperties": false,
         "properties": {
@@ -82,10 +82,10 @@
               "heuristic"
             ]
           },
-          "confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
+          "basis": {
+            "type": "string",
+            "enum": ["stated", "inferred"],
+            "description": "근거의 성격. stated는 원본이 그렇게 적어 놓은 것, inferred는 우리가 이름·산문·구조에서 짐작한 것이다. evidence 라벨에서 정해지며 라벨 하나에 성격 하나가 규칙이다(kbcommon/basis.py). 예전의 confidence(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다."
           }
         },
         "allOf": [
@@ -143,7 +143,7 @@
           "name",
           "source_doc",
           "evidence",
-          "confidence"
+          "basis"
         ],
         "additionalProperties": false,
         "properties": {
@@ -200,14 +200,15 @@
           "evidence": {
             "enum": [
               "azure-limits-doc",
+              "azure-limits-note",
               "curated",
               "heuristic"
             ]
           },
-          "confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
+          "basis": {
+            "type": "string",
+            "enum": ["stated", "inferred"],
+            "description": "근거의 성격. stated는 원본이 그렇게 적어 놓은 것, inferred는 우리가 이름·산문·구조에서 짐작한 것이다. evidence 라벨에서 정해지며 라벨 하나에 성격 하나가 규칙이다(kbcommon/basis.py). 예전의 confidence(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다."
           }
         }
       }

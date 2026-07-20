@@ -50,36 +50,33 @@ _UNIT = re.compile(
     r"|milliseconds?|IOPS|vCPUs?)\b"
 )
 
-# (정규식, rule 이름, confidence) — 하한/상한 쌍을 만드는 규칙
-_PAIR_RULES: tuple[tuple[re.Pattern[str], str, float], ...] = (
+# (정규식, rule 이름) — 하한/상한 쌍을 만드는 규칙
+_PAIR_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             rf"(?i)Valid\s+Range:\s*Minimum\s+value\s+of\s+({NUM})\.\s*"
             rf"Maximum\s+value\s+of\s+({NUM})\."
         ),
         "valid_range",
-        0.8,
     ),
-    (re.compile(rf"``\s*({NUM})\s*(?:-|–|to)\s*({NUM})\s*``"), "backtick_range", 0.8),
-    (re.compile(rf"(?i)\bbetween\s+({NUM})\s+and\s+({NUM})\b"), "between", 0.7),
+    (re.compile(rf"``\s*({NUM})\s*(?:-|–|to)\s*({NUM})\s*``"), "backtick_range"),
+    (re.compile(rf"(?i)\bbetween\s+({NUM})\s+and\s+({NUM})\b"), "between"),
     (
         re.compile(rf"(?i)\b(?:integer|number|value)\s+from\s+({NUM})\s+to\s+({NUM})\b"),
         "from_to",
-        0.7,
     ),
 )
 
 # 단독 상한/하한 규칙
-_MAX_RULES: tuple[tuple[re.Pattern[str], str, float], ...] = (
-    (re.compile(rf"(?i)\bmaximum\s+allowed\s+value\s+is\s+({NUM})\b"), "max_allowed", 0.8),
+_MAX_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(rf"(?i)\bmaximum\s+allowed\s+value\s+is\s+({NUM})\b"), "max_allowed"),
 )
-_MIN_RULES: tuple[tuple[re.Pattern[str], str, float], ...] = (
+_MIN_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(
             rf"(?i)\bmust\s+be\s+(?:equal\s+to\s+or\s+greater\s+than|at\s+least)\s+({NUM})\b"
         ),
         "min_at_least",
-        0.7,
     ),
 )
 
@@ -100,7 +97,6 @@ class Extraction:
     kind: str  # min | max | default | enum
     value: Any
     rule: str
-    confidence: float
     unit: str | None = None
     conditional: bool = False
     note: str | None = None
@@ -139,36 +135,36 @@ def extract_ranges(description: str) -> list[Extraction]:
     """설명문에서 하한/상한을 추출한다.
 
     여러 범위가 있으면(예: 볼륨 타입별로 다른 범위) **envelope**(가장 작은 하한,
-    가장 큰 상한)로 합치고 `conditional=True` + 신뢰도 0.6을 매긴다. envelope의
+    가장 큰 상한)로 합치고 `conditional=True`로 표시한다. envelope의
     명제("이 범위 밖은 어떤 설정으로도 무효")는 참이므로 유효한 반쪽 지식이다.
     """
     text = _norm(description)
-    pairs: list[tuple[float | int, float | int, str, float, str]] = []
-    min_cands: list[tuple[float | int, str, float, str]] = []
-    max_cands: list[tuple[float | int, str, float, str]] = []
+    pairs: list[tuple[float | int, float | int, str, str]] = []
+    min_cands: list[tuple[float | int, str, str]] = []
+    max_cands: list[tuple[float | int, str, str]] = []
     lone_mins: list[float | int] = []
     lone_maxs: list[float | int] = []
 
     for block in _blocks(text):
         if _VETO.search(block):
             continue  # 비율/증분/예시 문장 — 범위로 오인하면 안 됨
-        for pattern, rule, conf in _PAIR_RULES:
+        for pattern, rule in _PAIR_RULES:
             for match in pattern.finditer(block):
                 low, high = _num(match.group(1)), _num(match.group(2))
                 if low > high:
                     continue  # 역전된 쌍은 애초에 범위가 아니다
-                pairs.append((low, high, rule, conf, block))
-                min_cands.append((low, rule, conf, block))
-                max_cands.append((high, rule, conf, block))
-        for pattern, rule, conf in _MIN_RULES:
+                pairs.append((low, high, rule, block))
+                min_cands.append((low, rule, block))
+                max_cands.append((high, rule, block))
+        for pattern, rule in _MIN_RULES:
             for match in pattern.finditer(block):
                 value = _num(match.group(1))
-                min_cands.append((value, rule, conf, block))
+                min_cands.append((value, rule, block))
                 lone_mins.append(value)
-        for pattern, rule, conf in _MAX_RULES:
+        for pattern, rule in _MAX_RULES:
             for match in pattern.finditer(block):
                 value = _num(match.group(1))
-                max_cands.append((value, rule, conf, block))
+                max_cands.append((value, rule, block))
                 lone_maxs.append(value)
 
     if not min_cands and not max_cands:
@@ -176,8 +172,8 @@ def extract_ranges(description: str) -> list[Extraction]:
 
     # R3: 자기모순 검사. 단독 하한은 무조건적 주장이므로 어떤 상한보다도 작아야 한다.
     # (조건부로 서로 떨어진 범위들끼리는 비교하지 않는다 — 정상일 수 있으므로)
-    highs = [high for _, high, _, _, _ in pairs] + lone_maxs
-    lows = [low for low, _, _, _, _ in pairs] + lone_mins
+    highs = [high for _, high, _, _ in pairs] + lone_maxs
+    lows = [low for low, _, _, _ in pairs] + lone_mins
     if any(m > h for m in lone_mins for h in highs) or any(
         x < low for x in lone_maxs for low in lows
     ):
@@ -186,31 +182,30 @@ def extract_ranges(description: str) -> list[Extraction]:
     # 같은 경계에 서로 다른 값이 여러 개면 조건부다 (예: 티어별로 다른 하한).
     conditional = (
         len(pairs) > 1
-        or len({value for value, _, _, _ in min_cands}) > 1
-        or len({value for value, _, _, _ in max_cands}) > 1
+        or len({value for value, _, _ in min_cands}) > 1
+        or len({value for value, _, _ in max_cands}) > 1
     )
     note = None
     if conditional:
-        blocks = list(dict.fromkeys(block for _, _, _, block in min_cands + max_cands))
+        blocks = list(dict.fromkeys(block for _, _, block in min_cands + max_cands))
         note = _shorten(" / ".join(blocks))
 
     results: list[Extraction] = []
     sentinel = bool(_SENTINEL.search(text))
     if min_cands and not sentinel:
-        value, rule, conf, block = min(min_cands, key=lambda item: item[0])
+        value, rule, block = min(min_cands, key=lambda item: item[0])
         results.append(
             Extraction(
                 kind="min",
                 value=value,
                 rule=rule,
-                confidence=0.6 if conditional else conf,
                 unit=_unit_of(block),
                 conditional=conditional,
                 note=note,
             )
         )
     if max_cands:
-        value, rule, conf, block = max(max_cands, key=lambda item: item[0])
+        value, rule, block = max(max_cands, key=lambda item: item[0])
         sentinel_note = (
             "범위 밖의 특수값(-1/0 등)이 따로 허용되어 하한은 기록하지 않음"
             if sentinel
@@ -222,7 +217,6 @@ def extract_ranges(description: str) -> list[Extraction]:
                 kind="max",
                 value=value,
                 rule=rule,
-                confidence=0.6 if conditional else conf,
                 unit=_unit_of(block),
                 conditional=conditional,
                 note=merged or None,
@@ -243,13 +237,13 @@ def extract_default(description: str, *, numeric: bool = True) -> Extraction | N
         match = _DEFAULT_NUM.search(text)
         if match:
             return Extraction(
-                kind="default", value=_num(match.group(1)), rule="default_num", confidence=0.8
+                kind="default", value=_num(match.group(1)), rule="default_num"
             )
         return None
     match = _DEFAULT_STR.search(text)
     if match:
         return Extraction(
-            kind="default", value=match.group(1).strip(), rule="default_str", confidence=0.8
+            kind="default", value=match.group(1).strip(), rule="default_str"
         )
     return None
 
@@ -268,4 +262,4 @@ def extract_enum(description: str) -> Extraction | None:
     values = [v for v in values if v]
     if len(values) < 2:
         return None
-    return Extraction(kind="enum", value=values, rule="enum_valid_values", confidence=0.8)
+    return Extraction(kind="enum", value=values, rule="enum_valid_values")

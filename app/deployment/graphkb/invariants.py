@@ -5,7 +5,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 
-from kbcommon.invariants import Invariant, Violation, one_confidence_per_evidence
+from kbcommon.invariants import Invariant, Violation, one_basis_per_evidence
 
 
 def _no_casing_duplicates(dataset: dict) -> Iterable[Violation]:
@@ -69,9 +69,9 @@ INVARIANTS = (
         check=_edges_point_at_real_nodes,
     ),
     Invariant(
-        name="one-confidence-per-evidence",
-        question="같은 근거 라벨에 신뢰도가 하나만 붙는가?",
-        severity="report",
-        check=one_confidence_per_evidence("edges"),
+        name="one-basis-per-evidence",
+        question="같은 근거 라벨의 성격이 하나로 일치하는가?",
+        severity="error",
+        check=one_basis_per_evidence("edges"),
     ),
 )

@@ -27,7 +27,6 @@ def constraint(**overrides) -> Constraint:
         "kind": "max",
         "value": 65536,
         "evidence": "cfn-description",
-        "confidence": 0.6,
         "value_type": "integer",
         "unit": "GiB",
         "conditional": True,
@@ -45,40 +44,40 @@ def capacity() -> CapacitySet:
     result.add_constraint(
         constraint(
             property="Iops", kind="max", value=64000, evidence="cfn-schema",
-            confidence=1.0, unit="IOPS", conditional=False,
+            unit="IOPS", conditional=False,
         )
     )
     result.add_constraint(
         constraint(
             property="Iops", kind="min", value=100, evidence="cfn-schema",
-            confidence=1.0, unit="IOPS", conditional=False,
+            unit="IOPS", conditional=False,
         )
     )
     result.add_constraint(
         constraint(
             property="VolumeType", kind="enum", value=["gp2", "gp3", "io1"],
-            evidence="cfn-schema", confidence=1.0, unit=None, conditional=False,
+            evidence="cfn-schema", unit=None, conditional=False,
             value_type="string",
         )
     )
     result.add_constraint(
         constraint(
             type_id=SUBNET, property="VpcId", kind="mutability", value="create_only",
-            evidence="cfn-schema", confidence=1.0, unit=None, conditional=False,
+            evidence="cfn-schema", unit=None, conditional=False,
             value_type="string",
         )
     )
     result.add_constraint(
         constraint(
             type_id=SUBNET, property="Ipv6CidrBlock", kind="mutability",
-            value="conditional_create_only", evidence="cfn-schema", confidence=1.0,
+            value="conditional_create_only", evidence="cfn-schema",
             unit=None, conditional=False, value_type="string",
         )
     )
     result.add_constraint(
         constraint(
             type_id=SUBNET, property="SubnetId", kind="mutability", value="read_only",
-            evidence="cfn-schema", confidence=1.0, unit=None, conditional=False,
+            evidence="cfn-schema", unit=None, conditional=False,
             value_type="string",
         )
     )
@@ -88,7 +87,6 @@ def capacity() -> CapacitySet:
             name="Subnets per virtual network",
             source_doc="azure-virtual-network-limits.md",
             evidence="azure-limits-doc",
-            confidence=0.9,
             scope="virtual network",
             default=3000,
             type_id="azure::Microsoft.Network/virtualNetworks/subnets",
@@ -127,7 +125,7 @@ def test_check_above_schema_max(capacity: CapacitySet) -> None:
     assert "cfn-schema" in result.violations[0]
 
 
-def test_low_confidence_constraint_is_advisory_not_verdict(capacity: CapacitySet) -> None:
+def test_guess_is_advisory_not_verdict(capacity: CapacitySet) -> None:
     """산문 유래(0.6) 제약은 값을 거부하지 않고 참고로만 알린다 — fail-open."""
     result = check_value(capacity, VOLUME, "Size", 100000)
     assert result.violations == []
@@ -155,8 +153,8 @@ def test_value_within_advisory_range_is_ok(capacity: CapacitySet) -> None:
     assert result.verdict in ("ok", "unknown")
 
 
-def test_low_confidence_can_be_enforced_explicitly(capacity: CapacitySet) -> None:
-    result = check_value(capacity, VOLUME, "Size", 100000, min_confidence=0.5)
+def test_guess_can_be_enforced_explicitly(capacity: CapacitySet) -> None:
+    result = check_value(capacity, VOLUME, "Size", 100000, facts_only=False)
     assert not result.ok
     assert "최대 65536 GiB" in result.violations[0]
 
@@ -182,9 +180,9 @@ def test_check_unknown_property_is_not_a_verdict(capacity: CapacitySet) -> None:
 # --- limits / immutable / quota ---
 
 
-def test_limits_for_filters_by_confidence(capacity: CapacitySet) -> None:
+def test_limits_for_can_show_facts_only(capacity: CapacitySet) -> None:
     assert len(limits_for(capacity, VOLUME)) == 4
-    assert len(limits_for(capacity, VOLUME, min_confidence=0.8)) == 3
+    assert len(limits_for(capacity, VOLUME, facts_only=True)) == 3
     assert len(limits_for(capacity, VOLUME, prop="Iops")) == 2
 
 

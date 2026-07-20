@@ -16,7 +16,6 @@ def make_constraint(**overrides) -> Constraint:
         "kind": "max",
         "value": 65536,
         "evidence": "cfn-description",
-        "confidence": 0.6,
         "value_type": "integer",
         "unit": "GiB",
         "conditional": True,
@@ -32,7 +31,6 @@ def make_quota(**overrides) -> Quota:
         "name": "Subnets per virtual network",
         "source_doc": "azure-virtual-network-limits.md",
         "evidence": "azure-limits-doc",
-        "confidence": 0.9,
         "scope": "virtual network",
         "default": 3000,
         "type_id": "azure::Microsoft.Network/virtualNetworks/subnets",
@@ -58,9 +56,9 @@ def test_validate_passes() -> None:
     make_set().validate()
 
 
-def test_validate_rejects_bad_confidence() -> None:
+def test_validate_rejects_unknown_basis() -> None:
     bad = CapacitySet()
-    bad.add_constraint(make_constraint(confidence=1.5))
+    bad.add_constraint(make_constraint(basis="probably"))
     with pytest.raises(jsonschema.ValidationError):
         bad.validate()
 
@@ -90,32 +88,33 @@ def test_validate_rejects_bad_mutability_value() -> None:
     good.validate()
 
 
-def test_dedup_keeps_higher_confidence() -> None:
+def test_dedup_keeps_the_fact_over_the_guess() -> None:
+    """같은 키면 원본이 명시한 것이 짐작을 이긴다 — 순서와 무관하게."""
     result = CapacitySet()
-    result.add_constraint(make_constraint(evidence="cfn-description", confidence=0.6))
+    result.add_constraint(make_constraint(evidence="cfn-description"))
     result.add_constraint(
-        make_constraint(evidence="cfn-schema", confidence=1.0, conditional=False)
+        make_constraint(evidence="cfn-schema", conditional=False)
     )
     assert len(result.constraints) == 1
     assert result.constraints[0].evidence == "cfn-schema"
-    # 낮은 신뢰도가 뒤에 와도 덮어쓰지 않는다
-    result.add_constraint(make_constraint(evidence="cfn-description", confidence=0.6))
+    # 짐작이 뒤에 와도 덮어쓰지 않는다
+    result.add_constraint(make_constraint(evidence="cfn-description"))
     assert result.constraints[0].evidence == "cfn-schema"
 
 
 def test_different_kinds_coexist() -> None:
-    """같은 프로퍼티라도 kind가 다르면 근거·신뢰도가 따로 유지된다 (narrow 모델의 핵심)."""
+    """같은 프로퍼티라도 kind가 다르면 근거가 따로 유지된다 (narrow 모델의 핵심)."""
     result = CapacitySet()
     result.add_constraint(
-        make_constraint(kind="min", value=1, evidence="cfn-schema", confidence=1.0)
+        make_constraint(kind="min", value=1, evidence="cfn-schema")
     )
     result.add_constraint(
-        make_constraint(kind="max", value=900, evidence="cfn-description", confidence=0.8)
+        make_constraint(kind="max", value=900, evidence="cfn-description")
     )
     assert len(result.constraints) == 2
     kinds = {c.kind: c for c in result.constraints}
-    assert kinds["min"].confidence == 1.0
-    assert kinds["max"].confidence == 0.8
+    assert kinds["min"].basis == "stated"      # 스키마 필드
+    assert kinds["max"].basis == "inferred"    # 설명문에서 뽑음
 
 
 def test_has_and_get_constraint() -> None:
@@ -136,10 +135,15 @@ def test_for_type_and_for_property() -> None:
     assert len(result.for_property("aws::AWS::EC2::Volume", "Size")) == 2
 
 
-def test_quota_dedup_and_nonnumeric_default() -> None:
+def test_quota_dedup_prefers_the_stated_number() -> None:
+    """비수치 값은 파서가 `azure-limits-note`(짐작)로 라벨을 달아 보낸다.
+
+    그래서 표에서 읽은 숫자(azure-limits-doc, 사실)가 이긴다 — 도착 순서와 무관하게.
+    예전엔 신뢰도 0.9 vs 0.7로 갈랐는데, 그 숫자에는 정의가 없었다.
+    """
     result = CapacitySet()
-    result.add_quota(make_quota(default="Contact support", confidence=0.7))
-    result.add_quota(make_quota(default=3000, confidence=0.9))
+    result.add_quota(make_quota(default="Contact support", evidence="azure-limits-note"))
+    result.add_quota(make_quota(default=3000))
     assert len(result.quotas) == 1
     assert result.quotas[0].default == 3000
     result.validate()
@@ -170,9 +174,9 @@ def test_save_validates_before_writing(tmp_path) -> None:
     쓰다 끊기면 잘린 JSON이 남았다.
     """
     bad = CapacitySet()
-    bad.add_constraint(make_constraint(confidence=2.0))
+    bad.add_constraint(make_constraint(kind="vibes"))
     path = tmp_path / "bad.json"
-    with pytest.raises(ArtifactInvalid, match="confidence"):
+    with pytest.raises(ArtifactInvalid, match="kind"):
         bad.save(path)
     assert not path.exists()
 

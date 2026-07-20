@@ -194,31 +194,26 @@ def test_sentinel_specify_zero_drops_lower_bound() -> None:
     assert found["max"].value == 20
 
 
-def test_conditional_envelope_has_low_confidence_and_note() -> None:
+def test_conditional_envelope_has_a_note() -> None:
     found = {e.kind: e for e in extract_ranges(VOLUME_SIZE)}
-    assert found["max"].confidence == 0.6
     assert found["max"].conditional is True
     assert "gp3" in found["max"].note
     assert found["max"].unit == "GiB"
 
 
-def test_single_range_keeps_rule_confidence() -> None:
+def test_single_range_keeps_the_rule() -> None:
     found = {e.kind: e for e in extract_ranges(VOLUME_THROUGHPUT)}
     assert found["min"].rule == "valid_range"
-    assert found["min"].confidence == 0.8
-    assert found["max"].confidence == 0.8
 
 
-def test_unlabelled_rules_get_lower_confidence() -> None:
+def test_unlabelled_rules_still_extract() -> None:
     found = {e.kind: e for e in extract_ranges(SQS_WAIT_TIME)}
     assert found["max"].rule == "from_to"
-    assert found["max"].confidence == 0.7
 
 
 def test_max_allowed_rule() -> None:
     found = {e.kind: e for e in extract_ranges(LAMBDA_TIMEOUT)}
     assert found["max"].rule == "max_allowed"
-    assert found["max"].confidence == 0.8
     assert found["max"].unit == "seconds"
 
 
@@ -322,7 +317,6 @@ def test_no_default() -> None:
 def test_enum_from_explicit_valid_values() -> None:
     found = extract_enum(RDS_STORAGE_TYPE)
     assert found.value == ["gp2", "gp3", "io1", "io2", "standard"]
-    assert found.confidence == 0.8
 
 
 def test_enum_not_extracted_from_bullets() -> None:

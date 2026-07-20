@@ -25,7 +25,7 @@ _EDGE_KEYS = [
     ("required", "boolean"),
     ("cardinality", "string"),
     ("evidence", "string"),
-    ("confidence", "double"),
+    ("basis", "string"),
 ]
 
 

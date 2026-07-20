@@ -82,7 +82,7 @@ def perf_built(tmp_path, monkeypatch):
     - azure/gcp/alibaba도 없다 — 미추적 프로바이더 경로.
     """
     burst = {"value": False, "note": _BURST_NOTE,
-             "evidence": "aws-burstable-field", "confidence": 1.0}
+             "evidence": "aws-burstable-field", "basis": "stated"}
     records = [
         {"id": "aws+us-east-1+t3a.medium", "provider": "aws", "specName": "t3a.medium",
          "sustainedCpu": burst},
@@ -90,7 +90,7 @@ def perf_built(tmp_path, monkeypatch):
          "sustainedCpu": burst},
         {"id": "aws+us-east-1+c5.large", "provider": "aws", "specName": "c5.large",
          "sustainedCpu": {"value": True, "note": None,
-                          "evidence": "aws-burstable-field", "confidence": 1.0},
+                          "evidence": "aws-burstable-field", "basis": "stated"},
          "currentGeneration": True},
     ]
     (tmp_path / "tumblebug-perf.json").write_text(

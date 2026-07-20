@@ -22,6 +22,7 @@ from graphkb.query import (
     rank_types as _rank_types,
     resolve_node,
 )
+from kbcommon.basis import describe
 
 DEFAULT_OUTPUT_DIR = Path("output")
 GRAPH_FILES = (
@@ -203,13 +204,13 @@ def describe_type(
     outgoing = [e for e in graph.edges if e.from_id == node.id]
     if outgoing:
         lines.append("- 의존(나가는 엣지):")
-        for edge in sorted(outgoing, key=lambda e: (-e.confidence, e.to_id)):
+        for edge in sorted(outgoing, key=lambda e: (not e.is_fact, e.to_id)):
             required = "필수" if edge.required else "선택"
             via = f" via {edge.via_property}" if edge.via_property else ""
             lines.append(
                 f"  · {edge.type} → {edge.to_id}{via} "
                 f"({required}, {edge.cardinality}, {edge.evidence}, "
-                f"신뢰도 {edge.confidence})"
+                f"{describe(edge.basis, edge.reviewed)})"
             )
     else:
         lines.append("- 의존(나가는 엣지): 없음")

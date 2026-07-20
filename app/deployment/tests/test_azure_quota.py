@@ -42,7 +42,7 @@ def test_golden_subnets_per_vnet(vnet: list[Quota]) -> None:
     assert found.scope == "virtual network"
     assert found.provider == "azure"
     assert found.evidence == "azure-limits-doc"
-    assert found.confidence == 0.9
+    assert found.basis == "stated"
     assert found.source_doc == "azure-virtual-network-limits.md"
 
 
@@ -77,20 +77,20 @@ def test_link_target_with_nested_parentheses(subscription: list[Quota]) -> None:
     assert not any(")" in q.name and "(" not in q.name for q in subscription)
 
 
-def test_footnote_lowers_confidence_and_notes(subscription: list[Quota]) -> None:
+def test_footnote_switches_label_and_notes(subscription: list[Quota]) -> None:
     """각주가 붙은 값은 조건에 따라 달라질 수 있다 (EA vs 종량제 등)."""
     found = by_name(subscription, "vCPUs per subscription")
-    assert found.confidence == 0.7
+    assert found.basis == "inferred"
     assert "각주" in found.note
     # 각주 없는 행은 0.9
-    assert by_name(subscription, "DNS servers per subscription").confidence == 0.9
+    assert by_name(subscription, "DNS servers per subscription").basis == "stated"
 
 
 def test_non_numeric_values_preserved_as_string(vnet: list[Quota]) -> None:
     found = by_name(vnet, "Public IP addresses")
     assert found.default == 10
     assert found.maximum == "Contact support"
-    assert found.confidence == 0.7  # 비수치 값 포함
+    assert found.basis == "inferred"  # 비수치 값 포함
 
     prefix = by_name(vnet, "Public IP prefix length")
     assert prefix.default == "/28"

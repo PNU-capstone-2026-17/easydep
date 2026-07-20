@@ -33,7 +33,6 @@ def edge(from_id: str, to_id: str, *, required: bool = True, type_: str = "refer
         required=required,
         cardinality="one",
         evidence="swagger-field",
-        confidence=1.0,
     )
 
 
@@ -175,14 +174,14 @@ def test_rank_counts_distinct_types_not_edges() -> None:
         Edge(
             from_id="core::vm", to_id="core::vNet", type="references",
             via_property="vNetId", required=True, cardinality="one",
-            evidence="swagger-field", confidence=1.0,
+            evidence="swagger-field",
         )
     )
     graph.add_edge(
         Edge(
             from_id="core::vm", to_id="core::vNet", type="references",
             via_property="defaultVNetId", required=False, cardinality="one",
-            evidence="swagger-field", confidence=1.0,
+            evidence="swagger-field",
         )
     )
     assert rank_types(graph, by="dependencies")[0][1] == 1

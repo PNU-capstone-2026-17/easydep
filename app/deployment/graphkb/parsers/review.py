@@ -202,7 +202,6 @@ def apply_review(graph: Graph, provider: str, *, path: Path | None = None) -> di
                 required=bool(entry.get("required", False)),
                 cardinality=entry.get("cardinality", "one"),
                 evidence="human-review",
-                confidence=1.0,
                 reviewed=True,
             )
         )

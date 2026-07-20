@@ -60,10 +60,9 @@ def _build_parser() -> argparse.ArgumentParser:
     query.add_argument("--property", help="대상 속성 (limits/check 용)")
     query.add_argument("--value", help="판정할 값 (check 용)")
     query.add_argument(
-        "--min-confidence",
-        type=float,
-        default=None,
-        help="이 신뢰도 미만 제약은 제외 (기본: limits=0.0, check=0.8)",
+        "--facts-only",
+        action="store_true",
+        help="짐작(산문·이름 추론)에서 나온 제약은 빼고 원본이 명시한 것만 본다",
     )
     query.add_argument(
         "--data",
@@ -160,7 +159,7 @@ def _cmd_query(args: argparse.Namespace) -> int:
             capacity,
             type_id,
             prop=args.property,
-            min_confidence=args.min_confidence or 0.0,
+            facts_only=args.facts_only,
         )
         print(f"{type_id} 제약 {len(found)}건:")
         for item in found:
@@ -172,8 +171,8 @@ def _cmd_query(args: argparse.Namespace) -> int:
             return 1
         type_id = resolve_type(capacity, args.check)
         kwargs = (
-            {"min_confidence": args.min_confidence}
-            if args.min_confidence is not None
+            {"facts_only": args.facts_only}
+            if args.facts_only
             else {}
         )
         result = check_value(capacity, type_id, args.property, _coerce(args.value), **kwargs)

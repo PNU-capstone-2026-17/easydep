@@ -8,13 +8,13 @@ config/crds/resources/ 아래 리소스별 CRD YAML (v1.153.0 태그 고정 —
 대상 kind는 CRD 안에 구조화 메타데이터가 없어 3단계로 해석한다:
 
 1. config/servicemappings/<service>.yaml 의 (kind, key) → gvk.kind
-   (구조화된 명시 메타데이터: evidence=kcc-ref, confidence 1.0)
+   (구조화된 명시 메타데이터: evidence=kcc-ref → 원본이 명시)
 2. description 텍스트의 생성 패턴 정규식
    ("Allowed value: The `selfLink` field of a `ComputeNetwork` resource." /
    "externally managed ComputeNetwork resource" / "The name of a X resource")
-   (evidence=kcc-ref, confidence 0.9)
+   (evidence=kcc-description → 짐작)
 3. 필드명 휴리스틱 (networkRef → *Network kind 유일 매칭)
-   (evidence=heuristic, confidence 0.6/0.5)
+   (evidence=heuristic → 짐작)
 
 DCL 기반 CRD는 description이 generic이라 1번 없이는 대상을 알 수 없다.
 """
@@ -130,11 +130,18 @@ def _resolve_target(
     sm_index: dict[tuple[str, str], str],
     known_kinds: set[str],
     heuristics: bool,
-) -> tuple[str, str, float, str] | None:
-    """참조 필드의 대상을 3단계로 해석한다. (kind, evidence, confidence, 대상필드)."""
+) -> tuple[str, str, str] | None:
+    """참조 필드의 대상을 3단계로 해석한다. (kind, evidence, 대상필드).
+
+    세 단계는 성격이 다르므로 **라벨도 다르다.** 1번은 ServiceMapping의 구조화
+    필드라 원본이 명시한 것이고(`kcc-ref`), 2·3번은 산문과 이름에서 짐작한
+    것이다(`kcc-description`, `heuristic`). 예전에는 1·2번이 같은 `kcc-ref`
+    라벨을 쓰면서 신뢰도만 1.0/0.9로 갈렸는데, 그 탓에 라벨 단위 검수가
+    **짐작까지 싸잡아 승인**해 버렸다(gcp-edges.json의 통짜 confirmed).
+    """
     mapped = sm_index.get((kind, field_name))
     if mapped:
-        return mapped[0], "kcc-ref", 1.0, mapped[1]
+        return mapped[0], "kcc-ref", mapped[1]
 
     # 설명문에서 뽑은 이름은 **실재하는 종류인지 확인한다.** 정규식이 잡아낸 단어가
     # 곧 KCC 종류라는 보장이 없다 — 소문자 "service"를 종류로 읽어 `gcp::service`라는
@@ -171,11 +178,11 @@ def _resolve_target(
         # 첫 패턴만 대상 필드를 함께 준다 ("The `selfLink` field of a `X` resource").
         field_match = _DESC_WITH_FIELD.search(text)
         if field_match and (found := as_kind(field_match.group(2))):
-            return found, "kcc-ref", 0.9, field_match.group(1)
+            return found, "kcc-description", field_match.group(1)
         for pattern in _DESC_PATTERNS:
             match = pattern.search(text)
             if match and (found := as_kind(match.group(1))):
-                return found, "kcc-ref", 0.9, ""
+                return found, "kcc-description", ""
 
     if heuristics:
         base = _REF_FIELD.match(field_name)
@@ -188,9 +195,7 @@ def _resolve_target(
                     k for k in candidates if _service_of_kind(k) == service
                 ]
             if len(candidates) == 1:
-                target = candidates[0]
-                same = _service_of_kind(target) == _service_of_kind(kind)
-                return target, "heuristic", 0.6 if same else 0.5, ""
+                return candidates[0], "heuristic", ""
     return None
 
 
@@ -249,7 +254,7 @@ def parse_crds(
                     heuristics=heuristics,
                 )
                 if resolved is not None:
-                    target, evidence, confidence, target_field = resolved
+                    target, evidence, target_field = resolved
                     graph.add_node(_node(target))
                     graph.add_edge(
                         Edge(
@@ -260,7 +265,6 @@ def parse_crds(
                             required=prop_name in required_set,
                             cardinality="many" if many else "one",
                             evidence=evidence,
-                            confidence=confidence,
                             target_property=target_field,
                         )
                     )

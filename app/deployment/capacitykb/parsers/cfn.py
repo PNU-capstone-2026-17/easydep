@@ -138,7 +138,6 @@ def _add_schema_constraints(
                 kind=kind,
                 value=value,
                 evidence=EVIDENCE_SCHEMA,
-                confidence=1.0,
                 value_type=value_type,
             )
         )
@@ -183,7 +182,6 @@ def _walk(
                         kind="required",
                         value=True,
                         evidence=EVIDENCE_SCHEMA,
-                        confidence=1.0,
                     )
                 )
             _add_schema_constraints(capacity, type_id, prop_path, prop)
@@ -276,7 +274,6 @@ def _apply_prose(
                 kind=item.kind,
                 value=item.value,
                 evidence=EVIDENCE_PROSE,
-                confidence=item.confidence,
                 value_type=value_type,
                 unit=item.unit,
                 conditional=item.conditional,
@@ -320,7 +317,6 @@ def parse_schemas(
                         kind="mutability",
                         value=mutability,
                         evidence=EVIDENCE_SCHEMA,
-                        confidence=1.0,
                     )
                 )
 

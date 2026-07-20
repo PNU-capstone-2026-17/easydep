@@ -138,29 +138,33 @@ def accelerator_fields_agree(record_key: str) -> Callable[[dict], Iterable[Viola
     return check
 
 
-def one_confidence_per_evidence(*record_keys: str) -> Callable[[dict], Iterable[Violation]]:
-    """같은 근거 라벨에 신뢰도가 두 값 이상 붙었는가.
+def one_basis_per_evidence(*record_keys: str) -> Callable[[dict], Iterable[Violation]]:
+    """한 근거 라벨의 성격이 하나로 일치하는가.
 
-    라벨이 근거를 뜻한다면 등급은 라벨에서 결정돼야 한다. 값이 갈린다는 것은
-    **그 라벨이 서로 다른 두 가지를 뭉뚱그리고 있다**는 뜻이므로, 위반이 곧
-    "라벨을 쪼개라"는 신호다(감사 §5-3).
+    라벨이 "어떻게 알았는가"를 뜻한다면 그 성격(원본 명시/짐작)은 라벨에서 정해져야
+    한다. 갈린다는 것은 **그 라벨이 서로 다른 두 가지를 뭉뚱그리고 있다**는 뜻이므로,
+    위반이 곧 "라벨을 쪼개라"는 신호다.
+
+    실제로 이 검사가 신뢰도 시절에 두 라벨을 지목했고(`kcc-ref` 0.9/1.0,
+    `azure-limits-doc` 0.7/0.9), 둘 다 쪼개는 것이 답이었다. `kcc-ref`는 그 탓에
+    라벨 단위 검수가 **짐작까지 싸잡아 승인**하고 있었다.
     """
 
     def check(dataset: dict) -> Iterable[Violation]:
-        seen: dict[str, set[float]] = {}
+        seen: dict[str, set[str]] = {}
         for key in record_keys:
             for record in dataset.get(key) or []:
                 if not isinstance(record, dict):
                     continue
-                evidence, confidence = record.get("evidence"), record.get("confidence")
-                if evidence is None or confidence is None:
+                evidence, basis = record.get("evidence"), record.get("basis")
+                if evidence is None or basis is None:
                     continue
-                seen.setdefault(evidence, set()).add(confidence)
+                seen.setdefault(evidence, set()).add(basis)
         for evidence, values in sorted(seen.items()):
             if len(values) > 1:
                 yield Violation(
                     where=evidence,
-                    detail=f"신뢰도가 {sorted(values)}로 갈립니다",
+                    detail=f"근거의 성격이 {sorted(values)}로 갈립니다",
                 )
 
     return check

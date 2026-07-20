@@ -58,7 +58,7 @@ def test_golden_os_disk_size_range(capacity: CapacitySet) -> None:
     max_found = find(capacity, prop, "max")
     assert max_found.value == 2048
     assert max_found.evidence == "bicep-type"
-    assert max_found.confidence == 1.0
+    assert max_found.basis == "stated"
     assert max_found.value_type == "integer"
 
 

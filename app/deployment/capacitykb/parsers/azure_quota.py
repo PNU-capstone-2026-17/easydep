@@ -40,7 +40,8 @@ DEFAULT_INCLUDES = (
 )
 
 PROVIDER = "azure"
-EVIDENCE = "azure-limits-doc"
+EVIDENCE = "azure-limits-doc"   # 표의 숫자 — 원본이 명시
+EVIDENCE_NOTE = "azure-limits-note"  # 각주가 붙었거나 숫자가 아닌 값 — 짐작
 
 # 링크 대상에 괄호가 중첩될 수 있다 — 한 단계까지 허용해야 한다.
 # (실측: `[Local networks](/previous-versions/azure/reference/jj157100(v=azure.100))`
@@ -144,7 +145,10 @@ def parse_markdown(text: str, source_doc: str) -> list[Quota]:
         if default is None and maximum is None:
             continue
 
-        # 각주가 붙었거나(조건부 기본값) 값이 수치가 아니면 신뢰도를 낮춘다
+        # 각주가 붙었거나 값이 수치가 아니면 **라벨을 바꾼다.** 예전엔 같은 라벨에
+        # 신뢰도만 0.9/0.7로 갈렸는데, 그건 한 라벨이 성격이 다른 두 가지를
+        # 뭉뚱그렸다는 뜻이었다. 표에서 읽은 숫자는 원본이 명시한 것이고,
+        # "varies"나 각주가 달린 값은 우리가 해석한 것이다.
         footnoted = bool(_SUP.search(cells[0]))
         non_numeric = any(isinstance(v, str) for v in (default, maximum) if v is not None)
         note = None
@@ -155,8 +159,7 @@ def parse_markdown(text: str, source_doc: str) -> list[Quota]:
                 provider=PROVIDER,
                 name=name,
                 source_doc=source_doc,
-                evidence=EVIDENCE,
-                confidence=0.7 if (footnoted or non_numeric) else 0.9,
+                evidence=EVIDENCE_NOTE if (footnoted or non_numeric) else EVIDENCE,
                 scope=_scope_of(name),
                 default=default,
                 maximum=maximum,

@@ -95,7 +95,7 @@ def test_mcp_axis_covers_execution_not_just_state() -> None:
 
 
 def test_evidence_claim_is_scoped_to_the_kbs_that_have_it() -> None:
-    """costkb는 카탈로그 스냅샷이라 evidence/confidence가 없다 —
+    """costkb는 카탈로그 스냅샷이라 evidence/basis가 없다 —
     '각 지식베이스는 근거와 신뢰도를 담고 있다'는 일반화는 거짓이 된다."""
     section = INSTRUCTIONS.split("# 클라우드 지식 질의")[1].split("질문의 **축**")[0]
     assert "kb_* / cap_* 지식베이스는" in section

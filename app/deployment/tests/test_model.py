@@ -27,7 +27,6 @@ def make_edge(**overrides) -> Edge:
         "required": True,
         "cardinality": "one",
         "evidence": "swagger-field",
-        "confidence": 1.0,
     }
     base.update(overrides)
     return Edge(**base)
@@ -58,9 +57,9 @@ def test_validate_passes_on_good_graph() -> None:
     make_graph().validate()
 
 
-def test_validate_rejects_bad_confidence() -> None:
+def test_validate_rejects_unknown_basis() -> None:
     graph = make_graph()
-    graph.edges[0] = make_edge(confidence=2.0)
+    graph.edges[0] = make_edge(basis="probably")
     with pytest.raises(jsonschema.ValidationError):
         graph.validate()
 
@@ -79,19 +78,20 @@ def test_add_node_idempotent() -> None:
     assert len(graph.nodes) == 1
 
 
-def test_add_edge_dedup_keeps_higher_confidence() -> None:
+def test_add_edge_dedup_keeps_the_fact_over_the_guess() -> None:
+    """같은 키면 원본이 명시한 것이 짐작을 이긴다 — 도착 순서와 무관하게."""
     graph = make_graph()
-    graph.add_edge(make_edge(evidence="heuristic", confidence=0.6))
+    graph.add_edge(make_edge(evidence="heuristic"))
     assert len(graph.edges) == 1
-    assert graph.edges[0].confidence == 1.0
+    assert graph.edges[0].evidence == "swagger-field"  # 사실이 짐작을 이긴다
 
     graph2 = Graph()
     graph2.add_node(make_node("core::vNet"))
     graph2.add_node(make_node("core::subnet"))
-    graph2.add_edge(make_edge(evidence="heuristic", confidence=0.6))
-    graph2.add_edge(make_edge(evidence="swagger-field", confidence=1.0))
+    graph2.add_edge(make_edge(evidence="heuristic"))
+    graph2.add_edge(make_edge(evidence="relationshipRef"))
     assert len(graph2.edges) == 1
-    assert graph2.edges[0].evidence == "swagger-field"
+    assert graph2.edges[0].evidence == "relationshipRef"
 
 
 def test_add_edge_rejects_self_loop() -> None:

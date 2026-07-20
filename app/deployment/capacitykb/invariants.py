@@ -10,7 +10,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 
-from kbcommon.invariants import Invariant, Violation, one_confidence_per_evidence
+from kbcommon.invariants import Invariant, Violation, one_basis_per_evidence
 
 
 def _by_property(dataset: dict) -> dict[tuple[str, str], dict[str, dict]]:
@@ -67,11 +67,10 @@ INVARIANTS = (
         check=_read_only_is_not_required,
     ),
     Invariant(
-        name="one-confidence-per-evidence",
-        question="같은 근거 라벨에 신뢰도가 하나만 붙는가?",
-        # report인 이유: 고치려면 라벨을 쪼개거나 척도를 다시 설계해야 한다(R4).
-        # 지금 위반을 없애자고 숫자를 맞추면 근거 없는 수치가 하나 더 생길 뿐이다.
-        severity="report",
-        check=one_confidence_per_evidence("constraints", "quotas"),
+        name="one-basis-per-evidence",
+        question="같은 근거 라벨의 성격이 하나로 일치하는가?",
+        # R4에서 라벨을 쪼갰으므로 이제 위반은 곧 버그다. 다시 뭉뚱그려지면 막는다.
+        severity="error",
+        check=one_basis_per_evidence("constraints", "quotas"),
     ),
 )

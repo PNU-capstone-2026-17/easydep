@@ -62,7 +62,7 @@ def test_golden_subnet_to_vpc_via_cdk_oob(graph: Graph) -> None:
     assert len(edges) == 1
     edge = edges[0]
     assert edge.evidence == "cdk-oob"
-    assert edge.confidence == 0.9
+    assert edge.basis == "stated"
     assert edge.required is True  # Subnet 스키마에서 VpcId는 required
     assert edge.cardinality == "one"
 
@@ -78,7 +78,7 @@ def test_relationship_ref_in_array_items(graph: Graph) -> None:
     ]
     assert len(edges) == 1
     assert edges[0].evidence == "relationshipRef"
-    assert edges[0].confidence == 1.0
+    assert edges[0].basis == "stated"
     assert edges[0].cardinality == "many"
 
 
@@ -112,12 +112,12 @@ def test_heuristic_edge_from_plain_vpcid(graph: Graph) -> None:
     ]
     assert len(edges) == 1
     assert edges[0].evidence == "heuristic"
-    assert edges[0].confidence == 0.6
+    assert edges[0].basis == "inferred"
     assert edges[0].required is True
 
 
 def test_legacy_schema_heuristics(graph: Graph) -> None:
-    """구형 스키마: 휴리스틱 엣지 생성, 교차 서비스 confidence 0.5."""
+    """구형 스키마: 휴리스틱 엣지 생성, 교차 서비스 포함."""
     to_vpc = [
         e
         for e in find_edges(graph, "aws::AWS::Legacy::Widget", "aws::AWS::EC2::VPC")
@@ -125,7 +125,7 @@ def test_legacy_schema_heuristics(graph: Graph) -> None:
     ]
     assert len(to_vpc) == 1
     assert to_vpc[0].evidence == "heuristic"
-    assert to_vpc[0].confidence == 0.5
+    assert to_vpc[0].basis == "inferred"
     to_subnet = [
         e
         for e in find_edges(graph, "aws::AWS::Legacy::Widget", "aws::AWS::EC2::Subnet")
@@ -177,7 +177,7 @@ def test_no_heuristics_flag(graph: Graph) -> None:
     ]
 
 
-def test_dedup_prefers_higher_confidence(graph: Graph) -> None:
+def test_dedup_prefers_the_fact(graph: Graph) -> None:
     """Subnet.VpcId는 heuristic(0.6)과 cdk-oob(0.9)가 겹치며 cdk-oob가 남는다."""
     edges = [
         e

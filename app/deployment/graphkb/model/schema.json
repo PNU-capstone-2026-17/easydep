@@ -64,7 +64,7 @@
           "required",
           "cardinality",
           "evidence",
-          "confidence"
+          "basis"
         ],
         "additionalProperties": false,
         "properties": {
@@ -105,15 +105,16 @@
               "arm-hierarchy",
               "bicep-ref",
               "kcc-ref",
+              "kcc-description",
               "cb-spider-driver",
               "human-review"
             ],
             "description": "관계를 알아낸 방법. human-review는 소스에 있는데 파서가 못 뽑아 사람이 직접 채운 것으로, graphkb/reviewed/*.json에 이유가 적혀 있다."
           },
-          "confidence": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1
+          "basis": {
+            "type": "string",
+            "enum": ["stated", "inferred"],
+            "description": "근거의 성격. stated는 원본이 그렇게 적어 놓은 것, inferred는 우리가 이름·산문·구조에서 짐작한 것이다. evidence 라벨에서 정해지며 라벨 하나에 성격 하나가 규칙이다(kbcommon/basis.py). 예전의 confidence(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다."
           },
           "reviewed": {
             "type": "boolean",

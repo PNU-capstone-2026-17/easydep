@@ -38,23 +38,30 @@ def test_build_cfn_and_query_limits(cfn_zip, tmp_path, capsys) -> None:
     assert "조건부" in stdout
 
 
-def test_check_rejects_out_of_range(cfn_zip, tmp_path, capsys) -> None:
+def test_check_rejects_when_a_stated_limit_is_broken(cfn_zip, tmp_path, capsys) -> None:
+    """**원본이 명시한** 제약을 어기면 거부한다.
+
+    Lambda Timeout의 min=1은 스키마 필드라 사실이다. 반면 max=900은 설명문에서
+    뽑은 짐작이라 거부 근거가 못 된다 — 아래 테스트가 그쪽을 다룬다.
+    """
     out = tmp_path / "aws-capacity.json"
     main(["build", "--source", "cfn", "--zip-url", cfn_zip, "--output", str(out)])
     capsys.readouterr()
 
-    # Lambda Timeout 최대 900 (산문 0.8) → 기본 신뢰도 문턱(0.8)으로 판정된다
     assert main([
         "query", "--check", "AWS::Lambda::Function", "--property", "Timeout",
-        "--value", "1200", "--data", str(out),
+        "--value", "0", "--data", str(out),
     ]) == 0
     stdout = capsys.readouterr().out
     assert stdout.startswith("불가")
-    assert "900" in stdout
 
 
-def test_check_holds_when_only_low_confidence(cfn_zip, tmp_path, capsys) -> None:
-    """조건부 envelope(0.6)로는 거부하지 않되(fail-open), '가능'이라고도 하지 않는다."""
+def test_check_holds_when_only_a_guess(cfn_zip, tmp_path, capsys) -> None:
+    """짐작으로는 거부하지 않되(fail-open), "가능"이라고도 하지 않는다.
+
+    산문에서 뽑은 값으로 유효한 배포를 막으면 침묵보다 나쁘다. 그렇다고 통과라고
+    하면 아는 것을 숨기는 것이므로, 판정을 보류하고 참고로 보여준다.
+    """
     out = tmp_path / "aws-capacity.json"
     main(["build", "--source", "cfn", "--zip-url", cfn_zip, "--output", str(out)])
     capsys.readouterr()
@@ -66,13 +73,6 @@ def test_check_holds_when_only_low_confidence(cfn_zip, tmp_path, capsys) -> None
     stdout = capsys.readouterr().out
     assert stdout.startswith("판정 보류")
     assert "참고" in stdout
-
-    # 문턱을 낮추면 거부한다
-    assert main([
-        "query", "--check", "AWS::EC2::Volume", "--property", "Size",
-        "--value", "100000", "--min-confidence", "0.5", "--data", str(out),
-    ]) == 0
-    assert capsys.readouterr().out.startswith("불가")
 
 
 def test_query_immutable(cfn_zip, tmp_path, capsys) -> None:

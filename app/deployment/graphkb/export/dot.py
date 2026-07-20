@@ -15,7 +15,7 @@ def _quote(value: str) -> str:
 def write_dot(graph: Graph, path: Path) -> None:
     """그래프를 DOT 파일로 저장한다.
 
-    코어 노드는 box, 벤더 노드는 ellipse. confidence < 1.0 엣지는 dashed,
+    코어 노드는 box, 벤더 노드는 ellipse. **짐작인 엣지는 dashed**,
     contained_in 엣지는 회색으로 구분한다.
     """
     lines = ["digraph graphkb {", "  rankdir=LR;", "  node [fontsize=10];"]
@@ -26,7 +26,7 @@ def write_dot(graph: Graph, path: Path) -> None:
         )
     for edge in graph.edges:
         attrs = [f"label={_quote(edge.via_property)}"]
-        if edge.confidence < 1.0:
+        if not edge.is_fact:
             attrs.append("style=dashed")
         if edge.type == "contained_in":
             attrs.append("color=gray")

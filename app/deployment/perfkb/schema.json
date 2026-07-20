@@ -115,7 +115,7 @@
           "required": [
             "value",
             "evidence",
-            "confidence"
+            "basis"
           ],
           "properties": {
             "value": {
@@ -134,10 +134,10 @@
                 "azure-family-name"
               ]
             },
-            "confidence": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+            "basis": {
+              "type": "string",
+              "enum": ["stated", "inferred"],
+              "description": "근거의 성격. stated는 원본 필드를 그대로 옮긴 것, inferred는 이름 규칙에서 짐작한 것이다(kbcommon/basis.py)."
             }
           },
           "additionalProperties": false

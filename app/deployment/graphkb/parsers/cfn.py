@@ -1,12 +1,12 @@
 """AWS CloudFormation Registry 스키마 파서: AWS 벤더 레이어 그래프 추출.
 
-세 가지 근거 소스를 병합한다 (같은 엣지는 confidence 높은 쪽 유지):
+세 가지 근거 소스를 병합한다 (같은 엣지는 **사실인 쪽** 유지):
 
-1. relationshipRef (confidence 1.0) — 스키마에 명시된 참조 메타데이터.
+1. relationshipRef — 스키마에 명시된 참조 메타데이터 (원본 명시).
    단, 실측상 전체 ~1,600개 스키마 중 ~26개에만 존재해 커버리지가 매우 좁다.
-2. CDK out-of-band 관계 데이터 (cdk-oob, confidence 0.9) — AWS CDK 팀이
+2. CDK out-of-band 관계 데이터 (cdk-oob, 원본 명시) — AWS CDK 팀이
    별도 관리하는 relationships.json (~350타입/~970항목).
-3. 속성명 휴리스틱 (heuristic, confidence 0.6/0.5) — `*Id`/`*Arn` 속성명을
+3. 속성명 휴리스틱 (heuristic, 짐작) — `*Id`/`*Arn` 속성명을
    타입명과 매칭. 유일 매칭일 때만 엣지 생성해 오탐을 억제한다.
 
 readOnly 속성(생성 출력)은 생성 순서와 무관하므로 모든 소스에서 제외한다.
@@ -117,7 +117,7 @@ def _build_type_index(type_names: set[str]) -> dict[str, list[str]]:
 
 def _resolve_heuristic(
     prop_name: str, service: str, type_index: dict[str, list[str]]
-) -> tuple[str, float] | None:
+) -> str | None:
     """속성명에서 대상 타입을 추정한다. 유일 매칭일 때만 반환."""
     match = _ID_PROP.match(prop_name)
     if match is None:
@@ -130,8 +130,7 @@ def _resolve_heuristic(
         if len(same_service) != 1:
             return None
         target = same_service[0]
-    confidence = 0.6 if _service(target) == service else 0.5
-    return target, confidence
+    return target
 
 
 def _extract_schema_edges(
@@ -163,7 +162,6 @@ def _extract_schema_edges(
                 required=required,
                 cardinality="many" if in_array else "one",
                 evidence="relationshipRef",
-                confidence=1.0,
                 target_property=_target_property(ref.get("propertyPath")),
             )
         )
@@ -235,7 +233,7 @@ def _extract_schema_edges(
                 if heuristics and not _has_relationship_ref(prop):
                     resolved = _resolve_heuristic(prop_name, service, type_index)
                     if resolved is not None:
-                        target, confidence = resolved
+                        target = resolved
                         many = in_array or prop.get("type") == "array"
                         graph.add_edge(
                             Edge(
@@ -246,7 +244,6 @@ def _extract_schema_edges(
                                 required=prop_required,
                                 cardinality="many" if many else "one",
                                 evidence="heuristic",
-                                confidence=confidence,
                             )
                         )
 
@@ -292,7 +289,6 @@ def _apply_oob(graph: Graph, oob: dict, schemas_by_type: dict[str, dict]) -> Non
                         required=required,
                         cardinality="many" if many else "one",
                         evidence="cdk-oob",
-                        confidence=0.9,
                         target_property=_target_property(
                             target_entry.get("propertyPath")
                         ),

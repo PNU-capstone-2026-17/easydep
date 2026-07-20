@@ -209,8 +209,7 @@ def test_capacity_roundtrips_provenance(tmp_path) -> None:
 
     caps = CapacitySet()
     caps.add_constraint(Constraint(type_id="aws::AWS::EC2::Volume", property="Size",
-                                   kind="min", value=1, evidence="cfn-schema",
-                                   confidence=1.0))
+                                   kind="min", value=1, evidence="cfn-schema"))
     caps.provenance = [{"source": "cfn-schema", "sha256": "b" * 64}]
     out = tmp_path / "c.json"
     caps.save(out)

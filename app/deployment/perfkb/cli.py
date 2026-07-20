@@ -63,6 +63,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
     from perfkb.invariants import INVARIANTS
     from kbcommon.artifact import ArtifactInvalid, write_dataset
+    from kbcommon.basis import describe
     from kbcommon.invariants import announce
     from kbcommon.fetch import describe_source
 
@@ -110,7 +111,7 @@ def _describe(rec: dict) -> str:
         mark = "예" if sustained["value"] else "아니오"
         lines.append(
             f"  상시 CPU 성능 보장: {mark} "
-            f"(근거 {sustained['evidence']}, 신뢰도 {sustained['confidence']})"
+            f"(근거 {sustained['evidence']}, {describe(sustained.get('basis', ''))})"
         )
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")

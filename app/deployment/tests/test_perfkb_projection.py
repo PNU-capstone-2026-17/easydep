@@ -78,11 +78,11 @@ def azure_row(spec="Standard_B2s", family="standardBSFamily", acu=None, **over) 
 # --- sustainedCpu: 세 프로바이더, 세 메커니즘 ---
 
 
-def test_aws_burstable_is_not_sustained_with_full_confidence() -> None:
+def test_aws_burstable_is_not_sustained_and_is_stated() -> None:
     rec = project_row(aws_row(burstable="true"))
     assert rec["sustainedCpu"]["value"] is False
     assert rec["sustainedCpu"]["evidence"] == "aws-burstable-field"
-    assert rec["sustainedCpu"]["confidence"] == 1.0
+    assert rec["sustainedCpu"]["basis"] == "stated"
     assert "크레딧" in rec["sustainedCpu"]["note"]
 
 
@@ -97,17 +97,17 @@ def test_gcp_shared_cpu_is_a_different_mechanism_than_aws_burst() -> None:
     rec = project_row(gcp_row(shared="true"))
     assert rec["sustainedCpu"]["value"] is False
     assert rec["sustainedCpu"]["evidence"] == "gcp-shared-cpu-field"
-    assert rec["sustainedCpu"]["confidence"] == 1.0
+    assert rec["sustainedCpu"]["basis"] == "stated"
     assert "공유" in rec["sustainedCpu"]["note"]
     assert "크레딧" not in rec["sustainedCpu"]["note"]
 
 
-def test_azure_family_inference_carries_lower_confidence() -> None:
+def test_azure_family_inference_is_marked_as_a_guess() -> None:
     """이름 규칙 추론이라 1.0이 아니다 — B가 아닌 버스트 패밀리가 생기면 놓친다."""
     rec = project_row(azure_row(family="standardBsv2Family"))
     assert rec["sustainedCpu"]["value"] is False
     assert rec["sustainedCpu"]["evidence"] == "azure-family-name"
-    assert rec["sustainedCpu"]["confidence"] == 0.8
+    assert rec["sustainedCpu"]["basis"] == "inferred"
 
 
 def test_azure_family_match_is_case_insensitive() -> None:

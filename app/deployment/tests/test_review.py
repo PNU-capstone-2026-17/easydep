@@ -27,7 +27,7 @@ def _edge(frm: str, to: str, via: str, **kw) -> Edge:
     return Edge(from_id=frm, to_id=to, type="references", via_property=via,
                 required=kw.get("required", False), cardinality="one",
                 evidence=kw.get("evidence", "heuristic"),
-                confidence=kw.get("confidence", 0.5))
+                reviewed=kw.get("reviewed", False))
 
 
 @pytest.fixture()
@@ -201,8 +201,7 @@ def test_matching_on_evidence_covers_a_whole_source(graph, tmp_path) -> None:
     (cdk-oob)은 우리 짐작이 아니라 남의 검수 결과다. 개별로 보는 대신 "이 출처는
     믿을 만한가"를 한 번 판단하는 게 맞다.
     """
-    graph.add_edge(_edge("aws::A", "aws::C", "Declared", evidence="relationshipRef",
-                         confidence=1.0))
+    graph.add_edge(_edge("aws::A", "aws::C", "Declared", evidence="relationshipRef"))
     path = _write(tmp_path, {"confirmed": [{"evidence": "relationshipRef",
                                             "reason": "AWS가 직접 선언"}]})
     apply_review(graph, "aws", path=path)
@@ -232,7 +231,7 @@ def test_confirming_keeps_every_field(graph, tmp_path) -> None:
     """
     graph.add_edge(Edge(from_id="aws::A", to_id="aws::C", type="references",
                         via_property="WithTarget", required=True, cardinality="many",
-                        evidence="relationshipRef", confidence=1.0,
+                        evidence="relationshipRef",
                         target_property="GroupId"))
     path = _write(tmp_path, {"confirmed": [{"to": "aws::C", "reason": "x"}]})
     apply_review(graph, "aws", path=path)

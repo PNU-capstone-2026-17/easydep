@@ -95,7 +95,6 @@ def extract_constraints(
                 kind=kind,
                 value=value,
                 evidence=evidence,
-                confidence=1.0,
                 value_type=vtype,
             )
         )

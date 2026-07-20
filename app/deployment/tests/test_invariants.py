@@ -17,7 +17,7 @@ from kbcommon.invariants import (
     Invariant,
     Violation,
     accelerator_fields_agree,
-    one_confidence_per_evidence,
+    one_basis_per_evidence,
     run,
 )
 
@@ -26,7 +26,7 @@ ANY_SCHEMA = {"type": "object"}
 
 def constraint(type_id: str, prop: str, kind: str, value, **extra) -> dict:
     return {"type_id": type_id, "property": prop, "kind": kind, "value": value,
-            "evidence": "cfn-schema", "confidence": 1.0, **extra}
+            "evidence": "cfn-schema", "basis": "stated", **extra}
 
 
 # --- 얼개 ---------------------------------------------------------------------
@@ -91,16 +91,17 @@ def test_error_leaves_previous_artifact_intact(tmp_path) -> None:
 def test_report_severity_writes_and_returns_the_violation(tmp_path) -> None:
     """report는 산출물을 막지 않는다 — 대신 **호출자가 알려야 한다.**"""
     path = tmp_path / "out.json"
-    dataset = {"constraints": [
-        constraint("aws::T", "P", "min", 1, evidence="cfn-description", confidence=0.6),
-        constraint("aws::T", "Q", "min", 2, evidence="cfn-description", confidence=0.8),
+    dataset = {"specs": [
+        {"provider": "kt", "specName": "g", "acceleratorType": "gpu",
+         "acceleratorCount": 0},
     ]}
-    result = write_dataset(path, dataset, ANY_SCHEMA, CAPACITY_INVARIANTS)
+    from costkb.invariants import INVARIANTS as COST
+
+    result = write_dataset(path, dataset, ANY_SCHEMA, COST)
 
     assert path.exists()
     assert json.loads(path.read_text(encoding="utf-8")) == dataset
-    assert [i.name for i, _ in result.reports] == ["one-confidence-per-evidence"]
-    assert "0.6" in result.summary() and "0.8" in result.summary()
+    assert [i.name for i, _ in result.reports] == ["accelerator-fields-agree"]
 
 
 def test_no_invariants_means_schema_only(tmp_path) -> None:
@@ -178,15 +179,20 @@ def test_create_only_may_be_required() -> None:
 # --- 공용 검사 ----------------------------------------------------------------
 
 
-def test_one_confidence_per_evidence_reports_the_split() -> None:
-    check = one_confidence_per_evidence("edges")
+def test_one_basis_per_evidence_reports_the_split() -> None:
+    """한 라벨이 두 성격을 뭉뚱그리면 라벨을 쪼개라는 신호다.
+
+    실제로 `kcc-ref`가 그랬다 — ServiceMapping(원본 명시)과 설명문 정규식(짐작)이
+    같은 라벨을 쓰는 바람에, 라벨 단위 검수가 **짐작 322건까지 싸잡아 승인**했다.
+    """
+    check = one_basis_per_evidence("edges")
     violations = list(check({"edges": [
-        {"evidence": "heuristic", "confidence": 0.5},
-        {"evidence": "heuristic", "confidence": 0.6},
-        {"evidence": "arm-hierarchy", "confidence": 1.0},
+        {"evidence": "kcc-ref", "basis": "stated"},
+        {"evidence": "kcc-ref", "basis": "inferred"},
+        {"evidence": "arm-hierarchy", "basis": "stated"},
     ]}))
-    assert [v.where for v in violations] == ["heuristic"]
-    assert "[0.5, 0.6]" in violations[0].detail
+    assert [v.where for v in violations] == ["kcc-ref"]
+    assert "inferred" in violations[0].detail and "stated" in violations[0].detail
 
 
 def test_accelerator_type_without_count_is_caught() -> None:

@@ -20,24 +20,24 @@ def perf_built(tmp_path, monkeypatch):
         # 버스트(상시 미보장) + 네트워크 버스트 — 네트워크 버스트는 추천 경고에 안 나와야 함
         {"id": "aws+us-east-1+t3a.medium", "provider": "aws", "specName": "t3a.medium",
          "sustainedCpu": {"value": False, "note": "버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 떨어집니다.",
-                          "evidence": "aws-burstable-field", "confidence": 1.0},
+                          "evidence": "aws-burstable-field", "basis": "stated"},
          "currentGeneration": True, "networkIsBurst": True, "clockGHz": 2.2},
         # 구세대(상시 보장)
         {"id": "aws+us-east-1+m5.large", "provider": "aws", "specName": "m5.large",
-         "sustainedCpu": {"value": True, "note": None, "evidence": "aws-burstable-field", "confidence": 1.0},
+         "sustainedCpu": {"value": True, "note": None, "evidence": "aws-burstable-field", "basis": "stated"},
          "currentGeneration": False, "clockGHz": 3.1, "ebsBaselineMbps": 650, "ebsMaxMbps": 4750},
         # 문제 없음
         {"id": "aws+us-east-1+m7i.large", "provider": "aws", "specName": "m7i.large",
-         "sustainedCpu": {"value": True, "note": None, "evidence": "aws-burstable-field", "confidence": 1.0},
+         "sustainedCpu": {"value": True, "note": None, "evidence": "aws-burstable-field", "basis": "stated"},
          "currentGeneration": True},
         # Azure B계열 — 이름 추론이라 신뢰도 0.8
         {"id": "azure+eastus+Standard_B2s", "provider": "azure", "specName": "Standard_B2s",
          "sustainedCpu": {"value": False, "note": "B계열(버스트) — 크레딧 모델이라 상시 부하에서 성능이 떨어집니다.",
-                          "evidence": "azure-family-name", "confidence": 0.8},
+                          "evidence": "azure-family-name", "basis": "inferred"},
          "acu": 160},
         # 비교용: 같은 AWS 스펙 하나 더 (클럭·EBS 있음)
         {"id": "azure+eastus+Standard_D2s_v3", "provider": "azure", "specName": "Standard_D2s_v3",
-         "sustainedCpu": {"value": True, "note": None, "evidence": "azure-family-name", "confidence": 0.8},
+         "sustainedCpu": {"value": True, "note": None, "evidence": "azure-family-name", "basis": "inferred"},
          "acu": 210, "diskIops": 3200},
     ]
     (tmp_path / "tumblebug-perf.json").write_text(
@@ -102,9 +102,9 @@ def test_no_build_returns_none(tmp_path, monkeypatch) -> None:
 # --- instance_profile ---
 
 
-def test_profile_shows_confidence_hedge_for_inferred(perf_built) -> None:
+def test_profile_hedges_when_inferred(perf_built) -> None:
     text = agent_api.instance_profile("azure", "Standard_B2s")
-    assert "신뢰도 0.8" in text  # 이름 추론임을 사람에게 밝힌다
+    assert "이름 규칙에서 짐작" in text  # 이름 추론임을 사람에게 밝힌다
 
 
 def test_profile_of_missing_spec_is_graceful(perf_built) -> None:

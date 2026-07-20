@@ -39,14 +39,14 @@ def test_all_edges_are_equivalent_to(graph: Graph) -> None:
     assert all(e.evidence == "cb-spider-driver" for e in graph.edges)
 
 
-def test_lossy_mappings_have_lower_confidence(graph: Graph) -> None:
+def test_lossy_mappings_are_noted(graph: Graph) -> None:
     sg_gcp = [
         e
         for e in graph.edges
         if e.from_id == "core::securityGroup" and e.to_id == "gcp::ComputeFirewall"
     ]
     assert len(sg_gcp) == 1
-    assert sg_gcp[0].confidence == 0.7  # 1:N 매핑은 신뢰도 하향
+    assert sg_gcp[0].basis == "inferred"  # 1:N 매핑은 신뢰도 하향
 
 
 def test_no_equivalents_are_absent(graph: Graph) -> None:
@@ -68,14 +68,12 @@ def test_user_mapping_file_merges_and_overrides(tmp_path) -> None:
                         "core": "mci",
                         "provider": "aws",
                         "target": "AWS::Test::Group",
-                        "confidence": 0.6,
                         "status": "confirmed",
                     },
                     {
                         "core": "vNet",
                         "provider": "aws",
                         "target": "AWS::EC2::VPC",
-                        "confidence": 0.95,
                         "status": "rejected",
                     },
                 ]

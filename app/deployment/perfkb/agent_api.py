@@ -123,8 +123,7 @@ def _describe(rec: dict) -> str:
     sustained = rec.get("sustainedCpu")
     if sustained is not None:
         mark = "보장됨" if sustained["value"] else "보장 안 됨"
-        conf = sustained["confidence"]
-        hedge = "" if conf >= 1.0 else f" (이름 규칙 추론, 신뢰도 {conf})"
+        hedge = "" if sustained.get("basis") == "stated" else " (이름 규칙에서 짐작)"
         lines.append(f"  상시 CPU 성능: {mark}{hedge}")
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")

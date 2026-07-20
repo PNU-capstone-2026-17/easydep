@@ -58,8 +58,8 @@ def test_golden_subnetwork_to_network(graph: Graph) -> None:
     edge = edges[0]
     assert edge.via_property == "networkRef"
     assert edge.required is True  # spec.required에 networkRef 포함
-    assert edge.evidence == "kcc-ref"
-    assert edge.confidence == 0.9  # description 패턴으로 해석
+    assert edge.evidence == "kcc-description"  # 설명문 패턴 — 짐작
+    assert edge.basis == "inferred"
 
 
 def test_firewall_to_network_required(graph: Graph) -> None:
@@ -76,14 +76,18 @@ def test_golden_instance_to_subnetwork_nested_array(graph: Graph) -> None:
     assert edge.via_property == "networkInterface.subnetworkRef"
     assert edge.cardinality == "many"
     assert edge.evidence == "kcc-ref"
-    assert edge.confidence == 1.0  # servicemappings gvk.kind가 최우선
+    assert edge.basis == "stated"  # servicemappings gvk.kind가 최우선
 
 
 def test_instance_template_ref_description_tier(graph: Graph) -> None:
-    """servicemappings에 없는 ref는 description 패턴(0.9)으로 해석."""
+    """servicemappings에 없는 ref는 설명문 패턴으로 해석 — **짐작**이다.
+
+    예전엔 이것도 `kcc-ref` 라벨을 달아서, 라벨 단위 검수가 짐작까지 승인했다.
+    """
     edges = find_edges(graph, "gcp::ComputeInstance", "gcp::ComputeInstanceTemplate")
     assert len(edges) == 1
-    assert edges[0].confidence == 0.9
+    assert edges[0].evidence == "kcc-description"
+    assert edges[0].basis == "inferred"
 
 
 def test_dcl_style_resolved_only_by_servicemappings(graph: Graph) -> None:
@@ -92,7 +96,7 @@ def test_dcl_style_resolved_only_by_servicemappings(graph: Graph) -> None:
     assert len(edges) == 1
     assert edges[0].via_property == "attachedRef"
     assert edges[0].evidence == "kcc-ref"
-    assert edges[0].confidence == 1.0
+    assert edges[0].basis == "stated"
     assert edges[0].required is True
 
 
@@ -101,7 +105,7 @@ def test_heuristic_tier(graph: Graph) -> None:
     edges = find_edges(graph, "gcp::ComputeSyntheticThing", "gcp::ComputeFirewall")
     assert len(edges) == 1
     assert edges[0].evidence == "heuristic"
-    assert edges[0].confidence == 0.6  # 동일 서비스(compute)
+    assert edges[0].basis == "inferred"  # 동일 서비스(compute)
 
 
 def test_unresolvable_ref_skipped(graph: Graph) -> None:

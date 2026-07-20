@@ -62,7 +62,7 @@ def test_hierarchy_containment(graph: Graph) -> None:
     contained = [e for e in edges if e.type == "contained_in"]
     assert len(contained) == 1
     assert contained[0].evidence == "arm-hierarchy"
-    assert contained[0].confidence == 1.0
+    assert contained[0].basis == "stated"
 
 
 def test_hierarchy_walks_all_levels(graph: Graph) -> None:
@@ -81,7 +81,7 @@ def test_subnet_references_nsg(graph: Graph) -> None:
     ref = [e for e in edges if e.evidence == "bicep-ref"]
     assert len(ref) == 1
     assert ref[0].via_property == "properties.networkSecurityGroup"
-    assert ref[0].confidence == 0.8
+    assert ref[0].basis == "inferred"
 
 
 def test_nic_references_subnet_through_nested_array(graph: Graph) -> None:
@@ -104,7 +104,7 @@ def test_heuristic_string_id_property(graph: Graph) -> None:
     edges = [e for e in find_edges(graph, NIC, NSG) if e.evidence == "heuristic"]
     assert len(edges) == 1
     assert edges[0].via_property == "properties.networkSecurityGroupId"
-    assert edges[0].confidence == 0.6
+    assert edges[0].basis == "inferred"
 
 
 def test_readonly_property_skipped(graph: Graph) -> None:

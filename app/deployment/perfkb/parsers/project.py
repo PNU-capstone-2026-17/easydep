@@ -15,7 +15,7 @@
 | Azure B계열 | 크레딧 모델 (AWS와 유사) | `Family` 이름 패턴 **추론** | 0.8 |
 
 그래서 값(`value`)과 함께 **왜 그렇게 판단했는지**(`note`)와 **어떻게 알았는지**
-(`evidence`/`confidence`)를 항상 같이 준다. capacitykb와 같은 패턴이다.
+(`evidence`/`basis`)를 항상 같이 준다. capacitykb와 같은 패턴이다.
 costkb가 evidence를 안 두는 것과 대조된다 — 거긴 출처가 파일 단위로 균일한 미러라
 레코드별 evidence가 죽은 필드가 되지만, 여기선 같은 필드가 1.0에서도 0.8에서도 온다.
 
@@ -30,6 +30,7 @@ B가 아닌 새 버스트 패밀리가 생기면 놓친다 — 그래서 신뢰�
 from __future__ import annotations
 
 import re
+from kbcommon.basis import basis_of
 
 from .details import (
     go_bool,
@@ -60,7 +61,7 @@ def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:
             "value": not burst,
             "note": _NOTE_AWS_BURST if burst else None,
             "evidence": "aws-burstable-field",
-            "confidence": 1.0,
+            "basis": basis_of("aws-burstable-field"),
         }
     if provider == "gcp":
         shared = go_bool(det.get("IsSharedCpu"))
@@ -70,7 +71,7 @@ def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:
             "value": not shared,
             "note": _NOTE_GCP_SHARED if shared else None,
             "evidence": "gcp-shared-cpu-field",
-            "confidence": 1.0,
+            "basis": basis_of("gcp-shared-cpu-field"),
         }
     if provider == "azure":
         family = det.get("Family")
@@ -80,9 +81,9 @@ def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:
         return {
             "value": not burst,
             "note": _NOTE_AZURE_BURST if burst else None,
-            # 이름 규칙 추론이라 1.0이 아니다 — B가 아닌 버스트 패밀리가 생기면 놓친다.
+            # 이름 규칙 추론이라 짐작이다 — B가 아닌 버스트 패밀리가 생기면 놓친다.
             "evidence": "azure-family-name",
-            "confidence": 0.8,
+            "basis": basis_of("azure-family-name"),
         }
     return None  # 나머지 7개 프로바이더는 신호를 추적하지 못했다 — 모른다고 둔다
 

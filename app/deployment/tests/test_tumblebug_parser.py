@@ -41,7 +41,7 @@ def test_security_group_references_vnet(graph: Graph) -> None:
     assert edge.via_property == "vNetId"
     assert edge.required is True
     assert edge.evidence == "swagger-field"
-    assert edge.confidence == 1.0
+    assert edge.basis == "stated"
 
 
 def test_subnet_contained_in_vnet(graph: Graph) -> None:
