@@ -1008,6 +1008,23 @@ python -m perfkb coverage           # 무엇을 알고 무엇을 모르는지
 
 ## 16. 앞으로 남은 일
 
+### ⭐ 최우선 — 데이터셋 재구축 (2026-07-20 결정)
+
+전수 감사에서 결함 28건이 나왔고(`kb-data-audit-2026-07-20.md`), **개별 결함을 하나씩
+때우는 대신 데이터셋 구축을 처음부터 다시 하기로 했다.** 이유는 결함들이 개별 사고가
+아니라 세 개의 구조적 공백에서 반복 생성되기 때문이다 — 예외마다 오버피팅하면 다음
+덤프에서 같은 모양의 새 예외가 나온다.
+
+1. **소스 고정** — S1~S4(AWS·Azure)에 버전 핀이 없어 재현이 불가능하다(§18-1). 여기부터.
+2. **레코드 간 불변식 계층** — 지금은 레코드 하나의 형태만 검사한다. `default`가 자기
+   `min`을 위반하는 30건, `read_only`인데 `required=True`인 9건이 전부 스키마를 통과한다.
+   자리는 이미 있다: `kbcommon/artifact.py:write_dataset`이 쓰기 전 관문이다.
+3. **id 정규화 단일화** — graphkb에만 `_canon()`이 있어 capacitykb 조인이 깨진다. `kbcommon`으로.
+4. **신뢰도 재설계** — 수치에 근거가 없다(§18-5). 연속값 → 근거에서 유도되는 등급.
+5. **센티널·커버리지·접기 정책**을 데이터에 명시 (감사 문서 §5 체크리스트).
+
+### 그 밖에
+
 - 매핑 후보 검수 반복(suggest-mapping)으로 번역 사전 확장
 - Azure/GCP 커버리지 확대 (`--providers`, `--services` 옵션으로 서비스 추가)
 - capacitykb: GCP/Tumblebug 제약(불변성 위주), AWS/GCP 쿼터 큐레이션
@@ -1056,3 +1073,127 @@ python -m perfkb coverage           # 무엇을 알고 무엇을 모르는지
 > 규칙 KB(graphkb·capacitykb·perfkb)는 레코드마다 **근거와 신뢰도**를 남겨 확실한 것과 추측을
 > 구분하고, AI 에이전트가 **16개 도구**(`kb_*` 6 · `cap_*` 5 · `cost_*` 2 · `perf_*` 3)로 네
 > 지식베이스를 직접 조회한다. **443개 자동 검사**가 품질을 지킨다.
+
+---
+
+## 18. 데이터 출처 전체 목록 — 어디서, 무엇을, 어떻게
+
+이 절은 **재현을 위한 것**이다. 각 산출물이 어느 URL의 어느 버전에서, 어떤 가공을 거쳐
+나왔는지를 빠짐없이 적는다. 2026-07-20 데이터 감사(`kb-data-audit-2026-07-20.md`)에서
+"소스가 고정돼 있지 않아 결함 수치를 나중에 재현할 수 없다"는 문제가 드러나 정리했다.
+
+### 18-1. 소스 일람
+
+| # | 소스 | URL | 버전 고정 | 쓰는 KB | 라이선스 |
+|---|---|---|---|---|---|
+| S1 | AWS CloudFormation 리소스 스키마 | `https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip` | ❌ **없음** (라이브 zip) | graphkb, capacitykb | AWS 공개 스키마 |
+| S2 | AWS CDK OOB 관계 | `https://media.githubusercontent.com/media/cdklabs/awscdk-service-spec/main/sources/OobRelationships/relationships.json` | ❌ `main` | graphkb | Apache-2.0 |
+| S3 | Azure Bicep 타입 정의 | `https://raw.githubusercontent.com/Azure/bicep-types-az/main/generated` | ❌ `main` | graphkb, capacitykb | MIT |
+| S4 | Azure 서비스 한도 문서 | `https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/main/includes` | ❌ `main` | capacitykb(쿼터) | CC-BY-4.0 |
+| S5 | GCP Config Connector CRD | `https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-config-connector` | ✅ **`v1.153.0`** | graphkb | Apache-2.0 |
+| S6 | cb-tumblebug Swagger | `https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.11.8/src/interface/rest/docs/swagger.json` | ✅ **`v0.11.8`** | graphkb(코어) | Apache-2.0 |
+| S7 | cb-tumblebug 자산 덤프 | `https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/{tag}/assets/assets.dump.gz` | ✅ **`v0.12.25`** | costkb, perfkb | Apache-2.0 |
+| S8 | CB-Spider 드라이버 소스 | (사람 검수 후 `graphkb/parsers/core_vendor_map.json`으로 번들) | — 번들 스냅샷 | graphkb(매핑) | Apache-2.0 |
+
+> ⚠️ **S1~S4는 버전이 고정돼 있지 않다.** 언제든 바뀌므로 지금 산출물이 어느 시점
+> 스키마에서 나왔는지 알 수 없고, 결함 수치를 재현하거나 "고쳤다"를 증명할 수 없다.
+> 데이터셋 재설계에서 가장 먼저 닫아야 할 구멍이다.
+
+캐시는 `.cache/cloudkb/`(또는 `CLOUDKB_CACHE_DIR`)에 받고, `.part` 임시 파일 → `os.replace`로
+원자 교체한다(`kbcommon/fetch.py`). `--refresh`로 강제 재다운로드한다.
+
+### 18-2. 가공 경로 — 소스에서 산출물까지
+
+**graphkb** (`output/{aws,azure,gcp,core,mapping}-graph.json` — `{nodes, edges}`)
+
+| 산출물 | 소스 | 가공 |
+|---|---|---|
+| `aws-graph.json` | S1 + S2 | zip 안 리소스 스키마별로 `properties` 재귀 순회 → `*Id`/`*Arn` 접미사 속성에서 대상 타입 추론(`heuristic`), 스키마의 `relationshipRef`는 명시 참조, S2는 CDK가 손으로 모은 관계(`cdk-oob`) |
+| `azure-graph.json` | S3 | 타입 index.json → 리소스 타입별 ObjectType 순회. ARM 경로 계층에서 `contained_in`, 속성 타입 이름이 리소스 타입과 맞으면 `bicep-ref` |
+| `gcp-graph.json` | S5 | CRD YAML(compute·container) → `*Ref` 필드와 description 문구 4종 패턴에서 참조 추출 |
+| `core-graph.json` | S6 | Swagger 생성요청 정의(`model.TbVNetReq` 등) → 프로바이더 중립 13타입 |
+| `mapping-graph.json` | S8 | 사람 검수 매핑(`status=confirmed`)만 그래프에 반영. `suggest()`가 이름 유사도로 후보를 만들면 사람이 검수 |
+
+**capacitykb** (`output/{aws,azure}-capacity.json`, `azure-quota.json` — `{constraints, quotas}`)
+
+| 산출물 | 소스 | 가공 |
+|---|---|---|
+| `aws-capacity.json` | S1 | 스키마의 `minimum`/`maximum`/`minLength`/`enum`/`pattern`/`required`/`readOnlyProperties`/`createOnlyProperties` 직접 추출(`cfn-schema`) + **`description` 산문에서 정규식 추출**(`cfn-description`) |
+| `azure-capacity.json` | S3 | Bicep 플래그(`ReadOnly` 등 → `bicep-flags`)와 타입 제약(`bicep-type`) |
+| `azure-quota.json` | S4 | 마크다운 표 파싱. 각주·비수치 값이면 신뢰도를 낮춤 |
+
+**costkb** (`output/tumblebug-cost.json` — `{_note, specs}`)
+
+S7 덤프(PostgreSQL custom format, gzip) → `pgdumplib`으로 `spec_infos` 테이블 73,083행 →
+`namespace='system'` 필터 → 컬럼 투영. `cost_per_hour <= 0`은 null(0도 무료가 아님),
+gcp/azure `memory_gi_b`에 ×1.024 보정값을 `memGiBActual`로 **병기**(원값은 미러로 유지).
+
+**perfkb** (`output/tumblebug-perf.json` — `{_note, specs}`)
+
+**같은 S7 덤프의 다른 컬럼.** costkb가 버린 `details` 컬럼(CSP 원본 응답이 Go `%v` 형식으로
+찍힌 문자열)에서 정규식으로 특정 키만 추출. aws/azure/gcp만 구조를 추적한다.
+
+> `details`는 **JSON이 아니라 Go의 `%v` 출력**이라 파싱이 아니라 정규식 추출이다.
+> 구분자 가드가 필요한 이유가 이것이다(15절 참조).
+
+### 18-3. 산출물 스키마
+
+| KB | 스키마 파일 | 최상위 | 레코드 필드 |
+|---|---|---|---|
+| graphkb | `graphkb/model/schema.json` | `{nodes, edges}` | node: `id, layer, provider, kind, display_name, source`<br>edge: `from, to, type, via_property, required, cardinality, evidence, confidence` |
+| capacitykb | `capacitykb/model/schema.json` | `{constraints, quotas}` | constraint: `type_id, property, kind, value, value_type, unit, conditional, note, evidence, confidence`<br>quota: `provider, name, scope, default, maximum, unit, type_id, source_doc, note, evidence, confidence` |
+| costkb | `costkb/schema.json` | `{_note, specs}` | `id, provider, region, specName, vCPU, memGiB, memGiBActual, hourlyUSD, architecture, infraType, diskSizeGB, accelerator*` |
+| perfkb | `perfkb/schema.json` | `{_note, specs}` | `id, provider, specName, sustainedCpu{value,note,evidence,confidence}, currentGeneration, clockGHz, networkPerformance, networkIsBurst, ebs*, acu, diskIops, maxPersistentDisk*` |
+
+`id` 규약 — graphkb·capacitykb는 `{provider}::{타입명}`(예: `aws::AWS::EC2::Volume`),
+costkb·perfkb는 Tumblebug 키 `{provider}+{region}+{spec}`. 앞의 둘이 조인 키를 공유하는 것이
+두 KB를 코드 분리한 채로 엮는 방법이다.
+
+### 18-4. 근거(evidence)와 신뢰도 — ⚠️ 재설계 대상
+
+각 근거 라벨과 현재 붙는 신뢰도는 아래와 같다. **다만 이 수치들은 근거가 없다는 것이
+2026-07-20 감사에서 확인됐고, 재설계 대상이다**(§18-5).
+
+| KB | evidence | confidence | 의미 |
+|---|---|---|---|
+| graphkb | `relationshipRef` | 1.0 | CFN 스키마가 명시한 참조 |
+| | `arm-hierarchy` | 1.0 | ARM 경로 계층(구조적 사실) |
+| | `kcc-ref` | 0.9 / 1.0 | CRD `*Ref` 필드 |
+| | `cdk-oob` | 0.9 | CDK가 손으로 모은 관계 |
+| | `bicep-ref` | 0.8 | 속성 타입 **이름**이 리소스 타입과 일치 |
+| | `heuristic` | 0.5 / 0.6 | `*Id`/`*Arn` 접미사 추론(같은 서비스면 0.6) |
+| | `cb-spider-driver` | 0.7~0.95 | 사람 검수 매핑 |
+| capacitykb | `cfn-schema` | 1.0 | 스키마 필드 직접 |
+| | `bicep-flags` / `bicep-type` | 1.0 | Bicep 플래그·타입 |
+| | `azure-limits-doc` | 0.7 / 0.9 | 문서 표(각주·비수치면 0.7) |
+| | `cfn-description` | 0.6 / 0.7 / 0.8 | **산문에서 정규식 추출** |
+| perfkb | `aws-burstable-field` | 1.0 | `BurstablePerformanceSupported` 필드 |
+| | `gcp-shared-cpu-field` | 1.0 | `IsSharedCpu` 필드 |
+| | `azure-family-name` | 0.8 | family가 `standardB`로 시작하는지 (**이름 추론**) |
+| costkb | (없음) | — | 미러라 출처가 파일 단위로 균일 → `_note` 하나 |
+
+### 18-5. 왜 신뢰도를 재설계하는가 (실측)
+
+전 산출물에서 8개 값이 쓰인다: `0.5 / 0.6 / 0.7 / 0.8 / 0.85 / 0.9 / 0.95 / 1.0`.
+**척도의 정의가 어디에도 없다.** 0.9와 0.95의 차이가 무엇인지, 두 근거를 결합하면
+어떻게 되는지, 0.8이 "80% 확률"인지 "꽤 믿는다"인지가 기록돼 있지 않다.
+
+실측으로 확인된 문제 셋:
+
+1. **같은 evidence에 여러 confidence** — 라벨이 신뢰도의 함수가 아니다.
+   `cfn-description`(0.6/0.7/0.8), `heuristic`(0.5/0.6), `kcc-ref`(0.9/1.0),
+   `cb-spider-driver`(0.7/0.8/0.85/0.9/0.95 — 28개 엣지에 다섯 값, **0.85는 전체에서 1건**).
+2. **작동하는 임계선은 하나뿐이고 하필 가장 붐비는 값에 놓였다.**
+   `capacitykb/query.py`의 `CHECK_MIN_CONFIDENCE = 0.8`이 실제로 가르는 것은
+   `cfn-description` 158건뿐이고, 그중 **115건이 정확히 0.8**이다. 상수를 0.81로 바꾸면
+   115건이 판정에서 빠진다. perfkb의 `azure-family-name 0.8`은 **34,846건**에 붙는데
+   역시 임계값에 정확히 걸쳐 있다.
+3. **필요한 건 연속 척도가 아닐 가능성이 높다.** 코드가 이 값을 쓰는 곳은 최댓값 우선
+   dedup과 단일 임계선 두 군데뿐이다.
+
+**재설계 방향(초안)**: 연속값을 버리고 근거 종류에서 **함수적으로 유도되는 등급**으로 간다.
+예: `declared`(상위가 명시) / `derived`(구조에서 유도) / `inferred`(이름·산문 추론).
+등급이 evidence에서 결정되면 1번이 구조적으로 불가능해지고, 판정 여부를 등급으로 정하면
+2번의 임계선 민감도가 사라진다. **등급 수·이름·판정 규칙은 재설계 시 근거와 함께 확정한다.**
+
+---
