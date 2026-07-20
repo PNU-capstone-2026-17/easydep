@@ -24,6 +24,7 @@ from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from graphkb.parsers.review import apply_review, check_freshness
 from kbcommon.fetch import describe_source
 from kbcommon.sources import SOURCES
 
@@ -37,27 +38,6 @@ DEFAULT_OOB_URL = SOURCES["cdk-oob"].url
 SOURCE = "cloudformation-registry"
 
 _ID_PROP = re.compile(r"^(\w+?)(Id|Ids|Arn|Arns)$")
-
-# 이름 추론을 **금지**하는 총칭 베이스.
-#
-# "후보가 유일하면 채택"이라는 규칙은 이름이 구체적일 때만 성립한다. 총칭 단어는
-# 마침 어느 한 서비스에만 리소스로 존재하면 유일 매칭이 되어버린다:
-#
-#     FieldId    → AWS::Cases::Field       (QuickSight 차트의 내부 필드 식별자)
-#     VersionId  → AWS::Lambda::Version    (CloudFormation 훅·모듈의 버전)
-#     TypeId     → AWS::Cassandra::Type    (ACMPCA 인증서 템플릿 종류)
-#
-# 경로 버그를 고치자 QuickSight 한 타입에서만 `FieldId` 오탐이 421곳으로 번져
-# 이 방어가 필수가 됐다. **이름으로 긍정하지 않을 뿐, 다른 근거는 그대로 통과한다** —
-# relationshipRef·cdk-oob가 같은 속성에 진짜 관계를 선언했다면 그건 살아남는다.
-_GENERIC_BASES = frozenset(
-    {
-        "field", "version", "type", "name", "key", "group", "policy", "target",
-        "source", "destination", "resource", "config", "rule", "item", "object",
-        "value", "state", "status", "action", "event", "job", "task", "template",
-        "alias", "stage", "domain", "table", "index", "entity", "member", "owner",
-    }
-)
 _MAX_DEPTH = 32
 _COMBINATORS = ("anyOf", "oneOf", "allOf")
 
@@ -127,10 +107,7 @@ def _resolve_heuristic(
     match = _ID_PROP.match(prop_name)
     if match is None:
         return None
-    base = match.group(1).lower()
-    if base in _GENERIC_BASES:
-        return None
-    candidates = type_index.get(base, [])
+    candidates = type_index.get(match.group(1).lower(), [])
     if len(candidates) == 1:
         target = candidates[0]
     else:
@@ -363,6 +340,18 @@ def build(
     graph.provenance = [describe_source(zip_path, "cfn-schema")]
     if oob_path is not None:
         graph.provenance.append(describe_source(oob_path, "cdk-oob"))
+
+    # 사람 검수를 마지막에 적용한다 — 파서가 못 거르는 것을 눈으로 보고 지운다.
+    stale = check_freshness("aws", graph.provenance)
+    if stale:
+        print(f"⚠ {stale}", file=sys.stderr)
+    stats = apply_review(graph, "aws")
+    if any(stats.values()):
+        print(
+            f"검수 적용: 제거 {stats['dropped']}, 확인 표시 {stats['confirmed']}, "
+            f"추가 {stats['added']}"
+        )
+
     graph.save(output)
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:

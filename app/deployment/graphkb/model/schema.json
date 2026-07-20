@@ -112,6 +112,10 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1
+          },
+          "reviewed": {
+            "type": "boolean",
+            "description": "사람이 눈으로 보고 확인한 관계. graphkb/reviewed/*.json에서 온다."
           }
         }
       }

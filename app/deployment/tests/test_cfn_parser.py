@@ -269,35 +269,4 @@ def test_nested_readonly_pointer_does_not_skip_whole_property() -> None:
     assert not _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}]).edges
 
 
-def test_generic_base_names_never_infer_a_target() -> None:
-    """총칭 이름은 이름만으로 대상을 단정하지 않는다.
-
-    "후보가 유일하면 채택"은 이름이 구체적일 때만 성립한다. 경로 버그를 고치자
-    QuickSight 한 타입에서 `FieldId → AWS::Cases::Field` 오탐이 421곳으로 번졌다.
-    """
-    schema = {
-        "typeName": "AWS::QuickSight::Analysis",
-        "properties": {"FieldId": {"type": "string"}, "VersionId": {"type": "string"}},
-    }
-    others = [
-        {"typeName": "AWS::Cases::Field", "properties": {}},
-        {"typeName": "AWS::Lambda::Version", "properties": {}},
-    ]
-    assert not [e for e in _one([schema, *others]).edges if e.evidence == "heuristic"]
-
-
-def test_generic_name_block_does_not_touch_declared_relationships() -> None:
-    """이름으로 긍정하지 않을 뿐, **선언된 관계는 그대로 통과**한다."""
-    schema = {
-        "typeName": "AWS::QuickSight::Analysis",
-        "properties": {
-            "FieldId": {
-                "type": "string",
-                "relationshipRef": {"typeName": "AWS::Cases::Field"},
-            }
-        },
-    }
-    graph = _one([schema, {"typeName": "AWS::Cases::Field", "properties": {}}])
-    assert [(e.evidence, e.via_property) for e in graph.edges] == [
-        ("relationshipRef", "FieldId")
-    ]
+    

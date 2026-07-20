@@ -1,0 +1,78 @@
+{
+  "description": "AWS 의존성 엣지 사람 검수 결과. 형식과 이유는 graphkb/parsers/review.py 참조. via_property를 생략하면 그 타입쌍의 모든 경로에 적용된다.",
+  "reviewed_against": {
+    "source": "cfn-schema",
+    "sha256": "83b88800e04bb5cfc85bbf7eb261623998bccfe2a25920094c4adf268eb09e47"
+  },
+  "rejected": [
+    {
+      "from": "aws::AWS::QuickSight::Analysis",
+      "to": "aws::AWS::Cases::Field",
+      "reason": "칸이 Definition/Sheets/Visuals/.../SortConfiguration/FieldSort/FieldId 형태로, 차트 안에서 어느 항목으로 정렬할지 가리키는 내부 번호다. 대상인 Cases::Field는 '고객센터 케이스 데이터 모델의 필드'로 완전히 다른 것이다. 이름이 Field 하나로 겹쳤을 뿐이다.",
+      "reviewed": "2026-07-20",
+      "edges": 421
+    },
+    {
+      "from": "aws::AWS::QuickSight::Dashboard",
+      "to": "aws::AWS::Cases::Field",
+      "reason": "위 Analysis와 같은 이유. 대시보드도 같은 차트 정의 구조를 쓴다.",
+      "reviewed": "2026-07-20",
+      "edges": 421
+    },
+    {
+      "from": "aws::AWS::QuickSight::Template",
+      "to": "aws::AWS::Cases::Field",
+      "reason": "위 Analysis와 같은 이유. 템플릿도 같은 차트 정의 구조를 쓴다.",
+      "reviewed": "2026-07-20",
+      "edges": 412
+    },
+    {
+      "from": "aws::AWS::QuickSight::Analysis",
+      "to": "aws::AWS::Chatbot::CustomAction",
+      "reason": "칸이 definitions/VisualCustomAction의 CustomActionId로, 차트를 클릭했을 때의 동작을 가리킨다. 대상인 Chatbot::CustomAction은 슬랙·팀즈 봇의 액션이라 무관하다.",
+      "reviewed": "2026-07-20",
+      "edges": 25
+    },
+    {
+      "from": "aws::AWS::QuickSight::Dashboard",
+      "to": "aws::AWS::Chatbot::CustomAction",
+      "reason": "위 Analysis와 같은 이유.",
+      "reviewed": "2026-07-20",
+      "edges": 25
+    },
+    {
+      "from": "aws::AWS::QuickSight::Template",
+      "to": "aws::AWS::Chatbot::CustomAction",
+      "reason": "위 Analysis와 같은 이유.",
+      "reviewed": "2026-07-20",
+      "edges": 24
+    }
+  ],
+  "confirmed": [
+    {
+      "from": "aws::AWS::IoT::TopicRule",
+      "to": "aws::AWS::IAM::Role",
+      "reason": "TopicRulePayload/Actions/*/RoleArn — 규칙이 알람·로그·저장소에 쓰려면 그 동작마다 권한이 필요하다. 40개 경로 전부 실제 동작별 권한 칸이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::BedrockAgentCore::OAuth2CredentialProvider",
+      "to": "aws::AWS::SecretsManager::Secret",
+      "reason": "설명문이 'The ID or ARN of the secret in AWS Secrets Manager'로 대상을 명시한다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::Kendra::DataSource",
+      "to": "aws::AWS::SecretsManager::Secret",
+      "reason": "DataSourceConfiguration/*/SecretArn — 외부 시스템(SharePoint 등) 접속 정보를 Secrets Manager에 두고 참조한다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::DMS::DataProvider",
+      "to": "aws::AWS::DMS::Certificate",
+      "reason": "Settings/*Settings/CertificateArn — 데이터베이스 SSL 접속에 쓰는 인증서. 같은 서비스 안이고 DB 종류별로 칸이 하나씩이라 10개 경로가 정상이다.",
+      "reviewed": "2026-07-20"
+    }
+  ],
+  "added": []
+}

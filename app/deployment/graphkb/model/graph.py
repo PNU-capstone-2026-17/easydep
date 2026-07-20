@@ -72,6 +72,16 @@ class Edge:
     evidence: str
     confidence: float
 
+    reviewed: bool = False
+    """**사람이 눈으로 보고 맞다고 확인했는가.**
+
+    소스에 핀을 박아 입력이 얼어 있으므로, 손 검수 결과는 다음 빌드에서도 유효하다.
+    그래서 "얼마나 확신하는가"(confidence)보다 이 값이 실질적이다 — 짐작이라도
+    사람이 확인했으면 사실이고, 확인 안 했으면 여전히 짐작이다.
+
+    검수 목록은 `graphkb/reviewed/*.json`에 있고 빌드가 마지막에 적용한다.
+    """
+
     @property
     def key(self) -> tuple[str, str, str, str]:
         """중복 판정 키. 같은 키의 엣지는 confidence가 높은 쪽만 남긴다."""
@@ -79,7 +89,7 @@ class Edge:
 
     def to_dict(self) -> dict:
         # 직렬화 키는 브리프 스키마의 "from"/"to" (파이썬 예약어 회피용 필드명 변환)
-        return {
+        out = {
             "from": self.from_id,
             "to": self.to_id,
             "type": self.type,
@@ -89,6 +99,9 @@ class Edge:
             "evidence": self.evidence,
             "confidence": self.confidence,
         }
+        if self.reviewed:
+            out["reviewed"] = True
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> Edge:
@@ -101,6 +114,7 @@ class Edge:
             cardinality=data["cardinality"],
             evidence=data["evidence"],
             confidence=data["confidence"],
+            reviewed=bool(data.get("reviewed", False)),
         )
 
 
