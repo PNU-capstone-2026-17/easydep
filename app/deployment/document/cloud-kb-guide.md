@@ -1102,39 +1102,439 @@ python -m perfkb coverage           # 무엇을 알고 무엇을 모르는지
 캐시는 `.cache/cloudkb/`(또는 `CLOUDKB_CACHE_DIR`)에 받고, `.part` 임시 파일 → `os.replace`로
 원자 교체한다(`kbcommon/fetch.py`). `--refresh`로 강제 재다운로드한다.
 
-### 18-2. 가공 경로 — 소스에서 산출물까지
+### 18-2. 가공 경로 — 원본 한 줄이 레코드 한 줄이 되기까지
 
-**graphkb** (`output/{aws,azure,gcp,core,mapping}-graph.json` — `{nodes, edges}`)
+여기서는 **실제 원본 파일을 열어** 어느 부분을 어떻게 읽었는지 보인다. 아래 인용은 전부
+캐시(`.cache/cloudkb/`)에 있는 실물에서 그대로 뜬 것이다.
 
-| 산출물 | 소스 | 가공 |
-|---|---|---|
-| `aws-graph.json` | S1 + S2 | zip 안 리소스 스키마별로 `properties` 재귀 순회 → `*Id`/`*Arn` 접미사 속성에서 대상 타입 추론(`heuristic`), 스키마의 `relationshipRef`는 명시 참조, S2는 CDK가 손으로 모은 관계(`cdk-oob`) |
-| `azure-graph.json` | S3 | 타입 index.json → 리소스 타입별 ObjectType 순회. ARM 경로 계층에서 `contained_in`, 속성 타입 이름이 리소스 타입과 맞으면 `bicep-ref` |
-| `gcp-graph.json` | S5 | CRD YAML(compute·container) → `*Ref` 필드와 description 문구 4종 패턴에서 참조 추출 |
-| `core-graph.json` | S6 | Swagger 생성요청 정의(`model.TbVNetReq` 등) → 프로바이더 중립 13타입 |
-| `mapping-graph.json` | S8 | 사람 검수 매핑(`status=confirmed`)만 그래프에 반영. `suggest()`가 이름 유사도로 후보를 만들면 사람이 검수 |
+읽는 법: 클라우드 업체들은 자기 서비스를 **기계가 읽을 수 있는 명세서**로 공개한다.
+"EC2 인스턴스를 만들려면 어떤 항목을 채워야 하고, 각 항목은 어떤 값이 허용되는가"가
+적힌 설명서다. 우리는 그 설명서를 읽어 지식베이스를 만든다. 문제는 **설명서가 우리가
+원하는 걸 직접 말해주지 않는다**는 것이고, 이 절은 그 간극을 어떻게 메웠는지에 대한 기록이다.
 
-**capacitykb** (`output/{aws,azure}-capacity.json`, `azure-quota.json` — `{constraints, quotas}`)
+---
 
-| 산출물 | 소스 | 가공 |
-|---|---|---|
-| `aws-capacity.json` | S1 | 스키마의 `minimum`/`maximum`/`minLength`/`enum`/`pattern`/`required`/`readOnlyProperties`/`createOnlyProperties` 직접 추출(`cfn-schema`) + **`description` 산문에서 정규식 추출**(`cfn-description`) |
-| `azure-capacity.json` | S3 | Bicep 플래그(`ReadOnly` 등 → `bicep-flags`)와 타입 제약(`bicep-type`) |
-| `azure-quota.json` | S4 | 마크다운 표 파싱. 각주·비수치 값이면 신뢰도를 낮춤 |
+#### S1. AWS CloudFormation 리소스 스키마 → graphkb + capacitykb
 
-**costkb** (`output/tumblebug-cost.json` — `{_note, specs}`)
+**원본이 무엇인가**: AWS가 공개하는 zip 파일 하나에, 리소스 타입마다 JSON 파일이 하나씩
+들어 있다(총 1,600여 개). 서브넷이면 `aws-ec2-subnet.json`이다.
 
-S7 덤프(PostgreSQL custom format, gzip) → `pgdumplib`으로 `spec_infos` 테이블 73,083행 →
-`namespace='system'` 필터 → 컬럼 투영. `cost_per_hour <= 0`은 null(0도 무료가 아님),
-gcp/azure `memory_gi_b`에 ×1.024 보정값을 `memGiBActual`로 **병기**(원값은 미러로 유지).
+파일을 열면 최상위 키가 이렇게 생겼다:
 
-**perfkb** (`output/tumblebug-perf.json` — `{_note, specs}`)
+```
+typeName, description, properties, definitions, required,
+createOnlyProperties, conditionalCreateOnlyProperties,
+primaryIdentifier, readOnlyProperties, writeOnlyProperties, handlers
+```
 
-**같은 S7 덤프의 다른 컬럼.** costkb가 버린 `details` 컬럼(CSP 원본 응답이 Go `%v` 형식으로
-찍힌 문자열)에서 정규식으로 특정 키만 추출. aws/azure/gcp만 구조를 추적한다.
+##### (가) 의존성은 어디서 읽는가 — 대부분 **명시돼 있지 않다**
 
-> `details`는 **JSON이 아니라 Go의 `%v` 출력**이라 파싱이 아니라 정규식 추출이다.
-> 구분자 가드가 필요한 이유가 이것이다(15절 참조).
+서브넷은 VPC 안에 만들어야 한다. 그 사실이 파일 어디에 적혀 있을까? `properties.VpcId`를
+열어보면:
+
+```json
+"VpcId": {
+  "type": "string",
+  "description": "The ID of the VPC the subnet is in.\n If you update this property, you must also update the ``CidrBlock`` property."
+}
+```
+
+**"AWS::EC2::VPC를 가리킨다"는 말이 없다.** 타입은 그냥 문자열이고, 사람이 읽는 설명문에만
+"the VPC"라고 적혀 있을 뿐이다. 기계 입장에서 이건 아무 문자열이나 넣어도 되는 칸이다.
+
+그래서 우리는 **속성 이름의 모양**으로 추론한다(`graphkb/parsers/cfn.py`):
+
+1. 속성 이름이 `~Id` / `~Ids` / `~Arn` / `~Arns`로 끝나는가? → `VpcId`는 `Vpc` + `Id`
+2. 앞부분(`Vpc`)과 이름이 맞는 리소스 타입이 존재하는가? → `AWS::EC2::VPC` 있음
+3. 있으면 "서브넷 → VPC" 화살표를 긋는다
+
+이게 `evidence: heuristic` 엣지이고 신뢰도가 낮은(0.5~0.6) 이유다. **추측이기 때문이다.**
+같은 서비스 안에서 맞으면 0.6, 다른 서비스면 0.5를 준다 — `EC2::Subnet`이 `EC2::VPC`를
+가리키는 건 그럴듯하지만, 엉뚱한 서비스의 비슷한 이름에 걸리면 오탐이기 때문이다.
+
+##### (나) 가끔은 명시돼 있다 — `relationshipRef`
+
+일부 최신 스키마에는 AWS가 참조 관계를 직접 적어뒀다.
+`aws-autoscaling-launchconfiguration.json`의 `SecurityGroups`:
+
+```json
+"SecurityGroups": {
+  "type": "array",
+  "items": { "anyOf": [
+      { "relationshipRef": {
+          "typeName": "AWS::EC2::SecurityGroup",
+          "propertyPath": "/properties/GroupId" } },
+      ...
+```
+
+이건 추측이 아니라 **AWS가 선언한 사실**이라 신뢰도 1.0(`evidence: relationshipRef`)이다.
+다만 전체 1,600여 타입 중 59건뿐이라 이것만으로는 그래프가 성기다.
+
+> ⚠️ 여기서 우리가 **버리는 정보가 있다.** `propertyPath: "/properties/GroupId"`는
+> "보안그룹의 GroupId 값을 가져다 쓴다"는 뜻인데, 현재 파서는 `typeName`만 읽고
+> 이 경로를 버린다. 그래서 "VPCEndpoint가 VPC를 참조한다"로만 기록되고, 실제로는
+> VPC의 `DefaultSecurityGroup` 출력을 쓴다는 사실이 사라진다
+> (감사 결함 G3 — `kb-data-audit-2026-07-20.md`).
+
+##### (다) 용량·제약은 같은 파일의 다른 부분에서 읽는다 (capacitykb)
+
+`aws-ec2-subnet.json`의 나머지 키들이 그대로 제약 레코드가 된다:
+
+```
+required:              ["VpcId"]
+                        → "VpcId는 반드시 채워야 함"
+createOnlyProperties:  ["/properties/VpcId", "/properties/AvailabilityZone",
+                        "/properties/CidrBlock", ...]
+                        → "만들 때만 정할 수 있음. 나중에 바꾸려면 다시 만들어야 함"
+readOnlyProperties:    ["/properties/SubnetId", "/properties/Ipv6CidrBlocks", ...]
+                        → "AWS가 채워주는 값. 사용자가 못 씀"
+primaryIdentifier:     ["/properties/SubnetId"]
+```
+
+이건 스키마가 **직접 말해주는 것**이라 신뢰도 1.0(`evidence: cfn-schema`)이다.
+"서브넷을 만든 뒤 VPC를 바꿀 수 있나?" 같은 질문에 이 데이터로 답한다.
+
+##### (라) 그런데 숫자 한도는 설명문 안에 숨어 있다 — 산문 추출의 이유
+
+EBS 볼륨(`aws-ec2-volume.json`)에서 가장 자주 묻는 값들을 보면:
+
+```
+Size:       type=integer  minimum=None  maximum=None
+Iops:       type=integer  minimum=None  maximum=None
+Throughput: type=integer  minimum=None  maximum=None
+```
+
+**셋 다 스키마상 한도가 없다.** 그런데 같은 속성의 `description`을 읽으면:
+
+```
+Throughput: "The throughput to provision for a volume, with a maximum of 2,000 MiB/s.
+             This parameter is valid only for ``gp3`` volumes. The default value is 125.
+             Valid Range: Minimum value of 125. Maximum value of 2000. ..."
+
+Iops:       "... Valid ranges: + gp3: ``3,000``(*default*)``- 80,000`` IOPS
+             + io1: ``100`` - ``64,000`` IOPS ..."
+```
+
+숫자가 **사람이 읽는 문장 안에만** 있다. "gp3 볼륨의 최대 IOPS는?" 같은 실무 질문에
+답하려면 이 문장에서 숫자를 꺼내야 하고, 그래서 정규식으로 산문을 긁는 경로
+(`capacitykb/prose.py`, `evidence: cfn-description`)를 따로 만들었다.
+
+당연히 이건 **깨지기 쉽다.** 그래서 두 겹으로 막았다:
+- 신뢰도를 낮게(0.6~0.8) 주고, 판정에 쓸지를 임계선으로 거른다
+- 틀리더라도 **느슨한 쪽으로만** 틀리게 한다(fail-open) — 잘못 막는 것보다 침묵이 낫다
+
+실측상 이 경로로 나온 건 전체 46,810건 중 **158건(0.34%)** 뿐이다. 적지만, 하필 사람들이
+가장 많이 묻는 값들이라 빼기 어렵다.
+
+> ⚠️ 산문 추출은 실제로 사고를 냈다. `Iops`의 "operations per **second** (IOPS)"에서
+> 단위를 `second`로 잘못 뽑는 등 3건이 확인됐다(감사 결함 (라)).
+
+---
+
+#### S2. AWS CDK OOB 관계 → graphkb
+
+**원본이 무엇인가**: AWS CDK 팀이 "스키마에는 없지만 실제로 존재하는 관계"를 손으로 모아둔
+JSON 하나(`relationships.json`, 353개 타입).
+
+```json
+"AWS::ACMPCA::Certificate": {
+  "relationships": {
+    "CertificateAuthorityArn": [
+      { "cloudformationType": "AWS::ACMPCA::CertificateAuthority",
+        "propertyPath": "/properties/Arn" } ],
+    "TemplateArn": [
+      { "cloudformationType": "AWS::ACMPCA::CertificateAuthority",
+        "propertyPath": "/properties/Arn" } ]
+```
+
+구조가 단순하다 — `{타입: {속성: [{대상타입, 대상속성}]}}`. 우리는 이걸 그대로 엣지로 옮긴다
+(`evidence: cdk-oob`, 신뢰도 0.9, 1,220건). 스키마 추론(S1-가)보다 신뢰도가 높은 이유는
+**사람이 검수한 목록**이기 때문이고, 1.0이 아닌 이유는 AWS 공식 스키마가 아니라
+CDK 팀의 별도 산출물이기 때문이다.
+
+> Git LFS로 저장돼 있어 `raw.githubusercontent.com`이 아니라 `media.githubusercontent.com`에서
+> 받아야 한다 — 전자로 받으면 내용 대신 LFS 포인터 텍스트가 온다.
+
+---
+
+#### S3. Azure Bicep 타입 정의 → graphkb + capacitykb
+
+**원본이 무엇인가**: Azure는 리소스 명세를 **타입 배열 하나**로 준다. AWS처럼 리소스마다
+파일이 있는 게 아니라, 파일 하나에 온갖 타입이 평평하게 나열되고 서로를 **배열 인덱스로**
+참조한다. `microsoft.compute` 2026-03-01 버전 파일을 열면 원소가 1,018개다:
+
+```
+$type 분포: StringLiteralType 534 · ObjectType 247 · UnionType 113 · ArrayType 94
+            ResourceType 22 · IntegerType 4 · StringType 2 · BooleanType 1 · AnyType 1
+```
+
+`ResourceType`이 실제 리소스다:
+
+```json
+{ "$type": "ResourceType",
+  "name": "Microsoft.Compute/availabilitySets@2026-03-01",
+  "body": { "$ref": "#/3" },        ← 3번 원소(ObjectType)가 본문
+  "readableScopes": 8, "writableScopes": 8 }
+```
+
+`#/3`은 "이 배열의 3번째 원소"라는 뜻이다. 그래서 파서는 **인덱스를 따라가며** 속성을
+펼쳐야 한다(`graphkb/parsers/azure.py`, `capacitykb/parsers/azure.py`).
+
+##### (가) 계층은 이름에 들어 있다 — `contained_in`
+
+Azure 타입 이름은 `Microsoft.Compute/virtualMachines/extensions`처럼 **경로**다.
+슬래시로 자르면 부모가 그대로 나온다:
+
+```
+Microsoft.Compute/virtualMachines/extensions
+  → 부모: Microsoft.Compute/virtualMachines
+```
+
+이건 추론이 아니라 **ARM의 구조적 사실**이라 신뢰도 1.0(`evidence: arm-hierarchy`)이고,
+Azure 그래프 엣지 2,306건 중 2,223건이 이것이다. AWS와 정반대다 — **AWS 그래프에는
+`contained_in`이 0건**이고 전부 `references`다. 같은 지식베이스인데 프로바이더마다
+표현 가능한 관계 종류가 다르다(감사 결함 G6).
+
+##### (나) 참조는 이름 맞추기다 — `bicep-ref`
+
+속성의 타입 이름이 리소스 타입 이름과 맞으면 참조로 본다(신뢰도 0.8).
+
+> ⚠️ **이게 감사에서 오탐 12/59로 드러났다.** 예를 들어 가상머신의
+> `properties.osProfile.linuxConfiguration.ssh.publicKeys`는 타입 이름이
+> `sshPublicKeys`라 `Microsoft.Compute/sshPublicKeys` 리소스로 연결됐는데, 실제 그 객체의
+> 속성은 `['keyData', 'path']`뿐이다 — **인라인으로 적어 넣는 공개키 자체**이지
+> 별도 리소스에 대한 참조가 아니다.
+>
+> 판별법도 확인됐다: ARM에서 진짜 리소스 참조는 대상 객체에 반드시 `id` 속성이 있다.
+> 그리고 이름 휴리스틱인데도 신뢰도가 0.8로, 같은 파서의 명시적 `heuristic`(0.6)보다
+> 높다 — 근거 등급이 실제 추론 강도와 반대로 붙어 있다(감사 결함 G1).
+
+##### (다) 제약은 비트 플래그에서 읽는다 (capacitykb)
+
+각 속성에 `flags` 정수가 붙어 있고, 비트로 의미가 정해진다:
+
+```
+AvailabilitySetProperties 의 속성:
+   statuses: flags=2 → 읽기 전용
+   virtualMachineScaleSetMigrationInfo: flags=2 → 읽기 전용
+```
+
+```
+flags & 1 → required        (반드시 채워야 함)
+flags & 2 → read_only       (Azure가 채워주는 값)
+flags & 8 → DeployTimeConstant  ← 불변성이 아니다. name/type/apiVersion에만 붙는다
+```
+
+8번 비트를 불변성으로 오해하면 안 된다는 것이 파서 주석에 박혀 있다.
+
+> **Azure에는 "만들 때만 정할 수 있음"(create_only)에 해당하는 플래그가 아예 없다.**
+> 그래서 Azure 제약 6,608건 중 `mutability`는 전부 `read_only`(4,704건)이고 `create_only`는
+> **0건**이다. AKS의 `location`처럼 실제로는 바꾸면 재생성되는 속성이 있는데도
+> "변경 불가로 알려진 속성이 없습니다"라고 답하게 되는 이유가 이것이다 — 데이터 부재가
+> 사실 부재로 읽히는 문제(감사 결함 (나)-4).
+
+---
+
+#### S4. Azure 서비스 한도 문서 → capacitykb (쿼터)
+
+**원본이 무엇인가**: Azure 공식 문서 저장소의 마크다운 파일. 스키마가 아니라 **사람이 읽는
+문서의 표**다.
+
+```markdown
+| Resource | Limit |
+| --- | --- |
+| Virtual networks |1,000 |
+| Subnets per virtual network |3,000 |
+| Virtual network peerings per virtual network |500 |
+| [Virtual network gateways (VPN gateways) per virtual network](../articles/...) |1 |
+```
+
+표를 파싱해 `{name: "Subnets per virtual network", default: 3000}` 형태로 만든다
+(`evidence: azure-limits-doc`). 값이 숫자가 아니거나 각주가 붙어 있으면 신뢰도를
+0.9에서 0.7로 낮춘다.
+
+네 번째 행처럼 이름에 마크다운 링크가 섞이는데, 링크 대상에 괄호가 중첩될 수 있어
+(`jj157100(v=azure.100)`) 단순 정규식으로 자르면 이름에 `)`가 남는다 — 파서에 그 방어가 있다.
+
+> 쿼터는 **52건뿐**이고 그중 리소스 타입이 연결된 건 10건이다. `unit`은 52건 전부 비어 있어
+> "Subnets per virtual network: 3000"이 3000개인지 다른 단위인지 데이터만으로는 알 수 없다
+> (감사 결함 K8). 그리고 이 문서는 Azure만 있다 — AWS·GCP 쿼터는 수록돼 있지 않다.
+
+---
+
+#### S5. GCP Config Connector CRD → graphkb
+
+**원본이 무엇인가**: 구글이 GCP 리소스를 쿠버네티스 방식으로 다루기 위해 만든 정의 파일
+(YAML). 리소스마다 파일 하나씩이고, 버전이 `v1.153.0`으로 **고정**돼 있다.
+
+`computeinstances` 파일의 `spec`을 열면 `~Ref`로 끝나는 필드가 있다:
+
+```yaml
+instanceTemplateRef:
+  properties:
+    external:
+      description: 'Allowed value: The `selfLink` field of a `ComputeInstanceTemplate` resource.'
+      type: string
+    name:
+      description: 'Name of the referent. ...'
+    namespace:
+      description: 'Namespace of the referent. ...'
+  type: object
+```
+
+두 가지를 읽는다:
+1. **필드 이름** — `instanceTemplateRef` → `~Ref` 접미사 → 참조 필드
+2. **설명문** — `Allowed value: The 'selfLink' field of a 'ComputeInstanceTemplate' resource.`
+   여기서 대상 타입 이름 `ComputeInstanceTemplate`을 **직접 꺼낸다**
+
+AWS와 달리 **설명문이 대상 타입을 명시**해준다. 그래서 정규식 4종으로 이 문구들을 잡는다:
+
+```
+"Allowed value: The `~` field of a `~` resource"
+"externally managed ~ resource"
+"The name of a ~ resource"
+"reference to a (GCP)? ~"
+```
+
+이게 `evidence: kcc-ref`(신뢰도 0.9~1.0)다. GCP는 타입이 95개뿐이라 커버리지가 좁지만,
+**있는 것의 근거는 셋 중 가장 명확하다.**
+
+---
+
+#### S6. cb-tumblebug Swagger → graphkb (코어 레이어)
+
+**원본이 무엇인가**: cb-tumblebug의 REST API 명세(`swagger.json`, 버전 `v0.11.8` 고정).
+여기서는 프로바이더 중립 타입 13개를 만든다 — "AWS든 Azure든 상관없이 가상 네트워크라는
+개념이 있다"는 층이다.
+
+```json
+"model.TbVNetReq": {
+  "required": ["connectionName", "name"],
+  "properties": {
+    "cidrBlock", "connectionName", "description", "name",
+    "subnetInfoList": { "type": "array",
+                        "items": { "$ref": "#/definitions/model.TbSubnetReq" } }
+  }
+}
+```
+
+읽는 방법:
+- `model.TbVNetReq` → 코어 타입 `vNet` (파서에 매핑표가 하드코딩돼 있다)
+- `subnetInfoList`가 `model.TbSubnetReq`를 `$ref`로 품고 있다 → **`subnet`은 `vNet` 안에 있다**
+  (`contained_in`)
+- `connectionName`은 `"example": "aws-ap-northeast-2"` — 프로바이더+리전 연결 정보
+
+즉 "vNet을 만들 때 subnet 정보를 같이 넣는다"는 API 모양에서 포함 관계를 읽는다.
+
+---
+
+#### S7. cb-tumblebug 자산 덤프 → costkb + perfkb
+
+**원본이 무엇인가**: cb-tumblebug이 자기 데이터베이스를 통째로 백업해 저장소에 커밋해 둔
+파일(`assets.dump.gz`, 34MB, PostgreSQL 백업 형식). 태그 `v0.12.25`로 고정.
+
+그 안의 `spec_infos` 테이블에 인스턴스 스펙 73,083행이 있다. 한 행을 꺼내 보면 컬럼이 42개:
+
+```
+id             = 'aws+ap-east-1+t3.medium'
+provider_name  = 'aws'
+region_name    = 'ap-east-1'
+csp_spec_name  = 't3.medium'
+v_cpu          = '2'
+memory_gi_b    = '4'
+cost_per_hour  = '0.058400001376867294'
+architecture   = 'x86_64'
+infra_type     = 'node'
+namespace      = 'system'
+```
+
+##### (가) costkb는 이 컬럼들을 그대로 투영한다
+
+`id`·`vCPU`·`memGiB`·`hourlyUSD`… 계산이 거의 없다. **일부러 그렇게 했다** — 우리 에이전트의
+라이브 경로인 cb-tumblebug MCP가 **같은 테이블을 읽기** 때문에, 우리가 "더 정확하게" 고치면
+같은 질문에 두 경로가 다른 답을 낸다. 그래서 상위의 메모리 버그(GCP·Azure가 실제보다 2.4%
+낮음)까지 그대로 복사하고, 보정값은 `memGiBActual`로 **따로** 병기한다(14절 참조).
+
+예외는 센티널 처리다. `cost_per_hour`가 `0`이나 `-1`이면 "무료"가 아니라 **"가격 미상"**이라
+`null`로 바꾼다 — Tumblebug의 정렬 SQL이 `CASE WHEN cost_per_hour > 0 ... ELSE 999999`로
+뒤로 미는 것과 같은 취지다.
+
+##### (나) perfkb는 costkb가 버린 `details` 컬럼을 읽는다
+
+같은 행의 `details` 컬럼에 CSP 원본 응답이 들어 있다(1,670자):
+
+```
+[{"key":"AutoRecoverySupported","value":"true"},
+ {"key":"BareMetal","value":"false"},
+ {"key":"BurstablePerformanceSupported","value":"true"},
+ {"key":"CurrentGeneration","value":"true"},
+ {"key":"EbsInfo","value":"{EbsOptimizedInfo:{BaselineBandwidthInMbps:347,BaselineIops:2000,
+                            BaselineThroughputInMBps:43.375,MaximumBandwidthInMbps:2085,
+                            MaximumIops:11800,...}}"}, ...]
+```
+
+**바깥은 JSON인데 `value` 안쪽은 JSON이 아니다.** Go 언어의 `%v` 출력이라 따옴표가 없고,
+값에 공백이 들어가고(`NetworkPerformance:Up to 5 Gigabit`), 중첩과 배열이 섞인다.
+표준 JSON 파서로는 못 읽고, 범용 파서를 쓰면 `Up to 5 Gigabit`의 공백에서 깨진다.
+
+그래서 **전체를 파싱하지 않는다.** 필요한 키만 정규식으로 뽑고 못 뽑으면 `None`을 준다
+(`perfkb/parsers/details.py`). 뽑는 키를 7개로 유지하는 것 자체가 안전장치다.
+
+정규식에는 **구분자 가드**가 필수였다. 키 앞에 `{`·`,`·`[` 중 하나를 요구하지 않으면
+접미사가 같은 다른 키에 걸린다:
+
+```
+`Iops`를 찾으면          → MaximumIops:11800 에 걸림
+`ThreadsPerCore`를 찾으면 → DefaultThreadsPerCore 에 걸림
+```
+
+여기서 뽑은 값이 성능 판정이 된다:
+- `BurstablePerformanceSupported: true` → "상시 CPU 성능 **미보장**"(버스트 인스턴스)
+  `evidence: aws-burstable-field`, 신뢰도 1.0 — AWS가 명시한 필드라서
+- `CurrentGeneration: false` → "구세대"
+- `EbsInfo` 안의 `BaselineBandwidthInMbps` → 지속 대역폭
+
+> ⚠️ Azure는 이런 필드가 없어서 **스펙 이름이 `standardB`로 시작하는지**로 판정한다
+> (`evidence: azure-family-name`, 신뢰도 0.8). 이름 추론이라 신뢰도를 낮춘 것인데,
+> 34,846건에 붙는 이 하나의 상수가 판정 임계선(0.8)에 정확히 걸쳐 있다(§18-5).
+
+---
+
+#### S8. CB-Spider 드라이버 소스 → graphkb (매핑 레이어)
+
+**원본이 무엇인가**: "AWS의 VPC와 Azure의 Virtual Network는 같은 것"이라는 번역 사전.
+자동 추출이 아니라 **CB-Spider 드라이버 코드를 사람이 읽고 검수해** 만든 JSON이며,
+저장소에 번들돼 있다(`graphkb/parsers/core_vendor_map.json`, 28건).
+
+```json
+{"core": "vNet", "provider": "aws", "target": "AWS::EC2::VPC", "confidence": 0.95,
+ "note": "aws VPCHandler.go: ec2.CreateVpc (IGW/RouteTable 번들 생성 포함)",
+ "status": "confirmed"}
+```
+
+`note`에 **근거가 되는 드라이버 파일과 함수**가 적혀 있다. 신뢰도가 낮은 항목은 그 이유도
+함께 적혀 있다:
+
+```json
+{"core": "securityGroup", "provider": "gcp", "target": "ComputeFirewall", "confidence": 0.7,
+ "note": "gcp SecurityHandler.go: Firewalls.Insert — 규칙별 방화벽 1:N 생성 +
+          TargetTag 네트워크 태그 관례. 단일 리소스 동치가 아님"}
+
+{"core": "nlb", "provider": "gcp", "target": "ComputeForwardingRule", "confidence": 0.7,
+ "note": "gcp NLBHandler.go: ForwardingRules.Insert + TargetPools/HttpHealthChecks 번들
+          (legacy target-pool 방식)"}
+```
+
+즉 GCP 방화벽은 AWS 보안그룹과 **엄밀히 같지 않다**(하나는 네트워크 단위 규칙, 하나는
+인스턴스에 붙는 것). 그 사실이 신뢰도 0.7과 note로 기록돼 있다.
+
+파이프라인은 반자동이다 — `suggest()`가 이름 유사도로 후보(`status: candidate`)를 만들면
+사람이 검수해 `confirmed`로 바꾸고, 확정된 것만 그래프에 들어간다.
+
+> **신뢰도 수치에 대한 정확한 진단**: 이 파일의 값들은 *이유가 없는* 게 아니다 — note에
+> 근거가 적혀 있다. 문제는 **척도가 없다는 것**이다. 왜 0.7이고 0.65나 0.75가 아닌지,
+> 0.95와 0.9를 가르는 규칙이 무엇인지가 어디에도 없다. 28개 엣지에 다섯 개 값
+> (0.7/0.8/0.85/0.9/0.95)이 쓰이고 **0.85는 전 데이터셋에서 단 1건**이다. §18-5 참조.
 
 ### 18-3. 산출물 스키마
 
@@ -1177,6 +1577,11 @@ costkb·perfkb는 Tumblebug 키 `{provider}+{region}+{spec}`. 앞의 둘이 조�
 전 산출물에서 8개 값이 쓰인다: `0.5 / 0.6 / 0.7 / 0.8 / 0.85 / 0.9 / 0.95 / 1.0`.
 **척도의 정의가 어디에도 없다.** 0.9와 0.95의 차이가 무엇인지, 두 근거를 결합하면
 어떻게 되는지, 0.8이 "80% 확률"인지 "꽤 믿는다"인지가 기록돼 있지 않다.
+
+한 가지는 분명히 해두자 — **개별 값에 이유가 없는 게 아니다.** S8에서 봤듯 매핑 신뢰도에는
+`note`로 근거가 붙어 있고 내용도 타당하다. 문제는 그 산문 근거에서 **숫자가 유도되지
+않는다**는 것이다. 그래서 재설계의 과제는 "근거를 만들어라"가 아니라 **"근거에서 등급이
+함수적으로 나오게 하라"** 다.
 
 실측으로 확인된 문제 셋:
 
