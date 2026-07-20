@@ -138,6 +138,33 @@ def accelerator_fields_agree(record_key: str) -> Callable[[dict], Iterable[Viola
     return check
 
 
+def no_negative_measurements(record_key: str, *fields: str) -> Callable[[dict], Iterable[Violation]]:
+    """크기·개수 필드에 음수가 남아 있는가.
+
+    음수는 측정값이 아니라 **모른다는 표시**다(상류가 `-1`을 쓴다). 그대로 실으면
+    소비자가 계산에 넣어 버리므로 파서가 `null`로 바꾼다 — 이 검사는 그 정규화가
+    빠진 경로가 생기면 울린다. "모른다"를 표현하는 방법이 필드마다 다르면
+    소비자가 매번 다시 배워야 한다.
+    """
+
+    def check(dataset: dict) -> Iterable[Violation]:
+        seen: dict[str, int] = {}
+        for record in dataset.get(record_key) or []:
+            if not isinstance(record, dict):
+                continue
+            for field in fields:
+                value = record.get(field)
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and value < 0:
+                    seen[field] = seen.get(field, 0) + 1
+        for field, count in sorted(seen.items()):
+            yield Violation(
+                where=field,
+                detail=f"음수 값이 {count:,}건 남아 있습니다 (모름은 null로 적어야 한다)",
+            )
+
+    return check
+
+
 def one_basis_per_evidence(*record_keys: str) -> Callable[[dict], Iterable[Violation]]:
     """한 근거 라벨의 성격이 하나로 일치하는가.
 

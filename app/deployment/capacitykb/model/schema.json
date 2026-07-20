@@ -213,6 +213,24 @@
         }
       }
     },
+    "_coverage": {
+      "type": "array",
+      "description": "무엇을 훑었는가. 이게 없으면 '제약 없음'과 '안 봤음'이 구분되지 않는다 — 실측상 graphkb가 아는 벤더 타입 5,547종 중 3,634종에 제약 레코드가 없고 GCP 527종은 전부 미수집이다.",
+      "items": {
+        "type": "object",
+        "required": ["provider"],
+        "properties": {
+          "provider": {"type": "string"},
+          "scope": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "훑은 네임스페이스. 없으면 그 프로바이더 전체를 훑었다는 뜻."
+          },
+          "types": {"type": "integer", "minimum": 0},
+          "note": {"type": "string"}
+        }
+      }
+    },
     "_source": {
       "type": "array",
       "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",

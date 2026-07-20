@@ -372,6 +372,12 @@ def build(
     stats: Counter = Counter()
     capacity = parse_zip(zip_path, prose=prose, stats=stats)
     capacity.provenance = [describe_source(zip_path, "cfn-schema")]
+    # AWS는 스키마 zip 전체를 읽으므로 범위 제한이 없다(scope 생략 = 전부).
+    capacity.coverage = [{
+        "provider": "aws",
+        "types": len({c.type_id for c in capacity.constraints}),
+        "note": "CloudFormation 스키마 zip 전체를 읽는다.",
+    }]
     announce(capacity.save(output), "capacitykb/cfn")
 
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)

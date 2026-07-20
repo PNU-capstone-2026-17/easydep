@@ -96,6 +96,8 @@
             ]
           },
           "diskSizeGB": {
+            "description": "로컬 디스크 크기(GB). null은 상류가 모른다는 뜻(-1로 표기하던 것). 0은 '로컬 디스크 없음'일 수도 미기입일 수도 있어 가릴 수 없으므로 그대로 싣는다.",
+            "minimum": 0,
             "type": [
               "number",
               "null"

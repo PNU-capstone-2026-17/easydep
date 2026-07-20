@@ -88,6 +88,27 @@ def _describe(constraint) -> str:
     return f"  - {constraint.property}: {text}{suffix}{note}"
 
 
+def _nothing_found(capacity: CapacitySet, type_id: str, what: str) -> str:
+    """"없다"와 "안 봤다"를 구분해 답한다.
+
+    둘을 같은 문장으로 답하면 침묵이 사실로 읽힌다. 실측상 graphkb가 아는 벤더
+    타입 5,547종 중 3,634종에 제약 레코드가 없고, 그중 GCP 527종은 **capacitykb가
+    아예 안 읽어서** 없는 것이다. "제약 없음"이라고 답하면 그건 거짓이다.
+    """
+    if capacity.covers(type_id):
+        return f"{what} 에 대해 알려진 제약이 없습니다 (수집 범위 안이므로 '없음'이 답입니다)."
+    provider = type_id.split("::", 1)[0]
+    scanned = ", ".join(
+        f"{e['provider']}({'전체' if not e.get('scope') else '/'.join(e['scope'])})"
+        for e in capacity.coverage
+    )
+    return "\n".join([
+        f"{what} 는 **수집 범위 밖**이라 제약을 모릅니다 — 제약이 없다는 뜻이 아닙니다.",
+        f"  지금 수집한 범위: {scanned or '(기록 없음)'}",
+        f"  {provider} 쪽을 넓히려면 capacitykb 빌드 범위를 늘려야 합니다.",
+    ])
+
+
 def property_limits(
     resource_type: str,
     property_name: str | None = None,
@@ -104,7 +125,7 @@ def property_limits(
     found = limits_for(capacity, type_id, prop=property_name)
     if not found:
         target = f"{type_id}.{property_name}" if property_name else type_id
-        return f"{target} 에 대해 알려진 제약이 없습니다."
+        return _nothing_found(capacity, type_id, target)
     header = f"{type_id}" + (f".{property_name}" if property_name else "")
     lines = [f"{header} 제약 {len(found)}건:"]
     lines.extend(_describe(c) for c in found)
@@ -163,6 +184,8 @@ def immutable(
         return error
     found = immutable_properties(capacity, type_id)
     if not found:
+        if not capacity.covers(type_id):
+            return _nothing_found(capacity, type_id, type_id)
         return f"{type_id} 에 변경 불가로 알려진 속성이 없습니다."
     lines = [f"{type_id} 의 변경 시 재생성되는 속성 {len(found)}개:"]
     lines.extend(_describe(c) for c in found)
@@ -188,6 +211,8 @@ def allowed_values(
         if c.kind in ("enum", "pattern", "default")
     ]
     if not found:
+        if not capacity.covers(type_id):
+            return _nothing_found(capacity, type_id, f"{type_id}.{property_name}")
         return f"{type_id}.{property_name} 에 알려진 허용값/패턴 정보가 없습니다."
     lines = [f"{type_id}.{property_name} 허용값 정보:"]
     lines.extend(_describe(c) for c in found)

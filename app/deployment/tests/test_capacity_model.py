@@ -193,3 +193,41 @@ def test_save_refuses_contradictory_records(tmp_path) -> None:
     with pytest.raises(ArtifactInvalid, match="default=0인데 min=10"):
         bad.save(path)
     assert not path.exists()
+
+
+# --- 커버리지: "없다"와 "안 봤다"를 가른다 (2026-07-21, 감사 §5-5) ---
+
+
+def test_coverage_absent_means_no_claim() -> None:
+    """기록이 없는 옛 산출물은 판단하지 않는다 — 없는 정보로 단정할 수 없다."""
+    assert CapacitySet().covers("gcp::ComputeInstance")
+
+
+def test_scope_limits_what_we_claim_to_know() -> None:
+    """범위를 적었으면 그 밖은 '모른다'다.
+
+    실측: capacitykb는 Azure 3,382종 중 3개 네임스페이스만 읽는다. 범위 기록이
+    없으면 나머지 3,104종에 대해 "제약 없음"이라고 답하게 된다.
+    """
+    result = CapacitySet()
+    result.coverage = [{"provider": "azure", "scope": ["microsoft.network"]}]
+    assert result.covers("azure::Microsoft.Network/virtualNetworks")
+    assert not result.covers("azure::Microsoft.Storage/storageAccounts")
+    assert not result.covers("gcp::ComputeInstance")  # 프로바이더 자체가 미수집
+
+
+def test_scope_omitted_means_whole_provider() -> None:
+    """AWS는 스키마 zip 전체를 읽으므로 범위 제한이 없다."""
+    result = CapacitySet()
+    result.coverage = [{"provider": "aws", "types": 1635}]
+    assert result.covers("aws::AWS::EC2::Volume")
+    assert result.covers("aws::AWS::Anything::AtAll")
+
+
+def test_coverage_survives_merge_and_roundtrip() -> None:
+    left, right = CapacitySet(), CapacitySet()
+    left.coverage = [{"provider": "aws"}]
+    right.coverage = [{"provider": "azure", "scope": ["microsoft.network"]}]
+    left.merge(right)
+    assert len(left.coverage) == 2
+    assert CapacitySet.from_dict(left.to_dict()).coverage == left.coverage

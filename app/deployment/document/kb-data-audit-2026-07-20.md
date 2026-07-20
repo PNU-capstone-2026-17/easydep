@@ -339,10 +339,26 @@ IOPS 역전, ACU 극단값, threadsPerCore), 필드 조합 모순 0건(`networkI
    (`read_azure_index` / `AzureTypeIndex.type_id`)를 두 파서가 함께 쓴다. 조인율
    어서션은 `python -m kbcommon verify`가 걸며 1,913건 전부 통과한다.
 3. ~~**evidence당 등급 하나**~~ — ✅ **2026-07-21 R4 완료.** 예상대로 위반이 라벨 세분화 신호였다: `kcc-ref`→`kcc-description`, `azure-limits-doc`→`azure-limits-note`로 쪼갰고 `one-basis-per-evidence`가 error 등급으로 재발을 막는다.
-4. **센티널 정규화 일원화** — `hourlyUSD`의 `<=0 → null` 규칙을 `diskSizeGB`·
-   `acceleratorMemoryGB`에도 적용. 스키마 `exclusiveMinimum`으로 재유입을 막는다.
-5. **커버리지를 데이터에 기록** — 산출물마다 `{types_in_graph, types_covered,
-   extracted_at, source_versions}`. "정보 없음"과 "제약 없음"을 소비자가 구분할 수 있어야 한다.
+4. ~~**센티널 정규화 일원화**~~ — ✅ **2026-07-21 완료.** 다만 **감사가 가정한 것보다
+   좁게** 했다. `-1`(37,466건)은 크기가 될 수 없으므로 `null`로 옮겼고 스키마
+   `minimum: 0`으로 재유입을 막는다. **`0`은 건드리지 않았다** — 사실인지 미기입인지
+   가릴 수 없기 때문이다(Azure에서 이름상 로컬 디스크가 확실한 v6 계열 5,225건이
+   0으로 오는 반면, 0이 맞는 스펙도 있다). 미러가 애매한 값을 다시 쓰면 미러가
+   아니게 되므로 `disk-size-zero-is-ambiguous`가 건수만 알린다.
+   `acceleratorMemoryGB`의 0도 같은 이유로 유지 — 가속기가 없는 레코드에서는
+   0이 정당한 값이다.
+5. ~~**커버리지를 데이터에 기록**~~ — ✅ **2026-07-21 완료.** capacitykb 산출물에
+   `_coverage`(프로바이더·훑은 네임스페이스·타입 수)를 싣고 `CapacitySet.covers()`가
+   판정한다. 답변이 갈린다:
+
+   ```
+   범위 안 + 제약 없음 → "알려진 제약이 없습니다 (수집 범위 안이므로 '없음'이 답입니다)"
+   범위 밖            → "수집 범위 밖이라 제약을 모릅니다 — 제약이 없다는 뜻이 아닙니다"
+                        지금 수집한 범위: aws(전체), azure(microsoft.compute/…/network)
+   ```
+
+   이게 없을 때 실제로 틀리던 규모: graphkb가 아는 벤더 타입 5,547종 중 3,634종에
+   제약 레코드가 없고, 그중 **GCP 527종은 전부 capacitykb가 안 읽어서** 없는 것이었다.
 6. **다대일 접기 정책 명시** — perfkb 리전 접기를 first-wins(순서 의존)에서 명시적
    정책으로. 성능 KB에서는 과대 진술이 과소 진술보다 해로우므로 보수적 최소값 + 범위 병기.
 7. **소스 고정** — §6 참조. 현재 AWS·Azure는 핀이 없어 재현이 불가능하다.

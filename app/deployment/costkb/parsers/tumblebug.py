@@ -93,6 +93,22 @@ def correct_memory(provider: str, mem_gib: float) -> float:
     return mem_gib
 
 
+def _disk_size(raw) -> float | None:
+    """`-1`은 크기가 아니라 **모른다는 표시**다 → null.
+
+    디스크 크기가 음수일 수 없으므로 이 판정에는 애매함이 없다. 실측상 -1은
+    37,466건이고 aws·gcp·tencent·ibm 드라이버가 이 관례를 쓴다(azure·kt·nhn은
+    안 쓴다 — 즉 값이 아니라 드라이버별 표기다).
+
+    **`0`은 건드리지 않는다.** 0은 "로컬 디스크 없음"이라는 사실일 수도, 미기입일
+    수도 있어 가릴 수 없다 — Azure에서 이름상 로컬 디스크가 확실히 있는 v6 계열
+    5,225건이 0으로 오는 반면(미기입), 0이 사실인 스펙도 존재한다. 미러가 애매한
+    값을 다시 쓰면 그 순간 미러가 아니게 되므로 그대로 싣고 불변식이 건수를 알린다.
+    """
+    value = _num(raw)
+    return None if value is not None and value < 0 else value
+
+
 def project_row(row: dict) -> dict | None:
     """spec_infos 행 하나를 costkb 레코드로. 쓸 수 없는 행은 None."""
     provider = _text(row.get("provider_name"))
@@ -122,7 +138,7 @@ def project_row(row: dict) -> dict | None:
         "hourlyUSD": hourly,
         "architecture": _text(row.get("architecture")),
         "infraType": _text(row.get("infra_type")),
-        "diskSizeGB": _num(row.get("disk_size_gb")),
+        "diskSizeGB": _disk_size(row.get("disk_size_gb")),
         "acceleratorType": _text(row.get("accelerator_type")),
         "acceleratorModel": _text(row.get("accelerator_model")),
         "acceleratorCount": _int(row.get("accelerator_count")),

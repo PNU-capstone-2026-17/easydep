@@ -221,3 +221,44 @@ def test_mirror_and_derived_kb_disagree_on_severity() -> None:
     assert run(bad, COST).ok          # 산출물은 만들어진다
     assert run(bad, COST).reports     # 다만 조용하지 않다
     assert not run(bad, PERF).ok      # 이쪽은 막는다
+
+
+# --- 센티널 정규화 (2026-07-21, 감사 §5-4) ---
+
+
+def test_negative_measurement_blocks_the_write(tmp_path) -> None:
+    """음수는 측정값이 아니라 "모른다"는 표시다 — null로 옮기는 건 파서의 일이다.
+
+    실측: 상류가 `disk_size_gb = -1`로 37,466건을 보낸다. 그대로 실으면 소비자가
+    계산에 넣는다.
+    """
+    from costkb.invariants import INVARIANTS as COST
+
+    bad = {"specs": [{"provider": "aws", "specName": "d2.8xlarge", "diskSizeGB": -1.0}]}
+    result = run(bad, COST)
+    assert not result.ok
+    assert "음수" in result.summary()
+
+
+def test_zero_disk_is_reported_not_rewritten() -> None:
+    """0은 사실인지 미기입인지 **가릴 수 없다** — 미러는 다시 쓰지 않고 건수만 밝힌다.
+
+    Azure에서 이름상 로컬 디스크가 확실한 v6 계열이 0으로 오는가 하면(미기입),
+    0이 맞는 스펙도 있다. 애매한 값을 고쳐 쓰면 그 순간 미러가 아니게 된다.
+    """
+    from costkb.invariants import INVARIANTS as COST
+
+    data = {"specs": [{"provider": "azure", "specName": "Standard_E48ads_v6",
+                       "diskSizeGB": 0}]}
+    result = run(data, COST)
+    assert result.ok                                  # 산출물은 만들어진다
+    assert any(i.name == "disk-size-zero-is-ambiguous" for i, _ in result.reports)
+
+
+def test_disk_size_parser_maps_minus_one_to_none() -> None:
+    from costkb.parsers.tumblebug import _disk_size
+
+    assert _disk_size(-1) is None
+    assert _disk_size(0) == 0        # 0은 건드리지 않는다
+    assert _disk_size(100) == 100
+    assert _disk_size(None) is None

@@ -256,3 +256,22 @@ def test_agent_api_quota(tmp_path, capacity: CapacitySet) -> None:
     text = agent_api.service_quota("subnet", output_dir=tmp_path)
     assert "3000" in text
     assert "azure-virtual-network-limits.md" in text
+
+
+def test_out_of_scope_answer_does_not_claim_absence() -> None:
+    """**핵심 회귀**: 안 본 타입에 "제약 없음"이라고 답하면 거짓말이다.
+
+    실측: graphkb가 아는 벤더 타입 5,547종 중 3,634종에 제약 레코드가 없고,
+    GCP 527종은 capacitykb가 아예 안 읽어서 없는 것이다.
+    """
+    from capacitykb.agent_api import _nothing_found
+
+    capacity = CapacitySet()
+    capacity.coverage = [{"provider": "aws"}]
+
+    covered = _nothing_found(capacity, "aws::AWS::EC2::Volume", "aws::AWS::EC2::Volume")
+    assert "없습니다" in covered
+
+    unknown = _nothing_found(capacity, "gcp::ComputeInstance", "gcp::ComputeInstance")
+    assert "수집 범위 밖" in unknown
+    assert "제약이 없다는 뜻이 아닙니다" in unknown

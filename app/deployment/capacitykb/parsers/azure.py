@@ -221,6 +221,14 @@ def build(
         extract_constraints(capacity, types_arr, stats=stats, type_index=type_index)
 
     capacity.provenance = [describe_source_set(read_paths, "bicep-types-az")]
+    # **무엇을 훑었는지 남긴다.** 이게 없으면 안 훑은 타입의 제약을 물었을 때
+    # "제약 없음"이라고 답하게 된다 — Azure 3,382종 중 훑는 건 이 3개 네임스페이스뿐이다.
+    capacity.coverage = [{
+        "provider": "azure",
+        "scope": sorted(providers),
+        "types": len({c.type_id for c in capacity.constraints}),
+        "note": "bicep-types의 이 네임스페이스만 읽는다. 목록 밖 타입은 '제약 없음'이 아니라 '안 봤음'이다.",
+    }]
     announce(capacity.save(output), "capacitykb/azure")
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)
     summary = ", ".join(f"{k}={v}" for k, v in sorted(by_evidence.items()))

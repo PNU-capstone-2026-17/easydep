@@ -185,6 +185,18 @@ class CapacitySet:
     비어 있으면 "입력을 모른다"는 뜻이고, 그러면 어떤 수치도 재현·반증할 수 없다.
     """
 
+    coverage: list[dict] = field(default_factory=list)
+    """**무엇을 훑었는가.** `_coverage`로 직렬화된다.
+
+    이게 없으면 "제약이 없다"와 "우리가 안 봤다"가 구분되지 않는다. 실측상 그 차이가
+    크다 — graphkb가 아는 벤더 타입 5,547종 중 3,634종에 제약 레코드가 하나도 없고,
+    GCP는 **527종 전부**가 그렇다(capacitykb가 GCP를 아예 안 읽는다). 커버리지가
+    없으면 "GCP 디스크 크기 제한"을 물었을 때 "제약 없음"이라고 답하게 된다.
+
+    항목 하나가 한 번의 수집 범위다:
+        {"provider": "azure", "scope": ["microsoft.network", ...], "types": 278}
+    """
+
     _c_index: dict[tuple[str, str, str], int] = field(default_factory=dict, repr=False)
     _q_index: dict[tuple[str, str | None, str], int] = field(
         default_factory=dict, repr=False
@@ -227,11 +239,35 @@ class CapacitySet:
             c for c in self.constraints if c.type_id == type_id and c.property == prop
         ]
 
+    def covers(self, type_id: str) -> bool:
+        """이 타입이 **수집 범위 안**이었는가.
+
+        범위 안인데 제약이 없으면 "제약 없음"이고, 범위 밖이면 "모른다"다.
+        기록이 아예 없으면(옛 산출물) 판단하지 않고 True로 둔다 — 없는 정보를
+        근거로 "안 봤다"고 단정할 수는 없다.
+        """
+        if not self.coverage:
+            return True
+        provider, _, rest = type_id.partition("::")
+        for entry in self.coverage:
+            if entry.get("provider") != provider:
+                continue
+            scope = entry.get("scope")
+            if not scope:
+                return True  # 그 프로바이더 전체를 훑었다
+            head = rest.split("/", 1)[0].lower()
+            if any(head == s.lower() for s in scope):
+                return True
+        return False
+
     def merge(self, other: CapacitySet) -> None:
         for constraint in other.constraints:
             self.add_constraint(constraint)
         for quota in other.quotas:
             self.add_quota(quota)
+        for entry in other.coverage:
+            if entry not in self.coverage:
+                self.coverage.append(entry)
         seen = {(p.get("source"), p.get("sha256")) for p in self.provenance}
         for p in other.provenance:
             if (p.get("source"), p.get("sha256")) not in seen:
@@ -245,6 +281,8 @@ class CapacitySet:
         }
         if self.provenance:
             out["_source"] = self.provenance
+        if self.coverage:
+            out["_coverage"] = self.coverage
         return out
 
     @classmethod
@@ -255,6 +293,7 @@ class CapacitySet:
         for item in data.get("quotas", []):
             result.add_quota(Quota.from_dict(item))
         result.provenance = list(data.get("_source") or [])
+        result.coverage = list(data.get("_coverage") or [])
         return result
 
     def validate(self) -> None:
