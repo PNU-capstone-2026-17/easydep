@@ -138,9 +138,48 @@ def test_freshness_warns_when_the_source_moved() -> None:
 
 
 def test_shipped_review_entries_all_carry_a_reason() -> None:
-    """왜 지웠는지 없는 항목은 다음 사람이 판단할 수 없다."""
+    """왜 그렇게 판단했는지 없는 항목은 다음 사람이 다시 볼 수 없다."""
     review = load_review("aws")
     for section in ("rejected", "confirmed", "added"):
         for entry in review[section]:
             assert entry.get("reason"), f"{section}에 이유 없는 항목: {entry}"
-            assert entry.get("from") and entry.get("to")
+            # from/to/via_property 중 최소 하나는 있어야 한다 — 셋 다 없으면
+            # "모든 엣지"에 해당해 그래프가 통째로 사라진다.
+            assert any(entry.get(k) for k in ("from", "to", "via_property")), entry
+    for entry in review["added"]:
+        assert entry.get("from") and entry.get("to"), f"추가는 대상을 특정해야 한다: {entry}"
+
+
+def test_matching_on_target_alone_covers_every_source(graph, tmp_path) -> None:
+    """`to`만 적으면 그 대상으로 가는 엣지 전부에 적용된다.
+
+    권한(IAM::Role)처럼 110개 부품이 같은 이유로 가리키는 대상은 한 줄로 판단한다 —
+    `RoleArn`이 권한을 뜻하는지는 출발이 무엇이든 답이 같기 때문이다.
+    """
+    graph.add_node(_node("aws::D"))
+    graph.add_edge(_edge("aws::D", "aws::B", "FromAnother"))
+
+    path = _write(tmp_path, {"confirmed": [{"to": "aws::B", "reason": "대상 단위 판단"}]})
+    stats = apply_review(graph, "aws", path=path)
+
+    assert stats["confirmed"] == 3  # A→B 두 경로 + D→B
+    assert all(e.reviewed for e in graph.edges if e.to_id == "aws::B")
+    assert not any(e.reviewed for e in graph.edges if e.to_id == "aws::C")
+
+
+def test_rejecting_one_pair_under_a_confirmed_target(graph, tmp_path) -> None:
+    """대상 전체를 확인하되 예외 몇 개만 빼는 게 실제 검수 형태다.
+
+    EC2::Host가 그랬다 — Placement/HostId는 전용 호스트가 맞지만
+    CodeConnections의 HostArn은 전혀 다른 것이었다.
+    """
+    path = _write(tmp_path, {
+        "confirmed": [{"to": "aws::B", "reason": "대체로 맞다"}],
+        "rejected": [{"from": "aws::A", "to": "aws::B",
+                      "via_property": "OnePath", "reason": "이 칸만 다른 뜻"}],
+    })
+    apply_review(graph, "aws", path=path)
+
+    b_edges = {e.via_property: e for e in graph.edges if e.to_id == "aws::B"}
+    assert set(b_edges) == {"AnotherPath"}
+    assert b_edges["AnotherPath"].reviewed is True

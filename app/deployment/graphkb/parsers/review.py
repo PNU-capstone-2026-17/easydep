@@ -69,14 +69,25 @@ def load_review(provider: str, path: Path | None = None) -> dict:
 
 
 def _match(entry: dict, edge: Edge) -> bool:
-    """검수 항목이 이 엣지에 해당하는가.
+    """검수 항목이 이 엣지에 해당하는가. **적은 것만 본다.**
 
-    `via_property`가 있으면 그 경로만, 없으면 타입쌍 전체에 적용한다.
+    셋 다 생략 가능하고, 생략한 항목은 "아무거나"라는 뜻이다. 덕분에 판단 단위를
+    그때그때 고를 수 있다:
+
+        {"to": "aws::AWS::IAM::Role"}          → 권한으로 가는 엣지 전부 (110개 출발)
+        {"from": …, "to": …}                    → 그 타입쌍의 모든 경로
+        {"from": …, "to": …, "via_property": …} → 그 칸 하나
+
+    대상 하나를 판단하면 수십 쌍이 한 번에 정리된다 — `RoleArn`이 권한을 가리키는지는
+    출발 부품이 무엇이든 답이 같기 때문이다. 예외는 `rejected`가 `confirmed`를
+    이기므로 따로 적으면 된다.
     """
-    if entry.get("from") != edge.from_id or entry.get("to") != edge.to_id:
-        return False
-    via = entry.get("via_property")
-    return via is None or via == edge.via_property
+    for field, value in (("from", edge.from_id), ("to", edge.to_id),
+                         ("via_property", edge.via_property)):
+        wanted = entry.get(field)
+        if wanted is not None and wanted != value:
+            return False
+    return True
 
 
 def apply_review(graph: Graph, provider: str, *, path: Path | None = None) -> dict:
@@ -120,6 +131,7 @@ def apply_review(graph: Graph, provider: str, *, path: Path | None = None) -> di
 
     inserted = 0
     for entry in added:
+        # 추가는 대상을 특정해야 한다 — "아무거나"로 엣지를 만들 수는 없다.
         node_ids = (entry.get("from"), entry.get("to"))
         if not all(node_ids) or not all(n in graph.nodes for n in node_ids):
             print(f"경고: 검수 추가 항목의 노드가 그래프에 없어 건너뜀 — {entry}")

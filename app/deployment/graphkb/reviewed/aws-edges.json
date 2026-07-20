@@ -1,14 +1,38 @@
 {
-  "description": "AWS 의존성 엣지 사람 검수 결과. 형식과 이유는 graphkb/parsers/review.py 참조. via_property를 생략하면 그 타입쌍의 모든 경로에 적용된다.",
+  "description": "AWS 의존성 엣지 사람 검수 결과. 형식은 graphkb/parsers/review.py 참조. from/to/via_property는 적은 것만 대조하므로, to만 적으면 그 대상으로 가는 엣지 전부에 적용된다. rejected가 confirmed를 이기므로 '대상 전체 확인 + 예외 몇 개 제거'로 쓸 수 있다.",
   "reviewed_against": {
     "source": "cfn-schema",
     "sha256": "83b88800e04bb5cfc85bbf7eb261623998bccfe2a25920094c4adf268eb09e47"
   },
+
   "rejected": [
+    {
+      "to": "aws::AWS::Lambda::Version",
+      "reason": "VersionId는 람다 버전이 아니다. 실제 용례는 'S3 object version ID'(S3 객체 버전), 'The ID of an existing version of the hook'(CloudFormation 훅 버전) 등이다. Version이라는 이름의 부품이 람다에만 있어서 유일 매칭이 됐을 뿐, 8개 출발 부품 어느 것도 람다와 무관하다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "to": "aws::AWS::Glue::Catalog",
+      "reason": "CatalogId는 Glue 데이터 카탈로그를 소유한 AWS 계정 번호를 넣는 칸이지 Glue::Catalog 부품을 가리키는 게 아니다(설명문도 'Catalog id'뿐). DataBrew·CleanRoomsML 등 16개 출발 부품이 전부 이 용법이다. ※ 판단 근거가 설명문이 아니라 AWS 관례라 재검토 여지가 있는 항목.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::CodeConnections::Connection",
+      "to": "aws::AWS::EC2::Host",
+      "reason": "HostArn은 '서드파티 제공자가 설치된 인프라를 나타내는 호스트'로 CodeStar Connections의 Host이지 EC2 전용 호스트가 아니다. 설명문에 명시돼 있다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "aws::AWS::CodeStarConnections::Connection",
+      "to": "aws::AWS::EC2::Host",
+      "reason": "위 CodeConnections와 같은 이유. 같은 설명문을 쓴다.",
+      "reviewed": "2026-07-20"
+    },
+
     {
       "from": "aws::AWS::QuickSight::Analysis",
       "to": "aws::AWS::Cases::Field",
-      "reason": "칸이 Definition/Sheets/Visuals/.../SortConfiguration/FieldSort/FieldId 형태로, 차트 안에서 어느 항목으로 정렬할지 가리키는 내부 번호다. 대상인 Cases::Field는 '고객센터 케이스 데이터 모델의 필드'로 완전히 다른 것이다. 이름이 Field 하나로 겹쳤을 뿐이다.",
+      "reason": "칸이 Definition/Sheets/Visuals/.../SortConfiguration/FieldSort/FieldId 형태로, 차트 안에서 어느 항목으로 정렬할지 가리키는 내부 번호다. 대상인 Cases::Field는 고객센터 케이스 데이터 모델의 필드로 완전히 다른 것이다. ※ Cases::Field 자체는 유효한 대상이라 대상 전체를 막지 않고 이 세 쌍만 지운다 — Cases::CaseRule·Cases::Template에서 오는 것은 진짜다.",
       "reviewed": "2026-07-20",
       "edges": 421
     },
@@ -48,31 +72,154 @@
       "edges": 24
     }
   ],
+
   "confirmed": [
     {
-      "from": "aws::AWS::IoT::TopicRule",
       "to": "aws::AWS::IAM::Role",
-      "reason": "TopicRulePayload/Actions/*/RoleArn — 규칙이 알람·로그·저장소에 쓰려면 그 동작마다 권한이 필요하다. 40개 경로 전부 실제 동작별 권한 칸이다.",
-      "reviewed": "2026-07-20"
+      "reason": "RoleArn/RoleId는 AWS에서 예외 없이 IAM 권한을 가리킨다. 110개 출발 부품 전부가 '이 서비스가 대신 일하려면 필요한 권한'이라는 같은 용법이고, 5개는 CDK 목록이 별도로 확인해준다.",
+      "reviewed": "2026-07-20",
+      "edges": 159
     },
     {
-      "from": "aws::AWS::BedrockAgentCore::OAuth2CredentialProvider",
+      "to": "aws::AWS::EC2::Subnet",
+      "reason": "SubnetId/SubnetIds는 구역을 가리킨다. 73개 출발 부품이 전부 'VPC 안 어디에 배치할까'라는 같은 용법이다.",
+      "reviewed": "2026-07-20",
+      "edges": 84
+    },
+    {
       "to": "aws::AWS::SecretsManager::Secret",
-      "reason": "설명문이 'The ID or ARN of the secret in AWS Secrets Manager'로 대상을 명시한다.",
-      "reviewed": "2026-07-20"
+      "reason": "SecretArn/SecretId는 Secrets Manager의 비밀값을 가리킨다. 외부 시스템 접속 정보를 거기 두고 참조하는 표준 용법이고, 설명문에 'The ID or ARN of the secret in AWS Secrets Manager'로 명시된 것도 있다.",
+      "reviewed": "2026-07-20",
+      "edges": 62
     },
     {
-      "from": "aws::AWS::Kendra::DataSource",
-      "to": "aws::AWS::SecretsManager::Secret",
-      "reason": "DataSourceConfiguration/*/SecretArn — 외부 시스템(SharePoint 등) 접속 정보를 Secrets Manager에 두고 참조한다.",
-      "reviewed": "2026-07-20"
+      "to": "aws::AWS::EC2::VPC",
+      "reason": "VpcId는 네트워크를 가리킨다. 다른 뜻으로 쓰이는 경우가 없다.",
+      "reviewed": "2026-07-20",
+      "edges": 29
     },
     {
-      "from": "aws::AWS::DMS::DataProvider",
-      "to": "aws::AWS::DMS::Certificate",
-      "reason": "Settings/*Settings/CertificateArn — 데이터베이스 SSL 접속에 쓰는 인증서. 같은 서비스 안이고 DB 종류별로 칸이 하나씩이라 10개 경로가 정상이다.",
-      "reviewed": "2026-07-20"
+      "to": "aws::AWS::EC2::NetworkInterface",
+      "reason": "NetworkInterfaceId는 네트워크 인터페이스를 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 17
+    },
+    {
+      "to": "aws::AWS::Route53::HostedZone",
+      "reason": "HostedZoneId는 DNS 호스팅 영역을 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 14
+    },
+    {
+      "to": "aws::AWS::Cognito::UserPool",
+      "reason": "UserPoolId는 Cognito 사용자 풀을 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 10
+    },
+    {
+      "to": "aws::AWS::Logs::LogGroup",
+      "reason": "LogGroupName/LogGroupArn은 CloudWatch 로그 그룹을 가리킨다. '로그를 어디에 쓸까'라는 용법이다.",
+      "reviewed": "2026-07-20",
+      "edges": 9
+    },
+    {
+      "to": "aws::AWS::EC2::TransitGateway",
+      "reason": "TransitGatewayId는 전송 게이트웨이를 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 8
+    },
+    {
+      "to": "aws::AWS::ACMPCA::CertificateAuthority",
+      "reason": "CertificateAuthorityArn은 사설 인증기관을 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 8
+    },
+    {
+      "to": "aws::AWS::IoT::Thing",
+      "reason": "ThingArn은 IoT 사물을 가리킨다. Greengrass 코어·디바이스가 실제로 IoT Thing으로 등록되므로 맞다.",
+      "reviewed": "2026-07-20",
+      "edges": 7
+    },
+    {
+      "to": "aws::AWS::VpcLattice::ResourceConfiguration",
+      "reason": "ResourceConfigurationArn/Id. 설명문이 'The ARN of the Resource Configuration'으로 대상을 명시한다.",
+      "reviewed": "2026-07-20",
+      "edges": 7
+    },
+    {
+      "to": "aws::AWS::EC2::IPAMPool",
+      "reason": "IpamPoolId는 IP 주소 관리 풀을 가리킨다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
+    },
+    {
+      "to": "aws::AWS::EC2::Host",
+      "reason": "Placement/HostId는 전용 호스트를 가리킨다(설명문 'The ID of the Dedicated Host for the instance'). 단 CodeConnections·CodeStarConnections의 HostArn은 다른 것이라 위에서 따로 제거했다.",
+      "reviewed": "2026-07-20",
+      "edges": 3
+    },
+    {
+      "to": "aws::AWS::Cases::Field",
+      "reason": "Cases::CaseRule·Cases::Template에서 오는 FieldId는 진짜 케이스 필드를 가리킨다(설명문 'The unique identifier of a field'). QuickSight에서 오는 것만 위에서 제거했다.",
+      "reviewed": "2026-07-20",
+      "edges": 9
+    },
+
+    {
+      "to": "aws::AWS::Connect::Instance",
+      "reason": "InstanceArn/InstanceId. 출발이 전부 Connect 서비스 안이고, 컨택센터 인스턴스에 딸린 부품들이다.",
+      "reviewed": "2026-07-20",
+      "edges": 15
+    },
+    {
+      "to": "aws::AWS::ServiceCatalog::Portfolio",
+      "reason": "PortfolioId. 출발이 전부 ServiceCatalog 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 9
+    },
+    {
+      "to": "aws::AWS::AppSync::Api",
+      "reason": "ApiId. 출발이 전부 AppSync 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 8
+    },
+    {
+      "to": "aws::AWS::GuardDuty::Detector",
+      "reason": "DetectorId. 출발이 전부 GuardDuty 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 8
+    },
+    {
+      "to": "aws::AWS::MediaConnect::Flow",
+      "reason": "FlowArn. 출발이 전부 MediaConnect 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 8
+    },
+    {
+      "to": "aws::AWS::Deadline::Farm",
+      "reason": "FarmId. 출발이 전부 Deadline 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 7
+    },
+    {
+      "to": "aws::AWS::QBusiness::Application",
+      "reason": "ApplicationId. 출발이 전부 QBusiness 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 7
+    },
+    {
+      "to": "aws::AWS::NetworkManager::GlobalNetwork",
+      "reason": "GlobalNetworkId. 출발이 전부 NetworkManager 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 6
+    },
+    {
+      "to": "aws::AWS::QuickSight::Folder",
+      "reason": "FolderId. 출발이 전부 QuickSight 안이다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
     }
   ],
+
   "added": []
 }
