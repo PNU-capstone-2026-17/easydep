@@ -19,8 +19,6 @@ from costkb import dataset
 def _costkb_uses_bundle(tmp_path_factory, monkeypatch):
     """빌드 산출물이 있어도 테스트는 번들을 보게 하고, lru_cache 누수를 막는다."""
     monkeypatch.setattr(dataset, "DEFAULT_OUTPUT_DIR", tmp_path_factory.mktemp("no-build"))
-    dataset._load_cached.cache_clear()
-    dataset._schema.cache_clear()
+    dataset.clear_caches()
     yield
-    dataset._load_cached.cache_clear()
-    dataset._schema.cache_clear()
+    dataset.clear_caches()

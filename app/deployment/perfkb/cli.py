@@ -27,6 +27,7 @@ from perfkb.dataset import (
     coverage,
     find,
     is_built,
+    schema,
 )
 
 _MISSING = (
@@ -60,6 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
+    from kbcommon.artifact import ArtifactInvalid, write_dataset
 
     from perfkb.parsers.build import build_dataset, format_audit
 
@@ -75,14 +77,22 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
     dataset, stats = build_dataset(rows)
     output = args.output or (DEFAULT_OUTPUT_DIR / BUILT_FILENAME)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(dataset, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
 
-    specs = dataset["specs"]
     print(f"\n출처: {source}")
     print(format_audit(stats))
+    # 검증 후 원자적 교체 — 쓰다 만 파일이 남으면 비용 추천까지 죽었다(결함 (마)).
+    try:
+        write_dataset(output, dataset, schema())
+    except ArtifactInvalid as exc:
+        print(f"\n✗ 산출물이 스키마를 위반해 쓰지 않았습니다 — {exc}", file=sys.stderr)
+        print(
+            "  상위 덤프의 details 구조가 바뀌었을 수 있습니다. perfkb/schema.json과 "
+            f"parsers/를 확인하세요.\n  기존 산출물이 있다면 그대로 유지됩니다: {output}",
+            file=sys.stderr,
+        )
+        return 1
+
+    specs = dataset["specs"]
     print(f"\nperfkb: 레코드 {len(specs):,}개 → {output} ({output.stat().st_size:,} B)")
     return 0
 

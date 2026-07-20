@@ -28,6 +28,7 @@ from costkb.dataset import (
     filter_specs,
     is_built,
     provider_summary,
+    schema,
 )
 
 
@@ -72,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
+    from kbcommon.artifact import ArtifactInvalid, write_dataset
 
     from costkb.parsers.tumblebug import build_dataset, format_audit
 
@@ -87,15 +89,25 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
     dataset, stats = build_dataset(rows)
     output = args.output or (DEFAULT_OUTPUT_DIR / BUILT_FILENAME)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(
-        json.dumps(dataset, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+
+    # 쓰기 **전에** 검증한다. 예전엔 무검증으로 써서, 상위 스키마가 드리프트하면
+    # 깨진 파일을 남기고 exit 0으로 끝났다 — 그 뒤 모든 로드가 실패했다(결함 C2).
+    print(f"\n출처: {source}")
+    print(format_audit(stats))
+    try:
+        write_dataset(output, dataset, schema())
+    except ArtifactInvalid as exc:
+        print(f"\n✗ 산출물이 스키마를 위반해 쓰지 않았습니다 — {exc}", file=sys.stderr)
+        print(
+            "  상위 덤프 스키마가 바뀌었을 수 있습니다. costkb/schema.json과 "
+            "parsers/tumblebug.py의 KNOWN_PROVIDERS를 확인하세요.\n"
+            f"  기존 산출물이 있다면 그대로 유지됩니다: {output}",
+            file=sys.stderr,
+        )
+        return 1
 
     specs = dataset["specs"]
     priced = sum(1 for s in specs if s["hourlyUSD"] is not None)
-    print(f"\n출처: {source}")
-    print(format_audit(stats))
     print(
         f"\ncostkb: 레코드 {len(specs):,}개 (가격 있음 {priced:,} / "
         f"{priced / len(specs):.1%}) → {output} ({output.stat().st_size:,} B)"

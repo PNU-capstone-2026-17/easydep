@@ -68,13 +68,6 @@ def test_footer_receives_results_and_appends_once() -> None:
 # --- 2. 도구 계층 브리지 ---
 
 
-def _clear_perf_caches() -> None:
-    perf_dataset._load_cached.cache_clear()
-    perf_dataset._by_id.cache_clear()
-    perf_dataset._by_provider_name.cache_clear()
-    perf_dataset._schema.cache_clear()
-
-
 _BURST_NOTE = "버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 떨어집니다."
 
 
@@ -104,17 +97,17 @@ def perf_built(tmp_path, monkeypatch):
         json.dumps({"_note": "테스트", "specs": records}, ensure_ascii=False), encoding="utf-8"
     )
     monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
-    _clear_perf_caches()
+    perf_dataset.clear_caches()
     yield
-    _clear_perf_caches()
+    perf_dataset.clear_caches()
 
 
 @pytest.fixture()
 def perf_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
-    _clear_perf_caches()
+    perf_dataset.clear_caches()
     yield
-    _clear_perf_caches()
+    perf_dataset.clear_caches()
 
 
 def test_bridge_warns_on_known_burst_spec(perf_built) -> None:
@@ -168,11 +161,11 @@ def test_bridge_survives_corrupted_output(tmp_path, monkeypatch) -> None:
 
     (tmp_path / "tumblebug-perf.json").write_text('{"_note": "잘림", "spe', encoding="utf-8")
     monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
-    _clear_perf_caches()
+    perf_dataset.clear_caches()
     try:
         assert _perf_annotate({"provider": "aws", "specName": "t3.medium"}) is None
     finally:
-        _clear_perf_caches()
+        perf_dataset.clear_caches()
 
 
 def test_footer_explains_silence_when_built(perf_built) -> None:

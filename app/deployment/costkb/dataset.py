@@ -18,10 +18,13 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 import jsonschema
+
+from kbcommon.artifact import REBUILD_HINT, read_dataset
 
 _SPECS_PATH = Path(__file__).with_name("specs.json")
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
@@ -54,6 +57,12 @@ def _load_validated(path: Path) -> dict:
     return data
 
 
+@dataclass(frozen=True)
+class _Loaded:
+    data: dict
+    warning: str | None = None
+
+
 def _resolve(output_dir: Path | str | None) -> str:
     """None이면 그때그때 DEFAULT_OUTPUT_DIR을 읽는다.
 
@@ -63,19 +72,52 @@ def _resolve(output_dir: Path | str | None) -> str:
 
 
 @lru_cache(maxsize=4)
-def _load_cached(output_dir: str) -> dict:
-    """빌드 산출물이 있으면 그것을, 없으면 번들을 로드한다 (검증 포함)."""
-    built = Path(output_dir) / BUILT_FILENAME
-    return _load_validated(built if built.exists() else _SPECS_PATH)
+def _load_cached(output_dir: str) -> _Loaded:
+    """빌드 산출물이 있으면 그것을, 없거나 **깨졌으면** 번들을 로드한다.
+
+    깨진 산출물에 예외를 던지면 번들 폴백 경로가 통째로 사라진다 — 빌드 한 번
+    실패하면 `output/`를 손으로 지우기 전까지 KB가 영구 정지했다(결함 C2).
+    폴백하되 조용히 하지는 않는다: 사용자는 자기가 지금 36건짜리 번들을 보고
+    있다는 걸 알아야 한다.
+    """
+    data, error = read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
+    if data is not None:
+        return _Loaded(data)
+    bundle = _load_validated(_SPECS_PATH)  # 번들이 깨졌으면 그건 진짜 버그다
+    if error is None:
+        return _Loaded(bundle)
+    return _Loaded(
+        bundle,
+        f"빌드 산출물을 쓸 수 없어 번들 {len(bundle['specs'])}건으로 답합니다 "
+        f"({error}). {REBUILD_HINT}: python -m costkb build",
+    )
+
+
+def schema() -> dict:
+    """번들된 JSON Schema — 빌드가 쓰기 전 검증에 쓴다."""
+    return _schema()
+
+
+def clear_caches() -> None:
+    """로드·스키마 캐시를 비운다 (테스트가 output_dir을 갈아끼울 때)."""
+    _load_cached.cache_clear()
+    _schema.cache_clear()
 
 
 def load_dataset(output_dir: Path | str | None = None) -> dict:
     """데이터셋 전체를 로드하고 스키마로 검증한다(캐시됨).
 
-    Raises:
-        jsonschema.ValidationError: 데이터가 스키마를 위반할 때.
+    산출물이 깨져 있으면 번들로 폴백한다 — 그 사실은 `load_warning()`으로 알 수 있다.
     """
-    return _load_cached(_resolve(output_dir))
+    return _load_cached(_resolve(output_dir)).data
+
+
+def load_warning(output_dir: Path | str | None = None) -> str | None:
+    """산출물이 깨져 번들로 폴백했다면 그 설명. 정상이면 None.
+
+    응답에 붙이는 용도 — 조용한 폴백은 "커버리지가 왜 갑자기 좁아졌지?"를 미궁으로 만든다.
+    """
+    return _load_cached(_resolve(output_dir)).warning
 
 
 def load_specs(output_dir: Path | str | None = None) -> list[dict]:
@@ -89,8 +131,14 @@ def dataset_note(output_dir: Path | str | None = None) -> str:
 
 
 def is_built(output_dir: Path | str | None = None) -> bool:
-    """빌드 산출물을 쓰고 있는지 (아니면 번들 36건 폴백)."""
-    return (Path(_resolve(output_dir)) / BUILT_FILENAME).exists()
+    """빌드 산출물을 **실제로 쓰고 있는지** (아니면 번들 36건 폴백).
+
+    파일 존재만 보면 안 된다 — 깨진 파일이 있을 때 "빌드됨"이라고 답하면
+    커버리지 안내가 73k건 기준으로 나가는데 정작 답은 번들 36건에서 나온다.
+    """
+    return _load_cached(_resolve(output_dir)).warning is None and (
+        Path(_resolve(output_dir)) / BUILT_FILENAME
+    ).exists()
 
 
 def filter_specs(

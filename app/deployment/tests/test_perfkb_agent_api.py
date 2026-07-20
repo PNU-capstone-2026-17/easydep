@@ -44,13 +44,9 @@ def perf_built(tmp_path, monkeypatch):
         json.dumps({"_note": "테스트", "specs": records}, ensure_ascii=False), encoding="utf-8"
     )
     monkeypatch.setattr(dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
-    dataset._load_cached.cache_clear()
-    dataset._by_id.cache_clear()
-    dataset._schema.cache_clear()
+    dataset.clear_caches()
     yield
-    dataset._load_cached.cache_clear()
-    dataset._by_id.cache_clear()
-    dataset._schema.cache_clear()
+    dataset.clear_caches()
 
 
 # --- recommend_warning: 무엇을 경고하나 ---
@@ -99,8 +95,7 @@ def test_none_and_empty_id_return_none(perf_built) -> None:
 def test_no_build_returns_none(tmp_path, monkeypatch) -> None:
     """성능 데이터셋이 없으면 경고 없이 조용히 넘어간다(빌드 안 한 사용자)."""
     monkeypatch.setattr(dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
-    dataset._load_cached.cache_clear()
-    dataset._by_id.cache_clear()
+    dataset.clear_caches()
     assert agent_api.recommend_warning("aws+us-east-1+t3a.medium") is None
 
 

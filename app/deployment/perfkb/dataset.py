@@ -16,6 +16,8 @@ from pathlib import Path
 
 import jsonschema
 
+from kbcommon.artifact import read_dataset
+
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 
 DEFAULT_OUTPUT_DIR = Path("output")
@@ -33,13 +35,40 @@ def _resolve(output_dir: Path | str | None) -> str:
 
 
 @lru_cache(maxsize=4)
+def _load_result(output_dir: str) -> tuple[dict | None, str | None]:
+    """(데이터, 오류). 깨진 산출물에 **예외를 던지지 않는다**.
+
+    perfkb는 번들 폴백이 없어서 예외가 그대로 올라갔고, 그러면 성능 도구가 아니라
+    이 데이터를 조인하는 **비용 추천 전체가 죽었다**(결함 (마)). 성능 경고는 부가
+    정보이므로, 없으면 없는 대로 추천은 살아야 한다.
+    """
+    return read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
+
+
 def _load_cached(output_dir: str) -> dict | None:
-    built = Path(output_dir) / BUILT_FILENAME
-    if not built.exists():
-        return None
-    data = json.loads(built.read_text(encoding="utf-8"))
-    jsonschema.validate(data, _schema())
-    return data
+    return _load_result(output_dir)[0]
+
+
+def schema() -> dict:
+    """번들된 JSON Schema — 빌드가 쓰기 전 검증에 쓴다."""
+    return _schema()
+
+
+def clear_caches() -> None:
+    """로드·인덱스 캐시를 전부 비운다 (테스트가 output_dir을 갈아끼울 때).
+
+    캐시가 셋이라 호출부에서 하나씩 비우면 반드시 빠뜨린다 — 실제로 인덱스를
+    추가했을 때 기존 픽스처들이 조용히 낡은 데이터를 봤다. 추가는 여기만 고친다.
+    """
+    _load_result.cache_clear()
+    _by_id.cache_clear()
+    _by_provider_name.cache_clear()
+    _schema.cache_clear()
+
+
+def load_warning(output_dir: Path | str | None = None) -> str | None:
+    """산출물이 깨져 읽지 못했다면 그 설명. 정상이거나 미빌드면 None."""
+    return _load_result(_resolve(output_dir))[1]
 
 
 def load_perf(output_dir: Path | str | None = None) -> list[dict] | None:

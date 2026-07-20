@@ -100,7 +100,7 @@ def test_load_raises_on_invalid_data(tmp_path, monkeypatch) -> None:
     broken = tmp_path / "specs.json"
     broken.write_text(json.dumps(_sample(family="quantum")), encoding="utf-8")
     monkeypatch.setattr(dataset, "_SPECS_PATH", broken)
-    dataset._load_cached.cache_clear()
+    dataset.clear_caches()
     with pytest.raises(jsonschema.ValidationError):
         load_specs()
 

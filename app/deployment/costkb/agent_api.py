@@ -18,6 +18,7 @@ from costkb.dataset import (
     coverage,
     filter_specs,
     is_built,
+    load_warning,
     provider_summary,
 )
 
@@ -126,6 +127,11 @@ def recommend_specs(
             f"\n\n※ 조건에 맞지만 가격 정보가 없는 후보가 {unpriced}건 더 있습니다. "
             "라이브 가격은 cb-tumblebug MCP로 확인하세요."
         )
+
+    degraded = load_warning(output_dir)
+    if degraded:
+        # 조용한 폴백은 "커버리지가 왜 갑자기 좁아졌지?"를 미궁으로 만든다.
+        text += f"\n\n⚠ {degraded}"
 
     tail = footer(results) if footer is not None else None
     if tail:

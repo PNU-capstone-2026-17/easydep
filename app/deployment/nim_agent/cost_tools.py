@@ -23,6 +23,7 @@ from agents import RunContextWrapper, function_tool
 from costkb import agent_api
 from costkb.agent_api import HOURS_PER_MONTH
 from perfkb import agent_api as perf_api
+from perfkb import dataset as perf_dataset
 
 from .session import SessionState
 
@@ -64,6 +65,13 @@ def _perf_footer(specs: list[dict]) -> str | None:
     """
     notes = [_perf_note(spec) for spec in specs]
     if all(n.status == perf_api.NOTE_NOT_BUILT for n in notes):
+        try:
+            damaged = perf_dataset.load_warning()
+        except Exception:
+            damaged = None
+        if damaged:
+            # 손상과 미빌드는 사용자가 할 일이 다르다 — 하나는 지우고 다시, 하나는 그냥 빌드.
+            return f"성능 경고를 붙이지 못했습니다 — {damaged}"
         return (
             "성능 지식베이스가 없어 성능 함정(버스트·구세대)을 확인하지 못했습니다 "
             "— python -m perfkb build"
