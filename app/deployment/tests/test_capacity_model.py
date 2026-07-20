@@ -6,6 +6,7 @@ import jsonschema
 import pytest
 
 from capacitykb.model import CapacitySet, Constraint, Quota
+from kbcommon.artifact import ArtifactInvalid
 
 
 def make_constraint(**overrides) -> Constraint:
@@ -163,9 +164,28 @@ def test_save_and_load(tmp_path) -> None:
 
 
 def test_save_validates_before_writing(tmp_path) -> None:
+    """save는 이제 kbcommon의 쓰기 관문을 탄다 — costkb·perfkb와 같은 경로다.
+
+    그래서 예외도 `ArtifactInvalid`로 통일됐다. 예전엔 여기서 바로 write_text를 해서
+    쓰다 끊기면 잘린 JSON이 남았다.
+    """
     bad = CapacitySet()
     bad.add_constraint(make_constraint(confidence=2.0))
     path = tmp_path / "bad.json"
-    with pytest.raises(jsonschema.ValidationError):
+    with pytest.raises(ArtifactInvalid, match="confidence"):
+        bad.save(path)
+    assert not path.exists()
+
+
+def test_save_refuses_contradictory_records(tmp_path) -> None:
+    """스키마는 통과하지만 레코드 **사이**가 모순이면 쓰지 않는다.
+
+    두 레코드 다 형태는 멀쩡하다 — 나란히 놓아야 모순이 보인다.
+    """
+    bad = CapacitySet()
+    bad.add_constraint(make_constraint(kind="default", value=0))
+    bad.add_constraint(make_constraint(kind="min", value=10))
+    path = tmp_path / "bad.json"
+    with pytest.raises(ArtifactInvalid, match="default=0인데 min=10"):
         bad.save(path)
     assert not path.exists()

@@ -73,7 +73,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
+    from costkb.invariants import INVARIANTS
     from kbcommon.artifact import ArtifactInvalid, write_dataset
+    from kbcommon.invariants import announce
     from kbcommon.fetch import describe_source
 
     from costkb.parsers.tumblebug import build_dataset, format_audit
@@ -99,7 +101,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     print(f"\n출처: {source}")
     print(format_audit(stats))
     try:
-        write_dataset(output, dataset, schema())
+        announce(write_dataset(output, dataset, schema(), INVARIANTS), "costkb")
     except ArtifactInvalid as exc:
         print(f"\n✗ 산출물이 스키마를 위반해 쓰지 않았습니다 — {exc}", file=sys.stderr)
         print(

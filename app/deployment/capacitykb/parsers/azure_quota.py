@@ -29,6 +29,7 @@ from pathlib import Path
 
 from capacitykb.model import CapacitySet, Quota
 from kbcommon.fetch import describe_source_set, fetch_cached
+from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
 
 DEFAULT_BASE_URL = SOURCES["azure-limits-doc"].url
@@ -193,7 +194,7 @@ def build(
             capacity.add_quota(quota)
 
     capacity.provenance = [describe_source_set(read_paths, "azure-limits-doc")]
-    capacity.save(output)
+    announce(capacity.save(output), "capacitykb/azure_quota")
     linked = sum(1 for q in capacity.quotas if q.type_id)
     print(
         f"azure-quota: 쿼터 {len(capacity.quotas)}개 (타입 연결 {linked}개, "

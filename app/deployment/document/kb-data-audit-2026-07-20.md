@@ -44,6 +44,33 @@ aws::AWS::NotificationsContacts::EmailContact EmailContact/Arn  ← read_only인
 해소할 수도 없다. 산문 추출(0.34%)만 위험하다고 알려져 있었으나 이건 스키마 유래 1.0
 레코드의 결함이다.
 
+> **해결 (2026-07-21, R2)** — `kbcommon/invariants.py`에 레코드 간 검사 계층을 두고
+> `write_dataset`(쓰기 관문)에 걸었다. 심각도가 둘이다: `error`는 산출물을 쓰지 않고,
+> `report`는 쓰되 건수를 반드시 말한다. 전부 빌드 실패로 만들면 미러가 못 만들어진다.
+>
+> | 불변식 | 심각도 | 감사 시점 | 지금 |
+> |---|---|---|---|
+> | `default`가 min·max 안에 있는가 | error | 30건 | **0** |
+> | 읽기 전용이 필수로 표시되지 않았는가 | error | 9 + azure 1 | **0** |
+> | 가속기 종류가 있으면 개수도 있는가 | perfkb error / costkb report | 234건 | perfkb 0 / costkb 234 (미러라 그대로) |
+> | evidence당 신뢰도 하나 | report | 5개 라벨 | 5개 라벨 (R4가 닫는다) |
+> | capacitykb `type_id`가 graphkb에 있는가 | verify | 2건 | 2건 (R3가 닫는다) |
+> | 번들 메모리가 미러 보정값과 같은가 | verify | — | **36/36 통과** |
+>
+> 앞의 둘은 원인이 서로 달랐다. `default`는 **상류가 실제로 모순돼 있다**
+> (`Period: default=0, minimum=10`) — AWS의 의도를 지어낼 수 없으므로 경계만 싣고
+> 모순된 기본값은 버린다. `required`는 **우리 잘못**이었다: CFN의
+> `definitions.X.required`와 Azure의 `flags&1`은 "응답에 늘 들어 있다"는 뜻인데
+> 파서가 "네가 채워야 한다"로 옮겼다. 사용자에게 채울 수 없는 칸을 채우라고 하게 된다.
+>
+> 마지막 두 개는 KB **사이**의 검사라 어느 빌드에도 넣을 수 없다(단방향 규약).
+> `python -m kbcommon verify`가 산출물 JSON을 **데이터로** 읽어서 본다.
+>
+> 여섯 번째 항목은 감사에서 모순으로 분류됐지만 재조사 결과 **모순이 아니었다.**
+> 미러의 `memGiB`에는 상류 버그가 그대로 있고(16,000 MiB ÷ 1024 = 15.625)
+> `memGiBActual`이 보정값인데, 번들은 이미 보정값을 쓰고 있었다. 그래서 검사는
+> "번들은 보정값과 일치해야 한다"로 세웠고 36건 전부 통과한다.
+
 ### (2) id 정규화가 KB마다 따로 있다
 
 graphkb 파서에는 `_canon()`이 있고 capacitykb에는 **없다**.
@@ -289,9 +316,9 @@ IOPS 역전, ACU 극단값, threadsPerCore), 필드 조합 모순 0건(`networkI
 
 ## 5. 재설계가 만족해야 할 것 (체크리스트)
 
-1. **빌드 시점 불변식 계층** — 레코드 간 모순을 산출물이 되기 전에 잡는다. 위 §1(1)의
-   6종이 최소 집합. 자리는 이미 있다: `kbcommon/artifact.py:write_dataset`이 쓰기 전
-   관문이고 지금은 JSON Schema만 돌린다.
+1. ~~**빌드 시점 불변식 계층**~~ — ✅ **2026-07-21 R2 완료.** `kbcommon/invariants.py`
+   (검사 얼개·공용 검사) + KB별 `invariants.py` + `python -m kbcommon verify`(KB 간).
+   6종 전부 걸었고 고칠 수 있는 것은 고쳤다 — 위 §1-(1) 표 참조.
 2. **id 정규화 단일화** — `kbcommon`으로 승격하고 모든 KB가 같은 함수를 쓴다.
    크로스 KB 조인율 어서션(capacitykb 전 `type_id`가 graphkb 노드에 존재)을 빌드에 건다.
 3. **evidence당 등급 하나** — 어서션으로 강제한다. 위반이 곧 라벨 세분화 필요 신호다.

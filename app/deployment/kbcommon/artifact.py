@@ -25,20 +25,37 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import jsonschema
+
+from kbcommon.invariants import Invariant, Result, run
 
 
 class ArtifactInvalid(Exception):
     """산출물이 스키마를 위반해 쓰기를 거부했다."""
 
 
-def write_dataset(path: Path, dataset: dict, schema: dict) -> None:
+def write_dataset(
+    path: Path,
+    dataset: dict,
+    schema: dict,
+    invariants: Sequence[Invariant] = (),
+) -> Result:
     """검증에 통과한 데이터셋만 원자적으로 쓴다.
 
+    두 단계로 본다. **스키마**는 레코드 하나의 형태를, **불변식**은 레코드 사이의
+    정합성을 본다(`kbcommon/invariants.py`). 후자가 없어서 `default=0, min=10` 같은
+    모순이 그대로 산출물이 됐다.
+
+    Returns:
+        불변식 결과. `report` 등급 위반이 담겨 있으니 **호출자가 반드시 알려야 한다.**
+        조용히 버리면 침묵이 "문제 없음"으로 읽힌다.
+
     Raises:
-        ArtifactInvalid: 스키마 위반. **이때 파일은 만들어지지 않는다.**
+        ArtifactInvalid: 스키마 위반 또는 `error` 등급 불변식 위반.
+            **이때 파일은 만들어지지 않는다.**
     """
     try:
         jsonschema.validate(dataset, schema)
@@ -47,12 +64,17 @@ def write_dataset(path: Path, dataset: dict, schema: dict) -> None:
         location = "/".join(str(p) for p in exc.absolute_path) or "(최상위)"
         raise ArtifactInvalid(f"{location}: {exc.message}") from exc
 
+    result = run(dataset, invariants)
+    if not result.ok:
+        raise ArtifactInvalid("레코드 간 모순으로 쓰기를 거부했습니다\n" + result.summary())
+
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(
         json.dumps(dataset, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     os.replace(tmp, path)
+    return result
 
 
 def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:

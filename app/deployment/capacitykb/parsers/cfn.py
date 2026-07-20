@@ -30,6 +30,7 @@ from pathlib import Path
 from capacitykb.model import CapacitySet, Constraint
 from capacitykb.prose import extract_default, extract_enum, extract_ranges
 from kbcommon.fetch import describe_source, fetch_cached
+from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
 
 # ⚠️ 고정 불가 — kbcommon/sources.py의 `cfn-schema` 항목 참조.
@@ -94,6 +95,29 @@ def _scalar_type(prop: dict) -> str | None:
     return value_type if isinstance(value_type, str) else None
 
 
+def _default_contradicts_bounds(prop: dict, default) -> bool:
+    """기본값이 자기 속성의 min·max를 벗어나는가 — 그러면 싣지 않는다.
+
+    **상류 스키마가 실제로 모순돼 있다.** AWS가 이렇게 적어 놓았다:
+
+        "Period": {"type": "number", "default": 0, "minimum": 10, "maximum": 86400}
+
+    `default: 0`의 실체는 "안 적어도 되고, 안 적으면 0으로 직렬화된다"이지 쓸 수 있는
+    값이 아니다. 그대로 실으면 에이전트가 **스키마가 거부할 값**을 권하게 된다.
+    AWS의 의도를 우리가 지어낼 수는 없으므로, 아는 것만 남긴다 — 경계는 싣고
+    모순된 기본값은 버린다. "기본값 정보 없음"이 "기본값 0"보다 정직하다.
+
+    30건이 이에 해당하며 전부 `cfn-schema`(신뢰도 1.0)라, 소비자가 신뢰도로
+    걸러낼 수도 없었다.
+    """
+    if not isinstance(default, (int, float)) or isinstance(default, bool):
+        return False
+    low, high = prop.get("minimum"), prop.get("maximum")
+    if isinstance(low, (int, float)) and default < low:
+        return True
+    return isinstance(high, (int, float)) and default > high
+
+
 def _add_schema_constraints(
     capacity: CapacitySet, type_id: str, prop_path: str, prop: dict
 ) -> None:
@@ -104,6 +128,8 @@ def _add_schema_constraints(
             continue
         value = prop[keyword]
         if keyword == "enum" and not isinstance(value, list):
+            continue
+        if keyword == "default" and _default_contradicts_bounds(prop, value):
             continue
         capacity.add_constraint(
             Constraint(
@@ -125,6 +151,7 @@ def _walk(
     path: str,
     *,
     readonly_top: set[str],
+    readonly_paths: set[str],
     prose_targets: list[tuple[str, dict]],
     depth: int,
 ) -> None:
@@ -143,7 +170,12 @@ def _walk(
             prop_path = _join(path, name)
             is_readonly_top = not path and name in readonly_top
 
-            if name in required_set:
+            # 읽기 전용 속성은 `required`로 싣지 않는다. CFN의
+            # `definitions.X.required`는 "응답에 늘 들어 있다"는 뜻인데, 그대로
+            # 옮기면 "네가 채워야 한다"로 읽힌다 — 사용자에게 채울 수 없는 칸을
+            # 채우라고 하게 된다. EmailContact가 그랬다: 하위 6개가 전부
+            # readOnlyProperties에 있으면서 definitions.EmailContact.required에도 있다.
+            if name in required_set and prop_path not in readonly_paths:
                 capacity.add_constraint(
                     Constraint(
                         type_id=type_id,
@@ -164,6 +196,7 @@ def _walk(
                 prop,
                 prop_path,
                 readonly_top=readonly_top,
+                readonly_paths=readonly_paths,
                 prose_targets=prose_targets,
                 depth=depth + 1,
             )
@@ -176,6 +209,7 @@ def _walk(
             items,
             path,
             readonly_top=readonly_top,
+            readonly_paths=readonly_paths,
             prose_targets=prose_targets,
             depth=depth + 1,
         )
@@ -263,11 +297,15 @@ def parse_schemas(
         if not isinstance(type_name, str) or not type_name:
             continue
         type_id = f"aws::{type_name}"
-        readonly_top = {
+        # readonly_top은 최상위만(산문 게이트용), readonly_paths는 중첩까지 전부다.
+        # `required`를 거를 때는 후자가 필요하다 — 모순 9건이 전부 중첩 경로
+        # (`EmailContact/Arn` 등)에 있었다.
+        readonly_paths = {
             prop
             for pointer in schema.get("readOnlyProperties") or []
-            if (prop := _pointer_to_property(pointer)) and "/" not in prop
+            if (prop := _pointer_to_property(pointer))
         }
+        readonly_top = {p for p in readonly_paths if "/" not in p}
 
         # 변경 제약 (포인터 목록) — 스키마 레벨
         for keyword, mutability in _MUTABILITY_POINTERS.items():
@@ -293,6 +331,7 @@ def parse_schemas(
             schema,
             "",
             readonly_top=readonly_top,
+            readonly_paths=readonly_paths,
             prose_targets=prose_targets,
             depth=0,
         )
@@ -306,6 +345,7 @@ def parse_schemas(
                     definition,
                     def_name,
                     readonly_top=set(),
+                    readonly_paths=readonly_paths,
                     prose_targets=prose_targets,
                     depth=0,
                 )
@@ -336,7 +376,7 @@ def build(
     stats: Counter = Counter()
     capacity = parse_zip(zip_path, prose=prose, stats=stats)
     capacity.provenance = [describe_source(zip_path, "cfn-schema")]
-    capacity.save(output)
+    announce(capacity.save(output), "capacitykb/cfn")
 
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)
     evidence_summary = ", ".join(f"{k}={v}" for k, v in sorted(by_evidence.items()))

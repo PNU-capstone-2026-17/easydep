@@ -24,6 +24,7 @@ from pathlib import Path
 
 from capacitykb.model import CapacitySet, Constraint
 from kbcommon.fetch import describe_source_set, fetch_cached
+from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
 
 # graphkb/parsers/azure.py와 **같은 커밋**을 봐야 한다 (kbcommon/sources.py에서 관리).
@@ -153,7 +154,11 @@ def extract_constraints(
             prop_path = f"{path}.{name}" if path else name
             flags = prop.get("flags", 0)
 
-            if flags & _FLAG_REQUIRED:
+            # 읽기 전용이면 required 비트가 켜져 있어도 싣지 않는다. 둘이 같이 켜진
+            # 것은 "응답에 늘 들어 있다"는 뜻이지 "네가 채워야 한다"가 아니다 —
+            # 그대로 옮기면 사용자에게 채울 수 없는 칸을 채우라고 하게 된다.
+            # CFN의 readOnlyProperties ∩ definitions.required와 같은 모양이다.
+            if flags & _FLAG_REQUIRED and not flags & _FLAG_READONLY:
                 add(type_id, prop_path, "required", True, EVIDENCE_FLAGS, None)
             if flags & _FLAG_READONLY:
                 # 읽기 전용은 설정 대상이 아니므로 기록만 하고 내부로 내려가지 않는다.
@@ -231,7 +236,7 @@ def build(
         extract_constraints(capacity, types_arr, stats=stats)
 
     capacity.provenance = [describe_source_set(read_paths, "bicep-types-az")]
-    capacity.save(output)
+    announce(capacity.save(output), "capacitykb/azure")
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)
     summary = ", ".join(f"{k}={v}" for k, v in sorted(by_evidence.items()))
     print(

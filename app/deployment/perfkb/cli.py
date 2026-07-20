@@ -61,7 +61,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
+    from perfkb.invariants import INVARIANTS
     from kbcommon.artifact import ArtifactInvalid, write_dataset
+    from kbcommon.invariants import announce
     from kbcommon.fetch import describe_source
 
     from perfkb.parsers.build import build_dataset, format_audit
@@ -86,7 +88,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     print(format_audit(stats))
     # 검증 후 원자적 교체 — 쓰다 만 파일이 남으면 비용 추천까지 죽었다(결함 (마)).
     try:
-        write_dataset(output, dataset, schema())
+        announce(write_dataset(output, dataset, schema(), INVARIANTS), "perfkb")
     except ArtifactInvalid as exc:
         print(f"\n✗ 산출물이 스키마를 위반해 쓰지 않았습니다 — {exc}", file=sys.stderr)
         print(
