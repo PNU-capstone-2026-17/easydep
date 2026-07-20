@@ -15,7 +15,7 @@ from pathlib import Path
 
 from graphkb.model import Graph
 from graphkb.query import (
-    dependency_chain,
+    dependency_chain_detail,
     dependents,
     equivalents,
     rank_types as _rank_types,
@@ -76,13 +76,32 @@ def creation_order(
     node, error = _resolve(graph, resource_type)
     if node is None:
         return error
-    chain = dependency_chain(graph, node.id, required_only=required_only)
-    if len(chain) == 1:
+    result = dependency_chain_detail(graph, node.id, required_only=required_only)
+    if len(result.ordered) == 1:
         return f"{node.id} 는 선행 리소스 타입이 없습니다. 바로 생성할 수 있습니다."
+
     lines = [f"{node.id} 생성에 필요한 선행 체인 (먼저 만들 것부터):"]
-    for i, item in enumerate(chain, start=1):
-        suffix = " ← 대상" if item.id == node.id else ""
-        lines.append(f"{i}. {item.id}{suffix}")
+    for i, step in enumerate(result.steps, start=1):
+        if not step.cyclic:
+            item = step.nodes[0]
+            suffix = " ← 대상" if item.id == node.id else ""
+            lines.append(f"{i}. {item.id}{suffix}")
+            continue
+        # 순환 그룹은 한 단계로 묶어 보여준다 — 이 안의 순서는 스키마로 정할 수 없다.
+        lines.append(f"{i}. (아래 {len(step.nodes)}개는 서로 참조해 순서를 정할 수 없습니다)")
+        for item in step.nodes:
+            suffix = " ← 대상" if item.id == node.id else ""
+            lines.append(f"   - {item.id}{suffix}")
+
+    if result.has_cycle:
+        # 경고를 **반환 문자열에** 넣는다. 예전엔 stderr로만 나가서, 이 텍스트를 읽는
+        # 모델은 순서가 위상순이 아니라는 걸 알 방법이 없었다(결함 C1).
+        groups = len(result.cyclic_steps)
+        lines.append(
+            f"\n⚠ 의존성 순환이 {groups}곳 있습니다. 묶인 항목끼리는 스키마만으로 "
+            "선후를 정할 수 없으니, 실제 생성 시에는 참조를 나중에 채우거나"
+            "(예: 생성 후 업데이트) 순환을 끊는 방식을 검토하세요."
+        )
     return "\n".join(lines)
 
 

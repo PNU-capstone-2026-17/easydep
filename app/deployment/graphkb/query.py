@@ -6,8 +6,8 @@ dict 인접 리스트 + BFS + Kahn 위상정렬로 처리한다.
 
 from __future__ import annotations
 
-import sys
 from collections import deque
+from dataclasses import dataclass, field
 
 from graphkb.model import Edge, Graph, Node
 
@@ -53,14 +53,126 @@ def _dependency_edges(graph: Graph, *, required_only: bool = False) -> list[Edge
     ]
 
 
+@dataclass(frozen=True)
+class ChainStep:
+    """생성 순서의 한 단계. 보통 노드 하나지만, 순환이면 여럿이 한 단계를 이룬다."""
+
+    nodes: list[Node]
+
+    @property
+    def cyclic(self) -> bool:
+        """서로 참조해서 **이 단계 안에서는** 순서를 정할 수 없는지."""
+        return len(self.nodes) > 1
+
+
+@dataclass(frozen=True)
+class ChainResult:
+    """선행 체인 계산 결과 — 순환을 **한 단계로 묶어** 순서를 최대한 살린다.
+
+    예전에는 단순 리스트 하나였다. Kahn이 못 놓은 노드를 BFS 발견 순서로 뒤에
+    덧붙였는데, 대상 노드 자신이 순환에 걸리면 대상이 그 덧붙임의 첫 원소가 되어
+    **진짜 선행 리소스가 대상 뒤로 밀렸다**(결함 C1: 체인 보유 3,225개 중 503개,
+    15.6%). 경고도 stderr로만 나가서 반환값을 읽는 쪽은 그게 위상순이 아니란 걸
+    알 수 없었다.
+
+    순환 노드를 통째로 "순서 미상" 바구니에 던지는 것도 답이 아니다 — 순환에
+    *딸린* 노드까지 함께 쓸려 들어가 멀쩡한 순서 정보를 버린다(EC2::Instance에서
+    22개가 그랬다). 그래서 **SCC로 축약한 뒤 위상정렬**한다: 진짜 서로 참조하는
+    것만 한 단계로 묶이고, 그 단계들 사이의 순서는 그대로 확정된다.
+    """
+
+    steps: list[ChainStep]
+
+    @property
+    def ordered(self) -> list[Node]:
+        """단계를 평탄화한 목록. **대상 노드가 항상 마지막이다.**"""
+        return [n for step in self.steps for n in step.nodes]
+
+    @property
+    def cyclic_steps(self) -> list[ChainStep]:
+        return [s for s in self.steps if s.cyclic]
+
+    @property
+    def has_cycle(self) -> bool:
+        return any(s.cyclic for s in self.steps)
+
+
 def dependency_chain(
     graph: Graph, node_id: str, *, required_only: bool = False
 ) -> list[Node]:
+    """`dependency_chain_detail(...).ordered` — 평탄화된 선행 체인.
+
+    ⚠️ 순환이 있으면 이 평탄화는 **임의 순서를 가진 것처럼 보인다**. 어디가
+    순환인지 알아야 한다면 `dependency_chain_detail`을 쓰고 `cyclic_steps`를
+    함께 표시하세요.
+    """
+    return dependency_chain_detail(graph, node_id, required_only=required_only).ordered
+
+
+def _strongly_connected(
+    nodes: list[str], forward: dict[str, list[str]]
+) -> dict[str, int]:
+    """Tarjan SCC — 노드 → 컴포넌트 번호. 재귀 없이(깊이 수천이라 스택이 위험).
+
+    여기서는 *묶는* 용도로만 쓰고 순서는 뒤의 Kahn이 정한다. Tarjan의 방출 순서도
+    위상순이지만, 그러면 비순환 그래프의 기존 정렬 결과가 미묘하게 달라진다 —
+    사전순 tie-break를 유지하려고 정렬은 Kahn에 맡긴다.
+    """
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    comp: dict[str, int] = {}
+    counter = 0
+    ncomp = 0
+
+    for root in nodes:
+        if root in index:
+            continue
+        # (노드, 다음에 볼 이웃 위치) 쌍을 직접 관리하는 반복형 DFS
+        work: list[tuple[str, int]] = [(root, 0)]
+        while work:
+            current, next_child = work[-1]
+            if next_child == 0:
+                index[current] = low[current] = counter
+                counter += 1
+                stack.append(current)
+                on_stack.add(current)
+
+            children = forward.get(current, ())
+            if next_child < len(children):
+                work[-1] = (current, next_child + 1)
+                child = children[next_child]
+                if child not in index:
+                    work.append((child, 0))
+                elif child in on_stack:
+                    low[current] = min(low[current], index[child])
+                continue
+
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[current])
+            if low[current] == index[current]:
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    comp[member] = ncomp
+                    if member == current:
+                        break
+                ncomp += 1
+    return comp
+
+
+def dependency_chain_detail(
+    graph: Graph, node_id: str, *, required_only: bool = False
+) -> ChainResult:
     """node_id 생성에 필요한 선행 노드들을 위상순(선행 먼저)으로 반환한다.
 
-    자기 자신이 마지막 원소로 포함된다. references/contained_in 엣지를 따라
-    전방 폐포를 수집한 뒤 부분그래프에서 Kahn 위상정렬을 수행한다.
-    사이클이 있으면 stderr 경고 후 남은 노드를 BFS 발견 순서로 덧붙인다.
+    자기 자신이 `ordered`의 마지막 원소로 포함된다. references/contained_in 엣지를
+    따라 전방 폐포를 수집하고, **SCC로 축약한 뒤** 그 위에서 Kahn 위상정렬을 한다.
+    순환은 언제나 존재하므로(실측 2-사이클 20개) 순환 자체를 없애는 대신,
+    서로 참조하는 것들을 한 단계(`ChainStep.cyclic`)로 묶어 나머지 순서를 살린다.
 
     Args:
         graph: 대상 그래프.
@@ -87,35 +199,57 @@ def dependency_chain(
                 closure.append(target)
                 queue.append(target)
 
-    # 부분그래프에서 Kahn 위상정렬: 의존 대상(선행)이 먼저 나오도록
-    # "선행 → 의존자" 방향의 진입 차수를 계산한다.
-    out_degree = {nid: 0 for nid in seen}  # nid가 폐포 안에서 의존하는 수
-    reverse: dict[str, list[str]] = {nid: [] for nid in seen}
-    for edge in edges:
-        if edge.from_id in seen and edge.to_id in seen:
-            out_degree[edge.from_id] += 1
-            reverse[edge.to_id].append(edge.from_id)
+    # 폐포 안의 인접 리스트 (정렬해 두면 SCC·정렬 결과가 결정적이다)
+    inner: dict[str, list[str]] = {
+        nid: sorted({t for t in forward.get(nid, []) if t in seen and t != nid})
+        for nid in closure
+    }
+    comp_of = _strongly_connected(closure, inner)
 
-    ready = deque(sorted(nid for nid, deg in out_degree.items() if deg == 0))
-    ordered: list[str] = []
+    members: dict[int, list[str]] = {}
+    for nid in closure:
+        members.setdefault(comp_of[nid], []).append(nid)
+
+    # 축약 DAG에서 Kahn: 컴포넌트가 의존하는 컴포넌트 수를 센다. 컴포넌트가 전부
+    # 크기 1이면(=순환 없음) 예전 노드 단위 정렬과 결과가 같다 — 사전순 tie-break 포함.
+    reverse: dict[int, set[int]] = {c: set() for c in members}
+    dependencies: dict[int, set[int]] = {c: set() for c in members}
+    for nid, targets in inner.items():
+        for target in targets:
+            src, dst = comp_of[nid], comp_of[target]
+            if src != dst:
+                dependencies[src].add(dst)
+                reverse[dst].add(src)
+    out_degree = {c: len(deps) for c, deps in dependencies.items()}
+
+    def _key(comp: int) -> str:
+        return min(members[comp])
+
+    ready = sorted((c for c, deg in out_degree.items() if deg == 0), key=_key)
+    order: list[int] = []
     while ready:
-        current = ready.popleft()
-        ordered.append(current)
-        for dependent in sorted(reverse[current]):
+        current = ready.pop(0)
+        order.append(current)
+        newly = []
+        for dependent in reverse[current]:
             out_degree[dependent] -= 1
             if out_degree[dependent] == 0:
-                ready.append(dependent)
+                newly.append(dependent)
+        ready = sorted(ready + newly, key=_key)
 
-    if len(ordered) < len(seen):
-        remaining = [nid for nid in closure if nid not in set(ordered)]
-        print(
-            f"경고: 의존성 사이클 감지 — {len(remaining)}개 노드를 "
-            "BFS 발견 순서로 덧붙입니다.",
-            file=sys.stderr,
-        )
-        ordered.extend(remaining)
+    # 대상이 속한 컴포넌트는 폐포의 유일한 소스라 항상 마지막이지만, 계약이므로
+    # 방어적으로 확인한다("자기 자신이 마지막 원소" — docstring).
+    target_comp = comp_of[node_id]
+    order = [c for c in order if c != target_comp] + [target_comp]
 
-    return [graph.nodes[nid] for nid in ordered]
+    def _step(comp: int) -> ChainStep:
+        ids = sorted(members[comp])
+        if comp == target_comp:
+            # 대상이 순환 그룹 안에 있어도 그룹 안에서 마지막에 온다.
+            ids = [nid for nid in ids if nid != node_id] + [node_id]
+        return ChainStep(nodes=[graph.nodes[nid] for nid in ids])
+
+    return ChainResult(steps=[_step(comp) for comp in order])
 
 
 def rank_types(

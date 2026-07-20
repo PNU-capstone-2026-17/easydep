@@ -246,7 +246,12 @@ def _load_graphs(paths: list[Path] | None) -> Graph:
 
 
 def _cmd_query(args: argparse.Namespace) -> int:
-    from graphkb.query import dependency_chain, dependents, rank_types, resolve_node
+    from graphkb.query import (
+        dependency_chain_detail,
+        dependents,
+        rank_types,
+        resolve_node,
+    )
 
     if not args.deps and not args.dependents and not args.rank:
         print("--deps / --dependents / --rank 중 하나를 지정하세요.", file=sys.stderr)
@@ -269,11 +274,17 @@ def _cmd_query(args: argparse.Namespace) -> int:
 
     if args.deps:
         node = resolve_node(graph, args.deps)
-        chain = dependency_chain(graph, node.id, required_only=args.required_only)
+        result = dependency_chain_detail(graph, node.id, required_only=args.required_only)
         print(f"{node.id} 생성에 필요한 선행 체인 (위상순):")
-        for i, item in enumerate(chain, start=1):
-            marker = " (self)" if item.id == node.id else ""
-            print(f"  {i}. {item.id}{marker}")
+        for i, step in enumerate(result.steps, start=1):
+            if step.cyclic:
+                print(f"  {i}. [순환 {len(step.nodes)}개 — 내부 순서 미정]")
+            for item in step.nodes:
+                marker = " (self)" if item.id == node.id else ""
+                bullet = "     -" if step.cyclic else f"  {i}."
+                print(f"{bullet} {item.id}{marker}")
+        if result.has_cycle:
+            print(f"\n⚠ 의존성 순환 {len(result.cyclic_steps)}곳 — 묶인 항목은 선후 미정")
 
     if args.dependents:
         node = resolve_node(graph, args.dependents)

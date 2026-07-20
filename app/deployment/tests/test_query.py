@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from graphkb.model import Edge, Graph, Node
-from graphkb.query import dependency_chain, dependents, rank_types, resolve_node
+from graphkb.query import (
+    dependency_chain,
+    dependency_chain_detail,
+    dependents,
+    rank_types,
+    resolve_node,
+)
 
 
 def node(node_id: str, layer: str = "core", provider: str = "common") -> Node:
@@ -87,15 +93,59 @@ def test_dependency_chain_leaf_is_self_only(core_graph: Graph) -> None:
     assert [n.id for n in dependency_chain(core_graph, "core::vNet")] == ["core::vNet"]
 
 
-def test_dependency_chain_cycle_fallback(capsys) -> None:
+def _two_cycle() -> Graph:
+    """a ↔ b 상호 참조 — 실제 데이터의 Lambda::Function ↔ S3::Bucket과 같은 모양."""
     graph = Graph()
     graph.add_node(node("core::a"))
     graph.add_node(node("core::b"))
     graph.add_edge(edge("core::a", "core::b"))
     graph.add_edge(edge("core::b", "core::a"))
-    chain = [n.id for n in dependency_chain(graph, "core::a")]
-    assert set(chain) == {"core::a", "core::b"}
-    assert "사이클" in capsys.readouterr().err
+    return graph
+
+
+def test_dependency_chain_cycle_keeps_target_last() -> None:
+    """**C1 회귀**: 대상이 순환에 걸려도 마지막 자리를 지킨다.
+
+    예전엔 남은 노드를 BFS 순서로 뒤에 덧붙여서, 대상이 그 첫 원소가 되고
+    진짜 선행 리소스가 대상 뒤로 밀렸다(3,225개 중 503개).
+    """
+    result = dependency_chain_detail(_two_cycle(), "core::a")
+    assert result.has_cycle
+    assert result.ordered[-1].id == "core::a"
+    # a↔b는 한 단계로 묶인다 — 둘 중 누가 먼저인지는 스키마가 답할 수 없다.
+    assert len(result.steps) == 1
+    assert [n.id for n in result.steps[0].nodes] == ["core::b", "core::a"]
+
+
+def test_cycle_does_not_swallow_downstream_order() -> None:
+    """순환에 *딸린* 노드까지 순서를 잃지 않는다.
+
+    Kahn이 못 놓은 걸 전부 한 바구니에 넣으면 c와 d의 확정 순서까지 버려진다
+    (실측: EC2::Instance에서 22개가 그렇게 쓸려 들어갔다).
+    """
+    graph = Graph()
+    for nid in ("core::a", "core::b", "core::c", "core::d"):
+        graph.add_node(node(nid))
+    graph.add_edge(edge("core::a", "core::b"))  # a ↔ b 순환
+    graph.add_edge(edge("core::b", "core::a"))
+    graph.add_edge(edge("core::b", "core::c"))  # 순환에 딸린 선행들
+    graph.add_edge(edge("core::c", "core::d"))
+
+    result = dependency_chain_detail(graph, "core::a")
+    assert [[n.id for n in s.nodes] for s in result.steps] == [
+        ["core::d"],
+        ["core::c"],
+        ["core::b", "core::a"],
+    ]
+    assert len(result.cyclic_steps) == 1
+
+
+def test_dependency_chain_flattens_with_target_last() -> None:
+    """평탄화해도 대상은 마지막 — dependency_chain의 오래된 계약."""
+    assert [n.id for n in dependency_chain(_two_cycle(), "core::a")] == [
+        "core::b",
+        "core::a",
+    ]
 
 
 def test_dependents_reverse_closure(core_graph: Graph) -> None:
