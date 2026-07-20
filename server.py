@@ -110,8 +110,6 @@ PUML_FIELDS = {
 
 class CreateAppRequest(BaseModel):
     scenario_text: str = ""
-    title: str = ""
-    owner_id: str = "anonymous"
 
 
 class StageRequest(BaseModel):
@@ -144,17 +142,13 @@ def health() -> dict[str, bool]:
 @app.post("/api/apps")
 def create_app(request: CreateAppRequest) -> JSONResponse:
     """Issue an app id. Every later request works from this id alone."""
-    app_id = artifact_repository.create_app(
-        scenario_text=request.scenario_text,
-        title=request.title,
-        owner_id=request.owner_id,
-    )
+    app_id = artifact_repository.create_app(scenario_text=request.scenario_text)
     return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
 
 
 @app.get("/api/apps")
-def list_apps(owner_id: str = "anonymous") -> JSONResponse:
-    return JSONResponse(content={"apps": artifact_repository.list_apps(owner_id)})
+def list_apps() -> JSONResponse:
+    return JSONResponse(content={"apps": artifact_repository.list_apps()})
 
 
 @app.get("/api/apps/{app_id}")
@@ -223,7 +217,6 @@ def apply_stage_feedback(
             stage,
             updated,
             origin=ORIGIN_FEEDBACK_REVISED if request.feedback else ORIGIN_AUTO_FIXED,
-            feedback_text=request.feedback,
         )
     except Exception as error:
         artifact_repository.release_stage(app_id, stage, failed=True)

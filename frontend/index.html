@@ -555,10 +555,7 @@
       try {
         const data = await request("/api/apps", {
           method: "POST",
-          body: JSON.stringify({
-            scenario_text: scenarioText.value,
-            title: "Architecture workflow"
-          })
+          body: JSON.stringify({ scenario_text: scenarioText.value })
         });
         applyResponse(data);
         workflow.activeIndex = 0;

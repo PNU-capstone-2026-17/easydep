@@ -13,7 +13,6 @@ from app.db.models import (
     FORMAT_JSON,
     FORMAT_PUML,
     ORIGIN_GENERATED,
-    PHASE_DESIGN,
     STATUS_FAILED,
     STATUS_GENERATING,
     STATUS_PENDING,
@@ -26,7 +25,6 @@ from app.db.models import (
     App,
     Artifact,
     ArtifactVersion,
-    Feedback,
 )
 from app.db.session import session_scope
 from app.schemas.architecture_state import ArchitectureState
@@ -54,7 +52,6 @@ def stage_lock_lease_seconds() -> int:
 STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     "class_diagram": {
         "artifact_type": TYPE_CLASS,
-        "phase": PHASE_DESIGN,
         "format": FORMAT_PUML,
         "state_key": "class_diagram_puml",
         "valid_key": "class_diagram_syntax_valid",
@@ -62,7 +59,6 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     },
     "sequence_diagram": {
         "artifact_type": TYPE_SEQUENCE,
-        "phase": PHASE_DESIGN,
         "format": FORMAT_PUML,
         "state_key": "sequence_diagram_puml",
         "valid_key": "sequence_diagram_syntax_valid",
@@ -70,7 +66,6 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     },
     "api_spec": {
         "artifact_type": TYPE_API_SPEC,
-        "phase": PHASE_DESIGN,
         "format": FORMAT_JSON,
         "state_key": "api_spec",
         "valid_key": "api_spec_syntax_valid",
@@ -78,7 +73,6 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     },
     "erd": {
         "artifact_type": TYPE_ERD,
-        "phase": PHASE_DESIGN,
         "format": FORMAT_PUML,
         "state_key": "erd_puml",
         "valid_key": "erd_syntax_valid",
@@ -86,7 +80,6 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     },
     "deployment_diagram": {
         "artifact_type": TYPE_DEPLOYMENT,
-        "phase": PHASE_DESIGN,
         "format": FORMAT_PUML,
         "state_key": "deployment_diagram_puml",
         "valid_key": "deployment_diagram_syntax_valid",
@@ -99,43 +92,24 @@ STAGE_BY_ARTIFACT_TYPE = {
 }
 
 
-def create_app(
-    scenario_text: str,
-    title: str = "",
-    owner_id: str = "anonymous",
-) -> str:
+def create_app(scenario_text: str) -> str:
     """Issue a new app id and store the scenario the workflow starts from."""
     app_id = str(uuid.uuid4())
     with session_scope() as session:
-        session.add(
-            App(
-                app_id=app_id,
-                owner_id=owner_id or "anonymous",
-                title=title or "Untitled application",
-                scenario_text=scenario_text,
-                current_stage=None,
-                status="IN_PROGRESS",
-            )
-        )
+        session.add(App(app_id=app_id, scenario_text=scenario_text))
     return app_id
 
 
-def list_apps(owner_id: str = "anonymous", limit: int = 50) -> list[dict[str, Any]]:
+def list_apps(limit: int = 50) -> list[dict[str, Any]]:
     with session_scope() as session:
         rows = session.scalars(
-            select(App)
-            .where(App.owner_id == owner_id)
-            .order_by(App.created_at.desc())
-            .limit(limit)
+            select(App).order_by(App.created_at.desc()).limit(limit)
         ).all()
         return [
             {
                 "app_id": row.app_id,
-                "title": row.title,
                 "current_stage": row.current_stage,
-                "status": row.status,
                 "created_at": row.created_at.isoformat(),
-                "updated_at": row.updated_at.isoformat(),
             }
             for row in rows
         ]
@@ -193,7 +167,6 @@ def save_stage(
     stage: str,
     state: ArchitectureState,
     origin: str = ORIGIN_GENERATED,
-    feedback_text: str = "",
 ) -> int | None:
     """Persist a stage result as a new artifact version.
 
@@ -205,22 +178,7 @@ def save_stage(
         if state.get("scenario_text"):
             app.scenario_text = state["scenario_text"]
 
-        feedback_id = None
-        if feedback_text:
-            feedback = Feedback(
-                app_id=app_id,
-                artifact_type=STAGE_ARTIFACTS[stage]["artifact_type"],
-                feedback_text=feedback_text,
-                status="APPLIED",
-            )
-            session.add(feedback)
-            session.flush()
-            feedback_id = feedback.id
-
-        version_id = _write_version(session, app_id, stage, state, origin, feedback_id)
-
-        if feedback_id is not None and version_id is not None:
-            session.get(Feedback, feedback_id).result_version_id = version_id
+        version_id = _write_version(session, app_id, stage, state, origin)
 
         app.current_stage = stage
         return version_id
@@ -244,9 +202,7 @@ def claim_stage(app_id: str, stage: str) -> None:
                     session.add(
                         Artifact(
                             app_id=app_id,
-                            phase=config["phase"],
                             artifact_type=config["artifact_type"],
-                            content_format=config["format"],
                             status=STATUS_GENERATING,
                             generation_started_at=func.now(6),
                         )
@@ -351,7 +307,6 @@ def _write_version(
     stage: str,
     state: ArchitectureState,
     origin: str,
-    feedback_id: int | None,
 ) -> int | None:
     config = STAGE_ARTIFACTS[stage]
     value = state.get(config["state_key"])
@@ -361,12 +316,7 @@ def _write_version(
 
     artifact = _find_artifact(session, app_id, config["artifact_type"])
     if artifact is None:
-        artifact = Artifact(
-            app_id=app_id,
-            phase=config["phase"],
-            artifact_type=config["artifact_type"],
-            content_format=config["format"],
-        )
+        artifact = Artifact(app_id=app_id, artifact_type=config["artifact_type"])
         session.add(artifact)
         session.flush()
 
@@ -383,7 +333,6 @@ def _write_version(
             else None
         ),
         origin=origin,
-        feedback_id=feedback_id,
     )
     session.add(version)
     session.flush()

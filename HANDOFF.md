@@ -13,7 +13,7 @@ Files:
 
 - `app/db/schema.sql` — reference DDL with design rationale.
 - `app/db/models.py` — SQLAlchemy models: `apps`, `artifacts`,
-  `artifact_versions`, `feedbacks`.
+  `artifact_versions`.
 - `app/db/session.py` — engine/session, `init_db()` creates the database and
   tables on FastAPI startup.
 - `app/repositories/artifact_repository.py` — `create_app`, `load_state`,
@@ -26,6 +26,12 @@ Schema shape:
 - `artifacts` holds one row per (app_id, artifact_type) = the current artifact.
 - `artifact_versions` holds every revision, so feedback never overwrites the
   previous output. `origin` is GENERATED / AUTO_FIXED / FEEDBACK_REVISED.
+- Columns are limited to what the code actually reads. Speculative columns
+  (phase, content_format, owner_id, title, per-row audit timestamps) and the
+  `feedbacks` table were removed on 2026-07-20: they were written but never
+  read, and none of them appear in the design document. Anything needed later
+  can be added with ALTER TABLE, unlike revision history, which cannot be
+  reconstructed after the fact.
 - `artifact_type` is VARCHAR, not ENUM, so implementation/testing artifacts can
   be added without a migration.
 - Only final artifacts are stored. The BCE element JSON is deliberately NOT
@@ -56,7 +62,7 @@ API (all state now comes from the database):
 
 ```text
 POST /api/apps                                          issue app_id
-GET  /api/apps?owner_id=                                list sessions
+GET  /api/apps                                          list sessions
 GET  /api/apps/{app_id}                                 load all artifacts
 POST /api/apps/{app_id}/stages/{stage}/generate
 POST /api/apps/{app_id}/stages/{stage}/feedback
@@ -91,13 +97,14 @@ On release, an artifact that already has a version returns to READY even if the
 run failed, so a failed regeneration never discards the previous good output.
 
 Note: `init_db()` uses `create_all`, which does not ALTER existing tables. When a
-column is added to a model, apply it to already-provisioned databases by hand
-(`generation_started_at` was added this way on 2026-07-20).
+model column changes, apply it to an already-provisioned database by hand, or
+drop the database and let startup recreate it (the local database was recreated
+this way when the schema was minimized).
 
 Verified on 2026-07-20: schema creation, save/load round trip, version history,
-feedback linkage, per-app on-demand rendering, prerequisite guard (409), unknown
-app id (404), malformed app id (400), and one real LLM class-diagram generation
-persisted and re-read from MySQL.
+per-app on-demand rendering, prerequisite guard (409), unknown app id (404),
+malformed app id (400), and real LLM class-diagram generations persisted and
+re-read from MySQL. Re-verified end to end after the schema was minimized.
 
 Lock verified the same day: duplicate claim rejected, other stages unaffected,
 re-claim after release, stale-lease takeover, and two concurrent HTTP generate

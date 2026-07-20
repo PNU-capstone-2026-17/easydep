@@ -22,7 +22,6 @@ def main() -> None:
 
     app_id = artifact_repository.create_app(
         scenario_text='{"UseCaseName": "Login"}',
-        title="verify_db round trip",
     )
     print("app_id:", app_id)
 
@@ -45,7 +44,6 @@ def main() -> None:
             "class_diagram_syntax_errors": [],
         },
         origin=ORIGIN_FEEDBACK_REVISED,
-        feedback_text="Control 클래스를 추가해줘",
     )
     artifact_repository.save_stage(
         app_id,
