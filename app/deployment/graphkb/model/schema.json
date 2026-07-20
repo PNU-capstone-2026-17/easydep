@@ -118,6 +118,10 @@
           "reviewed": {
             "type": "boolean",
             "description": "사람이 눈으로 보고 확인한 관계. graphkb/reviewed/*.json에서 온다."
+          },
+          "target_property": {
+            "type": "string",
+            "description": "대상 부품이 돌려주는 값 중 어느 것을 가져다 쓰는가. via_property가 '내 어느 칸에 적나'라면 이쪽은 '거기에 무슨 값을 적나'다. 소스별 이름: AWS propertyPath, GCP targetField, Azure는 ARM 관례상 id. 빈 값은 '모른다'는 뜻이다."
           }
         }
       }

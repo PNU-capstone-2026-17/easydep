@@ -46,6 +46,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from graphkb.model import Edge, Graph
@@ -114,21 +115,13 @@ def apply_review(graph: Graph, provider: str, *, path: Path | None = None) -> di
             continue
         kept.append(edge)
 
-    # Edge는 frozen이라 수정 대신 새로 만든다.
+    # Edge는 frozen이라 수정 대신 새로 만든다. **필드를 손으로 나열하지 않는다** —
+    # 그렇게 했다가 나중에 추가된 target_property가 조용히 떨어져 나갔다.
+    # 모든 엣지가 confirmed였던 탓에 결합 지점이 전부 사라졌는데, 빌드는 성공했다.
     marked = 0
     for i, edge in enumerate(kept):
         if any(_match(entry, edge) for entry in confirmed) and not edge.reviewed:
-            kept[i] = Edge(
-                from_id=edge.from_id,
-                to_id=edge.to_id,
-                type=edge.type,
-                via_property=edge.via_property,
-                required=edge.required,
-                cardinality=edge.cardinality,
-                evidence=edge.evidence,
-                confidence=edge.confidence,
-                reviewed=True,
-            )
+            kept[i] = replace(edge, reviewed=True)
             marked += 1
 
     graph.edges.clear()

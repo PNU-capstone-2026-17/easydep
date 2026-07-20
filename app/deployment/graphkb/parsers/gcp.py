@@ -48,6 +48,8 @@ DEFAULT_SERVICES: tuple[str, ...] = ()  # 빈 튜플 = 전체
 SOURCE = "kcc-crd"
 
 _REF_FIELD = re.compile(r"^(\w+?)Refs?$")
+# 대상 필드까지 잡는 패턴 — 앞 백틱이 "대상의 어느 값을 쓰나"다.
+_DESC_WITH_FIELD = re.compile(r"Allowed value: The `(\w+)` field of an? `(\w+)` resource")
 _DESC_PATTERNS = (
     re.compile(r"Allowed value: The `\w+` field of an? `(\w+)` resource"),
     re.compile(r"externally managed (\w+) resource"),
@@ -89,9 +91,14 @@ def _service_of_kind(kind: str) -> str:
     return match.group(1).lower() if match else ""
 
 
-def build_sm_index(servicemappings: list[dict]) -> dict[tuple[str, str], str]:
-    """ServiceMapping 문서들에서 (kind, ref필드명) → 대상 kind 인덱스 생성."""
-    index: dict[tuple[str, str], str] = {}
+def build_sm_index(servicemappings: list[dict]) -> dict[tuple[str, str], tuple[str, str]]:
+    """ServiceMapping에서 (kind, ref필드명) → (대상 kind, 대상 필드) 인덱스.
+
+    `targetField`가 "대상의 어느 값을 가져다 쓰나"다 — AWS의 propertyPath에 해당한다.
+    없으면 빈 문자열이고, 그건 KCC 기본값(selfLink 또는 name)을 쓴다는 뜻이지만
+    무엇인지 단정할 수 없으므로 지어내지 않는다.
+    """
+    index: dict[tuple[str, str], tuple[str, str]] = {}
     for sm in servicemappings:
         for resource in sm.get("spec", {}).get("resources") or []:
             kind = resource.get("kind")
@@ -101,7 +108,7 @@ def build_sm_index(servicemappings: list[dict]) -> dict[tuple[str, str], str]:
                 key = ref.get("key")
                 target = (ref.get("gvk") or {}).get("kind")
                 if key and target:
-                    index[(kind, key)] = target
+                    index[(kind, key)] = (target, ref.get("targetField") or "")
     return index
 
 
@@ -113,11 +120,11 @@ def _resolve_target(
     sm_index: dict[tuple[str, str], str],
     known_kinds: set[str],
     heuristics: bool,
-) -> tuple[str, str, float] | None:
-    """참조 필드의 대상 kind를 3단계로 해석한다. (kind, evidence, confidence)."""
-    target = sm_index.get((kind, field_name))
-    if target:
-        return target, "kcc-ref", 1.0
+) -> tuple[str, str, float, str] | None:
+    """참조 필드의 대상을 3단계로 해석한다. (kind, evidence, confidence, 대상필드)."""
+    mapped = sm_index.get((kind, field_name))
+    if mapped:
+        return mapped[0], "kcc-ref", 1.0, mapped[1]
 
     props = ref_schema.get("properties") or {}
     texts = [
@@ -126,10 +133,14 @@ def _resolve_target(
         (props.get("name") or {}).get("description") or "",
     ]
     for text in texts:
+        # 첫 패턴만 대상 필드를 함께 준다 ("The `selfLink` field of a `X` resource").
+        field_match = _DESC_WITH_FIELD.search(text)
+        if field_match:
+            return field_match.group(2), "kcc-ref", 0.9, field_match.group(1)
         for pattern in _DESC_PATTERNS:
             match = pattern.search(text)
             if match:
-                return match.group(1), "kcc-ref", 0.9
+                return match.group(1), "kcc-ref", 0.9, ""
 
     if heuristics:
         base = _REF_FIELD.match(field_name)
@@ -144,7 +155,7 @@ def _resolve_target(
             if len(candidates) == 1:
                 target = candidates[0]
                 same = _service_of_kind(target) == _service_of_kind(kind)
-                return target, "heuristic", 0.6 if same else 0.5
+                return target, "heuristic", 0.6 if same else 0.5, ""
     return None
 
 
@@ -157,7 +168,7 @@ def parse_crds(
     """CRD 문서 목록(+선택적 ServiceMapping)에서 GCP 그래프를 만든다."""
     graph = Graph()
     sm_index = build_sm_index(servicemappings or [])
-    known_kinds = {k for _, k in sm_index.items()}
+    known_kinds = {target for target, _ in sm_index.values()}
 
     specs: list[tuple[str, dict]] = []  # (kind, spec 스키마)
     for crd in crds:
@@ -203,7 +214,7 @@ def parse_crds(
                     heuristics=heuristics,
                 )
                 if resolved is not None:
-                    target, evidence, confidence = resolved
+                    target, evidence, confidence, target_field = resolved
                     graph.add_node(_node(target))
                     graph.add_edge(
                         Edge(
@@ -215,6 +226,7 @@ def parse_crds(
                             cardinality="many" if many else "one",
                             evidence=evidence,
                             confidence=confidence,
+                            target_property=target_field,
                         )
                     )
                 continue  # Ref 필드 내부(external/name)는 더 내려가지 않음

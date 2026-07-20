@@ -221,3 +221,23 @@ def test_review_never_matches_everything_by_accident(graph, tmp_path) -> None:
     path = _write(tmp_path, {"rejected": [{"reason": "조건 없음"}]})
     apply_review(graph, "aws", path=path)
     assert not graph.edges
+
+
+def test_confirming_keeps_every_field(graph, tmp_path) -> None:
+    """확인 표시가 다른 필드를 떨어뜨리면 안 된다.
+
+    실제로 그랬다 — 확인 표시 코드가 Edge를 필드 나열로 다시 만드는 바람에,
+    나중에 추가된 target_property가 조용히 사라졌다. AWS는 모든 엣지가 확인
+    상태여서 결합 지점이 **전부** 날아갔는데 빌드는 성공했다.
+    """
+    graph.add_edge(Edge(from_id="aws::A", to_id="aws::C", type="references",
+                        via_property="WithTarget", required=True, cardinality="many",
+                        evidence="relationshipRef", confidence=1.0,
+                        target_property="GroupId"))
+    path = _write(tmp_path, {"confirmed": [{"to": "aws::C", "reason": "x"}]})
+    apply_review(graph, "aws", path=path)
+
+    kept = next(e for e in graph.edges if e.via_property == "WithTarget")
+    assert kept.reviewed is True
+    assert kept.target_property == "GroupId"
+    assert kept.required is True and kept.cardinality == "many"

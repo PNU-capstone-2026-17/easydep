@@ -74,6 +74,20 @@ def _top_property_names(pointer_list: list[str] | None) -> set[str]:
     return names
 
 
+def _target_property(pointer: str | None) -> str:
+    """`/properties/GroupId` → `GroupId`.
+
+    AWS는 대상의 어느 값을 쓰는지를 JSON 포인터로 준다. 중첩이면
+    (`/properties/A/B`) 슬래시로 이어 둔다 — 우리 `via_property`와 같은 표기다.
+    """
+    if not isinstance(pointer, str):
+        return ""
+    parts = pointer.split("/")
+    if len(parts) >= 3 and parts[1] == "properties":
+        return "/".join(parts[2:])
+    return pointer.strip("/")
+
+
 def _service(type_name: str) -> str:
     """"AWS::EC2::VPC" → "ec2"."""
     parts = type_name.split("::")
@@ -149,6 +163,7 @@ def _extract_schema_edges(
                 cardinality="many" if in_array else "one",
                 evidence="relationshipRef",
                 confidence=1.0,
+                target_property=_target_property(ref.get("propertyPath")),
             )
         )
 
@@ -277,6 +292,9 @@ def _apply_oob(graph: Graph, oob: dict, schemas_by_type: dict[str, dict]) -> Non
                         cardinality="many" if many else "one",
                         evidence="cdk-oob",
                         confidence=0.9,
+                        target_property=_target_property(
+                            target_entry.get("propertyPath")
+                        ),
                     )
                 )
 

@@ -72,6 +72,24 @@ class Edge:
     evidence: str
     confidence: float
 
+    target_property: str = ""
+    """대상 부품이 돌려주는 값 중 **어느 것을 가져다 쓰는가.**
+
+    `via_property`가 "내 어느 칸에 적나"라면 이쪽은 "거기에 무슨 값을 적나"다.
+    둘 다 있어야 실제로 조립할 수 있다:
+
+        VPCEndpoint → VPC   via_property=VpcId
+                            target_property=DefaultSecurityGroup
+
+    "네트워크를 가리킨다"까지는 via_property로 알지만, 정작 복사해 넣을 값이
+    네트워크 번호가 아니라 **그 네트워크의 기본 방화벽**이라는 건 이 필드에만 있다.
+    방향도 대상도 맞고 결합 지점만 틀린 형태라 원본 대조로도 안 잡히던 누락이다.
+
+    소스마다 이름이 다르다 — AWS는 `propertyPath`(`/properties/GroupId`),
+    GCP servicemapping은 `targetField`, Azure는 ARM 관례상 항상 `id`다.
+    모르면 빈 문자열이고, 그건 "이 관계에 결합 지점이 없다"가 아니라 "우리가 모른다"는 뜻이다.
+    """
+
     reviewed: bool = False
     """**사람이 눈으로 보고 맞다고 확인했는가.**
 
@@ -99,6 +117,8 @@ class Edge:
             "evidence": self.evidence,
             "confidence": self.confidence,
         }
+        if self.target_property:
+            out["target_property"] = self.target_property
         if self.reviewed:
             out["reviewed"] = True
         return out
@@ -114,6 +134,7 @@ class Edge:
             cardinality=data["cardinality"],
             evidence=data["evidence"],
             confidence=data["confidence"],
+            target_property=data.get("target_property", ""),
             reviewed=bool(data.get("reviewed", False)),
         )
 

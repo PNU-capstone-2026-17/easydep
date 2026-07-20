@@ -174,7 +174,7 @@ def extract_references(
         normalized = normalized.removeprefix("common")
         return target_index.get(normalized)
 
-    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, confidence: float) -> None:
+    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, confidence: float, target_property: str = "") -> None:
         if to_type == from_type or to_type.startswith(from_type + "/"):
             # 자기 자신 / 인라인 자식 목록은 계층(contained_in)으로 이미 표현됨
             return
@@ -189,6 +189,7 @@ def extract_references(
                 cardinality="many" if many else "one",
                 evidence=evidence,
                 confidence=confidence,
+                target_property=target_property,
             )
         )
 
@@ -246,7 +247,12 @@ def extract_references(
             if resolved_entry.get("$type") == "ObjectType":
                 target = resolve_target(resolved_entry)
                 if target is not None:
-                    emit(from_type, target, via, required=prop_required, many=many, evidence="bicep-ref", confidence=0.8)
+                    # ARM에서 다른 리소스를 가리키는 객체는 그 리소스의 `id`를 담는다.
+                    # 실제로 이 판별을 검수에도 썼다 — id가 없으면 인라인 설정값이라
+                    # 참조가 아니었다(오탐 12건을 이 기준으로 걸러냈다).
+                    emit(from_type, target, via, required=prop_required, many=many,
+                         evidence="bicep-ref", confidence=0.8,
+                         target_property="id" if "id" in (resolved_entry.get("properties") or {}) else "")
                     continue  # 참조 경계에서 멈춤 — 대상 내부는 대상 자신의 것
 
             if heuristics:
