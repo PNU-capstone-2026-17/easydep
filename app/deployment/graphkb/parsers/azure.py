@@ -29,6 +29,7 @@ from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from graphkb.parsers.review import apply_review, check_freshness
 from kbcommon.fetch import describe_source_set
 from kbcommon.sources import SOURCES
 
@@ -299,6 +300,17 @@ def build(
         extract_references(graph, types_arr, heuristics=heuristics)
 
     graph.provenance = [describe_source_set(read_paths, "bicep-types-az")]
+
+    stale = check_freshness("azure", graph.provenance)
+    if stale:
+        print(f"⚠ {stale}", file=sys.stderr)
+    review_stats = apply_review(graph, "azure")
+    if any(review_stats.values()):
+        print(
+            f"검수 적용: 제거 {review_stats['dropped']}, "
+            f"확인 표시 {review_stats['confirmed']}, 추가 {review_stats['added']}"
+        )
+
     graph.save(output)
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:

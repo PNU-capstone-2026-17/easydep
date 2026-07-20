@@ -105,8 +105,10 @@
               "arm-hierarchy",
               "bicep-ref",
               "kcc-ref",
-              "cb-spider-driver"
-            ]
+              "cb-spider-driver",
+              "human-review"
+            ],
+            "description": "관계를 알아낸 방법. human-review는 소스에 있는데 파서가 못 뽑아 사람이 직접 채운 것으로, graphkb/reviewed/*.json에 이유가 적혀 있다."
           },
           "confidence": {
             "type": "number",

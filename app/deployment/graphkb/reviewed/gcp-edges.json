@@ -1,0 +1,40 @@
+{
+  "description": "GCP 의존성 엣지 사람 검수 결과. 엣지 203개(kcc-ref 194 + heuristic 9) 전수 검수 완료. 형식은 graphkb/parsers/review.py 참조.",
+  "reviewed_against": {
+    "source": "kcc-crd",
+    "sha256": "0643900a4f6742db60d442239bcb1e681c84450bb92b8e949f7e846785c7e948"
+  },
+  "rejected": [],
+  "confirmed": [
+    {
+      "reason": "GCP 엣지 203개 전수 확인. 근거가 셋 다 강하다 — (1) 143개는 구글이 servicemapping 파일에 '이 부품의 이 칸은 저 부품을 가리킨다'를 표로 명시한 것이라 추론이 0이다. (2) 51개는 CRD 설명문이 대상 이름을 백틱으로 정확히 적어준 것이고, 51개 중 50개가 설명문과 일치함을 대조했다(1개는 설명문이 비어 대조 불가하나 필드명 targetServiceAccountRefs가 대상 IAMServiceAccount와 맞는다). (3) 9개는 이름 추론인데 전수를 눈으로 봤고 targetHTTPProxyRef→ComputeTargetHTTPProxy처럼 전부 정확했다. 대상 kind가 노드에 없는 경우도 0건이다.",
+      "reviewed": "2026-07-20",
+      "edges": 203
+    }
+  ],
+  "added": [
+    {
+      "from": "gcp::ComputeFirewallPolicyAssociation",
+      "to": "gcp::ComputeFirewallPolicy",
+      "via_property": "firewallPolicyRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "CRD 설명문에 'Allowed value: The Google Cloud resource name of a `ComputeFirewallPolicy` resource'로 대상이 명시돼 있는데, 파서가 아는 문구 형태('The `selfLink` field of a `X` resource')와 달라서 못 읽었다. 이름부터 '연결'인 부품이 관계 0개였던 원인이다.",
+      "reviewed": "2026-07-20"
+    }
+  ],
+  "notes": [
+    {
+      "topic": "못 넣은 참조 17개 — 파서 문제가 아니라 수집 범위 문제",
+      "detail": "설명문에 대상이 적혀 있는데 넣지 못한 것이 17개 있다. 14개는 대상이 Project(12)·Folder(2)로, 우리가 compute·container 두 서비스만 수집해서 그 부품 자체가 그래프에 없다. KCC v1.153.0에는 CRD가 510개(서비스 136종) 있으므로 수집 범위를 넓히면 자연히 해소된다. 나머지 3개는 아래 자기 참조 항목."
+    },
+    {
+      "topic": "자기 참조 5개를 버리고 있다",
+      "detail": "ComputeDisk.sourceDiskRef → ComputeDisk, ComputeImage.sourceImageRef → ComputeImage, ComputeTargetPool.backupTargetPoolRef → ComputeTargetPool, ComputeRouterInterface.redundantInterfaceRef → ComputeRouterInterface, ComputeDisk.asyncPrimaryDisk.diskRef → ComputeDisk. 그래프가 self-loop를 거부해서(Graph.add_edge) 들어가지 않는다. 부품 종류 수준에서는 자기 자신이지만 실제로는 '다른 디스크를 원본으로 삼는다'는 진짜 순서 제약이라, 타입 그래프에서 이걸 어떻게 표현할지는 미결이다."
+    },
+    {
+      "topic": "참조 아닌 것 1개",
+      "detail": "ComputeRouterPeer.ipAddress는 external/name 모양을 갖췄지만 실제로는 IP 주소 문자열이라 부품 참조가 아니다. 현재 엣지를 만들지 않으므로 조치 불필요."
+    }
+  ]
+}
