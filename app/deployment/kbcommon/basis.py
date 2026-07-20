@@ -64,8 +64,13 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "azure-limits-note": INFERRED,  # 각주·"varies"처럼 숫자가 아닌 표현
     "cfn-description": INFERRED,    # 설명문에서 뽑은 숫자
     # --- perfkb ---
-    "aws-burstable-field": STATED,  # BurstablePerformanceSupported 필드
-    "gcp-shared-cpu-field": STATED,  # IsSharedCpu 필드
+    # 이 두 필드는 **한 방향만** 직접 말한다 — "버스트다"/"공유 코어다".
+    "aws-burstable-field": STATED,   # BurstablePerformanceSupported=true
+    "gcp-shared-cpu-field": STATED,  # IsSharedCpu=true
+    # 반대 방향은 "그렇게 분류되지 않았다"에서 끌어낸 추론이다. t1.micro가 이 추론이
+    # 깨지는 실례다 — AWS가 false를 주지만 상시 성능이 보장되지는 않는다.
+    "aws-non-burstable-inferred": INFERRED,
+    "gcp-dedicated-cpu-inferred": INFERRED,
     "azure-family-name": INFERRED,  # family가 standardB로 시작하는지
 }
 

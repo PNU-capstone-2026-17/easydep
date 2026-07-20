@@ -49,6 +49,10 @@ _AZURE_BURST_FAMILY = re.compile(r"^standardB", re.IGNORECASE)
 _NOTE_AWS_BURST = "버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 떨어집니다."
 _NOTE_GCP_SHARED = "공유 코어 — vCPU를 다른 인스턴스와 공유하므로 성능이 일정하지 않습니다."
 _NOTE_AZURE_BURST = "B계열(버스트) — 크레딧 모델이라 상시 부하에서 성능이 떨어집니다."
+# 상시 보장은 "버스트로 분류되지 않았다"에서 끌어낸 **추론**이다. 원본이 그렇게
+# 말한 게 아니므로 그 사실을 답변에도 남긴다.
+_NOTE_AWS_NOT_BURST = "AWS가 버스트로 분류하지 않은 타입 — 상시 성능은 그로부터의 추론입니다."
+_NOTE_GCP_DEDICATED = "GCP가 공유 코어로 표시하지 않은 타입 — 전용 vCPU는 그로부터의 추론입니다."
 
 
 def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:
@@ -57,21 +61,29 @@ def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:
         burst = go_bool(det.get("BurstablePerformanceSupported"))
         if burst is None:
             return None
+        # **방향에 따라 근거가 다르다.** 필드가 참이면 "버스트다"를 직접 말한 것이고,
+        # 거짓이면 "버스트로 분류하지 않는다"까지만 말한 것이다. 거기서 "상시 성능
+        # 보장"을 끌어내는 건 추론이고, 그 추론은 실제로 깨진다 —
+        # `t1.micro`는 AWS가 false를 주지만 T2 크레딧 모델보다 앞선 세대라서일 뿐,
+        # 상시 성능이 보장되는 게 아니다(감사 결함 P1). 8건이 "확신에 찬 오답"이었다.
+        evidence = "aws-burstable-field" if burst else "aws-non-burstable-inferred"
         return {
             "value": not burst,
-            "note": _NOTE_AWS_BURST if burst else None,
-            "evidence": "aws-burstable-field",
-            "basis": basis_of("aws-burstable-field"),
+            "note": _NOTE_AWS_BURST if burst else _NOTE_AWS_NOT_BURST,
+            "evidence": evidence,
+            "basis": basis_of(evidence),
         }
     if provider == "gcp":
         shared = go_bool(det.get("IsSharedCpu"))
         if shared is None:
             return None
+        # AWS와 같은 비대칭 — 필드는 "공유 코어다"만 직접 말한다.
+        evidence = "gcp-shared-cpu-field" if shared else "gcp-dedicated-cpu-inferred"
         return {
             "value": not shared,
-            "note": _NOTE_GCP_SHARED if shared else None,
-            "evidence": "gcp-shared-cpu-field",
-            "basis": basis_of("gcp-shared-cpu-field"),
+            "note": _NOTE_GCP_SHARED if shared else _NOTE_GCP_DEDICATED,
+            "evidence": evidence,
+            "basis": basis_of(evidence),
         }
     if provider == "azure":
         family = det.get("Family")

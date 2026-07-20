@@ -130,7 +130,9 @@
             "evidence": {
               "enum": [
                 "aws-burstable-field",
+                "aws-non-burstable-inferred",
                 "gcp-shared-cpu-field",
+                "gcp-dedicated-cpu-inferred",
                 "azure-family-name"
               ]
             },

@@ -86,10 +86,27 @@ def test_aws_burstable_is_not_sustained_and_is_stated() -> None:
     assert "크레딧" in rec["sustainedCpu"]["note"]
 
 
-def test_aws_non_burstable_is_sustained_without_note() -> None:
+def test_aws_non_burstable_is_an_inference_not_a_statement() -> None:
+    """**P1 회귀**: "버스트 아님"에서 "상시 보장"을 끌어내는 건 추론이다.
+
+    AWS 필드는 한 방향만 직접 말한다 — `BurstablePerformanceSupported: true`면
+    "버스트다"이지만, false는 "버스트로 분류하지 않는다"까지다. 그 추론은 실제로
+    깨진다: `t1.micro`는 false를 받지만 T2 크레딧 모델보다 앞선 세대라서일 뿐,
+    상시 성능이 보장되지 않는다. 예전엔 이걸 신뢰도 1.0으로 단언했다(8건).
+    """
     rec = project_row(aws_row(spec="m5.large", burstable="false"))
     assert rec["sustainedCpu"]["value"] is True
-    assert rec["sustainedCpu"].get("note") is None
+    assert rec["sustainedCpu"]["evidence"] == "aws-non-burstable-inferred"
+    assert rec["sustainedCpu"]["basis"] == "inferred"
+    assert "추론" in rec["sustainedCpu"]["note"]
+
+
+def test_aws_burstable_is_stated_by_the_field() -> None:
+    """반대 방향은 필드가 직접 말한다 — 경고는 여기 걸려 있으므로 사실이어야 한다."""
+    rec = project_row(aws_row(spec="t3.micro", burstable="true"))
+    assert rec["sustainedCpu"]["value"] is False
+    assert rec["sustainedCpu"]["evidence"] == "aws-burstable-field"
+    assert rec["sustainedCpu"]["basis"] == "stated"
 
 
 def test_gcp_shared_cpu_is_a_different_mechanism_than_aws_burst() -> None:
