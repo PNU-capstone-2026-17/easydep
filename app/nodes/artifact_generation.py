@@ -18,9 +18,7 @@ from app.services.llm_artifacts import (
 def generate_class_diagram(state: ArchitectureState) -> ArchitectureState:
     from app.graphs.class_diagram_graph import class_diagram_graph
 
-    # The validation loop runs until the diagram compiles, so the graph needs a
-    # recursion budget far above LangGraph's default of 25 steps.
-    result = class_diagram_graph.invoke(state, {"recursion_limit": 1000})
+    result = class_diagram_graph.invoke(state)
     result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
     return result
 

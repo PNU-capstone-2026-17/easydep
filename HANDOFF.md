@@ -126,6 +126,9 @@ The LLM should revise that artifact using the feedback.
 For PlantUML artifacts, syntax errors should be extracted using the logic from
 `puml_error.py`, passed to the LLM, and retried until the artifact compiles.
 Set `MAX_REVISION_ATTEMPTS` to cap the retries; 0 (the default) means no cap.
+That applies to the per-stage endpoints. The whole-run endpoint goes through
+`class_diagram_graph`, where LangGraph's default recursion limit of 25 steps
+stops the loop after roughly a dozen retries with a GraphRecursionError.
 
 ## Important Clarification
 
