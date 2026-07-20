@@ -3,22 +3,52 @@
   "$id": "https://github.com/scenfit/graphkb/schema.json",
   "title": "graphkb dependency graph",
   "type": "object",
-  "required": ["nodes", "edges"],
+  "required": [
+    "nodes",
+    "edges"
+  ],
   "additionalProperties": false,
   "properties": {
     "nodes": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "layer", "provider", "kind", "display_name", "source"],
+        "required": [
+          "id",
+          "layer",
+          "provider",
+          "kind",
+          "display_name",
+          "source"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
-          "layer": { "enum": ["core", "vendor"] },
-          "provider": { "type": "string", "minLength": 1 },
-          "kind": { "type": "string", "minLength": 1 },
-          "display_name": { "type": "string", "minLength": 1 },
-          "source": { "type": "string", "minLength": 1 }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "layer": {
+            "enum": [
+              "core",
+              "vendor"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -26,22 +56,130 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["from", "to", "type", "via_property", "required", "cardinality", "evidence", "confidence"],
+        "required": [
+          "from",
+          "to",
+          "type",
+          "via_property",
+          "required",
+          "cardinality",
+          "evidence",
+          "confidence"
+        ],
         "additionalProperties": false,
         "properties": {
-          "from": { "type": "string", "minLength": 1 },
-          "to": { "type": "string", "minLength": 1 },
-          "type": { "enum": ["references", "contained_in", "equivalent_to"] },
-          "via_property": { "type": "string" },
-          "required": { "type": "boolean" },
-          "cardinality": { "enum": ["one", "many"] },
-          "evidence": {
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
             "enum": [
-              "relationshipRef", "cdk-oob", "swagger-field", "heuristic",
-              "arm-id", "arm-hierarchy", "bicep-ref", "kcc-ref", "cb-spider-driver"
+              "references",
+              "contained_in",
+              "equivalent_to"
             ]
           },
-          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+          "via_property": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "cardinality": {
+            "enum": [
+              "one",
+              "many"
+            ]
+          },
+          "evidence": {
+            "enum": [
+              "relationshipRef",
+              "cdk-oob",
+              "swagger-field",
+              "heuristic",
+              "arm-id",
+              "arm-hierarchy",
+              "bicep-ref",
+              "kcc-ref",
+              "cb-spider-driver"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "_source": {
+      "type": "array",
+      "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sha256"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "kbcommon/sources.py의 키"
+          },
+          "pin_kind": {
+            "enum": [
+              "tag",
+              "commit",
+              "digest",
+              "bundled"
+            ]
+          },
+          "pin": {
+            "type": "string",
+            "description": "태그명·커밋 SHA. digest 소스는 '(고정 불가)'"
+          },
+          "url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_modified": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "etag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_file": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "integer",
+            "description": "묶음 소스에서 실제로 읽은 파일 수"
+          }
         }
       }
     }

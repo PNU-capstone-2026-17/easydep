@@ -151,6 +151,12 @@ class CapacitySet:
 
     constraints: list[Constraint] = field(default_factory=list)
     quotas: list[Quota] = field(default_factory=list)
+    provenance: list[dict] = field(default_factory=list)
+    """어느 원본에서 나왔는지 (`kbcommon.fetch.describe_source*`). `_source`로 직렬화된다.
+
+    비어 있으면 "입력을 모른다"는 뜻이고, 그러면 어떤 수치도 재현·반증할 수 없다.
+    """
+
     _c_index: dict[tuple[str, str, str], int] = field(default_factory=dict, repr=False)
     _q_index: dict[tuple[str, str | None, str], int] = field(
         default_factory=dict, repr=False
@@ -194,12 +200,20 @@ class CapacitySet:
             self.add_constraint(constraint)
         for quota in other.quotas:
             self.add_quota(quota)
+        seen = {(p.get("source"), p.get("sha256")) for p in self.provenance}
+        for p in other.provenance:
+            if (p.get("source"), p.get("sha256")) not in seen:
+                self.provenance.append(p)
+                seen.add((p.get("source"), p.get("sha256")))
 
     def to_dict(self) -> dict:
-        return {
+        out: dict = {
             "constraints": [c.to_dict() for c in self.constraints],
             "quotas": [q.to_dict() for q in self.quotas],
         }
+        if self.provenance:
+            out["_source"] = self.provenance
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> CapacitySet:
@@ -208,6 +222,7 @@ class CapacitySet:
             result.add_constraint(Constraint.from_dict(item))
         for item in data.get("quotas", []):
             result.add_quota(Quota.from_dict(item))
+        result.provenance = list(data.get("_source") or [])
         return result
 
     def validate(self) -> None:

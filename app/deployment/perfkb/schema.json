@@ -2,7 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "perfkb 인스턴스 성능 데이터셋",
   "type": "object",
-  "required": ["_note", "specs"],
+  "required": [
+    "_note",
+    "specs"
+  ],
   "properties": {
     "_note": {
       "type": "string",
@@ -10,42 +13,149 @@
     },
     "specs": {
       "type": "array",
-      "items": {"$ref": "#/$defs/spec"}
+      "items": {
+        "$ref": "#/$defs/spec"
+      }
+    },
+    "_source": {
+      "type": "array",
+      "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sha256"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "kbcommon/sources.py의 키"
+          },
+          "pin_kind": {
+            "enum": [
+              "tag",
+              "commit",
+              "digest",
+              "bundled"
+            ]
+          },
+          "pin": {
+            "type": "string",
+            "description": "태그명·커밋 SHA. digest 소스는 '(고정 불가)'"
+          },
+          "url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_modified": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "etag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_file": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "integer",
+            "description": "묶음 소스에서 실제로 읽은 파일 수"
+          }
+        }
+      }
     }
   },
   "$defs": {
     "spec": {
       "type": "object",
-      "required": ["id", "provider", "specName"],
+      "required": [
+        "id",
+        "provider",
+        "specName"
+      ],
       "description": "성능 신호가 없는 스펙은 레코드 자체가 없다. 필드 부재 = '모른다'.",
       "properties": {
         "id": {
           "type": "string",
           "description": "costkb 조인 키 (aws+us-east-1+t3.medium)"
         },
-        "provider": {"enum": ["aws", "azure", "gcp"]},
-        "specName": {"type": "string"},
-
+        "provider": {
+          "enum": [
+            "aws",
+            "azure",
+            "gcp"
+          ]
+        },
+        "specName": {
+          "type": "string"
+        },
         "sustainedCpu": {
           "type": "object",
           "description": "상시 CPU 성능이 보장되나. 프로바이더마다 다른 메커니즘에서 오므로 근거를 함께 담는다.",
-          "required": ["value", "evidence", "confidence"],
+          "required": [
+            "value",
+            "evidence",
+            "confidence"
+          ],
           "properties": {
-            "value": {"type": "boolean"},
-            "note": {"type": ["string", "null"]},
-            "evidence": {
-              "enum": ["aws-burstable-field", "gcp-shared-cpu-field", "azure-family-name"]
+            "value": {
+              "type": "boolean"
             },
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "evidence": {
+              "enum": [
+                "aws-burstable-field",
+                "gcp-shared-cpu-field",
+                "azure-family-name"
+              ]
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
           },
           "additionalProperties": false
         },
-
-        "currentGeneration": {"type": "boolean"},
-        "clockGHz": {"type": "number", "exclusiveMinimum": 0},
-        "threadsPerCore": {"type": "number", "exclusiveMinimum": 0},
-        "bareMetal": {"type": "boolean"},
-
+        "currentGeneration": {
+          "type": "boolean"
+        },
+        "clockGHz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "threadsPerCore": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "bareMetal": {
+          "type": "boolean"
+        },
         "networkPerformance": {
           "type": "string",
           "description": "AWS 원문 유지 ('Up to 5 Gigabit' | '25 Gigabit')"
@@ -54,27 +164,44 @@
           "type": "boolean",
           "description": "'Up to'로 시작하면 true — 광고 대역폭이 버스트라는 뜻"
         },
-
         "ebsBaselineMbps": {
           "type": "number",
           "description": "지속 가능한 EBS 대역폭. Maximum이 아니라 이 값이 진짜 성능이다."
         },
-        "ebsMaxMbps": {"type": "number"},
-        "ebsBaselineIops": {"type": "number"},
-        "ebsMaxIops": {"type": "number"},
-
+        "ebsMaxMbps": {
+          "type": "number"
+        },
+        "ebsBaselineIops": {
+          "type": "number"
+        },
+        "ebsMaxIops": {
+          "type": "number"
+        },
         "acu": {
           "type": "number",
           "description": "Azure Compute Units. Azure 내부에서만 비교 가능하며 37.7%만 채워져 있다."
         },
-        "diskIops": {"type": "number"},
-        "cachedDiskIops": {"type": "number"},
-        "acceleratedNetworking": {"type": "boolean"},
-        "premiumIO": {"type": "boolean"},
-        "family": {"type": "string"},
-
-        "maxPersistentDisks": {"type": "number"},
-        "maxPersistentDiskGB": {"type": "number"},
+        "diskIops": {
+          "type": "number"
+        },
+        "cachedDiskIops": {
+          "type": "number"
+        },
+        "acceleratedNetworking": {
+          "type": "boolean"
+        },
+        "premiumIO": {
+          "type": "boolean"
+        },
+        "family": {
+          "type": "string"
+        },
+        "maxPersistentDisks": {
+          "type": "number"
+        },
+        "maxPersistentDiskGB": {
+          "type": "number"
+        },
         "vendorDescription": {
           "type": "string",
           "description": "GCP 벤더 설명 ('Efficient Instance, 8 vCPUs, 64 GB RAM')"

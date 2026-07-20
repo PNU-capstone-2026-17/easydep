@@ -23,9 +23,11 @@ from collections import Counter
 from pathlib import Path
 
 from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import fetch_cached
+from kbcommon.fetch import describe_source_set, fetch_cached
+from kbcommon.sources import SOURCES
 
-DEFAULT_BASE_URL = "https://raw.githubusercontent.com/Azure/bicep-types-az/main/generated"
+# graphkb/parsers/azure.py와 **같은 커밋**을 봐야 한다 (kbcommon/sources.py에서 관리).
+DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
 DEFAULT_PROVIDERS = (
     "microsoft.network",
     "microsoft.compute",
@@ -217,6 +219,7 @@ def build(
 
     capacity = CapacitySet()
     stats: Counter = Counter()
+    read_paths = [index_path]
     for rel_path in rel_paths:
         try:
             types_path = _fetch_relative(base_url, rel_path, refresh=refresh)
@@ -224,8 +227,10 @@ def build(
         except Exception as exc:  # noqa: BLE001 — 한 파일 실패가 전체를 막지 않게
             print(f"경고: types.json 처리 실패, 건너뜀 — {rel_path}: {exc}", file=sys.stderr)
             continue
+        read_paths.append(types_path)
         extract_constraints(capacity, types_arr, stats=stats)
 
+    capacity.provenance = [describe_source_set(read_paths, "bicep-types-az")]
     capacity.save(output)
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)
     summary = ", ".join(f"{k}={v}" for k, v in sorted(by_evidence.items()))

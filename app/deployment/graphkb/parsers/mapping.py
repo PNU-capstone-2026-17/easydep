@@ -15,6 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from graphkb.model import Edge, Graph, Node
+from kbcommon.fetch import describe_source
 
 SOURCE = "cb-spider-mapping"
 
@@ -153,6 +154,10 @@ def build(output: Path, *, mapping_file: Path | None = None) -> Graph:
     """매핑 그래프를 만들어 output에 저장한다."""
     mappings = load_mappings(mapping_file)
     graph = build_graph(mappings)
+    # 번들 파일이라 fetch를 거치지 않지만, 무엇을 읽었는지는 똑같이 남긴다 —
+    # 사람이 손으로 고치는 파일이라 오히려 버전 추적이 더 필요하다.
+    source_path = mapping_file or Path(__file__).with_name("core_vendor_map.json")
+    graph.provenance = [describe_source(source_path, "cb-spider-map")]
     graph.save(output)
     confirmed = sum(1 for m in mappings if m.get("status") == "confirmed")
     print(

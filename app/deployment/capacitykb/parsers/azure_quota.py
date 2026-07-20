@@ -28,9 +28,10 @@ from functools import lru_cache
 from pathlib import Path
 
 from capacitykb.model import CapacitySet, Quota
-from kbcommon.fetch import fetch_cached
+from kbcommon.fetch import describe_source_set, fetch_cached
+from kbcommon.sources import SOURCES
 
-DEFAULT_BASE_URL = "https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/main/includes"
+DEFAULT_BASE_URL = SOURCES["azure-limits-doc"].url
 # 코어 리소스 타입(네트워크/구독)을 덮는 최소 목록. --includes 로 확장한다.
 DEFAULT_INCLUDES = (
     "azure-virtual-network-limits.md",
@@ -174,6 +175,7 @@ def build(
 ) -> CapacitySet:
     """limits 문서를 받아 파싱하고 output에 저장한 뒤 결과를 반환한다."""
     capacity = CapacitySet()
+    read_paths: list[Path] = []
     for name in includes:
         local = Path(base_url) / name
         try:
@@ -183,12 +185,14 @@ def build(
                 else fetch_cached(f"{base_url.rstrip('/')}/{name}", f"azure-limits-{name}", refresh=refresh)
             )
             text = path.read_text(encoding="utf-8")
+            read_paths.append(path)
         except Exception as exc:  # noqa: BLE001 — 한 문서 실패가 전체를 막지 않게
             print(f"경고: limits 문서 처리 실패, 건너뜀 — {name}: {exc}", file=sys.stderr)
             continue
         for quota in parse_markdown(text, name):
             capacity.add_quota(quota)
 
+    capacity.provenance = [describe_source_set(read_paths, "azure-limits-doc")]
     capacity.save(output)
     linked = sum(1 for q in capacity.quotas if q.type_id)
     print(

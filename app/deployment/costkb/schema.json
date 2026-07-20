@@ -4,7 +4,10 @@
   "title": "costkb instance spec / price dataset",
   "description": "cb-tumblebug spec_infos 테이블의 투영. 번들 36건(손 큐레이션)과 빌드 산출물이 같은 스키마를 쓴다.",
   "type": "object",
-  "required": ["_note", "specs"],
+  "required": [
+    "_note",
+    "specs"
+  ],
   "additionalProperties": false,
   "properties": {
     "_note": {
@@ -17,7 +20,14 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["provider", "region", "specName", "vCPU", "memGiB", "hourlyUSD"],
+        "required": [
+          "provider",
+          "region",
+          "specName",
+          "vCPU",
+          "memGiB",
+          "hourlyUSD"
+        ],
         "additionalProperties": false,
         "properties": {
           "id": {
@@ -26,7 +36,18 @@
             "description": "Tumblebug 키 {provider}+{region}+{spec}. MCP 정렬의 근거. 번들 36건엔 없음."
           },
           "provider": {
-            "enum": ["aws", "azure", "gcp", "tencent", "alibaba", "ibm", "ncp", "kt", "nhn", "openstack"],
+            "enum": [
+              "aws",
+              "azure",
+              "gcp",
+              "tencent",
+              "alibaba",
+              "ibm",
+              "ncp",
+              "kt",
+              "nhn",
+              "openstack"
+            ],
             "description": "cb-tumblebug이 아는 10개 프로바이더. 새 값이 오면 검증 실패시켜 조용한 드리프트를 막는다."
           },
           "region": {
@@ -34,8 +55,15 @@
             "minLength": 1,
             "description": "Tumblebug 표기. AWS는 CSP와 우연히 일치하나 NCP는 'KR' 등으로 다르다."
           },
-          "specName": { "type": "string", "minLength": 1, "description": "CSP 원본 이름 (csp_spec_name)" },
-          "vCPU": { "type": "integer", "minimum": 1 },
+          "specName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "CSP 원본 이름 (csp_spec_name)"
+          },
+          "vCPU": {
+            "type": "integer",
+            "minimum": 1
+          },
           "memGiB": {
             "type": "number",
             "exclusiveMinimum": 0,
@@ -47,23 +75,131 @@
             "description": "보정값(표시용). 상위 CB-Spider 버그로 gcp/azure의 memGiB가 실제보다 2.4% 낮아 ×1.024로 복원한 값. 나머지 프로바이더는 memGiB와 같다."
           },
           "hourlyUSD": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "exclusiveMinimum": 0,
             "description": "cost_per_hour. 0과 음수는 '가격 미상'이므로 null (0은 무료가 아니다)."
           },
           "architecture": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "x86_64 | arm64 | arm64_mac | x86_64_mac. MCP가 기본으로 x86_64를 주입하므로 미러에 필요."
           },
-          "infraType": { "type": ["string", "null"] },
-          "diskSizeGB": { "type": ["number", "null"] },
-          "acceleratorType": { "type": ["string", "null"] },
-          "acceleratorModel": { "type": ["string", "null"] },
-          "acceleratorCount": { "type": ["integer", "null"] },
-          "acceleratorMemoryGB": { "type": ["number", "null"] },
+          "infraType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "diskSizeGB": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "acceleratorType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acceleratorModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acceleratorCount": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "acceleratorMemoryGB": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "family": {
-            "enum": ["burstable", "general", "compute", "memory"],
+            "enum": [
+              "burstable",
+              "general",
+              "compute",
+              "memory"
+            ],
             "description": "spec_infos에 없는 필드 — 번들 36건에만 존재한다."
+          }
+        }
+      }
+    },
+    "_source": {
+      "type": "array",
+      "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sha256"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "kbcommon/sources.py의 키"
+          },
+          "pin_kind": {
+            "enum": [
+              "tag",
+              "commit",
+              "digest",
+              "bundled"
+            ]
+          },
+          "pin": {
+            "type": "string",
+            "description": "태그명·커밋 SHA. digest 소스는 '(고정 불가)'"
+          },
+          "url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_modified": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "etag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_file": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "integer",
+            "description": "묶음 소스에서 실제로 읽은 파일 수"
           }
         }
       }

@@ -24,15 +24,15 @@ from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from kbcommon.fetch import describe_source
+from kbcommon.sources import SOURCES
 
-DEFAULT_ZIP_URL = (
-    "https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip"
-)
+# ⚠️ AWS는 이 zip을 계속 덮어쓴다 — 고정할 ref가 없다. 받은 바이트의 sha256을
+# 프로버넌스에 남기는 것이 최선이다 (kbcommon/sources.py 참조).
+DEFAULT_ZIP_URL = SOURCES["cfn-schema"].url
 # Git LFS 파일이므로 raw.githubusercontent.com이 아닌 media 호스트를 써야 한다.
-DEFAULT_OOB_URL = (
-    "https://media.githubusercontent.com/media/cdklabs/awscdk-service-spec/main/"
-    "sources/OobRelationships/relationships.json"
-)
+# 태그 고정됨 — main을 쓰면 재현이 안 된다.
+DEFAULT_OOB_URL = SOURCES["cdk-oob"].url
 
 SOURCE = "cloudformation-registry"
 
@@ -290,6 +290,9 @@ def build(
         else None
     )
     graph = parse_zip(zip_path, oob_path=oob_path, heuristics=heuristics)
+    graph.provenance = [describe_source(zip_path, "cfn-schema")]
+    if oob_path is not None:
+        graph.provenance.append(describe_source(oob_path, "cdk-oob"))
     graph.save(output)
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:

@@ -30,8 +30,11 @@ import yaml
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from kbcommon.fetch import describe_source_set
+from kbcommon.sources import SOURCES
 
-DEFAULT_TAG = "v1.153.0"
+# 고정 태그는 kbcommon/sources.py에서 관리한다 (--tag로 덮어쓸 수 있다).
+DEFAULT_TAG = SOURCES["kcc-crd"].pin
 RAW_BASE = "https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-config-connector"
 API_BASE = "https://api.github.com/repos/GoogleCloudPlatform/k8s-config-connector"
 DEFAULT_SERVICES = ("compute", "container")
@@ -276,9 +279,11 @@ def build(
     """
     crds: list[dict] = []
     servicemappings: list[dict] = []
+    read_paths: list[Path] = []
 
     if crd_dir is not None:
         for path in sorted(Path(crd_dir).glob("*.yaml")):
+            read_paths.append(path)
             doc = _load_yaml(path)
             if not isinstance(doc, dict):
                 continue
@@ -307,6 +312,7 @@ def build(
                 f"kcc-{tag}-{Path(rel).name}",
                 refresh=refresh,
             )
+            read_paths.append(path)
             doc = _load_yaml(path)
             if isinstance(doc, dict):
                 crds.append(doc)
@@ -316,6 +322,7 @@ def build(
                 f"kcc-{tag}-sm-{Path(rel).name}",
                 refresh=refresh,
             )
+            read_paths.append(path)
             doc = _load_yaml(path)
             if isinstance(doc, dict):
                 servicemappings.append(doc)
@@ -324,6 +331,7 @@ def build(
         )
 
     graph = parse_crds(crds, servicemappings=servicemappings, heuristics=heuristics)
+    graph.provenance = [describe_source_set(read_paths, "kcc-crd")]
     graph.save(output)
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:

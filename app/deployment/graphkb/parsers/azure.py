@@ -29,10 +29,12 @@ from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
+from kbcommon.fetch import describe_source_set
+from kbcommon.sources import SOURCES
 
-DEFAULT_BASE_URL = (
-    "https://raw.githubusercontent.com/Azure/bicep-types-az/main/generated"
-)
+# 고정 ref는 kbcommon/sources.py 한 곳에서 관리한다 — 같은 소스를 capacitykb도 쓰므로
+# 양쪽이 따로 들고 있으면 조용히 다른 커밋을 보게 된다.
+DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
 DEFAULT_PROVIDERS = ("microsoft.network", "microsoft.compute", "microsoft.containerservice")
 
 SOURCE = "bicep-types-az"
@@ -285,6 +287,7 @@ def build(
             if type_name.split("/", 1)[0].lower() in wanted
         }
     )
+    read_paths = [index_path]
     for rel_path in rel_paths:
         try:
             types_path = _fetch_relative(base_url, rel_path, refresh=refresh)
@@ -292,8 +295,10 @@ def build(
         except Exception as exc:  # noqa: BLE001 — 한 파일 실패가 전체를 막지 않게
             print(f"경고: types.json 처리 실패, 건너뜀 — {rel_path}: {exc}", file=sys.stderr)
             continue
+        read_paths.append(types_path)
         extract_references(graph, types_arr, heuristics=heuristics)
 
+    graph.provenance = [describe_source_set(read_paths, "bicep-types-az")]
     graph.save(output)
     by_evidence: dict[str, int] = {}
     for edge in graph.edges:

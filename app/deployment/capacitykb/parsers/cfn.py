@@ -29,11 +29,11 @@ from pathlib import Path
 
 from capacitykb.model import CapacitySet, Constraint
 from capacitykb.prose import extract_default, extract_enum, extract_ranges
-from kbcommon.fetch import fetch_cached
+from kbcommon.fetch import describe_source, fetch_cached
+from kbcommon.sources import SOURCES
 
-DEFAULT_ZIP_URL = (
-    "https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip"
-)
+# ⚠️ 고정 불가 — kbcommon/sources.py의 `cfn-schema` 항목 참조.
+DEFAULT_ZIP_URL = SOURCES["cfn-schema"].url
 
 EVIDENCE_SCHEMA = "cfn-schema"
 EVIDENCE_PROSE = "cfn-description"
@@ -335,6 +335,7 @@ def build(
     zip_path = fetch_cached(zip_url, "CloudformationSchema.zip", refresh=refresh)
     stats: Counter = Counter()
     capacity = parse_zip(zip_path, prose=prose, stats=stats)
+    capacity.provenance = [describe_source(zip_path, "cfn-schema")]
     capacity.save(output)
 
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)

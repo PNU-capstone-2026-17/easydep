@@ -1084,23 +1084,59 @@ python -m perfkb coverage           # 무엇을 알고 무엇을 모르는지
 
 ### 18-1. 소스 일람
 
-| # | 소스 | URL | 버전 고정 | 쓰는 KB | 라이선스 |
-|---|---|---|---|---|---|
-| S1 | AWS CloudFormation 리소스 스키마 | `https://schema.cloudformation.us-east-1.amazonaws.com/CloudformationSchema.zip` | ❌ **없음** (라이브 zip) | graphkb, capacitykb | AWS 공개 스키마 |
-| S2 | AWS CDK OOB 관계 | `https://media.githubusercontent.com/media/cdklabs/awscdk-service-spec/main/sources/OobRelationships/relationships.json` | ❌ `main` | graphkb | Apache-2.0 |
-| S3 | Azure Bicep 타입 정의 | `https://raw.githubusercontent.com/Azure/bicep-types-az/main/generated` | ❌ `main` | graphkb, capacitykb | MIT |
-| S4 | Azure 서비스 한도 문서 | `https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/main/includes` | ❌ `main` | capacitykb(쿼터) | CC-BY-4.0 |
-| S5 | GCP Config Connector CRD | `https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-config-connector` | ✅ **`v1.153.0`** | graphkb | Apache-2.0 |
-| S6 | cb-tumblebug Swagger | `https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.11.8/src/interface/rest/docs/swagger.json` | ✅ **`v0.11.8`** | graphkb(코어) | Apache-2.0 |
-| S7 | cb-tumblebug 자산 덤프 | `https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/{tag}/assets/assets.dump.gz` | ✅ **`v0.12.25`** | costkb, perfkb | Apache-2.0 |
-| S8 | CB-Spider 드라이버 소스 | (사람 검수 후 `graphkb/parsers/core_vendor_map.json`으로 번들) | — 번들 스냅샷 | graphkb(매핑) | Apache-2.0 |
+고정 ref는 **`kbcommon/sources.py` 한 곳**에서 관리한다. 같은 소스를 두 KB가 쓰는 경우
+(S1·S3)가 있어서, 각자 상수를 들고 있으면 한쪽만 갱신됐을 때 조용히 다른 세계를 본다.
 
-> ⚠️ **S1~S4는 버전이 고정돼 있지 않다.** 언제든 바뀌므로 지금 산출물이 어느 시점
-> 스키마에서 나왔는지 알 수 없고, 결함 수치를 재현하거나 "고쳤다"를 증명할 수 없다.
-> 데이터셋 재설계에서 가장 먼저 닫아야 할 구멍이다.
+| # | 소스 | 고정 | 쓰는 KB | 라이선스 |
+|---|---|---|---|---|
+| S1 | AWS CloudFormation 리소스 스키마 | ⚠️ **`digest`** (고정 불가) | graphkb, capacitykb | AWS 공개 스키마 |
+| S2 | AWS CDK OOB 관계 | ✅ `tag` `@aws-cdk/aws-service-spec@v0.1.196` | graphkb | Apache-2.0 |
+| S3 | Azure Bicep 타입 정의 | ✅ `commit` `ef7421bb…` | graphkb, capacitykb | MIT |
+| S4 | Azure 서비스 한도 문서 | ✅ `commit` `355bbdc3…` | capacitykb(쿼터) | CC-BY-4.0 |
+| S5 | GCP Config Connector CRD | ✅ `tag` `v1.153.0` | graphkb | Apache-2.0 |
+| S6 | cb-tumblebug Swagger | ✅ `tag` `v0.11.8` | graphkb(코어) | Apache-2.0 |
+| S7 | cb-tumblebug 자산 덤프 | ✅ `tag` `v0.12.25` | costkb, perfkb | Apache-2.0 |
+| S8 | CB-Spider 드라이버 소스 | — 번들 스냅샷(`core_vendor_map.json`) | graphkb(매핑) | Apache-2.0 |
 
-캐시는 `.cache/cloudkb/`(또는 `CLOUDKB_CACHE_DIR`)에 받고, `.part` 임시 파일 → `os.replace`로
-원자 교체한다(`kbcommon/fetch.py`). `--refresh`로 강제 재다운로드한다.
+**고정 방식 세 가지** — 소스 성격에 맞춰 쓴다.
+
+- **`tag`** — 저장소가 의미 있는 태그를 단다. 그대로 URL에 박는다.
+- **`commit`** — 태그가 없거나 쓸모없다. Azure `bicep-types-az`의 태그는 `v0.1`,
+  `v0.0-test`, `0.0.0-test` 셋뿐이라 쓸 수 없어서 커밋 SHA로 고정했다. GitHub raw가
+  SHA로 접근되므로 완전히 재현된다.
+- **`digest`** — 버전 개념이 아예 없다. **AWS는 zip 하나를 계속 덮어쓴다.** 고정할
+  ref가 없으므로 받은 바이트의 sha256을 기록하는 것이 최선이다. 재현은 못 해도
+  **바뀐 사실은 놓치지 않는다.**
+
+> **왜 이 작업을 먼저 했나** (2026-07-20): 감사 중에 로컬 캐시된 AWS zip이 2,783,390 B인데
+> 같은 URL의 라이브가 2,794,161 B인 것을 발견했다. 산출물이 **더 이상 존재하지 않는
+> 입력**에서 나온 상태였고, 그러면 결함 수치를 재현할 수도 "고쳤다"를 증명할 수도 없다.
+> 실제로 핀을 적용하고 재빌드하니 AWS 그래프가 노드 1,631 → 1,638, 엣지 2,373 → 2,381로
+> 바뀌었다 — 그동안 무엇을 보고 있었는지 몰랐다는 뜻이다.
+
+### 프로버넌스 — 실제로 무엇을 읽었나
+
+고정 ref가 *의도*라면 프로버넌스는 *실제*다. 받은 파일마다
+`<파일명>.provenance.json`(URL·sha256·크기·시각·`Last-Modified`/`ETag`)을 남기고,
+**산출물에도 `_source` 블록으로 싣는다**:
+
+```json
+"_source": [
+  { "source": "cfn-schema", "pin_kind": "digest", "pin": "(고정 불가)",
+    "sha256": "83b88800e04bb5cf…", "bytes": 2794161,
+    "last_modified": "Sat, 18 Jul 2026 06:29:09 GMT" },
+  { "source": "cdk-oob", "pin_kind": "tag",
+    "pin": "@aws-cdk/aws-service-spec@v0.1.196", "sha256": "6c650d20b4487e56…" }
+]
+```
+
+파일을 수백 개 받는 소스(Azure 타입 정의, GCP CRD)는 파일명과 각 sha256을 정렬해 이어붙인
+**묶음 다이제스트**를 쓴다 — 하나라도 달라지면 값이 바뀐다.
+
+캐시는 `.cache/cloudkb/`(또는 `CLOUDKB_CACHE_DIR`)에 받고, `.part` → `os.replace`로 원자
+교체한다. **캐시 재사용은 프로버넌스의 URL이 일치할 때만** 한다 — 고정 ref를 올리면 URL은
+바뀌는데 캐시 파일명은 그대로라, URL을 안 보면 새 커밋을 기록하면서 옛 데이터를 읽는
+사고가 난다(고정의 목적이 정확히 무너지는 경로).
 
 ### 18-2. 가공 경로 — 원본 한 줄이 레코드 한 줄이 되기까지
 
@@ -1142,7 +1178,13 @@ primaryIdentifier, readOnlyProperties, writeOnlyProperties, handlers
 **"AWS::EC2::VPC를 가리킨다"는 말이 없다.** 타입은 그냥 문자열이고, 사람이 읽는 설명문에만
 "the VPC"라고 적혀 있을 뿐이다. 기계 입장에서 이건 아무 문자열이나 넣어도 되는 칸이다.
 
-그래서 우리는 **속성 이름의 모양**으로 추론한다(`graphkb/parsers/cfn.py`):
+> 이 서브넷 사례 자체는 **S2(CDK OOB 목록)가 메워준다** — 최종 그래프에는
+> `Subnet → VPC via VpcId [cdk-oob 0.9]`로 들어가 있다. 추측이 아니다.
+> 문제는 OOB가 353개 타입만 덮는다는 것이고, **나머지 1,278개 타입에는 아래 추론밖에
+> 없다.** 이 절을 읽을 때 "스키마가 관계를 말해주지 않는다"와 "그래서 최종 답이
+> 추측이다"를 혼동하지 말 것.
+
+OOB가 덮지 않는 타입에 대해서는 **속성 이름의 모양**으로 추론한다(`graphkb/parsers/cfn.py`):
 
 1. 속성 이름이 `~Id` / `~Ids` / `~Arn` / `~Arns`로 끝나는가? → `VpcId`는 `Vpc` + `Id`
 2. 앞부분(`Vpc`)과 이름이 맞는 리소스 타입이 존재하는가? → `AWS::EC2::VPC` 있음

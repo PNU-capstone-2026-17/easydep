@@ -110,6 +110,13 @@ class Graph:
 
     nodes: dict[str, Node] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
+    provenance: list[dict] = field(default_factory=list)
+    """이 그래프가 어느 원본에서 나왔는지 (`kbcommon.fetch.describe_source`의 결과).
+
+    산출물에 `_source`로 직렬화된다. 없으면 "어느 입력에서 나왔는지 모른다"는 뜻이고,
+    그 상태로는 어떤 수치도 재현하거나 반증할 수 없다 — 그래서 빌드 경로는 항상 채운다.
+    """
+
     _edge_index: dict[tuple[str, str, str, str], int] = field(
         default_factory=dict, repr=False
     )
@@ -135,12 +142,21 @@ class Graph:
             self.add_node(node)
         for edge in other.edges:
             self.add_edge(edge)
+        # 병합 그래프는 여러 원본에서 온다 — 출처를 합쳐야 "이 답이 어디서 왔나"에 답할 수 있다.
+        seen = {(p.get("source"), p.get("sha256")) for p in self.provenance}
+        for p in other.provenance:
+            if (p.get("source"), p.get("sha256")) not in seen:
+                self.provenance.append(p)
+                seen.add((p.get("source"), p.get("sha256")))
 
     def to_dict(self) -> dict:
-        return {
+        out: dict = {
             "nodes": [node.to_dict() for node in self.nodes.values()],
             "edges": [edge.to_dict() for edge in self.edges],
         }
+        if self.provenance:
+            out["_source"] = self.provenance
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> Graph:
@@ -149,6 +165,7 @@ class Graph:
             graph.add_node(Node.from_dict(node_data))
         for edge_data in data.get("edges", []):
             graph.add_edge(Edge.from_dict(edge_data))
+        graph.provenance = list(data.get("_source") or [])
         return graph
 
     def validate(self) -> None:

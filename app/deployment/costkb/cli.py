@@ -74,20 +74,24 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_build(args: argparse.Namespace) -> int:
     from kbcommon import tumblebug_dump as dump_reader
     from kbcommon.artifact import ArtifactInvalid, write_dataset
+    from kbcommon.fetch import describe_source
 
     from costkb.parsers.tumblebug import build_dataset, format_audit
 
     if args.rows_file:
         rows = dump_reader.iter_rows_from_copy_file(args.rows_file)
         source = str(args.rows_file)
+        source_path = Path(args.rows_file)
     else:
         tag = args.tag or dump_reader.DEFAULT_TAG
         print(f"cb-tumblebug {tag}의 assets.dump.gz를 받는 중…", file=sys.stderr)
         path = dump_reader.fetch_dump(tag=tag, refresh=args.refresh)
         rows = dump_reader.iter_spec_rows(path)
         source = dump_reader.dump_url(tag)
+        source_path = path
 
     dataset, stats = build_dataset(rows)
+    dataset["_source"] = [describe_source(source_path, "tumblebug-dump")]
     output = args.output or (DEFAULT_OUTPUT_DIR / BUILT_FILENAME)
 
     # 쓰기 **전에** 검증한다. 예전엔 무검증으로 써서, 상위 스키마가 드리프트하면
