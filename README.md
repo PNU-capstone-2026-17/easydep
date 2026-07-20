@@ -36,6 +36,7 @@ app/            FastAPI + LangGraph 앱
       step3_specifications.py  3단계: 명세 생성 (스텁)
       step4_diagram.py         4단계: 다이어그램 (스텁)
 materials/      BERT 모델 · PURE 데이터셋 · 유스케이스 PDF (자료)
+                └ 가중치(model.safetensors)는 저장소 제외 — Releases에서 받는다(§0-1)
 k8s/            kustomize (base / overlays/local / overlays/aks)
 Dockerfile
 ```
@@ -58,6 +59,28 @@ Dockerfile
 cp .env.example .env
 # .env를 열어 API_KEY, BASE_URL, MODEL 값을 채운다.
 ```
+
+## 0-1. BERT 모델 가중치 내려받기
+파인튜닝 가중치 `model.safetensors`(417MB)는 GitHub 파일당 100MB 제한 때문에 저장소에 포함돼 있지 않고 [Releases](https://github.com/KimJW02/ai-agent-with-langgraph/releases/tag/bert-v1)로 배포한다.
+같은 디렉터리의 `config.json`·`tokenizer.json`·`tokenizer_config.json`은 저장소에 들어 있으므로 가중치 파일만 받아 넣으면 된다.
+
+```bash
+# gh CLI 사용
+gh release download bert-v1 -p model.safetensors \
+  -D materials/BERT_FR_NFR_Classifier/bert_model
+
+# 또는 curl
+curl -L -o materials/BERT_FR_NFR_Classifier/bert_model/model.safetensors \
+  https://github.com/KimJW02/ai-agent-with-langgraph/releases/download/bert-v1/model.safetensors
+```
+
+배치 후 경로가 아래와 같아야 한다.
+```
+materials/BERT_FR_NFR_Classifier/bert_model/model.safetensors
+```
+
+> 이 파일이 없으면 BERT 검증 분류기 로딩에서 실패한다. LLM 분류만 쓸 거라면 받지 않아도 되며,
+> CLI는 `--no-bert`, 서버/배포는 `ENABLE_BERT_VERIFY=false`로 우회한다.
 
 ## Phase A — 로컬 파이썬 실행
 ```bash
