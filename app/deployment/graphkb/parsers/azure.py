@@ -25,11 +25,12 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness
+from graphkb.parsers.review import apply_review, check_freshness, load_reference_map
 from kbcommon.fetch import describe_source_set
 from kbcommon.sources import SOURCES
 
@@ -39,6 +40,11 @@ DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
 DEFAULT_PROVIDERS = ("microsoft.network", "microsoft.compute", "microsoft.containerservice")
 
 SOURCE = "bicep-types-az"
+
+# 대상을 못 정한 참조 껍데기. 파일마다 extract_references가 불리므로 모듈에 모아 두고
+# build가 한 번에 보고한다. **침묵시키지 않는다** — 미결을 안 알리면 "관계가 없는 것"과
+# "아직 안 본 것"이 겉보기에 같아진다.
+UNRESOLVED_REFS: Counter[str] = Counter()
 
 _ID_PROP = re.compile(r"^(\w+?)(Id|Ids)$", re.IGNORECASE)
 _MAX_DEPTH = 24
@@ -129,13 +135,33 @@ def parse_index(index: dict) -> tuple[Graph, dict[str, tuple[str, str]]]:
 
 
 def _build_target_index(type_names: list[str]) -> dict[str, str]:
-    """정규화된 이름 → 타입명. 여러 타입과 충돌하는 이름은 제외한다."""
-    index: dict[str, str | None] = {}
+    """정규화된 이름 → 타입명.
+
+    같은 이름으로 끝나는 타입이 여럿이면 **경로가 가장 얕은 것**을 고른다.
+    이름만으로 가리킬 때는 독립 리소스를 뜻하지, 중첩 하위 리소스가 아니기 때문이다
+    (하위 리소스는 부모 경로를 포함해 참조한다).
+
+        networkInterfaces로 끝나는 타입 3종:
+          Microsoft.Network/networkInterfaces                        ← 이걸 고른다
+          Microsoft.Compute/virtualMachineScaleSets/networkInterfaces
+          Microsoft.Compute/.../virtualMachines/networkInterfaces
+
+    예전에는 충돌하면 통째로 뺐다. 안전해 보이지만 가장 중요한 참조가 그렇게 사라졌다 —
+    가상머신이 네트워크 인터페이스를 가리키지 못한 이유 중 하나다.
+    같은 깊이에서 갈리면 그때는 제외한다 — 고를 근거가 없다.
+    """
+    by_key: dict[str, list[str]] = {}
     for type_name in type_names:
         last = type_name.rsplit("/", 1)[-1]
         for candidate in _singular_candidates(last):
-            index[candidate] = None if candidate in index else type_name
-    return {k: v for k, v in index.items() if v is not None}
+            by_key.setdefault(candidate, []).append(type_name)
+
+    index: dict[str, str] = {}
+    for key, names in by_key.items():
+        best = min(names, key=lambda n: (n.count("/"), n))
+        if sum(1 for n in names if n.count("/") == best.count("/")) == 1:
+            index[key] = best
+    return index
 
 
 def extract_references(
@@ -162,19 +188,57 @@ def extract_references(
         for entry in types_arr
         if isinstance(entry, dict) and entry.get("$type") == "ResourceType"
     ]
-    type_names = [name for name, _ in resource_types]
-    exact_names = set(type_names)
-    target_index = _build_target_index(type_names)
 
-    def resolve_target(obj: dict) -> str | None:
-        name = _canon(obj.get("name") or "")
+    # 대상 후보는 **Azure 전체 타입**이다. 예전에는 이 파일 안의 ResourceType만 썼는데,
+    # 그러면 파일을 넘는 참조가 원리적으로 불가능하다 — Compute 파일에는
+    # Microsoft.Network/networkInterfaces가 없으니 가상머신이 네트워크 인터페이스를
+    # 가리킬 방법이 없었다. 실제로 Azure 관계 2,294개 중 참조가 71개뿐이었고
+    # 가상머신은 나가는 관계가 0개였다.
+    #
+    # graph.nodes는 index.json에서 만든 것이라 이 시점에 전체 타입이 들어 있다.
+    all_type_names = [canonical[k] for k in canonical]
+    exact_names = set(all_type_names)
+    target_index = _build_target_index(all_type_names)
+
+    reference_map = load_reference_map("azure")
+
+    def resolve_target(obj: dict, prop_name: str) -> tuple[str | None, bool]:
+        """참조 껍데기가 가리키는 타입과, 그게 **사람이 정한 것인지**.
+
+        판단 순서는 **확실한 것부터**다. 이름이 그대로 타입이면 그것, 사람이 채운
+        표에 있으면 그것, 이름 규칙으로 후보가 하나뿐이면 그것. 그 외에는 짐작하지
+        않는다 — `networkInterface`로 끝나는 타입이 5개인데 그중 하나를 고르는 규칙은
+        전부 근거 없는 취향이다(경로 깊이로 골라 봤더니 AzureStackHCI와 동점이었다).
+        """
+        raw = obj.get("name") or ""
+        name = _canon(raw)
         if name in exact_names:
-            return name
-        normalized = name.lower()
-        normalized = normalized.removeprefix("common")
-        return target_index.get(normalized)
+            return name, False
+        # 표를 찾을 때는 Common 접두사를 벗긴다 — bicep-types가 공용 정의 파일에
+        # 내보내는 같은 모양의 사본이라 뜻이 같다.
+        bare = raw[len("Common"):] if raw.startswith("Common") and len(raw) > 6 else raw
+        for key in (f"{bare}@{prop_name}", bare):
+            if key in reference_map:
+                # 표에서 나온 대상은 **사람이 정한 것**이다. 검수 이력은
+                # azure-references.json이 갖고 있으므로 엣지에 그대로 표시한다 —
+                # 같은 판단을 azure-edges.json에 한 번 더 적으면 둘이 어긋난다.
+                return reference_map[key], True  # None이면 "관계 없음"이라고 적은 것
+        normalized = name.lower().removeprefix("common")
+        # `NetworkInterfaceReference`처럼 참조 껍데기에 붙는 꼬리표를 떼고 다시 본다.
+        for suffix in ("reference", "ref"):
+            if normalized.endswith(suffix) and len(normalized) > len(suffix):
+                stripped = normalized[: -len(suffix)]
+                hit = target_index.get(stripped) or (
+                    stripped if stripped in exact_names else None
+                )
+                if hit:
+                    return hit, False
+        hit = target_index.get(normalized)
+        if hit is None:
+            UNRESOLVED_REFS[f"{bare}@{prop_name}"] += 1
+        return hit, False
 
-    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, confidence: float, target_property: str = "") -> None:
+    def emit(from_type: str, to_type: str, via: str, *, required: bool, many: bool, evidence: str, confidence: float, target_property: str = "", reviewed: bool = False) -> None:
         if to_type == from_type or to_type.startswith(from_type + "/"):
             # 자기 자신 / 인라인 자식 목록은 계층(contained_in)으로 이미 표현됨
             return
@@ -190,6 +254,7 @@ def extract_references(
                 evidence=evidence,
                 confidence=confidence,
                 target_property=target_property,
+                reviewed=reviewed,
             )
         )
 
@@ -245,15 +310,24 @@ def extract_references(
                     _, resolved_entry = deref(item_ref)
 
             if resolved_entry.get("$type") == "ObjectType":
-                target = resolve_target(resolved_entry)
-                if target is not None:
-                    # ARM에서 다른 리소스를 가리키는 객체는 그 리소스의 `id`를 담는다.
-                    # 실제로 이 판별을 검수에도 썼다 — id가 없으면 인라인 설정값이라
-                    # 참조가 아니었다(오탐 12건을 이 기준으로 걸러냈다).
-                    emit(from_type, target, via, required=prop_required, many=many,
-                         evidence="bicep-ref", confidence=0.8,
-                         target_property="id" if "id" in (resolved_entry.get("properties") or {}) else "")
-                    continue  # 참조 경계에서 멈춤 — 대상 내부는 대상 자신의 것
+                # **`id`가 있어야 참조다.** ARM에서 다른 리소스를 가리키는 객체는 그
+                # 리소스의 id를 담는 껍데기이고, id가 없으면 그 자리에 값을 직접 적는
+                # 인라인 설정이다. 이름만 보면 둘이 구분되지 않는다 —
+                # 가상머신의 `networkProfile`은 NetworkProfile이라는 이름 때문에
+                # Microsoft.Network/networkProfiles로 오인되지만 실제 속성은
+                # networkInterfaces·networkApiVersion뿐이다.
+                #
+                # 이 판별은 검수에서 먼저 쓴 것이다(오탐 12건을 이 기준으로 걸렀다).
+                # 파서에 넣으면 애초에 안 생기고, 무엇보다 **인라인 객체 안으로 계속
+                # 내려가게 된다** — networkProfile에서 멈추지 않아야 그 아래
+                # networkInterfaces(진짜 참조)에 닿는다.
+                if "id" in (resolved_entry.get("properties") or {}):
+                    target, decided = resolve_target(resolved_entry, prop_name)
+                    if target is not None:
+                        emit(from_type, target, via, required=prop_required, many=many,
+                             evidence="bicep-ref", confidence=0.8, target_property="id",
+                             reviewed=decided)
+                        continue  # 참조 경계에서 멈춤 — 대상 내부는 대상 자신의 것
 
             if heuristics:
                 match = _ID_PROP.match(prop_name)
@@ -286,6 +360,17 @@ def build(
     index = json.loads(index_path.read_text(encoding="utf-8"))
     graph, latest = parse_index(index)
 
+    # 검수표의 대상이 실재하는 타입인지 먼저 본다. 오타가 나면 그 껍데기의 엣지가
+    # 통째로 안 생기는데, 미결로도 안 잡혀서(표에는 있으므로) 조용히 사라진다.
+    known = {nid.split("::", 1)[1] for nid in graph.nodes}
+    missing = sorted({t for t in load_reference_map("azure").values() if t and t not in known})
+    if missing:
+        print(
+            f"⚠ 검수표(azure-references.json)의 대상 {len(missing)}개가 없는 타입입니다: "
+            + ", ".join(missing),
+            file=sys.stderr,
+        )
+
     wanted = {p.lower() for p in providers}
     rel_paths: list[str] = sorted(
         {
@@ -295,6 +380,7 @@ def build(
         }
     )
     read_paths = [index_path]
+    UNRESOLVED_REFS.clear()
     for rel_path in rel_paths:
         try:
             types_path = _fetch_relative(base_url, rel_path, refresh=refresh)
@@ -315,6 +401,23 @@ def build(
         print(
             f"검수 적용: 제거 {review_stats['dropped']}, "
             f"확인 표시 {review_stats['confirmed']}, 추가 {review_stats['added']}"
+        )
+
+    if UNRESOLVED_REFS:
+        pending = output.parent / "azure-unresolved-refs.json"
+        pending.write_text(
+            json.dumps(
+                {"resolved": {k: None for k, _ in UNRESOLVED_REFS.most_common()}},
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        print(
+            f"⚠ 대상을 못 정한 참조 껍데기 {len(UNRESOLVED_REFS)}종 "
+            f"({sum(UNRESOLVED_REFS.values())}곳) — 관계를 만들지 않았습니다. "
+            f"검수 대상 목록: {pending}",
+            file=sys.stderr,
         )
 
     graph.save(output)

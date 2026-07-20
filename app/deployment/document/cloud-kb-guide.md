@@ -1338,19 +1338,59 @@ Azure 그래프 엣지 2,306건 중 2,223건이 이것이다. AWS와 정반대�
 `contained_in`이 0건**이고 전부 `references`다. 같은 지식베이스인데 프로바이더마다
 표현 가능한 관계 종류가 다르다(감사 결함 G6).
 
-##### (나) 참조는 이름 맞추기다 — `bicep-ref`
+##### (나) 참조는 껍데기를 알아보는 일이다 — `bicep-ref`
 
-속성의 타입 이름이 리소스 타입 이름과 맞으면 참조로 본다(신뢰도 0.8).
+Azure에서 다른 리소스를 가리킬 때는 대상의 **id만 담은 작은 객체**를 끼워 넣는다.
+가상머신이 네트워크 인터페이스를 쓰는 자리는 이렇게 생겼다:
 
-> ⚠️ **이게 감사에서 오탐 12/59로 드러났다.** 예를 들어 가상머신의
-> `properties.osProfile.linuxConfiguration.ssh.publicKeys`는 타입 이름이
-> `sshPublicKeys`라 `Microsoft.Compute/sshPublicKeys` 리소스로 연결됐는데, 실제 그 객체의
-> 속성은 `['keyData', 'path']`뿐이다 — **인라인으로 적어 넣는 공개키 자체**이지
-> 별도 리소스에 대한 참조가 아니다.
+```
+Microsoft.Compute/virtualMachines
+  properties.networkProfile          → NetworkProfile        (속성: networkInterfaces, networkApiVersion)
+    .networkInterfaces[]             → NetworkInterfaceReference (속성: id, properties)
+```
+
+그래서 판별은 두 단계다.
+
+**1단계 — 참조인지 아닌지는 `id`로 가른다.** 진짜 참조 껍데기에는 반드시 `id`가 있고,
+그 자리에 값을 직접 적는 인라인 설정 객체에는 없다. 위에서 `NetworkProfile`은 `id`가
+없으니 설정이고, `NetworkInterfaceReference`는 `id`가 있으니 참조다.
+
+> 이 규칙이 없던 동안 가상머신의 `...ssh.publicKeys`가 `Microsoft.Compute/sshPublicKeys`
+> 리소스로 연결됐다. 실제 그 객체의 속성은 `['keyData', 'path']`뿐 — **인라인으로 적어
+> 넣는 공개키 자체**다. 검수에서 이런 오탐이 12건 나왔고, 전부 `id` 없음으로 걸러진다.
 >
-> 판별법도 확인됐다: ARM에서 진짜 리소스 참조는 대상 객체에 반드시 `id` 속성이 있다.
-> 그리고 이름 휴리스틱인데도 신뢰도가 0.8로, 같은 파서의 명시적 `heuristic`(0.6)보다
-> 높다 — 근거 등급이 실제 추론 강도와 반대로 붙어 있다(감사 결함 G1).
+> 인라인 설정에서 **멈추지 않는 것**도 똑같이 중요하다. `networkProfile`에서 멈추면
+> 그 아래 진짜 참조인 `networkInterfaces`에 영영 못 닿는다.
+
+**2단계 — 껍데기가 무엇을 가리키는지는 이름으로 안 풀린다.** `NetworkInterfaceReference`가
+어느 타입을 뜻하는지는 스키마 어디에도 없다. 이름으로 후보를 찾으면 5개가 나온다:
+
+```
+Microsoft.Network/networkInterfaces                                  ← 정답
+Microsoft.AzureStackHCI/networkInterfaces
+Microsoft.ManagedNetworkFabric/networkDevices/networkInterfaces
+microsoft.Compute/cloudServices/roleInstances/networkInterfaces
+microsoft.Compute/virtualMachineScaleSets/virtualMachines/networkInterfaces
+```
+
+`SubResource`(303곳)·`CommonSubResource`(87곳)는 더하다 — 이름에 대상 정보가 아예 없고,
+단서인 프로퍼티 이름조차 `sourceVault`→KeyVault처럼 어긋난다. **Azure를 아는 사람만
+답할 수 있는 문제**이므로 파서는 여기서 짐작하지 않는다:
+
+- 후보가 **하나뿐이면** 채택한다.
+- 아니면 `graphkb/reviewed/azure-references.json`을 본다. 사람이 채운 표다.
+- 표에도 없으면 **관계를 만들지 않고 미결로 보고한다**. 조용히 넘어가면 "관계가 없는
+  것"과 "아직 안 본 것"이 겉보기에 같아지기 때문이다.
+
+표는 판단을 네 갈래로 적는다: 대상을 정한 것(`resolved`), 참조가 아닌 인라인
+자식(`not_a_reference`), 같은 리소스 안 부품끼리의 배선(`intra_resource`), 참조는 맞지만
+대상이 자리마다 다른 것(`polymorphic`). 표에서 나온 엣지는 사람이 정한 것이므로
+`reviewed`로 표시된다 — 검수 이력이 이 파일 하나에 모인다.
+
+> **효과**: 표를 넣기 전 Azure 참조는 2,294개 중 71개뿐이었고
+> `Microsoft.Compute/virtualMachines`는 **나가는 관계가 0개**였다. 표를 채운 뒤
+> 참조 243개, 가상머신 16개(네트워크 인터페이스·서브넷·보안 그룹·디스크·키 저장소…),
+> 미결 껍데기 125종/841곳 → 2종/6곳이 됐다.
 
 ##### (다) 제약은 비트 플래그에서 읽는다 (capacitykb)
 
@@ -1606,7 +1646,7 @@ costkb·perfkb는 Tumblebug 키 `{provider}+{region}+{spec}`. 앞의 둘이 조�
 |            | `arm-hierarchy`                | 1.0             | ARM 경로 계층(구조적 사실)                               |
 |            | `kcc-ref`                      | 0.9 / 1.0       | CRD`*Ref` 필드                                         |
 |            | `cdk-oob`                      | 0.9             | CDK가 손으로 모은 관계                                   |
-|            | `bicep-ref`                    | 0.8             | 속성 타입**이름**이 리소스 타입과 일치             |
+|            | `bicep-ref`                    | 0.8             | 대상 객체에`id`가 있음 + 대상 타입 확정(§S3-나) |
 |            | `heuristic`                    | 0.5 / 0.6       | `*Id`/`*Arn` 접미사 추론(같은 서비스면 0.6)          |
 |            | `cb-spider-driver`             | 0.7~0.95        | 사람 검수 매핑                                           |
 | capacitykb | `cfn-schema`                   | 1.0             | 스키마 필드 직접                                         |

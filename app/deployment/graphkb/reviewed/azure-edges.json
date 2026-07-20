@@ -1,5 +1,5 @@
 {
-  "description": "Azure 의존성 엣지 사람 검수 결과. 짐작 83개(bicep-ref 65 + heuristic 18) 전수 검수 완료. 형식은 graphkb/parsers/review.py 참조.",
+  "description": "Azure 의존성 엣지 사람 검수 결과. 전수 검수 완료. 참조 껍데기의 대상 판단은 azure-references.json이 갖고 있고(그 표에서 나온 엣지는 파서가 reviewed로 표시한다), 이 파일은 이름 규칙·휴리스틱으로 나온 짐작만 다룬다. 형식은 graphkb/parsers/review.py 참조.",
   "reviewed_against": {
     "source": "bicep-types-az",
     "sha256": "c90274582b17335428b31cbbb27287b694b9093c493ae5f4e704d95bd200cd97"
@@ -25,6 +25,55 @@
       "reason": "properties.routingConfiguration은 라우팅 설정을 직접 적는 값이다. 대상 속성이 ['associatedRouteTable', 'propagatedRouteTables', 'vnetRoutes'] 등으로 id가 없다. ※ type을 references로 한정한 이유: 같은 대상으로 들어오는 arm-hierarchy 엣지 1개(ruleCollections의 부모 관계)는 진짜라서 살려야 한다.",
       "reviewed": "2026-07-20",
       "edges": 8
+    },
+    {
+      "to": "azure::Microsoft.EventGrid/namespaces/clients",
+      "evidence": "heuristic",
+      "reason": "clientId는 Entra 앱 등록 또는 관리 ID의 클라이언트 ID(GUID)다. EventGrid 네임스페이스의 clients 부품과는 무관한데 이름이 같아서 걸렸다. AWS 검수에서 SES::Tenant가 Microsoft 365 테넌트 ID였던 것과 같은 부류다.",
+      "reviewed": "2026-07-21",
+      "edges": 11
+    },
+    {
+      "to": "azure::Microsoft.ApiManagement/service/tenant",
+      "evidence": "heuristic",
+      "reason": "tenantId는 Entra 테넌트 ID(GUID)다. API Management의 tenant 부품이 아니다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "azure::Microsoft.ProfessionalService/resources",
+      "evidence": "heuristic",
+      "reason": "resourceId는 '아무 리소스의 ARM ID'라는 범용 필드다. 대상 타입이 정해져 있지 않으므로 어떤 타입으로도 이을 수 없다. ProfessionalService/resources는 이름만 같은 마켓플레이스 타입이다.",
+      "reviewed": "2026-07-21",
+      "edges": 9
+    },
+    {
+      "to": "azure::Microsoft.BillingTrust/assessments/rules",
+      "evidence": "heuristic",
+      "reason": "ruleId는 WAF 관리 규칙 집합 안의 규칙 번호(예: '942100')다. ARM 리소스 ID가 아니다.",
+      "reviewed": "2026-07-21",
+      "edges": 5
+    },
+    {
+      "to": "azure::Microsoft.Subscriptions.Admin/subscriptions",
+      "evidence": "heuristic",
+      "reason": "subscriptionId는 Azure 구독 ID(GUID)다. Azure Stack의 구독 관리 타입이 아니다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "azure::Microsoft.AppPlatform/Spring/containerRegistries",
+      "evidence": "heuristic",
+      "reason": "AKS의 bootstrapProfile.containerRegistryId는 컨테이너 레지스트리(Microsoft.ContainerRegistry/registries)를 가리킨다. Spring 앱 하위의 같은 이름 타입으로 잘못 갔다. 올바른 대상은 added에 넣었다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "from": "azure::Microsoft.Network/routeFilters",
+      "to": "azure::Microsoft.Network/expressRouteCircuits/peerings",
+      "reason": "경로 필터 body 안의 peerings는 '이 필터를 쓰는 피어링들'이라는 역방향 목록이다. 그 안으로 더 내려가 connections.expressRouteCircuitPeering까지 닿아서 나온 엣지라, 경로 필터가 피어링을 필요로 한다는 뜻이 아니다. 정방향(peerings → routeFilters)은 이미 따로 있다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
     }
   ],
   "confirmed": [
@@ -162,7 +211,66 @@
       "type": "references",
       "reason": "bicep-ref, 대상에 id 있음. 공인 IP·IP 접두사가 NAT 게이트웨이에 붙는다.",
       "reviewed": "2026-07-20"
+    },
+    {
+      "to": "azure::Microsoft.Storage/storageAccounts",
+      "evidence": "heuristic",
+      "reason": "storageAccountId — 디스크·스냅샷·갤러리 이미지 버전이 원본 VHD가 든 저장소 계정을 가리킨다. 이름과 용법이 일치한다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "azure::Microsoft.Compute/proximityPlacementGroups",
+      "evidence": "heuristic",
+      "reason": "proximityPlacementGroupID — AKS 노드풀이 근접 배치 그룹을 지정한다. 가상머신의 같은 관계(bicep-ref)와 대상이 같다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "azure::Microsoft.Compute/capacityReservationGroups",
+      "evidence": "heuristic",
+      "reason": "capacityReservationGroupID — AKS 노드풀이 용량 예약 그룹을 지정한다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "azure::Microsoft.Compute/hostGroups",
+      "evidence": "heuristic",
+      "reason": "hostGroupID — AKS 노드풀이 전용 호스트 그룹에 배치된다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "azure::Microsoft.ContainerService/preparedImageSpecifications",
+      "evidence": "heuristic",
+      "reason": "preparedImageSpecificationId — 노드풀이 미리 준비된 이미지 규격을 가리킨다. 같은 ContainerService 안이다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "azure::Microsoft.Network/privateDnsZones",
+      "evidence": "heuristic",
+      "reason": "privateDnsZoneId — 프라이빗 엔드포인트의 DNS 영역 그룹이 등록할 프라이빗 DNS 영역을 가리킨다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "from": "azure::Microsoft.Network/expressRouteCrossConnections",
+      "to": "azure::Microsoft.Network/expressRouteCircuits",
+      "reason": "bicep-ref. 교차 연결이 대응하는 ExpressRoute 회선을 가리킨다. 대상에 id 있음.",
+      "reviewed": "2026-07-21",
+      "edges": 1
     }
   ],
-  "added": []
+  "added": [
+    {
+      "from": "azure::Microsoft.ContainerService/managedClusters",
+      "to": "azure::Microsoft.ContainerRegistry/registries",
+      "via_property": "properties.bootstrapProfile.containerRegistryId",
+      "required": false,
+      "cardinality": "one",
+      "reason": "위에서 지운 오탐의 올바른 대상. AKS 부트스트랩이 이미지를 받아오는 컨테이너 레지스트리다. 휴리스틱이 이름이 같은 Spring 하위 타입을 골랐다.",
+      "reviewed": "2026-07-21"
+    }
+  ]
 }

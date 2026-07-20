@@ -69,6 +69,63 @@ def load_review(provider: str, path: Path | None = None) -> dict:
     return data
 
 
+def reference_map_path(provider: str) -> Path:
+    return REVIEW_DIR / f"{provider}-references.json"
+
+
+def load_reference_map(provider: str, path: Path | None = None) -> dict[str, str | None]:
+    """참조 껍데기 → 대상 타입 표를 읽는다. (`<provider>-references.json`)
+
+    Azure의 참조는 `NetworkInterfaceReference`처럼 **대상의 id만 담는 껍데기 객체**로
+    표현되는데, 그 껍데기 이름에서 대상 타입을 되찾는 일은 자동으로 안 된다:
+
+    - `networkInterface`로 끝나는 타입이 5개다(Network·AzureStackHCI·ManagedNetworkFabric…).
+      스키마 어디에도 그중 무엇인지 적혀 있지 않다 — Azure를 알아야 아는 사실이다.
+    - `SubResource`(303회)·`CommonSubResource`(87회)는 이름에 대상 정보가 아예 없다.
+      단서는 프로퍼티 이름뿐인데 `sourceVault`→KeyVault처럼 이름도 어긋난다.
+    - `ApplicationGatewayHttpListener` 같은 건 애초에 참조가 아니라 **부모 body 안에
+      인라인으로 적는 자식**이다. ARM 자식이라 `id`는 있어서 참조와 구분되지 않는다.
+
+    그래서 파서는 후보가 **유일할 때만** 스스로 판단하고, 나머지는 이 표를 본다.
+    표에 없는 껍데기는 엣지를 만들지 않고 빌드가 미결로 보고한다 — 조용히 넘어가면
+    "관계 없음"과 "아직 안 본 것"이 구분되지 않는다.
+
+    키는 두 단계로 찾는다. `래퍼@프로퍼티`가 있으면 그게 이기고, 없으면 `래퍼`를 본다.
+    껍데기 대부분은 어디서 쓰이든 뜻이 같아 `래퍼` 한 줄이면 되고, 뜻이 자리마다
+    다른 범용 껍데기 3종만 프로퍼티까지 적으면 된다.
+
+    파일은 판단을 세 갈래로 나눠 적는다. 셋 다 결과는 "엣지 없음"이지만 **뜻이
+    다르고**, 뜻이 달라야 다음 검수 때 무엇을 다시 볼지 알 수 있다:
+
+    - `resolved` — 대상을 정했다. `{"NetworkInterfaceReference": "Microsoft.Network/networkInterfaces"}`
+    - `not_a_reference` — 참조가 아니다. 부모 body 안에 인라인으로 적는 자식이거나
+      설정 객체다. 다시 볼 필요 없다.
+    - `intra_resource` — 같은 리소스 안의 다른 부품을 가리킨다. 애플리케이션
+      게이트웨이의 라우팅 규칙이 같은 게이트웨이의 리스너·백엔드풀을 지목하는 식이다.
+      부품 사이 배선이지 리소스 사이 의존이 아니라서 타입 수준 그래프에는 안 넣는다.
+      (미결로 남은 76종 중 50종이 이것이었다.)
+    - `polymorphic` — 참조는 맞는데 대상이 자리마다 다르다. DNS 레코드의
+      `targetResource`는 공용 IP일 수도 트래픽 매니저일 수도 있다. 하나로 못 정하는
+      것이 결론이므로 미결로 다시 보고하지 않는다.
+
+    표에 아예 없는 껍데기만 미결이다 — 아직 안 본 것이라는 뜻이다.
+
+    `Common` 접두사는 벗겨서 찾는다. bicep-types는 공용 정의 파일에도 같은 모양을
+    `CommonSubResource`처럼 한 벌 더 내보내는데, 뜻은 접두사 없는 것과 같다.
+    안 벗기면 표가 두 배가 된다(실측 251행 중 61행이 이 중복이었다).
+    """
+    target = path or reference_map_path(provider)
+    if not target.exists():
+        return {}
+    data = json.loads(target.read_text(encoding="utf-8"))
+    table: dict[str, str | None] = {}
+    for block in ("not_a_reference", "intra_resource", "polymorphic"):
+        for key in data.get(block) or []:
+            table[key] = None
+    table.update(data.get("resolved") or {})
+    return table
+
+
 def _match(entry: dict, edge: Edge) -> bool:
     """검수 항목이 이 엣지에 해당하는가. **적은 것만 본다.**
 
