@@ -61,7 +61,18 @@ record_plan → cost_recommend_specs → cost_estimate_monthly
 막혀 있습니다 — `nim_agent/session.py`). 기대 결과: `e2-highmem-8`, $0.3616/h, 3대 $791.90/월.
 
 > 성능 데이터셋(`python -m perfkb build`)이 빌드돼 있으면 이 추천에 **버스트·구세대 경고**가
-> 자동으로 붙습니다 — 3-7절 참고.
+> 자동으로 붙습니다 — 3-7절 참고. `costkb build`(미러)는 전제가 아닙니다. 조인이 `id`와
+> `(provider, specName)` 양쪽으로 걸려서 **번들 36건 상태에서도 붙습니다**.
+>
+> 경고가 없다고 안전한 게 아닙니다. 성능 데이터가 없는 후보는 `· 성능 정보 없음`으로
+> 따로 표시되고, 아무 표시도 없는 후보만 "확인됨"입니다(블록 끝 꼬리말이 밝힙니다).
+>
+> ```
+> - AWS t3.medium (us-east-1): 2 vCPU / 4 GiB, $0.0416/h
+>     ⚠ 버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 떨어집니다.
+> - ALIBABA ecs.t5-lc1m2.large (us-east-1): 2 vCPU / 4 GiB, $0.0307/h
+>     · 성능 정보 없음 — alibaba는 성능 신호를 추적하지 않습니다(aws/azure/gcp만 수록).
+> ```
 
 ### 1-4. 성능 특성 (`perf_*` 3개) — perfkb
 
@@ -199,7 +210,7 @@ AWS m5.large랑 Azure Standard_D2s_v3 중에 뭐가 더 빨라?
 | Azure vNet에서 못 바꾸는 속성은? | 없음 | Azure는 불변성 정보를 스키마에 안 담음 |
 | GCP 타입 검색 대부분 | 대체로 없음 | GCP는 **95개** 타입뿐 (AWS 1,631 / Azure 3,382) |
 | AWS·GCP 쿼터 | 없음 | 쿼터는 **Azure 52건**만 수록 |
-| tencent/ibm 등 성능 프로파일 | 없음 | 성능은 **aws/azure/gcp만** 수록(나머지 7개는 details 미추적) |
+| tencent/ibm 등 성능 프로파일 | 없음 | 성능은 **aws/azure/gcp만** 수록(나머지 7개는 details 미추적). `cost_recommend_specs` 추천에도 후보마다 `· 성능 정보 없음`으로 고지됩니다 |
 | Azure 인스턴스 ACU (약 62%) | 없음 | ACU 결측이 세대로 설명 안 됨 — "느리다"가 아니라 "모른다" |
 
 이 경우 에이전트는 도구가 돌려준 "없습니다"를 **그대로 전달**해야 합니다. 자체 지식으로

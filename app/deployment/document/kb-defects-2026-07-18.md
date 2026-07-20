@@ -75,6 +75,12 @@ try/except가 없어 예외가 에이전트 런타임까지 올라간다.
 ### C3. 번들 모드에서 성능 경고가 100% 침묵한다 — 그리고 그게 기본 상태다
 `nim_agent/cost_tools.py:36` · `costkb/specs.json` · `perfkb/agent_api.py:30-37`
 
+> ✅ **2026-07-20 수정됨** (C4와 함께). 조인이 `id` → `(provider, specName)` 폴백으로 걸린다
+> (`perfkb/dataset.py:get_by_spec_name`). 번들 36건에 `id`를 손으로 넣지 않은 이유는,
+> 폴백이 "id는 있는데 그 리전 성능 레코드가 없는" 미러 케이스까지 함께 덮기 때문이다.
+> 회귀 테스트: `tests/test_cost_perf_join.py::test_bridge_joins_bundled_spec_without_id`,
+> `::test_bundle_mode_recommendation_carries_warning`.
+
 `_perf_annotate`는 `spec.get("id")`로 조인하는데 번들 36건에는 `id` 키 자체가 없다(실측 0건).
 하필 번들 구성이 최악이다 — **t3.micro/small/medium/large/xlarge, Standard_B1s/B2s/B2ms/B4ms,
 e2-small/e2-medium**이 들어 있고 이들이 가장 싸서 `sort_by='cost'` 상위를 독점한다.
@@ -96,6 +102,14 @@ e2-small/e2-medium**이 들어 있고 이들이 가장 싸서 `sort_by='cost'` �
 
 ### C4. "성능 문제 없음"과 "성능 정보 없음"이 출력에서 완전히 같다
 `perfkb/agent_api.py:30-49` · `costkb/agent_api.py:105-110`
+
+> ✅ **2026-07-20 수정됨.** `perfkb.agent_api.recommend_note`가 다섯 상태를 구분해 돌려주고
+> (`warn`/`ok`/`no_record`/`untracked`/`not_built`), 도구 계층이 경고는 `⚠`, 정보 없음은
+> `·`로 표시한다. 후보마다 "확인됨"을 적으면 노이즈라, 침묵의 의미는 블록 끝 꼬리말이
+> 한 번만 밝힌다(사용자 결정). `costkb`가 하드코딩하던 `⚠`도 콜백 소유로 옮겼다 —
+> "모든 주석은 경고"라는 가정이 비경고 주석을 막고 있었다.
+> 실측 확인: `ecs.t5-lc1m2.large`에 "alibaba는 성능 신호를 추적하지 않습니다"가 붙는다.
+> 저수준 `recommend_warning`은 하위 호환으로 남기되 docstring에 사용 금지를 명시했다.
 
 `recommend_warning`은 (a) 성능이 멀쩡할 때, (b) id가 없을 때, (c) perfkb에 레코드가 없을 때,
 (d) 미추적 프로바이더일 때 **전부 `None`**을 반환하고, costkb는 `if note:`로 줄을 안 붙인다.
@@ -326,7 +340,7 @@ BacktrackWindow는 3600배 어긋난 단위다. 알려진 결함 (c)는 "단위�
 기존 `audit-2026-07-18-findings.md`의 P1~P3은 **답변 품질**(라우팅·누출) 문제였다.
 이번 건은 성격이 다르다 — **C1·C3·C4는 KB가 자신 있게 틀린 답을 주는 부류**라 위에 둔다.
 
-1. **C3 + C4를 함께** — 뿌리가 같다. 조인이 실패해도, 데이터가 없어도, 미추적 프로바이더여도
+1. ~~**C3 + C4를 함께**~~ — ✅ 2026-07-20 완료. 뿌리가 같다. 조인이 실패해도, 데이터가 없어도, 미추적 프로바이더여도
    출력이 전부 같아서 **"경고 없음"이 아무 정보도 담지 않는다.** Phase 2의 안전장치가
    기본 설정에서 작동하지 않는다는 뜻이므로 여기부터.
 2. **C1** — 단독으로 가장 명확한 버그이고 수정이 국소적이다.

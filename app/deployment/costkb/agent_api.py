@@ -71,6 +71,7 @@ def recommend_specs(
     architecture: str | None = DEFAULT_ARCHITECTURE,
     output_dir: Path | str | None = None,
     annotate: Callable[[dict], str | None] | None = None,
+    footer: Callable[[list[dict]], str | None] | None = None,
 ) -> str:
     """요구사항을 만족하는 VM 스펙 후보를 **시간당 단가까지만** 텍스트로 반환한다.
 
@@ -80,10 +81,16 @@ def recommend_specs(
     (사람이 읽는 `costkb/cli.py`의 표는 월 비용을 계속 보여준다 — 거기엔 다음 도구가 없다.)
 
     Args:
-        annotate: 각 후보 스펙 dict를 받아 한 줄 주석(경고 등)을 반환하는 선택적 콜백.
+        annotate: 각 후보 스펙 dict를 받아 한 줄 주석을 반환하는 선택적 콜백.
             None을 반환하면 주석을 안 붙인다. **costkb는 이 주석이 무엇인지 모른다** —
             성능 경고(perfkb) 조인을 도구 계층에서 끼워넣기 위한 확장점일 뿐이다.
             KB끼리 import하지 않는 규약을 지키면서 축을 잇는 방법이다.
+            **기호(`⚠`/`·`)도 콜백이 붙인다** — 예전엔 여기서 `⚠`를 하드코딩했는데,
+            그건 "모든 주석은 경고"라는 의미 가정이라 "정보 없음" 같은 비경고 주석을
+            달 수 없었다(결함 C4).
+        footer: 후보 목록 전체를 받아 블록 끝 한 줄을 반환하는 선택적 콜백.
+            annotate와 대칭이며 마찬가지로 costkb는 내용을 모른다. 후보마다 상태를
+            적으면 노이즈라, "주석 없는 후보가 무슨 뜻인지"를 한 번만 밝히는 데 쓴다.
     """
     results = filter_specs(
         vcpu_min,
@@ -106,7 +113,7 @@ def recommend_specs(
         line = _describe(spec)
         note = annotate(spec) if annotate is not None else None
         if note:
-            line += f"\n    ⚠ {note}"
+            line += f"\n    {note}"
         lines.append(line)
     text = "추천 후보(온디맨드 정가, 시간당 단가):\n" + "\n".join(lines)
 
@@ -119,6 +126,10 @@ def recommend_specs(
             f"\n\n※ 조건에 맞지만 가격 정보가 없는 후보가 {unpriced}건 더 있습니다. "
             "라이브 가격은 cb-tumblebug MCP로 확인하세요."
         )
+
+    tail = footer(results) if footer is not None else None
+    if tail:
+        text += f"\n\n※ {tail}"
     return (
         text
         + "\n\n월 비용은 estimate_monthly_cost 도구로 계산하세요 "

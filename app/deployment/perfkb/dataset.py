@@ -4,8 +4,8 @@
 성능 데이터는 손으로 옮겨 적을 만한 게 아니다(스펙당 10여 개 필드 × 3만 건). 산출물이 없으면
 도구가 빌드를 안내한다 — graphkb/capacitykb와 같은 방식이다.
 
-산출물이 없어도 **경고가 없을 뿐 추천은 그대로 동작한다**(fail-open). 자세한 건
-`nim_agent/cost_tools.py`의 조인 부분 참고.
+산출물이 없어도 **추천은 그대로 동작한다**(fail-open) — 다만 그 사실을 숨기지는 않는다.
+경고를 못 붙였으면 못 붙였다고 밝힌다. 자세한 건 `nim_agent/cost_tools.py`의 조인 부분 참고.
 """
 
 from __future__ import annotations
@@ -68,6 +68,50 @@ def _by_id(output_dir: str) -> dict[str, dict]:
 def get_by_id(spec_id: str, output_dir: Path | str | None = None) -> dict | None:
     """costkb 레코드의 `id`로 성능 레코드를 찾는다. 조인의 진입점."""
     return _by_id(_resolve(output_dir)).get(spec_id)
+
+
+@lru_cache(maxsize=4)
+def _by_provider_name(output_dir: str) -> dict[tuple[str, str], dict]:
+    """(provider, specName소문자) → 레코드. 리전마다 레코드가 있어 first-wins.
+
+    경고에 쓰는 신호(`sustainedCpu`, `currentGeneration`)는 리전 불변이라 어느 리전을
+    골라도 같다. 반면 `ebsBaselineIops` 등 일부 수치는 리전마다 다를 수 있으므로
+    (`aws c8gn.48xlarge`가 me-central-1만 60000) 이 인덱스를 수치 조회에 쓰면 안 된다.
+    """
+    data = _load_cached(output_dir)
+    if data is None:
+        return {}
+    index: dict[tuple[str, str], dict] = {}
+    for rec in data["specs"]:
+        index.setdefault((rec["provider"], rec["specName"].lower()), rec)
+    return index
+
+
+def get_by_spec_name(
+    provider: str, spec_name: str, output_dir: Path | str | None = None
+) -> dict | None:
+    """(provider, specName)으로 성능 레코드를 찾는다 — **id 조인의 폴백**.
+
+    costkb 번들 36건에는 `id`가 없고, 미러 레코드도 그 리전이 perfkb에 없을 수 있다.
+    id로만 조인하면 두 경우 모두 조용히 경고가 사라진다(결함 C3).
+    """
+    if not provider or not spec_name:
+        return None
+    return _by_provider_name(_resolve(output_dir)).get(
+        (provider.lower(), spec_name.lower())
+    )
+
+
+def tracked_providers(output_dir: Path | str | None = None) -> frozenset[str]:
+    """성능 신호를 **실제로 수록한** 프로바이더 집합.
+
+    상수로 박지 않고 산출물에서 유도한다 — `parsers/build.py`의 KNOWN_PROVIDERS를
+    복제해두면 커버리지가 넓어질 때 조용히 드리프트한다. "레코드가 없다"와
+    "이 프로바이더는 애초에 추적 대상이 아니다"를 가르는 데 쓴다(결함 C4).
+
+    별도 캐시를 두지 않는다 — `_by_provider_name`이 이미 캐시돼 있어 키만 훑으면 된다.
+    """
+    return frozenset(provider for provider, _ in _by_provider_name(_resolve(output_dir)))
 
 
 def find(

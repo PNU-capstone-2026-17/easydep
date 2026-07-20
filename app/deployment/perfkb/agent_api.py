@@ -14,31 +14,33 @@ Phase 1 실빌드에서 세 발견의 빈도가 크게 갈렸다:
 에서만 보여주고 **추천 경고에는 넣지 않는다.** 추천 경고는 *구매 결정을 바꾸는* 두 가지,
 상시 CPU 미보장과 구세대만 다룬다.
 
-**fail-open**: 성능 데이터가 없으면(빌드 안 됨, 번들 스펙이라 id 없음, 미추적 프로바이더)
-경고 없이 조용히 넘어간다. 잘못 경고하는 것보다 침묵이 낫다 — costkb·capacitykb와 같은 원칙.
+**fail-open이되 침묵하지는 않는다**: 성능 데이터가 없으면 경고를 **지어내지 않는다**.
+잘못 경고하는 것보다 모른다고 하는 게 낫다 — costkb·capacitykb와 같은 원칙. 다만
+*조용히* 넘어가지는 않는다. 예전에는 (a)성능 정상 (b)레코드 없음 (c)미추적 프로바이더가
+전부 `None`이라 출력이 바이트 단위로 같았고, 사용자는 침묵을 "이상 없음"으로 읽었다
+(결함 C4 — Alibaba 버스트 계열이 검증된 비버스트 스펙과 똑같이 무표시로 나왔다).
+그래서 `recommend_note`가 네 상태를 **구분해** 돌려준다. 표시 방법은 호출자 몫이다.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
-from perfkb.dataset import find, get_by_id, load_perf
+from perfkb.dataset import (
+    find,
+    get_by_id,
+    get_by_spec_name,
+    is_built,
+    load_perf,
+    tracked_providers,
+)
 
 _OLD_GEN_NOTE = "구세대 인스턴스입니다 — 최신 세대에 더 나은 가격/성능이 있을 수 있습니다."
 
 
-def recommend_warning(spec_id: str | None, output_dir: Path | str | None = None) -> str | None:
-    """추천 후보에 붙일 성능 경고. 문제가 없거나 데이터가 없으면 None.
-
-    구매 결정을 바꾸는 것만 — 상시 CPU 미보장, 구세대. 이 함수가 costkb 추천과 perfkb를
-    잇는 조인 지점이다(도구 계층에서 호출).
-    """
-    if not spec_id:
-        return None
-    rec = get_by_id(spec_id, output_dir)
-    if rec is None:
-        return None
-
+def _warning_for(rec: dict) -> str | None:
+    """레코드 하나에서 경고 문구를 만든다. 구매 결정을 바꾸는 것만."""
     parts: list[str] = []
     sustained = rec.get("sustainedCpu")
     if sustained and sustained["value"] is False:
@@ -47,6 +49,73 @@ def recommend_warning(spec_id: str | None, output_dir: Path | str | None = None)
     if rec.get("currentGeneration") is False:
         parts.append(_OLD_GEN_NOTE)
     return " ".join(parts) if parts else None
+
+
+def recommend_warning(spec_id: str | None, output_dir: Path | str | None = None) -> str | None:
+    """`id` 하나로 성능 경고만 얻는 저수준 진입점. 문제가 없거나 데이터가 없으면 None.
+
+    ⚠️ **추천 조인에는 `recommend_note`를 쓰세요.** 이 함수는 "경고 없음"과 "정보 없음"을
+    구분하지 못하고, id가 없는 costkb 번들 스펙을 조회조차 못 한다(결함 C3·C4).
+    """
+    if not spec_id:
+        return None
+    rec = get_by_id(spec_id, output_dir)
+    return None if rec is None else _warning_for(rec)
+
+
+#: `recommend_note`가 돌려주는 상태. 표시 기호는 호출자(도구 계층)가 정한다.
+NOTE_WARN = "warn"  # 성능 함정 있음
+NOTE_OK = "ok"  # 레코드가 있고 경고할 것이 없음
+NOTE_NO_RECORD = "no_record"  # 추적 대상 프로바이더인데 이 스펙이 없음
+NOTE_UNTRACKED = "untracked"  # 이 프로바이더는 성능 신호를 수록하지 않음
+NOTE_NOT_BUILT = "not_built"  # 성능 지식베이스 자체가 없음
+
+
+@dataclass(frozen=True)
+class PerfNote:
+    """성능 조인 결과. `text`가 None이면 후보 줄에 붙일 말이 없다는 뜻."""
+
+    status: str
+    text: str | None = None
+
+
+def recommend_note(
+    provider: str,
+    spec_name: str,
+    spec_id: str | None = None,
+    output_dir: Path | str | None = None,
+) -> PerfNote:
+    """추천 후보 하나에 대한 성능 소견 — costkb×perfkb 조인의 진입점.
+
+    `spec_id`로 먼저 찾고, 없으면 `(provider, specName)`으로 **폴백**한다. costkb 번들
+    36건에는 id가 없고 미러 레코드도 그 리전이 perfkb에 없을 수 있어서, id만 쓰면
+    경고가 통째로 사라진다(결함 C3 — 번들이 t3.*/B*/e2-*라 하필 추천 상위를 독점한다).
+
+    데이터가 없을 때 `None`을 돌려주지 않는 게 핵심이다 — 호출자가 "확인했고 괜찮다"와
+    "모른다"를 구분해 표시할 수 있어야 한다(결함 C4).
+    """
+    if not is_built(output_dir):
+        return PerfNote(NOTE_NOT_BUILT)
+
+    rec = get_by_id(spec_id, output_dir) if spec_id else None
+    if rec is None:
+        rec = get_by_spec_name(provider, spec_name, output_dir)
+
+    if rec is None:
+        if provider and provider.lower() not in tracked_providers(output_dir):
+            tracked = "/".join(sorted(tracked_providers(output_dir))) or "없음"
+            return PerfNote(
+                NOTE_UNTRACKED,
+                f"성능 정보 없음 — {provider}는 성능 신호를 추적하지 않습니다"
+                f"({tracked}만 수록).",
+            )
+        return PerfNote(
+            NOTE_NO_RECORD,
+            f"성능 정보 없음 — 성능 지식베이스에 {spec_name} 레코드가 없습니다.",
+        )
+
+    warning = _warning_for(rec)
+    return PerfNote(NOTE_WARN, warning) if warning else PerfNote(NOTE_OK)
 
 
 def _describe(rec: dict) -> str:

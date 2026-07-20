@@ -27,13 +27,50 @@ from perfkb import agent_api as perf_api
 from .session import SessionState
 
 
-def _perf_annotate(spec: dict) -> str | None:
-    """추천 후보에 성능 경고를 붙인다 — costkb×perfkb 조인 지점.
+def _perf_note(spec: dict) -> perf_api.PerfNote:
+    """조인 1회. 산출물이 깨져 있어도 추천 전체가 죽지 않게 감싼다.
 
-    여기(도구 계층)에서 조인하므로 두 KB는 서로 import하지 않는다. perfkb가 빌드되지
-    않았거나 번들 스펙(id 없음)이면 조용히 None을 준다(fail-open).
+    perfkb 로드는 스키마 검증까지 하므로 잘린 JSON·스키마 불일치에서 예외가 난다.
+    성능 경고는 부가 정보일 뿐이라 여기서 삼키고 "모른다"로 떨어뜨린다.
     """
-    return perf_api.recommend_warning(spec.get("id"))
+    try:
+        return perf_api.recommend_note(
+            spec.get("provider", ""), spec.get("specName", ""), spec.get("id")
+        )
+    except Exception:
+        return perf_api.PerfNote(perf_api.NOTE_NOT_BUILT)
+
+
+def _perf_annotate(spec: dict) -> str | None:
+    """추천 후보에 성능 소견을 붙인다 — costkb×perfkb 조인 지점.
+
+    여기(도구 계층)에서 조인하므로 두 KB는 서로 import하지 않는다. 기호도 여기서
+    정한다 — costkb는 이 문자열이 경고인지 고지인지 모른다.
+
+    후보 5건마다 "확인됨"을 적으면 노이즈라, **경고와 정보 없음만** 줄을 만든다.
+    침묵의 의미는 `_perf_footer`가 블록 끝에서 한 번 밝힌다.
+    """
+    note = _perf_note(spec)
+    if note.status == perf_api.NOTE_WARN:
+        return f"⚠ {note.text}"
+    return f"· {note.text}" if note.text else None
+
+
+def _perf_footer(specs: list[dict]) -> str | None:
+    """후보 목록 끝에 붙는 한 줄 — "주석 없음"이 무슨 뜻인지 밝힌다.
+
+    이게 없으면 (a)성능 확인됨 (b)perfkb 미빌드 두 경우의 출력이 같아진다. 예전에는
+    (c)레코드 없음 (d)미추적 프로바이더까지 네 경우가 전부 같았다(결함 C4).
+    """
+    notes = [_perf_note(spec) for spec in specs]
+    if all(n.status == perf_api.NOTE_NOT_BUILT for n in notes):
+        return (
+            "성능 지식베이스가 없어 성능 함정(버스트·구세대)을 확인하지 못했습니다 "
+            "— python -m perfkb build"
+        )
+    if any(n.status == perf_api.NOTE_OK for n in notes):
+        return "주석이 없는 후보는 성능 확인됨(상시 CPU 보장·최신 세대)."
+    return None
 
 _PLAN_REQUIRED = (
     "먼저 record_plan으로 계획을 기록하세요. 클라우드 리소스 산정은 구성요소별 사이징 → "
@@ -87,7 +124,7 @@ def cost_recommend_specs(
     )
     return agent_api.recommend_specs(
         vcpu_min, mem_min_gib, provider, region, sort_by, limit,
-        architecture=arch, annotate=_perf_annotate,
+        architecture=arch, annotate=_perf_annotate, footer=_perf_footer,
     )
 
 
