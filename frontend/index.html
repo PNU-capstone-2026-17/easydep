@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture Artifact Workflow</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-soft: #eef2f6;
+      --text: #17202a;
+      --muted: #667085;
+      --line: #d7dee8;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --ok: #15803d;
+      --warn: #b45309;
+      --danger: #b42318;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, "Noto Sans KR", sans-serif;
+      font-size: 14px;
+    }
+
+    header {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--warn);
+    }
+
+    .dot.ok {
+      background: var(--ok);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 380px minmax(0, 1fr);
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .panel {
+      min-width: 0;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: var(--panel-soft);
+      border-bottom: 1px solid var(--line);
+      font-weight: 800;
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .steps {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .step {
+      width: 100%;
+      height: 42px;
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 10px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .step[disabled] {
+      color: var(--muted);
+      cursor: not-allowed;
+      background: #f8fafc;
+    }
+
+    .step.active {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    .step-index {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .step.done .step-index {
+      background: var(--ok);
+      color: #fff;
+    }
+
+    .badge {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    textarea,
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      outline: none;
+    }
+
+    textarea:focus,
+    input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+
+    textarea {
+      min-height: 180px;
+      padding: 10px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    input {
+      height: 36px;
+      padding: 0 10px;
+    }
+
+    .field {
+      margin-bottom: 13px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      height: 36px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 13px;
+      background: var(--primary);
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: var(--primary-dark);
+    }
+
+    button.secondary {
+      background: #e5e7eb;
+      color: var(--text);
+    }
+
+    button.secondary:hover {
+      background: #d1d5db;
+    }
+
+    button[disabled] {
+      background: #cbd5e1;
+      color: #64748b;
+      cursor: not-allowed;
+    }
+
+    .output-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fff;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 17px;
+    }
+
+    .diagram-image-wrap {
+      border-bottom: 1px solid var(--line);
+      background: #f9fafb;
+      text-align: center;
+      padding: 16px;
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .diagram-image-wrap.hidden {
+      display: none;
+    }
+
+    .diagram-image-wrap img {
+      max-width: 100%;
+      max-height: 480px;
+      object-fit: contain;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      cursor: zoom-in;
+      transition: opacity 0.15s;
+    }
+
+    .diagram-image-wrap img:hover {
+      opacity: 0.85;
+    }
+
+    .diagram-image-wrap .no-image {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    /* ── Lightbox modal ── */
+    .lightbox-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0,0,0,0.82);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .lightbox-overlay.open {
+      display: flex;
+    }
+
+    .lightbox-overlay img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.4);
+    }
+
+    .lightbox-close {
+      position: fixed;
+      top: 18px;
+      right: 24px;
+      z-index: 10000;
+      width: 40px;
+      height: 40px;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      font-size: 22px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+    }
+
+    .lightbox-close:hover {
+      background: rgba(255,255,255,0.3);
+    }
+
+    pre {
+      min-height: 300px;
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      background: #111827;
+      color: #e5e7eb;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .errors {
+      min-height: 72px;
+      max-height: 160px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px 14px;
+      border-top: 1px solid var(--line);
+      background: #fff7ed;
+      color: var(--danger);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .errors.empty {
+      background: #f0fdf4;
+      color: var(--ok);
+    }
+
+    @media (max-width: 900px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .output-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Architecture Artifact Workflow</h1>
+    <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">대기 중</span></div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">Workflow</div>
+      <div class="panel-body">
+        <div id="steps" class="steps"></div>
+
+        <div class="field">
+          <label for="appIdInput">App ID</label>
+          <input id="appIdInput" placeholder="생성 시 자동 발급됩니다" spellcheck="false">
+        </div>
+
+        <div class="actions">
+          <button id="newAppButton" type="button" class="secondary">새 App ID 발급</button>
+          <button id="loadAppButton" type="button" class="secondary">App ID로 불러오기</button>
+        </div>
+
+        <div class="field">
+          <label for="scenarioText">유스케이스 시나리오</label>
+          <textarea id="scenarioText" spellcheck="false"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="feedbackText">현재 산출물 피드백</label>
+          <textarea id="feedbackText" spellcheck="false"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="plantumlJarPath">PlantUML JAR</label>
+          <input id="plantumlJarPath" value="plantuml.jar">
+        </div>
+
+        <div class="actions">
+          <button id="generateButton" type="button">현재 단계 생성</button>
+          <button id="feedbackButton" type="button" class="secondary">피드백 반영</button>
+          <button id="nextButton" type="button" class="secondary">다음 단계</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <span id="artifactTitle">Class Diagram</span>
+        <span id="artifactBadge" class="badge">locked</span>
+      </div>
+      <div class="output-meta">
+        <div class="metric"><span>STEP</span><strong id="stepMetric">1 / 5</strong></div>
+        <div class="metric"><span>VALIDATION</span><strong id="validMetric">N/A</strong></div>
+        <div class="metric"><span>COMPLETED</span><strong id="doneMetric">0</strong></div>
+      </div>
+      <div id="diagramImageWrap" class="diagram-image-wrap">
+        <span class="no-image">이미지가 아직 생성되지 않았습니다</span>
+      </div>
+      <pre id="artifactOutput"></pre>
+      <pre id="errorOutput" class="errors empty"></pre>
+    </section>
+  </main>
+
+  <!-- Lightbox modal -->
+  <div id="lightboxOverlay" class="lightbox-overlay" onclick="closeLightbox()">
+    <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
+    <img id="lightboxImg" src="" alt="fullscreen diagram" onclick="event.stopPropagation()">
+  </div>
+
+  <script>
+    const stages = [
+      { id: "class_diagram", label: "Class Diagram", artifact: "class_diagram" },
+      { id: "sequence_diagram", label: "Sequence Diagram", artifact: "sequence_diagram" },
+      { id: "api_spec", label: "API Specification", artifact: "api_spec" },
+      { id: "erd", label: "ERD", artifact: "erd" },
+      { id: "deployment_diagram", label: "Deployment Diagram", artifact: "deployment_diagram" }
+    ];
+
+    // Stages that render to a diagram image. Images are rebuilt on the server
+    // from the PlantUML text stored in MySQL, so they are fetched per app id.
+    const imageStages = {
+      class_diagram: true,
+      sequence_diagram: true,
+      api_spec: false,
+      erd: true,
+      deployment_diagram: true
+    };
+
+    const sampleScenario = `{
+  "UseCaseName": "Login",
+  "PrimaryActor": "User",
+  "MainSuccessScenario": [
+    "User enters email and password.",
+    "System validates credentials.",
+    "System creates a login session.",
+    "System displays the dashboard."
+  ],
+  "Extensions": [
+    "Invalid credentials show an error message."
+  ]
+}`;
+
+    // The server owns the workflow state; the browser only keeps the app id
+    // plus the last response it rendered.
+    const workflow = {
+      appId: localStorage.getItem("easydep_app_id") || "",
+      activeIndex: 0,
+      artifacts: {},
+      validation: {},
+      completed: new Set()
+    };
+
+    const stepsEl = document.getElementById("steps");
+    const scenarioText = document.getElementById("scenarioText");
+    const feedbackText = document.getElementById("feedbackText");
+    const plantumlJarPath = document.getElementById("plantumlJarPath");
+    const generateButton = document.getElementById("generateButton");
+    const feedbackButton = document.getElementById("feedbackButton");
+    const nextButton = document.getElementById("nextButton");
+    const artifactTitle = document.getElementById("artifactTitle");
+    const artifactBadge = document.getElementById("artifactBadge");
+    const artifactOutput = document.getElementById("artifactOutput");
+    const errorOutput = document.getElementById("errorOutput");
+    const diagramImageWrap = document.getElementById("diagramImageWrap");
+    const statusDot = document.getElementById("statusDot");
+    const statusText = document.getElementById("statusText");
+    const stepMetric = document.getElementById("stepMetric");
+    const validMetric = document.getElementById("validMetric");
+    const doneMetric = document.getElementById("doneMetric");
+    const appIdInput = document.getElementById("appIdInput");
+    const newAppButton = document.getElementById("newAppButton");
+    const loadAppButton = document.getElementById("loadAppButton");
+
+    scenarioText.value = sampleScenario;
+    feedbackText.value = "자연어 피드백을 입력";
+    appIdInput.value = workflow.appId;
+
+    generateButton.addEventListener("click", () => runStage("generate"));
+    feedbackButton.addEventListener("click", () => runStage("feedback"));
+    newAppButton.addEventListener("click", () => issueAppId());
+    loadAppButton.addEventListener("click", () => loadApp(appIdInput.value.trim()));
+    nextButton.addEventListener("click", () => {
+      if (workflow.completed.has(currentStage().id) && workflow.activeIndex < stages.length - 1) {
+        workflow.activeIndex += 1;
+        feedbackText.value = "";
+        render();
+      }
+    });
+
+    function currentStage() {
+      return stages[workflow.activeIndex];
+    }
+
+    function isSelectable(index) {
+      if (index === 0) return true;
+      return workflow.completed.has(stages[index - 1].id);
+    }
+
+    function isCompleted(stageId) {
+      return workflow.completed.has(stageId);
+    }
+
+    async function issueAppId() {
+      setBusy("App ID 발급 중");
+      try {
+        const data = await request("/api/apps", {
+          method: "POST",
+          body: JSON.stringify({
+            scenario_text: scenarioText.value,
+            title: "Architecture workflow"
+          })
+        });
+        applyResponse(data);
+        workflow.activeIndex = 0;
+        setStatus("App ID 발급 완료", true);
+      } catch (error) {
+        showError(error);
+      } finally {
+        render();
+      }
+    }
+
+    async function loadApp(appId) {
+      if (!appId) {
+        showError(new Error("App ID를 입력하세요."));
+        render();
+        return;
+      }
+
+      setBusy("산출물 조회 중");
+      try {
+        applyResponse(await request(`/api/apps/${appId}`));
+        setStatus("조회 완료", true);
+      } catch (error) {
+        showError(error);
+      } finally {
+        render();
+      }
+    }
+
+    async function runStage(action) {
+      const stage = currentStage();
+
+      // Generating without an app id would have nowhere to store the result.
+      if (!workflow.appId) {
+        await issueAppId();
+        if (!workflow.appId) return;
+      }
+
+      setBusy(action === "generate"
+        ? "생성 중: LLM 응답까지 30초 이상 걸릴 수 있습니다"
+        : "피드백 반영 중: LLM 수정과 문법 검증을 수행 중입니다"
+      );
+
+      try {
+        const data = await request(`/api/apps/${workflow.appId}/stages/${stage.id}/${action}`, {
+          method: "POST",
+          body: JSON.stringify({
+            scenario_text: scenarioText.value,
+            feedback: feedbackText.value,
+            plantuml_jar_path: plantumlJarPath.value
+          })
+        });
+        applyResponse(data);
+        setStatus("완료", true);
+      } catch (error) {
+        showError(error);
+      } finally {
+        render();
+      }
+    }
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, {
+        headers: { "Content-Type": "application/json" },
+        ...options
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(extractErrorMessage(data));
+      }
+      return data;
+    }
+
+    function applyResponse(data) {
+      if (data.app_id) {
+        workflow.appId = data.app_id;
+        appIdInput.value = data.app_id;
+        localStorage.setItem("easydep_app_id", data.app_id);
+      }
+      workflow.artifacts = data.artifacts || {};
+      workflow.validation = data.validation || {};
+      workflow.completed = new Set();
+      stages.forEach((stage) => updateCompletion(stage.id));
+    }
+
+    function showError(error) {
+      setStatus("오류", false);
+      errorOutput.classList.remove("empty");
+      errorOutput.textContent = error.message;
+    }
+
+    function updateCompletion(stageId) {
+      if (hasArtifact(stageId) && getValidation(stageId).valid !== false) {
+        workflow.completed.add(stageId);
+      }
+    }
+
+    function getValidation(stageId) {
+      return workflow.validation[stageId] || { valid: undefined, errors: [] };
+    }
+
+    function render() {
+      renderSteps();
+      renderArtifact();
+      generateButton.disabled = false;
+      feedbackButton.disabled = !hasArtifact(currentStage().id);
+      nextButton.disabled = !workflow.completed.has(currentStage().id) || workflow.activeIndex >= stages.length - 1;
+    }
+
+    function renderSteps() {
+      stepsEl.innerHTML = "";
+      stages.forEach((stage, index) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "step";
+        button.disabled = !isSelectable(index);
+        button.classList.toggle("active", index === workflow.activeIndex);
+        button.classList.toggle("done", isCompleted(stage.id));
+        button.innerHTML = `
+          <span class="step-index">${isCompleted(stage.id) ? "✓" : index + 1}</span>
+          <span>${stage.label}</span>
+          <span class="badge">${isCompleted(stage.id) ? "done" : isSelectable(index) ? "ready" : "locked"}</span>
+        `;
+        button.addEventListener("click", () => {
+          if (isSelectable(index)) {
+            workflow.activeIndex = index;
+            render();
+          }
+        });
+        stepsEl.appendChild(button);
+      });
+    }
+
+    function renderArtifact() {
+      const stage = currentStage();
+      const validation = getValidation(stage.id);
+      const value = workflow.artifacts[stage.id];
+      const output = stage.id === "api_spec"
+        ? JSON.stringify(value || {}, null, 2)
+        : value || "";
+
+      artifactTitle.textContent = stage.label;
+      artifactOutput.textContent = output || "아직 생성된 산출물이 없습니다.";
+      artifactBadge.textContent = isCompleted(stage.id) ? "done" : isSelectable(workflow.activeIndex) ? "ready" : "locked";
+      stepMetric.textContent = `${workflow.activeIndex + 1} / ${stages.length}`;
+      validMetric.textContent = validation.valid === true ? "OK" : validation.valid === false ? "FAIL" : "N/A";
+      doneMetric.textContent = String(workflow.completed.size);
+
+      const errors = validation.errors || [];
+      errorOutput.classList.toggle("empty", errors.length === 0);
+      errorOutput.textContent = errors.length ? errors.join("\n\n") : "검증 오류 없음";
+
+      renderDiagramImage(stage.id);
+    }
+
+    function renderDiagramImage(stageId) {
+      if (!imageStages[stageId]) {
+        diagramImageWrap.classList.add("hidden");
+        return;
+      }
+
+      diagramImageWrap.classList.remove("hidden");
+
+      if (hasArtifact(stageId) && workflow.appId) {
+        const cacheBust = Date.now();
+        const base = `/api/apps/${workflow.appId}/stages/${stageId}/image`;
+        const pngSrc = `${base}.png?t=${cacheBust}`;
+        const svgSrc = `${base}.svg?t=${cacheBust}`;
+        diagramImageWrap.innerHTML = `<img src="${pngSrc}" alt="${stageId} diagram" title="클릭하여 전체화면으로 보기" onclick="openLightbox('${svgSrc}', '${pngSrc}')" onerror="this.parentElement.innerHTML='<span class=no-image>이미지 파일을 불러올 수 없습니다</span>'">`;
+      } else {
+        diagramImageWrap.innerHTML = '<span class="no-image">이미지가 아직 생성되지 않았습니다</span>';
+      }
+    }
+
+    function hasArtifact(stageId) {
+      const value = workflow.artifacts[stageId];
+      if (stageId === "api_spec") {
+        return Boolean(value && Object.keys(value).length > 0);
+      }
+      return Boolean(value);
+    }
+
+    function setBusy(text) {
+      statusDot.classList.remove("ok");
+      statusText.textContent = text;
+      generateButton.disabled = true;
+      feedbackButton.disabled = true;
+      nextButton.disabled = true;
+    }
+
+    function setStatus(text, ok) {
+      statusText.textContent = text;
+      statusDot.classList.toggle("ok", ok);
+    }
+
+    function extractErrorMessage(data) {
+      if (!data) return "요청 실패";
+      if (typeof data.detail === "string") return data.detail;
+      if (data.detail && data.detail.message) return data.detail.message;
+      return JSON.stringify(data.detail || data);
+    }
+
+    // ── Lightbox ──
+    const lightboxOverlay = document.getElementById("lightboxOverlay");
+    const lightboxImg = document.getElementById("lightboxImg");
+
+    function openLightbox(svgSrc, pngFallback) {
+      lightboxImg.onerror = function () {
+        // SVG failed → try PNG
+        if (pngFallback && this.src !== pngFallback) {
+          this.src = pngFallback;
+        }
+      };
+      lightboxImg.src = svgSrc;
+      lightboxOverlay.classList.add("open");
+    }
+
+    function closeLightbox() {
+      lightboxOverlay.classList.remove("open");
+      lightboxImg.src = "";
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeLightbox();
+    });
+
+    render();
+
+    // Restore the last session's artifacts straight from the database.
+    if (workflow.appId) {
+      loadApp(workflow.appId);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Secrets: real API key and database password live here.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Generated artifacts and diagram render cache (rebuilt from MySQL on demand).
+outputs/
+
+# PlantUML tool, downloaded separately (17MB binary).
+plantuml.jar
+
+# Local-only working material. These files still exist on disk; they are just
+# not part of the repository.
+error.puml
+test.py
+main.py
+report/

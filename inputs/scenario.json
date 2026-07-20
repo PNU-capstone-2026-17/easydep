@@ -1,0 +1,33 @@
+{
+  "UseCaseName": "Subscription Renewal Payment and Cancellation Processing",
+  "PrimaryActor": "Subscriber",
+  "Stakeholders": [
+    "Payment Gateway (external PG system)",
+    "Customer Support Agent",
+    "Billing/Settlement Team"
+  ],
+  "Preconditions": [
+    "Subscriber must have an active subscription.",
+    "Subscription plan information and a previously registered payment method must already exist in the system."
+  ],
+  "MainSuccessScenario": [
+    "Subscriber checks the current subscription status and the next billing date on the subscription management screen.",
+    "Subscriber applies an owned coupon to adjust the renewal payment amount.",
+    "Subscriber taps the renew button to request payment.",
+    "The system forwards the registered payment method information to the Payment Gateway to request payment.",
+    "The Payment Gateway returns the payment authorization result to the system.",
+    "The system updates the subscription information according to the authorization result and issues an invoice.",
+    "The system sends a payment completion notification and the invoice to the Subscriber.",
+    "The system records the payment details in the settlement ledger so the Billing/Settlement Team can review them."
+  ],
+  "Extensions": [
+    "3a. If the Subscriber enters an invalid coupon code or applies an already-expired coupon, the system rejects the coupon and requests re-entry.",
+    "5a. If the Payment Gateway declines the payment authorization, the system schedules up to 3 retries at 24-hour intervals and sends a payment failure notification to the Subscriber.",
+    "5b. If all 3 retries fail, the system automatically downgrades the subscription to the free tier and sends a downgrade notice to the Subscriber.",
+    "8a. If the Subscriber requests immediate cancellation right after a successful payment, the system calculates the prorated refund amount based on days used and requests a refund from the Payment Gateway."
+  ],
+  "Postconditions": [
+    "The subscription status, invoice, and settlement ledger are all updated to their latest state.",
+    "The Subscriber has received a notification about the payment outcome."
+  ]
+}
