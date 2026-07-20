@@ -18,7 +18,9 @@ from app.services.llm_artifacts import (
 def generate_class_diagram(state: ArchitectureState) -> ArchitectureState:
     from app.graphs.class_diagram_graph import class_diagram_graph
 
-    result = class_diagram_graph.invoke(state)
+    # The validation loop runs until the diagram compiles, so the graph needs a
+    # recursion budget far above LangGraph's default of 25 steps.
+    result = class_diagram_graph.invoke(state, {"recursion_limit": 1000})
     result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
     return result
 
@@ -35,7 +37,6 @@ def generate_sequence_diagram(state: ArchitectureState) -> ArchitectureState:
     )
     return {
         "sequence_diagram_puml": sequence_puml,
-        "sequence_diagram_compile_result": validation["compile_result"],
         "sequence_diagram_syntax_valid": validation["syntax_valid"],
         "sequence_diagram_syntax_errors": validation["syntax_errors"],
         "artifact_status": mark_status(state, "sequence_diagram", "implemented"),
@@ -71,7 +72,6 @@ def generate_erd(state: ArchitectureState) -> ArchitectureState:
     )
     return {
         "erd_puml": erd_puml,
-        "erd_compile_result": validation["compile_result"],
         "erd_syntax_valid": validation["syntax_valid"],
         "erd_syntax_errors": validation["syntax_errors"],
         "artifact_status": mark_status(state, "erd", "implemented"),
@@ -93,7 +93,6 @@ def generate_deployment_diagram(state: ArchitectureState) -> ArchitectureState:
     )
     return {
         "deployment_diagram_puml": deployment_puml,
-        "deployment_diagram_compile_result": validation["compile_result"],
         "deployment_diagram_syntax_valid": validation["syntax_valid"],
         "deployment_diagram_syntax_errors": validation["syntax_errors"],
         "artifact_status": mark_status(state, "deployment_diagram", "implemented"),

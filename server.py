@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,15 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # Render cache only. Artifact text lives in MySQL; diagram images are
 # re-rendered from that text on demand, so this directory is disposable.
 RENDER_DIR = BASE_DIR / "outputs"
-MAX_REVISION_ATTEMPTS = 3
+
+
+def revision_attempt_limit() -> int:
+    """How many times to re-ask the LLM after a validation failure.
+
+    0 (the default) means keep going until the artifact validates. A cap can be
+    set through MAX_REVISION_ATTEMPTS when a run must be bounded.
+    """
+    return int(os.getenv("MAX_REVISION_ATTEMPTS", "0"))
 
 
 STAGES = [
@@ -77,7 +86,6 @@ PUML_FIELDS = {
         "code": "class_diagram_puml",
         "valid": "class_diagram_syntax_valid",
         "errors": "class_diagram_syntax_errors",
-        "compile": "class_diagram_compile_result",
         "filename": "bce_class_diagram.puml",
         "label": "class diagram",
     },
@@ -85,7 +93,6 @@ PUML_FIELDS = {
         "code": "sequence_diagram_puml",
         "valid": "sequence_diagram_syntax_valid",
         "errors": "sequence_diagram_syntax_errors",
-        "compile": "sequence_diagram_compile_result",
         "filename": "sequence_diagram.puml",
         "label": "sequence diagram",
     },
@@ -93,7 +100,6 @@ PUML_FIELDS = {
         "code": "erd_puml",
         "valid": "erd_syntax_valid",
         "errors": "erd_syntax_errors",
-        "compile": "erd_compile_result",
         "filename": "erd_diagram.puml",
         "label": "ERD",
     },
@@ -101,7 +107,6 @@ PUML_FIELDS = {
         "code": "deployment_diagram_puml",
         "valid": "deployment_diagram_syntax_valid",
         "errors": "deployment_diagram_syntax_errors",
-        "compile": "deployment_diagram_compile_result",
         "filename": "deployment_diagram.puml",
         "label": "deployment diagram",
     },
@@ -420,26 +425,26 @@ def auto_fix_puml_stage(
     code_key = fields["code"]
     valid_key = fields["valid"]
     errors_key = fields["errors"]
-    compile_key = fields["compile"]
     output_path = stage_output_path(app_id, stage)
     plantuml_jar_path = state.get("plantuml_jar_path", "plantuml.jar")
 
     current = state.get(code_key, "")
     updated = dict(state)
+    limit = revision_attempt_limit()
+    attempt = 0
 
-    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
+    while True:
         validation = validate_puml_artifact(current, output_path, plantuml_jar_path)
-        updated[compile_key] = validation["compile_result"]
         updated[valid_key] = validation["syntax_valid"]
         updated[errors_key] = validation["syntax_errors"]
         updated[code_key] = current
 
-        needs_revision = bool(feedback and attempt == 0) or (
-            not validation["syntax_valid"] and attempt < MAX_REVISION_ATTEMPTS
-        )
-        if not needs_revision:
+        # User feedback is applied once; syntax errors keep the loop running.
+        needs_revision = (feedback and attempt == 0) or not validation["syntax_valid"]
+        if not needs_revision or (limit and attempt >= limit):
             break
 
+        attempt += 1
         current = revise_puml_with_llm(
             artifact_name=fields["label"],
             current_puml=current,
@@ -460,19 +465,20 @@ def auto_fix_api_spec(
 ) -> ArchitectureState:
     current = state.get("api_spec", {})
     updated = dict(state)
+    limit = revision_attempt_limit()
+    attempt = 0
 
-    for attempt in range(MAX_REVISION_ATTEMPTS + 1):
+    while True:
         validation = validate_api_spec(current)
         updated["api_spec"] = current
         updated["api_spec_syntax_valid"] = validation["syntax_valid"]
         updated["api_spec_syntax_errors"] = validation["syntax_errors"]
 
-        needs_revision = bool(feedback and attempt == 0) or (
-            not validation["syntax_valid"] and attempt < MAX_REVISION_ATTEMPTS
-        )
-        if not needs_revision:
+        needs_revision = (feedback and attempt == 0) or not validation["syntax_valid"]
+        if not needs_revision or (limit and attempt >= limit):
             break
 
+        attempt += 1
         current = revise_json_with_llm(
             artifact_name="API specification",
             current_json=current,

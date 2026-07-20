@@ -14,19 +14,14 @@ class ArchitectureState(TypedDict, total=False):
     class_diagram_puml: str
     class_diagram_output_path: str
     plantuml_jar_path: str
-    class_diagram_compile_result: dict[str, Any]
     class_diagram_feedback_requested: bool
     class_diagram_requested_feedback: str
-    class_diagram_feedback: str
-    class_diagram_feedback_attempts: int
-    class_diagram_max_feedback_attempts: int
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]
 
     sequence_diagram_puml: str
     sequence_diagram_syntax_valid: bool
     sequence_diagram_syntax_errors: list[str]
-    sequence_diagram_compile_result: dict[str, Any]
 
     api_spec: dict[str, Any]
     api_spec_syntax_valid: bool
@@ -35,11 +30,9 @@ class ArchitectureState(TypedDict, total=False):
     erd_puml: str
     erd_syntax_valid: bool
     erd_syntax_errors: list[str]
-    erd_compile_result: dict[str, Any]
 
     deployment_diagram_puml: str
     deployment_diagram_syntax_valid: bool
     deployment_diagram_syntax_errors: list[str]
-    deployment_diagram_compile_result: dict[str, Any]
 
     artifact_status: dict[str, str]

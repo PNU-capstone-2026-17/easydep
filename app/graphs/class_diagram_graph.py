@@ -5,7 +5,6 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from app.nodes.class_diagram import (
-    MAX_CLASS_DIAGRAM_FEEDBACK_ATTEMPTS,
     feedback_class_diagram,
     convert_to_class_diagram_code,
     extract_class_elements,
@@ -17,19 +16,14 @@ from app.schemas.architecture_state import ArchitectureState
 def route_after_class_diagram_validation(
     state: ArchitectureState,
 ) -> Literal["feedback", "end"]:
-    has_syntax_error = not state.get("class_diagram_syntax_valid", False)
-    attempts = state.get("class_diagram_feedback_attempts", 0)
-    max_attempts = state.get(
-        "class_diagram_max_feedback_attempts",
-        MAX_CLASS_DIAGRAM_FEEDBACK_ATTEMPTS,
-    )
-
-    has_user_feedback = state.get("class_diagram_feedback_requested", False)
-
-    if attempts == 0 and has_user_feedback:
+    # Pending user feedback is applied first; the feedback node then clears the
+    # request so it is not applied twice.
+    if state.get("class_diagram_feedback_requested", False):
         return "feedback"
 
-    if has_syntax_error and attempts < max_attempts:
+    # Syntax errors are retried until the diagram compiles. There is no attempt
+    # cap: a diagram that never validates is not worth returning.
+    if not state.get("class_diagram_syntax_valid", False):
         return "feedback"
 
     return "end"

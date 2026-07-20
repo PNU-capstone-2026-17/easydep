@@ -16,9 +16,6 @@ from app.services.plantuml_error import (
 from app.services.llm_artifacts import revise_puml_with_llm
 
 
-MAX_CLASS_DIAGRAM_FEEDBACK_ATTEMPTS = 3
-
-
 def extract_class_elements(state: ArchitectureState) -> ArchitectureState:
     scenario_text = state.get("scenario_text") or state.get("source", "")
     scenario_file_path = state.get("scenario_file_path", "")
@@ -42,20 +39,12 @@ def convert_to_class_diagram_code(state: ArchitectureState) -> ArchitectureState
 
     return {
         "class_diagram_puml": diagram_puml,
-        "class_diagram_feedback_attempts": state.get(
-            "class_diagram_feedback_attempts", 0
-        ),
-        "class_diagram_max_feedback_attempts": state.get(
-            "class_diagram_max_feedback_attempts",
-            MAX_CLASS_DIAGRAM_FEEDBACK_ATTEMPTS,
-        ),
         "class_diagram_syntax_valid": False,
         "class_diagram_syntax_errors": [],
     }
 
 
 def feedback_class_diagram(state: ArchitectureState) -> ArchitectureState:
-    attempts = state.get("class_diagram_feedback_attempts", 0) + 1
     feedback_parts: list[str] = []
 
     requested_feedback = state.get("class_diagram_requested_feedback", "").strip()
@@ -73,10 +62,10 @@ def feedback_class_diagram(state: ArchitectureState) -> ArchitectureState:
     puml_text = state.get("class_diagram_puml", "").strip()
 
     if not puml_text:
+        # Nothing to revise; clearing the request stops the validation loop.
         return {
-            "class_diagram_feedback": feedback_text,
-            "class_diagram_feedback_attempts": attempts,
-            "class_diagram_puml": puml_text
+            "class_diagram_feedback_requested": False,
+            "class_diagram_puml": puml_text,
         }
 
     # LLM을 통해 피드백을 반영하여 다이어그램 수정
@@ -93,8 +82,9 @@ def feedback_class_diagram(state: ArchitectureState) -> ArchitectureState:
         save_plantuml_file(revised, output_path)
 
     return {
-        "class_diagram_feedback": feedback_text,
-        "class_diagram_feedback_attempts": attempts,
+        # User feedback is applied once; syntax errors keep the loop going on
+        # their own until the diagram compiles.
+        "class_diagram_feedback_requested": False,
         "class_diagram_puml": revised,
     }
 
@@ -107,10 +97,6 @@ def validate_class_diagram_syntax(state: ArchitectureState) -> ArchitectureState
     if not puml_text:
         errors = ["PlantUML class diagram code is empty."]
         return {
-            "class_diagram_compile_result": {
-                "success": False,
-                "error_message": errors[0],
-            },
             "class_diagram_syntax_valid": False,
             "class_diagram_syntax_errors": errors,
         }
@@ -132,7 +118,6 @@ def validate_class_diagram_syntax(state: ArchitectureState) -> ArchitectureState
             errors.append(hint)
 
     return {
-        "class_diagram_compile_result": compile_result,
         "class_diagram_syntax_valid": not errors,
         "class_diagram_syntax_errors": errors,
     }

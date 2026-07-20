@@ -124,7 +124,8 @@ Each artifact should be generated in order. The user should not freely skip ahea
 After each artifact is generated, the user can enter natural-language feedback.
 The LLM should revise that artifact using the feedback.
 For PlantUML artifacts, syntax errors should be extracted using the logic from
-`puml_error.py`, passed to the LLM, and retried up to 3 times.
+`puml_error.py`, passed to the LLM, and retried until the artifact compiles.
+Set `MAX_REVISION_ATTEMPTS` to cap the retries; 0 (the default) means no cap.
 
 ## Important Clarification
 
