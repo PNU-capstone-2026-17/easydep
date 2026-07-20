@@ -1,0 +1,136 @@
+{
+  "name": "ride_hailing",
+  "description": "참고 프로젝트에서 이관 (FR 18 + NFR 8).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Riders shall be able to submit a ride request specifying pickup and drop‑off locations, desired vehicle type, and payment method.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "RideNow shall locate drivers within a 5‑kilometer radius and present the closest available driver to the rider.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The system shall match a rider with a driver in under 3 seconds after the request is received.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "Drivers shall be able to toggle their availability status between online and offline.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "An driver shall accept or reject a pending trip request within 30 seconds of notification.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "The rider shall receive a real‑time map displaying the driver’s current location and estimated time of arrival.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Users can track the trip progress on a live map and view distance traveled, elapsed time, and current fare estimate.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "The platform shall calculate the estimated fare using base rate, distance, duration, and any applicable surge multiplier.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Riders shall be able to confirm payment using a saved credit card, digital wallet, or cash option at the end of the trip.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "After a trip is completed, the rider shall be prompted to rate the driver on a 1‑5 star scale and optionally leave written feedback.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Drivers shall be prompted to rate the rider on a 1‑5 star scale and may add comments after trip completion.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The system shall apply surge pricing automatically when demand exceeds supply in a defined geographic zone.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "Administrators shall configure surge multipliers and define surge zones through an admin console.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "Riders shall be able to cancel a pending request before a driver accepts without incurring a fee.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "Riders shall be charged a cancellation fee if the request is cancelled after a driver has accepted.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "Drivers shall be able to update their trip status to “arriving”, “in‑progress”, and “completed” which is reflected to the rider in real time.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "The platform shall generate a digital receipt containing trip details, fare breakdown, and payment confirmation, and email it to the rider.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Drivers shall have access to an earnings dashboard showing completed trips, total earnings, and pending payouts.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "RideNow shall scale elastically across multiple cloud regions to handle peak demand spikes without degradation of matching latency.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "The service shall maintain an availability of 99.9 % measured on a monthly basis, with automatic failover to standby instances.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "Real‑time location updates shall be delivered to riders and drivers within 1 second of change, supporting a smooth tracking experience.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "All data in transit shall be encrypted using TLS 1.3, and sensitive data at rest shall be protected with AES‑256 encryption.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "Access to administrative functions shall be restricted to authorized personnel through role‑based access control (RBAC).",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "The platform shall emit structured logs, metrics, and distributed traces to a centralized observability stack for monitoring and debugging.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "Payment processing shall comply with PCI‑DSS requirements and shall not store raw card numbers on the platform.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "Deployment pipelines shall support zero‑downtime rolling updates and automated rollback on health‑check failures.",
+      "type": "NFR"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# torch는 CPU 전용 휠을 사용 (CUDA 빌드 대비 이미지 대폭 축소)
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+langgraph>=0.2.60
+langchain-openai>=0.2.0
+langchain-core>=0.3.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic-settings>=2.5.0
+
+# 요구사항 FR/NFR BERT 검증 분류기 (materials의 파인튜닝 모델 로드)
+torch>=2.2.0
+transformers>=4.44.0
+safetensors>=0.4.0

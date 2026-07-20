@@ -1,0 +1,166 @@
+{
+  "name": "video_streaming",
+  "description": "참고 프로젝트에서 이관 (FR 22 + NFR 10).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Viewers shall be able to browse the catalog by genre, release year, and popularity.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "Users can perform keyword searches across titles, actors, and directors.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The recommendation engine shall deliver personalized title suggestions based on viewing history and explicit likes.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "StreamHub shall play videos using adaptive bitrate streaming that selects the optimal quality for current network conditions.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Viewers shall be able to resume playback from the exact timestamp where they previously stopped.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "The platform shall allow each user to create, edit, and delete multiple profiles within a single account.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Parents shall be able to configure parental control settings, including content rating limits, for each profile.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "Viewers shall be able to add titles to, and remove titles from, a personal watchlist.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "The system shall display the contents of a watchlist with thumbnail previews and short descriptions.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "Subscribers shall be able to select, upgrade, downgrade, or cancel subscription plans through a self‑service portal.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Users shall be able to update billing information, including credit card details and billing address.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The service shall send email notifications for successful payments, upcoming renewals, and failed transactions.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "Viewers shall be able to rate titles on a five‑star scale and submit optional written reviews.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "An administrator shall be able to upload new video assets together with associated metadata such as title, description, and tags.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "The system shall generate and store thumbnail images for each uploaded video for use in catalogs and recommendations.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "StreamHub shall enforce DRM protection on all streamed content to prevent unauthorized copying.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "The platform shall log playback start, pause, stop, and error events for analytics and troubleshooting.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Viewers shall be able to switch playback between devices and continue watching without losing position.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-19",
+      "text": "The service shall apply content rating filters automatically based on the parental control settings of the active profile.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-20",
+      "text": "Users can report inappropriate or offensive content, triggering a review workflow for moderators.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-21",
+      "text": "Administrators shall have the ability to approve or reject user‑submitted reviews before they become public.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-22",
+      "text": "The system shall provide a searchable history of a user’s watched titles, including timestamps and duration.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "StreamHub shall achieve 99.9% availability measured on a monthly basis, excluding scheduled maintenance windows.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "The service shall scale horizontally to support up to one million concurrent video streams without degradation of quality.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "Video delivery latency from the nearest CDN edge node to the client shall not exceed two seconds for initial playback.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "The adaptive bitrate algorithm shall react to changes in network bandwidth within one second, selecting the appropriate quality level.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "All data in transit between clients, microservices, and storage shall be encrypted using TLS 1.3 or higher.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "User passwords shall be stored using a salted bcrypt hash, and payment data shall be tokenized in compliance with PCI‑DSS.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "The platform shall emit structured logs, metrics, and traces to a centralized observability stack for real‑time monitoring.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "Deployments shall be performed using a blue‑green strategy to ensure zero‑downtime releases.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-09",
+      "text": "The system shall comply with GDPR and CCPA regulations, providing mechanisms for data access, correction, and erasure upon user request.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-10",
+      "text": "CDN cache entries for newly uploaded or updated video assets shall be refreshed within fifteen minutes of the change.",
+      "type": "NFR"
+    }
+  ]
+}

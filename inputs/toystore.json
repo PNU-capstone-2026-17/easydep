@@ -1,0 +1,121 @@
+{
+  "name": "toystore",
+  "description": "참고 프로젝트에서 이관 (FR 15 + NFR 8).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "The system shall allow users to browse toys by category.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "The system shall allow users to search for toys by name or keyword.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The system shall display detailed information for each toy product including name, price, description, and image.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "The system shall allow users to add toys to a shopping cart.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "The system shall allow users to modify quantities of items in the shopping cart.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "The system shall allow users to remove items from the shopping cart.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "The system shall calculate and display the total price of items in the shopping cart.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "The system shall allow users to register as a member with email and password.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "The system shall allow registered users to log in and log out.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "The system shall allow users to place an order with shipping address and payment information.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "The system shall send an order confirmation email to the user after successful order placement.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The system shall allow users to view their order history.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "The system shall allow users to add toys to a wishlist.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "The system shall allow users to write and view product reviews.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "The system shall display recommended toys based on user preferences or best sellers.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "The website shall be accessible on desktop and mobile browsers.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "The website shall support Chrome, Firefox, Safari, and Edge browsers.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "The product page shall load within 3 seconds under normal network conditions.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "All payment transactions shall be processed through a secure payment gateway.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "User passwords shall be stored using secure hashing algorithms.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "The website shall comply with applicable data protection regulations.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "The website shall maintain responsiveness across screen sizes from 320px to 1920px width.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "The system shall support concurrent access for at least 100 users simultaneously.",
+      "type": "NFR"
+    }
+  ]
+}

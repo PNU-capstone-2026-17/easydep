@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: langgraph-chatbot
+  labels:
+    app: langgraph-chatbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: langgraph-chatbot
+  template:
+    metadata:
+      labels:
+        app: langgraph-chatbot
+    spec:
+      containers:
+        - name: chatbot
+          image: langgraph-chatbot:local
+          ports:
+            - containerPort: 8000
+          # API_KEY / BASE_URL / MODEL 을 시크릿에서 환경변수로 주입
+          envFrom:
+            - secretRef:
+                name: nim-secret
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

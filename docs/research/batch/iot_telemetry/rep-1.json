@@ -1,0 +1,458 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 3,
+    "compound_fr_detail": [
+      "R23: 융합된 품질제약 ['throughput']",
+      "R25: 융합된 품질제약 ['availability']",
+      "R26: 융합된 품질제약 ['encrypted']"
+    ],
+    "n_actors": 9,
+    "n_use_cases": 14,
+    "n_specs": 14,
+    "fr_total": 32,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 19,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "step 5: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC2": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 6: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 7: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC3": [
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC5": [
+        "step 1: UI 용어 ['field'] — black-box 위반"
+      ],
+      "UC6": [
+        "4a: outcome=resume인데 resume_at_step 없음",
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC7": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 5: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC9": [
+        "1a: outcome=resume인데 resume_at_step 없음"
+      ],
+      "UC11": [
+        "4a: outcome=resume인데 resume_at_step 없음",
+        "step 5: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC12": [
+        "2a: outcome=resume인데 resume_at_step 없음",
+        "step 2: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC13": [
+        "1a: outcome=resume인데 resume_at_step 없음"
+      ],
+      "UC14": [
+        "4a: outcome=resume인데 resume_at_step 없음",
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 16,
+    "avg_main_steps": 5.36,
+    "n_relationships": 60,
+    "dangling_diagram_refs": 10,
+    "dangling_refs_detail": [
+      "association System -> Generate Alert Notification",
+      "association System -> Health Check",
+      "association System -> Retrieve Metrics",
+      "generalization Notification Service / Email Service",
+      "generalization Notification Service / SMS Gateway",
+      "generalization Notification Service / Webhook Receiver",
+      "generalization Monitoring Service / Prometheus Collector",
+      "generalization Monitoring Service / Kubernetes Orchestrator",
+      "generalization System / Notification Service",
+      "generalization System / Monitoring Service"
+    ],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 35,
+    "false_coverage_claims": 12,
+    "false_coverage_detail": [
+      "UC1 claims R17: The use case only establishes mutual TLS credentials during registration; it does not demonstrate that the platform enforces mutual TLS authentication for *all* device‑to‑cloud connections, which is the functional behavior required.",
+      "UC2 claims R23: The scenario contains no functional behavior that demonstrates horizontal scaling to handle a two‑fold throughput increase.",
+      "UC2 claims R24: The requirement’s core functional claim is to keep latency below a threshold; the use case only records latency and raises alerts, it does not implement a mechanism that ensures the latency bound.",
+      "UC2 claims R25: Automatic failover and high‑availability behavior are not described in the scenario; the requirement is purely a non‑functional availability claim.",
+      "UC2 claims R28: Only ingestion‑rate and latency metrics are exported; the required CPU, memory, request‑rate, and error‑count metrics are not covered.",
+      "UC3 claims R20: The scenario only applies tag‑based filters; it does not provide any functionality for an operator to assign arbitrary key‑value tags to devices, which is required by R20.",
+      "UC4 claims R6: The use case steps only describe creating a widget (selecting type, configuring, saving, and persisting). There are no steps that show editing an existing widget or deleting a widget, so the functional behavior required for edit and delete is not realized.",
+      "UC7 claims R22: The scenario logs successful command transmissions and acknowledgments, satisfying the command‑transmission part of the requirement. However, it contains no functional behavior related to logging firmware‑update events or alert events. Because the requirement also mandates immutable audit logging of those additional event types, the use case does not fully realize R22.",
+      "UC8 claims R22: The use‑case only states that status transitions are recorded in an immutable audit log (step 6). It does not specify that every command transmission, firmware‑update event, or alert event is logged. Hence the functional behavior required by R22 is not fully demonstrated.",
+      "UC9 claims R13: The use case describes querying data but does not specify that raw telemetry is retained for a configurable period or that the system automatically rolls up data into hourly/daily aggregates. Those retention and roll‑up behaviors are absent, so the functional intent of R13 is not realized.",
+      "UC9 claims R30: While R30 contains a non‑functional cost constraint, its functional component (retaining historical data for the configured period) is not addressed in the use case. The scenario does not describe any retention behavior, so the functional intent is not realized.",
+      "UC14 claims R25: While the scenario mentions a 99.95 % availability target (a non‑functional qualifier) and cites “automatic failover” in the goal, it provides no functional steps that demonstrate failover across availability zones. The described behavior is limited to rolling updates and rollbacks, not zone‑level failover, so the functional portion of R25 is not realized."
+    ],
+    "semantic_coverage_ratio": 0.7188,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R17",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R31",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R23",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R24",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R25",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R26",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R28",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R32",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R20",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R6",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R13",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R30",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R27",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "R18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R28",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "R29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "R25",
+        "realized": false
+      }
+    ]
+  },
+  "ours": {
+    "compound_fr_issues": 0,
+    "compound_fr_detail": [],
+    "n_actors": 7,
+    "n_use_cases": 16,
+    "n_specs": 16,
+    "fr_total": 29,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [
+      "NFR14",
+      "NFR15",
+      "NFR21",
+      "NFR22",
+      "NFR23"
+    ],
+    "spec_validation_issues": 0,
+    "spec_issues_by_uc": {},
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 55,
+    "avg_main_steps": 3.81,
+    "n_relationships": 19,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 29,
+    "false_coverage_claims": 2,
+    "false_coverage_detail": [
+      "UC2 claims FR28: No step in the scenario mentions automatic partition rebalancing or any mechanism to prevent hot spots; thus the functional behavior is absent.",
+      "UC16 claims FR29: The use case only describes configuring and recording per‑tenant rate‑limit values; it does not demonstrate the system actually enforcing or applying those limits to API traffic, which is the functional core of providing API rate limiting."
+    ],
+    "semantic_coverage_ratio": 0.931,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR25",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR26",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR28",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR27",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR17",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "FR19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "FR20",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "FR21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "FR22",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC15",
+        "requirement_id": "FR23",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC15",
+        "requirement_id": "FR24",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC16",
+        "requirement_id": "FR29",
+        "realized": false
+      }
+    ]
+  }
+}

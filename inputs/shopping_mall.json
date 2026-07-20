@@ -1,0 +1,13 @@
+{
+  "name": "shopping_mall",
+  "description": "E-commerce 예시. FR 5 + NFR 2. R4는 'The system shall ...' system-중심 FR(→ supporting actor 추론/서브펑션 흡수 대상), N2는 교차절단(전역) NFR.",
+  "classified": [
+    { "id": "R1", "text": "A registered user can log in with email and password.", "type": "FR" },
+    { "id": "R2", "text": "A registered user can add a product to the shopping cart.", "type": "FR" },
+    { "id": "R3", "text": "A registered user can place an order for the items in the cart.", "type": "FR" },
+    { "id": "R4", "text": "The system shall validate the shipping address before checkout.", "type": "FR" },
+    { "id": "R5", "text": "An administrator can view all placed orders.", "type": "FR" },
+    { "id": "N1", "text": "The checkout page shall load within 2 seconds.", "type": "NFR" },
+    { "id": "N2", "text": "All personal data shall be encrypted at rest.", "type": "NFR" }
+  ]
+}

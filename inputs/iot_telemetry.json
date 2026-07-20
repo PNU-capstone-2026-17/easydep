@@ -1,0 +1,166 @@
+{
+  "name": "iot_telemetry",
+  "description": "참고 프로젝트에서 이관 (FR 22 + NFR 10).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "An operator shall be able to register a new IoT device by providing a unique identifier, metadata, and authentication credentials.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "The platform shall validate device registration data against the schema and reject duplicate identifiers.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "SensorGrid shall ingest telemetry streams from registered devices at a rate of up to one million events per second.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "The system shall assign a timestamp to each incoming telemetry point using the device's clock or a server‑time fallback.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Users can view a real‑time dashboard that refreshes at least every five seconds with the latest telemetry values per device.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "An operator shall be able to create, edit, and delete custom visual widgets on the dashboard.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "The platform shall allow operators to define alerting rules based on threshold, rate‑of‑change, or pattern conditions over telemetry streams.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "When an alert condition is met, the system shall generate a notification via email, SMS, or webhook within thirty seconds.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Operators shall be able to send command messages to a specific device, with guaranteed delivery acknowledgment.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "The system shall queue command messages for offline devices and deliver them when the device reconnects.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "An operator shall be able to upload a firmware package and initiate a staged rollout to a selected device group.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "SensorGrid shall report the status of each firmware update (pending, in‑progress, succeeded, failed) per device.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "The platform shall retain raw telemetry for a configurable retention period (minimum thirty days) and automatically roll up data into hourly and daily aggregates.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "Users can query historical time‑series data with a time‑range filter and receive results in JSON or CSV format.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "The system shall support ad‑hoc aggregation queries (average, min, max, percentile) over any retained time window.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "An administrator shall be able to assign role‑based access permissions to operators for device groups and dashboards.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "The platform shall enforce mutual TLS authentication for all device‑to‑cloud connections.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Users can export dashboard configurations and import them into another SensorGrid instance.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-19",
+      "text": "The system shall provide a health‑check endpoint that reports ingestion latency, storage utilization, and alerting status.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-20",
+      "text": "An operator shall be able to tag devices with arbitrary key‑value pairs and filter views by tags.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-21",
+      "text": "SensorGrid shall support schema‑versioned telemetry, allowing devices to evolve payload structures without breaking existing queries.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-22",
+      "text": "The platform shall log every command transmission, firmware update, and alert event with immutable audit records.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "The platform shall scale horizontally to handle a two‑fold increase in ingestion throughput without degradation of latency.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "System shall maintain end‑to‑end ingestion latency below two hundred milliseconds for ninety‑nine point nine percent of telemetry points.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "SensorGrid shall achieve ninety‑nine point nine‑five percent monthly availability, with automatic failover across availability zones.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "All stored telemetry shall be encrypted at rest using AES‑256 and in transit using TLS 1.3.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "The platform shall implement role‑based access control (RBAC) and immutable audit logging to satisfy compliance requirements.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "System shall expose Prometheus‑compatible metrics for CPU, memory, request rates, and error counts.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "The deployment shall be containerized and orchestrated via Kubernetes, supporting rolling updates with zero‑downtime.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "The platform shall retain historical data for the configured period while ensuring storage cost does not exceed $0.02 per GB‑month.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-09",
+      "text": "SensorGrid shall automatically rebalance streaming partitions to prevent hot spots.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-10",
+      "text": "The system shall provide API rate limiting per tenant to protect against abusive usage.",
+      "type": "NFR"
+    }
+  ]
+}

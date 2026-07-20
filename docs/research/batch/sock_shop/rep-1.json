@@ -1,0 +1,512 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 4,
+    "compound_fr_detail": [
+      "R3: 융합된 품질제약 ['availability']",
+      "R20: 융합된 품질제약 ['9%', 'availability']",
+      "R21: 융합된 품질제약 ['encrypted']",
+      "R24: 융합된 품질제약 ['95 %', 'within 200 ms']"
+    ],
+    "n_actors": 6,
+    "n_use_cases": 21,
+    "n_specs": 21,
+    "fr_total": 26,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 43,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "A1: outcome=alternate_success인데 resume_at_step이 설정됨"
+      ],
+      "UC2": [
+        "A1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['button', 'clicks'] — black-box 위반"
+      ],
+      "UC3": [
+        "A1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['clicks'] — black-box 위반"
+      ],
+      "UC4": [
+        "A1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "A2: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 5: UI 용어 ['screen'] — black-box 위반"
+      ],
+      "UC5": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "E2: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "step 1: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 2: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC6": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "E2: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "step 4: UI 용어 ['clicks'] — black-box 위반",
+        "System displays a generic message: “If the e‑mail exists, a reset link will be sent.”: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC7": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨"
+      ],
+      "UC8": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC9": [
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC10": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "E2: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['button', 'clicks'] — black-box 위반",
+        "step 2: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 3: UI 용어 ['field'] — black-box 위반",
+        "step 4: UI 용어 ['clicks'] — black-box 위반"
+      ],
+      "UC12": [
+        "step 4: UI 용어 ['screen'] — black-box 위반",
+        "System logs the failure and retries asynchronously; the on‑screen confirmation still shows the order number.: UI 용어 ['screen'] — black-box 위반"
+      ],
+      "UC13": [
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC14": [
+        "step 3: UI 용어 ['button'] — black-box 위반"
+      ],
+      "UC15": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "step 2: UI 용어 ['clicks'] — black-box 위반"
+      ],
+      "UC16": [
+        "E1: outcome=alternate_success인데 resume_at_step이 설정됨",
+        "step 2: UI 용어 ['clicks'] — black-box 위반",
+        "step 4: UI 용어 ['fields'] — black-box 위반"
+      ],
+      "UC17": [
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC18": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC20": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC21": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 25,
+    "avg_main_steps": 4.24,
+    "n_relationships": 45,
+    "dangling_diagram_refs": 7,
+    "dangling_refs_detail": [
+      "generalization System / Process Payment",
+      "generalization System / Generate Order & Fulfill",
+      "generalization System / Deploy & Scale System",
+      "generalization System / Enforce Security",
+      "generalization System / Provide Observability",
+      "generalization System / Maintain Performance",
+      "generalization System / Automate CI/CD Pipeline"
+    ],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 26,
+    "false_coverage_claims": 1,
+    "false_coverage_detail": [
+      "UC7 claims R7: The use case describes adding and editing shipping addresses and payment cards, but it does not include functional steps for deleting them. Since the requirement explicitly includes the ability to delete, the functional behavior is not fully realized."
+    ],
+    "semantic_coverage_ratio": 0.9615,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R7",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "R12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "R16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC15",
+        "requirement_id": "R17",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC16",
+        "requirement_id": "R18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC17",
+        "requirement_id": "R19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC17",
+        "requirement_id": "R20",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC17",
+        "requirement_id": "R25",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC18",
+        "requirement_id": "R21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC18",
+        "requirement_id": "R22",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC19",
+        "requirement_id": "R23",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC20",
+        "requirement_id": "R24",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC21",
+        "requirement_id": "R26",
+        "realized": true
+      }
+    ]
+  },
+  "ours": {
+    "compound_fr_issues": 1,
+    "compound_fr_detail": [
+      "FR3: 융합된 품질제약 ['availability']"
+    ],
+    "n_actors": 4,
+    "n_use_cases": 14,
+    "n_specs": 14,
+    "fr_total": 30,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [
+      "NFR1",
+      "NFR4",
+      "NFR5",
+      "NFR7"
+    ],
+    "spec_validation_issues": 0,
+    "spec_issues_by_uc": {},
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 49,
+    "avg_main_steps": 4.64,
+    "n_relationships": 18,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 43,
+    "false_coverage_claims": 3,
+    "false_coverage_detail": [
+      "UC6 claims FR9: No step in the scenario describes removing an item from the cart; the functional behavior required for removal is absent.",
+      "UC6 claims FR10: The scenario only shows adding an item with a quantity; it does not demonstrate updating the quantity of an already‑present item.",
+      "UC14 claims FR29: The scenario deals exclusively with configuring autoscaling policies; it does not involve handling user‑initiated requests. Therefore the functional behavior required by FR29 is not present."
+    ],
+    "semantic_coverage_ratio": 0.9333,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR9",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR10",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR17",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR20",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR22",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "FR23",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "FR24",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "FR25",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "FR26",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "FR27",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "FR28",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "FR30",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "FR29",
+        "realized": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,166 @@
+{
+  "name": "online_boutique",
+  "description": "참고 프로젝트에서 이관 (FR 22 + NFR 10).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Shopper shall be able to browse the product catalog by category, brand, and popularity.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "Shopper shall be able to perform keyword searches and apply filters such as price range, rating, and availability.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The product detail page shall display description, high‑resolution images, stock level, and price in the selected currency.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "User shall select a preferred currency from the supported list and have all prices rendered accordingly.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Online Boutique shall retrieve live exchange rates from the external rates service and convert prices in real time.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "System shall cache exchange‑rate data for a maximum of five minutes to reduce external calls.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Shopper shall add items to a shopping cart without requiring authentication.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "Cart shall persist across page navigations using a session identifier stored in a secure cookie.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Shopper shall modify item quantities or remove items from the cart at any time before checkout.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "System shall compute cart subtotal, applicable taxes, and an estimated shipping cost based on the entered delivery zip code.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Guest checkout shall be available, allowing shoppers to complete purchase without creating an account.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "Payment service shall process credit‑card, PayPal, and Apple Pay transactions and return a success or failure response.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "System shall validate payment details and reject transactions that fail verification rules.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "Upon successful payment, an order record shall be created with a globally unique order identifier.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "Order confirmation email shall be sent to the shopper’s email address within two minutes of order placement.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "Confirmation email shall contain an itemized order summary, shipping estimate, and a placeholder for a tracking link.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "Recommendation engine shall display at least three product suggestions on the order confirmation page based on the purchased items.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Contextual advertising module shall serve relevant ads on product detail and checkout pages using shopper’s browsing context.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-19",
+      "text": "An administrator shall upload new product data and update existing items through a secured API endpoint.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-20",
+      "text": "Inventory service shall decrement stock quantities atomically when an order is confirmed.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-21",
+      "text": "Shopper shall retrieve order status by providing order ID and email address on the order lookup page.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-22",
+      "text": "System shall log all cart modifications and order lifecycle events to an immutable audit store.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "Online Boutique shall maintain an overall availability of 99.9 % across all microservices, measured on a monthly basis.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "Each gRPC call shall respond within 200 ms for the 95th percentile under normal traffic conditions.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "The platform shall automatically scale horizontally to support up to 10 000 concurrent shoppers by adding Kubernetes pods.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "Service mesh shall enforce mutual TLS for every inter‑service communication to ensure confidentiality and integrity.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "Sensitive data such as payment tokens shall be encrypted at rest using AES‑256 encryption.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "External dependencies (exchange‑rate service, payment gateway) shall be protected by circuit‑breaker patterns with defined fallback behavior.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "System shall emit structured logs and Prometheus metrics for all request paths to enable real‑time observability.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "Deployment pipeline shall perform zero‑downtime rolling updates via Helm charts and canary releases.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-09",
+      "text": "Sessions shall be represented by signed JWTs stored in HttpOnly, Secure cookies and shall expire after 24 hours of inactivity.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-10",
+      "text": "The application shall comply with PCI DSS requirements for all payment processing activities.",
+      "type": "NFR"
+    }
+  ]
+}

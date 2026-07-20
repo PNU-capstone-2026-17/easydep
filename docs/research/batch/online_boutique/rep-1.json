@@ -1,0 +1,552 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 5,
+    "compound_fr_detail": [
+      "R2: 융합된 품질제약 ['availability']",
+      "R20: 융합된 품질제약 ['atomically']",
+      "R23: 융합된 품질제약 ['9 %', 'availability']",
+      "R24: 융합된 품질제약 ['within 200 ms']",
+      "R27: 융합된 품질제약 ['encrypted']"
+    ],
+    "n_actors": 9,
+    "n_use_cases": 14,
+    "n_specs": 14,
+    "fr_total": 32,
+    "coverage_ratio": 0.8125,
+    "orphan_fr_ids": [
+      "R23",
+      "R24",
+      "R25",
+      "R26",
+      "R30",
+      "R31"
+    ],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 18,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "5a: outcome=resume인데 resume_at_step 없음",
+        "trigger: UI 용어 ['tab'] — black-box 위반"
+      ],
+      "UC2": [
+        "3a: outcome=resume인데 resume_at_step 없음",
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 5: UI 용어 ['button'] — black-box 위반"
+      ],
+      "UC3": [
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC4": [
+        "trigger: UI 용어 ['button', 'clicks'] — black-box 위반",
+        "step 1: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC5": [
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 1: UI 용어 ['clicks', 'field'] — black-box 위반",
+        "step 3: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC6": [
+        "trigger: UI 용어 ['clicks'] — black-box 위반",
+        "step 2: UI 용어 ['fields'] — black-box 위반"
+      ],
+      "UC9": [
+        "System retries up to three times with exponential back‑off.: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC11": [
+        "step 2: UI 용어 ['fields'] — black-box 위반"
+      ],
+      "UC12": [
+        "2a: outcome=resume인데 resume_at_step 없음"
+      ],
+      "UC13": [
+        "step 2: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC14": [
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 32,
+    "avg_main_steps": 5.14,
+    "n_relationships": 33,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [
+      "Audit Store"
+    ],
+    "claimed_coverage_pairs": 43,
+    "false_coverage_claims": 19,
+    "false_coverage_detail": [
+      "UC1 claims R18: The use case only describes contextual ads being displayed alongside the product list (search results). It does not cover serving ads on product‑detail or checkout pages, so the functional requirement is not realized.",
+      "UC5 claims R22: The scenario logs the cart‑modification event (step 6) but does not address logging of order‑lifecycle events. Because the requirement includes both cart modifications **and** order‑lifecycle events, the functional behavior is only partially covered, so the requirement is not fully realized.",
+      "UC6 claims R12: The scenario shows forwarding a payment request and receiving a success response, but it does not demonstrate handling or returning a failure response.",
+      "UC6 claims R13: Validation of payment details is described, yet the scenario does not state that invalid details are rejected, which is required behavior.",
+      "UC6 claims R22: Only the successful checkout event is logged (step 10); cart‑modification events are not covered.",
+      "UC6 claims R27: No mention of encrypting payment tokens at rest; the functional flow does not address this.",
+      "UC6 claims R32: PCI DSS compliance is a non‑functional requirement and is not reflected in the functional steps of the use case.",
+      "UC7 claims R13: The scenario only mentions format validation; it does not describe rejecting transactions that fail verification rules, so the functional behavior required by R13 is not demonstrated.",
+      "UC7 claims R27: Encryption of payment tokens at rest is a functional data‑handling behavior that is not addressed in the described steps.",
+      "UC7 claims R32: PCI DSS compliance involves numerous functional and non‑functional controls that are not reflected in the use‑case description.",
+      "UC8 claims R20: No step mentions the inventory service or any stock‑decrement operation, let alone an atomic decrement.",
+      "UC8 claims R22: Only an 'order‑created' event is written to the audit store; the use case does not log cart‑modification events, so it does not satisfy the requirement to log *all* cart modifications and order lifecycle events.",
+      "UC9 claims R17: The use case embeds recommendations into the email, not onto the order‑confirmation page; thus the functional requirement to display suggestions on the page is not satisfied.",
+      "UC9 claims R22: Only a single ‘confirmation‑email‑sent’ event is logged; the requirement calls for logging *all* cart modifications and order‑lifecycle events, which the scenario does not cover.",
+      "UC10 claims R22: Only the lookup event is logged; the scenario does not demonstrate logging of cart modifications or broader order‑lifecycle events, so the functional requirement is not satisfied.",
+      "UC11 claims R22: The scenario logs the product upload/update operation, but R22 concerns logging of cart modifications and order lifecycle events. Those events are not addressed, so the functional behavior required by R22 is not realized.",
+      "UC12 claims R22: The scenario deals solely with displaying contextual advertising; it contains no behavior related to logging cart modifications or order lifecycle events, so the functional requirement is not addressed.",
+      "UC13 claims R28: The use‑case description contains no mention of circuit‑breaker patterns, fallback behavior, or any mechanism that protects the external exchange‑rate service (or payment gateway) from failures. Therefore the functional behavior required by R28 is not realized.",
+      "UC14 claims R29: The scenario emits Prometheus metrics and structured logs only for cart modifications and order‑lifecycle events. It does not cover *all* request paths as required, so the functional behavior is insufficient."
+    ],
+    "semantic_coverage_ratio": 0.625,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R18",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R12",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R13",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R20",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R27",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R32",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R13",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R27",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R32",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R20",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R17",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "R19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R22",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R28",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "R22",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC14",
+        "requirement_id": "R29",
+        "realized": false
+      }
+    ]
+  },
+  "ours": {
+    "compound_fr_issues": 2,
+    "compound_fr_detail": [
+      "FR3: 융합된 품질제약 ['availability']",
+      "FR33: 융합된 품질제약 ['atomically']"
+    ],
+    "n_actors": 9,
+    "n_use_cases": 11,
+    "n_specs": 11,
+    "fr_total": 37,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [
+      "NFR12",
+      "NFR13",
+      "NFR15",
+      "NFR8"
+    ],
+    "spec_validation_issues": 0,
+    "spec_issues_by_uc": {},
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 34,
+    "avg_main_steps": 4.0,
+    "n_relationships": 23,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 38,
+    "false_coverage_claims": 3,
+    "false_coverage_detail": [
+      "UC5 claims FR36: Use case does not specify that the session is represented by a signed JWT.",
+      "UC5 claims FR37: Use case does not mention JWTs nor the HttpOnly attribute; functional representation of the session is missing.",
+      "UC6 claims FR29: The scenario only shows contextual advertising on the checkout page; it does not demonstrate serving ads on product‑detail pages, which is part of the functional intent of the requirement."
+    ],
+    "semantic_coverage_ratio": 0.9459,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR29",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR17",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR36",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR37",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR29",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR19",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR20",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR21",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR22",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR23",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR24",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR25",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR26",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR27",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR28",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR32",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR33",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR34",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR30",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR31",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "FR35",
+        "realized": true
+      }
+    ]
+  }
+}

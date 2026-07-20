@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# AKS에서는 ACR에 푸시한 이미지를 사용한다.
+# <acr> 를 실제 ACR 로그인 서버명으로 교체하세요 (예: myregistry.azurecr.io).
+images:
+  - name: langgraph-chatbot
+    newName: langgraphacr1.azurecr.io/langgraph-chatbot
+    newTag: v1
+
+# Service를 LoadBalancer로 노출해 외부 IP를 부여받는다.
+patches:
+  - target:
+      kind: Service
+      name: langgraph-chatbot
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: LoadBalancer

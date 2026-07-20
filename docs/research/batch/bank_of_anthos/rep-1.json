@@ -1,0 +1,356 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 5,
+    "compound_fr_detail": [
+      "R12: 융합된 품질제약 ['atomically']",
+      "R19: 융합된 품질제약 ['95%', 'availability']",
+      "R21: 융합된 품질제약 ['encrypted']",
+      "R22: 융합된 품질제약 ['at least 90']",
+      "R23: 융합된 품질제약 ['95%', 'within 200 ms']"
+    ],
+    "n_actors": 9,
+    "n_use_cases": 13,
+    "n_specs": 13,
+    "fr_total": 27,
+    "coverage_ratio": 0.6296,
+    "orphan_fr_ids": [
+      "R19",
+      "R20",
+      "R21",
+      "R22",
+      "R23",
+      "R24",
+      "R25",
+      "R26",
+      "R27",
+      "R9"
+    ],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 4,
+    "spec_issues_by_uc": {
+      "UC2": [
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)",
+        "step 7: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC13": [
+        "step 4: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ],
+      "UC6": [
+        "step 6: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 18,
+    "avg_main_steps": 6.0,
+    "n_relationships": 55,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 17,
+    "false_coverage_claims": 0,
+    "false_coverage_detail": [],
+    "semantic_coverage_ratio": 0.6296,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R17",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "R8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "R14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "R12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "R18",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "R13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "R11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC12",
+        "requirement_id": "R16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC13",
+        "requirement_id": "R3",
+        "realized": true
+      }
+    ]
+  },
+  "ours": {
+    "compound_fr_issues": 1,
+    "compound_fr_detail": [
+      "FR10: 융합된 품질제약 ['atomically']"
+    ],
+    "n_actors": 6,
+    "n_use_cases": 11,
+    "n_specs": 11,
+    "fr_total": 18,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [
+      "NFR10",
+      "NFR12",
+      "NFR13",
+      "NFR14",
+      "NFR7",
+      "NFR8",
+      "NFR9"
+    ],
+    "spec_validation_issues": 1,
+    "spec_issues_by_uc": {
+      "UC9": [
+        "5a: outcome=resume인데 resume_at_step 없음"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 43,
+    "avg_main_steps": 4.09,
+    "n_relationships": 24,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [
+      "Observability Stack"
+    ],
+    "claimed_coverage_pairs": 31,
+    "false_coverage_claims": 12,
+    "false_coverage_detail": [
+      "UC1 claims FR3: Verification of JWT integrity/expiration is performed only during registration, not on every request to protected resources.",
+      "UC1 claims FR17: The scenario states that a JWT is signed but does not specify the RSA‑256 algorithm required by the requirement.",
+      "UC2 claims FR3: The scenario only describes token issuance at login; it does not describe any verification of JWT integrity or expiration on subsequent requests, so the functional behavior required by FR3 is not present.",
+      "UC2 claims FR15: No logging of audit‑relevant events is mentioned in the login steps, therefore the functional requirement of logging to a centralized observability stack is not realized.",
+      "UC3 claims FR15: The scenario does not mention any logging of audit‑relevant events; therefore the functional behavior required by FR15 is not demonstrated.",
+      "UC4 claims FR15: The scenario does not mention any logging of audit‑relevant events to an observability stack; therefore the functional behavior required by FR15 is not demonstrated.",
+      "UC5 claims FR15: The scenario does not mention any logging of audit‑relevant events to an observability stack; therefore the functional behavior required by FR15 is not demonstrated.",
+      "UC6 claims FR15: The scenario does not mention any logging of audit‑relevant events to an observability stack; therefore the functional behavior required by FR15 is not demonstrated.",
+      "UC7 claims FR15: No step or goal in the scenario references logging audit‑relevant events to a centralized observability stack; the functional behavior is absent.",
+      "UC8 claims FR15: The scenario does not mention any logging of audit‑relevant events to a centralized observability stack; therefore the functional behavior required by this requirement is not demonstrated.",
+      "UC9 claims FR11: The use case mentions sending a notification but does not specify that it is delivered via email or SMS, which is a functional condition of the requirement.",
+      "UC9 claims FR15: No step in the scenario describes logging audit‑relevant events to a centralized observability stack."
+    ],
+    "semantic_coverage_ratio": 0.8889,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR3",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR17",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR3",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR16",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR5",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR14",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC6",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR7",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR11",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC7",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR12",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC8",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR8",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR9",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR10",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR11",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC9",
+        "requirement_id": "FR15",
+        "realized": false
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR13",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC10",
+        "requirement_id": "FR15",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC11",
+        "requirement_id": "FR18",
+        "realized": true
+      }
+    ]
+  }
+}

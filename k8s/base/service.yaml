@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: langgraph-chatbot
+  labels:
+    app: langgraph-chatbot
+spec:
+  selector:
+    app: langgraph-chatbot
+  ports:
+    - port: 80
+      targetPort: 8000
+  # 타입은 오버레이(local: NodePort / aks: LoadBalancer)에서 지정

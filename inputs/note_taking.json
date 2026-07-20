@@ -1,0 +1,13 @@
+{
+  "name": "note_taking",
+  "description": "노트 작성 앱 예시. FR 5 + NFR 2. 선택 실행(멀티 데이터셋) 시연용 두 번째 세트.",
+  "classified": [
+    { "id": "R1", "text": "A user can create a new note with a title and body.", "type": "FR" },
+    { "id": "R2", "text": "A user can edit the content of an existing note.", "type": "FR" },
+    { "id": "R3", "text": "A user can delete a note.", "type": "FR" },
+    { "id": "R4", "text": "A user can search notes by keyword.", "type": "FR" },
+    { "id": "R5", "text": "A user can share a note with another user by email.", "type": "FR" },
+    { "id": "N1", "text": "Note edits shall be auto-saved within 1 second.", "type": "NFR" },
+    { "id": "N2", "text": "Note content shall be encrypted end-to-end.", "type": "NFR" }
+  ]
+}

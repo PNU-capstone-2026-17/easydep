@@ -1,0 +1,22 @@
+[
+  "The format for service information description is defined",
+  "The interaction protocol between Web Server-SR, SR-mediator is defined.",
+  "Resource provisioning, delegation and reservation policies are in place",
+  "There is an established norm that any resource failure will be reported",
+  "Malicious requests are detected and rejected.",
+  "Web servers have already replicated necessary content.",
+  "Both anticipated and unanticipated user requests (traffic) are considered.",
+  "The format of service requirements is defined.",
+  "Mediator-SR, mediator-PR, mediator-PA interaction protocols are defined.",
+  "Mediator works in conjunction with the PA to establish negotiation.",
+  "Interaction protocols between PAs are identified.",
+  "Malicious requests are identified and acted upon.",
+  "There are existing policies for long-term peering arrangement.",
+  "There is procedure to perform short-term negotiation.",
+  "Negotiation is established between selected CDN peers.",
+  "Primary CDN has already acquired sufficient external resources.",
+  "Functional policies are identified and deployed.",
+  "Effective content delivery is ensured through SLA satisfaction.",
+  "Policies identifying the consequences of SLA violation are defined.",
+  "Policies are in place to perform renegotiation for problem resolution."
+]

@@ -1,0 +1,136 @@
+{
+  "name": "sock_shop",
+  "description": "참고 프로젝트에서 이관 (FR 18 + NFR 8).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Users shall be able to browse the product catalogue by category, brand, or popularity.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "Customers can search the catalogue using keywords, filters, and price ranges.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The system shall display detailed product information, including images, specifications, price, and stock availability.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "A new user shall be able to register an account by providing email, password, and optional profile data.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Users shall authenticate via email/password or third‑party OAuth providers.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "The application shall allow users to reset forgotten passwords through a secure token emailed link.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Customers shall manage multiple shipping addresses and payment cards within their profile.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "The cart service shall enable adding, removing, and updating quantity of items in a shopping cart.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Users shall be able to view a real‑time summary of cart contents, subtotal, taxes, and estimated shipping.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "At checkout, the system shall validate stock levels and reserve inventory before order creation.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Customers shall select a shipping method, apply promotional codes, and confirm the order.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The payment gateway shall process credit‑card transactions and return success or failure status to the order service.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "Upon successful payment, the order service shall generate an order record and trigger the fulfillment workflow.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "The system shall send order confirmation and receipt emails to the customer immediately after payment.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "Users shall track the current status of each order, including processing, shipped, in‑transit, and delivered.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "Customers shall view a chronological history of all past orders with details and downloadable invoices.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "The catalogue service shall allow administrators to create, update, or deactivate product entries.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "An administrator shall be able to adjust inventory quantities and set price discounts for selected items.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "Sock Shop shall be deployed as independent Docker containers orchestrated by Kubernetes, enabling horizontal scaling of each microservice.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "The platform shall achieve 99.9% availability measured on a monthly basis, with automatic failover across multiple zones.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "All inter‑service communication shall be encrypted using TLS 1.3, and data at rest shall be encrypted with AES‑256.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "The system shall enforce role‑based access control (RBAC) so that only authorized personnel can perform administrative actions.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "Observability shall be provided through centralized logging, distributed tracing, and metrics collection for each microservice.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "The application shall respond to user‑initiated requests within 200 ms for 95 % of calls under normal load.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "Autoscaling policies shall adjust the number of pod replicas based on CPU utilization and request latency thresholds.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "The CI/CD pipeline shall automatically build, test, and deploy new container images without manual intervention.",
+      "type": "NFR"
+    }
+  ]
+}

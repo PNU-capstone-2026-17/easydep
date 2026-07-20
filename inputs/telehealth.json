@@ -1,0 +1,136 @@
+{
+  "name": "telehealth",
+  "description": "참고 프로젝트에서 이관 (FR 18 + NFR 8).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Patients shall be able to register an account, verify identity, and create a personal health profile.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "The user shall be able to browse provider calendars and book an appointment for an available time slot.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "System shall prevent double‑booking by enforcing exclusive reservation of selected slots.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "Patients shall join a scheduled video consultation through a secure, time‑limited link.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Providers shall manage their availability, set working hours, and block out personal time.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "Providers shall start, pause, and end video visits, with the system automatically recording session duration.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Provider shall issue an e‑prescription that is stored in the patient’s record and transmitted to a selected pharmacy.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "Patients shall view e‑prescription details and download a PDF copy for personal records.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Both patients and providers shall access medical records, with patients receiving read‑only view rights and providers receiving edit rights where appropriate.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "System shall generate and display a visit summary immediately after each consultation.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Patients shall be able to upload prior medical documents (e.g., lab results, imaging) to their profile.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "Providers shall add clinical notes to the visit summary, which become part of the permanent medical record.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "System shall calculate a billing invoice based on visit type, duration, and applicable insurance coverage.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "Patients shall view outstanding invoices and complete payment through an integrated payment gateway.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "System shall automatically submit an insurance claim after a visit, attaching required CPT and diagnosis codes.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "Providers shall receive real‑time notifications of claim status changes (accepted, rejected, pending).",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "An administrator shall configure and maintain mappings for insurance providers, reimbursement rates, and claim formats.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "System shall send automated email and SMS reminders to patients 24 hours before their appointment.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "CareConnect shall achieve 99.9 % availability across all deployed regions, providing continuous access to telehealth services.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "All protected health information (PHI) shall be encrypted at rest using AES‑256 and in transit using TLS 1.3.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "The platform shall enforce role‑based access control (RBAC) to restrict functions to authorized patient, provider, and administrator roles.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "System shall maintain immutable audit logs for every access to medical records and retain them for a minimum of seven years.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "CareConnect shall scale horizontally to support up to 100 000 concurrent video consultation sessions without degradation.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "The response time for booking an appointment shall not exceed two seconds under normal load conditions.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "System shall be deployable through automated CI/CD pipelines and run in container orchestration platforms such as Kubernetes.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "The platform shall expose health‑check endpoints and emit operational metrics to Prometheus for real‑time observability.",
+      "type": "NFR"
+    }
+  ]
+}

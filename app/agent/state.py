@@ -1,0 +1,89 @@
+"""요구사항 분석 에이전트의 그래프 State 정의.
+
+모든 노드가 공유하는 단일 상태. 마일스톤1 필드 + 2~4단계 필드가 함께 있어,
+단계가 늘어도 State는 이 파일 한 곳에서 확장한다.
+"""
+from __future__ import annotations
+
+from typing import Annotated, Literal
+
+from langgraph.graph.message import add_messages
+from typing_extensions import NotRequired, TypedDict
+
+
+class RequirementItem(TypedDict):
+    """분류된 개별 요구사항 (BERT 단독 분류 결과).
+
+    id는 유형+순번(FR1, NFR2 …) 형식. 분류는 파인튜닝 BERT가 단독 수행한다.
+    """
+
+    id: str
+    text: str
+    type: Literal["FR", "NFR"]
+    # Phase 2(RTM): 이 NFR이 한정하는(qualify) FR id들. clarify가 복합요구에서 분리해낸
+    # 제약이면 classify가 부모 FR id로 채운다(NFR에만, 없으면 부재). 추적성 링크.
+    qualifies: NotRequired[list[str]]
+
+
+class ActorItem(TypedDict):
+    """도출된 액터(역할). FR에서만 도출한다. SuD(설계 대상 시스템)는 액터가 아님."""
+
+    name: str
+    description: str
+    kind: Literal["primary", "supporting"]
+    parent_actor: str | None        # 일반화(상속) 부모 액터, 없으면 None
+
+
+class UseCaseItem(TypedDict):
+    """도출된 유스케이스 (user-goal 고도). FR 추적성·NFR 제약을 담는다."""
+
+    id: str
+    name: str
+    primary_actor: str
+    level: Literal["summary", "user_goal", "subfunction"]
+    goal: str
+    requirement_ids: list[str]      # 커버하는 FR id (서브펑션 흡수 포함, 추적성)
+    nfr_ids: list[str]              # 이 UC를 한정하는 NFR id
+    # 주 시나리오/확장(예외·대안)은 step3에서 생성한다 (여기서 만들지 않음).
+
+
+class UseCaseSpecItem(TypedDict):
+    """유스케이스 명세 (step3 산출, Cockburn 풀 템플릿)."""
+
+    use_case_id: str
+    name: str
+    preconditions: list[str]
+    trigger: str
+    main_scenario: list[dict]       # {step_number, sentence, covered_req_ids}
+    extensions: list[dict]          # {label, branch_step, condition, handling_steps, outcome, resume_at_step}
+    success_guarantee: list[str]
+    minimal_guarantee: list[str]
+    issues: list[str]               # 검증 위반(정적+의미). reflection 루프 후 남은 것.
+    repair_iters: int               # 반성 루프에서 재생성한 횟수
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+    raw_requirements: list[str]
+    refined_requirements: list[str]
+    # Phase 2(RTM): clarify가 분리한 (constraint 문장 → qualify하는 functional 문장) 링크.
+    # classify가 이 문장쌍을 id로 해소해 RequirementItem.qualifies를 채운다.
+    constraint_links: NotRequired[list[dict]]
+    pending_questions: list[str]
+    is_concrete: bool
+    classified: list[RequirementItem]
+    phase: str
+    # 2단계 — 액터/유스케이스 도출 + FR 커버리지 점검
+    actors: list[ActorItem]
+    use_cases: list[UseCaseItem]
+    coverage: dict                   # check_coverage의 결정론적 커버리지 결과
+    # 3단계 — 유스케이스별 명세(병렬 생성) + 검증 요약
+    use_case_specs: list[UseCaseSpecItem]
+    spec_report: dict                # check_specs의 명세 검증 집계
+    # 4단계 — 관계 식별(LLM) + 검증 요약 + 다이어그램 렌더(결정론)
+    relationships: dict              # {associations, includes, extends, generalizations, derived_use_cases}
+    relationship_report: dict        # check_relationships의 관계 검증 집계
+    diagram: str                     # PlantUML 유스케이스 다이어그램 텍스트
+    # 정적 라우팅 마커 — 피드백 게이트가 "advance"(다음 단계)/"loop"(재생성 후 재질문)를 써 두면
+    # 서브그래프의 조건부 엣지(route_gate)가 이를 읽어 분기한다. Command(goto) 동적 라우팅 대체.
+    gate_route: NotRequired[str]
