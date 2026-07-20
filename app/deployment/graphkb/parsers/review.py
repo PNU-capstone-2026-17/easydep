@@ -126,6 +126,28 @@ def load_reference_map(provider: str, path: Path | None = None) -> dict[str, str
     return table
 
 
+def kind_alias_path(provider: str) -> Path:
+    return REVIEW_DIR / f"{provider}-kind-aliases.json"
+
+
+def load_kind_aliases(provider: str, path: Path | None = None) -> dict[str, str]:
+    """설명문이 쓴 이름 → 실재하는 종류명. (`<provider>-kind-aliases.json`)
+
+    CRD의 `description`은 사람이 읽으라고 쓴 산문이라 종류명을 정확히 적지 않는다.
+    "a Secret resource"라고 쓰지만 KCC 종류명은 `SecretManagerSecret`이고,
+    "BigQuery BigLake Catalog"라고 쓰지만 종류명은 `BigLakeCatalog`다.
+
+    이걸 검수 파일의 `rejected`+`added`로 처리하면 **노드가 남는다** — 엣지만
+    지워지고 파서가 만든 허구 종류 노드는 그대로다. 그래서 표기 교정은 파서가
+    id를 만들기 전에 한다. 대상이 통째로 틀린 경우(종류는 실재하는데 그 자리의
+    답이 아닌 것)는 여전히 검수 파일에서 다룬다 — 그건 이름 문제가 아니다.
+    """
+    target = path or kind_alias_path(provider)
+    if not target.exists():
+        return {}
+    return json.loads(target.read_text(encoding="utf-8")).get("aliases") or {}
+
+
 def _match(entry: dict, edge: Edge) -> bool:
     """검수 항목이 이 엣지에 해당하는가. **적은 것만 본다.**
 

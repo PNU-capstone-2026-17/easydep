@@ -151,3 +151,48 @@ def test_kind_without_crd_still_yields_a_relationship() -> None:
     from graphkb.parsers.gcp import _KIND_NAME
 
     assert _KIND_NAME.fullmatch("ComputeInstanceTemplate")
+
+
+def test_description_name_is_corrected_to_the_real_kind(monkeypatch) -> None:
+    """설명문 표기를 실재 종류명으로 바로잡는다 (사람이 채운 별칭 표).
+
+    CRD 설명문은 사람이 읽으라고 쓴 산문이라 종류명을 정확히 적지 않는다 —
+    "a Secret resource"라고 쓰지만 KCC 종류는 `SecretManagerSecret`이다.
+
+    **검수 파일의 rejected+added로 처리하면 안 된다.** 엣지만 지워지고 파서가 만든
+    허구 종류 노드(`gcp::Secret`)는 그대로 남는다. 그래서 id를 만들기 전에 고친다.
+    """
+    from graphkb.parsers import gcp
+
+    monkeypatch.setattr(gcp, "_KIND_ALIASES", {"Secret": "SecretManagerSecret"})
+    resolved = gcp._resolve_target(
+        "DatastreamConnectionProfile",
+        "secretManagerSecretRef",
+        {"description": "The name of a Secret resource", "properties": {"external": {}}},
+        sm_index={},
+        known_kinds={"SecretManagerSecret"},
+        heuristics=False,
+    )
+    assert resolved is not None
+    target, evidence, _field = resolved
+    assert target == "SecretManagerSecret"
+    assert evidence == "kcc-description"
+
+
+def test_alias_table_targets_are_real_kinds() -> None:
+    """별칭의 도착지는 실재하는 종류여야 한다 — 오타 나면 조용히 허구가 하나 더 생긴다."""
+    import json
+    from pathlib import Path
+
+    path = Path("graphkb/reviewed/gcp-kind-aliases.json")
+    if not path.exists():
+        return
+    aliases = json.loads(path.read_text(encoding="utf-8"))["aliases"]
+    graph_path = Path("output/gcp-graph.json")
+    if not graph_path.exists():
+        return  # 빌드 전이면 건너뛴다
+    nodes = json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]
+    ids = set(nodes) if isinstance(nodes, dict) else {n["id"] for n in nodes}
+    for wrong, right in aliases.items():
+        assert f"gcp::{right}" in ids, f"{wrong} → {right} (없는 종류)"
+        assert f"gcp::{wrong}" not in ids, f"{wrong} 노드가 아직 남아 있다"

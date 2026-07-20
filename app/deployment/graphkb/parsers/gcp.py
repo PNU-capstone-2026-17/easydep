@@ -31,7 +31,7 @@ import yaml
 
 from graphkb.fetch import fetch_cached
 from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness
+from graphkb.parsers.review import apply_review, check_freshness, load_kind_aliases
 from kbcommon.invariants import announce
 from kbcommon.fetch import describe_source_set
 from kbcommon.sources import SOURCES
@@ -67,6 +67,10 @@ _MAX_DEPTH = 24
 # **침묵시키지 않는다** — 정규식이 "externally" 같은 부사를 종류로 읽은 것(오탐)과
 # KCC가 아직 안 만든 진짜 리소스(수집 공백)가 섞여 있고, 둘은 대응이 다르다.
 UNKNOWN_DESC_TARGETS: collections.Counter = collections.Counter()
+
+# 설명문 표기 → 실재 종류명. 산문은 종류명을 정확히 적지 않는다("a Secret resource"
+# 라고 쓰지만 종류는 SecretManagerSecret). 사람이 채운 표라 파일에 이유가 적혀 있다.
+_KIND_ALIASES: dict[str, str] = load_kind_aliases("gcp")
 
 
 def _node(kind: str) -> Node:
@@ -166,7 +170,8 @@ def _resolve_target(
             if name:
                 UNKNOWN_DESC_TARGETS[name] += 1
             return None
-        return name
+        # 설명문이 쓴 표기를 실재하는 종류명으로 바로잡는다(사람이 채운 표).
+        return _KIND_ALIASES.get(name, name)
 
     props = ref_schema.get("properties") or {}
     texts = [

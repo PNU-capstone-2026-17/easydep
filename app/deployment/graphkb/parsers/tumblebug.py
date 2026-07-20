@@ -177,6 +177,10 @@ def _walk_definition(
                     required=required,
                     cardinality="many" if many else "one",
                     evidence="swagger-field",
+                    # FIELD_TARGETS는 사람이 손으로 채운 표다(`vNetId` → `vNet`).
+                    # 대상을 사람이 정했으므로 검수된 것으로 본다 — Azure의
+                    # azure-references.json과 같은 성격이다.
+                    reviewed=True,
                 )
             )
             continue
@@ -196,6 +200,8 @@ def _walk_definition(
                         required=True,
                         cardinality="one",
                         evidence="swagger-field",
+                        # DEFINITION_TYPES도 손으로 채운 표다.
+                        reviewed=True,
                     )
                 )
             elif ref_name in schemas and ref_name not in visited and depth < _MAX_DEPTH:
