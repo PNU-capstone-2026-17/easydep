@@ -145,3 +145,71 @@ def test_go_bool(raw, expected) -> None:
 )
 def test_burst_bandwidth_detection(raw, expected) -> None:
     assert is_burst_bandwidth(raw) is expected
+
+
+# --- 리전 접기 정책 (2026-07-21, 감사 §5-6 / P3) ---
+
+
+def test_region_fold_is_conservative_not_first_wins() -> None:
+    """리전마다 값이 갈리면 **가장 작은 값**을 쓰고 범위를 병기한다.
+
+    예전엔 first-wins였는데 그건 정책이 아니라 **파일에 먼저 나온 리전을 쓰는
+    우연**이었다 — 덤프 순서만 바뀌어도 같은 질문에 다른 답이 나온다. 실측상
+    `aws c8gn.48xlarge`가 리전에 따라 IOPS 240,000 / 480,000이라, 순서에 따라
+    **2배 과대 진술**이 가능했다.
+
+    성능 KB에서는 과대 진술이 과소 진술보다 해롭다 — "이 정도는 난다"고 했다가
+    안 나는 것이 "더 날 수도 있다"보다 나쁘다.
+    """
+    from perfkb.dataset import _fold_regions
+
+    records = [
+        {"provider": "aws", "specName": "c8gn.48xlarge", "region": "me-central-1",
+         "ebsMaxIops": 480000.0, "currentGeneration": True},
+        {"provider": "aws", "specName": "c8gn.48xlarge", "region": "us-east-1",
+         "ebsMaxIops": 240000.0, "currentGeneration": True},
+    ]
+    folded = _fold_regions(records)
+    assert folded["ebsMaxIops"] == 240000.0            # 보수적으로
+    assert folded["ebsMaxIopsRange"] == [240000.0, 480000.0]  # 폭은 밝힌다
+
+    # 순서를 뒤집어도 같은 답 — 이게 first-wins와의 차이다
+    assert _fold_regions(list(reversed(records)))["ebsMaxIops"] == 240000.0
+
+
+def test_region_fold_leaves_invariant_fields_alone() -> None:
+    from perfkb.dataset import _fold_regions
+
+    records = [
+        {"provider": "aws", "specName": "t3.micro", "region": "us-east-1",
+         "sustainedCpu": {"value": False}, "ebsMaxIops": 11800.0},
+        {"provider": "aws", "specName": "t3.micro", "region": "eu-west-1",
+         "sustainedCpu": {"value": False}, "ebsMaxIops": 11800.0},
+    ]
+    folded = _fold_regions(records)
+    assert folded["sustainedCpu"] == {"value": False}
+    assert "ebsMaxIopsRange" not in folded  # 값이 하나뿐이면 범위를 안 붙인다
+
+
+def test_region_invariance_assumption_is_checked_not_assumed() -> None:
+    """접기는 "경고 신호는 리전 불변"이라는 가정 위에 선다 — 매 빌드 확인한다.
+
+    가정을 주석에 적어 두는 것과 검사하는 것은 다르다. 상류가 리전별로 다른 값을
+    주기 시작하면 접기가 조용히 임의의 답을 낸다.
+    """
+    from kbcommon.invariants import run
+    from perfkb.invariants import INVARIANTS
+
+    ok = {"specs": [
+        {"provider": "aws", "specName": "t3.micro", "sustainedCpu": {"value": False}},
+        {"provider": "aws", "specName": "t3.micro", "sustainedCpu": {"value": False}},
+    ]}
+    assert run(ok, INVARIANTS).ok
+
+    broken = {"specs": [
+        {"provider": "aws", "specName": "t3.micro", "sustainedCpu": {"value": False}},
+        {"provider": "aws", "specName": "t3.micro", "sustainedCpu": {"value": True}},
+    ]}
+    result = run(broken, INVARIANTS)
+    assert not result.ok
+    assert "리전마다" in result.summary()

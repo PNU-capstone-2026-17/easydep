@@ -99,21 +99,57 @@ def get_by_id(spec_id: str, output_dir: Path | str | None = None) -> dict | None
     return _by_id(_resolve(output_dir)).get(spec_id)
 
 
+# 리전마다 값이 다를 수 있는 수치. 접을 때 **보수적으로(작은 값) 고르고 범위를 함께
+# 남긴다** — 성능 KB에서는 과대 진술이 과소 진술보다 해롭기 때문이다. "이 정도는 난다"고
+# 했다가 안 나는 것이 "더 날 수도 있다"보다 나쁘다.
+_REGION_VARYING = (
+    "ebsBaselineIops", "ebsMaxIops", "ebsBaselineMbps", "ebsMaxMbps",
+)
+
+
+def _fold_regions(records: list[dict]) -> dict:
+    """한 스펙의 리전별 레코드를 하나로 접는다. **정책이지 우연이 아니다.**
+
+    예전엔 first-wins였는데, 그건 정책이 아니라 **파일에 먼저 나온 리전을 쓰는
+    우연**이었다 — 같은 질문에 덤프 순서만 바뀌어도 다른 답이 나온다.
+
+    지금 규칙은 둘이다:
+
+    - 리전 불변인 필드(`sustainedCpu` 등)는 그대로 쓴다. 실측상 다리전 스펙
+      3,221종 전부에서 값이 같다 — 다만 그게 **참이라고 가정하지 않고**
+      `region-invariant-signals` 불변식이 매 빌드 확인한다.
+    - 리전마다 갈리는 수치는 **가장 작은 값**을 쓰고 `<필드>Range`에 실제 범위를
+      남긴다. 감춘 것이 아니라 보수적으로 답하고 폭을 함께 밝히는 것이다.
+      (실측: `aws c8gn.48xlarge` 한 종뿐. IOPS가 리전에 따라 240,000 / 480,000)
+    """
+    folded = dict(records[0])
+    if len(records) == 1:
+        return folded
+    for field in _REGION_VARYING:
+        values = sorted(
+            {r[field] for r in records
+             if isinstance(r.get(field), (int, float)) and not isinstance(r.get(field), bool)}
+        )
+        if len(values) > 1:
+            folded[field] = values[0]
+            folded[f"{field}Range"] = [values[0], values[-1]]
+    return folded
+
+
 @lru_cache(maxsize=4)
 def _by_provider_name(output_dir: str) -> dict[tuple[str, str], dict]:
-    """(provider, specName소문자) → 레코드. 리전마다 레코드가 있어 first-wins.
+    """(provider, specName소문자) → **리전을 접은** 레코드 하나.
 
-    경고에 쓰는 신호(`sustainedCpu`, `currentGeneration`)는 리전 불변이라 어느 리전을
-    골라도 같다. 반면 `ebsBaselineIops` 등 일부 수치는 리전마다 다를 수 있으므로
-    (`aws c8gn.48xlarge`가 me-central-1만 60000) 이 인덱스를 수치 조회에 쓰면 안 된다.
+    접는 규칙은 `_fold_regions` 참고. 이 인덱스에서 나온 수치는 리전 단위 답이
+    아니므로, 특정 리전의 값이 필요하면 `find(region=...)`을 써야 한다.
     """
     data = _load_cached(output_dir)
     if data is None:
         return {}
-    index: dict[tuple[str, str], dict] = {}
+    grouped: dict[tuple[str, str], list[dict]] = {}
     for rec in data["specs"]:
-        index.setdefault((rec["provider"], rec["specName"].lower()), rec)
-    return index
+        grouped.setdefault((rec["provider"], rec["specName"].lower()), []).append(rec)
+    return {key: _fold_regions(recs) for key, recs in grouped.items()}
 
 
 def get_by_spec_name(
