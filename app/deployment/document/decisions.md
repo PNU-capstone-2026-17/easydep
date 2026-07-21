@@ -395,6 +395,30 @@ List에 없어 botocore 문서에서 파싱합니다.
 파일(24,183개)입니다. 그대로 읽으면 **모든 인스턴스 타입을 거부**하는 fail-closed가
 됩니다. 리전 모양(`us-east-1` 꼴)에 맞는 키만 읽고 건너뛴 개수를 빌드가 출력합니다.
 
+### Azure 불변성 축을 연다 — `x-ms-mutability` 993건
+`azure-rest-api-specs`에서 **이 필드 하나만** 캡니다(tarball 191MB, 커밋 SHA로 핀).
+
+**왜**: `bicep-types-az`에 이 정보가 **0건**이라 Azure 3,371종 전부가 "변경 불가로 알려진
+속성이 없습니다"라고 답하고 있었습니다 — 데이터 부재가 사실 부재로 읽히는 최대 규모
+사례였습니다. 원본에 없어서가 아니라 **생성기가 떨어뜨립니다**(Bicep에 `Immutable`
+플래그가 없어 `["read","create"]`가 접힘).
+
+실측: stable 스펙 6,842개 → 최신만 1,422개, 그중 325개 파일에 있었고 **993건 / 417종**을
+담았습니다. 불변성 축이 aws 5,177 · gcp 2,199 · **azure 0 → 993**이 됐습니다.
+
+붙는 자리가 핵심 속성입니다 — `DBforMySQL/flexibleServers.properties.administratorLogin`,
+`NetworkCloud/virtualMachines.properties.adminUsername`.
+
+> 처음 표본(AKS 2건, 둘 다 하위 객체)을 보고 "핵심 속성에는 안 붙는다"고 판단했는데
+> **틀렸습니다.** AKS가 유난히 희소했을 뿐입니다.
+
+**단일 소스입니다.** "한 사실에 두 소스를 댄다"를 지킬 짝이 없습니다. 대신 원본이 직접
+단 주석이라 `stated`이고, 타입 이름이 우리 인덱스에 실재하는지는 대조합니다(못 찾은
+2종 3건은 담지 않고 셉니다).
+
+**`read`만 있는 것은 담지 않습니다** — 읽기 전용은 `bicep-flags`가 이미 4,704건 담고
+있어 중복이고, 라벨 하나에 성격 하나라는 규칙에 어긋납니다.
+
 ### 조건은 목록이다 — cfn-lint `if`/`then` 966건
 `condition`(단일)을 **`conditions`(논리곱 목록)**으로 넓히고 `op`에 `matches`를
 더했습니다. 설계 문서가 "필요해지면 그때 넓힌다"고 적어 둔 그때입니다.
@@ -604,7 +628,6 @@ conftest가 리전 4개짜리 번들만 보므로 충돌을 구조적으로 못 
 |---|---|---|
 | D4 | AWS Service Quotas 수집 | **스코프를 레코드에 적어야** — `Storage for gp3 volumes = 50 TiB`는 볼륨당처럼 보이지만 **계정 총량** |
 | T3 | botocore 전 서비스 | 파이프 구분 `Valid Values`만. 자유 서술 `Constraints:`는 제외(조사 둘이 독립적으로 같은 결론) |
-| T4 | Azure `x-ms-mutability` | 이것만 캠. 나머지는 이미 bicep-types에 있음(정정 c). 약 933건 예상 |
 | T5 | Price List RDS/DocDB | **저장소에 넣지 않고 빌드 때 받음**(재배포 허가 없음). *가격이 있다 ≠ 주문 가능하다* |
 | K1·K2 | `pattern` 컴파일 실패 197건 / 앵커 없음 1,008건 | 소비자가 `re.compile`하다 터짐 |
 | D8 | 가속기 모델 표기 무정규화 | T4가 **13가지 표기**, 2,100건 |

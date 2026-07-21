@@ -46,6 +46,7 @@ _EVIDENCE_NAMES = {
     "tpaws-schema": "Terraform AWS 프로바이더 스키마",
     "cfn-lint-region": "cfn-lint 리전별 허용값",
     "cfn-lint-conditional": "cfn-lint 조건부 허용값",
+    "swagger-mutability": "Azure REST 명세의 변경 가능성 표시",
     "aws-price-list": "AWS 가격표 API",
     "botocore-doc": "AWS SDK 설명문",
     "aws-cross-checked": "AWS 공식 두 소스 교차 확인",

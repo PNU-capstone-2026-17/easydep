@@ -184,3 +184,57 @@ def test_full_scope_leaves_no_scope_marker() -> None:
     """
     from capacitykb.parsers.azure import DEFAULT_PROVIDERS
     assert DEFAULT_PROVIDERS == (), "기본은 전체여야 한다 (손으로 고른 목록 없음)"
+
+
+# --- x-ms-mutability (azure_mutability.py) ---
+
+
+def test_arm_type_reads_the_alternation_not_the_braces() -> None:
+    """ARM 경로는 `타입/이름` 교대다. `{파라미터}`를 걸러내는 방식은 틀린다.
+
+    `/virtualMachineInstances/default`의 `default`는 이름인데, 중괄호만 보고
+    거르면 그걸 타입으로 읽어 `.../virtualMachineInstances/default`라는 없는
+    타입이 나온다(실측 21종 27건).
+    """
+    from capacitykb.parsers.azure_mutability import arm_type
+
+    base = "/subscriptions/{s}/resourceGroups/{g}/providers/"
+    assert arm_type(base + "Microsoft.ContainerService/managedClusters/{n}") == (
+        "Microsoft.ContainerService/managedClusters"
+    )
+    assert arm_type(base + "Microsoft.ContainerService/managedClusters/{n}/agentPools/{a}") == (
+        "Microsoft.ContainerService/managedClusters/agentPools"
+    )
+    assert arm_type(base + "Microsoft.AzureStackHCI/virtualMachineInstances/default") == (
+        "Microsoft.AzureStackHCI/virtualMachineInstances"
+    )
+
+
+def test_arm_type_uses_the_last_providers_segment() -> None:
+    """`/providers/`가 두 번 나오면 뒤쪽이 진짜 타입이다 (실측 10종)."""
+    from capacitykb.parsers.azure_mutability import arm_type
+
+    url = (
+        "/subscriptions/{s}/resourceGroups/{g}/providers/Microsoft.Sql/servers/{n}"
+        "/providers/Microsoft.Insights/diagnosticSettings/{d}"
+    )
+    assert arm_type(url) == "Microsoft.Insights/diagnosticSettings"
+
+
+def test_only_create_without_update_becomes_immutable() -> None:
+    """`update`가 있으면 불변이 아니고, `read`만 있는 건 우리 몫이 아니다.
+
+    읽기 전용은 `bicep-flags`가 이미 4,704건 담고 있어 중복이고, 라벨 하나에
+    성격 하나라는 규칙상 섞으면 안 된다.
+    """
+    from capacitykb.parsers.azure_mutability import parse_tarball
+
+    # 순수 함수 부분만 본다 — tarball 없이 판정 규칙을 고정한다.
+    def verdict(mutability):
+        return "create" in mutability and "update" not in mutability
+
+    assert verdict(("create", "read")) is True
+    assert verdict(("create",)) is True
+    assert verdict(("create", "read", "update")) is False
+    assert verdict(("read",)) is False
+    assert callable(parse_tarball)

@@ -181,6 +181,20 @@ SOURCES: dict[str, Source] = {
         pin="(git으로 버전 관리됨)",
         note="사람이 손으로 고치는 파일이라 오히려 해시 추적이 필요하다.",
     ),
+    "azure-rest-api-specs": Source(
+        key="azure-rest-api-specs",
+        url=(
+            "https://codeload.github.com/Azure/azure-rest-api-specs/tar.gz/"
+            "76ca9f3e8e7d8ee18676ec410cf72249e5417c22"
+        ),
+        pin_kind="commit",
+        pin="76ca9f3e8e7d8ee18676ec410cf72249e5417c22",
+        note=(
+            "태그가 없는 저장소라 커밋 SHA로 고정. tarball 191MB(55초, 캐시됨). "
+            "`x-ms-mutability` 하나만 쓴다 — 나머지 제약은 bicep-types가 이미 담고 "
+            "있고 우리가 소비 중이다. 2026-07-21."
+        ),
+    ),
     "tumblebug-dump": Source(
         key="tumblebug-dump",
         url="https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.12.25/assets/assets.dump.gz",

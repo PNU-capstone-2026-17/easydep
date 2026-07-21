@@ -83,6 +83,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 그렇게 적어 놓은 것이라 stated다.
     "cfn-lint-region": STATED,
     "cfn-lint-conditional": STATED,
+    # Azure 명세가 직접 단 주석(`x-ms-mutability`)이다. 교차 검증할 짝이 없는
+    # 단일 소스이지만, 우리가 짐작한 게 아니라 원본이 적어 둔 것이라 stated다.
+    "swagger-mutability": STATED,
     # AWS 한도. 두 공식 소스가 **같은 값을 말했을 때만** 이 라벨을 단다 —
     # 어느 한쪽만으로는 담지 않는다. 단일 미검증 소스가 감사에서 나온
     # "확신에 찬 오답"의 원인이었다.

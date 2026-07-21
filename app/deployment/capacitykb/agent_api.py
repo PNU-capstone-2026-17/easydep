@@ -33,6 +33,7 @@ CAPACITY_FILES = (
     "aws-tf.json",
     "aws-regions.json",
     "aws-conditional.json",
+    "azure-mutability.json",
 )
 
 #: 조건이 이보다 많으면 값을 나열하지 않고 "몇 가지에서 되는지"로 요약한다.
