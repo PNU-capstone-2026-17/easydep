@@ -19,6 +19,7 @@ from capacitykb.query import (
     limits_for,
     resolve_type,
 )
+from kbcommon import artifact
 from kbcommon.basis import describe
 from kbcommon.display import backend_caveat, display, evidence_name
 
@@ -50,9 +51,10 @@ def _load_merged_cached(output_dir: str) -> CapacitySet | None:
     merged = CapacitySet()
     found = False
     for name in CAPACITY_FILES:
-        path = base / name
-        if path.exists():
-            merged.merge(CapacitySet.load(path))
+        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
+        path = artifact.resolve(base, name)
+        if path is not None:
+            merged.merge(CapacitySet.from_dict(artifact.load_json(path)))
             found = True
     return merged if found else None
 

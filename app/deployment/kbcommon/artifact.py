@@ -77,6 +77,16 @@ def write_dataset(
     return result
 
 
+def load_json(path: Path) -> dict:
+    """`.gz`든 아니든 읽는다."""
+    if path.suffix == ".gz":
+        import gzip
+
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            return json.load(handle)
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:
     """산출물을 읽어 검증한다. **예외를 던지지 않는다.**
 
@@ -89,7 +99,9 @@ def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:
     if not path.exists():
         return None, None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # `.gz`(저장소에 커밋한 산출물)도 그대로 읽는다. 여기서 안 받으면 폴백이
+        # 조용히 "빌드 안 됨"으로 떨어진다 — 실제로 그렇게 한 번 새어 나갔다.
+        data = load_json(path)
     except (OSError, UnicodeDecodeError) as exc:
         return None, f"{path}를 읽을 수 없습니다: {exc}"
     except json.JSONDecodeError as exc:
@@ -103,3 +115,43 @@ def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:
 
 
 REBUILD_HINT = "다시 빌드하거나 파일을 지우세요"
+
+
+# --- 저장소에 커밋된 산출물 ------------------------------------------------
+#
+# 클론 직후 빌드 없이 동작하게 하려고 gzip한 산출물을 `data/`에 커밋한다.
+# `output/`(새로 빌드한 것)이 있으면 그쪽이 이기고, 없을 때만 `data/`에서 꺼낸다.
+#
+# **폴백은 기본 위치에서만 한다.** 호출자가 다른 디렉터리를 명시하면 그 말을
+# 그대로 지킨다 — 테스트가 빈 tmp 디렉터리를 묶어 "미빌드 상태"나 "번들 36건
+# 폴백"을 검사하는데, 거기서 커밋된 데이터가 슬쩍 끼어들면 그 테스트들이
+# 검사하려던 상황 자체가 사라진다.
+#
+# 커밋한 파일에는 `_source` 블록(핀·sha256)이 그대로 들어 있어 어느 소스 어느
+# 커밋에서 나왔는지가 파일 안에 남는다. 핀 규약이 약해지는 게 아니라 검증
+# 가능해지는 쪽이다.
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BUNDLED_DIR = REPO_ROOT / "data"
+DEFAULT_OUTPUT = REPO_ROOT / "output"
+
+
+def resolve(output_dir: Path | str, name: str) -> Path | None:
+    """산출물 하나의 실제 경로. 없으면 None.
+
+    `output/<name>` → `data/<name>.gz` 순으로 본다. `output_dir`가 기본 위치가
+    아니면 폴백하지 않는다(위 주석 참고).
+    """
+    fresh = Path(output_dir) / name
+    if fresh.exists():
+        return fresh
+    try:
+        is_default = Path(output_dir).resolve() == DEFAULT_OUTPUT
+    except OSError:
+        is_default = False
+    if not is_default:
+        return None
+    packed = BUNDLED_DIR / f"{name}.gz"
+    return packed if packed.exists() else None
+
+

@@ -16,6 +16,7 @@ from pathlib import Path
 
 import jsonschema
 
+from kbcommon import artifact
 from kbcommon.artifact import read_dataset
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
@@ -42,7 +43,10 @@ def _load_result(output_dir: str) -> tuple[dict | None, str | None]:
     이 데이터를 조인하는 **비용 추천 전체가 죽었다**(결함 (마)). 성능 경고는 부가
     정보이므로, 없으면 없는 대로 추천은 살아야 한다.
     """
-    return read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
+    found = artifact.resolve(output_dir, BUILT_FILENAME)
+    if found is None:
+        return read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
+    return read_dataset(found, _schema())
 
 
 def _load_cached(output_dir: str) -> dict | None:

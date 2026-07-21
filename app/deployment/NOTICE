@@ -1,0 +1,33 @@
+이 저장소는 아래 오픈소스 프로젝트의 산출물을 포함하거나 그로부터 유도한
+데이터를 포함합니다.
+
+## data/tumblebug-cost.json.gz, data/tumblebug-perf.json.gz
+
+cloud-barista / cb-tumblebug (v0.12.25) 의 `assets/assets.dump.gz`에서
+유도했습니다.
+
+    https://github.com/cloud-barista/cb-tumblebug
+    Copyright The Cloud-Barista Authors
+    Licensed under the Apache License, Version 2.0
+    http://www.apache.org/licenses/LICENSE-2.0
+
+가격·스펙 값은 스냅샷이며 실제 청구서가 아닙니다. 각 산출물의 `_source`
+블록에 받은 시점의 태그와 sha256이 들어 있습니다.
+
+## 그 밖의 소스
+
+`data/`의 나머지 파일은 각 벤더의 공개 스키마에서 유도한 것입니다. 어느
+소스 어느 커밋에서 나왔는지는 파일 안 `_source` 블록에 있고, 고정 정보는
+`kbcommon/sources.py`에 있습니다.
+
+- AWS CloudFormation Registry 스키마 (Amazon Web Services)
+- cfn-lint (Amazon Web Services, MIT-0)
+- Azure bicep-types-az (Microsoft, MIT)
+- MicrosoftDocs/azure-docs (Microsoft, CC-BY-4.0)
+- GCP Config Connector CRD (Google, Apache-2.0)
+- terraform-provider-google / terraform-provider-aws (HashiCorp, MPL-2.0)
+- botocore (Amazon Web Services, Apache-2.0)
+
+**포함하지 않는 것**: AWS Price List Bulk API 응답은 재배포 허가가 없어
+저장소에 넣지 않습니다. 빌드 때 받아 쓰고, 산출물에는 거기서 유도한 EBS
+볼륨 한도 20건만 남습니다(가격 값은 남지 않습니다).

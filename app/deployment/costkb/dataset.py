@@ -24,6 +24,7 @@ from pathlib import Path
 
 import jsonschema
 
+from kbcommon import artifact
 from kbcommon.artifact import REBUILD_HINT, read_dataset
 
 _SPECS_PATH = Path(__file__).with_name("specs.json")
@@ -80,7 +81,9 @@ def _load_cached(output_dir: str) -> _Loaded:
     폴백하되 조용히 하지는 않는다: 사용자는 자기가 지금 36건짜리 번들을 보고
     있다는 걸 알아야 한다.
     """
-    data, error = read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
+    # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
+    found = artifact.resolve(output_dir, BUILT_FILENAME)
+    data, error = read_dataset(found or Path(output_dir) / BUILT_FILENAME, _schema())
     if data is not None:
         return _Loaded(data)
     bundle = _load_validated(_SPECS_PATH)  # 번들이 깨졌으면 그건 진짜 버그다
@@ -137,8 +140,8 @@ def is_built(output_dir: Path | str | None = None) -> bool:
     커버리지 안내가 73k건 기준으로 나가는데 정작 답은 번들 36건에서 나온다.
     """
     return _load_cached(_resolve(output_dir)).warning is None and (
-        Path(_resolve(output_dir)) / BUILT_FILENAME
-    ).exists()
+        artifact.resolve(_resolve(output_dir), BUILT_FILENAME) is not None
+    )
 
 
 def filter_specs(

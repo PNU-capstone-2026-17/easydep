@@ -22,6 +22,7 @@ from graphkb.query import (
     rank_types as _rank_types,
     resolve_node,
 )
+from kbcommon import artifact
 from kbcommon.basis import describe
 from kbcommon.display import display, evidence_name
 
@@ -46,9 +47,10 @@ def _load_merged_cached(output_dir: str) -> Graph | None:
     merged = Graph()
     found = False
     for name in GRAPH_FILES:
-        path = base / name
-        if path.exists():
-            merged.merge(Graph.load(path))
+        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
+        path = artifact.resolve(base, name)
+        if path is not None:
+            merged.merge(Graph.from_dict(artifact.load_json(path)))
             found = True
     return merged if found else None
 
