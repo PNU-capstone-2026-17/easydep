@@ -131,3 +131,48 @@ def test_prose_lines_ignored(vnet: list[Quota]) -> None:
     """표 밖의 산문/노트/각주 줄은 레코드가 되지 않는다."""
     assert len(vnet) == 10  # 2열 표 7행 + 3열 표 3행
     assert all(q.default is not None or q.maximum is not None for q in vnet)
+
+# --- 전체 limits 문서를 읽는다 (D4) ---
+
+
+def test_default_reads_every_limits_doc() -> None:
+    """손으로 고른 목록을 없앴다.
+
+    예전엔 2개만 읽었고 그 둘을 고른 이유가 "코어 리소스를 덮는다"는 우리 판단뿐이라,
+    나머지 80개 문서의 쿼터는 물어봐도 "없음"이 나왔다.
+    """
+    from capacitykb.parsers.azure_quota import DEFAULT_INCLUDES
+    assert DEFAULT_INCLUDES == (), "기본은 전체여야 한다"
+
+
+def test_coverage_states_that_only_azure_has_quotas(tmp_path) -> None:
+    """'쿼터가 없다'와 '그 클라우드는 아예 못 받는다'는 다르다.
+
+    AWS Service Quotas와 GCP Cloud Quotas는 자격증명이 필요해 이 빌드에서 못 받는다.
+    그 사실이 산출물에 적혀 있어야 사용자가 침묵을 오해하지 않는다.
+    """
+    from capacitykb.model import CapacitySet, Quota
+    capacity = CapacitySet()
+    capacity.add_quota(Quota(provider="azure", name="X", source_doc="d.md",
+                             evidence="azure-limits-doc"))
+    capacity.coverage = [{"provider": "azure", "types": 0,
+                          "note": "쿼터는 Azure만 수록한다 — AWS/GCP는 자격증명이 필요하다."}]
+    capacity.save(tmp_path / "azure-quota.json")
+    loaded = CapacitySet.load(tmp_path / "azure-quota.json")
+    assert "자격증명" in loaded.coverage[0]["note"]
+
+
+def test_empty_include_list_does_not_silently_read_nothing(tmp_path) -> None:
+    """목록을 안 주면 **전체**를 읽는다 — 빈 목록으로 조용히 성공하면 안 된다.
+
+    로컬 디렉터리를 넘기는 경로에서 실제로 이 버그가 났고, CLI 테스트가 잡았다.
+    """
+    from capacitykb.parsers.azure_quota import build
+
+    doc = tmp_path / "docs"
+    doc.mkdir()
+    (doc / "sample-limits.md").write_text(
+        "| Resource | Limit |\n|---|---|\n| Widgets per thing | 42 |\n", encoding="utf-8"
+    )
+    got = build(tmp_path / "out.json", base_url=str(doc))
+    assert [q.name for q in got.quotas] == ["Widgets per thing"]

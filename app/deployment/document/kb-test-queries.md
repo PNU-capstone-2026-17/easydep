@@ -48,7 +48,7 @@ python -m perfkb build
 | Lambda 함수 MemorySize 제약이 뭐야? | `cap_property_limits` | 기본값 128 (설명문 유래라 **짐작**) |
 | 서브넷에서 나중에 못 바꾸는 속성이 뭐야? | `cap_immutable_properties` | **11개** (AvailabilityZone·CidrBlock 등) |
 | ECS 서비스 LaunchType에 뭘 넣을 수 있어? | `cap_allowed_values` | EC2 / FARGATE / EXTERNAL (**원본에 명시됨**) |
-| Azure 가상 네트워크 관련 쿼터 알려줘 | `cap_service_quota` | **9건** (Subnets per vNet 3000 등) |
+| Azure 가상 네트워크 관련 쿼터 알려줘 | `cap_service_quota` | **27건** (Subnets per vNet 3000 등) |
 
 ### 1-3. 스펙·가격 (`cost_*` 2개) — costkb
 
@@ -216,7 +216,7 @@ AWS m5.large랑 Azure Standard_D2s_v3 중에 뭐가 더 빨라?
 | RDS Engine에 뭘 넣을 수 있어? | 없음 | CFN 스키마에 enum이 없음 (설명문에만 존재) |
 | Azure vNet에서 못 바꾸는 속성은? | 없음 | Azure는 불변성 정보를 스키마에 안 담음 (커버율은 99.7%인데도 이 축만 빔) |
 | ~~GCP 제약~~ | **이제 나옵니다** | 커버율 0% → **92.7%**(497/536종). 단 **수치 한도는 여전히 0건** — KCC 원본에 `minimum`/`maximum`이 하나도 없습니다 |
-| AWS·GCP 쿼터 | 없음 | 쿼터는 **Azure 52건**만 수록 |
+| AWS·GCP 쿼터 | 없음 | 쿼터는 **Azure 494건**만 수록. AWS Service Quotas·GCP Cloud Quotas는 **둘 다 자격증명이 필요**해 이 빌드에서 못 받습니다 |
 | tencent/ibm 등 성능 프로파일 | 없음 | 성능은 **aws/azure/gcp만** 수록(나머지 7개는 details 미추적). `cost_recommend_specs` 추천에도 후보마다 `· 성능 정보 없음`으로 고지됩니다 |
 | Azure 인스턴스 ACU (약 62%) | 없음 | ACU 결측이 세대로 설명 안 됨 — "느리다"가 아니라 "모른다" |
 

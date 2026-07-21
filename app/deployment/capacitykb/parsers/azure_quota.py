@@ -33,11 +33,14 @@ from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
 
 DEFAULT_BASE_URL = SOURCES["azure-limits-doc"].url
-# 코어 리소스 타입(네트워크/구독)을 덮는 최소 목록. --includes 로 확장한다.
-DEFAULT_INCLUDES = (
-    "azure-virtual-network-limits.md",
-    "azure-subscription-limits.md",
-)
+#: 기본은 **전체**다(`includes/*-limits.md` 82개). 예전에는 두 개만 읽었는데,
+#: 그 둘을 고른 이유가 "코어 리소스를 덮는다"는 우리 판단이었을 뿐이라
+#: 나머지 80개 문서의 쿼터는 물어봐도 "없음"이 나왔다. 좁히려면 --includes.
+DEFAULT_INCLUDES: tuple[str, ...] = ()
+
+#: 파일 목록을 얻을 트리 API. 핀은 `azure-limits-doc`의 커밋 SHA와 같은 것을 쓴다 —
+#: 목록과 내용이 다른 시점이면 "있다고 한 파일이 없는" 상태가 된다.
+_TREE_API = "https://api.github.com/repos/MicrosoftDocs/azure-docs/git/trees"
 
 PROVIDER = "azure"
 EVIDENCE = "azure-limits-doc"   # 표의 숫자 — 원본이 명시
@@ -170,6 +173,32 @@ def parse_markdown(text: str, source_doc: str) -> list[Quota]:
     return quotas
 
 
+def list_limits_files(commit: str, *, refresh: bool = False) -> tuple[str, ...]:
+    """고정 커밋의 `includes/` 아래 `*-limits.md` 전체를 나열한다."""
+    root_path = fetch_cached(
+        f"{_TREE_API}/{commit}", f"azure-docs-tree-{commit}.json", refresh=refresh
+    )
+    root = json.loads(root_path.read_text(encoding="utf-8"))
+    sha = next(
+        (e["sha"] for e in root.get("tree", []) if e.get("path") == "includes"), None
+    )
+    if sha is None:
+        raise FileNotFoundError("azure-docs 트리에서 includes/ 를 찾지 못했습니다.")
+    inc_path = fetch_cached(
+        f"{_TREE_API}/{sha}", f"azure-docs-includes-{sha[:12]}.json", refresh=refresh
+    )
+    inc = json.loads(inc_path.read_text(encoding="utf-8"))
+    if inc.get("truncated"):
+        print("경고: includes/ 목록이 잘렸습니다 — 일부 문서가 누락될 수 있음", file=sys.stderr)
+    return tuple(
+        sorted(
+            e["path"]
+            for e in inc.get("tree", [])
+            if e.get("type") == "blob" and e["path"].endswith("-limits.md")
+        )
+    )
+
+
 def build(
     output: Path,
     *,
@@ -178,6 +207,17 @@ def build(
     refresh: bool = False,
 ) -> CapacitySet:
     """limits 문서를 받아 파싱하고 output에 저장한 뒤 결과를 반환한다."""
+    if not includes:
+        # 목록을 안 주면 전체를 읽는다. 로컬 디렉터리를 넘겼으면 거기서,
+        # 아니면 고정 커밋의 트리에서 찾는다. 여기서 빈 목록을 그냥 두면
+        # **아무것도 안 읽고 조용히 성공**한다 — 테스트가 그걸 잡았다.
+        local_dir = Path(base_url)
+        includes = (
+            tuple(sorted(p.name for p in local_dir.glob("*-limits.md")))
+            if local_dir.is_dir()
+            else list_limits_files(SOURCES["azure-limits-doc"].pin, refresh=refresh)
+        )
+        print(f"azure-quota: limits 문서 {len(includes)}개 읽는 중")
     capacity = CapacitySet()
     read_paths: list[Path] = []
     for name in includes:
@@ -197,10 +237,29 @@ def build(
             capacity.add_quota(quota)
 
     capacity.provenance = [describe_source_set(read_paths, "azure-limits-doc")]
+    capacity.coverage = [{
+        "provider": "azure",
+        "types": len({q.type_id for q in capacity.quotas if q.type_id}),
+        "note": (
+            f"azure-docs의 includes/*-limits.md {len(read_paths)}개를 읽는다. "
+            "**쿼터는 Azure만 수록한다** — AWS Service Quotas와 GCP Cloud Quotas는 "
+            "둘 다 자격증명이 필요해 이 빌드에서 받을 수 없다. "
+            "타입 연결은 사람이 검수한 표(azure_quota_types.json)에 있는 것만 되고, "
+            "나머지는 **이름 검색으로만** 찾힌다."
+        ),
+    }]
     announce(capacity.save(output), "capacitykb/azure_quota")
     linked = sum(1 for q in capacity.quotas if q.type_id)
+    total = len(capacity.quotas)
     print(
-        f"azure-quota: 쿼터 {len(capacity.quotas)}개 (타입 연결 {linked}개, "
-        f"문서 {len(includes)}개) → {output}"
+        f"azure-quota: 쿼터 {total}개 (문서 {len(includes)}개) → {output}"
+    )
+    # 조용히 두면 "쿼터가 494건이나 있다"만 보이고, 교차 축 질의
+    # (타입 → 그 타입의 쿼터)가 대부분 안 붙는다는 사실이 가려진다.
+    print(
+        f"  타입 연결 {linked}/{total}건 ({linked / max(total, 1):.0%}) — "
+        "나머지는 이름 검색으로만 찾힙니다. 연결을 늘리려면 "
+        "capacitykb/parsers/azure_quota_types.json 에 검수해 추가하세요.",
+        file=sys.stderr,
     )
     return capacity
