@@ -164,6 +164,14 @@ agents: `app.include_router(requirements_router)` for
 the design UI at `/`. The `/requirements` mount has to come first — the `/` mount
 is a catch-all. Startup does `init_db()` and preloads the BERT classifier once.
 
+Both pages are served from the same origin, so they share the app id through one
+`localStorage` key, `easydep_app_id` (`APP_ID_KEY` in each). The requirements UI
+issues an app when an analysis starts without one and sends `app_id` on every
+call, including the clarify and feedback resumes — the result is only persisted
+when the session completes, so dropping it midway would lose the storage target.
+The design UI reads the key on load and listens for `storage` events, which fire
+only for changes made in another tab.
+
 The four stages stay in `EXTERNAL_STAGES`. `generate` is one-shot per stage,
 while an analysis is a single interrupt-driven session that yields all four
 together, so driving them from `generate_stage` would mean running the whole
@@ -179,9 +187,6 @@ analysis four times.
   validation display, and diagram rendering are already generic. The
   "유스케이스 명세 저장" button and `saveUsecaseSpec()` are now a fallback for
   designing without an analysis run, not the only way to seed a specification.
-- The two UIs are separate pages that do not share an `app_id`: the design UI
-  keeps one in `localStorage`, and the requirements UI does not send one yet, so
-  today the handoff has to be driven over the API by hand.
 - If a stage needs a syntax-checked PlantUML artifact, reuse
   `auto_fix_puml_stage`; it already covers `usecase_diagram` through
   `PUML_FIELDS`.
