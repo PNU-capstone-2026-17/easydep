@@ -123,3 +123,30 @@ def test_fast_validator_rejects_what_the_slow_one_rejects(tmp_path) -> None:
             slow_ok = False
         fast_ok = artifact._validate_fast(data, schema) is None
         assert slow_ok == fast_ok == expected_ok, f"판정이 갈렸다: {data}"
+
+
+def test_fast_parser_reads_the_same_values(tmp_path) -> None:
+    """파서를 바꿔도 **같은 파이썬 값**이 나와야 한다.
+
+    검증기와 달리 여기는 판정이 갈릴 여지가 없지만, 한글·큰 수·null·중첩처럼
+    인코딩이 얽히는 것들은 실제로 확인해 둔다.
+    """
+    import gzip
+    import json as stdlib_json
+
+    payload = {
+        "_note": "한글과 특수문자 ⚠ · — ‑",
+        "big": 9007199254740993,
+        "float": 0.1 + 0.2,
+        "null": None,
+        "nested": [{"a": [1, 2, {"b": "값"}]}],
+        "empty": {},
+    }
+    plain = tmp_path / "x.json"
+    plain.write_text(stdlib_json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    packed = tmp_path / "y.json.gz"
+    with gzip.open(packed, "wt", encoding="utf-8") as handle:
+        stdlib_json.dump(payload, handle, ensure_ascii=False)
+
+    assert artifact.load_json(plain) == payload
+    assert artifact.load_json(packed) == payload

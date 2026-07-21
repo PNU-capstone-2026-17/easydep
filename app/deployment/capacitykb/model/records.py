@@ -383,4 +383,6 @@ class CapacitySet:
 
     @classmethod
     def load(cls, path: Path) -> CapacitySet:
-        return cls.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        from kbcommon.artifact import load_json
+
+        return cls.from_dict(load_json(path))

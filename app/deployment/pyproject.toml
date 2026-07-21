@@ -14,6 +14,9 @@ dependencies = [
     # (costkb 28.8초 · perfkb 48.6초). 스키마를 코드로 컴파일해 18배 빠르다.
     # 망가뜨린 입력 10가지에서 두 검증기의 판정이 전부 일치하는 것을 확인했다.
     "fastjsonschema>=2.19",
+    # 산출물 읽기 전용. 표준 json은 순수 파이썬이라 28MB에 1.9초가 든다(실측).
+    # orjson은 0.58초. 검증기와 달리 판정이 갈릴 여지가 없어 위험이 낮다.
+    "orjson>=3.10",
     "openai-agents>=0.18.2",
     "python-dotenv>=1.2.2",
     "pyyaml>=6",
