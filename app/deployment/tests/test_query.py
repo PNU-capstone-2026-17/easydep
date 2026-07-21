@@ -266,7 +266,8 @@ def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket")
 
-    assert "반드시 먼저 있어야 하는 것은 없습니다" in text
+    assert "바로 생성" not in text, "침묵을 허가로 바꿔 말하고 있다"
+    assert "필수로 표시한" in text
     assert "함께 쓸 수 있는 것 (2개" in text
     assert "aws::AccessPoint" in text and "aws::LogGroup" in text
     # 대상 자신만 있는 목록은 정보가 아니므로 찍지 않는다
@@ -279,5 +280,8 @@ def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket", required_only=True)
 
-    assert "바로 생성할 수 있습니다" in text
+    # required_only 분기도 같은 계약을 지킨다. 예전에는 이쪽만 "바로 생성할 수
+    # 있습니다"라고 말했다 — 바로 위 테스트가 그걸 거짓말이라고 적어 놓고도.
+    assert "바로 생성" not in text
+    assert "필수로 표시한" in text
     assert "aws::AccessPoint" not in text

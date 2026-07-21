@@ -105,16 +105,25 @@ def creation_order(
         }
     )
 
+    # **"필수 표시가 없다"를 "바로 만들어도 된다"로 바꿔 말하지 않는다.**
+    # 예전 문구는 "바로 생성할 수 있습니다"였다. 스키마의 필수 표시는 실제 배포
+    # 요건과 다르다 — Azure VM은 `networkProfile`이 스키마상 선택이라 필수 목록이
+    # 비지만, NIC 없이는 만들 수 없다. 침묵을 허가로 바꾸면 fail-open이 아니라
+    # 그냥 틀린 말이 된다.
+    _SCHEMA_CAVEAT = (
+        "스키마가 **필수로 표시한** 선행 리소스가 없다는 뜻이며, 실제로 아무것도 "
+        "필요 없다는 뜻이 아닙니다. 스키마가 선택으로 두지만 실무에서는 있어야 하는 "
+        "것이 있습니다(예: Azure VM의 네트워크 인터페이스). 아래 '함께 쓸 수 있는 것'을 "
+        "함께 보세요."
+    )
+
     if len(result.ordered) == 1 and (required_only or not optional):
-        return (
-            f"{node.id} 는 반드시 먼저 만들어야 하는 선행 리소스가 없습니다. "
-            "바로 생성할 수 있습니다."
-        )
+        return f"{node.id} — {_SCHEMA_CAVEAT}"
 
     lines: list[str] = []
     if len(result.ordered) == 1:
         # 목록을 찍지 않는다 — 대상 자기 자신뿐이라 "1. 대상"은 정보가 아니다.
-        lines.append(f"{node.id} — 스키마상 반드시 먼저 있어야 하는 것은 없습니다.")
+        lines.append(f"{node.id} — {_SCHEMA_CAVEAT}")
     else:
         lines.append(f"{node.id} 생성에 반드시 먼저 있어야 하는 것 (이 순서대로):")
         for i, step in enumerate(result.steps, start=1):

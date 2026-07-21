@@ -251,7 +251,9 @@ def parse_crds(
         if isinstance(schema, dict):
             specs.append((kind, schema))
 
-    def walk(kind: str, schema: dict, path: str, *, in_array: bool, depth: int) -> None:
+    def walk(
+        kind: str, schema: dict, path: str, *, in_array: bool, required: bool, depth: int
+    ) -> None:
         if depth > _MAX_DEPTH:
             return
         required_set = set(schema.get("required") or [])
@@ -296,7 +298,12 @@ def parse_crds(
                             # 계층 참조는 "참조"가 아니라 "담김"이다.
                             type="contained_in" if hierarchy else "references",
                             via_property=via,
-                            required=prop_name in required_set,
+                            # **조상과 논리곱.** CRD의 `required`는 그 부모 객체
+                            # 안에서만 필수라는 뜻이다. 그대로 올리면 선택 설정
+                            # 블록 안의 참조가 리소스 필수가 된다 — ContainerCluster의
+                            # `ipAllocationPolicy.additionalIpRangesConfigs.subnetworkRef`가
+                            # 그랬다.
+                            required=required and prop_name in required_set,
                             cardinality="many" if many else "one",
                             evidence=evidence,
                             target_property=target_field,
@@ -305,10 +312,15 @@ def parse_crds(
                 continue  # Ref 필드 내부(external/name)는 더 내려가지 않음
 
             if isinstance(target_schema, dict):
-                walk(kind, target_schema, via, in_array=many, depth=depth + 1)
+                walk(
+                    kind, target_schema, via, in_array=many,
+                    required=required and prop_name in required_set,
+                    depth=depth + 1,
+                )
 
     for kind, schema in specs:
-        walk(kind, schema, "", in_array=False, depth=0)
+        # 루트는 필수로 출발한다 — spec 자체는 늘 있다. 아래로 내려가며 논리곱한다.
+        walk(kind, schema, "", in_array=False, required=True, depth=0)
     return graph
 
 

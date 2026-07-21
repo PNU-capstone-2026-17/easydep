@@ -99,8 +99,16 @@ def test_creation_order_text(output_dir: Path) -> None:
 
 
 def test_creation_order_leaf(output_dir: Path) -> None:
+    """필수 표시가 없어도 **"바로 만들어도 된다"고 말하지 않는다.**
+
+    스키마의 필수 표시는 실제 배포 요건과 다르다 — Azure VM은 networkProfile이
+    스키마상 선택이라 필수 목록이 비지만 NIC 없이는 만들 수 없다. 침묵을 허가로
+    바꿔 말하면 fail-open이 아니라 그냥 틀린 말이 된다.
+    """
     text = agent_api.creation_order("vNet", output_dir=output_dir)
-    assert "바로 생성" in text
+    assert "바로 생성" not in text, "침묵을 허가로 바꿔 말하고 있다"
+    assert "필수로 표시한" in text
+    assert "실제로 아무것도 필요 없다는 뜻이 아닙니다" in text
 
 
 def test_deletion_impact_text(output_dir: Path) -> None:

@@ -255,19 +255,25 @@ def extract_references(
                     if idx not in visited:
                         walk(from_type, sub, path, in_array=in_array, required=required, depth=depth + 1, visited=visited | {idx})
             if kind == "DiscriminatedObjectType":
-                _walk_properties(from_type, entry.get("baseProperties") or {}, path, in_array=in_array, depth=depth, visited=visited)
+                _walk_properties(from_type, entry.get("baseProperties") or {}, path, in_array=in_array, required=required, depth=depth, visited=visited)
             return
         if kind == "ObjectType":
-            _walk_properties(from_type, entry.get("properties") or {}, path, in_array=in_array, depth=depth, visited=visited)
+            _walk_properties(from_type, entry.get("properties") or {}, path, in_array=in_array, required=required, depth=depth, visited=visited)
 
-    def _walk_properties(from_type: str, properties: dict, path: str, *, in_array: bool, depth: int, visited: frozenset[int]) -> None:
+    def _walk_properties(from_type: str, properties: dict, path: str, *, in_array: bool, required: bool, depth: int, visited: frozenset[int]) -> None:
         for prop_name, prop in properties.items():
             if not isinstance(prop, dict):
                 continue
             flags = prop.get("flags", 0)
             if flags & _FLAG_READONLY:
                 continue
-            prop_required = bool(flags & _FLAG_REQUIRED)
+            # **필수성은 조상과 논리곱이다.** 예전에는 이 자리에서 플래그만 봤는데,
+            # Bicep의 `required`는 **그 부모 객체 안에서만** 필수라는 뜻이다.
+            # 그래서 `osDisk.encryptionSettings.diskEncryptionKey.sourceVault`가
+            # 리소스 필수로 올라왔고, "Azure VM을 만들려면 KeyVault가 먼저 있어야
+            # 한다"는 답이 나왔다 — 디스크 암호화는 선택인데도. 정작 실질 필수인
+            # NIC는 선택으로 나왔다. **정확히 거꾸로였다.**
+            prop_required = required and bool(flags & _FLAG_REQUIRED)
             via = f"{path}.{prop_name}" if path else prop_name
             type_ref = prop.get("type")
             if not (isinstance(type_ref, dict) and "$ref" in type_ref):
@@ -320,7 +326,9 @@ def extract_references(
         body_ref = resource.get("body")
         if isinstance(body_ref, dict) and "$ref" in body_ref:
             idx, body = deref(body_ref)
-            walk(type_name, body, "", in_array=False, required=False, depth=0, visited=frozenset({idx}))
+            # 루트는 **필수**로 출발한다(리소스 본문 자체는 늘 있다). 아래로 내려가며
+            # 각 단계에서 논리곱하므로, 선택 조상 밑은 자동으로 선택이 된다.
+            walk(type_name, body, "", in_array=False, required=True, depth=0, visited=frozenset({idx}))
 
 
 def build(
