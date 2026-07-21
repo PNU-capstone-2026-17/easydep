@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from kbcommon.invariants import Violation
+from kbcommon.console import use_utf8
 
 DEFAULT_OUTPUT = Path("output")
 
@@ -145,4 +146,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_utf8()
     raise SystemExit(main())

@@ -25,6 +25,7 @@ from agents.exceptions import MaxTurnsExceeded
 
 from nim_agent.agent import build_agent
 from nim_agent.session import SessionState
+from kbcommon.console import use_utf8
 from nim_agent.tumblebug_mcp import optional_tumblebug_mcp
 from nim_agent.verbose import DEFAULT_MAX_TURNS, run_agent
 
@@ -106,6 +107,7 @@ async def main(
 
 
 if __name__ == "__main__":
+    use_utf8()
     _args = _parse_args()
     asyncio.run(
         main(
