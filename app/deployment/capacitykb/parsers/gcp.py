@@ -87,6 +87,24 @@ def _is_ref_shape(schema: dict) -> bool:
     return "external" in props or {"name", "namespace"} <= set(props)
 
 
+#: CRD가 스스로 밝히는 백엔드 라벨. 셋의 신선도가 다르다 —
+#: `tf2crd`는 2023-09-26에 나온 terraform-provider-google-beta 4.84.0을 벤더링한 것에서
+#: 스키마를 뽑는다. 실측으로 허용값이 낡은 리소스 5/5가 전부 tf2crd였다.
+_BACKEND_LABELS = {
+    "cnrm.cloud.google.com/tf2crd": "tf2crd",
+    "cnrm.cloud.google.com/dcl2crd": "dcl2crd",
+}
+
+
+def _backend(crd: dict) -> str:
+    """이 CRD를 무엇이 만들었나. 라벨이 없으면 direct(손으로 쓴 Go 타입)."""
+    labels = (crd.get("metadata") or {}).get("labels") or {}
+    for label, name in _BACKEND_LABELS.items():
+        if labels.get(label) == "true":
+            return name
+    return "direct"
+
+
 def _storage_version(crd: dict) -> dict | None:
     versions = crd.get("spec", {}).get("versions") or []
     for version in versions:
@@ -107,16 +125,18 @@ def parse_crds(crds: list[dict]) -> CapacitySet:
     capacity = CapacitySet()
     DISAGREEMENTS.clear()
     seen_kinds: set[str] = set()
+    backends: Counter[str] = Counter()
 
-    def add(type_id: str, prop: str, kind: str, value, evidence: str) -> None:
+    def add(type_id: str, prop: str, kind: str, value, evidence: str,
+            backend: str) -> None:
         capacity.add_constraint(
             Constraint(
                 type_id=type_id, property=prop, kind=kind,
-                value=value, evidence=evidence,
+                value=value, evidence=evidence, backend=backend,
             )
         )
 
-    def walk(type_id: str, schema: dict, path: str, depth: int) -> None:
+    def walk(type_id: str, schema: dict, path: str, depth: int, backend: str) -> None:
         if depth > _MAX_DEPTH or not isinstance(schema, dict):
             return
         if path and _is_ref_shape(schema):
@@ -129,26 +149,28 @@ def parse_crds(crds: list[dict]) -> CapacitySet:
             if by_prefix or by_cel:
                 # 둘 다면 기계가 강제하는 쪽(CEL)을 근거로 적는다 — 더 강한 증거다.
                 add(type_id, path, "mutability", "create_only",
-                    EVIDENCE_CEL if by_cel else EVIDENCE_PREFIX)
+                    EVIDENCE_CEL if by_cel else EVIDENCE_PREFIX, backend)
                 if by_cel and not by_prefix:
                     DISAGREEMENTS.append((type_id, path, "CEL만 — 설명문에 표기 없음"))
 
             for keyword, our_kind in _KEYWORDS.items():
                 if keyword in schema:
-                    add(type_id, path, our_kind, schema[keyword], EVIDENCE_SCHEMA)
+                    add(type_id, path, our_kind, schema[keyword],
+                        EVIDENCE_SCHEMA, backend)
 
         for name in schema.get("required") or []:
             child = f"{path}.{name}" if path else name
-            add(type_id, child, "required", True, EVIDENCE_SCHEMA)
+            add(type_id, child, "required", True, EVIDENCE_SCHEMA, backend)
 
         props = schema.get("properties")
         if isinstance(props, dict):
             for name, child in props.items():
-                walk(type_id, child, f"{path}.{name}" if path else name, depth + 1)
+                walk(type_id, child, f"{path}.{name}" if path else name,
+                     depth + 1, backend)
         for key in ("items", "additionalProperties"):
             child = schema.get(key)
             if isinstance(child, dict):
-                walk(type_id, child, path, depth + 1)
+                walk(type_id, child, path, depth + 1, backend)
 
     for crd in crds:
         if crd.get("kind") != "CustomResourceDefinition":
@@ -164,13 +186,15 @@ def parse_crds(crds: list[dict]) -> CapacitySet:
         if not isinstance(spec, dict):
             continue
         seen_kinds.add(kind)
-        walk(make_type_id("gcp", kind), spec, "", depth=0)
+        backends[_backend(crd)] += 1
+        walk(make_type_id("gcp", kind), spec, "", depth=0, backend=_backend(crd))
 
     capacity.coverage.append({
         "provider": "gcp",
         "types": len(seen_kinds),
         # 제약이 하나도 안 나온 타입(실측 39종)도 이름으로 찾히게 하려면 목록이 필요하다.
         "type_ids": sorted(make_type_id("gcp", k) for k in seen_kinds),
+        "backends": dict(backends),
         "note": (
             "KCC CRD 전체를 읽는다. **수치 한도(min/max)는 원본에 0건**이므로 "
             "'GCP 한도를 모른다'는 안 뽑아서가 아니라 원본에 없어서다."

@@ -119,3 +119,72 @@ def test_records_that_numeric_limits_are_absent_at_source() -> None:
     # 파서는 나오면 담을 수 있다 — 안 담는 게 아니라 원본에 없을 뿐이다.
     kinds = {c.kind for c in got.constraints}
     assert {"max", "min"} <= kinds
+
+
+# --- backend: 어느 상류가 만들었나 (D1-a) ---
+
+
+def labelled(kind: str, spec: dict, label: str | None) -> dict:
+    doc = crd(kind, spec)
+    if label:
+        doc["metadata"] = {"labels": {f"cnrm.cloud.google.com/{label}": "true"}}
+    return doc
+
+
+def test_backend_read_from_crd_label() -> None:
+    """KCC가 스스로 라벨로 밝히는 백엔드를 그대로 적는다 (우리 등급이 아니다)."""
+    got = parse_crds([
+        labelled("A", {"properties": {"x": {"type": "string", "description": "Immutable. x"}}}, "tf2crd"),
+        labelled("B", {"properties": {"x": {"type": "string", "description": "Immutable. x"}}}, "dcl2crd"),
+        labelled("C", {"properties": {"x": {"type": "string", "description": "Immutable. x"}}}, None),
+    ])
+    by_type = {c.type_id: c.backend for c in got.constraints}
+    assert by_type["gcp::A"] == "tf2crd"
+    assert by_type["gcp::B"] == "dcl2crd"
+    assert by_type["gcp::C"] == "direct", "라벨이 없으면 direct(손으로 쓴 Go 타입)"
+    assert got.coverage[0]["backends"] == {"tf2crd": 1, "dcl2crd": 1, "direct": 1}
+
+
+def test_backend_survives_roundtrip(tmp_path: Path) -> None:
+    got = parse_crds([labelled("A", {"properties": {
+        "x": {"type": "string", "description": "Immutable. x"}}}, "tf2crd")])
+    got.save(tmp_path / "gcp-capacity.json")
+    from capacitykb.model import CapacitySet
+    assert CapacitySet.load(tmp_path / "gcp-capacity.json").constraints[0].backend == "tf2crd"
+
+
+def test_stale_backend_is_disclosed_once_not_per_line(tmp_path: Path) -> None:
+    """낡은 상류는 밝히되 **블록당 한 번**.
+
+    backend는 CRD 단위라 한 타입 안에서는 전부 같은 값이다. 줄마다 달면 2,453줄에
+    똑같은 경고가 붙고, 노이즈가 되면 진짜 경고가 안 보인다.
+    """
+    im = "Immutable. x"
+    got = parse_crds([labelled("A", {"properties": {
+        "a": {"type": "string", "description": im},
+        "b": {"type": "string", "description": im},
+        "c": {"type": "string", "description": im},
+    }}, "tf2crd")])
+    got.save(tmp_path / "gcp-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+    text = agent_api.immutable("A", output_dir=tmp_path)
+    assert text.count("낡았을 수 있습니다") == 1, "줄마다 붙으면 안 된다"
+    assert "3건은" in text
+
+
+def test_fresh_backend_says_nothing(tmp_path: Path) -> None:
+    got = parse_crds([labelled("A", {"properties": {
+        "a": {"type": "string", "description": "Immutable. x"}}}, None)])
+    got.save(tmp_path / "gcp-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+    assert "낡았" not in agent_api.immutable("A", output_dir=tmp_path)
+
+
+def test_internal_labels_never_reach_the_user(tmp_path: Path) -> None:
+    got = parse_crds([labelled("A", {"properties": {
+        "a": {"type": "string", "description": "Immutable. x"}}}, "tf2crd")])
+    got.save(tmp_path / "gcp-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+    text = agent_api.immutable("A", output_dir=tmp_path)
+    for label in ("kcc-immutable-prefix", "kcc-crd-schema", "kcc-cel-immutable", "gcp::"):
+        assert label not in text

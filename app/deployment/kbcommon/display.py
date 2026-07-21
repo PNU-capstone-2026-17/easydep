@@ -38,6 +38,9 @@ _EVIDENCE_NAMES = {
     "azure-limits-doc": "Azure 한도 문서",
     "azure-limits-note": "Azure 한도 문서(각주)",
     "kcc-ref": "GCP Config Connector 참조 선언",
+    "kcc-crd-schema": "GCP Config Connector 스키마",
+    "kcc-immutable-prefix": "GCP Config Connector 설명문의 불변 표기",
+    "kcc-cel-immutable": "GCP Config Connector 검증 규칙(CEL)",
     "kcc-description": "GCP Config Connector 설명문",
     "cb-spider-driver": "CB-Spider 드라이버",
 }
@@ -62,3 +65,20 @@ def display(type_id: str) -> str:
 def evidence_name(label: str) -> str:
     """근거 라벨을 사람이 읽는 출처 이름으로 (모르는 라벨은 그대로)."""
     return _EVIDENCE_NAMES.get(label, label)
+
+
+#: 상류 파이프라인 → 사용자에게 밝힐 한 마디. **낡은 것만 적는다.**
+#: 전부 적으면 매 줄에 꼬리표가 붙어 노이즈가 되고, 그러면 진짜 경고가 안 보인다.
+_BACKEND_CAVEAT = {
+    "tf2crd": "2023-09-26에 나온 Terraform 프로바이더 스냅샷에서 온 값이라 낡았을 수 있습니다",
+}
+
+
+def backend_caveat(backend: str | None) -> str | None:
+    """상류가 낡은 경우에만 고지 문구를 돌려준다 (아니면 None).
+
+    `direct`·`dcl2crd`는 아무 말도 하지 않는다 — 침묵이 곧 "특별히 밝힐 게 없다"다.
+    다만 그 침묵의 뜻은 부르는 쪽이 꼬리말로 한 번 밝혀야 한다(costkb의 성능 주석과
+    같은 방식). 침묵을 안전 신호로 오독하게 두면 안 된다.
+    """
+    return _BACKEND_CAVEAT.get(backend or "")

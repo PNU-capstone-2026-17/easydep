@@ -85,6 +85,11 @@
               "heuristic"
             ]
           },
+          "backend": {
+            "type": ["string", "null"],
+            "enum": ["direct", "tf2crd", "dcl2crd", null],
+            "description": "이 레코드를 만들어낸 상류 파이프라인. 값은 소스가 쓰는 말 그대로다(KCC의 CRD 라벨). 같은 evidence라도 신선도가 다를 수 있어 둔다 — tf2crd는 2023-09-26에 나온 terraform-provider-google-beta 4.84.0을 벤더링한 것에서 스키마를 뽑는다. 등급이 아니라 사실을 적는 칸이다."
+          },
           "basis": {
             "type": "string",
             "enum": ["stated", "inferred"],

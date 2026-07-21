@@ -18,7 +18,7 @@ from capacitykb.query import (
     resolve_type,
 )
 from kbcommon.basis import describe
-from kbcommon.display import display, evidence_name
+from kbcommon.display import backend_caveat, display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
 CAPACITY_FILES = (
@@ -94,6 +94,29 @@ def _describe(constraint) -> str:
     return f"  - {constraint.property}: {text}{suffix}{note}"
 
 
+def _backend_footer(constraints) -> str | None:
+    """상류가 낡은 레코드가 섞여 있으면 **블록당 한 번** 밝힌다.
+
+    줄마다 붙이지 않는 이유: `backend`는 CRD 단위라 한 타입 안에서는 대개 전부
+    같은 값이다. 줄마다 달면 2,453줄에 똑같은 경고가 붙어 노이즈가 되고, 노이즈가
+    되면 진짜 경고가 안 보인다(costkb 추천의 성능 주석에서 이미 겪은 실패다).
+    """
+    stale = {}
+    for c in constraints:
+        caveat = backend_caveat(getattr(c, "backend", None))
+        if caveat:
+            stale[caveat] = stale.get(caveat, 0) + 1
+    if not stale:
+        return None
+    total = sum(stale.values())
+    text = "; ".join(stale)
+    return (
+        f"{total}건은 {text}."
+        if total == len(constraints)
+        else f"위 {len(constraints)}건 중 {total}건은 {text}."
+    )
+
+
 def _nothing_found(capacity: CapacitySet, type_id: str, what: str) -> str:
     """"없다"와 "안 봤다"를 구분해 답한다.
 
@@ -135,6 +158,9 @@ def property_limits(
     header = display(type_id) + (f".{property_name}" if property_name else "")
     lines = [f"{header} 제약 {len(found)}건:"]
     lines.extend(_describe(c) for c in found)
+    footer = _backend_footer(found)
+    if footer:
+        lines.append(f"  ⚠ {footer}")
     return "\n".join(lines)
 
 
@@ -216,6 +242,9 @@ def immutable(
         head += f" (하위 속성 {folded}개는 부모가 이미 불변이라 접었습니다)"
     lines = [head + ":"]
     lines.extend(_describe(c) for c in shown)
+    footer = _backend_footer(shown)
+    if footer:
+        lines.append(f"  ⚠ {footer}")
     return "\n".join(lines)
 
 

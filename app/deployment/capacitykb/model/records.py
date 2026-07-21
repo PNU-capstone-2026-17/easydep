@@ -62,6 +62,21 @@ class Constraint:
     예전의 `confidence`(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다.
     """
 
+    backend: str | None = None
+    """**이 레코드를 만들어낸 상류 파이프라인.** 값은 소스가 쓰는 말 그대로.
+
+    같은 `evidence` 라벨이라도 신선도가 다를 수 있어서 둔다. GCP(KCC)가 실례다 —
+    CRD가 스스로 라벨로 밝히는 백엔드가 셋이고, 그중 `tf2crd`(우리 GCP 제약의 55%)는
+    **2023-09-26에 나온 terraform-provider-google-beta 4.84.0을 벤더링한 것**에서
+    스키마를 뽑는다. 실측으로 허용값이 낡은 리소스 5/5가 전부 tf2crd였다.
+
+    이게 없으면 4,421건이 전부 같은 얼굴이라 **절반이 2년 8개월 묵었다는 걸
+    사용자가 알 방법이 없다.** 등급(`tier`)이 아니라 **사실**을 적는 칸이다 —
+    위아래를 이름에 박으면 나중에 판단이 바뀔 때 이름이 거짓이 된다.
+
+    값 예: `direct` | `tf2crd` | `dcl2crd` (KCC). 안 쓰는 소스는 None.
+    """
+
     value_type: str | None = None
     unit: str | None = None
     conditional: bool = False
@@ -92,6 +107,7 @@ class Constraint:
             "note": self.note,
             "evidence": self.evidence,
             "basis": self.basis,
+            "backend": self.backend,
         }
 
     @classmethod
@@ -107,6 +123,7 @@ class Constraint:
             unit=data.get("unit"),
             conditional=data.get("conditional", False),
             note=data.get("note"),
+            backend=data.get("backend"),
         )
 
 
