@@ -29,6 +29,7 @@ DEFAULT_OUTPUTS = {
     "azure-quota": Path("output") / "azure-quota.json",
     "gcp": Path("output") / "gcp-capacity.json",
     "aws-limits": Path("output") / "aws-limits.json",
+    "aws-tf": Path("output") / "aws-tf.json",
 }
 
 
@@ -102,6 +103,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import aws_limits
 
         aws_limits.build(output, refresh=args.refresh)
+    elif args.source == "aws-tf":
+        from capacitykb.parsers import tpaws
+
+        tpaws.build(output, refresh=args.refresh)
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 

@@ -150,8 +150,18 @@ cfn-lint의 리전별 enum은 그 칸에 **그대로** 들어갑니다.
 
 ## 4. 다음에 할 것 (추천 순서)
 
-1. **terraform-provider-aws** — `tpg.py`를 거의 그대로 재사용. AWS의 교차 필드 조건
-   1,219건과 조건부 불변 56건이 0에서 채워집니다. 근거 라벨은 분리(손 큐레이션이므로).
+1. ~~**terraform-provider-aws**~~ — ✅ 완료(`capacitykb/parsers/tpaws.py`).
+   **실제 수확은 예상보다 작습니다: 878건 / 155종**(원본에는 교차 조건 1,219건이
+   있는데 우리 손에 들어온 건 28건). 이유를 셋으로 갈라 셌습니다:
+   - CFN 타입에 못 이은 리소스 **837종** — 상당수는 매핑 실패가 아니라 **CFN에 그
+     리소스가 없는 것**(`aws_account_alternate_contact` 등)
+   - **Plugin Framework 리소스 497종** — 스키마 모양이 완전히 달라(Attributes 맵)
+     지금 파서로 못 읽습니다. **다음에 손댈 곳은 여기입니다.**
+   - 나머지는 출력 전용·Terraform 전용
+
+   그래도 **AWS의 빈 축 두 개가 0에서 열렸습니다** — 조건부 불변 24건
+   (`DynamoDB::Table.RestoreSourceName`, `DocDB::DBCluster.ServerlessV2ScalingConfiguration` 등),
+   교차 필드 조건 28건.
 2. **cfn-lint 리전별 enum** — 기존 `condition` 칸에 바로 들어갑니다. `"all"` 빈 enum
    함정을 테스트로 먼저 고정할 것.
 3. **`x-ms-mutability`** — Azure 불변성 0건을 933건으로. 범위가 작고 목표가 분명합니다.

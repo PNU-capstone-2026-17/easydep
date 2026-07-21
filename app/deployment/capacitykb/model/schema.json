@@ -85,6 +85,7 @@
               "kcc-immutable-prefix",
               "kcc-cel-immutable",
               "tpg-schema",
+              "tpaws-schema",
               "aws-price-list",
               "botocore-doc",
               "aws-cross-checked",

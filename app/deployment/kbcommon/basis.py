@@ -76,6 +76,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 생성된 terraform-provider-google의 스키마 리터럴 그대로.
     # 주의: ForceNew는 "Terraform이 재생성한다"이지 "API가 거부한다"가 아니다.
     "tpg-schema": STATED,
+    # terraform-provider-aws. 같은 Terraform이지만 google과 성격이 다르다 —
+    # 저쪽은 생성 코드고 이쪽은 사람이 쓴 것이라 틀리는 방식이 다르다.
+    "tpaws-schema": STATED,
     # AWS 한도. 두 공식 소스가 **같은 값을 말했을 때만** 이 라벨을 단다 —
     # 어느 한쪽만으로는 담지 않는다. 단일 미검증 소스가 감사에서 나온
     # "확신에 찬 오답"의 원인이었다.

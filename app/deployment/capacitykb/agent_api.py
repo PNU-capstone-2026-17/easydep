@@ -27,6 +27,7 @@ CAPACITY_FILES = (
     "azure-quota.json",
     "gcp-capacity.json",
     "aws-limits.json",
+    "aws-tf.json",
 )
 
 _MISSING_MESSAGE = (

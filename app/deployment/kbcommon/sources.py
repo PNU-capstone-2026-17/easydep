@@ -121,6 +121,20 @@ SOURCES: dict[str, Source] = {
             "설명문이 유일한 출처다."
         ),
     ),
+    "tpaws-provider": Source(
+        key="tpaws-provider",
+        url=(
+            "https://github.com/hashicorp/terraform-provider-aws/archive/"
+            "refs/tags/v6.55.0.tar.gz"
+        ),
+        pin_kind="tag",
+        pin="v6.55.0",
+        note=(
+            "CloudFormation이 표현 못 하는 교차 필드 조건·조건부 불변이 여기 있다. "
+            "google 프로바이더와 달리 **사람이 쓴 코드**라(생성 코드 19%) 빈 목록 증발이 "
+            "없는 대신 손 큐레이션이다 — 근거 라벨을 나눈 이유. 108MB, 캐시됨."
+        ),
+    ),
     "tpg-provider": Source(
         key="tpg-provider",
         url=(
