@@ -231,6 +231,18 @@
       cursor: not-allowed;
     }
 
+    a.linkbtn {
+      display: inline-flex;
+      align-items: center;
+      height: 36px;
+      border-radius: 6px;
+      padding: 0 13px;
+      background: #059669;
+      color: #fff;
+      font-weight: 800;
+      text-decoration: none;
+    }
+
     .output-meta {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -408,10 +420,11 @@
         <div class="actions">
           <button id="newAppButton" type="button" class="secondary">새 App ID 발급</button>
           <button id="loadAppButton" type="button" class="secondary">App ID로 불러오기</button>
+          <a id="requirementsLink" class="linkbtn" href="/requirements">요구사항 분석으로 →</a>
         </div>
 
         <div class="field">
-          <label for="usecaseSpecText">유스케이스 명세 (USECASE_SPEC)</label>
+          <label for="usecaseSpecText">유스케이스 명세 (USECASE_SPEC) — 보통은 요구사항 분석에서 채워집니다</label>
           <textarea id="usecaseSpecText" spellcheck="false"></textarea>
         </div>
 
@@ -486,10 +499,14 @@
   ]
 }`;
 
+    // 요구사항 분석 UI(app/requirements/static/index.html)와 공유하는 키.
+    // 두 화면이 같은 오리진에서 서빙되므로 이 하나로 같은 앱을 가리킨다.
+    const APP_ID_KEY = "easydep_app_id";
+
     // The server owns the workflow state; the browser only keeps the app id
     // plus the last response it rendered.
     const workflow = {
-      appId: localStorage.getItem("easydep_app_id") || "",
+      appId: localStorage.getItem(APP_ID_KEY) || "",
       activeIndex: 0,
       artifacts: {},
       validation: {},
@@ -564,8 +581,9 @@
       }
     }
 
-    // The requirements analysis agent normally produces USECASE_SPEC. Until it is
-    // connected, the specification is stored here by hand through the same endpoint.
+    // USECASE_SPEC is normally produced by the requirements analysis agent at
+    // /requirements against this same app id. This hand-save through the content
+    // endpoint remains for working on design alone, without an analysis run.
     async function saveUsecaseSpec() {
       if (!workflow.appId) {
         await issueAppId();
@@ -595,19 +613,24 @@
       }
     }
 
+    // Returns whether the app was actually loaded. The caller must not claim a
+    // switch it did not get: on failure workflow.appId still points at the old
+    // app, because only applyResponse moves it.
     async function loadApp(appId) {
       if (!appId) {
         showError(new Error("App ID를 입력하세요."));
         render();
-        return;
+        return false;
       }
 
       setBusy("산출물 조회 중");
       try {
         applyResponse(await request(`/api/apps/${appId}`));
         setStatus("조회 완료", true);
+        return true;
       } catch (error) {
         showError(error);
+        return false;
       } finally {
         render();
       }
@@ -657,7 +680,7 @@
       if (data.app_id) {
         workflow.appId = data.app_id;
         appIdInput.value = data.app_id;
-        localStorage.setItem("easydep_app_id", data.app_id);
+        localStorage.setItem(APP_ID_KEY, data.app_id);
       }
       workflow.artifacts = data.artifacts || {};
       workflow.validation = data.validation || {};
@@ -804,6 +827,16 @@
 
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closeLightbox();
+    });
+
+    // 요구사항 분석 화면이 다른 탭에서 App ID를 발급/변경하면 이어받는다.
+    // (storage 이벤트는 이 탭이 아닌 다른 탭의 변경에만 발생한다.)
+    window.addEventListener("storage", async (event) => {
+      if (event.key !== APP_ID_KEY) return;
+      if (!event.newValue || event.newValue === workflow.appId) return;
+      if (await loadApp(event.newValue)) {
+        setStatus("요구사항 분석에서 넘어온 App ID로 전환했습니다", true);
+      }
     });
 
     render();

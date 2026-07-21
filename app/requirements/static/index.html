@@ -40,6 +40,15 @@
     button.secondary { background: #6b7280; }
     button:disabled { background: #93b4f5; cursor: default; }
     .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
+    input.appid {
+      flex: 1 1 260px; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px;
+      font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      margin-top: 10px;
+    }
+    a.linkbtn {
+      display:inline-block; margin-top: 10px; padding: 10px 18px; border-radius: 10px;
+      background: #059669; color: #fff; font-size: 14px; text-decoration: none;
+    }
     .hint { color: #6b7280; font-size: 12px; margin: 4px 0 8px; }
     label.check { display:flex; align-items:center; gap:6px; font-size:13px; color:#374151; margin-top:10px; cursor:pointer; }
     ol.questions { margin: 6px 0 10px; padding-left: 20px; }
@@ -110,6 +119,20 @@
     <small>요구사항 → 대화형 구체화 · FR/NFR 분류 · 액터/유스케이스 · Cockburn 명세 · 유스케이스 다이어그램</small>
   </header>
   <main>
+    <div class="card" id="appCard">
+      <h2><span class="step-badge">#</span> 산출물 저장 대상</h2>
+      <p class="hint">
+        분석이 끝나면 요구사항 명세·유스케이스 명세·유스케이스 다이어그램이 이 App ID로 저장되고,
+        시스템 설계 에이전트가 같은 ID로 이어받습니다. 비워 두면 분석 시작 시 자동으로 발급됩니다.
+      </p>
+      <div class="row">
+        <input id="appIdInput" class="appid" placeholder="분석 시작 시 자동 발급됩니다" spellcheck="false">
+        <button id="newAppBtn" type="button" class="secondary">새 App ID 발급</button>
+        <a id="designLink" class="linkbtn" href="/">설계 에이전트로 →</a>
+      </div>
+      <div id="savedNote" class="status hidden"></div>
+    </div>
+
     <div class="card" id="inputCard">
       <h2><span class="step-badge">0</span> 요구사항 입력</h2>
       <p class="hint">한 줄에 하나씩 입력하세요. 추상적이어도(예: "I want to build a shopping mall service") 괜찮습니다.</p>
@@ -243,11 +266,40 @@
     document.addEventListener("focusout", hideReqPop);
     window.addEventListener("scroll", hideReqPop, true);
 
+    // ---- App ID: 설계 에이전트와 공유하는 산출물 저장 대상 ----
+    // 같은 오리진에서 서빙되므로 localStorage 키 하나로 두 UI가 같은 앱을 가리킨다.
+    // (설계 UI frontend/index.html 도 이 키를 읽고 쓴다.)
+    const APP_ID_KEY = "easydep_app_id";
+
+    const currentAppId = () => el("appIdInput").value.trim();
+
+    function setAppId(id) {
+      el("appIdInput").value = id || "";
+      if (id) localStorage.setItem(APP_ID_KEY, id);
+      else localStorage.removeItem(APP_ID_KEY);
+    }
+
+    async function issueAppId(requirementsText) {
+      const res = await fetch("/api/apps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // 사용자가 쓴 원문은 앱 행에 남는다. 구체화된 요구사항으로는 되돌릴 수 없어서
+        // 설계 에이전트가 재생성할 때 필요하다.
+        body: JSON.stringify({ requirements_text: requirementsText || "" }),
+      });
+      if (!res.ok) throw new Error("App ID 발급 실패: HTTP " + res.status);
+      const data = await res.json();
+      setAppId(data.app_id);
+      return data.app_id;
+    }
+
     async function callAnalyze(payload) {
+      const appId = currentAppId();
       const res = await fetch("/api/requirements/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        // app_id가 있어야 완료 시점에 산출물이 저장된다. 없으면 저장 없이 응답만 온다.
+        body: JSON.stringify(appId ? { ...payload, app_id: appId } : payload),
       });
       if (!res.ok) {
         let detail = "HTTP " + res.status;
@@ -417,6 +469,12 @@
         appendFeedbackCard(data);   // 맨 아래에 새 피드백 카드를 쌓는다
       } else { // completed
         hide("clarifyCard");
+        const note = el("savedNote");
+        const appId = currentAppId();
+        note.textContent = appId
+          ? `✓ 산출물을 App ID ${appId} 에 저장했습니다. 설계 에이전트에서 이어서 진행하세요.`
+          : "App ID 없이 실행해 저장하지 않았습니다. 설계로 넘기려면 App ID를 발급하고 다시 분석하세요.";
+        show("savedNote");
       }
     }
 
@@ -452,11 +510,22 @@
       }
     }
 
-    el("startBtn").addEventListener("click", () => {
+    el("startBtn").addEventListener("click", async () => {
       const lines = el("reqInput").value.split("\n").map((s) => s.trim()).filter(Boolean);
       if (!lines.length) { setError("요구사항을 한 줄 이상 입력하세요."); return; }
+
+      // 저장 대상이 없으면 여기서 발급한다. 분석이 끝난 뒤에 만들면 이미 늦다.
+      if (!currentAppId()) {
+        setError(null);
+        try {
+          await issueAppId(lines.join("\n"));
+        } catch (e) {
+          setError(e.message + " — App ID 없이 진행하면 결과가 저장되지 않습니다.");
+        }
+      }
+
       threadId = null; acc = {};
-      ["step1Card", "step2Card", "step3Card", "step4Card", "clarifyCard"].forEach(hide);
+      ["step1Card", "step2Card", "step3Card", "step4Card", "clarifyCard", "savedNote"].forEach(hide);
       el("feedbackThread").innerHTML = "";  // 이전 대화 스레드 초기화
       drive(
         { requirements: lines, feedback_gates: el("gatesChk").checked },
@@ -526,6 +595,26 @@
       input.focus();
       card.scrollIntoView({ behavior: "smooth", block: "end" });
     }
+
+    el("newAppBtn").addEventListener("click", async () => {
+      setError(null);
+      const btn = el("newAppBtn");
+      btn.disabled = true;
+      try {
+        await issueAppId(el("reqInput").value);
+        hide("savedNote");
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // 직접 붙여 넣은 App ID도 설계 UI가 그대로 읽어야 한다.
+    el("appIdInput").addEventListener("input", () => setAppId(currentAppId()));
+
+    // 설계 UI에서 쓰던 앱이 있으면 그대로 이어받는다.
+    setAppId(localStorage.getItem(APP_ID_KEY) || "");
 
     el("copyPumlBtn").addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(el("diagramText").textContent); el("copyPumlBtn").textContent = "복사됨 ✓"; }
