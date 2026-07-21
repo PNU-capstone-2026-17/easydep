@@ -73,3 +73,38 @@ def test_profile_shows_hardware_separately() -> None:
     })
     assert "— 하드웨어 (2025-12-10 확인)" in text
     assert "NVIDIA T4G ×1, Turing" in text
+
+
+# --- 축 간 교차 참조 (용량 → 성능) ---
+
+
+def test_capacity_points_at_perf_for_compute_types() -> None:
+    """용량 축에서 하드웨어를 물으면 성능 축을 가리킨다.
+
+    실측: "g5g.xlarge에 어떤 GPU가 달렸어?"에 모델이 용량 축을 뒤지다
+    `AWS::EC2::Instance.Gpu`라는 없는 속성까지 조회하고 웹으로 나갔다. 그때
+    우리는 GPU 571건을 쥐고 있었는데 **다른 축에** 있었다. 같은 질문을
+    "몇 개, 어떤 모델이야?"로 물으면 성능 도구로 바로 갔다 — 문구 하나 차이다.
+    """
+    from nim_agent.capacity_tools import _perf_pointer
+
+    text = _perf_pointer("AWS::EC2::Instance")
+    assert "perf_instance_profile" in text, "성능 축을 안 가리킨다"
+    assert "GPU" in text
+
+
+def test_perf_pointer_is_silent_for_other_types() -> None:
+    """인스턴스 종류를 고르는 자리가 아니면 조용하다 — 줄마다 붙으면 노이즈다."""
+    from nim_agent.capacity_tools import _perf_pointer
+
+    assert _perf_pointer("AWS::EC2::Volume") == ""
+    assert _perf_pointer("존재하지않는타입") == ""
+
+
+def test_hardware_summary_counts_only_real_hardware() -> None:
+    """하드웨어 근거가 있는 레코드만 센다."""
+    from perfkb.agent_api import hardware_summary
+
+    text = hardware_summary("aws")
+    assert text and "GPU 있는 것" in text
+    assert hardware_summary("존재하지않는프로바이더") is None

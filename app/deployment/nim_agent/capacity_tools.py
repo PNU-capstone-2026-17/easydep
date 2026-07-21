@@ -70,6 +70,53 @@ def _parse_context(text: str | None) -> dict | None:
     return out or None
 
 
+#: **어느 타입이 "인스턴스 종류"를 고르는 자리인가.** 3줄짜리 사람 검수표다.
+#: 규칙으로 유도하려 하면 짐작이 되고, 이건 짐작할 게 아니라 아는 사실이다.
+_COMPUTE_TYPES = {
+    "aws::AWS::EC2::Instance": "aws",
+    "azure::Microsoft.Compute/virtualMachines": "azure",
+    "gcp::ComputeInstance": "gcp",
+}
+
+
+def _perf_pointer(resource_type: str) -> str:
+    """"이 타입의 하드웨어는 성능 축에 있다"는 한 줄. 아니면 빈 문자열.
+
+    **축을 늘리는 것과 축에 닿게 하는 것은 다른 일이다.** 실측에서
+    "g5g.xlarge에 어떤 GPU가 달렸어?"를 물었더니 모델이 용량 축을 뒤지다
+    `AWS::EC2::Instance.Gpu`라는 없는 속성까지 조회하고 웹으로 나갔다.
+    그때 우리는 GPU 571건을 쥐고 있었는데, **다른 축에** 있었다.
+
+    같은 질문을 "몇 개, 어떤 모델이야?"로 물으면 성능 도구로 바로 갔다.
+    문구 하나 차이로 갈리므로 **양쪽 문이 다 알아야 한다.**
+
+    graphkb→capacitykb 때와 같이 도구 계층에 둔다 — 단방향 규약상 capacitykb는
+    perfkb를 import할 수 없고, 양쪽을 다 보는 층은 여기뿐이다.
+    """
+    try:
+        from capacitykb.agent_api import load_merged
+        from capacitykb.query import resolve_type
+        from perfkb.agent_api import hardware_summary
+
+        capacity = load_merged()
+        if capacity is None:
+            return ""
+        type_id = resolve_type(capacity, resource_type)
+        provider = _COMPUTE_TYPES.get(type_id)
+        if not provider:
+            return ""
+        summary = hardware_summary(provider)
+    except Exception:
+        return ""
+    if not summary:
+        return ""
+    return (
+        "\n  ※ CPU·GPU 모델처럼 **인스턴스 종류마다 다른 하드웨어**는 이 축에 없고 "
+        f"성능 축에 있습니다({summary}).\n"
+        f"     perf_instance_profile('{provider}', '<인스턴스 종류>') 로 보세요."
+    )
+
+
 @function_tool
 def cap_property_limits(resource_type: str, property_name: str | None = None) -> str:
     """리소스 타입(또는 특정 속성)에 걸린 제약을 근거·신뢰도와 함께 반환한다.
@@ -79,7 +126,9 @@ def cap_property_limits(resource_type: str, property_name: str | None = None) ->
         property_name: 특정 속성만 볼 때 지정. 미지정이면 타입 전체.
     """
     print(f"\n[용량질의] 제약 조회: {resource_type}" + (f".{property_name}" if property_name else ""))
-    return agent_api.property_limits(resource_type, property_name)
+    return agent_api.property_limits(resource_type, property_name) + _perf_pointer(
+        resource_type
+    )
 
 
 @function_tool
@@ -106,7 +155,9 @@ def cap_allowed_values(resource_type: str, property_name: str) -> str:
         property_name: 속성 이름. 예: 'StorageType', 'InstanceType'.
     """
     print(f"\n[용량질의] 허용값: {resource_type}.{property_name}")
-    return agent_api.allowed_values(resource_type, property_name)
+    return agent_api.allowed_values(resource_type, property_name) + _perf_pointer(
+        resource_type
+    )
 
 
 @function_tool

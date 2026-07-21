@@ -280,3 +280,33 @@ def specs_meeting_ebs_baseline(
         lines.append(f"  - {name}: 지속 {base:g} Mbps{mx_text}")
     lines.append("※ 가격·크기는 cost_recommend_specs로 확인하세요. 여기 값은 지속 대역폭입니다.")
     return "\n".join(lines)
+
+
+def hardware_summary(provider: str, output_dir: Path | str | None = None) -> str | None:
+    """이 프로바이더에 **하드웨어 사실이 얼마나 있는지** 한 줄로. 없으면 None.
+
+    용량 축에서 "이 인스턴스에 어떤 GPU가 달렸나"를 물었을 때, 그 답이 여기 있다는
+    걸 알려주기 위한 것이다. 실측에서 모델이 `AWS::EC2::Instance.Gpu`라는 없는
+    속성을 뒤지다 웹으로 갔다 — 우리는 그때 GPU 571건을 쥐고 있었다.
+
+    판정은 하지 않고 **어디를 보라고만** 말한다. 조인은 도구 계층의 몫이다.
+    """
+    specs = load_perf(output_dir)
+    if not specs:
+        return None
+    names, gpus = set(), set()
+    for rec in specs:
+        if rec.get("provider") != provider or not rec.get("hardwareEvidence"):
+            continue
+        names.add(rec.get("specName"))
+        if rec.get("gpuModel"):
+            gpus.add(rec.get("specName"))
+    if not names:
+        return None
+    checked = sorted({r.get("hardwareCheckedAt") for r in specs
+                      if r.get("provider") == provider and r.get("hardwareCheckedAt")})
+    when = f", {checked[0]}~{checked[-1]} 확인" if checked else ""
+    return (
+        f"CPU·GPU 모델을 아는 종류 {len(names):,}개"
+        f"{f' (그중 GPU 있는 것 {len(gpus)}개)' if gpus else ''}{when}"
+    )
