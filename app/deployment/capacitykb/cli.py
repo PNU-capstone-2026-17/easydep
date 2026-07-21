@@ -32,6 +32,7 @@ DEFAULT_OUTPUTS = {
     "aws-tf": Path("output") / "aws-tf.json",
     "aws-regions": Path("output") / "aws-regions.json",
     "aws-conditional": Path("output") / "aws-conditional.json",
+    "aws-endpoints": Path("output") / "aws-endpoints.json",
     "azure-mutability": Path("output") / "azure-mutability.json",
 }
 
@@ -118,6 +119,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import cfnlint
 
         cfnlint.build_conditions(output, refresh=args.refresh)
+    elif args.source == "aws-endpoints":
+        from capacitykb.parsers import aws_endpoints
+
+        aws_endpoints.build(output, refresh=args.refresh)
     elif args.source == "azure-mutability":
         from capacitykb.parsers import azure_mutability
 

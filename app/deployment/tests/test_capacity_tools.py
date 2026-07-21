@@ -13,14 +13,20 @@ from nim_agent.capacity_tools import CAPACITY_TOOLS, _coerce
 from nim_agent.tools import LOCAL_TOOLS
 
 
-def test_five_capacity_tools_defined() -> None:
-    assert len(CAPACITY_TOOLS) == 5
+def test_capacity_tools_registered() -> None:
+    """이름 목록을 고정한다.
+
+    이름에 개수를 박지 않는다 — 도구를 하나 늘릴 때마다 테스트 **이름**이
+    거짓이 되고, 그러면 이름을 믿고 읽는 사람이 속는다.
+    """
     assert {tool.name for tool in CAPACITY_TOOLS} == {
         "cap_check_value",
         "cap_property_limits",
         "cap_immutable_properties",
         "cap_allowed_values",
         "cap_service_quota",
+        "cap_resolve_region",
+        "cap_service_regions",
     }
 
 

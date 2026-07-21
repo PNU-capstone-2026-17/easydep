@@ -121,6 +121,25 @@ SOURCES: dict[str, Source] = {
             "설명문이 유일한 출처다."
         ),
     ),
+    "botocore-endpoints": Source(
+        key="botocore-endpoints",
+        url=(
+            "https://raw.githubusercontent.com/boto/botocore/1.43.52/"
+            "botocore/data/endpoints.json"
+        ),
+        pin_kind="tag",
+        pin="1.43.52",
+        note=(
+            "**새 소스가 아니라 이미 고정해 둔 태그 안의 안 쓰던 파일이다.** "
+            "`botocore`와 같은 1.43.52를 가리키므로 따로 고정할 것이 없다. "
+            "리전 표시 이름(`ap-northeast-2` → `Asia Pacific (Seoul)`)과 "
+            "(파티션, 서비스, 리전) 엔드포인트 9,039쌍이 들어 있다. "
+            "**읽는 법 주의**: 엔드포인트가 있다는 것은 사실이지만, 없다는 것은 "
+            "'그 리전에서 못 쓴다'가 아니다 — 글로벌 서비스일 수도 있다. "
+            "판별자(`isRegionalized`)가 307개 중 22개에만 있어서 구분이 안 되므로 "
+            "**있음만 담고 없음은 담지 않는다.**"
+        ),
+    ),
     "cfn-lint": Source(
         key="cfn-lint",
         url=(

@@ -6,6 +6,7 @@ graphkb의 agent_api와 같은 관례: 예외 대신 에이전트가 그대로 �
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -561,4 +562,167 @@ def value_lookup(
         f"cap_check_value('{display(top_type)}', '{top_prop}', '{name}') "
         "— 조건(리전·볼륨 종류 등)은 context로 주면 확정 판정이 나옵니다."
     )
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# 리전 — botocore endpoints.json (`output/aws-endpoints.json`)
+#
+# 이 산출물은 CapacitySet(제약·쿼터)과 모양이 달라 `CAPACITY_FILES`에 넣지 않는다.
+# "속성에 걸린 제약"이 아니라 "무엇이 어디에 있는가"라서 억지로 끼워 넣으면
+# `type_id`·`property` 칸을 거짓으로 채우게 된다.
+# --------------------------------------------------------------------------
+
+ENDPOINTS_FILE = "aws-endpoints.json"
+
+_ENDPOINTS_MISSING = (
+    "리전 산출물이 없습니다. `python -m capacitykb build --source aws-endpoints` "
+    "로 생성하세요."
+)
+
+#: 엔드포인트가 목록에 없다는 것은 **못 쓴다는 뜻이 아니다.** 이 문장을 답변에
+#: 반드시 함께 내보낸다 — 빼면 침묵이 "없음"으로 읽힌다.
+_ABSENCE_CAVEAT = (
+    "※ 여기 없는 리전은 '못 쓴다'가 아니라 **이 데이터로는 모른다**입니다. "
+    "글로벌 서비스는 엔드포인트가 하나뿐인데, 그걸 구분하는 표시가 원본 서비스 "
+    "307개 중 22개에만 있습니다."
+)
+
+
+#: 출처가 botocore라 리전 카탈로그는 **AWS만** 담겨 있다. 밝히지 않으면 AWS만 본
+#: 답이 전체를 본 답처럼 보인다 — 서울만 해도 다른 프로바이더에 여섯 곳이 더 있다.
+_AWS_ONLY_CAVEAT = (
+    "※ 이 리전 목록은 **AWS만** 담고 있습니다(출처가 AWS SDK). Azure·GCP 등 다른 "
+    "프로바이더에도 같은 도시의 리전이 있습니다 — 예: 서울은 azure `koreasouth`, "
+    "gcp `asia-northeast3`, tencent `ap-seoul`. 프로바이더를 안 정했다면 "
+    "이 코드로 좁히지 말고 사용자에게 먼저 물어보세요."
+)
+
+
+@lru_cache(maxsize=4)
+def _endpoints(output_dir: str) -> dict | None:
+    path = artifact.resolve(Path(output_dir), ENDPOINTS_FILE)
+    if path is None:
+        return None
+    try:
+        return artifact.load_json(path)
+    except Exception:
+        return None
+
+
+def _service_id(name: str, services: dict) -> tuple[str | None, str]:
+    """CFN 타입이나 서비스 이름을 botocore 서비스 id로. 못 붙이면 (None, 이유).
+
+    붙이는 방법은 둘뿐이다 — 그대로 일치, 하이픈 빼고 일치(`acmpca` → `acm-pca`).
+    실측으로 우리 네임스페이스 281개 중 182개(65%)가 이렇게 붙고 **충돌은 0건**이다.
+    남는 99개는 철자가 아니라 이름 자체가 다르다(`cloudwatch`는 원본에서
+    `monitoring`, `cognito`는 `cognito-idp`). 규칙으로 못 맞히는 것을 짐작으로
+    붙이면 **엉뚱한 서비스의 리전을 자신 있게 답하게 된다.**
+    """
+    text = name.strip()
+    match = re.match(r"^(?:aws::)?AWS::([^:]+)::", text)
+    key = (match.group(1) if match else text).lower()
+
+    if key in services:
+        return key, ""
+    flat = {s.replace("-", ""): s for s in services}
+    if key in flat:
+        return flat[key], ""
+    return None, key
+
+
+def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> str:
+    """이 서비스의 엔드포인트가 어느 리전에 있는가.
+
+    `AWS::EC2::Instance` 처럼 CFN 타입으로 물어도 되고 `ec2` 처럼 서비스 이름으로
+    물어도 된다. **없는 리전은 답하지 않는다** — 위 `_ABSENCE_CAVEAT` 참조.
+    """
+    data = _endpoints(str(output_dir))
+    if data is None:
+        return _ENDPOINTS_MISSING
+
+    services = data.get("services", {}).get("aws") or {}
+    service, unmatched = _service_id(name, services)
+    if service is None:
+        import difflib
+
+        # 비슷한 이름을 **제안**한다. 골라서 답하지는 않는다 — 제안은 사용자가
+        # 확인할 수 있지만, 골라 버리면 틀렸을 때 확인할 방법이 없다.
+        near = difflib.get_close_matches(unmatched, services, n=4, cutoff=0.6)
+        lines = [
+            f"'{name}' 이(가) AWS SDK의 어느 서비스인지 우리 데이터로는 확정할 수 "
+            f"없습니다(찾아본 이름: '{unmatched}').",
+            "  이름이 규칙적이지 않은 서비스가 있습니다 — CloudWatch는 `monitoring`, "
+            "Cognito는 `cognito-idp`, Certificate Manager는 `acm`입니다.",
+        ]
+        if near:
+            lines.append(f"  이름이 비슷한 것: {', '.join(near)}")
+        lines.append(
+            "  → SDK 서비스 이름으로 다시 물어보세요. 짐작으로 붙이면 엉뚱한 "
+            "서비스의 리전을 자신 있게 답하게 되므로 붙이지 않았습니다."
+        )
+        return "\n".join(lines)
+
+    body = services[service]
+    regions = body.get("regions") or []
+    partitions = data.get("partitions", {}).get("aws", {}).get("regions") or {}
+
+    if body.get("global"):
+        return (
+            f"{service}: **글로벌 서비스**입니다 — 원본이 리전에 매이지 않는다고 "
+            f"밝혔습니다(partitionEndpoint={body.get('partition_endpoint')}).\n"
+            "  리전을 골라 배포하는 대상이 아닙니다."
+        )
+
+    if not regions:
+        return (
+            f"{service}: 표준 파티션에서 엔드포인트를 하나도 찾지 못했습니다.\n"
+            f"  {_ABSENCE_CAVEAT}"
+        )
+
+    lines = [f"{service}: 엔드포인트가 있는 리전 {len(regions)}곳"]
+    for code in regions[:12]:
+        label = (partitions.get(code) or {}).get("description")
+        lines.append(f"  - {code}" + (f" ({label})" if label else ""))
+    if len(regions) > 12:
+        lines.append(f"  … 외 {len(regions) - 12}곳")
+    lines.append(f"  {_ABSENCE_CAVEAT}")
+    return "\n".join(lines)
+
+
+def region_lookup(query: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> str:
+    """사람이 쓴 말('서울')을 리전 코드로 옮긴다.
+
+    이게 없어서 실측에서 "서울 리전에서 GPU 인스턴스"에 답하지 못했다. 데이터는
+    `aws-regions.json`에 있었고 `ap-northeast-2`라는 키만 못 만들고 있었다.
+    """
+    from kbcommon.regions import catalog, resolve_region
+
+    found = resolve_region(query, output_dir=str(output_dir))
+    if not found:
+        known = catalog(output_dir=str(output_dir))
+        if not known:
+            return _ENDPOINTS_MISSING
+        return (
+            f"'{query}' 에서 리전을 알아보지 못했습니다 — 그런 리전이 없다는 뜻이 "
+            f"아니라 **우리가 못 알아들었다**는 뜻입니다.\n"
+            "  리전 코드(`ap-northeast-2`)나 영어 이름(`Seoul`)으로 다시 물어보세요.\n"
+            f"  아는 리전 {len(known)}곳 중 몇 가지: "
+            + ", ".join(f"{r.code}({r.name})" for r in known[:5])
+        )
+
+    lines = [f"'{query}' → 리전 {len(found)}곳"]
+    for region in found[:10]:
+        how = {
+            "code": "리전 코드",
+            "name": "원본 표시 이름",
+            "alias": "우리가 더한 한국어 번역",
+        }[region.matched_by]
+        note = "" if region.partition == "aws" else f" · {region.partition} 파티션"
+        lines.append(f"  - {region.code} — {region.name} ({how}{note})")
+    if len(found) > 10:
+        lines.append(f"  … 외 {len(found) - 10}곳")
+    if len(found) > 1:
+        lines.append("  → 여러 곳에 걸립니다. 어느 쪽인지 정해서 다시 물어보세요.")
+    lines.append(_AWS_ONLY_CAVEAT)
     return "\n".join(lines)

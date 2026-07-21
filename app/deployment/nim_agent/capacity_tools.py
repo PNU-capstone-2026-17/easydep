@@ -174,6 +174,39 @@ def cap_service_quota(keyword: str) -> str:
     return agent_api.service_quota(keyword)
 
 
+@function_tool
+def cap_resolve_region(place: str) -> str:
+    """사람이 쓴 지명을 **AWS** 리전 코드로 바꾼다. '서울' → 'ap-northeast-2'.
+
+    **다른 도구에 리전을 넘기기 전에 먼저 이걸 부르세요.** 나머지 도구는 리전
+    코드로 색인돼 있어서 '서울'을 그대로 넘기면 데이터가 있어도 못 찾습니다.
+
+    **AWS 리전만 압니다.** 같은 도시에 다른 프로바이더의 리전도 있습니다
+    (서울 = azure `koreasouth`, gcp `asia-northeast3`, tencent `ap-seoul`).
+    사용자가 프로바이더를 안 밝혔으면 이 코드로 좁히지 말고 먼저 되물으세요 —
+    좁히면 AWS만 본 답이 전체를 본 답처럼 보입니다.
+
+    Args:
+        place: 지명이나 리전 이름. 예: '서울', '도쿄', 'Seoul', 'ap-northeast-2'.
+    """
+    print(f"\n[용량질의] 리전 해석: {place!r}")
+    return agent_api.region_lookup(place)
+
+
+@function_tool
+def cap_service_regions(service: str) -> str:
+    """이 서비스의 엔드포인트가 어느 리전에 있는지 본다.
+
+    **주의**: 목록에 없는 리전은 "못 쓴다"가 아니라 "이 데이터로는 모른다"입니다.
+    없다고 단정해서 답하지 마세요.
+
+    Args:
+        service: CFN 타입(`AWS::EC2::Instance`) 또는 SDK 서비스 이름(`ec2`).
+    """
+    print(f"\n[용량질의] 서비스 리전: {service!r}")
+    return agent_api.where_available(service)
+
+
 def _coerce(raw: str) -> float | str:
     """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
     try:
@@ -189,4 +222,6 @@ CAPACITY_TOOLS = [
     cap_immutable_properties,
     cap_allowed_values,
     cap_service_quota,
+    cap_resolve_region,
+    cap_service_regions,
 ]

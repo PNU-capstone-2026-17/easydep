@@ -149,6 +149,16 @@ PROBES: tuple[Probe, ...] = (
           "턴 한도 초과 → 되묻기. 두 축을 잇는 필터가 없어서였다",
           want_tools=("cost_recommend_specs",), forbid_tools=("web_search",),
           want_any=("g4dn", "g5g", "g5.", "g6")),
+    Probe("R1", "서울 리전에서 쓸 수 있는 AWS GPU 인스턴스 알려줘",
+          "**H3과 같은 질문을 사람이 쓰는 말로.** H3은 `ap-northeast-2`라고 코드로 "
+          "물어서 이 실패를 못 잡았다. 데이터는 있었고 '서울'을 색인 키로 바꾸는 "
+          "길만 없었다",
+          want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
+          want_any=("g4dn", "g5g", "g5.", "g6")),
+    Probe("R2", "우리 서비스는 도쿄에 배포할 건데 리전 코드가 뭐야?",
+          "지명 → 리전 코드. 모델 기억이 아니라 도구로 답하는가",
+          want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
+          want_any=("ap-northeast-1",)),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",
@@ -162,6 +172,13 @@ PROBES: tuple[Probe, ...] = (
 #   모델이 cap_check_value 대신 cap_property_limits로 표를 받아 종류별 가능/불가를
 #   전부 정리해 답한다. 프롬프트로 지시해도 그렇다. 다만 그 답이 **실용적으로 더
 #   낫다** — "되물어야 한다"는 우리 기대가 옳은지부터 다시 볼 문제라, 강제하지 않는다.
+#
+# 프로바이더를 안 밝힌 "서울 리전 GPU 인스턴스"
+#   R1을 처음엔 프로바이더 없이 물었는데, 3번 돌려 1번만 끝까지 갔다. 그런데 되묻는
+#   쪽이 **옳다** — 우리 리전 카탈로그는 AWS만 담고 있고, 서울에 해당하는 리전이
+#   azure(koreasouth)·gcp(asia-northeast3) 등 여섯 곳 더 있다. 안 물어보고 답하면
+#   AWS만 본 답이 전체를 본 답처럼 보인다. **기대가 틀렸던 것이라 R1에 AWS를
+#   명시하도록 고쳤다.** 되묻기 여부는 문구 판정이라 기계로 굳히지 않는다.
 #
 # 3-3의 도구 **순서**
 #   계획 게이트에 몇 번 부딪힌 뒤 계획을 세우는지가 실행마다 다르다. 게이트가 막는지는
