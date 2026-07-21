@@ -413,6 +413,27 @@ List에 없어 botocore 문서에서 파싱합니다.
 > 지어내는 것입니다. 옛 감사 문서의 "소비자가 `re.compile`하다 터진다"도 이미
 > 막혀 있었습니다(다만 조용히 막혀 있었고, 그게 진짜 문제였습니다).
 
+### 가속기 필터는 새 도구가 아니라 기존 추천 도구에 단다
+`cost_recommend_specs`에 `require_accelerator`를 더했습니다. 도구 수는 20개 그대로입니다.
+
+**왜 새 도구가 아닌가**: 그 도구가 이미 `region`·`provider` 필터를 갖고 있고 perfkb
+조인(성능 경고)까지 하고 있었습니다. "이 리전에서 쓸 수 있는 GPU 인스턴스"는 **추천
+질문**이라 원래 이 도구의 일입니다.
+
+**왜 `perf_specs_by_ebs_baseline`에 합치지 않나**: 그건 perfkb만 보는 임계값 조회라
+리전을 넣으면 `perf_` 라는 이름이 거짓말이 되고, 가격·정렬이 없어 추천에는 부족합니다.
+
+> **필터 근거를 정정했습니다.** 처음엔 perfkb의 `gpuModel`로 축을 이으려 했습니다.
+> 근거는 "costkb의 `acceleratorCount`가 GPU 인스턴스에서도 0"이었는데 **틀렸습니다**
+> — ap-northeast-2 **첫 행 하나**(가속기 없는 인스턴스)를 보고 일반화했습니다.
+> 실제로는 GPU 스펙 571행 전부 1 이상이고, costkb 쪽이 **엄격히 더 넓습니다**
+> (296종·9개 프로바이더 vs perfkb 50종·aws만, perfkb에만 있는 것 0종).
+> 축을 이을 필요가 없었고, 그래서 넣었던 확장점(`keep` 술어)도 되돌렸습니다.
+> 표본 하나로 일반화한 실수가 오늘만 두 번째입니다(AKS `x-ms-mutability` 2건).
+
+`acceleratorCount`는 GPU만이 아니라 가속기 전반입니다(Inferentia 등). 그래서 칸 이름
+그대로 `require_accelerator`로 부르고, GPU **모델명**은 성능 축에서 봅니다.
+
 ### AWS 하드웨어 사실을 연다 — CPU·GPU 모델
 `vantage-sh/ec2instances.info`에 **커밋된** `manually_fetched_data.json`(MIT, 1.4MB)만
 받습니다. 커밋 SHA로 고정합니다.

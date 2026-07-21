@@ -155,6 +155,7 @@ def filter_specs(
     architecture: str | None = DEFAULT_ARCHITECTURE,
     priced_only: bool = True,
     fold_regions: bool = True,
+    require_accelerator: bool = False,
     output_dir: Path | str | None = None,
 ) ->list[dict]:
     """요구사항 조건으로 스펙을 필터링·정렬해 상위 결과를 반환한다.
@@ -171,6 +172,10 @@ def filter_specs(
             알 수 없는 값이면 'cost'로 폴백한다.
         limit: 반환 개수(최소 1).
         architecture: 기본 'x86_64' — MCP가 주입하는 것과 동일. None이면 전체.
+        require_accelerator: True면 `acceleratorCount`가 1 이상인 후보만. GPU를 포함한
+            가속기 전반이다(Inferentia·TPU 등도 걸린다) — 필드 이름 그대로 쓴다.
+            **정렬·접기보다 먼저** 건다. 나중에 걸면 상위 N을 고른 뒤라 가속기 후보가
+            이미 잘려 나간 상태가 된다.
         priced_only: True(기본)면 가격이 있는 후보만. 비용 정렬·판정이 성립해야 하므로.
         fold_regions: True(기본)면 같은 (프로바이더, 스펙명)이 리전만 달리해 여러 칸을
             먹지 않게 접는다. 접힌 리전은 `_foldedRegions`에 남는다.
@@ -191,6 +196,7 @@ def filter_specs(
         # 배제 사유가 되면 빌드 전 폴백이 통째로 사라진다.
         and (arch is None or not s.get("architecture") or s["architecture"].lower() == arch)
         and (not priced_only or s["hourlyUSD"] is not None)
+        and (not require_accelerator or (s.get("acceleratorCount") or 0) > 0)
     ]
 
     key = _SORT_KEYS.get(sort_by, _SORT_KEYS["cost"])

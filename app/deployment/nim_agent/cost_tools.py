@@ -102,6 +102,7 @@ def cost_recommend_specs(
     sort_by: str = "cost",
     limit: int = 5,
     architecture: str = "x86_64",
+    require_accelerator: bool = False,
 ) -> str:
     """요구사항을 만족하는 VM 스펙 후보와 시간당 단가를 추천한다(크레덴셜 불필요).
 
@@ -120,6 +121,10 @@ def cost_recommend_specs(
         limit: 반환할 후보 수(기본 5).
         architecture: 'x86_64'(기본) | 'arm64' | 'any'. cb-tumblebug의 라이브 추천과
             같은 기본값이라, 값을 바꾸면 라이브 결과와 달라질 수 있습니다.
+        require_accelerator: True면 **가속기(GPU 등)가 달린 것만** 추립니다.
+            "이 리전에서 쓸 수 있는 GPU 인스턴스 알려줘" 같은 질문은 `region`과 함께
+            이걸로 한 번에 답합니다. GPU **모델명**은 perf_instance_profile로 보세요.
+            GPU 인스턴스는 arm64인 것도 있으니 architecture='any'가 필요할 수 있습니다.
     """
     if _needs_plan(ctx):
         print("\n[스펙추천] 계획 없음 → 거부")
@@ -129,10 +134,12 @@ def cost_recommend_specs(
         f"\n[스펙추천] vcpu>={vcpu_min}, mem>={mem_min_gib}GiB, "
         f"provider={provider or 'any'}, region={region or 'any'}, "
         f"arch={arch or 'any'}, sort={sort_by}"
+        + (", 가속기 있는 것만" if require_accelerator else "")
     )
     return agent_api.recommend_specs(
         vcpu_min, mem_min_gib, provider, region, sort_by, limit,
-        architecture=arch, annotate=_perf_annotate, footer=_perf_footer,
+        architecture=arch, require_accelerator=require_accelerator,
+        annotate=_perf_annotate, footer=_perf_footer,
     )
 
 

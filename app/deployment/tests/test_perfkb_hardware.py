@@ -108,3 +108,77 @@ def test_hardware_summary_counts_only_real_hardware() -> None:
     text = hardware_summary("aws")
     assert text and "GPU 있는 것" in text
     assert hardware_summary("존재하지않는프로바이더") is None
+
+
+# --- 가속기 필터 (cost_recommend_specs) ---
+
+
+def test_accelerator_filter_uses_costkb_own_field() -> None:
+    """가속기 필터는 **costkb 자기 필드**로 건다 — 축을 이을 필요가 없다.
+
+    처음엔 perfkb의 `gpuModel`로 조인하려 했다. 근거는 "costkb의
+    `acceleratorCount`가 GPU 인스턴스에서도 0"이라는 것이었는데 **틀렸다** —
+    ap-northeast-2 첫 행 하나(GPU 없는 인스턴스)를 보고 일반화했다.
+    실제로는 GPU 스펙 571행 전부 1 이상이고, costkb 쪽이 **엄격히 더 넓다**
+    (296종/9개 프로바이더 vs perfkb 50종/aws만, perfkb에만 있는 것 0종).
+    """
+    import json
+
+    cost = json.load(open("output/tumblebug-cost.json", encoding="utf-8"))["specs"]
+    perf = json.load(open("output/tumblebug-perf.json", encoding="utf-8"))["specs"]
+    by_perf = {(s["provider"], s["specName"]) for s in perf if s.get("gpuModel")}
+    by_cost = {(s["provider"], s["specName"]) for s in cost if s.get("acceleratorCount")}
+    assert by_perf <= by_cost, "perfkb에만 있는 가속기 스펙이 생겼다 — 필터 근거를 다시 보라"
+    assert len({p for p, _ in by_cost}) > 1, "costkb 가속기 신호가 aws 한 곳뿐이다"
+
+
+def test_accelerator_filter_runs_before_sorting(tmp_path) -> None:
+    """필터를 **정렬·자르기보다 먼저** 걸어야 한다.
+
+    나중에 걸면 상위 N을 고른 뒤라 가속기 후보가 이미 잘려 나간다. 실제
+    ap-northeast-2에서도 저가 상위권은 전부 t 계열(가속기 없음)이다.
+
+    실제 미러가 아니라 **직접 만든 데이터**로 검사한다 — 테스트는 번들 36건
+    모드로 묶여 있고, 거기엔 가속기 스펙이 없다.
+    """
+    import json
+
+    from costkb.dataset import BUILT_FILENAME, _load_cached, filter_specs
+
+    def spec(name, hourly, accel):
+        return {
+            "id": name, "provider": "aws", "region": "test-1", "specName": name,
+            "vCPU": 4, "memGiB": 8.0, "memGiBActual": 8.0, "hourlyUSD": hourly,
+            "architecture": "x86_64", "infraType": "vm",
+            "acceleratorCount": accel, "acceleratorMemoryGB": 0.0,
+        }
+
+    dataset = {
+        "_note": "테스트용",
+        "specs": [spec("cheap-1", 0.01, 0), spec("cheap-2", 0.02, 0),
+                  spec("gpu-1", 5.00, 1), spec("gpu-2", 6.00, 2)],
+    }
+    (tmp_path / BUILT_FILENAME).write_text(
+        json.dumps(dataset, ensure_ascii=False), encoding="utf-8"
+    )
+    _load_cached.cache_clear()
+
+    plain = filter_specs(0, 0, "aws", None, "cost", 2, architecture=None,
+                         output_dir=tmp_path)
+    accel = filter_specs(0, 0, "aws", None, "cost", 2, architecture=None,
+                         require_accelerator=True, output_dir=tmp_path)
+    _load_cached.cache_clear()
+
+    assert [s["specName"] for s in plain] == ["cheap-1", "cheap-2"]
+    assert [s["specName"] for s in accel] == ["gpu-1", "gpu-2"], (
+        "가속기 후보가 상위 2건 밖이라 잘렸다 — 필터가 자르기 뒤에 걸렸다는 뜻"
+    )
+
+
+def test_empty_result_says_the_accelerator_condition_is_on() -> None:
+    """가속기 조건 때문에 비었으면 그걸 밝힌다 — 안 밝히면 엉뚱한 데를 조정한다."""
+    from costkb import agent_api as cost
+
+    text = cost.recommend_specs(500, 0, "aws", "ap-northeast-2", "cost", 3,
+                                architecture=None, require_accelerator=True)
+    assert "가속기가 달린 것만" in text

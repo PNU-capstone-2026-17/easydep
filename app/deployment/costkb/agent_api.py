@@ -76,6 +76,7 @@ def recommend_specs(
     limit: int = 5,
     *,
     architecture: str | None = DEFAULT_ARCHITECTURE,
+    require_accelerator: bool = False,
     output_dir: Path | str | None = None,
     annotate: Callable[[dict], str | None] | None = None,
     footer: Callable[[list[dict]], str | None] | None = None,
@@ -107,12 +108,19 @@ def recommend_specs(
         sort_by,
         limit,
         architecture=architecture,
+        require_accelerator=require_accelerator,
         output_dir=output_dir,
     )
     if not results:
+        # **무엇 때문에 비었는지 밝힌다.** 가속기 조건으로 걸러 비었는데 "조건을
+        # 조정하세요"만 말하면 사용자는 vCPU·메모리만 낮추다가 끝난다.
+        extra = (
+            "\n(가속기가 달린 것만 찾고 있습니다 — 이 조건을 빼면 후보가 더 있습니다.)"
+            if require_accelerator else ""
+        )
         return (
             "조건을 만족하는 스펙이 데이터셋에 없습니다. 이 데이터셋의 커버리지는 "
-            f"다음과 같으니 조건을 조정하세요:\n{coverage_text(output_dir)}"
+            f"다음과 같으니 조건을 조정하세요:{extra}\n{coverage_text(output_dir)}"
         )
 
     lines = []
