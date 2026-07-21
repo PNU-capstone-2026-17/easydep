@@ -162,6 +162,7 @@ uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 �
 | [`kb-design-2026-07-21.md`](document/kb-design-2026-07-21.md) | **데이터 우선 설계** — 진단·바깥 사례 조사·실행 순서(D1~D6) |
 | [`gcp-source-decision-2026-07-21.md`](document/gcp-source-decision-2026-07-21.md) | KCC vs Magic Modules — 왜 KCC를 뼈대로, 프로바이더를 값으로 |
 | [`kb-guidance-test-2026-07-21.md`](document/kb-guidance-test-2026-07-21.md) | 사용자에게 보이는 문장을 직접 태워 본 결과 |
+| [`source-survey-2026-07-21.md`](document/source-survey-2026-07-21.md) | **추가 소스 조사** — 안 쓰던 소스 순위와 함정, 그리고 내 오답 정정 3건 |
 | [`agent-probe-2026-07-21.md`](document/agent-probe-2026-07-21.md) | **에이전트 실측·회귀** — 데이터가 실제 답변으로 이어지는가. `RUN_AGENT_TESTS=1 pytest tests/test_agent_regression.py` |
 | [`session-2026-07-21.md`](document/session-2026-07-21.md) | **최근 작업 기록 + 다음 과제** — 이어서 작업한다면 여기부터 |
 | [`kb-data-audit-2026-07-20.md`](document/kb-data-audit-2026-07-20.md) | 데이터 결함 전수 감사 + 재조사 결과 |

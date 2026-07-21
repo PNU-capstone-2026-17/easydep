@@ -11,6 +11,17 @@
 붙는 배포 시점 상수 표시이므로 mutability로 쓰면 안 된다. 실측상 bicep에는 CFN의
 createOnlyProperties에 해당하는 불변 정보가 없다.
 
+**그 공백의 원인을 찾았다(2026-07-21).** 원본에는 있고 **생성기가 버린다.**
+`azure-rest-api-specs`의 `x-ms-mutability: ["read","create"]`가 생성 불변성인데,
+bicep 생성기는 이를 writable&readable로 접어 `flags: None`으로 만든다 —
+`ObjectTypePropertyFlags`에 `Immutable` 멤버 자체가 없다. 우리 캐시에서 `x-ms-mutability`
+출현은 **0건**이다.
+
+> 다만 "bicep이 제약을 잃는다"는 일반화는 **틀렸다.** `pattern` 920 · `maxLength` 827 ·
+> `minValue` 446 · `maxValue` 337은 그대로 있고 이 파서가 전부 소비한다. 잃는 건
+> **불변성 하나**다. 상류를 볼 이유가 있다면 그 필드 때문이지 제약 일반 때문이 아니다.
+> — `document/source-survey-2026-07-21.md`
+
 실측상 제약이 붙은 스칼라로 resolve되는 프로퍼티는 2.39%뿐이고, `diskSizeGB` 같은
 간판 필드에는 제약이 없다. 그래도 ContainerService/Network 쪽은 값이 잘 붙어 있다.
 """

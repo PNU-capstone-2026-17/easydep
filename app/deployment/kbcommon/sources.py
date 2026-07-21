@@ -112,7 +112,14 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="1.43.52",
-        note="shape에는 min/max가 없다(Integer = {\"type\":\"integer\"}). 설명문이 유일한 출처다.",
+        note=(
+            "**정정(2026-07-21)**: 예전 주석은 'shape에 min/max가 없다'였는데 틀렸다. "
+            "EC2만 봐도 shape 4,069개 중 min 183·max 175·enum 457개가 있다. "
+            "참인 것은 EBS의 `Size`·`Iops`·`Throughput`이 제약 없는 공용 `Integer` "
+            "shape을 가리킨다는 것뿐인데, 그 관찰을 전체로 일반화했다 — 우리가 막으려는 "
+            "'확신에 찬 오답'을 우리 주석이 저지른 것이다. **EBS 한도에 한해서** "
+            "설명문이 유일한 출처다."
+        ),
     ),
     "tpg-provider": Source(
         key="tpg-provider",

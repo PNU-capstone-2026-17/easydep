@@ -48,8 +48,14 @@ ComputeInterconnectAttachment · ComputeSubnetwork   → 전부 tf2crd
 | 라이선스 | **분할 라이선스**(GitHub이 `NOASSERTION`). `mmv1/products/`는 Apache-2.0 | 깔끔한 Apache-2.0 |
 | 커버리지 | KCC kind 527 중 **154종(29%)이 MM에 없음** | — |
 
-소스 핀은 우리 프로젝트의 전제입니다(`kbcommon/sources.py`). **핀을 못 박는 소스를
-뼈대로 쓸 수 없습니다.**
+소스 핀은 우리 프로젝트의 전제입니다(`kbcommon/sources.py`).
+
+> **정정(2026-07-21)**: "핀을 못 박는다"는 뺄 근거가 **아니었습니다.** 우리는 이미
+> `bicep-types-az`와 `azure-limits-doc`을 **커밋 SHA로 핀**하고 있고, AWS CFN zip은
+> 아예 `digest`(재현 불가)로 받아들입니다. 커밋 SHA는 digest보다 엄격히 더 재현
+> 가능하므로, 제 근거가 우리 자신의 핀 분류와 어긋났습니다.
+> 프로바이더를 고른 **다른** 이유(증발 12.7%, `ForceNewIfChange`가 YAML엔 없음)는
+> 그대로 유효합니다.
 
 ### MM 데이터에는 함정이 하나 더 있다
 
@@ -129,6 +135,13 @@ MM 쪽은 버그가 아니라 **Terraform의 클라이언트 측 기본값**입�
 
 `googleapis.com/discovery/v1/apis/*/rest`는 버전이 있고 받을 수 있으며 **API 자신의 말**입니다.
 기본값·필드 의미는 여기를 기준으로 삼고, 어긋나면 검수 대기열에 올립니다.
+
+> **정정(2026-07-21)**: Discovery에 **수치 한도는 없습니다.** compute v1을 직접 파싱해
+> `schemas` 안 `minimum`이 **0건**임을 확인했습니다(201건은 전부 페이지네이션 파라미터).
+> 기본값·`readOnly`(1,466)·`enum`(707)에는 여전히 쓸모 있지만 **범위 추출기를 만들면
+> 안 됩니다.** 또 `googleapis` proto는 저장소 전체로는 `IMMUTABLE` 2,941건인데
+> `compute/v1/compute.proto`는 **0건**입니다(그게 Discovery에서 생성되므로).
+> — [추가 소스 조사](source-survey-2026-07-21.md)
 
 ---
 
