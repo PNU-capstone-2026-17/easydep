@@ -15,7 +15,7 @@
 |---|---|
 | **정적=코드 / 의미=근거LLM** | 정적으로 판정 가능한 규칙(커버리지·참조무결성·분기어·계약)은 **코드**가, 의미 판단(내부컴포넌트 누출·안티패턴)은 **근거 프롬프트 LLM**이. |
 | **임의 사전 금지(오버피팅 방지)** | 근거 없는 키워드 목록·개수 상하한·ad-hoc 지침을 만들지 않는다. UI 용어 목록은 Cockburn 예시로만 한정, 개수 가드는 "엔지니어링일 뿐"으로 격하. |
-| **Cockburn 그라운딩** | 모든 프롬프트 지침은 도서 페이지 인용으로 교차검증(`docs/research/cockburn-grounding.md`). |
+| **Cockburn 그라운딩** | 모든 프롬프트 지침은 도서 페이지 인용으로 교차검증(`cockburn-grounding.md`, 아래 §참고). |
 | **생성 → 검증 → 반성(repair)** | 각 생성 뒤 정적+의미 검증을 병합하고, 실패 시 수술적 지시로 재생성(bounded). |
 | **전 구간 구조화 출력** | 모든 LLM 호출이 pydantic 스키마 강제(`with_structured_output`), 자유텍스트 파싱 제거. |
 | **추적성(provenance)** | 유스케이스는 `requirement_ids`로, 스텝은 `covered_req_ids`로 소스 FR을 태깅 → 커버리지를 코드로 검증. |
@@ -138,6 +138,9 @@ STEP 4 — 관계 · 다이어그램
 - **반성 루프**: 검증 실패 → 수술적 지시로 재생성 → 재검증(bounded, 회귀 방지, 마지막 정상본 유지).
 
 ### 4.2 Cockburn 그라운딩
+> 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖
+> `report/easydep-research/docs/research/` 로 옮겼다. 경로는 그 안에서의 상대 경로다.
+
 Cockburn, *Writing Effective Use Cases* 로 프롬프트 지침을 항목별 교차검증
 (`docs/research/cockburn-grounding.md`, 페이지 인용). 도서는 저작물이라 저장소에 없다.
 핵심 교정:
@@ -246,7 +249,7 @@ inputs/              # 입력 데이터셋(*.json)
 artifacts/           # 실행별 산출물(.gitignore)
 scripts/             # 데이터셋 변환 등
 materials/           # BERT 모델 · Cockburn PDF · PURE
-docs/research/       # 조사·근거 문서(concreteness/GORE/Cockburn 그라운딩/참고 프로젝트 분석)
+                     # (조사·근거 문서 docs/research/ 는 저장소 밖 report/easydep-research/ 로 옮김)
 tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통합
 ```
 

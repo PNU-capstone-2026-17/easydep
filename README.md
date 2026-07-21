@@ -60,4 +60,6 @@ python verify_db.py       # 산출물 저장소 왕복 확인 (MySQL 필요)
 - [HANDOFF.md](HANDOFF.md) — 산출물 저장소 설계와 설계 에이전트 인수인계 노트
 - [docs/requirements-agent.md](docs/requirements-agent.md) — 요구사항 분석 에이전트 상세, 배포(minikube/AKS), 운영 스크립트
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 요구사항 분석 그래프 구조
-- `docs/research/` — 프롬프트·베이스라인 비교 실험 기록
+
+실험·조사 기록(`docs/research/`), PURE 데이터셋, 실험 스크립트, BERT 학습 노트북은
+실행에 쓰이지 않아 저장소에서 빼고 바탕화면 `report/easydep-research/`에 보관한다.
