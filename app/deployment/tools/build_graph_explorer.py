@@ -1,10 +1,15 @@
-"""의존성 그래프 탐색기(단일 HTML)를 만든다.
+"""의존성 그래프 탐색기 — 로컬에서 브라우저로 본다.
 
-`output/*-graph.json`을 읽어 자기완결 HTML 한 장으로 굽는다. 외부 스크립트·폰트를
-쓰지 않는다 — 아티팩트로 올리면 CSP가 외부 요청을 전부 막기 때문이기도 하고,
-파일 하나만 열면 되는 편이 검수에 편해서이기도 하다.
+`output/*-graph.json`을 읽어 자기완결 HTML 한 장으로 굽고, 바로 띄운다.
+외부 스크립트·폰트·CDN을 안 쓰기 때문에 **인터넷 없이도 그대로 돈다.**
 
-    python tools/build_graph_explorer.py
+    python tools/build_graph_explorer.py            # 굽고 브라우저로 연다
+    python tools/build_graph_explorer.py --build    # 굽기만 한다
+    python tools/build_graph_explorer.py --port 9000
+
+기본은 `python -m http.server`와 같은 방식으로 localhost에 띄운다. 파일을 직접
+열어도(`file://`) 동작한다 — fetch를 안 쓰므로 CORS에 걸릴 게 없다. 그래도 서버를
+기본으로 둔 건 `file://` 경로가 OS마다 달라 안내가 지저분해지기 때문이다.
 
 시각 인코딩의 원칙: **한 변수에 한 채널.**
   - 색상 = 프로바이더 (aws/azure/gcp/core)
@@ -14,9 +19,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
+import webbrowser
 from collections import Counter, defaultdict
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# Windows 콘솔은 기본이 cp949라 한글도 '—'도 못 찍고 UnicodeEncodeError로 죽는다.
+# 사용자에게 PYTHONIOENCODING을 설정하라고 시키는 대신 여기서 처리한다 —
+# 안내문을 출력하다 도구가 죽는 건 말이 안 된다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 OUTPUT = Path("output")
 TARGET = OUTPUT / "graph-explorer.html"
@@ -100,8 +117,12 @@ def facts(nodes: list[dict], edges: list[dict]) -> list[dict]:
     return rows
 
 
-def main() -> None:
+def build() -> None:
     nodes, edges = load_graph()
+    if not nodes:
+        raise SystemExit(
+            "output/*-graph.json 이 없습니다. 먼저 `python -m graphkb build` 를 돌리세요."
+        )
     payload = compact(nodes, edges)
     payload["facts"] = facts(nodes, edges)
     payload["basis"] = {
@@ -110,11 +131,48 @@ def main() -> None:
     }
     blob = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     html = TEMPLATE.replace("__DATA__", blob)
+    TARGET.parent.mkdir(parents=True, exist_ok=True)
     TARGET.write_text(html, encoding="utf-8")
     size = TARGET.stat().st_size / 1024
     print(f"{TARGET} ({size:,.0f} KB) — 노드 {len(nodes):,} 엣지 {len(edges):,}")
     if payload["dropped"]:
         print(f"  ⚠ 양쪽 노드를 못 찾은 엣지 {payload['dropped']}건은 제외했습니다.")
+
+
+def serve(port: int, open_browser: bool) -> None:
+    """굽힌 HTML을 localhost로 띄운다."""
+    handler = partial(SimpleHTTPRequestHandler, directory=str(TARGET.parent.resolve()))
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    except OSError as exc:
+        raise SystemExit(
+            f"{port}번 포트를 열 수 없습니다 ({exc}). "
+            f"다른 포트를 주거나(--port 9000) 빈 포트를 자동으로 고르세요(--port 0)."
+        ) from exc
+    with httpd:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/{TARGET.name}"
+        # flush: 출력을 파이프로 넘기면 버퍼에 갇혀 URL이 안 보인다.
+        print(f"\n  {url}\n\n  멈추려면 Ctrl+C", flush=True)
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n멈췄습니다.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="의존성 그래프 탐색기")
+    parser.add_argument("--build", action="store_true", help="굽기만 하고 띄우지 않는다")
+    parser.add_argument("--port", type=int, default=8000, help="기본 8000. 0이면 빈 포트를 자동으로 고른다")
+    parser.add_argument("--no-open", action="store_true", help="브라우저를 자동으로 열지 않는다")
+    args = parser.parse_args()
+
+    build()
+    if args.build:
+        print("\n  브라우저에서 열려면: python tools/build_graph_explorer.py")
+        return
+    serve(args.port, not args.no_open)
 
 
 TEMPLATE = r"""<title>의존성 그래프 탐색기</title>
