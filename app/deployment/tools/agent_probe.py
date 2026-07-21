@@ -180,6 +180,7 @@ class Result:
     probe: Probe
     tools: list[str] = field(default_factory=list)
     answer: str = ""
+    tool_outputs: list[str] = field(default_factory=list)
     error: str = ""
     seconds: float = 0.0
     failures: list[str] = field(default_factory=list)
@@ -193,7 +194,8 @@ class Result:
     def to_dict(self) -> dict:
         return {
             "id": self.probe.id, "query": self.probe.query, "why": self.probe.why,
-            "tools": self.tools, "answer": self.answer, "error": self.error,
+            "tools": self.tools, "answer": self.answer,
+            "tool_outputs": self.tool_outputs, "error": self.error,
             "seconds": round(self.seconds, 1), "failures": self.failures,
             "flaky": self.flaky, "ok": self.ok,
         }
@@ -208,18 +210,40 @@ def _tool_names(result) -> list[str]:
     ]
 
 
-async def _run_once(agent, probe: Probe, max_turns: int) -> tuple[list[str], str, str]:
+def _tool_outputs(result) -> list[str]:
+    """도구가 **실제로 돌려준 문자열**들.
+
+    이름만으로는 "모델이 도구를 불렀다"까지만 안다. 답변이 그 출력에 근거하는지
+    보려면 출력이 있어야 한다 — 도구를 부르고도 없는 말을 지어내는 경우가 있고,
+    그게 우리가 가장 경계하는 실패다.
+    """
+    out = []
+    for item in result.new_items:
+        if getattr(item, "type", "") != "tool_call_output_item":
+            continue
+        text = getattr(item, "output", None)
+        if text is not None:
+            out.append(str(text))
+    return out
+
+
+async def _run_once(
+    agent, probe: Probe, max_turns: int
+) -> tuple[list[str], str, str, list[str]]:
     try:
         # 요청마다 새 상태 — 앞 질의의 계획이 이번 게이트를 열면 안 된다.
         result = await Runner.run(
             agent, [{"role": "user", "content": probe.query}],
             max_turns=max_turns, context=SessionState(),
         )
-        return _tool_names(result), str(result.final_output or ""), ""
+        return (
+            _tool_names(result), str(result.final_output or ""), "",
+            _tool_outputs(result),
+        )
     except MaxTurnsExceeded:
-        return [], "", f"턴 한도({max_turns}) 초과"
+        return [], "", f"턴 한도({max_turns}) 초과", []
     except Exception as exc:  # noqa: BLE001 — 한 질의 실패가 전체를 막지 않게
-        return [], "", f"{type(exc).__name__}: {exc}"
+        return [], "", f"{type(exc).__name__}: {exc}", []
 
 
 async def run_probes(
@@ -229,18 +253,20 @@ async def run_probes(
     out: list[Result] = []
     for probe in probes:
         started = time.monotonic()
-        tools, answer, error = await _run_once(agent, probe, max_turns)
+        tools, answer, error, outputs = await _run_once(agent, probe, max_turns)
         failures = [] if error else probe.failures(tools, answer)
         flaky = False
         for _ in range(retries if (error or failures) else 0):
-            tools2, answer2, error2 = await _run_once(agent, probe, max_turns)
+            tools2, answer2, error2, outputs2 = await _run_once(agent, probe, max_turns)
             failures2 = [] if error2 else probe.failures(tools2, answer2)
             if not error2 and not failures2:
                 # 재시도에서 통과 → 실패가 아니라 불안정으로 기록한다.
                 tools, answer, error, failures, flaky = tools2, answer2, "", [], True
+                outputs = outputs2
                 break
         record = Result(
             probe=probe, tools=tools, answer=answer, error=error,
+            tool_outputs=outputs,
             seconds=time.monotonic() - started, failures=failures, flaky=flaky,
         )
         out.append(record)
