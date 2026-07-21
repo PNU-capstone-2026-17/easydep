@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>요구사항 분석 AI 에이전트</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      margin: 0; min-height: 100vh; background: #f5f5f7; color: #111;
+    }
+    header {
+      padding: 14px 20px; background: #1f2937; color: #fff; font-weight: 600;
+      font-size: 17px;
+    }
+    header small { display:block; font-weight: 400; font-size: 12px; opacity: .8; margin-top: 2px; }
+    main { max-width: 960px; margin: 0 auto; padding: 20px 16px 80px; }
+    .card {
+      background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+      padding: 16px; margin-bottom: 16px;
+    }
+    h2 { font-size: 15px; margin: 0 0 10px; display:flex; align-items:center; gap:8px; }
+    h3 { font-size: 13px; margin: 16px 0 6px; color: #374151; }
+    .step-badge {
+      display:inline-flex; align-items:center; justify-content:center;
+      width: 22px; height: 22px; border-radius: 999px; background:#2563eb; color:#fff;
+      font-size: 12px; font-weight: 700;
+    }
+    textarea {
+      width: 100%; min-height: 120px; padding: 10px 12px; border: 1px solid #d1d5db;
+      border-radius: 10px; font-size: 14px; font-family: inherit; resize: vertical;
+    }
+    textarea.small { min-height: 70px; }
+    button {
+      padding: 10px 18px; border: none; border-radius: 10px; background: #2563eb;
+      color: #fff; font-size: 14px; cursor: pointer; margin-top: 10px;
+    }
+    button.secondary { background: #6b7280; }
+    button:disabled { background: #93b4f5; cursor: default; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
+    .hint { color: #6b7280; font-size: 12px; margin: 4px 0 8px; }
+    label.check { display:flex; align-items:center; gap:6px; font-size:13px; color:#374151; margin-top:10px; cursor:pointer; }
+    ol.questions { margin: 6px 0 10px; padding-left: 20px; }
+    ol.questions li { margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { color: #6b7280; font-weight: 600; white-space: nowrap; }
+    .tag { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .fr  { background: #dbeafe; color: #1e40af; }
+    .nfr { background: #fef3c7; color: #92400e; }
+    .kind-primary { background:#dcfce7; color:#166534; }
+    .kind-supporting { background:#ede9fe; color:#5b21b6; }
+    .idpill { display:inline-block; padding:1px 6px; margin:0 2px 2px 0; border-radius:6px;
+      background:#eef2ff; color:#3730a3; font-size:11px; font-weight:600; }
+    .idpill.nfr { background:#fef3c7; color:#92400e; }
+    /* 커버리지 태그: 요구사항 문장을 팝오버로 보여주는 것들 */
+    .idpill.has-pop { cursor: help; }
+    .idpill.has-pop:hover, .idpill.has-pop:focus { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+    .req-pop {
+      position: absolute; z-index: 1000; max-width: 340px;
+      background:#111827; color:#f9fafb; font-size:12px; line-height:1.45;
+      padding:8px 11px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.28);
+      pointer-events:none; word-break:break-word;
+    }
+    .req-pop::before { content:""; position:absolute; bottom:-5px; left:14px;
+      border:5px solid transparent; border-top-color:#111827; border-bottom:0; }
+    .req-pop.below::before { top:-5px; bottom:auto; border-top:0; border-bottom-color:#111827; }
+    .req-pop.hidden { display:none; }
+    .agree { color: #059669; font-weight: 600; }
+    .disagree { color: #dc2626; font-weight: 600; }
+    .muted { color: #9ca3af; }
+    .status { font-size: 13px; color: #6b7280; margin-bottom: 10px; }
+    .err { color: #dc2626; }
+    .hidden { display: none; }
+    .metrics { display:flex; gap:14px; flex-wrap:wrap; margin:6px 0; }
+    .metric { background:#f9fafb; border:1px solid #eef0f3; border-radius:10px; padding:8px 12px; min-width:96px; }
+    .metric .n { font-size:18px; font-weight:700; }
+    .metric .l { font-size:11px; color:#6b7280; }
+    .warn { color:#b45309; font-size:12px; margin-top:4px; }
+    details.uc { border:1px solid #e5e7eb; border-radius:10px; padding:8px 12px; margin-bottom:8px; background:#fbfbfc; }
+    details.uc > summary { cursor:pointer; font-weight:600; font-size:14px; }
+    details.uc[open] > summary { margin-bottom:8px; }
+    .spec-block { margin:8px 0; }
+    .spec-block .lbl { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }
+    ol.steps { margin:4px 0 4px 0; padding-left:22px; }
+    ol.steps li { margin-bottom:3px; }
+    ul.plain { margin:4px 0; padding-left:18px; }
+    .ext { border-left:3px solid #e5e7eb; padding:2px 0 2px 10px; margin:6px 0; }
+    .ext .cond { font-weight:600; }
+    .outcome { font-size:11px; padding:1px 6px; border-radius:6px; font-weight:600; }
+    .outcome.resume { background:#dbeafe; color:#1e40af; }
+    .outcome.alternate_success { background:#dcfce7; color:#166534; }
+    .outcome.fail { background:#fee2e2; color:#991b1b; }
+    pre.puml {
+      background:#0f172a; color:#e2e8f0; padding:12px; border-radius:10px; overflow-x:auto;
+      font-size:12px; line-height:1.5; font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    }
+    .rel-list { font-size:13px; }
+    .rel-list .arrow { color:#6b7280; }
+    .spinner { display:inline-block; width:14px; height:14px; border:2px solid #cbd5e1;
+      border-top-color:#2563eb; border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <header>
+    🧭 클라우드 네이티브 요구사항 분석 AI 에이전트
+    <small>요구사항 → 대화형 구체화 · FR/NFR 분류 · 액터/유스케이스 · Cockburn 명세 · 유스케이스 다이어그램</small>
+  </header>
+  <main>
+    <div class="card" id="inputCard">
+      <h2><span class="step-badge">0</span> 요구사항 입력</h2>
+      <p class="hint">한 줄에 하나씩 입력하세요. 추상적이어도(예: "I want to build a shopping mall service") 괜찮습니다.</p>
+      <textarea id="reqInput" placeholder="Users must be able to log in with email and password.&#10;The system shall respond within 2 seconds.&#10;Registered users can add products to a cart and place an order."></textarea>
+      <label class="check"><input type="checkbox" id="gatesChk" /> 단계별 대화형 진행(clarify 질문 + 각 단계 피드백 게이트)</label>
+      <p class="hint" style="margin-top:2px">체크 해제 시 4단계를 한 번에 자동 실행합니다. (서버가 대화형 모드가 아니면 이 옵션은 무시됩니다.)</p>
+      <div class="row"><button id="startBtn">분석 시작</button></div>
+    </div>
+
+    <div class="card hidden" id="clarifyCard">
+      <h2><span class="step-badge">?</span> 추가 정보가 필요합니다</h2>
+      <p class="hint">아래 질문에 자유롭게 답해주세요. 한 번에 이어 적어도 됩니다.</p>
+      <ol class="questions" id="questionList"></ol>
+      <textarea id="answerInput" class="small" placeholder="답변을 입력하세요..."></textarea>
+      <div class="row"><button id="answerBtn">답변 제출</button></div>
+    </div>
+
+    <div class="status hidden" id="busyBox"><span class="spinner"></span> <span id="busyMsg">분석 중...</span></div>
+
+    <!-- STEP 1 -->
+    <div class="card hidden" id="step1Card">
+      <h2><span class="step-badge">1</span> FR / NFR 분류</h2>
+      <div class="status" id="step1Status"></div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>요구사항</th><th>유형</th></tr>
+          </thead>
+          <tbody id="step1Body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- STEP 2 -->
+    <div class="card hidden" id="step2Card">
+      <h2><span class="step-badge">2</span> 액터 · 유스케이스</h2>
+      <div id="coverageMetrics"></div>
+      <h3>액터</h3>
+      <div style="overflow-x:auto;"><table><thead>
+        <tr><th>이름</th><th>종류</th><th>설명</th><th>상위 액터</th></tr>
+      </thead><tbody id="actorsBody"></tbody></table></div>
+      <h3>유스케이스</h3>
+      <div style="overflow-x:auto;"><table><thead>
+        <tr><th>ID</th><th>이름</th><th>주 액터</th><th>목표</th><th>FR</th><th>NFR</th></tr>
+      </thead><tbody id="useCasesBody"></tbody></table></div>
+    </div>
+
+    <!-- STEP 3 -->
+    <div class="card hidden" id="step3Card">
+      <h2><span class="step-badge">3</span> 유스케이스 명세 (Cockburn)</h2>
+      <div class="status" id="step3Status"></div>
+      <div id="specsList"></div>
+    </div>
+
+    <!-- STEP 4 -->
+    <div class="card hidden" id="step4Card">
+      <h2><span class="step-badge">4</span> 관계 · 유스케이스 다이어그램</h2>
+      <div id="relSummary" class="rel-list"></div>
+      <h3>PlantUML</h3>
+      <div class="row" style="margin:0 0 6px"><button id="copyPumlBtn" class="secondary" style="margin-top:0">복사</button></div>
+      <pre class="puml" id="diagramText"></pre>
+    </div>
+
+    <!-- 대화형 피드백 스레드 — 각 게이트마다 카드가 맨 아래에 새로 쌓인다(메신저 방식) -->
+    <div id="feedbackThread"></div>
+
+    <div class="status err hidden" id="errBox"></div>
+  </main>
+
+  <script>
+    const el = (id) => document.getElementById(id);
+    let threadId = null;
+    // 서버가 need_feedback 응답에 실어주는 부분 산출물을 누적해 화면을 점진적으로 갱신한다.
+    let acc = {};
+
+    const show = (id) => el(id).classList.remove("hidden");
+    const hide = (id) => el(id).classList.add("hidden");
+
+    function setError(msg) {
+      const box = el("errBox");
+      if (!msg) { hide("errBox"); return; }
+      box.textContent = "⚠️ 오류: " + msg;
+      show("errBox");
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+    }
+
+    // ---- 커버리지 태그 팝오버 ----
+    // 요구사항 id 태그(.idpill.has-pop) 위에 마우스를 올리면 해당 요구사항 문장을
+    // 떠 있는 말풍선으로 보여준다. body 하위에 단일 요소를 두어 표/카드의 overflow에
+    // 잘리지 않게 하고, 이벤트 위임으로 동적으로 그려지는 모든 태그를 커버한다.
+    const reqPop = document.createElement("div");
+    reqPop.className = "req-pop hidden";
+    document.body.appendChild(reqPop);
+
+    function showReqPop(pill) {
+      const txt = pill.getAttribute("data-req");
+      if (!txt) return;
+      reqPop.textContent = txt;
+      reqPop.classList.remove("hidden", "below");
+      const r = pill.getBoundingClientRect();
+      const margin = 8;
+      let top = window.scrollY + r.top - reqPop.offsetHeight - 6;    // 기본: 태그 위쪽
+      if (r.top - reqPop.offsetHeight - 6 < 0) {                     // 위 공간 부족 → 아래로
+        top = window.scrollY + r.bottom + 6;
+        reqPop.classList.add("below");
+      }
+      let left = window.scrollX + r.left;
+      const maxLeft = window.scrollX + document.documentElement.clientWidth - reqPop.offsetWidth - margin;
+      left = Math.max(window.scrollX + margin, Math.min(left, maxLeft));
+      reqPop.style.top = top + "px";
+      reqPop.style.left = left + "px";
+    }
+    const hideReqPop = () => reqPop.classList.add("hidden");
+
+    document.addEventListener("mouseover", (e) => {
+      const pill = e.target.closest && e.target.closest(".idpill.has-pop");
+      if (pill) showReqPop(pill);
+    });
+    document.addEventListener("mouseout", (e) => {
+      if (e.target.closest && e.target.closest(".idpill.has-pop")) hideReqPop();
+    });
+    document.addEventListener("focusin", (e) => {
+      const pill = e.target.closest && e.target.closest(".idpill.has-pop");
+      if (pill) showReqPop(pill);
+    });
+    document.addEventListener("focusout", hideReqPop);
+    window.addEventListener("scroll", hideReqPop, true);
+
+    async function callAnalyze(payload) {
+      const res = await fetch("/api/requirements/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        let detail = "HTTP " + res.status;
+        try { detail = (await res.json()).detail || detail; } catch (_) {}
+        throw new Error(detail);
+      }
+      return res.json();
+    }
+
+    // ---- 렌더러: acc(누적 상태)에서 각 단계 카드를 그린다 ----
+    // 요구사항 id → 문장 매핑(팝오버용). step1 분류 결과에서 만든다.
+    const reqTextById = () => {
+      const m = {};
+      (acc.requirements || []).forEach((r) => { if (r && r.id) m[r.id] = r.text; });
+      return m;
+    };
+    // 커버리지 태그: 요구사항 id면 data-req(문장)를 실어 호버 시 팝오버가 뜨게 한다.
+    // (확장 라벨 '3a' 등 요구사항이 아닌 pill은 매핑에 없으므로 팝오버가 붙지 않는다.)
+    const idPills = (ids, cls) => {
+      if (!(ids || []).length) return '<span class="muted">—</span>';
+      const map = reqTextById();
+      return ids.map((i) => {
+        const txt = map[i];
+        const classes = `idpill ${cls || ""}${txt != null ? " has-pop" : ""}`.trim();
+        const attrs = txt != null ? ` data-req="${escapeHtml(txt)}" tabindex="0"` : "";
+        return `<span class="${classes}"${attrs}>${escapeHtml(i)}</span>`;
+      }).join("");
+    };
+
+    function renderStep1() {
+      const items = acc.requirements || [];
+      if (!items.length) return;
+      el("step1Status").textContent = `${items.length}개 요구사항 분류 완료`;
+      el("step1Body").innerHTML = items.map((it) => {
+        const typeCls = it.type === "FR" ? "fr" : "nfr";
+        return `<tr>
+          <td>${escapeHtml(it.id)}</td>
+          <td>${escapeHtml(it.text)}</td>
+          <td><span class="tag ${typeCls}">${escapeHtml(it.type)}</span></td></tr>`;
+      }).join("");
+      show("step1Card");
+    }
+
+    function renderStep2() {
+      const actors = acc.actors || [], ucs = acc.use_cases || [];
+      if (!actors.length && !ucs.length) return;
+      const cov = acc.coverage || {};
+      if (Object.keys(cov).length) {
+        const ratio = cov.coverage_ratio != null ? (cov.coverage_ratio * 100).toFixed(0) + "%" : "—";
+        el("coverageMetrics").innerHTML = `<div class="metrics">
+          <div class="metric"><div class="n">${cov.fr_total ?? "—"}</div><div class="l">FR 총계</div></div>
+          <div class="metric"><div class="n">${ratio}</div><div class="l">FR 커버리지</div></div>
+          <div class="metric"><div class="n">${(cov.orphan_fr_ids || []).length}</div><div class="l">고아 FR</div></div>
+        </div>` + ((cov.orphan_fr_ids || []).length
+          ? `<div class="warn">⚠ 어떤 유스케이스에도 안 붙은 FR: ${cov.orphan_fr_ids.join(", ")}</div>` : "");
+      }
+      el("actorsBody").innerHTML = actors.map((a) => {
+        const kc = a.kind === "supporting" ? "kind-supporting" : "kind-primary";
+        return `<tr>
+          <td>${escapeHtml(a.name)}</td>
+          <td><span class="tag ${kc}">${escapeHtml(a.kind || "")}</span></td>
+          <td>${escapeHtml(a.description || "")}</td>
+          <td>${a.parent_actor ? escapeHtml(a.parent_actor) : '<span class="muted">—</span>'}</td></tr>`;
+      }).join("");
+      el("useCasesBody").innerHTML = ucs.map((u) => `<tr>
+        <td>${escapeHtml(u.id)}</td>
+        <td>${escapeHtml(u.name)}</td>
+        <td>${escapeHtml(u.primary_actor || "")}</td>
+        <td>${escapeHtml(u.goal || "")}</td>
+        <td>${idPills(u.requirement_ids)}</td>
+        <td>${idPills(u.nfr_ids, "nfr")}</td></tr>`).join("");
+      show("step2Card");
+    }
+
+    function renderSpec(s) {
+      const pre = (arr) => (arr || []).length
+        ? `<ul class="plain">${arr.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`
+        : '<span class="muted">—</span>';
+      const steps = (s.main_scenario || []).map((st) =>
+        `<li>${escapeHtml(st.sentence)} ${idPills(st.covered_req_ids)}</li>`).join("");
+      const exts = (s.extensions || []).map((e) => {
+        const hs = (e.handling_steps || []).map((h) =>
+          `<li><b>${escapeHtml(h.sub_step)}</b> ${escapeHtml(h.sentence)}</li>`).join("");
+        const resume = e.outcome === "resume" && e.resume_at_step != null
+          ? ` → 스텝 ${e.resume_at_step}로 복귀` : "";
+        const branch = e.branch_step != null ? `스텝 ${e.branch_step}` : "전역";
+        return `<div class="ext">
+          <div><span class="idpill">${escapeHtml(e.label)}</span> <span class="muted">(${branch})</span>
+            <span class="cond">${escapeHtml(e.condition)}</span></div>
+          <ul class="plain">${hs}</ul>
+          <span class="outcome ${escapeHtml(e.outcome)}">${escapeHtml(e.outcome)}${resume}</span>
+        </div>`;
+      }).join("");
+      const issues = (s.issues || []).length
+        ? `<div class="warn">⚠ 미해결 검증 이슈: ${s.issues.map(escapeHtml).join(" · ")}</div>` : "";
+      return `<details class="uc">
+        <summary>[${escapeHtml(s.use_case_id)}] ${escapeHtml(s.name)}${issues ? " ⚠" : ""}</summary>
+        <div class="spec-block"><div class="lbl">사전조건</div>${pre(s.preconditions)}</div>
+        <div class="spec-block"><div class="lbl">트리거</div>${escapeHtml(s.trigger) || '<span class="muted">—</span>'}</div>
+        <div class="spec-block"><div class="lbl">주 성공 시나리오</div><ol class="steps">${steps}</ol></div>
+        ${exts ? `<div class="spec-block"><div class="lbl">확장(예외·대안)</div>${exts}</div>` : ""}
+        <div class="spec-block"><div class="lbl">성공 보장</div>${pre(s.success_guarantee)}</div>
+        <div class="spec-block"><div class="lbl">최소 보장</div>${pre(s.minimal_guarantee)}</div>
+        ${issues}
+      </details>`;
+    }
+
+    function renderStep3() {
+      const specs = acc.use_case_specs || [];
+      if (!specs.length) return;
+      const rep = acc.spec_report || {};
+      el("step3Status").textContent =
+        `${specs.length}개 명세 · 미해결 이슈 ${rep.total_issues ?? 0}건 · 재생성 ${rep.total_repair_iters ?? 0}회`;
+      el("specsList").innerHTML = specs.map(renderSpec).join("");
+      show("step3Card");
+    }
+
+    function renderRel(rel) {
+      const line = (title, arr, fmt) => (arr || []).length
+        ? `<h3>${title}</h3><div class="rel-list">${arr.map(fmt).join("")}</div>` : "";
+      let html = "";
+      html += line("연관(actor ↔ use case)", rel.associations,
+        (a) => `<div>${escapeHtml(a.actor)} <span class="arrow">──▶</span> ${escapeHtml(a.use_case)}</div>`);
+      html += line("include", rel.includes,
+        (r) => `<div>${escapeHtml(r.base_use_case)} <span class="arrow">·· include ··▶</span> ${escapeHtml(r.included_use_case)}</div>`);
+      html += line("extend", rel.extends,
+        (r) => `<div>${escapeHtml(r.extending_use_case)} <span class="arrow">·· extend ··▶</span> ${escapeHtml(r.base_use_case)}</div>`);
+      html += line("일반화", rel.generalizations,
+        (r) => `<div>${escapeHtml(r.child)} <span class="arrow">──▷</span> ${escapeHtml(r.parent)} <span class="muted">(${escapeHtml(r.kind)})</span></div>`);
+      if ((rel.orphan_actors || []).length)
+        html += `<div class="warn">⚠ 연결 안 된 액터: ${rel.orphan_actors.map(escapeHtml).join(", ")}</div>`;
+      return html || '<span class="muted">관계 없음</span>';
+    }
+
+    function renderStep4() {
+      const rel = acc.relationships, dia = acc.diagram;
+      if (!rel && !dia) return;
+      if (rel) el("relSummary").innerHTML = renderRel(rel);
+      if (dia) el("diagramText").textContent = dia;
+      show("step4Card");
+    }
+
+    function renderAll() {
+      renderStep1(); renderStep2(); renderStep3(); renderStep4();
+    }
+
+    // 응답에서 존재하는 산출물 키만 acc에 병합(부분 갱신 지원).
+    function mergeArtifacts(data) {
+      ["requirements", "actors", "use_cases", "coverage", "use_case_specs",
+       "spec_report", "relationships", "relationship_report", "diagram"].forEach((k) => {
+        if (data[k] != null) acc[k] = data[k];
+      });
+    }
+
+    function render(data) {
+      threadId = data.thread_id;
+      mergeArtifacts(data);
+      renderAll();
+
+      if (data.status === "need_clarification") {
+        el("questionList").innerHTML = (data.questions || [])
+          .map((q) => `<li>${escapeHtml(q)}</li>`).join("");
+        el("answerInput").value = "";
+        show("clarifyCard"); el("answerInput").focus();
+      } else if (data.status === "need_feedback") {
+        hide("clarifyCard");
+        appendFeedbackCard(data);   // 맨 아래에 새 피드백 카드를 쌓는다
+      } else { // completed
+        hide("clarifyCard");
+      }
+    }
+
+    const PHASE_LABELS = {
+      requirements: "1단계 · FR/NFR", use_cases: "2단계 · 액터/유스케이스",
+      specs: "3단계 · 명세", relationships: "4단계 · 관계/다이어그램",
+    };
+    const phaseLabel = (p) => PHASE_LABELS[p] || p || "단계";
+    function summaryText(s) {
+      if (s == null) return "";
+      if (Array.isArray(s)) return s.join("  •  ");
+      if (typeof s === "object") return JSON.stringify(s);
+      return String(s);
+    }
+
+    function setBusy(on, msg) {
+      if (on) { el("busyMsg").textContent = msg || "분석 중..."; show("busyBox"); }
+      else hide("busyBox");
+    }
+
+    async function drive(payload, busyMsg, btn, btnLabel) {
+      setError(null);
+      if (btn) { btn.disabled = true; }
+      setBusy(true, busyMsg);
+      try {
+        const data = await callAnalyze(payload);
+        render(data);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setBusy(false);
+        if (btn) { btn.disabled = false; if (btnLabel) btn.textContent = btnLabel; }
+      }
+    }
+
+    el("startBtn").addEventListener("click", () => {
+      const lines = el("reqInput").value.split("\n").map((s) => s.trim()).filter(Boolean);
+      if (!lines.length) { setError("요구사항을 한 줄 이상 입력하세요."); return; }
+      threadId = null; acc = {};
+      ["step1Card", "step2Card", "step3Card", "step4Card", "clarifyCard"].forEach(hide);
+      el("feedbackThread").innerHTML = "";  // 이전 대화 스레드 초기화
+      drive(
+        { requirements: lines, feedback_gates: el("gatesChk").checked },
+        "요구사항 분석 중... (4단계 파이프라인은 수 초~수십 초 걸릴 수 있습니다)",
+        el("startBtn"), "분석 시작",
+      );
+    });
+
+    el("answerBtn").addEventListener("click", () => {
+      const answer = el("answerInput").value.trim();
+      if (!answer) { setError("답변을 입력하세요."); return; }
+      drive({ answer, thread_id: threadId }, "답변 반영 중...", el("answerBtn"), "답변 제출");
+    });
+
+    // 대화형 피드백 게이트 — 매 응답마다 스레드 맨 아래에 새 카드를 만든다(메신저 방식).
+    // 카드 내부 구조/클래스는 기존 디자인 그대로 재사용하고, id 대신 스코프드 셀렉터로 다룬다.
+    function appendFeedbackCard(data) {
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <h2><span class="step-badge">✎</span> ${escapeHtml(phaseLabel(data.phase))} 결과에 대한 피드백</h2>
+        <p class="hint">아래 결과를 확인하고, 수정하고 싶은 점을 자연어로 적으면 해당 단계를 재생성합니다. 없으면 <b>다음 단계로</b>를 누르세요.</p>
+        <div class="status fb-summary"></div>
+        <textarea class="small fb-input" placeholder="예: UC3에 결제 실패 확장을 추가해줘 / 액터에서 관리자를 분리해줘"></textarea>
+        <div class="row">
+          <button class="fb-send">피드백 반영</button>
+          <button class="secondary fb-next">다음 단계로 →</button>
+        </div>`;
+      card.querySelector(".fb-summary").textContent = summaryText(data.feedback_summary);
+      const input = card.querySelector(".fb-input");
+      const sendBtn = card.querySelector(".fb-send");
+      const nextBtn = card.querySelector(".fb-next");
+
+      // 이 카드를 히스토리로 고정: 버튼 줄을 '무엇을 했는지'로 교체하고 입력을 잠근다.
+      function lock(answer) {
+        const a = String(answer || "").trim();
+        card.querySelector(".row").innerHTML = a
+          ? `<span class="status">↳ 제출한 피드백: “${escapeHtml(a)}”</span>`
+          : `<span class="status">↳ 다음 단계로 진행</span>`;
+        if (a) { input.readOnly = true; } else { input.remove(); }
+      }
+
+      async function act(answer, busyMsg) {
+        setError(null);
+        sendBtn.disabled = true; nextBtn.disabled = true;
+        setBusy(true, busyMsg);
+        try {
+          const resp = await callAnalyze({ answer, thread_id: threadId });
+          lock(answer);      // 이 카드는 대화 기록으로 남기고
+          render(resp);      // 응답이 또 need_feedback이면 아래에 새 카드가 쌓인다
+        } catch (e) {
+          setError(e.message);
+          sendBtn.disabled = false; nextBtn.disabled = false;  // 실패 시 재시도 가능
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      sendBtn.addEventListener("click", () => {
+        const fb = input.value.trim();
+        if (!fb) { setError("피드백을 입력하거나 '다음 단계로'를 누르세요."); return; }
+        act(fb, "피드백 반영 중(재생성)...");
+      });
+      nextBtn.addEventListener("click", () => act("", "다음 단계 진행 중..."));
+
+      el("feedbackThread").appendChild(card);
+      input.focus();
+      card.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+
+    el("copyPumlBtn").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(el("diagramText").textContent); el("copyPumlBtn").textContent = "복사됨 ✓"; }
+      catch (_) { el("copyPumlBtn").textContent = "복사 실패"; }
+      setTimeout(() => { el("copyPumlBtn").textContent = "복사"; }, 1500);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+"""요구사항 분석 에이전트의 서빙 레이어.
+
+원래는 자체 FastAPI 앱(app/main.py)이었지만, 통합 저장소에서는 설계 에이전트와
+같은 프로세스로 서빙하므로 라우터로만 남기고 앱 생성은 server.py가 맡는다.
+그래프 자체(app.requirements.agent)는 서빙 방식과 무관하게 재사용된다.
+
+분석이 끝나면 결과는 설계 에이전트와 같은 MySQL 산출물 저장소에 저장된다.
+요청에 app_id가 있을 때만 저장하므로, 저장소 없이 단독으로 돌려보는 것도 그대로 된다.
+"""
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+
+from app.repositories import artifact_repository
+from app.requirements.agent import resume_analysis, start_analysis
+from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse
+
+router = APIRouter(prefix="/api/requirements", tags=["requirements"])
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+def persist_analysis(app_id: str, payload: dict) -> None:
+    """완료된 분석 결과를 산출물 저장소에 새 버전으로 남긴다.
+
+    STAGE_ARTIFACTS(app/repositories/artifact_repository.py)에 이미 자리가 있어
+    스키마 변경 없이 저장된다. resource_spec은 이 에이전트가 만들지 않으므로 비운다.
+    """
+    if payload.get("status") != "completed":
+        return
+
+    requirements = payload.get("requirements")
+    if requirements:
+        artifact_repository.save_stage(
+            app_id, "refined_requirements", {"refined_requirements": requirements}
+        )
+
+    use_case_specs = payload.get("use_case_specs")
+    if use_case_specs:
+        # 설계 에이전트는 usecase_spec 하나를 통째로 프롬프트에 넣는다
+        # (usecase_spec_text). 액터·유스케이스 목록이 있어야 명세가 읽히므로 함께 담는다.
+        artifact_repository.save_stage(
+            app_id,
+            "usecase_spec",
+            {
+                "usecase_spec": {
+                    "actors": payload.get("actors") or [],
+                    "use_cases": payload.get("use_cases") or [],
+                    "use_case_specs": use_case_specs,
+                }
+            },
+        )
+
+    diagram = payload.get("diagram")
+    if diagram:
+        artifact_repository.save_stage(
+            app_id, "usecase_diagram", {"usecase_diagram_puml": diagram}
+        )
+
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
+    """요구사항 분석 세션을 시작하거나(구체화 질문에 대한) 답변으로 재개한다.
+
+    - 신규 세션: requirements 를 담아 호출 (thread_id는 서버가 발급).
+    - 구체화 답변: answer + 기존 thread_id 로 호출.
+    응답이 need_clarification 이면 questions 를 사용자에게 보여주고,
+    답변을 다시 이 엔드포인트로 보내면 세션이 이어진다.
+    app_id를 함께 보내면 완료된 산출물이 그 앱의 저장소에 기록된다.
+    """
+    # 답변 재개 경로
+    if req.answer is not None:
+        if not req.thread_id:
+            raise HTTPException(status_code=400, detail="answer에는 thread_id가 필요합니다.")
+        payload = resume_analysis(req.answer, req.thread_id)
+    else:
+        # 신규 분석 시작 경로
+        if not req.requirements:
+            raise HTTPException(
+                status_code=400,
+                detail="requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다.",
+            )
+        thread_id = req.thread_id or str(uuid.uuid4())
+        payload = start_analysis(req.requirements, thread_id, req.feedback_gates)
+
+    if req.app_id:
+        try:
+            persist_analysis(req.app_id, payload)
+        except artifact_repository.AppNotFound:
+            raise HTTPException(status_code=404, detail=f"app_id {req.app_id} 를 찾을 수 없습니다.")
+
+    return AnalyzeResponse(**payload)

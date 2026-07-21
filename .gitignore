@@ -1,0 +1,31 @@
+# Secrets: real API key and database password live here.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+
+# PlantUML tool, downloaded separately (17MB binary).
+plantuml.jar
+
+# 실행 아티팩트 (재생성 가능) — 보존할 run만 선별 커밋
+artifacts/
+
+# 모델 가중치 (GitHub 100MB 제한 초과) — Releases에 별도 배포
+*.safetensors
+
+# Scratch files and report material, kept out of the project. Anchored to the
+# repository root so they cannot swallow real modules such as
+# app/requirements/main.py.
+/error.puml
+/test.py
+/main.py
+/report/

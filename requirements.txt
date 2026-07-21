@@ -1,0 +1,25 @@
+# torch는 CPU 전용 휠을 사용 (CUDA 빌드 대비 이미지 대폭 축소)
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- 두 에이전트 공통 ---
+langgraph==1.2.8
+fastapi==0.125.0
+uvicorn[standard]==0.38.0
+python-dotenv==1.2.2
+
+# --- 요구사항 분석 에이전트 ---
+# LLM 호출은 langchain-openai(구조화 출력 with_structured_output)를 쓴다.
+langchain-openai>=0.2.0
+langchain-core>=0.3.0
+pydantic-settings>=2.5.0
+# 요구사항 FR/NFR BERT 검증 분류기 (materials의 파인튜닝 모델 로드)
+torch>=2.2.0
+transformers>=4.44.0
+safetensors>=0.4.0
+
+# --- 시스템 설계 에이전트 ---
+# 설계 쪽은 OpenAI 호환 클라이언트를 직접 호출한다.
+openai==2.44.0
+# MySQL 산출물 저장소
+sqlalchemy==2.0.44
+pymysql==1.4.6
