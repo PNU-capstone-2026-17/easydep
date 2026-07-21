@@ -417,3 +417,7 @@ class AnalyzeResponse(BaseModel):
     relationships: dict | None = None           # associations/includes/extends/generalizations/derived
     relationship_report: dict | None = None     # check_relationships 검증 집계
     diagram: str | None = None                  # PlantUML 텍스트
+    # 이번 응답에서 산출물 저장소에 새 버전으로 기록된 stage 이름들.
+    # app_id를 보냈을 때만 채워지며, 화면이 "무엇이 저장됐는지"를 표시하는 데 쓴다.
+    # 내용이 이전과 같으면 저장하지 않으므로 빈 리스트일 수 있다.
+    saved_stages: list[str] | None = None

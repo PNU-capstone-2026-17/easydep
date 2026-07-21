@@ -476,27 +476,49 @@
       });
     }
 
+    // 저장소에 기록된 산출물(서버가 saved_stages로 알려준 것만). 화면 표시용.
+    let savedStages = new Set();
+    const STAGE_LABELS = {
+      refined_requirements: "요구사항 분류",
+      usecase_spec: "유스케이스 명세",
+      usecase_diagram: "유스케이스 다이어그램",
+    };
+
+    function updateSavedNote(data) {
+      (data.saved_stages || []).forEach((s) => savedStages.add(s));
+      const note = el("savedNote");
+      const appId = currentAppId();
+
+      if (!appId) {
+        note.textContent = "App ID 없이 실행 중이라 저장되지 않습니다. "
+          + "설계로 넘기려면 App ID를 발급하고 다시 분석하세요.";
+        show("savedNote");
+        return;
+      }
+      if (!savedStages.size) { hide("savedNote"); return; }
+
+      const names = [...savedStages].map((s) => STAGE_LABELS[s] || s).join(", ");
+      note.textContent = `✓ App ID ${appId} 에 저장됨: ${names}`
+        + (data.status === "completed" ? " — 설계 에이전트에서 이어서 진행하세요." : "");
+      show("savedNote");
+    }
+
     function render(data) {
       threadId = data.thread_id;
       mergeArtifacts(data);
       renderAll();
+      updateSavedNote(data);   // 단계가 끝날 때마다 저장되므로 매 응답에서 갱신한다
 
       if (data.status === "need_clarification") {
         el("questionList").innerHTML = (data.questions || [])
           .map((q) => `<li>${escapeHtml(q)}</li>`).join("");
         el("answerInput").value = "";
         show("clarifyCard"); el("answerInput").focus();
-      } else if (data.status === "need_feedback") {
+      } else {
         hide("clarifyCard");
-        appendFeedbackCard(data);   // 맨 아래에 새 피드백 카드를 쌓는다
-      } else { // completed
-        hide("clarifyCard");
-        const note = el("savedNote");
-        const appId = currentAppId();
-        note.textContent = appId
-          ? `✓ 산출물을 App ID ${appId} 에 저장했습니다. 설계 에이전트에서 이어서 진행하세요.`
-          : "App ID 없이 실행해 저장하지 않았습니다. 설계로 넘기려면 App ID를 발급하고 다시 분석하세요.";
-        show("savedNote");
+        if (data.status === "need_feedback") {
+          appendFeedbackCard(data);   // 해당 단계 오른쪽 칸에 피드백 카드를 쌓는다
+        }
       }
     }
 
@@ -550,7 +572,7 @@
         }
       }
 
-      threadId = null; acc = {};
+      threadId = null; acc = {}; savedStages = new Set();
       ["step1Row", "step2Row", "step3Row", "step4Row", "clarifyCard", "savedNote"].forEach(hide);
       // 이전 실행의 피드백 카드 비우기
       ["step1Fb", "step2Fb", "step3Fb", "step4Fb", "feedbackThread"].forEach((id) => {

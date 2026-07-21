@@ -4,11 +4,12 @@
 같은 프로세스로 서빙하므로 라우터로만 남기고 앱 생성은 server.py가 맡는다.
 그래프 자체(app.requirements.agent)는 서빙 방식과 무관하게 재사용된다.
 
-분석이 끝나면 결과는 설계 에이전트와 같은 MySQL 산출물 저장소에 저장된다.
+산출물은 단계가 끝날 때마다 설계 에이전트와 같은 MySQL 저장소에 저장된다.
 요청에 app_id가 있을 때만 저장하므로, 저장소 없이 단독으로 돌려보는 것도 그대로 된다.
 """
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -21,42 +22,52 @@ router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def persist_analysis(app_id: str, payload: dict) -> None:
-    """완료된 분석 결과를 산출물 저장소에 새 버전으로 남긴다.
+def persist_analysis(app_id: str, payload: dict) -> list[str]:
+    """응답에 실린 산출물 중 달라진 것을 새 버전으로 남기고, 저장한 stage를 돌려준다.
+
+    단계가 끝날 때마다(피드백 게이트 응답 포함) 호출되므로, 4단계까지 가지 않고
+    중간에 그만둬도 그때까지의 산출물은 남는다.
+
+    2단계(액터·유스케이스)에는 따로 저장할 자리가 없다. 액터·유스케이스는 3단계
+    명세와 함께 usecase_spec 한 건으로 저장되므로, 2단계 게이트에서는 아무것도
+    쓰지 않는다. 덕분에 명세가 비어 있는 usecase_spec이 저장돼 설계 에이전트의
+    선행조건 검사를 통과해 버리는 일도 없다.
 
     STAGE_ARTIFACTS(app/repositories/artifact_repository.py)에 이미 자리가 있어
-    스키마 변경 없이 저장된다. resource_spec은 이 에이전트가 만들지 않으므로 비운다.
+    스키마 변경은 필요 없다. resource_spec은 이 에이전트가 만들지 않으므로 비운다.
     """
-    if payload.get("status") != "completed":
-        return
+    if payload.get("status") not in ("need_feedback", "completed"):
+        return []  # clarify 질문 응답에는 아직 산출물이 없다
 
-    requirements = payload.get("requirements")
-    if requirements:
-        artifact_repository.save_stage(
-            app_id, "refined_requirements", {"refined_requirements": requirements}
-        )
+    stored = artifact_repository.load_state(app_id)
+    saved: list[str] = []
+
+    def save(stage: str, state_key: str, content: Any) -> None:
+        # 내용이 그대로면 건너뛴다. 피드백 없이 다음 단계로 넘어갈 때마다 같은
+        # 산출물이 새 버전으로 쌓이는 것을 막는다(응답은 누적 산출물을 매번 싣는다).
+        if not content or stored.get(state_key) == content:
+            return
+        artifact_repository.save_stage(app_id, stage, {state_key: content})
+        saved.append(stage)
+
+    save("refined_requirements", "refined_requirements", payload.get("requirements"))
 
     use_case_specs = payload.get("use_case_specs")
     if use_case_specs:
         # 설계 에이전트는 usecase_spec 하나를 통째로 프롬프트에 넣는다
         # (usecase_spec_text). 액터·유스케이스 목록이 있어야 명세가 읽히므로 함께 담는다.
-        artifact_repository.save_stage(
-            app_id,
+        save(
+            "usecase_spec",
             "usecase_spec",
             {
-                "usecase_spec": {
-                    "actors": payload.get("actors") or [],
-                    "use_cases": payload.get("use_cases") or [],
-                    "use_case_specs": use_case_specs,
-                }
+                "actors": payload.get("actors") or [],
+                "use_cases": payload.get("use_cases") or [],
+                "use_case_specs": use_case_specs,
             },
         )
 
-    diagram = payload.get("diagram")
-    if diagram:
-        artifact_repository.save_stage(
-            app_id, "usecase_diagram", {"usecase_diagram_puml": diagram}
-        )
+    save("usecase_diagram", "usecase_diagram_puml", payload.get("diagram"))
+    return saved
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -67,7 +78,8 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     - 구체화 답변: answer + 기존 thread_id 로 호출.
     응답이 need_clarification 이면 questions 를 사용자에게 보여주고,
     답변을 다시 이 엔드포인트로 보내면 세션이 이어진다.
-    app_id를 함께 보내면 완료된 산출물이 그 앱의 저장소에 기록된다.
+    app_id를 함께 보내면 단계가 끝날 때마다 그 앱의 저장소에 기록되고,
+    이번 호출에서 저장된 stage 목록이 saved_stages로 돌아온다.
     """
     # 답변 재개 경로
     if req.answer is not None:
@@ -86,7 +98,7 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
 
     if req.app_id:
         try:
-            persist_analysis(req.app_id, payload)
+            payload["saved_stages"] = persist_analysis(req.app_id, payload)
         except artifact_repository.AppNotFound:
             raise HTTPException(status_code=404, detail=f"app_id {req.app_id} 를 찾을 수 없습니다.")
 

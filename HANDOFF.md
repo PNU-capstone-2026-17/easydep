@@ -81,10 +81,28 @@ rather than four independent one-shot generations:
 POST /api/requirements/analyze   {"requirements": [...], "app_id": "..."}
 ```
 
-`app/requirements/api.py::persist_analysis` writes the completed result with
-`save_stage`, so it lands as a normal `origin = GENERATED` version. `app_id` is
-optional there — without it the agent answers without storing anything, which
-keeps it runnable on its own.
+`app/requirements/api.py::persist_analysis` writes with `save_stage`, so each
+artifact lands as a normal `origin = GENERATED` version. `app_id` is optional
+there — without it the agent answers without storing anything, which keeps it
+runnable on its own.
+
+It saves per step, not once at the end: every gate response carries the
+artifacts accumulated so far, and each one is written as soon as it appears, so
+abandoning the analysis midway still leaves what was already produced. Two
+consequences:
+
+- It only writes what changed against `load_state`. Otherwise every gate would
+  re-save the artifacts of all earlier steps, since the response repeats them.
+  Feedback that regenerates a step does change the content, so revisions still
+  become new versions.
+- Step 2 (actors and use cases) stores nothing. It has no artifact of its own —
+  actors and use cases are stored inside `usecase_spec` together with the step 3
+  specifications. Writing them alone would put a `usecase_spec` with no
+  specifications in the store, which would satisfy the design agent's
+  prerequisite check while carrying nothing to design from.
+
+The stages written by a call come back in the response as `saved_stages`, which
+is what the UI's "저장됨" line reports.
 
 `POST .../stages/{stage}/generate` still returns 501 for these four stages, and
 the content endpoint still accepts them by hand:
