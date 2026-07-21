@@ -21,7 +21,12 @@ def main() -> None:
     print("schema ready")
 
     app_id = artifact_repository.create_app(
-        scenario_text='{"UseCaseName": "Login"}',
+        requirements_text="사용자는 이메일과 비밀번호로 로그인할 수 있어야 한다.",
+    )
+    artifact_repository.save_stage(
+        app_id,
+        "usecase_spec",
+        {"usecase_spec": {"UseCaseName": "Login", "PrimaryActor": "User"}},
     )
     print("app_id:", app_id)
 
@@ -56,7 +61,8 @@ def main() -> None:
     )
 
     state = artifact_repository.load_state(app_id)
-    print("scenario_text:", state["scenario_text"])
+    print("requirements_text:", state["requirements_text"])
+    print("usecase_spec:", state["usecase_spec"])
     print("class_diagram_puml:", state["class_diagram_puml"].replace("\n", " | "))
     print("api_spec:", state["api_spec"])
     print("artifact_status:", state["artifact_status"])

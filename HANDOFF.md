@@ -33,7 +33,13 @@ Schema shape:
   can be added with ALTER TABLE, unlike revision history, which cannot be
   reconstructed after the fact.
 - `artifact_type` is VARCHAR, not ENUM, so implementation/testing artifacts can
-  be added without a migration.
+  be added without a migration. The requirements analysis types were added this
+  way on 2026-07-21 with no schema change at all.
+- Implementation artifacts (SOURCE_CODE, DEPLOYMENT_FILE, TEST_CODE, IAC_CODE)
+  will NOT fit as they stand: each is a file tree, not one document. Plan an
+  additive `artifact_files(artifact_version_id, file_path, content)` table so a
+  version stays one snapshot of many files. Test results are not artifacts
+  either and want their own table.
 - Only final artifacts are stored. The BCE element JSON is deliberately NOT
   persisted (see below).
 
@@ -58,6 +64,45 @@ gives a per-version view of the graph.
 
 `.env` keys: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`,
 `PLANTUML_JAR_PATH`.
+
+### Requirements analysis artifacts (added 2026-07-21)
+
+`REFINE_REQ`, `USECASE_SPEC`, `USECASE_DIAGRAM`, and `RESOURCE_SPEC` are
+registered in `STAGE_ARTIFACTS`, so they store, version, and load exactly like
+the design artifacts. No schema change was needed: `artifact_type` is a VARCHAR
+and each of them is a single document.
+
+They are NOT generated here. The requirements analysis agent is a separate
+teammate's work, so `POST .../stages/{stage}/generate` returns 501 for them and
+they arrive through:
+
+```text
+POST /api/apps/{app_id}/stages/{stage}/content   {"content": ...}
+```
+
+which stores the payload as a new version with `origin = IMPORTED`. When that
+agent is merged, it should call this endpoint (or `save_stage` directly) instead
+of the workflow generating them.
+
+`apps` now carries the user's own words:
+
+- `requirements_text` — the natural language requirements
+- `resource_constraints_text` — the cloud resource constraints
+
+These are kept rather than discarded because REFINE_REQ interprets them and
+cannot be turned back into them, and regenerating REFINE_REQ after feedback
+needs the original wording. This is the opposite call from the BCE elements
+above, and for the opposite reason: that intermediate was recoverable from its
+own output, this input is not.
+
+`scenario_text` is gone. Design artifacts now derive from `USECASE_SPEC`
+(`usecase_spec_text(state)` renders it for prompts), so class diagram generation
+requires it as a prerequisite. Until the requirements agent is connected, the UI
+saves a specification by hand through the content endpoint.
+
+Deployment diagram still does not require `RESOURCE_SPEC`, even though the
+report derives it from there, because nothing produces that artifact yet. Add it
+to `PREREQUISITES` once the requirements agent lands.
 
 ### Workflow state
 

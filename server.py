@@ -11,9 +11,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.db.models import (
+    FORMAT_JSON,
     ORIGIN_AUTO_FIXED,
     ORIGIN_FEEDBACK_REVISED,
     ORIGIN_GENERATED,
+    ORIGIN_IMPORTED,
 )
 from app.db.session import init_db
 from app.graphs.class_diagram_graph import class_diagram_graph
@@ -24,8 +26,12 @@ from app.nodes.artifact_generation import (
     generate_sequence_diagram,
 )
 from app.repositories import artifact_repository
-from app.repositories.artifact_repository import AppNotFound, StageBusy
-from app.schemas.architecture_state import ArchitectureState
+from app.repositories.artifact_repository import (
+    STAGE_ARTIFACTS,
+    AppNotFound,
+    StageBusy,
+)
+from app.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.services.artifact_validation import validate_api_spec, validate_puml_artifact
 from app.services.llm_artifacts import revise_json_with_llm, revise_puml_with_llm
 from app.services.plantuml_class_diagram import render_plantuml
@@ -44,16 +50,24 @@ def revision_attempt_limit() -> int:
     return int(os.getenv("MAX_REVISION_ATTEMPTS", "0"))
 
 
-STAGES = [
-    "class_diagram",
-    "sequence_diagram",
-    "api_spec",
-    "erd",
-    "deployment_diagram",
-]
+STAGES = list(STAGE_ARTIFACTS)
+
+# Produced by the requirements analysis agent, which lives outside this service.
+# They can be stored and read here, but not generated here yet.
+EXTERNAL_STAGES = {
+    "refined_requirements",
+    "usecase_spec",
+    "usecase_diagram",
+    "resource_spec",
+}
 
 PREREQUISITES = {
-    "class_diagram": [],
+    "refined_requirements": [],
+    "usecase_spec": ["refined_requirements"],
+    "usecase_diagram": ["usecase_spec"],
+    "resource_spec": ["refined_requirements"],
+    # Every design artifact is derived from the use case specification.
+    "class_diagram": ["usecase_spec"],
     "sequence_diagram": ["class_diagram_puml"],
     "api_spec": ["class_diagram_puml", "sequence_diagram_puml"],
     "erd": ["class_diagram_puml", "sequence_diagram_puml", "api_spec"],
@@ -66,6 +80,12 @@ PREREQUISITES = {
 }
 
 PUML_FIELDS = {
+    "usecase_diagram": {
+        "code": "usecase_diagram_puml",
+        "valid": "usecase_diagram_syntax_valid",
+        "errors": "usecase_diagram_syntax_errors",
+        "label": "use case diagram",
+    },
     "class_diagram": {
         "code": "class_diagram_puml",
         "valid": "class_diagram_syntax_valid",
@@ -94,11 +114,16 @@ PUML_FIELDS = {
 
 
 class CreateAppRequest(BaseModel):
-    scenario_text: str = ""
+    requirements_text: str = ""
+    resource_constraints_text: str = ""
 
 
 class StageRequest(BaseModel):
-    scenario_text: str = ""
+    pass
+
+
+class ImportRequest(BaseModel):
+    content: Any
 
 
 class FeedbackRequest(StageRequest):
@@ -126,7 +151,10 @@ def health() -> dict[str, bool]:
 @app.post("/api/apps")
 def create_app(request: CreateAppRequest) -> JSONResponse:
     """Issue an app id. Every later request works from this id alone."""
-    app_id = artifact_repository.create_app(scenario_text=request.scenario_text)
+    app_id = artifact_repository.create_app(
+        requirements_text=request.requirements_text,
+        resource_constraints_text=request.resource_constraints_text,
+    )
     return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
 
 
@@ -145,6 +173,16 @@ def get_app(app_id: str) -> JSONResponse:
 def generate_stage(app_id: str, stage: str, request: StageRequest) -> JSONResponse:
     validate_app_id(app_id)
     validate_stage_name(stage)
+    if stage in EXTERNAL_STAGES:
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "message": "This artifact comes from the requirements analysis "
+                "agent. Store it with the content endpoint.",
+                "stage": stage,
+            },
+        )
+
     state = prepare_state(app_id, request)
     ensure_prerequisites(stage, state)
     claim_stage(app_id, stage)
@@ -210,6 +248,41 @@ def apply_stage_feedback(
 
     artifact_repository.release_stage(app_id, stage)
     return JSONResponse(content={"app_id": app_id, **to_web_response(updated)})
+
+
+@app.post("/api/apps/{app_id}/stages/{stage}/content")
+def import_stage_content(
+    app_id: str,
+    stage: str,
+    request: ImportRequest,
+) -> JSONResponse:
+    """Store an artifact produced elsewhere.
+
+    The requirements analysis agent runs outside this service, so this is how
+    its output reaches the store. It is also how a use case specification can be
+    supplied by hand while that agent is not connected yet.
+    """
+    validate_app_id(app_id)
+    validate_stage_name(stage)
+    require_app(app_id)
+
+    config = STAGE_ARTIFACTS[stage]
+    state: ArchitectureState = {config["state_key"]: request.content}
+    if config["valid_key"] and stage in PUML_FIELDS:
+        validation = validate_puml_artifact(request.content)
+        state[config["valid_key"]] = validation["syntax_valid"]
+        state[config["errors_key"]] = validation["syntax_errors"]
+
+    version_id = artifact_repository.save_stage(
+        app_id,
+        stage,
+        state,
+        origin=ORIGIN_IMPORTED,
+    )
+    if version_id is None:
+        raise HTTPException(status_code=400, detail="Content is empty.")
+
+    return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
 
 
 @app.get("/api/apps/{app_id}/stages/{stage}/versions")
@@ -291,11 +364,7 @@ def require_app(app_id: str) -> ArchitectureState:
 
 
 def prepare_state(app_id: str, request: StageRequest) -> ArchitectureState:
-    state = require_app(app_id)
-    if request.scenario_text:
-        state["scenario_text"] = request.scenario_text
-        artifact_repository.update_scenario(app_id, request.scenario_text)
-    return state
+    return require_app(app_id)
 
 
 def load_response(app_id: str) -> dict[str, Any]:
@@ -404,7 +473,7 @@ def auto_fix_api_spec(
 def build_revision_context(state: ArchitectureState) -> str:
     return "\n\n".join(
         [
-            "[Scenario]\n" + state.get("scenario_text", ""),
+            "[Use Case Specification]\n" + usecase_spec_text(state),
             "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
             "[Sequence Diagram]\n" + state.get("sequence_diagram_puml", ""),
             "[API Spec]\n" + str(state.get("api_spec", {})),
@@ -433,38 +502,25 @@ def mark_status(
 
 
 def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
+    artifacts: dict[str, Any] = {}
+    validation: dict[str, Any] = {}
+
+    for stage, config in STAGE_ARTIFACTS.items():
+        empty: Any = {} if config["format"] == FORMAT_JSON else ""
+        artifacts[stage] = result.get(config["state_key"], empty)
+        validation[stage] = {
+            "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
+            "errors": (
+                result.get(config["errors_key"], []) if config["errors_key"] else []
+            ),
+        }
+
     return {
-        "artifacts": {
-            "class_diagram": result.get("class_diagram_puml", ""),
-            "sequence_diagram": result.get("sequence_diagram_puml", ""),
-            "api_spec": result.get("api_spec", {}),
-            "erd": result.get("erd_puml", ""),
-            "deployment_diagram": result.get("deployment_diagram_puml", ""),
-        },
-        "validation": {
-            "class_diagram": {
-                "valid": result.get("class_diagram_syntax_valid"),
-                "errors": result.get("class_diagram_syntax_errors", []),
-            },
-            "sequence_diagram": {
-                "valid": result.get("sequence_diagram_syntax_valid"),
-                "errors": result.get("sequence_diagram_syntax_errors", []),
-            },
-            "api_spec": {
-                "valid": result.get("api_spec_syntax_valid"),
-                "errors": result.get("api_spec_syntax_errors", []),
-            },
-            "erd": {
-                "valid": result.get("erd_syntax_valid"),
-                "errors": result.get("erd_syntax_errors", []),
-            },
-            "deployment_diagram": {
-                "valid": result.get("deployment_diagram_syntax_valid"),
-                "errors": result.get("deployment_diagram_syntax_errors", []),
-            },
-        },
+        "artifacts": artifacts,
+        "validation": validation,
         "artifact_status": result.get("artifact_status", {}),
     }
+
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

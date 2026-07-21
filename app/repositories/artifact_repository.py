@@ -17,7 +17,11 @@ from app.db.models import (
     TYPE_CLASS,
     TYPE_DEPLOYMENT,
     TYPE_ERD,
+    TYPE_REFINE_REQ,
+    TYPE_RESOURCE_SPEC,
     TYPE_SEQUENCE,
+    TYPE_USECASE_DIAGRAM,
+    TYPE_USECASE_SPEC,
     App,
     Artifact,
     ArtifactVersion,
@@ -46,6 +50,34 @@ def stage_lock_lease_seconds() -> int:
 # elements) is not: it is fully recoverable from the generated PlantUML, and it
 # goes stale the moment a feedback revision edits the PlantUML directly.
 STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
+    "refined_requirements": {
+        "artifact_type": TYPE_REFINE_REQ,
+        "format": FORMAT_JSON,
+        "state_key": "refined_requirements",
+        "valid_key": None,
+        "errors_key": None,
+    },
+    "usecase_spec": {
+        "artifact_type": TYPE_USECASE_SPEC,
+        "format": FORMAT_JSON,
+        "state_key": "usecase_spec",
+        "valid_key": None,
+        "errors_key": None,
+    },
+    "usecase_diagram": {
+        "artifact_type": TYPE_USECASE_DIAGRAM,
+        "format": FORMAT_PUML,
+        "state_key": "usecase_diagram_puml",
+        "valid_key": "usecase_diagram_syntax_valid",
+        "errors_key": "usecase_diagram_syntax_errors",
+    },
+    "resource_spec": {
+        "artifact_type": TYPE_RESOURCE_SPEC,
+        "format": FORMAT_JSON,
+        "state_key": "resource_spec",
+        "valid_key": None,
+        "errors_key": None,
+    },
     "class_diagram": {
         "artifact_type": TYPE_CLASS,
         "format": FORMAT_PUML,
@@ -88,11 +120,17 @@ STAGE_BY_ARTIFACT_TYPE = {
 }
 
 
-def create_app(scenario_text: str) -> str:
-    """Issue a new app id and store the scenario the workflow starts from."""
+def create_app(requirements_text: str = "", resource_constraints_text: str = "") -> str:
+    """Issue a new app id and store the inputs the workflow starts from."""
     app_id = str(uuid.uuid4())
     with session_scope() as session:
-        session.add(App(app_id=app_id, scenario_text=scenario_text))
+        session.add(
+            App(
+                app_id=app_id,
+                requirements_text=requirements_text,
+                resource_constraints_text=resource_constraints_text,
+            )
+        )
     return app_id
 
 
@@ -111,10 +149,17 @@ def list_apps(limit: int = 50) -> list[dict[str, Any]]:
         ]
 
 
-def update_scenario(app_id: str, scenario_text: str) -> None:
+def update_inputs(
+    app_id: str,
+    requirements_text: str | None = None,
+    resource_constraints_text: str | None = None,
+) -> None:
     with session_scope() as session:
         app = _require_app(session, app_id)
-        app.scenario_text = scenario_text
+        if requirements_text is not None:
+            app.requirements_text = requirements_text
+        if resource_constraints_text is not None:
+            app.resource_constraints_text = resource_constraints_text
 
 
 def load_state(app_id: str) -> ArchitectureState:
@@ -124,7 +169,8 @@ def load_state(app_id: str) -> ArchitectureState:
 
         state: ArchitectureState = {
             "app_id": app_id,
-            "scenario_text": app.scenario_text or "",
+            "requirements_text": app.requirements_text or "",
+            "resource_constraints_text": app.resource_constraints_text or "",
         }
         artifact_status: dict[str, str] = {}
 
@@ -169,10 +215,6 @@ def save_stage(
     """
     with session_scope() as session:
         app = _require_app(session, app_id)
-
-        if state.get("scenario_text"):
-            app.scenario_text = state["scenario_text"]
-
         version_id = _write_version(session, app_id, stage, state, origin)
 
         app.current_stage = stage

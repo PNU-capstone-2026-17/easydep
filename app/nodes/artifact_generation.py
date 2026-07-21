@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.architecture_state import ArchitectureState
+from app.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.services.artifact_validation import validate_api_spec, validate_puml_artifact
 from app.services.llm_artifacts import (
     generate_api_spec_with_llm,
@@ -12,7 +12,7 @@ from app.services.llm_artifacts import (
 
 def generate_sequence_diagram(state: ArchitectureState) -> ArchitectureState:
     sequence_puml = generate_sequence_diagram_with_llm(
-        state.get("scenario_text", ""),
+        usecase_spec_text(state),
         state.get("class_diagram_puml", ""),
     )
     validation = validate_puml_artifact(sequence_puml)
@@ -26,7 +26,7 @@ def generate_sequence_diagram(state: ArchitectureState) -> ArchitectureState:
 
 def generate_api_spec(state: ArchitectureState) -> ArchitectureState:
     api_spec = generate_api_spec_with_llm(
-        state.get("scenario_text", ""),
+        usecase_spec_text(state),
         state.get("class_diagram_puml", ""),
         state.get("sequence_diagram_puml", ""),
     )
@@ -41,7 +41,7 @@ def generate_api_spec(state: ArchitectureState) -> ArchitectureState:
 
 def generate_erd(state: ArchitectureState) -> ArchitectureState:
     erd_puml = generate_erd_with_llm(
-        state.get("scenario_text", ""),
+        usecase_spec_text(state),
         state.get("class_diagram_puml", ""),
         state.get("api_spec", {}),
     )
@@ -56,7 +56,7 @@ def generate_erd(state: ArchitectureState) -> ArchitectureState:
 
 def generate_deployment_diagram(state: ArchitectureState) -> ArchitectureState:
     deployment_puml = generate_deployment_diagram_with_llm(
-        state.get("scenario_text", ""),
+        usecase_spec_text(state),
         state.get("class_diagram_puml", ""),
         state.get("sequence_diagram_puml", ""),
         state.get("api_spec", {}),

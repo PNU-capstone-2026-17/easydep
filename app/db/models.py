@@ -23,6 +23,11 @@ class Base(DeclarativeBase):
 
 # Artifact types. Kept as plain strings so later phases (source code, IaC,
 # test results) can be added without a schema migration.
+TYPE_REFINE_REQ = "REFINE_REQ"
+TYPE_USECASE_SPEC = "USECASE_SPEC"
+TYPE_USECASE_DIAGRAM = "USECASE_DIAGRAM"
+TYPE_RESOURCE_SPEC = "RESOURCE_SPEC"
+
 TYPE_CLASS = "CLASS"
 TYPE_SEQUENCE = "SEQUENCE"
 TYPE_API_SPEC = "API_SPEC"
@@ -35,6 +40,8 @@ FORMAT_JSON = "JSON"
 ORIGIN_GENERATED = "GENERATED"
 ORIGIN_AUTO_FIXED = "AUTO_FIXED"
 ORIGIN_FEEDBACK_REVISED = "FEEDBACK_REVISED"
+# Supplied from outside this service (another agent, or entered by hand).
+ORIGIN_IMPORTED = "IMPORTED"
 
 
 class App(Base):
@@ -43,7 +50,13 @@ class App(Base):
     __tablename__ = "apps"
 
     app_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    scenario_text: Mapped[str | None] = mapped_column(MEDIUMTEXT, nullable=True)
+    # What the user typed. Kept because the refined requirements interpret it
+    # and cannot be turned back into it, and because regenerating REFINE_REQ
+    # after feedback needs the original wording.
+    requirements_text: Mapped[str | None] = mapped_column(MEDIUMTEXT, nullable=True)
+    resource_constraints_text: Mapped[str | None] = mapped_column(
+        MEDIUMTEXT, nullable=True
+    )
     # 개발 진행 상태: the stage whose artifact was written most recently.
     current_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

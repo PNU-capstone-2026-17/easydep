@@ -26,10 +26,11 @@ USE easydep;
 
 -- One cloud-native application development session.
 CREATE TABLE IF NOT EXISTS apps (
-  app_id        VARCHAR(36) NOT NULL COMMENT 'UUID issued at session start',
-  scenario_text MEDIUMTEXT  NULL COMMENT 'user requirement input',
-  current_stage VARCHAR(32) NULL COMMENT 'stage whose artifact was written last',
-  created_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  app_id                    VARCHAR(36) NOT NULL COMMENT 'UUID issued at session start',
+  requirements_text         MEDIUMTEXT  NULL COMMENT 'natural language requirements as the user wrote them',
+  resource_constraints_text MEDIUMTEXT  NULL COMMENT 'cloud resource constraints as the user wrote them',
+  current_stage             VARCHAR(32) NULL COMMENT 'stage whose artifact was written last',
+  created_at                DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (app_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE TABLE IF NOT EXISTS artifacts (
   id                    BIGINT      NOT NULL AUTO_INCREMENT,
   app_id                VARCHAR(36) NOT NULL,
-  artifact_type         VARCHAR(32) NOT NULL COMMENT 'CLASS/SEQUENCE/API_SPEC/ERD/DEPLOYMENT/...',
+  artifact_type         VARCHAR(32) NOT NULL COMMENT 'REFINE_REQ/USECASE_SPEC/CLASS/SEQUENCE/...',
   generation_started_at DATETIME(6) NULL
                           COMMENT 'generation lock: NULL is free, otherwise a lease that expires',
   current_version_id    BIGINT      NULL COMMENT 'no FK: circular with artifact_versions',
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
   syntax_valid  TINYINT(1)  NULL,
   syntax_errors JSON        NULL COMMENT 'list of validation/compile error strings',
   origin        VARCHAR(20) NOT NULL DEFAULT 'GENERATED'
-                  COMMENT 'GENERATED/AUTO_FIXED/FEEDBACK_REVISED',
+                  COMMENT 'GENERATED/AUTO_FIXED/FEEDBACK_REVISED/IMPORTED',
   created_at    DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
   UNIQUE KEY uq_versions_artifact_no (artifact_id, version_no),

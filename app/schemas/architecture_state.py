@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from typing_extensions import TypedDict
 
 
 class ArchitectureState(TypedDict, total=False):
     app_id: str
-    source: str
-    scenario_file_path: str
-    scenario_text: str
+
+    # User input, stored on the app row.
+    requirements_text: str
+    resource_constraints_text: str
+
+    # Requirements analysis artifacts.
+    refined_requirements: dict[str, Any]
+    usecase_spec: dict[str, Any]
+    usecase_diagram_puml: str
+    usecase_diagram_syntax_valid: bool
+    usecase_diagram_syntax_errors: list[str]
+    resource_spec: dict[str, Any]
 
     extracted_bce_classes: dict[str, Any]
     class_diagram_puml: str
@@ -32,3 +42,17 @@ class ArchitectureState(TypedDict, total=False):
     deployment_diagram_syntax_errors: list[str]
 
     artifact_status: dict[str, str]
+
+
+def usecase_spec_text(state: ArchitectureState) -> str:
+    """The use case specification as prompt text.
+
+    Every design artifact is derived from the use case specification produced by
+    the requirements analysis agent, so this is the context the LLM gets.
+    """
+    spec = state.get("usecase_spec")
+    if not spec:
+        return ""
+    if isinstance(spec, str):
+        return spec
+    return json.dumps(spec, ensure_ascii=False, indent=2)

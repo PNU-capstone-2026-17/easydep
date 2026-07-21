@@ -1,25 +1,18 @@
 from __future__ import annotations
 
-from app.schemas.architecture_state import ArchitectureState
-from app.services.bce_class_extractor import (
-    extract_bce_classes_from_scenario,
-    load_scenario_from_json,
-)
+from app.schemas.architecture_state import ArchitectureState, usecase_spec_text
+from app.services.bce_class_extractor import extract_bce_classes_from_scenario
 from app.services.artifact_validation import validate_puml_artifact
 from app.services.plantuml_class_diagram import generate_plantuml_from_bce_json
 from app.services.llm_artifacts import revise_puml_with_llm
 
 
 def extract_class_elements(state: ArchitectureState) -> ArchitectureState:
-    scenario_text = state.get("scenario_text") or state.get("source", "")
-    scenario_file_path = state.get("scenario_file_path", "")
-
-    if not scenario_text and scenario_file_path:
-        scenario_text = load_scenario_from_json(scenario_file_path)
-
+    """Derive BCE elements from the use case specification."""
     return {
-        "scenario_text": scenario_text,
-        "extracted_bce_classes": extract_bce_classes_from_scenario(scenario_text),
+        "extracted_bce_classes": extract_bce_classes_from_scenario(
+            usecase_spec_text(state)
+        ),
     }
 
 
@@ -47,7 +40,7 @@ def repair_class_diagram_syntax(state: ArchitectureState) -> ArchitectureState:
         current_puml=puml_text,
         feedback="Fix syntax errors: " + "; ".join(syntax_errors),
         syntax_errors=syntax_errors,
-        context=state.get("scenario_text", ""),
+        context=usecase_spec_text(state),
     )
     return {"class_diagram_puml": revised}
 
