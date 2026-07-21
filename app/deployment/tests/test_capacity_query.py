@@ -495,3 +495,24 @@ def test_unreadable_pattern_is_reported_not_swallowed(tmp_path) -> None:
     text = agent_api.check("AWS::EC2::Volume", "KmsKeyId", "abc", output_dir=tmp_path)
     assert "알려진 제약이 없어" not in text, "쥐고 있는 제약을 없다고 말한다"
     assert "읽을 수 없는" in text
+
+
+def test_wrong_property_name_points_at_the_real_ones(wide: Path) -> None:
+    """살짝 틀린 속성 이름에 막다른 길을 주지 않는다.
+
+    실측: 에이전트가 RDS에 `InstanceType`을 물었다(EC2가 그 이름을 쓰니 자연스러운
+    시도인데 RDS는 `DBInstanceClass`다). 우리는 938건을 쥐고도 "알려진 제약이
+    없어 판정할 수 없습니다"라고만 답했다 — `p5.48xlarge`를 타입 이름으로 물었을
+    때와 같은 실패다.
+    """
+    text = agent_api.check("AWS::EC2::Volume", "InstanceTyp", "x", output_dir=wide)
+    assert "그런 속성은 없습니다" in text, "막다른 길을 그대로 준다"
+    assert "InstanceType" in text, "우리가 아는 이름을 안 가리킨다"
+
+
+def test_property_hint_is_silent_when_the_type_is_unknown(tmp_path) -> None:
+    """아는 게 없으면 후보를 지어내지 않는다."""
+    CapacitySet().save(tmp_path / "aws-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+    text = agent_api.check("AWS::EC2::Volume", "Size", 1, output_dir=tmp_path)
+    assert "혹시 이것인가요" not in text

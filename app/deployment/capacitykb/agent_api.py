@@ -168,6 +168,30 @@ def _nothing_found(capacity: CapacitySet, type_id: str, what: str) -> str:
     ])
 
 
+def _property_hint(capacity: CapacitySet, type_id: str, prop: str) -> str:
+    """없는 속성 이름을 받았을 때 **우리가 아는 이름을 가리킨다.** 없으면 빈 문자열.
+
+    실측: 에이전트가 RDS에 `InstanceType`을 물었다. EC2가 그 이름을 쓰니 자연스러운
+    시도인데 RDS는 `DBInstanceClass`다. 우리는 "알려진 제약이 없어 판정할 수
+    없습니다"라고만 답했고 — 938건을 쥐고도 막다른 길을 줬다. `p5.48xlarge`를
+    타입으로 물었을 때와 같은 실패다.
+
+    닮은 이름이 없으면 몇 개라도 보여준다. "그 이름이 아니다"만 알아도 다음 시도가
+    달라진다.
+    """
+    import difflib
+
+    known = sorted({c.property for c in limits_for(capacity, type_id)})
+    if not known:
+        return ""
+    close = difflib.get_close_matches(prop, known, n=5, cutoff=0.5)
+    if close:
+        return f"  이 타입에 그런 속성은 없습니다. 혹시 이것인가요: {', '.join(close)}"
+    shown = ", ".join(known[:6])
+    more = f" 외 {len(known) - 6}개" if len(known) > 6 else ""
+    return f"  이 타입에 그런 속성은 없습니다. 아는 속성: {shown}{more}"
+
+
 def property_limits(
     resource_type: str,
     property_name: str | None = None,
@@ -184,7 +208,9 @@ def property_limits(
     found = limits_for(capacity, type_id, prop=property_name)
     if not found:
         target = f"{display(type_id)}.{property_name}" if property_name else display(type_id)
-        return _nothing_found(capacity, type_id, target)
+        base = _nothing_found(capacity, type_id, target)
+        hint = _property_hint(capacity, type_id, property_name) if property_name else ""
+        return f"{base}\n{hint}" if hint else base
     header = display(type_id) + (f".{property_name}" if property_name else "")
     lines = [f"{header} 제약 {len(found)}건:"]
     lines.extend(_describe(c) for c in found)
@@ -251,7 +277,22 @@ def check(
                 more = f" 외 {len(items) - 8}가지" if len(items) > 8 else ""
                 lines.append(f"  {label}: {'; '.join(names)}{more}")
             return "\n".join(lines)
+        if not result.references and not result.unevaluated and result.excluded:
+            # 제약은 있는데 **준 조합에 걸리는 게 없다.** "모른다"와 다른 말이다.
+            given = ", ".join(f"{k}={v!r}" for k, v in (context or {}).items())
+            return (
+                f"판정할 수 없습니다: {target} — 이 속성에 조건부 제약 "
+                f"{result.excluded}건이 있지만 주신 조합({given or '조건 없음'})에 "
+                "걸리는 것이 없습니다. 지식베이스가 그 조합을 모르는 것이니 "
+                "값(엔진·버전 표기 등)을 다시 확인하시거나 공식 문서를 보세요."
+            )
         if not result.references and not result.unevaluated:
+            hint = _property_hint(capacity, type_id, property_name)
+            if hint:
+                return (
+                    f"{display(type_id)}.{property_name} 에 대해 아는 제약이 없습니다.\n"
+                    + hint
+                )
             return (
                 f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "
                 "없습니다. 지식베이스에 없는 값이므로 공식 문서를 확인하세요."

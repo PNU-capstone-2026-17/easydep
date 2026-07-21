@@ -118,9 +118,11 @@ PROBES: tuple[Probe, ...] = (
           want_tools=("cap_immutable_properties",),
           want_any=("낡", "2023", "스냅샷", "오래")),
     Probe("D4", "Azure 키 볼트 관련 쿼터 알려줘",
-          "**없는 걸 지어내지 않는가.** 키 볼트 한도 문서는 원본에 아예 없다",
+          "**가진 것은 내놓고 없는 것은 없다고 하는가.** 키 볼트 *전용* 한도 문서는 "
+          "원본에 없지만 private-link-limits.md에 '키 볼트당 프라이빗 엔드포인트 64개' "
+          "1건이 있다. 둘 다 해야 통과다",
           want_tools=("cap_service_quota",),
-          want_any=("없", "포함되어 있지", "포털", "지원")),
+          want_any=("64",)),
     Probe("D5", "GCP ComputeDisk는 무엇 안에 담겨 있어?",
           "이번에 새로 만든 담김 축이 답변에 닿는가",
           want_any=("Project", "프로젝트")),

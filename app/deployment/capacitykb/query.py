@@ -84,6 +84,18 @@ class CheckResult:
     violations: list[str]
     advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
     checked: int
+    excluded: int = 0
+    """조건이 **성립하지 않아** 판정에서 빠진 제약 수.
+
+    이게 0이 아닌데 판정 근거도 없으면 "이 속성을 모른다"가 아니라 **"준 조합에
+    걸리는 제약이 없다"**이다. 둘은 사용자에게 전혀 다른 말이다 — 앞은 우리가
+    데이터가 없다는 뜻이고, 뒤는 조합 쪽을 다시 보라는 신호다(오타나 미지원 버전).
+
+    실측: `Engine=aurora-postgresql, EngineVersion=16.4`를 주면 938건 중 하나도
+    안 걸린다(원본에 `16.4`가 `16.4-limitless`로만 있다). 예전에는 그때
+    "알려진 제약이 없어 판정할 수 없습니다"라고 답했다.
+    """
+
     unevaluated: list[str] = field(default_factory=list)
     """제약을 **쥐고 있으나 평가하지 못한** 것들.
 
@@ -306,6 +318,7 @@ def check_value(
     references: list[tuple[str, str]] = []
     unresolved: list[str] = []
     unevaluated: list[str] = []
+    excluded = 0
     missing: set[str] = set()
     strong: set[str] = set()
     checked = 0
@@ -313,6 +326,7 @@ def check_value(
     for constraint in capacity.for_property(type_id, prop):
         holds = _condition_holds(constraint, context)
         if holds is False:
+            excluded += 1
             continue  # 다른 종류에 걸린 제약이다
         if holds is None:
             # 조건을 모르면 판정에 **못 쓴다**. 다만 버리지도 않고, 한 걸음 더 가서
@@ -385,6 +399,7 @@ def check_value(
         references=[text for kind, text in references if kind not in strong],
         unresolved=unresolved,
         unevaluated=unevaluated,
+        excluded=excluded,
         missing=sorted(missing),
     )
 
