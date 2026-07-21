@@ -430,3 +430,76 @@ def type_summary(
         "  → 값이 되는지 판정은 cap_check_value(조건은 context로), "
         "허용값은 cap_allowed_values, 한도 전체는 cap_property_limits."
     )
+
+
+@lru_cache(maxsize=2)
+def _value_index(output_dir: str) -> tuple[dict, dict] | None:
+    """허용값 → 그 값이 나오는 (타입, 속성). 그리고 (타입, 속성)별 enum 제약 수.
+
+    **없던 방향이다.** 지금까지 KB는 "타입을 주면 제약을 준다"만 할 수 있었다.
+    실측에서 에이전트는 `p5.48xlarge`를 **타입 이름으로** 물었고 — 사람도 그렇게
+    묻는다 — 우리는 "노드를 찾을 수 없습니다"만 내놨다. 값에서 속성으로 가는
+    길이 없어서, 에이전트는 올바른 질문을 하고도 막다른 길을 만났다.
+
+    싸다: 등장 78,482회지만 고유 값은 6,197개뿐이다(실측).
+    """
+    capacity = load_merged(output_dir)
+    if capacity is None:
+        return None
+    index: dict[str, dict[tuple[str, str], int]] = {}
+    totals: dict[tuple[str, str], int] = {}
+    for c in capacity.constraints:
+        if c.kind != "enum" or not isinstance(c.value, list):
+            continue
+        key = (c.type_id, c.property)
+        totals[key] = totals.get(key, 0) + 1
+        for v in c.value:
+            if isinstance(v, str):
+                slot = index.setdefault(v.lower(), {})
+                slot[key] = slot.get(key, 0) + 1
+    return index, totals
+
+
+def value_lookup(
+    name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+) -> str | None:
+    """이 이름이 어떤 속성의 **허용값**인지. 아니면 None.
+
+    조건부일 때 "조건 38가지 중 14가지에서 허용"까지 말한다 — 그게 보통
+    사람이 물은 것(`p5.48xlarge` 어느 리전에서 되나) 그 자체다.
+    """
+    built = _value_index(str(output_dir))
+    if not built:
+        return None
+    index, totals = built
+    hits = index.get(name.lower())
+    if not hits:
+        return None
+
+    # 많이 나오는 (타입, 속성)이 먼저다. p5.48xlarge는 EC2::Instance에서 14번,
+    # EMR::Cluster에서 12번 나온다 — 사람이 물은 쪽은 앞이다. 짐작이 아니라 사실이다.
+    # 동점이면 중첩 경로보다 최상위 속성을 앞세운다. gp3는 8곳에서 전부 1번씩
+    # 나오는데, 알파벳순으로 뒀더니 `EbsBlockDevice/VolumeType`이 앞자리를 먹었다.
+    def rank(item):
+        (type_id, prop), count = item
+        return (-count, prop.count("/") + prop.count("."), type_id, prop)
+
+    ranked = sorted(hits.items(), key=rank)
+    lines = [f"'{name}' 은(는) 타입이 아니라 **값**입니다. capacitykb에서 이 값이 나오는 곳:"]
+    for (type_id, prop), allowed in ranked[:4]:
+        total = totals.get((type_id, prop), allowed)
+        where = (
+            f"조건 {total}가지 중 {allowed}가지에서 허용"
+            if total > 1
+            else "허용값에 포함"
+        )
+        lines.append(f"  - {display(type_id)}.{prop} — {where}")
+    if len(ranked) > 4:
+        lines.append(f"  … 외 {len(ranked) - 4}곳")
+    top_type, top_prop = ranked[0][0]
+    lines.append(
+        f"  → 어느 조건에서 되는지는 "
+        f"cap_check_value('{display(top_type)}', '{top_prop}', '{name}') "
+        "— 조건(리전·볼륨 종류 등)은 context로 주면 확정 판정이 나옵니다."
+    )
+    return "\n".join(lines)

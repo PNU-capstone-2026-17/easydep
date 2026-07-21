@@ -26,6 +26,12 @@ def cap_check_value(
 ) -> str:
     """리소스 속성에 넣으려는 값이 허용 범위인지 판정한다.
 
+    **인스턴스 타입이 특정 리전에서 쓸 수 있는지도 여기서 판정한다** —
+    `cap_check_value('AWS::EC2::Instance', 'InstanceType', 'p5.48xlarge',
+    context='Region=af-south-1')`. 실측에서 에이전트가 바로 이 질문에 도구를
+    하나도 부르지 않고 "리전별 제공 여부는 조회되지 않는다"고 답했다. 그런
+    말은 어디에도 없었지만, **된다는 말도 없었다.**
+
     신뢰도가 낮은(설명문에서 추출한) 제약은 값을 거부하는 근거로 쓰지 않고
     참고로만 알려준다.
 
@@ -34,9 +40,11 @@ def cap_check_value(
             'Microsoft.ContainerService/managedClusters'.
         property_name: 속성 이름. 예: 'Size', 'Timeout', 'EphemeralStorage/Size'.
         value: 넣으려는 값. 숫자면 숫자로 해석한다. 예: '100000', 'gp3'.
-        context: 함께 정한 다른 속성. `'VolumeType=gp2'` 처럼 `이름=값`을 쉼표로 잇는다.
-            **한도가 다른 속성에 따라 달라지면 이걸 줘야 판정된다** — EBS 볼륨 크기
-            상한은 gp2 16,384 / gp3 65,536 / standard 1,024 GiB로 제각각이다.
+        context: 함께 정한 다른 속성. `'VolumeType=gp2'`, `'Region=af-south-1'` 처럼
+            `이름=값`을 쉼표로 잇는다.
+            **한도·허용값이 다른 것에 따라 달라지면 이걸 줘야 판정된다** — EBS 볼륨
+            크기 상한은 gp2 16,384 / gp3 65,536 / standard 1,024 GiB로 제각각이고,
+            인스턴스 타입 허용값은 리전 38곳마다 다르다.
             안 주면 "어느 조건에서 얼마인지"를 나열하고 무엇이 필요한지 알려준다.
     """
     parsed = _parse_context(context)
@@ -89,9 +97,13 @@ def cap_immutable_properties(resource_type: str) -> str:
 def cap_allowed_values(resource_type: str, property_name: str) -> str:
     """속성의 허용값(enum)·패턴·기본값을 반환한다.
 
+    리전마다 다른 허용값도 여기 있다 — `('AWS::EC2::Instance', 'InstanceType')`이면
+    리전 38곳의 인스턴스 타입 목록이 조건과 함께 나온다. 특정 리전에서 되는지만
+    알고 싶으면 `cap_check_value`에 `context='Region=...'`을 주는 쪽이 짧다.
+
     Args:
-        resource_type: 타입 이름. 예: 'AWS::RDS::DBInstance'.
-        property_name: 속성 이름. 예: 'StorageType'.
+        resource_type: 타입 이름. 예: 'AWS::RDS::DBInstance', 'AWS::EC2::Instance'.
+        property_name: 속성 이름. 예: 'StorageType', 'InstanceType'.
     """
     print(f"\n[용량질의] 허용값: {resource_type}.{property_name}")
     return agent_api.allowed_values(resource_type, property_name)

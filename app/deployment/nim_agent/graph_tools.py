@@ -68,6 +68,11 @@ def _capacity_pointer(resource_type: str) -> str:
     """
     try:
         summary = capacity_api.type_summary(resource_type)
+        if summary is None:
+            # 타입이 아니면 **값**일 수 있다. 실측에서 에이전트는 `p5.48xlarge`를
+            # 타입 이름으로 물었고 — 사람도 그렇게 묻는다 — "노드를 찾을 수
+            # 없습니다"라는 막다른 길을 받고 웹으로 나갔다. 올바른 질문이었다.
+            summary = capacity_api.value_lookup(resource_type)
     except Exception:
         return ""
     return f"\n{summary}" if summary else ""
@@ -95,7 +100,17 @@ def kb_search_types(keyword: str, provider: str | None = None, limit: int = 20) 
         limit: 반환할 최대 개수(기본 20).
     """
     print(f"\n[그래프질의] 타입 검색: {keyword!r} (provider={provider or 'any'})")
-    return agent_api.search_types(keyword, provider=provider, limit=limit)
+    found = agent_api.search_types(keyword, provider=provider, limit=limit)
+    # 여기가 **실제로 부딪히는 막다른 길**이다. describe_type에만 값 안내를 붙였더니
+    # 3차 실측에서도 실패했다 — 에이전트는 search_types에서 "타입이 없습니다"를 받고
+    # 거기서 포기하고 describe_type까지 가지 않는다. 처음 부르는 문이 답을 알아야 한다.
+    #
+    # 다만 **타입을 찾았을 때는 붙이지 않는다.** 무조건 붙였더니 'subnet' 검색이
+    # 타입 12개를 찾아 놓고 바로 밑에 "subnet은 타입이 아니라 값입니다"라고
+    # 모순된 말을 했다(실측). 막다른 길일 때만 다른 길을 가리킨다.
+    if agent_api.count_types(keyword, provider=provider):
+        return found
+    return found + _capacity_pointer(keyword)
 
 
 @function_tool

@@ -402,3 +402,50 @@ def test_capacity_pointer_survives_broken_output(monkeypatch) -> None:
 
     monkeypatch.setattr(graph_tools.capacity_api, "type_summary", boom)
     assert graph_tools._capacity_pointer("AWS::EC2::Instance") == ""
+
+
+def test_value_lookup_turns_a_dead_end_into_an_answer(wide: Path) -> None:
+    """값을 타입 이름으로 물어도 어디를 봐야 하는지 알려줘야 한다.
+
+    실측 결함: 에이전트가 `p5.48xlarge`를 **타입 이름으로** 물었고(사람도 그렇게
+    묻는다) 우리는 "노드를 찾을 수 없습니다"만 내놨다. 값에서 속성으로 가는
+    길이 없어서, 올바른 질문을 하고도 막다른 길을 만나 웹으로 나갔다.
+    """
+    agent_api._value_index.cache_clear()
+    text = agent_api.value_lookup("m3.large", output_dir=wide)
+    assert text, "허용값인데 못 찾았다"
+    assert "InstanceType" in text, "어느 속성의 값인지 안 알려준다"
+    assert "2가지 중 2가지" in text, "몇 개 조건에서 되는지 안 센다"
+    assert "cap_check_value" in text, "다음에 부를 도구를 안 가리킨다"
+
+
+def test_value_lookup_is_silent_on_unknown_names(wide: Path) -> None:
+    """모르는 이름엔 아무 말도 하지 않는다 — 지어내면 없느니만 못하다."""
+    agent_api._value_index.cache_clear()
+    assert agent_api.value_lookup("m9999.enormous", output_dir=wide) is None
+
+
+def test_search_does_not_contradict_its_own_results(monkeypatch, wide: Path) -> None:
+    """타입을 찾았으면 "이건 타입이 아니라 값입니다"라고 말하면 안 된다.
+
+    값 안내를 무조건 붙였더니 'subnet' 검색이 타입 12개를 찾아 놓고 바로 밑에
+    모순된 말을 했다(실측). 막다른 길일 때만 다른 길을 가리킨다.
+    """
+    from graphkb import agent_api as graph_api
+    from nim_agent import graph_tools
+
+    agent_api._value_index.cache_clear()
+    monkeypatch.setattr(agent_api, "DEFAULT_OUTPUT_DIR", wide)
+
+    def compose(keyword: str) -> str:
+        found = graph_api.search_types(keyword)
+        if graph_api.count_types(keyword):
+            return found
+        return found + graph_tools._capacity_pointer(keyword)
+
+    hit = compose("Volume")  # 타입으로 실재하는 이름
+    assert graph_api.count_types("Volume"), "전제가 깨졌다 — 타입이 있어야 한다"
+    assert "타입이 아니라" not in hit, "찾아 놓고 아니라고 말한다"
+
+    miss = compose("m3.large")  # 값이지 타입이 아닌 이름
+    assert "타입이 아니라" in miss, "막다른 길인데 다른 축을 안 가리킨다"

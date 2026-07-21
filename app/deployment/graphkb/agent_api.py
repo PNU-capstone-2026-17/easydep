@@ -252,6 +252,34 @@ def rank_types(
     return "\n".join(lines)
 
 
+def count_types(
+    keyword: str,
+    *,
+    provider: str | None = None,
+    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
+) -> int:
+    """`search_types`가 몇 건을 찾는지. 텍스트를 되파싱하지 않기 위한 것.
+
+    호출부가 "타입을 못 찾았을 때만" 다른 축을 안내하려면 이 수가 필요하다.
+    반환 문자열에서 "타입이 없습니다"를 문자열 매칭하면 문구를 다듬는 순간
+    조용히 깨진다.
+    """
+    graph = load_merged(output_dir)
+    if graph is None:
+        return 0
+    return len(_matching_nodes(graph, keyword, provider))
+
+
+def _matching_nodes(graph, keyword: str, provider: str | None) -> list:
+    lowered = keyword.lower()
+    return [
+        node
+        for node in graph.nodes.values()
+        if lowered in node.id.lower()
+        and (provider is None or node.provider == provider)
+    ]
+
+
 def search_types(
     keyword: str,
     *,
@@ -263,13 +291,7 @@ def search_types(
     graph = load_merged(output_dir)
     if graph is None:
         return _MISSING_MESSAGE
-    lowered = keyword.lower()
-    matches = [
-        node
-        for node in graph.nodes.values()
-        if lowered in node.id.lower()
-        and (provider is None or node.provider == provider)
-    ]
+    matches = _matching_nodes(graph, keyword, provider)
     if not matches:
         scope = f" (provider={provider})" if provider else ""
         return f"'{keyword}'{scope} 에 해당하는 타입이 없습니다."

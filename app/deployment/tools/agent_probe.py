@@ -124,6 +124,16 @@ PROBES: tuple[Probe, ...] = (
     Probe("D5", "GCP ComputeDisk는 무엇 안에 담겨 있어?",
           "이번에 새로 만든 담김 축이 답변에 닿는가",
           want_any=("Project", "프로젝트")),
+    Probe("N1", "af-south-1 리전에서 p5.48xlarge 인스턴스를 쓸 수 있어?",
+          "**값에서 출발한 질문이 KB 안에서 끝나는가.** 리전별 허용값 79,809쌍을 "
+          "넣고도 에이전트가 못 닿아 웹으로 나갔다 (데이터: af-south-1은 불가)",
+          forbid_tools=("web_search",),
+          want_any=("af-south-1", "제공되지", "지원되지", "사용할 수 없", "쓸 수 없")),
+    Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
+          "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
+          "\"지식베이스에 없습니다\"라고 답했다",
+          forbid_tools=("web_search",),
+          want_any=("us-east-1", "ap-northeast-2")),
 )
 
 # --- 기대에서 **뺀** 것 (지킬 생각 없는 기대를 남기면 실패가 일상이 된다) ---
