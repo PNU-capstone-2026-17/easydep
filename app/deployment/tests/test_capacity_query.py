@@ -449,3 +449,49 @@ def test_search_does_not_contradict_its_own_results(monkeypatch, wide: Path) -> 
 
     miss = compose("m3.large")  # 값이지 타입이 아닌 이름
     assert "타입이 아니라" in miss, "막다른 길인데 다른 축을 안 가리킨다"
+
+
+# --- 정규식 방언 ---
+
+
+def test_vendor_dialect_patterns_are_evaluated(tmp_path) -> None:
+    r"""`\p{L}` 계열은 원본이 틀린 게 아니라 .NET/PCRE 문법이다.
+
+    파이썬 `re`로는 205건이 안 돌았는데 그중 194건이 이것이었다. 예전에는
+    `re.error`를 잡아 조용히 건너뛰어서, 우리가 패턴을 쥐고도 판정하지 않는다는
+    사실이 답변에서 통째로 사라졌다.
+    """
+    result = CapacitySet()
+    result.add_constraint(
+        constraint(
+            property="Name", kind="pattern", value=r"^([\p{L}\p{N}_]*)$",
+            evidence="cfn-schema", unit=None, conditional=False, value_type="string",
+        )
+    )
+    result.save(tmp_path / "aws-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+
+    ok = agent_api.check("AWS::EC2::Volume", "Name", "abc123", output_dir=tmp_path)
+    assert "가능" in ok, "방언 패턴을 여전히 못 읽는다"
+    bad = agent_api.check("AWS::EC2::Volume", "Name", "a b!", output_dir=tmp_path)
+    assert "불가" in bad
+
+
+def test_unreadable_pattern_is_reported_not_swallowed(tmp_path) -> None:
+    """어느 엔진에서도 안 도는 정규식(상류 오류 11건)은 **밝힌다.**
+
+    조용히 넘기면 "패턴 제약이 없다"로 읽힌다 — 우리가 쥐고 있는데도.
+    """
+    result = CapacitySet()
+    result.add_constraint(
+        constraint(
+            property="KmsKeyId", kind="pattern", value=r"^[a-z]*{1,1000}$",
+            evidence="cfn-schema", unit=None, conditional=False, value_type="string",
+        )
+    )
+    result.save(tmp_path / "aws-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+
+    text = agent_api.check("AWS::EC2::Volume", "KmsKeyId", "abc", output_dir=tmp_path)
+    assert "알려진 제약이 없어" not in text, "쥐고 있는 제약을 없다고 말한다"
+    assert "읽을 수 없는" in text

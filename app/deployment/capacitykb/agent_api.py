@@ -251,11 +251,19 @@ def check(
                 more = f" 외 {len(items) - 8}가지" if len(items) > 8 else ""
                 lines.append(f"  {label}: {'; '.join(names)}{more}")
             return "\n".join(lines)
-        if not result.references:
+        if not result.references and not result.unevaluated:
             return (
                 f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "
                 "없습니다. 지식베이스에 없는 값이므로 공식 문서를 확인하세요."
             )
+        if not result.references:
+            # 제약을 쥐고 있는데 평가만 못 한다. 이걸 "제약이 없다"로 답하면 거짓이다.
+            return "\n".join([
+                f"확정 판정 불가: {target} — 제약은 있으나 그 정규식을 읽을 수 없습니다.",
+                *(f"  - {u}" for u in result.unevaluated),
+                "  원본 스키마의 정규식이 어느 엔진에서도 돌지 않습니다(상류 오류). "
+                "공식 문서를 확인하세요.",
+            ])
         # 확정 근거는 없지만 참고 정보는 쥐고 있다 — 예전엔 이걸 버리고 "모른다"고 답했다.
         return "\n".join([
             f"확정 판정 불가: {target} 를 판정할 확정 제약이 없습니다. "
@@ -275,6 +283,9 @@ def check(
     else:
         lines = [f"가능: {target} 는 알려진 제약 {result.checked}건을 만족합니다."]
 
+    if result.unevaluated:
+        lines.append("  ※ 아래 제약은 정규식을 읽을 수 없어 판정에 넣지 못했습니다:")
+        lines.extend(f"  - {u}" for u in result.unevaluated)
     if result.advisories or result.references:
         lines.append("  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):")
         lines.extend(f"  - {a}" for a in result.advisories)

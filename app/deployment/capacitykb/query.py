@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-import re
+import regex
 from dataclasses import dataclass, field
 
 from capacitykb.model import CapacitySet, Constraint, Quota
@@ -84,6 +84,14 @@ class CheckResult:
     violations: list[str]
     advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
     checked: int
+    unevaluated: list[str] = field(default_factory=list)
+    """제약을 **쥐고 있으나 평가하지 못한** 것들.
+
+    벤더가 쓴 정규식이 어느 엔진에서도 안 도는 경우다(실측 11건 — `*{1,1000}`
+    같은 상류 오류와 UTF-16 서로게이트 범위). 우리가 고칠 수 있는 종류가 아니라
+    **밝히기만 한다.** 조용히 넘기면 "패턴 제약이 없다"로 읽힌다.
+    """
+
     missing: list[str] = field(default_factory=list)
     """조건 판정에 **필요한데 문맥에 없던** 속성 이름들.
 
@@ -247,8 +255,8 @@ def _one_condition(cond: dict, context: dict | None) -> bool | None:
         # 정규식이 파이썬에서 안 돌면 **모른다**로 둔다. False로 치면 아는 제약을
         # 통째로 버리고, True로 치면 엉뚱한 조건의 한도를 적용한다.
         try:
-            return re.search(str(cond.get("value")), str(actual)) is not None
-        except re.error:
+            return regex.search(str(cond.get("value")), str(actual)) is not None
+        except regex.error:
             return None
     return None  # 모르는 연산자를 짐작해서 처리하지 않는다
 
@@ -297,6 +305,7 @@ def check_value(
     advisories: list[str] = []
     references: list[tuple[str, str]] = []
     unresolved: list[str] = []
+    unevaluated: list[str] = []
     missing: set[str] = set()
     strong: set[str] = set()
     checked = 0
@@ -328,11 +337,25 @@ def check_value(
         elif constraint.kind == "enum" and isinstance(constraint.value, list):
             breached, label = value not in constraint.value, "허용값"
         elif constraint.kind == "pattern" and isinstance(value, str):
+            # **벤더 문법 그대로 읽는다.** 파이썬 `re`로는 205건이 안 돌았는데
+            # 그중 194건은 원본이 틀린 게 아니라 .NET/PCRE 문법(`\p{L}` 계열)이라
+            # 파이썬이 못 읽는 것이었다. `regex`는 그 문법을 안다.
+            #
+            # `re.search` 의미(부분 일치)를 그대로 쓴다 — JSON Schema의 `pattern`은
+            # 원래 앵커되지 않는다. 여기서 `fullmatch`로 바꾸면 우리가 원본에 없는
+            # 엄격함을 지어내는 것이 된다.
             try:
-                breached = re.search(constraint.value, value) is None
+                breached = regex.search(constraint.value, value) is None
                 label = "패턴"
-            except re.error:
-                continue  # 스키마의 정규식이 파이썬에서 안 돌면 판정하지 않는다
+            except regex.error:
+                # **조용히 넘기지 않는다.** 예전엔 `continue`라, 우리가 패턴을
+                # 쥐고도 평가하지 못한다는 사실이 답변에서 통째로 사라졌다.
+                unevaluated.append(
+                    f"{constraint.property}: 패턴 제약이 있으나 우리가 읽을 수 없는 "
+                    f"정규식입니다 (근거 {evidence_name(constraint.evidence)}) — "
+                    f"{brief(constraint.value)}"
+                )
+                continue
         elif constraint.kind == "mutability" and constraint.value == "read_only":
             violations.append(f"{constraint.property}: 읽기 전용이라 설정할 수 없음")
             checked += 1
@@ -361,6 +384,7 @@ def check_value(
         # (`최대 65536`, 어느 볼륨에도 안 맞는 값)가 계속 따라붙었다.
         references=[text for kind, text in references if kind not in strong],
         unresolved=unresolved,
+        unevaluated=unevaluated,
         missing=sorted(missing),
     )
 

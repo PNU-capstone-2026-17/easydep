@@ -13,6 +13,10 @@ dependencies = [
     "openai-agents>=0.18.2",
     "python-dotenv>=1.2.2",
     "pyyaml>=6",
+    # 벤더 스키마의 정규식은 .NET/PCRE 문법이라 파이썬 `re`가 205건을 못 읽는다
+    # (`\p{L}` 계열 194건). 번역하지 않고 그 문법을 아는 엔진으로 읽는다 —
+    # `\p{L}`을 `[^\W\d_]`로 옮기는 건 근사치라 검증이 엄격해지면 fail-closed가 된다.
+    "regex>=2024.5.15",
 ]
 
 [project.optional-dependencies]
