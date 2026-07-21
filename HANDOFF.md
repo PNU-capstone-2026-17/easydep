@@ -121,6 +121,50 @@ go through the same revision loop in `server.py`.
 The whole-run endpoint and `architecture_artifact_graph` were removed; the UI
 drives one stage at a time.
 
+### Integrating the requirements analysis agent
+
+That agent is another member's code and is not merged yet. This service already
+has the storage slots, so merging is mostly wiring. Nothing in the database
+schema needs to change.
+
+**1. Where its output goes.** Each artifact maps to a stage name and a state key
+(`STAGE_ARTIFACTS` in `app/repositories/artifact_repository.py`):
+
+| stage | artifact_type | state key | format |
+|---|---|---|---|
+| `refined_requirements` | REFINE_REQ | `refined_requirements` | JSON |
+| `usecase_spec` | USECASE_SPEC | `usecase_spec` | JSON |
+| `usecase_diagram` | USECASE_DIAGRAM | `usecase_diagram_puml` | PlantUML |
+| `resource_spec` | RESOURCE_SPEC | `resource_spec` | JSON |
+
+Store from Python with
+`artifact_repository.save_stage(app_id, stage, {state_key: content})`, or over
+HTTP with `POST /api/apps/{app_id}/stages/{stage}/content`.
+
+**2. Its input.** The user's own words live on the app row:
+`apps.requirements_text` and `apps.resource_constraints_text`, both reachable
+through `load_state(app_id)`.
+
+**3. What to change once it runs in-process.**
+
+- `server.py`: drop the stage from `EXTERNAL_STAGES` so `generate` stops
+  returning 501, and add its branch in `generate_stage` the way the design
+  stages do (claim → generate → `save_stage` → release).
+- `server.py` `PREREQUISITES`: add `resource_spec` to `deployment_diagram`. The
+  report derives the deployment diagram from the cloud resource specification;
+  it was left out only because nothing produced that artifact.
+- `frontend/index.html`: add the four stages to the `stages` array. The step
+  list, validation display, and diagram rendering are already generic. The
+  "유스케이스 명세 저장" button and `saveUsecaseSpec()` exist only to seed a
+  specification by hand — delete them once the agent generates it.
+- If a stage needs a syntax-checked PlantUML artifact, reuse
+  `auto_fix_puml_stage`; it already covers `usecase_diagram` through
+  `PUML_FIELDS`.
+
+**4. What not to change.** `artifact_type` is a VARCHAR and every one of these
+artifacts is a single document, so versioning, the generation lock, revision
+history, and the image endpoint all work as they are.
+
 API (all state now comes from the database):
 
 ```text
