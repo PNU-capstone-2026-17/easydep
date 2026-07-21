@@ -367,3 +367,66 @@ def service_quota(
             f"(출처 {quota.source_doc}, {describe(quota.basis)}){note}"
         )
     return "\n".join(lines)
+
+
+def type_summary(
+    resource_type: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+) -> str | None:
+    """이 타입에 대해 capacitykb가 **무엇을 쥐고 있는지** 한두 줄로. 모르면 None.
+
+    판정을 하지 않는다 — 어느 도구를 부르면 되는지만 가리킨다. 실측에서
+    "af-south-1에서 p5.48xlarge 되나"를 물었을 때 에이전트가
+    `kb_describe_type('AWS::EC2::Instance')`을 부르고는 **제약 얘기가 한 글자도
+    없으니 근거가 없다고 판단**해, 웹검색 13회를 14분간 돌고 "지식베이스에
+    없습니다"라고 답했다. 그 순간 KB는 리전별 허용값 39건을 쥐고 있었다.
+
+    데이터를 늘리는 것과 데이터에 닿게 하는 것은 다른 일이라, 다른 축의 입구에
+    이 줄을 붙인다.
+
+    산출물이 없으면 None이다 — 빌드 안내는 `cap_*` 도구의 몫이지 그래프 도구가
+    떠들 일이 아니다.
+    """
+    capacity = load_merged(output_dir)
+    if capacity is None:
+        return None
+    type_id, _ = _resolve(capacity, resource_type)
+    if type_id is None or not capacity.covers(type_id):
+        return None
+
+    immutables = immutable_properties(capacity, type_id)
+    others = [c for c in limits_for(capacity, type_id) if c.kind != "mutability"]
+    if not immutables and not others:
+        # **"제약 없음"과 "안 봤음"을 구분해서 말한다.** 침묵하면 모델이 둘을
+        # 같은 뜻으로 읽고, 우리가 수록 범위 안이라고 아는 타입까지 웹으로 간다.
+        return "용량·제약(capacitykb): 수록 범위 안이지만 이 타입에 걸린 제약은 없습니다."
+
+    parts = []
+    if others:
+        by_prop = {}
+        for c in others:
+            by_prop.setdefault(c.property, 0)
+            by_prop[c.property] += 1
+        # **중첩 경로보다 최상위 속성을 먼저 보인다.** 개수순으로만 정렬했더니
+        # `addonsConfig.dnsCacheConfig` 같은 게 알파벳 순으로 앞자리를 먹고
+        # 정작 `InstanceType`·`Size`가 "외 159개"에 묻혔다. 사람이 묻는 것은
+        # 최상위 속성이다.
+        def rank(item):
+            prop, count = item
+            depth = prop.count("/") + prop.count(".")
+            return (depth, -count, prop)
+
+        top = sorted(by_prop.items(), key=rank)
+        named = ", ".join(f"{p}({n}건)" if n > 1 else p for p, n in top[:4])
+        more = f" 외 {len(top) - 4}개 속성" if len(top) > 4 else ""
+        parts.append(f"제약 {len(others)}건 — {named}{more}")
+    if immutables:
+        names = [c.property for c in immutables]
+        shown = ", ".join(names[:3])
+        more = f" 외 {len(names) - 3}개" if len(names) > 3 else ""
+        parts.append(f"변경 시 재생성되는 속성 {len(names)}개 — {shown}{more}")
+
+    return (
+        f"용량·제약(capacitykb): {' · '.join(parts)}\n"
+        "  → 값이 되는지 판정은 cap_check_value(조건은 context로), "
+        "허용값은 cap_allowed_values, 한도 전체는 cap_property_limits."
+    )

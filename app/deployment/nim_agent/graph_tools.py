@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
+from capacitykb import agent_api as capacity_api
 from graphkb import agent_api
 
 
@@ -50,15 +51,38 @@ def kb_equivalent_types(resource_type: str) -> str:
     return agent_api.equivalent_types(resource_type)
 
 
+def _capacity_pointer(resource_type: str) -> str:
+    """"이 타입은 capacitykb도 알고 있다"는 한 줄. 없거나 실패하면 빈 문자열.
+
+    **축을 늘리는 것과 축에 닿게 하는 것은 다른 일이다.** 실측에서
+    "af-south-1에서 p5.48xlarge 되나"를 물었더니 에이전트가 이 도구를 부르고는
+    응답에 제약 얘기가 한 글자도 없으니 근거가 없다고 판단해, 웹검색을 13회
+    돌리며 14분을 쓰고 "지식베이스에 없습니다"라고 답했다. 그 순간 KB는
+    리전별 허용값 39건을 쥐고 있었다.
+
+    교차 참조가 KB 안이 아니라 **여기** 있는 이유: 단방향 규약상 graphkb는
+    capacitykb를 import할 수 없다. 양쪽을 다 볼 수 있는 층은 도구 계층뿐이다.
+
+    예외를 삼키는 이유: 용량 산출물이 손상돼도 그래프 질의는 답할 수 있어야
+    한다. 이 줄은 덤이지 이 도구의 본업이 아니다.
+    """
+    try:
+        summary = capacity_api.type_summary(resource_type)
+    except Exception:
+        return ""
+    return f"\n{summary}" if summary else ""
+
+
 @function_tool
 def kb_describe_type(resource_type: str) -> str:
-    """리소스 타입의 레이어/프로바이더/출처와, 의존 엣지 상세(참조 필드·필수 여부·신뢰도)를 반환한다.
+    """리소스 타입의 레이어/프로바이더/출처, 의존 엣지 상세(참조 필드·필수 여부·신뢰도)와
+    이 타입에 용량·제약(cap_* 도구) 정보가 있는지를 반환한다.
 
     Args:
         resource_type: 타입 이름.
     """
     print(f"\n[그래프질의] 타입 상세: {resource_type!r}")
-    return agent_api.describe_type(resource_type)
+    return agent_api.describe_type(resource_type) + _capacity_pointer(resource_type)
 
 
 @function_tool

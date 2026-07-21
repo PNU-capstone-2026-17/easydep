@@ -370,3 +370,35 @@ def test_property_limits_summarizes_and_scopes(wide: Path) -> None:
     assert "500개 중 하나" in text and "400개 중 하나" in text
     for region in ("us-east-1", "af-south-1"):
         assert f"Region={region!r} 일 때" in text, f"{region} 줄이 어느 조건인지 모른다"
+
+
+# --- 축 간 교차 참조 (2차 실측) ---
+
+
+def test_type_summary_points_at_the_data(wide: Path) -> None:
+    """다른 축의 입구에서 "여기 데이터가 있다"를 알 수 있어야 한다.
+
+    실측 결함: `kb_describe_type('AWS::EC2::Instance')`이 그래프 엣지만 1,484자
+    반환하고 제약을 한 글자도 말하지 않아서, 에이전트가 근거 없음으로 판단하고
+    웹검색 13회를 14분간 돌린 뒤 "지식베이스에 없습니다"라고 답했다. 그 순간
+    KB는 리전별 허용값 39건을 쥐고 있었다.
+    """
+    text = agent_api.type_summary("AWS::EC2::Volume", output_dir=wide)
+    assert text and "InstanceType" in text, "제약이 걸린 속성 이름이 안 보인다"
+    assert "cap_check_value" in text, "다음에 부를 도구를 안 가리킨다"
+
+
+def test_type_summary_is_silent_on_unknown_types(wide: Path) -> None:
+    """모르는 타입엔 아무 말도 하지 않는다 — 그래프 질의를 어지럽히면 안 된다."""
+    assert agent_api.type_summary("AWS::Lambda::Function", output_dir=wide) is None
+
+
+def test_capacity_pointer_survives_broken_output(monkeypatch) -> None:
+    """용량 산출물이 깨져도 그래프 질의는 답해야 한다. 이 줄은 덤이다."""
+    from nim_agent import graph_tools
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("산출물 손상")
+
+    monkeypatch.setattr(graph_tools.capacity_api, "type_summary", boom)
+    assert graph_tools._capacity_pointer("AWS::EC2::Instance") == ""
