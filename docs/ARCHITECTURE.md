@@ -138,8 +138,9 @@ STEP 4 — 관계 · 다이어그램
 - **반성 루프**: 검증 실패 → 수술적 지시로 재생성 → 재검증(bounded, 회귀 방지, 마지막 정상본 유지).
 
 ### 4.2 Cockburn 그라운딩
-`materials/Usecase_Knowledge/Writing Effective Use Cases.pdf` 로 프롬프트 지침을 항목별 교차검증
-(`docs/research/cockburn-grounding.md`, 페이지 인용). 핵심 교정:
+Cockburn, *Writing Effective Use Cases* 로 프롬프트 지침을 항목별 교차검증
+(`docs/research/cockburn-grounding.md`, 페이지 인용). 도서는 저작물이라 저장소에 없다.
+핵심 교정:
 - 공유 인증 = **precondition**(include 아님, p.81) · 자동결과 = **guarantee**(스텝·include 아님, p.64)
 - include는 **권장 기본**, extend/generalize만 sparingly(p.207) · supporting 액터 오른쪽(p.243)
 - UI 금지 단어목록은 명문화되지 않음 → **예시 단어로만 한정**(p.209) · "3-9 steps"는 관찰이지 제한 아님(p.208)

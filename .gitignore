@@ -22,6 +22,10 @@ artifacts/
 # 모델 가중치 (GitHub 100MB 제한 초과) — Releases에 별도 배포
 *.safetensors
 
+# 저작권 있는 참고 도서. 프롬프트 근거 자료로 로컬에서만 참고하고 배포하지 않는다.
+# (Alistair Cockburn, Writing Effective Use Cases, Addison-Wesley 2001)
+materials/Usecase_Knowledge/
+
 # Scratch files and report material, kept out of the project. Anchored to the
 # repository root so they cannot swallow real modules such as
 # app/requirements/main.py.

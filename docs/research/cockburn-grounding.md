@@ -1,7 +1,8 @@
 # Cockburn 도서 교차검증 — 프롬프트 지침·정적 체크의 근거
 
 > 대상 도서: Alistair Cockburn, *Writing Effective Use Cases* (Addison-Wesley, 2001).
-> 로컬 사본: `materials/Usecase_Knowledge/Writing Effective Use Cases.pdf`.
+> 저작물이라 저장소에 포함하지 않는다. 각자 구한 사본을
+> `materials/Usecase_Knowledge/`(gitignore 대상)에 두고 참고한다.
 > 페이지는 **인쇄 페이지**(도서 헤더/푸터 기준. PDF 인덱스 = 인쇄 + 25).
 >
 > 목적: 파이프라인의 프롬프트 지침·정적 체크가 실제 Cockburn 근거에 있는지 항목별 교차검증.
