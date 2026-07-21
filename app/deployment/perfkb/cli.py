@@ -49,6 +49,10 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument(
         "--rows-file", type=Path, help="pg_restore로 미리 뽑아둔 COPY 텍스트 (pgdumplib 우회용)"
     )
+    build.add_argument(
+        "--no-hardware", action="store_true",
+        help="AWS 하드웨어 사실(CPU·GPU 모델) 덧붙이기를 건너뛴다",
+    )
     build.add_argument("--output", type=Path, help=f"출력 경로 (기본: output/{BUILT_FILENAME})")
 
     show = sub.add_parser("show", help="특정 스펙의 성능 프로파일")
@@ -82,7 +86,23 @@ def _cmd_build(args: argparse.Namespace) -> int:
         source_path = path
 
     dataset, stats = build_dataset(rows)
-    dataset["_source"] = [describe_source(source_path, "tumblebug-dump")]
+    sources = [describe_source(source_path, "tumblebug-dump")]
+
+    # **하드웨어 사실을 같은 빌드 안에서 덧붙인다.** 별도 명령으로 두면 perfkb를
+    # 다시 빌드할 때 조용히 사라진다 — 사라져도 아무 표시가 없는 종류의 실패다.
+    if not args.no_hardware:
+        from perfkb.parsers import hardware
+
+        try:
+            table, hw_path = hardware.fetch(refresh=args.refresh)
+        except Exception as exc:  # noqa: BLE001 — 부가 정보가 본체를 막지 않는다
+            print(f"\n⚠ 하드웨어 사실을 받지 못해 건너뜁니다: {exc}", file=sys.stderr)
+        else:
+            report = hardware.enrich(dataset["specs"], table)
+            print(f"\n{hardware.format_report(report)}")
+            sources.append(describe_source(hw_path, "ec2-hardware"))
+
+    dataset["_source"] = sources
     output = args.output or (DEFAULT_OUTPUT_DIR / BUILT_FILENAME)
 
     print(f"\n출처: {source}")

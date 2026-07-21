@@ -98,7 +98,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 깨지는 실례다 — AWS가 false를 주지만 상시 성능이 보장되지는 않는다.
     "aws-non-burstable-inferred": INFERRED,
     "gcp-dedicated-cpu-inferred": INFERRED,
-    "azure-family-name": INFERRED,  # family가 standardB로 시작하는지
+    "azure-family-name": INFERRED,
+    # 인스턴스에 실제로 붙어 있는 하드웨어. 측정이 아니라 사양이다.
+    "ec2-hardware-probe": STATED,  # family가 standardB로 시작하는지
 }
 
 

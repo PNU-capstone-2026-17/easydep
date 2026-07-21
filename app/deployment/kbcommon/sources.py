@@ -195,6 +195,23 @@ SOURCES: dict[str, Source] = {
             "있고 우리가 소비 중이다. 2026-07-21."
         ),
     ),
+    "ec2-hardware": Source(
+        key="ec2-hardware",
+        url=(
+            "https://raw.githubusercontent.com/vantage-sh/ec2instances.info/"
+            "4ef36cd2c9867c1076206dcb691412ae2de7e8dd/"
+            "scraper/aws/ec2/extras/manually_fetched_data.json"
+        ),
+        pin_kind="commit",
+        pin="4ef36cd2c9867c1076206dcb691412ae2de7e8dd",
+        note=(
+            "MIT. 태그·릴리스가 없어 커밋 SHA로 고정한다 — 이게 배제 근거가 될 수 "
+            "없다는 건 bicep-types-az에서 이미 정리했다. **저장소가 서빙하는 "
+            "instances.json(209MB)은 쓰지 않는다** — 커밋돼 있지 않고 AWS Price "
+            "List 파생물이라 고정도 재배포도 안 된다. 여기 커밋된 파일만 쓴다. "
+            "벤치마크 점수도 들어 있으나 담지 않는다(parsers/hardware.py 참고)."
+        ),
+    ),
     "tumblebug-dump": Source(
         key="tumblebug-dump",
         url="https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.12.25/assets/assets.dump.gz",

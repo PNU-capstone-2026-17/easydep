@@ -138,7 +138,10 @@
             },
             "basis": {
               "type": "string",
-              "enum": ["stated", "inferred"],
+              "enum": [
+                "stated",
+                "inferred"
+              ],
               "description": "근거의 성격. stated는 원본 필드를 그대로 옮긴 것, inferred는 이름 규칙에서 짐작한 것이다(kbcommon/basis.py)."
             }
           },
@@ -207,6 +210,77 @@
         "vendorDescription": {
           "type": "string",
           "description": "GCP 벤더 설명 ('Efficient Instance, 8 vCPUs, 64 GB RAM')"
+        },
+        "cpuVendor": {
+          "type": "string",
+          "description": "CPU 제조사 문자열 그대로 (GenuineIntel · AuthenticAMD 등)."
+        },
+        "cpuModel": {
+          "type": "string",
+          "description": "CPU 모델명 그대로 (예: Intel(R) Xeon(R) Platinum 8488C)."
+        },
+        "cpuClockMHz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cpuCacheKB": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cpuCores": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "cpuThreads": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "memorySpeedMHz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gpuCount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "장착된 GPU 개수. 0은 담지 않는다 — '없음'과 '모름'이 섞인다."
+        },
+        "gpuModel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "GPU 모델명. 한 인스턴스에 모델이 섞여 있으면 목록으로 남긴다 — 하나로 고르면 짐작이 된다."
+        },
+        "gpuArchitecture": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "hardwareCheckedAt": {
+          "type": "string",
+          "description": "하드웨어 사실이 확인된 날짜(YYYY-MM-DD). 잘 안 바뀌는 값이지만 언제 확인된 것인지 없으면 신선도를 판단할 수 없다."
+        },
+        "hardwareEvidence": {
+          "type": "string",
+          "enum": [
+            "ec2-hardware-probe"
+          ],
+          "description": "하드웨어 칸들의 근거. 본체(cb-tumblebug)와 다른 소스라 따로 적는다."
         }
       },
       "additionalProperties": false

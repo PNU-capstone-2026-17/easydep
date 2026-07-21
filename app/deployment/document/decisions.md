@@ -413,6 +413,30 @@ List에 없어 botocore 문서에서 파싱합니다.
 > 지어내는 것입니다. 옛 감사 문서의 "소비자가 `re.compile`하다 터진다"도 이미
 > 막혀 있었습니다(다만 조용히 막혀 있었고, 그게 진짜 문제였습니다).
 
+### AWS 하드웨어 사실을 연다 — CPU·GPU 모델
+`vantage-sh/ec2instances.info`에 **커밋된** `manually_fetched_data.json`(MIT, 1.4MB)만
+받습니다. 커밋 SHA로 고정합니다.
+
+**왜**: 가속기 정보가 **0건**이었습니다. 그 빈칸에서 모델이 GPU 사양표를 통째로
+지어냈고(`g5g`를 AMD라고 했습니다 — 실제로는 NVIDIA T4G), 그것을 "우리 지식베이스에서
+조회한 결과"라고 적었습니다. 빈칸이 지어내기를 부릅니다.
+
+수확: CPU 모델 11,499건 · GPU 모델 571건(표기 11종으로 이미 정규화). 소스 1,093종 중
+우리 aws 스펙과 1,069종이 붙습니다. 미결이던 `D8`(가속기 표기 13가지 무정규화)도 함께
+풀립니다.
+
+**벤치마크 점수(coremark·ffmpeg)는 같은 파일에 있지만 담지 않았습니다.** 재 보니
+원점수가 인스턴스 크기에 거의 정비례해서(m7i 2vCPU 47k → 48vCPU 1,068k) 그대로 쓰면
+**큰 인스턴스가 항상 이기는** 답이 나옵니다. vCPU당으로 나누면 세대·아키텍처 차이가
+잘 보이지만(Intel 18.7k · AMD 21.1k · Graviton 25.7k) **어느 쪽을 보여주느냐가 답을
+뒤집습니다.** "한 번 잰 값으로 순위를 매기는 것"이 정확히 확신에 찬 오답의 모양이라,
+답할 질문이 뚜렷해질 때까지 담지 않습니다.
+
+> **배제 근거를 정정했습니다.** 예전에 이 소스를 "태그·릴리스가 없어서" 뺐는데,
+> 그건 틀린 근거입니다 — 우리는 `bicep-types-az`를 커밋 SHA로 고정하고 있고 그건
+> 이미 정정 (b)로 적어 뒀습니다. 같은 실수를 반복했습니다. 유효한 배제 근거는
+> **서빙되는 209MB 쪽**에만 해당합니다.
+
 ### Azure 불변성 축을 연다 — `x-ms-mutability` 993건
 `azure-rest-api-specs`에서 **이 필드 하나만** 캡니다(tarball 191MB, 커밋 SHA로 핀).
 
@@ -542,7 +566,7 @@ bicep-types가 이미 `pattern` 920 · `maxLength` 827 · `minValue` 446 · `max
 
 **Crossplane/Upjet CRD.** 우리 Go 파싱보다 엄격히 손실이 큽니다(`oldSelf` 전 코퍼스 0건).
 
-**ec2instances.info / Vantage.** 태그·릴리스가 없고 데이터가 커밋돼 있지 않으며 Price
+| ec2instances.info **가 서빙하는 instances.json** | 209MB·커밋돼 있지 않음·AWS Price List 파생물이라 고정도 재배포도 안 됨 |
 List의 파생물인데 **핀은 Price List만 됩니다.**
 
 **`azure-resource-manager-schemas`.** bicep-types보다 엄격히 나쁩니다.

@@ -144,6 +144,32 @@ def _describe(rec: dict) -> str:
         # EBS 버스트와 네트워크 버스트는 다른 사안이라 오해가 판단을 바꾼다.
         if key == "networkPerformance" and rec.get("networkIsBurst"):
             lines.append("    ⚠ 네트워크 대역폭이 버스트('Up to')라 지속 값이 아닙니다.")
+
+    # **하드웨어 사실은 따로 묶는다.** 위쪽은 cb-tumblebug에서 온 성능 신호이고
+    # 이쪽은 다른 소스(실제 인스턴스에서 확인한 것)라, 섞으면 어느 값이 어디서
+    # 왔는지 알 수 없다. 확인 시점도 함께 밝힌다.
+    hardware = []
+    if rec.get("gpuModel"):
+        model = rec["gpuModel"]
+        shown = model if isinstance(model, str) else " + ".join(model)
+        count = rec.get("gpuCount")
+        arch = rec.get("gpuArchitecture")
+        arch_text = f", {arch}" if isinstance(arch, str) else ""
+        hardware.append(f"  GPU: {shown}{f' ×{count}' if count else ''}{arch_text}")
+    if rec.get("cpuModel"):
+        detail = []
+        if rec.get("cpuCores"):
+            detail.append(f"{rec['cpuCores']}코어")
+        if rec.get("cpuThreads"):
+            detail.append(f"{rec['cpuThreads']}스레드")
+        suffix = f" ({' · '.join(detail)})" if detail else ""
+        hardware.append(f"  CPU: {rec['cpuModel']}{suffix}")
+    if rec.get("memorySpeedMHz"):
+        hardware.append(f"  메모리 속도: {rec['memorySpeedMHz']} MHz")
+    if hardware:
+        checked = rec.get("hardwareCheckedAt")
+        lines.append(f"  — 하드웨어{f' ({checked} 확인)' if checked else ''}")
+        lines.extend(hardware)
     return "\n".join(lines)
 
 
