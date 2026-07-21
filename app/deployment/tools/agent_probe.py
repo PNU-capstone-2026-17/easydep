@@ -41,6 +41,7 @@ from agents import Runner
 from agents.exceptions import MaxTurnsExceeded
 
 from kbcommon.console import use_utf8
+from tools import claim_check
 from nim_agent.agent import build_agent
 from nim_agent.session import SessionState
 
@@ -181,6 +182,15 @@ class Result:
     tools: list[str] = field(default_factory=list)
     answer: str = ""
     tool_outputs: list[str] = field(default_factory=list)
+    unsupported: list[str] = field(default_factory=list)
+    """답변의 구체값 중 그 턴의 도구 출력에 **근거가 없는** 것들.
+
+    **통과/실패에 넣지 않는다.** 24건 실측에서 오탐이 1건 있었고(단위 환산
+    `900초=15분`), 그걸 실패로 만들면 멀쩡한 답변이 빨갛게 뜬다. 대신 세어서
+    보여준다 — 이 문제가 나아지는지 나빠지는지를 계속 알 수 있게.
+    """
+
+    claims_checked: int = 0
     error: str = ""
     seconds: float = 0.0
     failures: list[str] = field(default_factory=list)
@@ -196,6 +206,7 @@ class Result:
             "id": self.probe.id, "query": self.probe.query, "why": self.probe.why,
             "tools": self.tools, "answer": self.answer,
             "tool_outputs": self.tool_outputs, "error": self.error,
+            "unsupported": self.unsupported, "claims_checked": self.claims_checked,
             "seconds": round(self.seconds, 1), "failures": self.failures,
             "flaky": self.flaky, "ok": self.ok,
         }
@@ -264,9 +275,12 @@ async def run_probes(
                 tools, answer, error, failures, flaky = tools2, answer2, "", [], True
                 outputs = outputs2
                 break
+        verdict = claim_check.check(answer, outputs, probe.query)
         record = Result(
             probe=probe, tools=tools, answer=answer, error=error,
             tool_outputs=outputs,
+            unsupported=[f"[{f.kind}] {f.token}" for f in verdict.unsupported],
+            claims_checked=verdict.checked,
             seconds=time.monotonic() - started, failures=failures, flaky=flaky,
         )
         out.append(record)
@@ -285,6 +299,14 @@ def _report(r: Result) -> None:
         print(f"  ✗ {line}")
     if r.error:
         print(f"  ✗ {r.error}")
+    if r.unsupported:
+        # 실패가 아니라 신호다. 답변이 도구가 준 적 없는 구체값을 말하고 있다.
+        shown = ", ".join(r.unsupported[:6])
+        more = f" 외 {len(r.unsupported) - 6}개" if len(r.unsupported) > 6 else ""
+        print(
+            f"  ⚑ 주장 대조: 구체값 {r.claims_checked}개 중 "
+            f"{len(r.unsupported)}개가 도구 출력에 없음 — {shown}{more}"
+        )
     if r.answer:
         cut = r.answer[:400]
         more = f" … (전체 {len(r.answer)}자)" if len(r.answer) > 400 else ""
@@ -330,6 +352,20 @@ def main() -> int:
         print(f"  ✗ [{r.probe.id}] {'; '.join(r.failures) or r.error}")
     for r in flaky:
         print(f"  ~ [{r.probe.id}] 재시도로 통과 — 가끔 틀린다는 뜻이다")
+
+    flagged = [r for r in results if r.unsupported]
+    if flagged:
+        total = sum(len(r.unsupported) for r in flagged)
+        print(
+            f"\n⚑ 주장 대조: {len(flagged)}건에서 도구 출력에 없는 구체값 {total}개. "
+            "**실패가 아니라 신호입니다** — 24건 실측에서 오탐이 1건 있었습니다"
+            "(단위 환산). 개수가 많을수록 지어냈을 가능성이 큽니다(최악 사례 16개)."
+        )
+        for r in flagged:
+            print(
+                f"  ⚑ [{r.probe.id}] {len(r.unsupported)}개: "
+                f"{', '.join(r.unsupported[:4])}"
+            )
     print("\n답변이 **잘 쓰였는지**는 판정하지 않습니다 — 그건 사람이 읽으세요.")
     return 1 if (args.strict and failed) else 0
 
