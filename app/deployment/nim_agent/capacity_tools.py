@@ -18,7 +18,12 @@ from capacitykb import agent_api
 
 
 @function_tool
-def cap_check_value(resource_type: str, property_name: str, value: str) -> str:
+def cap_check_value(
+    resource_type: str,
+    property_name: str,
+    value: str,
+    context: str | None = None,
+) -> str:
     """리소스 속성에 넣으려는 값이 허용 범위인지 판정한다.
 
     신뢰도가 낮은(설명문에서 추출한) 제약은 값을 거부하는 근거로 쓰지 않고
@@ -29,9 +34,32 @@ def cap_check_value(resource_type: str, property_name: str, value: str) -> str:
             'Microsoft.ContainerService/managedClusters'.
         property_name: 속성 이름. 예: 'Size', 'Timeout', 'EphemeralStorage/Size'.
         value: 넣으려는 값. 숫자면 숫자로 해석한다. 예: '100000', 'gp3'.
+        context: 함께 정한 다른 속성. `'VolumeType=gp2'` 처럼 `이름=값`을 쉼표로 잇는다.
+            **한도가 다른 속성에 따라 달라지면 이걸 줘야 판정된다** — EBS 볼륨 크기
+            상한은 gp2 16,384 / gp3 65,536 / standard 1,024 GiB로 제각각이다.
+            안 주면 "어느 조건에서 얼마인지"를 나열하고 무엇이 필요한지 알려준다.
     """
-    print(f"\n[용량질의] 값 판정: {resource_type}.{property_name} = {value!r}")
-    return agent_api.check(resource_type, property_name, _coerce(value))
+    parsed = _parse_context(context)
+    shown = f" ({context})" if parsed else ""
+    print(f"\n[용량질의] 값 판정: {resource_type}.{property_name} = {value!r}{shown}")
+    return agent_api.check(resource_type, property_name, _coerce(value), context=parsed)
+
+
+def _parse_context(text: str | None) -> dict | None:
+    """`'VolumeType=gp2, Tier=Premium'` → `{"VolumeType": "gp2", "Tier": "Premium"}`.
+
+    모델이 채우는 칸이라 형식을 느슨하게 받는다. 못 알아들은 조각은 버리되,
+    하나도 못 읽으면 None을 돌려 "문맥 없음"과 같게 만든다 — 반쯤 읽은 문맥으로
+    판정하면 어느 조건이 적용됐는지 아무도 모른다.
+    """
+    if not text:
+        return None
+    out: dict[str, str] = {}
+    for chunk in text.replace(";", ",").split(","):
+        name, sep, value = chunk.partition("=")
+        if sep and name.strip() and value.strip():
+            out[name.strip()] = value.strip()
+    return out or None
 
 
 @function_tool

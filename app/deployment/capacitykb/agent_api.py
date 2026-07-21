@@ -270,11 +270,12 @@ def immutable(
     head = f"{display(type_id)} 의 변경 시 재생성되는 속성 {len(shown)}개"
     if folded:
         head += f" (하위 속성 {folded}개는 부모가 이미 불변이라 접었습니다)"
-    lines = [head + ":"]
+    # 낡음 고지를 **머리줄에** 붙인다. 꼬리말로 뒀더니 모델이 값만 옮기고 경고는
+    # 뺐다 — 프롬프트로 "⚠는 반드시 옮기라"고 지시해도 그랬다(실측). 개수는 모델이
+    # 반드시 옮기는 정보라, 거기 붙이면 경고만 따로 떼기 어렵다.
+    caveat = _backend_footer(shown)
+    lines = [f"{head}:" if not caveat else f"{head}. ⚠ {caveat}"]
     lines.extend(_describe(c) for c in shown)
-    footer = _backend_footer(shown)
-    if footer:
-        lines.append(f"  ⚠ {footer}")
     return "\n".join(lines)
 
 

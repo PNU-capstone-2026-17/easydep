@@ -190,11 +190,17 @@ def list_limits_files(commit: str, *, refresh: bool = False) -> tuple[str, ...]:
     inc = json.loads(inc_path.read_text(encoding="utf-8"))
     if inc.get("truncated"):
         print("경고: includes/ 목록이 잘렸습니다 — 일부 문서가 누락될 수 있음", file=sys.stderr)
+    # `-limits.md`로 끝나는 것만 보면 13개를 놓친다 — `azure-storage-account-limits-standard.md`,
+    # `azure-virtual-machines-limits-azure-resource-manager.md`처럼 뒤에 말이 더 붙는 것들이
+    # 전부 실제 한도 표다(에이전트 실측에서 발견). `-limits`를 부분 문자열로 보면
+    # `rate-limit` 류 산문 파일은 안 걸리면서(하이픈 위치가 다르다) 이것들만 들어온다.
     return tuple(
         sorted(
             e["path"]
             for e in inc.get("tree", [])
-            if e.get("type") == "blob" and e["path"].endswith("-limits.md")
+            if e.get("type") == "blob"
+            and e["path"].endswith(".md")
+            and "-limits" in e["path"]
         )
     )
 
@@ -213,7 +219,7 @@ def build(
         # **아무것도 안 읽고 조용히 성공**한다 — 테스트가 그걸 잡았다.
         local_dir = Path(base_url)
         includes = (
-            tuple(sorted(p.name for p in local_dir.glob("*-limits.md")))
+            tuple(sorted(p.name for p in local_dir.glob("*-limits*.md")))
             if local_dir.is_dir()
             else list_limits_files(SOURCES["azure-limits-doc"].pin, refresh=refresh)
         )
