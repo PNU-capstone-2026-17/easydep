@@ -201,3 +201,170 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         )
     capacity.save(output)
     return capacity
+
+
+# --- if/then 조건 블록 -------------------------------------------------------
+#
+# 리전별 허용값과 **같은 wheel의 다른 모양**이다. 저쪽은 `{리전: {enum: [...]}}`이고
+# 이쪽은 JSON Schema의 `allOf: [{if: ..., then: ...}]`이다.
+#
+# 실측(1.53.1): 파일 10개에 블록 987개.
+#   조건 개수 — 2개가 938블록 · 1개가 42 · 0개가 7
+#   연산자    — eq 979 · matches 939
+#   대상      — DBInstanceClass→enum 938 · EngineVersion→enum 21 · maximum 4 · 그 외
+#
+# **여기서는 속성 이름을 짐작하지 않는다.** 리전 쪽은 파일명에서 이름을 만들어야
+# 했지만, if/then은 `then.properties`의 키가 곧 속성 이름이다. 그래도 CFN 스키마에
+# 실재하는지는 대조한다 — 없는 이름을 담으면 그 제약은 영원히 아무 것에도 안 걸린다.
+
+EVIDENCE_CONDITIONAL = "cfn-lint-conditional"
+
+#: `then`이 정하는 것 → 우리 `kind`. 여기 없는 모양(`format`·`items`)은 담지 않고 센다.
+_THEN_KINDS = {"enum": "enum", "maximum": "max", "minimum": "min"}
+
+
+class ConditionReport:
+    def __init__(self) -> None:
+        self.no_conditions = 0
+        """`if`에 값 조건이 없어 **언제 적용되는지 말할 수 없는** 블록."""
+        self.unsupported_then: Counter = Counter()
+        """우리가 담을 칸이 없는 `then` 모양. 조용히 넘기면 다음 사람이 또 조사한다."""
+        self.unmapped_types: list[str] = []
+        self.unmapped_props: list[tuple[str, str]] = []
+
+
+def _conditions_of(if_block: dict) -> tuple[dict, ...]:
+    """`if.properties` → 우리 조건 목록.
+
+    `{"type": "string"}`처럼 값이 없는 항목은 **조건이 아니라 대상 표시**다 —
+    if 스키마가 그 속성의 존재를 요구하려고 넣어 둔 것이라 조건으로 읽으면 안 된다.
+    """
+    out = []
+    for name, spec in (if_block.get("properties") or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        if "const" in spec:
+            out.append({"property": name, "op": "eq", "value": spec["const"]})
+        elif "pattern" in spec:
+            out.append({"property": name, "op": "matches", "value": spec["pattern"]})
+    return tuple(sorted(out, key=lambda c: c["property"]))
+
+
+def parse_conditions(
+    wheel: Path, *, cfn_schemas: dict[str, dict]
+) -> tuple[CapacitySet, ConditionReport]:
+    """cfn-lint의 `allOf: [{if, then}]` 블록을 조건부 제약으로."""
+    capacity = CapacitySet()
+    report = ConditionReport()
+    by_key = {t.split("::", 1)[1].replace("::", "").lower(): t for t in cfn_schemas}
+    props_cache: dict[str, set[str]] = {}
+
+    with zipfile.ZipFile(wheel) as zf:
+        for name in zf.namelist():
+            if _EXT_DIR not in name or not name.endswith(".json"):
+                continue
+            try:
+                data = json.loads(zf.read(name))
+            except Exception:
+                continue
+            blocks = data.get("allOf") if isinstance(data, dict) else None
+            if not isinstance(blocks, list):
+                continue
+
+            directory = name.split(_EXT_DIR)[1].split("/")[0]
+            type_id = type_id_of(directory, by_key)
+            if type_id is None:
+                report.unmapped_types.append(directory)
+                continue
+            if type_id not in props_cache:
+                props_cache[type_id] = property_names(cfn_schemas[type_id])
+            available = props_cache[type_id]
+
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if_block, then_block = block.get("if"), block.get("then")
+                if not (isinstance(if_block, dict) and isinstance(then_block, dict)):
+                    continue
+                conditions = _conditions_of(if_block)
+                if not conditions:
+                    # 언제 적용되는지 못 말하면 담지 않는다. 무조건으로 담으면
+                    # 그 순간 봉투가 된다 — 우리가 막으려는 바로 그 실패다.
+                    report.no_conditions += 1
+                    continue
+                for prop, spec in (then_block.get("properties") or {}).items():
+                    if not isinstance(spec, dict) or prop not in available:
+                        if isinstance(spec, dict) and prop not in available:
+                            report.unmapped_props.append((directory, prop))
+                        continue
+                    matched = False
+                    for keyword, kind in _THEN_KINDS.items():
+                        if keyword in spec:
+                            capacity.add_constraint(
+                                Constraint(
+                                    type_id=type_id, property=prop, kind=kind,
+                                    value=(sorted(spec[keyword])
+                                           if kind == "enum" else spec[keyword]),
+                                    evidence=EVIDENCE_CONDITIONAL,
+                                    conditions=conditions,
+                                )
+                            )
+                            matched = True
+                    if not matched:
+                        report.unsupported_then[
+                            ",".join(sorted(k for k in spec if k != "type"))
+                        ] += 1
+    return capacity, report
+
+
+def build_conditions(output: Path, *, refresh: bool = False) -> CapacitySet:
+    from capacitykb.parsers.cfn import iter_schemas
+    from kbcommon.fetch import fetch_cached
+
+    source = SOURCES["cfn-lint"]
+    wheel = fetch_cached(source.url, f"cfn-lint-{source.pin}.whl", refresh=refresh)
+    zip_path = fetch_cached(
+        SOURCES["cfn-schema"].url, "CloudformationSchema.zip", refresh=refresh
+    )
+    schemas = {
+        f"aws::{schema['typeName']}": schema
+        for schema in iter_schemas(zip_path)
+        if isinstance(schema, dict) and schema.get("typeName")
+    }
+    capacity, report = parse_conditions(wheel, cfn_schemas=schemas)
+    capacity.provenance = [describe_source_set([wheel], source.key)]
+    capacity.coverage = [{
+        "provider": "aws",
+        "types": len({c.type_id for c in capacity.constraints}),
+        "type_ids": sorted({c.type_id for c in capacity.constraints}),
+        "note": (
+            "cfn-lint의 if/then 조건 블록. 조건이 둘인 것이 대부분이라(엔진 × 버전) "
+            "단일 조건으로는 담을 수 없었고, 이 때문에 condition을 목록으로 넓혔다."
+        ),
+    }]
+
+    counts = Counter(len(c.conditions) for c in capacity.constraints)
+    print(
+        f"cfn-lint 조건 블록: 제약 {len(capacity.constraints):,}건 "
+        f"({len({c.type_id for c in capacity.constraints})}종 · "
+        f"조건 개수 {dict(sorted(counts.items()))})"
+    )
+    if report.no_conditions:
+        print(
+            f"  값 조건이 없어 담지 않은 블록 {report.no_conditions}개 — 언제 적용되는지 "
+            "못 말하면 무조건으로 담을 수 없습니다(그러면 봉투가 됩니다).",
+            file=sys.stderr,
+        )
+    if report.unsupported_then:
+        print(
+            f"  담을 칸이 없는 then 모양: {dict(report.unsupported_then)}",
+            file=sys.stderr,
+        )
+    if report.unmapped_types or report.unmapped_props:
+        print(
+            f"  안 담음: CFN 타입 못 찾음 {len(report.unmapped_types)} · "
+            f"속성 이름 못 찾음 {len(report.unmapped_props)}",
+            file=sys.stderr,
+        )
+    capacity.save(output)
+    return capacity

@@ -31,6 +31,7 @@ CAPACITY_FILES = (
     "aws-limits.json",
     "aws-tf.json",
     "aws-regions.json",
+    "aws-conditional.json",
 )
 
 #: 조건이 이보다 많으면 값을 나열하지 않고 "몇 가지에서 되는지"로 요약한다.
@@ -241,10 +242,11 @@ def check(
             for label, items in (("가능", allowed), ("불가", denied)):
                 if not items:
                     continue
-                names = [u.split(" 일 때", 1)[0].split("= ", 1)[-1].strip("'")
-                         for u in items[:12]]
-                more = f" 외 {len(items) - 12}곳" if len(items) > 12 else ""
-                lines.append(f"  {label}: {', '.join(names)}{more}")
+                # 조건 절만 남긴다. 예전에는 `"= "`로 잘라 값만 뽑았는데, 조건이
+                # 둘이 되고 정규식이 들어오면서 그 파싱이 통째로 무의미해졌다.
+                names = [u.split(" 일 때", 1)[0] for u in items[:8]]
+                more = f" 외 {len(items) - 8}가지" if len(items) > 8 else ""
+                lines.append(f"  {label}: {'; '.join(names)}{more}")
             return "\n".join(lines)
         if not result.references:
             return (

@@ -87,6 +87,7 @@
               "tpg-schema",
               "tpaws-schema",
               "cfn-lint-region",
+              "cfn-lint-conditional",
               "aws-price-list",
               "botocore-doc",
               "aws-cross-checked",

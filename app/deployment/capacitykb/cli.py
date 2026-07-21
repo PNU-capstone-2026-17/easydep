@@ -31,6 +31,7 @@ DEFAULT_OUTPUTS = {
     "aws-limits": Path("output") / "aws-limits.json",
     "aws-tf": Path("output") / "aws-tf.json",
     "aws-regions": Path("output") / "aws-regions.json",
+    "aws-conditional": Path("output") / "aws-conditional.json",
 }
 
 
@@ -112,6 +113,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import cfnlint
 
         cfnlint.build(output, refresh=args.refresh)
+    elif args.source == "aws-conditional":
+        from capacitykb.parsers import cfnlint
+
+        cfnlint.build_conditions(output, refresh=args.refresh)
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 

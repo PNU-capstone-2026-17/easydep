@@ -124,3 +124,67 @@ def test_long_value_lists_are_summarized(tmp_path: Path) -> None:
                            context={"Region": "us-east-1"}, output_dir=tmp_path)
     assert "50개 중 하나" in text
     assert text.count("t4.micro") == 0 or len(text) < 400, "목록을 통째로 찍으면 안 된다"
+
+
+# --- if/then 조건 블록 (다중 조건) ---
+
+
+def test_conditions_of_ignores_target_markers() -> None:
+    """`if.properties`의 값 없는 항목은 **조건이 아니라 대상 표시**다.
+
+    `{"DBInstanceClass": {"type": "string"}}`은 if 스키마가 그 속성의 존재를
+    요구하려고 넣은 것이라, 조건으로 읽으면 "DBInstanceClass가 아무 값일 때"라는
+    뜻 없는 조건이 생긴다.
+    """
+    from capacitykb.parsers.cfnlint import _conditions_of
+
+    got = _conditions_of({
+        "properties": {
+            "DBInstanceClass": {"type": "string"},
+            "Engine": {"const": "aurora-mysql", "type": "string"},
+            "EngineVersion": {"pattern": r"^(10\.11)$", "type": ["string", "number"]},
+        },
+        "required": ["Engine", "EngineVersion", "DBInstanceClass"],
+    })
+    assert [c["property"] for c in got] == ["Engine", "EngineVersion"]
+    assert got[0]["op"] == "eq" and got[1]["op"] == "matches"
+
+
+def test_a_definite_mismatch_beats_an_unknown() -> None:
+    """조건 하나가 **확실히 안 맞으면** 나머지를 몰라도 해당 없음이다.
+
+    RDS는 Engine은 알고 EngineVersion은 모르는 경우가 흔하다. 모름으로 접으면
+    938블록이 전부 미결로 남아 아무것도 못 답한다. 실측: Engine만 줘도
+    후보가 67개로 좁혀지고 "67가지 전부 불가"라는 확정 답이 나온다.
+    """
+    from capacitykb.model import Constraint
+    from capacitykb.query import _condition_holds
+
+    c = Constraint(
+        type_id="aws::AWS::RDS::DBInstance", property="DBInstanceClass",
+        kind="enum", value=["db.t3.medium"], evidence="cfn-lint-conditional",
+        conditions=(
+            {"property": "Engine", "op": "eq", "value": "aurora-mysql"},
+            {"property": "EngineVersion", "op": "matches", "value": r"^10\."},
+        ),
+    )
+    # 엔진이 다르다 → 버전을 몰라도 해당 없음
+    assert _condition_holds(c, {"Engine": "postgres"}) is False
+    # 엔진은 맞고 버전은 모른다 → 모름
+    assert _condition_holds(c, {"Engine": "aurora-mysql"}) is None
+    # 둘 다 맞다 → 성립
+    assert _condition_holds(c, {"Engine": "aurora-mysql", "EngineVersion": "10.11.2"}) is True
+    # 버전이 안 맞는다 → 해당 없음
+    assert _condition_holds(c, {"Engine": "aurora-mysql", "EngineVersion": "8.0"}) is False
+
+
+def test_broken_regex_is_unknown_not_false() -> None:
+    """정규식이 파이썬에서 안 돌면 **모른다**로 둔다.
+
+    False로 치면 아는 제약을 통째로 버리고, True로 치면 엉뚱한 조건의 한도를
+    적용한다. 실측상 이 데이터셋에 컴파일 안 되는 정규식이 205건 있다.
+    """
+    from capacitykb.query import _one_condition
+
+    cond = {"property": "V", "op": "matches", "value": "*{1,2}"}
+    assert _one_condition(cond, {"V": "x"}) is None

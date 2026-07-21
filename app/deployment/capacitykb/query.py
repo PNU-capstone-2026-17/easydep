@@ -181,12 +181,26 @@ def _reference(constraint: Constraint, label: str) -> str:
     )
 
 
+#: 정규식은 길다. 버전 패턴 정도는 괜찮지만 훨씬 긴 것도 있다.
+_COND_VALUE_MAX = 44
+
+
 def _cond_text(cond: dict) -> str:
-    """조건 하나를 사람 말로. `matches`는 등호가 아니므로 그렇게 쓰지 않는다."""
+    """조건 하나를 사람 말로.
+
+    **뒤에 "일 때"가 붙는다는 전제**로 쓴다 — 여기에 "…할 때"까지 넣었더니
+    `"…에 맞을 때 일 때"`가 됐다. 절만 만들고 시점 표현은 호출부가 붙인다.
+
+    `matches`는 등호가 아니므로 `=`로 쓰지 않는다. 값이 정규식이라 등호로 쓰면
+    "EngineVersion이 정확히 그 문자열일 때"로 읽힌다.
+    """
     prop, value = cond.get("property"), cond.get("value")
+    shown = repr(value)
+    if len(shown) > _COND_VALUE_MAX:
+        shown = shown[: _COND_VALUE_MAX - 1] + "…'"
     if cond.get("op") == "matches":
-        return f"{prop}가 {value!r} 에 맞을 때"
-    return f"{prop}={value!r}"
+        return f"{prop}이 {shown} 패턴"
+    return f"{prop}={shown}"
 
 
 def _conditional(constraint: Constraint, breached: bool | None) -> str:
