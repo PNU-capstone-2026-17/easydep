@@ -135,12 +135,26 @@ def brief(value) -> str:
     return str(value)
 
 
+def _scope(constraint: Constraint) -> str:
+    """이 제약이 **어느 조건에서의** 값인지. 조건이 없으면 빈 문자열.
+
+    문맥으로 조건이 성립함을 이미 확인했더라도 밝혀야 한다. 안 밝히면
+    "최대 16,384 GiB"가 보편 상한처럼 읽히고, 정작 답이 되는 사실
+    (**gp3로 바꾸면 65,536**)이 안 보인다. 한도를 어겼다는 말보다
+    어느 조건에서의 한도인지가 해결책을 가리킨다.
+    """
+    cond = constraint.condition
+    if not cond:
+        return ""
+    return f"{cond.get('property')}={cond.get('value')!r} 일 때, "
+
+
 def _violation(constraint: Constraint, value, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
         f"{constraint.property}: {value}{unit}는 {label} {brief(constraint.value)}{unit}"
-        f"을(를) 벗어남 (근거 {evidence_name(constraint.evidence)}, "
+        f"을(를) 벗어남 ({_scope(constraint)}근거 {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){note}"
     )
 
@@ -155,7 +169,8 @@ def _reference(constraint: Constraint, label: str) -> str:
     note = f" — {constraint.note}" if constraint.note else ""
     return (
         f"{constraint.property}: {label} {brief(constraint.value)}{unit} "
-        f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
+        f"({_scope(constraint)}근거 {evidence_name(constraint.evidence)}, "
+        f"{describe(constraint.basis)}){note}"
     )
 
 

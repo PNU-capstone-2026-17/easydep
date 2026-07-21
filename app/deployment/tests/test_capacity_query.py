@@ -309,3 +309,64 @@ def test_agent_api_hides_internal_ids(output_dir: Path) -> None:
     assert "aws::" not in text
     for label in ("cfn-schema", "cfn-description", "cdk-oob", "heuristic"):
         assert label not in text
+
+
+# --- 표시 계약: 조건을 밝히고, 긴 목록은 요약한다 ---
+
+
+@pytest.fixture()
+def wide(tmp_path) -> Path:
+    """리전별 허용값을 흉내낸 산출물 — 조건부이고 값이 아주 많다."""
+    result = CapacitySet()
+    for region, size in (("us-east-1", 500), ("af-south-1", 400)):
+        result.add_constraint(
+            constraint(
+                property="InstanceType", kind="enum",
+                value=[f"m{n}.large" for n in range(size)],
+                evidence="cfn-lint-region", unit=None, conditional=False,
+                value_type="string",
+                condition={"property": "Region", "op": "eq", "value": region},
+            )
+        )
+    result.add_constraint(
+        constraint(
+            property="Size", kind="max", value=16384, evidence="cfn-schema",
+            conditional=False,
+            condition={"property": "VolumeType", "op": "eq", "value": "gp2"},
+        )
+    )
+    result.save(tmp_path / "aws-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+    return tmp_path
+
+
+def test_violation_names_the_condition(wide: Path) -> None:
+    """위반 문구는 **어느 조건에서의** 한도인지 밝혀야 한다.
+
+    안 밝히면 "최대 16,384 GiB"가 보편 상한처럼 읽힌다. 정작 사용자가 필요한
+    사실은 gp2에서의 한도라는 것 — 즉 gp3로 바꾸면 된다는 것이다.
+    """
+    text = agent_api.check(
+        "AWS::EC2::Volume", "Size", 30000,
+        context={"VolumeType": "gp2"}, output_dir=wide,
+    )
+    assert "불가" in text
+    assert "VolumeType='gp2' 일 때" in text, "한도의 조건이 빠져 보편 상한처럼 읽힌다"
+
+
+def test_property_limits_summarizes_and_scopes(wide: Path) -> None:
+    """긴 허용값을 통째로 찍지 않고, 줄마다 조건을 밝힌다.
+
+    실측 결함: `property_limits('AWS::EC2::Instance','InstanceType')`이
+    **377,439자**를 반환해 도구 응답 하나가 모델 컨텍스트를 통째로 먹었다.
+    요약을 `check` 경로에만 넣고 이쪽에 안 넣은 게 원인이었다.
+
+    줄인 뒤엔 리전별 줄이 전부 똑같아 보이는 두 번째 결함이 드러났다 —
+    조건이 그 줄의 뜻 전부인 경우가 있다.
+    """
+    text = agent_api.property_limits("AWS::EC2::Volume", "InstanceType", output_dir=wide)
+    assert len(text) < 2000, f"응답이 {len(text):,}자 — 목록을 통째로 찍고 있다"
+    assert "m0.large" not in text.split("…")[-1], "요약 뒤에도 전체 목록이 남아 있다"
+    assert "500개 중 하나" in text and "400개 중 하나" in text
+    for region in ("us-east-1", "af-south-1"):
+        assert f"Region={region!r} 일 때" in text, f"{region} 줄이 어느 조건인지 모른다"
