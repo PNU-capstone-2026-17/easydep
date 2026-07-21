@@ -144,6 +144,11 @@ PROBES: tuple[Probe, ...] = (
           "개수와 모델을 성능 축에서 가져오는가 (정답 A100 8장)",
           want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
           want_any=("A100",)),
+    Probe("H3", "ap-northeast-2에서 쓸 수 있는 GPU 인스턴스 알려줘",
+          "**세 번 실패했던 질문.** 사양표 지어내기 → 780종을 하나씩 판정하다 109초 "
+          "턴 한도 초과 → 되묻기. 두 축을 잇는 필터가 없어서였다",
+          want_tools=("cost_recommend_specs",), forbid_tools=("web_search",),
+          want_any=("g4dn", "g5g", "g5.", "g6")),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",
