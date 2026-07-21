@@ -11,6 +11,7 @@ from pathlib import Path
 
 from capacitykb.model import CapacitySet
 from capacitykb.query import (
+    brief,
     check_value,
     find_quota,
     immutable_properties,
@@ -99,8 +100,16 @@ def _describe(constraint) -> str:
     elif constraint.kind == "required":
         text = "필수 항목"
     else:
-        text = f"{labels.get(constraint.kind, constraint.kind)} {constraint.value}{unit}"
+        # **긴 목록을 통째로 찍지 않는다.** 리전별 인스턴스 타입을 그대로 내보냈더니
+        # 도구 응답 하나가 377,439자였다 — 모델 컨텍스트를 통째로 먹고 실측이 멈췄다.
+        # check 경로에는 요약을 넣어 놓고 이쪽에 안 넣은 게 원인이었다.
+        text = f"{labels.get(constraint.kind, constraint.kind)} {brief(constraint.value)}{unit}"
     tags = []
+    # **조건을 안 보여주면 39줄이 전부 똑같아 보인다.** 리전별 허용값을 넣고서야
+    # 드러났다 — 어느 조건에서의 값인지가 그 줄의 뜻 전부인 경우가 있다.
+    cond = constraint.condition
+    if cond:
+        tags.append(f"{cond.get('property')}={cond.get('value')!r} 일 때")
     if constraint.conditional:
         tags.append("조건부")
     tags.append(f"근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}")

@@ -124,7 +124,7 @@ class CheckResult:
         return "ok" if self.checked > 0 else "unknown"
 
 
-def _brief(value) -> str:
+def brief(value) -> str:
     """제약 값을 한 줄로. **긴 목록을 통째로 찍지 않는다.**
 
     리전별 인스턴스 타입은 목록 하나가 600개가 넘는다. 그대로 찍으면 답변이
@@ -139,7 +139,7 @@ def _violation(constraint: Constraint, value, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
-        f"{constraint.property}: {value}{unit}는 {label} {_brief(constraint.value)}{unit}"
+        f"{constraint.property}: {value}{unit}는 {label} {brief(constraint.value)}{unit}"
         f"을(를) 벗어남 (근거 {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){note}"
     )
@@ -154,7 +154,7 @@ def _reference(constraint: Constraint, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
-        f"{constraint.property}: {label} {_brief(constraint.value)}{unit} "
+        f"{constraint.property}: {label} {brief(constraint.value)}{unit} "
         f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
     )
 
@@ -168,7 +168,7 @@ def _conditional(constraint: Constraint, breached: bool | None) -> str:
     verdict = "" if breached is None else ("  → 불가" if breached else "  → 가능")
     return (
         f"{cond.get('property')} = {cond.get('value')!r} 일 때 "
-        f"{label} {_brief(constraint.value)}{unit} "
+        f"{label} {brief(constraint.value)}{unit} "
         f"(근거 {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){verdict}"
     )
