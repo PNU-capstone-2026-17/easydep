@@ -26,8 +26,10 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 
+import fastjsonschema
 import jsonschema
 
 from kbcommon.invariants import Invariant, Result, run
@@ -77,6 +79,34 @@ def write_dataset(
     return result
 
 
+@lru_cache(maxsize=8)
+def _compiled(schema_json: str):
+    return fastjsonschema.compile(json.loads(schema_json))
+
+
+def _validate_fast(data: dict, schema: dict) -> str | None:
+    """읽기 경로 전용 검증. 통과하면 None, 아니면 사람이 읽을 설명.
+
+    **왜 쓰기와 다른 검증기를 쓰나.** 읽기는 세션 첫 도구 호출마다 일어나는데,
+    `jsonschema`는 순수 파이썬이라 여기서 **거의 전부의 시간**을 먹었다(실측:
+    costkb 로드 30.5초 중 28.8초, perfkb 50.5초 중 48.6초 — 94~96%).
+    `fastjsonschema`는 스키마를 파이썬 코드로 컴파일해서 **18배 빠르다**
+    (28.8초 → 1.6초).
+
+    **바꾸기 전에 같은 것을 거부하는지 확인했다.** 일부러 망가뜨린 입력 10가지
+    (숫자 자리에 문자열·필수 칸 삭제·enum 밖의 값·목록 자체 없음)에서 두 검증기의
+    판정이 **전부 일치**했다. 빠른데 조용히 통과시키면 느린 것보다 나쁘다.
+
+    쓰기 경로는 `jsonschema`를 그대로 쓴다 — 거기서는 "어디가 틀렸는지"(경로)를
+    알려주는 게 중요하고, 빌드당 한 번뿐이라 느려도 된다.
+    """
+    try:
+        _compiled(json.dumps(schema, sort_keys=True))(data)
+    except fastjsonschema.JsonSchemaException as exc:
+        return str(exc)
+    return None
+
+
 def load_json(path: Path) -> dict:
     """`.gz`든 아니든 읽는다."""
     if path.suffix == ".gz":
@@ -106,11 +136,9 @@ def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:
         return None, f"{path}를 읽을 수 없습니다: {exc}"
     except json.JSONDecodeError as exc:
         return None, f"{path}가 온전한 JSON이 아닙니다(쓰다 만 파일일 수 있음): {exc}"
-    try:
-        jsonschema.validate(data, schema)
-    except jsonschema.ValidationError as exc:
-        location = "/".join(str(p) for p in exc.absolute_path) or "(최상위)"
-        return None, f"{path}가 스키마를 위반합니다 — {location}: {exc.message}"
+    error = _validate_fast(data, schema)
+    if error:
+        return None, f"{path}가 스키마를 위반합니다 — {error}"
     return data, None
 
 

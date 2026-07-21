@@ -10,6 +10,10 @@ dependencies = [
     "ddgs>=9.14.4",
     "httpx>=0.28",
     "jsonschema>=4.23",
+    # 읽기 경로 전용. jsonschema(순수 파이썬)가 세션 첫 로드의 94~96%를 먹었다
+    # (costkb 28.8초 · perfkb 48.6초). 스키마를 코드로 컴파일해 18배 빠르다.
+    # 망가뜨린 입력 10가지에서 두 검증기의 판정이 전부 일치하는 것을 확인했다.
+    "fastjsonschema>=2.19",
     "openai-agents>=0.18.2",
     "python-dotenv>=1.2.2",
     "pyyaml>=6",

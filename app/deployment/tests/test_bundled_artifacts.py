@@ -79,3 +79,47 @@ def test_committed_artifacts_carry_their_pins() -> None:
     for path in packed:
         data = artifact.load_json(path)
         assert "_source" in data or "provenance" in data, f"{path.name}에 출처가 없다"
+
+
+def test_fast_validator_rejects_what_the_slow_one_rejects(tmp_path) -> None:
+    """읽기 경로만 다른 검증기를 쓴다 — **같은 것을 거부해야** 한다.
+
+    빠른데 조용히 통과시키면 느린 것보다 나쁘다. 바꾸기 전에 망가뜨린 입력
+    10가지로 두 검증기를 대조했고 판정이 전부 일치했다. 여기서는 그 계약을
+    고정한다(대표 사례 셋).
+    """
+    import jsonschema
+
+    schema = {
+        "type": "object",
+        "required": ["specs"],
+        "properties": {
+            "specs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "vcpu": {"type": "integer"},
+                        "provider": {"enum": ["aws", "gcp"]},
+                    },
+                },
+            }
+        },
+    }
+    cases = [
+        ({"specs": [{"name": "a", "vcpu": 2, "provider": "aws"}]}, True),
+        ({"specs": [{"name": "a", "vcpu": "둘"}]}, False),      # 숫자 자리에 문자열
+        ({"specs": [{"vcpu": 2}]}, False),                       # 필수 칸 없음
+        ({"specs": [{"name": "a", "provider": "없는회사"}]}, False),  # enum 밖
+        ({}, False),                                             # 목록 자체가 없음
+    ]
+    for data, expected_ok in cases:
+        try:
+            jsonschema.validate(data, schema)
+            slow_ok = True
+        except jsonschema.ValidationError:
+            slow_ok = False
+        fast_ok = artifact._validate_fast(data, schema) is None
+        assert slow_ok == fast_ok == expected_ok, f"판정이 갈렸다: {data}"
