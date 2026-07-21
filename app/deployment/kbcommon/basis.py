@@ -63,6 +63,13 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "azure-limits-doc": STATED,     # 한도 문서 표의 숫자
     "azure-limits-note": INFERRED,  # 각주·"varies"처럼 숫자가 아닌 표현
     "cfn-description": INFERRED,    # 설명문에서 뽑은 숫자
+    # KCC(GCP). 셋 다 **원본이 명시한 것**이다.
+    "kcc-crd-schema": STATED,       # OpenAPI 스키마 키워드 그대로
+    "kcc-cel-immutable": STATED,    # x-kubernetes-validations의 self == oldSelf (기계가 강제)
+    # `Immutable.` 접두사는 산문에 있지만 KCC의 **표기 규약**이다. CEL과 대조해보니
+    # 접두사가 있는데 CEL이 변경을 허용하는 모순은 0건이고, 누락만 19건 있었다.
+    # 즉 과다 보고를 하지 않으므로 짐작이 아니라 명시로 취급한다.
+    "kcc-immutable-prefix": STATED,
     # --- perfkb ---
     # 이 두 필드는 **한 방향만** 직접 말한다 — "버스트다"/"공유 코어다".
     "aws-burstable-field": STATED,   # BurstablePerformanceSupported=true

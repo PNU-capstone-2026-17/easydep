@@ -5,6 +5,7 @@
     python -m capacitykb build --source cfn --no-prose
     python -m capacitykb build --source azure --providers microsoft.network
     python -m capacitykb build --source azure-quota
+    python -m capacitykb build --source gcp
     python -m capacitykb query --limits AWS::EC2::Volume --property Size
     python -m capacitykb query --check AWS::EC2::Volume --property Size --value 100000
     python -m capacitykb query --immutable AWS::EC2::Subnet
@@ -25,6 +26,7 @@ DEFAULT_OUTPUTS = {
     "cfn": Path("output") / "aws-capacity.json",
     "azure": Path("output") / "azure-capacity.json",
     "azure-quota": Path("output") / "azure-quota.json",
+    "gcp": Path("output") / "gcp-capacity.json",
 }
 
 
@@ -50,6 +52,8 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--zip-url", help="CFN 스키마 zip URL 또는 로컬 경로")
     build.add_argument("--base-url", help="소스 루트 URL 또는 로컬 디렉터리")
     build.add_argument("--providers", help="azure 전용, 쉼표 구분 (microsoft.network,…)")
+    build.add_argument("--tag", help="gcp 전용, KCC 태그 (기본은 kbcommon/sources.py의 핀)")
+    build.add_argument("--crd-dir", help="gcp 전용, 네트워크 대신 로컬 CRD 디렉터리를 읽는다")
     build.add_argument("--includes", help="azure-quota 전용, 쉼표 구분 (*-limits.md)")
 
     query = sub.add_parser("query", help="제약/쿼터 질의")
@@ -88,6 +92,15 @@ def _cmd_build(args: argparse.Namespace) -> int:
         if args.zip_url:
             kwargs["zip_url"] = args.zip_url
         cfn.build(output, **kwargs)
+    elif args.source == "gcp":
+        from capacitykb.parsers import gcp
+
+        kwargs = {"refresh": args.refresh}
+        if args.tag:
+            kwargs["tag"] = args.tag
+        if args.crd_dir:
+            kwargs["crd_dir"] = args.crd_dir
+        gcp.build(output, **kwargs)
     elif args.source == "azure":
         from capacitykb.parsers import azure
 

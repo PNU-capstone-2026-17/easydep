@@ -21,7 +21,12 @@ from kbcommon.basis import describe
 from kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
-CAPACITY_FILES = ("aws-capacity.json", "azure-capacity.json", "azure-quota.json")
+CAPACITY_FILES = (
+    "aws-capacity.json",
+    "azure-capacity.json",
+    "azure-quota.json",
+    "gcp-capacity.json",
+)
 
 _MISSING_MESSAGE = (
     "용량·제약 산출물이 없습니다. 먼저 `python -m capacitykb build --source "
@@ -197,8 +202,20 @@ def immutable(
         if not capacity.covers(type_id):
             return _nothing_found(capacity, type_id, display(type_id))
         return f"{display(type_id)} 에 변경 불가로 알려진 속성이 없습니다."
-    lines = [f"{display(type_id)} 의 변경 시 재생성되는 속성 {len(found)}개:"]
-    lines.extend(_describe(c) for c in found)
+
+    # 부모가 이미 불변이면 자식은 접는다. GCP를 넣고 나서 이게 문제가 됐다 —
+    # KCC는 `Immutable.`을 부모와 자식 모두에 달아서 실측상 2,003건 중 913건(45.6%)이
+    # 부모의 자식이었고, DataprocWorkflowTemplate은 185줄 중 179줄이 그랬다.
+    # 값을 지우는 게 아니라 표시만 접는다(레코드는 원본 그대로 남는다).
+    names = {c.property for c in found}
+    shown = [c for c in found if not any(c.property.startswith(p + ".") for p in names)]
+    folded = len(found) - len(shown)
+
+    head = f"{display(type_id)} 의 변경 시 재생성되는 속성 {len(shown)}개"
+    if folded:
+        head += f" (하위 속성 {folded}개는 부모가 이미 불변이라 접었습니다)"
+    lines = [head + ":"]
+    lines.extend(_describe(c) for c in shown)
     return "\n".join(lines)
 
 

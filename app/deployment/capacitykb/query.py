@@ -25,9 +25,14 @@ def resolve_type(capacity: CapacitySet, name: str) -> str:
     정확한 id를 우선하고, 아니면 접두사(`aws::` 등)를 뗀 뒤 대소문자 무시로 비교한다.
     후보가 여럿이면 후보 목록을 담은 ValueError.
     """
-    known = {c.type_id for c in capacity.constraints} | {
-        q.type_id for q in capacity.quotas if q.type_id
-    }
+    known = (
+        {c.type_id for c in capacity.constraints}
+        | {q.type_id for q in capacity.quotas if q.type_id}
+        # 훑었지만 제약이 하나도 안 나온 타입도 이름으로는 찾혀야 한다.
+        # 안 그러면 "타입을 찾을 수 없습니다"라고 답하는데, 그건 거짓이다 —
+        # 그 타입은 실재하고 우리가 읽기까지 했다. 답은 "제약이 없다"여야 한다.
+        | {t for e in capacity.coverage for t in (e.get("type_ids") or ())}
+    )
     if name in known:
         return name
     lowered = name.lower()

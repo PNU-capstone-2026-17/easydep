@@ -195,6 +195,11 @@ class CapacitySet:
 
     항목 하나가 한 번의 수집 범위다:
         {"provider": "azure", "scope": ["microsoft.network", ...], "types": 278}
+
+    `type_ids`를 함께 적으면 **제약이 하나도 안 나온 타입도 이름으로 찾을 수 있다.**
+    이게 없으면 훑긴 훑었는데 아무것도 안 나온 타입이 "타입을 찾을 수 없습니다"로
+    답해진다 — 실재하고 우리가 읽기까지 한 타입인데 없다고 말하는 셈이라,
+    에이전트가 그대로 옮기면 거짓말이 된다. GCP에서 실제로 39종이 그랬다.
     """
 
     _c_index: dict[tuple[str, str, str], int] = field(default_factory=dict, repr=False)

@@ -77,6 +77,9 @@
               "bicep-flags",
               "crd-schema",
               "crd-description",
+              "kcc-crd-schema",
+              "kcc-immutable-prefix",
+              "kcc-cel-immutable",
               "swagger-field",
               "curated",
               "heuristic"
