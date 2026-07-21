@@ -1,0 +1,100 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 4,
+    "compound_fr_detail": [
+      "R24: 융합된 품질제약 ['9%', 'availability']",
+      "R26: 융합된 품질제약 ['encrypted']",
+      "R29: 융합된 품질제약 ['within 3 seconds']",
+      "R32: 융합된 품질제약 ['at least 90']"
+    ],
+    "n_actors": 6,
+    "n_use_cases": 17,
+    "n_specs": 17,
+    "fr_total": 32,
+    "coverage_ratio": 0.75,
+    "orphan_fr_ids": [
+      "R23",
+      "R24",
+      "R26",
+      "R27",
+      "R28",
+      "R30",
+      "R31",
+      "R32"
+    ],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 12,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "2a: outcome=fail인데 resume_at_step이 설정됨"
+      ],
+      "UC2": [
+        "step 3: UI 용어 ['clicks'] — black-box 위반"
+      ],
+      "UC3": [
+        "1a: outcome=fail인데 resume_at_step이 설정됨",
+        "trigger: UI 용어 ['button', 'clicks'] — black-box 위반",
+        "step 4: UI 용어 ['screen'] — black-box 위반"
+      ],
+      "UC4": [
+        "4a: outcome=fail인데 resume_at_step이 설정됨"
+      ],
+      "UC5": [
+        "step 3: UI 용어 ['click'] — black-box 위반"
+      ],
+      "UC9": [
+        "3a: outcome=fail인데 resume_at_step이 설정됨"
+      ],
+      "UC10": [
+        "step 5: UI 용어 ['clicks'] — black-box 위반"
+      ],
+      "UC11": [
+        "3a: outcome=fail인데 resume_at_step이 설정됨",
+        "step 1: UI 용어 ['button'] — black-box 위반"
+      ],
+      "UC13": [
+        "3a: outcome=fail인데 resume_at_step이 설정됨"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 19,
+    "avg_main_steps": 4.12,
+    "n_relationships": 32,
+    "dangling_diagram_refs": 2,
+    "dangling_refs_detail": [
+      "include RegisterAccount / IdentityProvider",
+      "include Login / IdentityProvider"
+    ],
+    "orphan_actors": []
+  },
+  "ours": {
+    "compound_fr_issues": 0,
+    "compound_fr_detail": [],
+    "n_actors": 7,
+    "n_use_cases": 15,
+    "n_specs": 15,
+    "fr_total": 25,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [
+      "NFR1",
+      "NFR10",
+      "NFR2",
+      "NFR3"
+    ],
+    "spec_validation_issues": 0,
+    "spec_issues_by_uc": {},
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 55,
+    "avg_main_steps": 4.8,
+    "n_relationships": 30,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": []
+  }
+}

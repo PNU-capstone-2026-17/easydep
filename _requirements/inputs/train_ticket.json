@@ -1,0 +1,166 @@
+{
+  "name": "train_ticket",
+  "description": "참고 프로젝트에서 이관 (FR 22 + NFR 10).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "Travelers shall be able to search for available train routes by origin, destination, and date.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "The platform shall return a list of matching itineraries with departure/arrival times, duration, and available seat classes.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "Users shall be able to select a specific seat class and view a seat map for each train.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "Travelers shall be able to reserve a particular seat and add it to a pending booking.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "The system shall calculate total fare based on selected class, distance, and applicable discounts.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "Travelers shall be able to complete payment using supported payment methods and receive a confirmation receipt.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Users shall be able to view a summary of all active and historical orders in a personal dashboard.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "Travelers shall be able to cancel a confirmed booking and receive an automatic refund according to the cancellation policy.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "The platform shall generate a refundable ticket PDF and email it to the traveler upon successful purchase.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "Travelers shall be able to order in‑trip meals from a menu linked to the selected train and seat.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "Users shall be able to add, edit, and remove consignments, and track their status through a real‑time tracking view.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The system shall validate passenger information against the traveler's profile before confirming a booking.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "Travelers shall be able to register a new account, verify email, and set a secure password.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "Users shall be able to log in using password or federated identity providers (e.g., SSO).",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "An administrator shall create, update, and delete train records, including train number, capacity, and equipment type.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "An administrator shall define, modify, and publish route definitions with intermediate stations and mileage.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "Administrators shall schedule train departures, assign rolling stock, and publish timetables.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Administrators shall view, filter, and export all traveler orders for reporting purposes.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-19",
+      "text": "The platform shall send booking confirmation, cancellation, and refund notifications via email and push.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-20",
+      "text": "The system shall publish travel news and service alerts to subscribed travelers based on their itinerary.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-21",
+      "text": "Users can retrieve a QR code for each ticket to be scanned at station gates.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-22",
+      "text": "Travelers shall be able to add multiple passenger contacts to a booking and designate a primary contact.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "TrainTicket shall be deployed as 41 containerized microservices orchestrated by Kubernetes, enabling horizontal scaling of each service.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "The platform shall achieve 99.9% availability measured on a monthly basis, with automatic failover across multiple zones.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "System shall enforce role‑based access control (RBAC) so that only authorized administrators can modify train and schedule data.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "All data in transit shall be encrypted using TLS 1.3, and sensitive data at rest shall be encrypted with AES‑256.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "The platform shall emit distributed tracing spans for each request, compatible with OpenTelemetry, to support end‑to‑end observability.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "Response time for route search shall not exceed 2 seconds for the 95th percentile of requests under normal load.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "The system shall process payment transactions within 3 seconds and guarantee exactly‑once semantics.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "Each microservice shall be stateless or store state in a centralized data store, allowing seamless container replacement.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-09",
+      "text": "The platform shall support rolling updates with zero‑downtime deployments, rolling back automatically on health‑check failures.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-10",
+      "text": "Logs shall be centralized and retained for at least 90 days, searchable by correlation ID.",
+      "type": "NFR"
+    }
+  ]
+}

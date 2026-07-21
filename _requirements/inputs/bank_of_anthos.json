@@ -1,0 +1,141 @@
+{
+  "name": "bank_of_anthos",
+  "description": "참고 프로젝트에서 이관 (FR 18 + NFR 9).",
+  "classified": [
+    {
+      "id": "FR-01",
+      "text": "The user shall be able to create a new account by providing required personal information and receive a signed JWT upon successful registration.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-02",
+      "text": "Bank of Anthos shall validate user credentials during login and issue a time‑limited access token for authenticated sessions.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-03",
+      "text": "The system shall verify the integrity and expiration of JWTs on every request to protected resources.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-04",
+      "text": "Account holders shall be able to retrieve the current balance of each of their accounts in real time.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-05",
+      "text": "Users can request a paginated transaction history filtered by date range, transaction type, or amount.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-06",
+      "text": "The user shall be able to add, edit, or delete payment contacts that can be selected as transfer recipients.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-07",
+      "text": "Account holders shall initiate fund transfers to their own accounts or to saved contacts, specifying amount and optional memo.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-08",
+      "text": "The system shall validate each transfer for sufficient available balance, compliance rules, and daily limits before execution.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-09",
+      "text": "Bank of Anthos shall record every successful transfer, deposit, or withdrawal in an immutable, durable ledger service.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-10",
+      "text": "The user shall be able to submit a deposit request, which the system shall acknowledge and reflect in the balance cache after ledger confirmation.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-11",
+      "text": "An administrator shall have read‑only access to audit logs of all ledger entries for compliance review.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-12",
+      "text": "The system shall update the balance cache atomically after each ledger‑committed transaction.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-13",
+      "text": "Users can receive email or SMS notifications summarizing the details of completed transactions.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-14",
+      "text": "The user shall be able to cancel a pending outbound transfer within a configurable 5‑minute window.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-15",
+      "text": "Bank of Anthos shall enforce rate limiting on login attempts to mitigate credential‑stuffing attacks.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-16",
+      "text": "An administrator shall configure retention periods and archival policies for ledger data.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-17",
+      "text": "The system shall support optional multi‑factor authentication during login for accounts that enable it.",
+      "type": "FR"
+    },
+    {
+      "id": "FR-18",
+      "text": "Users shall be able to export their transaction history in CSV or PDF format for personal record‑keeping.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR-01",
+      "text": "The platform shall achieve 99.95% availability across all microservices, measured on a monthly basis.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-02",
+      "text": "System shall automatically scale horizontally in response to CPU or request latency thresholds defined per service.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-03",
+      "text": "All inter‑service communication shall be encrypted with TLS 1.3 and mutual authentication where appropriate.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-04",
+      "text": "The application shall log audit‑relevant events to a centralized observability stack with a retention of at least 90 days.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-05",
+      "text": "Balance queries shall return results within 200 ms for 95% of requests under normal load.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-06",
+      "text": "The ledger service shall provide durability guarantees of at least three geographically separated replicas.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-07",
+      "text": "Deployment pipelines shall support zero‑downtime rolling updates for each independently deployable microservice.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-08",
+      "text": "The system shall enforce role‑based access control (RBAC) such that only authorized personnel can perform administrative functions.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR-09",
+      "text": "All JWTs shall be signed using RSA‑256 keys rotated every 30 days, and private keys shall be stored in a hardware security module (HSM).",
+      "type": "NFR"
+    }
+  ]
+}

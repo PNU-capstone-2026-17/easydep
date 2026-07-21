@@ -1,0 +1,774 @@
+{
+  "datasets": [
+    {
+      "stem": "bank_of_anthos",
+      "n_reqs": 27,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 4.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 0.0,
+          "ours_mean": 12.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 5.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 10.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.6296,
+          "ours_mean": 0.8889,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.6296,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "iot_telemetry",
+      "n_reqs": 32,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 19.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 12.0,
+          "ours_mean": 2.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 3.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 10.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.7188,
+          "ours_mean": 0.931,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 1.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        }
+      }
+    },
+    {
+      "stem": "note_taking",
+      "n_reqs": 7,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 8.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.7143,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.7143,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "online_boutique",
+      "n_reqs": 32,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 18.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 19.0,
+          "ours_mean": 3.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 5.0,
+          "ours_mean": 2.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 6.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 1.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.625,
+          "ours_mean": 0.9459,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.8125,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "ride_hailing",
+      "n_reqs": 26,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 13.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 4.0,
+          "ours_mean": 3.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 5.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.8077,
+          "ours_mean": 0.8947,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.9231,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "shopping_mall",
+      "n_reqs": 7,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 4.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 1.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.8571,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 1.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        }
+      }
+    },
+    {
+      "stem": "sock_shop",
+      "n_reqs": 26,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 43.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 1.0,
+          "ours_mean": 3.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 4.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 7.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.9615,
+          "ours_mean": 0.9333,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 1.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        }
+      }
+    },
+    {
+      "stem": "telehealth",
+      "n_reqs": 26,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 23.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 4.0,
+          "ours_mean": 3.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 4.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.9615,
+          "ours_mean": 0.9429,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 1.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        }
+      }
+    },
+    {
+      "stem": "toystore",
+      "n_reqs": 23,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 21.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": 5.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 5.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": 0.6957,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.7826,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "train_ticket",
+      "n_reqs": 32,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 12.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": null,
+          "ours_mean": null,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "—"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 4.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 8.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": null,
+          "ours_mean": null,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "—"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.75,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    },
+    {
+      "stem": "video_streaming",
+      "n_reqs": 32,
+      "reps": 1,
+      "metrics": {
+        "spec_validation_issues": {
+          "baseline_mean": 6.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "false_coverage_claims": {
+          "baseline_mean": null,
+          "ours_mean": null,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "—"
+        },
+        "compound_fr_issues": {
+          "baseline_mean": 2.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "orphan_fr_ids": {
+          "baseline_mean": 6.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        },
+        "unknown_requirement_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "dangling_diagram_refs": {
+          "baseline_mean": 0.0,
+          "ours_mean": 0.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "tie"
+        },
+        "orphan_actors": {
+          "baseline_mean": 0.0,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "baseline"
+        },
+        "semantic_coverage_ratio": {
+          "baseline_mean": null,
+          "ours_mean": null,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "—"
+        },
+        "coverage_ratio": {
+          "baseline_mean": 0.8125,
+          "ours_mean": 1.0,
+          "baseline_std": 0.0,
+          "ours_std": 0.0,
+          "winner": "ours"
+        }
+      }
+    }
+  ]
+}

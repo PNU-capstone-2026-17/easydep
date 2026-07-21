@@ -1,0 +1,139 @@
+{
+  "rep": 1,
+  "baseline": {
+    "compound_fr_issues": 2,
+    "compound_fr_detail": [
+      "R6: 융합된 품질제약 ['within 1 second']",
+      "R7: 융합된 품질제약 ['encrypted']"
+    ],
+    "n_actors": 2,
+    "n_use_cases": 5,
+    "n_specs": 5,
+    "fr_total": 7,
+    "coverage_ratio": 0.7143,
+    "orphan_fr_ids": [
+      "R6",
+      "R7"
+    ],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 8,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "2a: outcome=fail인데 resume_at_step이 설정됨",
+        "step 1: UI 용어 ['fields'] — black-box 위반",
+        "step 2: UI 용어 ['field'] — black-box 위반",
+        "step 3: UI 용어 ['field'] — black-box 위반"
+      ],
+      "UC2": [
+        "2a: outcome=fail인데 resume_at_step이 설정됨",
+        "3a: outcome=fail인데 resume_at_step이 설정됨"
+      ],
+      "UC5": [
+        "2a: outcome=fail인데 resume_at_step이 설정됨",
+        "4a: outcome=fail인데 resume_at_step이 설정됨"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 8,
+    "avg_main_steps": 4.4,
+    "n_relationships": 12,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 5,
+    "false_coverage_claims": 0,
+    "false_coverage_detail": [],
+    "semantic_coverage_ratio": 0.7143,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "R1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "R2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "R3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "R4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "R5",
+        "realized": true
+      }
+    ]
+  },
+  "ours": {
+    "compound_fr_issues": 0,
+    "compound_fr_detail": [],
+    "n_actors": 2,
+    "n_use_cases": 5,
+    "n_specs": 5,
+    "fr_total": 6,
+    "coverage_ratio": 1.0,
+    "orphan_fr_ids": [],
+    "unknown_requirement_refs": [],
+    "unattached_nfr_ids": [],
+    "spec_validation_issues": 1,
+    "spec_issues_by_uc": {
+      "UC1": [
+        "1a1: UI 용어 ['fields'] — black-box 위반"
+      ]
+    },
+    "specs_missing_preconditions": 0,
+    "specs_missing_success_guarantee": 0,
+    "total_extensions": 15,
+    "avg_main_steps": 3.6,
+    "n_relationships": 6,
+    "dangling_diagram_refs": 0,
+    "dangling_refs_detail": [],
+    "orphan_actors": [],
+    "claimed_coverage_pairs": 6,
+    "false_coverage_claims": 0,
+    "false_coverage_detail": [],
+    "semantic_coverage_ratio": 1.0,
+    "coverage_verdicts": [
+      {
+        "use_case_id": "UC1",
+        "requirement_id": "FR1",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR2",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC2",
+        "requirement_id": "FR6",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC3",
+        "requirement_id": "FR3",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC4",
+        "requirement_id": "FR4",
+        "realized": true
+      },
+      {
+        "use_case_id": "UC5",
+        "requirement_id": "FR5",
+        "realized": true
+      }
+    ]
+  }
+}
