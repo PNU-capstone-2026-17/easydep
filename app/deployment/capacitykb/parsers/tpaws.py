@@ -76,6 +76,8 @@ class Report:
     def __init__(self) -> None:
         self.unmapped: list[tuple[str, str]] = []
         self.no_schema = 0
+        self.framework = 0
+        """Plugin Framework 경로로 읽은 리소스 수."""
         self.output_only = 0
         self.tf_only = 0
         self.force_new_if: list[tuple[str, str, str]] = []
@@ -172,6 +174,15 @@ def parse_provider(tar_path: Path, *, cfn_types: set[str]) -> tuple[CapacitySet,
             if hcl_member
             else {}
         )
+        csv_member = next(
+            (m for m in tar.getmembers() if m.name.endswith("names/attr_constants.csv")),
+            None,
+        )
+        consts = (
+            read_attr_constants(tar.extractfile(csv_member).read().decode("utf-8", "replace"))
+            if csv_member
+            else {}
+        )
         for member in tar.getmembers():
             name = member.name
             if not (
@@ -194,23 +205,28 @@ def parse_provider(tar_path: Path, *, cfn_types: set[str]) -> tuple[CapacitySet,
                 # **애너테이션 위치부터** 스키마를 찾는다. 파일 단위로 첫 스키마를
                 # 찾으면 한 파일에 리소스가 여럿일 때 서로 오염된다 — 처음 구현이
                 # 그랬고, 수확이 1/6로 줄고 값이 엉뚱한 타입에 붙었다.
-                _emit(text, match.end(), type_id, capacity, report)
+                if not _emit(text, match.end(), type_id, capacity, report):
+                    # SDK 스키마가 없으면 Plugin Framework 모양으로 다시 본다.
+                    # 새 AWS 리소스가 그쪽으로 가고 있어서, 안 읽으면 공백이 계속 커진다.
+                    if _emit_framework(text, type_id, capacity, report, consts):
+                        report.framework += 1
+                        report.no_schema -= 1
     return capacity, report
 
 
-def _emit(text: str, start: int, type_id: str, capacity: CapacitySet, report: Report) -> None:
+def _emit(text: str, start: int, type_id: str, capacity: CapacitySet, report: Report) -> bool:
     # 애너테이션 다음의 리소스 함수 본문 안에서만 찾는다.
     func = _FUNC.search(text, start)
     if func is None:
         report.no_schema += 1
-        return
+        return False
     body_end = _scan(text, func.end() - 1)
     anchor = text.find("Schema: " + _SCHEMA_MAP, func.end(), body_end)
     if anchor < 0:
         # Plugin Framework 리소스는 스키마 모양이 완전히 다르다(Attributes 맵).
         # 여기서는 안 읽고 센다 — 억지로 읽으면 조용히 틀린 걸 담게 된다.
         report.no_schema += 1
-        return
+        return False
     props: dict[str, str] = {}
     _parse_schema_map(text, anchor + len("Schema: " + _SCHEMA_MAP) - 1, "", props)
 
@@ -257,6 +273,7 @@ def _emit(text: str, start: int, type_id: str, capacity: CapacitySet, report: Re
         add(prop, "mutability", "update_restricted",
             note=f"조건부로만 재생성된다 (판정 함수: {pred})")
         report.force_new_if.append((type_id, prop, pred))
+    return True
 
 
 def build(output: Path, *, refresh: bool = False, cfn_types: set[str] | None = None) -> CapacitySet:
@@ -288,10 +305,11 @@ def build(output: Path, *, refresh: bool = False, cfn_types: set[str] | None = N
 
     kinds = Counter(c.kind for c in capacity.constraints)
     print(f"tpaws: 제약 {len(capacity.constraints):,}건 / "
-          f"{len({c.type_id for c in capacity.constraints})}종 — {dict(kinds)}")
+          f"{len({c.type_id for c in capacity.constraints})}종 "
+          f"(그중 Plugin Framework {report.framework}종) — {dict(kinds)}")
     print(
         f"  안 담은 것: CFN 타입에 못 이은 리소스 {len(report.unmapped)}종 · "
-        f"스키마 모양이 달라 못 읽음(Plugin Framework) {report.no_schema}종 · "
+        f"스키마를 못 찾음 {report.no_schema}종 · "
         f"서버가 채우는 필드 {report.output_only:,} · Terraform 전용 {report.tf_only:,}",
         file=sys.stderr,
     )
@@ -301,3 +319,124 @@ def build(output: Path, *, refresh: bool = False, cfn_types: set[str] | None = N
             print(f"    - {type_id.split('::', 1)[1]}.{prop} ({pred})", file=sys.stderr)
     capacity.save(output)
     return capacity
+
+# ---------------------------------------------------------------- Plugin Framework
+#
+# 새 AWS 리소스는 SDK가 아니라 Plugin Framework로 간다(실측 v6.55.0: 애너테이션
+# 1,679개 중 Framework가 440개). 스키마 모양이 완전히 달라서 SDK 파서로는 못 읽고,
+# **안 읽으면 공백이 계속 커진다.**
+#
+#     response.Schema = schema.Schema{
+#         Attributes: map[string]schema.Attribute{
+#             "workspace_id": schema.StringAttribute{
+#                 Required: true,
+#                 PlanModifiers: []planmodifier.String{
+#                     stringplanmodifier.RequiresReplace(),   ← ForceNew에 해당
+#                 },
+#             },
+#         },
+#         Blocks: map[string]schema.Block{ ... },
+#     }
+#
+#: `resp.Schema =` 와 `response.Schema =` 둘 다 쓰인다(284:2로 후자가 다수다).
+_FW_SCHEMA = re.compile(r"(?:resp|response)\.Schema\s*=\s*schema\.Schema\{")
+_FW_MAP = re.compile(r"(?:Attributes|Blocks):\s*map\[string\]schema\.(?:Attribute|Block)\{")
+#: 키가 문자열 리터럴이거나 **Go 상수**다(`names.AttrDestination`).
+_FW_ENTRY = re.compile(r'(?:"([a-z0-9_]+)"|names\.Attr(\w+)):\s*schema\.\w+\{')
+
+_FW_ATTRS = {
+    # RequiresReplace가 SDK의 ForceNew에 해당한다.
+    "RequiresReplace": re.compile(r"RequiresReplace(?:IfConfigured)?\(\)"),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
+    "OneOf": re.compile(r"\w+validator\.OneOf\(([^)]*)\)"),
+    "Between": re.compile(r"\w+validator\.Between\((-?\d+),\s*(-?\d+)\)"),
+    "AtLeast": re.compile(r"\w+validator\.AtLeast\((-?\d+)\)"),
+    "AtMost": re.compile(r"\w+validator\.AtMost\((-?\d+)\)"),
+    "SizeAtMost": re.compile(r"listvalidator\.SizeAtMost\((\d+)\)"),
+    "SizeAtLeast": re.compile(r"listvalidator\.SizeAtLeast\((\d+)\)"),
+}
+
+
+def read_attr_constants(csv_text: str) -> dict[str, str]:
+    """`names/attr_constants.csv` → {상수 접미사: 속성 이름}.
+
+    `names.AttrDestination`이 `"destination"`이다. 프로바이더가 이 표를 갖고 있으므로
+    상수 이름을 우리가 짐작해 풀지 않는다.
+    """
+    out: dict[str, str] = {}
+    for line in csv_text.splitlines():
+        parts = line.split(",")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            out[parts[1].strip()] = parts[0].strip()
+    return out
+
+
+def _fw_walk(text: str, open_brace: int, prefix: str, out: dict, consts: dict) -> None:
+    """`Attributes:`/`Blocks:` 맵을 훑어 속성 경로 → 그 속성 자신의 본문."""
+    end = _scan(text, open_brace)
+    i, stop = open_brace + 1, end - 1
+    while i < stop:
+        m = _FW_ENTRY.search(text, i, stop)
+        if not m:
+            return
+        literal, const = m.group(1), m.group(2)
+        name = literal or consts.get(const or "")
+        entry_open = m.end() - 1
+        entry_end = _scan(text, entry_open)
+        if name:
+            path = f"{prefix}.{name}" if prefix else name
+            body = text[entry_open + 1 : entry_end - 1]
+            nested = _FW_MAP.search(body)
+            out[path] = body[: nested.start()] if nested else body
+            if nested:
+                _fw_walk(text, entry_open + 1 + nested.end() - 1, path, out, consts)
+        i = entry_end
+
+
+def _emit_framework(
+    text: str, type_id: str, capacity: CapacitySet, report: Report, consts: dict
+) -> bool:
+    """Framework 스키마에서 제약을 뽑는다. 스키마를 못 찾으면 False."""
+    schema = _FW_SCHEMA.search(text)
+    if schema is None:
+        return False
+    body_end = _scan(text, schema.end() - 1)
+    props: dict[str, str] = {}
+    for m in _FW_MAP.finditer(text, schema.end(), body_end):
+        _fw_walk(text, m.end() - 1, "", props, consts)
+
+    def add(prop: str, kind: str, value) -> None:
+        capacity.add_constraint(
+            Constraint(type_id=type_id, property=prop, kind=kind, value=value,
+                       evidence=EVIDENCE)
+        )
+
+    for tf_path, body in props.items():
+        if tf_path.split(".", 1)[0] in _TF_ONLY:
+            report.tf_only += 1
+            continue
+        if (_FW_ATTRS["Computed"].search(body)
+                and not _FW_ATTRS["Optional"].search(body)
+                and not _FW_ATTRS["Required"].search(body)):
+            report.output_only += 1
+            continue
+        prop = tf_path_to_cfn(tf_path)
+        if _FW_ATTRS["RequiresReplace"].search(body):
+            add(prop, "mutability", "create_only")
+        m = _FW_ATTRS["OneOf"].search(body)
+        if m:
+            values = re.findall(r'"([^"]+)"', m.group(1))
+            if values:
+                add(prop, "enum", values)
+        m = _FW_ATTRS["Between"].search(body)
+        if m:
+            add(prop, "min", int(m.group(1)))
+            add(prop, "max", int(m.group(2)))
+        for key, kind in (("AtLeast", "min"), ("AtMost", "max"),
+                          ("SizeAtLeast", "min_items"), ("SizeAtMost", "max_items")):
+            m = _FW_ATTRS[key].search(body)
+            if m:
+                add(prop, kind, int(m.group(1)))
+    return True
