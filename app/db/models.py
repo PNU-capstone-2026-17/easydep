@@ -32,11 +32,6 @@ TYPE_DEPLOYMENT = "DEPLOYMENT"
 FORMAT_PUML = "PUML"
 FORMAT_JSON = "JSON"
 
-STATUS_PENDING = "PENDING"
-STATUS_GENERATING = "GENERATING"
-STATUS_READY = "READY"
-STATUS_FAILED = "FAILED"
-
 ORIGIN_GENERATED = "GENERATED"
 ORIGIN_AUTO_FIXED = "AUTO_FIXED"
 ORIGIN_FEEDBACK_REVISED = "FEEDBACK_REVISED"
@@ -73,11 +68,8 @@ class Artifact(Base):
         nullable=False,
     )
     artifact_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=STATUS_PENDING
-    )
-    # When status is GENERATING, this is when the lock was taken. A generation
-    # that dies without releasing would otherwise lock the artifact forever, so
+    # The generation lock: NULL when free, otherwise when the lock was taken. A
+    # generation that dies without releasing would lock the artifact forever, so
     # the claim is a lease that expires (see artifact_repository.claim_stage).
     generation_started_at: Mapped[datetime | None] = mapped_column(
         DATETIME(fsp=6), nullable=True

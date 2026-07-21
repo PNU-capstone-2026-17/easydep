@@ -13,10 +13,6 @@ from app.db.models import (
     FORMAT_JSON,
     FORMAT_PUML,
     ORIGIN_GENERATED,
-    STATUS_FAILED,
-    STATUS_GENERATING,
-    STATUS_PENDING,
-    STATUS_READY,
     TYPE_API_SPEC,
     TYPE_CLASS,
     TYPE_DEPLOYMENT,
@@ -155,8 +151,7 @@ def load_state(app_id: str) -> ArchitectureState:
             if config["errors_key"]:
                 state[config["errors_key"]] = version.syntax_errors or []
 
-            if artifact.status == STATUS_READY:
-                artifact_status[stage] = "implemented"
+            artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
         return state
@@ -187,9 +182,10 @@ def save_stage(
 def claim_stage(app_id: str, stage: str) -> None:
     """Take the generation lock for one artifact.
 
-    Raises StageBusy when another request already holds it. The claim is a
-    lease: a stale GENERATING row (crashed worker) can be taken over once
-    stage_lock_lease_seconds has passed.
+    generation_started_at is the lock: NULL means free, a timestamp means held
+    since then. Raises StageBusy when another request already holds it. The
+    claim is a lease, so a lock left behind by a crashed worker can be taken
+    over once stage_lock_lease_seconds has passed.
     """
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
@@ -203,7 +199,6 @@ def claim_stage(app_id: str, stage: str) -> None:
                         Artifact(
                             app_id=app_id,
                             artifact_type=config["artifact_type"],
-                            status=STATUS_GENERATING,
                             generation_started_at=func.now(6),
                         )
                     )
@@ -227,31 +222,27 @@ def claim_stage(app_id: str, stage: str) -> None:
             .where(
                 Artifact.id == artifact.id,
                 or_(
-                    Artifact.status != STATUS_GENERATING,
                     Artifact.generation_started_at.is_(None),
                     Artifact.generation_started_at < expiry,
                 ),
             )
-            .values(status=STATUS_GENERATING, generation_started_at=func.now(6))
+            .values(generation_started_at=func.now(6))
         )
         if result.rowcount != 1:
             raise StageBusy(stage)
 
 
-def release_stage(app_id: str, stage: str, failed: bool = False) -> None:
-    """Release the generation lock, leaving the artifact in a truthful state."""
+def release_stage(app_id: str, stage: str) -> None:
+    """Release the generation lock.
+
+    A failed run leaves whatever version was already current in place, so there
+    is nothing to roll back here.
+    """
     config = STAGE_ARTIFACTS[stage]
     with session_scope() as session:
         artifact = _find_artifact(session, app_id, config["artifact_type"])
-        if artifact is None:
-            return
-
-        if artifact.current_version_id is not None:
-            # A previous good version survives a failed regeneration.
-            artifact.status = STATUS_READY
-        else:
-            artifact.status = STATUS_FAILED if failed else STATUS_PENDING
-        artifact.generation_started_at = None
+        if artifact is not None:
+            artifact.generation_started_at = None
 
 
 def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:
@@ -339,7 +330,6 @@ def _write_version(
 
     artifact.latest_version_no = version.version_no
     artifact.current_version_id = version.id
-    artifact.status = STATUS_READY
     return version.id
 
 

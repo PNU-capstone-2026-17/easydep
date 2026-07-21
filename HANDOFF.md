@@ -108,19 +108,20 @@ database on load.
 
 ### Concurrent generation lock
 
-`artifacts.status = GENERATING` is claimed before any generation starts, through
-a single conditional UPDATE, so only one request per (app_id, artifact_type) can
-run. A second request gets 409 immediately instead of failing later on the
+`artifacts.generation_started_at` is the lock: NULL means free, a timestamp means
+held since then. It is claimed before any generation starts through a single
+conditional UPDATE, so only one request per (app_id, artifact_type) can run. A
+second request gets 409 immediately instead of failing later on the
 `uq_versions_artifact_no` unique constraint. Different stages of the same app do
 not block each other.
 
-The claim is a lease, not a permanent flag: `generation_started_at` is stamped
-with it, and a request may take over a GENERATING row older than
-`STAGE_LOCK_LEASE_SECONDS` (default 900). Without that, a worker crashing
+The claim is a lease, not a permanent flag: a request may take over a lock older
+than `STAGE_LOCK_LEASE_SECONDS` (default 900). Without that, a worker crashing
 mid-generation would lock the artifact forever.
 
-On release, an artifact that already has a version returns to READY even if the
-run failed, so a failed regeneration never discards the previous good output.
+There is no status column. An artifact counts as produced once
+`current_version_id` is set, which stays true while a regeneration is running or
+after one fails, so a failed run never hides the previous good output.
 
 Note: `init_db()` uses `create_all`, which does not ALTER existing tables. When a
 model column changes, apply it to an already-provisioned database by hand, or

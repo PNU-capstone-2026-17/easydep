@@ -167,7 +167,7 @@ def generate_stage(app_id: str, stage: str, request: StageRequest) -> JSONRespon
 
         artifact_repository.save_stage(app_id, stage, updated, origin=ORIGIN_GENERATED)
     except Exception as error:
-        artifact_repository.release_stage(app_id, stage, failed=True)
+        artifact_repository.release_stage(app_id, stage)
         raise HTTPException(
             status_code=502,
             detail=f"LLM/API generation failed: {error}",
@@ -202,7 +202,7 @@ def apply_stage_feedback(
             origin=ORIGIN_FEEDBACK_REVISED if request.feedback else ORIGIN_AUTO_FIXED,
         )
     except Exception as error:
-        artifact_repository.release_stage(app_id, stage, failed=True)
+        artifact_repository.release_stage(app_id, stage)
         raise HTTPException(
             status_code=502,
             detail=f"LLM/API feedback revision failed: {error}",

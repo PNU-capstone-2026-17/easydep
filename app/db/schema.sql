@@ -12,6 +12,8 @@
 --   * artifacts holds one row per (app_id, artifact_type) = "the current one".
 --     artifact_versions holds the full revision history, so a feedback loop
 --     never destroys the previous output.
+--   * An artifact counts as produced once current_version_id is set, so there
+--     is no separate status column to keep in step with it.
 --   * Columns are limited to what the application actually reads. Anything
 --     speculative was left out; it can be added with ALTER TABLE when a feature
 --     needs it.
@@ -36,10 +38,8 @@ CREATE TABLE IF NOT EXISTS artifacts (
   id                    BIGINT      NOT NULL AUTO_INCREMENT,
   app_id                VARCHAR(36) NOT NULL,
   artifact_type         VARCHAR(32) NOT NULL COMMENT 'CLASS/SEQUENCE/API_SPEC/ERD/DEPLOYMENT/...',
-  status                VARCHAR(16) NOT NULL DEFAULT 'PENDING'
-                          COMMENT 'PENDING/GENERATING/READY/FAILED',
   generation_started_at DATETIME(6) NULL
-                          COMMENT 'when status became GENERATING; the lock is a lease that expires',
+                          COMMENT 'generation lock: NULL is free, otherwise a lease that expires',
   current_version_id    BIGINT      NULL COMMENT 'no FK: circular with artifact_versions',
   latest_version_no     INT         NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
