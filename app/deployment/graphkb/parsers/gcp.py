@@ -50,6 +50,23 @@ DEFAULT_SERVICES: tuple[str, ...] = ()  # 빈 튜플 = 전체
 SOURCE = "kcc-crd"
 
 _REF_FIELD = re.compile(r"^(\w+?)Refs?$")
+
+#: **GCP 자원 계층.** 이 네 이름은 KCC의 규약이고, 뜻은 "참조한다"가 아니라
+#: **"이 안에 담긴다"**이다. 설명문이 그렇게 말한다 —
+#: `projectRef`: "The project that this resource belongs to." (296개 중 273개가 이 문구)
+#: `folderRef` 15/18 · `organizationRef` 26/32도 같은 꼴이다.
+#:
+#: 담김 축이 aws·gcp에서 통째로 비어 있던 게 여기서 메워진다. Azure는 타입 이름이
+#: 계층적(`.../virtualNetworks/subnets`)이라 공짜로 나오지만, GCP는 이름이 평평해서
+#: **이 참조가 유일한 계층 신호**다.
+_HIERARCHY_REFS = {
+    "projectRef": "Project",
+    "folderRef": "Folder",
+    "organizationRef": "Organization",
+    "billingAccountRef": "BillingAccount",
+}
+#: 이름 규약으로 대상을 정할 때 쓰는 근거. 규약이 곧 원본의 명시라 stated다.
+EVIDENCE_HIERARCHY = "kcc-hierarchy"
 # KCC 종류 이름의 모양: 대문자로 시작하는 PascalCase (ComputeNetwork, IAMServiceAccount).
 # 소문자로 시작하면 산문 속 영어 단어이지 종류가 아니다.
 _KIND_NAME = re.compile(r"[A-Z][A-Za-z0-9]{2,}")
@@ -258,6 +275,17 @@ def parse_crds(
                     known_kinds=known_kinds,
                     heuristics=heuristics,
                 )
+                hierarchy = _HIERARCHY_REFS.get(prop_name)
+                if hierarchy and hierarchy in known_kinds:
+                    if resolved is None:
+                        # 아무 패턴도 안 걸렸을 때 이름 규약으로 대상을 정한다.
+                        resolved = (hierarchy, EVIDENCE_HIERARCHY, None)
+                    elif resolved[0] == hierarchy:
+                        # 같은 대상에 도달했는데 근거가 일반 휴리스틱(짐작)이면
+                        # **규약 쪽으로 올린다.** `projectRef → Project`는 이름이
+                        # 우연히 맞은 게 아니라 KCC가 그렇게 쓰기로 한 것이다.
+                        resolved = (hierarchy, EVIDENCE_HIERARCHY, resolved[2])
+                    # 대상이 다르면(Apigee의 ApigeeOrganization) 해석된 쪽을 그대로 둔다.
                 if resolved is not None:
                     target, evidence, target_field = resolved
                     graph.add_node(_node(target))
@@ -265,7 +293,8 @@ def parse_crds(
                         Edge(
                             from_id=f"gcp::{kind}",
                             to_id=f"gcp::{target}",
-                            type="references",
+                            # 계층 참조는 "참조"가 아니라 "담김"이다.
+                            type="contained_in" if hierarchy else "references",
                             via_property=via,
                             required=prop_name in required_set,
                             cardinality="many" if many else "one",

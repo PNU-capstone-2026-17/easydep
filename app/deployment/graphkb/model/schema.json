@@ -105,6 +105,7 @@
               "arm-hierarchy",
               "bicep-ref",
               "kcc-ref",
+              "kcc-hierarchy",
               "kcc-description",
               "cb-spider-driver",
               "human-review"

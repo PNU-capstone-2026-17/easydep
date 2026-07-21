@@ -50,6 +50,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "arm-id": STATED,               # (구) 같은 계열
     "arm-hierarchy": STATED,        # ARM 타입명이 곧 계층 (규칙 위반 0/2,223 확인)
     "kcc-ref": STATED,              # KCC ServiceMapping의 gvk.kind
+    # projectRef/folderRef/organizationRef/billingAccountRef — GCP 자원 계층.
+    # 이름이 KCC의 규약이고 설명문이 "belongs to"라고 말한다(projectRef 273/296).
+    "kcc-hierarchy": STATED,
     "cdk-oob": STATED,              # AWS CDK가 손으로 정리해 배포하는 관계표
     "kcc-description": INFERRED,    # CRD 설명문 정규식
     "bicep-ref": INFERRED,          # 대상 객체에 id가 있는지로 판별 (검수표로 확정)
