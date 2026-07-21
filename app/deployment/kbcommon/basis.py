@@ -70,6 +70,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 접두사가 있는데 CEL이 변경을 허용하는 모순은 0건이고, 누락만 19건 있었다.
     # 즉 과다 보고를 하지 않으므로 짐작이 아니라 명시로 취급한다.
     "kcc-immutable-prefix": STATED,
+    # 생성된 terraform-provider-google의 스키마 리터럴 그대로.
+    # 주의: ForceNew는 "Terraform이 재생성한다"이지 "API가 거부한다"가 아니다.
+    "tpg-schema": STATED,
     # --- perfkb ---
     # 이 두 필드는 **한 방향만** 직접 말한다 — "버스트다"/"공유 코어다".
     "aws-burstable-field": STATED,   # BurstablePerformanceSupported=true

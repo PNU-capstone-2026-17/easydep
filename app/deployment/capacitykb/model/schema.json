@@ -44,7 +44,11 @@
               "enum",
               "default",
               "required",
-              "mutability"
+              "mutability",
+              "exactly_one_of",
+              "at_least_one_of",
+              "conflicts_with",
+              "required_with"
             ]
           },
           "value": {},
@@ -80,6 +84,7 @@
               "kcc-crd-schema",
               "kcc-immutable-prefix",
               "kcc-cel-immutable",
+              "tpg-schema",
               "swagger-field",
               "curated",
               "heuristic"
@@ -114,7 +119,8 @@
                   "enum": [
                     "create_only",
                     "conditional_create_only",
-                    "read_only"
+                    "read_only",
+                    "update_restricted"
                   ]
                 }
               }
@@ -235,6 +241,16 @@
             "description": "훑은 네임스페이스. 없으면 그 프로바이더 전체를 훑었다는 뜻."
           },
           "types": {"type": "integer", "minimum": 0},
+          "type_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "훑은 타입 id 전체. 제약이 하나도 안 나온 타입도 이름으로 찾히게 하려면 필요하다 — 없으면 '타입을 찾을 수 없습니다'라고 답하는데, 실재하고 우리가 읽기까지 한 타입이라 그건 거짓이다."
+          },
+          "backends": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"},
+            "description": "상류 파이프라인별 타입 수 (KCC의 direct/tf2crd/dcl2crd)."
+          },
           "note": {"type": "string"}
         }
       }

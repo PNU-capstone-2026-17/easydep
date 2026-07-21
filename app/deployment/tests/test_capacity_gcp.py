@@ -188,3 +188,152 @@ def test_internal_labels_never_reach_the_user(tmp_path: Path) -> None:
     text = agent_api.immutable("A", output_dir=tmp_path)
     for label in ("kcc-immutable-prefix", "kcc-crd-schema", "kcc-cel-immutable", "gcp::"):
         assert label not in text
+
+
+# --- 프로바이더 릴리스 보강 (D6) ---
+
+from capacitykb.parsers import tpg
+from capacitykb.parsers.gcp import merge_provider
+
+GO = '''
+func ResourceComputeSubnetwork() *schema.Resource {
+	return &schema.Resource{
+		CustomizeDiff: customdiff.All(
+			customdiff.ForceNewIfChange("ip_cidr_range", IsShrinkageIpCidr),
+		),
+		Schema: map[string]*schema.Schema{
+			"purpose": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Description: `Has a brace { in the text and 'quotes'.`,
+			},
+			"region": {
+				Type:     schema.TypeString,
+				ForceNew: true,
+			},
+			"role": {
+				Type:         schema.TypeString,
+				ValidateFunc: verify.ValidateEnum([]string{"ACTIVE", "BACKUP", ""}),
+			},
+			"log_config": {
+				Type:     schema.TypeList,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"flow_sampling": {
+							Type:         schema.TypeFloat,
+							Default:      0.5,
+							AtLeastOneOf: []string{"log_config.0.flow_sampling", "log_config.0.metadata"},
+						},
+						"metadata": {
+							Type:          schema.TypeString,
+							ConflictsWith: []string{},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+'''
+
+
+def _fake_tar(tmp_path: Path) -> Path:
+    import io as _io
+    import tarfile
+    path = tmp_path / "tpg.tar.gz"
+    with tarfile.open(path, "w:gz") as tar:
+        data = GO.encode("utf-8")
+        info = tarfile.TarInfo("x/google/services/compute/resource_compute_subnetwork.go")
+        info.size = len(data)
+        tar.addfile(info, _io.BytesIO(data))
+    return path
+
+
+def test_go_parser_survives_braces_in_strings(tmp_path: Path) -> None:
+    """Description이 백틱 문자열이고 그 안에 중괄호가 있어도 블록이 안 어긋난다."""
+    got, _ = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    props = {(c.property, c.kind) for c in got.constraints}
+    assert ("region", "mutability") in props
+    assert ("role", "enum") in props
+    assert ("logConfig.flowSampling", "default") in props, "중첩 경로가 안 잡혔다"
+
+
+def test_nested_attributes_not_stolen_by_parent(tmp_path: Path) -> None:
+    """자식의 Default가 부모(log_config) 것으로 잘못 읽히면 안 된다."""
+    got, _ = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    parent = [c for c in got.constraints if c.property == "logConfig"]
+    assert {c.kind for c in parent} == {"max_items"}
+
+
+def test_empty_group_is_counted_not_stored(tmp_path: Path) -> None:
+    """MM이 선언했지만 생성 과정에서 증발한 교차 조건 — 담으면 현실보다 엄격해진다."""
+    got, report = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    assert not [c for c in got.constraints if c.kind == "conflicts_with"]
+    assert report.empty_groups == 1
+
+
+def test_force_new_if_becomes_update_restricted(tmp_path: Path) -> None:
+    """'줄이면 재생성'은 불변도 가변도 아니다 — 별도 축으로 담는다."""
+    got, report = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    found = [c for c in got.constraints
+             if c.kind == "mutability" and c.value == "update_restricted"]
+    assert [c.property for c in found] == ["ipCidrRange"]
+    assert "IsShrinkageIpCidr" in found[0].note
+    assert report.force_new_if
+
+
+def test_tf_path_conversion() -> None:
+    assert tpg.tf_path_to_kcc("log_config.0.aggregation_interval") == "logConfig.aggregationInterval"
+    assert tpg.tf_path_to_kcc("ip_cidr_range") == "ipCidrRange"
+    assert tpg.tf_path_to_kcc("name") == "resourceID", "KCC는 name을 resourceID로 쓴다"
+
+
+def test_provider_wins_only_over_stale_backend(tmp_path: Path) -> None:
+    """tf2crd만 프로바이더가 이긴다. direct는 KCC가 이긴다."""
+    from capacitykb.model import CapacitySet, Constraint
+    kcc = CapacitySet()
+    for backend in ("tf2crd", "direct"):
+        kcc.add_constraint(Constraint(
+            type_id=f"gcp::{backend}Type", property="x", kind="max_items",
+            value=1, evidence="kcc-crd-schema", backend=backend))
+    prov = CapacitySet()
+    for backend in ("tf2crd", "direct"):
+        prov.add_constraint(Constraint(
+            type_id=f"gcp::{backend}Type", property="x", kind="max_items",
+            value=99, evidence="tpg-schema"))
+    merged, stat = merge_provider(kcc, prov)
+    by = {c.type_id: c.value for c in merged.constraints}
+    assert by["gcp::tf2crdType"] == 99, "낡은 쪽은 프로바이더가 이겨야 한다"
+    assert by["gcp::directType"] == 1, "direct는 proto에 붙은 독립 소스라 KCC가 이긴다"
+    assert stat["value_changed"] == 1
+
+
+def test_provider_absence_removes_stale_immutability(tmp_path: Path) -> None:
+    """프로바이더가 그 속성을 **알면서** 재생성 표시를 안 했으면 갱신 가능하다는 뜻이다.
+
+    이게 없으면 ComputeSubnetwork.purpose가 2023년판 'Immutable.' 표기 그대로 남는다.
+    """
+    from capacitykb.model import CapacitySet, Constraint
+    kcc = CapacitySet()
+    kcc.add_constraint(Constraint(
+        type_id="gcp::ComputeSubnetwork", property="purpose", kind="mutability",
+        value="create_only", evidence="kcc-immutable-prefix", backend="tf2crd"))
+    prov, report = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    merged, stat = merge_provider(kcc, prov, report)
+    assert stat["dropped_stale_immutable"] == 1
+    assert not [c for c in merged.constraints
+                if c.property == "purpose" and c.kind == "mutability"]
+
+
+def test_absence_alone_is_not_enough(tmp_path: Path) -> None:
+    """프로바이더가 **모르는** 속성은 손대지 않는다 — 침묵은 근거가 아니다."""
+    from capacitykb.model import CapacitySet, Constraint
+    kcc = CapacitySet()
+    kcc.add_constraint(Constraint(
+        type_id="gcp::ComputeSubnetwork", property="somethingElse", kind="mutability",
+        value="create_only", evidence="kcc-immutable-prefix", backend="tf2crd"))
+    prov, report = tpg.parse_provider(_fake_tar(tmp_path), kcc_kinds={"ComputeSubnetwork"})
+    merged, stat = merge_provider(kcc, prov, report)
+    assert stat["dropped_stale_immutable"] == 0
+    assert len([c for c in merged.constraints if c.property == "somethingElse"]) == 1

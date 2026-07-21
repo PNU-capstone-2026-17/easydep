@@ -54,6 +54,10 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--providers", help="azure 전용, 쉼표 구분 (microsoft.network,…)")
     build.add_argument("--tag", help="gcp 전용, KCC 태그 (기본은 kbcommon/sources.py의 핀)")
     build.add_argument("--crd-dir", help="gcp 전용, 네트워크 대신 로컬 CRD 디렉터리를 읽는다")
+    build.add_argument(
+        "--no-provider", dest="provider", action="store_false",
+        help="gcp 전용, terraform-provider-google 릴리스로 값을 보강하지 않는다",
+    )
     build.add_argument("--includes", help="azure-quota 전용, 쉼표 구분 (*-limits.md)")
 
     query = sub.add_parser("query", help="제약/쿼터 질의")
@@ -95,7 +99,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 
-        kwargs = {"refresh": args.refresh}
+        kwargs = {"refresh": args.refresh, "provider": args.provider}
         if args.tag:
             kwargs["tag"] = args.tag
         if args.crd_dir:

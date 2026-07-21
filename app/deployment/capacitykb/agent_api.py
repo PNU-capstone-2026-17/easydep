@@ -73,11 +73,19 @@ def _describe(constraint) -> str:
         "default": "기본값",
         "required": "필수",
         "mutability": "변경",
+        # 형제 속성과의 관계. value가 관련 속성 목록이라 라벨만으로 뜻이 통해야 한다.
+        "exactly_one_of": "이 중 정확히 하나만",
+        "at_least_one_of": "이 중 최소 하나는",
+        "conflicts_with": "함께 못 쓰는 속성",
+        "required_with": "함께 있어야 하는 속성",
     }
     mutability_labels = {
         "create_only": "생성 후 변경 불가 (바꾸면 리소스 재생성)",
         "conditional_create_only": "조건부 변경 불가 (경우에 따라 재생성)",
         "read_only": "읽기 전용 (설정 불가)",
+        # 불변/가변 이분법에 안 담기는 축. "늘리는 건 되고 줄이면 재생성" 같은 것이라,
+        # 무엇이 조건인지는 note에 붙는 판정 함수 이름으로만 알 수 있다.
+        "update_restricted": "조건부 재생성 (어떤 방향으로 바꾸느냐에 따라 다름)",
     }
     if constraint.kind == "mutability":
         text = mutability_labels.get(constraint.value, constraint.value)

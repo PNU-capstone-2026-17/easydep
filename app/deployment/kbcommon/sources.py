@@ -90,6 +90,20 @@ SOURCES: dict[str, Source] = {
         pin="v1.153.0",
         note="파서가 뒤에 /config/<경로>를 붙인다. --tag로 바꿀 수 있다.",
     ),
+    "tpg-provider": Source(
+        key="tpg-provider",
+        url=(
+            "https://github.com/hashicorp/terraform-provider-google/archive/"
+            "refs/tags/v7.40.0.tar.gz"
+        ),
+        pin_kind="tag",
+        pin="v7.40.0",
+        note=(
+            "Magic Modules의 **버전이 매겨진 산출물**. MM 저장소 자체는 태그가 0개라 "
+            "핀을 못 박고 하루 3.6건씩 바뀌므로, 같은 파이프라인의 주간 릴리스를 쓴다. "
+            "KCC가 벤더링한 4.84.0(2023-09-26)보다 3개 메이저 최신이다. 17MB, 캐시됨."
+        ),
+    ),
     "tumblebug-swagger": Source(
         key="tumblebug-swagger",
         url=(

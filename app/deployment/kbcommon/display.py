@@ -42,6 +42,7 @@ _EVIDENCE_NAMES = {
     "kcc-immutable-prefix": "GCP Config Connector 설명문의 불변 표기",
     "kcc-cel-immutable": "GCP Config Connector 검증 규칙(CEL)",
     "kcc-description": "GCP Config Connector 설명문",
+    "tpg-schema": "Terraform Google 프로바이더 스키마",
     "cb-spider-driver": "CB-Spider 드라이버",
 }
 
