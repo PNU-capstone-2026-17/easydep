@@ -11,6 +11,7 @@ from pathlib import Path
 
 from capacitykb.model import CapacitySet
 from capacitykb.query import (
+    _cond_text,
     brief,
     check_value,
     find_quota,
@@ -107,9 +108,10 @@ def _describe(constraint) -> str:
     tags = []
     # **조건을 안 보여주면 39줄이 전부 똑같아 보인다.** 리전별 허용값을 넣고서야
     # 드러났다 — 어느 조건에서의 값인지가 그 줄의 뜻 전부인 경우가 있다.
-    cond = constraint.condition
-    if cond:
-        tags.append(f"{cond.get('property')}={cond.get('value')!r} 일 때")
+    if constraint.conditions:
+        tags.append(
+            " 그리고 ".join(_cond_text(c) for c in constraint.conditions) + " 일 때"
+        )
     if constraint.conditional:
         tags.append("조건부")
     tags.append(f"근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}")
@@ -218,7 +220,7 @@ def check(
             # 조건을 모를 뿐 아는 건 있다. 이걸 "모른다"로 뭉개면 답을 쥐고도 안 내놓는
             # 것이 된다 — 어느 조건에서 얼마인지를 보여주고, 무엇을 알려주면 판정할 수
             # 있는지까지 말한다.
-            asked = sorted({u.split(" =", 1)[0] for u in result.unresolved})
+            asked = result.missing
             head = (
                 f"조건에 따라 다릅니다: {target} 는 {', '.join(asked)} 에 따라 달라져서, "
                 "그 값을 알아야 확정할 수 있습니다."

@@ -325,14 +325,14 @@ def wide(tmp_path) -> Path:
                 value=[f"m{n}.large" for n in range(size)],
                 evidence="cfn-lint-region", unit=None, conditional=False,
                 value_type="string",
-                condition={"property": "Region", "op": "eq", "value": region},
+                conditions=({"property": "Region", "op": "eq", "value": region},),
             )
         )
     result.add_constraint(
         constraint(
             property="Size", kind="max", value=16384, evidence="cfn-schema",
             conditional=False,
-            condition={"property": "VolumeType", "op": "eq", "value": "gp2"},
+            conditions=({"property": "VolumeType", "op": "eq", "value": "gp2"},),
         )
     )
     result.save(tmp_path / "aws-capacity.json")

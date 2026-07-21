@@ -77,18 +77,25 @@ class Constraint:
     값 예: `direct` | `tf2crd` | `dcl2crd` (KCC). 안 쓰는 소스는 None.
     """
 
-    condition: dict | None = None
-    """**이 제약이 언제 적용되는가.** `{"property": ..., "op": "eq", "value": ...}`.
+    conditions: tuple[dict, ...] = ()
+    """**이 제약이 언제 적용되는가.** 조건들의 **논리곱**(전부 성립해야 적용).
 
-    없으면 무조건이다. 있으면 "그 속성이 이 값일 때만" 이 제약이 산다.
+    각 조건은 `{"property": ..., "op": ..., "value": ...}`. `op`는 두 가지다:
+
+    - `eq` — 그 속성이 이 값일 때 (`VolumeType=gp2`, `Region=us-east-1`)
+    - `matches` — 그 속성이 이 정규식에 걸릴 때 (`EngineVersion` 같은 버전 표현)
+
+    비어 있으면 무조건이다.
 
     필요한 이유는 **봉투 붕괴** 때문이다. EBS 볼륨 크기 한도는 종류마다 다른데
     (gp2 16,384 / gp3 65,536 / standard 1,024 GiB), 이걸 min/max 한 쌍으로 뭉개면
     최소 중 최소·최대 중 최대를 취해 **어떤 실제 설정에도 해당하지 않는 범위**가 된다.
     `standard` 볼륨에 5,000 GiB는 불가능한데 그 봉투는 통과시킨다.
 
-    조건은 **평평한 단일 조건**만 담는다. 중첩·AND/OR를 지금 넣지 않는 이유는
-    실제로 필요한 사례가 손에 꼽기 때문이다 — 필요해지면 그때 넓힌다.
+    **왜 단일 조건에서 목록으로 넓혔나.** 설계 문서에 "필요해지면 그때 넓힌다"고
+    적어 뒀는데 그때가 왔다 — cfn-lint의 RDS 인스턴스 클래스는 조건이 둘이다
+    (`Engine` **그리고** `EngineVersion`, 938블록). 게다가 둘째는 등호가 아니라
+    패턴이라 `op`도 함께 넓혀야 했다.
     """
 
     value_type: str | None = None
@@ -107,13 +114,14 @@ class Constraint:
         조건이 키에 들어가야 한다 — 안 그러면 볼륨 종류별 6개 레코드가 하나로
         접혀서, 조건부 제약을 담으려던 것이 도로 봉투가 된다.
         """
-        if self.condition is None:
+        if not self.conditions:
             return (self.type_id, self.property, self.kind)
-        cond = self.condition
-        return (
-            self.type_id, self.property, self.kind,
-            cond.get("property"), cond.get("op"), json.dumps(cond.get("value"), sort_keys=True),
+        # 조건 순서가 달라도 같은 제약이므로 정렬해서 키를 만든다.
+        parts = sorted(
+            (c.get("property"), c.get("op"), json.dumps(c.get("value"), sort_keys=True))
+            for c in self.conditions
         )
+        return (self.type_id, self.property, self.kind, tuple(parts))
 
     @property
     def is_fact(self) -> bool:
@@ -132,11 +140,21 @@ class Constraint:
             "evidence": self.evidence,
             "basis": self.basis,
             "backend": self.backend,
-            "condition": self.condition,
+            "conditions": list(self.conditions),
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> Constraint:
+        if "condition" in data:
+            # **조용히 무시하면 봉투가 도로 붙는다.** 단일 `condition`을 목록
+            # `conditions`로 넓힐 때 실제로 겪었다 — 낡은 산출물을 그대로 읽었더니
+            # 조건이 전부 사라져 리전별 38개 레코드가 중복 키로 하나에 접혔다.
+            # 값이 틀린 게 아니라 **어떤 실제 설정에도 해당하지 않는 범위**가 된다.
+            raise ValueError(
+                "낡은 산출물입니다 — `condition`(단일)은 `conditions`(목록)으로 "
+                "바뀌었습니다. `python -m capacitykb build` 로 다시 만드세요. "
+                "그냥 읽으면 조건이 사라져 봉투 붕괴가 됩니다."
+            )
         return cls(
             type_id=data["type_id"],
             property=data["property"],
@@ -149,7 +167,7 @@ class Constraint:
             conditional=data.get("conditional", False),
             note=data.get("note"),
             backend=data.get("backend"),
-            condition=data.get("condition"),
+            conditions=tuple(data.get("conditions") or ()),
         )
 
 

@@ -41,7 +41,7 @@ def test_all_key_is_not_a_region(tmp_path: Path) -> None:
         cfn_schemas=SCHEMAS,
     )
     assert len(got.constraints) == 1
-    assert got.constraints[0].condition["value"] == "us-east-1"
+    assert got.constraints[0].conditions[0]["value"] == "us-east-1"
     assert report.skipped_all == 1, "건너뛴 사실을 세어야 한다"
     assert not [c for c in got.constraints if c.value == []]
 
@@ -53,7 +53,7 @@ def test_empty_region_list_is_not_stored(tmp_path: Path) -> None:
                           "us-west-2": {"enum": ["t3.micro"]}}),
         cfn_schemas=SCHEMAS,
     )
-    assert [c.condition["value"] for c in got.constraints] == ["us-west-2"]
+    assert [c.conditions[0]["value"] for c in got.constraints] == ["us-west-2"]
 
 
 def test_property_name_is_verified_not_guessed() -> None:

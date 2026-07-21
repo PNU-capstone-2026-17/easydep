@@ -37,7 +37,7 @@ BOTO = {"shapes": {"CreateVolumeRequest": {"members": {
 def test_units_are_converted() -> None:
     assert read_price_list(PRICE)["gp2"]["maxVolumeSize"] == "16 TiB"
     got, _ = cross_check(read_price_list(PRICE), read_botocore(BOTO))
-    sizes = {(c.condition["value"], c.kind): c.value
+    sizes = {(c.conditions[0]["value"], c.kind): c.value
              for c in got.constraints if c.property == "Size"}
     assert sizes[("gp2", "max")] == 16384, "16 TiB → 16,384 GiB"
     assert sizes[("gp3", "max")] == 65536
@@ -60,7 +60,7 @@ def test_only_agreeing_values_are_stored() -> None:
     bad = {"products": {"A": {"productFamily": "Storage", "attributes": {
         "volumeApiName": "gp2", "maxVolumeSize": "99 TiB"}}}}
     got, report = cross_check(read_price_list(bad), read_botocore(BOTO))
-    assert not [c for c in got.constraints if c.condition["value"] == "gp2"]
+    assert not [c for c in got.constraints if c.conditions[0]["value"] == "gp2"]
     assert report.disagreed and report.disagreed[0][1] == "gp2"
 
 
@@ -68,7 +68,7 @@ def test_non_numeric_price_value_is_not_guessed() -> None:
     """`500 - based on 1 MiB I/O size`는 숫자가 아니다. 억지로 파싱하지 않는다."""
     got, _ = cross_check(read_price_list(PRICE), read_botocore(BOTO))
     assert not [c for c in got.constraints
-                if c.property == "Iops" and c.condition["value"] == "st1"]
+                if c.property == "Iops" and c.conditions[0]["value"] == "st1"]
 
 
 def test_condition_is_part_of_the_dedup_key() -> None:
@@ -78,7 +78,7 @@ def test_condition_is_part_of_the_dedup_key() -> None:
         capacity.add_constraint(Constraint(
             type_id=VOLUME, property="Size", kind="max", value=limit,
             evidence="aws-cross-checked",
-            condition={"property": "VolumeType", "op": "eq", "value": vol}))
+            conditions=({"property": "VolumeType", "op": "eq", "value": vol},)))
     assert len(capacity.constraints) == 2
 
 

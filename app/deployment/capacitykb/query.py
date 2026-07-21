@@ -84,6 +84,14 @@ class CheckResult:
     violations: list[str]
     advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
     checked: int
+    missing: list[str] = field(default_factory=list)
+    """조건 판정에 **필요한데 문맥에 없던** 속성 이름들.
+
+    표시 문자열을 되파싱해서 뽑던 것을 칸으로 옮겼다 — 조건이 둘 이상이 되면
+    `"Engine='aurora-mysql' 그리고 EngineVersion가 ..."` 같은 문장이라 파싱이
+    깨진다. 답에 "무엇을 알려주면 판정할 수 있는지"를 실으려면 구조가 필요하다.
+    """
+
     unresolved: list[str] = field(default_factory=list)
     """조건부 제약인데 **조건을 몰라 판정에 못 쓴** 것들.
 
@@ -143,10 +151,9 @@ def _scope(constraint: Constraint) -> str:
     (**gp3로 바꾸면 65,536**)이 안 보인다. 한도를 어겼다는 말보다
     어느 조건에서의 한도인지가 해결책을 가리킨다.
     """
-    cond = constraint.condition
-    if not cond:
+    if not constraint.conditions:
         return ""
-    return f"{cond.get('property')}={cond.get('value')!r} 일 때, "
+    return " 그리고 ".join(_cond_text(c) for c in constraint.conditions) + " 일 때, "
 
 
 def _violation(constraint: Constraint, value, label: str) -> str:
@@ -174,15 +181,23 @@ def _reference(constraint: Constraint, label: str) -> str:
     )
 
 
+def _cond_text(cond: dict) -> str:
+    """조건 하나를 사람 말로. `matches`는 등호가 아니므로 그렇게 쓰지 않는다."""
+    prop, value = cond.get("property"), cond.get("value")
+    if cond.get("op") == "matches":
+        return f"{prop}가 {value!r} 에 맞을 때"
+    return f"{prop}={value!r}"
+
+
 def _conditional(constraint: Constraint, breached: bool | None) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
-    cond = constraint.condition or {}
     label = {"min": "최소", "max": "최대", "enum": "허용값"}.get(
         constraint.kind, constraint.kind
     )
     verdict = "" if breached is None else ("  → 불가" if breached else "  → 가능")
+    where = " 그리고 ".join(_cond_text(c) for c in constraint.conditions) or "무조건"
     return (
-        f"{cond.get('property')} = {cond.get('value')!r} 일 때 "
+        f"{where} 일 때 "
         f"{label} {brief(constraint.value)}{unit} "
         f"(근거 {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){verdict}"
@@ -205,20 +220,49 @@ def _breaches(constraint: Constraint, value) -> bool | None:
     return None
 
 
+def _one_condition(cond: dict, context: dict | None) -> bool | None:
+    """조건 하나가 성립하는가. 모르면 None."""
+    prop = cond.get("property")
+    if not context or prop not in context:
+        return None
+    actual = context[prop]
+    op = cond.get("op")
+    if op == "eq":
+        return actual == cond.get("value")
+    if op == "matches":
+        # 정규식이 파이썬에서 안 돌면 **모른다**로 둔다. False로 치면 아는 제약을
+        # 통째로 버리고, True로 치면 엉뚱한 조건의 한도를 적용한다.
+        try:
+            return re.search(str(cond.get("value")), str(actual)) is not None
+        except re.error:
+            return None
+    return None  # 모르는 연산자를 짐작해서 처리하지 않는다
+
+
 def _condition_holds(constraint: Constraint, context: dict | None) -> bool | None:
-    """조건이 성립하는가. 모르면 None.
+    """조건들이 **전부** 성립하는가. 모르면 None.
 
     - 조건이 없으면 언제나 성립(True).
-    - 조건이 있는데 문맥에 그 속성이 없으면 **모른다**(None) — 성립한다고도,
-      안 한다고도 하면 안 된다. 여기서 True로 치면 gp2 볼륨에 gp3 한도를 적용하게 되고,
-      False로 치면 아는 제약을 통째로 버리게 된다.
+    - 문맥에 그 속성이 없으면 **모른다**(None) — 성립한다고도, 안 한다고도 하면
+      안 된다. True로 치면 gp2 볼륨에 gp3 한도를 적용하게 되고, False로 치면 아는
+      제약을 통째로 버리게 된다.
+    - 여럿일 때: **하나라도 확실히 안 맞으면 안 맞는다**(False). 안 맞는 게 없고
+      모르는 게 있으면 모른다(None). 셋 다 아니면 성립(True).
+
+      순서가 중요하다 — RDS는 `Engine`은 알고 `EngineVersion`은 모르는 경우가
+      흔한데, 그때 Engine이 다르면 그 블록은 **확실히** 해당 없음이다. 이걸
+      모름으로 접으면 938블록이 전부 미결로 남아 아무것도 못 답한다.
     """
-    cond = constraint.condition
-    if cond is None:
+    if not constraint.conditions:
         return True
-    if not context or cond.get("property") not in context:
-        return None
-    return context[cond["property"]] == cond.get("value")
+    unknown = False
+    for cond in constraint.conditions:
+        held = _one_condition(cond, context)
+        if held is False:
+            return False
+        if held is None:
+            unknown = True
+    return None if unknown else True
 
 
 def check_value(
@@ -239,6 +283,7 @@ def check_value(
     advisories: list[str] = []
     references: list[tuple[str, str]] = []
     unresolved: list[str] = []
+    missing: set[str] = set()
     strong: set[str] = set()
     checked = 0
 
@@ -251,6 +296,9 @@ def check_value(
             # **그 조건이 성립한다면 어떻게 되는지**까지 계산해 둔다 —
             # "38개 리전마다 다릅니다"보다 "14곳에서 가능합니다"가 답에 가깝다.
             unresolved.append(_conditional(constraint, _breaches(constraint, value)))
+            for cond in constraint.conditions:
+                if _one_condition(cond, context) is None:
+                    missing.add(str(cond.get("property")))
             continue
         weak = facts_only and not constraint.is_fact
         breached = False
@@ -299,6 +347,7 @@ def check_value(
         # (`최대 65536`, 어느 볼륨에도 안 맞는 값)가 계속 따라붙었다.
         references=[text for kind, text in references if kind not in strong],
         unresolved=unresolved,
+        missing=sorted(missing),
     )
 
 

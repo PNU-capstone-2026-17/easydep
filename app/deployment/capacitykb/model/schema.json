@@ -95,16 +95,19 @@
               "heuristic"
             ]
           },
-          "condition": {
-            "type": ["object", "null"],
-            "required": ["property", "op", "value"],
-            "additionalProperties": false,
-            "properties": {
-              "property": {"type": "string", "minLength": 1},
-              "op": {"enum": ["eq"]},
-              "value": {}
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["property", "op", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "property": {"type": "string", "minLength": 1},
+                "op": {"enum": ["eq", "matches"]},
+                "value": {}
+              }
             },
-            "description": "이 제약이 언제 적용되는가. 없으면 무조건. EBS 볼륨 크기처럼 다른 속성 값에 따라 한도가 달라지는 경우에 쓴다 — min/max 한 쌍으로 뭉개면 어떤 실제 설정에도 해당하지 않는 봉투가 된다. 지금은 평평한 단일 조건(op=eq)만 담는다."
+            "description": "이 제약이 언제 적용되는가. 조건들의 논리곱이며 비어 있으면 무조건이다. EBS 볼륨 크기처럼 다른 속성 값에 따라 한도가 달라지는 경우에 쓴다 — min/max 한 쌍으로 뭉개면 어떤 실제 설정에도 해당하지 않는 봉투가 된다. op=matches는 정규식으로, 등호로 못 쓰는 조건(RDS의 EngineVersion)에 쓴다."
           },
           "backend": {
             "type": ["string", "null"],

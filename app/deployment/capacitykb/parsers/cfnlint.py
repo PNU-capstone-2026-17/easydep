@@ -144,7 +144,7 @@ def parse_wheel(
                     Constraint(
                         type_id=type_id, property=prop, kind="enum",
                         value=sorted(values), evidence=EVIDENCE,
-                        condition={"property": "Region", "op": "eq", "value": region},
+                        conditions=({"property": "Region", "op": "eq", "value": region},),
                     )
                 )
     return capacity, report
@@ -178,7 +178,7 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         ),
     }]
 
-    regions = len({c.condition["value"] for c in capacity.constraints})
+    regions = len({c.conditions[0]["value"] for c in capacity.constraints})
     values = sum(len(c.value) for c in capacity.constraints)
     print(
         f"cfn-lint: 제약 {len(capacity.constraints):,}건 "

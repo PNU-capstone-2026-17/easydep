@@ -120,7 +120,7 @@ def cross_check(price: dict[str, dict], boto: dict) -> tuple[CapacitySet, Report
             Constraint(
                 type_id=VOLUME, property=prop, kind=kind, value=value,
                 evidence=EVIDENCE, unit=unit,
-                condition={"property": "VolumeType", "op": "eq", "value": vol},
+                conditions=({"property": "VolumeType", "op": "eq", "value": vol},),
             )
         )
 
