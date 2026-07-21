@@ -13,10 +13,11 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from capacitykb.model import CapacitySet, Constraint, Quota
 from kbcommon.basis import describe
+from kbcommon.display import evidence_name
 
 def resolve_type(capacity: CapacitySet, name: str) -> str:
     """이름으로 타입 id를 찾는다.
@@ -78,11 +79,20 @@ class CheckResult:
     violations: list[str]
     advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
     checked: int
+    references: list[str] = field(default_factory=list)
+    """신뢰도가 낮은 근거 중 **벗어나지 않은** 것들.
+
+    예전에는 이걸 아예 버렸다. 그래서 "gp2 볼륨 30,000 GiB 되나?"에
+    `unknown`("알려진 제약이 없습니다")으로 답했는데, 정작 데이터셋 안에는
+    `gp2: 1 - 16,384 GiB`라고 적힌 설명문이 들어 있었다 — **답을 쥐고도 모른다고
+    한 것이다.** 약한 근거가 의심을 키우는 데만 쓰이고 알려주는 데는 안 쓰이던
+    비대칭을 없앤다. fail-open은 "짐작으로 막지 마라"이지 "짐작을 숨겨라"가 아니다.
+    """
 
     @property
     def known(self) -> bool:
         """판정 근거가 하나라도 있었는지."""
-        return self.checked > 0 or bool(self.advisories)
+        return self.checked > 0 or bool(self.advisories) or bool(self.references)
 
     @property
     def verdict(self) -> str:
@@ -107,7 +117,21 @@ def _violation(constraint: Constraint, value, label: str) -> str:
     note = f" — {constraint.note}" if constraint.note else ""
     return (
         f"{constraint.property}: {value}{unit}는 {label} {constraint.value}{unit}을(를) "
-        f"벗어남 (근거 {constraint.evidence}, {describe(constraint.basis)}){note}"
+        f"벗어남 (근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
+    )
+
+
+def _reference(constraint: Constraint, label: str) -> str:
+    """벗어나지 **않은** 약한 근거를 사람이 읽을 문장으로.
+
+    note(변종별 범위표 등)를 반드시 함께 실어야 한다 — 그 표가 정작 사용자가
+    물은 것에 답하는 경우가 있다(`Volume.Size`의 볼륨 종류별 상한).
+    """
+    unit = f" {constraint.unit}" if constraint.unit else ""
+    note = f" — {constraint.note}" if constraint.note else ""
+    return (
+        f"{constraint.property}: {label} {constraint.value}{unit} "
+        f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
     )
 
 
@@ -126,6 +150,7 @@ def check_value(
     """
     violations: list[str] = []
     advisories: list[str] = []
+    references: list[str] = []
     checked = 0
 
     for constraint in capacity.for_property(type_id, prop):
@@ -158,13 +183,19 @@ def check_value(
         if weak:
             if breached:
                 advisories.append(_violation(constraint, value, label) + " [참고]")
+            else:
+                references.append(_reference(constraint, label))
             continue
         checked += 1
         if breached:
             violations.append(_violation(constraint, value, label))
 
     return CheckResult(
-        ok=not violations, violations=violations, advisories=advisories, checked=checked
+        ok=not violations,
+        violations=violations,
+        advisories=advisories,
+        checked=checked,
+        references=references,
     )
 
 

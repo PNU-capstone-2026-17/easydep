@@ -18,6 +18,7 @@ from capacitykb.query import (
     resolve_type,
 )
 from kbcommon.basis import describe
+from kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
 CAPACITY_FILES = ("aws-capacity.json", "azure-capacity.json", "azure-quota.json")
@@ -82,7 +83,7 @@ def _describe(constraint) -> str:
     tags = []
     if constraint.conditional:
         tags.append("조건부")
-    tags.append(f"근거 {constraint.evidence}, {describe(constraint.basis)}")
+    tags.append(f"근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}")
     suffix = f" ({', '.join(tags)})"
     note = f"\n    ※ {constraint.note}" if constraint.note else ""
     return f"  - {constraint.property}: {text}{suffix}{note}"
@@ -124,9 +125,9 @@ def property_limits(
         return error
     found = limits_for(capacity, type_id, prop=property_name)
     if not found:
-        target = f"{type_id}.{property_name}" if property_name else type_id
+        target = f"{display(type_id)}.{property_name}" if property_name else display(type_id)
         return _nothing_found(capacity, type_id, target)
-    header = f"{type_id}" + (f".{property_name}" if property_name else "")
+    header = display(type_id) + (f".{property_name}" if property_name else "")
     lines = [f"{header} 제약 {len(found)}건:"]
     lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
@@ -147,13 +148,21 @@ def check(
     if type_id is None:
         return error
     result = check_value(capacity, type_id, property_name, value)
-    target = f"{type_id}.{property_name} = {value}"
+    target = f"{display(type_id)}.{property_name} = {value}"
 
     if result.verdict == "unknown":
-        return (
-            f"{type_id}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 없습니다. "
-            "지식베이스에 없는 값이므로 공식 문서를 확인하세요."
-        )
+        if not result.references:
+            return (
+                f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "
+                "없습니다. 지식베이스에 없는 값이므로 공식 문서를 확인하세요."
+            )
+        # 확정 근거는 없지만 참고 정보는 쥐고 있다 — 예전엔 이걸 버리고 "모른다"고 답했다.
+        return "\n".join([
+            f"확정 판정 불가: {target} 를 판정할 확정 제약이 없습니다. "
+            "다만 아래 참고 정보가 있으니 함께 보세요.",
+            "  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):",
+            *(f"  - {r}" for r in result.references),
+        ])
     if result.verdict == "violation":
         lines = [f"불가: {target} 는 제약을 위반합니다."]
         lines.extend(f"  - {v}" for v in result.violations)
@@ -166,9 +175,10 @@ def check(
     else:
         lines = [f"가능: {target} 는 알려진 제약 {result.checked}건을 만족합니다."]
 
-    if result.advisories:
+    if result.advisories or result.references:
         lines.append("  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):")
         lines.extend(f"  - {a}" for a in result.advisories)
+        lines.extend(f"  - {r}" for r in result.references)
     return "\n".join(lines)
 
 
@@ -185,9 +195,9 @@ def immutable(
     found = immutable_properties(capacity, type_id)
     if not found:
         if not capacity.covers(type_id):
-            return _nothing_found(capacity, type_id, type_id)
-        return f"{type_id} 에 변경 불가로 알려진 속성이 없습니다."
-    lines = [f"{type_id} 의 변경 시 재생성되는 속성 {len(found)}개:"]
+            return _nothing_found(capacity, type_id, display(type_id))
+        return f"{display(type_id)} 에 변경 불가로 알려진 속성이 없습니다."
+    lines = [f"{display(type_id)} 의 변경 시 재생성되는 속성 {len(found)}개:"]
     lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
 
@@ -212,9 +222,9 @@ def allowed_values(
     ]
     if not found:
         if not capacity.covers(type_id):
-            return _nothing_found(capacity, type_id, f"{type_id}.{property_name}")
-        return f"{type_id}.{property_name} 에 알려진 허용값/패턴 정보가 없습니다."
-    lines = [f"{type_id}.{property_name} 허용값 정보:"]
+            return _nothing_found(capacity, type_id, f"{display(type_id)}.{property_name}")
+        return f"{display(type_id)}.{property_name} 에 알려진 허용값/패턴 정보가 없습니다."
+    lines = [f"{display(type_id)}.{property_name} 허용값 정보:"]
     lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
 

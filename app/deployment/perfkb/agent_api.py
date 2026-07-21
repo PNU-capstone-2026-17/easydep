@@ -136,10 +136,14 @@ def _describe(rec: dict) -> str:
         ("acu", "ACU (Azure 내부 비교용)", ""),
         ("diskIops", "디스크 IOPS", ""),
     ):
-        if key in rec:
-            lines.append(f"  {label}: {rec[key]}{unit}")
-    if rec.get("networkIsBurst"):
-        lines.append("    ⚠ 네트워크 대역폭이 버스트('Up to')라 지속 값이 아닙니다.")
+        if key not in rec:
+            continue
+        lines.append(f"  {label}: {rec[key]}{unit}")
+        # 경고는 **그 줄 바로 밑**에 붙여야 한다. 예전엔 블록 맨 끝에 붙였는데,
+        # 그러면 네트워크 이야기가 마지막 줄(EBS 최대 대역폭)에 달린 것처럼 읽혔다.
+        # EBS 버스트와 네트워크 버스트는 다른 사안이라 오해가 판단을 바꾼다.
+        if key == "networkPerformance" and rec.get("networkIsBurst"):
+            lines.append("    ⚠ 네트워크 대역폭이 버스트('Up to')라 지속 값이 아닙니다.")
     return "\n".join(lines)
 
 

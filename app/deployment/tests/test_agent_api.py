@@ -117,7 +117,9 @@ def test_equivalent_types_text(output_dir: Path) -> None:
 
 def test_describe_type_text(output_dir: Path) -> None:
     text = agent_api.describe_type("vm", output_dir=output_dir)
-    assert "references → core::subnet" in text
+    # 내부 id의 `core::` 접두사는 사용자에게 보이지 않는다 (kbcommon.display)
+    assert "references → subnet" in text
+    assert "core::" not in text
     assert "필수" in text
 
 

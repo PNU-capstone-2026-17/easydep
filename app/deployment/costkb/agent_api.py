@@ -55,8 +55,14 @@ def _describe(spec: dict) -> str:
     mem_text = f"{actual:g} GiB"
     if actual != mem:
         mem_text += f" (지식베이스 기준값 {mem:g})"
+    # 리전을 접었으면 몇 곳이 더 있는지 밝힌다. 숨기면 "이 스펙은 이 리전에만 있나?"로
+    # 오해되고, 그건 접기가 만들어낸 거짓 정보다.
+    folded = spec.get("_foldedRegions") or []
+    where = spec["region"]
+    if folded:
+        where += f" 외 {len(folded)}개 리전"
     return (
-        f"- {spec['provider'].upper()} {spec['specName']} ({spec['region']}): "
+        f"- {spec['provider'].upper()} {spec['specName']} ({where}): "
         f"{spec['vCPU']} vCPU / {mem_text}, {price}"
     )
 

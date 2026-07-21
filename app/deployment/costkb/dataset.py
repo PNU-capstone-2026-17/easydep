@@ -151,6 +151,7 @@ def filter_specs(
     *,
     architecture: str | None = DEFAULT_ARCHITECTURE,
     priced_only: bool = True,
+    fold_regions: bool = True,
     output_dir: Path | str | None = None,
 ) ->list[dict]:
     """요구사항 조건으로 스펙을 필터링·정렬해 상위 결과를 반환한다.
@@ -168,6 +169,8 @@ def filter_specs(
         limit: 반환 개수(최소 1).
         architecture: 기본 'x86_64' — MCP가 주입하는 것과 동일. None이면 전체.
         priced_only: True(기본)면 가격이 있는 후보만. 비용 정렬·판정이 성립해야 하므로.
+        fold_regions: True(기본)면 같은 (프로바이더, 스펙명)이 리전만 달리해 여러 칸을
+            먹지 않게 접는다. 접힌 리전은 `_foldedRegions`에 남는다.
         output_dir: 빌드 산출물 위치.
     """
     prov = provider.lower() if provider else None
@@ -189,7 +192,35 @@ def filter_specs(
 
     key = _SORT_KEYS.get(sort_by, _SORT_KEYS["cost"])
     matched.sort(key=key)
+    if fold_regions:
+        matched = _fold_regions(matched)
     return matched[: max(1, limit)]
+
+
+def _fold_regions(specs: list[dict]) -> list[dict]:
+    """같은 스펙이 리전만 달리해 여러 칸을 먹지 않게 접는다.
+
+    실측: `vcpu_min=2, mem_min_gib=4, limit=6`이 `S5.MEDIUM4`·`BF1.MEDIUM4`를
+    ap-chengdu/ap-chongqing 두 벌씩 돌려줘 **6칸에 실제 스펙은 3종**이었다.
+    리전을 지정하지 않은 사용자는 선택지를 **비교**하려는 것이므로 같은 것을
+    여러 번 보여주면 그만큼 다른 후보를 못 본다.
+
+    정렬이 끝난 뒤에 부르므로 **먼저 오는 것이 곧 그 스펙의 최선**이다(비용 정렬이면
+    최저가). 값은 고쳐 쓰지 않는다 — 미러 원칙대로 고른 레코드를 그대로 두고,
+    접혔다는 사실만 `_` 접두사 키로 덧붙인다(`_source`·`_coverage`와 같은 관례).
+    """
+    best: dict[tuple[str, str], dict] = {}
+    order: list[tuple[str, str]] = []
+    for spec in specs:
+        key = (spec["provider"], spec["specName"])
+        if key not in best:
+            chosen = dict(spec)
+            chosen["_foldedRegions"] = []
+            best[key] = chosen
+            order.append(key)
+        elif spec["region"] != best[key]["region"]:
+            best[key]["_foldedRegions"].append(spec["region"])
+    return [best[k] for k in order]
 
 
 def count_unpriced(

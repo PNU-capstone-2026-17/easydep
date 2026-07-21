@@ -175,3 +175,63 @@ def test_coverage_reports_dataset_boundaries() -> None:
     assert sum(r["count"] for r in rows) == 36
     seoul = next(r for r in rows if r["region"] == "ap-northeast-2")
     assert seoul["vcpu_max"] == 4  # 서울은 커버리지가 좁다
+
+
+# --- 리전 접기 (결함 ④) ---
+
+
+def _multi_region_specs(tmp_path):
+    """같은 스펙이 리전만 달리해 여러 벌 있는 데이터셋을 만든다."""
+    specs = [
+        {"provider": "tencent", "region": "ap-chengdu", "specName": "S5.MEDIUM4",
+         "vCPU": 2, "memGiB": 4, "hourlyUSD": 0.0300},
+        {"provider": "tencent", "region": "ap-chongqing", "specName": "S5.MEDIUM4",
+         "vCPU": 2, "memGiB": 4, "hourlyUSD": 0.0300},
+        {"provider": "tencent", "region": "ap-guangzhou", "specName": "S5.MEDIUM4",
+         "vCPU": 2, "memGiB": 4, "hourlyUSD": 0.0300},
+        {"provider": "tencent", "region": "ap-chengdu", "specName": "BF1.MEDIUM4",
+         "vCPU": 2, "memGiB": 4, "hourlyUSD": 0.0301},
+    ]
+    path = tmp_path / "tumblebug-cost.json"
+    path.write_text(json.dumps({"_note": "테스트", "specs": specs}), encoding="utf-8")
+    dataset.clear_caches()
+    return tmp_path
+
+
+def test_folds_same_spec_across_regions(tmp_path) -> None:
+    """6칸 요청에 실제 스펙이 3종만 나오던 문제 — 같은 스펙은 한 칸만 먹는다."""
+    out = _multi_region_specs(tmp_path)
+    results = filter_specs(2, 4, limit=5, architecture=None, output_dir=out)
+    names = [s["specName"] for s in results]
+    assert names == ["S5.MEDIUM4", "BF1.MEDIUM4"], names
+    assert len(names) == len(set(names)), "같은 스펙이 여러 칸을 먹었다"
+
+
+def test_folding_records_what_it_hid(tmp_path) -> None:
+    """접었다는 사실을 남긴다 — 숨기면 '이 리전에만 있다'는 거짓 인상을 준다."""
+    out = _multi_region_specs(tmp_path)
+    top = filter_specs(2, 4, limit=5, architecture=None, output_dir=out)[0]
+    assert sorted(top["_foldedRegions"]) == ["ap-chongqing", "ap-guangzhou"]
+
+
+def test_folding_keeps_the_best_row(tmp_path) -> None:
+    """정렬 뒤에 접으므로 남는 레코드는 그 스펙의 최선(비용 정렬이면 최저가)이다."""
+    specs = [
+        {"provider": "aws", "region": "us-west-2", "specName": "m5.large",
+         "vCPU": 2, "memGiB": 8, "hourlyUSD": 0.1120},
+        {"provider": "aws", "region": "us-east-1", "specName": "m5.large",
+         "vCPU": 2, "memGiB": 8, "hourlyUSD": 0.0960},
+    ]
+    path = tmp_path / "tumblebug-cost.json"
+    path.write_text(json.dumps({"_note": "테스트", "specs": specs}), encoding="utf-8")
+    dataset.clear_caches()
+    top = filter_specs(2, 4, limit=5, architecture=None, output_dir=tmp_path)[0]
+    assert top["region"] == "us-east-1"
+    assert top["hourlyUSD"] == 0.0960
+
+
+def test_folding_can_be_turned_off(tmp_path) -> None:
+    out = _multi_region_specs(tmp_path)
+    results = filter_specs(2, 4, limit=5, architecture=None,
+                           fold_regions=False, output_dir=out)
+    assert len(results) == 4

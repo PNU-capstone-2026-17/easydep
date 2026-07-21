@@ -122,7 +122,9 @@ def test_check_above_schema_max(capacity: CapacitySet) -> None:
     result = check_value(capacity, VOLUME, "Iops", 100000)
     assert not result.ok
     assert "최대 64000" in result.violations[0]
-    assert "cfn-schema" in result.violations[0]
+    # 근거는 계속 밝히되 내부 라벨(cfn-schema)이 아니라 사람 말로 — kbcommon.display
+    assert "CloudFormation 스키마" in result.violations[0]
+    assert "cfn-schema" not in result.violations[0]
 
 
 def test_guess_is_advisory_not_verdict(capacity: CapacitySet) -> None:
@@ -210,7 +212,8 @@ def output_dir(tmp_path, capacity: CapacitySet) -> Path:
 def test_agent_api_check_rejects_with_evidence(output_dir: Path) -> None:
     text = agent_api.check("AWS::EC2::Volume", "Iops", 100000, output_dir=output_dir)
     assert text.startswith("불가")
-    assert "cfn-schema" in text
+    assert "CloudFormation 스키마" in text
+    assert "cfn-schema" not in text
 
 
 def test_agent_api_check_advisory_is_held_not_allowed(output_dir: Path) -> None:
@@ -275,3 +278,34 @@ def test_out_of_scope_answer_does_not_claim_absence() -> None:
     unknown = _nothing_found(capacity, "gcp::ComputeInstance", "gcp::ComputeInstance")
     assert "수집 범위 밖" in unknown
     assert "제약이 없다는 뜻이 아닙니다" in unknown
+
+
+def test_weak_reference_survives_when_in_range(capacity: CapacitySet) -> None:
+    """범위 **안**인 약한 근거도 버리지 않는다 (결함 ①).
+
+    예전에는 약한 근거를 '벗어났을 때만' 기록해서, 범위 안이면 아무것도 안 남고
+    판정이 unknown으로 떨어졌다. 그 결과 "gp2 30,000 GiB 되나?"에 "알려진 제약이
+    없습니다"라고 답했는데 데이터셋 안에는 볼륨 종류별 상한표가 들어 있었다.
+    """
+    result = check_value(capacity, VOLUME, "Size", 30000)
+    assert result.verdict == "unknown"  # 확정 근거는 여전히 없다
+    assert result.references, "범위 안인 약한 근거가 버려졌다"
+    assert "65536" in result.references[0]
+    assert result.known, "참고 정보가 있으면 '아무것도 모른다'가 아니다"
+
+
+def test_agent_api_unknown_still_reports_what_it_holds(output_dir: Path) -> None:
+    """확정 판정을 못 해도 쥐고 있는 참고 정보는 내놓아야 한다."""
+    text = agent_api.check("AWS::EC2::Volume", "Size", 30000, output_dir=output_dir)
+    assert "알려진 제약이 없어" not in text, "답을 쥐고도 모른다고 말하고 있다"
+    assert "확정 판정 불가" in text
+    assert "65536" in text
+    assert "참고" in text
+
+
+def test_agent_api_hides_internal_ids(output_dir: Path) -> None:
+    """내부 id 접두사와 근거 라벨은 사용자에게 보이지 않는다 (결함 ⑥)."""
+    text = agent_api.immutable("AWS::EC2::Volume", output_dir=output_dir)
+    assert "aws::" not in text
+    for label in ("cfn-schema", "cfn-description", "cdk-oob", "heuristic"):
+        assert label not in text

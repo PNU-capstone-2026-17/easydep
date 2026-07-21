@@ -149,3 +149,19 @@ def test_ebs_baseline_filter_ranks_and_notes_burst(perf_built) -> None:
 def test_ebs_baseline_filter_excludes_below_threshold(perf_built) -> None:
     text = agent_api.specs_meeting_ebs_baseline(10000)
     assert "찾지 못했습니다" in text
+
+
+def test_network_burst_warning_sits_under_network_line(tmp_path) -> None:
+    """경고는 네트워크 줄 바로 밑에 — 블록 끝에 붙이면 EBS 줄에 달린 것처럼 읽힌다 (결함 ⑤)."""
+    from perfkb.agent_api import _describe
+
+    text = _describe({
+        "networkPerformance": "Up to 5 Gigabit",
+        "networkIsBurst": True,
+        "ebsBaselineMbps": 347.0,
+        "ebsMaxMbps": 2085.0,
+    })
+    lines = text.split("\n")
+    warn = next(i for i, l in enumerate(lines) if "버스트" in l)
+    assert "네트워크" in lines[warn - 1], f"경고가 엉뚱한 줄에 붙었다: {lines[warn - 1]!r}"
+    assert "EBS" not in lines[warn - 1]

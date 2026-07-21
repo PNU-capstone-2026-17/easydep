@@ -23,6 +23,7 @@ from graphkb.query import (
     resolve_node,
 )
 from kbcommon.basis import describe
+from kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
 GRAPH_FILES = (
@@ -198,7 +199,7 @@ def describe_type(
     if node is None:
         return error
     lines = [
-        f"{node.id}",
+        display(node.id),
         f"- 레이어: {node.layer} / 프로바이더: {node.provider} / 출처: {node.source}",
     ]
     outgoing = [e for e in graph.edges if e.from_id == node.id]
@@ -208,8 +209,8 @@ def describe_type(
             required = "필수" if edge.required else "선택"
             via = f" via {edge.via_property}" if edge.via_property else ""
             lines.append(
-                f"  · {edge.type} → {edge.to_id}{via} "
-                f"({required}, {edge.cardinality}, {edge.evidence}, "
+                f"  · {edge.type} → {display(edge.to_id)}{via} "
+                f"({required}, {edge.cardinality}, {evidence_name(edge.evidence)}, "
                 f"{describe(edge.basis, edge.reviewed)})"
             )
     else:
