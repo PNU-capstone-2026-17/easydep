@@ -79,6 +79,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # terraform-provider-aws. 같은 Terraform이지만 google과 성격이 다르다 —
     # 저쪽은 생성 코드고 이쪽은 사람이 쓴 것이라 틀리는 방식이 다르다.
     "tpaws-schema": STATED,
+    # cfn-lint가 별도 관리하는 리전별 허용값. 손 큐레이션이지만 원본이
+    # 그렇게 적어 놓은 것이라 stated다.
+    "cfn-lint-region": STATED,
     # AWS 한도. 두 공식 소스가 **같은 값을 말했을 때만** 이 라벨을 단다 —
     # 어느 한쪽만으로는 담지 않는다. 단일 미검증 소스가 감사에서 나온
     # "확신에 찬 오답"의 원인이었다.

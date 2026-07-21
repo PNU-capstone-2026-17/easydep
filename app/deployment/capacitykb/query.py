@@ -124,12 +124,24 @@ class CheckResult:
         return "ok" if self.checked > 0 else "unknown"
 
 
+def _brief(value) -> str:
+    """제약 값을 한 줄로. **긴 목록을 통째로 찍지 않는다.**
+
+    리전별 인스턴스 타입은 목록 하나가 600개가 넘는다. 그대로 찍으면 답변이
+    목록으로 뒤덮여 정작 "되나 안 되나"가 안 보인다.
+    """
+    if isinstance(value, list) and len(value) > 6:
+        return f"{len(value)}개 중 하나 (예: {', '.join(map(str, value[:3]))} …)"
+    return str(value)
+
+
 def _violation(constraint: Constraint, value, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
-        f"{constraint.property}: {value}{unit}는 {label} {constraint.value}{unit}을(를) "
-        f"벗어남 (근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
+        f"{constraint.property}: {value}{unit}는 {label} {_brief(constraint.value)}{unit}"
+        f"을(를) 벗어남 (근거 {evidence_name(constraint.evidence)}, "
+        f"{describe(constraint.basis)}){note}"
     )
 
 
@@ -142,20 +154,40 @@ def _reference(constraint: Constraint, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
-        f"{constraint.property}: {label} {constraint.value}{unit} "
+        f"{constraint.property}: {label} {_brief(constraint.value)}{unit} "
         f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}){note}"
     )
 
 
-def _conditional(constraint: Constraint) -> str:
+def _conditional(constraint: Constraint, breached: bool | None) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     cond = constraint.condition or {}
-    label = {"min": "최소", "max": "최대"}.get(constraint.kind, constraint.kind)
+    label = {"min": "최소", "max": "최대", "enum": "허용값"}.get(
+        constraint.kind, constraint.kind
+    )
+    verdict = "" if breached is None else ("  → 불가" if breached else "  → 가능")
     return (
         f"{cond.get('property')} = {cond.get('value')!r} 일 때 "
-        f"{label} {constraint.value}{unit} "
-        f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)})"
+        f"{label} {_brief(constraint.value)}{unit} "
+        f"(근거 {evidence_name(constraint.evidence)}, "
+        f"{describe(constraint.basis)}){verdict}"
     )
+
+
+def _breaches(constraint: Constraint, value) -> bool | None:
+    """이 제약 하나만 놓고 볼 때 값이 벗어나는가. 판정할 수 없으면 None."""
+    kind, limit = constraint.kind, constraint.value
+    if kind == "min" and isinstance(value, (int, float)):
+        return value < limit
+    if kind == "max" and isinstance(value, (int, float)):
+        return value > limit
+    if kind == "enum" and isinstance(limit, list):
+        return value not in limit
+    if kind == "max_length" and isinstance(value, str):
+        return len(value) > limit
+    if kind == "min_length" and isinstance(value, str):
+        return len(value) < limit
+    return None
 
 
 def _condition_holds(constraint: Constraint, context: dict | None) -> bool | None:
@@ -200,9 +232,10 @@ def check_value(
         if holds is False:
             continue  # 다른 종류에 걸린 제약이다
         if holds is None:
-            # 조건을 모르면 판정에 못 쓴다. 다만 **버리지도 않는다** —
-            # "볼륨 종류에 따라 다르다"는 것 자체가 사용자가 알아야 할 정보다.
-            unresolved.append(_conditional(constraint))
+            # 조건을 모르면 판정에 **못 쓴다**. 다만 버리지도 않고, 한 걸음 더 가서
+            # **그 조건이 성립한다면 어떻게 되는지**까지 계산해 둔다 —
+            # "38개 리전마다 다릅니다"보다 "14곳에서 가능합니다"가 답에 가깝다.
+            unresolved.append(_conditional(constraint, _breaches(constraint, value)))
             continue
         weak = facts_only and not constraint.is_fact
         breached = False

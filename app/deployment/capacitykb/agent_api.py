@@ -28,7 +28,12 @@ CAPACITY_FILES = (
     "gcp-capacity.json",
     "aws-limits.json",
     "aws-tf.json",
+    "aws-regions.json",
 )
+
+#: 조건이 이보다 많으면 값을 나열하지 않고 "몇 가지에서 되는지"로 요약한다.
+#: 리전은 38가지라 나열이 무의미하고, 볼륨 종류는 6가지라 값이 보여야 한다.
+_SUMMARIZE_OVER = 8
 
 _MISSING_MESSAGE = (
     "용량·제약 산출물이 없습니다. 먼저 `python -m capacitykb build --source "
@@ -205,11 +210,31 @@ def check(
             # 것이 된다 — 어느 조건에서 얼마인지를 보여주고, 무엇을 알려주면 판정할 수
             # 있는지까지 말한다.
             asked = sorted({u.split(" =", 1)[0] for u in result.unresolved})
-            return "\n".join([
-                f"조건에 따라 다릅니다: {target} 는 {', '.join(asked)} 에 따라 한도가 "
-                "달라져서, 그 값을 알아야 판정할 수 있습니다.",
-                *(f"  - {u}" for u in result.unresolved),
-            ])
+            head = (
+                f"조건에 따라 다릅니다: {target} 는 {', '.join(asked)} 에 따라 달라져서, "
+                "그 값을 알아야 확정할 수 있습니다."
+            )
+            allowed = [u for u in result.unresolved if u.endswith("→ 가능")]
+            denied = [u for u in result.unresolved if u.endswith("→ 불가")]
+            # 조건이 몇 개 안 되면 **값을 그대로** 보여준다. 볼륨 종류 6가지에
+            # "2가지에서 가능"만 말하면 정작 한도 숫자가 사라진다.
+            # 리전 38개처럼 많을 때만 세어서 요약한다.
+            if not (allowed or denied) or len(result.unresolved) <= _SUMMARIZE_OVER:
+                return "\n".join([head, *(f"  - {u}" for u in result.unresolved)])
+            # 조건이 38개(리전)씩 되면 전부 나열하는 게 답이 아니다.
+            # **어디서 되고 어디서 안 되는지**를 세어 주는 편이 질문에 가깝다.
+            lines = [
+                head + f" 조건 {len(result.unresolved)}가지 중 "
+                f"**{len(allowed)}가지에서 가능**, {len(denied)}가지에서 불가입니다."
+            ]
+            for label, items in (("가능", allowed), ("불가", denied)):
+                if not items:
+                    continue
+                names = [u.split(" 일 때", 1)[0].split("= ", 1)[-1].strip("'")
+                         for u in items[:12]]
+                more = f" 외 {len(items) - 12}곳" if len(items) > 12 else ""
+                lines.append(f"  {label}: {', '.join(names)}{more}")
+            return "\n".join(lines)
         if not result.references:
             return (
                 f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "

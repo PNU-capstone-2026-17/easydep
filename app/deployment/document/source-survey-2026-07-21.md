@@ -162,8 +162,16 @@ cfn-lint의 리전별 enum은 그 칸에 **그대로** 들어갑니다.
    그래도 **AWS의 빈 축 두 개가 0에서 열렸습니다** — 조건부 불변 24건
    (`DynamoDB::Table.RestoreSourceName`, `DocDB::DBCluster.ServerlessV2ScalingConfiguration` 등),
    교차 필드 조건 28건.
-2. **cfn-lint 리전별 enum** — 기존 `condition` 칸에 바로 들어갑니다. `"all"` 빈 enum
-   함정을 테스트로 먼저 고정할 것.
+2. ~~**cfn-lint 리전별 enum**~~ — ✅ 완료(`capacitykb/parsers/cfnlint.py`).
+   제약 **385건 / 13종 / 리전 38개 / 값 70,092개**. 기존 `condition` 칸에 그대로
+   들어갔고, 모델 변경은 **0줄**이었습니다.
+
+   **함정이 실재했습니다** — `aws_ec2_instance`의 `"all"`이 빈 enum이고, 하필 값이
+   가장 많은 파일(24,183개)입니다. 리전 모양(`us-east-1` 꼴)에 맞는 키만 읽고,
+   건너뛴 개수를 빌드가 찍습니다. 테스트로 고정했습니다.
+
+   속성 이름은 짐작하지 않고 **CFN 스키마에 실재하는지 대조**합니다. 못 찾은 1건
+   (`aws_amazonmq_broker`)은 담지 않고 셌습니다.
 3. **`x-ms-mutability`** — Azure 불변성 0건을 933건으로. 범위가 작고 목표가 분명합니다.
 4. **botocore 전 서비스** — 파이프 구분 `Valid Values`만.
 5. cfn-lint RDS 삼중항 — **다중 조건 확장이 선행**돼야 합니다.

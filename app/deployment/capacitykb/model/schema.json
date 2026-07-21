@@ -86,6 +86,7 @@
               "kcc-cel-immutable",
               "tpg-schema",
               "tpaws-schema",
+              "cfn-lint-region",
               "aws-price-list",
               "botocore-doc",
               "aws-cross-checked",

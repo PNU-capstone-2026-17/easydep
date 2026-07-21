@@ -44,6 +44,7 @@ _EVIDENCE_NAMES = {
     "kcc-description": "GCP Config Connector 설명문",
     "tpg-schema": "Terraform Google 프로바이더 스키마",
     "tpaws-schema": "Terraform AWS 프로바이더 스키마",
+    "cfn-lint-region": "cfn-lint 리전별 허용값",
     "aws-price-list": "AWS 가격표 API",
     "botocore-doc": "AWS SDK 설명문",
     "aws-cross-checked": "AWS 공식 두 소스 교차 확인",

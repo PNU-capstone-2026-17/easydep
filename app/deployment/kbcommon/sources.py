@@ -121,6 +121,21 @@ SOURCES: dict[str, Source] = {
             "설명문이 유일한 출처다."
         ),
     ),
+    "cfn-lint": Source(
+        key="cfn-lint",
+        url=(
+            "https://files.pythonhosted.org/packages/ba/f3/"
+            "5218c6fa4ed79b6ccb92bee07c8702f34798e2c77ac3fedf4de6f4add868/"
+            "cfn_lint-1.53.1-py3-none-any.whl"
+        ),
+        pin_kind="tag",
+        pin="1.53.1",
+        note=(
+            "MIT-0. CloudFormation 레지스트리가 표현 못 하는 것을 cfn-lint가 별도 "
+            "파일로 관리한다 — 리전별 인스턴스 타입 (리전,값) 79,809쌍. "
+            "PyPI wheel URL은 내용 주소라 불변이다(경로에 해시가 박혀 있다)."
+        ),
+    ),
     "tpaws-provider": Source(
         key="tpaws-provider",
         url=(
