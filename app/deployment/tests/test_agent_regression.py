@@ -40,7 +40,7 @@ def _results():
 
 
 @pytest.mark.parametrize("probe_id", [
-    "1-1b", "1-2a", "3-1", "3-3", "3-6", "3-9", "3-11", "D4", "D5",
+    "1-1b", "1-2a", "3-1", "3-3", "3-6", "3-9", "3-11", "D4", "D5", "N1", "N2",
 ])
 def test_probe(probe_id: str) -> None:
     result = _results()[probe_id]
