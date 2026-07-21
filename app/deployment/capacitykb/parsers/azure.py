@@ -30,11 +30,11 @@ from kbcommon.type_ids import AzureTypeIndex, make_type_id, read_azure_index
 
 # graphkb/parsers/azure.py와 **같은 커밋**을 봐야 한다 (kbcommon/sources.py에서 관리).
 DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
-DEFAULT_PROVIDERS = (
-    "microsoft.network",
-    "microsoft.compute",
-    "microsoft.containerservice",
-)
+#: 기본은 **전체**다. 예전에는 네임스페이스 3개만 읽어 3,382종 중 279종(8.5%)만
+#: 커버했는데, 그 목록은 우리가 손으로 고른 것이라 "왜 이 셋인가"에 답이 없었고
+#: 나머지 3,103종은 물어보면 "안 봤음"이 나왔다. 전체라야 576개 파일이라
+#: (일회성 100MB, 캐시됨) 굳이 고를 이유가 없다. 좁히려면 --providers.
+DEFAULT_PROVIDERS: tuple[str, ...] = ()
 
 EVIDENCE_TYPE = "bicep-type"
 EVIDENCE_FLAGS = "bicep-flags"
@@ -170,7 +170,18 @@ def extract_constraints(
         # **대표 표기로 정규화한 뒤** id를 만든다. types.json은 API 버전마다
         # 표기가 달라서(Microsoft.Compute vs microsoft.Compute) 그대로 쓰면
         # 같은 타입이 두 개의 id로 갈리고 graphkb와 조인이 깨진다.
-        bare = name.split("@")[0]
+        bare, _, version = name.partition("@")
+
+        # **최신 안정 버전만 읽는다.** 한 types.json에는 같은 타입의 여러 API 버전이
+        # 들어 있고, 버전마다 flags가 다르다. 전부 읽으면 옛 버전의 `required`와
+        # 새 버전의 `read_only`가 한 레코드 집합에 섞여, 사용자에게 **못 채우는 칸을
+        # 채우라고** 하게 된다. 실측: workbooks.properties.userId가 2015-05-01에선
+        # required, 2023-06-01에선 read_only다. 불변식이 이걸 잡아 쓰기를 거부했다.
+        if type_index is not None:
+            chosen = type_index.latest.get(type_index.canonical(bare))
+            if chosen is not None and version and chosen[0] != version:
+                counters["skipped:old-version"] += 1
+                continue
         type_id = type_index.type_id(bare) if type_index else make_type_id("azure", bare)
         index, body = deref(body_ref)
         walk(type_id, body, "", depth=0, visited=frozenset({index}))
@@ -198,14 +209,16 @@ def build(
     type_index = read_azure_index(index)
     latest = type_index.latest
 
-    wanted = {p.lower() for p in providers}
+    wanted = {p.lower() for p in providers}  # 비어 있으면 전체
     rel_paths = sorted(
         {
             rel_path
             for type_name, (_version, rel_path) in latest.items()
-            if type_name.split("/", 1)[0].lower() in wanted
+            if not wanted or type_name.split("/", 1)[0].lower() in wanted
         }
     )
+    print(f"azure: types.json {len(rel_paths):,}개 읽는 중"
+          f"{'' if not wanted else f' (네임스페이스 {len(wanted)}개로 한정)'}")
 
     capacity = CapacitySet()
     stats: Counter = Counter()
@@ -223,12 +236,21 @@ def build(
     capacity.provenance = [describe_source_set(read_paths, "bicep-types-az")]
     # **무엇을 훑었는지 남긴다.** 이게 없으면 안 훑은 타입의 제약을 물었을 때
     # "제약 없음"이라고 답하게 된다 — Azure 3,382종 중 훑는 건 이 3개 네임스페이스뿐이다.
-    capacity.coverage = [{
+    entry: dict = {
         "provider": "azure",
-        "scope": sorted(providers),
         "types": len({c.type_id for c in capacity.constraints}),
-        "note": "bicep-types의 이 네임스페이스만 읽는다. 목록 밖 타입은 '제약 없음'이 아니라 '안 봤음'이다.",
-    }]
+    }
+    if wanted:
+        # scope가 있으면 covers()가 "목록 밖은 안 봤음"으로 답한다. 전체를 읽었을 때
+        # 이걸 남기면 훑은 타입까지 '안 봤음'이 되므로, 좁혔을 때만 적는다.
+        entry["scope"] = sorted(providers)
+        entry["note"] = (
+            "bicep-types의 이 네임스페이스만 읽었다. 목록 밖 타입은 "
+            "'제약 없음'이 아니라 '안 봤음'이다."
+        )
+    else:
+        entry["note"] = "bicep-types 전체를 읽는다 (최신 안정 버전 기준)."
+    capacity.coverage = [entry]
     announce(capacity.save(output), "capacitykb/azure")
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)
     summary = ", ".join(f"{k}={v}" for k, v in sorted(by_evidence.items()))

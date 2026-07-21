@@ -132,3 +132,55 @@ def test_type_id_convention_matches_graphkb(capacity: CapacitySet) -> None:
 
 def test_validates(capacity: CapacitySet) -> None:
     capacity.validate()
+
+
+# --- 최신 API 버전만 읽는다 (D2에서 불변식이 잡은 결함) ---
+
+
+def _resource(name: str, prop_flags: int) -> list[dict]:
+    """types.json 한 벌: ResourceType → body(Object) → 속성 하나."""
+    return [
+        {"$type": "ObjectType", "name": "Body",
+         "properties": {"userId": {"type": {"$ref": "#/2"}, "flags": prop_flags}}},
+        {"$type": "ResourceType", "name": name, "body": {"$ref": "#/0"}},
+        {"$type": "StringType"},
+    ]
+
+
+def test_only_latest_api_version_is_read() -> None:
+    """한 파일에 같은 타입의 여러 API 버전이 들어 있고 flags가 다르다.
+
+    전부 읽으면 옛 버전의 required와 새 버전의 read_only가 섞여, 사용자에게
+    **못 채우는 칸을 채우라고** 하게 된다. 실측: workbooks.properties.userId가
+    2015-05-01에선 required(1), 2023-06-01에선 read_only(2)였다.
+    """
+    from capacitykb.model import CapacitySet
+    from capacitykb.parsers.azure import extract_constraints
+    from kbcommon.type_ids import read_azure_index
+
+    index = {"resources": {
+        "Microsoft.Insights/workbooks@2015-05-01": {"$ref": "old.json#/1"},
+        "Microsoft.Insights/workbooks@2023-06-01": {"$ref": "new.json#/1"},
+    }}
+    ti = read_azure_index(index)
+    assert ti.latest["Microsoft.Insights/workbooks"][0] == "2023-06-01"
+
+    capacity = CapacitySet()
+    extract_constraints(capacity, _resource("Microsoft.Insights/workbooks@2015-05-01", 1),
+                        type_index=ti)
+    extract_constraints(capacity, _resource("Microsoft.Insights/workbooks@2023-06-01", 2),
+                        type_index=ti)
+
+    kinds = {(c.property, c.kind) for c in capacity.constraints}
+    assert ("userId", "mutability") in kinds, "최신 버전의 read_only가 실려야 한다"
+    assert ("userId", "required") not in kinds, "옛 버전의 required가 새면 안 된다"
+
+
+def test_full_scope_leaves_no_scope_marker() -> None:
+    """전체를 읽었으면 coverage에 scope를 남기지 않는다.
+
+    scope가 있으면 covers()가 "목록 밖은 안 봤음"으로 답하는데, 전체를 읽고도
+    이걸 남기면 훑은 타입까지 '안 봤음'이 되어 거짓말이 된다.
+    """
+    from capacitykb.parsers.azure import DEFAULT_PROVIDERS
+    assert DEFAULT_PROVIDERS == (), "기본은 전체여야 한다 (손으로 고른 목록 없음)"
