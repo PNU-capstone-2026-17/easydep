@@ -132,6 +132,18 @@ PROBES: tuple[Probe, ...] = (
           "넣고도 에이전트가 못 닿아 웹으로 나갔다 (데이터: af-south-1은 불가)",
           forbid_tools=("web_search",),
           want_any=("af-south-1", "제공되지", "지원되지", "사용할 수 없", "쓸 수 없")),
+    Probe("H1", "g5g.xlarge에는 어떤 GPU가 달려 있어?",
+          "**지어내기가 났던 자리.** 모델은 예전에 'AMD Radeon Instinct MI250X'라고 "
+          "했다 — 실제는 NVIDIA T4G 1장(Turing). 가속기 데이터가 0건이라 빈칸이 "
+          "지어내기를 불렀다",
+          want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
+          # 모델명을 부분 문자열로 걸지 않는다 — 모델이 `T4G`를 `T4 G`로 띄어 써서
+          # 정답을 실패로 읽었다(판정 아티팩트 8회째). 도구 호출로 건다.
+          want_any=("Turing",)),
+    Probe("H2", "p4d.24xlarge에 GPU가 몇 개 달려 있고 어떤 모델이야?",
+          "개수와 모델을 성능 축에서 가져오는가 (정답 A100 8장)",
+          want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
+          want_any=("A100",)),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",
