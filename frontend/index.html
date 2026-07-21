@@ -420,7 +420,7 @@
         <div class="actions">
           <button id="newAppButton" type="button" class="secondary">새 App ID 발급</button>
           <button id="loadAppButton" type="button" class="secondary">App ID로 불러오기</button>
-          <a id="requirementsLink" class="linkbtn" href="/requirements">요구사항 분석으로 →</a>
+          <a id="requirementsLink" class="linkbtn" href="/">← 요구사항 분석으로</a>
         </div>
 
         <div class="field">
@@ -582,7 +582,7 @@
     }
 
     // USECASE_SPEC is normally produced by the requirements analysis agent at
-    // /requirements against this same app id. This hand-save through the content
+    // / against this same app id. This hand-save through the content
     // endpoint remains for working on design alone, without an analysis run.
     async function saveUsecaseSpec() {
       if (!workflow.appId) {

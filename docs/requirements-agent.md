@@ -6,7 +6,7 @@ LangGraph 기반 **요구사항 분석 에이전트**를 FastAPI로 서빙하고
 
 - **LLM**: Nvidia NIM (OpenAI 호환, `langchain-openai`), 기본 모델 `openai/gpt-oss-120b`
 - **하이브리드 분류**: LLM 1차 분류 + `materials`의 파인튜닝 **BERT**로 검증/대조(confidence·일치 여부)
-- **서빙**: FastAPI (`/api/requirements/analyze`, `/healthz`, 웹 UI `/requirements`) — 통합 저장소에서는 `server.py`가 설계 에이전트와 함께 서빙한다
+- **서빙**: FastAPI (`/api/requirements/analyze`, `/healthz`, 웹 UI `/`) — 통합 저장소에서는 `server.py`가 설계 에이전트와 함께 서빙한다
 - **배포**: Docker → minikube → AKS (kustomize base/overlays)
 
 ## 아키텍처 (마일스톤1 그래프)

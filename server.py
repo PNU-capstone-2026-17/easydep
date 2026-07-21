@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -542,11 +542,21 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
 
 
 
-# 요구사항 분석 UI가 먼저다. 아래 "/" 마운트는 나머지 전부를 받아가는 catch-all이라
-# 순서가 바뀌면 /requirements 가 설계 UI에 먹힌다.
+@app.get("/design", include_in_schema=False)
+def design_ui_redirect() -> RedirectResponse:
+    """마운트는 "/design/"에만 걸린다.
+
+    보통은 Starlette이 슬래시를 붙여 리다이렉트해 주지만, 아래 "/" catch-all이
+    "/design"을 먼저 받아가 404로 끝난다. 주소창에 "/design"을 친 경우를 위해 직접 넘긴다.
+    """
+    return RedirectResponse("/design/")
+
+
+# 워크플로우 순서대로 붙인다. 첫 화면 "/"는 요구사항 분석이고, 설계는 그 다음인
+# "/design". "/"는 나머지 전부를 받아가는 catch-all이라 반드시 마지막에 마운트한다.
+app.mount("/design", StaticFiles(directory=FRONTEND_DIR, html=True), name="design-ui")
 app.mount(
-    "/requirements",
+    "/",
     StaticFiles(directory=REQUIREMENTS_UI_DIR, html=True),
     name="requirements-ui",
 )
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

@@ -160,9 +160,9 @@ through `load_state(app_id)`.
 
 **3. How it is wired.** `server.py` builds the one FastAPI app and mounts both
 agents: `app.include_router(requirements_router)` for
-`POST /api/requirements/analyze`, the requirements UI at `/requirements`, and
-the design UI at `/`. The `/requirements` mount has to come first — the `/` mount
-is a catch-all. Startup does `init_db()` and preloads the BERT classifier once.
+`POST /api/requirements/analyze`, the requirements UI at `/` and the design UI
+at `/design`. The first screen is the analysis, because that is where the
+workflow starts. `/` is a catch-all mount, so it has to come last. Startup does `init_db()` and preloads the BERT classifier once.
 
 Both pages are served from the same origin, so they share the app id through one
 `localStorage` key, `easydep_app_id` (`APP_ID_KEY` in each). The requirements UI

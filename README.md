@@ -33,8 +33,8 @@ POST /api/apps/{app_id}/stages/class_diagram/generate
 
 | 경로 | 내용 |
 |---|---|
-| `/` | 시스템 설계 워크플로우 UI (`frontend/index.html`) |
-| `/requirements` | 요구사항 분석 UI (`app/requirements/static/index.html`) |
+| `/` | 요구사항 분석 UI — 워크플로우의 시작 (`app/requirements/static/index.html`) |
+| `/design` | 시스템 설계 워크플로우 UI (`frontend/index.html`) |
 | `/docs` | FastAPI 자동 문서 |
 | `/healthz` | 쿠버네티스 프로브 |
 
