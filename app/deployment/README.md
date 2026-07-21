@@ -111,8 +111,13 @@ tencent/alibaba/ibm/ncp/kt/nhn/openstack …  bug 0.0%
 uv run python -m graphkb build --source tumblebug   # 벤더 중립 의존성 그래프
 uv run python -m graphkb build --source cfn         # AWS
 uv run python -m graphkb build --source mapping     # 벤더 간 동치 매핑
-uv run python -m capacitykb build --source cfn      # AWS 제약 (46,810건)
+uv run python -m graphkb build --source azure       # Azure
+uv run python -m graphkb build --source gcp         # GCP
+uv run python -m capacitykb build --source cfn         # AWS 제약 (46,911건)
+uv run python -m capacitykb build --source azure       # Azure 전체 (42,831건, 576파일·100MB)
 uv run python -m capacitykb build --source azure-quota
+uv run python -m capacitykb build --source gcp         # GCP (6,923건, 프로바이더 보강 포함)
+uv run python -m capacitykb build --source aws-limits  # EBS 종류별 확정 한도 (교차 검증)
 
 # CLI로 직접 질의도 가능
 uv run python -m graphkb query --rank dependents --provider aws --limit 5
@@ -137,12 +142,26 @@ uv run python -m costkb build --rows-file rows.tsv  # pg_restore 우회 경로
 uv run python -m kbcommon verify
 ```
 
+의존성 그래프는 브라우저에서 눈으로 훑을 수 있습니다. 외부 스크립트·폰트를 안 써서
+**인터넷 없이도** 돕니다:
+
+```bash
+uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 브라우저를 연다
+```
+
+색은 프로바이더, **선 모양은 근거**(실선 = 원본이 명시 / 파선 = 우리 짐작)입니다.
+둘을 색 하나에 겹치면 "짐작인 aws 엣지"를 눈으로 못 가릅니다. 전체 5,755건 중
+**1,867건(32%)이 파선**이라, 켜 놓고 보면 짐작이 어디 몰려 있는지가 바로 보입니다.
+
 ### 문서 어디부터 읽나
 
 | 문서 | 무엇 |
 |---|---|
 | [`cloud-kb-guide.md`](document/cloud-kb-guide.md) | 전체 해설 — 출처(§18)·안전장치(§19)·남은 설계 질문(§20) |
 | [`dependency-extraction.md`](document/dependency-extraction.md) | 의존성을 어떻게 알아냈나 (문외한용, 예시 중심) |
+| [`kb-design-2026-07-21.md`](document/kb-design-2026-07-21.md) | **데이터 우선 설계** — 진단·바깥 사례 조사·실행 순서(D1~D6) |
+| [`gcp-source-decision-2026-07-21.md`](document/gcp-source-decision-2026-07-21.md) | KCC vs Magic Modules — 왜 KCC를 뼈대로, 프로바이더를 값으로 |
+| [`kb-guidance-test-2026-07-21.md`](document/kb-guidance-test-2026-07-21.md) | 사용자에게 보이는 문장을 직접 태워 본 결과 |
 | [`session-2026-07-21.md`](document/session-2026-07-21.md) | **최근 작업 기록 + 다음 과제** — 이어서 작업한다면 여기부터 |
 | [`kb-data-audit-2026-07-20.md`](document/kb-data-audit-2026-07-20.md) | 데이터 결함 전수 감사 + 재조사 결과 |
 | [`kb-test-queries.md`](document/kb-test-queries.md) | 손으로 확인하는 질의집 |
@@ -238,6 +257,10 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `kbcommon/` | KB 공유 인프라 — 다운로드 캐시(`fetch.py`) + 덤프 리더(`tumblebug_dump.py`) |
 | `kbcommon/tumblebug_dump.py` | `assets.dump.gz`(PostgreSQL custom dump) → `spec_infos` 행 (costkb·perfkb 공유) |
 | `kbcommon/invariants.py` | 레코드 **간** 정합성 검사 (쓰기 관문에서 돈다) |
+| `kbcommon/display.py` | 내부 id·근거 라벨 → 사람 말 (모델에게 지우라 시키지 않고 API가 안 만든다) |
+| `kbcommon/console.py` | 콘솔 UTF-8 고정 — Windows cp949에서 한글 출력 중 죽던 것을 막는다 |
+| `capacitykb/parsers/tpg.py` | terraform-provider-google 릴리스 → GCP 값 보강 |
+| `capacitykb/parsers/aws_limits.py` | Price List × botocore **교차 검증** → 조건부 한도 |
 | `kbcommon/basis.py` | 근거의 성격 — 사실(stated)인가 짐작(inferred)인가 |
 | `kbcommon/type_ids.py` | KB 사이 조인 키 정규화 (Azure 표기 흔들림 흡수) |
 | `graphkb/reviewed/` | **사람이 채운 표** — 프로그램이 못 푸는 것을 손으로 적는다 |

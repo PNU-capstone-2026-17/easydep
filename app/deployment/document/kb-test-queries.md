@@ -2,7 +2,7 @@
 
 에이전트가 **세 지식베이스를 축에 맞게 쓰는지** 손으로 확인할 때 쓰는 질의 모음입니다.
 아래 질의는 전부 실제 산출물에 넣어 돌려보고 **답이 나오는 것만** 골랐습니다(기대 결과의
-숫자는 실측치입니다). 자동화된 검사는 `uv run pytest`(373개)가 따로 담당하고, 이 문서는
+숫자는 실측치입니다). 자동화된 검사는 `uv run pytest`(586개)가 따로 담당하고, 이 문서는
 **모델이 도구를 실제로 부르는지**처럼 테스트로 고정하기 어려운 것을 사람이 볼 때 씁니다.
 
 ```bash
@@ -13,9 +13,14 @@ uv run python main.py --verbose
 > 지어낸 것일 수 있고, 그게 이 프로젝트에서 반복적으로 겪은 실패 양상입니다. 도구 호출
 > 줄(`[verbose] 도구 호출 → ...`)이 보이는지부터 확인하세요.
 
-전제: `python -m graphkb build` / `python -m capacitykb build`가 돌아 있어야 합니다
-(`costkb`는 빌드 없이도 번들 36건으로 동작하지만, 아래 기대치는 미러 빌드 기준입니다 —
-[README](../README.md) 참고).
+전제: 아래 빌드가 돌아 있어야 합니다. `costkb`는 빌드 없이도 번들 36건으로 동작하지만,
+아래 기대치는 미러 빌드 기준입니다 — [README](../README.md) 참고.
+
+```bash
+python -m graphkb build --source cfn      # 그리고 azure / gcp / mapping
+python -m capacitykb build --source cfn   # 그리고 azure / azure-quota / gcp / aws-limits
+python -m perfkb build
+```
 
 ---
 
@@ -26,9 +31,9 @@ uv run python main.py --verbose
 | 질의 | 기대 도구 | 기대 결과 |
 |---|---|---|
 | VM을 만들려면 어떤 리소스들이 먼저 필요해? | `kb_creation_order` | 선행 체인 (VPC·Volume·KMS Key 등) |
-| AWS VPC를 지우면 뭐가 영향받아? | `kb_deletion_impact` | **477개** 타입 |
+| AWS VPC를 지우면 뭐가 영향받아? | `kb_deletion_impact` | **466개** 타입 |
 | AWS VPC가 Azure랑 GCP에선 뭐야? | `kb_equivalent_types` | vNet / Microsoft.Network~ / ComputeNetwork |
-| GCP ComputeInstance는 정확히 뭘 참조해? | `kb_describe_type` | 나가는 엣지 + 근거·신뢰도 |
+| GCP ComputeInstance는 정확히 뭘 참조해? | `kb_describe_type` | 나가는 엣지 + 근거·사실/짐작 |
 | AWS에서 rds 들어가는 리소스 타입 찾아줘 | `kb_search_types` | **18개** |
 | AWS에서 의존성이 가장 큰 리소스 타입 5개는? | `kb_rank_types` | IAM::Role **198**, Subnet 116, VPC 64 |
 
@@ -40,9 +45,9 @@ uv run python main.py --verbose
 | 질의 | 기대 도구 | 기대 결과 |
 |---|---|---|
 | EBS 볼륨을 100TB로 만들 수 있어? | `cap_check_value` | **판정 보류** (3-2절 참고) |
-| Lambda 함수 MemorySize 제약이 뭐야? | `cap_property_limits` | 기본값 128 (신뢰도 0.8) |
+| Lambda 함수 MemorySize 제약이 뭐야? | `cap_property_limits` | 기본값 128 (설명문 유래라 **짐작**) |
 | 서브넷에서 나중에 못 바꾸는 속성이 뭐야? | `cap_immutable_properties` | **11개** (AvailabilityZone·CidrBlock 등) |
-| ECS 서비스 LaunchType에 뭘 넣을 수 있어? | `cap_allowed_values` | EC2 / FARGATE / EXTERNAL (신뢰도 1.0) |
+| ECS 서비스 LaunchType에 뭘 넣을 수 있어? | `cap_allowed_values` | EC2 / FARGATE / EXTERNAL (**원본에 명시됨**) |
 | Azure 가상 네트워크 관련 쿼터 알려줘 | `cap_service_quota` | **9건** (Subnets per vNet 3000 등) |
 
 ### 1-3. 스펙·가격 (`cost_*` 2개) — costkb
@@ -133,11 +138,13 @@ EBS 볼륨을 100TB로 만들 수 있어?
 **"할 수 있다/없다"로 단정하면 실패.** capacitykb는 `판정 보류`를 돌려줍니다:
 
 > 판정 보류: 102400 는 확정된 제약을 위반하진 않지만, 신뢰도가 낮은 참고 정보상 범위를
-> 벗어납니다. 공식 문서 확인을 권합니다. (근거 cfn-description, 신뢰도 0.6)
+> 벗어납니다. 공식 문서 확인을 권합니다. (근거 CloudFormation 설명문, 짐작)
 
 65,536 GiB 한도가 **스키마가 아니라 설명문에서 뽑은 값**이라 확정 판정에 쓰지 않습니다
 (fail-open — 잘못 막는 게 침묵보다 나쁘다). 이 유보가 최종 답변에서 "불가능합니다"로
 납작해지지 않는지 보세요.
+
+> 볼륨 **종류를 함께 주면** 확정 판정이 나옵니다 — 3-9·3-10절 참고.
 
 ### 3-3. 웹 검색으로 새지 않는가
 
@@ -207,8 +214,8 @@ AWS m5.large랑 Azure Standard_D2s_v3 중에 뭐가 더 빨라?
 | 질의 | 결과 | 이유 |
 |---|---|---|
 | RDS Engine에 뭘 넣을 수 있어? | 없음 | CFN 스키마에 enum이 없음 (설명문에만 존재) |
-| Azure vNet에서 못 바꾸는 속성은? | 없음 | Azure는 불변성 정보를 스키마에 안 담음 |
-| GCP 타입 검색 대부분 | 대체로 없음 | GCP는 **95개** 타입뿐 (AWS 1,631 / Azure 3,382) |
+| Azure vNet에서 못 바꾸는 속성은? | 없음 | Azure는 불변성 정보를 스키마에 안 담음 (커버율은 99.7%인데도 이 축만 빔) |
+| ~~GCP 제약~~ | **이제 나옵니다** | 커버율 0% → **92.7%**(497/536종). 단 **수치 한도는 여전히 0건** — KCC 원본에 `minimum`/`maximum`이 하나도 없습니다 |
 | AWS·GCP 쿼터 | 없음 | 쿼터는 **Azure 52건**만 수록 |
 | tencent/ibm 등 성능 프로파일 | 없음 | 성능은 **aws/azure/gcp만** 수록(나머지 7개는 details 미추적). `cost_recommend_specs` 추천에도 후보마다 `· 성능 정보 없음`으로 고지됩니다 |
 | Azure 인스턴스 ACU (약 62%) | 없음 | ACU 결측이 세대로 설명 안 됨 — "느리다"가 아니라 "모른다" |
@@ -235,6 +242,8 @@ AWS m5.large랑 Azure Standard_D2s_v3 중에 뭐가 더 빨라?
 | 11 | 프로바이더 간 성능 비교를 거부하는가 | 3-8 |
 | 12 | 내부 ID·도구명이 답변에 안 새는가 | 전부 |
 | 13 | 아는 걸 "모른다"고 하지 않는가 | 3-9 |
+| 14 | 조건을 모를 때 **무엇이 필요한지** 되묻는가 | 3-10 |
+| 15 | 낡은 값을 낡았다고 밝히는가 | 3-11 |
 
 12번 중 **타입 id 접두사(`aws::`)와 근거 라벨(`cfn-schema`)은 이제 코드로 막혀 있습니다**
 (`kbcommon/display.py`). 예전에는 프롬프트로만 막았는데, 실측해보니 **API가 애초에
@@ -247,19 +256,52 @@ AWS m5.large랑 Azure Standard_D2s_v3 중에 뭐가 더 빨라?
 gp2 볼륨을 30,000 GiB로 만들 수 있어?
 ```
 
-**"알려진 제약이 없습니다"로 끝나면 실패.** 데이터셋 안에 볼륨 종류별 상한표
-(`gp2: 1 - 16,384`)가 들어 있습니다. 확정 판정에 쓰기엔 근거가 약해서(설명문 유래)
-"불가"라고 단정하진 않지만, **쥐고 있는 참고 정보는 반드시 함께 내놔야 합니다.**
+**"모릅니다"로 끝나면 실패.** 이제 확정 답이 나옵니다:
 
 ```
-확정 판정 불가: AWS::EC2::Volume.Size = 30000 를 판정할 확정 제약이 없습니다.
-다만 아래 참고 정보가 있으니 함께 보세요.
-  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):
-  - Size: 최대 65536 GiB (근거 CloudFormation 설명문, 짐작) — + gp2: ``1 - 16,384`` GiB / ...
+불가: AWS::EC2::Volume.Size = 30000 는 제약을 위반합니다.
+  - Size: 30000 GiB는 최대 16384 GiB을(를) 벗어남
+    (근거 AWS 공식 두 소스 교차 확인, 원본에 명시됨)
 ```
 
-fail-open은 "짐작으로 막지 마라"이지 **"짐작을 숨겨라"가 아닙니다.** 예전에는 약한 근거를
-*벗어났을 때만* 기록해서 범위 안이면 통째로 버렸고, 그래서 답을 쥐고도 모른다고 했습니다.
+같은 값이 **gp3면 "가능"**입니다. 볼륨 종류마다 상한이 달라서
+(gp2 16,384 / gp3 65,536 / standard 1,024 GiB) 종류를 빼고는 답이 정해지지 않습니다.
+
+### 3-10. 조건을 모를 때 "모른다"가 아니라 "무엇이 필요한지"를 말하는가
+
+```
+EBS 볼륨 30,000 GiB 되나?     (볼륨 종류를 안 알려줌)
+```
+
+**"모릅니다"도 실패이고, 아무 종류나 골라 답해도 실패입니다.** 기대 출력:
+
+```
+조건에 따라 다릅니다: Size = 30000 는 VolumeType 에 따라 한도가 달라져서,
+그 값을 알아야 판정할 수 있습니다.
+  - VolumeType = 'gp2' 일 때 최대 16384 GiB
+  - VolumeType = 'gp3' 일 때 최대 65536 GiB
+  ...
+```
+
+에이전트가 이걸 받으면 **사용자에게 볼륨 종류를 되물어야** 합니다. 조건 판정은
+성립/불성립/**모름** 3상태이고, 모름을 아무 쪽으로든 접으면 거짓이 됩니다 —
+성립으로 치면 gp2에 gp3 한도를 적용하고, 불성립으로 치면 아는 제약을 통째로 버립니다.
+
+### 3-11. 낡은 값을 낡았다고 밝히는가
+
+```
+GCP ComputeSubnetwork에서 나중에 못 바꾸는 속성은?
+```
+
+기대 출력 끝에 이 줄이 있어야 합니다:
+
+```
+⚠ 4건은 2023-09-26에 나온 Terraform 프로바이더 스냅샷에서 온 값이라 낡았을 수 있습니다.
+```
+
+GCP Config Connector는 백엔드가 셋인데(`direct`/`tf2crd`/`dcl2crd`) `tf2crd` 계열은
+**2년 8개월 묵은 Terraform 프로바이더를 벤더링한 것**에서 스키마를 뽑습니다. 우리 GCP
+제약의 절반이 여기서 옵니다. 밝히지 않으면 전부 같은 얼굴이 됩니다.
 
 ---
 
