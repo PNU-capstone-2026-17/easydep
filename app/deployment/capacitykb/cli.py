@@ -6,6 +6,7 @@
     python -m capacitykb build --source azure --providers microsoft.network
     python -m capacitykb build --source azure-quota
     python -m capacitykb build --source gcp
+    python -m capacitykb build --source aws-limits
     python -m capacitykb query --limits AWS::EC2::Volume --property Size
     python -m capacitykb query --check AWS::EC2::Volume --property Size --value 100000
     python -m capacitykb query --immutable AWS::EC2::Subnet
@@ -27,6 +28,7 @@ DEFAULT_OUTPUTS = {
     "azure": Path("output") / "azure-capacity.json",
     "azure-quota": Path("output") / "azure-quota.json",
     "gcp": Path("output") / "gcp-capacity.json",
+    "aws-limits": Path("output") / "aws-limits.json",
 }
 
 
@@ -96,6 +98,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         if args.zip_url:
             kwargs["zip_url"] = args.zip_url
         cfn.build(output, **kwargs)
+    elif args.source == "aws-limits":
+        from capacitykb.parsers import aws_limits
+
+        aws_limits.build(output, refresh=args.refresh)
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 

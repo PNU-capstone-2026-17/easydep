@@ -26,6 +26,7 @@ CAPACITY_FILES = (
     "azure-capacity.json",
     "azure-quota.json",
     "gcp-capacity.json",
+    "aws-limits.json",
 )
 
 _MISSING_MESSAGE = (
@@ -177,19 +178,37 @@ def check(
     property_name: str,
     value: float | str,
     *,
+    context: dict | None = None,
     output_dir: Path | str = DEFAULT_OUTPUT_DIR,
 ) -> str:
-    """값이 허용 범위인지 판정한다."""
+    """값이 허용 범위인지 판정한다.
+
+    Args:
+        context: 함께 정한 다른 속성들 (`{"VolumeType": "gp2"}`). 한도가 다른 속성에
+            따라 달라지면 이걸 줘야 판정할 수 있다 — EBS 볼륨 크기 상한은
+            gp2 16,384 / gp3 65,536 / standard 1,024 GiB로 제각각이라, 문맥 없이는
+            어느 값을 적용할지 정할 수 없다.
+    """
     capacity = load_merged(output_dir)
     if capacity is None:
         return _MISSING_MESSAGE
     type_id, error = _resolve(capacity, resource_type)
     if type_id is None:
         return error
-    result = check_value(capacity, type_id, property_name, value)
+    result = check_value(capacity, type_id, property_name, value, context=context)
     target = f"{display(type_id)}.{property_name} = {value}"
 
     if result.verdict == "unknown":
+        if result.unresolved:
+            # 조건을 모를 뿐 아는 건 있다. 이걸 "모른다"로 뭉개면 답을 쥐고도 안 내놓는
+            # 것이 된다 — 어느 조건에서 얼마인지를 보여주고, 무엇을 알려주면 판정할 수
+            # 있는지까지 말한다.
+            asked = sorted({u.split(" =", 1)[0] for u in result.unresolved})
+            return "\n".join([
+                f"조건에 따라 다릅니다: {target} 는 {', '.join(asked)} 에 따라 한도가 "
+                "달라져서, 그 값을 알아야 판정할 수 있습니다.",
+                *(f"  - {u}" for u in result.unresolved),
+            ])
         if not result.references:
             return (
                 f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "
@@ -218,6 +237,9 @@ def check(
         lines.append("  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):")
         lines.extend(f"  - {a}" for a in result.advisories)
         lines.extend(f"  - {r}" for r in result.references)
+    if result.unresolved:
+        lines.append("  다른 조건에서는 한도가 다릅니다:")
+        lines.extend(f"  - {u}" for u in result.unresolved)
     return "\n".join(lines)
 
 

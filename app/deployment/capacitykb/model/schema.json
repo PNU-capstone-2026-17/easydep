@@ -85,10 +85,24 @@
               "kcc-immutable-prefix",
               "kcc-cel-immutable",
               "tpg-schema",
+              "aws-price-list",
+              "botocore-doc",
+              "aws-cross-checked",
               "swagger-field",
               "curated",
               "heuristic"
             ]
+          },
+          "condition": {
+            "type": ["object", "null"],
+            "required": ["property", "op", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "property": {"type": "string", "minLength": 1},
+              "op": {"enum": ["eq"]},
+              "value": {}
+            },
+            "description": "이 제약이 언제 적용되는가. 없으면 무조건. EBS 볼륨 크기처럼 다른 속성 값에 따라 한도가 달라지는 경우에 쓴다 — min/max 한 쌍으로 뭉개면 어떤 실제 설정에도 해당하지 않는 봉투가 된다. 지금은 평평한 단일 조건(op=eq)만 담는다."
           },
           "backend": {
             "type": ["string", "null"],

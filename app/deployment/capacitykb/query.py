@@ -84,6 +84,13 @@ class CheckResult:
     violations: list[str]
     advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
     checked: int
+    unresolved: list[str] = field(default_factory=list)
+    """조건부 제약인데 **조건을 몰라 판정에 못 쓴** 것들.
+
+    버리면 안 된다 — "볼륨 종류에 따라 한도가 다르다"는 사실 자체가 답의 일부다.
+    문맥을 주면(`context={"VolumeType": "gp2"}`) 판정에 들어간다.
+    """
+
     references: list[str] = field(default_factory=list)
     """신뢰도가 낮은 근거 중 **벗어나지 않은** 것들.
 
@@ -140,6 +147,33 @@ def _reference(constraint: Constraint, label: str) -> str:
     )
 
 
+def _conditional(constraint: Constraint) -> str:
+    unit = f" {constraint.unit}" if constraint.unit else ""
+    cond = constraint.condition or {}
+    label = {"min": "최소", "max": "최대"}.get(constraint.kind, constraint.kind)
+    return (
+        f"{cond.get('property')} = {cond.get('value')!r} 일 때 "
+        f"{label} {constraint.value}{unit} "
+        f"(근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)})"
+    )
+
+
+def _condition_holds(constraint: Constraint, context: dict | None) -> bool | None:
+    """조건이 성립하는가. 모르면 None.
+
+    - 조건이 없으면 언제나 성립(True).
+    - 조건이 있는데 문맥에 그 속성이 없으면 **모른다**(None) — 성립한다고도,
+      안 한다고도 하면 안 된다. 여기서 True로 치면 gp2 볼륨에 gp3 한도를 적용하게 되고,
+      False로 치면 아는 제약을 통째로 버리게 된다.
+    """
+    cond = constraint.condition
+    if cond is None:
+        return True
+    if not context or cond.get("property") not in context:
+        return None
+    return context[cond["property"]] == cond.get("value")
+
+
 def check_value(
     capacity: CapacitySet,
     type_id: str,
@@ -147,6 +181,7 @@ def check_value(
     value,
     *,
     facts_only: bool = True,
+    context: dict | None = None,
 ) -> CheckResult:
     """프로퍼티에 넣으려는 값이 허용 범위인지 판정한다.
 
@@ -155,10 +190,20 @@ def check_value(
     """
     violations: list[str] = []
     advisories: list[str] = []
-    references: list[str] = []
+    references: list[tuple[str, str]] = []
+    unresolved: list[str] = []
+    strong: set[str] = set()
     checked = 0
 
     for constraint in capacity.for_property(type_id, prop):
+        holds = _condition_holds(constraint, context)
+        if holds is False:
+            continue  # 다른 종류에 걸린 제약이다
+        if holds is None:
+            # 조건을 모르면 판정에 못 쓴다. 다만 **버리지도 않는다** —
+            # "볼륨 종류에 따라 다르다"는 것 자체가 사용자가 알아야 할 정보다.
+            unresolved.append(_conditional(constraint))
+            continue
         weak = facts_only and not constraint.is_fact
         breached = False
         label = ""
@@ -189,8 +234,9 @@ def check_value(
             if breached:
                 advisories.append(_violation(constraint, value, label) + " [참고]")
             else:
-                references.append(_reference(constraint, label))
+                references.append((constraint.kind, _reference(constraint, label)))
             continue
+        strong.add(constraint.kind)
         checked += 1
         if breached:
             violations.append(_violation(constraint, value, label))
@@ -200,7 +246,11 @@ def check_value(
         violations=violations,
         advisories=advisories,
         checked=checked,
-        references=references,
+        # 같은 종류(min/max)에 확정 근거가 이미 있으면 약한 참고는 노이즈다.
+        # EBS에서 실제로 그랬다 — 종류별 확정 한도를 얻고 나서도 옛 봉투
+        # (`최대 65536`, 어느 볼륨에도 안 맞는 값)가 계속 따라붙었다.
+        references=[text for kind, text in references if kind not in strong],
+        unresolved=unresolved,
     )
 
 

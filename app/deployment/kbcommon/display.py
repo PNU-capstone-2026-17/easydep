@@ -43,6 +43,9 @@ _EVIDENCE_NAMES = {
     "kcc-cel-immutable": "GCP Config Connector 검증 규칙(CEL)",
     "kcc-description": "GCP Config Connector 설명문",
     "tpg-schema": "Terraform Google 프로바이더 스키마",
+    "aws-price-list": "AWS 가격표 API",
+    "botocore-doc": "AWS SDK 설명문",
+    "aws-cross-checked": "AWS 공식 두 소스 교차 확인",
     "cb-spider-driver": "CB-Spider 드라이버",
 }
 

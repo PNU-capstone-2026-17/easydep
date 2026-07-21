@@ -77,6 +77,20 @@ class Constraint:
     값 예: `direct` | `tf2crd` | `dcl2crd` (KCC). 안 쓰는 소스는 None.
     """
 
+    condition: dict | None = None
+    """**이 제약이 언제 적용되는가.** `{"property": ..., "op": "eq", "value": ...}`.
+
+    없으면 무조건이다. 있으면 "그 속성이 이 값일 때만" 이 제약이 산다.
+
+    필요한 이유는 **봉투 붕괴** 때문이다. EBS 볼륨 크기 한도는 종류마다 다른데
+    (gp2 16,384 / gp3 65,536 / standard 1,024 GiB), 이걸 min/max 한 쌍으로 뭉개면
+    최소 중 최소·최대 중 최대를 취해 **어떤 실제 설정에도 해당하지 않는 범위**가 된다.
+    `standard` 볼륨에 5,000 GiB는 불가능한데 그 봉투는 통과시킨다.
+
+    조건은 **평평한 단일 조건**만 담는다. 중첩·AND/OR를 지금 넣지 않는 이유는
+    실제로 필요한 사례가 손에 꼽기 때문이다 — 필요해지면 그때 넓힌다.
+    """
+
     value_type: str | None = None
     unit: str | None = None
     conditional: bool = False
@@ -87,9 +101,19 @@ class Constraint:
             object.__setattr__(self, "basis", basis_of(self.evidence))
 
     @property
-    def key(self) -> tuple[str, str, str]:
-        """중복 판정 키. 같은 키면 **사실인 쪽**을 남긴다."""
-        return (self.type_id, self.property, self.kind)
+    def key(self) -> tuple:
+        """중복 판정 키. 같은 키면 **사실인 쪽**을 남긴다.
+
+        조건이 키에 들어가야 한다 — 안 그러면 볼륨 종류별 6개 레코드가 하나로
+        접혀서, 조건부 제약을 담으려던 것이 도로 봉투가 된다.
+        """
+        if self.condition is None:
+            return (self.type_id, self.property, self.kind)
+        cond = self.condition
+        return (
+            self.type_id, self.property, self.kind,
+            cond.get("property"), cond.get("op"), json.dumps(cond.get("value"), sort_keys=True),
+        )
 
     @property
     def is_fact(self) -> bool:
@@ -108,6 +132,7 @@ class Constraint:
             "evidence": self.evidence,
             "basis": self.basis,
             "backend": self.backend,
+            "condition": self.condition,
         }
 
     @classmethod
@@ -124,6 +149,7 @@ class Constraint:
             conditional=data.get("conditional", False),
             note=data.get("note"),
             backend=data.get("backend"),
+            condition=data.get("condition"),
         )
 
 

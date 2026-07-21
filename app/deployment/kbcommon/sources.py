@@ -90,6 +90,30 @@ SOURCES: dict[str, Source] = {
         pin="v1.153.0",
         note="파서가 뒤에 /config/<경로>를 붙인다. --tag로 바꿀 수 있다.",
     ),
+    "aws-price-list": Source(
+        key="aws-price-list",
+        url=(
+            "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/"
+            "20260721012550/ap-east-2/index.json"
+        ),
+        pin_kind="tag",
+        pin="20260721012550",
+        note=(
+            "버전 URL이 있어 고정한다(`current`는 움직인다). 볼륨 종류 속성은 리전 "
+            "불변이라 작은 리전에서 받는다(43MB, 캐시됨). 값이 계속 정확하리란 "
+            "계약상 보장은 없으므로 sha256을 함께 남겨 다음 빌드와 대조한다."
+        ),
+    ),
+    "botocore": Source(
+        key="botocore",
+        url=(
+            "https://raw.githubusercontent.com/boto/botocore/1.43.52/"
+            "botocore/data/ec2/2016-11-15/service-2.json"
+        ),
+        pin_kind="tag",
+        pin="1.43.52",
+        note="shape에는 min/max가 없다(Integer = {\"type\":\"integer\"}). 설명문이 유일한 출처다.",
+    ),
     "tpg-provider": Source(
         key="tpg-provider",
         url=(
