@@ -50,6 +50,9 @@ _ATTRS = {
     "AtLeastOneOf": re.compile(r"AtLeastOneOf:\s*\[\]string\{([^}]*)\}"),
     "ConflictsWith": re.compile(r"ConflictsWith:\s*\[\]string\{([^}]*)\}"),
     "RequiredWith": re.compile(r"RequiredWith:\s*\[\]string\{([^}]*)\}"),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
 }
 _GROUP_KINDS = {
     "ExactlyOneOf": "exactly_one_of",
@@ -62,10 +65,13 @@ _FORCE_NEW_IF = re.compile(
     r"customdiff\.ForceNewIf(?:Change)?\(\s*\"([^\"]+)\"\s*,\s*([A-Za-z0-9_.]+)"
 )
 
-#: Terraform 쪽에만 있는 필드. KCC 경로로 옮길 대상이 아니다.
+#: Terraform/Magic Modules 쪽에만 있는 개념. GCP API의 필드가 아니라 옮길 대상이 아니다.
+#: `deletion_policy`는 Terraform이 리소스를 지울 때의 동작을 정하는 것이고(309개 리소스),
+#: `params`는 MM이 붙이는 부가 블록이다.
 _TF_ONLY = {
     "project", "self_link", "id", "timeouts", "labels", "terraform_labels",
     "effective_labels", "annotations", "effective_annotations", "deletion_protection",
+    "deletion_policy", "params",
 }
 
 
@@ -193,6 +199,7 @@ class Report:
         self.unmapped_paths = 0
         self.tf_only_paths = 0
         self.empty_groups = 0
+        self.output_only = 0
         self.force_new_if: list[tuple[str, str, str]] = []
         self.seen: dict[str, set[str]] = {}
         """kind → 프로바이더가 **본** 속성 경로.
@@ -242,6 +249,38 @@ def parse_provider(
     return capacity, report
 
 
+def _is_output_only(body: str) -> bool:
+    """서버가 채우기만 하는 필드인가 (`Computed`이면서 사용자가 못 넣는 것).
+
+    `Computed: true` 하나만으로는 판단하면 안 된다 — `Optional`과 함께 붙으면
+    "안 넣으면 서버가 채운다"는 뜻이라 사용자가 넣을 수 있다(`Subnetwork.purpose`가 그렇다).
+    """
+    return bool(
+        _ATTRS["Computed"].search(body)
+        and not _ATTRS["Optional"].search(body)
+        and not _ATTRS["Required"].search(body)
+    )
+
+
+def _match_kcc_spelling(
+    prop: str, known: set[str], lowered: dict[str, str]
+) -> str | None:
+    """KCC가 쓰는 철자로 맞춰 준다. 못 맞추면 None.
+
+    Terraform은 snake_case라 두문자어의 대소문자 정보를 잃는다. `peering_cidr_range`를
+    기계적으로 바꾸면 `peeringCidrRange`가 되지만 KCC는 `peeringCIDRRange`라고 쓴다
+    (`locationURI` · `cloudSQL` · `iamRoleID`도 같다). 실측 108건.
+
+    손으로 두문자어 표를 만들지 않는 이유는, 그게 **우리 취향으로 목록을 짜는 일**이라
+    새 두문자어가 나올 때마다 조용히 틀리기 때문이다. 대신 **KCC가 실제로 쓰는 철자를
+    찾아서** 그대로 쓴다 — 우리가 없는 이름을 지어내는 게 아니라 있는 이름에 붙이는
+    것이므로 안전하다.
+    """
+    if prop in known:
+        return prop
+    return lowered.get(prop.lower())
+
+
 def _emit(text, match, kind, capacity, report, kcc_paths) -> None:
     anchor = text.find("Schema: " + _SCHEMA_MAP, match.end())
     if anchor < 0:
@@ -251,6 +290,7 @@ def _emit(text, match, kind, capacity, report, kcc_paths) -> None:
 
     type_id = make_type_id("gcp", kind)
     known = kcc_paths.get(kind) if kcc_paths else None
+    lowered = {k.lower(): k for k in known} if known is not None else {}
 
     def add(prop: str, ckind: str, value, note: str | None = None) -> None:
         capacity.add_constraint(
@@ -265,10 +305,18 @@ def _emit(text, match, kind, capacity, report, kcc_paths) -> None:
         if head in _TF_ONLY:
             report.tf_only_paths += 1
             continue
-        prop = tf_path_to_kcc(tf_path)
-        if known is not None and prop not in known:
-            report.unmapped_paths += 1
+        if _is_output_only(body):
+            # 서버가 채우는 값이라 "사용자가 넣을 수 있는 값의 제약"이 아니다.
+            # KCC도 이런 필드를 spec이 아니라 status에 두므로 애초에 붙을 자리가 없다.
+            # 이름 목록을 손으로 만들지 않고 **프로바이더 자신의 표시**로 거른다.
+            report.output_only += 1
             continue
+        prop = tf_path_to_kcc(tf_path)
+        if known is not None:
+            prop = _match_kcc_spelling(prop, known, lowered)
+            if prop is None:
+                report.unmapped_paths += 1
+                continue
 
         report.seen.setdefault(kind, set()).add(prop)
         if _ATTRS["ForceNew"].search(body):
@@ -302,9 +350,11 @@ def _emit(text, match, kind, capacity, report, kcc_paths) -> None:
     body_end = _scan(text, match.end() - 1)
     for tf_path, pred in _FORCE_NEW_IF.findall(text[match.end():body_end]):
         prop = tf_path_to_kcc(tf_path)
-        if known is not None and prop not in known:
-            report.unmapped_paths += 1
-            continue
+        if known is not None:
+            prop = _match_kcc_spelling(prop, known, lowered)
+            if prop is None:
+                report.unmapped_paths += 1
+                continue
         add(prop, "mutability", "update_restricted",
             note=f"조건부로만 재생성된다 (판정 함수: {pred})")
         report.force_new_if.append((kind, prop, pred))

@@ -368,10 +368,14 @@ def _add_provider(capacity: CapacitySet, *, refresh: bool) -> CapacitySet:
         f"새로 추가 {stat['added']:,}건"
     )
     # 조용히 자르지 않는다 — 못 붙인 것을 세어 밝힌다.
+    # "못 붙임"이라 뭉뚱그리면 우리 실패처럼 읽힌다. 대부분은 우리 실패가 아니라
+    # 프로바이더가 KCC보다 새 필드를 안다는 뜻이다(실측 확인: KCC v1.153.0의
+    # AccessContextManagerAccessLevel에 vpcNetworkSources가 0건, 프로바이더엔 있다).
     print(
-        f"  못 붙임: KCC에 없는 리소스 {len(report.unmapped_kinds)}종 · "
-        f"KCC에 없는 속성 경로 {report.unmapped_paths:,}건 · "
-        f"Terraform 전용 필드 {report.tf_only_paths:,}건",
+        f"  안 담은 것: KCC에 없는 리소스 {len(report.unmapped_kinds)}종 · "
+        f"프로바이더엔 있고 KCC v1.153.0엔 없는 속성 {report.unmapped_paths:,}건 · "
+        f"Terraform 전용 필드 {report.tf_only_paths:,}건 · "
+        f"서버가 채우는 출력 필드 {report.output_only:,}건",
         file=sys.stderr,
     )
     if report.empty_groups:

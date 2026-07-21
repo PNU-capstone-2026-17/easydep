@@ -337,3 +337,79 @@ def test_absence_alone_is_not_enough(tmp_path: Path) -> None:
     merged, stat = merge_provider(kcc, prov, report)
     assert stat["dropped_stale_immutable"] == 0
     assert len([c for c in merged.constraints if c.property == "somethingElse"]) == 1
+
+
+GO_OUTPUT = '''
+func ResourceX() *schema.Resource {
+	return &schema.Resource{
+		Schema: map[string]*schema.Schema{
+			"create_time": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+			"purpose": {
+				Type:     schema.TypeString,
+				Computed: true,
+				Optional: true,
+				ForceNew: true,
+			},
+			"deletion_policy": {
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
+		},
+	}
+}
+'''
+
+
+def _tar_with(tmp_path: Path, body: str, name: str = "resource_x.go") -> Path:
+    import io as _io
+    import tarfile
+    path = tmp_path / f"{name}.tar.gz"
+    with tarfile.open(path, "w:gz") as tar:
+        data = body.encode("utf-8")
+        info = tarfile.TarInfo(f"x/google/services/compute/{name}")
+        info.size = len(data)
+        tar.addfile(info, _io.BytesIO(data))
+    return path
+
+
+def test_output_only_fields_are_skipped(tmp_path: Path) -> None:
+    """서버가 채우기만 하는 필드는 '사용자가 넣을 값의 제약'이 아니다.
+
+    이름 목록을 손으로 만들지 않고 프로바이더 자신의 Computed 표시로 거른다.
+    실측 1,647건이 여기 해당했다.
+    """
+    got, report = tpg.parse_provider(_tar_with(tmp_path, GO_OUTPUT), kcc_kinds={"X"})
+    props = {c.property for c in got.constraints}
+    assert "createTime" not in props
+    assert report.output_only == 1
+
+
+def test_computed_plus_optional_is_still_settable(tmp_path: Path) -> None:
+    """Computed 하나로 판단하면 안 된다 — Optional과 함께면 사용자가 넣을 수 있다."""
+    got, _ = tpg.parse_provider(_tar_with(tmp_path, GO_OUTPUT), kcc_kinds={"X"})
+    assert ("purpose", "mutability") in {(c.property, c.kind) for c in got.constraints}
+
+
+def test_terraform_only_concepts_are_skipped(tmp_path: Path) -> None:
+    """deletion_policy는 Terraform이 지울 때의 동작이지 GCP 필드가 아니다(309개 리소스)."""
+    got, report = tpg.parse_provider(_tar_with(tmp_path, GO_OUTPUT), kcc_kinds={"X"})
+    assert "deletionPolicy" not in {c.property for c in got.constraints}
+    assert report.tf_only_paths == 1
+
+
+def test_kcc_spelling_wins_for_acronyms(tmp_path: Path) -> None:
+    """TF는 snake_case라 두문자어 대소문자를 잃는다. KCC가 쓰는 철자에 맞춘다."""
+    body = GO_OUTPUT.replace('"create_time"', '"peering_cidr_range"')
+    got, _ = tpg.parse_provider(
+        _tar_with(tmp_path, body), kcc_kinds={"X"},
+        kcc_paths={"X": {"peeringCIDRRange", "purpose"}},
+    )
+    # Computed 전용이라 안 담기지만, 철자 매칭 자체는 purpose로 확인한다
+    assert "purpose" in {c.property for c in got.constraints}
+    assert tpg._match_kcc_spelling("peeringCidrRange", {"peeringCIDRRange"},
+                                   {"peeringcidrrange": "peeringCIDRRange"}) == "peeringCIDRRange"
+    assert tpg._match_kcc_spelling("nope", {"peeringCIDRRange"}, {}) is None
