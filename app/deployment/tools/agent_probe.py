@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import re
 import time
@@ -333,6 +334,19 @@ def _tool_names(result) -> list[str]:
     ]
 
 
+@functools.lru_cache(maxsize=1)
+def _known_tool_names() -> frozenset[str]:
+    """우리 도구 이름 전체. **명단을 손으로 적지 않는다** — 도구를 늘리면 자동으로 는다.
+
+    답변이 부르지도 않은 도구를 출처로 대는 걸 잡는 데 쓴다(`claim_check.misattributed`).
+    """
+    from nim_agent.agent import LOCAL_TOOLS
+
+    return frozenset(
+        name for tool in LOCAL_TOOLS if (name := getattr(tool, "name", None))
+    )
+
+
 def _tool_outputs(result) -> list[str]:
     """도구가 **실제로 돌려준 문자열**들.
 
@@ -387,7 +401,10 @@ async def run_probes(
                 tools, answer, error, failures, flaky = tools2, answer2, "", [], True
                 outputs = outputs2
                 break
-        verdict = claim_check.check(answer, outputs, probe.query)
+        verdict = claim_check.check(
+            answer, outputs, probe.query,
+            called_tools=tools, known_tools=_known_tool_names(),
+        )
         record = Result(
             probe=probe, tools=tools, answer=answer, error=error,
             tool_outputs=outputs,
@@ -411,13 +428,19 @@ def _report(r: Result) -> None:
         print(f"  ✗ {line}")
     if r.error:
         print(f"  ✗ {r.error}")
-    if r.unsupported:
+    # **출처 세탁은 따로 낸다.** 숫자 대조는 오탐이 있는 신호지만, 부르지도 않은 도구를
+    # 출처로 대는 것은 그 자체로 결함이다 — 같은 줄에 묶으면 묻힌다.
+    laundered = [x for x in r.unsupported if x.startswith("[attribution]")]
+    if laundered:
+        print(f"  ✗ 출처 세탁: 부르지 않은 도구를 출처로 댐 — {', '.join(laundered)}")
+    rest = [x for x in r.unsupported if not x.startswith("[attribution]")]
+    if rest:
         # 실패가 아니라 신호다. 답변이 도구가 준 적 없는 구체값을 말하고 있다.
-        shown = ", ".join(r.unsupported[:6])
-        more = f" 외 {len(r.unsupported) - 6}개" if len(r.unsupported) > 6 else ""
+        shown = ", ".join(rest[:6])
+        more = f" 외 {len(rest) - 6}개" if len(rest) > 6 else ""
         print(
             f"  ⚑ 주장 대조: 구체값 {r.claims_checked}개 중 "
-            f"{len(r.unsupported)}개가 도구 출력에 없음 — {shown}{more}"
+            f"{len(rest)}개가 도구 출력에 없음 — {shown}{more}"
         )
     if r.answer:
         cut = r.answer[:400]

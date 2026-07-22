@@ -50,7 +50,10 @@ _IDENTIFIER = re.compile(
 )
 
 #: 두 자리 이상의 수만 본다. 1·2·3은 목록 번호로 흔해서 신호가 안 된다.
-_NUMBER = re.compile(_LEFT + r"\d[\d,]{1,}(?:\.\d+)?" + _RIGHT)
+#: **반드시 숫자로 끝나야 한다.** 예전 패턴은 `[\d,]{1,}`이라 쉼표로 끝날 수 있었고,
+#: "vCPU 8, x86_64"에서 `8,`를 토큰으로 잡아 도구 출력의 `8`과 안 맞았다 —
+#: 근거 있는 값이 근거 없다고 나오는 오탐이다(실측 N3).
+_NUMBER = re.compile(_LEFT + r"\d[\d,]*\d(?:\.\d+)?" + _RIGHT)
 
 
 def normalize(text: str) -> str:
@@ -59,9 +62,13 @@ def normalize(text: str) -> str:
     return re.sub(r"(?<=\d)[, ](?=\d)", "", text)
 
 
+#: 도구 이름 꼴 — `cost_describe_spec` 처럼 소문자와 밑줄. 답변에서 이걸 찾는다.
+_TOOL_NAME = re.compile(_LEFT + r"[a-z]+(?:_[a-z]+){1,3}" + _RIGHT)
+
+
 @dataclass
 class Finding:
-    kind: str          # "number" | "identifier"
+    kind: str          # "number" | "identifier" | "attribution"
     token: str
     context: str
 
@@ -84,10 +91,52 @@ def _context_of(text: str, token: str, width: int = 34) -> str:
     return text[start : index + len(token) + width].replace("\n", " ").strip()
 
 
-def check(answer: str, tool_outputs: list[str], question: str = "") -> Verdict:
+def misattributed(
+    answer: str,
+    called: list[str] | tuple[str, ...],
+    known: frozenset[str],
+    grounded: str = "",
+) -> list[Finding]:
+    """답변이 **부르지도 않은 우리 도구**를 출처로 댔는가.
+
+    가장 위험한 형태를 결정론적으로 잡는다. 실측에서 모델이 GPU 사양 표를 지어내고
+    *"cap_allowed_values 지식베이스에서 조회한 결과"*라고 적었다 — 그 도구는 그 턴에
+    호출되지 않았다. **`basis`·소스 핀·교차 확인이 통째로 무의미해지는 실패**다.
+
+    숫자 대조와 달리 이건 오탐이 거의 없다. 우리 도구 이름은 답변에 우연히 나올 수
+    없고, 부른 도구를 언급하는 것은 정당하므로 거른다.
+
+    `grounded`는 도구 출력 전체다. **도구가 스스로 다른 도구를 가리키는 경우**를
+    거르는 데 쓴다 — `cost_describe_spec`이 "성능은 `perf_instance_profile`로 보세요"를
+    붙이므로, 답변이 그걸 옮긴 것을 세탁으로 세면 우리가 만든 축 연결이 매번 걸린다.
+    """
+    used = {name.strip() for name in called}
+    out, seen = [], set()
+    text = normalize(answer)
+    for match in _TOOL_NAME.finditer(text):
+        token = match.group(0)
+        if token in seen or token in used or token not in known:
+            continue
+        if token in grounded:
+            continue  # 도구 출력이 그 이름을 먼저 말했다
+        seen.add(token)
+        out.append(Finding("attribution", token, _context_of(text, token)))
+    return out
+
+
+def check(
+    answer: str,
+    tool_outputs: list[str],
+    question: str = "",
+    *,
+    called_tools: list[str] | tuple[str, ...] = (),
+    known_tools: frozenset[str] = frozenset(),
+) -> Verdict:
     """답변의 구체값 중 **어디에도 근거가 없는 것**을 찾는다.
 
     질문에 있던 값은 세지 않는다 — 사용자가 준 값을 되풀이하는 건 주장이 아니다.
+
+    `known_tools`를 주면 **출처 세탁**도 함께 본다(`misattributed`).
     """
     haystack = normalize("\n".join(tool_outputs))
     asked = normalize(question)
@@ -108,6 +157,11 @@ def check(answer: str, tool_outputs: list[str], question: str = "") -> Verdict:
             if token in haystack:
                 continue
             verdict.unsupported.append(Finding(kind, token, _context_of(text, token)))
+
+    if known_tools:
+        found = misattributed(answer, called_tools, known_tools, haystack)
+        verdict.checked += len(found)
+        verdict.unsupported.extend(found)
     return verdict
 
 
