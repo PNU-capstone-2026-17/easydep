@@ -1,8 +1,13 @@
+"""산출물 검증. PlantUML은 jar 문법 검사로, API 명세는 필수 필드 검사로 확인한다.
+
+두 검증 모두 여러 산출물이 공유하는 판정 형식({syntax_valid, syntax_errors})을
+돌려주므로 common에 둔다.
+"""
 from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.plantuml_error import check_plantuml_syntax
+from app.design.services.common.plantuml import check_plantuml_syntax
 
 
 def validate_puml_artifact(puml_text: str) -> dict[str, Any]:

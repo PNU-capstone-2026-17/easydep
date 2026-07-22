@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
-from app.design.services.bce_class_extractor import extract_bce_classes_from_scenario
-from app.design.services.artifact_validation import validate_puml_artifact
-from app.design.services.plantuml_class_diagram import generate_plantuml_from_bce_json
-from app.design.services.llm_artifacts import revise_puml_with_llm
+from app.design.services.class_diagram.extractor import extract_bce_classes_from_scenario
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.common.revision import revise_puml_with_llm
+from app.design.services.common.validation import validate_puml_artifact
 
 
 def extract_class_elements(state: ArchitectureState) -> ArchitectureState:

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
-from app.design.services.artifact_validation import validate_api_spec, validate_puml_artifact
-from app.design.services.llm_artifacts import (
-    generate_api_spec_with_llm,
+from app.design.services.api_spec.generator import generate_api_spec_with_llm
+from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
+from app.design.services.deployment_diagram.generator import (
     generate_deployment_diagram_with_llm,
-    generate_erd_with_llm,
-    generate_sequence_diagram_with_llm,
 )
+from app.design.services.erd.generator import generate_erd_with_llm
+from app.design.services.sequence_diagram.generator import generate_sequence_diagram_with_llm
 
 
 def generate_sequence_diagram(state: ArchitectureState) -> ArchitectureState:

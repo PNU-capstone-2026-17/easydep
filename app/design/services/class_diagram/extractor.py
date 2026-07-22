@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import queue
-import re
-import threading
 from typing import Any
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -158,5 +155,5 @@ def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
             seed=42,
             response_format=BCEExtractionResult,
         )
-    
+
     return response.choices[0].message.parsed.model_dump()

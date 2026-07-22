@@ -1,10 +1,12 @@
+"""BCE 추출 결과(JSON)를 클래스 다이어그램 PlantUML로 변환한다.
+
+jar 실행·렌더는 common.plantuml이 맡고, 여기서는 클래스 다이어그램 고유의
+"무엇을 그릴지"(스테레오타입·필드·메서드·관계 매핑)만 다룬다.
+"""
 from __future__ import annotations
 
 import re
-import subprocess
 from typing import Any
-
-from app.design.services.plantuml_runtime import plantuml_command
 
 
 def sanitize_class_name(name: str) -> str:
@@ -96,19 +98,3 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
 
     final_puml = "\n".join(puml_lines)
     return final_puml.replace("\xa0", " ").replace("\u200b", "")
-
-
-def render_plantuml(puml_text: str, image_format: str = "png") -> bytes:
-    """Render a diagram straight to image bytes.
-
-    Uses `-pipe`, so nothing is written to disk: artifacts live in MySQL and
-    images are rebuilt from that text whenever they are requested.
-    """
-    result = subprocess.run(
-        plantuml_command("-pipe", f"-t{image_format}"),
-        input=puml_text.encode("utf-8"),
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    return result.stdout
