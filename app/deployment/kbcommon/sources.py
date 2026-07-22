@@ -399,6 +399,22 @@ SOURCES: dict[str, Source] = {
             "모호한 것은 담지 않는다."
         ),
     ),
+    "aws-cfn-templates": Source(
+        key="aws-cfn-templates",
+        url=(
+            "https://codeload.github.com/aws-cloudformation/aws-cloudformation-templates/"
+            "tar.gz/a0f43bc6d20813052892546f445037cf84c75b54"
+        ),
+        pin_kind="commit",
+        pin="a0f43bc6d20813052892546f445037cf84c75b54",
+        note=(
+            "AWS 공식 CloudFormation 샘플. Apache-2.0. 태그가 없어 커밋 SHA로 고정"
+            "(2026-06-01). **Azure에서 통한 동시 출현 방법이 AWS에서도 되는지**를 재려고 "
+            "받았고, 실측으로 확인됐다 — Lambda→IAM::Role 100%(38/38), "
+            "EC2::Instance→SecurityGroup 90.2%. 다만 템플릿이 299개뿐이라 "
+            "Azure(1,152개)보다 훨씬 얇고 앵커도 22종뿐이다. basis=observed."
+        ),
+    ),
     "azure-quickstart-templates": Source(
         key="azure-quickstart-templates",
         url=(

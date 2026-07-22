@@ -164,6 +164,8 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "aws-solutions-construct": STATED,
     # 실제 템플릿 코퍼스에서 **센** 동시 출현. 클라우드 사실이 아니다.
     "aqt-corpus": OBSERVED,
+    # 같은 방법을 AWS에 적용한 것. 표본이 훨씬 얇다는 사실은 coverage에 적는다.
+    "awscfn-corpus": OBSERVED,
     # 명시 소스와 코퍼스가 **같은 답을 냈을 때만** 단다. `aws-cross-checked`와 같은 규율.
     "bundle-cross-checked": STATED,
     # --- sizingkb ---

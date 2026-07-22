@@ -73,6 +73,7 @@ _EVIDENCE_NAMES = {
     "tumblebug-template": "cb-tumblebug 큐레이션 템플릿",
     "aws-solutions-construct": "AWS Solutions Constructs 패턴",
     "aqt-corpus": "Azure Quickstart 템플릿 코퍼스 실측",
+    "awscfn-corpus": "AWS CloudFormation 샘플 코퍼스 실측",
     "bundle-cross-checked": "명시 소스와 코퍼스가 일치",
     "tumblebug-networkinfo": "cb-tumblebug 네트워크 계획표",
     "tumblebug-k8sinfo": "cb-tumblebug 클러스터 요구사항표",

@@ -386,3 +386,66 @@ RAG가 값을 하는 자리는 하나뿐이다.
 - AWS·GCP 코퍼스 동시 출현 — Azure에서만 실험했다. 같은 방법이 통할 개연성은
   높지만 **재지 않았으므로 통한다고 말하지 않는다.**
 - `latency_infos`·`image_infos`는 **찾기만 했다.** 두 축 어느 쪽도 아니라 별도 상신.
+
+---
+
+# 2차 조사 (2026-07-23) — 방법이 어디까지 전이되나
+
+1차에서 미측정으로 남긴 것을 쟀다. *"AWS·GCP 코퍼스 동시 출현은 Azure에서만 쟀으므로
+통한다고 말하지 않는다."*
+
+## AWS — 전이된다. 그리고 **더 흥미롭게** 갈린다
+
+`aws-cloudformation/aws-cloudformation-templates`(Apache-2.0, 커밋 `a0f43bc6`)에서
+템플릿 **299개** · 타입 150종을 파싱했다.
+
+```
+AWS::Lambda::Function  → AWS::IAM::Role          100.0% (38/38)
+AWS::EC2::Instance     → AWS::EC2::SecurityGroup   90.2%
+                         AWS::EC2::Subnet          78.0%
+                         AWS::EC2::KeyPair         75.6%
+AWS::EC2::VPC          → AWS::EC2::SecurityGroup   72.5%
+                         AWS::EC2::Subnet          71.0%
+```
+
+**Lambda는 100%, EC2는 90%대에서 멈춘다.** 이건 잡음이 아니라 신호다 — Lambda는 실행
+역할이 **없으면 안 되고**, EC2는 기본 VPC·기본 SG를 쓸 수 있다. **분포가 "구조적
+필수"와 "관행"을 갈라 보여준다.** Azure에서 VM→NIC이 100%였던 것과 같은 성질이다.
+
+한계도 분명하다. 템플릿이 **299개**(Azure는 1,152개), 앵커가 **22종**(Azure는 43종)이라
+훨씬 얇다. 비율만 보면 두 코퍼스가 같은 무게로 읽히므로 그 차이를 coverage에 적었다.
+
+> 표본 편향도 다르게 나타난다. `EC2::KeyPair`가 75.6%인데, CFN 리소스로서의 KeyPair는
+> 실무에서 그만큼 흔하지 않다 — AWS 자신의 샘플이라 스타일이 일관된 결과다.
+
+## GCP — **전이되지 않는다** (측정된 부정 결과)
+
+`GoogleCloudPlatform/cloud-foundation-fabric`(Apache-2.0, 커밋 `11c1d248`)의 모듈
+**86개**를 Terraform `resource "google_*"` 선언으로 셌다.
+
+```
+무조건 리소스 0개인 모듈 : 63 / 86
+net-vpc              무조건 []   조건부 [google_compute_network, …]
+gke-cluster-standard 무조건 []   조건부 [google_container_cluster, …]
+```
+
+**AVM에서 통한 판별자가 여기서는 안 통한다.** Terraform 모듈은 주 리소스에도
+`count = var.vpc_create ? 1 : 0`을 걸어 **"만들거나 참조하거나"**를 표현한다. ARM의
+`condition`/`copy`와 겉모습은 같은데 뜻이 다르다.
+
+되게 하려면 변수 기본값까지 따라가야 하고, 그건 별도 작업이다. **억지로 맞추지 않고
+부정 결과로 남긴다** — 반쯤 읽은 값을 담는 것보다 낫다.
+
+## 그 밖에 두드려 본 것
+
+| 소스 | 규모 | 판정 |
+|---|---|---|
+| `Azure/ALZ-Bicep` | 컴파일 산출물 551개 | 후보 — 대부분 파라미터 파일이라 선별 필요 |
+| `terraform-aws-modules/*` | 최상위 `.tf` 5개씩 | GCP와 같은 `count` 문제가 예상됨 |
+| `upbound/platform-ref-aws` | 파일 37개 | 얇다 — 후보 아님 |
+| `pulumi/pulumi-awsx` | yaml 92개(대부분 CI) | 선언적 추출 대상 아님 |
+
+## 담은 것
+
+`bundlekb build --source awscfn` — 앵커 22종 · 쌍 720건. 이로써 동시 출현은
+**Azure(43앵커) + AWS(22앵커)** 두 프로바이더에서 나온다.
