@@ -17,8 +17,10 @@ from costkb.dataset import (
     count_unpriced,
     coverage,
     filter_specs,
+    find_by_name,
     is_built,
     load_warning,
+    name_suggestions,
     provider_summary,
     spot_commit_for,
     spot_commit_regions,
@@ -154,6 +156,75 @@ def recommend_specs(
         + "\n\n월 비용은 estimate_monthly_cost 도구로 계산하세요 "
         "(대수·가동시간이 반영되고 한계 고지가 붙습니다). 직접 곱하지 마세요."
     )
+
+
+def describe_spec(
+    spec_name: str,
+    provider: str | None = None,
+    region: str | None = None,
+    *,
+    output_dir: Path | str | None = None,
+) -> str:
+    """스펙 **하나**를 이름으로 조회한다. "n2-highmem-8 메모리 몇 GiB?"에 답한다.
+
+    조건 필터만 있고 이름 조회가 없어서 이 질문이 실측에서 0/3 실패했다 — 데이터는
+    처음부터 있었고 표면이 없었을 뿐이다.
+
+    리전을 안 주면 **가격 범위**를 보여준다. 리전마다 단가가 달라서 하나만 고르면
+    그게 대표값인 양 읽히기 때문이다(n2-highmem-8은 40개 리전에서 $0.52~$0.84다).
+    """
+    rows = find_by_name(spec_name, provider, output_dir)
+    if not rows:
+        near = name_suggestions(spec_name, output_dir=output_dir)
+        hint = f"\n  이름이 비슷한 것: {', '.join(near)}" if near else ""
+        return (
+            f"'{spec_name}' 스펙을 카탈로그에서 찾지 못했습니다 — 그런 스펙이 없다는 "
+            f"뜻이 아니라 **이 데이터셋에 없다**는 뜻입니다.{hint}"
+        )
+
+    lines = []
+    for prov in sorted({r["provider"] for r in rows}):
+        group = [r for r in rows if r["provider"] == prov]
+        head = group[0]
+        priced = [r for r in group if r["hourlyUSD"] is not None]
+        regions = sorted({r["region"] for r in group})
+
+        lines.append(f"{prov.upper()} {head['specName']}")
+        lines.append(f"  vCPU {head['vCPU']} · 메모리 {head['memGiB']:g} GiB")
+        if head.get("architecture"):
+            lines[-1] += f" · {head['architecture']}"
+        accel = head.get("acceleratorCount") or 0
+        if accel:
+            model = head.get("acceleratorModel") or head.get("acceleratorType") or "가속기"
+            lines.append(f"  가속기 {model} {accel}개")
+
+        if region is not None:
+            here = [r for r in group if r["region"].lower() == region.strip().lower()]
+            if not here:
+                lines.append(
+                    f"  '{region}' 리전에는 없습니다. 있는 리전: "
+                    + ", ".join(regions[:8])
+                )
+            elif here[0]["hourlyUSD"] is None:
+                lines.append(f"  {here[0]['region']}: 가격 정보 없음")
+            else:
+                lines.append(f"  {here[0]['region']}: ${here[0]['hourlyUSD']:.4f}/h")
+        elif not priced:
+            lines.append(f"  리전 {len(regions)}곳 · 가격 정보 없음")
+        else:
+            low = min(r["hourlyUSD"] for r in priced)
+            high = max(r["hourlyUSD"] for r in priced)
+            span = f"${low:.4f}/h" if low == high else f"${low:.4f} ~ ${high:.4f}/h"
+            lines.append(f"  리전 {len(regions)}곳 · 시간당 {span} (리전마다 다름)")
+        lines.append(f"  리전: {', '.join(regions[:10])}" + (" …" if len(regions) > 10 else ""))
+
+    degraded = load_warning(output_dir)
+    if degraded:
+        lines.append(f"\n⚠ {degraded}")
+    lines.append(
+        "\n※ 온디맨드 정가 스냅샷입니다. " + _COST_DISCLAIMER
+    )
+    return "\n".join(lines)
 
 
 def _discount_line(rec: dict) -> str:

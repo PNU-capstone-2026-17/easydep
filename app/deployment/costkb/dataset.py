@@ -252,6 +252,38 @@ def filter_specs(
     return matched[: max(1, limit)]
 
 
+def find_by_name(
+    name: str, provider: str | None = None, output_dir: Path | str | None = None
+) -> list[dict]:
+    """스펙 **이름**으로 찾는다. 리전별 레코드를 전부 돌려준다.
+
+    조건 필터(`filter_specs`)만 있고 이름 조회가 없어서 "n2-highmem-8 메모리 몇
+    GiB?"에 답할 길이 없었다 — 실측에서 0/3 실패하고 web_search로 3/3 샜다.
+    **데이터는 처음부터 있었고 표면이 없었을 뿐이다.**
+
+    이름은 대체로 유일하다(실측: 5,248종 중 프로바이더가 겹치는 것은 `m1.*` 4종뿐,
+    aws와 openstack). 겹치면 둘 다 돌려주고 고르는 일은 부르는 쪽에 맡긴다.
+    """
+    wanted = name.strip().lower()
+    prov = provider.strip().lower() if provider else None
+    return [
+        spec
+        for spec in load_specs(output_dir)
+        if spec["specName"].lower() == wanted
+        and (prov is None or spec["provider"] == prov)
+    ]
+
+
+def name_suggestions(
+    name: str, limit: int = 5, output_dir: Path | str | None = None
+) -> list[str]:
+    """비슷한 스펙 이름. 오타·기억 착오를 막다른 길로 만들지 않는다."""
+    import difflib
+
+    names = {spec["specName"] for spec in load_specs(output_dir)}
+    return difflib.get_close_matches(name.strip(), names, n=limit, cutoff=0.6)
+
+
 def _fold_regions(specs: list[dict]) -> list[dict]:
     """같은 스펙이 리전만 달리해 여러 칸을 먹지 않게 접는다.
 

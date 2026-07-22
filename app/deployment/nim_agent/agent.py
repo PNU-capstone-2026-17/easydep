@@ -106,6 +106,9 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
 
 3. **제공 여부·가격** (무엇을 살 수 있고 얼마인가) → cost_* 도구
    - "이 요구사항에 맞는 인스턴스 뭐가 있고 시간당 얼마야?" → cost_recommend_specs
+   - **"이 인스턴스 메모리/vCPU 얼마야? 어느 리전에 있어?"** → cost_describe_spec
+     이름을 아는 스펙 하나를 볼 때 씁니다. 조건 필터(cost_recommend_specs)로는
+     이름을 못 찾으니 웹 검색으로 새지 마세요.
    - "이 단가로 월 얼마야?" → cost_estimate_monthly
    - "이 GCP 인스턴스 스팟/예약(1년·3년 약정)으로 쓰면 얼마?" → cost_gcp_discount_pricing
      (GCP 전용. 온디맨드는 미러, 스팟·약정만 별도 스냅샷 — 도구가 붙이는 "기준

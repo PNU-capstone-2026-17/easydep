@@ -189,4 +189,60 @@ def cost_gcp_discount_pricing(spec_name: str, region: str | None = None) -> str:
     return agent_api.discount_pricing(spec_name, region)
 
 
-COST_TOOLS = [cost_recommend_specs, cost_estimate_monthly, cost_gcp_discount_pricing]
+@function_tool
+def cost_describe_spec(
+    spec_name: str, provider: str | None = None, region: str | None = None
+) -> str:
+    """인스턴스 **하나**를 이름으로 조회한다 — vCPU·메모리·가격·리전.
+
+    "n2-highmem-8 메모리 몇 GiB?" 같은 질문에 이걸 쓰세요. `cost_recommend_specs`는
+    조건 필터라 이름을 모르면 못 찾습니다 — 그래서 예전에는 이 질문이 웹 검색으로
+    샜습니다.
+
+    리전을 안 주면 **가격 범위**가 나옵니다(리전마다 단가가 다릅니다).
+    성능 특성(버스트·세대·CPU/GPU 모델)은 `perf_instance_profile`에 있습니다.
+
+    Args:
+        spec_name: 인스턴스 이름. 예: 'n2-highmem-8', 't3.medium', 'Standard_D2_v5'.
+        provider: 이름이 겹칠 때만 필요합니다(실측상 `m1.*` 4종뿐).
+        region: 특정 리전 단가만 볼 때.
+    """
+    print(f"\n[비용질의] 스펙 조회: {spec_name!r} provider={provider!r} region={region!r}")
+    text = agent_api.describe_spec(spec_name, provider, region)
+    return text + _perf_hint(spec_name, provider)
+
+
+def _perf_hint(spec_name: str, provider: str | None) -> str:
+    """성능 축에 이 스펙의 프로파일이 있으면 그리로 가리킨다.
+
+    **축을 늘리는 것과 축에 닿게 하는 것은 다른 일이다** — 카탈로그 답만 주면
+    "이게 버스트인가", "구세대인가"를 모른 채 고르게 된다. KB끼리 import하지
+    않는 규약이라 이 조인은 도구 계층에서 한다(`capacity_tools._perf_pointer`와 같다).
+    """
+    try:
+        from costkb.dataset import find_by_name
+        from perfkb.agent_api import recommend_note
+
+        rows = find_by_name(spec_name, provider)
+        if not rows:
+            return ""
+        prov = rows[0]["provider"]
+        note = recommend_note(prov, rows[0]["specName"])
+    except Exception:
+        return ""
+    if note.status == "warn" and note.text:
+        return f"\n\n⚠ {note.text}"
+    if note.status in ("no_record", "untracked", "not_built"):
+        return ""
+    return (
+        f"\n\n※ 성능 특성(버스트 여부·세대·CPU/GPU 모델)은 "
+        f"perf_instance_profile('{prov}', '{rows[0]['specName']}') 로 보세요."
+    )
+
+
+COST_TOOLS = [
+    cost_recommend_specs,
+    cost_estimate_monthly,
+    cost_gcp_discount_pricing,
+    cost_describe_spec,
+]

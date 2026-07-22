@@ -201,6 +201,11 @@ PROBES: tuple[Probe, ...] = (
           "방법이 없었다. 이제 근거가 답에 실린다",
           want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
           want_any=("짐작", "가장 가까운", "정확히", "완전히 같", "차이")),
+    Probe("N3", "n2-highmem-8 메모리 몇 GiB야?",
+          "**이름 조회 도구가 없어 0/3 실패하던 질문.** 데이터는 처음부터 있었고 "
+          "표면이 없었을 뿐이다 — 조건 필터로는 이름을 못 찾아 웹 검색으로 샜다",
+          want_tools=("cost_describe_spec",), forbid_tools=("web_search",),
+          want_any=("64",)),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",
