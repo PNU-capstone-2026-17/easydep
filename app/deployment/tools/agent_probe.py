@@ -433,7 +433,13 @@ def _report(r: Result) -> None:
     laundered = [x for x in r.unsupported if x.startswith("[attribution]")]
     if laundered:
         print(f"  ✗ 출처 세탁: 부르지 않은 도구를 출처로 댐 — {', '.join(laundered)}")
-    rest = [x for x in r.unsupported if not x.startswith("[attribution]")]
+    turned = [x for x in r.unsupported if x.startswith("[flip]")]
+    if turned:
+        print(f"  ✗ 뒤집기: 도구가 '가능'이라 한 것을 부정함 — {', '.join(turned)}")
+    rest = [
+        x for x in r.unsupported
+        if not x.startswith("[attribution]") and not x.startswith("[flip]")
+    ]
     if rest:
         # 실패가 아니라 신호다. 답변이 도구가 준 적 없는 구체값을 말하고 있다.
         shown = ", ".join(rest[:6])

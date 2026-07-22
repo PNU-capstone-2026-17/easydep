@@ -68,7 +68,7 @@ _TOOL_NAME = re.compile(_LEFT + r"[a-z]+(?:_[a-z]+){1,3}" + _RIGHT)
 
 @dataclass
 class Finding:
-    kind: str          # "number" | "identifier" | "attribution"
+    kind: str          # "number" | "identifier" | "attribution" | "flip"
     token: str
     context: str
 
@@ -124,6 +124,79 @@ def misattributed(
     return out
 
 
+#: 우리 도구가 "여기서는 된다"를 적는 줄. **형식을 우리가 통제한다는 게 요점이다.**
+#: `capacitykb.agent_api.check`의 조건부 판정이 이 꼴로 쓴다:
+#:     조건 38가지 중 **840가지에서 가능**, 98가지에서 불가입니다.
+#:       가능: ap-northeast-2; us-east-1; …
+#:       불가: ap-east-1; …
+_POSSIBLE_LINE = re.compile(r"^\s*가능:\s*(.+)$", re.M)
+_DENIED_LINE = re.compile(r"^\s*불가:\s*(.+)$", re.M)
+
+#: 답변이 **못 한다고 단언하는** 표현. 우리 도구가 쓰는 말이 아니라 모델이 쓰는 말이다.
+_NEGATION = regex_negation = re.compile(
+    r"지원(?:되지|하지)\s*않|미지원|불가능|불가합니다|사용할\s*수\s*없|쓸\s*수\s*없"
+    r"|되지\s*않습니다|없습니다|제공되지\s*않"
+)
+
+#: 절 경계. 한국어는 한 문장에 긍정과 부정이 같이 온다 — "A는 되지만 B는 안 됩니다".
+#: 절로 자르지 않으면 A가 부정 절에 있는 것처럼 보인다.
+#:
+#: **숫자 사이의 마침표에서는 자르지 않는다.** 그냥 `[.!?]`로 자르면 `16.4`가 `16`과
+#: `4`로 쪼개져, 하필 이 검사가 노리는 버전 문자열이 통째로 사라진다(실제로 그랬다).
+_CLAUSE = re.compile(
+    r"(?<!\d)[.!?](?!\d)|[\n!?]|(?<=지만)|(?<=으나)|(?<=하나)|(?<=며)|(?<=고,)"
+)
+
+
+def _values_of(line: str) -> set[str]:
+    """`가능: a; b; c 외 5가지` → {a, b, c}."""
+    body = re.sub(r"외\s*\d+가지.*$", "", line)
+    return {part.strip() for part in body.split(";") if part.strip()}
+
+
+def flipped(answer: str, tool_outputs: list[str]) -> list[Finding]:
+    """도구가 **가능이라 한 값**을 답변이 못 한다고 단언하는가.
+
+    실측 사례: 도구가 *"938가지 중 840가지에서 가능"*이라 했는데 답변은 *"16.4에서는
+    지원되지 않음으로 표시되었습니다"*로 뒤집었다. 숫자 대조로는 안 걸린다 — `16.4`는
+    도구 출력에 **있기** 때문이다. 뒤집힌 것은 값이 아니라 **부호**다.
+
+    ## 왜 이건 되고 일반적인 뒤집기는 안 되나
+
+    문장의 뜻을 읽는 일이 아니라 **우리가 쓴 형식을 읽는 일**이기 때문이다. `가능:` /
+    `불가:` 줄은 `capacitykb.agent_api.check`가 만든다. 임의의 주장이 뒤집혔는지는
+    여전히 못 잡는다 — 이 함수가 보는 것은 그 두 줄에 든 값뿐이다.
+
+    오탐을 줄이는 두 가지:
+
+    - **절 단위로 본다.** "A는 되지만 B는 안 됩니다"에서 A를 부정으로 세면 안 된다.
+    - **`불가:`에도 있는 값은 세지 않는다.** 조건이 갈리는 값이라 답변의 부정이
+      근거 있는 말일 수 있다.
+    """
+    joined = "\n".join(tool_outputs)
+    possible: set[str] = set()
+    denied: set[str] = set()
+    for line in _POSSIBLE_LINE.findall(joined):
+        possible |= _values_of(line)
+    for line in _DENIED_LINE.findall(joined):
+        denied |= _values_of(line)
+    candidates = {v for v in possible - denied if len(v) >= 2}
+    if not candidates:
+        return []
+
+    out, seen = [], set()
+    text = normalize(answer)
+    for clause in _CLAUSE.split(text):
+        if not clause or not _NEGATION.search(clause):
+            continue
+        for value in candidates:
+            if value in seen or value not in clause:
+                continue
+            seen.add(value)
+            out.append(Finding("flip", value, clause.strip()[:80]))
+    return out
+
+
 def check(
     answer: str,
     tool_outputs: list[str],
@@ -162,6 +235,10 @@ def check(
         found = misattributed(answer, called_tools, known_tools, haystack)
         verdict.checked += len(found)
         verdict.unsupported.extend(found)
+
+    turned = flipped(answer, tool_outputs)
+    verdict.checked += len(turned)
+    verdict.unsupported.extend(turned)
     return verdict
 
 
