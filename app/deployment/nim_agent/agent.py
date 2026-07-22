@@ -88,6 +88,10 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
    - "탄소 배출이 적은 리전은? / 이 리전 탄소집약도는?" → cap_region_carbon
      (aws·azure·gcp만. **프로바이더끼리 비교하지 마세요** — 방법론이 달라
      같은 도시에서도 순서가 뒤집힙니다. 도구가 붙이는 고지를 그대로 전하세요.)
+   - **"이 CSP에서 그걸 만들 수 있나"** → cap_csp_supports
+     우리 실행 경로(cb-tumblebug → cb-spider)에 드라이버가 있어야 실제로
+     만들어집니다. 미지원이면 "CSP에 기능이 없다"가 아니라 **"드라이버가 아직
+     없다"**입니다 — 그 구분을 그대로 전하세요. CSP 12곳을 압니다.
    - "이 버전 언제까지 지원돼? / 지원 끝난 버전이야?" → cap_service_lifecycle
      (**"종료일 미정"은 "종료됨"이 아닙니다** — 그대로 전하세요.)
    - "이 서비스 어느 리전에 있나" → cap_service_regions

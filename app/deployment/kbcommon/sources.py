@@ -322,6 +322,22 @@ SOURCES: dict[str, Source] = {
         pin_kind="tag",
         pin="v0.11.8",
     ),
+    "cb-spider": Source(
+        key="cb-spider",
+        url=(
+            "https://codeload.github.com/cloud-barista/cb-spider/"
+            "tar.gz/refs/tags/v0.12.37"
+        ),
+        pin_kind="tag",
+        pin="v0.12.37",
+        note=(
+            "**우리 런타임 경로의 하부다.** cb-tumblebug이 CSP를 다룰 때 cb-spider "
+            "드라이버를 통하므로, 여기 없는 것은 우리 에이전트가 실제로 만들 수 없다. "
+            "드라이버 12곳(alibaba·aws·azure·gcp·ibm·kt·ktclassic·ncp·nhn·openstack·"
+            "oracle·tencent)의 핸들러에서 **어느 CSP가 무엇을 만들 수 있는지**를 뽑는다. "
+            "Apache-2.0. 2.9MB. `core_vendor_map.json`의 매핑 근거도 이 저장소다."
+        ),
+    ),
     "cb-spider-map": Source(
         key="cb-spider-map",
         # 네트워크 소스가 아니다 — CB-Spider 드라이버를 사람이 읽고 검수해 만든 번들.

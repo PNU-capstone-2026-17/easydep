@@ -1,0 +1,299 @@
+"""cb-spider 드라이버 → **어느 CSP가 무엇을 만들 수 있는가.**
+
+**왜 이게 답인가.** 우리 에이전트의 실행 경로는 cb-tumblebug이고 그 하부가
+cb-spider다. 그래서 **cb-spider 드라이버에 없는 것은 우리가 실제로 만들 수 없다.**
+"KT Cloud에서 쿠버네티스 클러스터 만들어줘"에 "됩니다"라고 답하면, 데이터가 아니라
+**실행이 실패한다.**
+
+지금까지 우리는 CSP를 다섯만 알았다(aws·azure·gcp·alibaba·tencent). cb-spider는
+**열둘**을 다룬다. 나머지 일곱(ibm·kt·ktclassic·ncp·nhn·openstack·oracle)은
+costkb·perfkb에 가격과 스펙이 있는데도 "무엇을 만들 수 있나"는 답할 수 없었다.
+
+## 매트릭스가 곧 지식이다 (v0.12.37 실측)
+
+    VPC·Security·KeyPair·VM·Disk·MyImage   12/12  전부 지원
+    NLB                                    11/12  oracle 없음
+    Cluster(k8s)                            8/12  kt·ktclassic·openstack·oracle 없음
+
+**"파일이 있다"와 "구현됐다"는 다르다.** cb-spider는 미지원 기능을 "not supported"
+에러를 던지는 스텁으로 두기도 한다. 파일 존재만으로 답하면 확신에 찬 오답이 되므로,
+**핸들러의 주 생성 메서드가 실제로 있는지**까지 본다.
+
+메서드 이름이 핸들러마다 다르다는 것이 함정이다 — 인터페이스를 직접 읽고 확인했다:
+
+    VMHandler      → StartVM      (CreateVM이 아니다)
+    MyImageHandler → SnapshotVM   (CreateImage가 아니다)
+
+`Create`로만 찾으면 이 둘이 **전부 미구현으로 잡힌다**(처음에 그 상태를 만들었다).
+"""
+
+from __future__ import annotations
+
+import re
+import tarfile
+from functools import lru_cache
+from pathlib import Path
+
+from kbcommon.artifact import load_json, resolve, write_dataset
+from kbcommon.fetch import describe_source_set, fetch_cached
+from kbcommon.sources import SOURCES
+
+#: 핸들러 → (core 리소스들, 주 생성 메서드).
+#: 메서드 이름은 `cloud-driver/interfaces/resources/*.go`에서 직접 확인했다.
+HANDLERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "VPCHandler": (("vNet", "subnet"), "CreateVPC"),
+    "SecurityHandler": (("securityGroup",), "CreateSecurity"),
+    "KeyPairHandler": (("sshKey",), "CreateKey"),
+    "VMHandler": (("vm",), "StartVM"),
+    "NLBHandler": (("nlb",), "CreateNLB"),
+    "ClusterHandler": (("k8sCluster", "k8sNodeGroup"), "CreateCluster"),
+    "DiskHandler": (("dataDisk",), "CreateDisk"),
+    "MyImageHandler": (("customImage",), "SnapshotVM"),
+}
+
+#: `drivers/<csp>/resources/<Handler>.go`. `-plugin` 디렉터리와 mock은 뺀다.
+_PATH = re.compile(r"/cloud-driver/drivers/([a-z0-9]+)/resources/(\w+Handler)\.go$")
+
+#: 미구현 표시. 주 메서드가 이것만 돌려주면 스텁이다.
+_UNSUPPORTED = re.compile(
+    r"(?:not\s+supported|does\s+not\s+support|unsupported|미지원|지원하지\s*않)", re.I
+)
+
+_SKIP_CSP = {"mock"}
+
+SCHEMA = {
+    "type": "object",
+    "required": ["csps", "_source"],
+    "properties": {
+        "_note": {"type": "string"},
+        "_source": {"type": "array"},
+        "csps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["csp", "resources"],
+                "additionalProperties": False,
+                "properties": {
+                    "csp": {"type": "string", "minLength": 1},
+                    "resources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["core", "supported"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "core": {"type": "string", "minLength": 1},
+                                "supported": {"type": "boolean"},
+                                "handler": {"type": ["string", "null"]},
+                                "method": {"type": ["string", "null"]},
+                                # 왜 미지원인지 — 파일이 없나, 스텁인가
+                                "reason": {"type": ["string", "null"]},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+def _method_body(text: str, method: str) -> str | None:
+    """`func (h *X) Method(...) {` 의 **여는 중괄호 다음부터** 본문. 없으면 None.
+
+    시그니처부터 자르면 안 된다 — 첫 줄이 `req irs.ClusterInfo) (…, error) {`
+    같은 시그니처 잔여물이 되어 "첫 실행문" 판정이 통째로 빗나간다(테스트가 잡았다).
+    """
+    found = re.search(rf"func \([^)]*\) {re.escape(method)}\s*\(", text)
+    if found is None:
+        return None
+    opening = text.find("{", found.end())
+    if opening < 0:
+        return None
+    # 다음 최상위 `func `까지를 본문으로 본다 — 중괄호를 세는 것보다 튼튼하다.
+    nxt = text.find("\nfunc ", opening)
+    return text[opening + 1 : nxt if nxt > 0 else len(text)]
+
+
+def classify(text: str, method: str) -> tuple[bool, str | None]:
+    """(구현됐나, 아니라면 이유).
+
+    **판정은 "미지원 반환이 첫 실행문인가"다.** 처음엔 본문 길이로 갈랐는데
+    임계값이 취약했다 — 짧지만 실제로 구현된 본문을 스텁으로 잡았다(테스트가
+    잡아냈다). 길이는 우연이지만 **조건 없이 바로 미지원을 돌려주는 것**은
+    스텁의 정의 그 자체다.
+
+    반대로 `if`나 다른 문장 뒤에 나오는 미지원 반환은 **일부 기능 제한**이다
+    (NLB가 UDP 헬스체크만 거부하는 식). 그걸 스텁으로 보면 되는 것을 안 된다고
+    답하게 되고, 그 오답은 침묵보다 나쁘다.
+    """
+    body = _method_body(text, method)
+    if body is None:
+        return False, f"{method} 메서드가 없습니다"
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
+            continue
+        if stripped.startswith("return") and _UNSUPPORTED.search(stripped):
+            return False, f"{method}가 미지원 오류만 돌려줍니다 (스텁)"
+        break  # 첫 실행문이 미지원 반환이 아니면 구현으로 본다
+    return True, None
+
+
+def parse_tarball(tar: Path) -> tuple[list[dict], dict]:
+    """드라이버 tarball → CSP별 지원 매트릭스."""
+    files: dict[tuple[str, str], str] = {}
+    with tarfile.open(tar, "r:gz") as archive:
+        for member in archive:
+            if not member.isfile():
+                continue
+            found = _PATH.search("/" + member.name)
+            if not found:
+                continue
+            csp, handler = found.groups()
+            if csp in _SKIP_CSP or handler not in HANDLERS:
+                continue
+            try:
+                files[(csp, handler)] = archive.extractfile(member).read().decode(
+                    "utf-8", "replace"
+                )
+            except Exception:
+                continue
+
+    csps = sorted({csp for csp, _ in files})
+    stats = {"csps": len(csps), "supported": 0, "missing": 0, "stub": 0}
+    records = []
+    for csp in csps:
+        resources = []
+        for handler, (cores, method) in HANDLERS.items():
+            text = files.get((csp, handler))
+            if text is None:
+                ok, reason = False, "핸들러 파일이 없습니다"
+            else:
+                ok, reason = classify(text, method)
+            if ok:
+                stats["supported"] += len(cores)
+            elif text is None:
+                stats["missing"] += len(cores)
+            else:
+                stats["stub"] += len(cores)
+            for core in cores:
+                resources.append({
+                    "core": core,
+                    "supported": ok,
+                    "handler": handler,
+                    "method": method,
+                    "reason": reason,
+                })
+        records.append({"csp": csp, "resources": resources})
+    return records, stats
+
+
+def build(output: Path, *, refresh: bool = False) -> dict:
+    source = SOURCES["cb-spider"]
+    tar = fetch_cached(source.url, f"cb-spider-{source.pin}.tar.gz", refresh=refresh)
+    records, stats = parse_tarball(tar)
+
+    dataset = {
+        "_note": (
+            "cb-spider 드라이버가 CSP별로 무엇을 만들 수 있는가. **이건 우리 실행 "
+            "경로의 사실이다** — cb-tumblebug이 cb-spider를 통해 CSP를 다루므로 "
+            "여기서 미지원이면 실제로 만들 수 없다. 'CSP가 그 기능이 없다'가 아니라 "
+            "'cb-spider 드라이버가 아직 안 만든다'는 뜻이다."
+        ),
+        "_source": [describe_source_set([tar], source.key)],
+        "csps": records,
+    }
+    write_dataset(output, dataset, SCHEMA)
+    print(
+        f"cbspider-support: CSP {stats['csps']}곳 · 지원 {stats['supported']} · "
+        f"핸들러 없음 {stats['missing']} · 스텁 {stats['stub']}"
+    )
+    return dataset
+
+
+# --------------------------------------------------------------------------
+# 조회
+# --------------------------------------------------------------------------
+
+ARTIFACT = "cbspider-support.json"
+
+_MISSING = (
+    "cb-spider 지원 산출물이 없습니다. `python -m kbcommon build-cbspider` 로 "
+    "생성하세요."
+)
+
+
+@lru_cache(maxsize=4)
+def _load(output_dir: str) -> dict[str, dict[str, dict]]:
+    path = resolve(Path(output_dir), ARTIFACT)
+    if path is None:
+        return {}
+    try:
+        data = load_json(path)
+    except Exception:
+        return {}
+    return {
+        row["csp"]: {r["core"]: r for r in row["resources"]}
+        for row in data.get("csps") or []
+    }
+
+
+def providers(*, output_dir: str = "output") -> tuple[str, ...]:
+    return tuple(sorted(_load(output_dir)))
+
+
+def supports(csp: str, core: str, *, output_dir: str = "output") -> dict | None:
+    return _load(output_dir).get(csp.strip().lower(), {}).get(core)
+
+
+def describe(csp: str | None = None, core: str | None = None, *, output_dir: str = "output") -> str:
+    """어느 CSP가 무엇을 만들 수 있는지. 사람이 읽는 답."""
+    data = _load(output_dir)
+    if not data:
+        return _MISSING
+
+    if csp is not None:
+        key = csp.strip().lower()
+        if key not in data:
+            return (
+                f"'{csp}'는 cb-spider가 다루지 않습니다 — 우리 실행 경로로는 만들 수 "
+                f"없습니다.\n  다루는 CSP: {', '.join(sorted(data))}"
+            )
+        rows = data[key]
+        if core is not None:
+            record = rows.get(core)
+            if record is None:
+                return (
+                    f"{key}: '{core}'는 우리가 추적하는 리소스가 아닙니다.\n"
+                    f"  추적하는 것: {', '.join(sorted(rows))}"
+                )
+            if record["supported"]:
+                return (
+                    f"{key}에서 {core}: **만들 수 있습니다** "
+                    f"(cb-spider {record['handler']}.{record['method']})"
+                )
+            return (
+                f"{key}에서 {core}: **cb-spider로 만들 수 없습니다** "
+                f"({record['reason']}).\n"
+                "  CSP에 그 기능이 없다는 뜻이 아니라 **드라이버가 아직 없다**는 뜻입니다 "
+                "— 우리 실행 경로로는 못 만듭니다."
+            )
+        ok = sorted(c for c, r in rows.items() if r["supported"])
+        no = sorted(c for c, r in rows.items() if not r["supported"])
+        lines = [f"{key}에서 cb-spider로 만들 수 있는 것 {len(ok)}종: {', '.join(ok)}"]
+        if no:
+            lines.append(f"  만들 수 없는 것: {', '.join(no)} (드라이버 없음)")
+        return "\n".join(lines)
+
+    if core is not None:
+        yes = sorted(c for c, rows in data.items() if (rows.get(core) or {}).get("supported"))
+        no = sorted(c for c, rows in data.items() if core in rows and not rows[core]["supported"])
+        if not yes and not no:
+            return f"'{core}'는 우리가 추적하는 리소스가 아닙니다."
+        lines = [f"{core}을(를) 만들 수 있는 CSP {len(yes)}곳: {', '.join(yes)}"]
+        if no:
+            lines.append(f"  못 만드는 곳: {', '.join(no)}")
+        return "\n".join(lines)
+
+    return f"cb-spider가 다루는 CSP {len(data)}곳: {', '.join(sorted(data))}"

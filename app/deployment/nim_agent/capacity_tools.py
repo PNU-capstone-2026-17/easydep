@@ -276,6 +276,25 @@ def cap_operation_time(resource_type: str) -> str:
     return agent_api.operation_time(resource_type)
 
 
+@function_tool
+def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str:
+    """이 CSP에서 그 리소스를 **실제로 만들 수 있는지**. cb-spider 드라이버 기준.
+
+    우리 실행 경로가 cb-tumblebug → cb-spider라, 여기서 미지원이면 배포가 실패한다.
+    "CSP에 그 기능이 없다"가 아니라 **"드라이버가 아직 없다"**는 뜻이니 그대로 전하세요.
+
+    Args:
+        csp: 프로바이더. aws · azure · gcp · alibaba · tencent · ibm · ncp · nhn ·
+            kt · ktclassic · openstack · oracle. 생략하면 다루는 CSP 목록.
+        resource: 코어 리소스. vNet · subnet · securityGroup · sshKey · vm · nlb ·
+            k8sCluster · k8sNodeGroup · dataDisk · customImage.
+    """
+    from kbcommon import cbspider
+
+    print(f"\n[용량질의] CSP 지원: csp={csp!r} resource={resource!r}")
+    return cbspider.describe(csp, resource)
+
+
 def _coerce(raw: str) -> float | str:
     """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
     try:
@@ -297,4 +316,5 @@ CAPACITY_TOOLS = [
     cap_region_carbon,
     cap_service_lifecycle,
     cap_operation_time,
+    cap_csp_supports,
 ]

@@ -183,6 +183,11 @@ PROBES: tuple[Probe, ...] = (
           "두 CSP 제약 축(tpcsp). 리소스 제약이 0건이던 프로바이더다",
           want_tools=("cap_immutable_properties",), forbid_tools=("web_search",),
           want_any=("cidr_block", "재생성")),
+    Probe("K1", "KT Cloud에서 쿠버네티스 클러스터 만들 수 있어?",
+          "**cb-spider 흡수.** 실행 경로에 드라이버가 없으면 실제로 못 만든다 — "
+          "'CSP에 기능이 없다'가 아니라 '드라이버가 없다'를 구분해 답하는가",
+          want_tools=("cap_csp_supports",), forbid_tools=("web_search",),
+          want_any=("드라이버", "만들 수 없", "지원")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",

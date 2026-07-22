@@ -141,7 +141,22 @@ def main(argv: list[str] | None = None) -> int:
     life.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     life.add_argument("--output", type=Path, help="출력 경로 (기본: output/service-lifecycle.json)")
 
+    spider = sub.add_parser(
+        "build-cbspider", help="CSP별로 무엇을 만들 수 있는가 (cb-spider 드라이버)"
+    )
+    spider.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    spider.add_argument("--output", type=Path, help="출력 경로 (기본: output/cbspider-support.json)")
+
     args = parser.parse_args(argv)
+
+    if args.command == "build-cbspider":
+        from kbcommon import cbspider
+
+        cbspider.build(
+            args.output or (DEFAULT_OUTPUT / "cbspider-support.json"),
+            refresh=args.refresh,
+        )
+        return 0
 
     if args.command == "build-lifecycle":
         from kbcommon import lifecycle
