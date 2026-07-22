@@ -82,6 +82,11 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # terraform-provider-aws. 같은 Terraform이지만 google과 성격이 다르다 —
     # 저쪽은 생성 코드고 이쪽은 사람이 쓴 것이라 틀리는 방식이 다르다.
     "tpaws-schema": STATED,
+    # alicloud·tencent provider. 같은 Terraform이지만 **대조할 짝이 없다** —
+    # aws는 CFN, gcp는 KCC라는 독립 소스가 있어 어긋남을 셀 수 있었는데 이 둘은
+    # 공개 리소스 스키마가 없어 이게 유일한 소스다. 프로바이더가 적어 둔 것이라
+    # stated지만, 교차 검증이 없다는 사실은 산출물 coverage에 적는다.
+    "tpcsp-schema": STATED,
     # cfn-lint가 별도 관리하는 리전별 허용값. 손 큐레이션이지만 원본이
     # 그렇게 적어 놓은 것이라 stated다.
     "cfn-lint-region": STATED,

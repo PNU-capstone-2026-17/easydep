@@ -87,6 +87,7 @@
               "kcc-cel-immutable",
               "tpg-schema",
               "tpaws-schema",
+              "tpcsp-schema",
               "cfn-lint-region",
               "cfn-lint-conditional",
               "swagger-mutability",

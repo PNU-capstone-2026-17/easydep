@@ -45,6 +45,7 @@ _EVIDENCE_NAMES = {
     "kcc-description": "GCP Config Connector 설명문",
     "tpg-schema": "Terraform Google 프로바이더 스키마",
     "tpaws-schema": "Terraform AWS 프로바이더 스키마",
+    "tpcsp-schema": "Terraform 프로바이더 스키마(Alibaba·Tencent)",
     "cfn-lint-region": "cfn-lint 리전별 허용값",
     "cfn-lint-conditional": "cfn-lint 조건부 허용값",
     "swagger-mutability": "Azure REST 명세의 변경 가능성 표시",

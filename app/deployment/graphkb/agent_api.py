@@ -34,6 +34,8 @@ GRAPH_FILES = (
     "gcp-graph.json",
     "mapping-graph.json",
     "azure-deploy-graph.json",
+    "alibaba-graph.json",
+    "tencent-graph.json",
 )
 
 _MISSING_MESSAGE = (

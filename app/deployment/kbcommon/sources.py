@@ -201,6 +201,35 @@ SOURCES: dict[str, Source] = {
             "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
         ),
     ),
+    "tp-alicloud": Source(
+        key="tp-alicloud",
+        url=(
+            "https://codeload.github.com/aliyun/terraform-provider-alicloud/"
+            "tar.gz/refs/tags/v1.285.0"
+        ),
+        pin_kind="tag",
+        pin="v1.285.0",
+        note=(
+            "Alibaba Cloud 리소스 타입·제약. **이 CSP에는 우리가 쓸 공개 리소스 "
+            "스키마가 없어서** Terraform provider가 유일한 경로다. 등록 리소스 "
+            "1,161종(실측). MPL-2.0. 타입 이름이 Terraform 것이라 id에 "
+            "`alicloud_`가 그대로 남는다 — 나중에 공식 스키마가 생겼을 때 무엇을 "
+            "바꿔야 하는지 알 수 있게. tarball 6.9MB."
+        ),
+    ),
+    "tp-tencent": Source(
+        key="tp-tencent",
+        url=(
+            "https://codeload.github.com/tencentcloudstack/terraform-provider-tencentcloud/"
+            "tar.gz/refs/tags/v1.83.13"
+        ),
+        pin_kind="tag",
+        pin="v1.83.13",
+        note=(
+            "Tencent Cloud 리소스 타입·제약. alicloud와 같은 이유·같은 방식이다. "
+            "MPL-2.0."
+        ),
+    ),
     "avm-bicep": Source(
         key="avm-bicep",
         url=(

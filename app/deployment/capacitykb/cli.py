@@ -33,6 +33,8 @@ DEFAULT_OUTPUTS = {
     "aws-regions": Path("output") / "aws-regions.json",
     "aws-conditional": Path("output") / "aws-conditional.json",
     "aws-endpoints": Path("output") / "aws-endpoints.json",
+    "alicloud": Path("output") / "alibaba-capacity.json",
+    "tencent": Path("output") / "tencent-capacity.json",
     "azure-mutability": Path("output") / "azure-mutability.json",
     "azure-secret": Path("output") / "azure-secret.json",
 }
@@ -120,6 +122,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import cfnlint
 
         cfnlint.build_conditions(output, refresh=args.refresh)
+    elif args.source in ("alicloud", "tencent"):
+        from capacitykb.parsers import tpcsp
+
+        tpcsp.build(output, key=args.source, refresh=args.refresh)
     elif args.source == "aws-endpoints":
         from capacitykb.parsers import aws_endpoints
 
