@@ -1,0 +1,53 @@
+{{#if getBasePackage}}package {{getBasePackage}};
+
+{{/if}}{{#each getJavaImports}}import {{this}};
+{{/each}}{{#if getJavaImports}}
+{{/if}}/** Generated from BCE {{getStereotype}} {{getName}}. */
+{{#if isBoundary}}
+public interface {{getName}} {
+{{#each getMethods}}
+  {{this.getJavaType}} {{this.getName}}{{#if this.getParameters}}({{#each this.getParameters}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{#if this.getName}}{{this.getName}}{{else}}param{{@index}}{{/if}}{{/each}}){{else}}(){{/if}};
+{{/each}}
+}
+{{else}}{{#if isControl}}
+public interface {{getName}} {
+{{#each getMethods}}
+  {{this.getJavaType}} {{this.getName}}{{#if this.getParameters}}({{#each this.getParameters}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{#if this.getName}}{{this.getName}}{{else}}param{{@index}}{{/if}}{{/each}}){{else}}(){{/if}};
+{{/each}}
+}
+{{else}}{{#if isGateway}}
+public interface {{getName}} {
+{{#each getMethods}}
+  {{this.getJavaType}} {{this.getName}}{{#if this.getParameters}}({{#each this.getParameters}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{#if this.getName}}{{this.getName}}{{else}}param{{@index}}{{/if}}{{/each}}){{else}}(){{/if}};
+{{/each}}
+}
+{{else}}
+public class {{getName}} {
+{{#each getFields}}
+  private {{this.getJavaType}} {{this.getName}}{{this.getJavaInitializer}};
+{{/each}}
+
+  public {{getName}}() {}
+{{#if getFields}}
+  public {{getName}}({{#each getFields}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{this.getName}}{{/each}}) {
+{{#each getFields}}
+    this.{{this.getName}} = {{this.getName}};
+{{/each}}
+  }
+{{/if}}
+{{#each getFields}}
+  public {{this.getJavaType}} get{{this.getJavaAccessorSuffix}}() {
+    return this.{{this.getName}};
+  }
+
+  public void set{{this.getJavaAccessorSuffix}}({{this.getJavaType}} {{this.getName}}) {
+    this.{{this.getName}} = {{this.getName}};
+  }
+{{/each}}
+{{#each getEntityBehaviorMethods}}
+  public {{this.getJavaType}} {{this.getName}}{{#if this.getParameters}}({{#each this.getParameters}}{{#if @first}}{{else}}, {{/if}}{{this.getJavaType}} {{#if this.getName}}{{this.getName}}{{else}}param{{@index}}{{/if}}{{/each}}){{else}}(){{/if}} {
+    {{javaEntityMethodBody ../this this}}
+  }
+{{/each}}
+}
+{{/if}}{{/if}}{{/if}}

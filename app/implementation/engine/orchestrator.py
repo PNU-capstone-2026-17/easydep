@@ -1,0 +1,631 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+from .models import CommandEvidence, Diagnostic, JobSpec, RunManifest
+from .agent_runtime import gradle_command, write_execution_plan
+from .design_context import (
+    generate_api_adapter_tasks,
+    generate_boundary_adapter_tasks,
+    generate_e2e_tasks,
+    generate_gateway_adapter_tasks,
+    generate_implementation_tasks,
+    generate_persistence_tasks,
+    generate_wiring_tasks,
+)
+
+
+OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
+BCE_GENERATOR_VERSION = "0.2.0"
+IMPLEMENTATION_PIPELINE_VERSION = "0.3.0-ir"
+JAVA_BUILTIN_TYPES = {
+    "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
+    "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
+    "String", "string", "DateTime", "OffsetDateTime", "List", "Map", "Set", "Object",
+}
+
+
+def load_job(path: Path) -> JobSpec:
+    job_path = path.resolve()
+    data = json.loads(job_path.read_text(encoding="utf-8"))
+    root = (job_path.parent / data.get("workspaceRoot", ".")).resolve()
+
+    def resolve(value: str) -> Path:
+        candidate = (root / value).resolve()
+        if candidate != root and root not in candidate.parents:
+            raise ValueError(f"Path escapes workspaceRoot: {value}")
+        return candidate
+
+    inputs = {name: resolve(value) for name, value in data.get("inputs", {}).items()}
+    generation = data.get("generation", {})
+    tools = data.get("tools", {})
+    agent = data.get("agent", {})
+    return JobSpec(
+        name=data.get("name", job_path.stem),
+        workspace_root=root,
+        inputs=inputs,
+        required_inputs=list(data.get("requiredInputs", ["bceClass", "openapi"])),
+        base_package=generation.get("basePackage", "com.example.generated"),
+        allow_assumptions=bool(generation.get("allowAssumptions", False)),
+        verify_compile=bool(data.get("verification", {}).get("compile", True)),
+        output_root=resolve(data.get("outputRoot", "generated/runs")),
+        puml2code_root=resolve(
+            tools.get(
+                "puml2codeRoot", "app/implementation/tools/puml2code-bce"
+            )
+        ),
+        openapi_generator_jar=resolve(
+            tools.get(
+                "openapiGeneratorJar",
+                "app/implementation/tools/openapi-generator/openapi-generator-cli-7.24.0.jar",
+            )
+        ),
+        agent_mode=agent.get("mode", "plan-only"),
+        agent_model=agent.get(
+            "model", "nvidia_nim/openai/gpt-oss-120b"
+        ),
+        agent_base_url=agent.get(
+            "baseUrl", "https://integrate.api.nvidia.com/v1"
+        ),
+        agent_temperature=float(agent.get("temperature", 0.6)),
+        agent_top_p=float(agent.get("topP", 0.7)),
+        agent_max_output_tokens=int(agent.get("maxOutputTokens", 4096)),
+        agent_reasoning_budget=int(agent.get("reasoningBudget", 2048)),
+    )
+
+
+class PrototypeOrchestrator:
+    def __init__(self, spec: JobSpec):
+        self.spec = spec
+        self.manifest = RunManifest(job_name=spec.name)
+
+    def run(self) -> Path:
+        self.manifest.status = "VALIDATING_INPUT"
+        self._validate_inputs()
+        self.manifest.input_hash = self._combined_input_hash()
+        run_name = f"run_{self.manifest.input_hash[:12]}"
+        staging = self.spec.output_root / f".{run_name}.staging"
+        final = self.spec.output_root / run_name
+        existing_manifest = final / "reports" / "run-manifest.json"
+        if existing_manifest.is_file():
+            existing = json.loads(existing_manifest.read_text(encoding="utf-8"))
+            if existing.get("input_hash") == self.manifest.input_hash:
+                return final
+            raise RuntimeError(f"Existing run has a conflicting input hash: {final}")
+        self._reset_target(staging)
+        staging.mkdir(parents=True, exist_ok=True)
+
+        if any(item.severity == "ERROR" for item in self.manifest.diagnostics):
+            self.manifest.status = "NEEDS_INPUT"
+            self._write_reports(staging)
+            self._promote(staging, final)
+            return final
+
+        application = staging / "application"
+        java_root = application / "src" / "main" / "java"
+        java_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            self.manifest.status = "GENERATING_CODE"
+            self._generate_bce(java_root)
+            self._generate_openapi(application)
+            self._write_gradle_project(application)
+            self._write_missing_type_placeholders(java_root)
+
+            if self.spec.verify_compile:
+                self.manifest.status = "VERIFYING"
+                self._compile(application)
+
+            tasks = generate_implementation_tasks(self.spec, staging)
+            self.manifest.implementation_tasks = [task.to_dict() for task in tasks]
+            self.manifest.agent_execution = write_execution_plan(
+                staging,
+                self.manifest.implementation_tasks,
+                self.spec.agent_mode,
+                self.spec.agent_model,
+                self.spec.agent_base_url,
+            )
+
+            self.manifest.status = "SUCCEEDED"
+        except Exception as error:  # evidence is written before returning the failed run
+            self.manifest.status = "FAILED"
+            self.manifest.diagnostics.append(
+                Diagnostic("GENERATION_FAILED", "ERROR", str(error))
+            )
+
+        self.manifest.generated_files = sorted(
+            str(path.relative_to(staging)).replace("\\", "/")
+            for path in staging.rglob("*")
+            if path.is_file()
+        )
+        self._write_reports(staging)
+        self._promote(staging, final)
+        return final
+
+    def _validate_inputs(self) -> None:
+        for name in self.spec.required_inputs:
+            path = self.spec.inputs.get(name)
+            if path is None or not path.is_file():
+                self.manifest.diagnostics.append(
+                    Diagnostic("MISSING_REQUIRED_INPUT", "ERROR", f"Missing required input: {name}")
+                )
+
+        for name in OPTIONAL_DESIGN_INPUTS:
+            path = self.spec.inputs.get(name)
+            if path is None or not path.is_file():
+                self.manifest.diagnostics.append(
+                    Diagnostic(
+                        "MISSING_PROTOTYPE_INPUT",
+                        "WARNING",
+                        f"Prototype continues without optional input: {name}",
+                    )
+                )
+
+        for name, path in self.spec.inputs.items():
+            if not path.is_file():
+                continue
+            digest = sha256_file(path)
+            self.manifest.inputs[name] = {
+                "path": str(path),
+                "sha256": digest,
+                "size": path.stat().st_size,
+            }
+
+        required_tools = {
+            "puml2code": self.spec.puml2code_root / "bin" / "puml2code",
+            "openapiGenerator": self.spec.openapi_generator_jar,
+        }
+        for name, path in required_tools.items():
+            if not path.is_file():
+                self.manifest.diagnostics.append(
+                    Diagnostic("MISSING_TOOL", "ERROR", f"Missing tool {name}: {path}")
+                )
+
+    def _combined_input_hash(self) -> str:
+        digest = hashlib.sha256()
+        digest.update(self.spec.name.encode())
+        digest.update(self.spec.base_package.encode())
+        digest.update(str(self.spec.allow_assumptions).encode())
+        digest.update(str(self.spec.verify_compile).encode())
+        digest.update(self.spec.agent_model.encode())
+        digest.update(self.spec.agent_base_url.encode())
+        digest.update(str(self.spec.agent_temperature).encode())
+        digest.update(str(self.spec.agent_top_p).encode())
+        digest.update(str(self.spec.agent_max_output_tokens).encode())
+        digest.update(str(self.spec.agent_reasoning_budget).encode())
+        digest.update(BCE_GENERATOR_VERSION.encode())
+        digest.update(IMPLEMENTATION_PIPELINE_VERSION.encode())
+        # Bind a run to the actual planner/runtime implementation, not only a
+        # manually maintained version label. Prompt or gate edits therefore
+        # always receive a new immutable run ID.
+        for source in sorted(Path(__file__).parent.glob("*.py")):
+            digest.update(source.name.encode())
+            digest.update(sha256_file(source).encode())
+        for tool in (
+            self.spec.puml2code_root / "package.json",
+            self.spec.openapi_generator_jar,
+        ):
+            if tool.is_file():
+                digest.update(sha256_file(tool).encode())
+        for name in sorted(self.manifest.inputs):
+            digest.update(name.encode())
+            digest.update(self.manifest.inputs[name]["sha256"].encode())
+        return digest.hexdigest()
+
+    def _generate_bce(self, java_root: Path) -> None:
+        bce_package = f"{self.spec.base_package}.bce"
+        command = [
+            "node",
+            str(self.spec.puml2code_root / "bin" / "puml2code"),
+            "-i",
+            str(self.spec.inputs["bceClass"]),
+            "-l",
+            "java",
+            "-p",
+            bce_package,
+            "-o",
+            str(java_root),
+        ]
+        self._run_command("puml2code-bce", command, self.spec.puml2code_root)
+        self.manifest.tools["puml2code-bce"] = {
+            "upstream": "https://github.com/jupe/puml2code",
+            "forkVersion": BCE_GENERATOR_VERSION,
+        }
+
+    def _generate_openapi(self, application: Path) -> None:
+        command = [
+            "java", "-jar", str(self.spec.openapi_generator_jar), "generate",
+            "-g", "spring",
+            "-i", str(self.spec.inputs["openapi"]),
+            "-o", str(application),
+            "--additional-properties=" + ",".join(
+                [
+                    "library=spring-boot",
+                    "interfaceOnly=true",
+                    "skipDefaultInterface=true",
+                    "useSpringBoot3=true",
+                    "useBeanValidation=true",
+                    "hideGenerationTimestamp=true",
+                    f"basePackage={self.spec.base_package}",
+                    f"apiPackage={self.spec.base_package}.api",
+                    f"modelPackage={self.spec.base_package}.api.model",
+                    f"artifactId={self.spec.name}",
+                    "groupId=com.example",
+                ]
+            ),
+            "--global-property", "apis,models",
+        ]
+        evidence = self._run_command(
+            "openapi-generator", command, self.spec.workspace_root
+        )
+        missing_operation_ids: set[str] = set()
+        for line in (evidence.stdout + evidence.stderr).splitlines():
+            if "Empty operationId found" in line:
+                match = re.search(r"path:\s*([A-Za-z]+\s+\S+)", line)
+                if match:
+                    method, path = match.group(1).split(maxsplit=1)
+                    operation = f"{method.upper()} {path}"
+                else:
+                    operation = line.strip()
+                missing_operation_ids.add(operation)
+        for operation in sorted(missing_operation_ids):
+            self.manifest.diagnostics.append(
+                Diagnostic(
+                    "OPENAPI_MISSING_OPERATION_ID",
+                    "WARNING",
+                    f"OpenAPI operation has no operationId: {operation}",
+                    str(self.spec.inputs["openapi"]),
+                )
+            )
+        self.manifest.tools["openapi-generator"] = {
+            "version": "7.24.0",
+            "sha256": sha256_file(self.spec.openapi_generator_jar),
+        }
+
+    def _write_gradle_project(self, application: Path) -> None:
+        build = """plugins {
+    id 'java'
+}
+
+group = 'com.example'
+version = '0.1.0-SNAPSHOT'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
+}
+
+repositories { mavenCentral() }
+
+dependencies {
+    implementation platform('org.springframework.boot:spring-boot-dependencies:3.3.13')
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0'
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+    implementation 'org.openapitools:jackson-databind-nullable:0.2.10'
+    runtimeOnly 'com.h2database:h2'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.withType(Test).configureEach { useJUnitPlatform() }
+"""
+        (application / "build.gradle").write_text(build, encoding="utf-8")
+        (application / "settings.gradle").write_text(
+            f"rootProject.name = '{self.spec.name}'\n", encoding="utf-8"
+        )
+
+    def _write_missing_type_placeholders(self, java_root: Path) -> None:
+        source = self.spec.inputs["bceClass"].read_text(encoding="utf-8")
+        missing = find_undefined_bce_types(source)
+        if not missing:
+            return
+        if not self.spec.allow_assumptions:
+            raise ValueError(f"Undefined BCE types require input: {', '.join(missing)}")
+
+        package = f"{self.spec.base_package}.bce"
+        target_dir = java_root / Path(package.replace(".", "/"))
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for type_name in missing:
+            (target_dir / f"{type_name}.java").write_text(
+                f"package {package};\n\n"
+                f"/** Assumed placeholder for an undefined BCE type. */\n"
+                f"public final class {type_name} {{}}\n",
+                encoding="utf-8",
+            )
+            assumption = f"Generated placeholder for undefined BCE type: {type_name}"
+            self.manifest.assumptions.append(assumption)
+            self.manifest.diagnostics.append(
+                Diagnostic("BCE_UNDEFINED_TYPE_ASSUMED", "WARNING", assumption, str(self.spec.inputs["bceClass"]))
+            )
+
+    def _compile(self, application: Path) -> None:
+        gradle_home = self.spec.output_root.parent.parent / ".cache" / "gradle"
+        executable = gradle_command()
+        self._run_command(
+            "gradle-compile",
+            [
+                *executable,
+                "--gradle-user-home",
+                str(gradle_home),
+                "compileJava",
+                "--no-daemon",
+            ],
+            application,
+        )
+        build_output = application / "build"
+        if build_output.exists():
+            shutil.rmtree(build_output)
+        local_gradle = application / ".gradle"
+        if local_gradle.exists():
+            shutil.rmtree(local_gradle)
+
+    def _run_command(self, name: str, command: list[str], cwd: Path) -> CommandEvidence:
+        started = time.monotonic()
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            check=False,
+        )
+        evidence = CommandEvidence(
+            name=name,
+            command=command,
+            cwd=str(cwd),
+            exit_code=result.returncode,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            stdout=result.stdout[-20000:],
+            stderr=result.stderr[-20000:],
+        )
+        self.manifest.commands.append(evidence)
+        if result.returncode != 0:
+            raise RuntimeError(f"{name} failed with exit code {result.returncode}: {result.stderr[-1000:]}")
+        return evidence
+
+    def _write_reports(self, root: Path) -> None:
+        reports = root / "reports"
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / "run-manifest.json").write_text(
+            json.dumps(self.manifest.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        (reports / "input-diagnostics.json").write_text(
+            json.dumps(
+                [diagnostic.__dict__ for diagnostic in self.manifest.diagnostics],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        with (reports / "traceability-matrix.csv").open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["source_artifact", "source_sha256", "generated_file"])
+            for name, metadata in sorted(self.manifest.inputs.items()):
+                for generated in self.manifest.generated_files:
+                    if (name == "bceClass" and "/bce/" in generated) or (
+                        name == "openapi" and ("/api/" in generated or "/api/model/" in generated)
+                    ):
+                        writer.writerow([name, metadata["sha256"], generated])
+                for task in self.manifest.implementation_tasks:
+                    if name in task["source_artifacts"]:
+                        writer.writerow([name, metadata["sha256"], task["prompt_file"]])
+                        writer.writerow([name, metadata["sha256"], task["context_file"]])
+
+    def _reset_target(self, target: Path) -> None:
+        target = target.resolve()
+        output_root = self.spec.output_root.resolve()
+        if output_root not in target.parents:
+            raise ValueError(f"Refusing to reset path outside output root: {target}")
+        if target.exists():
+            shutil.rmtree(target)
+
+    def _promote(self, staging: Path, final: Path) -> None:
+        self.spec.output_root.mkdir(parents=True, exist_ok=True)
+        if final.exists():
+            raise RuntimeError(f"Refusing to overwrite immutable run: {final}")
+        os.replace(staging, final)
+
+
+def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add persistence tasks and deterministic dependencies to an existing run."""
+    run_root = run_root.resolve()
+    build = run_root / "application" / "build.gradle"
+    if not build.is_file():
+        raise ValueError(f"Run build.gradle was not found: {build}")
+    source = build.read_text(encoding="utf-8")
+    source = source.replace(
+        "    implementation 'org.springframework.data:spring-data-commons'\n",
+        "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
+        "    implementation 'org.flywaydb:flyway-core'\n",
+    )
+    if "spring-boot-starter-data-jpa" not in source:
+        marker = "    implementation 'org.springframework.boot:spring-boot-starter-validation'\n"
+        source = source.replace(
+            marker,
+            marker
+            + "    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n"
+            + "    implementation 'org.flywaydb:flyway-core'\n",
+        )
+    if "runtimeOnly 'com.h2database:h2'" not in source:
+        source = source.replace(
+            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
+            "    runtimeOnly 'com.h2database:h2'\n"
+            "    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n",
+        )
+    build.write_text(source, encoding="utf-8")
+
+    tasks = generate_persistence_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add generated OpenAPI adapter tasks to an existing run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_api_adapter_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_boundary_adapter_tasks(
+    spec: JobSpec, run_root: Path
+) -> list[dict[str, object]]:
+    """Add BCE Boundary adapter tasks to an existing run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_boundary_adapter_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_gateway_adapter_tasks(
+    spec: JobSpec, run_root: Path
+) -> list[dict[str, object]]:
+    """Add outbound Gateway adapter tasks to an existing run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_gateway_adapter_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add the Spring application wiring task to an existing run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_wiring_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_e2e_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add the E2E task, or persist a structured NEEDS_INPUT design-gap report."""
+    run_root = run_root.resolve()
+    tasks = generate_e2e_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["implementation_tasks"] = [
+        item for item in manifest.get("implementation_tasks", [])
+        if item.get("task_type") != "integration-test"
+    ]
+    if not tasks:
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return []
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def find_undefined_bce_types(source: str) -> list[str]:
+    """Find member types that have no class declaration in the BCE diagram.
+
+    Notes and relationship labels deliberately remain outside the scan; they are
+    natural-language data, not type declarations.
+    """
+    declarations = set(re.findall(r"(?m)^\s*class\s+([A-Za-z_]\w*)", source))
+    member_lines: list[str] = []
+    inside_class = False
+    for line in source.splitlines():
+        if re.match(r"^\s*class\s+[A-Za-z_]\w*.*\{\s*$", line):
+            inside_class = True
+            continue
+        if inside_class and re.match(r"^\s*}\s*$", line):
+            inside_class = False
+            continue
+        if inside_class and re.match(r"^\s*[+#~-]\s+", line):
+            member_lines.append(line)
+
+    type_fragments: list[str] = []
+    for line in member_lines:
+        type_fragments.extend(
+            re.findall(r":\s*([A-Za-z_]\w*(?:\s*<[^>]+>)?(?:\[\])?)", line)
+        )
+    referenced: set[str] = set()
+    for fragment in type_fragments:
+        referenced.update(re.findall(r"[A-Za-z_]\w*", fragment))
+    return sorted(referenced - declarations - JAVA_BUILTIN_TYPES)
