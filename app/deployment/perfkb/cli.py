@@ -29,6 +29,7 @@ from perfkb.dataset import (
     is_built,
     schema,
 )
+from perfkb.fields import FIELDS
 
 _MISSING = (
     "성능 데이터셋이 없습니다. `python -m perfkb build`로 먼저 빌드하세요 "
@@ -135,18 +136,11 @@ def _describe(rec: dict) -> str:
         )
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")
-    for key, label in (
-        ("currentGeneration", "최신 세대"),
-        ("clockGHz", "클럭(GHz)"),
-        ("networkPerformance", "네트워크"),
-        ("ebsBaselineMbps", "EBS baseline(Mbps)"),
-        ("ebsMaxMbps", "EBS 최대(Mbps)"),
-        ("acu", "ACU (Azure 내부 비교용)"),
-        ("diskIops", "디스크 IOPS"),
-        ("vendorDescription", "벤더 설명"),
-    ):
-        if key in rec:
-            lines.append(f"  {label}: {rec[key]}")
+    # 목록은 `perfkb.fields` 하나뿐이다 — 예전엔 여기와 agent_api가 각자 목록을 갖고
+    # 있어서 사람이 보는 것과 에이전트가 보는 것이 달랐다(CLI만 벤더 설명을 출력했다).
+    for field in FIELDS:
+        if rec.get(field.key) is not None:
+            lines.append(f"  {field.label}: {field.render(rec[field.key])}")
     if rec.get("networkIsBurst"):
         lines.append("    ⚠ 네트워크 대역폭이 버스트입니다('Up to') — 지속 값이 아닙니다.")
     return "\n".join(lines)

@@ -118,14 +118,20 @@ def test_profile_of_missing_spec_is_graceful(perf_built) -> None:
 def test_compare_lays_out_axes_without_declaring_winner(perf_built) -> None:
     text = agent_api.compare("aws", ["m5.large", "m7i.large"])
     assert "m5.large" in text and "m7i.large" in text
-    assert "클럭(GHz)" in text  # AWS 전용 축
+    assert "클럭" in text and "GHz" in text  # AWS 전용 축
     assert "승자를 단정하지 않습니다" in text
 
 
 def test_compare_marks_generation_difference(perf_built) -> None:
-    """m5.large는 구세대, m7i.large는 최신 — 상시 CPU 행에 드러나야 함(둘 다 보장이지만)."""
+    """m5.large는 구세대, m7i.large는 최신.
+
+    예전엔 이 테스트가 상시 CPU 행의 존재만 봤다 — 이름은 '세대 차이'인데 세대를
+    검사하지 않았고, 그래서 `_COMPARE_AXES`에 `currentGeneration`이 없다는 사실이
+    통과하는 테스트 뒤에 가려져 있었다.
+    """
     text = agent_api.compare("aws", ["m5.large", "m7i.large"])
     assert "상시 CPU 성능" in text
+    assert "구세대" in text and "최신 세대" in text
 
 
 def test_compare_needs_two_found_specs(perf_built) -> None:

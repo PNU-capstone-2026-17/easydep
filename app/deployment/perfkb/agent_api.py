@@ -35,6 +35,7 @@ from perfkb.dataset import (
     load_perf,
     tracked_providers,
 )
+from perfkb.fields import COMPARE_FIELDS, FIELDS
 
 _OLD_GEN_NOTE = "구세대 인스턴스입니다 — 최신 세대에 더 나은 가격/성능이 있을 수 있습니다."
 
@@ -127,22 +128,14 @@ def _describe(rec: dict) -> str:
         lines.append(f"  상시 CPU 성능: {mark}{hedge}")
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")
-    for key, label, unit in (
-        ("currentGeneration", "최신 세대", ""),
-        ("clockGHz", "클럭", " GHz"),
-        ("networkPerformance", "네트워크", ""),
-        ("ebsBaselineMbps", "EBS 지속 대역폭", " Mbps"),
-        ("ebsMaxMbps", "EBS 최대 대역폭", " Mbps"),
-        ("acu", "ACU (Azure 내부 비교용)", ""),
-        ("diskIops", "디스크 IOPS", ""),
-    ):
-        if key not in rec:
+    for field in FIELDS:
+        if rec.get(field.key) is None:
             continue
-        lines.append(f"  {label}: {rec[key]}{unit}")
+        lines.append(f"  {field.label}: {field.render(rec[field.key])}")
         # 경고는 **그 줄 바로 밑**에 붙여야 한다. 예전엔 블록 맨 끝에 붙였는데,
         # 그러면 네트워크 이야기가 마지막 줄(EBS 최대 대역폭)에 달린 것처럼 읽혔다.
         # EBS 버스트와 네트워크 버스트는 다른 사안이라 오해가 판단을 바꾼다.
-        if key == "networkPerformance" and rec.get("networkIsBurst"):
+        if field.key == "networkPerformance" and rec.get("networkIsBurst"):
             lines.append("    ⚠ 네트워크 대역폭이 버스트('Up to')라 지속 값이 아닙니다.")
 
     # **하드웨어 사실은 따로 묶는다.** 위쪽은 cb-tumblebug에서 온 성능 신호이고
@@ -190,16 +183,6 @@ def instance_profile(
     return f"{provider} {spec_name} 성능 프로파일:\n{_describe(found[0])}"
 
 
-# 프로바이더별로 비교 가능한 축. **교집합이 아니라 프로바이더 전용**이라는 게 핵심 —
-# ACU는 Azure에만, 클럭·EBS는 AWS에만 있어서 프로바이더 간 비교가 불가능하다.
-_COMPARE_AXES = {
-    "aws": [("clockGHz", "클럭(GHz)", "높을수록"), ("ebsBaselineMbps", "EBS 지속 대역폭(Mbps)", "높을수록"),
-            ("ebsBaselineIops", "EBS 지속 IOPS", "높을수록")],
-    "azure": [("acu", "ACU", "높을수록"), ("diskIops", "디스크 IOPS", "높을수록")],
-    "gcp": [("maxPersistentDisks", "최대 영구 디스크 수", "높을수록")],
-}
-
-
 def compare(
     provider: str, spec_names: list[str], output_dir: Path | str | None = None
 ) -> str:
@@ -210,6 +193,11 @@ def compare(
 
     프로바이더 간 비교(AWS vs Azure)는 이 함수로 **할 수 없다**. 파라미터가 단일 provider라
     구조적으로 막혀 있고, 축 자체가 프로바이더 전용이라 비교 기준이 없다.
+
+    축은 `perfkb.fields`에서 온다 — 프로파일과 **같은 목록**이다. 예전엔 여기만 별도
+    목록을 갖고 있어서 100% 채워진 `currentGeneration`이 빠졌고, 그래서 `perf_compare`는
+    m5.large가 구세대라는 걸 한 줄도 말하지 않는데 `cost_recommend_specs`는 경고하는
+    **상충**이 났다.
     """
     provider = provider.lower()
     recs, missing = [], []
@@ -238,12 +226,20 @@ def compare(
         sustained.append("보장" if s and s["value"] else "미보장" if s else "모름")
     lines.append(_row("상시 CPU 성능", sustained))
 
-    for key, label, _ in _COMPARE_AXES.get(provider, []):
-        vals = [r.get(key) for r in recs]
+    for field in COMPARE_FIELDS:
+        vals = [r.get(field.key) for r in recs]
         if all(v is None for v in vals):
-            continue  # 아무도 이 축 값이 없으면 행을 만들지 않는다
-        cells = [str(v) if v is not None else "모름" for v in vals]
-        lines.append(_row(label, cells, incomplete=any(v is None for v in vals)))
+            continue  # 아무도 이 축 값이 없으면 행을 만들지 않는다 — 축은 저절로 갈린다
+        cells = [field.render(v) if v is not None else "모름" for v in vals]
+        lines.append(_row(field.label, cells, incomplete=any(v is None for v in vals)))
+
+    # **판단이 갈리는 것은 여기서 같은 문구로 말한다.** 축 값만 나열하면 "구세대"라는
+    # 사실이 표에는 있어도 그게 무슨 뜻인지는 안 나온다 — 그 자리를 `cost_recommend_specs`의
+    # 경고가 채우면서 두 도구가 다른 말을 하게 됐다. 판정 함수를 공유해 문구를 맞춘다.
+    for rec in recs:
+        warning = _warning_for(rec)
+        if warning:
+            lines.append(f"  ⚠ {rec['specName']}: {warning}")
 
     lines.append(
         "※ '더 빠르다'는 워크로드(CPU 바운드/IO 바운드)에 따라 다르므로 승자를 단정하지 "

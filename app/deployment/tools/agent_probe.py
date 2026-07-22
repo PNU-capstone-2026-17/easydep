@@ -206,6 +206,17 @@ PROBES: tuple[Probe, ...] = (
           "표면이 없었을 뿐이다 — 조건 필터로는 이름을 못 찾아 웹 검색으로 샜다",
           want_tools=("cost_describe_spec",), forbid_tools=("web_search",),
           want_any=("64",)),
+    Probe("N4", "m5.large랑 c6a.large 성능 비교해줘",
+          "**두 도구가 상충하던 자리.** 세대는 aws에서 100% 채워진 칸인데 비교 축 "
+          "목록에만 빠져 있어서, perf_compare는 m5.large가 구세대라는 걸 한 줄도 "
+          "말하지 않는데 cost_recommend_specs는 경고했다",
+          want_tools=("perf_compare",), forbid_tools=("web_search",),
+          want_any=("구세대", "이전 세대")),
+    Probe("N5", "gcp n2-highmem-8 성능 특성 알려줘",
+          "**목록이 AWS 위주로 자라 gcp의 100% 채워진 칸이 통째로 빠졌다.** "
+          "프로파일이 상시 CPU 한 줄뿐이었고, 사람용 CLI만 벤더 설명을 출력했다",
+          want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
+          want_any=("영구 디스크", "persistent", "128")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",
