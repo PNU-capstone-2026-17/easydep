@@ -1,9 +1,12 @@
-"""cb-spider 드라이버 → **어느 CSP가 무엇을 만들 수 있는가.**
+"""cb-spider 드라이버 → **멀티클라우드 도구가 어느 CSP의 무엇을 다루는가.**
 
-**왜 이게 답인가.** 우리 에이전트의 실행 경로는 cb-tumblebug이고 그 하부가
-cb-spider다. 그래서 **cb-spider 드라이버에 없는 것은 우리가 실제로 만들 수 없다.**
-"KT Cloud에서 쿠버네티스 클러스터 만들어줘"에 "됩니다"라고 답하면, 데이터가 아니라
-**실행이 실패한다.**
+**무엇에 대한 지식인가.** 이건 **도구의 커버리지**이지 클라우드의 사실이 아니다.
+cb-spider는 여러 CSP를 한 인터페이스로 다루는 계층이고, 여기 없는 리소스는
+"그 CSP에 없다"가 아니라 **"이 도구로는 다루지 못한다"**는 뜻이다.
+
+우리는 배포기가 아니라 **가이드라인 지식베이스**를 만들므로 이 구분이 중요하다.
+멀티클라우드 도구를 고려하는 사람에게 "어느 CSP까지 한 방식으로 다룰 수 있나"는
+쓸모 있는 정보지만, 그걸 "KT Cloud에 쿠버네티스가 없다"로 옮겨 말하면 거짓이다.
 
 지금까지 우리는 CSP를 다섯만 알았다(aws·azure·gcp·alibaba·tencent). cb-spider는
 **열둘**을 다룬다. 나머지 일곱(ibm·kt·ktclassic·ncp·nhn·openstack·oracle)은
@@ -196,10 +199,10 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 
     dataset = {
         "_note": (
-            "cb-spider 드라이버가 CSP별로 무엇을 만들 수 있는가. **이건 우리 실행 "
-            "경로의 사실이다** — cb-tumblebug이 cb-spider를 통해 CSP를 다루므로 "
-            "여기서 미지원이면 실제로 만들 수 없다. 'CSP가 그 기능이 없다'가 아니라 "
-            "'cb-spider 드라이버가 아직 안 만든다'는 뜻이다."
+            "cb-spider 드라이버가 CSP별로 어떤 리소스를 다루는가. **도구의 커버리지이지 "
+            "클라우드의 사실이 아니다** — 여기서 미지원이면 'CSP에 그 기능이 없다'가 "
+            "아니라 '이 도구로는 못 다룬다'는 뜻이다. 멀티클라우드 도구를 고려할 때 "
+            "쓰는 정보다."
         ),
         "_source": [describe_source_set([tar], source.key)],
         "csps": records,
@@ -257,8 +260,9 @@ def describe(csp: str | None = None, core: str | None = None, *, output_dir: str
         key = csp.strip().lower()
         if key not in data:
             return (
-                f"'{csp}'는 cb-spider가 다루지 않습니다 — 우리 실행 경로로는 만들 수 "
-                f"없습니다.\n  다루는 CSP: {', '.join(sorted(data))}"
+                f"'{csp}'는 cb-spider가 다루지 않는 CSP입니다 — 그런 CSP가 없다는 "
+                f"뜻이 아니라 **이 도구의 커버리지 밖**입니다.\n"
+                f"  다루는 CSP: {', '.join(sorted(data))}"
             )
         rows = data[key]
         if core is not None:
@@ -270,20 +274,24 @@ def describe(csp: str | None = None, core: str | None = None, *, output_dir: str
                 )
             if record["supported"]:
                 return (
-                    f"{key}에서 {core}: **만들 수 있습니다** "
-                    f"(cb-spider {record['handler']}.{record['method']})"
+                    f"{key}에서 {core}: **cb-spider가 다룹니다** "
+                    f"({record['handler']}.{record['method']})"
                 )
             return (
-                f"{key}에서 {core}: **cb-spider로 만들 수 없습니다** "
+                f"{key}에서 {core}: **cb-spider 드라이버가 다루지 않습니다** "
                 f"({record['reason']}).\n"
-                "  CSP에 그 기능이 없다는 뜻이 아니라 **드라이버가 아직 없다**는 뜻입니다 "
-                "— 우리 실행 경로로는 못 만듭니다."
+                "  **그 CSP에 해당 기능이 없다는 뜻이 아닙니다** — 멀티클라우드 도구로 "
+                "한 방식으로 다루려면 별도 방법이 필요하다는 뜻입니다. 그 CSP가 이 "
+                "서비스를 제공하는지는 이 데이터가 답하지 않습니다."
             )
         ok = sorted(c for c, r in rows.items() if r["supported"])
         no = sorted(c for c, r in rows.items() if not r["supported"])
-        lines = [f"{key}에서 cb-spider로 만들 수 있는 것 {len(ok)}종: {', '.join(ok)}"]
+        lines = [f"{key}에서 cb-spider가 다루는 리소스 {len(ok)}종: {', '.join(ok)}"]
         if no:
-            lines.append(f"  만들 수 없는 것: {', '.join(no)} (드라이버 없음)")
+            lines.append(
+                f"  이 도구가 안 다루는 것: {', '.join(no)} — CSP에 없다는 뜻이 "
+                "아니라 드라이버가 없다는 뜻입니다."
+            )
         return "\n".join(lines)
 
     if core is not None:
@@ -291,9 +299,12 @@ def describe(csp: str | None = None, core: str | None = None, *, output_dir: str
         no = sorted(c for c, rows in data.items() if core in rows and not rows[core]["supported"])
         if not yes and not no:
             return f"'{core}'는 우리가 추적하는 리소스가 아닙니다."
-        lines = [f"{core}을(를) 만들 수 있는 CSP {len(yes)}곳: {', '.join(yes)}"]
+        lines = [f"{core}을(를) cb-spider가 다루는 CSP {len(yes)}곳: {', '.join(yes)}"]
         if no:
-            lines.append(f"  못 만드는 곳: {', '.join(no)}")
+            lines.append(
+                f"  드라이버가 없는 곳: {', '.join(no)} — 그 CSP에 기능이 없다는 "
+                "뜻이 아닙니다."
+            )
         return "\n".join(lines)
 
     return f"cb-spider가 다루는 CSP {len(data)}곳: {', '.join(sorted(data))}"

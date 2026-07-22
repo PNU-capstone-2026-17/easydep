@@ -184,14 +184,15 @@ PROBES: tuple[Probe, ...] = (
           want_tools=("cap_immutable_properties",), forbid_tools=("web_search",),
           want_any=("cidr_block", "재생성")),
     Probe("K1", "KT Cloud에서 쿠버네티스 클러스터 만들 수 있어?",
-          "**cb-spider 흡수.** 실행 경로에 드라이버가 없으면 실제로 못 만든다 — "
-          "'CSP에 기능이 없다'가 아니라 '드라이버가 없다'를 구분해 답하는가",
+          "**도구 커버리지를 클라우드 사실로 옮겨 말하지 않는가.** cb-spider에 "
+          "드라이버가 없다는 것과 KT Cloud에 k8s가 없다는 것은 다른 말이다 — "
+          "우리는 배포기가 아니라 가이드라인 KB다",
           want_tools=("cap_csp_supports",), forbid_tools=("web_search",),
-          want_any=("드라이버", "만들 수 없", "지원")),
+          want_any=("드라이버", "도구", "커버리지")),
     Probe("G1", "AWS EC2 인스턴스 하나 만들려면 뭐가 먼저 있어야 해?",
-          "**사용자가 잡아낸 불일치.** 벤더 스키마는 필수 0개라 하고 실행 경로"
-          "(cb-tumblebug)는 7가지를 요구한다. 한쪽만 답하면 실제 배포에서 틀린다 — "
-          "두 관점을 다 전하는가",
+          "**사용자가 잡아낸 불일치.** 벤더 스키마는 필수 0개라 하지만 실무에서는 "
+          "네트워크·서브넷·보안그룹이 필요하다. 스키마만 답하면 VM 하나 만들려는 "
+          "사람에게 쓸모없는 답이 된다",
           want_tools=("kb_creation_order",), forbid_tools=("web_search",),
           want_any=("서브넷", "subnet", "vNet", "실행", "tumblebug")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",

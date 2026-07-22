@@ -165,32 +165,41 @@ def creation_order(
         )
         lines.extend(f"- {t}" for t in optional)
 
-    counterpart = _runtime_requirements(graph, node.id)
-    if counterpart:
-        lines.append(counterpart)
+    practical = _practical_prerequisites(graph, node.id)
+    if practical:
+        lines.append(practical)
     return "\n".join(lines)
 
 
-def _runtime_requirements(graph, type_id: str) -> str | None:
-    """**우리 실행 경로가 더 요구하면 그 사실을 밝힌다.** 아니면 None.
+def _practical_prerequisites(graph, type_id: str) -> str | None:
+    """**IaC 스키마가 선택으로 두지만 실무에서는 필요한 것.** 없으면 None.
 
     같은 것을 묻는데 답이 갈리는 문제가 있었다(사용자 지적으로 드러남):
 
-        core::vm              반드시 먼저 있어야 하는 것 **7개**
+        core::vm                  반드시 먼저 있어야 하는 것 **7개**
         aws::AWS::EC2::Instance   필수 **0개**
 
-    둘 다 사실이다. 근거가 다르기 때문이다 — `core::vm`은 **cb-tumblebug REST
-    스키마**(`swagger-field`)에서 왔고 거기서 `vNetId`·`subnetId`·`securityGroupIds`가
-    required 필드다. `AWS::EC2::Instance`는 CFN/CDK에서 왔고 CFN은 `SubnetId`를
-    선택으로 둔다(기본 VPC를 쓸 수 있으니까).
+    둘 다 사실이고 근거가 다르다. 벤더 쪽은 CFN/ARM이라 `SubnetId`가 선택이고
+    (기본 VPC를 쓸 수 있으니까), 코어 쪽은 **여러 CSP에 공통으로 필요한 구성**을
+    담은 층이라 네트워크·서브넷·보안그룹을 필수로 본다. 스키마만 보고 "필수 없음"
+    이라 답하면 **VM 하나 만들려는 사람에게 쓸모없는 답**이 된다.
 
-    **문제는 우리 실행 경로가 cb-tumblebug이라는 것이다.** 벤더 스키마만 보고
-    "필수 없음"이라고 답하면 실제 배포에서 틀린다. 실측으로 이 어긋남이 vm만이
-    아니라 5개 코어 타입에 있었고, vm은 **9/9 CSP 전부** 0을 말했다.
+    ## 도구 고유 개념과 카탈로그는 빼야 한다
 
-    그래서 벤더 타입을 물으면 대응하는 코어 타입의 요구사항을 함께 보여준다.
-    감추지 않고 **둘을 나란히 놓고 근거를 밝히는 것**이 맞는 처리다 — 어느 한쪽을
-    고르면 그건 우리가 정한 것이 되고, 실제로는 무엇으로 만드느냐에 달렸다.
+    코어 층의 필수 목록을 그대로 옮기면 안 된다. `core::vm`의 7개에는 성격이
+    다른 셋이 섞여 있다:
+
+        만드는 리소스   vNet · subnet · securityGroup · sshKey
+        고르는 카탈로그  spec · image          ← 만드는 게 아니라 선택하는 값
+        도구 고유 개념   mci                   ← cb-tumblebug의 묶음 단위
+
+    "EC2를 만들려면 mci가 필요하다"는 **가이드라인으로서 거짓**이다 — AWS에 그런
+    것은 없다. 우리는 배포기가 아니라 **가이드라인 지식베이스**를 만들므로, 특정
+    도구의 요구사항을 클라우드의 사실인 양 말하면 안 된다.
+
+    판정 근거는 이미 데이터에 있다. `core_vendor_map`이 **spec·image·mci는
+    등가물이 없다**고 명시하므로, **벤더 대응물이 있는 코어 타입만** 옮기면 셋이
+    자동으로 걸러진다. 손으로 목록을 또 만들 필요가 없다.
     """
     if type_id.startswith("core::"):
         return None
@@ -201,23 +210,35 @@ def _runtime_requirements(graph, type_id: str) -> str | None:
         and edge.to_id == type_id
         and edge.from_id.startswith("core::")
     }
+    if not core_ids:
+        return None
+    # 같은 프로바이더에서 대응물이 있는 코어 타입만 — 도구 고유 개념·카탈로그 제외.
+    provider = type_id.split("::", 1)[0]
+    mapped = {
+        edge.from_id
+        for edge in graph.edges
+        if edge.type == "equivalent_to"
+        and edge.from_id.startswith("core::")
+        and edge.to_id.startswith(f"{provider}::")
+    }
     needed: set[str] = set()
     for core_id in core_ids:
         needed |= {
             edge.to_id
             for edge in graph.edges
-            if edge.from_id == core_id and edge.required and edge.to_id != core_id
+            if edge.from_id == core_id
+            and edge.required
+            and edge.to_id != core_id
+            and edge.to_id in mapped
         }
     if not needed:
         return None
     names = ", ".join(sorted(n.replace("core::", "") for n in needed))
     return (
-        f"\n※ **실행 경로에서는 더 필요합니다.** 위 목록은 이 CSP의 IaC 스키마"
-        f"(CloudFormation·ARM 등) 기준입니다. 우리가 실제로 배포하는 길인 "
-        f"cb-tumblebug은 같은 리소스를 만들 때 **{len(needed)}가지를 필수로 요구**"
-        f"합니다: {names}.\n"
-        f"  둘 다 사실이며 근거가 다릅니다 — 스키마는 '없어도 API가 받는다', "
-        f"실행 경로는 '이 값을 채워야 요청이 성립한다'입니다."
+        f"\n※ **스키마는 선택으로 두지만 실무에서는 보통 필요합니다**: {names}.\n"
+        f"  위 '필수' 목록은 이 CSP의 IaC 스키마(CloudFormation·ARM 등)가 "
+        f"required로 표시한 것만입니다 — 스키마가 받아준다는 뜻이지 그것만으로 "
+        f"쓸 수 있는 구성이 된다는 뜻은 아닙니다."
     )
 
 

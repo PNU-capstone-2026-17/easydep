@@ -6,7 +6,9 @@
 - **스텁을 구현으로 세지 않는다.** 파일이 있다고 되는 게 아니다.
 - **과잉 판정도 막는다.** 긴 본문 속 "not supported"는 일부 기능 제한일 수 있어
   스텁으로 보지 않는다 — 되는 것을 안 된다고 답하면 그것도 오답이다.
-- **"CSP에 기능이 없다"와 "드라이버가 없다"는 다른 말이다.**
+- **도구의 커버리지이지 클라우드의 사실이 아니다.** "드라이버가 없다"를
+  "CSP에 그 기능이 없다"로 옮겨 말하면 거짓이 된다 — 우리는 배포기가 아니라
+  가이드라인 지식베이스를 만든다.
 """
 
 from __future__ import annotations
@@ -142,13 +144,19 @@ def built(tmp_path):
     cbspider._load.cache_clear()
 
 
-def test_answer_says_driver_missing_not_csp_missing(built) -> None:
-    """CSP에 기능이 없다는 말로 읽히면 안 된다."""
+def test_answer_is_tool_coverage_not_a_cloud_fact(built) -> None:
+    """**가이드라인 KB의 핵심 계약.** 이건 도구의 커버리지이지 클라우드의 사실이 아니다.
+
+    "KT Cloud에 쿠버네티스가 없다"로 읽히면 거짓을 말한 것이다. 우리는 배포기가
+    아니라 가이드라인 지식베이스를 만든다.
+    """
     text = cbspider.describe("kt", "k8sCluster", output_dir=str(built))
-    assert "드라이버가 아직 없다" in text
-    assert "CSP에 그 기능이 없다는 뜻이 아니라" in text
+    assert "그 CSP에 해당 기능이 없다는 뜻이 아닙니다" in text
+    assert "이 데이터가 답하지 않습니다" in text
 
 
 def test_unknown_csp_is_rejected_clearly(built) -> None:
+    """모르는 CSP도 '없다'가 아니라 '커버리지 밖'이다."""
     text = cbspider.describe("vultr", output_dir=str(built))
-    assert "cb-spider가 다루지 않습니다" in text
+    assert "커버리지 밖" in text
+    assert "그런 CSP가 없다는 뜻이 아니라" in text

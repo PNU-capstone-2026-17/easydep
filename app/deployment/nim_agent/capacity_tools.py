@@ -278,10 +278,12 @@ def cap_operation_time(resource_type: str) -> str:
 
 @function_tool
 def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str:
-    """이 CSP에서 그 리소스를 **실제로 만들 수 있는지**. cb-spider 드라이버 기준.
+    """멀티클라우드 도구(cb-spider)가 이 CSP의 그 리소스를 다루는지.
 
-    우리 실행 경로가 cb-tumblebug → cb-spider라, 여기서 미지원이면 배포가 실패한다.
-    "CSP에 그 기능이 없다"가 아니라 **"드라이버가 아직 없다"**는 뜻이니 그대로 전하세요.
+    **도구의 커버리지이지 클라우드의 사실이 아닙니다.** 미지원이면 "그 CSP에 그
+    기능이 없다"가 **아니라** "이 도구로는 한 방식으로 못 다룬다"는 뜻입니다 —
+    그 구분을 반드시 그대로 전하세요. CSP가 그 서비스를 제공하는지는 이 도구가
+    답하지 않습니다.
 
     Args:
         csp: 프로바이더. aws · azure · gcp · alibaba · tencent · ibm · ncp · nhn ·
