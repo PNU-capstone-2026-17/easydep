@@ -94,6 +94,9 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
 3. **제공 여부·가격** (무엇을 살 수 있고 얼마인가) → cost_* 도구
    - "이 요구사항에 맞는 인스턴스 뭐가 있고 시간당 얼마야?" → cost_recommend_specs
    - "이 단가로 월 얼마야?" → cost_estimate_monthly
+   - "이 GCP 인스턴스 스팟/예약(1년·3년 약정)으로 쓰면 얼마?" → cost_gcp_discount_pricing
+     (GCP 전용. 온디맨드는 미러, 스팟·약정만 별도 스냅샷 — 도구가 붙이는 "기준
+     온디맨드"·출처 고지를 그대로 전하세요.)
    cost_* 는 서버·자격증명 없이 항상 동작하며, cb-tumblebug의 스펙 카탈로그를 그대로
    미러한 데이터입니다. recommend_vm_spec(MCP)이 연결돼 있다면 **같은 스펙**을 라이브
    가격으로 답하므로 그쪽을 우선 쓰세요(기본은 연결되지 않습니다).

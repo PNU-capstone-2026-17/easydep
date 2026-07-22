@@ -172,4 +172,21 @@ def cost_estimate_monthly(
     return agent_api.estimate_monthly_cost(hourly_usd, count, hours_per_month)
 
 
-COST_TOOLS = [cost_recommend_specs, cost_estimate_monthly]
+@function_tool
+def cost_gcp_discount_pricing(spec_name: str, region: str | None = None) -> str:
+    """GCP 인스턴스의 스팟·약정(1년·3년) 가격을 조회한다.
+
+    미러(cb-tumblebug)엔 온디맨드 정가만 있어서 이 축은 Cyclenerd 가격표로 보강한다.
+    **GCP 전용**이다 — AWS·Azure 스펙엔 "미수록"이라고 답한다. 온디맨드가 우리 미러와
+    다른 스냅샷이라, 어긋난 리전은 도구가 "기준 온디맨드"를 함께 밝힌다 — 그 문구를
+    사용자에게 그대로 전하세요.
+
+    Args:
+        spec_name: GCP 스펙 이름. 예: 'e2-standard-4', 'a2-highgpu-1g'.
+        region: 리전(선택). 없으면 대표 리전 몇 곳을 보여준다. 예: 'asia-northeast3'.
+    """
+    print(f"\n[비용질의] GCP 스팟·약정: {spec_name!r} region={region!r}")
+    return agent_api.discount_pricing(spec_name, region)
+
+
+COST_TOOLS = [cost_recommend_specs, cost_estimate_monthly, cost_gcp_discount_pricing]

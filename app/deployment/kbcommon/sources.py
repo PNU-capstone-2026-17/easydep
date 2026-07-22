@@ -183,6 +183,24 @@ SOURCES: dict[str, Source] = {
             "KCC가 벤더링한 4.84.0(2023-09-26)보다 3개 메이저 최신이다. 17MB, 캐시됨."
         ),
     ),
+    "cyclenerd-gcp-pricing": Source(
+        key="cyclenerd-gcp-pricing",
+        url=(
+            "https://raw.githubusercontent.com/Cyclenerd/"
+            "google-cloud-pricing-cost-calculator/574d8fbb68fa/pricing.yml"
+        ),
+        pin_kind="commit",
+        pin="574d8fbb68fa",
+        note=(
+            "GCP **스팟·약정** 가격. 우리 미러(tumblebug)엔 온디맨드 정가 하나뿐이라 "
+            "'예약하면 얼마'에 답할 수 없었다. 라이선스는 파일 안에 Apache-2.0으로 "
+            "명시(about.copyright). 태그가 없어 커밋 SHA로 고정한다. "
+            "**미러를 대체하지 않는다** — 온디맨드는 tumblebug를 유지하고 스팟·약정만 "
+            "보강한다. 이 파일의 온디맨드는 다른 스냅샷(2026-07-16 생성)이라 tumblebug와 "
+            "리전×패밀리 단위로 어긋나므로, 조인 시 괴리를 함께 기록한다. "
+            "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
+        ),
+    ),
     "tumblebug-swagger": Source(
         key="tumblebug-swagger",
         url=(

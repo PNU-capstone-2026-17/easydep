@@ -165,6 +165,11 @@ PROBES: tuple[Probe, ...] = (
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
           want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
           want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전")),
+    Probe("P1", "GCP e2-standard-4를 서울 리전에서 스팟으로 쓰면 시간당 얼마야?",
+          "스팟·약정 축(gcp-pricing). 미러엔 온디맨드만 있어 못 답했다 — "
+          "지어내지 말고 도구로 답하는가",
+          want_tools=("cost_gcp_discount_pricing",), forbid_tools=("web_search",),
+          want_any=("스팟", "$0.0", "0.06")),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",

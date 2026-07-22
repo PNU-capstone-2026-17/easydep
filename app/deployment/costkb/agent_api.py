@@ -20,6 +20,8 @@ from costkb.dataset import (
     is_built,
     load_warning,
     provider_summary,
+    spot_commit_for,
+    spot_commit_regions,
 )
 
 # 한 달 가동 시간 기준: 24h * 365d / 12 ≈ 730시간(상시 가동 가정).
@@ -154,6 +156,115 @@ def recommend_specs(
         text
         + "\n\n월 비용은 estimate_monthly_cost 도구로 계산하세요 "
         "(대수·가동시간이 반영되고 한계 고지가 붙습니다). 직접 곱하지 마세요."
+    )
+
+
+def _discount_line(rec: dict) -> str:
+    """스팟·약정 한 리전의 값을 시간당으로 나란히 보여준다.
+
+    약정은 원본이 월 단위라 그대로 두고 시간당(÷730)을 병기한다 — 다른 가격과
+    비교하려면 시간당이 필요한데, 원본을 버리지 않도록 둘 다 적는다.
+    """
+    parts = []
+    spot = rec.get("hourSpotUSD")
+    if spot is not None:
+        parts.append(f"스팟 ${spot:.4f}/h")
+    for label, key in (("1년 약정", "month1yUSD"), ("3년 약정", "month3yUSD")):
+        month = rec.get(key)
+        if month is not None:
+            parts.append(f"{label} ${month / HOURS_PER_MONTH:.4f}/h (월 ${month:,.2f})")
+    return " · ".join(parts) if parts else "값 없음"
+
+
+def discount_pricing(
+    spec_name: str,
+    region: str | None = None,
+    *,
+    output_dir: Path | str | None = None,
+) -> str:
+    """GCP 인스턴스의 스팟·약정 가격. 미러엔 없는 축이라 Cyclenerd에서 보강한다.
+
+    미러의 온디맨드와 **다른 스냅샷**이므로, 온디맨드가 어긋난 리전에서는 그 사실을
+    함께 밝힌다 — 스팟·약정은 Cyclenerd 자신의 온디맨드 기준이다.
+    """
+    if region is not None:
+        rec = spot_commit_for(spec_name, region, output_dir)
+        if rec is None:
+            rows = spot_commit_regions(spec_name, output_dir)
+            if not rows:
+                return _no_discount(spec_name)
+            # 리전 오타를 잡는다. 모델이 `asia-northheast3`(h 하나 더)처럼 한 글자
+            # 틀리면, "정보 없음"을 "그 리전엔 스팟이 없다"로 오해해 **틀린 답**을
+            # 냈다(실측). 가까운 리전이 확실하면 그걸로 답하되 교정 사실을 밝힌다.
+            import difflib
+
+            available = sorted(r["region"] for r in rows)
+            near = difflib.get_close_matches(region, available, n=1, cutoff=0.8)
+            if near:
+                rec = spot_commit_for(spec_name, near[0], output_dir)
+                note = (
+                    f"('{region}'는 없는 리전이라 가장 가까운 '{near[0]}'로 답합니다) "
+                )
+                lines = [f"{spec_name} 스팟·약정 가격 (GCP) {note}:"]
+                lines.append(f"  - {rec['region']}: {_discount_line(rec)}")
+                extra = ""
+                if not rec.get("snapshotMatchesMirror", True):
+                    ref = rec.get("hourRefUSD")
+                    lines[-1] += f"  ※ 기준 온디맨드 ${ref:.4f}/h" if ref else ""
+                    extra = (
+                        "\n※ 이 소스의 온디맨드가 미러와 5% 넘게 다릅니다 — 스냅샷 "
+                        "시점 차이라 스팟·약정도 그 온디맨드 기준입니다."
+                    )
+                return (
+                    "\n".join(lines)
+                    + "\n\n※ 출처: Cyclenerd GCP 가격표(2026-07-16 스냅샷, Apache-2.0)."
+                    + extra
+                )
+            return (
+                f"{spec_name}: '{region}' 리전의 스팟·약정 정보가 없습니다. "
+                f"이 스펙이 정보를 가진 리전: "
+                + ", ".join(available[:8])
+            )
+        recs = [rec]
+    else:
+        recs = spot_commit_regions(spec_name, output_dir)
+        if not recs:
+            return _no_discount(spec_name)
+        recs = sorted(recs, key=lambda r: r["region"])[:6]
+
+    lines = [f"{spec_name} 스팟·약정 가격 (GCP):"]
+    diverged = False
+    for rec in recs:
+        line = f"  - {rec['region']}: {_discount_line(rec)}"
+        if not rec.get("snapshotMatchesMirror", True):
+            diverged = True
+            ref = rec.get("hourRefUSD")
+            line += f"  ※ 기준 온디맨드 ${ref:.4f}/h" if ref else ""
+        lines.append(line)
+    footer = (
+        "\n\n※ 출처: Cyclenerd GCP 가격표(2026-07-16 스냅샷, Apache-2.0). "
+        "온디맨드는 costkb 미러(cb-tumblebug)를 쓰고 스팟·약정만 이 소스로 보강합니다."
+    )
+    if diverged:
+        footer += (
+            "\n※ '기준 온디맨드'가 붙은 리전은 이 소스의 온디맨드가 우리 미러와 5% "
+            "넘게 다릅니다 — 가격 스냅샷 시점 차이라, 스팟·약정도 그 온디맨드 기준입니다. "
+            "정확한 현재가는 cb-tumblebug MCP로 확인하세요."
+        )
+    return "\n".join(lines) + footer
+
+
+def _no_discount(spec_name: str) -> str:
+    """스팟·약정을 못 찾았을 때. '없음'과 '이 축 미수록'을 구분한다."""
+    if not spec_name.startswith(("n1", "n2", "n4", "e2", "c2", "c3", "c4", "t2",
+                                 "a2", "a3", "g2", "m1", "m2", "m3", "z3")):
+        return (
+            f"'{spec_name}'의 스팟·약정 정보가 없습니다. 이 보강은 **GCP 전용**입니다 "
+            "(Cyclenerd). AWS·Azure의 스팟은 지금 수록돼 있지 않습니다."
+        )
+    return (
+        f"{spec_name}의 스팟·약정 정보를 찾지 못했습니다. GCP 스팟·약정 보강이 빌드되지 "
+        "않았거나(python -m costkb build-gcp-pricing) 미러에 없는 스펙일 수 있습니다."
     )
 
 

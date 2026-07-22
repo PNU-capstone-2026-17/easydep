@@ -32,6 +32,8 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 
 DEFAULT_OUTPUT_DIR = Path("output")
 BUILT_FILENAME = "tumblebug-cost.json"
+#: GCP 스팟·약정 보강(Cyclenerd). 미러와 별개 파일이라 없을 수 있다.
+SPOT_COMMIT_FILENAME = "gcp-spot-commit.json"
 
 # MCP의 recommend_vm_spec은 호출자가 architecture를 안 주면 x86_64를 끼워넣는다
 # (tb-mcp.py). 이걸 미러하지 않으면 MCP가 감추는 arm64 스펙(덤프 기준 7,790건)이
@@ -101,9 +103,47 @@ def schema() -> dict:
     return _schema()
 
 
+@lru_cache(maxsize=4)
+def _load_spot_commit(output_dir: str) -> dict[tuple[str, str], dict]:
+    """`(specName, region)` → 스팟·약정 레코드. 없으면 빈 맵.
+
+    미러와 별개 파일이라 보강이 안 됐을 수 있다 — 그때는 빈 맵을 돌려주고, 부르는
+    쪽이 "이 축은 안 붙었다"고 답한다. 미러 로드와 달리 번들 폴백이 없다(GCP 전용
+    보강이라 폴백할 손 큐레이션이 없다).
+    """
+    found = artifact.resolve(Path(output_dir), SPOT_COMMIT_FILENAME)
+    if found is None:
+        return {}
+    try:
+        # load_json이 `.gz`(data/ 배포 번들)와 평문 둘 다 처리한다. read_text로
+        # 직접 읽으면 gz 바이트를 UTF-8로 디코드하려다 죽는다(빌드 안 한 사용자 경로).
+        data = artifact.load_json(found)
+    except (OSError, ValueError):
+        return {}
+    return {
+        (r["specName"], r["region"]): r for r in data.get("records") or []
+    }
+
+
+def spot_commit_for(
+    spec_name: str, region: str, output_dir: Path | str | None = None
+) -> dict | None:
+    """한 스펙·리전의 스팟·약정 레코드. 없으면 None."""
+    return _load_spot_commit(_resolve(output_dir)).get((spec_name, region))
+
+
+def spot_commit_regions(
+    spec_name: str, output_dir: Path | str | None = None
+) -> list[dict]:
+    """한 스펙이 스팟·약정을 가진 모든 리전의 레코드."""
+    index = _load_spot_commit(_resolve(output_dir))
+    return [r for (name, _), r in index.items() if name == spec_name]
+
+
 def clear_caches() -> None:
     """로드·스키마 캐시를 비운다 (테스트가 output_dir을 갈아끼울 때)."""
     _load_cached.cache_clear()
+    _load_spot_commit.cache_clear()
     _schema.cache_clear()
 
 

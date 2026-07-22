@@ -49,6 +49,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     build.add_argument("--output", type=Path, help=f"출력 경로 (기본: output/{BUILT_FILENAME})")
 
+    # 미러가 아니라 **보강**이라 별도 서브커맨드다. 미러(build)를 먼저 돌려야 조인 대상이
+    # 생긴다 — 온디맨드는 미러를 쓰고 스팟·약정만 여기서 붙인다.
+    spot = sub.add_parser("build-gcp-pricing", help="GCP 스팟·약정 가격 보강 (Cyclenerd)")
+    spot.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    spot.add_argument("--output", type=Path, help="출력 경로 (기본: output/gcp-spot-commit.json)")
+
     query = sub.add_parser("query", help="요구사항으로 스펙 후보 조회")
     query.add_argument("--vcpu-min", type=int, default=0, help="최소 vCPU")
     query.add_argument("--mem-min", type=float, default=0, help="최소 메모리(GiB, 미러 기준)")
@@ -179,9 +185,29 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_gcp_pricing(args: argparse.Namespace) -> int:
+    from costkb.parsers import gcp_pricing
+
+    output = args.output or (DEFAULT_OUTPUT_DIR / "gcp-spot-commit.json")
+    if not (DEFAULT_OUTPUT_DIR / BUILT_FILENAME).exists():
+        print(
+            "미러가 없습니다. 먼저 `python -m costkb build`로 미러를 만드세요 — "
+            "스팟·약정은 미러 스펙에 조인해 담습니다.",
+            file=sys.stderr,
+        )
+        return 1
+    gcp_pricing.build(output, refresh=args.refresh)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    handlers = {"build": _cmd_build, "query": _cmd_query, "coverage": _cmd_coverage}
+    handlers = {
+        "build": _cmd_build,
+        "build-gcp-pricing": _cmd_build_gcp_pricing,
+        "query": _cmd_query,
+        "coverage": _cmd_coverage,
+    }
     try:
         return handlers[args.command](args)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
