@@ -129,6 +129,12 @@ def main(argv: list[str] | None = None) -> int:
     regions.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     regions.add_argument("--output", type=Path, help="출력 경로 (기본: output/cloud-regions.json)")
 
+    carbon_cmd = sub.add_parser(
+        "build-carbon", help="리전별 탄소 (GCP 발표 + Cloud Carbon Footprint 추정)"
+    )
+    carbon_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    carbon_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/region-carbon.json)")
+
     args = parser.parse_args(argv)
 
     if args.command == "build-regions":
@@ -136,6 +142,14 @@ def main(argv: list[str] | None = None) -> int:
 
         cloudinfo.build(
             args.output or (DEFAULT_OUTPUT / "cloud-regions.json"), refresh=args.refresh
+        )
+        return 0
+
+    if args.command == "build-carbon":
+        from kbcommon import carbon
+
+        carbon.build(
+            args.output or (DEFAULT_OUTPUT / "region-carbon.json"), refresh=args.refresh
         )
         return 0
 

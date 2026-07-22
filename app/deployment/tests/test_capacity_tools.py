@@ -28,6 +28,7 @@ def test_capacity_tools_registered() -> None:
         "cap_service_quota",
         "cap_resolve_region",
         "cap_service_regions",
+        "cap_region_carbon",
     }
 
 

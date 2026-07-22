@@ -224,6 +224,26 @@ def cap_service_regions(service: str) -> str:
     return agent_api.where_available(service)
 
 
+@function_tool
+def cap_region_carbon(provider: str, region: str | None = None) -> str:
+    """리전의 탄소집약도(gCO2eq/kWh). 리전을 안 주면 깨끗한 순으로 보여준다.
+
+    "같은 성능이면 어느 리전이 탄소를 덜 쓰나"에 답하는 데 쓴다. 지금은
+    aws·azure·gcp만 수록돼 있다 — 다른 프로바이더엔 "없다" 말고 "추적 안 함".
+
+    **프로바이더끼리 비교하지 마세요.** GCP는 발표값, AWS·Azure는 추정값이라
+    방법론이 다릅니다. 도구가 붙이는 그 고지를 사용자에게 그대로 전하세요.
+
+    Args:
+        provider: aws · azure · gcp.
+        region: 리전 코드(선택). 예: 'asia-northeast3', 'ap-northeast-2'.
+    """
+    from kbcommon import carbon
+
+    print(f"\n[용량질의] 리전 탄소: {provider!r} region={region!r}")
+    return carbon.describe(provider, region)
+
+
 def _coerce(raw: str) -> float | str:
     """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
     try:
@@ -242,4 +262,5 @@ CAPACITY_TOOLS = [
     cap_service_quota,
     cap_resolve_region,
     cap_service_regions,
+    cap_region_carbon,
 ]

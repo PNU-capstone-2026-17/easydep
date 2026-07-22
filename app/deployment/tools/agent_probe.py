@@ -165,6 +165,16 @@ PROBES: tuple[Probe, ...] = (
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
           want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
           want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전")),
+    Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
+          "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
+          "지어내지 말고 도구로 답하는가",
+          want_tools=("cap_region_carbon",), forbid_tools=("web_search",),
+          want_any=("europe-north2", "northamerica-northeast1", "gCO2")),
+    Probe("C2", "AWS 서울이랑 GCP 서울 중에 어디가 탄소가 적어?",
+          "**방법론이 다른 값을 비교하면 안 된다.** GCP는 발표값, AWS는 추정값이라 "
+          "같은 도시에서도 순서가 뒤집힌다 — 비교 불가를 전하는가",
+          want_tools=("cap_region_carbon",), forbid_tools=("web_search",),
+          want_any=("비교", "방법론", "다릅니다", "다르")),
     Probe("R3", "서울 리전 코드가 프로바이더마다 어떻게 달라?",
           "리전 이름이 프로바이더 10곳으로 넓어졌다. 모델 기억이 아니라 도구로 "
           "답하고, 코드가 다르다는 사실을 전하는가",

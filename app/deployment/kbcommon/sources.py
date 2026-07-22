@@ -201,6 +201,38 @@ SOURCES: dict[str, Source] = {
             "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
         ),
     ),
+    "gcp-carbon": Source(
+        key="gcp-carbon",
+        url=(
+            "https://raw.githubusercontent.com/GoogleCloudPlatform/"
+            "region-carbon-info/49f3f26bfd68/data/yearly/2024.csv"
+        ),
+        pin_kind="commit",
+        pin="49f3f26bfd68",
+        note=(
+            "GCP 리전별 **무탄소 에너지 비율(CFE)**과 그리드 탄소집약도. Google이 "
+            "직접 발표한 값이라 basis=stated다. Apache-2.0. 우리 gcp 리전 43개 중 "
+            "42개(98%)와 조인된다. 연도별 파일이 있어 2024를 쓴다 — 최신 연도를 "
+            "따라가면 값이 조용히 바뀌므로 연도를 고정한다."
+        ),
+    ),
+    "ccf-emissions": Source(
+        key="ccf-emissions",
+        url=(
+            "https://raw.githubusercontent.com/cloud-carbon-footprint/"
+            "cloud-carbon-footprint/f584c549ee35/packages/"
+        ),
+        pin_kind="commit",
+        pin="f584c549ee35",
+        note=(
+            "AWS·Azure 리전별 배출계수(t CO2eq/kWh). Apache-2.0. **파일 셋을 함께 "
+            "읽어야 한다** — 리전 enum, 계수 표, 미국 NERC 지역 상수. 계수 표가 "
+            "NERC 상수를 참조하기 때문이다(us-east-1 → SERC). "
+            "**GCP 값과 같은 축에 놓고 비교하면 안 된다** — 이쪽은 공개 그리드 "
+            "데이터 추정이고 GCP는 자체 발표라 방법론이 다르다. 실측으로 같은 도시의 "
+            "값이 다르고 순서까지 뒤집힌다(서울은 gcp가 최저, 도쿄는 aws가 최저)."
+        ),
+    ),
     "tumblebug-cloudinfo": Source(
         key="tumblebug-cloudinfo",
         url=(
