@@ -63,9 +63,9 @@ def subnet_capacity(
         known = ", ".join(scopes("reserved_ips", output_dir)) or "없음"
         return (
             f"/{prefix_length} 서브넷의 전체 주소는 {total:,}개입니다. 다만 "
-            f"**'{provider}'의 예약 IP 수를 이 데이터셋이 모릅니다** — 예약이 없다는 "
-            f"뜻이 아닙니다(AWS도 실제로 5개를 예약하는데 원본 표가 비어 있습니다). "
-            f"아는 프로바이더: {known}"
+            f"**'{provider}'의 예약 IP 수를 이 데이터셋이 모릅니다** — 예약이 "
+            "**없다는 뜻이 아니라** 우리 소스가 안 적었다는 뜻입니다. 실제로는 몇 개를 "
+            f"떼므로 전체 주소 수를 그대로 쓰면 안 됩니다. 아는 프로바이더: {known}"
         )
     reserved = int(rule.value)
     usable = usable_ips(prefix_length, reserved)
@@ -75,7 +75,11 @@ def subnet_capacity(
     ]
     if rule.note:
         lines.append(f"  예약 내역: {rule.note}")
-    lines.append(f"  근거: {evidence_name(rule.evidence)}, {describe(rule.basis)}")
+    lines.append(f"  근거: {evidence_name(rule.evidence)}")
+    # **손으로 적은 값이면 그렇다고 말해야 한다.** 근거 라벨만 보이면
+    # "원본에 명시됨"으로 읽혀 기계 판독 소스가 있는 것처럼 들린다.
+    if rule.caveat:
+        lines.append(f"  ⚠ {rule.caveat}")
     lines.append(_DISCLAIMER)
     return "\n".join(lines)
 

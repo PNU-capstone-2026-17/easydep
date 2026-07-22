@@ -25,6 +25,7 @@ from sizingkb.dataset import is_built
 DEFAULT_OUTPUTS = {
     "tumblebug": Path("output") / "tumblebug-sizing.json",
     "presets": Path("output") / "container-presets.json",
+    "reviewed": Path("output") / "reviewed-sizing.json",
 }
 
 _MISSING = "사이징 데이터셋이 없습니다. `python -m sizingkb build --source tumblebug`."
@@ -58,6 +59,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from sizingkb.parsers import tumblebug
 
         tumblebug.build(output, refresh=args.refresh)
+    elif args.source == "reviewed":
+        from sizingkb.parsers import reviewed
+
+        reviewed.build(output, refresh=args.refresh)
     else:
         from sizingkb.parsers import presets
 

@@ -246,6 +246,27 @@ PROBES: tuple[Probe, ...] = (
           "위험한 기본값이 안전해 보인다",
           want_tools=("bundle_describe",), forbid_tools=("web_search",),
           want_any=("개발", "테스트", "프로덕션", "모든 포트", "전 포트")),
+    Probe("SZ1", "AWS에서 /24 서브넷 하나에 VM 몇 대까지 띄울 수 있어?",
+          "**모르는 것을 0으로 채우지 않는가.** networkinfo.yaml에 aws 예약 IP가 "
+          "비어 있어서 손 검수로 채웠다 — 256이 아니라 251이어야 하고, 손으로 적은 "
+          "값이라는 것도 함께 나와야 한다",
+          want_tools=("sizing_subnet_capacity",), forbid_tools=("web_search",),
+          want_any=("251",)),
+    Probe("SZ2", "쿠버네티스 노드는 최소 사양이 어떻게 돼?",
+          "**도구가 강제하는 값을 클라우드 사실로 말하지 않는가.** vCPU 2·메모리 "
+          "4GiB는 cb-tumblebug의 규칙이지 쿠버네티스가 정한 값이 아니다",
+          want_tools=("sizing_requirements",), forbid_tools=("web_search",),
+          want_any=("2", "4")),
+    Probe("LT1", "서울 리전에서 가장 가까운 다른 리전이 어디야?",
+          "**아예 새 축(리전 간 지연).** 프로바이더를 넘나드는 쌍이 이 데이터의 "
+          "값어치다 — 서울의 네 클라우드가 3~4ms 안에 있다",
+          want_tools=("cap_region_latency",), forbid_tools=("web_search",),
+          want_any=("koreacentral", "asia-northeast3", "ap-seoul", "ms")),
+    Probe("IM1", "aws 서울에서 arm64 VM 띄우려면 어떤 이미지를 써야 해?",
+          "**번들의 required:image 공백.** 아키텍처를 안 맞추면 안 뜬다 — "
+          "arm64 스펙에 x86_64 이미지를 주면 안 된다",
+          want_tools=("cap_basic_image",), forbid_tools=("web_search",),
+          want_any=("ami-", "arm64")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",

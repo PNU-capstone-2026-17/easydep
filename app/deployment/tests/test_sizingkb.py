@@ -99,7 +99,7 @@ def test_unknown_provider_refuses_to_guess(built) -> None:
     text = subnet_capacity(24, "aws", output_dir=built)
     assert "251" not in text
     assert "모릅니다" in text
-    assert "예약이 없다는 뜻이 아닙니다" in text
+    assert "없다는 뜻이 아니라" in text
 
 
 def test_unknown_provider_still_gives_the_total(built) -> None:
@@ -112,6 +112,32 @@ def test_bad_prefix_is_reported_not_raised(built) -> None:
 
 
 # --- 경고가 값과 함께 간다 ----------------------------------------------------
+
+def test_hand_entered_value_says_so(built) -> None:
+    """**손으로 적은 값이면 그렇다고 말해야 한다.**
+
+    근거 라벨(`손 검수`)만 보이면 "원본에 명시됨"으로 읽혀 기계 판독 소스가 있는
+    것처럼 들린다. `networkinfo.yaml`이 aws·gcp를 비워 두었고 아카이브된 AWS 문서도
+    비어 있어서 손으로 적은 값이다.
+    """
+    from sizingkb.model import Rule
+
+    rules = dict(RULES)
+    rules["rules"] = RULES["rules"] + [{
+        "id": "reviewed::reserved/aws", "kind": "reserved_ips", "scope": "aws",
+        "metric": "reservedIps", "value": 5, "unit": "개",
+        "evidence": "human-review", "note": "네트워크·라우터·DNS·예약·브로드캐스트",
+        "caveat": "**기계 판독 소스가 없어 사람이 적은 값**입니다.",
+    }]
+    import json as _json
+    from pathlib import Path as _Path
+    target = _Path(built) / "reviewed-sizing.json"
+    target.write_text(_json.dumps(rules, ensure_ascii=False), encoding="utf-8")
+    dataset.clear_caches()
+    text = subnet_capacity(24, "aws", output_dir=built)
+    assert "251" in text
+    assert "사람이 적은 값" in text
+
 
 def test_tool_minimum_says_who_requires_it(built) -> None:
     """K8s 최소치는 **도구가 강제하는 값**이지 쿠버네티스가 정한 값이 아니다."""

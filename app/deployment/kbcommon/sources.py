@@ -415,6 +415,23 @@ SOURCES: dict[str, Source] = {
             "Azure(1,152개)보다 훨씬 얇고 앵커도 22종뿐이다. basis=observed."
         ),
     ),
+    "widdix-cf-templates": Source(
+        key="widdix-cf-templates",
+        url=(
+            "https://codeload.github.com/widdix/aws-cf-templates/"
+            "tar.gz/1a9f04f934179975a3a56c2496d2ed2b27598bd8"
+        ),
+        pin_kind="commit",
+        pin="1a9f04f934179975a3a56c2496d2ed2b27598bd8",
+        note=(
+            "두 번째 AWS CFN 코퍼스. Apache-2.0. 태그가 의미 없어 커밋 SHA로 고정. "
+            "AWS 공식 샘플 299개만으로는 앵커가 22종뿐이라 얇았다 — 이걸 더하면 "
+            "템플릿 362개·앵커 30종이 된다. **RDS(15건)·EKS(2건)는 그래도 임계에 "
+            "못 미친다** — 그 둘은 여전히 구멍이고, 채운 척하지 않는다. "
+            "성격이 다르다: AWS 샘플은 서비스별 데모이고 이쪽은 운영용 스택이라 "
+            "CloudWatch 경보가 55.6%로 나온다."
+        ),
+    ),
     "azure-quickstart-templates": Source(
         key="azure-quickstart-templates",
         url=(

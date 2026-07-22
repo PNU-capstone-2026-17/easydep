@@ -16,6 +16,7 @@ DEFAULT_OUTPUT_DIR = Path("output")
 SIZING_FILES = (
     "tumblebug-sizing.json",
     "container-presets.json",
+    "reviewed-sizing.json",
 )
 
 
