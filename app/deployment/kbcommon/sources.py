@@ -432,6 +432,22 @@ SOURCES: dict[str, Source] = {
             "클라우드의 사실이 아니다."
         ),
     ),
+    "tumblebug-latency": Source(
+        key="tumblebug-latency",
+        url=(
+            "https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/"
+            "v0.12.25/assets/cloudlatencymap.csv"
+        ),
+        pin_kind="tag",
+        pin="v0.12.25",
+        note=(
+            "리전 간 왕복 지연 행렬. **cb-tumblebug의 benchmark.go가 실제로 VM을 "
+            "띄워 잰 값**이고 벤더 SLA가 아니다 — 어느 시점의 관측이다. "
+            "측정 시각은 원본에 없다(DB의 measured_at은 적재 시각). Apache-2.0. "
+            "검증: 대권거리와 상관 0.817, 양방향 4,851쌍 중 99.9%가 서로 다른 값이라 "
+            "전치 복사가 아니다."
+        ),
+    ),
     "tumblebug-src": Source(
         key="tumblebug-src",
         url=(

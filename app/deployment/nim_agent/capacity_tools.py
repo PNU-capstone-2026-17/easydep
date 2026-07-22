@@ -245,6 +245,27 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
 
 
 @function_tool
+def cap_region_latency(source_region: str, target_region: str | None = None) -> str:
+    """리전 간 왕복 네트워크 지연(ms). 대상을 안 주면 가까운 순으로 보여준다.
+
+    "멀티 리전으로 두면 지연이 얼마나?", "서울에서 가장 가까운 리전은?" 같은
+    질문에 쓴다. **프로바이더를 넘나드는 쌍도 있다** — 같은 도시의 AWS↔Azure가
+    3.3 ms다.
+
+    ⚠️ **벤더가 보장한 SLA가 아니라 cb-tumblebug이 VM을 띄워 잰 값**입니다.
+    측정 시각이 원본에 없으므로 "지금도 이렇다"고 말하지 마세요.
+
+    Args:
+        source_region: `프로바이더-리전` 꼴. 예: 'aws-ap-northeast-2'.
+        target_region: 같은 꼴(선택). 주면 그 쌍만.
+    """
+    from kbcommon import latency
+
+    print(f"\n[용량질의] 리전 지연: {source_region!r} → {target_region!r}")
+    return latency.describe(source_region, target_region)
+
+
+@function_tool
 def cap_service_lifecycle(service: str, version: str | None = None) -> str:
     """관리형 서비스 버전의 지원 종료일. "EKS 1.28 언제까지 쓸 수 있나".
 
@@ -316,6 +337,7 @@ CAPACITY_TOOLS = [
     cap_resolve_region,
     cap_service_regions,
     cap_region_carbon,
+    cap_region_latency,
     cap_service_lifecycle,
     cap_operation_time,
     cap_csp_supports,

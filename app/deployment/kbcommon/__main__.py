@@ -130,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     regions.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     regions.add_argument("--output", type=Path, help="출력 경로 (기본: output/cloud-regions.json)")
 
+    latency_cmd = sub.add_parser(
+        "build-latency", help="리전 간 네트워크 지연 (cb-tumblebug 벤치마크 실측)"
+    )
+    latency_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    latency_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/region-latency.json)")
+
     carbon_cmd = sub.add_parser(
         "build-carbon", help="리전별 탄소 (GCP 발표 + Cloud Carbon Footprint 추정)"
     )
@@ -173,6 +179,14 @@ def main(argv: list[str] | None = None) -> int:
 
         cloudinfo.build(
             args.output or (DEFAULT_OUTPUT / "cloud-regions.json"), refresh=args.refresh
+        )
+        return 0
+
+    if args.command == "build-latency":
+        from kbcommon import latency
+
+        latency.build(
+            args.output or (DEFAULT_OUTPUT / "region-latency.json"), refresh=args.refresh
         )
         return 0
 
