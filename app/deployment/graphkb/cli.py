@@ -27,6 +27,9 @@ DEFAULT_OUTPUTS = {
     "azure": Path("output") / "azure-graph.json",
     "gcp": Path("output") / "gcp-graph.json",
     "mapping": Path("output") / "mapping-graph.json",
+    # AVM 배포 순서는 azure-graph를 덮지 않고 옆에 둔다 — 근거 성격이 다르고,
+    # 기존 빌드를 안 건드려야 회귀를 구분할 수 있다.
+    "avm": Path("output") / "azure-deploy-graph.json",
 }
 
 
@@ -40,7 +43,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="공개 스키마에서 그래프를 추출·저장")
     build.add_argument(
         "--source",
-        choices=("tumblebug", "cfn", "azure", "gcp", "mapping"),
+        choices=("tumblebug", "cfn", "azure", "gcp", "mapping", "avm"),
         required=True,
         help="추출 소스",
     )
@@ -183,6 +186,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 p.strip() for p in args.providers.split(",") if p.strip()
             )
         azure.build(output, **kwargs)
+    elif args.source == "avm":
+        from graphkb.parsers import avm
+
+        avm.build(output, refresh=args.refresh)
     elif args.source == "gcp":
         from graphkb.parsers import gcp
 

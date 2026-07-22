@@ -244,6 +244,24 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
     return carbon.describe(provider, region)
 
 
+@function_tool
+def cap_service_lifecycle(service: str, version: str | None = None) -> str:
+    """관리형 서비스 버전의 지원 종료일. "EKS 1.28 언제까지 쓸 수 있나".
+
+    제품 이름(`amazon-eks`)이나 리소스 타입(`AWS::EKS::Cluster`)으로 물어도 된다.
+    **'종료일 미정'은 '종료됨'이 아닙니다** — 아직 안 정해진 것이니 그대로 전하세요.
+    수록 안 된 서비스는 "종료일이 없다"가 아니라 "이 소스에 없다"입니다.
+
+    Args:
+        service: 제품 이름 또는 리소스 타입. 예: 'amazon-eks', 'AWS::RDS::DBInstance'.
+        version: 버전(선택). 예: '1.28', '8.0'.
+    """
+    from kbcommon import lifecycle
+
+    print(f"\n[용량질의] 수명주기: {service!r} version={version!r}")
+    return lifecycle.describe(service, version)
+
+
 def _coerce(raw: str) -> float | str:
     """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
     try:
@@ -263,4 +281,5 @@ CAPACITY_TOOLS = [
     cap_resolve_region,
     cap_service_regions,
     cap_region_carbon,
+    cap_service_lifecycle,
 ]

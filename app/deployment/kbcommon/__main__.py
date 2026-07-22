@@ -135,7 +135,22 @@ def main(argv: list[str] | None = None) -> int:
     carbon_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     carbon_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/region-carbon.json)")
 
+    life = sub.add_parser(
+        "build-lifecycle", help="관리형 서비스 버전별 지원 종료일 (endoflife.date)"
+    )
+    life.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    life.add_argument("--output", type=Path, help="출력 경로 (기본: output/service-lifecycle.json)")
+
     args = parser.parse_args(argv)
+
+    if args.command == "build-lifecycle":
+        from kbcommon import lifecycle
+
+        lifecycle.build(
+            args.output or (DEFAULT_OUTPUT / "service-lifecycle.json"),
+            refresh=args.refresh,
+        )
+        return 0
 
     if args.command == "build-regions":
         from kbcommon import cloudinfo

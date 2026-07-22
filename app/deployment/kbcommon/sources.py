@@ -201,6 +201,40 @@ SOURCES: dict[str, Source] = {
             "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
         ),
     ),
+    "avm-bicep": Source(
+        key="avm-bicep",
+        url=(
+            "https://codeload.github.com/Azure/bicep-registry-modules/tar.gz/"
+            "b7c2b1a25b334fe260c5347f70468e47c7dfeef4"
+        ),
+        pin_kind="commit",
+        pin="b7c2b1a25b334fe260c5347f70468e47c7dfeef4",
+        note=(
+            "Azure Verified Modules의 **실무 배포 순서**. 컴파일된 ARM 템플릿"
+            "(`main.json`) 522개의 `dependsOn`에서 타입 쌍을 뽑는다. "
+            "스키마 계층(arm-hierarchy)이나 참조(bicep-ref)와 **성격이 다르다** — "
+            "'실제로 배포할 때 무엇을 먼저 만드는가'다. 실측으로 한 모듈(storage-account)의 "
+            "타입 쌍 6개 중 5개가 우리 graphkb에 없는 새 관계였다(겹침 0). "
+            "**저장소 전체 태그가 없다** — 태그가 모듈별 semver(`storage/storage-account/3.0.1`)라 "
+            "커밋 SHA로 고정한다. tarball 11MB, 캐시됨. MIT."
+        ),
+    ),
+    "endoflife-date": Source(
+        key="endoflife-date",
+        url=(
+            "https://raw.githubusercontent.com/endoflife-date/endoflife.date/"
+            "2ffcafdaa788/products/"
+        ),
+        pin_kind="commit",
+        pin="2ffcafdaa788",
+        note=(
+            "관리형 서비스의 **버전별 지원 종료일**. 'EKS 1.28 언제까지 쓸 수 있나'에 "
+            "답한다. 클라우드 제품 23종이 있다(amazon-eks·amazon-rds-*·azure-*·gke 등). "
+            "**라이선스 함정**: 저장소는 MIT이지만 README가 본문 설명을 'adapted from "
+            "Wikipedia, CC BY-SA 3.0'이라고 밝힌다. 그래서 **YAML frontmatter의 "
+            "`releases:`만 취하고 `---` 뒤의 산문은 버린다** — 그래야 MIT로 남는다."
+        ),
+    ),
     "gcp-carbon": Source(
         key="gcp-carbon",
         url=(

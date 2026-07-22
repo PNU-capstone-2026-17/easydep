@@ -27,6 +27,7 @@ _EVIDENCE_NAMES = {
     "cfn-schema": "CloudFormation 스키마",
     "cfn-description": "CloudFormation 설명문",
     "cdk-oob": "AWS CDK 참조 정의",
+    "avm-dependson": "Azure 검증 모듈의 배포 순서",
     "heuristic": "이름 규칙 추정",
     "human-review": "손 검수",
     "relationshipRef": "스키마의 관계 선언",

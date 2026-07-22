@@ -99,6 +99,7 @@
             "enum": [
               "relationshipRef",
               "cdk-oob",
+              "avm-dependson",
               "swagger-field",
               "heuristic",
               "arm-id",

@@ -54,6 +54,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 이름이 KCC의 규약이고 설명문이 "belongs to"라고 말한다(projectRef 273/296).
     "kcc-hierarchy": STATED,
     "cdk-oob": STATED,              # AWS CDK가 손으로 정리해 배포하는 관계표
+    # AVM 모듈의 dependsOn. **"모듈이 이 순서로 배포한다"**이지 "API가 강제한다"가
+    # 아니다 — tpg-schema의 ForceNew와 같은 구분이다. 모듈 저자가 명시한 것이라 stated다.
+    "avm-dependson": STATED,
     "kcc-description": INFERRED,    # CRD 설명문 정규식
     "bicep-ref": INFERRED,          # 대상 객체에 id가 있는지로 판별 (검수표로 확정)
     "heuristic": INFERRED,          # 이름 끝 맞추기

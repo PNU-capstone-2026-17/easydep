@@ -33,6 +33,7 @@ GRAPH_FILES = (
     "azure-graph.json",
     "gcp-graph.json",
     "mapping-graph.json",
+    "azure-deploy-graph.json",
 )
 
 _MISSING_MESSAGE = (
