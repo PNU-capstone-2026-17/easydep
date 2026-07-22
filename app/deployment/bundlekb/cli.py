@@ -27,6 +27,7 @@ DEFAULT_OUTPUTS = {
     "aqt": Path("output") / "aqt-cooccurrence.json",
     "aws-patterns": Path("output") / "aws-pattern-bundles.json",
     "awscfn": Path("output") / "awscfn-cooccurrence.json",
+    "kcc": Path("output") / "kcc-bundles.json",
 }
 
 _MISSING = "번들 데이터셋이 없습니다. `python -m bundlekb build --source avm` 으로 빌드하세요."
@@ -72,6 +73,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from bundlekb.parsers import awscfn
 
         awscfn.build(output, refresh=args.refresh)
+    elif args.source == "kcc":
+        from bundlekb.parsers import kcc
+
+        kcc.build(output, refresh=args.refresh)
     else:  # pragma: no cover - argparse가 막는다
         raise SystemExit(f"알 수 없는 소스: {args.source}")
     return 0

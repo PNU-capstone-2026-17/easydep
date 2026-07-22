@@ -523,3 +523,65 @@ aws-ap-northeast-2 기준 왕복 지연 (가까운 순, 110곳 중 8곳):
 
 **프로바이더를 넘나드는 쌍이 이 데이터의 값어치다** — 서울의 네 클라우드가 서로 3~4 ms
 안에 있다는 것은 다른 어느 축도 답하지 못한다.
+
+---
+
+# GCP 번들 — 두 번 헛짚고 세 번째에 찾았다 (2026-07-23)
+
+## 1차 실패 — Terraform 모듈
+
+`cloud-foundation-fabric` 모듈 86개 중 **63개가 무조건 리소스 0개**였다. 주 리소스에도
+`count = var.vpc_create ? 1 : 0`이 걸려 "만들거나 참조하거나"를 표현하기 때문이다.
+
+## 2차 실패 — 변수 기본값까지 추적
+
+"기본값을 읽으면 풀린다"고 봤다. 재 봤다.
+
+```
+리소스 선언 719개
+  게이트 없음(무조건)    40
+  **풀림**               46  (6.4%)
+  못 풀음               633
+    for_each  535   ← 기본값이 빈 맵이라 0개
+    그 밖      98
+```
+
+**6.4%였다.** 지배적인 꼴이 `for_each`이고 기본값이 `{}`라, 이 모듈들은 **설계상
+보장하는 것이 거의 없다.** 되게 만들 수는 있지만 그건 소스를 억지로 미는 것이다.
+
+## 3차 — 이미 핀 박힌 소스의 안 쓰던 디렉터리 (여섯 번째)
+
+`kcc-crd`(v1.153.0)는 이미 고정돼 있고 우리는 CRD 스키마만 읽고 있었다.
+`config/samples/resources/<kind>/`는 **Google이 직접 만든 최소 동작 구성**이다.
+
+```
+시나리오 443개 · 리소스 2종 이상 **296개**
+
+alloydbcluster/regular-cluster
+  → AlloyDBCluster · ComputeAddress · ComputeNetwork · IAMPartialPolicy
+    KMSCryptoKey · KMSKeyRing · ServiceIdentity · ServiceNetworkingConnection
+notebookinstance
+  → ComputeNetwork · ComputeSubnetwork · IAMPartialPolicy · IAMServiceAccount
+    KMSCryptoKey · KMSKeyRing · NotebookInstance
+
+동반 빈도: KMSKeyRing → KMSCryptoKey 16회 (키링만으로는 쓸모가 없다)
+           ComputeNetwork → ComputeSubnetwork 35회
+```
+
+kind가 우리 graphkb 노드 id와 **그대로 맞는다**(`gcp::AlloyDBCluster`).
+
+**'샘플'이지 '요구'가 아니다.** Google이 예시로 고른 구성이고 API가 그 집합을
+강제한다는 뜻은 아니다 — `avm-module`·`tumblebug-dynamic`과 같은 경계이며 `caveat`에
+적었다.
+
+> 함정 하나: YAML 한 파일에 `---`로 문서가 여럿 들어 있다. 파일 전체에서 정규식을
+> 돌리면 `apiVersion`과 `kind`의 짝이 어긋난다 — **문서 단위로 자른 뒤** 봐야 한다.
+
+## 지금 번들 축의 프로바이더 커버리지
+
+| 프로바이더 | 명시 번들 | 동시 출현 |
+|---|---|---|
+| Azure | AVM 207 | Quickstart 43앵커 |
+| AWS | Solutions Constructs 52 | CFN 샘플 22앵커 |
+| GCP | **KCC 샘플 296** | — |
+| core | tumblebug 23 | — |

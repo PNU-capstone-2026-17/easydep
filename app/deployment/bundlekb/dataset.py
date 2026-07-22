@@ -25,6 +25,7 @@ BUNDLE_FILES = (
     "aqt-cooccurrence.json",
     "aws-pattern-bundles.json",
     "awscfn-cooccurrence.json",
+    "kcc-bundles.json",
 )
 
 #: 이 아래 표본에서는 비율을 내지 않는다. 6/17을 35.3%로 읽게 하지 않기 위한 선.

@@ -162,6 +162,9 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "tumblebug-template": STATED,
     # AWS가 공식으로 묶어 둔 패턴 이름(`aws-solutions-constructs`).
     "aws-solutions-construct": STATED,
+    # Config Connector 샘플. Google이 예시로 고른 최소 동작 구성이지
+    # API가 강제하는 집합은 아니다 — avm-module과 같은 경계.
+    "kcc-sample": STATED,
     # 실제 템플릿 코퍼스에서 **센** 동시 출현. 클라우드 사실이 아니다.
     "aqt-corpus": OBSERVED,
     # 같은 방법을 AWS에 적용한 것. 표본이 훨씬 얇다는 사실은 coverage에 적는다.

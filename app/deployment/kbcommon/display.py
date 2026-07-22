@@ -72,6 +72,7 @@ _EVIDENCE_NAMES = {
     "tumblebug-dynamic": "cb-tumblebug 동적 생성이 만드는 리소스",
     "tumblebug-template": "cb-tumblebug 큐레이션 템플릿",
     "aws-solutions-construct": "AWS Solutions Constructs 패턴",
+    "kcc-sample": "GCP Config Connector 샘플 구성",
     "aqt-corpus": "Azure Quickstart 템플릿 코퍼스 실측",
     "awscfn-corpus": "AWS CloudFormation 샘플 코퍼스 실측",
     "bundle-cross-checked": "명시 소스와 코퍼스가 일치",
