@@ -59,6 +59,15 @@ class Probe:
     want_tools: tuple[str, ...] = ()
     """전부 불려야 하는 도구."""
 
+    want_any_tool: tuple[str, ...] = ()
+    """**이 중 하나는** 불려야 한다.
+
+    한 사실을 두 도구가 다 답할 수 있는 경우가 있다. GPU 모델이 그렇다 — 성능 축에도
+    비용 축에도 있어서, 어느 쪽을 불러도 근거 있는 답이 나온다. 그때 도구 하나를
+    지목해 요구하면 **검사가 사실이 아니라 경로를 고정**하게 된다. 진짜로 지킬 것은
+    `want_any`(답에 그 사실이 있는가)이고, 이건 "웹으로 새지 않았는가"만 본다.
+    """
+
     forbid_tools: tuple[str, ...] = ()
     """하나라도 불리면 실패."""
 
@@ -79,6 +88,8 @@ class Probe:
         for want in self.want_tools:
             if want not in called:
                 out.append(f"기대 도구 미호출: {want}")
+        if self.want_any_tool and not (called & set(self.want_any_tool)):
+            out.append(f"기대 도구 미호출(택1): {', '.join(self.want_any_tool)}")
         for bad in self.forbid_tools:
             if bad in called:
                 out.append(f"금지 도구 호출: {bad}")
@@ -137,13 +148,18 @@ PROBES: tuple[Probe, ...] = (
           "**지어내기가 났던 자리.** 모델은 예전에 'AMD Radeon Instinct MI250X'라고 "
           "했다 — 실제는 NVIDIA T4G 1장(Turing). 가속기 데이터가 0건이라 빈칸이 "
           "지어내기를 불렀다",
-          want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
+          # 성능 축에도 비용 축에도 GPU가 있어서 어느 쪽을 불러도 근거 있는 답이
+          # 나온다. 도구 하나를 지목하면 **사실이 아니라 경로를 고정**하게 된다.
+          want_any_tool=("perf_instance_profile", "cost_describe_spec"),
+          forbid_tools=("web_search",),
           # 모델명을 부분 문자열로 걸지 않는다 — 모델이 `T4G`를 `T4 G`로 띄어 써서
-          # 정답을 실패로 읽었다(판정 아티팩트 8회째). 도구 호출로 건다.
+          # 정답을 실패로 읽었다(판정 아티팩트 8회째). 아키텍처 이름으로 건다 —
+          # `Turing`은 **우리 데이터에만** 있으므로 이게 진짜 검사다.
           want_any=("Turing",)),
     Probe("H2", "p4d.24xlarge에 GPU가 몇 개 달려 있고 어떤 모델이야?",
-          "개수와 모델을 성능 축에서 가져오는가 (정답 A100 8장)",
-          want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
+          "개수와 모델을 우리 데이터에서 가져오는가 (정답 A100 8장)",
+          want_any_tool=("perf_instance_profile", "cost_describe_spec"),
+          forbid_tools=("web_search",),
           want_any=("A100",)),
     Probe("H3", "ap-northeast-2에서 쓸 수 있는 GPU 인스턴스 알려줘",
           "**세 번 실패했던 질문.** 사양표 지어내기 → 780종을 하나씩 판정하다 109초 "

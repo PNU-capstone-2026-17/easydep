@@ -221,23 +221,33 @@ def _perf_hint(spec_name: str, provider: str | None) -> str:
     """
     try:
         from costkb.dataset import find_by_name
-        from perfkb.agent_api import recommend_note
+        from perfkb.agent_api import hardware_facts, recommend_note
 
         rows = find_by_name(spec_name, provider)
         if not rows:
             return ""
         prov = rows[0]["provider"]
-        note = recommend_note(prov, rows[0]["specName"])
+        name = rows[0]["specName"]
+        note = recommend_note(prov, name)
+        hardware = hardware_facts(prov, name)
     except Exception:
         return ""
+
+    out = ""
     if note.status == "warn" and note.text:
-        return f"\n\n⚠ {note.text}"
-    if note.status in ("no_record", "untracked", "not_built"):
-        return ""
-    return (
-        f"\n\n※ 성능 특성(버스트 여부·세대·CPU/GPU 모델)은 "
-        f"perf_instance_profile('{prov}', '{rows[0]['specName']}') 로 보세요."
-    )
+        out += f"\n\n⚠ {note.text}"
+    elif note.status not in ("no_record", "untracked", "not_built"):
+        out += (
+            f"\n\n※ 성능 특성(버스트 여부·세대·EBS 대역폭)은 "
+            f"perf_instance_profile('{prov}', '{name}') 로 보세요."
+        )
+    # **하드웨어는 가리키지 말고 실어 준다.** 이름 조회 도구를 만들자 모델이 GPU
+    # 질문에도 이걸 부르기 시작했고, 답은 근거가 있었지만 성능 축에만 있는
+    # 아키텍처(`Turing`)와 정확한 SKU(`A100-SXM4-40GB`)가 답에서 사라졌다.
+    # 가리키기만 하면 모델은 이미 답을 얻었다고 보고 더 안 부른다.
+    if hardware:
+        out += f"\n\n하드웨어(성능 축): {hardware}"
+    return out
 
 
 COST_TOOLS = [

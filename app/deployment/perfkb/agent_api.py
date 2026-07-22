@@ -282,6 +282,41 @@ def specs_meeting_ebs_baseline(
     return "\n".join(lines)
 
 
+def hardware_facts(
+    provider: str, spec_name: str, output_dir: Path | str | None = None
+) -> str | None:
+    """스펙 **하나**의 하드웨어 사실을 한 줄로. 없으면 None.
+
+    성능 축에만 있는 것을 다른 축의 도구가 가져갈 수 있게 한다. 비용 축에도
+    `acceleratorModel`이 있어서 "NVIDIA A100 8개"까지는 나오지만, **아키텍처
+    (`Ampere`)와 정확한 SKU(`A100-SXM4-40GB`)는 여기에만 있다.**
+
+    실측에서 드러났다 — 이름 조회 도구를 만들자 모델이 GPU 질문에도 그걸 부르기
+    시작했고, 답 자체는 근거가 있었지만 `Turing` 같은 사실이 답에서 사라졌다.
+    **어느 도구를 부르든 아는 것이 실려야 한다.**
+    """
+    found = find(provider=provider, spec_name=spec_name, output_dir=output_dir)
+    if not found:
+        return None
+    rec = found[0]
+    parts = []
+    if rec.get("gpuModel"):
+        model = rec["gpuModel"]
+        shown = model if isinstance(model, str) else " + ".join(model)
+        count = rec.get("gpuCount")
+        arch = rec.get("gpuArchitecture")
+        parts.append(
+            f"GPU {shown}{f' ×{count}' if count else ''}"
+            f"{f' ({arch})' if isinstance(arch, str) else ''}"
+        )
+    if rec.get("cpuModel"):
+        parts.append(f"CPU {rec['cpuModel']}")
+    if not parts:
+        return None
+    checked = rec.get("hardwareCheckedAt")
+    return " · ".join(parts) + (f" ({checked} 확인)" if checked else "")
+
+
 def hardware_summary(provider: str, output_dir: Path | str | None = None) -> str | None:
     """이 프로바이더에 **하드웨어 사실이 얼마나 있는지** 한 줄로. 없으면 None.
 
