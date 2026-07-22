@@ -38,6 +38,8 @@ from app.design.services.plantuml_class_diagram import render_plantuml
 from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
 from app.requirements.api import router as requirements_router
 from app.requirements.classifier import warmup
+from app.implementation.api import router as implementation_router
+from app.implementation.worker import worker as implementation_worker
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -139,6 +141,7 @@ class FeedbackRequest(StageRequest):
 
 app = FastAPI(title="EasyDep Agents")
 app.include_router(requirements_router)
+app.include_router(implementation_router)
 
 
 @app.on_event("startup")
@@ -153,6 +156,11 @@ def startup() -> None:
     # (enable_bert_verify=False면 건너뛴다.)
     loaded = warmup()
     print(f"[startup] BERT 분류기 프리로드: {'완료' if loaded else '건너뜀(비활성 또는 로드 실패)'}")
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    implementation_worker.shutdown()
 
 
 @app.get("/api/health")
