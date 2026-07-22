@@ -148,7 +148,7 @@ def test_accelerator_filter_runs_before_sorting(tmp_path) -> None:
     def spec(name, hourly, accel):
         return {
             "id": name, "provider": "aws", "region": "test-1", "specName": name,
-            "vCPU": 4, "memGiB": 8.0, "memGiBActual": 8.0, "hourlyUSD": hourly,
+            "vCPU": 4, "memGiB": 8.0, "hourlyUSD": hourly,
             "architecture": "x86_64", "infraType": "vm",
             "acceleratorCount": accel, "acceleratorMemoryGB": 0.0,
         }

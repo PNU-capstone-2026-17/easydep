@@ -75,34 +75,37 @@ def test_maps_columns_to_record() -> None:
     assert record["architecture"] == "x86_64"
 
 
-# --- ⭐ 메모리: 미러는 그대로, 보정은 병기 ---
+# --- ⭐ 메모리: **빌드가 고쳐서 담는다** ---
+#
+# 예전에는 원본을 그대로 두고 `memGiBActual`에 보정값을 병기했다 — 라이브 MCP와
+# 필터 결과를 맞추려던 배포기의 이유다. 값 하나를 두 칸에 나누니 표시·필터·정렬이
+# 서로 다른 칸을 보게 됐고, "16 GiB 이상"에서 실제로는 만족하는 3,765건이 빠졌다.
+# 지금은 `memGiB`가 곧 실제 값이고, 보정 규칙은 데이터셋 메타데이터에 남는다.
 
 
-def test_gcp_memory_is_mirrored_not_fixed() -> None:
-    """memGiB를 '고치면' 라이브 MCP와 답이 갈린다 — 미러값을 그대로 둬야 한다."""
+def test_gcp_memory_is_corrected_in_place() -> None:
+    """실제 64 GiB인 스펙은 `memGiB`에 64로 담긴다 — 칸을 나누지 않는다."""
     record = project_row(gcp_row())
-    assert record["memGiB"] == 62.5  # MCP가 보는 값
-    assert record["memGiBActual"] == 64.0  # 사람이 봐야 하는 값
+    assert record["memGiB"] == 64.0
+    assert "memGiBActual" not in record
 
 
 def test_azure_memory_also_corrected() -> None:
     record = project_row(gcp_row(provider_name="azure", memory_gi_b=15.625))
-    assert record["memGiB"] == 15.625
-    assert record["memGiBActual"] == 16.0
+    assert record["memGiB"] == 16.0
 
 
 def test_aws_memory_is_not_corrected() -> None:
     """AWS는 원시 MiB를 그대로 쓰므로 정확하다 — 보정하면 오히려 틀린다."""
     record = project_row(row(memory_gi_b=8))
     assert record["memGiB"] == 8
-    assert record["memGiBActual"] == 8
 
 
 @pytest.mark.parametrize("provider", ["tencent", "alibaba", "ibm", "ncp", "kt", "nhn", "openstack"])
 def test_untraced_providers_are_not_corrected(provider: str) -> None:
     """덤프 실측상 이들은 ×1.024 지문이 0.0%였다 → 보정 대상이 아니다."""
     record = project_row(row(provider_name=provider, memory_gi_b=16))
-    assert record["memGiBActual"] == 16
+    assert record["memGiB"] == 16
 
 
 def test_correct_memory_directly() -> None:

@@ -51,12 +51,9 @@ def coverage_text(output_dir: Path | str | None = None) -> str:
 def _describe(spec: dict) -> str:
     hourly = spec["hourlyUSD"]
     price = f"${hourly:.4f}/h" if hourly is not None else "가격 미상"
-    # 표시는 보정값(진실), 필터·판정은 미러값(MCP 일치). 둘이 다르면 밝힌다.
-    mem = spec["memGiB"]
-    actual = spec.get("memGiBActual", mem)
-    mem_text = f"{actual:g} GiB"
-    if actual != mem:
-        mem_text += f" (지식베이스 기준값 {mem:g})"
+    # `memGiB`가 곧 실제 값이다 — 빌드가 상위 버그를 고쳐서 담는다(_corrections).
+    # 예전에는 표시와 필터가 서로 다른 칸을 봐서 답이 자리마다 갈렸다.
+    mem_text = f"{spec['memGiB']:g} GiB"
     # 리전을 접었으면 몇 곳이 더 있는지 밝힌다. 숨기면 "이 스펙은 이 리전에만 있나?"로
     # 오해되고, 그건 접기가 만들어낸 거짓 정보다.
     folded = spec.get("_foldedRegions") or []

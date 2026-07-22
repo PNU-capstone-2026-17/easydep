@@ -151,10 +151,8 @@ def _cmd_query(args: argparse.Namespace) -> int:
             if hourly is not None
             else "가격 미상"
         )
-        # 표시는 보정값, 필터는 미러값 — 다르면 둘 다 보여준다
-        mem = spec["memGiB"]
-        actual = spec.get("memGiBActual", mem)
-        mem_text = f"{actual:g} GiB" + (f" (기준 {mem:g})" if actual != mem else "")
+        # `memGiB`가 곧 실제 값이다 — 빌드가 상위 버그를 고쳐서 담는다(_corrections).
+        mem_text = f"{spec['memGiB']:g} GiB"
         print(
             f"  {spec['provider']:9} {spec['specName']:24} {spec['region']:16} "
             f"{spec['vCPU']:3} vCPU / {mem_text:22} {price}"

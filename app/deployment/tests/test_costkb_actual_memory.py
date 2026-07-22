@@ -1,15 +1,14 @@
-"""판단은 **실제 메모리**로 한다 — 미러의 버그값이 아니라.
+"""메모리는 **빌드가 고쳐서 담는다** — `memGiB`가 곧 실제 값이다.
 
-미러(cb-tumblebug 덤프)에는 상위 CB-Spider 버그가 실려 있어 GCP·Azure 메모리가
-실제보다 2.4% 낮다. 실측상 73,083건 중 **46,468건(64%)**이 그렇다.
+상류 CB-Spider 버그로 GCP·Azure 메모리가 실제보다 2.4% 낮게 기록된다
+(73,083건 중 46,468건). 처리 방식이 두 번 바뀌었다:
 
-예전에는 그 버그값으로 필터링했다 — 라이브 MCP와 답을 맞추기 위해서였는데
-**그건 배포기의 이유**다. 우리는 가이드라인 지식베이스이므로 사용자가
-"메모리 16GiB 이상"이라고 하면 **실제로 16GiB인 것**이 나와야 한다.
-그 기준으로 재보니 **3,765건이 조용히 빠지고 있었다.**
-
-원본이 뭐라고 적었는지는 `memGiB`에 그대로 남는다 — 데이터를 고치는 게 아니라
-**무엇을 근거로 판단하느냐**를 바꾼 것이다.
+1. 처음엔 원본을 그대로 담고 `memGiBActual`에 보정값을 병기했다 — 라이브 MCP와
+   필터 결과를 맞추려던 **배포기의 이유**다. 그 탓에 표시는 보정값, 필터는 버그값을
+   써서 "16 GiB 이상"에서 실제로는 만족하는 3,765건이 조용히 빠졌다.
+2. 지금은 **빌드가 고쳐서 담는다.** 값 하나를 두 칸에 나눠 두면 어느 쪽으로
+   판단하느냐가 자리마다 갈리기 때문이다. 무엇을 어떻게 고쳤는지는 데이터셋
+   메타데이터(`_corrections`)에 규칙으로 남고, 그 식으로 원본을 되돌릴 수 있다.
 """
 
 from __future__ import annotations
@@ -19,16 +18,38 @@ import json
 import pytest
 
 from costkb import dataset
-from costkb.dataset import actual_memory, filter_specs
+from costkb.dataset import filter_specs
+from costkb.parsers.tumblebug import CORRECTIONS, correct_memory
 
-# 실제 16 GiB인데 미러에는 15.625로 적힌 스펙(버그 비율 1.024)
-BUGGY = {
+# 원본 15.625 (실제 16 GiB) — 상류 버그의 전형적인 지문
+BUGGY_ROW_MEM = 15.625
+
+
+def test_correction_restores_the_real_value() -> None:
+    assert correct_memory("gcp", BUGGY_ROW_MEM) == 16.0
+    assert correct_memory("azure", 62.5) == 64.0
+    # 영향 없는 프로바이더는 건드리지 않는다 — 실측으로 정상이 확인된 곳이다
+    assert correct_memory("aws", 16.0) == 16.0
+    assert correct_memory("tencent", 15.625) == 15.625
+
+
+def test_corrections_are_recorded_as_metadata() -> None:
+    """**값마다 칸을 늘리는 대신 규칙을 한 곳에 적는다.**
+
+    이 식이 곧 원본 복원식이라, 원본이 필요한 사람은 되돌릴 수 있다.
+    """
+    entry = next(c for c in CORRECTIONS if c["field"] == "memGiB")
+    assert set(entry["providers"]) == {"azure", "gcp"}
+    assert "1.024" in entry["operation"]
+    assert "되돌리려면" in entry["reason"]
+
+
+CORRECTED = {
     "id": "gcp+us-central1+n2-standard-4", "provider": "gcp", "region": "us-central1",
-    "specName": "n2-standard-4", "vCPU": 4, "memGiB": 15.625, "memGiBActual": 16.0,
+    "specName": "n2-standard-4", "vCPU": 4, "memGiB": 16.0,
     "hourlyUSD": 0.19, "architecture": "x86_64", "infraType": "node",
     "acceleratorCount": 0, "acceleratorMemoryGB": 0.0,
 }
-# 보정값이 없는 정상 스펙(AWS는 버그 영향이 없다)
 CLEAN = {
     "id": "aws+us-east-1+m5.xlarge", "provider": "aws", "region": "us-east-1",
     "specName": "m5.xlarge", "vCPU": 4, "memGiB": 16.0,
@@ -37,18 +58,13 @@ CLEAN = {
 }
 
 
-def test_actual_memory_prefers_the_correction() -> None:
-    assert actual_memory(BUGGY) == 16.0
-    # 보정값이 없으면 기록값이 곧 실제값이다 — 없다고 0으로 떨어뜨리지 않는다
-    assert actual_memory(CLEAN) == 16.0
-
-
 @pytest.fixture
 def built(tmp_path):
     (tmp_path / "tumblebug-cost.json").write_text(
         json.dumps({
             "_note": "테스트",
-            "specs": [BUGGY, CLEAN],
+            "_corrections": CORRECTIONS,
+            "specs": [CORRECTED, CLEAN],
             "_source": [],
         }),
         encoding="utf-8",
@@ -58,31 +74,34 @@ def built(tmp_path):
     dataset.clear_caches()
 
 
-def test_buggy_spec_is_not_silently_dropped(built) -> None:
-    """**이 수정의 핵심.** 실제 16 GiB인데 미러값 때문에 빠지면 안 된다."""
+def test_corrected_spec_is_not_silently_dropped(built) -> None:
+    """**이 계약의 핵심.** 실제 16 GiB면 "16 GiB 이상"에 나와야 한다."""
     rows = filter_specs(mem_min_gib=16, limit=10, output_dir=built)
-    names = {r["specName"] for r in rows}
-    assert "n2-standard-4" in names, "실제로 16 GiB인데 미러 버그값 때문에 빠졌다"
-    assert "m5.xlarge" in names
-
-
-def test_threshold_above_actual_still_excludes(built) -> None:
-    """실제 값도 못 미치면 당연히 빠진다 — 무조건 통과시키는 게 아니다."""
-    rows = filter_specs(mem_min_gib=32, limit=10, output_dir=built)
-    assert rows == []
-
-
-def test_sort_by_memory_uses_actual(built) -> None:
-    """정렬도 실제 값 기준이어야 순서가 뒤집히지 않는다."""
-    rows = filter_specs(mem_min_gib=0, limit=10, sort_by="memory", output_dir=built)
-    # 둘 다 실제 16 GiB라 메모리로는 동률 — 버그값(15.625)으로 정렬하면
-    # gcp가 뒤로 밀린다. 동률이면 순서를 강제하지 않되 둘 다 나와야 한다.
     assert {r["specName"] for r in rows} == {"n2-standard-4", "m5.xlarge"}
 
 
-def test_mirror_value_is_kept_intact(built) -> None:
-    """원본을 고치지 않는다 — 무엇을 근거로 판단하느냐만 바꿨다."""
+def test_threshold_above_actual_still_excludes(built) -> None:
+    """무조건 통과시키는 게 아니다 — 실제 값도 못 미치면 빠진다."""
+    assert filter_specs(mem_min_gib=32, limit=10, output_dir=built) == []
+
+
+def test_no_split_memory_field_remains(built) -> None:
+    """`memGiBActual`은 없어졌다 — 값 하나에 칸 하나다.
+
+    두 칸으로 나눠 두면 표시·필터·정렬이 서로 다른 칸을 보게 되고, 실제로 그렇게
+    갈려서 답이 자리마다 달랐다.
+    """
     rows = filter_specs(mem_min_gib=0, limit=10, output_dir=built)
-    buggy = next(r for r in rows if r["specName"] == "n2-standard-4")
-    assert buggy["memGiB"] == 15.625      # 원본 그대로
-    assert buggy["memGiBActual"] == 16.0  # 보정값도 그대로
+    assert all("memGiBActual" not in r for r in rows)
+
+
+def test_schema_rejects_the_old_field() -> None:
+    """낡은 산출물이 조용히 섞이지 않도록 스키마가 막는다."""
+    import jsonschema
+
+    bad = {
+        "_note": "테스트",
+        "specs": [{**CORRECTED, "memGiBActual": 16.0}],
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(bad, dataset.schema())

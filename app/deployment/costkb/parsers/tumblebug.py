@@ -27,9 +27,16 @@ CB-Spider의 `ConvertMBToMiBInt64`는 `mb * 1000 / 1024`로 비율을 제곱이 
     aws    0.0%   tencent 0.0%   ibm 0.0%   ncp 0.0%   nhn 0.0%
     alibaba 0.0%  kt 0.0%        openstack 0.0%        ← 정상
 
-즉 **gcp/azure만** 보정 대상이다(코드 추적 결과와 실측이 일치). `memGiB`는 미러값 그대로
-두어 필터·판정이 MCP와 일치하게 하고, `memGiBActual`에 보정값을 병기해 사람이 볼 때는
-진실을 보여준다. **`memGiB`를 "고치면" 미러가 깨진다.**
+즉 **gcp/azure만** 보정 대상이다(코드 추적 결과와 실측이 일치).
+
+**`memGiB`에 보정값을 넣는다.** 예전에는 미러값을 그대로 두고 `memGiBActual`에 보정값을
+병기했다 — 라이브 MCP와 필터 결과를 맞추기 위해서였는데 **그건 배포기의 이유**다.
+우리는 가이드라인 지식베이스이고, 값 하나를 두 칸에 나눠 두면 **어느 쪽으로 판단하느냐가
+자리마다 갈린다.** 실제로 표시는 보정값, 필터는 버그값을 쓰다가 "16 GiB 이상"에서
+실제로는 만족하는 3,765건이 조용히 빠졌다.
+
+보정했다는 사실은 **데이터셋 메타데이터**(`_note`·`_corrections`)에 남긴다 — 값마다
+칸을 늘리는 대신, 무엇을 어떻게 고쳤는지 한 곳에 적는다.
 """
 
 from __future__ import annotations
@@ -40,8 +47,9 @@ from typing import Any
 SOURCE_NOTE = (
     "cb-tumblebug의 spec_infos 테이블(assets.dump.gz) 미러입니다. 에이전트의 라이브 경로인 "
     "cb-tumblebug MCP recommend_vm_spec이 같은 테이블을 읽으므로 두 경로의 답이 일치합니다. "
-    "memGiB는 Tumblebug 기준값이며, 상위 CB-Spider 버그로 GCP·Azure는 실제보다 2.4% 낮습니다"
-    "(memGiBActual이 보정값). 가격은 스냅샷이라 시간이 지나면 드리프트하며 실제 청구서가 "
+    "memGiB는 **보정된 실제 값**입니다 — 상위 CB-Spider 버그로 원본은 GCP·Azure가 "
+    "실제보다 2.4% 낮게 적혀 있어 ×1.024로 복원했습니다(_corrections 참조). "
+    "가격은 스냅샷이라 시간이 지나면 드리프트하며 실제 청구서가 "
     "아닙니다. 라이브 정확도가 필요하면 cb-tumblebug MCP를 쓰세요."
 )
 
@@ -133,8 +141,9 @@ def project_row(row: dict) -> dict | None:
         "region": region,
         "specName": spec_name,
         "vCPU": vcpu,
-        "memGiB": mem,
-        "memGiBActual": correct_memory(provider, mem),
+        # **보정값을 담는다.** 원본값은 레코드마다 두지 않고 메타데이터에 규칙으로 남긴다
+        # (`_corrections`) — 어느 프로바이더에 무슨 배율을 적용했는지가 곧 원본 복원식이다.
+        "memGiB": correct_memory(provider, mem),
         "hourlyUSD": hourly,
         "architecture": _text(row.get("architecture")),
         "infraType": _text(row.get("infra_type")),
@@ -184,7 +193,11 @@ def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[lis
         # 상위 버그 감시: ×1.024로 정수가 되면 버그 지문. 새 프로바이더가 버그 영향권에
         # 들어오면 여기서 드러난다 (보정 대상을 코드로 못 박아 두었으므로).
         audit = stats["memory_audit"][provider]
-        mem = record["memGiB"]
+        # 감사는 **원본값**으로 한다 — 보정 후 값으로 지문을 세면 늘 정수라 뜻이 없다.
+        # 컬럼 이름은 `memory_gi_b`다. `mem_gib`로 잘못 적었더니 전부 0이 되어
+        # "정수 100% · bug 0%"라는 **무해해 보이는 거짓 통계**가 나왔다 —
+        # 감사가 조용히 죽으면 새 프로바이더가 버그 영향권에 들어와도 못 잡는다.
+        mem = _num(row.get("memory_gi_b")) or 0.0
         audit["n"] += 1
         if mem == int(mem):
             audit["integral"] += 1
@@ -197,10 +210,29 @@ def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[lis
     return specs, stats
 
 
+#: 원본에 무엇을 어떻게 했는지. **값마다 칸을 늘리는 대신 규칙을 한 곳에 적는다** —
+#: 이 식이 곧 원본 복원식이라 `memGiB / factor`로 되돌릴 수 있다.
+CORRECTIONS = [
+    {
+        "field": "memGiB",
+        "providers": sorted(_MEMORY_BUG_PROVIDERS),
+        "operation": f"×{_MEMORY_BUG_FACTOR}",
+        "reason": (
+            "상위 CB-Spider의 ConvertMBToMiBInt64가 MB→MiB 비율을 한 번만, 그것도 "
+            "이미 MiB인 값에 적용해 실제보다 2.4% 낮게 기록된다. 원본으로 되돌리려면 "
+            f"이 값을 {_MEMORY_BUG_FACTOR}로 나눈다."
+        ),
+    }
+]
+
+
 def build_dataset(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[dict, dict]:
     """`costkb/schema.json` 모양의 데이터셋과 감사 통계를 만든다."""
     specs, stats = project_rows(rows, namespace=namespace)
-    return {"_note": SOURCE_NOTE, "specs": specs}, stats
+    return (
+        {"_note": SOURCE_NOTE, "_corrections": CORRECTIONS, "specs": specs},
+        stats,
+    )
 
 
 def format_audit(stats: dict) -> str:

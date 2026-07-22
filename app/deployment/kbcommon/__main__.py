@@ -72,11 +72,14 @@ def check_capacity_joins_graph(out: Path) -> tuple[str, list[Violation], int]:
 
 
 def check_bundle_matches_mirror(out: Path) -> tuple[str, list[Violation], int]:
-    """번들 스펙의 메모리가 미러의 **보정값**과 같은가.
+    """번들 스펙의 메모리가 빌드 산출물과 같은가.
 
-    미러의 `memGiB`에는 상류 버그가 그대로 실려 있다(16,000 MiB를 1024로 나눠
-    15.625). 보정값은 `memGiBActual`이고 번들은 그쪽을 따라야 한다. 번들 36건은
-    미러가 없을 때 쓰이는 폴백이라, 둘이 어긋나면 **미러 유무에 따라 답이 달라진다.**
+    번들 36건은 산출물이 없을 때 쓰이는 폴백이라, 둘이 어긋나면 **빌드 유무에 따라
+    답이 달라진다.**
+
+    예전에는 미러의 `memGiBActual`(보정값)과 대조했다 — 산출물이 상류 버그를 그대로
+    담고 보정값을 따로 두던 시절이다. 지금은 **빌드가 고쳐서 담으므로** `memGiB`끼리
+    비교하면 된다(`costkb/parsers/tumblebug.py`의 `_corrections`).
     """
     bundle_path = Path(__file__).resolve().parent.parent / "costkb" / "specs.json"
     bundle = _load(bundle_path)
@@ -97,16 +100,14 @@ def check_bundle_matches_mirror(out: Path) -> tuple[str, list[Violation], int]:
         if found is None:
             violations.append(Violation(where=where, detail="미러에 같은 스펙이 없습니다"))
             continue
-        corrected = found.get("memGiBActual")
-        if corrected is None:
-            corrected = found.get("memGiB")
-        if corrected is None:
+        built = found.get("memGiB")
+        if built is None:
             continue
-        if abs(float(spec.get("memGiB", 0)) - float(corrected)) > 1e-6:
+        if abs(float(spec.get("memGiB", 0)) - float(built)) > 1e-6:
             violations.append(
                 Violation(
                     where=where,
-                    detail=f"번들 memGiB={spec.get('memGiB')} vs 미러 보정값={corrected}",
+                    detail=f"번들 memGiB={spec.get('memGiB')} vs 산출물={built}",
                 )
             )
     return "bundle-matches-mirror", violations, len(specs)
