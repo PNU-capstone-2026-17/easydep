@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import uuid
 from typing import Any
@@ -25,6 +26,7 @@ from app.db.models import (
     App,
     Artifact,
     ArtifactVersion,
+    ArtifactFile,
 )
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
@@ -334,6 +336,98 @@ def get_version_content(app_id: str, stage: str, version_no: int) -> Any:
         return _decode_content(version.content, config["format"])
 
 
+def save_file_snapshot(
+    app_id: str,
+    artifact_type: str,
+    files: dict[str, str],
+    *,
+    origin: str = ORIGIN_GENERATED,
+    metadata: dict[str, Any] | None = None,
+) -> int:
+    """Save a whole file tree as one immutable artifact version."""
+    if not files:
+        raise ValueError("A file artifact snapshot cannot be empty")
+    normalized = {_normalize_file_path(path): content for path, content in files.items()}
+    with session_scope() as session:
+        _require_app(session, app_id)
+        artifact = session.scalars(
+            select(Artifact)
+            .where(Artifact.app_id == app_id, Artifact.artifact_type == artifact_type)
+            .with_for_update()
+        ).first()
+        if artifact is None:
+            artifact = Artifact(app_id=app_id, artifact_type=artifact_type)
+            session.add(artifact)
+            session.flush()
+
+        version = ArtifactVersion(
+            artifact_id=artifact.id,
+            version_no=artifact.latest_version_no + 1,
+            content=json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True),
+            syntax_valid=True,
+            origin=origin,
+        )
+        session.add(version)
+        session.flush()
+        for path, content in sorted(normalized.items()):
+            session.add(
+                ArtifactFile(
+                    artifact_version_id=version.id,
+                    file_path=path,
+                    content=content,
+                    sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                )
+            )
+        artifact.latest_version_no = version.version_no
+        artifact.current_version_id = version.id
+        return version.id
+
+
+def load_file_snapshot(app_id: str, artifact_type: str) -> dict[str, Any] | None:
+    """Load the current multi-file snapshot without mixing it into design state."""
+    with session_scope() as session:
+        _require_app(session, app_id)
+        artifact = _find_artifact(session, app_id, artifact_type)
+        if artifact is None or artifact.current_version_id is None:
+            return None
+        version = session.get(ArtifactVersion, artifact.current_version_id)
+        if version is None:
+            return None
+        return {
+            "artifact_type": artifact_type,
+            "version_no": version.version_no,
+            "metadata": _safe_json_object(version.content),
+            "files": {
+                item.file_path: {"content": item.content, "sha256": item.sha256}
+                for item in version.files
+            },
+            "created_at": version.created_at.isoformat(),
+        }
+
+
+def list_file_artifact_versions(app_id: str, artifact_type: str) -> list[dict[str, Any]]:
+    with session_scope() as session:
+        _require_app(session, app_id)
+        artifact = _find_artifact(session, app_id, artifact_type)
+        if artifact is None:
+            return []
+        versions = session.scalars(
+            select(ArtifactVersion)
+            .where(ArtifactVersion.artifact_id == artifact.id)
+            .order_by(ArtifactVersion.version_no)
+        ).all()
+        return [
+            {
+                "version_no": version.version_no,
+                "file_count": len(version.files),
+                "is_current": version.id == artifact.current_version_id,
+                "metadata": _safe_json_object(version.content),
+                "created_at": version.created_at.isoformat(),
+            }
+            for version in versions
+        ]
+
+
 def _write_version(
     session: Session,
     app_id: str,
@@ -410,5 +504,20 @@ def _decode_content(content: str, content_format: str) -> Any:
         return content
     try:
         return json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _normalize_file_path(value: str) -> str:
+    path = value.replace("\\", "/").strip("/")
+    if not path or any(part in {"", ".", ".."} for part in path.split("/")):
+        raise ValueError(f"Invalid artifact file path: {value}")
+    return path
+
+
+def _safe_json_object(value: str) -> dict[str, Any]:
+    try:
+        decoded = json.loads(value)
+        return decoded if isinstance(decoded, dict) else {}
     except json.JSONDecodeError:
         return {}

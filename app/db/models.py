@@ -34,6 +34,13 @@ TYPE_API_SPEC = "API_SPEC"
 TYPE_ERD = "ERD"
 TYPE_DEPLOYMENT = "DEPLOYMENT"
 
+# Implementation and test agents produce file trees.  Their version metadata
+# lives in artifact_versions while the immutable files live in artifact_files.
+TYPE_SOURCE_CODE = "SOURCE_CODE"
+TYPE_TEST_CODE = "TEST_CODE"
+TYPE_DEPLOYMENT_FILE = "DEPLOYMENT_FILE"
+TYPE_IAC_CODE = "IAC_CODE"
+
 FORMAT_PUML = "PUML"
 FORMAT_JSON = "JSON"
 
@@ -127,7 +134,38 @@ class ArtifactVersion(Base):
     )
 
     artifact: Mapped[Artifact] = relationship(back_populates="versions")
+    files: Mapped[list[ArtifactFile]] = relationship(
+        back_populates="artifact_version",
+        cascade="all, delete-orphan",
+        order_by="ArtifactFile.file_path",
+    )
 
     __table_args__ = (
         UniqueConstraint("artifact_id", "version_no", name="uq_versions_artifact_no"),
+    )
+
+
+class ArtifactFile(Base):
+    """One file in an immutable implementation artifact snapshot."""
+
+    __tablename__ = "artifact_files"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    artifact_version_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("artifact_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    artifact_version: Mapped[ArtifactVersion] = relationship(back_populates="files")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "artifact_version_id",
+            "file_path",
+            name="uq_artifact_files_version_path",
+        ),
     )

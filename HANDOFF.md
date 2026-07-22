@@ -36,10 +36,10 @@ Schema shape:
   be added without a migration. The requirements analysis types were added this
   way on 2026-07-21 with no schema change at all.
 - Implementation artifacts (SOURCE_CODE, DEPLOYMENT_FILE, TEST_CODE, IAC_CODE)
-  will NOT fit as they stand: each is a file tree, not one document. Plan an
-  additive `artifact_files(artifact_version_id, file_path, content)` table so a
-  version stays one snapshot of many files. Test results are not artifacts
-  either and want their own table.
+  are stored as immutable multi-file snapshots in the additive `artifact_files`
+  table. `artifact_versions` remains the version boundary and carries snapshot
+  metadata; every file also stores a SHA-256 digest. Test execution results are
+  still not artifacts and will need a separate execution/evidence table.
 - Only final artifacts are stored. The BCE element JSON is deliberately NOT
   persisted (see below).
 
