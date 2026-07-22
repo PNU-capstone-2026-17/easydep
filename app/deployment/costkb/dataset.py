@@ -45,11 +45,24 @@ SPOT_COMMIT_FILENAME = "gcp-spot-commit.json"
 # 우리에게만 보여 결과가 갈린다.
 DEFAULT_ARCHITECTURE = "x86_64"
 
+def _tiebreak(spec: dict) -> tuple[str, str, str]:
+    """동점일 때의 순서. **없으면 파일 순서가 답을 정한다.**
+
+    `sort_by='vcpu'`는 vCPU만 보므로 2 vCPU짜리 수천 건이 전부 동점이고, 그중 어느
+    5개가 나오는지는 덤프의 행 순서가 정했다. 같은 핀에서는 재현되지만 **왜 그
+    5개인지 설명할 수 없는 답**이고, 다음 빌드에서 조용히 바뀐다.
+
+    id를 안 쓰는 이유: costkb 번들 36건에는 id가 없다(결함 C3의 원인이기도 하다).
+    프로바이더·이름·리전은 항상 있고 사람이 읽어도 납득이 된다.
+    """
+    return (spec["provider"], spec["specName"], spec["region"])
+
+
 _SORT_KEYS = {
     # 가격 미상(None)은 맨 뒤로 — Tumblebug의 `CASE WHEN cost_per_hour > 0 ... ELSE 999999`와 같은 취지.
-    "cost": lambda s: (s["hourlyUSD"] is None, s["hourlyUSD"] or 0),
-    "vcpu": lambda s: -s["vCPU"],
-    "memory": lambda s: -s["memGiB"],
+    "cost": lambda s: (s["hourlyUSD"] is None, s["hourlyUSD"] or 0, *_tiebreak(s)),
+    "vcpu": lambda s: (-s["vCPU"], *_tiebreak(s)),
+    "memory": lambda s: (-s["memGiB"], *_tiebreak(s)),
 }
 
 
@@ -245,7 +258,9 @@ def filter_specs(
             (`resolve_region`). 대소문자 무시. None이면 전체.
         sort_by: 'cost'(저렴한 순) | 'vcpu'(큰 순) | 'memory'(큰 순).
             알 수 없는 값이면 'cost'로 폴백한다.
-        limit: 반환 개수(최소 1).
+        limit: 반환 개수. **0 이하도 1로 올린다** — 빈 목록을 돌려주면 호출부가
+            "조건을 만족하는 스펙이 데이터셋에 없습니다"라고 답해 **거짓을 말하게**
+            된다. 데이터가 없는 것과 0개를 요청받은 것은 다른 일이다.
         architecture: 기본 'x86_64' — MCP가 주입하는 것과 동일. None이면 전체.
         require_accelerator: True면 `acceleratorCount`가 1 이상인 후보만. GPU를 포함한
             가속기 전반이다(Inferentia·TPU 등도 걸린다) — 필드 이름 그대로 쓴다.

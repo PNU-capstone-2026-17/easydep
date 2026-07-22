@@ -82,7 +82,7 @@
               "string",
               "null"
             ],
-            "description": "x86_64 | arm64 | arm64_mac | x86_64_mac. MCP가 기본으로 x86_64를 주입하므로 미러에 필요."
+            "description": "x86_64 | arm64 | arm64_mac | x86_64_mac. MCP가 기본으로 x86_64를 주입하므로 미러에 필요. provider와 달리 enum으로 잠그지 않는다 — provider는 우리가 정규화하는 키라 우리가 통제하지만 이 값은 소스에서 그대로 온다. 새 값(riscv64 등)이 빌드를 막으면 안 된다. 대신 tests의 known-set 검사가 새 값을 알린다 — 기본 필터가 x86_64라 모르는 값은 모든 기본 질의에서 조용히 빠지기 때문이다."
           },
           "infraType": {
             "type": [
