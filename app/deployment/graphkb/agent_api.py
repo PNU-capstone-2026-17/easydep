@@ -164,7 +164,61 @@ def creation_order(
             f"\n함께 쓸 수 있는 것 ({len(optional)}개, 선택이라 순서를 강제하지 않습니다):"
         )
         lines.extend(f"- {t}" for t in optional)
+
+    counterpart = _runtime_requirements(graph, node.id)
+    if counterpart:
+        lines.append(counterpart)
     return "\n".join(lines)
+
+
+def _runtime_requirements(graph, type_id: str) -> str | None:
+    """**우리 실행 경로가 더 요구하면 그 사실을 밝힌다.** 아니면 None.
+
+    같은 것을 묻는데 답이 갈리는 문제가 있었다(사용자 지적으로 드러남):
+
+        core::vm              반드시 먼저 있어야 하는 것 **7개**
+        aws::AWS::EC2::Instance   필수 **0개**
+
+    둘 다 사실이다. 근거가 다르기 때문이다 — `core::vm`은 **cb-tumblebug REST
+    스키마**(`swagger-field`)에서 왔고 거기서 `vNetId`·`subnetId`·`securityGroupIds`가
+    required 필드다. `AWS::EC2::Instance`는 CFN/CDK에서 왔고 CFN은 `SubnetId`를
+    선택으로 둔다(기본 VPC를 쓸 수 있으니까).
+
+    **문제는 우리 실행 경로가 cb-tumblebug이라는 것이다.** 벤더 스키마만 보고
+    "필수 없음"이라고 답하면 실제 배포에서 틀린다. 실측으로 이 어긋남이 vm만이
+    아니라 5개 코어 타입에 있었고, vm은 **9/9 CSP 전부** 0을 말했다.
+
+    그래서 벤더 타입을 물으면 대응하는 코어 타입의 요구사항을 함께 보여준다.
+    감추지 않고 **둘을 나란히 놓고 근거를 밝히는 것**이 맞는 처리다 — 어느 한쪽을
+    고르면 그건 우리가 정한 것이 되고, 실제로는 무엇으로 만드느냐에 달렸다.
+    """
+    if type_id.startswith("core::"):
+        return None
+    core_ids = {
+        edge.from_id
+        for edge in graph.edges
+        if edge.type == "equivalent_to"
+        and edge.to_id == type_id
+        and edge.from_id.startswith("core::")
+    }
+    needed: set[str] = set()
+    for core_id in core_ids:
+        needed |= {
+            edge.to_id
+            for edge in graph.edges
+            if edge.from_id == core_id and edge.required and edge.to_id != core_id
+        }
+    if not needed:
+        return None
+    names = ", ".join(sorted(n.replace("core::", "") for n in needed))
+    return (
+        f"\n※ **실행 경로에서는 더 필요합니다.** 위 목록은 이 CSP의 IaC 스키마"
+        f"(CloudFormation·ARM 등) 기준입니다. 우리가 실제로 배포하는 길인 "
+        f"cb-tumblebug은 같은 리소스를 만들 때 **{len(needed)}가지를 필수로 요구**"
+        f"합니다: {names}.\n"
+        f"  둘 다 사실이며 근거가 다릅니다 — 스키마는 '없어도 API가 받는다', "
+        f"실행 경로는 '이 값을 채워야 요청이 성립한다'입니다."
+    )
 
 
 def deletion_impact(

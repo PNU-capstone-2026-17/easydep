@@ -188,6 +188,12 @@ PROBES: tuple[Probe, ...] = (
           "'CSP에 기능이 없다'가 아니라 '드라이버가 없다'를 구분해 답하는가",
           want_tools=("cap_csp_supports",), forbid_tools=("web_search",),
           want_any=("드라이버", "만들 수 없", "지원")),
+    Probe("G1", "AWS EC2 인스턴스 하나 만들려면 뭐가 먼저 있어야 해?",
+          "**사용자가 잡아낸 불일치.** 벤더 스키마는 필수 0개라 하고 실행 경로"
+          "(cb-tumblebug)는 7가지를 요구한다. 한쪽만 답하면 실제 배포에서 틀린다 — "
+          "두 관점을 다 전하는가",
+          want_tools=("kb_creation_order",), forbid_tools=("web_search",),
+          want_any=("서브넷", "subnet", "vNet", "실행", "tumblebug")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",
