@@ -201,6 +201,23 @@ SOURCES: dict[str, Source] = {
             "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
         ),
     ),
+    "tumblebug-cloudinfo": Source(
+        key="tumblebug-cloudinfo",
+        url=(
+            "https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.11.8/"
+            "assets/cloudinfo.yaml"
+        ),
+        pin_kind="tag",
+        pin="v0.11.8",
+        note=(
+            "**이미 핀 박은 저장소의 안 쓰던 파일이다.** 우리는 이 저장소에서 "
+            "assets.dump.gz(spec_infos)만 쓰고 있었는데, 같은 태그에 리전 정의가 있다. "
+            "프로바이더 10곳 188개 리전의 **표시 이름·위경도·가용영역**이 전부 채워져 "
+            "있다(실측 188/188). 미러와 같은 저장소라 리전 코드가 정확히 맞는다 — "
+            "소문자 정규화 후 미러 리전 163개 중 155개(95%)와 조인된다. "
+            "botocore endpoints는 AWS만 주는데 이건 전 프로바이더를 준다. Apache-2.0."
+        ),
+    ),
     "tumblebug-swagger": Source(
         key="tumblebug-swagger",
         url=(

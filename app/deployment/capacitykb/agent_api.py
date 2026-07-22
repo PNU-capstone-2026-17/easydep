@@ -633,13 +633,12 @@ _ABSENCE_CAVEAT = (
 )
 
 
-#: 출처가 botocore라 리전 카탈로그는 **AWS만** 담겨 있다. 밝히지 않으면 AWS만 본
-#: 답이 전체를 본 답처럼 보인다 — 서울만 해도 다른 프로바이더에 여섯 곳이 더 있다.
+#: **서비스 소재**(where_available)는 출처가 botocore라 AWS 전용이다. 리전 *이름*은
+#: 이제 cloudinfo로 프로바이더 10곳을 알지만(`region_lookup`), 이 축은 아니다.
+#: 밝히지 않으면 AWS만 본 답이 전체를 본 답처럼 보인다.
 _AWS_ONLY_CAVEAT = (
-    "※ 이 리전 목록은 **AWS만** 담고 있습니다(출처가 AWS SDK). Azure·GCP 등 다른 "
-    "프로바이더에도 같은 도시의 리전이 있습니다 — 예: 서울은 azure `koreasouth`, "
-    "gcp `asia-northeast3`, tencent `ap-seoul`. 프로바이더를 안 정했다면 "
-    "이 코드로 좁히지 말고 사용자에게 먼저 물어보세요."
+    "※ 서비스가 어느 리전에 있는지는 **AWS만** 수록돼 있습니다(출처가 AWS SDK). "
+    "다른 프로바이더의 서비스 가용성은 이 도구가 답하지 않습니다."
 )
 
 
@@ -731,42 +730,68 @@ def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -
     if len(regions) > 12:
         lines.append(f"  … 외 {len(regions) - 12}곳")
     lines.append(f"  {_ABSENCE_CAVEAT}")
+    lines.append(f"  {_AWS_ONLY_CAVEAT}")
     return "\n".join(lines)
 
 
-def region_lookup(query: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> str:
-    """사람이 쓴 말('서울')을 리전 코드로 옮긴다.
+_REGIONS_MISSING = (
+    "리전 산출물이 없습니다. `python -m kbcommon build-regions` 로 생성하세요."
+)
+
+
+def region_lookup(
+    query: str,
+    provider: str | None = None,
+    *,
+    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
+) -> str:
+    """사람이 쓴 말('서울')을 리전 코드로 옮긴다. 프로바이더 10곳을 안다.
 
     이게 없어서 실측에서 "서울 리전에서 GPU 인스턴스"에 답하지 못했다. 데이터는
     `aws-regions.json`에 있었고 `ap-northeast-2`라는 키만 못 만들고 있었다.
-    """
-    from kbcommon.regions import catalog, resolve_region
 
-    found = resolve_region(query, output_dir=str(output_dir))
+    **서울은 프로바이더마다 다르다** — aws `ap-northeast-2`, gcp `asia-northeast3`,
+    azure `koreacentral`. `provider`를 주면 그 안에서만 찾는다.
+    """
+    from kbcommon.regions import catalog, providers, resolve_region
+
+    found = resolve_region(query, provider=provider, output_dir=str(output_dir))
     if not found:
-        known = catalog(output_dir=str(output_dir))
+        known = catalog(provider=provider, output_dir=str(output_dir))
         if not known:
-            return _ENDPOINTS_MISSING
+            if provider and catalog(output_dir=str(output_dir)):
+                have = ", ".join(providers(output_dir=str(output_dir)))
+                return (
+                    f"'{provider}' 프로바이더의 리전 정보가 없습니다. "
+                    f"아는 프로바이더: {have}"
+                )
+            return _REGIONS_MISSING
+        scope = f"{provider} " if provider else ""
         return (
-            f"'{query}' 에서 리전을 알아보지 못했습니다 — 그런 리전이 없다는 뜻이 "
-            f"아니라 **우리가 못 알아들었다**는 뜻입니다.\n"
+            f"'{query}' 에서 {scope}리전을 알아보지 못했습니다 — 그런 리전이 없다는 "
+            f"뜻이 아니라 **우리가 못 알아들었다**는 뜻입니다.\n"
             "  리전 코드(`ap-northeast-2`)나 영어 이름(`Seoul`)으로 다시 물어보세요.\n"
-            f"  아는 리전 {len(known)}곳 중 몇 가지: "
+            f"  아는 {scope}리전 {len(known)}곳 중 몇 가지: "
             + ", ".join(f"{r.code}({r.name})" for r in known[:5])
         )
 
-    lines = [f"'{query}' → 리전 {len(found)}곳"]
-    for region in found[:10]:
+    scope = f" ({provider})" if provider else ""
+    lines = [f"'{query}'{scope} → 리전 {len(found)}곳"]
+    for region in found[:12]:
         how = {
             "code": "리전 코드",
             "name": "원본 표시 이름",
             "alias": "우리가 더한 한국어 번역",
         }[region.matched_by]
-        note = "" if region.partition == "aws" else f" · {region.partition} 파티션"
-        lines.append(f"  - {region.code} — {region.name} ({how}{note})")
-    if len(found) > 10:
-        lines.append(f"  … 외 {len(found) - 10}곳")
-    if len(found) > 1:
-        lines.append("  → 여러 곳에 걸립니다. 어느 쪽인지 정해서 다시 물어보세요.")
-    lines.append(_AWS_ONLY_CAVEAT)
+        lines.append(
+            f"  - [{region.provider}] {region.code} — {region.name} ({how})"
+        )
+    if len(found) > 12:
+        lines.append(f"  … 외 {len(found) - 12}곳")
+    if len({r.provider for r in found}) > 1:
+        lines.append(
+            "  → **프로바이더마다 리전 코드가 다릅니다.** 어느 프로바이더인지 정해서 "
+            "그 코드를 쓰세요 — 다른 프로바이더의 코드를 넘기면 데이터가 있어도 "
+            "못 찾습니다."
+        )
     return "\n".join(lines)

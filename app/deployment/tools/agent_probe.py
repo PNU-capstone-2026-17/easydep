@@ -165,6 +165,11 @@ PROBES: tuple[Probe, ...] = (
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
           want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
           want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전")),
+    Probe("R3", "서울 리전 코드가 프로바이더마다 어떻게 달라?",
+          "리전 이름이 프로바이더 10곳으로 넓어졌다. 모델 기억이 아니라 도구로 "
+          "답하고, 코드가 다르다는 사실을 전하는가",
+          want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
+          want_any=("asia-northeast3",)),
     Probe("P1", "GCP e2-standard-4를 서울 리전에서 스팟으로 쓰면 시간당 얼마야?",
           "스팟·약정 축(gcp-pricing). 미러엔 온디맨드만 있어 못 답했다 — "
           "지어내지 말고 도구로 답하는가",

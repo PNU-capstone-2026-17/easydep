@@ -190,22 +190,24 @@ def cap_service_quota(keyword: str) -> str:
 
 
 @function_tool
-def cap_resolve_region(place: str) -> str:
-    """사람이 쓴 지명을 **AWS** 리전 코드로 바꾼다. '서울' → 'ap-northeast-2'.
+def cap_resolve_region(place: str, provider: str | None = None) -> str:
+    """사람이 쓴 지명을 리전 코드로 바꾼다. 프로바이더 10곳을 압니다.
 
     **다른 도구에 리전을 넘기기 전에 먼저 이걸 부르세요.** 나머지 도구는 리전
     코드로 색인돼 있어서 '서울'을 그대로 넘기면 데이터가 있어도 못 찾습니다.
 
-    **AWS 리전만 압니다.** 같은 도시에 다른 프로바이더의 리전도 있습니다
-    (서울 = azure `koreasouth`, gcp `asia-northeast3`, tencent `ap-seoul`).
-    사용자가 프로바이더를 안 밝혔으면 이 코드로 좁히지 말고 먼저 되물으세요 —
-    좁히면 AWS만 본 답이 전체를 본 답처럼 보입니다.
+    **서울은 프로바이더마다 코드가 다릅니다** — aws `ap-northeast-2`,
+    gcp `asia-northeast3`, azure `koreacentral`, tencent `ap-seoul`.
+    그래서 GCP 질문이면 `provider='gcp'`를 주고 그 코드를 쓰세요. 다른
+    프로바이더의 코드를 넘기면 데이터가 있어도 "없다"는 답이 나옵니다.
 
     Args:
         place: 지명이나 리전 이름. 예: '서울', '도쿄', 'Seoul', 'ap-northeast-2'.
+        provider: 좁힐 프로바이더(선택). aws · azure · gcp · alibaba · tencent ·
+            ibm · ncp · kt · nhn · openstack.
     """
-    print(f"\n[용량질의] 리전 해석: {place!r}")
-    return agent_api.region_lookup(place)
+    print(f"\n[용량질의] 리전 해석: {place!r} provider={provider!r}")
+    return agent_api.region_lookup(place, provider)
 
 
 @function_tool

@@ -121,7 +121,23 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify", help="산출물끼리 이어지는지 확인한다")
     verify.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
                         help="산출물 디렉터리 (기본: output)")
+
+    # 리전 이름은 네 KB가 다 쓰는 공용 축이라 여기서 빌드한다(어느 KB에도 안 속한다).
+    regions = sub.add_parser(
+        "build-regions", help="프로바이더별 리전 이름·위치 (cb-tumblebug cloudinfo)"
+    )
+    regions.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    regions.add_argument("--output", type=Path, help="출력 경로 (기본: output/cloud-regions.json)")
+
     args = parser.parse_args(argv)
+
+    if args.command == "build-regions":
+        from kbcommon import cloudinfo
+
+        cloudinfo.build(
+            args.output or (DEFAULT_OUTPUT / "cloud-regions.json"), refresh=args.refresh
+        )
+        return 0
 
     if not args.output.exists():
         print(f"산출물 디렉터리가 없습니다: {args.output} — 먼저 빌드하세요.", file=sys.stderr)
