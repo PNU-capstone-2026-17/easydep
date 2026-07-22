@@ -21,6 +21,23 @@
 
     사실로 취급 = (basis == "stated") or reviewed
 
+## 세 번째 등급 — `observed`
+
+번들 축을 열면서 둘로 안 되는 것이 나왔다. "Azure VM 템플릿 330개 중 **100.0%**에
+네트워크 인터페이스가 있다"는 사실은
+
+- `stated`가 아니다 — Azure 문서가 그렇게 말한 적 없다. **우리가 센 것**이다.
+- `inferred`도 아니다 — 짐작이 아니라 **측정**이고, 세는 방법을 적어 두면 누구나
+  같은 숫자를 얻는다.
+
+그래서 `observed`를 둔다. 뜻은 **"이 코퍼스에서 그렇게 나왔다"**이지
+**"클라우드가 그렇게 강제한다"가 아니다.** 이 경계를 흐리면 표본 편향이 곧 사실이
+된다(Quickstart 템플릿은 데모 쪽으로 기울어, VM과 스토리지 계정이 53.6%로 같이
+나오는데 그건 옛 부트 진단 관행의 흔적이다).
+
+판정에는 쓰지 않는다 — 100%가 "없으면 안 된다"를 증명하지 못한다. 고지는 반드시
+붙인다. 표본 수도 함께 담아야 한다(17개짜리 앵커의 35.3%는 6건이다).
+
 ## 질문이 둘이다 — 판정과 고지
 
 옛 계획(P2a)은 "신뢰도 < 0.7이면 경고"였다. 그 선은 `check`가 쓰던 0.8과도 어긋났고,
@@ -57,8 +74,11 @@ from __future__ import annotations
 
 STATED = "stated"
 INFERRED = "inferred"
+#: 코퍼스에서 **세어 나온** 것. 원본이 말한 것도, 우리가 짐작한 것도 아니다.
+#: 자세한 건 위 "세 번째 등급" 절 참고.
+OBSERVED = "observed"
 
-VALUES = (STATED, INFERRED)
+VALUES = (STATED, INFERRED, OBSERVED)
 
 # evidence 라벨 → 근거의 성격. **라벨 하나에 성격 하나**가 규칙이다.
 BASIS_OF_EVIDENCE: dict[str, str] = {
@@ -130,6 +150,22 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "azure-family-name": INFERRED,
     # 인스턴스에 실제로 붙어 있는 하드웨어. 측정이 아니라 사양이다.
     "ec2-hardware-probe": STATED,  # family가 standardB로 시작하는지
+    # --- bundlekb ---
+    # AVM 모듈이 **무엇을 배포하는지**. `avm-dependson`(배포 순서)과 같은 소스지만
+    # 다른 축이다. 모듈 저자가 그렇게 짠 것이라 stated지만, "API가 강제한다"는
+    # 뜻이 아니라는 점도 `avm-dependson`과 같다.
+    "avm-module": STATED,
+    # cb-tumblebug이 VM 하나에 실제로 만드는 것(provisioning.go). **우리 실행 경로**의
+    # 사실이지 클라우드의 요구가 아니다.
+    "tumblebug-dynamic": STATED,
+    # cb-tumblebug의 손 큐레이션 템플릿(`init/templates`).
+    "tumblebug-template": STATED,
+    # AWS가 공식으로 묶어 둔 패턴 이름(`aws-solutions-constructs`).
+    "aws-solutions-construct": STATED,
+    # 실제 템플릿 코퍼스에서 **센** 동시 출현. 클라우드 사실이 아니다.
+    "aqt-corpus": OBSERVED,
+    # 명시 소스와 코퍼스가 **같은 답을 냈을 때만** 단다. `aws-cross-checked`와 같은 규율.
+    "bundle-cross-checked": STATED,
 }
 
 
@@ -147,8 +183,11 @@ def is_fact(basis: str, reviewed: bool = False) -> bool:
 
     짐작이라도 사람이 확인했으면 사실이다. 소스에 핀이 박혀 있으므로
     (`kbcommon/sources.py`) 그 확인은 다음 빌드에서도 유효하다.
+
+    **`observed`는 사실이 아니다.** 코퍼스에서 100%가 나와도 그건 표본이 그랬다는
+    뜻이지 클라우드가 강제한다는 뜻이 아니다 — 그걸로 값을 거부하면 안 된다.
     """
-    return basis == STATED or reviewed
+    return basis == STATED or (reviewed and basis != OBSERVED)
 
 
 def needs_hedge(basis: str, reviewed: bool = False) -> bool:
@@ -166,7 +205,12 @@ def needs_hedge(basis: str, reviewed: bool = False) -> bool:
 
 
 # 화면에 보여줄 말. 숫자 대신 **무엇을 근거로 아는지**를 그대로 적는다.
-_WORDS = {STATED: "원본에 명시됨", INFERRED: "짐작"}
+_WORDS = {
+    STATED: "원본에 명시됨",
+    INFERRED: "짐작",
+    # "실측"이라고만 쓰면 클라우드를 잰 것처럼 읽힌다. 무엇을 셌는지 밝힌다.
+    OBSERVED: "실제 템플릿에서 센 값",
+}
 
 
 def describe(basis: str, reviewed: bool = False) -> str:

@@ -234,6 +234,18 @@ PROBES: tuple[Probe, ...] = (
           "프로파일이 상시 CPU 한 줄뿐이었고, 사람용 CLI만 벤더 설명을 출력했다",
           want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
           want_any=("영구 디스크", "persistent", "128")),
+    Probe("BU1", "Azure에서 VM 하나만 만들면 되나? 뭐가 같이 필요해?",
+          "**research.md 문제 2가 요구하는 답.** graphkb는 스키마 참조를 따라가 "
+          "'가능한 것'을 전부 주지만(EC2에서 KMS까지), 이 축은 실제로 함께 쓰이는 "
+          "것을 등급과 빈도로 가른다",
+          want_tools=("bundle_for_resource",), forbid_tools=("web_search",),
+          want_any=("네트워크 인터페이스", "networkInterface", "NIC")),
+    Probe("BU2", "sg-default 템플릿 써도 돼?",
+          "**원본이 스스로 단 경고를 옮기는가.** 이 템플릿은 전 포트를 열고 "
+          "'프로덕션엔 쓰지 말라'고 자기가 적어 두었다 — 값만 옮기고 경고를 떼면 "
+          "위험한 기본값이 안전해 보인다",
+          want_tools=("bundle_describe",), forbid_tools=("web_search",),
+          want_any=("개발", "테스트", "프로덕션", "모든 포트", "전 포트")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",

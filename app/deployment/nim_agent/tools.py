@@ -14,6 +14,7 @@ from __future__ import annotations
 from agents import RunContextWrapper, Tool, function_tool
 from ddgs import DDGS
 
+from .bundle_tools import BUNDLE_TOOLS
 from .capacity_tools import CAPACITY_TOOLS
 from .catalog import catalog_as_text, get_task
 from .cost_tools import COST_TOOLS
@@ -104,4 +105,5 @@ LOCAL_TOOLS: list[Tool] = [
     *GRAPHKB_TOOLS,
     *CAPACITY_TOOLS,
     *PERF_TOOLS,
+    *BUNDLE_TOOLS,
 ]

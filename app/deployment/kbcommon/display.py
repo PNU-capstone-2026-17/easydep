@@ -68,6 +68,12 @@ _EVIDENCE_NAMES = {
     "gcp-shared-cpu-field": "GCP의 공유 코어 표시",
     "gcp-dedicated-cpu-inferred": "GCP가 공유 코어로 표시하지 않음(추론)",
     "azure-family-name": "Azure 인스턴스 계열 이름(추론)",
+    "avm-module": "Azure 검증 모듈이 배포하는 리소스",
+    "tumblebug-dynamic": "cb-tumblebug 동적 생성이 만드는 리소스",
+    "tumblebug-template": "cb-tumblebug 큐레이션 템플릿",
+    "aws-solutions-construct": "AWS Solutions Constructs 패턴",
+    "aqt-corpus": "Azure Quickstart 템플릿 코퍼스 실측",
+    "bundle-cross-checked": "명시 소스와 코퍼스가 일치",
 }
 
 

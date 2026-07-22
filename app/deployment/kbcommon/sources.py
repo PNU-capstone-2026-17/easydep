@@ -367,6 +367,53 @@ SOURCES: dict[str, Source] = {
             "값이 다르고 순서까지 뒤집힌다(서울은 gcp가 최저, 도쿄는 aws가 최저)."
         ),
     ),
+    "aws-solutions-constructs": Source(
+        key="aws-solutions-constructs",
+        url=(
+            "https://codeload.github.com/awslabs/aws-solutions-constructs/"
+            "tar.gz/refs/tags/v2.103.0"
+        ),
+        pin_kind="tag",
+        pin="v2.103.0",
+        note=(
+            "AWS가 공식으로 묶어 둔 패턴 83개. Apache-2.0. **이름 자체가 조합**이라"
+            "(`aws-apigateway-lambda`) 코드를 파싱하지 않고도 신호가 나온다 — CDK나 "
+            "SAM은 코드라 비용이 크다. 서비스→리소스 타입 매핑은 우리가 하며 "
+            "모호한 것은 담지 않는다."
+        ),
+    ),
+    "azure-quickstart-templates": Source(
+        key="azure-quickstart-templates",
+        url=(
+            "https://codeload.github.com/Azure/azure-quickstart-templates/"
+            "tar.gz/331d6f394416122008f71342d20c8a2ba8d9b24a"
+        ),
+        pin_kind="commit",
+        pin="331d6f394416122008f71342d20c8a2ba8d9b24a",
+        note=(
+            "실제 ARM 템플릿 코퍼스. 태그가 없어 커밋 SHA로 고정(2026-07-17). MIT. "
+            "**동시 출현 빈도**를 세는 데만 쓴다 — 이 저장소가 못 하던 '가능한 것'과 "
+            "'실제로 필요한 것'의 구분이 여기서 나온다(VM 템플릿 330개 중 NIC 100.0%, "
+            "bastion 5.5%). tarball이 **326 MB**라 빌드 시점에만 받고 산출물에는 "
+            "파생 표만 담는다. 나오는 값은 `basis=observed` — 코퍼스의 사실이지 "
+            "클라우드의 사실이 아니다."
+        ),
+    ),
+    "tumblebug-src": Source(
+        key="tumblebug-src",
+        url=(
+            "https://codeload.github.com/cloud-barista/cb-tumblebug/"
+            "tar.gz/refs/tags/v0.12.25"
+        ),
+        pin_kind="tag",
+        pin="v0.12.25",
+        note=(
+            "cb-tumblebug **소스 트리**. 미러(assets.dump.gz)와 **같은 태그**를 써야 "
+            "번들과 카탈로그가 어긋나지 않는다. `init/templates/*.json`(이름 붙은 "
+            "리소스 군 22개)와 `src/core/infra/provisioning.go`(VM 하나에 실제로 "
+            "만들어지는 것)를 읽는다. Apache-2.0."
+        ),
+    ),
     "tumblebug-cloudinfo": Source(
         key="tumblebug-cloudinfo",
         url=(
