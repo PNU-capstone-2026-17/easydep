@@ -201,6 +201,59 @@ SOURCES: dict[str, Source] = {
             "자기정합성은 확인됨(스팟 중앙값 온디맨드의 32%, 이상치 0건). 3.8MB, 캐시됨."
         ),
     ),
+    "tp-ibm": Source(
+        key="tp-ibm",
+        url=(
+            "https://codeload.github.com/IBM-Cloud/terraform-provider-ibm/"
+            "tar.gz/refs/tags/v2.4.0"
+        ),
+        pin_kind="tag",
+        pin="v2.4.0",
+        note=(
+            "IBM Cloud 리소스 타입·제약. MPL-2.0. **주의**: 이 저장소의 "
+            "`provider_metadata.json`은 저장소 태그와 내용이 어긋난 전례가 있다"
+            "(조사에서 확인). 우리는 그 파일이 아니라 provider.go 등록표와 Go "
+            "스키마를 읽으므로 영향받지 않는다. tarball 7.4MB."
+        ),
+    ),
+    "tp-ncp": Source(
+        key="tp-ncp",
+        url=(
+            "https://codeload.github.com/NaverCloudPlatform/terraform-provider-ncloud/"
+            "tar.gz/refs/tags/v4.0.6"
+        ),
+        pin_kind="tag",
+        pin="v4.0.6",
+        note="NAVER Cloud 리소스 타입·제약. MPL-2.0. tarball 0.4MB.",
+    ),
+    "tp-openstack": Source(
+        key="tp-openstack",
+        url=(
+            "https://codeload.github.com/terraform-provider-openstack/"
+            "terraform-provider-openstack/tar.gz/refs/tags/v3.4.0"
+        ),
+        pin_kind="tag",
+        pin="v3.4.0",
+        note=(
+            "OpenStack 리소스 타입·제약. MPL-2.0. 타입 이름에 API 버전이 붙는다"
+            "(`openstack_networking_network_v2`) — 벤더 규약이라 그대로 쓴다. 0.5MB."
+        ),
+    ),
+    "tp-oracle": Source(
+        key="tp-oracle",
+        url=(
+            "https://codeload.github.com/oracle/terraform-provider-oci/"
+            "tar.gz/refs/tags/v8.23.0"
+        ),
+        pin_kind="tag",
+        pin="v8.23.0",
+        note=(
+            "Oracle Cloud 리소스 타입·제약. MPL-2.0. **등록 형태가 다르다** — "
+            "다른 provider는 맵 리터럴인데 이쪽은 `RegisterResource(\"oci_x\", …)` "
+            "호출이다(996건). tags API가 `vdev-version`을 먼저 주므로 releases를 "
+            "봐야 실제 최신을 안다. tarball 28MB."
+        ),
+    ),
     "tp-alicloud": Source(
         key="tp-alicloud",
         url=(

@@ -54,10 +54,20 @@ from kbcommon.sources import SOURCES
 
 EVIDENCE = "tpcsp-schema"
 
-#: 프로바이더별 설정. `prefix`는 TF 리소스 이름 접두사, `provider`는 우리 id 네임스페이스.
+#: 프로바이더별 설정.
+#: `prefix`는 TF 리소스 이름 접두사, `provider`는 우리 id 네임스페이스,
+#: `form`은 등록 표기 방식(아래 `_registration` 참조).
 PROVIDERS = {
     "alicloud": {"source": "tp-alicloud", "prefix": "alicloud_", "provider": "alibaba"},
     "tencent": {"source": "tp-tencent", "prefix": "tencentcloud_", "provider": "tencent"},
+    "ibm": {"source": "tp-ibm", "prefix": "ibm_", "provider": "ibm"},
+    "ncp": {"source": "tp-ncp", "prefix": "ncloud_", "provider": "ncp"},
+    "openstack": {
+        "source": "tp-openstack", "prefix": "openstack_", "provider": "openstack"
+    },
+    "oracle": {
+        "source": "tp-oracle", "prefix": "oci_", "provider": "oracle", "form": "call"
+    },
 }
 
 _SCHEMA_MAP = "map[string]*schema.Schema{"
@@ -89,21 +99,37 @@ class Report:
         self.tf_only = 0
         self.output_only = 0
         self.kinds: Counter = Counter()
+        self.types: set[str] = set()
+        """**파싱에 성공한 모든 타입**(제약이 0건이어도 포함).
+
+        graphkb 노드는 이걸로 만든다. 제약이 있는 것만 노드로 만들었더니
+        `ibm_is_vpc`처럼 **존재하지만 제약 신호가 없는** 타입이 통째로 사라졌고,
+        그 탓에 core 매핑을 만들 수 없었다(실측으로 겪었다). "이 타입이 있다"는
+        것 자체가 지식이다 — 제약 유무와는 별개다.
+        """
 
 
-def _registration(prefix: str) -> re.Pattern:
-    """provider.go의 등록표에서 (리소스 이름, 함수명).
+def _registration(prefix: str, form: str = "map") -> re.Pattern:
+    """등록표에서 (리소스 이름, 함수명). **표기가 저장소마다 다르다.**
 
     파일명(`resource_alicloud_*.go`)으로 찾으면 실제보다 많이 잡힌다(실측 2,270 파일
     vs 등록 1,161종) — 헬퍼·구버전 파일이 섞이기 때문이다.
 
-    **두 저장소의 표기가 다르다.** alicloud는 함수를 그대로 적고
-    (`"alicloud_vpc": resourceAliCloudVpc()`), tencent는 패키지를 앞에 붙인다
-    (`"tencentcloud_vpc": vpc.ResourceTencentCloudVpc()`). 점을 허용하지 않으면
-    tencent가 **0건**이 된다(실측). 함수 정의 자체는 패키지 없이 쓰이므로
-    마지막 마디만 쓴다.
+    세 가지를 실측으로 만났다:
+
+        alicloud   "alicloud_vpc": resourceAliCloudVpc()        맵, 함수 그대로
+        tencent    "tencentcloud_vpc": vpc.ResourceTencent…()   맵, 패키지 접두사
+        ibm/ncp/openstack                                        맵 (같은 꼴)
+        oracle     RegisterResource("oci_core_vcn", tf_core.…()) **호출**
+
+    점을 허용하지 않으면 tencent가 **0건**, 호출 형태를 모르면 oracle이 **0건**이
+    된다(둘 다 실제로 그 상태를 만들었다). 함수 정의 자체는 패키지 없이 쓰이므로
+    부르는 쪽에서 마지막 마디만 취한다.
     """
-    return re.compile(rf'"({re.escape(prefix)}[a-z0-9_]+)":\s*([\w.]+)\(\)')
+    name = rf'"({re.escape(prefix)}[a-z0-9_]+)"'
+    if form == "call":
+        return re.compile(rf"RegisterResource\(\s*{name}\s*,\s*([\w.]+)\(\)")
+    return re.compile(rf"{name}:\s*([\w.]+)\(\)")
 
 
 def _is_output_only(body: str) -> bool:
@@ -118,7 +144,7 @@ def parse_provider(tar_path: Path, *, key: str) -> tuple[CapacitySet, Report]:
     config = PROVIDERS[key]
     capacity = CapacitySet()
     report = Report()
-    registration = _registration(config["prefix"])
+    registration = _registration(config["prefix"], config.get("form", "map"))
 
     # 1차: 등록표(어느 함수가 어느 리소스인가)와 파일 내용을 한 번에 모은다.
     func_of: dict[str, str] = {}
@@ -133,7 +159,9 @@ def parse_provider(tar_path: Path, *, key: str) -> tuple[CapacitySet, Report]:
                 text = archive.extractfile(member).read().decode("utf-8", "replace")
             except Exception:
                 continue
-            if "provider.go" in member.name.rsplit("/", 1)[-1]:
+            # 맵 형태는 provider.go에만 있지만 호출 형태(oracle)는 각 서비스 파일에
+            # 흩어져 있다 — 파일을 제한하면 0건이 된다.
+            if config.get("form") == "call" or "provider.go" in member.name.rsplit("/", 1)[-1]:
                 for name, func in registration.findall(text):
                     short = func.rsplit(".", 1)[-1]
                     # 데이터소스는 리소스가 아니다 — 만들 수 있는 것이 아니라 조회다.
@@ -164,6 +192,7 @@ def parse_provider(tar_path: Path, *, key: str) -> tuple[CapacitySet, Report]:
                 text, anchor + len("Schema: " + _SCHEMA_MAP) - 1, "", props
             )
             type_id = f"{config['provider']}::{tf_name}"
+            report.types.add(type_id)
             if _emit(props, type_id, capacity, report):
                 report.parsed += 1
     report.no_schema = report.registered - report.parsed
@@ -257,12 +286,14 @@ def build(output: Path, *, key: str, refresh: bool = False) -> CapacitySet:
     tar = fetch_cached(source.url, f"{config['source']}-{source.pin}.tar.gz", refresh=refresh)
 
     capacity, report = parse_provider(tar, key=key)
-    types = {c.type_id for c in capacity.constraints}
+    # 노드는 **파싱된 전체**로, coverage는 제약이 붙은 것으로 센다.
+    types = report.types or {c.type_id for c in capacity.constraints}
+    constrained = {c.type_id for c in capacity.constraints}
     capacity.provenance = [describe_source_set([tar], source.key)]
     capacity.coverage = [{
         "provider": config["provider"],
-        "types": len(types),
-        "type_ids": sorted(types),
+        "types": len(constrained),
+        "type_ids": sorted(constrained),
         "note": (
             f"{key} Terraform provider의 스키마. 타입 이름이 Terraform 것이다 — "
             "이 CSP에는 우리가 쓸 공개 리소스 스키마가 없다. **대조할 짝이 없는 "
@@ -272,8 +303,9 @@ def build(output: Path, *, key: str, refresh: bool = False) -> CapacitySet:
     }]
 
     print(
-        f"{key}: 제약 {len(capacity.constraints):,}건 · 타입 {len(types):,}종 "
-        f"(등록 {report.registered:,}종 중 {report.parsed:,}종 파싱)"
+        f"{key}: 제약 {len(capacity.constraints):,}건 · 제약 있는 타입 "
+        f"{len(constrained):,}종 / 파싱된 타입 {len(types):,}종 "
+        f"(등록 {report.registered:,}종)"
     )
     print("  종류: " + ", ".join(f"{k} {v:,}" for k, v in report.kinds.most_common()))
     if report.no_schema:

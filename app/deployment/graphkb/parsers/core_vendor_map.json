@@ -1,5 +1,5 @@
 {
-  "description": "코어 타입 ↔ 벤더 네이티브 타입 동치 매핑 (사람 검수 완료). 1차 근거: cb-spider 드라이버 소스 (cloud-control-manager/cloud-driver/drivers/{aws,azure,gcp}/resources/). 등가물이 없는 조합(sshKey/gcp, customImage/aws·gcp, spec/image/mci 전체)은 항목을 만들지 않는다. alibaba·tencent(2026-07-22 추가)도 같은 방식이다 — 드라이버 소스를 읽고, 대상 이름은 Terraform 것을 쓴다(이 두 CSP에는 공개 리소스 스키마가 없다). 후보가 둘인 곳은 드라이버가 실제로 쓰는 쪽을 골랐다(SLB vs NLB, 관리형 vs 비관리형).",
+  "description": "코어 타입 ↔ 벤더 네이티브 타입 동치 매핑 (사람 검수 완료). 1차 근거: cb-spider 드라이버 소스 (cloud-control-manager/cloud-driver/drivers/{aws,azure,gcp}/resources/). 등가물이 없는 조합(sshKey/gcp, customImage/aws·gcp, spec/image/mci 전체)은 항목을 만들지 않는다. alibaba·tencent(2026-07-22 추가)도 같은 방식이다 — 드라이버 소스를 읽고, 대상 이름은 Terraform 것을 쓴다(이 두 CSP에는 공개 리소스 스키마가 없다). 후보가 둘인 곳은 드라이버가 실제로 쓰는 쪽을 골랐다(SLB vs NLB, 관리형 vs 비관리형). ibm·ncp·openstack·oracle(2026-07-22 추가)은 근거가 한 단계 얕다 — cb-spider 핸들러 존재와 TF 타입 실재까지 확인했고 드라이버의 구체 API 호출은 읽지 않았다(confidence 0.9). ncp는 절반이 Plugin Framework로 이전해 우리 파서가 못 읽고, oracle은 SSH 키가 리소스가 아니라 인스턴스 메타데이터라 항목을 만들지 않았다.",
   "mappings": [
     {
       "core": "vNet",
@@ -383,6 +383,278 @@
       "target": "tencentcloud_image",
       "confidence": 0.95,
       "note": "tencent MyImageHandler.go: CreateImage",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "ibm",
+      "target": "ibm_is_vpc",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "ibm",
+      "target": "ibm_is_subnet",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "ibm",
+      "target": "ibm_is_security_group",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "ibm",
+      "target": "ibm_is_ssh_key",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "ibm",
+      "target": "ibm_is_instance",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "ibm",
+      "target": "ibm_is_lb",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "ibm",
+      "target": "ibm_container_vpc_cluster",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "ibm",
+      "target": "ibm_container_vpc_worker_pool",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "ibm",
+      "target": "ibm_is_volume",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "ibm",
+      "target": "ibm_is_image",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "ncp",
+      "target": "ncloud_access_control_group",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "ncp",
+      "target": "ncloud_server",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "ncp",
+      "target": "ncloud_nks_cluster",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "ncp",
+      "target": "ncloud_nks_node_pool",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "ncp",
+      "target": "ncloud_block_storage",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "openstack",
+      "target": "openstack_networking_network_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "openstack",
+      "target": "openstack_networking_subnet_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "openstack",
+      "target": "openstack_networking_secgroup_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "openstack",
+      "target": "openstack_compute_keypair_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "openstack",
+      "target": "openstack_compute_instance_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "openstack",
+      "target": "openstack_lb_loadbalancer_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "openstack",
+      "target": "openstack_containerinfra_cluster_v1",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "openstack",
+      "target": "openstack_containerinfra_nodegroup_v1",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "openstack",
+      "target": "openstack_blockstorage_volume_v3",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "openstack",
+      "target": "openstack_images_image_v2",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "oracle",
+      "target": "oci_core_vcn",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "oracle",
+      "target": "oci_core_subnet",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "oracle",
+      "target": "oci_core_network_security_group",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "oracle",
+      "target": "oci_core_instance",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "oracle",
+      "target": "oci_load_balancer_load_balancer",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "oracle",
+      "target": "oci_containerengine_cluster",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "oracle",
+      "target": "oci_containerengine_node_pool",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "oracle",
+      "target": "oci_core_volume",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "oracle",
+      "target": "oci_core_image",
+      "confidence": 0.9,
+      "note": "cb-spider 드라이버가 이 리소스를 다루고(지원 매트릭스 확인) 대상 타입이 우리 산출물에 실재함을 확인했다. **alibaba·tencent보다 근거가 한 단계 얕다** — 저쪽은 드라이버의 실제 API 호출까지 읽었지만 여기는 핸들러 존재까지다.",
       "status": "confirmed"
     }
   ]

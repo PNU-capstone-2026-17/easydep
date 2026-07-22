@@ -36,6 +36,10 @@ GRAPH_FILES = (
     "azure-deploy-graph.json",
     "alibaba-graph.json",
     "tencent-graph.json",
+    "ibm-graph.json",
+    "ncp-graph.json",
+    "openstack-graph.json",
+    "oracle-graph.json",
 )
 
 _MISSING_MESSAGE = (

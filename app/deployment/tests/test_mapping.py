@@ -21,10 +21,10 @@ def graph() -> Graph:
 
 
 def test_golden_vnet_equivalences(graph: Graph) -> None:
-    """골든: core vNet ≡ 다섯 CSP의 가상 네트워크.
+    """골든: core vNet ≡ 여덟 CSP의 가상 네트워크.
 
-    alibaba·tencent는 2026-07-22에 더했다. 이 둘은 공개 리소스 스키마가 없어
-    **Terraform 이름**을 대상으로 쓴다 — id에 그 사실이 드러난다.
+    2026-07-22에 alibaba·tencent·ibm·openstack·oracle을 더했다. 이들은 공개
+    리소스 스키마가 없어 **Terraform 이름**을 대상으로 쓴다 — id에 그 사실이 드러난다.
     """
     targets = {
         e.to_id
@@ -37,7 +37,12 @@ def test_golden_vnet_equivalences(graph: Graph) -> None:
         "gcp::ComputeNetwork",
         "alibaba::alicloud_vpc",
         "tencent::tencentcloud_vpc",
+        "ibm::ibm_is_vpc",
+        "openstack::openstack_networking_network_v2",
+        "oracle::oci_core_vcn",
     }
+    # ncp는 여기 없다 — `ncloud_vpc`가 Plugin Framework로 이전해 우리 파서가
+    # 못 읽는다. **없는 것을 만들어 적지 않는다**는 원칙의 실례다.
 
 
 def test_all_edges_are_equivalent_to(graph: Graph) -> None:
