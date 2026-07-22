@@ -226,6 +226,24 @@ SOURCES: dict[str, Source] = {
         pin="v4.0.6",
         note="NAVER Cloud 리소스 타입·제약. MPL-2.0. tarball 0.4MB.",
     ),
+    "tp-nhn": Source(
+        key="tp-nhn",
+        url=(
+            "https://codeload.github.com/nhn-cloud/terraform-provider-nhncloud/"
+            "tar.gz/refs/tags/v1.0.9"
+        ),
+        pin_kind="tag",
+        pin="v1.0.9",
+        note=(
+            "NHN Cloud 리소스 타입·제약. MPL-2.0. **'공개 프로바이더가 없다'고 "
+            "적어 뒀던 것이 틀렸다** — 받아 보니 ResourcesMap에 110종이 있다"
+            "(2026-07-22 확인). **OpenStack 프로바이더를 리브랜딩한 것이다** — "
+            "구현 파일 111개 중 90개가 `resource_openstack_*.go` 그대로다"
+            "(GitHub fork 플래그는 False지만 복사본이다). 그래서 이름이 "
+            "openstack_* 와 84/110 겹치는 것은 **교차 검증이 아니라 같은 코드다.** "
+            "tp-openstack과 독립된 소스로 세지 말 것."
+        ),
+    ),
     "tp-openstack": Source(
         key="tp-openstack",
         url=(

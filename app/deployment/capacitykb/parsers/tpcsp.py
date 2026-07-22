@@ -65,9 +65,24 @@ PROVIDERS = {
     "openstack": {
         "source": "tp-openstack", "prefix": "openstack_", "provider": "openstack"
     },
+    # NHN Cloud는 OpenStack 기반이라 이름이 openstack_* 와 짝을 이룬다
+    # (`nhncloud_compute_instance_v2` ↔ `openstack_compute_instance_v2`).
+    # **이 프로젝트에서 드물게 대조할 짝이 있는 경우다.**
+    "nhn": {"source": "tp-nhn", "prefix": "nhncloud_", "provider": "nhn"},
     "oracle": {
         "source": "tp-oracle", "prefix": "oci_", "provider": "oracle", "form": "call"
     },
+}
+
+#: 프로바이더별로 덧붙일 한계 고지. 공통 문구로 못 담는 것만.
+_EXTRA_NOTE = {
+    "nhn": (
+        " NHN Cloud 프로바이더는 **OpenStack 프로바이더를 리브랜딩한 것**이다 — "
+        "구현 파일 111개 중 90개가 resource_openstack_*.go 그대로다. 그래서 "
+        "openstack 타입과 이름이 84/110 겹치지만 **그건 교차 검증이 아니라 같은 "
+        "코드다.** 등록돼 있다는 것은 '프로바이더가 노출한다'는 뜻이지 'NHN Cloud가 "
+        "지원한다'는 뜻이 아니다."
+    ),
 }
 
 _SCHEMA_MAP = "map[string]*schema.Schema{"
@@ -299,7 +314,7 @@ def build(output: Path, *, key: str, refresh: bool = False) -> CapacitySet:
             "이 CSP에는 우리가 쓸 공개 리소스 스키마가 없다. **대조할 짝이 없는 "
             "단일 소스**라 ForceNew·validation은 프로바이더 작성자의 주장이며 "
             "API가 그대로 강제한다는 보장은 없다."
-        ),
+        ) + _EXTRA_NOTE.get(key, ""),
     }]
 
     print(

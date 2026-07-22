@@ -40,6 +40,7 @@ GRAPH_FILES = (
     "ncp-graph.json",
     "openstack-graph.json",
     "oracle-graph.json",
+    "nhn-graph.json",
 )
 
 _MISSING_MESSAGE = (

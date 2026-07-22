@@ -45,7 +45,11 @@ _EVIDENCE_NAMES = {
     "kcc-description": "GCP Config Connector 설명문",
     "tpg-schema": "Terraform Google 프로바이더 스키마",
     "tpaws-schema": "Terraform AWS 프로바이더 스키마",
-    "tpcsp-schema": "Terraform 프로바이더 스키마(Alibaba·Tencent)",
+    # 프로바이더 이름을 라벨에 박지 않는다. 예전엔 "(Alibaba·Tencent)"였는데 이후
+    # ibm·ncp·openstack·oracle·nhn까지 같은 라벨을 쓰게 되면서, NHN 타입의 근거를
+    # **"Alibaba·Tencent"라고 말하고 있었다** — 출처를 틀리게 대는 것이다.
+    # 어느 프로바이더인지는 type_id의 네임스페이스가 이미 말한다(`nhn::nhncloud_…`).
+    "tpcsp-schema": "해당 CSP의 Terraform 프로바이더 스키마",
     "cfn-lint-region": "cfn-lint 리전별 허용값",
     "cfn-lint-conditional": "cfn-lint 조건부 허용값",
     "swagger-mutability": "Azure REST 명세의 변경 가능성 표시",
@@ -55,6 +59,15 @@ _EVIDENCE_NAMES = {
     "botocore-doc": "AWS SDK 설명문",
     "aws-cross-checked": "AWS 공식 두 소스 교차 확인",
     "cb-spider-driver": "CB-Spider 드라이버",
+    "arm-id": "Azure 명세의 arm-id 표시",
+    "kcc-hierarchy": "GCP Config Connector의 자원 계층 참조",
+    # perfkb. **한 방향만 원본이 말한다** — "버스트다"/"공유 코어다"는 표시 필드이고,
+    # 반대 방향은 "그렇게 분류되지 않았다"에서 끌어낸 추론이다. 라벨에서 갈라 둔다.
+    "aws-burstable-field": "AWS의 버스트 인스턴스 표시",
+    "aws-non-burstable-inferred": "AWS가 버스트로 분류하지 않음(추론)",
+    "gcp-shared-cpu-field": "GCP의 공유 코어 표시",
+    "gcp-dedicated-cpu-inferred": "GCP가 공유 코어로 표시하지 않음(추론)",
+    "azure-family-name": "Azure 인스턴스 계열 이름(추론)",
 }
 
 
