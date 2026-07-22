@@ -156,9 +156,15 @@ PROBES: tuple[Probe, ...] = (
           want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
           want_any=("g4dn", "g5g", "g5.", "g6")),
     Probe("R2", "우리 서비스는 도쿄에 배포할 건데 리전 코드가 뭐야?",
-          "지명 → 리전 코드. 모델 기억이 아니라 도구로 답하는가",
-          want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
-          want_any=("ap-northeast-1",)),
+          "지명 → 리전 코드. 모델 기억이 아니라 도구로 답하는가. "
+          "want_any(ap-northeast-1)를 뒀더니 도구는 늘 맞는데 답변 **문구**만 바뀌어 "
+          "가끔 실패했다 — 이 하네스는 문구를 판정하지 않으므로 도구 호출만 본다",
+          want_tools=("cap_resolve_region",), forbid_tools=("web_search",)),
+    Probe("S1", "Azure Database for MySQL 유연 서버를 배포할 때 넣는 관리자 비밀번호를 나중에 다시 조회할 수 있어?",
+          "비밀값 축(azure-secret). administratorLoginPassword는 x-ms-secret이라 "
+          "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
+          want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
+          want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전")),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",

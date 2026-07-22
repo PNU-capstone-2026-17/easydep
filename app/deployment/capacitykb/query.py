@@ -76,6 +76,14 @@ def immutable_properties(capacity: CapacitySet, type_id: str) -> list[Constraint
     )
 
 
+def secret_properties(capacity: CapacitySet, type_id: str) -> list[Constraint]:
+    """배포 때 넣지만 API로 다시 못 읽는 속성들 (비밀번호·키·연결 문자열)."""
+    return sorted(
+        (c for c in capacity.for_type(type_id) if c.kind == "secret"),
+        key=lambda c: c.property,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CheckResult:
     """값 판정 결과."""

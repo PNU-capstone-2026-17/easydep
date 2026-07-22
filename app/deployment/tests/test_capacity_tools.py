@@ -23,6 +23,7 @@ def test_capacity_tools_registered() -> None:
         "cap_check_value",
         "cap_property_limits",
         "cap_immutable_properties",
+        "cap_secret_properties",
         "cap_allowed_values",
         "cap_service_quota",
         "cap_resolve_region",

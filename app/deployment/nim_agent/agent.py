@@ -78,6 +78,8 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
    - "X 속성에 이 값을 넣어도 되나 / 디스크 100TB 가능?" → cap_check_value
    - "X의 크기·개수·길이 한도는?" → cap_property_limits
    - "이 값을 바꾸면 리소스가 재생성되나?" → cap_immutable_properties
+   - "배포할 때 비밀번호·키 같은 비밀값이 필요한가 / 나중에 확인할 수 있나" →
+     cap_secret_properties (Azure만 제공. 다른 프로바이더엔 "없음" 말고 "추적 안 함")
    - "X 속성에 어떤 값들을 쓸 수 있나 (타입/모드 등)" → cap_allowed_values
    - "계정/구독당 몇 개까지 만들 수 있나" → cap_service_quota
    - **지명이 나오면 먼저 cap_resolve_region** ('서울' → 'ap-northeast-2').

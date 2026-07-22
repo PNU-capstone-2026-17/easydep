@@ -143,6 +143,21 @@ def cap_immutable_properties(resource_type: str) -> str:
 
 
 @function_tool
+def cap_secret_properties(resource_type: str) -> str:
+    """배포 때 넣지만 API로 다시 못 읽는 속성들(비밀번호·키·연결 문자열).
+
+    인프라를 만들 때 이 값들은 잃어버리면 다시 조회할 수 없으니 Key Vault 등으로
+    따로 관리하도록 안내하는 데 쓴다. 지금은 Azure만 이 표시를 제공한다 — 다른
+    프로바이더에 "비밀값 없음"이라고 답하지 마세요(추적 안 함이지 없음이 아님).
+
+    Args:
+        resource_type: 타입 이름. 예: 'Microsoft.DBforMySQL/flexibleServers'.
+    """
+    print(f"\n[용량질의] 비밀값 속성: {resource_type}")
+    return agent_api.secrets(resource_type)
+
+
+@function_tool
 def cap_allowed_values(resource_type: str, property_name: str) -> str:
     """속성의 허용값(enum)·패턴·기본값을 반환한다.
 
@@ -220,6 +235,7 @@ CAPACITY_TOOLS = [
     cap_check_value,
     cap_property_limits,
     cap_immutable_properties,
+    cap_secret_properties,
     cap_allowed_values,
     cap_service_quota,
     cap_resolve_region,

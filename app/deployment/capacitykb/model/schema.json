@@ -45,6 +45,7 @@
               "default",
               "required",
               "mutability",
+              "secret",
               "exactly_one_of",
               "at_least_one_of",
               "conflicts_with",
@@ -89,6 +90,7 @@
               "cfn-lint-region",
               "cfn-lint-conditional",
               "swagger-mutability",
+              "swagger-secret",
               "aws-price-list",
               "botocore-doc",
               "aws-cross-checked",
@@ -152,6 +154,25 @@
               "properties": {
                 "kind": {
                   "const": "required"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "const": true
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "secret"
                 }
               },
               "required": [

@@ -35,6 +35,7 @@ CAPACITY_FILES = (
     "aws-regions.json",
     "aws-conditional.json",
     "azure-mutability.json",
+    "azure-secret.json",
 )
 
 #: 조건이 이보다 많으면 값을 나열하지 않고 "몇 가지에서 되는지"로 요약한다.
@@ -105,6 +106,10 @@ def _describe(constraint) -> str:
         text = mutability_labels.get(constraint.value, constraint.value)
     elif constraint.kind == "required":
         text = "필수 항목"
+    elif constraint.kind == "secret":
+        # 비밀값 — 배포 때 넣지만 API로 다시 못 읽는다. Key Vault 등으로 따로
+        # 관리해야 한다는 신호라, 값(True)이 아니라 이 사실을 문장으로 보여준다.
+        text = "비밀값 (배포 시 설정, API로 다시 읽을 수 없음 — 안전하게 보관 필요)"
     else:
         # **긴 목록을 통째로 찍지 않는다.** 리전별 인스턴스 타입을 그대로 내보냈더니
         # 도구 응답 하나가 377,439자였다 — 모델 컨텍스트를 통째로 먹고 실측이 멈췄다.
@@ -371,6 +376,45 @@ def immutable(
     caveat = _backend_footer(shown)
     lines = [f"{head}:" if not caveat else f"{head}. ⚠ {caveat}"]
     lines.extend(_describe(c) for c in shown)
+    return "\n".join(lines)
+
+
+def secrets(
+    resource_type: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+) -> str:
+    """배포 때 넣지만 API로 다시 못 읽는 속성들(비밀번호·키·연결 문자열).
+
+    배포 계획에 쓰인다 — 이 값들은 잃어버리면 다시 조회할 수 없으므로 Key Vault
+    등으로 따로 관리해야 한다. 지금은 Azure만 이 표시(`x-ms-secret`)를 준다.
+    """
+    from capacitykb.query import secret_properties
+
+    capacity = load_merged(output_dir)
+    if capacity is None:
+        return _MISSING_MESSAGE
+    type_id, error = _resolve(capacity, resource_type)
+    if type_id is None:
+        return error
+    found = secret_properties(capacity, type_id)
+    if not found:
+        if not capacity.covers(type_id):
+            return _nothing_found(capacity, type_id, display(type_id))
+        # **"없다"의 뜻을 좁혀서 말한다.** 비밀값 표시는 Azure만 준다. AWS·GCP 타입에
+        # 대고 "비밀값 없음"이라고 하면 없는 걸 확인해 준 것처럼 읽힌다.
+        provider = type_id.split("::", 1)[0]
+        if provider != "azure":
+            return (
+                f"{display(type_id)} 의 비밀값 정보가 없습니다 — 이 표시는 지금 "
+                f"Azure 명세만 제공합니다({provider}는 미수록). '비밀값 없음'이 "
+                "아니라 '이 축을 추적하지 않음'입니다."
+            )
+        return f"{display(type_id)} 에 비밀값으로 표시된 속성이 없습니다."
+
+    lines = [
+        f"{display(type_id)} 의 비밀값 속성 {len(found)}개 "
+        "(배포 시 설정, API로 다시 읽을 수 없음 — Key Vault 등으로 관리):"
+    ]
+    lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
 
 

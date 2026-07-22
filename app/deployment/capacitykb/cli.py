@@ -34,6 +34,7 @@ DEFAULT_OUTPUTS = {
     "aws-conditional": Path("output") / "aws-conditional.json",
     "aws-endpoints": Path("output") / "aws-endpoints.json",
     "azure-mutability": Path("output") / "azure-mutability.json",
+    "azure-secret": Path("output") / "azure-secret.json",
 }
 
 
@@ -127,6 +128,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import azure_mutability
 
         azure_mutability.build(output, refresh=args.refresh)
+    elif args.source == "azure-secret":
+        from capacitykb.parsers import azure_secret
+
+        azure_secret.build(output, refresh=args.refresh)
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 

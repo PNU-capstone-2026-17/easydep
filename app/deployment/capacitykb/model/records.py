@@ -34,6 +34,7 @@ ConstraintKind = Literal[
     "default",
     "required",
     "mutability",
+    "secret",
 ]
 Mutability = Literal["create_only", "conditional_create_only", "read_only"]
 

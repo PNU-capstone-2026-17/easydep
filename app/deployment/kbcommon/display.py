@@ -47,6 +47,7 @@ _EVIDENCE_NAMES = {
     "cfn-lint-region": "cfn-lint 리전별 허용값",
     "cfn-lint-conditional": "cfn-lint 조건부 허용값",
     "swagger-mutability": "Azure REST 명세의 변경 가능성 표시",
+    "swagger-secret": "Azure REST 명세의 비밀값 표시",
     "ec2-hardware-probe": "EC2 인스턴스 하드웨어 확인",
     "aws-price-list": "AWS 가격표 API",
     "botocore-doc": "AWS SDK 설명문",
