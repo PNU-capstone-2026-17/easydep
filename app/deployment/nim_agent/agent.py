@@ -94,6 +94,11 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
    - **지명이 나오면 먼저 cap_resolve_region** ('서울' → 'ap-northeast-2').
      다른 도구는 전부 리전 **코드**로 색인돼 있어서 '서울'을 그대로 넘기면
      데이터가 있어도 "없다"는 답이 나옵니다. 실제로 그렇게 틀린 적이 있습니다.
+     **리전 코드를 답에 쓰기 전에 반드시 이 도구로 확인하세요.** 프로바이더를
+     안 밝힌 질문이면 되묻거나, 확인한 프로바이더들을 함께 밝히면 됩니다 —
+     다만 **확인하지 않은 코드를 쓰거나 "그 프로바이더엔 없다"고 말하지 마세요.**
+     실측에서 기억으로 답하다 Alibaba·Tencent 도쿄 리전을 "지원 안 함"이라고
+     **거짓으로** 말한 적이 있습니다(둘 다 있습니다).
    - "탄소 배출이 적은 리전은? / 이 리전 탄소집약도는?" → cap_region_carbon
      (aws·azure·gcp만. **프로바이더끼리 비교하지 마세요** — 방법론이 달라
      같은 도시에서도 순서가 뒤집힙니다. 도구가 붙이는 고지를 그대로 전하세요.)
@@ -170,16 +175,19 @@ context 없이 부르세요 — 도구가 "어느 조건에서 얼마인지"와 
 """
 
 
-def build_agent(mcp_servers: list | None = None) -> Agent:
+def build_agent(mcp_servers: list | None = None, tools: list | None = None) -> Agent:
     """NIM 모델과 도구가 결합된 에이전트를 만든다.
 
     Args:
         mcp_servers: 연결된 MCP 서버 목록(없으면 로컬 도구만 사용).
+        tools: 도구 목록을 **바꿔 끼울 때만** 준다. 기본은 `LOCAL_TOOLS` 전부다.
+            도구 수가 라우팅 정확도에 영향을 주는지 재려고 열어 둔 구멍이며,
+            평상시에는 쓰지 않는다 — 실험이 아니라면 기본값이 곧 실제 동작이다.
     """
     return Agent(
         name="NIM Planner Agent",
         instructions=INSTRUCTIONS,
         model=build_model(),
-        tools=LOCAL_TOOLS,
+        tools=LOCAL_TOOLS if tools is None else tools,
         mcp_servers=mcp_servers or [],
     )

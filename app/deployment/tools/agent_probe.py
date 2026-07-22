@@ -82,6 +82,17 @@ class Probe:
     no_tools: bool = False
     """도구를 **하나도** 부르지 않아야 통과 (없는 축을 거절하는 경우)."""
 
+    tools_optional: bool = False
+    """도구를 안 불러도 실패로 보지 않는다.
+
+    **모호한 물음에는 되묻는 것이 최선일 때가 있다.** "도쿄 리전 코드가 뭐야?"는
+    프로바이더마다 답이 다르므로, 아무 코드도 단정하지 않고 "어느 클라우드냐"고
+    되묻는 것이 옳다 — 그때는 부를 도구가 없다.
+
+    이걸 못 표현해서 **최선의 답을 실패로 찍었다.** 근거 없는 단정을 막는 일은
+    `want_any`와 주장 대조(`claim_check`)가 맡는다 — 도구 호출은 그 대리 지표일 뿐이다.
+    """
+
     def failures(self, tools: list[str], answer: str) -> list[str]:
         out: list[str] = []
         called = set(tools)
@@ -95,7 +106,7 @@ class Probe:
                 out.append(f"금지 도구 호출: {bad}")
         if self.no_tools and tools:
             out.append(f"도구를 부르면 안 되는데 불렀다: {', '.join(tools)}")
-        if not self.no_tools and not tools:
+        if not self.no_tools and not self.tools_optional and not tools:
             out.append("도구를 아예 안 불렀다")
         if self.want_any and not any(w in _normalized(answer) for w in self.want_any):
             out.append(f"답변에 없음 (후보: {', '.join(self.want_any)})")
@@ -172,11 +183,26 @@ PROBES: tuple[Probe, ...] = (
           "길만 없었다",
           want_tools=("cap_resolve_region",), forbid_tools=("web_search",),
           want_any=("g4dn", "g5g", "g5.", "g6")),
-    Probe("R2", "우리 서비스는 도쿄에 배포할 건데 리전 코드가 뭐야?",
+    Probe("R2", "우리 서비스는 AWS 도쿄에 배포할 건데 리전 코드가 뭐야?",
           "지명 → 리전 코드. 모델 기억이 아니라 도구로 답하는가. "
-          "want_any(ap-northeast-1)를 뒀더니 도구는 늘 맞는데 답변 **문구**만 바뀌어 "
-          "가끔 실패했다 — 이 하네스는 문구를 판정하지 않으므로 도구 호출만 본다",
+          "**기대가 두 번 틀렸던 자리다.** 처음엔 want_any(ap-northeast-1)를 뒀는데 "
+          "도구는 늘 맞고 문구만 바뀌어 실패했다. 그다음엔 프로바이더를 안 밝힌 "
+          "문장('도쿄에 배포할 건데')을 썼는데, 그건 **답이 여럿인 물음**이라 모델이 "
+          "되묻는 게 옳았다 — 실측 12회 중 도구 호출 5회로 '실패'가 났지만 나머지는 "
+          "'어느 클라우드냐'고 되물은 것이었다. 프로바이더를 밝히니 12/12가 됐다.",
           want_tools=("cap_resolve_region",), forbid_tools=("web_search",)),
+    Probe("R4", "도쿄 리전 코드가 뭐야?",
+          "**모호한 물음에 하나로 단정하지 않는가.** 도쿄는 프로바이더마다 코드가 "
+          "다르다(aws ap-northeast-1 · azure japaneast · gcp asia-northeast1 · "
+          "ibm jp-tok). 옳은 답이 **둘**이다 — 되묻거나, 도구로 확인해 여럿을 밝히거나. "
+          "그래서 도구 호출을 강요하지 않는다(`tools_optional`). 실제로 강요했더니 "
+          "'어느 클라우드냐'고 되묻는 **최선의 답이 실패로 찍혔다.** 근거 없는 단정은 "
+          "주장 대조가 잡는다 — 실측에서 기억으로 답하다 Alibaba·Tencent 도쿄를 "
+          "'지원 안 함'이라고 거짓으로 말한 회차가 있었고, 그때 `ap-northeast-1`이 "
+          "근거 없는 값으로 걸렸다.",
+          tools_optional=True, forbid_tools=("web_search",),
+          want_any=("어느", "제공자", "클라우드마다", "제공업체마다", "japaneast",
+                    "asia-northeast1", "jp-tok")),
     Probe("S1", "Azure Database for MySQL 유연 서버를 배포할 때 넣는 관리자 비밀번호를 나중에 다시 조회할 수 있어?",
           "비밀값 축(azure-secret). administratorLoginPassword는 x-ms-secret이라 "
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
@@ -257,9 +283,13 @@ PROBES: tuple[Probe, ...] = (
           "4GiB는 cb-tumblebug의 규칙이지 쿠버네티스가 정한 값이 아니다",
           want_tools=("sizing_requirements",), forbid_tools=("web_search",),
           want_any=("2", "4")),
-    Probe("LT1", "서울 리전에서 가장 가까운 다른 리전이 어디야?",
+    Probe("LT1", "AWS 서울 리전에서 가장 가까운 다른 리전이 어디야?",
           "**아예 새 축(리전 간 지연).** 프로바이더를 넘나드는 쌍이 이 데이터의 "
-          "값어치다 — 서울의 네 클라우드가 3~4ms 안에 있다",
+          "값어치다 — 서울의 네 클라우드가 3~4ms 안에 있다.\n"
+          "처음엔 '서울 리전에서'라고만 물었는데 불안정했다. R2에서 잰 것과 **같은 "
+          "뿌리**다 — 프로바이더를 안 밝히면 답이 여럿이라 모델이 되묻거나 기억으로 "
+          "답한다. 그 발견이 이 프로브의 불안정을 예측했고, 같은 처방(프로바이더 "
+          "명시)으로 고쳤다.",
           want_tools=("cap_region_latency",), forbid_tools=("web_search",),
           want_any=("koreacentral", "asia-northeast3", "ap-seoul", "ms")),
     Probe("IM1", "aws 서울에서 arm64 VM 띄우려면 어떤 이미지를 써야 해?",
