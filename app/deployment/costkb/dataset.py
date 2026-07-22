@@ -5,10 +5,16 @@
    있으면 이쪽을 쓴다.
 2. `specs.json` — 번들된 손 큐레이션 36건. 빌드 안 해도 서버·크레덴셜 없이 즉시 동작한다.
 
-**왜 미러인가**: 우리 에이전트의 런타임 경로는 cb-tumblebug MCP의 `recommend_vm_spec`이고,
-그 도구는 `spec_infos` 테이블을 읽어 컬럼을 그대로 투영한다. 같은 테이블에서 빌드하면
-오프라인 기준선과 라이브 경로가 **같은 세계**를 본다. AWS/Azure 공개 API에서 직접 빌드하면
-오히려 불일치가 생긴다 (자세한 건 `parsers/tumblebug.py` 참고).
+**왜 이 소스인가**: 열 개 CSP의 스펙·가격을 한 스키마로 모아 둔 공개 덤프라, 프로바이더
+간 비교가 가능한 유일한 출처다. 각 CSP 공개 API를 따로 긁으면 필드가 제각각이라
+"같은 조건으로 비교"가 안 된다.
+
+**다만 우리는 미러의 노예가 아니다.** 이 덤프에는 상위 CB-Spider 버그가 실려 있어
+GCP·Azure 메모리가 실제보다 2.4% 낮다(73,083건 중 46,468건). 예전에는 라이브 MCP와
+답을 맞추려고 그 값으로 필터링했는데, 그건 **배포기의 이유**였다. 우리는 가이드라인
+지식베이스이므로 **판단은 실제 값으로 한다**(`actual_memory()`). 원본이 뭐라고 적었는지는
+`memGiB`에 그대로 남는다 — 고치는 게 아니라 **무엇을 근거로 판단하느냐**를 바꾼 것이다.
+(자세한 건 `parsers/tumblebug.py` 참고.)
 
 `specs.json`은 손으로 편집하는 파일이라 오타(예: `memGib`)가 들어가기 쉽다. 예전에는
 검증이 없어서 그런 오타가 로드 시점이 아니라 `filter_specs` 안에서 `KeyError`로 터졌다.
@@ -40,11 +46,30 @@ SPOT_COMMIT_FILENAME = "gcp-spot-commit.json"
 # 우리에게만 보여 결과가 갈린다.
 DEFAULT_ARCHITECTURE = "x86_64"
 
+def actual_memory(spec: dict) -> float:
+    """**실제 메모리(GiB).** 보정값이 있으면 그것, 없으면 기록값.
+
+    미러의 `memGiB`에는 상위 CB-Spider 버그가 실려 있다 — GCP·Azure가 실제보다
+    2.4% 낮다(`parsers/tumblebug.py`). 실측상 스펙 73,083건 중 **46,468건(64%)**이
+    그렇다.
+
+    **가이드라인 지식베이스로서는 실제 값으로 걸러야 한다.** 예전에는 미러값으로
+    필터링했다 — 라이브 MCP와 답을 맞추기 위해서였는데, 그건 배포기의 이유다.
+    "메모리 16GiB 이상"으로 물으면 **실제로는 16GiB인 인스턴스 3,765건이 조용히
+    빠졌다**(실측). 사용자에게 그건 그냥 틀린 답이다.
+
+    미러 자체는 그대로 둔다 — 원본이 뭐라고 적었는지는 계속 남는다. 바뀐 것은
+    **우리가 판단에 무엇을 쓰느냐**다.
+    """
+    actual = spec.get("memGiBActual")
+    return spec["memGiB"] if actual is None else actual
+
+
 _SORT_KEYS = {
     # 가격 미상(None)은 맨 뒤로 — Tumblebug의 `CASE WHEN cost_per_hour > 0 ... ELSE 999999`와 같은 취지.
     "cost": lambda s: (s["hourlyUSD"] is None, s["hourlyUSD"] or 0),
     "vcpu": lambda s: -s["vCPU"],
-    "memory": lambda s: -s["memGiB"],
+    "memory": lambda s: -actual_memory(s),
 }
 
 
@@ -200,12 +225,14 @@ def filter_specs(
 ) ->list[dict]:
     """요구사항 조건으로 스펙을 필터링·정렬해 상위 결과를 반환한다.
 
-    `memGiB`(미러값)로 필터링한다 — 표시용 `memGiBActual`이 아니라. 라이브 MCP가
-    같은 컬럼으로 필터링하므로, 여기서 보정값을 쓰면 두 경로의 답이 갈린다.
+    **실제 메모리(`memGiBActual`)로 필터링한다** — 미러의 `memGiB`가 아니라.
+    예전에는 미러값을 썼는데(라이브 MCP와 답을 맞추려고) 그건 배포기의 이유였다.
+    실측상 "16GiB 이상"에서 **실제로는 만족하는 3,765건이 조용히 빠졌다.**
+    자세한 건 `actual_memory()` 참조.
 
     Args:
         vcpu_min: 최소 vCPU. 0이면 바운드 없음(Tumblebug도 0값 범위는 무시한다).
-        mem_min_gib: 최소 메모리(GiB, 미러 기준).
+        mem_min_gib: 최소 메모리(GiB). **실제 값 기준**(상위 버그 보정 후).
         provider: 'aws' | 'gcp' | 'azure' 등 (대소문자 무시). None이면 전체.
         region: 리전 필터(부분 일치, 대소문자 무시). None이면 전체.
         sort_by: 'cost'(저렴한 순) | 'vcpu'(큰 순) | 'memory'(큰 순).
@@ -229,7 +256,7 @@ def filter_specs(
         s
         for s in load_specs(output_dir)
         if s["vCPU"] >= vcpu_min
-        and s["memGiB"] >= mem_min_gib
+        and actual_memory(s) >= mem_min_gib
         and (prov is None or s["provider"] == prov)
         and (reg is None or reg in s["region"].lower())
         # architecture를 모르는 레코드(번들 36건)는 거르지 않는다 — 정보 부재가
@@ -323,8 +350,8 @@ def coverage(output_dir: Path | str | None = None) -> list[dict]:
             "priced": sum(1 for r in rows if r["hourlyUSD"] is not None),
             "vcpu_min": min(r["vCPU"] for r in rows),
             "vcpu_max": max(r["vCPU"] for r in rows),
-            "mem_min_gib": min(r["memGiB"] for r in rows),
-            "mem_max_gib": max(r["memGiB"] for r in rows),
+            "mem_min_gib": min(actual_memory(r) for r in rows),
+            "mem_max_gib": max(actual_memory(r) for r in rows),
         }
         for (provider, region), rows in sorted(groups.items())
     ]
@@ -342,7 +369,7 @@ def provider_summary(output_dir: Path | str | None = None) -> list[dict]:
             "priced": sum(1 for r in rows if r["hourlyUSD"] is not None),
             "regions": len({r["region"] for r in rows}),
             "vcpu_max": max(r["vCPU"] for r in rows),
-            "mem_max_gib": max(r["memGiB"] for r in rows),
+            "mem_max_gib": max(actual_memory(r) for r in rows),
         }
         for provider, rows in sorted(groups.items(), key=lambda kv: -len(kv[1]))
     ]
