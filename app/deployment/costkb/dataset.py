@@ -189,6 +189,34 @@ def is_built(output_dir: Path | str | None = None) -> bool:
     )
 
 
+def resolve_region(
+    query: str, output_dir: Path | str | None = None
+) -> tuple[frozenset[str], str]:
+    """리전 질의어 → (걸릴 리전 코드들, 방식). 방식은 `exact` | `partial` | `none`.
+
+    **정확 일치가 있으면 그것만 쓴다.** 예전엔 무조건 부분 일치라, 실존 리전 15쌍이
+    서로의 부분문자열인 탓에 질의가 오염됐다:
+
+        region='centralus'  1,234건이어야 하는데 4,120건 (north/south/westcentralus)
+        region='us-east'      190건이어야 하는데 4,349건 (us-east-1/2, us-east1/4/5)
+
+    `us-east`는 **그 자체로 실존 리전**이면서 다섯 리전의 접두사다 — 그래서 "부분 일치를
+    없앤다"도 "부분 일치를 유지한다"도 답이 아니었다. 정확 일치를 우선하면 둘 다 산다.
+
+    부분 일치는 정확 일치가 없을 때만 쓴다(`ap-northeast` → -1/-2/-3). 그때는 **여러
+    리전을 섞었다는 사실을 답에 밝혀야 한다** — 방식을 함께 돌려주는 이유다.
+
+    Tumblebug은 정확 비교만 한다. 이제 정확 일치 질의에서는 두 경로의 답이 같고,
+    갈리는 것은 부분 일치로 떨어질 때뿐이다.
+    """
+    wanted = query.strip().lower()
+    known = {s["region"].lower() for s in load_specs(output_dir)}
+    if wanted in known:
+        return frozenset({wanted}), "exact"
+    hit = frozenset(r for r in known if wanted in r)
+    return (hit, "partial") if hit else (frozenset(), "none")
+
+
 def filter_specs(
     vcpu_min: int = 0,
     mem_min_gib: float = 0,
@@ -213,7 +241,8 @@ def filter_specs(
         vcpu_min: 최소 vCPU. 0이면 바운드 없음(Tumblebug도 0값 범위는 무시한다).
         mem_min_gib: 최소 메모리(GiB). 보정된 실제 값 기준.
         provider: 'aws' | 'gcp' | 'azure' 등 (대소문자 무시). None이면 전체.
-        region: 리전 필터(부분 일치, 대소문자 무시). None이면 전체.
+        region: 리전 필터. **정확 일치가 있으면 그것만**, 없으면 부분 일치
+            (`resolve_region`). 대소문자 무시. None이면 전체.
         sort_by: 'cost'(저렴한 순) | 'vcpu'(큰 순) | 'memory'(큰 순).
             알 수 없는 값이면 'cost'로 폴백한다.
         limit: 반환 개수(최소 1).
@@ -228,7 +257,9 @@ def filter_specs(
         output_dir: 빌드 산출물 위치.
     """
     prov = provider.lower() if provider else None
-    reg = region.lower() if region else None
+    # 정확 일치 우선. 부분 일치로만 걸러 `centralus`가 northcentralus를 함께 물던
+    # 자리다 — 자세한 건 `resolve_region`.
+    regs = resolve_region(region, output_dir)[0] if region else None
     arch = architecture.lower() if architecture else None
 
     matched = [
@@ -237,7 +268,7 @@ def filter_specs(
         if s["vCPU"] >= vcpu_min
         and s["memGiB"] >= mem_min_gib
         and (prov is None or s["provider"] == prov)
-        and (reg is None or reg in s["region"].lower())
+        and (regs is None or s["region"].lower() in regs)
         # architecture를 모르는 레코드(번들 36건)는 거르지 않는다 — 정보 부재가
         # 배제 사유가 되면 빌드 전 폴백이 통째로 사라진다.
         and (arch is None or not s.get("architecture") or s["architecture"].lower() == arch)

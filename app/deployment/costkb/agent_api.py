@@ -22,6 +22,7 @@ from costkb.dataset import (
     load_warning,
     name_suggestions,
     provider_summary,
+    resolve_region,
     spot_commit_for,
     spot_commit_regions,
 )
@@ -65,6 +66,31 @@ def _describe(spec: dict) -> str:
     return (
         f"- {spec['provider'].upper()} {spec['specName']} ({where}): "
         f"{spec['vCPU']} vCPU / {mem_text}, {price}"
+    )
+
+
+def _region_fallback_note(
+    region: str | None, output_dir: Path | str | None = None
+) -> str | None:
+    """리전 질의가 **여러 리전으로 번졌으면** 그 사실을 밝힌다. 아니면 None.
+
+    정확 일치는 아무 말도 하지 않는다 — 사용자가 물은 그대로이기 때문이다. 부분
+    일치일 때만 밝히는데, 이때 단가를 리전 하나의 값으로 읽으면 틀린 비교가 된다.
+    """
+    if not region:
+        return None
+    regions, how = resolve_region(region, output_dir)
+    if how == "none":
+        return (
+            f"※ '{region}'과 이름이 겹치는 리전이 데이터셋에 없어 리전 조건을 "
+            "만족하는 후보가 없습니다."
+        )
+    if how == "exact":
+        return None
+    shown = ", ".join(sorted(regions)[:6]) + (" …" if len(regions) > 6 else "")
+    return (
+        f"※ '{region}'은 정확히 그 이름인 리전이 없어 **{len(regions)}개 리전을 "
+        f"묶어** 답했습니다({shown}). 리전마다 단가가 다르니 하나로 읽지 마세요."
     )
 
 
@@ -119,6 +145,13 @@ def recommend_specs(
             "\n(가속기가 달린 것만 찾고 있습니다 — 이 조건을 빼면 후보가 더 있습니다.)"
             if require_accelerator else ""
         )
+        # 리전 이름이 원인이면 그걸 먼저 말한다. 안 그러면 사용자는 vCPU·메모리만
+        # 낮추다가 끝난다 — 가속기 조건에서 이미 겪은 실패 모양이다.
+        if region and resolve_region(region, output_dir)[1] == "none":
+            extra = (
+                f"\n('{region}'과 이름이 겹치는 리전이 데이터셋에 없습니다 — "
+                "리전 이름부터 확인하세요.)"
+            ) + extra
         return (
             "조건을 만족하는 스펙이 데이터셋에 없습니다. 이 데이터셋의 커버리지는 "
             f"다음과 같으니 조건을 조정하세요:{extra}\n{coverage_text(output_dir)}"
@@ -132,6 +165,10 @@ def recommend_specs(
             line += f"\n    {note}"
         lines.append(line)
     text = "추천 후보(온디맨드 정가, 시간당 단가):\n" + "\n".join(lines)
+
+    mixed = _region_fallback_note(region, output_dir)
+    if mixed:
+        text += f"\n\n{mixed}"
 
     unpriced = count_unpriced(
         vcpu_min, mem_min_gib, provider, region,

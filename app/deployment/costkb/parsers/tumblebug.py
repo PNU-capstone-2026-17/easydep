@@ -46,9 +46,13 @@ from typing import Any
 
 SOURCE_NOTE = (
     "cb-tumblebug의 spec_infos 테이블(assets.dump.gz) 미러입니다. 에이전트의 라이브 경로인 "
-    "cb-tumblebug MCP recommend_vm_spec이 같은 테이블을 읽으므로 두 경로의 답이 일치합니다. "
-    "memGiB는 **보정된 실제 값**입니다 — 상위 CB-Spider 버그로 원본은 GCP·Azure가 "
-    "실제보다 2.4% 낮게 적혀 있어 ×1.024로 복원했습니다(_corrections 참조). "
+    "cb-tumblebug MCP recommend_vm_spec이 **같은 테이블**을 읽습니다. 다만 답이 항상 "
+    "같지는 않고, 우리가 일부러 다르게 하는 곳이 셋입니다. (1) memGiB는 **보정된 실제 "
+    "값**입니다 — 상위 CB-Spider 버그로 원본은 GCP·Azure가 실제보다 2.4% 낮게 적혀 있어 "
+    "×1.024로 복원했습니다(_corrections 참조). (2) 가격 미상 후보는 기본으로 제외합니다 — "
+    "Tumblebug은 999999로 뒤로 밀 뿐 빼지 않으므로, 미가격 비율이 높은 프로바이더에서 "
+    "갈립니다(그 건수는 답에 함께 적습니다). (3) 리전은 정확 일치를 우선하되 그런 리전이 "
+    "없으면 부분 일치로 넓히고, 넓혔다는 사실을 답에 밝힙니다. "
     "가격은 스냅샷이라 시간이 지나면 드리프트하며 실제 청구서가 "
     "아닙니다. 라이브 정확도가 필요하면 cb-tumblebug MCP를 쓰세요."
 )

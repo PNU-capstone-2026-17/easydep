@@ -124,8 +124,13 @@ def test_provider_filter_is_case_insensitive() -> None:
     assert filter_specs(provider="AWS", limit=99) == filter_specs(provider="aws", limit=99)
 
 
-def test_region_filter_is_substring_match() -> None:
-    """'us-east'가 'us-east-1'을 잡아야 한다 (부분 일치)."""
+def test_region_filter_falls_back_to_substring() -> None:
+    """'us-east'가 'us-east-1'을 잡아야 한다 — **정확 일치가 없을 때만**.
+
+    번들 36건에는 `us-east`라는 리전이 없어서 부분 일치로 떨어진다. 미러 전체에는
+    `us-east`가 실존 리전(190건)이므로 거기서는 정확 일치가 이긴다 —
+    `test_costkb_region.py`가 그 갈림을 따로 고정한다.
+    """
     found = filter_specs(region="us-east", limit=99)
     assert found
     assert all("us-east" in s["region"] for s in found)
