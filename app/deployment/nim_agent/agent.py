@@ -68,6 +68,10 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
    - "X를 만들려면 뭐가 먼저 필요한가 / 생성·배포 순서" → kb_creation_order
    - "X를 삭제하면 뭐가 영향받나" → kb_deletion_impact
    - "AWS의 X가 Azure/GCP에선 뭔가 (벤더 간 대응)" → kb_equivalent_types
+     **결과에 "짐작"이라고 적혀 있으면 그 말을 답변에 옮기세요.** 클라우드마다
+     리소스를 나누는 결이 달라 딱 맞는 짝이 아닌 경우가 많습니다(GCP 방화벽은
+     네트워크 단위, AWS 보안 그룹은 인스턴스 단위). "X가 Y다"가 아니라
+     "가장 가까운 것은 Y이고 이런 차이가 있다"로 답하세요.
    - "X는 정확히 뭘 참조하나 / 필수 의존은?" → kb_describe_type
    - "~관련 타입 찾아줘" → kb_search_types
    - **"전체에서 가장 ~한 타입은? / 순위 / 통계"** → kb_rank_types (한 번만 호출하면 됨)

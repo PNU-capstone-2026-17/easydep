@@ -23,7 +23,7 @@ from graphkb.query import (
     resolve_node,
 )
 from kbcommon import artifact
-from kbcommon.basis import describe
+from kbcommon.basis import describe, is_fact
 from kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
@@ -165,6 +165,13 @@ def creation_order(
         )
         lines.extend(f"- {t}" for t in optional)
 
+    # 근거를 밝힌다. 용량 축은 5개 도구 전부 근거를 내는데 그래프 축은 버리고
+    # 있었다 — 그래서 "짐작(검수됨)"인 관계가 답변에서 단언이 됐다.
+    involved = required_ids | set(optional)
+    footer = _evidence_footer(graph, involved, node.id)
+    if footer:
+        lines.append(footer)
+
     practical = _practical_prerequisites(graph, node.id)
     if practical:
         lines.append(practical)
@@ -257,7 +264,46 @@ def deletion_impact(
         return f"{node.id} 를 삭제해도 스키마상 직접 영향받는 타입은 없습니다."
     lines = [f"{node.id} 삭제 시 영향받는 타입 {len(affected)}개:"]
     lines.extend(f"- {item.id}" for item in affected)
+    footer = _evidence_footer(graph, {item.id for item in affected}, node.id)
+    if footer:
+        lines.append(footer)
     return "\n".join(lines)
+
+
+def _evidence_footer(graph, affected: set[str], target: str) -> str | None:
+    """근거를 **블록당 한 번** 밝힌다. 없으면 None.
+
+    줄마다 붙이지 않는 이유는 개수다 — `AWS::EC2::VPC` 삭제 영향이 466건이라
+    줄마다 근거를 달면 노이즈가 되고, 노이즈가 되면 진짜 경고가 안 보인다
+    (capacitykb의 `_backend_footer`에서 이미 겪은 실패다).
+
+    **짐작이 섞였는지가 핵심이다.** AWS 엣지의 47%가 이름 휴리스틱이라, 이 목록을
+    "스키마가 보증하는 관계"로 읽으면 안 된다.
+    """
+    from collections import Counter
+
+    counts: Counter = Counter()
+    for edge in _dependency_edges(graph):
+        if edge.from_id in affected or edge.from_id == target:
+            if edge.to_id in affected or edge.to_id == target:
+                counts[
+                    (evidence_name(edge.evidence), describe(edge.basis, edge.reviewed))
+                ] += 1
+    if not counts:
+        return None
+    total = sum(counts.values())
+    # **"짐작"이었다는 사실은 검수 뒤에도 남는다.** `describe`가 "짐작(검수됨)"을
+    # 주므로 그대로 쓴다 — 검수는 확인이지 원본이 선언했다는 뜻이 아니다.
+    guessed = sum(n for (_, mark), n in counts.items() if "짐작" in mark)
+    top = ", ".join(f"{name} {n}건({mark})" for (name, mark), n in counts.most_common(3))
+    line = f"\n※ 이 관계들의 근거: {top}"
+    if guessed:
+        line += (
+            f"\n※ 그중 **{guessed}건({guessed / total:.0%})이 이름 추론에서 나온 "
+            "것**입니다. 사람이 확인했지만 원본이 관계를 선언한 것은 아니므로, "
+            "삭제 계획에 쓸 때는 실제 참조를 함께 확인하세요."
+        )
+    return line
 
 
 def equivalent_types(
@@ -277,8 +323,68 @@ def equivalent_types(
             "(mapping-graph.json이 없거나 매핑 미등록)."
         )
     lines = [f"{node.id} 와 같은 것을 가리키는 타입:"]
-    lines.extend(f"- {item.id} ({item.provider})" for item in peers)
+    guessed = 0
+    for item in peers:
+        edge = _weakest_link(graph, node.id, item.id)
+        if edge is None:
+            lines.append(f"- {item.id} ({item.provider})")
+            continue
+        mark = describe(edge.basis, edge.reviewed)
+        # **검수됐어도 짐작은 짐작이다.** `is_fact`로 세면 검수된 것이 빠지는데,
+        # 클라우드 간 동치는 검수를 거쳐도 "딱 맞는 짝"이라는 뜻이 아니다 —
+        # 사람이 "가장 가깝다"고 판단한 것이지 원본이 선언한 관계가 아니다.
+        if edge.basis != "stated":
+            guessed += 1
+        lines.append(
+            f"- {item.id} ({item.provider}) — 근거 {evidence_name(edge.evidence)}, {mark}"
+        )
+    if guessed:
+        # **짐작을 단언으로 옮기지 못하게 한다.** 실측에서 "AWS ALB는 GCP에서 뭐야?"에
+        # 모델이 `ComputeForwardingRule`을 단언했다 — 데이터의 basis는 짐작이었는데
+        # 출력에 안 실려서 모델이 알 방법이 없었다.
+        lines.append(
+            f"\n※ 위 {guessed}건은 **짐작**입니다. 클라우드마다 리소스를 나누는 결이 "
+            "달라 딱 맞는 짝이 없는 경우가 있습니다(예: GCP 방화벽은 네트워크 단위 "
+            "규칙이라 인스턴스에 붙는 AWS 보안 그룹과 같은 것이 아닙니다). "
+            "'대응한다'가 아니라 '가장 가까운 것'으로 전하세요."
+        )
     return "\n".join(lines)
+
+
+def _weakest_link(graph, a: str, b: str):
+    """`a`↔`b` 동치의 근거 엣지. 추이적이면 **경로에서 가장 약한 고리**.
+
+    동치는 `aws VPC → core vNet → gcp ComputeNetwork`처럼 코어를 거쳐 이어진다.
+    그래서 두 벤더 타입 사이에는 직접 엣지가 없고, 경로의 근거가 곧 그 쌍의 근거다.
+    **여러 고리 중 하나라도 짐작이면 결과도 짐작**이다 — 사슬은 가장 약한 곳에서
+    끊어진다.
+    """
+    from collections import deque
+
+    links: dict[str, list] = {}
+    for edge in graph.edges:
+        if edge.type != "equivalent_to":
+            continue
+        links.setdefault(edge.from_id, []).append((edge.to_id, edge))
+        links.setdefault(edge.to_id, []).append((edge.from_id, edge))
+
+    queue = deque([(a, [])])
+    seen = {a}
+    while queue:
+        current, path = queue.popleft()
+        if current == b:
+            if not path:
+                return None
+            # 짐작이 하나라도 있으면 그것을, 없으면 마지막 고리를 대표로.
+            for edge in path:
+                if not is_fact(edge.basis, edge.reviewed):
+                    return edge
+            return path[-1]
+        for nxt, edge in links.get(current, []):
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append((nxt, path + [edge]))
+    return None
 
 
 def describe_type(

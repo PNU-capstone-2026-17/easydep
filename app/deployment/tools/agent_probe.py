@@ -195,6 +195,12 @@ PROBES: tuple[Probe, ...] = (
           "사람에게 쓸모없는 답이 된다",
           want_tools=("kb_creation_order",), forbid_tools=("web_search",),
           want_any=("서브넷", "subnet", "vNet", "실행", "tumblebug")),
+    Probe("B1", "AWS ALB는 GCP에서 뭐야?",
+          "**짐작을 단언으로 옮기지 않는가.** 실측에서 모델이 ComputeForwardingRule을 "
+          "단언했다 — 데이터의 basis는 짐작(검수됨)인데 출력에 안 실려 모델이 알 "
+          "방법이 없었다. 이제 근거가 답에 실린다",
+          want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
+          want_any=("짐작", "가장 가까운", "정확히", "완전히 같", "차이")),
     Probe("C1", "GCP에서 탄소 배출이 가장 적은 리전이 어디야?",
           "탄소 축(region-carbon). 아예 없던 축이라 답할 수 없었다 — "
           "지어내지 말고 도구로 답하는가",
