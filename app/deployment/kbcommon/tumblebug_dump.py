@@ -71,7 +71,8 @@ def _columns_of(entry) -> list[str]:
     match = _COPY_COLUMNS.search(getattr(entry, "copy_stmt", "") or "")
     if not match:
         raise RuntimeError(
-            f"{TABLE}의 COPY 문에서 컬럼을 읽지 못했습니다. 덤프 형식이 바뀌었을 수 있습니다."
+            f"{getattr(entry, 'tag', '?')}의 COPY 문에서 컬럼을 읽지 못했습니다. "
+            "덤프 형식이 바뀌었을 수 있습니다."
         )
     return [c.strip() for c in match.group(1).split(",")]
 
@@ -82,6 +83,16 @@ def iter_spec_rows(dump_path: Path) -> Iterator[dict]:
     Raises:
         RuntimeError: pgdumplib이 없거나, 덤프에 spec_infos가 없거나, 파싱에 실패할 때.
             조용히 빈 결과를 내지 않고 크게 실패한다.
+    """
+    yield from iter_table_rows(dump_path, TABLE)
+
+
+def iter_table_rows(dump_path: Path, table: str) -> Iterator[dict]:
+    """덤프의 **아무 테이블**이나 dict로 내보낸다.
+
+    처음엔 `spec_infos` 하나만 읽었는데, 같은 덤프에 `image_infos`(174,759행)와
+    `latency_infos`(10,890행)가 **안 쓰인 채로** 들어 있었다. 테이블 이름을 상수로
+    박아 두면 그런 걸 못 본다.
     """
     try:
         import pgdumplib
@@ -106,17 +117,17 @@ def iter_spec_rows(dump_path: Path) -> Iterator[dict]:
     )
 
     entry = next(
-        (e for e in dump.entries if e.desc == "TABLE DATA" and e.tag == TABLE), None
+        (e for e in dump.entries if e.desc == "TABLE DATA" and e.tag == table), None
     )
     if entry is None:
         available = sorted({e.tag for e in dump.entries if e.desc == "TABLE DATA"})
         raise RuntimeError(
-            f"덤프에 {TABLE} 테이블이 없습니다. 있는 것: {available}. "
+            f"덤프에 {table} 테이블이 없습니다. 있는 것: {available}. "
             "업스트림이 스키마를 바꿨을 수 있습니다(94MB→32.8MB 축소 전례 있음)."
         )
 
     columns = _columns_of(entry)
-    for row in dump.table_data(_SCHEMA, TABLE):
+    for row in dump.table_data(_SCHEMA, table):
         yield dict(zip(columns, row, strict=False))
 
 

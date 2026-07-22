@@ -266,6 +266,34 @@ def cap_region_latency(source_region: str, target_region: str | None = None) -> 
 
 
 @function_tool
+def cap_basic_image(
+    provider: str, region: str | None = None, architecture: str | None = None
+) -> str:
+    """이 리전에서 쓸 **기본 OS 이미지**를 반환한다.
+
+    "VM 띄우려면 이미지 ID가 뭐야?"에 답한다. 리소스 군 도구가 "이미지는 필수"라고
+    말하는데 어느 것인지는 못 말하므로 이 도구가 그 자리를 메운다.
+
+    ⚠️ **아키텍처를 스펙과 맞추세요.** `g5g.xlarge` 같은 arm64 스펙에 x86_64 이미지를
+    쓰면 뜨지 않습니다. 스펙의 아키텍처는 `cost_describe_spec`이 알려 줍니다.
+
+    **'가장 좋은 이미지'가 아니라 cb-tumblebug이 기본으로 고른 것**입니다 —
+    벤더 권장도 최신도 아닙니다. 실측상 Linux만 있고 Windows 기본 이미지는 없습니다.
+
+    Args:
+        provider: aws · azure · gcp · alibaba · ibm · ncp · nhn · tencent · kt.
+        region: 리전 코드(선택). Azure처럼 리전 무관인 경우 'common'.
+        architecture: 'x86_64' | 'arm64' (선택).
+    """
+    from kbcommon import images
+
+    print(
+        f"\n[용량질의] 기본 이미지: {provider!r} region={region!r} arch={architecture!r}"
+    )
+    return images.describe(provider, region, architecture)
+
+
+@function_tool
 def cap_service_lifecycle(service: str, version: str | None = None) -> str:
     """관리형 서비스 버전의 지원 종료일. "EKS 1.28 언제까지 쓸 수 있나".
 
@@ -338,6 +366,7 @@ CAPACITY_TOOLS = [
     cap_service_regions,
     cap_region_carbon,
     cap_region_latency,
+    cap_basic_image,
     cap_service_lifecycle,
     cap_operation_time,
     cap_csp_supports,

@@ -130,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     regions.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     regions.add_argument("--output", type=Path, help="출력 경로 (기본: output/cloud-regions.json)")
 
+    images_cmd = sub.add_parser(
+        "build-images", help="리전별 기본 OS 이미지 (cb-tumblebug 큐레이션)"
+    )
+    images_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    images_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/basic-images.json)")
+
     latency_cmd = sub.add_parser(
         "build-latency", help="리전 간 네트워크 지연 (cb-tumblebug 벤치마크 실측)"
     )
@@ -179,6 +185,14 @@ def main(argv: list[str] | None = None) -> int:
 
         cloudinfo.build(
             args.output or (DEFAULT_OUTPUT / "cloud-regions.json"), refresh=args.refresh
+        )
+        return 0
+
+    if args.command == "build-images":
+        from kbcommon import images
+
+        images.build(
+            args.output or (DEFAULT_OUTPUT / "basic-images.json"), refresh=args.refresh
         )
         return 0
 

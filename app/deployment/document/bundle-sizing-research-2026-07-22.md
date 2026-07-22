@@ -585,3 +585,47 @@ kind가 우리 graphkb 노드 id와 **그대로 맞는다**(`gcp::AlloyDBCluster
 | AWS | Solutions Constructs 52 | CFN 샘플 22앵커 |
 | GCP | **KCC 샘플 296** | — |
 | core | tumblebug 23 | — |
+
+---
+
+# 기본 OS 이미지 — 번들의 `required: image` 공백 (2026-07-23)
+
+`bundlekb`가 "VM에는 이미지가 **필수**"라고 말하는데 **어느 이미지인지는 못 말했다.**
+1차 조사에서 찾아만 두고 손대지 않은 `image_infos` 174,759건이 그 자리다.
+
+## 17만 건 중 6,033건만 담았다
+
+```
+is_basic_image        5,814  (3.3%)   ← 담음
+is_kubernetes_image     225  (0.1%)   ← 담음
+is_gpu_image         79,617 (45.6%)   ← **안 담음**
+is_basic_gpu_image   10,616  (6.1%)
+```
+
+`is_gpu_image`는 **79,478건이 AWS 하나**다. 45%가 켜진 플래그는 "GPU용으로 고른 것"이
+아니라 "GPU 인스턴스에서 돌아갈 수 있는 것"에 가깝다 — **큐레이션 신호가 아니므로
+쓰지 않았다.** 전량을 담으면 카탈로그이지 가이드라인이 아니다.
+
+## 아키텍처가 진짜 값어치다
+
+`g5g.xlarge`는 arm64라 x86_64 이미지로는 **안 뜬다.** costkb의 `architecture`와
+여기 `osArchitecture`가 조인 키다.
+
+```
+aws / ap-northeast-2 / arm64  → Ubuntu 24.04 (arm64)  ami-0e8b157a03d302b0d
+aws / ap-northeast-2 / x86_64 → Ubuntu 22.04 (x86_64) ami-02c966ff90f11a0d4
+aws / ap-northeast-2 / riscv64 → "있는 아키텍처: arm64, x86_64"
+```
+
+## 경계 둘
+
+- **"가장 좋은 이미지"가 아니라 cb-tumblebug이 기본으로 고른 것**이다. 벤더 권장도
+  최신도 아니다.
+- 실측상 **전부 Linux/UNIX**다. Windows 기본 이미지는 **없다** — '없다'가 아니라
+  '이 표시가 안 붙어 있다'로 읽어야 한다.
+
+## 곁다리 — 덤프 리더가 테이블 이름을 상수로 박고 있었다
+
+`iter_spec_rows`가 `spec_infos`에 고정돼 있었다. 같은 덤프에 `image_infos`(174,759행)와
+`latency_infos`(10,890행)가 **안 쓰인 채로** 들어 있었는데, 이름을 상수로 박아 두면
+그런 걸 못 본다. `iter_table_rows(dump, table)`로 일반화했다.

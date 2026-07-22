@@ -30,6 +30,7 @@ def test_capacity_tools_registered() -> None:
         "cap_service_regions",
         "cap_region_carbon",
         "cap_region_latency",
+        "cap_basic_image",
         "cap_service_lifecycle",
         "cap_operation_time",
         "cap_csp_supports",
