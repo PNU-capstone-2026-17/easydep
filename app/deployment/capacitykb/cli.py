@@ -37,6 +37,7 @@ DEFAULT_OUTPUTS = {
     "tencent": Path("output") / "tencent-capacity.json",
     "azure-mutability": Path("output") / "azure-mutability.json",
     "azure-secret": Path("output") / "azure-secret.json",
+    "azure-operations": Path("output") / "azure-operations.json",
 }
 
 
@@ -138,6 +139,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from capacitykb.parsers import azure_secret
 
         azure_secret.build(output, refresh=args.refresh)
+    elif args.source == "azure-operations":
+        from capacitykb.parsers import azure_operations
+
+        azure_operations.build(output, refresh=args.refresh)
     elif args.source == "gcp":
         from capacitykb.parsers import gcp
 

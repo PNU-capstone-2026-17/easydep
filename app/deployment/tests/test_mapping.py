@@ -21,7 +21,11 @@ def graph() -> Graph:
 
 
 def test_golden_vnet_equivalences(graph: Graph) -> None:
-    """골든: core vNet ≡ AWS VPC ≡ Azure virtualNetworks ≡ GCP ComputeNetwork."""
+    """골든: core vNet ≡ 다섯 CSP의 가상 네트워크.
+
+    alibaba·tencent는 2026-07-22에 더했다. 이 둘은 공개 리소스 스키마가 없어
+    **Terraform 이름**을 대상으로 쓴다 — id에 그 사실이 드러난다.
+    """
     targets = {
         e.to_id
         for e in graph.edges
@@ -31,6 +35,8 @@ def test_golden_vnet_equivalences(graph: Graph) -> None:
         "aws::AWS::EC2::VPC",
         "azure::Microsoft.Network/virtualNetworks",
         "gcp::ComputeNetwork",
+        "alibaba::alicloud_vpc",
+        "tencent::tencentcloud_vpc",
     }
 
 

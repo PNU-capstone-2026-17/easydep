@@ -797,3 +797,89 @@ def region_lookup(
             "못 찾습니다."
         )
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# 작업 소요 — Azure LRO (`output/azure-operations.json`)
+#
+# 속성이 아니라 **작업**에 붙는 사실이라 CapacitySet에 안 들어간다.
+# aws-endpoints와 같은 이유로 여기서 따로 읽는다.
+# --------------------------------------------------------------------------
+
+OPERATIONS_FILE = "azure-operations.json"
+
+_OPERATIONS_MISSING = (
+    "작업 정보 산출물이 없습니다. `python -m capacitykb build --source "
+    "azure-operations` 로 생성하세요."
+)
+
+
+@lru_cache(maxsize=4)
+def _operations(output_dir: str) -> dict[str, dict]:
+    path = artifact.resolve(Path(output_dir), OPERATIONS_FILE)
+    if path is None:
+        return {}
+    try:
+        data = artifact.load_json(path)
+    except Exception:
+        return {}
+    return {r["type_id"]: r for r in data.get("types") or []}
+
+
+def operation_time(
+    resource_type: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+) -> str:
+    """이 리소스의 생성·삭제·수정이 오래 걸리는가, 어떤 액션이 있는가.
+
+    배포 스크립트의 타임아웃과 단계 나누기에 쓴다. 지금은 Azure만 이 표시를 준다.
+    """
+    index = _operations(str(output_dir))
+    if not index:
+        return _OPERATIONS_MISSING
+
+    capacity = load_merged(output_dir)
+    type_id = None
+    if capacity is not None:
+        type_id, _ = _resolve(capacity, resource_type)
+    if type_id is None:
+        # 제약이 하나도 없는 타입일 수 있다 — 작업 정보는 따로 있을 수 있으므로
+        # 이름을 그대로/접두사 붙여 한 번 더 본다.
+        for candidate in (resource_type, f"azure::{resource_type}"):
+            if candidate in index:
+                type_id = candidate
+                break
+    if type_id is None or type_id not in index:
+        provider = (type_id or resource_type).split("::", 1)[0]
+        if provider != "azure":
+            return (
+                f"'{resource_type}'의 작업 소요 정보가 없습니다 — 이 표시는 지금 "
+                "**Azure만** 제공합니다. '빠르다'가 아니라 '추적하지 않음'입니다."
+            )
+        return (
+            f"{display(type_id or resource_type)} 의 작업 소요 정보가 없습니다 "
+            "(원본이 이 타입의 작업을 말하지 않았습니다)."
+        )
+
+    record = index[type_id]
+    lines = [f"{display(type_id)} 작업 소요:"]
+    for field, label in (("create", "생성"), ("delete", "삭제"), ("update", "수정")):
+        value = record.get(field)
+        if value is None:
+            # **없음과 즉시를 구분한다.** 원본이 말 안 한 것을 "빠르다"로 읽으면
+            # 타임아웃을 짧게 잡게 된다.
+            lines.append(f"  - {label}: 원본이 말하지 않음 (모름)")
+        elif value:
+            lines.append(f"  - {label}: **오래 걸립니다** (비동기 — 완료를 기다려야 함)")
+        else:
+            lines.append(f"  - {label}: 즉시 (응답이 곧 완료)")
+
+    actions = record.get("actions") or []
+    if actions:
+        slow = [a for a in actions if a["long_running"]]
+        lines.append(f"  액션 {len(actions)}개 (오래 걸리는 것 {len(slow)}개):")
+        for action in actions[:8]:
+            mark = "오래 걸림" if action["long_running"] else "즉시"
+            lines.append(f"    - {action['name']}: {mark}")
+        if len(actions) > 8:
+            lines.append(f"    … 외 {len(actions) - 8}개")
+    return "\n".join(lines)

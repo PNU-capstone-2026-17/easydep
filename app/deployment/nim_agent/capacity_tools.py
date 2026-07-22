@@ -262,6 +262,20 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
     return lifecycle.describe(service, version)
 
 
+@function_tool
+def cap_operation_time(resource_type: str) -> str:
+    """이 리소스의 생성·삭제·수정이 오래 걸리는지와, 쓸 수 있는 액션 목록.
+
+    배포 스크립트의 타임아웃과 단계 나누기에 쓴다. 지금은 Azure만 제공한다.
+    **"원본이 말하지 않음"은 "빠르다"가 아닙니다** — 그대로 전하세요.
+
+    Args:
+        resource_type: 타입 이름. 예: 'Microsoft.Compute/virtualMachines'.
+    """
+    print(f"\n[용량질의] 작업 소요: {resource_type}")
+    return agent_api.operation_time(resource_type)
+
+
 def _coerce(raw: str) -> float | str:
     """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
     try:
@@ -282,4 +296,5 @@ CAPACITY_TOOLS = [
     cap_service_regions,
     cap_region_carbon,
     cap_service_lifecycle,
+    cap_operation_time,
 ]

@@ -1,5 +1,5 @@
 {
-  "description": "코어 타입 ↔ 벤더 네이티브 타입 동치 매핑 (사람 검수 완료). 1차 근거: cb-spider 드라이버 소스 (cloud-control-manager/cloud-driver/drivers/{aws,azure,gcp}/resources/). 등가물이 없는 조합(sshKey/gcp, customImage/aws·gcp, spec/image/mci 전체)은 항목을 만들지 않는다.",
+  "description": "코어 타입 ↔ 벤더 네이티브 타입 동치 매핑 (사람 검수 완료). 1차 근거: cb-spider 드라이버 소스 (cloud-control-manager/cloud-driver/drivers/{aws,azure,gcp}/resources/). 등가물이 없는 조합(sshKey/gcp, customImage/aws·gcp, spec/image/mci 전체)은 항목을 만들지 않는다. alibaba·tencent(2026-07-22 추가)도 같은 방식이다 — 드라이버 소스를 읽고, 대상 이름은 Terraform 것을 쓴다(이 두 CSP에는 공개 리소스 스키마가 없다). 후보가 둘인 곳은 드라이버가 실제로 쓰는 쪽을 골랐다(SLB vs NLB, 관리형 vs 비관리형).",
   "mappings": [
     {
       "core": "vNet",
@@ -223,6 +223,166 @@
       "target": "ComputeMachineImage",
       "confidence": 0.9,
       "note": "gcp MyImageHandler.go: MachineImages.Insert — KCC v1.153.0에 ComputeMachineImage kind 존재 확인 (suggest-mapping 후보에서 검수 반영)",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "alibaba",
+      "target": "alicloud_vpc",
+      "confidence": 0.95,
+      "note": "alibaba VPCHandler.go: ecs CreateVpc",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "alibaba",
+      "target": "alicloud_vswitch",
+      "confidence": 0.95,
+      "note": "alibaba VPCHandler.go: CreateVSwitch — Alibaba는 서브넷을 VSwitch라 부른다",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "alibaba",
+      "target": "alicloud_security_group",
+      "confidence": 0.95,
+      "note": "alibaba SecurityHandler.go: CreateSecurityGroup",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "alibaba",
+      "target": "alicloud_ecs_key_pair",
+      "confidence": 0.95,
+      "note": "alibaba KeyPairHandler.go: CreateKeyPair",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "alibaba",
+      "target": "alicloud_instance",
+      "confidence": 0.95,
+      "note": "alibaba VMHandler.go: RunInstances",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "alibaba",
+      "target": "alicloud_slb_load_balancer",
+      "confidence": 0.95,
+      "note": "alibaba NLBHandler.go: slb.Client + CreateLoadBalancer — **SLB이지 신형 NLB가 아니다**(alicloud_nlb_load_balancer도 존재하나 드라이버는 slb를 쓴다)",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "alibaba",
+      "target": "alicloud_cs_managed_kubernetes",
+      "confidence": 0.95,
+      "note": "alibaba ClusterHandler.go: ClusterType=\"ManagedKubernetes\" — 관리형이므로 alicloud_cs_kubernetes(비관리형)가 아니다",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "alibaba",
+      "target": "alicloud_cs_kubernetes_node_pool",
+      "confidence": 0.95,
+      "note": "alibaba ClusterHandler.go: CreateClusterNodePool",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "alibaba",
+      "target": "alicloud_ecs_disk",
+      "confidence": 0.95,
+      "note": "alibaba DiskHandler.go: CreateDisk",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "alibaba",
+      "target": "alicloud_image",
+      "confidence": 0.95,
+      "note": "alibaba MyImageHandler.go: CreateImage",
+      "status": "confirmed"
+    },
+    {
+      "core": "vNet",
+      "provider": "tencent",
+      "target": "tencentcloud_vpc",
+      "confidence": 0.95,
+      "note": "tencent VPCHandler.go: CreateVpc",
+      "status": "confirmed"
+    },
+    {
+      "core": "subnet",
+      "provider": "tencent",
+      "target": "tencentcloud_subnet",
+      "confidence": 0.95,
+      "note": "tencent VPCHandler.go: CreateSubnet",
+      "status": "confirmed"
+    },
+    {
+      "core": "securityGroup",
+      "provider": "tencent",
+      "target": "tencentcloud_security_group",
+      "confidence": 0.95,
+      "note": "tencent SecurityHandler.go: CreateSecurityGroupWithPolicies",
+      "status": "confirmed"
+    },
+    {
+      "core": "sshKey",
+      "provider": "tencent",
+      "target": "tencentcloud_key_pair",
+      "confidence": 0.95,
+      "note": "tencent KeyPairHandler.go: CreateKeyPair",
+      "status": "confirmed"
+    },
+    {
+      "core": "vm",
+      "provider": "tencent",
+      "target": "tencentcloud_instance",
+      "confidence": 0.95,
+      "note": "tencent VMHandler.go: RunInstances",
+      "status": "confirmed"
+    },
+    {
+      "core": "nlb",
+      "provider": "tencent",
+      "target": "tencentcloud_clb_instance",
+      "confidence": 0.95,
+      "note": "tencent NLBHandler.go: CreateLoadBalancer (CLB)",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sCluster",
+      "provider": "tencent",
+      "target": "tencentcloud_kubernetes_cluster",
+      "confidence": 0.95,
+      "note": "tencent ClusterHandler.go: CreateCluster (TKE)",
+      "status": "confirmed"
+    },
+    {
+      "core": "k8sNodeGroup",
+      "provider": "tencent",
+      "target": "tencentcloud_kubernetes_node_pool",
+      "confidence": 0.95,
+      "note": "tencent ClusterHandler.go: CreateClusterNodePool",
+      "status": "confirmed"
+    },
+    {
+      "core": "dataDisk",
+      "provider": "tencent",
+      "target": "tencentcloud_cbs_storage",
+      "confidence": 0.95,
+      "note": "tencent DiskHandler.go: CreateDisks (CBS)",
+      "status": "confirmed"
+    },
+    {
+      "core": "customImage",
+      "provider": "tencent",
+      "target": "tencentcloud_image",
+      "confidence": 0.95,
+      "note": "tencent MyImageHandler.go: CreateImage",
       "status": "confirmed"
     }
   ]
