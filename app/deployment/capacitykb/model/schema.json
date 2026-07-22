@@ -144,7 +144,8 @@
                     "create_only",
                     "conditional_create_only",
                     "read_only",
-                    "update_restricted"
+                    "update_restricted",
+                    "updatable"
                   ]
                 }
               }

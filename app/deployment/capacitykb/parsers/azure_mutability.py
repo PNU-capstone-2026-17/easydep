@@ -22,6 +22,30 @@
 
 `read`만 있는 것은 담지 않는다 — 읽기 전용은 `bicep-flags`가 이미 4,704건 담고 있어
 중복이고, 라벨 하나에 성격 하나라는 규칙상 섞으면 안 된다.
+
+## "바꿀 수 있다"도 원본이 한 말이다
+
+예전엔 `update`가 목록에 있으면 그냥 버렸다. 그러면 **원본이 명시한 사실이 "우리가
+모른다"와 같은 모양**이 된다 — 이 KB가 줄곧 좁히려 한 바로 그 '없음'이다. 지금은
+`create`가 있으면 담되, `update` 유무로 `create_only` / `updatable`을 가른다.
+
+소비자는 값을 명시적으로 고르므로(`query.py`의 불변 목록은 `create_only`·
+`conditional_create_only`만 본다) 이게 불변 목록에 섞이지 않는다.
+
+## ARM 규약을 일반화하지 않는 이유 — 반례를 셌다 (2026-07-22)
+
+"ARM은 이름과 리전을 못 바꾼다"를 규약으로 선언해 4,358건을 채우자는 안이 보류돼
+있었다. 근거는 "실제로 못 바꾸는데 원본이 그렇게 말한 문장이 없다"였다. 원본을
+직접 세어 보니 **문장이 없는 게 아니라 반대로 말하는 문장이 있었다.**
+
+    name      [create,read] 8 · [read] 3            반례 0건
+    location  [create,read] 160 · [read] 2          반례 **2건**
+              [create,read,update] 2 ← Microsoft.DocumentDB/cassandraClusters
+                                       Microsoft.Capacity/reservationOrders
+
+`kcc-immutable-prefix`는 반례 0건·누락만 19건이라 명시로 취급했다. 여기는 반례가
+있으므로 **같은 논리로 일반화할 수 없다** — 규약으로 채웠다면 최소 2종에서 거짓을
+단언했을 것이고, 어느 2종인지 알 방법도 없었을 것이다. 표시가 붙은 것만 담는다.
 """
 
 from __future__ import annotations
@@ -169,12 +193,16 @@ def parse_tarball(tar: Path, *, type_index: AzureTypeIndex) -> tuple[CapacitySet
                 for prop, mutability in found:
                     report.combos[mutability] += 1
                     # `read`만 있는 것은 담지 않는다 — bicep-flags가 이미 담고 있다.
-                    if "create" not in mutability or "update" in mutability:
+                    if "create" not in mutability:
                         continue
+                    # **"바꿀 수 있다"도 원본이 한 말이다.** 예전엔 update가 있으면
+                    # 그냥 버렸는데, 그러면 원본이 명시한 사실이 "우리가 모른다"와
+                    # 같은 모양이 된다 — 이 KB가 줄곧 좁히려 한 바로 그 '없음'이다.
+                    value = "updatable" if "update" in mutability else "create_only"
                     capacity.add_constraint(
                         Constraint(
                             type_id=type_id, property=prop, kind="mutability",
-                            value="create_only", evidence=EVIDENCE,
+                            value=value, evidence=EVIDENCE,
                         )
                     )
     return capacity, report
@@ -199,12 +227,18 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         "note": (
             "Azure REST 명세의 x-ms-mutability. bicep-types에는 이 정보가 0건인데 "
             "원본에 없어서가 아니라 생성기가 떨어뜨리기 때문이다. 교차 검증할 짝이 "
-            "없는 단일 소스다."
+            "없는 단일 소스다. **표시가 붙은 속성만 담는다** — 표시가 없다고 바꿀 수 "
+            "있다는 뜻이 아니다(대부분의 타입에는 아예 표시가 없다). ARM 규약으로 "
+            "일반화하지 않는 이유는 반례를 셌기 때문이다: location에 update를 허용한 "
+            "타입이 2종 있다(DocumentDB/cassandraClusters, Capacity/reservationOrders)."
         ),
     }]
 
+    # 이제 '불변'만 담지 않는다 — 어느 쪽인지 세어서 밝힌다.
+    fixed = sum(1 for c in capacity.constraints if c.value == "create_only")
     print(
-        f"azure-mutability: 불변 속성 {len(capacity.constraints):,}건 "
+        f"azure-mutability: 변경 가능성 표시 {len(capacity.constraints):,}건 "
+        f"(생성 후 불변 {fixed:,} · 변경 가능 {len(capacity.constraints) - fixed:,}) "
         f"({len({c.type_id for c in capacity.constraints})}종 · "
         f"stable 최신 {report.scanned:,}개 중 {report.files_with}개 파일에서)"
     )

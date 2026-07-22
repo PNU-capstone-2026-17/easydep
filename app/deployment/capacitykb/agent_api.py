@@ -103,6 +103,9 @@ def _describe(constraint) -> str:
     mutability_labels = {
         "create_only": "생성 후 변경 불가 (바꾸면 리소스 재생성)",
         "conditional_create_only": "조건부 변경 불가 (경우에 따라 재생성)",
+        # **원본이 "바꿀 수 있다"고 적은 것.** 짐작으로 바꿀 수 있다는 뜻이 아니라,
+        # 명세가 update를 허용 목록에 넣었다는 뜻이다.
+        "updatable": "생성 후 변경 가능 (명세가 update를 허용으로 표시)",
         "read_only": "읽기 전용 (설정 불가)",
         # 불변/가변 이분법에 안 담기는 축. "늘리는 건 되고 줄이면 재생성" 같은 것이라,
         # 무엇이 조건인지는 note에 붙는 판정 함수 이름으로만 알 수 있다.
