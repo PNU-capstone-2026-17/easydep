@@ -121,9 +121,95 @@ def _num(raw: str) -> float | int:
     return int(value) if value.is_integer() else value
 
 
-def _unit_of(block: str) -> str | None:
-    match = _UNIT.search(block)
-    return match.group(1) if match else None
+#: 괄호 안의 **환산 표기** — `(72 hours)`, `(20 MB)`처럼 숫자와 단위가 함께 든 것.
+#: 이건 앞 숫자를 사람이 읽기 쉽게 바꿔 적은 것이지 **그 값의 단위가 아니다.**
+_CONVERSION = re.compile(r"\(\s*[\d,.]+\s*[A-Za-z/]+\s*\)")
+
+#: 단위 토큰 목록. `_UNIT`과 같은 것을 가리키되 **하나씩 따로 쓴다** —
+#: 컴파일된 패턴을 문자열로 잘라 재사용하면 조용히 깨진다(실제로 겪었다).
+_UNIT_WORDS = (
+    "GiB", "TiB", "MiB/s", "MiB", "KiB", "GB", "MB", "KB", "TB",
+    "bytes", "byte", "seconds", "second", "minutes", "minute",
+    "hours", "hour", "days", "day", "milliseconds", "millisecond",
+    "IOPS", "vCPUs", "vCPU",
+)
+
+#: `in seconds` / `in GiB` — 원문이 단위를 **선언**하는 형태. 가장 믿을 만하다.
+_UNIT_DECL = re.compile(
+    r"(?i)\bin\s+(" + "|".join(re.escape(w) for w in _UNIT_WORDS) + r")\b"
+)
+
+#: 속성 이름이 단위를 말하는 경우. `TimeoutInMillis`, `IntervalSeconds`, `Iops`.
+#: **이름이 가장 강한 근거다** — 산문은 한 문단에 단위를 여럿 섞지만 이름은 하나다.
+#: 정규식이 아니라 **소문자 부분 문자열**로 본다. 이름은 낱말 경계가 없는
+#: 붙임말(`ReceiveMessageWaitTimeSeconds`)이라 경계 표시가 오히려 방해가 된다.
+_NAME_UNITS: tuple[tuple[str, str], ...] = (
+    ("millis", "milliseconds"),
+    ("milliseconds", "milliseconds"),
+    ("seconds", "seconds"),
+    ("minutes", "minutes"),
+    ("hours", "hours"),
+    ("days", "days"),
+    ("iops", "IOPS"),
+    ("gib", "GiB"),
+)
+
+
+def _unit_from_name(prop: str | None) -> str | None:
+    """속성 이름이 스스로 밝히는 단위. 없으면 None."""
+    if not prop:
+        return None
+    tail = prop.rsplit("/", 1)[-1].lower()
+    for needle, unit in _NAME_UNITS:
+        if needle in tail:
+            return unit
+    return None
+    tail = prop.rsplit("/", 1)[-1]
+    for pattern, unit in _NAME_UNITS:
+        if pattern.search(tail):
+            return unit
+    return None
+
+
+def _unit_of(block: str, prop: str | None = None, full: str | None = None) -> str | None:
+    """이 숫자의 단위. **확신이 없으면 None을 돌려준다.**
+
+    예전에는 매칭된 블록의 **첫 번째** 단위 토큰을 그냥 돌려줬다. 그래서 세 가지가
+    실제로 틀렸다(실측):
+
+        BacktrackWindow  259200  → `hours`  (원문은 "in seconds … (72 hours)")
+        Iops               1000  → `second` (원문은 "operations per second (IOPS)")
+        MaximumLength  20971520  → `MB`     (원문은 "number of characters")
+
+    첫 번째가 **3,600배 어긋난 단위**다. `cap_check_value`가
+    "500 second는 최소 1000 second를 벗어남" 같은 문장을 만들고 있었다.
+
+    그래서 순서를 세운다:
+
+    1. **속성 이름** — `TimeoutInMillis`·`IntervalSeconds`는 이름이 곧 단위다.
+       산문은 한 문단에 단위를 여럿 섞지만 이름은 하나뿐이라 가장 강하다.
+    2. **`in X` 선언** — 원문이 "in seconds"라고 못 박은 것.
+    3. **블록의 단위** — 위 둘이 없을 때만. 단, 괄호 안 환산 표기는 지운다.
+
+    3번까지 와도 후보가 여럿이면 **담지 않는다.** 틀린 단위는 침묵보다 나쁘다 —
+    침묵은 "모른다"지만 틀린 단위는 확신에 찬 오답이다.
+    """
+    from_name = _unit_from_name(prop)
+    if from_name:
+        return from_name
+
+    haystack = full or block
+    declared = _UNIT_DECL.search(_CONVERSION.sub(" ", haystack))
+    if declared:
+        return declared.group(1)
+
+    cleaned = _CONVERSION.sub(" ", block)
+    found = _UNIT.findall(cleaned)
+    if not found:
+        return None
+    # 서로 다른 단위가 섞여 있으면 무엇이 이 숫자의 것인지 알 수 없다.
+    distinct = {u.lower().rstrip("s") for u in found}
+    return found[0] if len(distinct) == 1 else None
 
 
 def _shorten(text: str) -> str:
@@ -131,7 +217,7 @@ def _shorten(text: str) -> str:
     return flat if len(flat) <= _NOTE_LIMIT else flat[:_NOTE_LIMIT] + " …"
 
 
-def extract_ranges(description: str) -> list[Extraction]:
+def extract_ranges(description: str, prop: str | None = None) -> list[Extraction]:
     """설명문에서 하한/상한을 추출한다.
 
     여러 범위가 있으면(예: 볼륨 타입별로 다른 범위) **envelope**(가장 작은 하한,
@@ -199,7 +285,7 @@ def extract_ranges(description: str) -> list[Extraction]:
                 kind="min",
                 value=value,
                 rule=rule,
-                unit=_unit_of(block),
+                unit=_unit_of(block, prop, text),
                 conditional=conditional,
                 note=note,
             )
@@ -217,7 +303,7 @@ def extract_ranges(description: str) -> list[Extraction]:
                 kind="max",
                 value=value,
                 rule=rule,
-                unit=_unit_of(block),
+                unit=_unit_of(block, prop, text),
                 conditional=conditional,
                 note=merged or None,
             )

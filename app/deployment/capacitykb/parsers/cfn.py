@@ -232,7 +232,7 @@ def _apply_prose(
 
     extractions = []
     if numeric:
-        extractions.extend(extract_ranges(description))
+        extractions.extend(extract_ranges(description, prop_path))
         default = extract_default(description, numeric=True)
         if default is not None:
             extractions.append(default)
