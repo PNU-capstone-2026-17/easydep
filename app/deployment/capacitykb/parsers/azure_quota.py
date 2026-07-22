@@ -33,7 +33,9 @@ from kbcommon.invariants import announce
 from kbcommon.sources import SOURCES
 
 DEFAULT_BASE_URL = SOURCES["azure-limits-doc"].url
-#: 기본은 **전체**다(`includes/*-limits.md` 82개). 예전에는 두 개만 읽었는데,
+#: 기본은 **전체**다(핀 SHA 기준 `includes/*-limits*.md` 95개 — 산출물 `_source.files`와
+#: 같은 수다). 예전 주석은 82개라고 적었는데, 글롭이 `*-limits*.md`라
+#: `…-limits-v2.md` 같은 이름도 걸린다. 예전에는 두 개만 읽었는데,
 #: 그 둘을 고른 이유가 "코어 리소스를 덮는다"는 우리 판단이었을 뿐이라
 #: 나머지 80개 문서의 쿼터는 물어봐도 "없음"이 나왔다. 좁히려면 --includes.
 DEFAULT_INCLUDES: tuple[str, ...] = ()
