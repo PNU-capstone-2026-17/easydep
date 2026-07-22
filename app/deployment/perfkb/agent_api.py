@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from kbcommon.basis import needs_hedge
 from perfkb.dataset import (
     find,
     get_by_id,
@@ -124,7 +125,10 @@ def _describe(rec: dict) -> str:
     sustained = rec.get("sustainedCpu")
     if sustained is not None:
         mark = "보장됨" if sustained["value"] else "보장 안 됨"
-        hedge = "" if sustained.get("basis") == "stated" else " (이름 규칙에서 짐작)"
+        # 유보를 붙일지는 `kbcommon.basis`가 정한다 — 여기서 리터럴로 비교하면
+        # 같은 규칙이 KB마다 한 벌씩 생긴다.
+        guessed = needs_hedge(sustained.get("basis", ""), sustained.get("reviewed", False))
+        hedge = " (이름 규칙에서 짐작)" if guessed else ""
         lines.append(f"  상시 CPU 성능: {mark}{hedge}")
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")

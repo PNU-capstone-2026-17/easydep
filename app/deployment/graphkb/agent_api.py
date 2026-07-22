@@ -23,7 +23,7 @@ from graphkb.query import (
     resolve_node,
 )
 from kbcommon import artifact
-from kbcommon.basis import describe, is_fact
+from kbcommon.basis import describe, is_fact, needs_hedge
 from kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
@@ -333,7 +333,8 @@ def equivalent_types(
         # **검수됐어도 짐작은 짐작이다.** `is_fact`로 세면 검수된 것이 빠지는데,
         # 클라우드 간 동치는 검수를 거쳐도 "딱 맞는 짝"이라는 뜻이 아니다 —
         # 사람이 "가장 가깝다"고 판단한 것이지 원본이 선언한 관계가 아니다.
-        if edge.basis != "stated":
+        # 이 갈림이 `needs_hedge`와 `is_fact`가 따로 있는 이유다.
+        if needs_hedge(edge.basis, edge.reviewed):
             guessed += 1
         lines.append(
             f"- {item.id} ({item.provider}) — 근거 {evidence_name(edge.evidence)}, {mark}"
