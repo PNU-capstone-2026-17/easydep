@@ -166,6 +166,13 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "aqt-corpus": OBSERVED,
     # 명시 소스와 코퍼스가 **같은 답을 냈을 때만** 단다. `aws-cross-checked`와 같은 규율.
     "bundle-cross-checked": STATED,
+    # --- sizingkb ---
+    # cb-tumblebug이 손으로 큐레이션한 표. 원본 문서 링크까지 달려 있다.
+    # **채움이 고르지 않다** — 비어 있는 칸은 "0"이 아니라 "안 적었다"이다.
+    "tumblebug-networkinfo": STATED,
+    "tumblebug-k8sinfo": STATED,
+    # bitnami 공용 차트의 규모 프리셋. 원본이 "프로덕션용 아님"을 스스로 적었다.
+    "bitnami-preset": STATED,
 }
 
 

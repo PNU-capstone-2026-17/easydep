@@ -21,6 +21,7 @@ from .cost_tools import COST_TOOLS
 from .graph_tools import GRAPHKB_TOOLS
 from .perf_tools import PERF_TOOLS
 from .session import SessionState
+from .sizing_tools import SIZING_TOOLS
 
 
 @function_tool
@@ -106,4 +107,5 @@ LOCAL_TOOLS: list[Tool] = [
     *CAPACITY_TOOLS,
     *PERF_TOOLS,
     *BUNDLE_TOOLS,
+    *SIZING_TOOLS,
 ]

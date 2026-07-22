@@ -367,6 +367,23 @@ SOURCES: dict[str, Source] = {
             "값이 다르고 순서까지 뒤집힌다(서울은 gcp가 최저, 도쿄는 aws가 최저)."
         ),
     ),
+    "bitnami-charts": Source(
+        key="bitnami-charts",
+        url=(
+            "https://raw.githubusercontent.com/bitnami/charts/"
+            "33201f7e944a60abf9af5c652ae1cdb30a267a5e/"
+            "bitnami/common/templates/_resources.tpl"
+        ),
+        pin_kind="commit",
+        pin="33201f7e944a60abf9af5c652ae1cdb30a267a5e",
+        note=(
+            "컨테이너 **규모 프리셋**(nano~2xlarge → cpu/memory). 파일 헤더가 "
+            "APACHE-2.0(저장소 메타는 NOASSERTION이라 파일 쪽을 근거로 삼는다). "
+            "**원본이 스스로 '프로덕션용이 아니다'라고 적어 두었고**, 그 문장을 값과 "
+            "함께 담는다 — 떼면 테스트용 숫자가 권장값이 된다. 컨테이너 규모이지 "
+            "인스턴스 규모가 아니다."
+        ),
+    ),
     "aws-solutions-constructs": Source(
         key="aws-solutions-constructs",
         url=(
