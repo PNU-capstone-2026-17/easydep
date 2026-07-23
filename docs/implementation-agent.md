@@ -14,6 +14,28 @@ EasyDep 밖의 별도 구현 저장소, 개인 가상환경, 절대 도구 경�
 checkpoint와 생성 workspace는 기본적으로 `.easydep/implementation-runs/`에
 놓이며 Git에서 제외된다.
 
+## 자연어 소스 피드백
+
+완료된 구현의 현재 `SOURCE_CODE`, `TEST_CODE`, 배포/IaC snapshot을 기준으로 증분 수정
+job을 만들 수 있다.
+
+```http
+POST /api/implementation/apps/{app_id}/feedback-jobs
+Content-Type: application/json
+
+{
+  "feedback": "배송이 시작된 주문은 취소할 수 없도록 수정하고 기존 테스트를 보강해 주세요.",
+  "base_package": "com.example.generated",
+  "allow_assumptions": false
+}
+```
+
+피드백 job은 기존 파일을 별도 immutable run에 복원하고 `FEEDBACK_REVISION` OpenHands
+task 하나를 계획한다. 이후 상태 조회와 전송 승인은 최초 구현 job과 같은 API를 사용한다.
+OpenHands는 기존 파일만 수정할 수 있으며 새 파일 추가는 허용하지 않는다. 수정 후 전체
+`compileJava test`와 완료 감사를 다시 수행하고, 결과는 기존 내용을 덮어쓰지 않고 새 파일
+artifact 버전으로 저장한다. 저장 metadata에는 피드백, 부모 job, 기준 artifact 버전이 남는다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,

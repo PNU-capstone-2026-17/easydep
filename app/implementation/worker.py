@@ -52,6 +52,76 @@ class ImplementationWorker:
         self.executor.submit(self._plan, job_id)
         return self.public_record(record)
 
+    def create_feedback_job(
+        self,
+        app_id: str,
+        design: dict[str, Any],
+        feedback: str,
+        base_package: str,
+        allow_assumptions: bool,
+    ) -> dict[str, Any]:
+        source_snapshot = artifact_repository.load_file_snapshot(
+            app_id, TYPE_SOURCE_CODE
+        )
+        if not source_snapshot:
+            raise InvalidJobState(
+                "No generated source snapshot is available for feedback"
+            )
+
+        snapshots = {
+            path: item["content"]
+            for path, item in source_snapshot.get("files", {}).items()
+        }
+        base_versions = {
+            TYPE_SOURCE_CODE: source_snapshot["version_no"],
+        }
+        for artifact_type in (
+            TYPE_TEST_CODE,
+            TYPE_DEPLOYMENT_FILE,
+            TYPE_IAC_CODE,
+        ):
+            snapshot = artifact_repository.load_file_snapshot(app_id, artifact_type)
+            if snapshot:
+                snapshots.update(
+                    {
+                        path: item["content"]
+                        for path, item in snapshot.get("files", {}).items()
+                    }
+                )
+                base_versions[artifact_type] = snapshot["version_no"]
+
+        job_id = uuid.uuid4().hex
+        job_path = self.client.prepare_feedback_job(
+            job_id,
+            app_id,
+            design,
+            snapshots,
+            feedback,
+            base_package,
+            allow_assumptions,
+        )
+        metadata = source_snapshot.get("metadata", {})
+        record = {
+            "job_id": job_id,
+            "job_type": "FEEDBACK_REVISION",
+            "parent_job_id": metadata.get("implementation_job_id"),
+            "app_id": app_id,
+            "status": "QUEUED",
+            "base_package": base_package,
+            "base_versions": base_versions,
+            "feedback": feedback,
+            "job_path": str(job_path),
+            "run_root": None,
+            "workflow": None,
+            "transmission_request": None,
+            "error": None,
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        self._write(record)
+        self.executor.submit(self._plan, job_id)
+        return self.public_record(record)
+
     def get(self, job_id: str) -> dict[str, Any]:
         return self.public_record(self._read(job_id))
 
@@ -135,7 +205,14 @@ class ImplementationWorker:
             else:
                 kind = TYPE_SOURCE_CODE
             groups[kind][relative] = content
-        metadata = {"implementation_job_id": record["job_id"], "run_id": Path(record["run_root"]).name}
+        metadata = {
+            "implementation_job_id": record["job_id"],
+            "run_id": Path(record["run_root"]).name,
+            "job_type": record.get("job_type", "INITIAL_IMPLEMENTATION"),
+            "parent_job_id": record.get("parent_job_id"),
+            "base_versions": record.get("base_versions", {}),
+            "feedback": record.get("feedback"),
+        }
         versions = {}
         for artifact_type, files in groups.items():
             if files:

@@ -46,6 +46,9 @@ PHASES = (
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     """Idempotently plan implemented phases and persist a resumable checkpoint."""
     run_root = run_root.resolve()
+    if spec.job_type == "FEEDBACK_REVISION":
+        apply_repair_directives(run_root)
+        return reconcile_workflow_state(run_root)
     ir = build_implementation_ir(spec, run_root)
     needs_persistence = bool(ir.persistent_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
