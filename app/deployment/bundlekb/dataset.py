@@ -107,6 +107,32 @@ def bundles_for(
     return tuple(out)
 
 
+#: 같은 타입에 번들이 여럿일 때 **먼저 보는 순서**.
+#:
+#: 동적 생성은 "요청만 하면 도구가 하는 일"이고 나머지는 "골라야 쓰는 것"이다.
+#: 둘을 같은 무게로 늘어놓으면 `core::vm`에 17개가 나오는데, 그중 16개는
+#: 전 리전에 nano를 하나씩 띄우는 연결 시험 템플릿이라 "VM 하나 올리려면"의
+#: 답이 아니다. **골라 주지 않으면 안 고른 것과 같다.**
+_DEFAULT_ORDER = ("tumblebug-dynamic", "avm-module", "aws-solutions-construct", "kcc-sample")
+
+
+def default_bundle_for(
+    type_id: str, output_dir: Path | str | None = None
+) -> Bundle | None:
+    """이 타입에 대해 **기본으로 보여줄** 번들 하나. 없으면 None."""
+    found = bundles_for(type_id, output_dir)
+    if not found:
+        return None
+
+    def rank(bundle: Bundle) -> tuple[int, str]:
+        try:
+            return _DEFAULT_ORDER.index(bundle.evidence), bundle.id
+        except ValueError:
+            return len(_DEFAULT_ORDER), bundle.id
+
+    return min(found, key=rank)
+
+
 def find_bundle(name: str, output_dir: Path | str | None = None) -> Bundle | None:
     wanted = _norm(name)
     for bundle in all_bundles(output_dir):

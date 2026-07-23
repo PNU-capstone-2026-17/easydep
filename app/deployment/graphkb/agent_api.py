@@ -10,6 +10,7 @@ output/의 JSON 그래프를 직접 읽는 사전 정의 질의를 1차 인터�
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -74,6 +75,74 @@ def _resolve(graph: Graph, name: str):
         return resolve_node(graph, name), None
     except ValueError as exc:
         return None, str(exc)
+
+
+#: core 층 노드의 provider 값. 벤더 노드와 구분하는 유일한 표시다.
+CORE_PROVIDER = "common"
+
+
+@dataclass(frozen=True)
+class CoreLink:
+    """벤더 타입이 core 층에서 무엇인가.
+
+    **이 파일에서 유일하게 텍스트가 아닌 것을 돌려주는 함수의 반환형이다.**
+    다른 축(비용·성능)과 조인하려면 문자열이 아니라 값이 필요한데, 문장을 다시
+    파싱하는 것은 우리가 모델에게 하지 말라고 하는 바로 그 일이다.
+    `perfkb.PerfNote`가 같은 이유로 있다.
+
+    `hedged`는 **다리를 건너며 근거 등급이 떨어졌는가**다. `core::vm`을 직접 물으면
+    안 건너므로 False이고, `aws::AWS::EC2::Instance`에서 오면 cb-spider 드라이버를
+    읽어 사람이 맞춘 대응(짐작·검수됨)을 한 번 거치므로 True다.
+    """
+
+    core_id: str
+    hedged: bool
+
+
+#: 스펙 카탈로그 자체. `core::X --references via specId--> core::spec`인 X만 단가가 붙는다.
+SPEC_NODE = "core::spec"
+
+
+@lru_cache(maxsize=4)
+def concepts_with_spec(output_dir: str = str(DEFAULT_OUTPUT_DIR)) -> frozenset[str]:
+    """스펙(= 단가)이 붙는 core 개념들.
+
+    **손으로 적지 않고 그래프에서 끌어온다.** `core::vm`만 적어 두면 노드 그룹처럼
+    나중에 같은 성질을 갖게 된 개념이 조용히 빠진다 — 이 저장소에서 "같은 목록이
+    두 벌"이 갈라진 사고가 세 번 있었다.
+    """
+    graph = load_merged(output_dir)
+    if graph is None:
+        return frozenset()
+    return frozenset(
+        edge.from_id
+        for edge in graph.edges
+        if edge.to_id == SPEC_NODE and edge.type == "references"
+    )
+
+
+def core_concept(
+    type_id: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+) -> CoreLink | None:
+    """이 타입이 core 층에서 무엇인가. 대응이 없으면 None.
+
+    비용·성능 축은 **core 층 개념 단위**로만 붙는다(스펙 카탈로그가 곧 `core::spec`
+    이므로). 그래서 벤더 타입에서 출발한 질의는 여기를 반드시 거친다.
+    """
+    graph = load_merged(output_dir)
+    if graph is None:
+        return None
+    node, _ = _resolve(graph, type_id)
+    if node is None:
+        return None
+    if node.provider == CORE_PROVIDER:
+        return CoreLink(node.id, hedged=False)
+    for peer in equivalents(graph, node.id):
+        if peer.provider == CORE_PROVIDER:
+            edge = _weakest_link(graph, node.id, peer.id)
+            hedged = edge is None or needs_hedge(edge.basis, edge.reviewed)
+            return CoreLink(peer.id, hedged=hedged)
+    return None
 
 
 def creation_order(

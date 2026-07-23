@@ -197,6 +197,58 @@ def flipped(answer: str, tool_outputs: list[str]) -> list[Finding]:
     return out
 
 
+#: 우리 도구가 "값을 못 매긴다"를 적는 칸의 머리. `nim_agent.guideline_tools`가 쓴다.
+_UNPRICED_HEAD = "값을 매길 수 없는 것"
+
+#: 답변이 **공짜라고 단언하는** 표현. 모델이 쓰는 말이지 우리 도구가 쓰는 말이 아니다.
+_FREE = re.compile(
+    r"무료|무상|공짜|0\s*원|요금이?\s*(?:부과되지\s*)?없|비용이?\s*(?:들지\s*)?않"
+    r"|비용이?\s*없|과금되지\s*않|요금이?\s*부과되지\s*않|별도\s*요금\s*없"
+)
+
+#: 그 표현을 **부정하는** 절. 우리 고지("무료라는 뜻이 아닙니다")가 여기 걸린다 —
+#: 답변이 우리 말을 옮긴 것을 위반으로 세면 옳은 행동을 벌하게 된다.
+_NOT_FREE = re.compile(r"아닙니다|아니라|아니며|뜻이\s*아|않습니다만|는\s*아니")
+
+
+def priced_as_free(answer: str, tool_outputs: list[str]) -> list[Finding]:
+    """도구가 **값을 모른다**고 한 자리에서 답변이 **공짜**라고 단언하는가.
+
+    `flipped`의 거울상이다. 저쪽은 "가능"을 "불가"로 뒤집는 것을 잡고, 이쪽은
+    "우리가 모른다"를 "0원"으로 뒤집는 것을 잡는다. **이 저장소가 막으려는 그
+    실패 그대로다** — 모르는 것을 0으로 채우면 사람은 그 숫자로 예산을 정한다.
+
+    실측 사례(GL1): 도구가 *"값을 매길 수 없는 것 — 이 데이터셋에 가격 축이 없음:
+    securityGroup · sshKey · subnet · vNet"*이라 했는데 답변이 *"보안 그룹, VPC,
+    서브넷, SSH 키: 별도 요금이 부과되지 않음(무료)"*이라고 적었다. **숫자 대조로는
+    절대 안 걸린다** — 지어낸 숫자가 없기 때문이다.
+
+    ## 왜 이름을 대조하지 않나 — 처음엔 그렇게 짰고 0건이 나왔다
+
+    도구는 `securityGroup`·`vNet`이라 쓰는데 답변은 **"보안 그룹"·"VPC"**라고 쓴다.
+    모델이 옮겨 적으므로 토큰 대조는 살아남지 못한다.
+
+    대신 `misattributed`와 같은 논리를 쓴다 — **우리 도구는 어떤 리소스도 공짜라고
+    말하지 않는다.** 그러니 값의 출처가 우리 도구뿐인 답변에 공짜 단언이 있으면
+    그건 구성상 근거가 없다. 부정절(우리 고지를 옮긴 것)과 도구 출력에 이미 있는
+    말은 뺀다.
+    """
+    joined = "\n".join(tool_outputs)
+    if _UNPRICED_HEAD not in joined:
+        return []
+    out = []
+    for clause in _CLAUSE.split(normalize(answer)):
+        if not clause or not _FREE.search(clause):
+            continue
+        if _NOT_FREE.search(clause):
+            continue  # "무료라는 뜻이 아닙니다" — 우리가 시킨 말이다
+        body = clause.strip()
+        if body and body in normalize(joined):
+            continue  # 도구 출력이 먼저 한 말
+        out.append(Finding("free", _FREE.search(clause).group(0), body[:80]))
+    return out
+
+
 def check(
     answer: str,
     tool_outputs: list[str],
@@ -239,6 +291,10 @@ def check(
     turned = flipped(answer, tool_outputs)
     verdict.checked += len(turned)
     verdict.unsupported.extend(turned)
+
+    freebies = priced_as_free(answer, tool_outputs)
+    verdict.checked += len(freebies)
+    verdict.unsupported.extend(freebies)
     return verdict
 
 

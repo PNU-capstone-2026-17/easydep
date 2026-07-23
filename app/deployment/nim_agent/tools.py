@@ -19,6 +19,7 @@ from .capacity_tools import CAPACITY_TOOLS
 from .catalog import catalog_as_text, get_task
 from .cost_tools import COST_TOOLS
 from .graph_tools import GRAPHKB_TOOLS
+from .guideline_tools import GUIDELINE_TOOLS
 from .perf_tools import PERF_TOOLS
 from .session import SessionState
 from .sizing_tools import SIZING_TOOLS
@@ -108,4 +109,5 @@ LOCAL_TOOLS: list[Tool] = [
     *PERF_TOOLS,
     *BUNDLE_TOOLS,
     *SIZING_TOOLS,
+    *GUIDELINE_TOOLS,
 ]
