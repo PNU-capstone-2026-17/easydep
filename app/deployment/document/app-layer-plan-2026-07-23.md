@@ -125,6 +125,12 @@ RAG 구현도 단계적으로 갑니다: **1단계는 SQLite FTS5**(표준 라�
 - **실행 경계 명시**: cb-tumblebug은 VM·k8s만 배포하므로 관리형 서비스 대응은
   "안내이지 이 도구로 만들 수 있다는 뜻이 아님" (cap_csp_supports와 같은 구분).
 
+> **P1·P2·P3 완료 (2026-07-23).** 진행하며 계획이 두 곳에서 바뀌었습니다 —
+> **P2는 파서가 아니라 입력 계약**이 됐고(설계 산출물이 JSON으로 오므로),
+> 출력 다이어그램은 Mermaid가 아니라 **PlantUML**입니다(상류 파이프라인에 맞춤).
+> 실제 산출물: `graphkb/parsers/svcmap.py` · `appkb/` · `nim_agent/design_tools.py`.
+> 계약의 근거는 `document/design-input-contract-2026-07-23.md`.
+
 ### P2. appkb — 설계도 파서 + IR
 
 - **IR(중간 표현) 스키마가 이 단계의 본체**입니다: 구성요소(이름·아키타입·상태성·

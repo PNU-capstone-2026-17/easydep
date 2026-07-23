@@ -27,6 +27,12 @@ CATALOG: list[Task] = [
         "앱 요구사항으로부터 VM 스펙을 추천(cost_recommend_specs)하고 "
         "월 비용을 추정(cost_estimate_monthly)한다.",
     ),
+    Task(
+        "design_to_deployment",
+        "설계도 → 배포 구성",
+        "앱 설계 산출물(클래스·시퀀스·ER·OpenAPI를 담은 JSON)에서 배포 구성과 "
+        "PlantUML 다이어그램을 만든다. 줄마다 근거(설계/설계자/지식베이스/추론)가 붙는다.",
+    ),
 ]
 
 _BY_ID = {t.id: t for t in CATALOG}

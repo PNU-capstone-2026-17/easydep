@@ -65,6 +65,12 @@ def test_cross_provider_perf_comparison_is_declared_impossible() -> None:
     assert "같은 프로바이더만" in perf_axis
 
 
+#: MCP 축의 머리글. **번호가 아니라 이름으로 잡는다** — 앞에 축이 하나 들어오면
+#: 번호가 밀리는데, 그때 테스트가 깨지는 것은 지시문 결함이 아니라 이 테스트의
+#: 결함이다(실제로 5번 → 6번이 되며 두 건이 깨졌다).
+_MCP_AXIS_HEADING = "**현재 상태·실행**"
+
+
 def test_mcp_spec_recommendation_is_same_axis_not_a_different_one() -> None:
     """MCP의 recommend_vm_spec은 '현재 상태'가 아니라 cost_*와 **같은 축**이다.
 
@@ -72,7 +78,7 @@ def test_mcp_spec_recommendation_is_same_axis_not_a_different_one() -> None:
     다른 축인 것처럼 서술했다.
     """
     axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
-    cost_axis, mcp_axis = axes.split("5. **현재 상태·실행**")
+    cost_axis, mcp_axis = axes.split(_MCP_AXIS_HEADING)
     assert "recommend_vm_spec" in cost_axis  # 같은 축 안에서 대안으로 언급
     assert "같은 스펙" in cost_axis  # costkb가 그 카탈로그의 미러라 문자 그대로 같다
     assert "recommend_vm_spec" not in mcp_axis  # 4번 축의 도구가 아니다
@@ -82,7 +88,7 @@ def test_missing_mcp_axis_is_declined_not_substituted() -> None:
     """MCP가 기본으로 꺼졌으므로 4번 축은 보통 답할 수 없다 —
     지식베이스나 검색으로 메우면 없는 배포 상태를 지어내게 된다."""
     axes = INSTRUCTIONS.split("질문의 **축**에 따라 도구가 나뉩니다:")[1]
-    mcp_axis = axes.split("5. **현재 상태·실행**")[1]
+    mcp_axis = axes.split(_MCP_AXIS_HEADING)[1]
     assert "답할 수 없다고 사용자에게 알리세요" in mcp_axis
     assert "메우려 하지 마세요" in mcp_axis
 

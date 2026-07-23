@@ -113,6 +113,14 @@ class Probe:
         return out
 
 
+#: 설계도 프로브의 입력. 예제 파일을 **읽지 않고 여기 박는다** — 프로브는 사용자가
+#: 붙여 넣는 상황을 재현해야 하고, 파일 경로를 주면 그 상황이 아니게 된다.
+_DESIGN_QUERY = (
+    "아래 설계 산출물로 배포 구성을 만들어줘.\n"
+    "{\"schemaVersion\":\"1\",\"name\":\"주문 서비스 데모\",\"components\":[{\"id\":\"order-api\",\"name\":\"OrderService\",\"summary\":\"주문 접수·조회 HTTP API\"},{\"id\":\"order-worker\",\"name\":\"OrderWorker\",\"summary\":\"주문 후처리(영수증 발송) 비동기 소비자\"}],\"externals\":[{\"id\":\"pg-gateway\",\"name\":\"PG사 결제 게이트웨이\"}],\"artifacts\":[{\"id\":\"api-1\",\"kind\":\"openapi\",\"componentId\":\"order-api\",\"openapi\":{\"openapi\":\"3.0.3\",\"info\":{\"title\":\"Order API\",\"version\":\"1.0.0\"},\"paths\":{\"/orders\":{\"post\":{\"summary\":\"주문 생성\",\"responses\":{\"201\":{\"description\":\"created\"}}},\"get\":{\"summary\":\"주문 목록\",\"responses\":{\"200\":{\"description\":\"ok\"}}}},\"/orders/{id}\":{\"get\":{\"summary\":\"주문 조회\",\"responses\":{\"200\":{\"description\":\"ok\"}}}}},\"components\":{\"securitySchemes\":{\"bearer\":{\"type\":\"http\",\"scheme\":\"bearer\"}}}}},{\"id\":\"er-1\",\"kind\":\"er\",\"engineHint\":\"postgresql\",\"entities\":[{\"name\":\"Order\",\"ownerComponentId\":\"order-api\",\"attributes\":[{\"name\":\"id\",\"type\":\"uuid\",\"isPrimaryKey\":true},{\"name\":\"status\",\"type\":\"varchar\"},{\"name\":\"totalAmount\",\"type\":\"numeric\"}]},{\"name\":\"OrderItem\",\"ownerComponentId\":\"order-api\",\"attributes\":[{\"name\":\"id\",\"type\":\"uuid\",\"isPrimaryKey\":true},{\"name\":\"orderId\",\"type\":\"uuid\"},{\"name\":\"quantity\",\"type\":\"integer\"}]}],\"relations\":[{\"from\":\"Order\",\"to\":\"OrderItem\",\"cardinality\":\"1-n\"}]},{\"id\":\"class-1\",\"kind\":\"class\",\"classes\":[{\"name\":\"OrderController\",\"componentId\":\"order-api\",\"stereotypes\":[\"Controller\"]},{\"name\":\"OrderService\",\"componentId\":\"order-api\",\"stereotypes\":[\"Service\"]},{\"name\":\"OrderRepository\",\"componentId\":\"order-api\",\"stereotypes\":[\"Repository\"]},{\"name\":\"ReceiptSender\",\"componentId\":\"order-worker\",\"stereotypes\":[\"Service\"]}]},{\"id\":\"seq-1\",\"kind\":\"sequence\",\"participants\":[{\"id\":\"user\",\"actor\":true,\"name\":\"구매자\"},{\"id\":\"api\",\"componentId\":\"order-api\"},{\"id\":\"worker\",\"componentId\":\"order-worker\"},{\"id\":\"pg\",\"externalId\":\"pg-gateway\"}],\"messages\":[{\"from\":\"user\",\"to\":\"api\",\"async\":false,\"label\":\"POST /orders\"},{\"from\":\"api\",\"to\":\"pg\",\"async\":false,\"label\":\"결제 승인 요청\"},{\"from\":\"api\",\"to\":\"worker\",\"async\":true,\"label\":\"주문 완료 이벤트\"}]}],\"requirements\":{\"provider\":\"aws\",\"region\":\"ap-northeast-2\",\"expectedConcurrentUsers\":200,\"multiZone\":true}}"
+)
+
+
 PROBES: tuple[Probe, ...] = (
     Probe("1-1b", "AWS VPC를 지우면 뭐가 영향받아?",
           "삭제 영향을 도구로 조회하는가",
@@ -362,6 +370,16 @@ PROBES: tuple[Probe, ...] = (
     # 앞의 38건은 **전부 단일 축 조회**였다. want_tools가 2개 이상인 프로브가
     # 0건이고 record_plan·cost_estimate_monthly를 기대하는 프로브도 0건이라,
     # "네 축을 고려한 가이드라인"이라는 목표 자체가 측정 밖에 있었다.
+    # --- 설계도 → 배포 구성 (P3) ---------------------------------------------
+    Probe("DS1", _DESIGN_QUERY,
+          "**앱 계층과 인프라 계층이 처음으로 이어지는 지점.** 설계 산출물 JSON에서 "
+          "구성요소·관리형 서비스·연결이 나오고, ER 소유 → app::relationalDatabase → "
+          "svcmap → RDS까지 간다. 값은 컴퓨트에만 붙고 관리형에는 안 붙는다.\n"
+          "지켜야 할 것은 **추론을 사실로 옮기지 않는 것** — 아키타입 분류는 영원히 "
+          "짐작이라 ⚠ 표시와 '검증된 사실이 아닙니다'가 답에 살아 있어야 한다.",
+          want_tools=("design_to_deployment",), forbid_tools=("web_search",),
+          want_any=("추론", "RDS", "DBInstance")),
+
     # --- svcmap: 앱 개념 ↔ 관리형 서비스 (P1) --------------------------------
     Probe("SM1", "DynamoDB 쓰던 앱을 Azure로 옮기면 뭘 써야 해?",
           "**관리형 서비스 대응 — 예전엔 0건이던 축.** core 층 13개가 전부 인프라라 "
