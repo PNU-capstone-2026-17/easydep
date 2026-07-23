@@ -57,6 +57,17 @@ def _short(type_id: str) -> str:
     return type_id.split("::", 1)[-1]
 
 
+def _named(member) -> str:
+    """구성원 한 줄의 이름. **개수가 1이 아니면 반드시 붙인다.**
+
+    안 붙이면 VM 34대짜리 템플릿이 "vm 1종"으로 읽힌다 — 사이징을 그 숫자로
+    하게 되므로 값 자체보다 틀린 방향으로 아프다.
+    """
+    if member.count != 1:
+        return f"{_short(member.type_id)} ×{member.count}"
+    return _short(member.type_id)
+
+
 def _corpus_index(type_id: str, output_dir: Path | str | None) -> dict[str, float]:
     return {c.type_id: c.ratio for c in companions_of(type_id, output_dir=output_dir)}
 
@@ -84,20 +95,21 @@ def resource_bundle(
 
     # --- 1. 명시된 것 ---
     for tier in (ALWAYS, REQUIRED, OPTIONAL):
-        rows: list[tuple[str, str, str | None]] = []
+        rows = []
         for bundle in found:
             for member in bundle.by_tier(tier):
                 if member.type_id.lower() == type_id.lower():
                     continue
-                rows.append((member.type_id, bundle.name, member.note))
+                rows.append((member, bundle.name))
         if not rows:
             continue
-        seen: dict[str, tuple[str, str | None]] = {}
-        for member_id, source, note in rows:
-            seen.setdefault(member_id, (source, note))
+        seen: dict[str, tuple[str, object]] = {}
+        for member, source in rows:
+            seen.setdefault(member.type_id, (source, member))
         lines.append(f"\n[{_TIER_LABEL[tier]}] {len(seen)}종")
-        for member_id, (source, note) in list(seen.items())[:_SHOW]:
+        for member_id, (source, member) in list(seen.items())[:_SHOW]:
             mark = ""
+            note = member.note
             ratio = corpus.get(member_id)
             if ratio is not None and tier in (ALWAYS, REQUIRED) and ratio >= _AGREE_RATIO:
                 # 독립인 두 근거가 같은 답을 냈다.
@@ -107,7 +119,7 @@ def resource_bundle(
             # 있는 것(CosmosDB·복구 자격 증명 모음)이 이 리소스의 일반 요구처럼
             # 읽힌다 — 이 KB가 없애려던 바로 그 오독이다.
             origin = f"  ({source})" if len(found) > 1 else ""
-            lines.append(f"  - {_short(member_id)}{detail}{origin}{mark}")
+            lines.append(f"  - {_named(member)}{detail}{origin}{mark}")
         if len(seen) > _SHOW:
             lines.append(f"  … 외 {len(seen) - _SHOW}종")
 
@@ -160,7 +172,7 @@ def describe_named_bundle(name: str, *, output_dir: Path | str | None = None) ->
         lines.append(f"\n[{_TIER_LABEL[tier]}] {len(members)}종")
         for member in members[:_SHOW]:
             detail = f" — {member.note}" if member.note else ""
-            lines.append(f"  - {_short(member.type_id)}{detail}")
+            lines.append(f"  - {_named(member)}{detail}")
         if len(members) > _SHOW:
             lines.append(f"  … 외 {len(members) - _SHOW}종")
     lines.append(

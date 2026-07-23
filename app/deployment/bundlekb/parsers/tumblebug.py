@@ -86,21 +86,38 @@ def dynamic_bundle() -> Bundle:
     )
 
 
+def _positive(value: object, default: int = 1) -> int:
+    """원본의 개수 필드. **없거나 이상하면 세지 않은 것으로 보고 1로 둔다.**
+
+    0으로 두면 "이 리소스를 안 만든다"가 되어 뜻이 뒤집힌다.
+    """
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 1 else default
+
+
 def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
-    """템플릿 하나에서 (앵커, 구성원, 앵커타입)을 뽑는다."""
+    """템플릿 하나에서 (종류, 구성원, 앵커)를 뽑는다.
+
+    **한 타입은 한 줄이고 개수는 `count`에 담는다.** 예전에는 노드 그룹마다 줄을
+    하나씩 만들어 `core::vm`이 28줄이 됐고, 그러면서도 `nodeGroupSize`를 안 봐서
+    **대수는 오히려 틀렸다**(그룹 17개 × 2대 = 34대를 17로 셌다).
+    """
     kind = doc.get("resourceType")
     members: list[Member] = []
     anchor = None
     if kind == "infra":
         groups = (doc.get("infraDynamicReq") or {}).get("nodeGroups") or []
-        # 노드 그룹은 전부 VM이다. 스펙 id는 구성원이 아니라 **사이징 참조점**이라
-        # note로만 남긴다 — 타입과 값을 같은 칸에 섞지 않는다.
-        for group in groups:
-            spec = group.get("specId")
+        if groups:
+            # 노드 그룹은 전부 VM이다. 스펙 id는 구성원이 아니라 **사이징 참조점**이라
+            # 여기 담지 않는다 — 타입과 값을 같은 칸에 섞지 않는다.
+            total = sum(_positive(g.get("nodeGroupSize")) for g in groups)
             members.append(
-                Member(f"{_CORE}::vm", ALWAYS, f"{group.get('name')}: {spec}" if spec else None)
+                Member(f"{_CORE}::vm", ALWAYS, f"노드 그룹 {len(groups)}개", count=total)
             )
-        anchor = f"{_CORE}::vm" if groups else None
+            anchor = f"{_CORE}::vm"
     elif kind == "securityGroup":
         rules = (doc.get("securityGroupReq") or {}).get("firewallRules") or []
         members.append(
@@ -108,15 +125,35 @@ def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
         )
         anchor = f"{_CORE}::securityGroup"
     elif kind == "vNet":
-        policy = doc.get("vNetPolicy") or {}
         members.append(Member(f"{_CORE}::vNet", ALWAYS, None))
-        count = policy.get("subnetCount")
+        # 서브넷을 적는 방식이 **템플릿마다 다르다.** `vNetPolicy.subnetCount`는
+        # CSP 중립 정책이고, `vNetReq.subnetInfoList`는 CIDR까지 박은 구체 목록이다.
+        # 뒤쪽만 보던 코드가 없어서 3개짜리 AWS 템플릿이 서브넷 0개로 나왔다.
+        policy = doc.get("vNetPolicy") or {}
+        listed = (doc.get("vNetReq") or {}).get("subnetInfoList") or []
+        count = _positive(policy.get("subnetCount"), default=0) or len(listed)
         if count:
-            members.append(Member(f"{_CORE}::subnet", ALWAYS, f"서브넷 {count}개"))
+            note = "CIDR까지 지정됨" if listed else "CSP 중립 정책(프로비저닝 때 조정됨)"
+            members.append(Member(f"{_CORE}::subnet", ALWAYS, note, count=count))
         anchor = f"{_CORE}::vNet"
     elif kind == "k8sCluster":
-        members.append(Member(f"{_CORE}::cluster", ALWAYS, None))
-        anchor = f"{_CORE}::cluster"
+        # 타입 id를 `core::cluster`로 적고 있었는데 **그런 노드는 없다.**
+        # core 층 이름은 `core::k8sCluster`다 — 안 맞으면 다른 KB와 조인이 끊긴다.
+        clusters = (doc.get("k8sMultiClusterDynamicReq") or {}).get("clusters") or []
+        members.append(
+            Member(f"{_CORE}::k8sCluster", ALWAYS, None, count=max(1, len(clusters)))
+        )
+        if clusters:
+            nodes = sum(_positive(c.get("desiredNodeSize")) for c in clusters)
+            members.append(
+                Member(
+                    f"{_CORE}::k8sNodeGroup",
+                    ALWAYS,
+                    f"클러스터마다 하나 · 희망 노드 합계 {nodes}대",
+                    count=len(clusters),
+                )
+            )
+        anchor = f"{_CORE}::k8sCluster"
     return kind or "?", members, anchor
 
 

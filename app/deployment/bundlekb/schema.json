@@ -47,7 +47,12 @@
                 "enum": ["always", "required", "optional"],
                 "description": "always=반드시 생김 · required=값을 반드시 줘야 함 · optional=붙일 수 있음"
               },
-              "note": { "type": ["string", "null"] }
+              "note": { "type": ["string", "null"] },
+              "count": {
+                "type": "integer",
+                "minimum": 2,
+                "description": "이 번들이 이 타입을 몇 개 만드는가. 1이면 적지 않는다 — 대부분이 1이라, 다 적으면 1이 아닌 곳이 안 보인다."
+              }
             }
           }
         }

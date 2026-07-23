@@ -23,15 +23,25 @@ _TIER_RANK = {ALWAYS: 0, REQUIRED: 1, OPTIONAL: 2}
 
 @dataclass(frozen=True)
 class Member:
-    """번들 구성원 하나."""
+    """번들 구성원 하나. **한 타입은 한 줄이고, 개수는 `count`가 말한다.**
+
+    `count`가 없던 시절 tumblebug 파서는 VM 28대짜리 템플릿을 `core::vm` 28줄로
+    담았다. 화면에 같은 줄이 28번 찍히는 것도 문제지만, 더 나쁜 건 **원본의
+    `nodeGroupSize`를 버려서 대수 자체가 틀렸다**는 것이다(그룹 17개 × 2대 = 34대를
+    17로 셌다). 대수는 사이징에 쓰는 값이라 없어지면 안 된다.
+    """
 
     type_id: str
     tier: str
     note: str | None = None
+    #: 이 번들이 이 타입을 **몇 개** 만드는가. 1이면 산출물에 적지 않는다.
+    count: int = 1
 
     def __post_init__(self) -> None:
         if self.tier not in TIERS:
             raise ValueError(f"알 수 없는 등급: {self.tier!r} (가능: {TIERS})")
+        if self.count < 1:
+            raise ValueError(f"count는 1 이상이어야 한다: {self.type_id} = {self.count}")
 
     @property
     def rank(self) -> int:
@@ -57,6 +67,23 @@ class Bundle:
     #: "전 포트를 연다, 프로덕션엔 쓰지 말라"고 자기가 적어 두었다.
     caveat: str | None = None
 
+    def __post_init__(self) -> None:
+        """같은 타입이 두 줄이면 **빌드를 세운다.**
+
+        조용히 합치지 않는 이유는, 합치려면 note를 어떻게 할지 정해야 하는데
+        그건 **파서가 원본을 보고 내릴 판단**이지 모델이 대신할 일이 아니기
+        때문이다. 여기서 죽으면 어느 파서가 개수를 흘리는지 그 자리에서 드러난다.
+        """
+        seen: dict[str, str] = {}
+        for member in self.members:
+            if member.type_id in seen:
+                raise ValueError(
+                    f"{self.id}: '{member.type_id}'가 두 번 들어 있다"
+                    f" ({seen[member.type_id]} · {member.tier})."
+                    " 개수는 Member.count로 담는다."
+                )
+            seen[member.type_id] = member.tier
+
     @property
     def basis(self) -> str:
         return basis_of(self.evidence)
@@ -77,8 +104,11 @@ class Bundle:
             "anchor": self.anchor,
             "description": self.description,
             "caveat": self.caveat,
+            # count는 1이면 적지 않는다 — 거의 모든 구성원이 1이라, 적으면 산출물
+            # 대부분이 `"count": 1`로 채워져 정작 1이 아닌 곳이 안 보인다.
             "members": [
                 {"typeId": m.type_id, "tier": m.tier, "note": m.note}
+                | ({"count": m.count} if m.count != 1 else {})
                 for m in sorted(self.members, key=lambda x: (x.rank, x.type_id))
             ],
         }
@@ -94,7 +124,8 @@ class Bundle:
             description=row.get("description"),
             caveat=row.get("caveat"),
             members=tuple(
-                Member(m["typeId"], m["tier"], m.get("note")) for m in row["members"]
+                Member(m["typeId"], m["tier"], m.get("note"), m.get("count", 1))
+                for m in row["members"]
             ),
         )
 
