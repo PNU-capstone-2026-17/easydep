@@ -92,6 +92,9 @@ print(validate_design(d) or '통과')
 계약의 성격이 바로 보입니다. 스키마는 `appkb/schema.json`, 근거는
 `document/design-input-contract-2026-07-23.md`.
 
+> **5단계 전체 실행 기록**(입력 → 계약 검증 → 계획 → PlantUML → 자체 검증)과
+> **틀린 입력 다섯 가지의 출력**은 `document/end-to-end-example.md`에 있습니다.
+
 ---
 
 ## 3. 비용 — costkb
@@ -249,6 +252,7 @@ uv run python -m perfkb build-ibm
 | 전체 개요(비전문가용) | `document/plain-language-overview.md` |
 | 왜 이렇게 결정했나 | `document/decisions.md` |
 | 목표 2 대비 남은 것 | `document/goal2-open-items.md` |
+| **끝에서 끝까지 예제** | `document/end-to-end-example.md` |
 | 앱 계층 계획 | `document/app-layer-plan-2026-07-23.md` |
 | 설계도 입력 계약 | `document/design-input-contract-2026-07-23.md` |
 | 질의 예시 모음 | `document/kb-test-queries.md` |
