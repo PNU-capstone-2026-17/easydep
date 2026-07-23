@@ -13,8 +13,8 @@ __pycache__/
 # 재배포하지 않고 각자 원본에서 빌드한다 (costkb는 특히 상위 CSP 데이터라 중요).
 output/
 # data/ 는 **커밋한다** — 클론 직후 빌드 없이 동작하게 하는 gzip 산출물.
-# 단 하나만 예외다: Azure Retail Prices 산출물은 **재배포 허가가 없어** 넣지 않는다.
-# (문서가 밝히는 용도는 "your own tools for internal analysis"뿐이고 라이선스 문구가
-#  없다.) 실수로 포장해 넣는 것을 test_costkb_azure_pricing.py가 함께 막는다.
-data/azure-discount-pricing.json.gz
+# 재배포 허가 문구가 없는 소스(Azure Retail·IBM Global Catalog)에서 나온 것도
+# 넣되, NOTICE와 파일 안 `_note`에 그 사실을 밝힌다.
+# `tests/test_redistribution_notice.py`가 그 명시를 강제하고, **명시적으로 막힌**
+# 소스(AWS Price List)의 산출물이 들어오는 것도 함께 막는다.
 .cache/

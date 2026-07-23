@@ -56,8 +56,9 @@ def _build_parser() -> argparse.ArgumentParser:
     spot.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     spot.add_argument("--output", type=Path, help="출력 경로 (기본: output/gcp-spot-commit.json)")
 
-    # **이 산출물만 `data/`에 커밋하지 않는다** — 재배포 허가가 없어서다.
-    # 그래서 클론 직후엔 이 축이 없는 것이 기본이고, 쓰려면 직접 돌려야 한다.
+    # 재배포 **허가 문구가 없는** 소스다(금지 문구도 없다). 산출물은 `data/`에 넣되
+    # NOTICE와 파일 안 `_note`에 그 사실을 밝힌다 — `test_redistribution_notice.py`가
+    # 그 명시를 강제한다.
     azure = sub.add_parser(
         "build-azure-pricing", help="Azure 스팟·예약·저축 플랜 보강 (Retail Prices API)"
     )
@@ -229,8 +230,9 @@ def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
         output, mirror=mirror, regions=args.regions, refresh=args.refresh
     )
     print(
-        "※ 이 산출물은 재배포 허가가 없어 `data/`에 커밋하지 않습니다. "
-        "다른 환경에서 쓰려면 그 환경에서 이 명령을 다시 돌리세요.",
+        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
+        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
+        "포장하세요.",
         file=sys.stderr,
     )
     return 0

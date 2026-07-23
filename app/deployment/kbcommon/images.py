@@ -36,6 +36,7 @@ import json
 from pathlib import Path
 
 from kbcommon import artifact
+from kbcommon.fetch import describe_source_set
 
 EVIDENCE = "tumblebug-basic-image"
 
@@ -157,7 +158,10 @@ def build(output: Path, *, refresh: bool = False) -> dict:
                 ),
             }
         ],
-        "_source": [],
+        # **빈 배열로 두고 있었다.** 스키마가 키만 요구하고 커밋 검사도 키 존재만
+        # 봐서 조용히 통과했다 — 그러면 "커밋된 데이터"가 출처 불명 덩어리가 된다.
+        # 재배포 명시 검사를 넣으며 드러났다.
+        "_source": [describe_source_set([dump], "tumblebug-dump")],
     }
     artifact.write_dataset(output, dataset, _schema())
     print(

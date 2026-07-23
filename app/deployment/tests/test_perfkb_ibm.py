@@ -152,9 +152,13 @@ def test_record_with_signals_is_still_ok(built) -> None:
     assert note.status == agent_api.NOTE_OK
 
 
-def test_artifact_is_not_committed_to_the_repo() -> None:
-    """재배포 허가를 확인하지 못했다. 실수로 커밋되면 여기서 걸린다."""
+def test_committed_artifact_discloses_its_redistribution_status() -> None:
+    """저장소에 넣기로 한 이상 **파일 하나만 떼어 봐도** 출처와 허가 상태가 보여야 한다."""
     from kbcommon import artifact
 
     packed = artifact.BUNDLED_DIR / f"{dataset.EXTRA_FILENAMES[0]}.gz"
-    assert not packed.exists()
+    if not packed.exists():
+        pytest.skip("아직 빌드·포장하지 않은 환경")
+    note = artifact.load_json(packed).get("_note") or ""
+    assert "재배포" in note and "찾지 못했습니다" in note
+    assert "허가를 받았다는 뜻이 아닙니다" in note

@@ -63,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # 미러가 아니라 **보강**이라 별도 서브커맨드다. 미러(build)를 먼저 돌려야
     # 조인 대상이 생긴다. **산출물은 `data/`에 커밋하지 않는다**(재배포 허가 미확인).
     ibm = sub.add_parser(
-        "build-ibm", help="IBM 성능 신호 보강 (Global Catalog, 재배포 불가라 빌드 때만)"
+        "build-ibm", help="IBM 성능 신호 보강 (Global Catalog)"
     )
     ibm.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     ibm.add_argument("--output", type=Path, help="출력 경로 (기본: output/ibm-perf.json)")
@@ -88,8 +88,9 @@ def _cmd_build_ibm(args: argparse.Namespace) -> int:
     output = args.output or (DEFAULT_OUTPUT_DIR / EXTRA_FILENAMES[0])
     ibm_catalog.build(output, mirror=mirror, refresh=args.refresh)
     print(
-        "※ 이 산출물은 재배포 허가를 확인하지 못해 `data/`에 커밋하지 않습니다. "
-        "다른 환경에서 쓰려면 그 환경에서 이 명령을 다시 돌리세요.",
+        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
+        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
+        "포장하세요.",
         file=sys.stderr,
     )
     return 0

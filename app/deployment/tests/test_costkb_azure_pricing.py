@@ -124,19 +124,29 @@ def test_spot_is_read_from_the_name_not_the_type() -> None:
 
 # --- 이 소스만 갖는 계약: 저장소에 없는 것이 기본 -----------------------------
 
-def test_artifact_is_not_committed_to_the_repo() -> None:
-    """**재배포 허가가 없다.** 실수로 커밋되면 여기서 걸린다."""
+def test_committed_artifact_discloses_its_redistribution_status() -> None:
+    """**허가가 없는 것과 명시하는 것은 다른 문제다.**
+
+    출처를 밝힌다고 라이선스가 생기지는 않는다. 저장소에 넣기로 한 이상, 파일 하나만
+    떼어 봐도 어디서 왔고 허가가 어떤 상태인지 보여야 한다 — 산출물은 저장소 밖으로도
+    나간다. `NOTICE` 쪽 강제는 `test_redistribution_notice.py`에 있다.
+    """
     from kbcommon import artifact
 
     packed = artifact.BUNDLED_DIR / f"{dataset.AZURE_DISCOUNT_FILENAME}.gz"
-    assert not packed.exists(), (
-        "Azure Retail 산출물이 data/에 들어갔다. 문서가 밝히는 용도는 "
-        "'your own tools for internal analysis'뿐이고 재배포 허가가 없다."
-    )
+    if not packed.exists():
+        pytest.skip("아직 빌드·포장하지 않은 환경")
+    note = artifact.load_json(packed).get("_note") or ""
+    assert "재배포" in note and "찾지 못했습니다" in note
+    assert "허가를 받았다는 뜻이 아닙니다" in note
 
 
 def test_missing_artifact_says_how_to_get_it_not_that_there_is_no_discount(tmp_path) -> None:
-    """**빈 답은 '할인이 없다'로 읽힌다.** 없는 것이 기본이므로 더 그렇다."""
+    """**빈 답은 '할인이 없다'로 읽힌다.**
+
+    이제 `data/`에 포장돼 있어 보통은 안 나오지만, 다른 `output_dir`를 명시하면
+    폴백이 없으므로 여전히 이 경로를 탄다.
+    """
     dataset.clear_caches()
     try:
         text = azure_discount_pricing("Standard_D2s_v5", "koreasouth", output_dir=tmp_path)

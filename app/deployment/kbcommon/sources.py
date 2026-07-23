@@ -45,6 +45,21 @@ class Source:
     pin: str
     """태그명·커밋 SHA. `digest` 소스는 `"(고정 불가)"`."""
 
+    redistribution: str = ""
+    """유도 산출물을 저장소에 넣어도 되는가. **판단한 소스만 적는다.**
+
+    빈 문자열은 "괜찮다"가 아니라 **"따로 판단하지 않았다"**는 뜻이다. 40개 소스를
+    다 감사하지 않았으면서 기본값으로 허가를 주장하면 그게 곧 거짓이 된다.
+
+        "denied"      원본이 재배포를 명시적으로 막는다 → **산출물을 커밋하지 않는다**
+        "not-stated"  허가 문구를 찾지 못했다. 금지 문구도 없다 → 넣되 `NOTICE`에 밝힌다
+        ""            판단하지 않음 (대부분의 오픈소스 라이선스 소스)
+
+    `not-stated`와 `denied`는 `NOTICE`에 이름이 나와야 한다 —
+    `tests/test_redistribution_notice.py`가 강제한다. **명시를 사람 기억에 맡기지
+    않으려는 것**이 이 칸의 목적이다.
+    """
+
     note: str = ""
 
 
@@ -98,6 +113,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="20260721012550",
+        redistribution="denied",
         note=(
             "버전 URL이 있어 고정한다(`current`는 움직인다). 볼륨 종류 속성은 리전 "
             "불변이라 작은 리전에서 받는다(43MB, 캐시됨). 값이 계속 정확하리란 "
@@ -188,13 +204,14 @@ SOURCES: dict[str, Source] = {
         url="https://globalcatalog.cloud.ibm.com/api/v1?q=is.instance",
         pin_kind="digest",
         pin="(고정 불가)",
+        redistribution="not-stated",
         note=(
             "IBM VPC 인스턴스 프로필의 **성능 신호**. perfkb는 aws·azure·gcp 셋뿐이었고 "
             "나머지 일곱 중 **소스가 실재하는 것은 IBM뿐**이다(Terraform provider는 타입 "
             "축만 주고 스펙 카탈로그를 안 준다). 무인증 200. 미러의 ibm 287종과 "
             "**287/287 조인**되고 cpu·ram이 287건 전부 일치해 교차 확인이 된다.\n"
-            "**버전이 없어 고정 불가**이고 **재배포 허가 문구도 찾지 못했다** — "
-            "Azure Retail과 같은 취급으로 산출물을 `data/`에 커밋하지 않는다.\n"
+            "**버전이 없어 고정 불가**이고 **재배포 허가 문구도 찾지 못했다**"
+            "(금지 문구도 없다) — 유도 산출물은 넣되 `NOTICE`에 그 사실을 밝힌다.\n"
             "페이지네이션 함정: `limit`은 무시되고 `_limit`/`_offset`을 써야 한다 — "
             "첫 페이지만 보면 커버리지가 14%로 보인다.\n"
             "**`freqency`(원본 오타)는 310건 전부 2000이라 담지 않는다** — 담으면 모든 "
@@ -207,13 +224,15 @@ SOURCES: dict[str, Source] = {
         url="https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview",
         pin_kind="digest",
         pin="(고정 불가)",
+        redistribution="not-stated",
         note=(
             "Azure **스팟·예약·저축 플랜** 가격. 문서가 *\"unauthenticated experience\"*라고 "
             "명시하며 실제로 자격증명 없이 200이 온다. **버전이 없다** — 태그도 커밋도 "
             "없고 URL도 질의라, 받은 바이트의 sha256만 남긴다. "
-            "**재배포 허가가 없다**: 문서가 밝히는 용도는 *\"your own tools for internal "
-            "analysis\"*뿐이고 라이선스 문구가 없다. 그래서 산출물을 `data/`에 커밋하지 "
-            "않고 **빌드 때만 받는다**(AWS Price List와 같은 취급). "
+            "**재배포 허가 문구가 없다**: 문서가 밝히는 용도는 *\"your own tools for "
+            "internal analysis\"*뿐이다. 금지 문구도 없으므로 유도 산출물은 넣되 "
+            "`NOTICE`에 그 사실을 밝힌다(AWS Price List는 이와 달리 **명시적 금지**라 "
+            "여전히 안 넣는다). "
             "함정 셋을 실측으로 겪었다 — (1) 같은 armSkuName에 Windows 값이 따로 있고, "
             "(2) `Cloud Services`(구형 PaaS)가 같은 크기 이름을 쓴다. 둘을 안 거르면 "
             "SKU의 93.4%%가 값이 여럿이 된다. (3) 예약의 `retailPrice`는 "

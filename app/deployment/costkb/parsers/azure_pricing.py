@@ -262,7 +262,14 @@ def build(
             "저축 플랜은 원본이 이미 시간당입니다. Windows 값과 Cloud Services "
             "제품은 담지 않습니다(같은 SKU 이름을 쓰는 다른 것). Dev/Test와 "
             "Low Priority도 담지 않습니다 — 적용 조건이 따로 있어 일반 가격이 "
-            "아닙니다. **재배포 허가가 없어 저장소에 커밋하지 않습니다.**"
+            "아닙니다.\n"
+            "**출처와 재배포 상태**: Microsoft Azure Retail Prices API"
+            "(https://prices.azure.com/api/retail/prices)에서 받은 값에서 유도했습니다. "
+            "가격 데이터의 권리는 Microsoft에 있습니다. **재배포를 허가하는 문구를 "
+            "찾지 못했고 금지하는 문구도 찾지 못했습니다** — 무인증으로 공개된 API라 "
+            "편의를 위해 유도 산출물을 저장소에 포함했을 뿐, 허가를 받았다는 뜻이 "
+            "아닙니다. 권리자가 요청하면 제거합니다. 값은 스냅샷이며 실제 청구서가 "
+            "아닙니다."
         ),
         "records": records,
         "_coverage": [
