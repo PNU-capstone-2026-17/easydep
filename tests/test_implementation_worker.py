@@ -73,12 +73,19 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
             "erd_puml": "@startuml\nentity orders\n@enduml",
             "deployment_diagram_puml": "@startuml\nnode app\n@enduml",
             "resource_spec": {"cloud": "azure"},
+            "deployment_intent": {
+                "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                "workloads": [],
+            },
         },
         "com.example.orders",
         False,
     )
     job = json.loads(path.read_text(encoding="utf-8"))
-    assert set(job["inputs"]) == {"bceClass", "sequence", "openapi", "erd", "deployment", "cloud"}
+    assert set(job["inputs"]) == {
+        "bceClass", "sequence", "openapi", "erd", "deployment", "cloud",
+        "deploymentIntent",
+    }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
     assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")

@@ -77,3 +77,31 @@ def e2e_contract_violations(
         if found:
             violations.append(f"Forbidden {label}: {', '.join(found)}")
     return violations
+
+
+def deployment_contract_violations(run_root: Path, paths: list[str]) -> list[str]:
+    """Return structural defects in the bounded Kubernetes deployment output set."""
+    required = {
+        "application/Dockerfile": ("FROM ", "EXPOSE 8000", "USER "),
+        "application/k8s/namespace.yaml": ("apiVersion:", "kind: Namespace", "metadata:"),
+        "application/k8s/deployment.yaml": ("apiVersion: apps/v1", "kind: Deployment", "metadata:", "readinessProbe:", "livenessProbe:"),
+        "application/k8s/service.yaml": ("apiVersion: v1", "kind: Service", "metadata:", "type: LoadBalancer"),
+        "application/k8s/hpa.yaml": ("apiVersion: autoscaling/v2", "kind: HorizontalPodAutoscaler", "metadata:"),
+        "application/k8s/secret.example.yaml": ("apiVersion: v1", "kind: Secret", "metadata:", "DB_PASSWORD"),
+    }
+    violations: list[str] = []
+    for relative in paths:
+        path = run_root / relative
+        if not path.is_file():
+            violations.append(f"Deployment output is missing: {relative}")
+            continue
+        source = path.read_text(encoding="utf-8")
+        for token in required.get(relative, ("apiVersion:", "kind:", "metadata:")):
+            if token not in source:
+                violations.append(f"{relative} is missing required content: {token}")
+        if relative.endswith("secret.example.yaml") and re.search(
+            r"(?im)^\s*(?:DB_PASSWORD|API_KEY)\s*:\s*(?!['\"]?(?:<|\$|\}|$))[^#\s]+",
+            source,
+        ):
+            violations.append(f"{relative} appears to contain a non-placeholder secret value")
+    return violations

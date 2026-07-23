@@ -17,6 +17,7 @@ from .design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
+    generate_deployment_tasks,
     generate_e2e_tasks,
     generate_gateway_adapter_tasks,
     generate_implementation_tasks,
@@ -25,7 +26,7 @@ from .design_context import (
 )
 
 
-OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
+OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud", "deploymentIntent")
 BCE_GENERATOR_VERSION = "0.2.0"
 IMPLEMENTATION_PIPELINE_VERSION = "0.3.0-ir"
 JAVA_BUILTIN_TYPES = {
@@ -133,6 +134,8 @@ class PrototypeOrchestrator:
             self._generate_bce(java_root)
             self._generate_openapi(application)
             self._write_gradle_project(application)
+            self._write_application_entrypoint(java_root)
+            self._write_runtime_configuration(application)
             self._write_missing_type_placeholders(java_root)
 
             if self.spec.verify_compile:
@@ -388,6 +391,8 @@ class PrototypeOrchestrator:
 
     def _write_gradle_project(self, application: Path) -> None:
         build = """plugins {
+    id 'org.springframework.boot' version '3.3.13'
+    id 'io.spring.dependency-management' version '1.1.6'
     id 'java'
 }
 
@@ -401,8 +406,8 @@ java {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation platform('org.springframework.boot:spring-boot-dependencies:3.3.13')
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.flywaydb:flyway-core'
@@ -419,6 +424,45 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         (application / "build.gradle").write_text(build, encoding="utf-8")
         (application / "settings.gradle").write_text(
             f"rootProject.name = '{self.spec.name}'\n", encoding="utf-8"
+        )
+
+    def _write_application_entrypoint(self, java_root: Path) -> None:
+        """Create the executable Spring Boot entrypoint required by bootJar."""
+        package = self.spec.base_package
+        target = java_root / Path(package.replace(".", "/")) / "Application.java"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"package {package};\n\n"
+            "import org.springframework.boot.SpringApplication;\n"
+            "import org.springframework.boot.autoconfigure.SpringBootApplication;\n\n"
+            "@SpringBootApplication\n"
+            "public class Application {\n"
+            "    public static void main(String[] args) {\n"
+            "        SpringApplication.run(Application.class, args);\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+    def _write_runtime_configuration(self, application: Path) -> None:
+        resources = application / "src" / "main" / "resources"
+        resources.mkdir(parents=True, exist_ok=True)
+        (resources / "application.yml").write_text(
+            "server:\n"
+            "  port: 8000\n"
+            "management:\n"
+            "  endpoints:\n"
+            "    web:\n"
+            "      base-path: /\n"
+            "      exposure:\n"
+            "        include: health\n"
+            "      path-mapping:\n"
+            "        health: healthz\n"
+            "  endpoint:\n"
+            "    health:\n"
+            "      probes:\n"
+            "        enabled: true\n",
+            encoding="utf-8",
         )
 
     def _write_missing_type_placeholders(self, java_root: Path) -> None:
@@ -455,6 +499,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
                 "--gradle-user-home",
                 str(gradle_home),
                 "compileJava",
+                "bootJar",
                 "--no-daemon",
             ],
             application,
@@ -675,6 +720,25 @@ def plan_e2e_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return []
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_deployment_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add the Kubernetes deployment task to an existing run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_deployment_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])

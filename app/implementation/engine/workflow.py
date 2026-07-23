@@ -23,6 +23,7 @@ from .orchestrator import (
     plan_wiring_tasks,
 )
 from .repair_planner import apply_repair_directives, schedule_cross_phase_repair
+from .deployment_renderer import render_deployment
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -67,6 +68,17 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         plan_gateway_adapter_tasks(spec, run_root)
     plan_wiring_tasks(spec, run_root)
     plan_e2e_tasks(spec, run_root)
+    deployment = spec.inputs.get("deployment")
+    cloud = spec.inputs.get("cloud")
+    deployment_intent = spec.inputs.get("deploymentIntent")
+    if deployment_intent and deployment_intent.is_file():
+        render_deployment(run_root, spec)
+    elif cloud and cloud.is_file():
+        render_deployment(run_root, spec)
+    elif deployment and deployment.is_file():
+        raise ValueError(
+            "Deployment intent inference requires a cloud resource specification"
+        )
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
 

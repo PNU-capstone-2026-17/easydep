@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .design_context import read_generated_java_contracts, referenced_openapi_model_names
-from .quality_gates import e2e_contract_violations
+from .quality_gates import deployment_contract_violations, e2e_contract_violations
 from .repair_planner import referenced_source_paths
 
 
@@ -455,6 +455,21 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "testResults": "",
                             }
                         )
+                if str(task.get("task_type", "")) == "deployment":
+                    deployment_violations = deployment_contract_violations(
+                        sandbox, list(task["allowed_write_paths"])
+                    )
+                    if deployment_violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["deployment-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(deployment_violations),
+                                "testResults": "",
+                            }
+                        )
                 verification = verify_agent_workspace(sandbox)
                 break
             except WorkspaceVerificationError as error:
@@ -884,7 +899,7 @@ def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
     executable = gradle_command()
     started = time.monotonic()
     result = subprocess.run(
-        [*executable, "compileJava", "test", "--no-daemon"],
+        [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
         cwd=sandbox / "application",
         capture_output=True,
         text=True,
@@ -894,7 +909,7 @@ def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
         check=False,
     )
     evidence = {
-        "command": [*executable, "compileJava", "test", "--no-daemon"],
+        "command": [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
         "exitCode": result.returncode,
         "durationMs": int((time.monotonic() - started) * 1000),
         "stdout": result.stdout[-16000:],

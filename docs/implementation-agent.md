@@ -36,6 +36,29 @@ OpenHands는 기존 파일만 수정할 수 있으며 새 파일 추가는 허�
 `compileJava test`와 완료 감사를 다시 수행하고, 결과는 기존 내용을 덮어쓰지 않고 새 파일
 artifact 버전으로 저장한다. 저장 metadata에는 피드백, 부모 job, 기준 artifact 버전이 남는다.
 
+## 결정적 배포 파일 생성
+
+구현 job에 `DEPLOYMENT`와 `RESOURCE_SPEC` 산출물이 모두 있으면, 구현·E2E 단계 다음에
+외부 LLM 호출 없이 결정적 renderer가 실행된다. `deployment_intent`가 제공되면
+`easydep-deployment-intent/v1alpha1` 계약을 사용하고, 없으면 cloud resource spec의
+workload·networking·registry·secret-store 근거로 intent를 생성한다.
+
+각 workload는 `Deployment`, `StatefulSet`, `Job`, `CronJob` 중 하나이며 다음 capability를
+독립적으로 활성화할 수 있다.
+
+- Service, Ingress, HPA, PodDisruptionBudget
+- NetworkPolicy, ServiceAccount, ExternalSecret
+- ConfigMap, PersistentVolumeClaim, ServiceMonitor
+
+Ingress는 Service를, ServiceMonitor는 Service를, HPA는 Deployment 또는 StatefulSet과
+유효한 min/max replica 범위를 요구한다. Job/CronJob에 서비스·Ingress·HPA·PDB를 요청하면
+렌더링 전에 거부한다. 결과 YAML은 구조와 HPA/Ingress/selector 참조를 검증하고
+`reports/deployment-render.json`에 확정 intent, 파일 목록, 검증 결과를 기록한다.
+
+배포 다이어그램과 리소스 명세는 task context로 전달된다. 실제 비밀값은 생성하지 않으며,
+배포 파일은 `apiVersion`·`kind`·`metadata`, 프로브, HPA, Secret 예시를 정적 게이트로
+검증한 뒤 전체 Gradle 검증과 함께 새 `DEPLOYMENT_FILE` artifact 버전으로 저장된다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,

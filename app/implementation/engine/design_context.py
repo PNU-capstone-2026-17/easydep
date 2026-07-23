@@ -685,6 +685,67 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     return [task]
 
 
+def generate_deployment_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
+    """Plan one bounded OpenHands task that creates deployable Kubernetes files."""
+    deployment = _read(spec.inputs.get("deployment"))
+    cloud = _read(spec.inputs.get("cloud"))
+    if not deployment or not cloud:
+        raise ValueError(
+            "Deployment diagram and cloud resource specification are both required"
+        )
+
+    output = run_root / "reports" / "implementation-tasks"
+    output.mkdir(parents=True, exist_ok=True)
+    allowed = [
+        "application/Dockerfile",
+        "application/k8s/namespace.yaml",
+        "application/k8s/deployment.yaml",
+        "application/k8s/service.yaml",
+        "application/k8s/hpa.yaml",
+        "application/k8s/secret.example.yaml",
+    ]
+    context = {
+        "schemaVersion": "implementation-deployment-context/v1alpha1",
+        "taskId": "generate-kubernetes-deployment",
+        "taskType": "deployment",
+        "deploymentDiagram": deployment,
+        "cloudResourceSpec": cloud,
+        "applicationImage": "<acr-name>.azurecr.io/" + camel_to_kebab(spec.name) + ":<tag>",
+        "containerPort": 8000,
+        "healthEndpoint": "/healthz",
+    }
+    context_path = output / "kubernetes-deployment.context.json"
+    context_path.write_text(
+        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    prompt = render_deployment_prompt(spec, context, allowed)
+    prompt_path = output / "kubernetes-deployment.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    task = ImplementationTask(
+        task_id="generate-kubernetes-deployment",
+        control="Kubernetes deployment files",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=allowed,
+        immutable_paths=[
+            "application/src",
+            "application/build.gradle",
+            "application/settings.gradle",
+        ],
+        source_artifacts={
+            name: str(path) for name, path in spec.inputs.items()
+            if name in {"deployment", "cloud", "openapi"} and path.is_file()
+        },
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=_llm_config(spec),
+        task_type="deployment",
+    )
+    (output / "kubernetes-deployment.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task]
+
+
 def _detect_stock_purchase_e2e_design_gaps_legacy(
     spec: JobSpec, run_root: Path
 ) -> list[dict[str, str]]:
@@ -1124,6 +1185,56 @@ Required Gateway adapters: {gateways}
 {contracts}
 ```
 """
+
+
+def render_deployment_prompt(
+    spec: JobSpec, context: dict[str, object], allowed: list[str]
+) -> str:
+    return f"""# Implementation task: Kubernetes deployment files
+
+Create production-oriented Kubernetes deployment files for the generated Spring Boot
+application. The deployment diagram and cloud resource specification below are the
+source of truth.
+
+Rules:
+- Create every contracted output exactly at its listed path. Do not edit Java, Gradle,
+  generated API/BCE contracts, or any other existing file.
+- Deploy only the generated Spring Boot application. Do not invent a deployment for the
+  EasyDep agent service, OpenHands worker, external trading site, MySQL server, ACR,
+  Key Vault, or Azure Monitor; those are platform-managed or external dependencies.
+- Dockerfile: use a multi-stage Java 21 build, run the application as a non-root user,
+  expose port {context['containerPort']}, and copy only the runnable JAR into the final image.
+- namespace.yaml creates the `stock-purchase` namespace.
+- deployment.yaml uses `apps/v1`, two replicas, image
+  `{context['applicationImage']}`, container port {context['containerPort']}, readiness and
+  liveness HTTP probes on `{context['healthEndpoint']}`, and the CPU/memory request/limit values
+  in the cloud resource specification. Read MySQL configuration only from a Kubernetes Secret;
+  do not embed credentials or real endpoint values.
+- service.yaml exposes the API through a `LoadBalancer` Service on port 80 targeting port
+  {context['containerPort']}. Include a comment that TLS termination is handled by the ingress or
+  load-balancer configuration outside this manifest set.
+- hpa.yaml uses `autoscaling/v2`, targets the Deployment, and follows the requested min/max
+  replica range. Use CPU utilization as the metric.
+- secret.example.yaml is documentation only: use empty string values or clearly invalid
+  placeholders for DB_HOST, DB_PORT, DB_NAME, DB_USER, and DB_PASSWORD. Never include a real
+  secret, API key, or base64-encoded credential.
+- YAML must be valid Kubernetes-style YAML with `apiVersion`, `kind`, and `metadata` in every
+  manifest. Do not leave TODO/FIXME/placeholder markers except the intentional angle-bracket
+  deployment-time image and secret values described above.
+- Do not run shell commands. Finish after creating the contracted files.
+
+## Deployment diagram
+
+```plantuml
+{context['deploymentDiagram']}
+```
+
+## Cloud resource specification
+
+```json
+{context['cloudResourceSpec']}
+```
+""" + render_allowed_output_rules(allowed)
 
 
 def _llm_config(spec: JobSpec) -> dict[str, object]:

@@ -20,6 +20,7 @@ from .agent_runtime import (
     validate_openhands_adapter,
     verify_run_workspace,
 )
+from .deployment_renderer import render_deployment
 from .completion_audit import audit_run_completion
 from .workflow import plan_workflow, run_workflow, workflow_status
 
@@ -49,6 +50,15 @@ def main() -> int:
             load_job(args.job.resolve()), args.run.resolve()
         )
         print(json.dumps({"tasks": [task["task_id"] for task in tasks]}, ensure_ascii=False))
+        return 0
+    if len(sys.argv) > 1 and sys.argv[1] == "plan-deployment":
+        parser = argparse.ArgumentParser(description="Plan Kubernetes deployment files")
+        parser.add_argument("command")
+        parser.add_argument("run", type=Path)
+        parser.add_argument("job", type=Path)
+        args = parser.parse_args()
+        report = render_deployment(args.run.resolve(), load_job(args.job.resolve()))
+        print(json.dumps({"renderer": "deterministic", "files": report["renderedFiles"]}, ensure_ascii=False))
         return 0
     if len(sys.argv) > 1 and sys.argv[1] == "plan-wiring":
         parser = argparse.ArgumentParser(description="Plan Spring application wiring task")

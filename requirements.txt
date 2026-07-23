@@ -6,6 +6,8 @@ langgraph==1.2.8
 fastapi==0.125.0
 uvicorn[standard]==0.38.0
 python-dotenv==1.2.2
+PyYAML>=6.0
+jsonschema>=4.20
 
 # --- 요구사항 분석 에이전트 ---
 # LLM 호출은 langchain-openai(구조화 출력 with_structured_output)를 쓴다.
