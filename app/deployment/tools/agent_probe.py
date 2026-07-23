@@ -319,8 +319,25 @@ PROBES: tuple[Probe, ...] = (
     Probe("P1", "GCP e2-standard-4를 서울 리전에서 스팟으로 쓰면 시간당 얼마야?",
           "스팟·약정 축(gcp-pricing). 미러엔 온디맨드만 있어 못 답했다 — "
           "지어내지 말고 도구로 답하는가",
-          want_tools=("cost_gcp_discount_pricing",), forbid_tools=("web_search",),
+          want_tools=("cost_discount_pricing",), forbid_tools=("web_search",),
           want_any=("스팟", "$0.0", "0.06")),
+    Probe("P2", "Azure Standard_D2s_v5를 koreasouth에서 3년 예약하면 시간당 얼마야?",
+          "**단위 칸이 거짓말한다.** 원본은 예약가를 기간 총액으로 주면서 "
+          "unitOfMeasure를 1,348건 전부 '1 Hour'라고 적는다 — 그대로 읽으면 "
+          "5,165배 틀린다. 시간당으로 환산된 값이 나와야 하고, 환산했다는 사실도 "
+          "답에 실려야 한다",
+          want_tools=("cost_discount_pricing",), forbid_tools=("web_search",),
+          want_any=("0.04", "0.0436", "예약")),
+    Probe("P3", "AWS m5.large 스팟 가격 알려줘",
+          "**없는 축을 '없다'가 아니라 '안 담았다'로 답하는가.** 할인 축은 "
+          "gcp·azure만 담겨 있다. AWS에 스팟이 없다고 말하면 거짓이다.\n"
+          "`tools_optional`인 이유: 지시문이 이미 담긴 프로바이더를 밝히므로 "
+          "**부를 도구가 없는 것이 옳다.** 실측에서 모델은 \"이 데이터셋에 없다\"고 "
+          "말하고 AWS 공식 페이지를 가리켰는데, 도구 호출을 요구했더니 그 최선의 "
+          "답이 실패로 찍혔다 — R1·R2·R4·GL3에 이어 **같은 실수 다섯 번째**다. "
+          "지킬 것은 호출이 아니라 답에 그 구분이 있는가이고 그건 `want_any`가 본다.",
+          tools_optional=True, forbid_tools=("web_search",),
+          want_any=("담", "수록", "포함되어 있지", "제공되지")),
     Probe("N2", "p5.48xlarge는 어느 리전에서 쓸 수 있어?",
           "**조건 38가지를 세어서 답하는가.** 한때 웹검색 13회로 14분을 쓰고 "
           "\"지식베이스에 없습니다\"라고 답했다",

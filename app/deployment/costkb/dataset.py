@@ -39,6 +39,10 @@ DEFAULT_OUTPUT_DIR = Path("output")
 BUILT_FILENAME = "tumblebug-cost.json"
 #: GCP 스팟·약정 보강(Cyclenerd). 미러와 별개 파일이라 없을 수 있다.
 SPOT_COMMIT_FILENAME = "gcp-spot-commit.json"
+#: Azure 스팟·예약·저축 플랜 보강(Retail Prices API).
+#: **`data/`에 커밋하지 않는 유일한 산출물이다** — 재배포 허가가 없어서다.
+#: 그래서 "없을 수 있다"가 아니라 **없는 것이 기본**이다.
+AZURE_DISCOUNT_FILENAME = "azure-discount-pricing.json"
 
 # MCP의 recommend_vm_spec은 호출자가 architecture를 안 주면 x86_64를 끼워넣는다
 # (tb-mcp.py). 이걸 미러하지 않으면 MCP가 감추는 arm64 스펙(덤프 기준 7,790건)이
@@ -143,6 +147,53 @@ def _load_spot_commit(output_dir: str) -> dict[tuple[str, str], dict]:
     }
 
 
+@lru_cache(maxsize=4)
+def _load_azure_discount(output_dir: str) -> dict[tuple[str, str], dict]:
+    """`(specName, region)` → Azure 스팟·예약·저축 플랜. 없으면 빈 맵.
+
+    **이 파일은 `data/`에 없는 것이 정상이다.** Azure Retail Prices API는 재배포
+    허가가 없어 산출물을 커밋하지 않으므로, 클론 직후에는 빈 맵이 정상 상태다.
+    GCP 쪽과 달리 "빌드를 안 했다"가 예외가 아니라 기본이라, 부르는 쪽이 그 사실을
+    **빈 답이 아니라 안내로** 말해야 한다.
+
+    스펙 이름은 소문자로 색인한다 — API의 `armSkuName`은 `Standard_D2s_v5`이고
+    미러도 같은 표기지만, 대소문자로 조인이 깨진 적이 세 번 있었다(kt·ncp·nhn 리전).
+    """
+    found = artifact.resolve(Path(output_dir), AZURE_DISCOUNT_FILENAME)
+    if found is None:
+        return {}
+    try:
+        data = artifact.load_json(found)
+    except (OSError, ValueError):
+        return {}
+    return {
+        (r["specName"].lower(), r["region"]): r for r in data.get("records") or []
+    }
+
+
+def azure_discount_for(
+    spec_name: str, region: str, output_dir: Path | str | None = None
+) -> dict | None:
+    """한 Azure 스펙·리전의 할인 레코드. 없으면 None."""
+    return _load_azure_discount(_resolve(output_dir)).get(
+        (spec_name.strip().lower(), region.strip())
+    )
+
+
+def azure_discount_regions(
+    spec_name: str, output_dir: Path | str | None = None
+) -> list[dict]:
+    """한 Azure 스펙이 할인 값을 가진 모든 리전의 레코드."""
+    wanted = spec_name.strip().lower()
+    index = _load_azure_discount(_resolve(output_dir))
+    return [r for (name, _), r in index.items() if name == wanted]
+
+
+def azure_discount_built(output_dir: Path | str | None = None) -> bool:
+    """할인 산출물이 있나. **없는 것이 기본**이라 부르는 쪽이 확인해야 한다."""
+    return bool(_load_azure_discount(_resolve(output_dir)))
+
+
 def spot_commit_for(
     spec_name: str, region: str, output_dir: Path | str | None = None
 ) -> dict | None:
@@ -162,6 +213,7 @@ def clear_caches() -> None:
     """로드·스키마 캐시를 비운다 (테스트가 output_dir을 갈아끼울 때)."""
     _load_cached.cache_clear()
     _load_spot_commit.cache_clear()
+    _load_azure_discount.cache_clear()
     _schema.cache_clear()
 
 

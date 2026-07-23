@@ -21,6 +21,7 @@ from pathlib import Path
 
 from costkb.agent_api import HOURS_PER_MONTH
 from costkb.dataset import (
+    AZURE_DISCOUNT_FILENAME,
     BUILT_FILENAME,
     DEFAULT_OUTPUT_DIR,
     coverage,
@@ -54,6 +55,20 @@ def _build_parser() -> argparse.ArgumentParser:
     spot = sub.add_parser("build-gcp-pricing", help="GCP 스팟·약정 가격 보강 (Cyclenerd)")
     spot.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
     spot.add_argument("--output", type=Path, help="출력 경로 (기본: output/gcp-spot-commit.json)")
+
+    # **이 산출물만 `data/`에 커밋하지 않는다** — 재배포 허가가 없어서다.
+    # 그래서 클론 직후엔 이 축이 없는 것이 기본이고, 쓰려면 직접 돌려야 한다.
+    azure = sub.add_parser(
+        "build-azure-pricing", help="Azure 스팟·예약·저축 플랜 보강 (Retail Prices API)"
+    )
+    azure.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    azure.add_argument(
+        "--region", action="append", dest="regions",
+        help="리전 하나만(여러 번 줄 수 있음). 기본은 미러의 azure 리전 전부",
+    )
+    azure.add_argument(
+        "--output", type=Path, help="출력 경로 (기본: output/azure-discount-pricing.json)"
+    )
 
     query = sub.add_parser("query", help="요구사항으로 스펙 후보 조회")
     query.add_argument("--vcpu-min", type=int, default=0, help="최소 vCPU")
@@ -198,11 +213,35 @@ def _cmd_build_gcp_pricing(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
+    from costkb.parsers import azure_pricing
+
+    mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
+    if not mirror.exists():
+        print(
+            "미러가 없습니다. 먼저 `python -m costkb build`로 미러를 만드세요 — "
+            "할인 가격은 미러 스펙에 조인해 담습니다.",
+            file=sys.stderr,
+        )
+        return 1
+    output = args.output or (DEFAULT_OUTPUT_DIR / AZURE_DISCOUNT_FILENAME)
+    azure_pricing.build(
+        output, mirror=mirror, regions=args.regions, refresh=args.refresh
+    )
+    print(
+        "※ 이 산출물은 재배포 허가가 없어 `data/`에 커밋하지 않습니다. "
+        "다른 환경에서 쓰려면 그 환경에서 이 명령을 다시 돌리세요.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     handlers = {
         "build": _cmd_build,
         "build-gcp-pricing": _cmd_build_gcp_pricing,
+        "build-azure-pricing": _cmd_build_azure_pricing,
         "query": _cmd_query,
         "coverage": _cmd_coverage,
     }

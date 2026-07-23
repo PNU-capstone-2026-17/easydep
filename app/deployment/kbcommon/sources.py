@@ -183,6 +183,25 @@ SOURCES: dict[str, Source] = {
             "KCC가 벤더링한 4.84.0(2023-09-26)보다 3개 메이저 최신이다. 17MB, 캐시됨."
         ),
     ),
+    "azure-retail-prices": Source(
+        key="azure-retail-prices",
+        url="https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview",
+        pin_kind="digest",
+        pin="(고정 불가)",
+        note=(
+            "Azure **스팟·예약·저축 플랜** 가격. 문서가 *\"unauthenticated experience\"*라고 "
+            "명시하며 실제로 자격증명 없이 200이 온다. **버전이 없다** — 태그도 커밋도 "
+            "없고 URL도 질의라, 받은 바이트의 sha256만 남긴다. "
+            "**재배포 허가가 없다**: 문서가 밝히는 용도는 *\"your own tools for internal "
+            "analysis\"*뿐이고 라이선스 문구가 없다. 그래서 산출물을 `data/`에 커밋하지 "
+            "않고 **빌드 때만 받는다**(AWS Price List와 같은 취급). "
+            "함정 셋을 실측으로 겪었다 — (1) 같은 armSkuName에 Windows 값이 따로 있고, "
+            "(2) `Cloud Services`(구형 PaaS)가 같은 크기 이름을 쓴다. 둘을 안 거르면 "
+            "SKU의 93.4%%가 값이 여럿이 된다. (3) 예약의 `retailPrice`는 "
+            "**기간 총액인데 `unitOfMeasure`는 1,348건 전부 '1 Hour'라고 적는다** — "
+            "그대로 읽으면 5,165배 틀린다. savingsPlan은 반대로 진짜 시간당이다."
+        ),
+    ),
     "cyclenerd-gcp-pricing": Source(
         key="cyclenerd-gcp-pricing",
         url=(

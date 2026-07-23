@@ -51,12 +51,22 @@ def test_no_source_silently_tracks_a_moving_branch() -> None:
 
 
 def test_unpinnable_sources_are_declared_as_such() -> None:
-    """고정 불가 소스는 숨기지 말고 드러낸다 — 원격 소스 중 AWS zip이 유일해야 한다.
+    """고정 불가 소스는 숨기지 말고 드러낸다 — **목록을 여기 못 박는다.**
 
     번들 파일(`bundled`)은 git이 버전 관리하므로 여기 포함되지 않는다.
+
+    이 목록이 자라는 것은 나쁜 일이므로 **자동으로 늘어나지 않게** 한다. 늘리려면
+    여기 이유를 적어야 하고, 그 강제가 이 단언의 목적이다.
+
+        cfn-schema           AWS가 zip 하나를 계속 덮어쓴다. 버전 URL이 없다.
+        azure-retail-prices  가격 API라 고정할 대상 자체가 없다(질의가 곧 URL).
+                             받은 응답의 sha256만 남겨 **바뀐 사실은 놓치지 않는다.**
+                             재배포 허가도 없어 산출물을 `data/`에 커밋하지 않는다.
     """
     keys = {s.key for s in unpinnable()}
-    assert keys == {"cfn-schema"}, f"고정 불가 소스가 예상과 다르다: {keys}"
+    assert keys == {"cfn-schema", "azure-retail-prices"}, (
+        f"고정 불가 소스가 예상과 다르다: {keys}"
+    )
 
 
 def test_graphkb_and_capacitykb_read_the_same_bicep_commit() -> None:

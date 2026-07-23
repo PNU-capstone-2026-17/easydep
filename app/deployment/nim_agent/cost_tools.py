@@ -172,21 +172,44 @@ def cost_estimate_monthly(
     return agent_api.estimate_monthly_cost(hourly_usd, count, hours_per_month)
 
 
-@function_tool
-def cost_gcp_discount_pricing(spec_name: str, region: str | None = None) -> str:
-    """GCP 인스턴스의 스팟·약정(1년·3년) 가격을 조회한다.
+#: 할인 축이 있는 프로바이더. **여기 없으면 "할인이 없다"가 아니라 "안 담았다"다.**
+_DISCOUNT_PROVIDERS = ("gcp", "azure")
 
-    미러(cb-tumblebug)엔 온디맨드 정가만 있어서 이 축은 Cyclenerd 가격표로 보강한다.
-    **GCP 전용**이다 — AWS·Azure 스펙엔 "미수록"이라고 답한다. 온디맨드가 우리 미러와
-    다른 스냅샷이라, 어긋난 리전은 도구가 "기준 온디맨드"를 함께 밝힌다 — 그 문구를
-    사용자에게 그대로 전하세요.
+
+@function_tool
+def cost_discount_pricing(
+    provider: str, spec_name: str, region: str | None = None
+) -> str:
+    """스팟·예약·약정 가격을 조회한다. 미러엔 **온디맨드 정가만** 있어서 별도 축이다.
+
+    프로바이더마다 소스와 담긴 종류가 다르다:
+
+    - `gcp`   — 스팟 · 1년/3년 약정 (Cyclenerd 가격표). 온디맨드가 우리 미러와
+      **다른 스냅샷**이라, 어긋난 리전은 도구가 "기준 온디맨드"를 함께 밝힌다.
+    - `azure` — 스팟 · 1년/3년 예약 · 1년/3년 저축 플랜 (Azure Retail Prices API).
+      **이 축은 저장소에 없는 것이 기본**이다(재배포 허가가 없어 커밋하지 않는다).
+      없으면 도구가 받는 명령을 알려주니 그대로 전하세요 — "할인이 없다"가 아니다.
+
+    **다른 프로바이더는 담지 않았다.** aws 등에 이 도구를 쓰면 "미수록"이라고
+    답하는데, 그건 **AWS에 스팟이 없다는 뜻이 아니라 우리가 안 담았다는 뜻**이다.
+    그 구분을 그대로 전하세요.
 
     Args:
-        spec_name: GCP 스펙 이름. 예: 'e2-standard-4', 'a2-highgpu-1g'.
-        region: 리전(선택). 없으면 대표 리전 몇 곳을 보여준다. 예: 'asia-northeast3'.
+        provider: 'gcp' | 'azure'. **필수** — 소스가 갈린다.
+        spec_name: 스펙 이름. 예: 'e2-standard-4', 'Standard_D2s_v5'.
+        region: 리전(선택). 없으면 대표 리전 몇 곳을 보여준다.
     """
-    print(f"\n[비용질의] GCP 스팟·약정: {spec_name!r} region={region!r}")
-    return agent_api.discount_pricing(spec_name, region)
+    key = provider.strip().lower()
+    print(f"\n[비용질의] 할인 가격: {key} {spec_name!r} region={region!r}")
+    if key == "gcp":
+        return agent_api.discount_pricing(spec_name, region)
+    if key == "azure":
+        return agent_api.azure_discount_pricing(spec_name, region)
+    return (
+        f"'{provider}'의 할인(스팟·예약) 가격은 이 데이터셋에 없습니다. "
+        f"담긴 것은 {', '.join(_DISCOUNT_PROVIDERS)}뿐입니다. "
+        "**그 프로바이더에 할인이 없다는 뜻이 아니라 우리가 안 담았다는 뜻**입니다."
+    )
 
 
 @function_tool
@@ -253,6 +276,6 @@ def _perf_hint(spec_name: str, provider: str | None) -> str:
 COST_TOOLS = [
     cost_recommend_specs,
     cost_estimate_monthly,
-    cost_gcp_discount_pricing,
+    cost_discount_pricing,
     cost_describe_spec,
 ]

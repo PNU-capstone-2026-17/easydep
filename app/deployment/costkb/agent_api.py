@@ -14,6 +14,11 @@ from pathlib import Path
 
 from costkb.dataset import (
     DEFAULT_ARCHITECTURE,
+    _load_azure_discount,
+    _resolve,
+    azure_discount_built,
+    azure_discount_for,
+    azure_discount_regions,
     count_unpriced,
     coverage,
     filter_specs,
@@ -357,6 +362,124 @@ def discount_pricing(
             "정확한 현재가는 cb-tumblebug MCP로 확인하세요."
         )
     return "\n".join(lines) + footer
+
+
+def _azure_line(rec: dict) -> str:
+    """할인 한 줄. **온디맨드 대비 비율을 함께 적는다** — 값만 주면 얼마나 싼지
+    사람이 암산해야 하고, 그 암산은 우리가 보증하지 않는다.
+    """
+    base = rec.get("mirrorUSD")
+    parts = []
+    for key, label in (
+        ("spotUSD", "스팟"),
+        ("reserved1yUSD", "1년 예약"),
+        ("reserved3yUSD", "3년 예약"),
+        ("savings1yUSD", "1년 저축플랜"),
+        ("savings3yUSD", "3년 저축플랜"),
+    ):
+        value = rec.get(key)
+        if value is None:
+            continue
+        share = f" ({value / base:.0%})" if base else ""
+        parts.append(f"{label} ${value:.4f}/h{share}")
+    return " · ".join(parts) if parts else "할인 정보 없음"
+
+
+AZURE_DISCOUNT_MISSING = (
+    "Azure 할인 가격(스팟·예약·저축 플랜)이 이 환경에 없습니다. **데이터가 없다는 "
+    "뜻이지 할인이 없다는 뜻이 아닙니다.** 이 축은 Azure Retail Prices API에서 "
+    "받는데 재배포 허가가 없어 저장소에 넣지 않으므로, 쓰려면 직접 받아야 합니다: "
+    "`python -m costkb build-azure-pricing`"
+)
+
+
+def azure_discount_pricing(
+    spec_name: str,
+    region: str | None = None,
+    *,
+    output_dir: Path | str | None = None,
+) -> str:
+    """Azure VM의 스팟·예약·저축 플랜 가격.
+
+    GCP 쪽(`discount_pricing`)과 두 가지가 다르다.
+
+    1. **온디맨드가 미러와 일치한다.** 실측에서 어긋남이 0건이라 스냅샷 헤지가
+       필요 없다. 오히려 독립 소스 둘이 같은 값을 말하는 **교차 확인**이다.
+       그래도 가정하지 않고 레코드의 `matchesMirror`를 보고, 어긋난 것이 있으면
+       그것만 밝힌다.
+    2. **산출물이 없는 것이 기본이다.** 재배포 허가가 없어 커밋하지 않으므로,
+       빈 답 대신 받는 방법을 알려준다.
+    """
+    if not azure_discount_built(output_dir):
+        return AZURE_DISCOUNT_MISSING
+
+    if region is not None:
+        rec = azure_discount_for(spec_name, region, output_dir)
+        if rec is None:
+            rows = azure_discount_regions(spec_name, output_dir)
+            if not rows:
+                return _no_azure_discount(spec_name, output_dir)
+            import difflib
+
+            available = sorted(r["region"] for r in rows)
+            near = difflib.get_close_matches(region, available, n=1, cutoff=0.8)
+            if not near:
+                return (
+                    f"{spec_name}: '{region}' 리전의 할인 정보가 없습니다. "
+                    "이 스펙이 정보를 가진 리전: " + ", ".join(available[:8])
+                )
+            # GCP 쪽에서 실측으로 겪은 실패다 — 모델이 리전을 한 글자 틀리면
+            # "정보 없음"을 "그 리전엔 스팟이 없다"로 오해해 틀린 답을 냈다.
+            rec = azure_discount_for(spec_name, near[0], output_dir)
+            prefix = f"('{region}'는 없는 리전이라 가장 가까운 '{near[0]}'로 답합니다) "
+        else:
+            prefix = ""
+        recs = [rec]
+    else:
+        prefix = ""
+        recs = sorted(azure_discount_regions(spec_name, output_dir),
+                      key=lambda r: r["region"])[:6]
+        if not recs:
+            return _no_azure_discount(spec_name, output_dir)
+
+    lines = [f"{spec_name} 할인 가격 (Azure) {prefix}:".replace(" :", ":")]
+    diverged = False
+    for rec in recs:
+        base = rec.get("mirrorUSD")
+        head = f"  - {rec['region']}: 온디맨드 ${base:.4f}/h" if base else f"  - {rec['region']}:"
+        lines.append(f"{head} · {_azure_line(rec)}")
+        if not rec.get("matchesMirror", True):
+            diverged = True
+    footer = (
+        "\n\n※ 출처: Azure Retail Prices API(무인증). 온디맨드는 costkb 미러"
+        "(cb-tumblebug)를 쓰고 할인만 이 소스로 보강합니다. **예약가는 원본이 기간 "
+        "총액으로 주므로 시간당으로 환산한 값**입니다(1년 8,760h · 3년 26,280h). "
+        "Windows 라이선스가 붙는 값과 Dev/Test 전용가는 담지 않았습니다."
+    )
+    if diverged:
+        footer += (
+            "\n※ 이 소스의 온디맨드가 우리 미러와 다른 리전이 있습니다 — 스냅샷 시점 "
+            "차이일 수 있으니 할인가도 그만큼 어긋날 수 있습니다."
+        )
+    return "\n".join(lines) + footer
+
+
+def _no_azure_discount(spec_name: str, output_dir: Path | str | None) -> str:
+    """**제안은 이 데이터셋 안에서만 한다.**
+
+    처음엔 미러 전체에서 비슷한 이름을 찾았는데, `m5.large`를 물으면 AWS 스펙을
+    줄줄이 제안했다 — Azure 전용 축에서 AWS 이름을 권하면 그게 Azure에 있는 것처럼
+    읽힌다. 이 KB가 줄곧 좁혀 온 '없음'의 뜻이 흐려지는 자리다.
+    """
+    import difflib
+
+    known = sorted({name for name, _ in _load_azure_discount(_resolve(output_dir))})
+    near = difflib.get_close_matches(spec_name.strip().lower(), known, n=5, cutoff=0.6)
+    hint = f" Azure 쪽에서 비슷한 이름: {', '.join(near)}" if near else ""
+    return (
+        f"'{spec_name}'의 Azure 할인 정보가 없습니다. **없다는 뜻이 아니라 이 "
+        f"데이터셋에 없다**는 뜻입니다(Azure VM만 담습니다).{hint}"
+    )
 
 
 def _no_discount(spec_name: str) -> str:
