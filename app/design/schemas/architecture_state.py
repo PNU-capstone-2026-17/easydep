@@ -21,6 +21,9 @@ class ArchitectureState(TypedDict, total=False):
     resource_spec: dict[str, Any]
 
     extracted_bce_classes: dict[str, Any]
+    # Transient: carries user feedback into the class diagram feedback graph so it
+    # edits the BCE model (extracted_bce_classes), not the derived PlantUML.
+    class_diagram_feedback: str
     class_diagram_puml: str
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]

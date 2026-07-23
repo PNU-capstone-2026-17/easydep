@@ -411,8 +411,8 @@
         </div>
 
         <div class="field">
-          <label for="usecaseSpecText">유스케이스 명세 (USECASE_SPEC) — 보통은 요구사항 분석에서 채워집니다</label>
-          <textarea id="usecaseSpecText" spellcheck="false"></textarea>
+          <label for="usecaseSpecText">유스케이스 명세 (USECASE_SPEC) — 요구사항 분석에서 이어받습니다</label>
+          <textarea id="usecaseSpecText" spellcheck="false" readonly placeholder="요구사항 분석 단계에서 유스케이스 명세를 먼저 생성하세요."></textarea>
         </div>
 
         <div class="field">
@@ -421,7 +421,6 @@
         </div>
 
         <div class="actions">
-          <button id="saveSpecButton" type="button" class="secondary">유스케이스 명세 저장</button>
           <button id="generateButton" type="button">현재 단계 생성</button>
           <button id="feedbackButton" type="button" class="secondary">피드백 반영</button>
           <button id="nextButton" type="button" class="secondary">다음 단계</button>
@@ -472,20 +471,6 @@
       deployment_diagram: true
     };
 
-    const sampleUsecaseSpec = `{
-  "UseCaseName": "Login",
-  "PrimaryActor": "User",
-  "MainSuccessScenario": [
-    "User enters email and password.",
-    "System validates credentials.",
-    "System creates a login session.",
-    "System displays the dashboard."
-  ],
-  "Extensions": [
-    "Invalid credentials show an error message."
-  ]
-}`;
-
     // 요구사항 분석 UI(app/requirements/static/index.html)와 공유하는 키.
     // 두 화면이 같은 오리진에서 서빙되므로 이 하나로 같은 앱을 가리킨다.
     const APP_ID_KEY = "easydep_app_id";
@@ -502,7 +487,6 @@
 
     const stepsEl = document.getElementById("steps");
     const usecaseSpecText = document.getElementById("usecaseSpecText");
-    const saveSpecButton = document.getElementById("saveSpecButton");
     const feedbackText = document.getElementById("feedbackText");
     const generateButton = document.getElementById("generateButton");
     const feedbackButton = document.getElementById("feedbackButton");
@@ -521,14 +505,12 @@
     const newAppButton = document.getElementById("newAppButton");
     const loadAppButton = document.getElementById("loadAppButton");
 
-    usecaseSpecText.value = sampleUsecaseSpec;
     feedbackText.value = "자연어 피드백을 입력";
     appIdInput.value = workflow.appId;
 
     generateButton.addEventListener("click", () => runStage("generate"));
     feedbackButton.addEventListener("click", () => runStage("feedback"));
     newAppButton.addEventListener("click", () => issueAppId());
-    saveSpecButton.addEventListener("click", () => saveUsecaseSpec());
     loadAppButton.addEventListener("click", () => loadApp(appIdInput.value.trim()));
     nextButton.addEventListener("click", () => {
       if (workflow.completed.has(currentStage().id) && workflow.activeIndex < stages.length - 1) {
@@ -561,38 +543,6 @@
         applyResponse(data);
         workflow.activeIndex = 0;
         setStatus("App ID 발급 완료", true);
-      } catch (error) {
-        showError(error);
-      } finally {
-        render();
-      }
-    }
-
-    // USECASE_SPEC is normally produced by the requirements analysis agent at
-    // / against this same app id. This hand-save through the content
-    // endpoint remains for working on design alone, without an analysis run.
-    async function saveUsecaseSpec() {
-      if (!workflow.appId) {
-        await issueAppId();
-        if (!workflow.appId) return;
-      }
-
-      let content;
-      try {
-        content = JSON.parse(usecaseSpecText.value);
-      } catch (error) {
-        showError(new Error("유스케이스 명세는 JSON 형식이어야 합니다: " + error.message));
-        render();
-        return;
-      }
-
-      setBusy("유스케이스 명세 저장 중");
-      try {
-        applyResponse(await request(
-          `/api/apps/${workflow.appId}/stages/usecase_spec/content`,
-          { method: "POST", body: JSON.stringify({ content }) }
-        ));
-        setStatus("명세 저장 완료", true);
       } catch (error) {
         showError(error);
       } finally {
@@ -673,6 +623,16 @@
       workflow.validation = data.validation || {};
       workflow.completed = new Set();
       stages.forEach((stage) => updateCompletion(stage.id));
+      syncUsecaseSpecField();
+    }
+
+    // 유스케이스 명세 칸(읽기 전용)을 이 app_id에 저장된 USECASE_SPEC으로 채운다.
+    // 요구사항 분석 에이전트가 같은 app_id로 저장해 둔 명세를 설계 화면이 그대로
+    // 이어받아 보여준다. 저장된 명세가 없으면 비워 두고 placeholder 안내를 노출한다.
+    function syncUsecaseSpecField() {
+      const spec = workflow.artifacts.usecase_spec;
+      const hasSpec = spec && typeof spec === "object" && Object.keys(spec).length > 0;
+      usecaseSpecText.value = hasSpec ? JSON.stringify(spec, null, 2) : "";
     }
 
     function showError(error) {
