@@ -16,7 +16,10 @@ import jsonschema
 
 from kbcommon.basis import basis_of, is_fact
 
-NodeLayer = Literal["core", "vendor"]
+#: `app`은 svcmap이 만든 **애플리케이션 개념 층**이다(관계형 DB·큐·객체 스토리지 등).
+#: core 층(cb-tumblebug 스웨거 미러)에 우리 개념을 섞으면 미러가 오염되므로 층을
+#: 따로 둔다. provider도 "app"이라 `core_concept`(provider=="common" 검색)에 안 걸린다.
+NodeLayer = Literal["core", "vendor", "app"]
 EdgeType = Literal["references", "contained_in", "equivalent_to"]
 Cardinality = Literal["one", "many"]
 

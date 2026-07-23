@@ -42,6 +42,9 @@ GRAPH_FILES = (
     "openstack-graph.json",
     "oracle-graph.json",
     "nhn-graph.json",
+    # 앱 개념(app::) ↔ 관리형 서비스. 병합에 넣는 것만으로 equivalents()가
+    # DynamoDB↔CosmosDB 같은 관리형 대응을 타기 시작한다.
+    "svcmap-graph.json",
 )
 
 _MISSING_MESSAGE = (
@@ -418,6 +421,15 @@ def equivalent_types(
             "달라 딱 맞는 짝이 없는 경우가 있습니다(예: GCP 방화벽은 네트워크 단위 "
             "규칙이라 인스턴스에 붙는 AWS 보안 그룹과 같은 것이 아닙니다). "
             "'대응한다'가 아니라 '가장 가까운 것'으로 전하세요."
+        )
+    if node.layer == "app" or any(item.layer == "app" for item in peers):
+        # 관리형 서비스 대응은 svcmap이 잇는다 — **안내이지 배포 가능이 아니다.**
+        # cb-tumblebug 실행 경로는 VM·k8s까지라, 이 구분을 빼면 "우리 도구로
+        # 만들 수 있다"로 읽힌다(cap_csp_supports가 하는 것과 같은 구분).
+        lines.append(
+            "\n※ 관리형 서비스 대응은 **안내**입니다 — cb-tumblebug 실행 경로(VM·k8s)로 "
+            "이 서비스들을 만들 수 있다는 뜻이 아닙니다. 배포는 각 클라우드 콘솔·IaC로 "
+            "해야 합니다."
         )
     return "\n".join(lines)
 

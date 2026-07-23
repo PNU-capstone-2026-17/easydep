@@ -100,6 +100,14 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "heuristic": INFERRED,          # 이름 끝 맞추기
     "cb-spider-driver": INFERRED,   # 드라이버 코드를 사람이 읽고 만든 매핑
     "human-review": STATED,         # 사람이 직접 적어 넣은 것
+    # --- svcmap (앱 개념 ↔ 벤더 관리형 서비스) ---
+    # 넷 다 INFERRED다. MS 표가 명시하는 것은 **서비스 이름 수준의 대응**이고,
+    # 그걸 타입 id에 붙이는 마지막 걸음은 언제나 우리 손 검수다 — 다리를 건너면
+    # 등급이 떨어진다. 라벨이 갈리는 것은 **어떤 독립 근거가 뒤에 있는가**다.
+    "svcmap-cross-checked": INFERRED,   # MS 비교표 + diagrams 분류가 일치
+    "ms-learn-comparison": INFERRED,    # MS 비교표만
+    "mingrammer-taxonomy": INFERRED,    # diagrams 분류만
+    "svcmap-reviewed": INFERRED,        # 독립 근거 없이 손 검수만 (타입 이름이 용도를 말하는 경우)
     # --- capacitykb ---
     "cfn-schema": STATED,           # 스키마 키워드 그대로
     "bicep-flags": STATED,          # flags 비트

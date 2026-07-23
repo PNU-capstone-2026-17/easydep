@@ -24,6 +24,9 @@ cloud-barista / cb-tumblebug (v0.12.25) 의 `assets/assets.dump.gz`에서
 - cfn-lint (Amazon Web Services, MIT-0)
 - Azure bicep-types-az (Microsoft, MIT)
 - MicrosoftDocs/azure-docs (Microsoft, CC-BY-4.0)
+- MicrosoftDocs/architecture-center (Microsoft, CC-BY-4.0) —
+  `data/svcmap-graph.json.gz`의 서비스 대응 근거(AWS↔Azure·GCP↔Azure 비교표)
+- mingrammer/diagrams (MIT) — 위 대응의 교차 확인용 분류 체계
 - GCP Config Connector CRD (Google, Apache-2.0)
 - terraform-provider-google / terraform-provider-aws (HashiCorp, MPL-2.0)
 - botocore (Amazon Web Services, Apache-2.0)

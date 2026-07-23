@@ -199,6 +199,39 @@ SOURCES: dict[str, Source] = {
             "KCC가 벤더링한 4.84.0(2023-09-26)보다 3개 메이저 최신이다. 17MB, 캐시됨."
         ),
     ),
+    "ms-architecture-center": Source(
+        key="ms-architecture-center",
+        url=(
+            "https://raw.githubusercontent.com/MicrosoftDocs/architecture-center/"
+            "11c3681605cfeb209ddbac372a53d8931696d0cd"
+        ),
+        pin_kind="commit",
+        pin="11c3681605cfeb209ddbac372a53d8931696d0cd",
+        note=(
+            "AWS↔Azure·GCP↔Azure **서비스 비교표**(CC-BY-4.0 — azure-docs와 같은 "
+            "라이선스, 재배포 시 저작자 표시). svcmap의 1차 근거다. 태그가 없어 커밋 "
+            "SHA로 고정한다.\n"
+            "**문서라 표가 재편된다** — `aws-professional/services.md` 하나였던 것이 "
+            "카테고리별 파일 6개로 쪼개져 있었다(조사에서 404를 직접 겪음). 파서가 "
+            "행수를 세어 급감하면 알린다.\n"
+            "표가 말하는 것은 **서비스 이름 수준의 대응**('Amazon RDS ↔ Azure SQL')"
+            "이고, 그걸 타입 id(AWS::RDS::DBInstance)에 붙이는 것은 우리 손 검수다 — "
+            "그래서 엣지 basis는 stated가 아니라 **inferred(검수됨)**다. 다리를 "
+            "건너며 등급이 떨어지는 그 규칙 그대로."
+        ),
+    ),
+    "mingrammer-diagrams": Source(
+        key="mingrammer-diagrams",
+        url="https://raw.githubusercontent.com/mingrammer/diagrams/v0.24.4",
+        pin_kind="tag",
+        pin="v0.24.4",
+        note=(
+            "MIT. 프로바이더별 서비스 분류(모듈 구조가 곧 분류 체계). svcmap의 "
+            "**독립 교차 소스**다 — MS 비교표와 이것이 같은 대응을 말하면 교차 확인. "
+            "aws·azure·gcp 외에 **ibm·alibabacloud·oci·openstack** 모듈이 있어 MS "
+            "표가 안 덮는 프로바이더를 이쪽이 덮는다(tencent·ncloud는 없다 — 실측)."
+        ),
+    ),
     "ibm-global-catalog": Source(
         key="ibm-global-catalog",
         url="https://globalcatalog.cloud.ibm.com/api/v1?q=is.instance",

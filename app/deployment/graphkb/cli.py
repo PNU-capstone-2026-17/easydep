@@ -30,6 +30,8 @@ DEFAULT_OUTPUTS = {
     # AVM 배포 순서는 azure-graph를 덮지 않고 옆에 둔다 — 근거 성격이 다르고,
     # 기존 빌드를 안 건드려야 회귀를 구분할 수 있다.
     "avm": Path("output") / "azure-deploy-graph.json",
+    # 앱 개념 ↔ 관리형 서비스. core-graph(tumblebug 미러)에 섞지 않는다.
+    "svcmap": Path("output") / "svcmap-graph.json",
 }
 
 
@@ -43,7 +45,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build = sub.add_parser("build", help="공개 스키마에서 그래프를 추출·저장")
     build.add_argument(
         "--source",
-        choices=("tumblebug", "cfn", "azure", "gcp", "mapping", "avm"),
+        choices=("tumblebug", "cfn", "azure", "gcp", "mapping", "avm", "svcmap"),
         required=True,
         help="추출 소스",
     )
@@ -190,6 +192,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from graphkb.parsers import avm
 
         avm.build(output, refresh=args.refresh)
+    elif args.source == "svcmap":
+        from graphkb.parsers import svcmap
+
+        svcmap.build(output)
     elif args.source == "gcp":
         from graphkb.parsers import gcp
 

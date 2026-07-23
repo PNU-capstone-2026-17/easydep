@@ -362,6 +362,21 @@ PROBES: tuple[Probe, ...] = (
     # 앞의 38건은 **전부 단일 축 조회**였다. want_tools가 2개 이상인 프로브가
     # 0건이고 record_plan·cost_estimate_monthly를 기대하는 프로브도 0건이라,
     # "네 축을 고려한 가이드라인"이라는 목표 자체가 측정 밖에 있었다.
+    # --- svcmap: 앱 개념 ↔ 관리형 서비스 (P1) --------------------------------
+    Probe("SM1", "DynamoDB 쓰던 앱을 Azure로 옮기면 뭘 써야 해?",
+          "**관리형 서비스 대응 — 예전엔 0건이던 축.** core 층 13개가 전부 인프라라 "
+          "DB·큐·캐시 대응이 없었고, ALB→ComputeForwardingRule을 기억으로 단언한 "
+          "그 실패 모양이 관리형 서비스에서도 났을 것이다. 이제 svcmap이 답하고 "
+          "짐작 표시와 실행 경계(안내이지 배포 가능이 아님)가 함께 온다",
+          want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
+          want_any=("Cosmos",)),
+    Probe("SM2", "S3 같은 객체 스토리지가 IBM이랑 OpenStack에도 있어?",
+          "**MS 표가 안 덮는 프로바이더를 diagrams 분류가 덮는다.** ibm_cos_bucket· "
+          "openstack objectstorage가 나와야 하고, 근거가 다르다는 것(교차/단일)이 "
+          "데이터에 있다",
+          want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
+          want_any=("cos_bucket", "objectstorage", "오브젝트 스토리지")),
+
     Probe("GL1", "AWS 서울에 VM 하나 올리려면 뭐가 같이 필요하고 얼마나 들어?",
           "**목표 2 ¶4 한 문장이 요구하는 두 반쪽.** 리소스 군(bundlekb)과 그 선택의 "
           "값(costkb·perfkb)이 각각 있었는데 잇는 답이 없었다. 지명이 나오므로 "
