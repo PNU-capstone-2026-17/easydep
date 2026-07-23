@@ -325,7 +325,7 @@ def check(
         return "\n".join([
             f"확정 판정 불가: {target} 를 판정할 확정 제약이 없습니다. "
             "다만 아래 참고 정보가 있으니 함께 보세요.",
-            "  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):",
+            "  참고(원본이 명시한 것이 아니라 판정엔 쓰지 않음):",
             *(f"  - {r}" for r in result.references),
         ])
     if result.verdict == "violation":
@@ -335,7 +335,8 @@ def check(
         # 확정 제약은 없지만 참고 정보상 벗어남 → "가능"이라고 하면 거짓 긍정이 된다
         lines = [
             f"판정 보류: {target} 는 확정된 제약을 위반하진 않지만, "
-            "신뢰도가 낮은 참고 정보상 범위를 벗어납니다. 공식 문서 확인을 권합니다."
+            "원본이 명시하지 않고 산문에서 뽑은 참고 정보상 범위를 벗어납니다. "
+            "공식 문서 확인을 권합니다."
         ]
     else:
         lines = [f"가능: {target} 는 알려진 제약 {result.checked}건을 만족합니다."]
@@ -344,7 +345,7 @@ def check(
         lines.append("  ※ 아래 제약은 정규식을 읽을 수 없어 판정에 넣지 못했습니다:")
         lines.extend(f"  - {u}" for u in result.unevaluated)
     if result.advisories or result.references:
-        lines.append("  참고(신뢰도가 낮아 확정 판정엔 쓰지 않음):")
+        lines.append("  참고(원본이 명시한 것이 아니라 판정엔 쓰지 않음):")
         lines.extend(f"  - {a}" for a in result.advisories)
         lines.extend(f"  - {r}" for r in result.references)
     if result.unresolved:

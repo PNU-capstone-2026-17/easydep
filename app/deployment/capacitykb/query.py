@@ -90,7 +90,14 @@ class CheckResult:
 
     ok: bool
     violations: list[str]
-    advisories: list[str]  # 신뢰도가 낮아 판정엔 쓰지 않은 참고 정보 (전부 "벗어남")
+    advisories: list[str]
+    """판정엔 쓰지 않은 참고 정보 (전부 "벗어남").
+
+    **가르는 기준은 `basis`이지 숫자가 아니다.** 예전엔 `confidence < 0.7`이었는데
+    그 척도는 정의가 없었고, `check`의 0.8과도 어긋났다. 지금 기준은
+    `is_fact` — "원본이 그렇게 적었는가"다. 그러니 사용자에게 보이는 말도
+    '신뢰도가 낮다'가 아니라 **'원본이 명시한 것이 아니다'**여야 한다.
+    """
     checked: int
     excluded: int = 0
     """조건이 **성립하지 않아** 판정에서 빠진 제약 수.
@@ -128,7 +135,7 @@ class CheckResult:
     """
 
     references: list[str] = field(default_factory=list)
-    """신뢰도가 낮은 근거 중 **벗어나지 않은** 것들.
+    """원본이 명시하지 않은 근거 중 **벗어나지 않은** 것들.
 
     예전에는 이걸 아예 버렸다. 그래서 "gp2 볼륨 30,000 GiB 되나?"에
     `unknown`("알려진 제약이 없습니다")으로 답했는데, 정작 데이터셋 안에는

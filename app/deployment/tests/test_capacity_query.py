@@ -222,7 +222,11 @@ def test_agent_api_check_advisory_is_held_not_allowed(output_dir: Path) -> None:
     assert text.startswith("판정 보류")
     assert not text.startswith("가능")
     assert "65536" in text
-    assert "신뢰도" in text
+    # **유보하는 이유가 답에 있어야 한다.** 예전엔 "신뢰도가 낮아"라고 적었는데,
+    # 신뢰도라는 숫자는 폐기됐다(척도의 정의가 없어 임계값을 0.01 옮기면 판정이
+    # 뒤집혔다). 지금 가르는 것은 `basis` 하나이므로 말도 그렇게 해야 한다.
+    assert "원본이 명시하지 않" in text
+    assert "신뢰도" not in text
 
 
 def test_agent_api_immutable(output_dir: Path) -> None:
