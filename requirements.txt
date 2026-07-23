@@ -23,3 +23,7 @@ openai==2.44.0
 # MySQL 산출물 저장소
 sqlalchemy==2.0.44
 pymysql==1.4.6
+
+# --- 시스템 구현 에이전트(OpenHands SDK 기반 restricted editor worker) ---
+openhands-sdk==1.36.1
+openhands-tools==1.36.1

@@ -1,0 +1,45 @@
+{
+ "name": "@easydep/puml2code-bce",
+ "version": "0.2.0",
+ "description": "EasyDep BCE PlantUML to Java skeleton generator, forked from jupe/puml2code",
+  "main": "src/index.js",
+ "bin": {
+ "puml2code-bce": "./bin/puml2code"
+  },
+  "scripts": {
+    "cli": "node src/cli.js",
+    "install": "node node_modules/pegjs/bin/pegjs --output src/parser/plantuml.js src/parser/plantuml.pegjs"
+  },
+  "engines": {
+    "node": ">=10.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jupe/puml2code.git"
+  },
+  "keywords": [
+    "plantuml",
+    "puml",
+    "code",
+    "pegjs",
+    "generator",
+    "uml",
+    "class",
+    "diagram"
+  ],
+  "author": "Jussi Vatjus-Anttila",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jupe/puml2code/issues"
+  },
+  "homepage": "https://github.com/jupe/puml2code#readme",
+  "dependencies": {
+    "bluebird": "^3.7.2",
+    "camelcase": "^5.2.0",
+    "commander": "^4.1.1",
+    "debug": "^4.3.4",
+    "handlebars": "^4.1.1",
+    "lodash": "^4.17.21",
+    "pegjs": "^0.10.0"
+  }
+}

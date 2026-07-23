@@ -65,3 +65,16 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
   CONSTRAINT fk_versions_artifact FOREIGN KEY (artifact_id)
     REFERENCES artifacts (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Immutable file tree belonging to one implementation artifact version.
+CREATE TABLE IF NOT EXISTS artifact_files (
+  id                  BIGINT        NOT NULL AUTO_INCREMENT,
+  artifact_version_id BIGINT        NOT NULL,
+  file_path           VARCHAR(512)  NOT NULL,
+  content             LONGTEXT      NOT NULL,
+  sha256              CHAR(64)      NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_artifact_files_version_path (artifact_version_id, file_path),
+  CONSTRAINT fk_artifact_files_version FOREIGN KEY (artifact_version_id)
+    REFERENCES artifact_versions (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

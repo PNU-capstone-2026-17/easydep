@@ -18,6 +18,10 @@ plantuml.jar
 
 # 실행 아티팩트 (재생성 가능) — 보존할 run만 선별 커밋
 artifacts/
+/.easydep/
+/app/implementation/tools/puml2code-bce/node_modules/
+/app/implementation/tools/openapi-generator/*.jar
+**/.gradle/
 
 # 모델 가중치 (GitHub 100MB 제한 초과) — Releases에 별도 배포
 *.safetensors
