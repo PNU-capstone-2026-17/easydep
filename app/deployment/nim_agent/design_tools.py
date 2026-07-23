@@ -50,6 +50,33 @@ from appkb.plan import (
 )
 from appkb.verify import unhedged_claims, verify_diagram, verify_plan
 
+#: 컴퓨트 방식별 성격. **`deployHint`가 실제로 계획을 바꾸게 하는 표다.**
+#:
+#: 처음엔 힌트를 근거 라벨로만 기록하고 계획은 그대로 뒀는데, 그러면
+#: `serverlessFunction`을 지정해도 **시간당 VM 단가**가 붙었다 — 서버리스는 호출당
+#: 과금이라 그 값은 그냥 틀린 값이다. 실측으로 잡았다.
+_COMPUTE_KIND = {
+    # 값이 붙는가 · 어느 core 개념 위에 도는가 · svcmap 개념(서버리스 전용)
+    "vm": {"priced": True, "hosts": ("core::vm",), "concept": None},
+    "kubernetes": {"priced": True, "hosts": ("core::k8sCluster", "core::k8sNodeGroup"),
+                   "concept": None},
+    "serverlessFunction": {"priced": False, "hosts": (),
+                           "concept": "serverlessFunction"},
+}
+
+#: 컴퓨트가 도는 데 **함께 있어야 하는 것**. bundlekb가 답하는 것을 그대로 쓴다.
+#: 연결당 공유이므로 컴포넌트마다가 아니라 **계획에 한 벌만** 세운다 — 아니면
+#: 컴포넌트 2개짜리 앱에 VPC가 2개 그려진다.
+_SHARED_LABEL = {
+    "core::vNet": "가상 네트워크",
+    "core::subnet": "서브넷",
+    "core::securityGroup": "보안 그룹",
+    "core::sshKey": "SSH 키",
+    "core::image": "OS 이미지",
+    "core::k8sCluster": "쿠버네티스 클러스터",
+    "core::k8sNodeGroup": "노드 그룹",
+}
+
 #: engineHint → app:: 개념. 모르는 힌트는 관계형으로 몰지 않고 **미결로 올린다.**
 _ENGINE_CONCEPT = {
     "postgresql": "relationalDatabase", "postgres": "relationalDatabase",
@@ -70,6 +97,26 @@ _ENGINE_FLAVOR = {
 
 def _artifacts(design: dict, kind: str) -> list[dict]:
     return [a for a in design["artifacts"] if a["kind"] == kind]
+
+
+def _vendor_of(core_id: str, provider: str | None) -> tuple[str, bool]:
+    """core 개념 → 그 프로바이더의 벤더 타입. `(타입, 짐작을 거쳤나)`.
+
+    조사 1에서 찾은 다리를 그대로 쓴다. **대응은 cb-spider 드라이버를 읽어 사람이
+    맞춘 것(짐작·검수됨)**이라 등급이 떨어지고, 그 사실이 노트에 실린다.
+    """
+    if not provider:
+        return "", False
+    from graphkb.agent_api import load_merged
+    from graphkb.query import equivalents
+
+    graph = load_merged()
+    if graph is None or core_id not in graph.nodes:
+        return "", False
+    for peer in equivalents(graph, core_id):
+        if peer.provider == provider:
+            return peer.id, True
+    return "", False
 
 
 def _svcmap_types(concept: str, provider: str | None) -> list[str]:
@@ -128,6 +175,8 @@ def compose(design: dict) -> DeploymentPlan:
 
     plan = DeploymentPlan(name=design["name"])
     components = {c["id"]: c for c in design["components"]}
+    #: 시간당 단가가 붙는 컴퓨트만. 서버리스는 여기 안 들어간다.
+    _priced_computes: set[str] = set()
 
     # --- 1. 신호 모으기 ---------------------------------------------------
     has_api = {a["componentId"] for a in _artifacts(design, "openapi")}
@@ -162,17 +211,22 @@ def compose(design: dict) -> DeploymentPlan:
             sync_calls.append((src_id, dst_id, message.get("label") or ""))
 
     # --- 2. 컴퓨트 노드 ---------------------------------------------------
+    #: 어느 컴퓨트 방식이 실제로 쓰였나 — 공유 인프라를 무엇으로 세울지 정한다.
+    compute_kinds: set[str] = set()
     for cid, component in components.items():
         hint = component.get("deployHint")
         notes: list[Note] = []
         if hint:
             origin = ORIGIN_DESIGNER
+            kind = hint["compute"]
             notes.append(Note(
-                f"설계자가 {hint['compute']}로 지정" + (f" — {hint['reason']}" if hint.get("reason") else ""),
+                f"설계자가 {kind}로 지정"
+                + (f" — {hint['reason']}" if hint.get("reason") else ""),
                 ORIGIN_DESIGNER, "deployHint",
             ))
         else:
             origin = ORIGIN_INFERRED
+            kind = "vm"
             if cid in has_api:
                 notes.append(Note("OpenAPI 산출물이 있어 HTTP 서비스로 봄",
                                   ORIGIN_INFERRED, "openapi"))
@@ -185,13 +239,54 @@ def compose(design: dict) -> DeploymentPlan:
                 plan.unresolved.append(
                     f"{cid}: OpenAPI도 비동기 수신도 없어 배포 형태를 정하지 못했습니다"
                 )
+            notes.append(Note(
+                "컴퓨트 방식은 VM으로 가정했습니다 — 설계가 지정하지 않았습니다"
+                "(deployHint로 바꿀 수 있습니다)", ORIGIN_INFERRED, "",
+            ))
+        compute_kinds.add(kind)
         if cid in exposed:
             notes.append(Note("시퀀스에서 actor가 직접 호출 — 공개 노출",
                               ORIGIN_DESIGN, "sequence"))
+
+        # **서버리스는 값이 다른 축이다.** 시간당 VM 단가를 붙이면 그냥 틀린 값이라
+        # 관리형 서비스로 세우고 값을 붙이지 않는다(호출당 과금 데이터가 0건).
+        spec = _COMPUTE_KIND[kind]
+        if spec["concept"]:
+            types = _svcmap_types(spec["concept"], provider)
+            notes.append(Note(
+                "서버리스는 호출당 과금이라 이 데이터셋에 단가가 없습니다 — "
+                "값을 붙이지 않습니다", ORIGIN_KB, "costkb",
+            ))
+            if len(types) == 1:
+                notes.append(Note(f"svcmap: app::{spec['concept']} → {types[0]}",
+                                  ORIGIN_KB, "svcmap"))
+            plan.nodes.append(PlanNode(
+                id=cid, label=component["name"], role="managed", origin=origin,
+                archetype=f"app::{spec['concept']}",
+                type_id=types[0] if len(types) == 1 else "",
+                candidates=tuple(types) if len(types) != 1 else (),
+                notes=tuple(notes),
+            ))
+            if not types:
+                plan.unresolved.append(
+                    f"{cid}: 서버리스 함수에 대응하는 타입을 찾지 못했습니다"
+                    + (f" (provider={provider})" if provider else "")
+                )
+            continue
+
+        if kind == "kubernetes":
+            # **파드가 도는 곳은 노드 그룹이다.** 컴포넌트마다 VM 단가를 붙이면
+            # 같은 노드에 여러 파드가 올라가는 구조가 지워지고, 합치면 중복이 된다.
+            notes.append(Note(
+                "파드로 배포됩니다 — 값은 이 컴포넌트가 아니라 노드 그룹에 붙습니다",
+                ORIGIN_INFERRED, "",
+            ))
         plan.nodes.append(PlanNode(
             id=cid, label=component["name"], role="compute",
             origin=origin, notes=tuple(notes),
         ))
+        if kind == "vm":
+            _priced_computes.add(cid)
 
     for external in design.get("externals") or []:
         plan.nodes.append(PlanNode(
@@ -258,6 +353,9 @@ def compose(design: dict) -> DeploymentPlan:
                  ORIGIN_INFERRED, "openapi"),
         )
 
+    # --- 3.5 공유 인프라 (bundlekb) --------------------------------------
+    _add_shared_infra(plan, compute_kinds, provider, requirements, _priced_computes)
+
     # --- 4. 통신 선 ------------------------------------------------------
     known = {n.id for n in plan.nodes}
     for src, dst, label in sync_calls:
@@ -279,7 +377,7 @@ def compose(design: dict) -> DeploymentPlan:
 
     # --- 5. 값 ------------------------------------------------------------
     if provider:
-        _attach_values(plan, provider, region, requirements)
+        _attach_values(plan, provider, region, requirements, _priced_computes)
     else:
         plan.notes.append(Note(
             "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
@@ -294,9 +392,168 @@ def compose(design: dict) -> DeploymentPlan:
     return plan
 
 
+def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | None,
+                      requirements: dict, priced: set[str]) -> None:
+    """컴퓨트가 도는 데 **함께 있어야 하는 것**을 bundlekb에서 가져온다.
+
+    붙이기 전까지 배포 다이어그램에 **네트워크 경계가 통째로 없었다** — VPC도
+    서브넷도 보안 그룹도. bundlekb는 정확히 "무엇이 딸려 오나"에 답하려고 만든
+    축인데 구성기가 부르질 않았다(실측으로 잡았다).
+
+    **연결당 공유라 계획에 한 벌만 세운다.** 컴포넌트마다 세우면 컴포넌트 2개짜리
+    앱에 VPC가 2개 그려진다 — tumblebug이 스스로 "연결당 공유라 이미 있으면
+    재사용한다"고 밝힌 것과도 어긋난다.
+    """
+    from bundlekb.dataset import default_bundle_for
+
+    anchors = []
+    if "vm" in kinds:
+        anchors.append("core::vm")
+    if "kubernetes" in kinds:
+        anchors.append("core::k8sCluster")
+    if not anchors:
+        # 전부 서버리스면 VM 네트워크가 필요 없다 — 없는 것을 그리지 않는다.
+        return
+
+    seen: set[str] = set()
+    for anchor in anchors:
+        bundle = default_bundle_for(anchor)
+        if bundle is None:
+            plan.unresolved.append(f"{anchor}: 함께 필요한 리소스 정보를 찾지 못했습니다")
+            continue
+        for member in bundle.members:
+            core_id = member.type_id
+            if core_id in seen or core_id == "core::vm":
+                continue  # core::vm은 컴포넌트 노드가 이미 대표한다
+            seen.add(core_id)
+            if core_id == "core::image":
+                # **이미지는 리소스가 아니라 값이다.** 벤더 타입이 없는 게 정상이라
+                # 매핑 미결로 올리면 거짓 미결이 된다 — 대신 실제 이미지 id를 붙인다.
+                _add_image_note(plan, provider, requirements, priced)
+                continue
+            node_id = core_id.split("::")[-1].lower()
+            label = _SHARED_LABEL.get(core_id, node_id)
+            notes = [Note(
+                f"{bundle.name}: {member.tier}"
+                + (f" — {member.note}" if member.note else ""),
+                ORIGIN_KB, "bundlekb",
+            )]
+            if member.count != 1:
+                # 이름 붙은 템플릿의 대수는 **그 템플릿의 것**이지 이 앱의 것이 아니다
+                # (k8scluster-across는 멀티클라우드 데모라 클러스터가 8개다).
+                notes.append(Note(
+                    f"위 개수({member.count})는 '{bundle.name}' 템플릿의 값이며 "
+                    "이 앱에 필요한 수가 아닙니다", ORIGIN_KB, "bundlekb",
+                ))
+            if bundle.caveat:
+                notes.append(Note(bundle.caveat, ORIGIN_KB, "bundlekb"))
+            type_id, hedged = _vendor_of(core_id, provider)
+            if type_id:
+                notes.append(Note(
+                    f"{core_id} → {type_id}"
+                    + (" (대응은 짐작·검수됨 — cb-spider 드라이버를 읽어 사람이 맞춘 것)"
+                       if hedged else ""),
+                    ORIGIN_KB, "mapping-graph",
+                ))
+            elif provider:
+                plan.unresolved.append(
+                    f"{node_id}: {provider}에서 {core_id}에 해당하는 타입을 찾지 못했습니다"
+                )
+            if core_id == "core::subnet":
+                notes.extend(_subnet_notes(provider, requirements))
+            if core_id == "core::k8sNodeGroup":
+                notes.extend(_node_group_notes())
+            # **선을 긋지 않는다.** 컴퓨트마다 공유 자원 4개로 선을 그으면 컴포넌트
+            # 5개짜리 앱에 선이 20개 늘어 그림이 못 쓰게 된다(실측: 2개에 이미 15개).
+            # 관계는 다이어그램의 **중첩**이 표현한다 — UML 배포 다이어그램의 정석이고,
+            # tumblebug이 "연결당 공유"라 말한 것과도 맞는다.
+            plan.nodes.append(PlanNode(
+                id=node_id, label=label, role="shared",
+                origin=ORIGIN_KB, type_id=type_id, notes=tuple(notes),
+            ))
+
+
+def _add_image_note(plan: DeploymentPlan, provider: str | None,
+                    requirements: dict, priced: set[str]) -> None:
+    """OS 이미지는 **값**이라 노드가 아니라 컴퓨트의 노트로 붙인다."""
+    text = "요청에 이미지 ID를 줘야 합니다 — 설계 산출물에는 없는 정보입니다"
+    origin, source = ORIGIN_KB, "bundlekb"
+    if provider:
+        from kbcommon.images import describe
+
+        found = describe(provider, requirements.get("region"), "x86_64", limit=1)
+        first = next(
+            (ln.strip() for ln in found.splitlines()[1:] if ln.strip().startswith("-")),
+            "",
+        )
+        if first:
+            text = f"OS 이미지를 골라야 합니다. 이 리전의 기본 이미지 예: {first[1:].strip()}"
+            source = "basic-images"
+    updated = []
+    for node in plan.nodes:
+        if node.id not in priced:
+            updated.append(node)
+            continue
+        updated.append(PlanNode(
+            id=node.id, label=node.label, role=node.role, origin=node.origin,
+            archetype=node.archetype, type_id=node.type_id,
+            candidates=node.candidates,
+            notes=node.notes + (Note(text, origin, source),),
+        ))
+    plan.nodes[:] = updated
+
+
+def _node_group_notes() -> list[Note]:
+    """노드 그룹의 최소 사양. **cb-tumblebug이 정한 값이지 쿠버네티스가 정한 게 아니다.**"""
+    from sizingkb.dataset import rules_of
+    from sizingkb.model import MINIMUM
+
+    notes = []
+    for rule in rules_of(MINIMUM, "k8s-node"):
+        notes.append(Note(
+            f"노드 최소 {rule.metric} {rule.value}{rule.unit or ''} "
+            "(cb-tumblebug이 요구하는 값이며 쿠버네티스가 정한 값이 아닙니다)",
+            ORIGIN_KB, "sizingkb",
+        ))
+    return notes
+
+
+def _subnet_notes(provider: str | None, requirements: dict) -> list[Note]:
+    """서브넷에 붙는 사이징 사실 — 개수와 용량. 둘 다 sizingkb가 답한다."""
+    from sizingkb.dataset import rules_of
+    from sizingkb.model import REQUIRED_COUNT
+
+    notes: list[Note] = []
+    if provider:
+        for rule in rules_of(REQUIRED_COUNT, provider):
+            if rule.metric == "requiredSubnetCount":
+                # 원본 `unit`이 "서브넷"이라 그대로 붙이면 "2서브넷가"가 된다 — 실측.
+                notes.append(Note(
+                    f"이 프로바이더의 클러스터는 서브넷이 {rule.value}개 필요합니다",
+                    ORIGIN_KB, "sizingkb",
+                ))
+    if requirements.get("multiZone"):
+        # 계약이 받아 놓고 안 읽던 칸이다.
+        notes.append(Note(
+            "요구사항이 multiZone이라 서브넷을 여러 가용영역에 나눠 둬야 합니다",
+            ORIGIN_DESIGN, "requirements",
+        ))
+    if provider:
+        from sizingkb.agent_api import subnet_capacity
+
+        first = subnet_capacity(24, provider).splitlines()[0]
+        notes.append(Note(f"참고 — {first}", ORIGIN_KB, "sizingkb"))
+    return notes
+
+
 def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
-                   requirements: dict) -> None:
-    """컴퓨트 노드에 스펙·단가·성능 소견을 붙인다. 관리형에는 붙지 않는다(가격 축 없음)."""
+                   requirements: dict, priced: set[str]) -> None:
+    """값이 붙는 노드에 스펙·단가·성능 소견을 붙인다.
+
+    **어디에 붙이느냐가 핵심이다.** 관리형 서비스는 가격 축이 없어 안 붙고,
+    서버리스는 호출당 과금이라 안 붙고, 쿠버네티스 컴포넌트는 파드라 안 붙는다 —
+    대신 파드가 도는 **노드 그룹**이 값을 받는다.
+    """
     from costkb import dataset as cost_dataset
 
     from .cost_tools import _perf_note
@@ -319,7 +576,10 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
     perf = _perf_note(spec)
     updated = []
     for node in plan.nodes:
-        if node.role != "compute":
+        # **서버리스는 role이 managed라 여기 안 걸린다** — 시간당 단가를 붙이면
+        # 틀린 값이 되는 그 자리다. 쿠버네티스 컴포넌트도 안 걸리고, 대신
+        # 노드 그룹(shared)이 값을 받는다 — 파드가 도는 곳이 거기다.
+        if node.id not in priced and node.id != "k8snodegroup":
             updated.append(node)
             continue
         notes = list(node.notes)
@@ -345,7 +605,9 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
 
     lines = [f"{plan.name} — 배포 구성"]
     for role, title in (("actor", "사용자"), ("compute", "직접 배포"),
-                        ("managed", "관리형 서비스"), ("external", "외부 시스템")):
+                        ("managed", "관리형 서비스"),
+                        ("shared", "공유 인프라 (연결당 한 벌)"),
+                        ("external", "외부 시스템")):
         nodes = [n for n in plan.nodes if n.role == role]
         if not nodes:
             continue

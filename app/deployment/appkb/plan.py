@@ -71,7 +71,11 @@ class PlanNode:
     id: str
     label: str
     role: str
-    """`compute` | `managed` | `external` | `actor`. 도형이 모양을 여기서 정한다."""
+    """`compute` | `managed` | `shared` | `external` | `actor`.
+
+    도형이 모양을 여기서 정한다. `shared`는 네트워크·키·이미지처럼 **연결당 공유라
+    계획에 한 벌만 있는 것**이다(bundlekb가 답한다).
+    """
 
     origin: str
     archetype: str = ""

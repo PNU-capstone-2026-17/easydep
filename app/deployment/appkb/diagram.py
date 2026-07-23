@@ -31,6 +31,8 @@ _STEREOTYPE = {
 _SHAPE = {
     "compute": "node",
     "managed": "database",
+    # 공유 인프라(네트워크·키·이미지)는 실행 환경이지 저장소가 아니다.
+    "shared": "rectangle",
     "external": "cloud",
     "actor": "actor",
 }
@@ -56,6 +58,14 @@ def _node_line(node: PlanNode) -> str:
     return f'{shape} "{label}" as "{node.id}"{tail}'
 
 
+#: 다른 노드를 **담는** 공유 인프라. 바깥부터 안쪽 순서다.
+#:
+#: 컴퓨트마다 공유 자원으로 선을 그으면 컴포넌트 5개짜리 앱에 선이 20개 늘어
+#: 그림이 못 쓰게 된다(실측: 2개에 이미 15개). 배포 다이어그램은 그 관계를
+#: **중첩**으로 표현하는 것이 정석이고, tumblebug이 "연결당 공유"라 말한 것과도 맞는다.
+_CONTAINERS = ("vnet", "subnet")
+
+
 def render(plan: DeploymentPlan) -> str:
     """계획 하나를 PlantUML 텍스트로."""
     lines = [
@@ -64,8 +74,29 @@ def render(plan: DeploymentPlan) -> str:
         "skinparam shadowing false",
         "",
     ]
+    by_id = {n.id: n for n in plan.nodes}
+    nesting = [cid for cid in _CONTAINERS if cid in by_id]
+    inside = {n.id for n in plan.nodes if n.role == "compute"}
+
+    depth = 0
+    for cid in nesting:
+        lines.append("  " * depth + _node_line(by_id[cid]) + " {")
+        depth += 1
     for node in plan.nodes:
-        lines.append(_node_line(node))
+        if node.id in nesting:
+            continue
+        pad = "  " * depth if node.id in inside else ""
+        if node.id not in inside and depth:
+            continue  # 컨테이너 밖의 노드는 닫은 뒤에 그린다
+        lines.append(pad + _node_line(node))
+    for _ in range(depth):
+        depth -= 1
+        lines.append("  " * depth + "}")
+    if depth == 0 and nesting:
+        for node in plan.nodes:
+            if node.id in nesting or node.id in inside:
+                continue
+            lines.append(_node_line(node))
     if plan.nodes and plan.edges:
         lines.append("")
     for edge in plan.edges:
@@ -98,7 +129,8 @@ def parse_back(uml: str) -> tuple[set[str], set[tuple[str, str]]]:
     """
     import re
 
-    aliases = set(re.findall(r'^\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.M))
+    # 중첩이 들어오면서 줄 앞에 들여쓰기가, 줄 끝에 `{`가 붙는다 — 둘 다 허용한다.
+    aliases = set(re.findall(r'^\s*\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.M))
     # `-{1,2}>`다. `-->?`로 쓰면 `--`가 필수라 **동기 화살표 `->`가 통째로 빠진다**
     # (되파싱 검증이 잡았다 — 5개 선 중 4개가 조용히 사라졌다).
     edges = set(re.findall(r'^"([^"]+)"\s+-{1,2}>\s+"([^"]+)"', uml, re.M))

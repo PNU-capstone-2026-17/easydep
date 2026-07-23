@@ -98,6 +98,22 @@ def test_sync_arrows_are_not_dropped() -> None:
     assert ("order-api", "order-api-db") in edges  # 비동기
 
 
+def test_containment_replaces_the_edge_explosion() -> None:
+    """컴퓨트마다 공유 자원으로 선을 그으면 컴포넌트 5개짜리 앱에 선이 20개 는다
+    (실측: 2개에 이미 15개). 배포 다이어그램은 그걸 **중첩**으로 표현한다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode("vnet", "VPC", "shared", ORIGIN_KB,
+                               type_id="aws::AWS::EC2::VPC"))
+    plan.nodes.append(PlanNode("subnet", "서브넷", "shared", ORIGIN_KB,
+                               type_id="aws::AWS::EC2::Subnet"))
+    uml = render(plan)
+    assert "{" in uml and "}" in uml
+    # 중첩이 들어와도 되파싱은 여전히 전부 읽어야 한다
+    assert verify_diagram(plan, uml) == []
+    aliases, _ = parse_back(uml)
+    assert {"vnet", "subnet", "order-api"} <= aliases
+
+
 def test_diagram_carries_the_hedge_marks() -> None:
     """그림은 잘려 돌아다닌다 — 범례에만 적어 두면 부족하다."""
     assert "<<추론>>" in render(_plan())
