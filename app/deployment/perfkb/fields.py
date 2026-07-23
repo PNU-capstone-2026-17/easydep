@@ -86,6 +86,21 @@ FIELDS: tuple[Field, ...] = (
     Field("maxPersistentDisks", "최대 영구 디스크 수"),
     Field("maxPersistentDiskGB", "최대 영구 디스크 용량", " GB"),
     Field("vendorDescription", "벤더 설명", kind="text", compare=False),
+    # IBM (Global Catalog). **클럭은 없다** — 원본이 310건 전부 2000이라 담지 않았다.
+    Field("networkBandwidthMbps", "네트워크 대역폭", " Mbps"),
+    Field("portSpeedMbps", "포트 속도", " Mbps"),
+    Field("maxNics", "최대 네트워크 인터페이스 수"),
+    Field("numaCount", "NUMA 노드 수"),
+    # IBM을 붙이며 드러난 구멍 — `cpuVendor`는 aws 61.9%·ibm 82.9%로 채워져 있는데
+    # **어느 목록에도 없어서 화면에 한 번도 나온 적이 없었다.** 필드 목록이 세 벌로
+    # 갈라졌던 그 문제의 잔재다.
+    Field("cpuVendor", "CPU 제조사", kind="text", compare=False),
+    Field("cpuFamily", "CPU 계열", kind="text", compare=False),
+    # **`sustainedCpu`로 옮기지 않은 이유가 라벨에 있어야 한다.** dedicated를 보고
+    # "상시 CPU 보장"이라 적으면 그건 우리 추론이지 원본이 한 말이 아니다.
+    Field("vcpuTenancy", "vCPU 점유 방식(원본 표기)", kind="text", compare=False),
+    Field("provisioningTimeoutSeconds", "프로비저닝 타임아웃", "초", compare=False),
+    Field("gpuMemoryGB", "GPU 메모리", " GB"),
 )
 
 COMPARE_FIELDS: tuple[Field, ...] = tuple(f for f in FIELDS if f.compare)

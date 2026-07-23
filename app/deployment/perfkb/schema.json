@@ -103,8 +103,10 @@
           "enum": [
             "aws",
             "azure",
-            "gcp"
-          ]
+            "gcp",
+            "ibm"
+          ],
+          "description": "우리가 정규화하는 키라 enum으로 잠근다(architecture는 소스에서 그대로 오므로 안 잠근다). 프로바이더를 늘릴 때 여기를 함께 고치라는 강제가 목적이다."
         },
         "specName": {
           "type": "string"
@@ -281,6 +283,38 @@
             "ec2-hardware-probe"
           ],
           "description": "하드웨어 칸들의 근거. 본체(cb-tumblebug)와 다른 소스라 따로 적는다."
+        },
+        "networkBandwidthMbps": {
+          "type": "number",
+          "description": "총 네트워크 대역폭(Mbps). IBM 카탈로그의 bandwidth."
+        },
+        "portSpeedMbps": {
+          "type": "number",
+          "description": "포트 속도(Mbps)."
+        },
+        "maxNics": {
+          "type": "integer",
+          "description": "붙일 수 있는 네트워크 인터페이스 수."
+        },
+        "numaCount": {
+          "type": "integer",
+          "description": "NUMA 노드 수."
+        },
+        "provisioningTimeoutSeconds": {
+          "type": "integer",
+          "description": "원본이 밝힌 프로비저닝 타임아웃(초)."
+        },
+        "vcpuTenancy": {
+          "type": "string",
+          "description": "vCPU 점유 방식(dedicated|shared). **sustainedCpu로 옮기지 않는다** — 그건 우리 추론이지 원본이 한 말이 아니다."
+        },
+        "cpuFamily": {
+          "type": "string",
+          "description": "CPU 마이크로아키텍처 계열(Sapphirerapids 등). 정확한 모델명(cpuModel)과 다르다."
+        },
+        "gpuMemoryGB": {
+          "type": "number",
+          "description": "GPU 하나당 메모리(GB)."
         }
       },
       "additionalProperties": false

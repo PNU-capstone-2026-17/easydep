@@ -40,6 +40,20 @@ from perfkb.fields import COMPARE_FIELDS, FIELDS
 
 _OLD_GEN_NOTE = "구세대 인스턴스입니다 — 최신 세대에 더 나은 가격/성능이 있을 수 있습니다."
 
+#: 경고를 만들 수 있는 신호. **레코드에 이 중 하나도 없으면 "확인했다"고 말할 수 없다.**
+#:
+#: IBM을 붙이면서 드러난 구멍이다. IBM 카탈로그엔 버스트 여부도 세대 표시도 없어서,
+#: 레코드는 있는데 `_warning_for`가 아무것도 못 찾는다. 그걸 `ok`로 돌려주면 비용
+#: 도구의 꼬리말("경고가 없는 후보는 성능 확인됨 — 상시 CPU 보장·최신 세대")이
+#: **거짓말**이 된다. 결함 C4에서 침묵을 안전 신호로 오독하게 만든 것과 같은 모양이라
+#: 상태를 하나 더 뒀다.
+_WARNING_SIGNALS = ("sustainedCpu", "currentGeneration")
+
+
+def has_warning_signals(rec: dict) -> bool:
+    """이 레코드로 버스트·세대를 판정할 수 있나."""
+    return any(key in rec for key in _WARNING_SIGNALS)
+
 
 def _warning_for(rec: dict) -> str | None:
     """레코드 하나에서 경고 문구를 만든다. 구매 결정을 바꾸는 것만."""
@@ -67,7 +81,8 @@ def recommend_warning(spec_id: str | None, output_dir: Path | str | None = None)
 
 #: `recommend_note`가 돌려주는 상태. 표시 기호는 호출자(도구 계층)가 정한다.
 NOTE_WARN = "warn"  # 성능 함정 있음
-NOTE_OK = "ok"  # 레코드가 있고 경고할 것이 없음
+NOTE_OK = "ok"  # 레코드가 있고 **판정에 필요한 신호를 다 보고** 경고할 것이 없음
+NOTE_PARTIAL = "partial"  # 레코드는 있으나 버스트·세대 신호가 없어 판정 불가
 NOTE_NO_RECORD = "no_record"  # 추적 대상 프로바이더인데 이 스펙이 없음
 NOTE_UNTRACKED = "untracked"  # 이 프로바이더는 성능 신호를 수록하지 않음
 NOTE_NOT_BUILT = "not_built"  # 성능 지식베이스 자체가 없음
@@ -117,7 +132,16 @@ def recommend_note(
         )
 
     warning = _warning_for(rec)
-    return PerfNote(NOTE_WARN, warning) if warning else PerfNote(NOTE_OK)
+    if warning:
+        return PerfNote(NOTE_WARN, warning)
+    if not has_warning_signals(rec):
+        # **"경고가 없다"와 "판정할 수 없다"는 다른 말이다.**
+        return PerfNote(
+            NOTE_PARTIAL,
+            f"버스트·세대 판정 불가 — {provider}는 원본에 그 신호가 없습니다"
+            "(다른 성능 값은 있습니다).",
+        )
+    return PerfNote(NOTE_OK)
 
 
 def _describe(rec: dict) -> str:

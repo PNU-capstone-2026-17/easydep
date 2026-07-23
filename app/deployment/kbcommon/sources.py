@@ -183,6 +183,25 @@ SOURCES: dict[str, Source] = {
             "KCC가 벤더링한 4.84.0(2023-09-26)보다 3개 메이저 최신이다. 17MB, 캐시됨."
         ),
     ),
+    "ibm-global-catalog": Source(
+        key="ibm-global-catalog",
+        url="https://globalcatalog.cloud.ibm.com/api/v1?q=is.instance",
+        pin_kind="digest",
+        pin="(고정 불가)",
+        note=(
+            "IBM VPC 인스턴스 프로필의 **성능 신호**. perfkb는 aws·azure·gcp 셋뿐이었고 "
+            "나머지 일곱 중 **소스가 실재하는 것은 IBM뿐**이다(Terraform provider는 타입 "
+            "축만 주고 스펙 카탈로그를 안 준다). 무인증 200. 미러의 ibm 287종과 "
+            "**287/287 조인**되고 cpu·ram이 287건 전부 일치해 교차 확인이 된다.\n"
+            "**버전이 없어 고정 불가**이고 **재배포 허가 문구도 찾지 못했다** — "
+            "Azure Retail과 같은 취급으로 산출물을 `data/`에 커밋하지 않는다.\n"
+            "페이지네이션 함정: `limit`은 무시되고 `_limit`/`_offset`을 써야 한다 — "
+            "첫 페이지만 보면 커버리지가 14%로 보인다.\n"
+            "**`freqency`(원본 오타)는 310건 전부 2000이라 담지 않는다** — 담으면 모든 "
+            "IBM 스펙에 '2.0GHz'라는 확신에 찬 오답이 된다. `status`·`vcpu_architecture`·"
+            "`os_architecture`도 값이 하나뿐이라 뺐다."
+        ),
+    ),
     "azure-retail-prices": Source(
         key="azure-retail-prices",
         url="https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview",

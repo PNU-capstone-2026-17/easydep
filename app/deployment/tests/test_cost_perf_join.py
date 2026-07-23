@@ -103,6 +103,31 @@ def perf_built(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def perf_partial(tmp_path, monkeypatch):
+    """aws(신호 있음) + ibm(신호 없음)이 섞인 산출물.
+
+    IBM 카탈로그엔 버스트 여부도 세대 표시도 없다. 레코드는 있으니 "미추적"도
+    "레코드 없음"도 아니지만, **판정은 못 한다** — 그 세 번째 경우를 고정한다.
+    """
+    records = [
+        {"id": "aws+us-east-1+c5.large", "provider": "aws", "specName": "c5.large",
+         "sustainedCpu": {"value": True, "note": None,
+                          "evidence": "aws-burstable-field", "basis": "stated"},
+         "currentGeneration": True},
+        {"id": "ibm+us-south+bx2-2x8", "provider": "ibm", "specName": "bx2-2x8",
+         "networkBandwidthMbps": 4000, "vcpuTenancy": "dedicated"},
+    ]
+    (tmp_path / "tumblebug-perf.json").write_text(
+        json.dumps({"_note": "테스트", "specs": records}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
+    perf_dataset.clear_caches()
+    yield
+    perf_dataset.clear_caches()
+
+
+@pytest.fixture()
 def perf_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
     perf_dataset.clear_caches()
@@ -173,6 +198,30 @@ def test_footer_explains_silence_when_built(perf_built) -> None:
 
     footer = _perf_footer([{"provider": "aws", "specName": "c5.large"}])
     assert footer is not None and "확인됨" in footer
+
+
+def test_footer_does_not_call_partial_candidates_confirmed(perf_partial) -> None:
+    """**IBM을 붙이며 생긴 구멍.** 레코드는 있는데 버스트·세대 신호가 없으면
+    `_warning_for`가 아무것도 못 찾는다. 그걸 `ok`와 같이 다루면 꼬리말이
+    "경고가 없는 후보는 성능 확인됨"이라고 **거짓말**한다.
+    """
+    from nim_agent.cost_tools import _perf_footer
+
+    mixed = _perf_footer([
+        {"provider": "aws", "specName": "c5.large"},
+        {"provider": "ibm", "specName": "bx2-2x8"},
+    ])
+    assert mixed is not None and "확인한 것이 아닙니다" in mixed
+
+
+def test_footer_speaks_when_every_candidate_is_partial(perf_partial) -> None:
+    """후보가 **전부** partial이면 두 갈래에 안 걸려 꼬리말이 통째로 사라졌다 —
+    그러면 다시 침묵이 안전 신호로 읽힌다(결함 C4가 되돌아오는 자리).
+    """
+    from nim_agent.cost_tools import _perf_footer
+
+    footer = _perf_footer([{"provider": "ibm", "specName": "bx2-2x8"}])
+    assert footer is not None and "확인하지 못했습니다" in footer
 
 
 # --- 3. 전 구간: 번들 모드에서 실제로 경고가 붙는가 (C3의 최종 형태) ---

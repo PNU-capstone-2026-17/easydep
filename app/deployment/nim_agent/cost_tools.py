@@ -76,8 +76,25 @@ def _perf_footer(specs: list[dict]) -> str | None:
             "성능 지식베이스가 없어 성능 함정(버스트·구세대)을 확인하지 못했습니다 "
             "— python -m perfkb build"
         )
-    if any(n.status == perf_api.NOTE_OK for n in notes):
+    # **"주석이 없는 후보"라고 뭉뚱그리면 안 된다.** IBM처럼 레코드는 있는데
+    # 버스트·세대 신호가 없는 프로바이더가 섞이면 그 후보도 "확인됨"으로 읽힌다 —
+    # 우리가 확인한 적 없는 것을 확인했다고 말하는 셈이다.
+    partial = any(n.status == perf_api.NOTE_PARTIAL for n in notes)
+    confirmed = any(n.status == perf_api.NOTE_OK for n in notes)
+    if confirmed and partial:
+        return (
+            "⚠ 표시가 없고 · 표시도 없는 후보만 성능 확인됨(상시 CPU 보장·최신 세대). "
+            "· 가 붙은 것은 확인한 것이 아닙니다."
+        )
+    if confirmed:
         return "주석이 없는 후보는 성능 확인됨(상시 CPU 보장·최신 세대)."
+    if partial:
+        # 후보가 **전부** partial이면 위 두 갈래에 안 걸려 꼬리말이 통째로 사라진다.
+        # 그러면 다시 침묵이 안전 신호로 읽힌다 — 결함 C4가 되돌아오는 자리다.
+        return (
+            "이번 후보들은 버스트·세대를 판정할 신호가 원본에 없어 "
+            "**성능을 확인하지 못했습니다.** 경고가 없는 것이 이상 없다는 뜻이 아닙니다."
+        )
     return None
 
 _PLAN_REQUIRED = (

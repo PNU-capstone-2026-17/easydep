@@ -24,6 +24,13 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 DEFAULT_OUTPUT_DIR = Path("output")
 BUILT_FILENAME = "tumblebug-perf.json"
 
+#: 소스마다 파일을 따로 두고 **읽을 때 합친다**(capacitykb·bundlekb와 같은 방식).
+#: 소스별 핀·라이선스가 다르므로 한 파일에 섞으면 어느 부분이 언제 것인지 알 수 없다.
+#:
+#: `ibm-perf.json`은 **재배포 허가를 확인하지 못해 `data/`에 커밋하지 않는다** —
+#: 없는 것이 기본이고, 없다고 나머지가 못 도는 일은 없어야 한다.
+EXTRA_FILENAMES = ("ibm-perf.json",)
+
 
 @lru_cache(maxsize=1)
 def _schema() -> dict:
@@ -44,9 +51,30 @@ def _load_result(output_dir: str) -> tuple[dict | None, str | None]:
     정보이므로, 없으면 없는 대로 추천은 살아야 한다.
     """
     found = artifact.resolve(output_dir, BUILT_FILENAME)
-    if found is None:
-        return read_dataset(Path(output_dir) / BUILT_FILENAME, _schema())
-    return read_dataset(found, _schema())
+    data, error = read_dataset(
+        found if found is not None else Path(output_dir) / BUILT_FILENAME, _schema()
+    )
+    if data is None:
+        return data, error
+
+    # 보조 산출물은 **있으면 더하고 없으면 조용히 넘어간다.** 다만 깨져 있으면
+    # 조용히 넘어가지 않는다 — "커버리지가 왜 좁아졌지?"를 미궁으로 만든다.
+    merged = dict(data)
+    specs = list(data["specs"])
+    notes = [data["_note"]]
+    for name in EXTRA_FILENAMES:
+        extra_path = artifact.resolve(output_dir, name)
+        if extra_path is None:
+            continue
+        extra, extra_error = read_dataset(extra_path, _schema())
+        if extra is None:
+            error = error or extra_error
+            continue
+        specs.extend(extra["specs"])
+        notes.append(extra["_note"])
+    merged["specs"] = specs
+    merged["_note"] = "\n".join(notes)
+    return merged, error
 
 
 def _load_cached(output_dir: str) -> dict | None:
