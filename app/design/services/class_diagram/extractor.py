@@ -124,10 +124,11 @@ def load_scenario_from_json(file_path: str) -> str:
     return json.dumps(scenario_data, indent=2, ensure_ascii=False)
 
 
-def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
-    if not scenario_text:
-        return {}
+def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
+    """BCE 구조화 완성. 추출과 피드백 수정이 공유한다.
 
+    LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
+    """
     load_dotenv()
 
     client = OpenAI(
@@ -137,23 +138,25 @@ def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
     )
 
-    model = os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b")
+    response = client.chat.completions.parse(
+        model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+        messages=messages,
+        temperature=0,
+        seed=42,
+        response_format=BCEExtractionResult,
+    )
+    return response.choices[0].message.parsed.model_dump()
+
+
+def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
+    if not scenario_text:
+        return {}
+
     messages = [
-        {
-            "role": "system",
-            "content": BCE_CLASS_EXTRACTION_SYSTEM_PROMPT
-        },
+        {"role": "system", "content": BCE_CLASS_EXTRACTION_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": f"Requirement Specification Scenario:\n{scenario_text}",
         },
     ]
-    response = client.chat.completions.parse(
-            model=model,
-            messages=messages,
-            temperature=0,
-            seed=42,
-            response_format=BCEExtractionResult,
-        )
-
-    return response.choices[0].message.parsed.model_dump()
+    return run_bce_parse(messages)

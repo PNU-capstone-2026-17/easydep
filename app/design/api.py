@@ -26,7 +26,10 @@ from app.db.models import (
     ORIGIN_GENERATED,
     ORIGIN_IMPORTED,
 )
-from app.design.graphs.class_diagram_graph import class_diagram_graph
+from app.design.graphs.class_diagram_graph import (
+    class_diagram_feedback_graph,
+    class_diagram_graph,
+)
 from app.design.nodes.artifact_generation import (
     generate_api_spec,
     generate_deployment_diagram,
@@ -34,6 +37,7 @@ from app.design.nodes.artifact_generation import (
     generate_sequence_diagram,
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.revision import revise_json_with_llm, revise_puml_with_llm
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
@@ -223,6 +227,8 @@ def apply_stage_feedback(
     try:
         if stage == "api_spec":
             updated = auto_fix_api_spec(state, request.feedback)
+        elif stage == "class_diagram":
+            updated = revise_class_diagram_once(state, request.feedback)
         else:
             updated = auto_fix_puml_stage(stage, state, request.feedback)
 
@@ -260,11 +266,21 @@ def import_stage_content(
     require_app(app_id)
 
     config = STAGE_ARTIFACTS[stage]
-    state: ArchitectureState = {config["state_key"]: request.content}
-    if config["valid_key"] and stage in PUML_FIELDS:
-        validation = validate_puml_artifact(request.content)
+    source_key = config.get("source_key")
+    if source_key:
+        # class_diagram is stored as its BCE model; the diagram is derived from it,
+        # so an imported class diagram is supplied as BCE JSON, not PlantUML.
+        puml = generate_plantuml_from_bce_json(request.content)
+        state: ArchitectureState = {source_key: request.content, config["state_key"]: puml}
+        validation = validate_puml_artifact(puml)
         state[config["valid_key"]] = validation["syntax_valid"]
         state[config["errors_key"]] = validation["syntax_errors"]
+    else:
+        state = {config["state_key"]: request.content}
+        if config["valid_key"] and stage in PUML_FIELDS:
+            validation = validate_puml_artifact(request.content)
+            state[config["valid_key"]] = validation["syntax_valid"]
+            state[config["errors_key"]] = validation["syntax_errors"]
 
     version_id = artifact_repository.save_stage(
         app_id,
@@ -365,8 +381,24 @@ def load_response(app_id: str) -> dict[str, Any]:
 
 
 def generate_class_diagram_once(state: ArchitectureState) -> ArchitectureState:
-    """Extraction, conversion, and the syntax repair loop, run as a LangGraph."""
+    """Extract BCE elements, convert to PlantUML, and validate, run as a LangGraph."""
     result = dict(class_diagram_graph.invoke(state))
+    result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
+    return result
+
+
+def revise_class_diagram_once(
+    state: ArchitectureState,
+    feedback: str,
+) -> ArchitectureState:
+    """Apply feedback to the BCE model, then re-render the diagram deterministically.
+
+    Feedback edits the stored source of truth (extracted_bce_classes), never the
+    PlantUML text, so the model and the diagram cannot drift apart.
+    """
+    graph_input: ArchitectureState = dict(state)
+    graph_input["class_diagram_feedback"] = feedback
+    result = dict(class_diagram_feedback_graph.invoke(graph_input))
     result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
     return result
 
