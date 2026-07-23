@@ -36,7 +36,7 @@ app/requirements/  LangGraph 요구사항 분석 에이전트
       step3_specifications.py  3단계: 명세 생성 (스텁)
       step4_diagram.py         4단계: 다이어그램 (스텁)
 materials/      BERT 모델 · PURE 데이터셋 · 유스케이스 PDF (자료)
-                └ 가중치(model.safetensors)는 저장소 제외 — Releases에서 받는다(§0-1)
+                └ 가중치는 45MiB 조각으로 쪼개 저장소에 포함 — 로딩 시 재조립(§0-1)
 k8s/            kustomize (base / overlays/local / overlays/aks)
 Dockerfile
 ```
@@ -60,27 +60,74 @@ cp .env.example .env
 # .env를 열어 API_KEY, BASE_URL, MODEL 값을 채운다.
 ```
 
-## 0-1. BERT 모델 가중치 내려받기
-파인튜닝 가중치 `model.safetensors`(417MB)는 GitHub 파일당 100MB 제한 때문에 저장소에 포함돼 있지 않고 [Releases](https://github.com/KimJW02/ai-agent-with-langgraph/releases/tag/bert-v1)로 배포한다.
-같은 디렉터리의 `config.json`·`tokenizer.json`·`tokenizer_config.json`은 저장소에 들어 있으므로 가중치 파일만 받아 넣으면 된다.
+## 0-1. BERT 모델 가중치
+파인튜닝 가중치는 **저장소에 들어 있다.** 따로 받을 것이 없고 `git clone` 하면 끝난다.
+
+원본 `model.safetensors`는 417MiB로 GitHub 파일당 100MiB 한도를 넘어 그대로는 커밋할 수
+없다. 그래서 45MiB 이하 조각으로 쪼개 커밋해 두고, 로딩 시점에 되살린다.
+
+### 어떻게 쪼갰나
+한 번에 자르지 않고 두 단계로 나눈다.
+
+1. **텐서 단위 샤딩** — HuggingFace 네이티브 포맷(`model-0000N-of-00011.safetensors` +
+   `model.safetensors.index.json`)으로 나눈다. transformers가 인덱스를 보고 샤드를
+   **그대로 읽기 때문에 합칠 필요가 없고**, 샤드별로 mmap 되어 로딩 메모리도 덜 쓴다.
+2. **바이트 단위 분할** — 텐서 하나가 한도보다 크면 샤딩으로는 더 못 줄인다. BERT-base의
+   `bert.embeddings.word_embeddings.weight`(30522×768 f32 = 89.4MiB)가 여기 해당한다.
+   이 샤드만 `.part000`/`.part001`로 잘라 두고 로딩 시 이어 붙인다.
+
+전체를 100MiB씩 잘라 매번 417MiB를 통째로 다시 쓰는 방식보다, **한도를 넘는 샤드 하나만**
+(89MiB) 이어 붙이면 되므로 재조립 쓰기량이 1/5 이하다. 나머지 78%는 복사조차 하지 않고
+하드링크로 연결한다.
+
+```
+materials/BERT_FR_NFR_Classifier/bert_model/
+  config.json  tokenizer.json  tokenizer_config.json       ← 저장소에 그대로
+  weights/                                                 ← 저장소 (총 417MiB, 14개 파일)
+    manifest.json                        재조립 명세 (파일별 크기·sha256)
+    model.safetensors.index.json         HF 샤드 인덱스 (텐서 → 샤드 매핑)
+    model-00001-of-00011.safetensors     ┐ 한도 이하 샤드 10개
+    model-00003-of-00011.safetensors     │ 최대 42.8MiB, 재조립 없이 그대로 사용
+    ...                                  ┘
+    model-00002-of-00011.safetensors.part000   ┐ 89.4MiB 샤드만 45MiB씩 분할
+    model-00002-of-00011.safetensors.part001   ┘
+```
+
+### 로딩 시 무슨 일이 일어나나
+`app/requirements/model_assets.py`의 `ensure_model_dir()`가 `classifier.py`의 지연 로딩
+직전에 호출된다.
+
+- 조각을 `.easydep/models/bert_fr_nfr/`에 되살린다. **커밋된 디렉터리는 건드리지 않는다** —
+  저장소에 들어간 것은 읽기 전용 입력, 되살린 것은 언제든 다시 만들 수 있는 산출물이다.
+  (읽기 전용 루트 파일시스템 배포에서는 `BERT_MODEL_CACHE_DIR`로 위치만 바꾸면 된다.)
+- 조각마다 `sha256`을 대조한다. Git 전송 중 손상되거나 조각이 빠지면 조용히 이상한 가중치를
+  로드하는 대신 즉시 실패한다.
+- 되살린 뒤 manifest 지문을 stamp로 남긴다. **두 번째 기동부터는 존재·크기 확인만** 하고
+  건너뛴다(측정: 최초 2.1초, 이후 17ms).
+- uvicorn 멀티 워커가 동시에 기동해도 잠금으로 한 번만 만든다. 파일은 임시 이름으로 쓴 뒤
+  `os.replace`로 바꿔 넣어 중간 상태가 노출되지 않는다.
+
+**Docker 이미지는 빌드 단계(`weights` stage)에서 미리 되살려 두므로 파드 기동에 재조립
+비용이 아예 없다.** 최종 이미지에는 되살린 결과만 들어가 조각과 완성본이 중복되지 않는다
+(이미지 증가분은 예전과 같은 약 417MB).
+
+무결성 검사는 테스트에도 들어 있다: `python -m pytest tests/test_model_assets.py`
+
+### 가중치를 다시 만들 때
+모델을 재학습해 새 `model.safetensors`가 생기면 조각을 다시 만든다.
 
 ```bash
-# gh CLI 사용
-gh release download bert-v1 -p model.safetensors \
-  -D materials/BERT_FR_NFR_Classifier/bert_model
-
-# 또는 curl
-curl -L -o materials/BERT_FR_NFR_Classifier/bert_model/model.safetensors \
-  https://github.com/KimJW02/ai-agent-with-langgraph/releases/download/bert-v1/model.safetensors
+python scripts/shard_bert_model.py <새 model.safetensors 경로>
+python scripts/shard_bert_model.py --verify <같은 경로>   # 원본과 비트 단위 대조
 ```
 
-배치 후 경로가 아래와 같아야 한다.
-```
-materials/BERT_FR_NFR_Classifier/bert_model/model.safetensors
-```
+`--verify`는 재조립한 모델과 원본을 둘 다 로드해 state_dict가 비트 단위로 같은지, 같은
+입력에 대한 logits 차이가 0인지 확인한다. 텐서 바이트를 그대로 복사할 뿐 torch로 다시 저장하지
+않으므로 값이 바뀔 여지가 없다.
 
-> 이 파일이 없으면 BERT 검증 분류기 로딩에서 실패한다. LLM 분류만 쓸 거라면 받지 않아도 되며,
-> CLI는 `--no-bert`, 서버/배포는 `ENABLE_BERT_VERIFY=false`로 우회한다.
+> 예전처럼 온전한 `model.safetensors`를 모델 디렉터리에 두면 재조립을 건너뛰고 그 파일을
+> 그대로 쓴다. LLM 분류만 쓸 거라면 CLI는 `--no-bert`, 서버/배포는
+> `ENABLE_BERT_VERIFY=false`로 BERT 로드 자체를 건너뛴다.
 
 ## Phase A — 로컬 파이썬 실행
 ```bash
@@ -178,6 +225,6 @@ kubectl get svc langgraph-chatbot -w
 ## 참고
 - `.env`는 커밋 금지(`.gitignore` 포함).
 - 세션(대화 이력)은 인메모리(`MemorySaver`)라 파드 재시작 시 초기화됨 — 데모용. 멀티 레플리카 배포 시 세션 불일치 가능하므로 단일 레플리카 유지.
-- **BERT 검증**은 `torch`+`transformers`+417MB 모델을 사용해 이미지가 커진다. 경량/메모리 제약 배포에서는 `ENABLE_BERT_VERIFY=false`(+ Dockerfile의 모델 COPY 제거)로 LLM 분류만 사용 가능.
+- **BERT 검증**은 `torch`+`transformers`+417MB 모델을 사용해 이미지가 커진다. 경량/메모리 제약 배포에서는 `ENABLE_BERT_VERIFY=false`(+ Dockerfile 마지막의 `COPY --from=weights` 제거)로 LLM 분류만 사용 가능. 가중치는 빌드 단계에서 조각으로부터 되살리므로(§0-1) 이미지 크기는 조각 도입 전과 같다.
 - 구조화 출력은 `with_structured_output(method="json_schema")`(= OpenAI 네이티브 `chat.completions.parse` 경로를 langchain이 감싼 것)를 쓰고, gpt-oss가 간헐적으로 빈 `parsed`를 반환하면 자동으로 JSON 모드 폴백(`app/requirements/agent/llm.py::invoke_structured`).
 - 다음 단계(2~4단계) 확장은 `app/requirements/agent/steps/step2~4`의 스텁 노드를 채우고 `app/requirements/agent/graph.py`에서 배선만 늘리면 되며, 서빙 코드는 그대로 재사용.

@@ -23,8 +23,13 @@ artifacts/
 /app/implementation/tools/openapi-generator/*.jar
 **/.gradle/
 
-# 모델 가중치 (GitHub 100MB 제한 초과) — Releases에 별도 배포
+# 모델 가중치. 원본 model.safetensors(417MiB)는 GitHub 파일당 100MiB 한도를 넘어
+# 커밋할 수 없다.
 *.safetensors
+# 단, 한도 아래(45MiB)로 쪼개 둔 BERT 샤드는 저장소에 포함한다. 되살린 결과는
+# .easydep/models/ 아래에 만들어지므로 위 /.easydep/ 규칙에 걸려 커밋되지 않는다.
+# (scripts/shard_bert_model.py, app/requirements/model_assets.py 참고)
+!materials/BERT_FR_NFR_Classifier/bert_model/weights/*.safetensors
 
 # 저작권 있는 참고 도서. 프롬프트 근거 자료로 로컬에서만 참고하고 배포하지 않는다.
 # (Alistair Cockburn, Writing Effective Use Cases, Addison-Wesley 2001)

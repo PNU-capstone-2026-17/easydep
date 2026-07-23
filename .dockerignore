@@ -9,3 +9,7 @@ venv/
 .vscode/
 k8s/
 README.md
+# 로컬에서 되살린 BERT 가중치(417MB)와 실행 산출물. 이미지 빌드는 weights stage에서
+# 조각으로부터 직접 되살리므로 build context로 보낼 필요가 없다.
+.easydep/
+artifacts/

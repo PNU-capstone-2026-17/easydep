@@ -9,12 +9,16 @@ materials/BERT_FR_NFR_Classifier 노트북에서 파인튜닝한 BertForSequence
 무거운 의존성(torch/transformers)과 417MB 가중치를 쓰므로:
   - 모델은 최초 호출 시 1회 지연 로딩(lazy) 후 프로세스 전역 재사용.
   - settings.enable_bert_verify=False 이면 로드 자체를 건너뛴다.
+
+가중치는 GitHub 파일 한도 때문에 저장소에 쪼개 들어 있다. 로드 직전
+`model_assets.ensure_model_dir`로 되살린 디렉터리를 얻어 쓴다(자세한 내용은 그 모듈).
 """
 from __future__ import annotations
 
 import threading
 
 from app.requirements.config import settings
+from app.requirements.model_assets import ensure_model_dir
 
 # 0 = NFR, 1 = FR  (학습 시 {'NFR': 0, 'FR': 1} 매핑과 동일)
 _ID2LABEL = {0: "NFR", 1: "FR"}
@@ -38,10 +42,10 @@ def _load_bundle():
             import torch
             from transformers import BertForSequenceClassification, BertTokenizer
 
-            tokenizer = BertTokenizer.from_pretrained(settings.bert_model_path)
-            model = BertForSequenceClassification.from_pretrained(
-                settings.bert_model_path
-            )
+            # 쪼개 커밋한 샤드를 로드 가능한 디렉터리로 되살린다(이미 있으면 즉시 반환).
+            model_dir = ensure_model_dir(settings.bert_model_path)
+            tokenizer = BertTokenizer.from_pretrained(model_dir)
+            model = BertForSequenceClassification.from_pretrained(model_dir)
             model.eval()
             _bundle = (tokenizer, model, torch)
         except Exception as exc:  # noqa: BLE001 - 검증은 옵션 기능이라 실패해도 앱은 계속

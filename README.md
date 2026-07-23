@@ -115,7 +115,12 @@ docker build -t easydep .
 ```
 
 MySQL은 서버 기동 시 `init_db()`가 데이터베이스와 테이블을 생성한다. DB 접속 환경변수와
-BERT/PlantUML 준비는 [요구사항 에이전트 문서](docs/requirements-agent.md)를 참고한다.
+PlantUML 준비는 [요구사항 에이전트 문서](docs/requirements-agent.md)를 참고한다.
+
+BERT FR/NFR 분류기 가중치(417MiB)는 GitHub 파일당 100MiB 한도 때문에 45MiB 조각으로 쪼개
+저장소에 들어 있다. 따로 받을 것은 없고, 첫 기동 때 `.easydep/models/`에 한 번 재조립된다
+(약 2초, 이후 기동은 건너뜀). 자세한 방식은
+[요구사항 에이전트 문서 §0-1](docs/requirements-agent.md#0-1-bert-모델-가중치)에 있다.
 
 ```bash
 python -m pytest

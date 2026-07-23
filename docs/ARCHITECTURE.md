@@ -230,6 +230,7 @@ app/
   schemas.py         # 모든 구조화 출력 pydantic 스키마
   prompts.py         # 프롬프트 빌더(Cockburn 그라운딩) + 피드백/검증 프롬프트
   classifier.py      # 파인튜닝 BERT FR/NFR 로더·추론
+  model_assets.py    # 저장소에 쪼개 넣은 BERT 가중치 재조립(로드 직전 1회)
   runner.py          # 배치 러너(run_pipeline/persist_run/load_state)
   run_pipeline.py    # 러너 CLI
   feedback.py        # 완료본 피드백(의도분류+cascade)
@@ -247,8 +248,9 @@ app/
       feedback_gates.py      # 각 스텝 말미 interrupt 게이트
 inputs/              # 입력 데이터셋(*.json)
 artifacts/           # 실행별 산출물(.gitignore)
-scripts/             # 데이터셋 변환 등
+scripts/             # 데이터셋 변환 · BERT 가중치 분할(shard_bert_model.py) 등
 materials/           # BERT 모델 · Cockburn PDF · PURE
+                     # 가중치는 GitHub 한도 때문에 bert_model/weights/ 에 45MiB 조각으로
                      # (조사·근거 문서 docs/research/ 는 저장소 밖 report/easydep-research/ 로 옮김)
 tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통합
 ```
