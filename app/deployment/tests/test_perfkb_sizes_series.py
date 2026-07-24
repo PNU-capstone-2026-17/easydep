@@ -61,6 +61,46 @@ def test_azure_enrich_fills_only_empty_fields() -> None:
     assert "azureSizesEvidence" not in specs[2]
 
 
+# --- azure 구세대 손 표 ---------------------------------------------------------
+
+def test_generation_flags_false_only_and_never_current_sizes() -> None:
+    """오지정이 곧 오경보인 자리다 — 현행 세대는 절대 걸리면 안 되고, 목록 부재를
+    최신 주장으로 승격하지 않는다(False만 표시, 미기재는 None 유지)."""
+    import re
+
+    from perfkb.parsers.azure_sizes import _GENERATION_TABLE
+
+    patterns = [re.compile(p) for pats in _GENERATION_TABLE.values() for p in pats]
+
+    def hit(name: str) -> bool:
+        return any(p.match(name) for p in patterns)
+
+    # 알려진 구세대·은퇴 (문서 라벨의 대표들)
+    for old in ("standard_d2_v2", "standard_ds3", "standard_b2ms", "standard_f4s",
+                "standard_e8s_v3", "standard_nc6s_v3", "standard_m192is_v2"):
+        assert hit(old), old
+    # 현행 세대 — 접미(_v5·_v6·bsv2류)로 구조적으로 배제돼야 한다
+    for cur in ("standard_d2s_v5", "standard_e4s_v5", "standard_b2ts_v2",
+                "standard_d2als_v6", "standard_nc40ads_h100_v5", "standard_l8s_v3"):
+        assert not hit(cur), cur
+
+
+def test_generation_enrich_marks_false_without_claiming_true() -> None:
+    import re
+
+    from perfkb.parsers.azure_sizes import enrich
+
+    patterns = [re.compile(r"^standard_d\d+_v2$")]
+    specs = [
+        {"provider": "azure", "specName": "Standard_D2_v2"},
+        {"provider": "azure", "specName": "Standard_D2s_v5"},
+    ]
+    report = enrich(specs, {}, patterns)
+    assert report.generation_flagged == 1
+    assert specs[0]["currentGeneration"] is False
+    assert "currentGeneration" not in specs[1]  # 부재는 최신 주장이 아니다
+
+
 # --- gcp 시리즈 SQL 파싱 --------------------------------------------------------
 
 _SQL = """

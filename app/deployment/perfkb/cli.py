@@ -151,12 +151,15 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
         try:
             sizes_table, size_paths = azure_sizes.fetch(refresh=args.refresh)
+            generation, gen_paths = azure_sizes.fetch_generation(refresh=args.refresh)
         except Exception as exc:  # noqa: BLE001 — 부가 정보가 본체를 막지 않는다
             print(f"\n⚠ azure 크기 표를 받지 못해 건너뜁니다: {exc}", file=sys.stderr)
         else:
-            report = azure_sizes.enrich(dataset["specs"], sizes_table)
+            report = azure_sizes.enrich(dataset["specs"], sizes_table, generation)
             print(f"\n{azure_sizes.format_report(report)}")
-            sources.append(describe_source_set(size_paths, "azure-compute-docs"))
+            sources.append(
+                describe_source_set(size_paths + gen_paths, "azure-compute-docs")
+            )
 
     if not args.no_gcp_series:
         from kbcommon.fetch import describe_source_set

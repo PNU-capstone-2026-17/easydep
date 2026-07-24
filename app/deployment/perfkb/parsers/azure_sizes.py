@@ -42,12 +42,105 @@ _SUP = re.compile(r"<sup>.*?</sup>")
 _SIZE_NAME = re.compile(r"^Standard_[A-Za-z0-9_-]+$")
 
 
+#: 구세대·은퇴 목록 문서. 행이 **산문 시리즈 라벨**("Dv1 and Dsv1-series")이라
+#: 구체 크기로의 매핑은 아래 손 표가 한다 — 오지정하면 구세대 **오경보**가 되는
+#: 자리라, 문서 라벨 집합과 손 표를 상호 대조해 낡음을 빌드가 잡는다(svcmap
+#: 바인딩 검증 선례).
+_LIFECYCLE_FILES = (
+    "virtual-machines/sizes/lifecycle/previous-gen-sizes-list.md",
+    "virtual-machines/sizes/lifecycle/retired-sizes-list.md",
+)
+
+#: 라벨 → 크기 이름 정규식(소문자). **문서의 라벨 전수와 1:1이어야 빌드가 돈다.**
+#: 패턴은 전부 앵커드 — 현행 세대(_v5·bsv2류)는 접미로 구조적으로 배제된다.
+#: 확인처: 각 라벨이 곧 확인처다(위 두 문서의 해당 행).
+_GENERATION_TABLE: dict[str, tuple[str, ...]] = {
+    # --- previous-gen-sizes-list.md ---
+    "B-series (V1)": (r"^standard_b\d+l?m?s?$",),          # B1ls·B1s·B2ms… (bsv2류는 _v2 접미라 제외)
+    "Standard D-series": (r"^standard_d\d+$",),
+    "Preview DC-series": (r"^standard_dc\d+s$",),           # DC2s·DC4s (dcsv2는 _v2)
+    "DS-series": (r"^standard_ds\d+$",),
+    "Dv1 and Dsv1-series": (r"^standard_ds?\d+$",),         # v1은 무접미 — D/DS 표와 같은 크기들
+    "Dv2 and Dsv2-series": (r"^standard_ds?\d+_v2(_promo)?$",),
+    "Dv3 and Dsv3-series": (r"^standard_d\d+s?_v3$",),
+    "Av2 and Amv2-series": (r"^standard_a\d+m?_v2$",),
+    "F-series": (r"^standard_f\d+$",),
+    "Fs-series": (r"^standard_f\d+s$",),
+    "Fsv2-series": (r"^standard_f\d+s_v2$",),
+    "Ev3 and Esv3-series": (r"^standard_e\d+i?s?_v3$",),
+    "Ev4 and Esv4-series": (r"^standard_e\d+s?_v4$",),
+    "Eav4 and Easv4-series": (r"^standard_e\d+as?_v4$",),
+    "Edv4 and Edsv4-series": (r"^standard_e\d+ds?_v4$",),
+    "GS-series": (r"^standard_gs\d+$",),
+    "G-series": (r"^standard_g\d+$",),
+    "Memory-optimized D-series": (r"^standard_d1[1-4]$",),   # D 패턴의 부분집합 — 겹침 무해
+    "Memory-optimized DS-series": (r"^standard_ds1[1-4]$",),
+    "Lsv1-series": (r"^standard_l\d+s$",),
+    "Lsv2-series": (r"^standard_l\d+s_v2$",),
+    # --- retired-sizes-list.md (구세대 목록과 겹치는 라벨은 같은 크기를 가리킨다) ---
+    "D-series": (r"^standard_d\d+$",),
+    "Ds-series": (r"^standard_ds\d+$",),
+    "Dv2-series": (r"^standard_d\d+_v2(_promo)?$",),
+    "Dsv2-series": (r"^standard_ds\d+_v2(_promo)?$",),
+    "Av2/Amv2-series": (r"^standard_a\d+m?_v2$",),
+    "Gs-series": (r"^standard_gs\d+$",),
+    "Standard_M192idms_v2": (r"^standard_m192idms_v2$",),
+    "Standard_M192ids_v2": (r"^standard_m192ids_v2$",),
+    "Standard_M192ims_v2": (r"^standard_m192ims_v2$",),
+    "Standard_M192is_v2": (r"^standard_m192is_v2$",),
+    "Ls-series": (r"^standard_l\d+s$",),
+    "NCv3-NC24rs Series": (r"^standard_nc24rs_v3$",),
+    "NCv3-Series": (r"^standard_nc\d+r?s_v3$",),
+    "NVv3-series": (r"^standard_nv\d+s_v3$",),
+    "NVv4-series": (r"^standard_nv\d+as_v4$",),
+    "NP-series": (r"^standard_np\d+s?$",),
+}
+
+_SERIES_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|")
+
+
+def _doc_labels(markdown: str) -> set[str]:
+    """목록 문서의 첫 칸(시리즈 라벨) 전수 — 헤더·구분선 제외."""
+    labels: set[str] = set()
+    for line in markdown.splitlines():
+        match = _SERIES_ROW.match(line)
+        if not match:
+            continue
+        label = _SUP.sub("", match.group(1)).strip()
+        if not label or label.lower() == "series name" or set(label) <= {"-", ":"}:
+            continue
+        labels.add(label)
+    return labels
+
+
+def fetch_generation(refresh: bool = False) -> tuple[list[re.Pattern], list[Path]]:
+    """구세대·은퇴 크기 패턴(검증됨). 손 표가 문서와 어긋나면 빌드가 죽는다."""
+    source = SOURCES["azure-compute-docs"]
+    found: set[str] = set()
+    fetched: list[Path] = []
+    for rel in _LIFECYCLE_FILES:
+        cache_name = f"azure-compute-docs-{rel.replace('/', '-')}"
+        path = fetch_cached(f"{source.url}/articles/{rel}", cache_name, refresh=refresh)
+        fetched.append(path)
+        found.update(_doc_labels(path.read_text(encoding="utf-8")))
+    missing = found - set(_GENERATION_TABLE)
+    stale = set(_GENERATION_TABLE) - found
+    if missing or stale:
+        raise RuntimeError(
+            "구세대 손 표가 문서와 어긋난다 — "
+            f"문서에만 있음: {sorted(missing)} / 표에만 있음: {sorted(stale)}. "
+            "오지정은 구세대 오경보가 되므로 표를 사람이 고친 뒤 빌드할 것."
+        )
+    return [re.compile(p) for pats in _GENERATION_TABLE.values() for p in pats], fetched
+
+
 class Report:
     def __init__(self) -> None:
         self.files = 0
         self.matched = 0
         self.unmatched: Counter = Counter()
         self.non_numeric = 0
+        self.generation_flagged = 0
 
 
 def _cells(line: str) -> list[str]:
@@ -130,16 +223,30 @@ def fetch(refresh: bool = False) -> tuple[dict[str, dict], list[Path]]:
     return table, fetched
 
 
-def enrich(specs: list[dict], table: dict[str, dict]) -> Report:
+def enrich(specs: list[dict], table: dict[str, dict],
+           generation: list[re.Pattern] = ()) -> Report:
     """perfkb azure 레코드에 크기 표 사실을 덧붙인다(제자리 수정).
 
     **빈 칸만 채운다** — 이미 값이 있으면(다른 소스) 덮지 않는다.
+    구세대 판정은 **False만 표시한다**: 목록에 있으면 문서가 그렇게 말한 것
+    (stated)이고, 없다고 최신이라 주장하지 않는다 — 부재를 True로 읽는 것이
+    침묵 오독이다(perfkb의 aws-non-burstable 계보).
     """
     report = Report()
     by_name: dict[str, list[dict]] = {}
     for spec in specs:
         if spec.get("provider") == "azure" and spec.get("specName"):
             by_name.setdefault(spec["specName"].lower(), []).append(spec)
+
+    if generation:
+        for name, targets in by_name.items():
+            if not any(p.match(name) for p in generation):
+                continue
+            for spec in targets:
+                if spec.get("currentGeneration") is None:
+                    spec["currentGeneration"] = False
+                    spec["azureSizesEvidence"] = EVIDENCE
+            report.generation_flagged += 1
 
     for name, fields in table.items():
         targets = by_name.get(name)
@@ -166,6 +273,11 @@ def format_report(report: Report) -> str:
         f"azure 크기 표: 문서의 크기 {report.files:,}종 중 미러와 매칭 "
         f"{report.matched:,}종에 NIC·대역폭을 덧붙임"
     ]
+    if report.generation_flagged:
+        lines.append(
+            f"  구세대·은퇴 목록 매칭 {report.generation_flagged:,}종 → "
+            "currentGeneration=False (미기재는 최신 주장 없이 모름 유지)"
+        )
     if report.unmatched:
         total = sum(report.unmatched.values())
         lines.append(
