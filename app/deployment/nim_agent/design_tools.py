@@ -274,11 +274,14 @@ def compose(design: dict) -> DeploymentPlan:
                     uploads.add(openapi_artifact["componentId"])
     owners: dict[str, list[str]] = {}
     engine_of: dict[str, str] = {}
+    archetype_hint_of: dict[str, str] = {}
     for artifact in _artifacts(design, "er"):
         for entity in artifact["entities"]:
             owners.setdefault(entity["ownerComponentId"], []).append(entity["name"])
             if artifact.get("engineHint"):
                 engine_of[entity["ownerComponentId"]] = artifact["engineHint"]
+            if artifact.get("archetypeHint"):
+                archetype_hint_of[entity["ownerComponentId"]] = artifact["archetypeHint"]
 
     exposed: set[str] = set()
     async_targets: set[str] = set()
@@ -410,7 +413,8 @@ def compose(design: dict) -> DeploymentPlan:
 
     # --- 3. 관리형 서비스 -------------------------------------------------
     def add_managed(node_id: str, label: str, concept: str, why: Note,
-                    extra: tuple[Note, ...] = ()) -> None:
+                    extra: tuple[Note, ...] = (),
+                    origin: str = ORIGIN_INFERRED) -> None:
         types = _pick_flavor(_svcmap_types(concept, provider), engine_of.get(node_id))
         notes = [why, *extra]
         if not provider:
@@ -434,29 +438,44 @@ def compose(design: dict) -> DeploymentPlan:
                 + (f" (provider={provider})" if provider else "")
             )
         plan.nodes.append(PlanNode(
-            id=node_id, label=label, role="managed", origin=ORIGIN_INFERRED,
+            id=node_id, label=label, role="managed", origin=origin,
             archetype=f"app::{concept}", type_id=chosen, candidates=candidates,
             notes=tuple(notes),
         ))
 
     for cid, entities in sorted(owners.items()):
         engine = engine_of.get(cid)
-        concept = _ENGINE_CONCEPT.get((engine or "").lower(), "relationalDatabase")
+        hint_concept = archetype_hint_of.get(cid)
+        node_origin = ORIGIN_INFERRED
         extra: tuple[Note, ...] = ()
-        if engine and (engine or "").lower() not in _ENGINE_CONCEPT:
-            plan.unresolved.append(
-                f"{cid}: engineHint '{engine}'를 아는 개념으로 옮기지 못해 "
-                "관계형으로 가정했습니다"
-            )
-            # 분류가 애매한 바로 그 자리에만 산문 자문을 단다 — 지침이지 사실이
-            # 아니라서 분류·미결 판정은 그대로 둔다.
-            if advisory := _pattern_advisory(engine):
-                extra = (advisory,)
+        if hint_concept:
+            # **설계자가 아키타입을 직접 갈랐다** — deployHint와 같은 등급이다.
+            # kafka처럼 우리가 몰면 안 되는 모호 엔진의 해소 경로이고, 주장이라
+            # origin=designer로 hedge된다. 미결·자문은 달지 않는다(해소됐다).
+            concept = hint_concept
+            node_origin = ORIGIN_DESIGNER
+            extra = (Note(
+                f"설계자가 {hint_concept}로 지정 (archetypeHint)"
+                + (f" — engineHint '{engine}'의 축을 설계자가 가른 것" if engine else ""),
+                ORIGIN_DESIGNER, "archetypeHint",
+            ),)
+        else:
+            concept = _ENGINE_CONCEPT.get((engine or "").lower(), "relationalDatabase")
+            if engine and (engine or "").lower() not in _ENGINE_CONCEPT:
+                plan.unresolved.append(
+                    f"{cid}: engineHint '{engine}'를 아는 개념으로 옮기지 못해 "
+                    "관계형으로 가정했습니다"
+                )
+                # 분류가 애매한 바로 그 자리에만 산문 자문을 단다 — 지침이지 사실이
+                # 아니라서 분류·미결 판정은 그대로 둔다.
+                if advisory := _pattern_advisory(engine):
+                    extra = (advisory,)
         why = Note(
             f"엔티티 {len(entities)}개를 소유({', '.join(entities[:3])}) → 영속 저장소 필요",
             ORIGIN_INFERRED, "er",
         )
-        add_managed(f"{cid}-db", f"{components[cid]['name']} 저장소", concept, why, extra)
+        add_managed(f"{cid}-db", f"{components[cid]['name']} 저장소", concept, why,
+                    extra, origin=node_origin)
         plan.edges.append(PlanEdge(cid, f"{cid}-db", "읽기/쓰기", ORIGIN_INFERRED))
 
     if any_async:
@@ -572,6 +591,26 @@ def compose(design: dict) -> DeploymentPlan:
             "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
             ORIGIN_KB, "requirements",
         ))
+
+    # 레지던시 대조 자료 — 판정이 아니다. 리전의 원본 표시 이름을 그대로 싣고,
+    # 국가 판정은 하지 않는다(부합 판정문이 "판정 불가"를 명시한다 — verify).
+    if requirements.get("dataResidency") and provider and region:
+        from envkb.regions import name_of
+
+        display = name_of(region, provider=provider)
+        if display:
+            plan.notes.append(Note(
+                f"레지던시 요구({requirements['dataResidency']}) 대조 자료 — "
+                f"{provider} {region}의 원본 표시 이름: '{display}'. 국가 판정은 "
+                "하지 않습니다(표시 이름은 원본 표기이지 판정 소스가 아닙니다)",
+                ORIGIN_KB, "envkb",
+            ))
+        else:
+            plan.notes.append(Note(
+                f"레지던시 요구({requirements['dataResidency']}) — {provider} "
+                f"{region}의 표시 이름이 리전 데이터셋에 없어 대조 자료를 싣지 "
+                "못했습니다", ORIGIN_KB, "envkb",
+            ))
 
     # 이그레스 — 노출(트래픽이 밖으로 나가는 신호)이 있을 때만 알린다. 전부
     # 사용량형이라 곱하지 않는다 — 대표로 기본(전 세계) 첫 구간 단가만 보이고

@@ -127,6 +127,9 @@ _CONSUMERS = {
     "multiZone": "design_tools._subnet_notes · verify_against_requirements",
     "trafficPattern": "verify_against_requirements — 버스트 적합 판정(⑥-A에서 열림)",
     "stateless": "verify_against_requirements — 서버리스 적합 판정(⑥-A에서 열림)",
+    "dataResidency": "design_tools.compose(리전 원본 표시 이름 대조 노트 — envkb) · "
+                     "verify_against_requirements(**판정 불가 명시** — 국가 판정 "
+                     "소스가 없어 대조 자료까지가 소비다. 2층 보강에서 열림)",
     "meta": "자유 메타 — 계약이 뜻을 정하지 않는 유일한 칸",
 }
 

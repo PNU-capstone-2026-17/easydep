@@ -67,7 +67,7 @@ _STORE_LIKE = re.compile(r"(db|database|repository|저장소)", re.I)
 _REQ_FIELDS = (
     "provider", "region", "expectedConcurrentUsers",
     "approxRequestsPerSecond", "monthlyBudgetUSD", "multiZone",
-    "trafficPattern", "stateless",
+    "trafficPattern", "stateless", "dataResidency",
 )
 
 

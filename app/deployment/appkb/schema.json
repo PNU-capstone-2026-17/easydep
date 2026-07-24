@@ -104,6 +104,10 @@
           "type": "boolean",
           "description": "앱이 인스턴스(컴퓨트)에 상태를 두지 않는가 — 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다). 소비자: 서버리스 적합 판정 — false인데 서버리스 컴포넌트가 있으면 상충 가능성으로 판정한다."
         },
+        "dataResidency": {
+          "type": "string",
+          "description": "데이터가 머물러야 하는 국가·지역, 사용자 표현 그대로(예: '한국', 'EU'). 소비자: 배포 계획이 리전의 **원본 표시 이름**(예: 'South Korea (Seoul)')을 대조 자료로 싣고, 부합 판정문은 **판정 불가를 명시**한다 — 리전의 국가를 기계 판정할 소스가 없다(표시 이름이 프로바이더마다 자유 서식 — 실측 2026-07-24). 산문에서 국가를 추출해 판정하면 확신에 찬 오답이 된다. 확인은 사용자 몫이고, 그 사실이 답에 실린다."
+        },
         "meta": { "type": "object" }
       }
     }
@@ -149,6 +153,17 @@
         "engineHint": {
           "type": "string",
           "description": "설계자가 엔진을 정했으면(postgresql·mysql·redis…). svcmap의 벤더 flavor 선택(Azure의 DBforPostgreSQL vs DBforMySQL)이 소비한다. 없으면 flavor를 고르지 않고 선택지를 보여준다."
+        },
+        "archetypeHint": {
+          "enum": [
+            "relationalDatabase",
+            "nosqlDatabase",
+            "keyValueCache",
+            "searchIndex",
+            "eventStream",
+            "objectStorage"
+          ],
+          "description": "설계자가 이 저장소의 아키타입을 직접 지정 — deployHint와 같은 등급이다(주장이지 검증된 사실이 아니라 hedge된다). **kafka 같은 모호 엔진의 해소 경로**: engineHint가 큐·스트림·저장 어느 축인지 못 가를 때(우리는 몰면 안 되므로 미결로 둔다), 설계자가 여기서 가른다. easydep의 ERD PlantUML에는 이 정보가 없어 어댑터 경로에서는 비고, 직접 설계 JSON 입력에서만 쓰인다."
         },
         "entities": {
           "type": "array",

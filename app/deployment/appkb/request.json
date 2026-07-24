@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RESOURCE_SPEC v1 — 클라우드 리소스 제약 계약",
-  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경·레지던시)은 여기 없고, 소비자가 생길 때 연다.",
+  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "provider", "region", "monthlyBudgetUSD"],
@@ -49,6 +49,10 @@
     "stateless": {
       "type": "boolean",
       "description": "앱이 인스턴스(컴퓨트)에 상태를 두지 않는가 — 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다). 소비자: 서버리스 적합 판정 — false인데 서버리스 컴포넌트가 있으면 상충 가능성으로 판정한다."
+    },
+    "dataResidency": {
+      "type": "string",
+      "description": "데이터가 머물러야 하는 국가·지역, 사용자 표현 그대로(예: '한국', 'EU'). 소비자: 배포 계획이 리전의 **원본 표시 이름**(예: 'South Korea (Seoul)')을 대조 자료로 싣고, 부합 판정문은 **판정 불가를 명시**한다 — 리전의 국가를 기계 판정할 소스가 없다(표시 이름이 프로바이더마다 자유 서식 — 실측 2026-07-24). 산문에서 국가를 추출해 판정하면 확신에 찬 오답이 된다. 확인은 사용자 몫이고, 그 사실이 답에 실린다."
     },
     "meta": { "type": "object" }
   }

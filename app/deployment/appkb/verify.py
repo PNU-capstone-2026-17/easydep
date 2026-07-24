@@ -219,6 +219,18 @@ def verify_against_requirements(
     elif stateless is True:
         out.append("stateless(true): 계획과 알려진 상충 없음 — 주장으로 기록됩니다")
 
+    residency = req.get("dataResidency")
+    if residency:
+        # **판정 불가를 판정으로 낸다.** 리전의 국가를 기계 판정할 소스가 없다 —
+        # 표시 이름이 프로바이더마다 자유 서식이라(실측), 산문에서 국가를 추출해
+        # 판정하면 확신에 찬 오답이 된다. 대조 자료(원본 표시 이름)는 도구 계층이
+        # 계획 노트로 싣는다.
+        out.append(
+            f"dataResidency({residency}): **판정 불가** — 리전의 소속 국가를 기계 "
+            "판정할 소스가 없습니다. 계획 노트의 리전 원본 표시 이름과 대조해 "
+            "직접 확인하세요"
+        )
+
     provider = (req.get("provider") or "").strip().lower()
     if provider:
         mismatched = sorted(

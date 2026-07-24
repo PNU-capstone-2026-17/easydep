@@ -224,6 +224,50 @@ def test_gcp_object_storage_carries_billing_axes(design, monkeypatch) -> None:
     assert "합계는 없습니다" in axes_notes[0]
 
 
+# --- 레지던시 (2층-A) -----------------------------------------------------------
+
+def test_residency_gets_reference_material_not_a_verdict(design) -> None:
+    """국가 판정 소스가 없다(리전 표시 이름은 프로바이더 자유 서식 — 실측).
+    산문에서 국가를 추출해 판정하면 확신에 찬 오답이라, **대조 자료 + 판정 불가
+    명시**까지가 소비다."""
+    design["requirements"]["dataResidency"] = "한국"
+    text = deployment_answer(design, diagram=False)
+    assert "dataResidency(한국): **판정 불가**" in text
+    assert "South Korea (Seoul)" in text          # envkb 원본 표시 이름
+    assert "국가 판정은 하지 않습니다" in text
+
+
+def test_no_residency_no_reference_note(design) -> None:
+    assert not [n for n in compose(design).notes if "레지던시" in n.text]
+
+
+# --- 설계자 아키타입 지정 (2층-B) ------------------------------------------------
+
+def test_archetype_hint_resolves_kafka_as_designer_claim(design) -> None:
+    """kafka는 우리가 몰면 안 되는 모호 엔진이다(큐·스트림·저장이 설계 의도에
+    달림). archetypeHint는 그 해소 경로 — 설계자의 주장이라 origin=designer로
+    hedge되고, 미결·자문은 사라진다(해소됐으므로)."""
+    design["artifacts"][1]["engineHint"] = "kafka"
+    design["artifacts"][1]["archetypeHint"] = "eventStream"
+    plan = compose(design)
+    node = plan.node("order-api-db")
+    assert node.archetype == "app::eventStream"
+    assert node.origin == ORIGIN_DESIGNER
+    assert node.type_id == "aws::AWS::Kinesis::Stream"
+    assert any("설계자가 eventStream로 지정" in n.text for n in node.notes)
+    assert not any("kafka" in item for item in plan.unresolved)
+    assert not any(n.source == "pattern-advisory" for n in node.notes)
+
+
+def test_archetype_hint_must_be_a_known_concept(design) -> None:
+    """enum 밖의 지정은 계약 위반이다 — 임의 문자열이 아키타입이 되면 svcmap
+    조인이 조용히 빈 답이 된다."""
+    design["artifacts"][1]["archetypeHint"] = "blockchainLedger"
+    plan = compose(design)
+    assert plan.nodes == []
+    assert any("입력 계약 위반" in item for item in plan.unresolved)
+
+
 # --- 진입점 (로드밸런서) --------------------------------------------------------
 
 def test_exposed_vm_gets_an_lb_in_front(design) -> None:
