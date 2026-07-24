@@ -37,6 +37,7 @@ KB_PACKAGES = {
     "costkb",
     "envkb",
     "graphkb",
+    "patternkb",
     "perfkb",
     "sizingkb",
 }

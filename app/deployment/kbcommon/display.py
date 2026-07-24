@@ -80,6 +80,8 @@ _EVIDENCE_NAMES = {
     "aqt-corpus": "Azure Quickstart 템플릿 코퍼스 실측",
     "awscfn-corpus": "AWS CloudFormation 샘플 코퍼스 실측",
     "bundle-cross-checked": "명시 소스와 코퍼스가 일치",
+    # 산문 지침이라 이름부터 "지침"이다 — "문서"라고만 쓰면 사실 소스처럼 읽힌다.
+    "pattern-advisory": "설계 패턴 문서(지침·사실 아님)",
     "tumblebug-networkinfo": "cb-tumblebug 네트워크 계획표",
     "tumblebug-k8sinfo": "cb-tumblebug 클러스터 요구사항표",
     "bitnami-preset": "bitnami 차트의 규모 프리셋",

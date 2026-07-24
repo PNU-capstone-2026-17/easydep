@@ -232,6 +232,19 @@ SOURCES: dict[str, Source] = {
             "표가 안 덮는 프로바이더를 이쪽이 덮는다(tencent·ncloud는 없다 — 실측)."
         ),
     ),
+    "twelve-factor": Source(
+        key="twelve-factor",
+        url="https://raw.githubusercontent.com/heroku/12factor/1385d2c80bac38c25647651f6f5ec769561828dc",
+        pin_kind="commit",
+        pin="1385d2c80bac38c25647651f6f5ec769561828dc",
+        note=(
+            "12factor **배포 원칙 산문**(patternkb 코퍼스). MIT — LICENSE에 "
+            "'Copyright (c) 2012 Adam Wiggins' 명시(실측 2026-07-24). 태그가 없어 "
+            "커밋 SHA로 고정한다. content/en의 md만 취하고 toc.md는 목차라 뺀다. "
+            "**산문이라 값·한도가 아니다** — patternkb는 advisory 전용이고 이 소스가 "
+            "사실 축에 섞이면 안 된다."
+        ),
+    ),
     "ibm-global-catalog": Source(
         key="ibm-global-catalog",
         url="https://globalcatalog.cloud.ibm.com/api/v1?q=is.instance",

@@ -179,6 +179,11 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "awscfn-corpus": OBSERVED,
     # 명시 소스와 코퍼스가 **같은 답을 냈을 때만** 단다. `aws-cross-checked`와 같은 규율.
     "bundle-cross-checked": STATED,
+    # --- patternkb ---
+    # 설계 지침 **산문**의 검색 결과다. 영원히 자문(advisory)이다 — 검수해도
+    # 클라우드 사실이 되지 않는 성격이라 reviewed를 붙이지 않는 것이 규약이고,
+    # 값·한도·판정의 근거로 쓰면 안 된다(모든 답에 그 고지가 붙는다).
+    "pattern-advisory": INFERRED,
     # --- sizingkb ---
     # cb-tumblebug이 손으로 큐레이션한 표. 원본 문서 링크까지 달려 있다.
     # **채움이 고르지 않다** — 비어 있는 칸은 "0"이 아니라 "안 적었다"이다.

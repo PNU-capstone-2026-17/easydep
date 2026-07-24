@@ -164,6 +164,15 @@ RAG 구현도 단계적으로 갑니다: **1단계는 SQLite FTS5**(표준 라�
   "설계 지침이지 클라우드 사실이 아님"을 답니다.
 - 아키타입 분류가 애매할 때 P3가 참고하되, 다이어그램 근거 라벨은 `pattern-advisory`.
 
+> **P4 완료 (2026-07-24, 재편 계획 ⑥-C).** 코퍼스 90편 — architecture-center
+> `docs/patterns`(44)·`guide/architecture-styles`(7)·`guide/design-principles`(11)·
+> `best-practices`(13) + 12factor `content/en`(15, toc 제외). 계획에서 바뀐 것:
+> 12factor는 heroku 저장소에 태그가 없어 **커밋 SHA 핀**(MIT는 LICENSE로 실측),
+> 색인은 디스크 DB가 아니라 **커밋된 JSON 코퍼스에서 인메모리로** 만든다(바이트
+> 대조 재현 검증을 지키려고). P3 참고 지점은 compose의 **engineHint 미상**
+> 자리 하나로 좁혔다 — 분류·미결 판정은 자문이 바꾸지 않는다.
+> 산출물: `patternkb/` · `data/pattern-corpus.json.gz` · `pattern_search` 도구.
+
 ### 순서의 이유
 
 P1이 먼저인 것은 **③이 이미 있어서**입니다 — 대응만 열리면

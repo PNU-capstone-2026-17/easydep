@@ -147,6 +147,25 @@ def _svcmap_types(concept: str, provider: str | None) -> list[str]:
     return sorted(out)
 
 
+def _pattern_advisory(query: str) -> Note | None:
+    """아키타입 분류가 애매할 때 patternkb 자문 한 줄 (앱 계층 P4).
+
+    **분류를 바꾸지 않는다.** 산문 지침은 클라우드 사실이 아니라서, 참고 인용을
+    노트로 달고 그 성격을 문장에 함께 싣는 것까지가 자문의 전부다 — 근거 라벨은
+    `pattern-advisory`이고 basis는 영원히 inferred다.
+    """
+    from patternkb.query import search
+
+    hits = search(query, limit=1)
+    if not hits:
+        return None
+    hit = hits[0]
+    return Note(
+        f"참고 지침 '{hit.title}'({hit.path}) — 설계 지침이지 클라우드 사실이 아닙니다",
+        ORIGIN_KB, "pattern-advisory",
+    )
+
+
 def _pick_flavor(types: list[str], engine: str | None) -> list[str]:
     """engineHint로 후보를 좁힌다. **못 좁히면 전부 돌려준다** — 하나를 임의로
     고르는 것이 이 저장소가 막아 온 실패다."""
@@ -346,9 +365,10 @@ def compose(design: dict) -> DeploymentPlan:
         ))
 
     # --- 3. 관리형 서비스 -------------------------------------------------
-    def add_managed(node_id: str, label: str, concept: str, why: Note) -> None:
+    def add_managed(node_id: str, label: str, concept: str, why: Note,
+                    extra: tuple[Note, ...] = ()) -> None:
         types = _pick_flavor(_svcmap_types(concept, provider), engine_of.get(node_id))
-        notes = [why]
+        notes = [why, *extra]
         if not provider:
             notes.append(Note("프로바이더 미지정이라 특정 클라우드로 좁히지 못함",
                               ORIGIN_INFERRED, "requirements"))
@@ -378,16 +398,21 @@ def compose(design: dict) -> DeploymentPlan:
     for cid, entities in sorted(owners.items()):
         engine = engine_of.get(cid)
         concept = _ENGINE_CONCEPT.get((engine or "").lower(), "relationalDatabase")
+        extra: tuple[Note, ...] = ()
         if engine and (engine or "").lower() not in _ENGINE_CONCEPT:
             plan.unresolved.append(
                 f"{cid}: engineHint '{engine}'를 아는 개념으로 옮기지 못해 "
                 "관계형으로 가정했습니다"
             )
+            # 분류가 애매한 바로 그 자리에만 산문 자문을 단다 — 지침이지 사실이
+            # 아니라서 분류·미결 판정은 그대로 둔다.
+            if advisory := _pattern_advisory(engine):
+                extra = (advisory,)
         why = Note(
             f"엔티티 {len(entities)}개를 소유({', '.join(entities[:3])}) → 영속 저장소 필요",
             ORIGIN_INFERRED, "er",
         )
-        add_managed(f"{cid}-db", f"{components[cid]['name']} 저장소", concept, why)
+        add_managed(f"{cid}-db", f"{components[cid]['name']} 저장소", concept, why, extra)
         plan.edges.append(PlanEdge(cid, f"{cid}-db", "읽기/쓰기", ORIGIN_INFERRED))
 
     if any_async:
