@@ -191,10 +191,14 @@ def _managed_axes_note(archetype: str, provider: str | None,
     곱할 수량이 사이징 결과이며, 사용량형은 트래픽을 알아야 한다(조사 문서).
     미빌드(None)와 "봤는데 없음"([])은 뜻이 반대라 그대로 가른다.
     """
-    if provider not in ("azure", "gcp") or not region:
+    if provider not in ("azure", "gcp", "aws") or not region:
         return None
     from costkb import dataset as cost_dataset
 
+    if not cost_dataset.managed_built(provider):
+        # 이 프로바이더의 산출물이 없다(aws는 로컬 빌드 전용이라 이게 기본) —
+        # "수록 없음(봤는데 없다)"이라 말하면 거짓이다. 전역 고지에 맡긴다.
+        return None
     axes = cost_dataset.managed_axes(archetype, region)
     if axes is None:
         return None  # 미빌드 — 전역 고지("가격 없음")가 그대로 참이다
@@ -648,11 +652,18 @@ def compose(design: dict) -> DeploymentPlan:
             ORIGIN_KB, "costkb",
         ))
     else:
-        plan.notes.append(Note(
+        text = (
             "관리형 서비스 가격은 이 데이터셋에 없어 값이 붙지 않습니다. "
-            "**합계를 내지 않습니다** — 값 없는 것을 0으로 두면 실제보다 낮아집니다.",
-            ORIGIN_KB, "costkb",
-        ))
+            "**합계를 내지 않습니다** — 값 없는 것을 0으로 두면 실제보다 낮아집니다."
+        )
+        if provider == "aws":
+            # 없는 이유가 다르다 — 소스 부재가 아니라 재배포 금지다. 열 수 있는
+            # 길(로컬 빌드)을 안내한다(azure-discount의 명령 안내 선례).
+            text += (
+                " aws 관리형 가격은 재배포가 금지된 소스라 저장소에 없습니다 — "
+                "`python -m costkb build-aws-managed`로 로컬 빌드하면 붙습니다."
+            )
+        plan.notes.append(Note(text, ORIGIN_KB, "costkb"))
     return plan
 
 

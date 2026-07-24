@@ -95,6 +95,21 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, help="출력 경로 (기본: output/gcp-managed-pricing.json)"
     )
 
+    aws_managed = sub.add_parser(
+        "build-aws-managed",
+        help="AWS 관리형 과금 축 (Price List — 재배포 금지라 로컬 빌드 전용)",
+    )
+    aws_managed.add_argument(
+        "--refresh", action="store_true", help="캐시를 무시하고 다시 받기"
+    )
+    aws_managed.add_argument(
+        "--region", action="append", dest="regions",
+        help="리전 하나만(여러 번 줄 수 있음). 기본은 미러의 aws 리전 전부",
+    )
+    aws_managed.add_argument(
+        "--output", type=Path, help="출력 경로 (기본: output/aws-managed-pricing.json)"
+    )
+
     query = sub.add_parser("query", help="요구사항으로 스펙 후보 조회")
     query.add_argument("--vcpu-min", type=int, default=0, help="최소 vCPU")
     query.add_argument("--mem-min", type=float, default=0, help="최소 메모리(GiB, 미러 기준)")
@@ -304,6 +319,30 @@ def _cmd_build_gcp_managed(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_aws_managed(args: argparse.Namespace) -> int:
+    from costkb.dataset import AWS_MANAGED_FILENAME
+    from costkb.parsers import aws_managed
+
+    mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
+    if not mirror.exists():
+        print(
+            "미러가 없습니다. 먼저 `python -m costkb build`로 미러를 만드세요 — "
+            "리전 목록을 미러에서 가져옵니다.",
+            file=sys.stderr,
+        )
+        return 1
+    output = args.output or (DEFAULT_OUTPUT_DIR / AWS_MANAGED_FILENAME)
+    aws_managed.build(
+        output, mirror=mirror, regions=args.regions, refresh=args.refresh
+    )
+    print(
+        "※ **재배포가 명시적으로 금지된 소스입니다.** 이 산출물은 로컬 전용입니다 — "
+        "`data/`에 포장하거나 저장소에 커밋하지 마세요(테스트가 막습니다).",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     handlers = {
@@ -312,6 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "build-azure-pricing": _cmd_build_azure_pricing,
         "build-azure-managed": _cmd_build_azure_managed,
         "build-gcp-managed": _cmd_build_gcp_managed,
+        "build-aws-managed": _cmd_build_aws_managed,
         "query": _cmd_query,
         "coverage": _cmd_coverage,
     }

@@ -46,6 +46,9 @@ AZURE_DISCOUNT_FILENAME = "azure-discount-pricing.json"
 AZURE_MANAGED_FILENAME = "azure-managed-pricing.json"
 #: GCP 관리형 과금 축(Cyclenerd — objectStorage뿐, 그것이 소스의 전부다).
 GCP_MANAGED_FILENAME = "gcp-managed-pricing.json"
+#: AWS 관리형 과금 축. **로컬 빌드 전용 — data/에 커밋 금지**(재배포가 명시적으로
+#: 금지된 소스라, 없는 것이 기본이고 테스트가 커밋을 막는다).
+AWS_MANAGED_FILENAME = "aws-managed-pricing.json"
 
 # MCP의 recommend_vm_spec은 호출자가 architecture를 안 주면 x86_64를 끼워넣는다
 # (tb-mcp.py). 이걸 미러하지 않으면 MCP가 감추는 arm64 스펙(덤프 기준 7,790건)이
@@ -187,11 +190,12 @@ def azure_discount_for(
 def _load_managed(output_dir: str) -> dict[tuple[str, str], list[dict]]:
     """`(archetype, region)` → 관리형 과금 축 레코드들. 파일이 없으면 빈 맵.
 
-    azure(Retail API)와 gcp(Cyclenerd)를 한 맵으로 합친다 — 리전 코드 체계가
-    서로 겹치지 않아(koreacentral vs asia-northeast3) 키 충돌이 없다.
+    azure(Retail API)·gcp(Cyclenerd)·aws(Price List, 로컬 빌드 전용)를 한 맵으로
+    합친다 — 리전 코드 체계가 서로 겹치지 않아(koreacentral vs asia-northeast3
+    vs ap-northeast-2) 키 충돌이 없다. aws 파일은 커밋되지 않으므로 보통 없다.
     """
     out: dict[tuple[str, str], list[dict]] = {}
-    for name in (AZURE_MANAGED_FILENAME, GCP_MANAGED_FILENAME):
+    for name in (AZURE_MANAGED_FILENAME, GCP_MANAGED_FILENAME, AWS_MANAGED_FILENAME):
         found = artifact.resolve(Path(output_dir), name)
         if found is None:
             continue
@@ -202,6 +206,26 @@ def _load_managed(output_dir: str) -> dict[tuple[str, str], list[dict]]:
         for record in data.get("records") or []:
             out.setdefault((record["archetype"], record["region"]), []).append(record)
     return out
+
+
+_MANAGED_FILES = {
+    "azure": AZURE_MANAGED_FILENAME,
+    "gcp": GCP_MANAGED_FILENAME,
+    "aws": AWS_MANAGED_FILENAME,
+}
+
+
+def managed_built(provider: str, output_dir: Path | str | None = None) -> bool:
+    """이 프로바이더의 관리형 축 산출물이 있는가.
+
+    **한 맵으로 합쳐진 뒤에는 [](봤는데 없다)와 미빌드(안 봤다)를 리전만으로
+    가를 수 없다** — azure·gcp는 커밋돼 있는데 aws는 로컬 빌드 전용이라, aws
+    미빌드가 "수록 없음"으로 읽히면 거짓이 된다. 부르는 쪽이 이걸로 가른다.
+    """
+    name = _MANAGED_FILES.get((provider or "").strip().lower())
+    if name is None:
+        return False
+    return artifact.resolve(Path(_resolve(output_dir)), name) is not None
 
 
 def managed_axes(
