@@ -48,7 +48,7 @@ def _results():
 @pytest.mark.parametrize("probe_id", [
     "1-1b", "1-2a", "3-1", "3-3", "3-6", "3-9", "3-11", "D4", "D5", "N1", "N2", "H1", "H2", "H3",
     # 2026-07-24 신축 검증 — patternkb·azure 크기 표·gcp 시리즈·구세대·로컬 SSD·WAF
-    "X1", "X2", "X3", "X4", "X5", "X6",
+    "X1", "X2", "X3", "X4", "X5", "X6", "X7",
 ])
 def test_probe(probe_id: str) -> None:
     result = _results()[probe_id]

@@ -599,6 +599,115 @@ def _wire_edges(
             plan.edges.append(PlanEdge("end-user", cid, "요청", ORIGIN_DESIGN))
 
 
+def _method_comparison_notes(
+    requirements: dict, provider: str | None, region: str | None,
+    unhinted: int,
+) -> list[Note]:
+    """컴퓨트 방식 비교 판정 — **결정 대행이 아니라 근거 달린 권고다.**
+
+    deployHint 없는 컴포넌트가 있을 때, VM·k8s·서버리스 각각에 대해 우리가
+    **잴 수 있는 판정**(비용 하한·버스트 상충·stateless 적합·도구 최소사양·
+    대응 존재)을 나란히 놓는다. 권고는 **상충 없는 방식이 정확히 하나일 때만**
+    낸다 — 여럿 남으면 하나를 고르지 않고(이 저장소가 막아 온 실패), 판별할
+    사실이 없다고 말한다. 판정에 못 들어간 입력(팀 역량·지연 SLO·조직)이
+    있다는 사실도 명시한다.
+    """
+    if not unhinted or not provider:
+        return []
+    from costkb import dataset as cost_dataset
+    from sizingkb.dataset import rules_of
+    from sizingkb.model import MINIMUM, REQUIRED_COUNT
+
+    from .cost_tools import _perf_note
+
+    users = requirements.get("expectedConcurrentUsers")
+    vcpu, mem = (2, 4) if not users or users <= 500 else (4, 8)
+    specs = cost_dataset.filter_specs(
+        vcpu_min=vcpu, mem_min_gib=mem, provider=provider, region=region,
+        sort_by="cost", limit=1,
+    )
+    spec = specs[0] if specs else None
+    steady = requirements.get("trafficPattern") == "steady"
+    stateless = requirements.get("stateless")
+
+    conflicts: dict[str, list[str]] = {"vm": [], "kubernetes": [], "serverless": []}
+    holds: dict[str, list[str]] = {"vm": [], "kubernetes": [], "serverless": []}
+
+    # --- VM ---
+    vm_parts: list[str] = []
+    burst = False
+    if spec:
+        vm_parts.append(
+            f"최저가 {spec['specName']} ${spec['hourlyUSD']:.4f}/h (1대 기준)"
+            if spec.get("hourlyUSD") else f"최저가 {spec['specName']} (단가 미상)"
+        )
+        burst = "버스트" in (_perf_note(spec).text or "")
+        if steady and burst:
+            conflicts["vm"].append("상시 부하인데 최저가 스펙이 버스트형 — 고정 성능 스펙으로 재검토 필요")
+    else:
+        holds["vm"].append("이 조건의 스펙을 찾지 못해 값 판정 불가")
+
+    # --- k8s (같은 스펙 경제 — 값은 노드 그룹에 붙는다) ---
+    k8s_parts: list[str] = []
+    for rule in rules_of(MINIMUM, "k8s-node"):
+        k8s_parts.append(f"노드 최소 {rule.metric} {rule.value}{rule.unit or ''} (도구 요구)")
+    for rule in rules_of(REQUIRED_COUNT, provider):
+        if rule.metric == "requiredSubnetCount":
+            k8s_parts.append(f"서브넷 {rule.value}개 필요")
+    k8s_parts.append("값은 컴포넌트가 아니라 노드 그룹 기준")
+    if steady and burst:
+        conflicts["kubernetes"].append("노드도 같은 스펙 경제라 버스트 상충이 동일")
+
+    # --- 서버리스 ---
+    sls_parts: list[str] = ["시간당 단가 없음(호출·사용량 과금)"]
+    sls_types = _svcmap_types("serverlessFunction", provider)
+    if not sls_types:
+        conflicts["serverless"].append(f"{provider}에 대응 타입이 수록돼 있지 않음")
+    if stateless is False:
+        conflicts["serverless"].append("stateless=false — 인스턴스에 상태를 두는 앱과 상충 가능성(우리 추론)")
+    elif stateless is None:
+        holds["serverless"].append("stateless 미확인 — 적합 판정 보류")
+
+    def _fmt(name: str, parts: list[str], key: str) -> str:
+        line = f"  {name}: " + (" · ".join(parts) if parts else "판정 축 없음")
+        for c in conflicts[key]:
+            line += f" · ✗ {c}"
+        for h in holds[key]:
+            line += f" · ? {h}"
+        return line
+
+    body = "\n".join([
+        f"컴퓨트 방식 비교 판정 — deployHint 없는 컴포넌트 {unhinted}개 (현재 VM 가정):",
+        _fmt("VM", vm_parts, "vm"),
+        _fmt("k8s", k8s_parts, "kubernetes"),
+        _fmt("서버리스", sls_parts, "serverless"),
+    ])
+    notes = [Note(body, ORIGIN_KB, "costkb·perfkb·sizingkb·svcmap")]
+
+    clean = [m for m in ("vm", "kubernetes", "serverless")
+             if not conflicts[m] and not holds[m]]
+    conflicted = [m for m in ("vm", "kubernetes", "serverless") if conflicts[m]]
+    label = {"vm": "VM", "kubernetes": "k8s", "serverless": "서버리스"}
+    if len(clean) == 1 and len(conflicted) == 2:
+        notes.append(Note(
+            f"권고: {label[clean[0]]} — 잰 축에서 유일하게 상충이 없습니다. "
+            "**우리 권고이지 검증된 사실이 아니며**, 잰 축 밖의 입력(팀 역량·"
+            "지연 요건·운영 모델)은 이 판정에 없습니다. deployHint로 확정하세요.",
+            ORIGIN_INFERRED, "method-comparison",
+        ))
+    else:
+        survivors = ", ".join(label[m] for m in ("vm", "kubernetes", "serverless")
+                              if not conflicts[m]) or "없음"
+        notes.append(Note(
+            f"권고 없음 — 상충 없는 방식: {survivors}. 잰 축만으로 하나를 "
+            "고를 근거가 없어 고르지 않습니다(임의 선택이 이 저장소가 막아 온 "
+            "실패). 결정 입력(팀 역량·지연 요건 등)은 이 판정 밖입니다 — "
+            "deployHint로 지정하면 그대로 따릅니다.",
+            ORIGIN_INFERRED, "method-comparison",
+        ))
+    return notes
+
+
 def _global_notices(
     plan: DeploymentPlan, requirements: dict,
     provider: str | None, region: str | None, exposed: set[str],
@@ -716,6 +825,10 @@ def compose(design: dict) -> DeploymentPlan:
             ORIGIN_KB, "requirements",
         ))
 
+    unhinted = sum(1 for c in components.values() if not c.get("deployHint"))
+    plan.notes.extend(
+        _method_comparison_notes(requirements, provider, region, unhinted)
+    )
     _global_notices(plan, requirements, provider, region, s.exposed)
     return plan
 

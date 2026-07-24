@@ -258,6 +258,48 @@ def test_archetype_hint_must_be_a_known_concept(design) -> None:
     assert any("입력 계약 위반" in item for item in plan.unresolved)
 
 
+# --- 컴퓨트 방식 비교 판정 (아키텍처 권고 — 결정 대행 아님) ----------------------
+
+def _comparison_notes(plan):
+    return [n for n in plan.notes
+            if "비교 판정" in n.text or n.source == "method-comparison"]
+
+
+def test_recommendation_only_when_exactly_one_method_survives(design) -> None:
+    """steady(버스트 상충으로 VM·k8s 탈락) + stateless=true(서버리스 무상충)일
+    때만 권고가 난다 — 그리고 권고는 hedge된 우리 권고다."""
+    design["requirements"].update({"trafficPattern": "steady", "stateless": True})
+    notes = _comparison_notes(compose(design))
+    verdict = notes[-1]
+    assert "권고: 서버리스" in verdict.text
+    assert verdict.origin == ORIGIN_INFERRED
+    assert "검증된 사실이 아니" in verdict.text
+    assert "잰 축 밖의 입력" in verdict.text  # 판정에 없는 결정 입력을 명시
+
+
+def test_no_recommendation_when_all_methods_conflict(design) -> None:
+    """전멸이면 임의로 하나를 고르지 않는다."""
+    design["requirements"].update({"trafficPattern": "steady", "stateless": False})
+    notes = _comparison_notes(compose(design))
+    assert "권고 없음" in notes[-1].text
+    assert "상충 없는 방식: 없음" in notes[-1].text
+
+
+def test_sparse_requirements_keep_all_options_open(design) -> None:
+    """판별 사실이 없으면 선택지를 유지하고, stateless 미확인은 보류로 표시된다."""
+    notes = _comparison_notes(compose(design))
+    body = notes[0].text
+    assert "stateless 미확인" in body
+    assert "권고 없음" in notes[-1].text and "VM, k8s, 서버리스" in notes[-1].text
+
+
+def test_all_hinted_components_get_no_comparison(design) -> None:
+    """설계자가 전부 지정했으면 비교할 결정이 없다 — 노이즈를 만들지 않는다."""
+    for component in design["components"]:
+        component["deployHint"] = {"compute": "vm"}
+    assert not _comparison_notes(compose(design))
+
+
 # --- 진입점 (로드밸런서) --------------------------------------------------------
 
 def test_exposed_vm_gets_an_lb_in_front(design) -> None:

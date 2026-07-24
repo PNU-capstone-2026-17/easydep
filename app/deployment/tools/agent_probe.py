@@ -227,6 +227,16 @@ PROBES: tuple[Probe, ...] = (
           "도구 출력이 보장한다",
           want_tools=("pattern_search",), forbid_tools=("web_search",),
           want_any=("radeoff", "트레이드오프")),
+    Probe("X7", '다음 설계 JSON으로 배포 구성을 만들어줘: {"schemaVersion":"1",'
+          '"name":"probe-app","components":[{"id":"api","name":"Api"}],'
+          '"artifacts":[{"id":"o1","kind":"openapi","componentId":"api",'
+          '"openapi":{"openapi":"3.0.0","info":{"title":"api"},"paths":{}}}],'
+          '"requirements":{"provider":"aws","region":"ap-northeast-2",'
+          '"trafficPattern":"steady","stateless":true}}',
+          "**방식 비교 판정의 라이브 검증.** steady+stateless=true면 서버리스만 "
+          "상충이 없어 권고가 나야 하고, 그 권고가 hedge와 함께 답변에 실리는가",
+          want_tools=("design_to_deployment",), forbid_tools=("web_search",),
+          want_any=("권고",)),
     Probe("R1", "서울 리전에서 쓸 수 있는 AWS GPU 인스턴스 알려줘",
           "**H3과 같은 질문을 사람이 쓰는 말로.** H3은 `ap-northeast-2`라고 코드로 "
           "물어서 이 실패를 못 잡았다. 데이터는 있었고 '서울'을 색인 키로 바꾸는 "
