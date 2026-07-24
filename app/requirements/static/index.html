@@ -509,6 +509,14 @@
       renderAll();
       updateSavedNote(data);   // 단계가 끝날 때마다 저장되므로 매 응답에서 갱신한다
 
+      if (data.status === "completed") {
+        // 마지막 단계(유스케이스 다이어그램)의 '다음 단계로'까지 끝나면 파이프라인이
+        // 완료된다. 여기서 시스템 설계 화면으로 이어간다 — app_id는 localStorage
+        // (easydep_app_id)로 공유되므로 설계 UI가 같은 앱을 그대로 이어받는다.
+        window.location.assign("/design");
+        return;
+      }
+
       if (data.status === "need_clarification") {
         el("questionList").innerHTML = (data.questions || [])
           .map((q) => `<li>${escapeHtml(q)}</li>`).join("");
