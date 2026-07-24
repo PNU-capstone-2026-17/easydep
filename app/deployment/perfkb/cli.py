@@ -54,6 +54,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-hardware", action="store_true",
         help="AWS 하드웨어 사실(CPU·GPU 모델) 덧붙이기를 건너뛴다",
     )
+    build.add_argument(
+        "--no-azure-sizes", action="store_true",
+        help="azure 크기 표(NIC·네트워크 대역폭) 덧붙이기를 건너뛴다",
+    )
+    build.add_argument(
+        "--no-gcp-series", action="store_true",
+        help="gcp 시리즈 특성(CPU 플랫폼·대역폭·GPU) 덧붙이기를 건너뛴다",
+    )
     build.add_argument("--output", type=Path, help=f"출력 경로 (기본: output/{BUILT_FILENAME})")
 
     show = sub.add_parser("show", help="특정 스펙의 성능 프로파일")
@@ -134,6 +142,35 @@ def _cmd_build(args: argparse.Namespace) -> int:
             report = hardware.enrich(dataset["specs"], table)
             print(f"\n{hardware.format_report(report)}")
             sources.append(describe_source(hw_path, "ec2-hardware"))
+
+    # azure 크기 표도 같은 이유로 같은 빌드 안에서 — 별도 명령이면 조용히 사라진다.
+    if not args.no_azure_sizes:
+        from kbcommon.fetch import describe_source_set
+
+        from perfkb.parsers import azure_sizes
+
+        try:
+            sizes_table, size_paths = azure_sizes.fetch(refresh=args.refresh)
+        except Exception as exc:  # noqa: BLE001 — 부가 정보가 본체를 막지 않는다
+            print(f"\n⚠ azure 크기 표를 받지 못해 건너뜁니다: {exc}", file=sys.stderr)
+        else:
+            report = azure_sizes.enrich(dataset["specs"], sizes_table)
+            print(f"\n{azure_sizes.format_report(report)}")
+            sources.append(describe_source_set(size_paths, "azure-compute-docs"))
+
+    if not args.no_gcp_series:
+        from kbcommon.fetch import describe_source_set
+
+        from perfkb.parsers import gcp_series
+
+        try:
+            rules, instances, series_paths = gcp_series.fetch(refresh=args.refresh)
+        except Exception as exc:  # noqa: BLE001 — 부가 정보가 본체를 막지 않는다
+            print(f"\n⚠ gcp 시리즈 특성을 받지 못해 건너뜁니다: {exc}", file=sys.stderr)
+        else:
+            report = gcp_series.enrich(dataset["specs"], rules, instances)
+            print(f"\n{gcp_series.format_report(report)}")
+            sources.append(describe_source_set(series_paths, "gcloud-machine-types"))
 
     dataset["_source"] = sources
     output = args.output or (DEFAULT_OUTPUT_DIR / BUILT_FILENAME)

@@ -55,6 +55,8 @@ _EVIDENCE_NAMES = {
     "swagger-mutability": "Azure REST 명세의 변경 가능성 표시",
     "swagger-secret": "Azure REST 명세의 비밀값 표시",
     "ec2-hardware-probe": "EC2 인스턴스 하드웨어 확인",
+    "azure-sizes-doc": "Azure VM 크기 문서 표",
+    "cyclenerd-gcp-catalog": "GCP 머신 카탈로그(커뮤니티 큐레이션)",
     "aws-price-list": "AWS 가격표 API",
     "botocore-doc": "AWS SDK 설명문",
     "aws-cross-checked": "AWS 공식 두 소스 교차 확인",

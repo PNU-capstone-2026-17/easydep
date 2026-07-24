@@ -232,6 +232,49 @@ SOURCES: dict[str, Source] = {
             "표가 안 덮는 프로바이더를 이쪽이 덮는다(tencent·ncloud는 없다 — 실측)."
         ),
     ),
+    "azure-compute-docs": Source(
+        key="azure-compute-docs",
+        url="https://raw.githubusercontent.com/MicrosoftDocs/azure-compute-docs/9c18d88d498d09e897edde7e2fe8483067f2556a",
+        pin_kind="commit",
+        pin="9c18d88d498d09e897edde7e2fe8483067f2556a",
+        note=(
+            "Azure VM **크기 문서의 표**(CC-BY-4.0 — azure-docs와 같은 라이선스). "
+            "`articles/virtual-machines/sizes/` 계열별 `*-series.md`에 NIC 수·"
+            "네트워크 대역폭 Mbps·디스크 IOPS 표가 있다(실측 2026-07-24). "
+            "perfkb azure 보강의 근거 — azure-limits-doc처럼 산문이 아니라 "
+            "**표**를 파싱한다. 문서라 재편될 수 있어 최소 매칭 수로 감지한다."
+        ),
+    ),
+    "gcloud-machine-types": Source(
+        key="gcloud-machine-types",
+        url=(
+            "https://raw.githubusercontent.com/Cyclenerd/"
+            "google-cloud-compute-machine-types/add204f16413d608d35141715aef4a122b59cb96"
+        ),
+        pin_kind="commit",
+        pin="add204f16413d608d35141715aef4a122b59cb96",
+        note=(
+            "GCP 머신 **시리즈 특성**(Apache-2.0). instances/series/*.sql의 UPDATE "
+            "문에 cpuPlatform·계열·크기별 네트워크 대역폭 Gbps가 들어 있다"
+            "(실측 2026-07-24). gcp perfkb가 sustainedCpu 하나뿐이던 구멍을 메운다. "
+            "**커뮤니티 큐레이션**이라 basis=inferred — 원문이 Google 문서 URL을 "
+            "달아 두어 사람이 확인할 수 있다. gcp-spot-commit과 같은 저자의 다른 "
+            "저장소이고, 태그가 없어 커밋 SHA로 고정한다."
+        ),
+    ),
+    "azure-well-architected": Source(
+        key="azure-well-architected",
+        url="https://raw.githubusercontent.com/MicrosoftDocs/well-architected/1353bbb66e53121b702a46baed0d64e1f6284bb5",
+        pin_kind="commit",
+        pin="1353bbb66e53121b702a46baed0d64e1f6284bb5",
+        note=(
+            "Azure Well-Architected **지침 산문**(CC-BY-4.0 — architecture-center와 "
+            "같은 라이선스). well-architected/ 하위 md 199편(실측 2026-07-24). "
+            "patternkb 코퍼스 확장분 — advisory 전용이고 사실 축이 아니다. "
+            "AWS WAF는 재배포 불명+labs는 실습 절차라, GCP는 핀 가능 저장소가 "
+            "없어 기각했다(조사 문서)."
+        ),
+    ),
     "twelve-factor": Source(
         key="twelve-factor",
         url="https://raw.githubusercontent.com/heroku/12factor/1385d2c80bac38c25647651f6f5ec769561828dc",

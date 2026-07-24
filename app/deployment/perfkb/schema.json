@@ -242,9 +242,9 @@
           "exclusiveMinimum": 0
         },
         "gpuCount": {
-          "type": "integer",
+          "type": "number",
           "exclusiveMinimum": 0,
-          "description": "장착된 GPU 개수. 0은 담지 않는다 — '없음'과 '모름'이 섞인다."
+          "description": "장착된 GPU 개수. 0은 담지 않는다 — '없음'과 '모름'이 섞인다. GCP g4처럼 GPU를 나눠 쓰는 크기는 소수(0.25)가 사실이라 정수로 반올림하지 않는다."
         },
         "gpuModel": {
           "anyOf": [
@@ -286,7 +286,26 @@
         },
         "networkBandwidthMbps": {
           "type": "number",
-          "description": "총 네트워크 대역폭(Mbps). IBM 카탈로그의 bandwidth."
+          "description": "총 네트워크 대역폭(Mbps). IBM 카탈로그의 bandwidth, azure는 크기 문서 표의 Max Network Bandwidth."
+        },
+        "azureSizesEvidence": {
+          "type": "string",
+          "enum": [
+            "azure-sizes-doc"
+          ],
+          "description": "azure 크기 문서(표)에서 온 칸들의 근거. 본체(cb-tumblebug)와 다른 소스라 따로 적는다 — hardwareEvidence와 같은 규약."
+        },
+        "gcpSeriesEvidence": {
+          "type": "string",
+          "enum": [
+            "cyclenerd-gcp-catalog"
+          ],
+          "description": "gcp 칸들(cpuFamily·family·대역폭·GPU·로컬SSD)의 근거 — Cyclenerd 큐레이션(basis=inferred). 같은 규약."
+        },
+        "localSsdGB": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "장착 로컬 SSD 용량(GB). 값이 없으면 '미지원'이 아니라 '모름'이다."
         },
         "portSpeedMbps": {
           "type": "number",

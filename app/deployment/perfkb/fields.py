@@ -101,6 +101,7 @@ FIELDS: tuple[Field, ...] = (
     Field("vcpuTenancy", "vCPU 점유 방식(원본 표기)", kind="text", compare=False),
     Field("provisioningTimeoutSeconds", "프로비저닝 타임아웃", "초", compare=False),
     Field("gpuMemoryGB", "GPU 메모리", " GB"),
+    Field("localSsdGB", "로컬 SSD", " GB"),
 )
 
 COMPARE_FIELDS: tuple[Field, ...] = tuple(f for f in FIELDS if f.compare)

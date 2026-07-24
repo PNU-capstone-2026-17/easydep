@@ -158,6 +158,12 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "azure-family-name": INFERRED,
     # 인스턴스에 실제로 붙어 있는 하드웨어. 측정이 아니라 사양이다.
     "ec2-hardware-probe": STATED,  # family가 standardB로 시작하는지
+    # azure 크기 문서 표의 숫자(NIC 수·네트워크 대역폭). azure-limits-doc과 같은
+    # 성격 — 문서가 표로 명시한 것을 옮겼다.
+    "azure-sizes-doc": STATED,
+    # Cyclenerd의 GCP 카탈로그(시리즈 SQL + pricing.yml 인스턴스 항목).
+    # Google 문서를 커뮤니티가 옮긴 것이라 mingrammer와 같은 등급 — 짐작(큐레이션).
+    "cyclenerd-gcp-catalog": INFERRED,
     # --- bundlekb ---
     # AVM 모듈이 **무엇을 배포하는지**. `avm-dependson`(배포 순서)과 같은 소스지만
     # 다른 축이다. 모듈 저자가 그렇게 짠 것이라 stated지만, "API가 강제한다"는
