@@ -16,8 +16,9 @@
 재배포: azure_pricing.py와 같은 소스(무인증 공개, 허가 문구도 금지 문구도 없음 —
 not-stated). 같은 고지를 `_note`에 싣고 NOTICE에 등록한다.
 
-수록 범위(보강 3에서 갱신): 여기(azure 6종)에 더해 **gcp는 objectStorage만**
-`parsers/gcp_managed.py`가 담는다(Cyclenerd — 그 파일에 있는 관리형 축의 전부).
+수록 범위(1층 보강에서 갱신, 2026-07-24): 여기 azure 11종 + 진입점용 의사
+아키타입 loadBalancer. gcp는 `parsers/gcp_managed.py`가 objectStorage·
+networkEgress를 담는다(Cyclenerd — 그 파일에 있는 관리형 축의 전부).
 **AWS는 미수록 확정** — Price List API가 재배포를 명시적으로 금지한다(소스 표의
 `denied`). 단가가 곧 산출물이라 커밋 자체가 성립하지 않는다.
 """
@@ -55,10 +56,17 @@ class Rule:
     """productName 접두 허용 목록. 비면 전부 — 좁힐 이유가 실측되면 적는다."""
     exclude: tuple[str, ...] = ()
     """productName에 이게 들어 있으면 **다른 아키타입의 것**이다(경계 오염)."""
+    meter_include: tuple[str, ...] = ()
+    """meterName 접두 허용 목록. LB처럼 한 productName 안에 다른 제품층(Gateway
+    LB·크로스리전 LB)이 섞일 때만 쓴다 — 비면 전부."""
+    region_override: str = ""
+    """리전 루프 대신 이 리전 하나만 받는다. Load Balancer가 이 경우다 —
+    **일반 리전 행이 없고 armRegionName='Global'로만 공표된다**(실측 2026-07-24).
+    리전별 값을 지어내지 않고 원본 표기 그대로 Global로 담는다."""
 
 
-#: 아키타입 6종의 큐레이션 표. svcmap이 다루는 9종 중 Azure Retail에서 과금
-#: 축을 실측한 것들이다. exclude는 전부 실측에서 나온 오염이다.
+#: 큐레이션 표 — ⑥-B의 6종 + 1층 보강(2026-07-24)의 6종. exclude·meter_include는
+#: 전부 실측에서 나온 경계 오염이다.
 RULES: tuple[Rule, ...] = (
     Rule("keyValueCache", "Redis Cache"),
     Rule("relationalDatabase", "Azure Database for PostgreSQL",
@@ -68,6 +76,24 @@ RULES: tuple[Rule, ...] = (
     Rule("messageQueue", "Service Bus"),
     Rule("secretStore", "Key Vault"),
     Rule("serverlessFunction", "Functions"),
+    # --- 1층 보강 ---
+    # Storage는 잡탕이다(실측: koreacentral 1,412건·제품 35종 — Managed Disk·
+    # Files·Tables·Data Lake 혼재). Blob(블록 블랍)만 objectStorage다.
+    # Hierarchical Namespace 변형은 Data Lake Gen2라 뺀다.
+    Rule("objectStorage", "Storage",
+         include=("Blob Storage", "General Block Blob"),
+         exclude=("Hierarchical Namespace",)),
+    Rule("containerService", "Azure Kubernetes Service"),
+    # serviceName은 옛 이름(Cognitive Search)이고 productName이 신명(AI Search)
+    # 이다 — 'Azure AI Search'로 조회하면 0건이 나온다(실측).
+    Rule("searchIndex", "Azure Cognitive Search"),
+    Rule("eventStream", "Event Hubs"),
+    Rule("apiGateway", "API Management"),
+    # svcmap 아키타입이 아니라 **의사 아키타입**이다 — 배포 계획의 진입점(ingress)
+    # 노드가 소비한다. Standard(우리 NLB 대응)만 담고 Gateway LB·크로스리전
+    # (Global 티어) 미터는 다른 제품층이라 거른다.
+    Rule("loadBalancer", "Load Balancer",
+         meter_include=("Standard ",), region_override="Global"),
 )
 
 
@@ -76,11 +102,14 @@ def axis_of(row: dict) -> str:
 
     단위 칸만 믿지 않는다: PostgreSQL vCore 미터도 단위는 '1 Hour'지만 그 값은
     **vCore 하나당** 시간 단가라 인스턴스-시간이 아니다(예약가 단위 함정과 같은
-    계보 — 단위 칸이 뜻을 다 담지 못한다).
+    계보 — 단위 칸이 뜻을 다 담지 못한다). Event Hubs의 Throughput/Processing/
+    Capacity Unit도 같은 함정이다(실측 2026-07-24) — 단위 수가 사이징 결과다.
     """
     meter = row.get("meterName") or ""
     unit = row.get("unitOfMeasure") or ""
     if "vCore" in meter or "RU" in meter:
+        return AXIS_CAPACITY
+    if any(k in meter for k in ("Throughput Unit", "Processing Unit", "Capacity Unit")):
         return AXIS_CAPACITY
     if "GB/Month" in unit or "GiB/Month" in unit:
         return AXIS_CAPACITY
@@ -132,6 +161,11 @@ def classify(rule: Rule, rows: list[dict]) -> tuple[list[dict], Counter]:
         if any(x in product for x in rule.exclude):
             dropped["boundary-bleed"] += 1
             continue
+        if rule.meter_include and not any(
+            (row.get("meterName") or "").startswith(m) for m in rule.meter_include
+        ):
+            dropped["meter-not-included"] += 1
+            continue
         price = row.get("retailPrice")
         if not price:
             dropped["zero-or-no-price"] += 1  # 프리 티어 미터 포함 — 0을 값으로 안 담는다
@@ -181,8 +215,20 @@ def build(
     records: list[dict] = []
     dropped: Counter = Counter()
     digests: list[str] = []
+    # 리전 무관(Global) 공표 규칙 — 리전 루프 밖에서 한 번만 받는다.
+    for rule in RULES:
+        if not rule.region_override:
+            continue
+        rows, digest = _fetch(rule.service, rule.region_override, refresh=refresh)
+        digests.append(digest)
+        found, drops = classify(rule, rows)
+        dropped.update(drops)
+        for record in found:
+            records.append({**record, "region": rule.region_override})
     for region in wanted:
         for rule in RULES:
+            if rule.region_override:
+                continue
             rows, digest = _fetch(rule.service, region, refresh=refresh)
             digests.append(digest)
             found, drops = classify(rule, rows)
@@ -199,9 +245,10 @@ def build(
             "(capacityRate)은 단가에 곱할 수량(vCore·RU·GB)이 사이징 결과이며, "
             "사용량형(usage)은 트래픽을 알아야 비용이 나옵니다 — 사용량형에 숫자 "
             "하나를 붙이면 모르는 것을 채우는 것이라 붙이지 않습니다. 합계도 "
-            "만들지 않습니다. 이 파일은 **azure 수록분**입니다 — gcp는 "
-            "objectStorage만 별도 파일(gcp-managed-pricing)에 있고, AWS는 "
-            "재배포가 명시적으로 금지라 미수록입니다.\n"
+            "만들지 않습니다. 이 파일은 **azure 수록분**(아키타입 11종 + 진입점용 "
+            "loadBalancer — LB는 원본이 리전 무관 Global로 공표)입니다. gcp는 "
+            "objectStorage·networkEgress만 별도 파일(gcp-managed-pricing)에 있고, "
+            "AWS는 재배포가 명시적으로 금지라 미수록입니다.\n"
             "**출처와 재배포 상태**: Microsoft Azure Retail Prices API"
             "(https://prices.azure.com/api/retail/prices)에서 받은 값에서 유도했습니다. "
             "가격 데이터의 권리는 Microsoft에 있습니다. **재배포를 허가하는 문구를 "

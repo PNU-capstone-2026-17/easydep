@@ -86,3 +86,27 @@ Retail API에는 ARM 타입 칸이 없다. `app::아키타입 → serviceName/pr
 - 소비자도 함께 열었다: OpenAPI의 파일 업로드 본문(multipart/octet-stream) →
   objectStorage 노드(inferred). 신호 없는 데이터는 계약 원칙(소비자 없는 칸
   금지) 위반이라, 신호부터 만들었다.
+
+## 추기 2 — 1층 보강 실측 (2026-07-24)
+
+- **Blob(azure objectStorage)**: Storage serviceName은 잡탕이다 — koreacentral
+  1,412건·제품 35종에 Managed Disk·Files·Tables·Data Lake 혼재. Blob만
+  productName 큐레이션(include: Blob Storage·General Block Blob / exclude:
+  Hierarchical Namespace = Data Lake Gen2). 남는 축은 GCS와 같은 이야기 구조다
+  (저장 GB/월 + 검색·오퍼레이션 사용량).
+- **Load Balancer**: **일반 리전 행이 없다** — armRegionName='Global'로만 공표
+  (실측: koreacentral 0건, Networking 계열에도 없음). 리전별 값을 지어내지 않고
+  Global 그대로 담는다. Standard 미터만 취한다(Gateway LB·크로스리전은 다른
+  제품층). 진입점(ingress) 노드가 소비한다 — svcmap 아키타입이 아니라 의사
+  아키타입 `loadBalancer`다.
+- **새 아키타입 4종**: AKS·Cognitive Search(제품명은 AI Search — serviceName은
+  옛 이름이라 'Azure AI Search'로 조회하면 0건)·Event Hubs·API Management 전부
+  제품 1~2종으로 깨끗. **Event Hubs의 Throughput/Processing/Capacity Unit은
+  vCore 함정의 재판**이다 — 단위는 '1 Hour'지만 단위 수가 사이징 결과라
+  capacityRate로 분류(axis_of 확장).
+- **GCP 이그레스**: Cyclenerd `compute.network.traffic.egress.internet`에 목적지
+  (전 세계 기본·중국·호주) × 월간 구간(0~1TB·1~10TB·10TB 초과) × 리전 단가가
+  전수로 있다 — networkEgress 의사 아키타입으로 담고, 노출이 있는 계획의
+  전역 노트가 소비한다(전부 사용량형 — 곱하지 않는다). 같은 섹션의 azure
+  'Bandwidth' serviceName(koreacentral 17건)도 실측에서 보였다 — **다음 후보로
+  기록만** 하고 이번엔 안 담는다(gcp와 달리 소비자 검증을 따로 해야 한다).

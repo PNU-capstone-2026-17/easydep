@@ -59,14 +59,31 @@ def test_no_multi_region_location_leaks_into_the_region_axis() -> None:
     assert "asia-multi" not in regions and "asia1" not in regions
 
 
-def test_only_object_storage_is_claimed() -> None:
-    """소스에 있는 것이 objectStorage뿐이다 — 다른 아키타입이 나타나면 그건
-    지어낸 것이다."""
+def test_only_sourced_archetypes_are_claimed() -> None:
+    """소스에 있는 것이 objectStorage·networkEgress뿐이다(1층 ②에서 이그레스
+    추가) — 다른 아키타입이 나타나면 그건 지어낸 것이다."""
     from kbcommon import artifact
 
     path = artifact.resolve("output", "gcp-managed-pricing.json")
     data = artifact.load_json(path)
-    assert {r["archetype"] for r in data["records"]} == {"objectStorage"}
+    assert {r["archetype"] for r in data["records"]} == {"objectStorage", "networkEgress"}
+
+
+def test_egress_is_usage_only_with_destination_and_tier() -> None:
+    """이그레스는 전부 사용량형이고, 단가가 목적지·월간 구간으로 갈린다는 사실이
+    레코드에 남아야 한다 — 한 단가로 뭉개면 중국행 트래픽에서 틀린다."""
+    axes = managed_axes("networkEgress", "asia-northeast3", output_dir=DEFAULT_OUTPUT_DIR)
+    assert axes and all(a["axis"] == "usage" and a["unit"] == "GB" for a in axes)
+    assert {a["sku"] for a in axes} == {"worldwide", "australia", "china"}
+    tiers = {a["meter"] for a in axes}
+    assert any("0~1TB" in t for t in tiers) and any("10TB 초과" in t for t in tiers)
+
+
+def test_egress_worldwide_differs_from_china() -> None:
+    """목적지 축이 실제로 값을 가르는지 — 같으면 축을 나눈 의미가 없다."""
+    axes = managed_axes("networkEgress", "asia-northeast3", output_dir=DEFAULT_OUTPUT_DIR)
+    tier0 = {a["sku"]: a["unitPriceUSD"] for a in axes if "0~1TB" in a["meter"]}
+    assert tier0["china"] != tier0["worldwide"]
 
 
 def test_azure_and_gcp_regions_do_not_collide() -> None:

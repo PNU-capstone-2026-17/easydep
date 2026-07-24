@@ -112,8 +112,8 @@ def test_committed_dataset_answers_for_redis_in_seoul() -> None:
 
 def test_unknown_archetype_is_empty_not_none() -> None:
     """빌드됐는데 없음([])과 미빌드(None)는 뜻이 반대다 — 합치면 '안 봤다'가
-    '봤는데 없다'로 읽힌다."""
-    assert managed_axes("objectStorage", "koreasouth", output_dir=DEFAULT_OUTPUT) == []
+    '봤는데 없다'로 읽힌다. (objectStorage는 1층 ①에서 수록돼 dnsZone으로 바꿈.)"""
+    assert managed_axes("dnsZone", "koreasouth", output_dir=DEFAULT_OUTPUT) == []
 
 
 def test_unbuilt_dir_is_none(tmp_path) -> None:
@@ -122,6 +122,49 @@ def test_unbuilt_dir_is_none(tmp_path) -> None:
 
 def test_app_prefix_is_accepted() -> None:
     assert managed_axes("app::keyValueCache", "koreasouth", output_dir=DEFAULT_OUTPUT)
+
+
+# --- 1층 보강 (2026-07-24) ------------------------------------------------------
+
+def test_blob_axes_exist_without_boundary_bleed() -> None:
+    """1층 ① — Storage serviceName은 잡탕(제품 35종)이라 Blob만 큐레이션했다.
+    Managed Disk·Files·Tables·Data Lake가 새어 들어오면 객체 스토리지 단가가
+    디스크 단가로 오염된다."""
+    axes = managed_axes("objectStorage", "koreasouth", output_dir=DEFAULT_OUTPUT)
+    assert axes, "objectStorage·koreasouth 축이 있어야 한다 (1층 ①)"
+    products = {a["product"] for a in axes}
+    bled = [p for p in products
+            if any(x in p for x in ("Hierarchical", "Disk", "Files", "Table"))]
+    assert not bled, f"경계 오염: {bled}"
+    assert any(a["axis"] == "capacityRate" for a in axes)  # Data Stored GB/월
+    assert any(a["axis"] == "usage" for a in axes)          # 오퍼레이션·검색
+
+
+def test_lb_axes_are_global_and_standard_only() -> None:
+    """1층 ③ — LB는 원본이 리전 무관(Global)으로만 공표한다(실측: 일반 리전 행
+    0건). 리전별 값을 지어내지 않고 Global로 담으며, Gateway LB·크로스리전
+    미터는 다른 제품층이라 거른다."""
+    axes = managed_axes("loadBalancer", "Global", output_dir=DEFAULT_OUTPUT)
+    assert axes
+    assert all(a["meter"].startswith("Standard") for a in axes)
+    assert managed_axes("loadBalancer", "koreasouth", output_dir=DEFAULT_OUTPUT) == []
+
+
+def test_event_hubs_capacity_units_are_not_instance_hours() -> None:
+    """1층 ④ — Throughput/Processing/Capacity Unit은 vCore와 같은 함정이다:
+    단위는 '1 Hour'지만 단위 수가 사이징 결과라 인스턴스-시간이 아니다."""
+    assert axis_of({"meterName": "Standard Throughput Unit",
+                    "unitOfMeasure": "1 Hour"}) == AXIS_CAPACITY
+    axes = managed_axes("eventStream", "koreasouth", output_dir=DEFAULT_OUTPUT)
+    units = [a for a in axes if "Throughput Unit" in a["meter"]
+             or "Capacity Unit" in a["meter"] or "Processing Unit" in a["meter"]]
+    assert units and all(a["axis"] == "capacityRate" for a in units)
+
+
+def test_new_archetypes_all_have_axes() -> None:
+    """1층 ④ — 보강 2에서 대응만 생기고 값이 0건이던 4종이 채워졌는가."""
+    for archetype in ("containerService", "searchIndex", "eventStream", "apiGateway"):
+        assert managed_axes(archetype, "koreasouth", output_dir=DEFAULT_OUTPUT), archetype
 
 
 # --- 배포 계획 소비자 -----------------------------------------------------------

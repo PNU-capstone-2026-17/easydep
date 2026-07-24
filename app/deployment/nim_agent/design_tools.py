@@ -520,12 +520,26 @@ def compose(design: dict) -> DeploymentPlan:
                 "(스펙에 명시)", ORIGIN_KB, "graphkb",
             )]
             if provider:
-                # 값 조인이 도는 계획에서만 이 고지가 필요하다 — 프로바이더가
-                # 없으면 전역 고지("단가 조인을 하지 않았습니다")가 이미 참이다.
-                lb_notes.append(Note(
-                    "로드밸런서 가격은 이 데이터셋에 없어 값이 붙지 않습니다",
-                    ORIGIN_KB, "costkb",
-                ))
+                # LB 과금 축 — azure는 원본이 리전 무관(Global)으로 공표한다
+                # (실측: 일반 리전 행이 없다). 축이 없으면 "수록 없음"이,
+                # 관리형 데이터 미빌드·미수록 프로바이더면 "가격 없음"이 붙는다 —
+                # 프로바이더가 없으면 전역 고지("단가 조인 안 함")가 이미 참이다.
+                axes_note = _managed_axes_note(
+                    "loadBalancer", provider,
+                    "Global" if provider == "azure" else region,
+                )
+                if axes_note is not None:
+                    lb_notes.append(axes_note)
+                    if provider == "azure":
+                        lb_notes.append(Note(
+                            "위 LB 단가는 원본이 리전 무관(Global)으로 공표한 값입니다",
+                            ORIGIN_KB, "costkb",
+                        ))
+                else:
+                    lb_notes.append(Note(
+                        "로드밸런서 가격은 이 데이터셋에 없어 값이 붙지 않습니다",
+                        ORIGIN_KB, "costkb",
+                    ))
             type_id, hedged = _vendor_of("core::nlb", provider)
             if type_id:
                 lb_notes.append(Note(
@@ -558,6 +572,29 @@ def compose(design: dict) -> DeploymentPlan:
             "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
             ORIGIN_KB, "requirements",
         ))
+
+    # 이그레스 — 노출(트래픽이 밖으로 나가는 신호)이 있을 때만 알린다. 전부
+    # 사용량형이라 곱하지 않는다 — 대표로 기본(전 세계) 첫 구간 단가만 보이고
+    # 목적지·구간별 축 개수를 함께 밝힌다.
+    if provider and region and exposed:
+        from costkb import dataset as cost_dataset
+
+        egress_axes = cost_dataset.managed_axes("networkEgress", region)
+        if egress_axes:
+            base = next(
+                (r for r in egress_axes
+                 if r["sku"] == "worldwide" and "0~1TB" in r["meter"]),
+                None,
+            )
+            head = (
+                f"기본(전 세계) {base['meter']} ${base['unitPriceUSD']}/GB · "
+                if base else ""
+            )
+            plan.notes.append(Note(
+                "인터넷 이그레스는 GB당 과금입니다(사용량형 — 트래픽을 알아야 "
+                f"하며, 곱하지 않습니다). {region} 기준 {head}목적지·구간별 "
+                f"축 {len(egress_axes)}개", ORIGIN_KB, "costkb",
+            ))
 
     # 관리형 가격 고지 — azure 수록분이 붙었으면 "없다"는 고지가 거짓이 된다.
     if any(

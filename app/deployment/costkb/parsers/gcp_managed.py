@@ -1,11 +1,12 @@
-"""Cyclenerd GCP 가격표 → 관리형 서비스 과금 축 (보강 3).
+"""Cyclenerd GCP 가격표 → 관리형 서비스 과금 축 (보강 3 + 1층 ②).
 
-## objectStorage 한 종뿐이다 — 그리고 그것이 조사 결과다
+## objectStorage·networkEgress 두 종뿐이다 — 그리고 그것이 조사 결과다
 
 "새 소스보다 이미 받아 둔 소스의 안 쓰는 부분부터"(소스 전수 조사의 교훈). 이미
 핀 박은 Cyclenerd pricing.yml(Apache-2.0)의 안 쓰던 `storage` 섹션에 Cloud
-Storage 버킷의 저장·검색 단가가 리전 전수로 들어 있다(실측 2026-07-24). 그 외
-관리형 축은 이 파일에 없다 — Cloud SQL·Memorystore·Pub/Sub 없음.
+Storage 버킷의 저장·검색 단가가, `compute.network.traffic` 섹션에 인터넷
+이그레스 단가가 리전 전수로 들어 있다(실측 2026-07-24). 그 외 관리형 축은 이
+파일에 없다 — Cloud SQL·Memorystore·Pub/Sub 없음.
 
 **다른 길이 없는 것도 실측이다**: GCP Billing Catalog API는 API 키 인증이
 필요해 무인증 재현 빌드 규약에 안 맞고, AWS Price List는 재배포가 **명시적으로
@@ -101,15 +102,55 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
         if name.endswith(_MULTI_SUFFIXES)
     )
 
+    # --- 인터넷 이그레스 (같은 파일의 안 쓰던 network 섹션 — 1층 보강 ②) ------
+    # 구조: internet → 목적지(기본은 'cost' 키가 곧 전 세계) → 월간 구간(TB) →
+    # 리전 → GB당 단가. 목적지·구간·리전 3차원 전부 사용량형이다 — 트래픽을
+    # 모르면 곱할 수 없고, 우리는 곱하지 않는다.
+    egress = (((doc.get("compute") or {}).get("network") or {})
+              .get("traffic") or {}).get("egress") or {}
+    internet = egress.get("internet") or {}
+    destinations: dict[str, dict] = {}
+    for key, spec in internet.items():
+        if key == "cost":
+            destinations["worldwide"] = spec or {}
+        else:
+            destinations[key] = (spec or {}).get("cost") or {}
+    _TIER_LABEL = {"0-1": "월 0~1TB 구간", "1-10": "월 1~10TB 구간",
+                   "10n": "월 10TB 초과 구간"}
+    for dest, tiers in sorted(destinations.items()):
+        for tier, regions_map in sorted((tiers or {}).items()):
+            label = _TIER_LABEL.get(tier, tier)
+            for region, cell in sorted((regions_map or {}).items()):
+                price = (cell or {}).get("month")
+                if not price:
+                    dropped["zero-or-no-price"] += 1
+                    continue
+                if region not in mirror_regions:
+                    dropped["region-not-in-mirror"] += 1
+                    continue
+                records.append({
+                    "archetype": "networkEgress",
+                    "region": region,
+                    "service": "Network egress",
+                    "product": f"internet egress ({dest})",
+                    "sku": dest,
+                    "meter": label,
+                    "unit": "GB",
+                    "axis": AXIS_USAGE,
+                    "unitPriceUSD": round(float(price), 6),
+                })
+
     records.sort(key=lambda r: (r["region"], r["product"], r["meter"]))
     axis_counts = Counter(r["axis"] for r in records)
     payload = {
         "_note": (
             "GCP 관리형 서비스의 **과금 축 목록**입니다 — 수록은 objectStorage"
-            "(Cloud Storage) 하나뿐이고, 그것이 소스의 전부입니다(Cyclenerd "
-            "pricing.yml에 Cloud SQL·Memorystore·Pub/Sub 없음 — 실측). 저장은 "
-            "GB/월 단가(용량-비례형 — 곱할 용량은 사이징 결과)이고, 콜드 "
-            "클래스의 검색은 GB당 요금(사용량형 — 검색량을 알아야 함)입니다. "
+            "(Cloud Storage 저장·검색)와 networkEgress(인터넷 이그레스)이고, "
+            "그것이 소스의 전부입니다(Cyclenerd pricing.yml에 Cloud SQL·"
+            "Memorystore·Pub/Sub 없음 — 실측). 저장은 GB/월 단가(용량-비례형 — "
+            "곱할 용량은 사이징 결과)이고, 콜드 클래스의 검색과 이그레스는 GB당 "
+            "요금(사용량형 — 검색량·트래픽을 알아야 함)입니다. 이그레스는 "
+            "목적지(전 세계 기본·중국·호주)와 월간 구간(TB)으로 단가가 갈립니다. "
             "합계는 만들지 않습니다. 값은 스냅샷이며 실제 청구서가 아닙니다. "
             "Apache-2.0(Cyclenerd/google-cloud-pricing-cost-calculator)."
         ),

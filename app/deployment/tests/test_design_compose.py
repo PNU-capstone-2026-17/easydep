@@ -270,6 +270,44 @@ def test_k8s_exposure_notes_the_ingress_layer_instead_of_an_lb(design) -> None:
     assert any("Service/Ingress" in n.text for n in plan.node("order-api").notes)
 
 
+def _use_committed_costkb(monkeypatch) -> None:
+    """conftest의 번들 고정을 이 테스트만 되돌린다 (⑥-B 테스트의 선례)."""
+    from costkb import dataset as cost_dataset
+    from kbcommon.artifact import DEFAULT_OUTPUT
+
+    monkeypatch.setattr(cost_dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
+    cost_dataset.clear_caches()
+
+
+def test_azure_lb_carries_global_billing_axes(design, monkeypatch) -> None:
+    """1층 ③ — LB 노드에 과금 축이 붙되, 원본이 리전 무관(Global)으로 공표한
+    값이라는 사실이 함께 실린다."""
+    _use_committed_costkb(monkeypatch)
+    design["requirements"]["provider"] = "azure"
+    design["requirements"]["region"] = "koreasouth"
+    lb = compose(design).node("order-api-lb")
+    texts = [n.text for n in lb.notes]
+    assert any("과금 축(azure Global" in t for t in texts)
+    assert any("리전 무관(Global)으로 공표" in t for t in texts)
+    assert not any("값이 붙지 않습니다" in t for t in texts)
+
+
+def test_gcp_exposed_plan_notes_egress(design, monkeypatch) -> None:
+    """1층 ② — 노출이 있는 gcp 계획에 이그레스 축이 알려지되, **곱하지 않는다**."""
+    _use_committed_costkb(monkeypatch)
+    design["requirements"]["provider"] = "gcp"
+    design["requirements"]["region"] = "asia-northeast3"
+    plan = compose(design)
+    egress = [n.text for n in plan.notes if "이그레스" in n.text]
+    assert egress and "곱하지 않습니다" in egress[0]
+    assert "월 0~1TB 구간" in egress[0]
+
+
+def test_aws_plan_has_no_egress_claim(design) -> None:
+    """이그레스 수록은 gcp뿐이다 — aws 계획에서 이그레스 단가가 나오면 거짓이다."""
+    assert not [n for n in compose(design).notes if "이그레스" in n.text]
+
+
 def test_exposed_vm_says_it_scales_out_but_count_is_not_ours(design) -> None:
     """스케일아웃 표현(보강 4) — 구조(서브그룹)는 스펙 명시라 적되, **대수는
     정하지 못한다**가 문장의 절반이어야 한다. 대수를 정하면 근거 없는 사이징이다."""
