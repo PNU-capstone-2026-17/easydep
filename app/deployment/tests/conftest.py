@@ -22,3 +22,15 @@ def _costkb_uses_bundle(tmp_path_factory, monkeypatch):
     dataset.clear_caches()
     yield
     dataset.clear_caches()
+
+
+@pytest.fixture()
+def costkb_committed(monkeypatch):
+    """위 번들 고정을 **이 테스트만** 되돌린다 — 커밋된 관리형 산출물(data/)을
+    보는 통합 테스트용(⑥-B에서 시작된 패턴을 픽스처로 승격)."""
+    from kbcommon.artifact import DEFAULT_OUTPUT
+
+    monkeypatch.setattr(dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
+    dataset.clear_caches()
+    yield
+    dataset.clear_caches()

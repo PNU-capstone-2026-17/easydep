@@ -116,6 +116,37 @@ def check_bundle_matches_mirror(out: Path) -> tuple[str, list[Violation], int]:
 CHECKS = (check_capacity_joins_graph, check_bundle_matches_mirror)
 
 
+#: **재배포가 금지돼 절대 포장하면 안 되는 산출물.** 소스 표의 `denied` — 여기
+#: 있는 이름은 pack이 거부하고, 커밋되면 tests/test_costkb_aws_managed.py가 잡는다.
+PACK_FORBIDDEN = frozenset({"aws-managed-pricing.json"})
+
+
+def pack_artifacts(names: list[str], output_dir: Path, data_dir: Path) -> int:
+    """`output/<이름>` → `data/<이름>.gz`. 매번 일회성 스크립트로 하던 반복 수작업의
+    명령화 — 이름을 안 주면 data/에 이미 있는 산출물 전부를 다시 포장한다."""
+    import gzip
+
+    wanted = names or sorted(
+        p.name[:-3] for p in data_dir.glob("*.json.gz")
+    )
+    failed = 0
+    for name in wanted:
+        if name in PACK_FORBIDDEN:
+            print(f"✗ {name}: 재배포가 금지된 소스라 포장을 거부합니다 (로컬 전용)",
+                  file=sys.stderr)
+            failed += 1
+            continue
+        src = output_dir / name
+        if not src.exists():
+            print(f"− {name}: output/에 없습니다 (빌드 안 됨) — 건너뜀")
+            continue
+        dest = data_dir / f"{name}.gz"
+        with gzip.open(dest, "wb", compresslevel=9) as handle:
+            handle.write(src.read_bytes())
+        print(f"✓ {name} → {dest} ({dest.stat().st_size:,} bytes)")
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kbcommon", description="KB 사이의 정합성 검사")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -123,11 +154,22 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
                         help="산출물 디렉터리 (기본: output)")
 
+    pack = sub.add_parser(
+        "pack", help="output/ 산출물을 data/*.gz로 포장 (이름 생략 = 기존 전부 갱신)"
+    )
+    pack.add_argument("names", nargs="*", help="산출물 파일명 (예: svcmap-graph.json)")
+    pack.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+
     # build-* 명령들은 envkb로 이사했다(재편 계획 ⑤) — 리전·탄소·지연·수명주기·
     # 드라이버 커버리지·이미지는 자체 산출물을 소유하는 지식베이스지 공용 배관이
     # 아니다. `python -m envkb build-<축>`을 쓰세요.
 
     args = parser.parse_args(argv)
+
+    if args.command == "pack":
+        from kbcommon.artifact import BUNDLED_DIR
+
+        return pack_artifacts(args.names, args.output, BUNDLED_DIR)
 
     if not args.output.exists():
         print(f"산출물 디렉터리가 없습니다: {args.output} — 먼저 빌드하세요.", file=sys.stderr)

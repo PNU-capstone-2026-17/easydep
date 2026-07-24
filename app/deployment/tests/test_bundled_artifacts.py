@@ -66,6 +66,29 @@ def test_read_dataset_accepts_gzip(tmp_path) -> None:
     assert error is None and data == {"v": 1}
 
 
+def test_pack_refuses_forbidden_and_roundtrips(tmp_path) -> None:
+    """`python -m kbcommon pack` — 반복 수작업(output→data gzip)의 명령화.
+
+    핵심은 거부다: 재배포 금지 산출물(aws-managed)은 포장 자체를 거부해야
+    라이선스 방벽이 명령 계층에서도 선다."""
+    import gzip
+    import json
+
+    from kbcommon.__main__ import pack_artifacts
+
+    out = tmp_path / "output"; out.mkdir()
+    data = tmp_path / "data"; data.mkdir()
+    (out / "x.json").write_text('{"v": 1}', encoding="utf-8")
+    (out / "aws-managed-pricing.json").write_text('{"v": 2}', encoding="utf-8")
+
+    assert pack_artifacts(["x.json"], out, data) == 0
+    with gzip.open(data / "x.json.gz", "rt", encoding="utf-8") as handle:
+        assert json.load(handle) == {"v": 1}
+
+    assert pack_artifacts(["aws-managed-pricing.json"], out, data) == 1
+    assert not (data / "aws-managed-pricing.json.gz").exists()
+
+
 def test_committed_artifacts_carry_their_pins() -> None:
     """커밋한 파일에 `_source`가 살아 있어야 한다.
 

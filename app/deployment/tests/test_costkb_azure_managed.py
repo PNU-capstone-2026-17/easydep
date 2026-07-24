@@ -169,21 +169,13 @@ def test_new_archetypes_all_have_axes() -> None:
 
 # --- 배포 계획 소비자 -----------------------------------------------------------
 
-def test_azure_plan_managed_nodes_carry_billing_axes(monkeypatch) -> None:
+def test_azure_plan_managed_nodes_carry_billing_axes(costkb_committed) -> None:
     """관리형 노드의 "값 없음"이 azure에서는 **과금 축 목록**으로 바뀐다 —
-    합계는 여전히 없고, 그 이유(수량을 모름)가 문장에 실린다.
-
-    conftest가 costkb를 빈 디렉터리(번들 모드)로 고정하므로, 커밋된 관리형
-    산출물을 보려면 이 테스트만 기본 위치로 되돌린다.
-    """
+    합계는 여전히 없고, 그 이유(수량을 모름)가 문장에 실린다."""
     import json
     from pathlib import Path
 
-    from costkb import dataset
     from nim_agent.design_tools import _render_plan_text, compose
-
-    monkeypatch.setattr(dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
-    dataset.clear_caches()
 
     design = json.loads(
         (Path(__file__).resolve().parent.parent / "appkb" / "examples"

@@ -199,19 +199,9 @@ def test_no_upload_no_object_storage(design) -> None:
     assert compose(design).node("order-api-files") is None
 
 
-def test_gcp_object_storage_carries_billing_axes(design, monkeypatch) -> None:
+def test_gcp_object_storage_carries_billing_axes(design, costkb_committed) -> None:
     """보강 3의 소비자 실측 — gcp 계획의 객체 스토리지에 저장(용량-비례)·검색
-    (사용량) 과금 축이 붙고, 합계 없음 고지가 함께 간다.
-
-    conftest가 costkb를 빈 디렉터리(번들 모드)로 고정하므로, 커밋된 관리형
-    산출물을 보려면 이 테스트만 기본 위치로 되돌린다(⑥-B 테스트의 선례).
-    """
-    from costkb import dataset as cost_dataset
-    from kbcommon.artifact import DEFAULT_OUTPUT
-
-    monkeypatch.setattr(cost_dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
-    cost_dataset.clear_caches()
-
+    (사용량) 과금 축이 붙고, 합계 없음 고지가 함께 간다."""
     _add_upload_path(design)
     design["requirements"]["provider"] = "gcp"
     design["requirements"]["region"] = "asia-northeast3"
@@ -314,19 +304,9 @@ def test_k8s_exposure_notes_the_ingress_layer_instead_of_an_lb(design) -> None:
     assert any("Service/Ingress" in n.text for n in plan.node("order-api").notes)
 
 
-def _use_committed_costkb(monkeypatch) -> None:
-    """conftest의 번들 고정을 이 테스트만 되돌린다 (⑥-B 테스트의 선례)."""
-    from costkb import dataset as cost_dataset
-    from kbcommon.artifact import DEFAULT_OUTPUT
-
-    monkeypatch.setattr(cost_dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
-    cost_dataset.clear_caches()
-
-
-def test_azure_lb_carries_global_billing_axes(design, monkeypatch) -> None:
+def test_azure_lb_carries_global_billing_axes(design, costkb_committed) -> None:
     """1층 ③ — LB 노드에 과금 축이 붙되, 원본이 리전 무관(Global)으로 공표한
     값이라는 사실이 함께 실린다."""
-    _use_committed_costkb(monkeypatch)
     design["requirements"]["provider"] = "azure"
     design["requirements"]["region"] = "koreasouth"
     lb = compose(design).node("order-api-lb")
@@ -336,9 +316,8 @@ def test_azure_lb_carries_global_billing_axes(design, monkeypatch) -> None:
     assert not any("값이 붙지 않습니다" in t for t in texts)
 
 
-def test_gcp_exposed_plan_notes_egress(design, monkeypatch) -> None:
+def test_gcp_exposed_plan_notes_egress(design, costkb_committed) -> None:
     """1층 ② — 노출이 있는 gcp 계획에 이그레스 축이 알려지되, **곱하지 않는다**."""
-    _use_committed_costkb(monkeypatch)
     design["requirements"]["provider"] = "gcp"
     design["requirements"]["region"] = "asia-northeast3"
     plan = compose(design)

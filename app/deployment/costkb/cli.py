@@ -269,9 +269,9 @@ def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
         output, mirror=mirror, regions=args.regions, refresh=args.refresh
     )
     print(
-        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
-        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
-        "포장하세요.",
+        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). "
+        "`python -m kbcommon pack`으로 `data/`에 포장하되 NOTICE와 파일 안 "
+        "`_note`에 그 사실을 밝힙니다.",
         file=sys.stderr,
     )
     return 0
@@ -294,9 +294,9 @@ def _cmd_build_azure_managed(args: argparse.Namespace) -> int:
         output, mirror=mirror, regions=args.regions, refresh=args.refresh
     )
     print(
-        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
-        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
-        "포장하세요.",
+        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). "
+        "`python -m kbcommon pack`으로 `data/`에 포장하되 NOTICE와 파일 안 "
+        "`_note`에 그 사실을 밝힙니다.",
         file=sys.stderr,
     )
     return 0
