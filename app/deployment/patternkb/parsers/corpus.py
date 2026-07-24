@@ -38,14 +38,17 @@ from patternkb.dataset import schema
 
 _ARCH = "ms-architecture-center"
 _TWELVE = "twelve-factor"
+_WAF = "azure-well-architected"
 
 _ARCH_API = "https://api.github.com/repos/MicrosoftDocs/architecture-center"
 _TWELVE_API = "https://api.github.com/repos/heroku/12factor"
+_WAF_API = "https://api.github.com/repos/MicrosoftDocs/well-architected"
 
 _ARCH_ATTRIBUTION = (
     "Microsoft Corporation — MicrosoftDocs/architecture-center, CC BY 4.0"
 )
 _TWELVE_ATTRIBUTION = "Adam Wiggins — heroku/12factor, MIT"
+_WAF_ATTRIBUTION = "Microsoft Corporation — MicrosoftDocs/well-architected, CC BY 4.0"
 
 #: (경로 접두, section, 최소 편수). 최소치는 실측 편수보다 조금 낮게 잡는다 —
 #: 한두 편의 이동은 흡수하고 하위 전체의 증발만 잡는 것이 목적이다.
@@ -56,6 +59,14 @@ _ARCH_SECTIONS = (
     ("best-practices/", "best-practices", 10),
 )
 _TWELVE_MIN = 12  # 12요소보다 적으면 뭔가 잘못됐다
+_WAF_MIN = 150  # 실측 199편 — 급감하면 저장소 재편
+
+#: 섹션별 최소 편수 — 불변식과 테스트가 공유한다(두 벌이면 드리프트한다).
+SECTION_MINIMUMS: dict[str, int] = {
+    **{section: minimum for _, section, minimum in _ARCH_SECTIONS},
+    "twelve-factor": _TWELVE_MIN,
+    "well-architected": _WAF_MIN,
+}
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 _TITLE_LINE = re.compile(r"^title:\s*(.+?)\s*$", re.M)
@@ -156,9 +167,38 @@ def _twelve_docs(refresh: bool) -> tuple[list[dict], list[Path]]:
     return docs, fetched
 
 
+def _waf_docs(refresh: bool) -> tuple[list[dict], list[Path]]:
+    """Azure Well-Architected 지침 199편 (조사 2026-07-24 채택 3)."""
+    pin = SOURCES[_WAF].pin
+    paths = list_github_tree(
+        _WAF_API, pin, "well-architected", cache_prefix="waf-tree", refresh=refresh
+    )
+    docs: list[dict] = []
+    fetched: list[Path] = []
+    for path in sorted(p for p in paths if p.endswith(".md")):
+        rel = f"well-architected/{path}"
+        raw, cached = _fetch_doc(_WAF, rel, refresh=refresh)
+        fetched.append(cached)
+        title, body = _parse_markdown(raw, _fallback_title(path))
+        docs.append({
+            "id": f"well-architected/{path.removesuffix('.md')}",
+            "title": title,
+            "path": rel,
+            "source": _WAF,
+            "section": "well-architected",
+            "license": "CC-BY-4.0",
+            "attribution": _WAF_ATTRIBUTION,
+            "url": (
+                "https://github.com/MicrosoftDocs/well-architected/"
+                f"blob/{pin}/{rel}"
+            ),
+            "text": body,
+        })
+    return docs, fetched
+
+
 def _invariants() -> list[Invariant]:
-    minimums = {section: minimum for _, section, minimum in _ARCH_SECTIONS}
-    minimums["twelve-factor"] = _TWELVE_MIN
+    minimums = SECTION_MINIMUMS
 
     def section_counts(dataset: dict):
         counts: dict[str, int] = {}
@@ -208,7 +248,8 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 
     arch_docs, arch_paths = _arch_docs(refresh)
     twelve_docs, twelve_paths = _twelve_docs(refresh)
-    docs = arch_docs + twelve_docs
+    waf_docs, waf_paths = _waf_docs(refresh)
+    docs = arch_docs + twelve_docs + waf_docs
 
     coverage: dict[str, int] = {}
     for doc in docs:
@@ -220,6 +261,7 @@ def build(output: Path, *, refresh: bool = False) -> dict:
         "_source": [
             describe_source_set(arch_paths, _ARCH),
             describe_source_set(twelve_paths, _TWELVE),
+            describe_source_set(waf_paths, _WAF),
         ],
     }
     result = write_dataset(output, dataset, schema(), _invariants())

@@ -12,7 +12,7 @@ def pattern_search(query: str, top: int = 3) -> str:
     """클라우드 설계 패턴·원칙 **문서(산문)**를 검색해 인용문을 돌려준다 — 자문 전용.
 
     코퍼스: Azure Architecture Center의 설계 패턴·아키텍처 스타일·설계 원칙·실무
-    지침(CC-BY-4.0)과 12factor 배포 원칙(MIT), 90편(영어).
+    지침과 Well-Architected 지침(CC-BY-4.0), 12factor 배포 원칙(MIT) — 영어 문서.
 
     **결과는 설계 지침이지 클라우드 사실이 아닙니다** — 값·한도·가격·판정은 이
     도구가 아니라 kb_*/cap_*/cost_* 도구로 확인하세요. 결과에 붙는 고지와 출처

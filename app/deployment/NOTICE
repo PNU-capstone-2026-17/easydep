@@ -27,6 +27,9 @@ patternkb(설계 지침 검색, advisory 전용)의 코퍼스로, 아래 문서�
   변경 사항: YAML frontmatter 제거, 본문 발췌. 핀(커밋 SHA)은
   `kbcommon/sources.py`와 산출물 `_source` 블록에 있습니다.
       https://github.com/MicrosoftDocs/architecture-center
+- **MicrosoftDocs/well-architected** — Copyright Microsoft Corporation,
+  **CC BY 4.0**. `well-architected/` 하위 지침 199편. 변경 사항 동일.
+      https://github.com/MicrosoftDocs/well-architected
 - **heroku/12factor** — Copyright (c) 2012 Adam Wiggins, **MIT**.
   `content/en` 하위 15편(목차 제외).
       https://github.com/heroku/12factor

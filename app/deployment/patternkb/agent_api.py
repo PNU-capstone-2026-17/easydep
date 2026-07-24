@@ -27,6 +27,7 @@ _SECTION_KOREAN = {
     "design-principles": "설계 원칙",
     "best-practices": "실무 지침",
     "twelve-factor": "12factor 배포 원칙",
+    "well-architected": "Well-Architected 지침",
 }
 
 

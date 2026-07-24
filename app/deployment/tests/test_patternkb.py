@@ -19,8 +19,7 @@ from patternkb import dataset, query
 from patternkb.agent_api import _MISSING, coverage_text, search_patterns
 from patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
 from patternkb.parsers.corpus import (
-    _ARCH_SECTIONS,
-    _TWELVE_MIN,
+    SECTION_MINIMUMS,
     _fallback_title,
     _invariants,
     _parse_markdown,
@@ -171,17 +170,11 @@ def test_invariants_catch_section_collapse_and_empty_docs() -> None:
     from kbcommon.invariants import run
 
     good_docs = []
-    for prefix, section, minimum in _ARCH_SECTIONS:
+    for section, minimum in SECTION_MINIMUMS.items():
         good_docs.extend(
-            _doc(f"{prefix}d{i}", f"D{i}", _RETRY_TEXT, section=section)
+            _doc(f"{section}/d{i}", f"D{i}", _RETRY_TEXT, section=section)
             for i in range(minimum)
         )
-    good_docs.extend(
-        _doc(f"twelve-factor/f{i}", f"F{i}", _QUEUE_TEXT,
-             source="twelve-factor", section="twelve-factor", license="MIT",
-             attribution="Adam Wiggins — heroku/12factor, MIT")
-        for i in range(_TWELVE_MIN)
-    )
     assert run({"docs": good_docs}, _invariants()).ok
 
     collapsed = [d for d in good_docs if d["section"] != "patterns"]
@@ -216,6 +209,5 @@ def test_bundled_corpus_finds_circuit_breaker() -> None:
 
 def test_bundled_corpus_sections_meet_minimums() -> None:
     counts = dataset.sections()
-    for _, section, minimum in _ARCH_SECTIONS:
+    for section, minimum in SECTION_MINIMUMS.items():
         assert counts.get(section, 0) >= minimum, section
-    assert counts.get("twelve-factor", 0) >= _TWELVE_MIN

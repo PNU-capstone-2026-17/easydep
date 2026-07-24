@@ -23,14 +23,15 @@
           "type": "string",
           "description": "원본 저장소 기준 경로 — 인용의 좌표다."
         },
-        "source": { "enum": ["ms-architecture-center", "twelve-factor"] },
+        "source": { "enum": ["ms-architecture-center", "twelve-factor", "azure-well-architected"] },
         "section": {
           "enum": [
             "patterns",
             "architecture-styles",
             "design-principles",
             "best-practices",
-            "twelve-factor"
+            "twelve-factor",
+            "well-architected"
           ]
         },
         "license": {

@@ -32,6 +32,8 @@ _NOT_DISPLAY_FIELDS = {
     "cpuVendor", "cpuModel", "cpuClockMHz", "cpuCacheKB", "cpuCores", "cpuThreads",
     "memorySpeedMHz", "gpuCount", "gpuModel", "gpuArchitecture",
     "hardwareCheckedAt", "hardwareEvidence",
+    # 보강 소스별 근거 메타 칸 — hardwareEvidence와 같은 규약(값 칸이 아니다)
+    "azureSizesEvidence", "gcpSeriesEvidence",
 }
 
 AWS_OLD = {
