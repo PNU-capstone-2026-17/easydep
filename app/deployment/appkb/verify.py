@@ -160,6 +160,62 @@ def verify_against_requirements(
                     "분산 흔적이 없습니다"
                 )
 
+    pattern = req.get("trafficPattern")
+    if pattern:
+        # 버스트 경고는 도구 계층이 perfkb에서 붙인 노트로 판정한다. 경고의
+        # **부재**를 "버스트 아님"으로 읽는 건 침묵 오독이라, 값이 붙은 노드가
+        # 있을 때만(=성능 조인이 실제로 돌았을 때만) 그렇게 말한다 — partial·
+        # untracked는 노트가 붙으므로 부재와 구분된다.
+        burst = sorted(
+            n.id for n in plan.nodes
+            if any(x.source == "perfkb" and "버스트" in x.text for x in n.notes)
+        )
+        if pattern == "steady" and burst:
+            out.append(
+                f"trafficPattern(steady): **상충** — 상시 부하인데 버스트 인스턴스"
+                f"({', '.join(burst)})가 계획에 있습니다. CPU 크레딧이 소진되면 "
+                "baseline 성능으로 떨어집니다 — 고정 성능 스펙으로 재검토가 필요합니다"
+            )
+        elif pattern == "spiky" and burst:
+            out.append(
+                f"trafficPattern(spiky): 버스트 인스턴스({', '.join(burst)})와 알려진 "
+                "상충 없음 — 간헐 폭증에는 크레딧 모델이 맞을 수 있습니다"
+            )
+        elif any(n.hourly_usd for n in plan.nodes):
+            out.append(
+                f"trafficPattern({pattern}): 계획의 스펙에 버스트 경고가 없습니다"
+                "(성능 축 확인 기준)"
+            )
+        else:
+            out.append(
+                f"trafficPattern({pattern}): 판정 불가 — 값·성능 조인이 안 된 계획입니다"
+            )
+
+    stateless = req.get("stateless")
+    serverless = sorted(
+        n.id for n in plan.nodes if n.archetype == "app::serverlessFunction"
+    )
+    if stateless is False and serverless:
+        out.append(
+            f"stateless(false) × 서버리스({', '.join(serverless)}): **상충 가능성"
+            "(우리 추론)** — 서버리스 함수는 인스턴스에 상태를 보존하지 않는 실행 "
+            "모델이라, 상태를 관리형 저장소로 옮기는 재설계가 필요합니다"
+        )
+    elif stateless is False:
+        out.append(
+            "stateless(false): 컴퓨트에 둔 상태는 재생성·스케일 때 사라집니다 — "
+            "계획의 저장소 노드가 상태의 자리입니다 (우리 추론)"
+        )
+    elif stateless is None and serverless:
+        # 서버리스가 계획에 있는데 상태성 주장을 못 받았다 — 침묵을 적합으로
+        # 읽지 않도록 미확인을 명시한다.
+        out.append(
+            f"상태성 미확인: 서버리스({', '.join(serverless)})가 계획에 있는데 "
+            "stateless 여부를 받지 못했습니다"
+        )
+    elif stateless is True:
+        out.append("stateless(true): 계획과 알려진 상충 없음 — 주장으로 기록됩니다")
+
     provider = (req.get("provider") or "").strip().lower()
     if provider:
         mismatched = sorted(

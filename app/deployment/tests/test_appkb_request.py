@@ -125,6 +125,8 @@ _CONSUMERS = {
                                "verify_against_requirements(규모 판정 불가 명시)",
     "approxRequestsPerSecond": "verify_against_requirements — 규모 판정 불가 명시",
     "multiZone": "design_tools._subnet_notes · verify_against_requirements",
+    "trafficPattern": "verify_against_requirements — 버스트 적합 판정(⑥-A에서 열림)",
+    "stateless": "verify_against_requirements — 서버리스 적합 판정(⑥-A에서 열림)",
     "meta": "자유 메타 — 계약이 뜻을 정하지 않는 유일한 칸",
 }
 

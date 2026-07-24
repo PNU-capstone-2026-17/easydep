@@ -242,6 +242,22 @@ def test_multizone_requirement_is_judged_in_the_answer(design) -> None:
     assert "multiZone: 반영됨" in text
 
 
+def test_steady_traffic_turns_the_burst_warning_into_a_verdict(design) -> None:
+    """**⑥-A가 여는 판정.** 데모의 최저가 스펙(t3a.medium)은 버스트라 경고가
+    붙는데, 지금까지는 이 앱에 문제인지 판단할 입력이 없었다 — trafficPattern이
+    그 입력이고, steady면 상충으로 판정된다. 실제 costkb×perfkb 조인을 탄다."""
+    design["requirements"]["trafficPattern"] = "steady"
+    text = deployment_answer(design, diagram=False)
+    assert "trafficPattern(steady): **상충**" in text
+
+
+def test_stateful_serverless_hint_is_flagged_in_the_answer(design) -> None:
+    design["requirements"]["stateless"] = False
+    design["components"][0]["deployHint"] = {"compute": "serverlessFunction"}
+    text = deployment_answer(design, diagram=False)
+    assert "상충 가능성" in text and "우리 추론" in text
+
+
 # --- 답의 계약 -----------------------------------------------------------------
 
 def test_answer_never_totals(design) -> None:

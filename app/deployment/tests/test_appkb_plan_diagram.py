@@ -256,6 +256,76 @@ def test_multizone_on_serverless_plan_is_not_a_false_violation() -> None:
     assert not any("미반영" in ln for ln in lines)
 
 
+def _burst_plan() -> DeploymentPlan:
+    plan = _plan()
+    plan.nodes[0] = __import__("dataclasses").replace(
+        plan.nodes[0],
+        hourly_usd=0.05,
+        notes=plan.nodes[0].notes + (
+            Note("버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 "
+                 "떨어집니다.", ORIGIN_KB, "perfkb"),
+        ),
+    )
+    return plan
+
+
+def test_steady_traffic_on_burst_spec_is_a_conflict() -> None:
+    """⑥-A의 핵심 소비자 — 버스트 **경고**가 이 앱에 **문제**인지를 처음으로
+    판정한다. 지금까지는 경고만 하고 판단할 입력이 없었다."""
+    lines = verify_against_requirements(
+        _burst_plan(), {"trafficPattern": "steady"}, _HOURS
+    )
+    conflict = next(ln for ln in lines if ln.startswith("trafficPattern"))
+    assert "상충" in conflict and "order-api" in conflict
+
+
+def test_spiky_traffic_on_burst_spec_is_not_flagged() -> None:
+    lines = verify_against_requirements(
+        _burst_plan(), {"trafficPattern": "spiky"}, _HOURS
+    )
+    assert any("알려진 상충 없음" in ln for ln in lines)
+
+
+def test_no_burst_note_is_only_trusted_when_values_joined() -> None:
+    """경고의 **부재**를 '버스트 아님'으로 읽는 건 침묵 오독이다 — 성능 조인이
+    실제로 돈 계획(값이 붙은 노드 존재)에서만 그렇게 말한다."""
+    lines = verify_against_requirements(
+        _priced_plan(0.05), {"trafficPattern": "steady"}, _HOURS
+    )
+    assert any("버스트 경고가 없습니다" in ln for ln in lines)
+    unjoined = verify_against_requirements(
+        _plan(), {"trafficPattern": "steady"}, _HOURS
+    )
+    assert any("판정 불가" in ln for ln in unjoined if ln.startswith("trafficPattern"))
+
+
+def test_stateful_app_with_serverless_is_a_flagged_inference() -> None:
+    """상충 판정이지만 KB 사실이 아니라 **우리 추론**이다 — 그 표시가 판정문에
+    붙어 있어야 한다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode(
+        "worker", "Worker", "managed", ORIGIN_DESIGNER,
+        archetype="app::serverlessFunction",
+        type_id="aws::AWS::Lambda::Function",
+        notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
+    ))
+    lines = verify_against_requirements(plan, {"stateless": False}, _HOURS)
+    conflict = next(ln for ln in lines if "서버리스" in ln)
+    assert "상충 가능성" in conflict and "우리 추론" in conflict and "worker" in conflict
+
+
+def test_serverless_without_statefulness_claim_is_said() -> None:
+    """침묵을 적합으로 읽지 않는다 — stateless를 못 받았으면 미확인을 명시."""
+    plan = _plan()
+    plan.nodes.append(PlanNode(
+        "worker", "Worker", "managed", ORIGIN_DESIGNER,
+        archetype="app::serverlessFunction", type_id="aws::AWS::Lambda::Function",
+        notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
+    ))
+    lines = verify_against_requirements(plan, {}, _HOURS)
+    assert any("상태성 미확인" in ln for ln in lines)
+
+
 def test_foreign_provider_type_in_plan_is_caught() -> None:
     plan = _plan()
     plan.nodes.append(PlanNode("cache", "캐시", "managed", ORIGIN_KB,

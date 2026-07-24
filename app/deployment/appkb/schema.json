@@ -96,6 +96,14 @@
           "type": "boolean",
           "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
         },
+        "trafficPattern": {
+          "enum": ["steady", "spiky"],
+          "description": "부하 모양 — steady(상시 부하) | spiky(간헐 폭증). 소비자: 버스트 적합 판정 — steady인데 계획의 스펙에 버스트 경고(perfkb)가 붙어 있으면 상충으로 판정한다. 이 칸이 없으면 버스트 경고는 경고로만 남고 이 앱에 문제인지는 판정하지 않는다."
+        },
+        "stateless": {
+          "type": "boolean",
+          "description": "앱이 인스턴스(컴퓨트)에 상태를 두지 않는가 — 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다). 소비자: 서버리스 적합 판정 — false인데 서버리스 컴포넌트가 있으면 상충 가능성으로 판정한다."
+        },
         "meta": { "type": "object" }
       }
     }
