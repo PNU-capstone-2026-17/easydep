@@ -24,10 +24,15 @@ from perfkb import agent_api
 
 @function_tool
 def perf_instance_profile(provider: str, spec_name: str) -> str:
-    """한 인스턴스 스펙의 성능 프로파일을 반환한다(상시 CPU·세대·클럭·EBS·ACU 등).
+    """한 인스턴스 스펙의 성능 프로파일과 **장착 하드웨어 구성**을 반환한다.
 
-    가격만으로는 안 보이는 특성을 확인할 때 쓴다 — 예: "t3.medium 상시 부하에 괜찮아?",
-    "m5.large 최신 세대야?", "이 인스턴스 네트워크 대역폭 얼마야?".
+    담는 축: 상시 CPU·세대(구세대 여부)·클럭·EBS·ACU·네트워크 대역폭·NIC 수·
+    **GPU 모델/개수·로컬 SSD 용량**·CPU 플랫폼. 특정 스펙에 "뭐가 달려 있나/
+    용량이 얼마나"를 물으면 cap_* 가 아니라 **이 도구**다 — cap_* 는 리소스
+    속성의 허용값이지 인스턴스에 장착된 하드웨어가 아니다.
+
+    예: "t3.medium 상시 부하에 괜찮아?", "g2-standard-8에 어떤 GPU 달려 있어?",
+    "a2-ultragpu-1g 로컬 SSD 용량은?", "Standard_D4s_v5 네트워크 대역폭은?".
 
     Args:
         provider: 'aws' | 'azure' | 'gcp' (성능은 이 셋만 수록).

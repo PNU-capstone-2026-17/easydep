@@ -194,6 +194,39 @@ PROBES: tuple[Probe, ...] = (
           "검사(두 축 필터)만 남긴다. 모호 질의의 옳은 행동은 R4가 지킨다.",
           want_tools=("cost_recommend_specs",), forbid_tools=("web_search",),
           want_any=("g4dn", "g5g", "g5.", "g6")),
+    # --- 2026-07-24 신축 검증 (기대값은 전부 산출물 실측) ---
+    Probe("X1", "재시도 로직 설계에 알려진 패턴 있어?",
+          "**patternkb 라이브 첫 검증.** 자문 도구를 부르고 인용(패턴 이름)이 "
+          "답에 실리는가 — 코퍼스는 영어라 모델이 영어 질의를 만들어야 한다",
+          want_tools=("pattern_search",), forbid_tools=("web_search",),
+          want_any=("Retry", "재시도")),
+    Probe("X2", "azure Standard_D4s_v5의 네트워크 대역폭이 얼마야?",
+          "**azure 크기 표 보강의 라이브 검증.** 12,500 Mbps는 크기 문서 표에서 "
+          "온 값(실측)이다 — 이게 답에 실리려면 perf 축이 조인돼야 한다",
+          want_any_tool=("perf_instance_profile", "cost_describe_spec",
+                         "perf_compare"),
+          forbid_tools=("web_search",), want_any=("12500", "12,500")),
+    Probe("X3", "gcp g2-standard-8에는 어떤 GPU가 달려 있어?",
+          "**gcp 시리즈 카탈로그의 라이브 검증.** L4 ×1은 Cyclenerd 큐레이션에서 "
+          "온 값(실측) — 짐작으로 다른 모델을 대면 실패다",
+          want_any_tool=("perf_instance_profile", "cost_describe_spec"),
+          forbid_tools=("web_search",), want_any=("L4",)),
+    Probe("X4", "azure Standard_DS3 인스턴스 지금 새로 쓰기에 괜찮아?",
+          "**azure 구세대 판정의 라이브 검증.** DS3는 생애주기 목록의 구세대 "
+          "(실측 currentGeneration=False)다 — '구세대' 경고가 답까지 살아남는가",
+          want_any_tool=("perf_instance_profile", "cost_describe_spec",
+                         "perf_compare"),
+          forbid_tools=("web_search",), want_any=("구세대",)),
+    Probe("X5", "gcp a2-ultragpu-1g의 로컬 SSD 용량은?",
+          "**로컬 SSD 축의 라이브 검증.** 375GB는 pricing.yml 큐레이션 값(실측)",
+          want_any_tool=("perf_instance_profile", "cost_describe_spec"),
+          forbid_tools=("web_search",), want_any=("375",)),
+    Probe("X6", "비용을 아끼면서 신뢰성을 지키는 트레이드오프 지침이 있어?",
+          "**WAF 코퍼스의 라이브 검증.** 트레이드오프 문서(실측: 검색 1위)가 "
+          "인용되는가 — 지침이 사실로 승격되지 않고 advisory 고지가 붙는가는 "
+          "도구 출력이 보장한다",
+          want_tools=("pattern_search",), forbid_tools=("web_search",),
+          want_any=("radeoff", "트레이드오프")),
     Probe("R1", "서울 리전에서 쓸 수 있는 AWS GPU 인스턴스 알려줘",
           "**H3과 같은 질문을 사람이 쓰는 말로.** H3은 `ap-northeast-2`라고 코드로 "
           "물어서 이 실패를 못 잡았다. 데이터는 있었고 '서울'을 색인 키로 바꾸는 "

@@ -153,6 +153,9 @@ INSTRUCTIONS = f"""당신은 자율 계획형(autonomous planning) 에이전트�
 
 4. **성능 특성** (그게 실제로 얼마나 빠른가) → perf_* 도구
    - "t3.medium 상시 부하에 괜찮아? / m5.large 최신 세대야?" → perf_instance_profile
+   - **"이 인스턴스에 뭐가 달려 있어?"(GPU·로컬 SSD·NIC·네트워크 대역폭)** →
+     perf_instance_profile. '용량'이라는 말이 있어도 인스턴스 장착 하드웨어는
+     cap_* 가 아니라 이쪽입니다 — cap_* 는 리소스 속성의 허용값입니다.
    - "m5.large랑 m6i.large 성능 비교해줘" → perf_compare (**같은 프로바이더만**)
    - "지속 EBS 대역폭 4000Mbps 이상 뭐 있어?" → perf_specs_by_ebs_baseline (AWS)
    가격만 보면 버스트·구세대 함정을 놓칩니다. cost_recommend_specs 결과에는 이 경고가
