@@ -16,8 +16,10 @@
 재배포: azure_pricing.py와 같은 소스(무인증 공개, 허가 문구도 금지 문구도 없음 —
 not-stated). 같은 고지를 `_note`에 싣고 NOTICE에 등록한다.
 
-**Azure 한 곳뿐이다.** AWS·GCP 관리형 가격은 기계 판독 가능한 무인증 소스를
-찾지 못했다 — 답에는 "azure만 수록"이 붙어야 한다.
+수록 범위(보강 3에서 갱신): 여기(azure 6종)에 더해 **gcp는 objectStorage만**
+`parsers/gcp_managed.py`가 담는다(Cyclenerd — 그 파일에 있는 관리형 축의 전부).
+**AWS는 미수록 확정** — Price List API가 재배포를 명시적으로 금지한다(소스 표의
+`denied`). 단가가 곧 산출물이라 커밋 자체가 성립하지 않는다.
 """
 
 from __future__ import annotations
@@ -197,8 +199,9 @@ def build(
             "(capacityRate)은 단가에 곱할 수량(vCore·RU·GB)이 사이징 결과이며, "
             "사용량형(usage)은 트래픽을 알아야 비용이 나옵니다 — 사용량형에 숫자 "
             "하나를 붙이면 모르는 것을 채우는 것이라 붙이지 않습니다. 합계도 "
-            "만들지 않습니다. **azure만 수록** — AWS·GCP 관리형 가격 소스는 "
-            "찾지 못했습니다.\n"
+            "만들지 않습니다. 이 파일은 **azure 수록분**입니다 — gcp는 "
+            "objectStorage만 별도 파일(gcp-managed-pricing)에 있고, AWS는 "
+            "재배포가 명시적으로 금지라 미수록입니다.\n"
             "**출처와 재배포 상태**: Microsoft Azure Retail Prices API"
             "(https://prices.azure.com/api/retail/prices)에서 받은 값에서 유도했습니다. "
             "가격 데이터의 권리는 Microsoft에 있습니다. **재배포를 허가하는 문구를 "

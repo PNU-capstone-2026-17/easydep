@@ -44,6 +44,8 @@ SPOT_COMMIT_FILENAME = "gcp-spot-commit.json"
 #: 그래서 "없을 수 있다"가 아니라 **없는 것이 기본**이다.
 AZURE_DISCOUNT_FILENAME = "azure-discount-pricing.json"
 AZURE_MANAGED_FILENAME = "azure-managed-pricing.json"
+#: GCP 관리형 과금 축(Cyclenerd — objectStorage뿐, 그것이 소스의 전부다).
+GCP_MANAGED_FILENAME = "gcp-managed-pricing.json"
 
 # MCP의 recommend_vm_spec은 호출자가 architecture를 안 주면 x86_64를 끼워넣는다
 # (tb-mcp.py). 이걸 미러하지 않으면 MCP가 감추는 arm64 스펙(덤프 기준 7,790건)이
@@ -182,31 +184,36 @@ def azure_discount_for(
 
 
 @lru_cache(maxsize=4)
-def _load_azure_managed(output_dir: str) -> dict[tuple[str, str], list[dict]]:
-    """`(archetype, region)` → 관리형 과금 축 레코드들. 파일이 없으면 빈 맵."""
-    found = artifact.resolve(Path(output_dir), AZURE_MANAGED_FILENAME)
-    if found is None:
-        return {}
-    try:
-        data = artifact.load_json(found)
-    except (OSError, ValueError):
-        return {}
+def _load_managed(output_dir: str) -> dict[tuple[str, str], list[dict]]:
+    """`(archetype, region)` → 관리형 과금 축 레코드들. 파일이 없으면 빈 맵.
+
+    azure(Retail API)와 gcp(Cyclenerd)를 한 맵으로 합친다 — 리전 코드 체계가
+    서로 겹치지 않아(koreacentral vs asia-northeast3) 키 충돌이 없다.
+    """
     out: dict[tuple[str, str], list[dict]] = {}
-    for record in data.get("records") or []:
-        out.setdefault((record["archetype"], record["region"]), []).append(record)
+    for name in (AZURE_MANAGED_FILENAME, GCP_MANAGED_FILENAME):
+        found = artifact.resolve(Path(output_dir), name)
+        if found is None:
+            continue
+        try:
+            data = artifact.load_json(found)
+        except (OSError, ValueError):
+            continue
+        for record in data.get("records") or []:
+            out.setdefault((record["archetype"], record["region"]), []).append(record)
     return out
 
 
 def managed_axes(
     archetype: str, region: str, output_dir: Path | str | None = None
 ) -> list[dict] | None:
-    """한 (아키타입, 리전)의 Azure 관리형 **과금 축** 목록.
+    """한 (아키타입, 리전)의 관리형 **과금 축** 목록 (azure 6종 + gcp objectStorage).
 
     **미빌드면 None, 빌드됐는데 해당이 없으면 []** — 두 상태의 뜻이 반대라
     (하나는 "안 봤다", 하나는 "봤는데 없다") 한 값으로 합치지 않는다.
     아키타입은 `app::` 접두가 있어도 받는다.
     """
-    loaded = _load_azure_managed(_resolve(output_dir))
+    loaded = _load_managed(_resolve(output_dir))
     if not loaded:
         return None
     return loaded.get((archetype.removeprefix("app::"), region.strip()), [])
@@ -246,7 +253,7 @@ def clear_caches() -> None:
     _load_cached.cache_clear()
     _load_spot_commit.cache_clear()
     _load_azure_discount.cache_clear()
-    _load_azure_managed.cache_clear()
+    _load_managed.cache_clear()
     _schema.cache_clear()
 
 

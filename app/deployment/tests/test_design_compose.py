@@ -171,6 +171,59 @@ def test_deploy_hint_is_recorded_as_designer_claim_not_ours(design) -> None:
     assert any("설계자가" in n.text for n in node.notes)
 
 
+# --- 객체 스토리지 (파일 업로드 신호, 보강 3) -----------------------------------
+
+def _add_upload_path(design: dict) -> None:
+    design["artifacts"][0]["openapi"].setdefault("paths", {})["/files"] = {
+        "post": {
+            "requestBody": {
+                "content": {"multipart/form-data": {"schema": {"type": "object"}}}
+            }
+        }
+    }
+
+
+def test_upload_body_creates_object_storage(design) -> None:
+    """securitySchemes→비밀 저장소와 같은 계열 — OpenAPI가 말한 사실(업로드
+    본문)에서 출발하되 결론은 inferred다."""
+    _add_upload_path(design)
+    plan = compose(design)
+    node = plan.node("order-api-files")
+    assert node is not None and node.archetype == "app::objectStorage"
+    assert node.origin == ORIGIN_INFERRED
+    assert ("order-api", "order-api-files") in {(e.from_id, e.to_id) for e in plan.edges}
+
+
+def test_no_upload_no_object_storage(design) -> None:
+    """신호가 없으면 만들지 않는다 — 있으면 좋을 것 같아서 넣지 않는다."""
+    assert compose(design).node("order-api-files") is None
+
+
+def test_gcp_object_storage_carries_billing_axes(design, monkeypatch) -> None:
+    """보강 3의 소비자 실측 — gcp 계획의 객체 스토리지에 저장(용량-비례)·검색
+    (사용량) 과금 축이 붙고, 합계 없음 고지가 함께 간다.
+
+    conftest가 costkb를 빈 디렉터리(번들 모드)로 고정하므로, 커밋된 관리형
+    산출물을 보려면 이 테스트만 기본 위치로 되돌린다(⑥-B 테스트의 선례).
+    """
+    from costkb import dataset as cost_dataset
+    from kbcommon.artifact import DEFAULT_OUTPUT
+
+    monkeypatch.setattr(cost_dataset, "DEFAULT_OUTPUT_DIR", DEFAULT_OUTPUT)
+    cost_dataset.clear_caches()
+
+    _add_upload_path(design)
+    design["requirements"]["provider"] = "gcp"
+    design["requirements"]["region"] = "asia-northeast3"
+    plan = compose(design)
+    node = plan.node("order-api-files")
+    assert node.type_id == "gcp::StorageBucket"
+    axes_notes = [n.text for n in node.notes if "과금 축" in n.text]
+    assert axes_notes and "gcp asia-northeast3" in axes_notes[0]
+    assert "용량-비례" in axes_notes[0] and "사용량" in axes_notes[0]
+    assert "합계는 없습니다" in axes_notes[0]
+
+
 # --- 진입점 (로드밸런서) --------------------------------------------------------
 
 def test_exposed_vm_gets_an_lb_in_front(design) -> None:

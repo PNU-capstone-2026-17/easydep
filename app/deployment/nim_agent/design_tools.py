@@ -185,13 +185,13 @@ def _pick_flavor(types: list[str], engine: str | None) -> list[str]:
 
 def _managed_axes_note(archetype: str, provider: str | None,
                        region: str | None) -> Note | None:
-    """관리형 노드의 **과금 축** 노트 (azure만 수록 — ⑥-B).
+    """관리형 노드의 **과금 축** 노트 (수록: azure 6종 · gcp objectStorage — ⑥-B/보강 3).
 
     단가 한 칸이 아니다: 인스턴스-시간형만 시간당 단가가 성립하고, 용량-비례형은
     곱할 수량이 사이징 결과이며, 사용량형은 트래픽을 알아야 한다(조사 문서).
     미빌드(None)와 "봤는데 없음"([])은 뜻이 반대라 그대로 가른다.
     """
-    if provider != "azure" or not region:
+    if provider not in ("azure", "gcp") or not region:
         return None
     from costkb import dataset as cost_dataset
 
@@ -200,7 +200,7 @@ def _managed_axes_note(archetype: str, provider: str | None,
         return None  # 미빌드 — 전역 고지("가격 없음")가 그대로 참이다
     if not axes:
         return Note(
-            "과금 축 수록 없음 — azure 관리형 수록분에 이 아키타입·리전이 없습니다"
+            f"과금 축 수록 없음 — {provider} 관리형 수록분에 이 아키타입·리전이 없습니다"
             "(무료라는 뜻이 아닙니다)", ORIGIN_KB, "costkb",
         )
     by_axis: dict[str, list[dict]] = {}
@@ -217,9 +217,9 @@ def _managed_axes_note(archetype: str, provider: str | None,
             f"용량-비례 {len(capacity)}종(vCore·RU·GB/월 단가 — 곱할 수량은 사이징 결과)"
         )
     if usage := by_axis.get("usage"):
-        parts.append(f"사용량 {len(usage)}종(오퍼레이션·실행 등 — 트래픽을 알아야 함)")
+        parts.append(f"사용량 {len(usage)}종(오퍼레이션·검색·실행 등 — 사용량을 알아야 함)")
     return Note(
-        f"과금 축(azure {region}, 단가 한 칸이 아님): " + " · ".join(parts)
+        f"과금 축({provider} {region}, 단가 한 칸이 아님): " + " · ".join(parts)
         + " — 합계는 없습니다", ORIGIN_KB, "costkb",
     )
 
@@ -256,6 +256,22 @@ def compose(design: dict) -> DeploymentPlan:
         a["componentId"] for a in _artifacts(design, "openapi")
         if (a["openapi"].get("components") or {}).get("securitySchemes")
     }
+    # 파일 업로드 본문 → 객체 스토리지 후보. securitySchemes→비밀 저장소와 같은
+    # 계열의 결정론 신호다 — OpenAPI가 말한 사실에서 출발하되 결론은 inferred.
+    uploads: set[str] = set()
+    for openapi_artifact in _artifacts(design, "openapi"):
+        for path_item in (openapi_artifact["openapi"].get("paths") or {}).values():
+            if not isinstance(path_item, dict):
+                continue
+            for operation in path_item.values():
+                if not isinstance(operation, dict):
+                    continue
+                content = (operation.get("requestBody") or {}).get("content") or {}
+                if any(
+                    ct.startswith(("multipart/", "application/octet-stream"))
+                    for ct in content
+                ):
+                    uploads.add(openapi_artifact["componentId"])
     owners: dict[str, list[str]] = {}
     engine_of: dict[str, str] = {}
     for artifact in _artifacts(design, "er"):
@@ -445,6 +461,13 @@ def compose(design: dict) -> DeploymentPlan:
             Note("OpenAPI에 securitySchemes가 있어 자격 증명 보관이 필요하다고 봄",
                  ORIGIN_INFERRED, "openapi"),
         )
+    for cid in sorted(uploads):
+        add_managed(
+            f"{cid}-files", f"{components[cid]['name']} 파일 저장소", "objectStorage",
+            Note("OpenAPI에 파일 업로드 본문(multipart/octet-stream)이 있어 "
+                 "객체 스토리지가 필요하다고 봄", ORIGIN_INFERRED, "openapi"),
+        )
+        plan.edges.append(PlanEdge(cid, f"{cid}-files", "파일 저장/조회", ORIGIN_INFERRED))
 
     # --- 3.5 공유 인프라 (bundlekb) --------------------------------------
     _add_shared_infra(plan, compute_kinds, provider, requirements, _priced_computes)
@@ -531,9 +554,9 @@ def compose(design: dict) -> DeploymentPlan:
     ):
         plan.notes.append(Note(
             "관리형 서비스는 값이 한 칸이 아니라 **과금 축 목록**으로 붙습니다"
-            "(azure만 수록 — 인스턴스-시간형만 시간당 단가가 성립합니다). "
-            "**합계를 내지 않습니다** — 용량·사용량 축의 수량을 모르는 채로 더하면 "
-            "실제보다 낮아집니다.",
+            "(수록: azure 6종·gcp 객체 스토리지 — 인스턴스-시간형만 시간당 단가가 "
+            "성립합니다). **합계를 내지 않습니다** — 용량·사용량 축의 수량을 "
+            "모르는 채로 더하면 실제보다 낮아집니다.",
             ORIGIN_KB, "costkb",
         ))
     else:

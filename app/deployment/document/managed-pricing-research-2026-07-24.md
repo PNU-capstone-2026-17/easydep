@@ -70,3 +70,19 @@ Retail API에는 ARM 타입 칸이 없다. `app::아키타입 → serviceName/pr
 - 사용량형 축에 가정 사용량을 곱해 "예상 비용"을 만드는 것 — 사용량은 계약에
   없는 입력이고, 그 곱은 어느 기준도 아닌 숫자가 된다.
 - Dev/Test·Low Priority 미터 (azure-discount에서 이미 제외한 것과 같은 이유).
+
+## 추기 — AWS·GCP 재조사 (보강 3, 2026-07-24)
+
+"AWS·GCP 소스는 없다"를 재실측해 **반은 뒤집혔다**:
+
+- **GCP: 이미 핀 박은 Cyclenerd pricing.yml의 안 쓰던 `storage` 섹션**에 Cloud
+  Storage 버킷의 저장(GB/월)·검색(GB당) 단가가 리전 전수로 있다 — objectStorage
+  한 종을 담았다(`gcp-managed-pricing.json`, Apache-2.0이라 커밋 가능). Cloud
+  SQL·Memorystore·Pub/Sub는 이 파일에 없고, GCP Billing Catalog API는 API 키
+  인증이 필요해 무인증 재현 빌드 규약에 안 맞는다 — 그래서 한 종이 전부다.
+- **AWS: 미수록 확정.** Price List API는 소스가 실재하지만 재배포가 **명시적으로
+  금지**다(소스 표의 `denied` — EBS 한도 때 이미 판정). 과금 축 산출물은 단가
+  그 자체라, "빌드 때 받고 값은 안 남긴다"는 EBS식 우회도 성립하지 않는다.
+- 소비자도 함께 열었다: OpenAPI의 파일 업로드 본문(multipart/octet-stream) →
+  objectStorage 노드(inferred). 신호 없는 데이터는 계약 원칙(소비자 없는 칸
+  금지) 위반이라, 신호부터 만들었다.

@@ -45,6 +45,9 @@ patternkb(설계 지침 검색, advisory 전용)의 코퍼스로, 아래 문서�
   `data/svcmap-graph.json.gz`의 서비스 대응 근거(AWS↔Azure·GCP↔Azure 비교표)
 - mingrammer/diagrams (MIT) — 위 대응의 교차 확인용 분류 체계
 - GCP Config Connector CRD (Google, Apache-2.0)
+- Cyclenerd/google-cloud-pricing-cost-calculator (Apache-2.0) —
+  `data/gcp-spot-commit.json.gz`(스팟·약정)와
+  `data/gcp-managed-pricing.json.gz`(Cloud Storage 과금 축)의 근거
 - terraform-provider-google / terraform-provider-aws (HashiCorp, MPL-2.0)
 - botocore (Amazon Web Services, Apache-2.0)
 

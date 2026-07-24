@@ -134,7 +134,7 @@
         "componentId": { "type": "string", "description": "이 API를 제공하는 컴포넌트. 이름 매칭이 아니라 명시 조인." },
         "openapi": {
           "type": "object",
-          "description": "OpenAPI 3.x 문서 전체(표준이라 재정의하지 않는다). 소비: info.title(표시명) · paths(표면 크기) · securitySchemes(인증→비밀 저장소 후보)."
+          "description": "OpenAPI 3.x 문서 전체(표준이라 재정의하지 않는다). 소비: info.title(표시명) · paths(표면 크기) · securitySchemes(인증→비밀 저장소 후보) · requestBody의 multipart/octet-stream(파일 업로드→객체 스토리지 후보)."
         }
       }
     },
