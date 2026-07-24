@@ -643,7 +643,7 @@ def _global_notices(
             )
             plan.notes.append(Note(
                 "인터넷 이그레스는 GB당 과금입니다(사용량형 — 트래픽을 알아야 "
-                f"하며, 곱하지 않습니다). {region} 기준 {head}목적지·구간별 "
+                f"하며, 곱하지 않습니다). {region} 기준 {head}경로·목적지·구간별 "
                 f"축 {len(egress_axes)}개", ORIGIN_KB, "costkb",
             ))
 

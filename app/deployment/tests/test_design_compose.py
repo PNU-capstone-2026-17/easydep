@@ -326,6 +326,16 @@ def test_gcp_exposed_plan_notes_egress(design, costkb_committed) -> None:
     assert "월 0~1TB 구간" in egress[0]
 
 
+def test_azure_exposed_plan_notes_egress_too(design, costkb_committed) -> None:
+    """검증 라운드 ② — gcp만 있던 이그레스 비대칭이 azure(Bandwidth
+    serviceName, Data Transfer Out만 큐레이션)로 닫혔다."""
+    design["requirements"]["provider"] = "azure"
+    design["requirements"]["region"] = "koreasouth"
+    plan = compose(design)
+    egress = [n.text for n in plan.notes if "이그레스" in n.text]
+    assert egress and "곱하지 않습니다" in egress[0]
+
+
 def test_aws_plan_has_no_egress_claim(design) -> None:
     """이그레스 수록은 gcp뿐이다 — aws 계획에서 이그레스 단가가 나오면 거짓이다."""
     assert not [n for n in compose(design).notes if "이그레스" in n.text]

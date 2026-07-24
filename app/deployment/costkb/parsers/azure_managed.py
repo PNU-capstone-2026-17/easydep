@@ -94,6 +94,12 @@ RULES: tuple[Rule, ...] = (
     # (Global 티어) 미터는 다른 제품층이라 거른다.
     Rule("loadBalancer", "Load Balancer",
          meter_include=("Standard ",), region_override="Global"),
+    # 인터넷 이그레스(의사 아키타입 networkEgress — gcp와 같은 소비자). Bandwidth
+    # 파일에는 In·Inter-Region·Inter-AZ도 섞여 있다(실측 17건) — 인터넷 이그레스가
+    # 아닌 축이라 Data Transfer Out만 담는다. 구간(첫 100GB 무료 뒤 계층)은
+    # tierMin이 그대로 받는다. 라우팅 선호(MGN vs Internet)는 product가 가른다.
+    Rule("networkEgress", "Bandwidth",
+         meter_include=("Standard Data Transfer Out",)),
 )
 
 

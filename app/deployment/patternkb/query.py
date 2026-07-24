@@ -66,11 +66,9 @@ def clear_caches() -> None:
 
 
 def match_expression(query: str) -> str | None:
-    """사용자 질의 → FTS5 MATCH 식. 토큰이 없으면 None.
+    """사용자 질의 → FTS5 MATCH 식(OR — 재현 패스). 토큰이 없으면 None.
 
-    토큰을 **따옴표로 감싸 OR로 잇는다.** 따옴표는 FTS5 연산자 오작동(`-`, `.` 등)을
-    막고, OR는 재현율을 위한 것이다 — 여러 단어 질의에서 전부 등장하는 문서만 남기면
-    자문이 자주 빈다. 정밀도는 bm25 순위가 맡는다(많이 맞을수록 위로 온다).
+    토큰을 **따옴표로 감싸** FTS5 연산자 오작동(`-`, `.` 등)을 막는다.
     """
     tokens = _TOKEN.findall(query)
     if not tokens:
@@ -78,26 +76,57 @@ def match_expression(query: str) -> str | None:
     return " OR ".join(f'"{t}"' for t in tokens)
 
 
+def _and_expression(query: str) -> str | None:
+    """전 토큰 AND — 정밀 패스.
+
+    코퍼스가 346편으로 자라며 OR 단독의 순위가 흐려졌다(실측 2026-07-24:
+    hit@3 70% — 'retry backoff'가 긴 WAF 문서들에 밀렸다). 그래서 **2패스**다:
+    전 토큰이 다 있는 문서를 먼저, 부족하면 OR로 채운다. 재현은 그대로 두고
+    정밀만 올리는 방향 — 임베딩 승급은 이걸로도 부족이 실측되면 그때다.
+    """
+    tokens = _TOKEN.findall(query)
+    if not tokens:
+        return None
+    return " ".join(f'"{t}"' for t in tokens)
+
+
 def search(
     query: str, *, limit: int = 3, output_dir: Path | str | None = None
 ) -> tuple[Hit, ...]:
-    """코퍼스 검색. 코퍼스가 없거나 토큰이 없으면 빈 튜플 — 예외를 던지지 않는다."""
-    expression = match_expression(query)
-    if expression is None:
+    """코퍼스 검색(2패스: AND 정밀 → OR 재현). 코퍼스가 없거나 토큰이 없으면
+    빈 튜플 — 예외를 던지지 않는다."""
+    or_expr = match_expression(query)
+    if or_expr is None:
         return ()
     resolved = _resolve(output_dir)
     docs = {d.id: d for d in all_docs(resolved)}
     if not docs:
         return ()
-    rows = _index(resolved).execute(
-        # bm25 가중치: title 5 > section 2 > body 1. snippet은 본문(3번 열)에서
-        # 매칭 주변 32토큰 — 인용문이 문장 반쪽이면 지침이 왜곡된다.
-        "SELECT doc_id, snippet(docs, 3, ?, ?, ?, 32), bm25(docs, 0.0, 5.0, 2.0, 1.0) AS rank "
-        "FROM docs WHERE docs MATCH ? ORDER BY rank, doc_id LIMIT ?",
-        (_QUOTE_OPEN, _QUOTE_CLOSE, _ELLIPSIS, expression, max(1, limit)),
-    ).fetchall()
+
+    def _run(expression: str, n: int) -> list[tuple[str, str]]:
+        return _index(resolved).execute(
+            # bm25 가중치: title 5 > section 2 > body 1. 제목 가중을 20까지 올려도
+            # 순위가 안 변한다(실측 2026-07-24 — 가중은 지렛대가 아니다).
+            # snippet은 본문(3번 열)에서 매칭 주변 32토큰 — 인용문이 문장 반쪽이면
+            # 지침이 왜곡된다.
+            "SELECT doc_id, snippet(docs, 3, ?, ?, ?, 32), "
+            "bm25(docs, 0.0, 5.0, 2.0, 1.0) AS rank "
+            "FROM docs WHERE docs MATCH ? ORDER BY rank, doc_id LIMIT ?",
+            (_QUOTE_OPEN, _QUOTE_CLOSE, _ELLIPSIS, expression, n),
+        ).fetchall()
+
+    wanted = max(1, limit)
+    rows = list(_run(_and_expression(query), wanted))
+    if len(rows) < wanted:
+        seen = {doc_id for doc_id, *_ in rows}
+        rows.extend(
+            row for row in _run(or_expr, wanted + len(seen))
+            if row[0] not in seen
+        )
+        rows = rows[:wanted]
+
     hits = []
-    for doc_id, quote, _rank in rows:
+    for doc_id, quote, *_ in rows:
         doc = docs.get(doc_id)
         if doc is None:
             continue

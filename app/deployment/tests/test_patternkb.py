@@ -112,6 +112,22 @@ def test_no_hit_and_coverage_still_carry_the_notice(tmp_path) -> None:
         dataset.clear_caches()
 
 
+def test_and_pass_outranks_single_token_spam(tmp_path) -> None:
+    """검증 라운드 ③ — 코퍼스가 커지며 OR 단독 순위가 흐려져(실측 hit@3 70%)
+    2패스가 됐다: 전 토큰이 다 있는 문서가, 한 토큰만 여러 번 나오는 문서보다
+    앞서야 한다."""
+    out = _write_corpus(tmp_path, [
+        _doc("patterns/spam", "Spam", "retry " * 80),
+        _doc("patterns/right", "Right",
+             "You should retry with exponential backoff strategy."),
+    ])
+    try:
+        hits = query.search("retry exponential backoff", limit=2, output_dir=out)
+        assert hits and hits[0].id == "patterns/right"
+    finally:
+        dataset.clear_caches()
+
+
 def test_search_is_deterministic(tmp_path) -> None:
     out = _write_corpus(tmp_path, [
         _doc("patterns/retry", "Retry", _RETRY_TEXT),
