@@ -33,6 +33,8 @@ _SHAPE = {
     "managed": "database",
     # 공유 인프라(네트워크·키·이미지)는 실행 환경이지 저장소가 아니다.
     "shared": "rectangle",
+    # 진입점(로드밸런서) — 트래픽이 갈라지는 지점이라 모양을 달리한다.
+    "ingress": "hexagon",
     "external": "cloud",
     "actor": "actor",
 }

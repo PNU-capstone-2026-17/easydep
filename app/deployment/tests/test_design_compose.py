@@ -171,6 +171,60 @@ def test_deploy_hint_is_recorded_as_designer_claim_not_ours(design) -> None:
     assert any("설계자가" in n.text for n in node.notes)
 
 
+# --- 진입점 (로드밸런서) --------------------------------------------------------
+
+def test_exposed_vm_gets_an_lb_in_front(design) -> None:
+    """공개 노출된 VM 앞에 진입점이 선다 — 다이어그램에 LB가 통째로 없던 구멍.
+    LB 삽입은 설계가 아니라 **우리 권고**라 노드·선 전부 inferred다."""
+    plan = compose(design)
+    lb = plan.node("order-api-lb")
+    assert lb is not None and lb.role == "ingress" and lb.origin == ORIGIN_INFERRED
+    edges = {(e.from_id, e.to_id) for e in plan.edges}
+    assert ("end-user", "order-api-lb") in edges
+    assert ("order-api-lb", "order-api") in edges
+    assert ("end-user", "order-api") not in edges  # 직결이 남으면 LB가 장식이 된다
+
+
+def test_lb_maps_to_vendor_type_and_says_it_is_a_guess(design) -> None:
+    lb = compose(design).node("order-api-lb")
+    assert lb.type_id == "aws::AWS::ElasticLoadBalancingV2::LoadBalancer"
+    assert any("짐작" in n.text for n in lb.notes)
+
+
+def test_lb_is_unpriced_and_counted_in_the_budget_verdict(design) -> None:
+    """LB 가격은 데이터셋에 없다 — 0으로 치지 않고 미가격 구성원으로 센다."""
+    lb = compose(design).node("order-api-lb")
+    assert lb.hourly_usd is None
+    assert any("값이 붙지 않습니다" in n.text for n in lb.notes)
+    design["requirements"]["monthlyBudgetUSD"] = 10_000
+    text = deployment_answer(design, diagram=False)
+    assert "부합 단정 불가" in text and "order-api-lb" in text
+
+
+def test_unexposed_component_gets_no_lb(design) -> None:
+    """워커는 actor가 부르지 않는다 — 노출 안 된 컴포넌트에 LB를 세우면
+    '있으면 좋을 것 같아서 넣는' 실패다."""
+    assert compose(design).node("order-worker-lb") is None
+
+
+def test_k8s_exposure_notes_the_ingress_layer_instead_of_an_lb(design) -> None:
+    """k8s의 노출은 클러스터 안(Service/Ingress)의 일이고 그 층의 대응 축이
+    없다 — NLB를 억지로 세우지 않고 사실을 적는다."""
+    design["components"][0]["deployHint"] = {"compute": "kubernetes"}
+    plan = compose(design)
+    assert plan.node("order-api-lb") is None
+    assert ("end-user", "order-api") in {(e.from_id, e.to_id) for e in plan.edges}
+    assert any("Service/Ingress" in n.text for n in plan.node("order-api").notes)
+
+
+def test_lb_diagram_roundtrips_clean(design) -> None:
+    """새 역할(ingress·hexagon)이 되파싱 검증을 통과해야 한다 — 그림 검사가
+    실패하면 답 끝에 '자체 검증에서 걸린 것'이 붙는다."""
+    text = deployment_answer(design, diagram=True)
+    assert "자체 검증에서 걸린 것" not in text
+    assert 'hexagon "' in text
+
+
 # --- 모르는 것을 채우지 않는다 --------------------------------------------------
 
 def test_component_without_signals_is_reported_not_guessed(design) -> None:

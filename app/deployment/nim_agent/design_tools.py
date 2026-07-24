@@ -280,6 +280,8 @@ def compose(design: dict) -> DeploymentPlan:
     # --- 2. 컴퓨트 노드 ---------------------------------------------------
     #: 어느 컴퓨트 방식이 실제로 쓰였나 — 공유 인프라를 무엇으로 세울지 정한다.
     compute_kinds: set[str] = set()
+    #: 컴포넌트별 방식 — 진입점(LB)을 세울지 말지가 여기 달렸다(VM만 NLB 대상).
+    kind_of: dict[str, str] = {}
     for cid, component in components.items():
         hint = component.get("deployHint")
         notes: list[Note] = []
@@ -311,9 +313,18 @@ def compose(design: dict) -> DeploymentPlan:
                 "(deployHint로 바꿀 수 있습니다)", ORIGIN_INFERRED, "",
             ))
         compute_kinds.add(kind)
+        kind_of[cid] = kind
         if cid in exposed:
             notes.append(Note("시퀀스에서 actor가 직접 호출 — 공개 노출",
                               ORIGIN_DESIGN, "sequence"))
+            if kind == "kubernetes":
+                # k8s의 노출은 클러스터 안(Service/Ingress)에서 일어난다 — 그 층의
+                # 대응 축이 없으므로 NLB를 억지로 세우지 않고 사실만 적는다.
+                notes.append(Note(
+                    "공개 노출은 클러스터의 Service/Ingress 층에서 처리됩니다 — "
+                    "이 지식베이스에 그 층의 대응이 없어 구성을 답하지 않습니다",
+                    ORIGIN_INFERRED, "",
+                ))
 
         # **서버리스는 값이 다른 축이다.** 시간당 VM 단가를 붙이면 그냥 틀린 값이라
         # 관리형 서비스로 세우고 값을 붙이지 않는다(호출당 과금 데이터가 0건).
@@ -453,7 +464,51 @@ def compose(design: dict) -> DeploymentPlan:
                 notes=(Note("시퀀스의 actor", ORIGIN_DESIGN, "sequence"),),
             ))
             known.add("end-user")
-        plan.edges.append(PlanEdge("end-user", cid, "요청", ORIGIN_DESIGN))
+        # **공개 노출된 VM 앞에는 진입점(로드밸런서)을 둔다.** 설계가 그린 것은
+        # actor→컴포넌트 호출이고 LB 삽입은 우리 권고라 전부 inferred다. 근거는
+        # 실행 경로에 실재한다 — core::nlb가 스펙(swagger)에서 VM을 참조한다.
+        # 노출 서비스마다 하나다: cb-tumblebug NLB는 VM 그룹 단위라 서로 다른
+        # 서비스를 한 대로 합치면 실행 경로가 못 만드는 그림이 된다.
+        if kind_of.get(cid) == "vm":
+            lb_id = f"{cid}-lb"
+            lb_notes = [Note(
+                "actor가 직접 호출하는 공개 서비스라 진입점(로드밸런서)을 앞에 "
+                "둡니다 — 설계가 지정한 것이 아니라 우리 권고입니다",
+                ORIGIN_INFERRED, "sequence",
+            ), Note(
+                "실행 경로(cb-tumblebug)의 NLB가 대상으로 VM을 참조합니다 "
+                "(스펙에 명시)", ORIGIN_KB, "graphkb",
+            )]
+            if provider:
+                # 값 조인이 도는 계획에서만 이 고지가 필요하다 — 프로바이더가
+                # 없으면 전역 고지("단가 조인을 하지 않았습니다")가 이미 참이다.
+                lb_notes.append(Note(
+                    "로드밸런서 가격은 이 데이터셋에 없어 값이 붙지 않습니다",
+                    ORIGIN_KB, "costkb",
+                ))
+            type_id, hedged = _vendor_of("core::nlb", provider)
+            if type_id:
+                lb_notes.append(Note(
+                    f"core::nlb → {type_id}"
+                    + (" (대응은 짐작·검수됨 — cb-spider 드라이버를 읽어 사람이 맞춘 것)"
+                       if hedged else ""),
+                    ORIGIN_KB, "mapping-graph",
+                ))
+            elif provider:
+                plan.unresolved.append(
+                    f"{lb_id}: {provider}에서 core::nlb에 해당하는 타입을 찾지 못했습니다"
+                )
+            plan.nodes.append(PlanNode(
+                id=lb_id, label=f"{components[cid]['name']} 로드밸런서",
+                role="ingress", origin=ORIGIN_INFERRED, type_id=type_id,
+                notes=tuple(lb_notes),
+            ))
+            plan.edges.append(PlanEdge("end-user", lb_id, "요청", ORIGIN_INFERRED))
+            plan.edges.append(PlanEdge(lb_id, cid, "요청 전달", ORIGIN_INFERRED))
+        else:
+            # k8s(Service/Ingress가 클러스터 안)·서버리스(플랫폼 엔드포인트)는
+            # NLB 대상이 아니다 — 설계가 말한 직접 호출을 그대로 그린다.
+            plan.edges.append(PlanEdge("end-user", cid, "요청", ORIGIN_DESIGN))
 
     # --- 5. 값 ------------------------------------------------------------
     if provider:
@@ -689,7 +744,9 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
     from appkb.plan import ORIGIN_LABEL
 
     lines = [f"{plan.name} — 배포 구성"]
-    for role, title in (("actor", "사용자"), ("compute", "직접 배포"),
+    for role, title in (("actor", "사용자"),
+                        ("ingress", "진입점 (노출 서비스마다 하나)"),
+                        ("compute", "직접 배포"),
                         ("managed", "관리형 서비스"),
                         ("shared", "공유 인프라 (연결당 한 벌)"),
                         ("external", "외부 시스템")):

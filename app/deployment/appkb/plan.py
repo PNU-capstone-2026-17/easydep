@@ -71,10 +71,11 @@ class PlanNode:
     id: str
     label: str
     role: str
-    """`compute` | `managed` | `shared` | `external` | `actor`.
+    """`compute` | `managed` | `shared` | `ingress` | `external` | `actor`.
 
     도형이 모양을 여기서 정한다. `shared`는 네트워크·키·이미지처럼 **연결당 공유라
-    계획에 한 벌만 있는 것**이다(bundlekb가 답한다).
+    계획에 한 벌만 있는 것**이다(bundlekb가 답한다). `ingress`는 공개 노출
+    컴포넌트 앞의 진입점(로드밸런서) — 노출 서비스마다 하나라 shared가 아니다.
     """
 
     origin: str

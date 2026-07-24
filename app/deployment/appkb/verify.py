@@ -81,7 +81,7 @@ def verify_diagram(plan: DeploymentPlan, uml: str) -> list[str]:
 
 #: 청구 대상이 될 수 있는 역할 — 값이 안 붙었으면 "미가격"으로 센다.
 #: actor(사람)·external(남의 시스템)은 우리 청구서가 아니다.
-_BILLABLE_ROLES = ("compute", "managed", "shared")
+_BILLABLE_ROLES = ("compute", "managed", "shared", "ingress")
 
 
 def verify_against_requirements(
