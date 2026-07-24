@@ -184,9 +184,14 @@ PROBES: tuple[Probe, ...] = (
           want_any_tool=("perf_instance_profile", "cost_describe_spec"),
           forbid_tools=("web_search",),
           want_any=("A100",)),
-    Probe("H3", "ap-northeast-2에서 쓸 수 있는 GPU 인스턴스 알려줘",
+    Probe("H3", "AWS ap-northeast-2에서 쓸 수 있는 GPU 인스턴스 알려줘",
           "**세 번 실패했던 질문.** 사양표 지어내기 → 780종을 하나씩 판정하다 109초 "
-          "턴 한도 초과 → 되묻기. 두 축을 잇는 필터가 없어서였다",
+          "턴 한도 초과 → 되묻기. 두 축을 잇는 필터가 없어서였다. "
+          "**질의 정정(2026-07-24)**: 원래 프로바이더 없이 물었는데, "
+          "ap-northeast-2는 aws·alibaba가 공유하는 코드라 **답이 여럿인 물음**이고 "
+          "모델이 되묻는 게 옳았다(라이브 실측 — R2가 겪은 것과 같은 함정을 이 "
+          "프로브만 소급 못 받았던 것). 프로바이더를 밝혀 지어내기 방지 본연의 "
+          "검사(두 축 필터)만 남긴다. 모호 질의의 옳은 행동은 R4가 지킨다.",
           want_tools=("cost_recommend_specs",), forbid_tools=("web_search",),
           want_any=("g4dn", "g5g", "g5.", "g6")),
     Probe("R1", "서울 리전에서 쓸 수 있는 AWS GPU 인스턴스 알려줘",

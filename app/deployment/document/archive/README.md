@@ -21,6 +21,7 @@
 | managed-pricing-research-2026-07-24.md | 관리형 가격 조사 (⑥-B 게이트 + 추기) |
 | easydep-agenda-2026-07-24.md | easydep 팀 합의 안건 4건 (제안 스냅샷 — 결과는 커밋이 기록) |
 | instance-traits-nl-research-2026-07-24.md | 인스턴스 특성·자연어 KB 조사 — 채택 3(azure 크기 표·gcp 시리즈·Azure WAF)·기각 2 |
+| verification-round-2026-07-24.md | 검증 라운드 — 라이브 회귀 0건(프로브 기대 결함 1 정정)·FTS 재현율 첫 실측·세대 보류 게이트 |
 | end-to-end-example.md · runnable-examples.md | 실행 예제 스냅샷 (07-23 출력 기준) |
 | kb-test-queries.md | 수동 검증 질의집 (도구 목록은 코드가 진실) |
 | cloud-kb-guide.md · plain-language-overview.md | 구세대 해설서 (KB 3개 시절 — kb-book으로 대체) |
