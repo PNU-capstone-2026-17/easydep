@@ -444,3 +444,31 @@ netstat -ano | findstr :8000
 
 Do not show `BCE JSON` as a final artifact in the UI.
 It is internal class extraction state only.
+
+## Deployment diagram now comes from the knowledge base (2026-07-24)
+
+`generate_deployment_diagram` no longer calls an LLM. It calls
+`app/design/services/kb_deployment.py`, which delegates to **agent-sdk**
+(package `nim-agent`, the cloud knowledge-base repo). The composer is
+deterministic: it re-parses the final design artifacts (class/sequence/ER
+PlantUML + api_spec) plus `RESOURCE_SPEC`, joins them against the dependency /
+bundle / cost / performance knowledge bases, and emits a deployment diagram
+where **every line carries its evidence origin** (design artifact / designer
+hint / knowledge base / inference).
+
+- Evidence and verdicts (budget fit, multi-zone, provider match) are embedded
+  as PlantUML `'` line comments in the same document, because artifact storage
+  is one document per stage. They do not render in the image but are stored and
+  versioned with the artifact.
+- agent-sdk must be installed in the same Python environment:
+  `pip install -e <agent-sdk repo path>`. Without it, the deployment stage
+  raises a clear error instead of silently falling back to the old LLM path.
+- `RESOURCE_SPEC` is still not a prerequisite (nothing produces it yet — same
+  open item as before). When it is absent the diagram is built without
+  constraints and the comments state which verdicts could not be made. The
+  clarify-gate integration that will produce RESOURCE_SPEC from
+  `resource_constraints_text` is the next planned step.
+- Caveat: the feedback loop still revises the PUML with an LLM
+  (`revise_puml_with_llm`). Revising a knowledge-base-grounded diagram by hand
+  of an LLM can break the evidence comments — regeneration is safer than
+  revision for this stage. Left unchanged for now, flagged for discussion.

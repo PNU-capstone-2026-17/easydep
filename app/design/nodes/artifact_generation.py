@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.artifact_validation import validate_api_spec, validate_puml_artifact
+from app.design.services.kb_deployment import generate_deployment_puml
 from app.design.services.llm_artifacts import (
     generate_api_spec_with_llm,
-    generate_deployment_diagram_with_llm,
     generate_erd_with_llm,
     generate_sequence_diagram_with_llm,
 )
@@ -55,13 +55,9 @@ def generate_erd(state: ArchitectureState) -> ArchitectureState:
 
 
 def generate_deployment_diagram(state: ArchitectureState) -> ArchitectureState:
-    deployment_puml = generate_deployment_diagram_with_llm(
-        usecase_spec_text(state),
-        state.get("class_diagram_puml", ""),
-        state.get("sequence_diagram_puml", ""),
-        state.get("api_spec", {}),
-        state.get("erd_puml", ""),
-    )
+    # LLM 자유 생성에서 agent-sdk 지식베이스 구성으로 교체(2026-07-24) —
+    # 근거·판정이 PlantUML 주석으로 문서에 함께 실린다. kb_deployment.py 참고.
+    deployment_puml = generate_deployment_puml(dict(state))
     validation = validate_puml_artifact(deployment_puml)
     return {
         "deployment_diagram_puml": deployment_puml,
