@@ -21,7 +21,12 @@ from appkb.plan import (
     PlanNode,
     needs_hedge,
 )
-from appkb.verify import unhedged_claims, verify_diagram, verify_plan
+from appkb.verify import (
+    unhedged_claims,
+    verify_against_requirements,
+    verify_diagram,
+    verify_plan,
+)
 
 
 def _plan() -> DeploymentPlan:
@@ -163,3 +168,103 @@ def test_plan_serialises_with_origins_intact() -> None:
     assert data["nodes"][0]["origin"] == ORIGIN_INFERRED
     assert data["nodes"][0]["notes"][0]["origin"] == ORIGIN_INFERRED
     assert data["edges"][0]["origin"] == ORIGIN_INFERRED
+
+
+# --- 요구사항 대조 (research.md 목표 1의 "부합 측정") ---------------------------
+#
+# 판정문 목록이지 문제 목록이 아니다 — "잴 수 없다"도 판정이고, 침묵이면 부분
+# 답이 완전한 답처럼 읽힌다.
+
+_HOURS = 730.0
+
+
+def _priced_plan(hourly: float) -> DeploymentPlan:
+    from dataclasses import replace
+
+    plan = _plan()
+    plan.nodes[0] = replace(plan.nodes[0], hourly_usd=hourly)
+    return plan
+
+
+def test_budget_overrun_is_confirmed_from_the_floor_alone() -> None:
+    """**비대칭의 한쪽.** 값이 붙은 부분만의 월합은 실제 청구의 하한이다 —
+    하한이 이미 예산을 넘으면 초과는 확정이다."""
+    lines = verify_against_requirements(
+        _priced_plan(1.0), {"monthlyBudgetUSD": 500}, _HOURS
+    )
+    assert any("초과 확정" in ln for ln in lines)
+
+
+def test_under_floor_is_never_called_compliant() -> None:
+    """**비대칭의 반대쪽.** 하한이 예산 아래인 것은 부합의 근거가 못 된다 —
+    미가격 구성원을 0으로 치면 서브넷 256 답과 같은 실패다."""
+    lines = verify_against_requirements(
+        _priced_plan(1.0), {"monthlyBudgetUSD": 1000}, _HOURS
+    )
+    budget_line = next(ln for ln in lines if ln.startswith("예산"))
+    assert "부합 단정 불가" in budget_line
+    assert "order-api-db" in budget_line  # 미가격 구성원의 이름이 보인다
+    assert "부합" not in budget_line.replace("부합 단정 불가", "")
+
+
+def test_no_priced_nodes_means_no_verdict_not_zero() -> None:
+    lines = verify_against_requirements(_plan(), {"monthlyBudgetUSD": 500}, _HOURS)
+    assert any("판정 불가" in ln for ln in lines)
+
+
+def test_no_budget_is_said_not_skipped() -> None:
+    lines = verify_against_requirements(_plan(), {}, _HOURS)
+    assert any("기준 없음" in ln for ln in lines)
+
+
+def test_scale_gets_an_explicit_cannot_judge() -> None:
+    """규모는 필수로 받지만 **스펙 충분성 판정은 KB 밖이다** — 그 사실을 말하는
+    것까지가 측정이다. 말하지 않으면 계획이 규모를 보증한 것처럼 읽힌다."""
+    lines = verify_against_requirements(
+        _plan(), {"expectedConcurrentUsers": 200}, _HOURS
+    )
+    assert any("판정하지 못합니다" in ln and "200" in ln for ln in lines)
+    rps = verify_against_requirements(
+        _plan(), {"approxRequestsPerSecond": 30}, _HOURS
+    )
+    assert any("30" in ln and "RPS" in ln for ln in rps)
+
+
+def test_multizone_unreflected_is_flagged() -> None:
+    plan = _plan()
+    plan.nodes.append(PlanNode("vnet", "VPC", "shared", ORIGIN_KB,
+                               type_id="aws::AWS::EC2::VPC"))
+    lines = verify_against_requirements(plan, {"multiZone": True}, _HOURS)
+    assert any("미반영" in ln for ln in lines)
+
+
+def test_multizone_reflected_when_subnet_carries_the_note() -> None:
+    plan = _plan()
+    plan.nodes.append(PlanNode(
+        "subnet", "서브넷", "shared", ORIGIN_KB, type_id="aws::AWS::EC2::Subnet",
+        notes=(Note("여러 가용영역에 나눠 둬야 합니다", ORIGIN_DESIGN, "requirements"),),
+    ))
+    lines = verify_against_requirements(plan, {"multiZone": True}, _HOURS)
+    assert any("반영됨" in ln for ln in lines)
+
+
+def test_multizone_on_serverless_plan_is_not_a_false_violation() -> None:
+    """전부 서버리스면 VM 네트워크가 없다 — 그걸 '미반영'이라 벌하면 없는 것을
+    그리라는 요구가 된다."""
+    lines = verify_against_requirements(_plan(), {"multiZone": True}, _HOURS)
+    assert any("해당 구성 없음" in ln for ln in lines)
+    assert not any("미반영" in ln for ln in lines)
+
+
+def test_foreign_provider_type_in_plan_is_caught() -> None:
+    plan = _plan()
+    plan.nodes.append(PlanNode("cache", "캐시", "managed", ORIGIN_KB,
+                               type_id="gcp::redis.googleapis.com/Instance"))
+    lines = verify_against_requirements(plan, {"provider": "aws"}, _HOURS)
+    assert any("불일치" in ln and "cache" in ln for ln in lines)
+
+
+def test_matching_provider_is_stated_positively() -> None:
+    lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
+    assert any("일치합니다" in ln for ln in lines)
+    assert not any("불일치" in ln for ln in lines)

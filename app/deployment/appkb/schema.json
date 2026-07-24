@@ -67,13 +67,35 @@
     "requirements": {
       "type": "object",
       "additionalProperties": false,
-      "description": "요구사항 단계 산출물에서 오는 비기능 요구. **비어 있으면 비용·리전 조인을 못 한다고 답하지, 임의 기본값을 채우지 않는다** — 프로바이더 명시가 라우팅 변수라는 실측 그대로.",
+      "description": "요구사항 단계 산출물(RESOURCE_SPEC, appkb/request.json 계약)에서 내려오는 비기능 요구의 투영. 칸 정의는 request.json과 같아야 하며(테스트가 대조로 고정), 필수 여부만 다르다 — 진입에서는 필수지만 여기서는 **비어 있으면 비용·리전 조인을 못 한다고 답하지, 임의 기본값을 채우지 않는다**(설계 계약 단독 사용을 허용).",
       "properties": {
-        "provider": { "type": "string", "description": "aws | azure | gcp | … 값 조인의 축." },
-        "region": { "type": "string", "description": "리전 코드. 지명이면 composer가 cap_resolve_region으로 바꾼다." },
-        "expectedConcurrentUsers": { "type": "integer", "minimum": 1 },
-        "monthlyBudgetUSD": { "type": "number", "exclusiveMinimum": 0 },
-        "multiZone": { "type": "boolean", "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인." },
+        "provider": {
+          "type": "string",
+          "description": "aws | azure | gcp | … 값 조인의 축. 실측된 라우팅 변수 — 없으면 비용·성능·번들·벤더 타입 대응이 전부 닫힌다."
+        },
+        "region": {
+          "type": "string",
+          "description": "리전 코드(예: ap-northeast-2). 지명('서울')은 계약 진입 전에 리전 해석 도구(cap_resolve_region)로 코드로 바꿔 담는다 — 지명이 그대로 오면 조인이 조용히 빈 답이 된다(실측). 원문은 regionAsWritten에 남긴다."
+        },
+        "expectedConcurrentUsers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "예상 동시 사용자. approxRequestsPerSecond와 둘 중 하나는 있어야 한다(사이징 판정의 기준) — 없으면 스펙 추천이 전부 임의가 된다."
+        },
+        "approxRequestsPerSecond": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호."
+        },
+        "monthlyBudgetUSD": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "월 예산, USD. 비용 부합 판정의 기준값. 환율 환산은 하지 않는다(환율 소스가 없다) — 다른 통화는 진입에서 USD로 받아야 한다. 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+        },
+        "multiZone": {
+          "type": "boolean",
+          "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
+        },
         "meta": { "type": "object" }
       }
     }

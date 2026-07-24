@@ -79,6 +79,104 @@ def verify_diagram(plan: DeploymentPlan, uml: str) -> list[str]:
     return problems
 
 
+#: 청구 대상이 될 수 있는 역할 — 값이 안 붙었으면 "미가격"으로 센다.
+#: actor(사람)·external(남의 시스템)은 우리 청구서가 아니다.
+_BILLABLE_ROLES = ("compute", "managed", "shared")
+
+
+def verify_against_requirements(
+    plan: DeploymentPlan, requirements: dict | None, hours_per_month: float
+) -> list[str]:
+    """계획 ↔ 요구 제약 대조 — **판정문 목록**을 돌려준다 (문제 목록이 아니다).
+
+    research.md 목표 1의 "산출물이 요구사항에 부합하는지 측정"이 이 함수다.
+    잴 수 없는 것을 잴 수 없다고 말하는 것까지가 측정이다 — 침묵을 안전 신호로
+    오독하게 두지 않는다.
+
+    `hours_per_month`는 호출자가 준다(costkb의 730). appkb는 KB를 import하지
+    않으므로 그 상수를 여기 복제하면 두 벌이 되어 드리프트한다.
+
+    ## 예산 판정은 비대칭이다
+
+    이 계획은 합계를 내지 않는다(미가격 구성원이 있어 더하면 실제보다 낮아진다).
+    그래도 판정은 반쪽이 가능하다: **값이 붙은 부분만의 월합은 실제 청구의
+    하한**이므로, 하한이 이미 예산을 넘으면 초과는 확정이다. 반대로 하한이 예산
+    아래인 것은 부합의 근거가 못 된다 — 모르는 것을 0으로 치지 않는다.
+    """
+    req = requirements or {}
+    out: list[str] = []
+
+    budget = req.get("monthlyBudgetUSD")
+    priced = [n for n in plan.nodes if n.hourly_usd]
+    unpriced = sorted(
+        n.id for n in plan.nodes if n.role in _BILLABLE_ROLES and not n.hourly_usd
+    )
+    if budget is None:
+        out.append("예산: 기준 없음 — monthlyBudgetUSD가 없어 비용 부합을 판정하지 않습니다")
+    elif not priced:
+        out.append(
+            f"예산(월 ${budget:,.2f}): 판정 불가 — 값이 붙은 노드가 없습니다"
+            "(프로바이더·리전 미지정이거나 가격 축이 없는 구성)"
+        )
+    else:
+        floor = sum(n.hourly_usd for n in priced) * hours_per_month
+        if floor > budget:
+            out.append(
+                f"예산(월 ${budget:,.2f}): **초과 확정** — 값이 붙은 부분만의 월합"
+                f"(하한) ${floor:,.2f}이 이미 예산을 넘습니다. "
+                f"미가격 구성원 {len(unpriced)}종은 더하지도 않은 값입니다"
+            )
+        else:
+            out.append(
+                f"예산(월 ${budget:,.2f}): 부합 단정 불가 — 값이 붙은 부분의 하한은 "
+                f"${floor:,.2f}이지만 미가격 구성원 {len(unpriced)}종"
+                f"({', '.join(unpriced[:5])})의 값을 모릅니다. "
+                "모르는 것을 0으로 치지 않습니다"
+            )
+
+    users = req.get("expectedConcurrentUsers")
+    rps = req.get("approxRequestsPerSecond")
+    if users is not None or rps is not None:
+        scale = f"동시 사용자 {users}" if users is not None else f"약 {rps} RPS"
+        out.append(
+            f"규모({scale}): 스펙 충분성은 이 지식베이스가 판정하지 못합니다 — "
+            "계획의 사이징은 근거 없는 추정으로 표시되어 있고, 부하 테스트나 "
+            "사이징 참조점으로 확인해야 합니다"
+        )
+
+    if req.get("multiZone"):
+        if not any(n.role == "shared" for n in plan.nodes):
+            out.append(
+                "multiZone: 해당 구성 없음 — VM 네트워크가 없는 계획입니다(서버리스)."
+                " 가용영역 분산은 이 계획이 다루지 않는 층에서 정해집니다"
+            )
+        else:
+            subnet = plan.node("subnet")
+            if subnet and any("가용영역" in n.text for n in subnet.notes):
+                out.append("multiZone: 반영됨 — 서브넷에 가용영역 분산 요구가 붙어 있습니다")
+            else:
+                out.append(
+                    "multiZone: **미반영** — 요구는 multiZone인데 계획에 가용영역 "
+                    "분산 흔적이 없습니다"
+                )
+
+    provider = (req.get("provider") or "").strip().lower()
+    if provider:
+        mismatched = sorted(
+            n.id for n in plan.nodes
+            if n.type_id and "::" in n.type_id
+            and n.type_id.split("::")[0] not in ("core", "app", provider)
+        )
+        if mismatched:
+            out.append(
+                f"프로바이더({provider}): **불일치** — 다른 프로바이더 타입이 섞인 "
+                f"노드: {', '.join(mismatched)}"
+            )
+        else:
+            out.append(f"프로바이더({provider}): 계획의 벤더 타입이 전부 일치합니다")
+    return out
+
+
 def unhedged_claims(plan: DeploymentPlan) -> list[str]:
     """유보가 필요한데 근거 줄이 하나도 없는 요소.
 

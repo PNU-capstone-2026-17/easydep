@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from appkb.plan import ORIGIN_DESIGN, ORIGIN_DESIGNER, ORIGIN_INFERRED, ORIGIN_KB
-from nim_agent.design_tools import _render_plan_text, compose
+from nim_agent.design_tools import _render_plan_text, compose, deployment_answer
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
 
@@ -205,6 +205,41 @@ def test_contract_violation_short_circuits(design) -> None:
     plan = compose(design)
     assert plan.nodes == []
     assert any("입력 계약 위반" in item for item in plan.unresolved)
+
+
+# --- 요구사항 대조 (부합 측정이 답에 실리는가) ----------------------------------
+
+def test_priced_node_carries_a_machine_readable_hourly(design) -> None:
+    """예산 판정은 노트 문장("$0.0468/h")을 되파싱하지 않는다 — 문구 하나에
+    판정이 흔들리면 안 되므로 기계 값이 따로 실린다."""
+    node = compose(design).node("order-api")
+    assert node.hourly_usd and node.hourly_usd > 0
+
+
+def test_tiny_budget_is_confirmed_over(design) -> None:
+    """하한(값 붙은 부분의 월합)만으로 초과가 확정되는 경우 — 비대칭의 확정 쪽."""
+    design["requirements"]["monthlyBudgetUSD"] = 1
+    text = deployment_answer(design, diagram=False)
+    assert "[요구사항 대조]" in text and "초과 확정" in text
+
+
+def test_loose_budget_is_not_called_compliant(design) -> None:
+    """하한이 예산 아래여도 부합이라 말하지 않는다 — 미가격 구성원을 0으로 치는
+    그 실패를 판정에서도 막는다."""
+    design["requirements"]["monthlyBudgetUSD"] = 10_000
+    text = deployment_answer(design, diagram=False)
+    assert "부합 단정 불가" in text
+
+
+def test_no_budget_still_gets_a_verdict_line(design) -> None:
+    """"기준 없음"도 판정이다 — 침묵이면 부분 답이 완전한 답처럼 읽힌다."""
+    text = deployment_answer(design, diagram=False)
+    assert "기준 없음" in text
+
+
+def test_multizone_requirement_is_judged_in_the_answer(design) -> None:
+    text = deployment_answer(design, diagram=False)
+    assert "multiZone: 반영됨" in text
 
 
 # --- 답의 계약 -----------------------------------------------------------------

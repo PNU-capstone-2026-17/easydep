@@ -88,6 +88,11 @@ class PlanNode:
     candidates: tuple[str, ...] = ()
     notes: tuple[Note, ...] = ()
 
+    hourly_usd: float | None = None
+    """값이 붙은 노드의 시간당 단가(USD). **판정용 기계 값**이다 — 예산 대조가
+    노트 문장("$0.0468/h")을 되파싱하게 두면 문구 하나에 판정이 흔들린다.
+    None은 0이 아니라 "값이 없다"다 — 더하는 쪽이 그 구분을 지켜야 한다."""
+
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
             raise ValueError(f"알 수 없는 근거: {self.origin!r}")
@@ -140,6 +145,7 @@ class DeploymentPlan:
                     "id": n.id, "label": n.label, "role": n.role,
                     "origin": n.origin, "archetype": n.archetype,
                     "typeId": n.type_id, "candidates": list(n.candidates),
+                    "hourlyUSD": n.hourly_usd,
                     "notes": [
                         {"text": x.text, "origin": x.origin, "source": x.source}
                         for x in n.notes

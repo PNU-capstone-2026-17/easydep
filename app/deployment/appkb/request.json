@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RESOURCE_SPEC v1 — 클라우드 리소스 제약 계약",
+  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경·레지던시)은 여기 없고, 소비자가 생길 때 연다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "provider", "region", "monthlyBudgetUSD"],
+  "anyOf": [
+    { "required": ["expectedConcurrentUsers"] },
+    { "required": ["approxRequestsPerSecond"] }
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1" },
+    "provider": {
+      "type": "string",
+      "description": "aws | azure | gcp | … 값 조인의 축. 실측된 라우팅 변수 — 없으면 비용·성능·번들·벤더 타입 대응이 전부 닫힌다."
+    },
+    "region": {
+      "type": "string",
+      "description": "리전 코드(예: ap-northeast-2). 지명('서울')은 계약 진입 전에 리전 해석 도구(cap_resolve_region)로 코드로 바꿔 담는다 — 지명이 그대로 오면 조인이 조용히 빈 답이 된다(실측). 원문은 regionAsWritten에 남긴다."
+    },
+    "regionAsWritten": {
+      "type": "string",
+      "description": "사용자가 쓴 리전 표현 원문('서울' 등). 해석이 틀렸을 때 되짚을 근거 — REFINE_REQ가 원문을 남기는 것과 같은 이유다."
+    },
+    "monthlyBudgetUSD": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "월 예산, USD. 비용 부합 판정의 기준값. 환율 환산은 하지 않는다(환율 소스가 없다) — 다른 통화는 진입에서 USD로 받아야 한다. 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+    },
+    "expectedConcurrentUsers": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "예상 동시 사용자. approxRequestsPerSecond와 둘 중 하나는 있어야 한다(사이징 판정의 기준) — 없으면 스펙 추천이 전부 임의가 된다."
+    },
+    "approxRequestsPerSecond": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호."
+    },
+    "multiZone": {
+      "type": "boolean",
+      "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
+    },
+    "meta": { "type": "object" }
+  }
+}

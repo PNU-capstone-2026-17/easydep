@@ -32,6 +32,7 @@ KB끼리는 import하지 않는 규약이라 엮는 일은 이 계층에서만 �
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 from agents import function_tool
 
@@ -48,7 +49,12 @@ from appkb.plan import (
     PlanNode,
     needs_hedge,
 )
-from appkb.verify import unhedged_claims, verify_diagram, verify_plan
+from appkb.verify import (
+    unhedged_claims,
+    verify_against_requirements,
+    verify_diagram,
+    verify_plan,
+)
 
 #: 컴퓨트 방식별 성격. **`deployHint`가 실제로 계획을 바꾸게 하는 표다.**
 #:
@@ -489,18 +495,11 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
         if first:
             text = f"OS 이미지를 골라야 합니다. 이 리전의 기본 이미지 예: {first[1:].strip()}"
             source = "basic-images"
-    updated = []
-    for node in plan.nodes:
-        if node.id not in priced:
-            updated.append(node)
-            continue
-        updated.append(PlanNode(
-            id=node.id, label=node.label, role=node.role, origin=node.origin,
-            archetype=node.archetype, type_id=node.type_id,
-            candidates=node.candidates,
-            notes=node.notes + (Note(text, origin, source),),
-        ))
-    plan.nodes[:] = updated
+    plan.nodes[:] = [
+        node if node.id not in priced
+        else replace(node, notes=node.notes + (Note(text, origin, source),))
+        for node in plan.nodes
+    ]
 
 
 def _node_group_notes() -> list[Note]:
@@ -591,10 +590,9 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
             ))
         if perf.text:
             notes.append(Note(perf.text, ORIGIN_KB, "perfkb"))
-        updated.append(PlanNode(
-            id=node.id, label=node.label, role=node.role, origin=node.origin,
-            archetype=node.archetype, type_id=node.type_id,
-            candidates=node.candidates, notes=tuple(notes),
+        # 단가는 노트 문장과 **별도로 기계 값**으로도 싣는다 — 예산 대조가 읽는다.
+        updated.append(replace(
+            node, notes=tuple(notes), hourly_usd=spec.get("hourlyUSD") or None,
         ))
     plan.nodes[:] = updated
 
@@ -644,28 +642,12 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
     return "\n".join(lines)
 
 
-@function_tool
-def design_to_deployment(design_json: str, diagram: bool = True) -> str:
-    """앱 설계 산출물(JSON)에서 **배포 구성**을 만든다 — 구성요소·관리형 서비스·연결.
+def deployment_answer(design: dict, diagram: bool = True) -> str:
+    """설계 dict → 답변 텍스트 전부(계획·대조·다이어그램·자체 검증).
 
-    입력은 `appkb/schema.json` 계약을 따르는 JSON이다(클래스·시퀀스·ER·OpenAPI를
-    한 문서에 담은 것). 계약을 어기면 **무엇이 어긋났는지 목록으로** 답한다.
-
-    답에는 근거가 줄마다 붙는다 — 설계 산출물이 말한 것 / 설계자가 지정한 것 /
-    지식베이스가 답한 것 / **우리가 추론한 것**. ⚠ 표시는 추론이므로 사용자에게
-    그대로 전하세요. 관리형 서비스는 가격 축이 없어 값이 안 붙고 **합계도 내지
-    않습니다** — 그 고지도 그대로 전하세요.
-
-    Args:
-        design_json: 설계 산출물 JSON 문자열.
-        diagram: True면 PlantUML 다이어그램도 함께 낸다.
+    도구 껍데기와 분리해 둔 이유: **easydep의 배포 다이어그램 노드가 이 함수를
+    그대로 부른다**(재편 계획 P1c). LLM도 agents SDK도 필요 없는 결정론 경로다.
     """
-    try:
-        design = json.loads(design_json)
-    except json.JSONDecodeError as exc:
-        return f"설계 JSON을 읽지 못했습니다: {exc}"
-    print(f"\n[설계질의] 배포 구성: {design.get('name')!r}")
-
     plan = compose(design)
     if plan.unresolved and not plan.nodes:
         return "입력 계약을 통과하지 못했습니다:\n" + "\n".join(
@@ -673,6 +655,17 @@ def design_to_deployment(design_json: str, diagram: bool = True) -> str:
         )
 
     text = _render_plan_text(plan)
+
+    # 요구사항 대조 — research.md 목표 1의 "부합 측정". 판정문이라 항상 싣는다:
+    # "기준 없음"도 판정이다(침묵이면 부분 답이 완전한 답처럼 읽힌다).
+    from costkb.agent_api import HOURS_PER_MONTH
+
+    conformance = verify_against_requirements(
+        plan, design.get("requirements"), HOURS_PER_MONTH
+    )
+    if conformance:
+        text += "\n\n[요구사항 대조]\n" + "\n".join(f"  - {c}" for c in conformance)
+
     problems = verify_plan(plan)
     if diagram:
         uml = render(plan)
@@ -685,6 +678,33 @@ def design_to_deployment(design_json: str, diagram: bool = True) -> str:
         # **우리가 만든 그림을 우리가 검사한 결과**다. 숨기면 검사가 무의미해진다.
         text += "\n\n⚠ 자체 검증에서 걸린 것:\n" + "\n".join(f"  - {p}" for p in problems)
     return text
+
+
+@function_tool
+def design_to_deployment(design_json: str, diagram: bool = True) -> str:
+    """앱 설계 산출물(JSON)에서 **배포 구성**을 만든다 — 구성요소·관리형 서비스·연결.
+
+    입력은 `appkb/schema.json` 계약을 따르는 JSON이다(클래스·시퀀스·ER·OpenAPI를
+    한 문서에 담은 것). 계약을 어기면 **무엇이 어긋났는지 목록으로** 답한다.
+
+    답에는 근거가 줄마다 붙는다 — 설계 산출물이 말한 것 / 설계자가 지정한 것 /
+    지식베이스가 답한 것 / **우리가 추론한 것**. ⚠ 표시는 추론이므로 사용자에게
+    그대로 전하세요. 관리형 서비스는 가격 축이 없어 값이 안 붙고 **합계도 내지
+    않습니다** — 그 고지도 그대로 전하세요.
+
+    답 끝의 [요구사항 대조]는 예산·규모·multiZone 판정입니다. **"초과 확정"과
+    "부합 단정 불가"는 다른 판정입니다** — 뭉개지 말고 그대로 전하세요.
+
+    Args:
+        design_json: 설계 산출물 JSON 문자열.
+        diagram: True면 PlantUML 다이어그램도 함께 낸다.
+    """
+    try:
+        design = json.loads(design_json)
+    except json.JSONDecodeError as exc:
+        return f"설계 JSON을 읽지 못했습니다: {exc}"
+    print(f"\n[설계질의] 배포 구성: {design.get('name')!r}")
+    return deployment_answer(design, diagram=diagram)
 
 
 DESIGN_TOOLS = [design_to_deployment]

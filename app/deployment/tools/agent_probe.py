@@ -436,6 +436,27 @@ PROBES: tuple[Probe, ...] = (
           want_tools=("record_plan", "cost_recommend_specs"),
           forbid_tools=("web_search",),
           want_any=("월", "/월", "USD", "$")),
+
+    # --- 진입 계약: 필수 제약 (RESOURCE_SPEC, 재편 계획 P1) -------------------
+    Probe("RS1", "우리 쇼핑몰 서비스를 클라우드에 올리고 싶어. 배포 구성이랑 비용 알려줘",
+          "**필수 제약이 하나도 없는 물음 — 지어내지 않고 되묻는가.** 진입 계약의 "
+          "필수 4칸(프로바이더·리전·월 예산·규모)이 전부 비어 있다. 임의 프로바이더로 "
+          "계획을 세우고 비용을 내면, 그 숫자는 사용자가 밝힌 적 없는 전제 위의 "
+          "값이다 — 대표 리전을 임의로 고르지 않는다는 원칙의 진입 버전. "
+          "되묻는 답에는 부를 도구가 없다(tools_optional).",
+          forbid_tools=("record_plan", "cost_recommend_specs",
+                        "cost_estimate_monthly", "web_search"),
+          tools_optional=True,
+          want_any=("프로바이더", "클라우드", "예산", "리전")),
+    Probe("RS2", "쇼핑몰 웹 서비스야. AWS 서울 리전, 월 예산 300달러, 동시 사용자 "
+                 "500명 정도야. 스펙 추천하고 월 비용이 예산에 맞는지 알려줘",
+          "**필수 4칸이 다 있으면 예산 판정까지 닿는가.** GL4는 계획→추천→비용까지만 "
+          "쟀다 — 목표 1의 동사는 '부합 측정'이고, 예산이 있어야 그 판정이 성립한다. "
+          "판정은 비대칭이다(온디맨드 하한 기준·스토리지 등 미반영) — 한계 고지가 "
+          "함께 있어야 숫자가 청구 예상액으로 오독되지 않는다.",
+          want_tools=("record_plan", "cost_recommend_specs", "cost_estimate_monthly"),
+          forbid_tools=("web_search",),
+          want_any=("예산", "300")),
 )
 
 # --- 기대에서 **뺀** 것 (지킬 생각 없는 기대를 남기면 실패가 일상이 된다) ---
