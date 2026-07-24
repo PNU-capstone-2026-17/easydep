@@ -120,18 +120,21 @@ def verify_against_requirements(
         )
     else:
         floor = sum(n.hourly_usd for n in priced) * hours_per_month
+        # "1대 기준"을 판정문에 박는다 — 하한은 컴퓨트가 각 1대일 때의 값이고,
+        # 수평 확장(대수)은 이 지식베이스가 정하지 못하는 사이징이다. 이 명시가
+        # 없으면 하한이 "스케일아웃해도 이 값"으로 읽힌다.
         if floor > budget:
             out.append(
                 f"예산(월 ${budget:,.2f}): **초과 확정** — 값이 붙은 부분만의 월합"
-                f"(하한) ${floor:,.2f}이 이미 예산을 넘습니다. "
+                f"(하한, 컴퓨트 각 1대 기준) ${floor:,.2f}이 이미 예산을 넘습니다. "
                 f"미가격 구성원 {len(unpriced)}종은 더하지도 않은 값입니다"
             )
         else:
             out.append(
-                f"예산(월 ${budget:,.2f}): 부합 단정 불가 — 값이 붙은 부분의 하한은 "
-                f"${floor:,.2f}이지만 미가격 구성원 {len(unpriced)}종"
-                f"({', '.join(unpriced[:5])})의 값을 모릅니다. "
-                "모르는 것을 0으로 치지 않습니다"
+                f"예산(월 ${budget:,.2f}): 부합 단정 불가 — 값이 붙은 부분의 하한"
+                f"(컴퓨트 각 1대 기준)은 ${floor:,.2f}이지만 미가격 구성원 "
+                f"{len(unpriced)}종({', '.join(unpriced[:5])})의 값을 모르고, "
+                "수평 확장 대수도 정해지지 않았습니다. 모르는 것을 0으로 치지 않습니다"
             )
 
     users = req.get("expectedConcurrentUsers")

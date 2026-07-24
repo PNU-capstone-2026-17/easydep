@@ -346,6 +346,18 @@ def compose(design: dict) -> DeploymentPlan:
                     "이 지식베이스에 그 층의 대응이 없어 구성을 답하지 않습니다",
                     ORIGIN_INFERRED, "",
                 ))
+            if kind == "vm":
+                # 스케일아웃은 스펙이 명시하는 구조다: NLB의 대상이 VM 서브그룹이고
+                # (targetGroup.subGroupId), 동적 생성이 subGroupSize를 받는다.
+                # **대수는 사이징이라 우리가 정하지 못한다** — 그 정직함이 이 노트의 절반이다.
+                notes.append(Note(
+                    "수평 확장 단위입니다 — 실행 경로 스펙이 NLB 대상을 VM "
+                    "서브그룹으로 참조하고(targetGroup.subGroupId) 동적 생성이 "
+                    "서브그룹 크기(subGroupSize)를 받습니다. **몇 대가 필요한지는 "
+                    "이 지식베이스가 정하지 못합니다** — 부하 테스트·사이징 "
+                    "참조점으로 정하세요. 값이 붙는 경우 단가·월 하한은 1대 기준입니다.",
+                    ORIGIN_KB, "graphkb",
+                ))
 
         # **서버리스는 값이 다른 축이다.** 시간당 VM 단가를 붙이면 그냥 틀린 값이라
         # 관리형 서비스로 세우고 값을 붙이지 않는다(호출당 과금 데이터가 0건).

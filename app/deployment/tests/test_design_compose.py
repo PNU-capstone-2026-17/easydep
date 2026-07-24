@@ -270,6 +270,28 @@ def test_k8s_exposure_notes_the_ingress_layer_instead_of_an_lb(design) -> None:
     assert any("Service/Ingress" in n.text for n in plan.node("order-api").notes)
 
 
+def test_exposed_vm_says_it_scales_out_but_count_is_not_ours(design) -> None:
+    """스케일아웃 표현(보강 4) — 구조(서브그룹)는 스펙 명시라 적되, **대수는
+    정하지 못한다**가 문장의 절반이어야 한다. 대수를 정하면 근거 없는 사이징이다."""
+    notes = [n for n in compose(design).node("order-api").notes
+             if "수평 확장" in n.text]
+    assert notes and notes[0].origin == ORIGIN_KB
+    assert "정하지 못합니다" in notes[0].text
+    assert "1대 기준" in notes[0].text
+    # 노출 안 된 워커에는 안 붙는다 — LB 뒤 확장 단위가 아니다.
+    assert not [n for n in compose(design).node("order-worker").notes
+                if "수평 확장" in n.text]
+
+
+def test_budget_floor_declares_the_single_instance_basis(design) -> None:
+    """하한이 "스케일아웃해도 이 값"으로 읽히면 안 된다 — 1대 기준 명시가
+    판정문에 있어야 한다."""
+    design["requirements"]["monthlyBudgetUSD"] = 10_000
+    text = deployment_answer(design, diagram=False)
+    assert "컴퓨트 각 1대 기준" in text
+    assert "수평 확장 대수도 정해지지 않았습니다" in text
+
+
 def test_lb_diagram_roundtrips_clean(design) -> None:
     """새 역할(ingress·hexagon)이 되파싱 검증을 통과해야 한다 — 그림 검사가
     실패하면 답 끝에 '자체 검증에서 걸린 것'이 붙는다."""
