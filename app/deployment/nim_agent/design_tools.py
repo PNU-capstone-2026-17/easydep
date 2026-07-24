@@ -32,6 +32,7 @@ KB끼리는 import하지 않는 규약이라 엮는 일은 이 계층에서만 �
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 
 from agents import function_tool
@@ -721,6 +722,51 @@ def deployment_answer_from_easydep(
             f"  - {s}" for s in skipped
         )
     return text
+
+
+def deployment_puml_from_easydep(
+    name: str,
+    *,
+    api_spec: dict | None = None,
+    class_puml: str = "",
+    sequence_puml: str = "",
+    erd_puml: str = "",
+    resource_spec: dict | None = None,
+) -> str:
+    """easydep 배포 노드가 **저장할 한 문서** — PlantUML + 근거·판정을 주석으로.
+
+    easydep 산출물 저장은 스테이지당 단일 문서(PUML 문자열)라, 근거 라벨·부합
+    판정·어댑터 고지를 PlantUML 줄 주석(`'`)으로 같은 문서에 싣는다(팀 결정
+    2026-07-24). 주석은 렌더링에 안 나오지만 산출물과 함께 저장·버전되고,
+    문서만 떼어 봐도 어느 줄이 추론인지 남는다.
+
+    `deployment_answer_from_easydep`의 답을 변환해 만든다 — 따로 조립하면 두
+    표면이 드리프트한다.
+    """
+    text = deployment_answer_from_easydep(
+        name,
+        api_spec=api_spec,
+        class_puml=class_puml,
+        sequence_puml=sequence_puml,
+        erd_puml=erd_puml,
+        resource_spec=resource_spec,
+        diagram=True,
+    )
+    match = re.search(r"```plantuml\n(.*?)\n```", text, re.S)
+    if match is None:
+        # 계약 실패 등 그림이 없는 답 — 빈 그림 대신 **실패를 그린 문서**를 남긴다.
+        body = "\n".join(ln for ln in text.splitlines() if ln.strip())
+        return "@startuml\nnote as contract_failure\n" + body + "\nend note\n@enduml\n"
+    uml = match.group(1).rstrip()
+    evidence = (text[: match.start()] + text[match.end():]).strip()
+    comments = "\n".join(f"' {ln}".rstrip() for ln in evidence.splitlines())
+    assert uml.endswith("@enduml"), "render()의 출력 계약이 바뀌었다"
+    return (
+        uml[: -len("@enduml")]
+        + "' ──── 이하 근거·판정 (agent-sdk 자동 생성 · 렌더링에는 나오지 않음)\n"
+        + comments
+        + "\n@enduml\n"
+    )
 
 
 @function_tool

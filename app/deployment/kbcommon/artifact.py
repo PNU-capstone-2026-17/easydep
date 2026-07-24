@@ -178,12 +178,21 @@ def resolve(output_dir: Path | str, name: str) -> Path | None:
 
     `output/<name>` → `data/<name>.gz` 순으로 본다. `output_dir`가 기본 위치가
     아니면 폴백하지 않는다(위 주석 참고).
+
+    **상대 경로는 CWD가 아니라 저장소 기준이다.** KB들의 기본값이 상대
+    `Path("output")`인데, easydep처럼 CWD가 다른 프로세스에 임포트되면 CWD
+    해석은 일부 KB만 조용히 미빌드 상태로 만들었다 — 배포 구성에서 svcmap
+    대응과 네트워크 계층이 통째로 빠진 채 "미결"로 답했다(실측 2026-07-24).
+    같은 저장소의 데이터를 어디서 부르든 같게 찾는 것이 옳다.
     """
-    fresh = Path(output_dir) / name
+    base = Path(output_dir)
+    if not base.is_absolute():
+        base = REPO_ROOT / base
+    fresh = base / name
     if fresh.exists():
         return fresh
     try:
-        is_default = Path(output_dir).resolve() == DEFAULT_OUTPUT
+        is_default = base.resolve() == DEFAULT_OUTPUT
     except OSError:
         is_default = False
     if not is_default:

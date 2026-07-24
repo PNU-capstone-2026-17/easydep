@@ -250,6 +250,37 @@ def test_easydep_entrypoint_reports_invalid_resource_spec() -> None:
     assert "monthlyBudgetUSD" in text and "규모 신호" in text
 
 
+def test_puml_document_carries_evidence_as_comments() -> None:
+    """easydep 저장은 스테이지당 단일 문서(PUML)다 — 근거·판정을 버리면 이 교체의
+    요점이 사라지므로 PlantUML 주석으로 같은 문서에 싣는다(팀 결정 2026-07-24)."""
+    from appkb.diagram import parse_back
+    from nim_agent.design_tools import deployment_puml_from_easydep
+
+    doc = deployment_puml_from_easydep(
+        "주문 서비스", api_spec=_API_SPEC, class_puml=_CLASS_PUML,
+        sequence_puml=_SEQUENCE_PUML, erd_puml=_ERD_PUML,
+        resource_spec=_RESOURCE_SPEC,
+    )
+    assert doc.startswith("@startuml") and doc.rstrip().endswith("@enduml")
+    comments = [ln for ln in doc.splitlines() if ln.startswith("'")]
+    joined = "\n".join(comments)
+    assert "[요구사항 대조]" in joined and "예산" in joined
+    assert "검증된 사실이 아닙니다" in joined
+    # 주석이 되파싱을 오염시키면 안 된다 — 주석 속 문장이 노드·선으로 읽히면
+    # 그림 대조가 유령을 잡는다.
+    with_comments = parse_back(doc)
+    bare = parse_back(doc[: doc.index("' ────")] + "@enduml\n")
+    assert with_comments == bare
+
+
+def test_contract_failure_becomes_a_drawn_failure_not_an_empty_diagram() -> None:
+    from nim_agent.design_tools import deployment_puml_from_easydep
+
+    doc = deployment_puml_from_easydep("빈 설계")
+    assert doc.startswith("@startuml")
+    assert "계약" in doc and "note" in doc
+
+
 def test_adapter_output_composes_into_a_plan() -> None:
     """끝에서 끝까지: easydep 산출물 모양 → 계약 → 배포 계획. 저장소·큐·공개
     노출·값이 전부 나오고, 자체 검증을 통과한다."""
