@@ -1,4 +1,4 @@
-"""함수 호출(function calling) 예제 도구들.
+"""에이전트 로컬 도구 조립 — 각 축의 *_TOOLS를 한 목록으로 모은다.
 
 @function_tool 데코레이터는 함수 시그니처와 docstring으로부터 도구 스키마를 자동 생성한다.
 gpt-oss-120b는 tool calling을 지원하므로 NIM Chat Completions 경로에서도 아래 도구들이 호출된다.

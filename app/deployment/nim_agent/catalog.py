@@ -17,9 +17,6 @@ class Task:
 
 
 CATALOG: list[Task] = [
-    Task("summarize", "문서 요약", "긴 텍스트를 핵심만 간결하게 요약한다."),
-    Task("translate", "번역", "한국어 ↔ 영어 번역을 수행한다."),
-    Task("brainstorm", "아이디어 발상", "주제에 대한 아이디어와 대안을 제시한다."),
     Task("web_search", "웹 검색", "web_search 도구(DuckDuckGo)로 최신 정보를 검색한다."),
     Task(
         "cloud_sizing",
