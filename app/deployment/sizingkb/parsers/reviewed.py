@@ -35,6 +35,16 @@ EVIDENCE = "human-review"
 
 #: (프로바이더, 예약 수, 무엇이 예약되나, 사람이 확인할 곳)
 #: **여기 없는 프로바이더는 추측해 넣지 않는다** — 모르면 도구가 모른다고 답한다.
+#:
+#: 2026-07-24 (재편 계획 ⑥-D): 판정 조인을 끝에서 끝까지 돌려 보니 oracle·tencent
+#: 경로에서 "예약 IP 모름"이 실측되어, 실행 경로(cb-spider 12 CSP)의 나머지를
+#: 조사했다. 공식 문서가 고정 수를 명시한 4곳만 담는다. **안 담은 곳과 이유**:
+#:
+#:   openstack   Neutron은 게이트웨이 유무·DHCP 포트 수가 구성에 따라 달라
+#:               고정 상수가 아니다. NHN(OpenStack 기반)의 5개는 그 배포판의
+#:               선택이지 상류의 상수가 아니다 — 상류에 그대로 옮기면 거짓이 된다.
+#:   kt          매뉴얼(manual.cloud.kt.com)에서 고정 수 명시를 찾지 못했다.
+#:               G-Cloud PDF(2021)의 "Tier당 약 170개"는 수가 아니라 어림이다.
 _RESERVED: tuple[tuple[str, int, str, str], ...] = (
     (
         "aws",
@@ -48,6 +58,37 @@ _RESERVED: tuple[tuple[str, int, str, str], ...] = (
         4,
         "네트워크 주소 · 기본 게이트웨이 · 끝에서 두 번째(향후 사용) · 브로드캐스트",
         "GCP VPC 문서 'Subnet ranges' (기계 판독 소스 없음)",
+    ),
+    (
+        "tencent",
+        3,
+        "처음 두 주소 · 마지막 주소",
+        "Tencent Cloud VPC 'Limits' 문서(tencentcloud.com/document/product/215/31804): "
+        "\"For each subnet, Tencent Cloud reserves its first two IPs and the last "
+        "one for IP networking.\" (2026-07-24 확인)",
+    ),
+    (
+        "oracle",
+        3,
+        "CIDR의 처음 두 주소 · 마지막 주소",
+        "OCI 'Overview of VCNs and Subnets': \"the first two addresses and the "
+        "last in the subnet's CIDR are reserved by the Networking service.\" "
+        "(2026-07-24 확인)",
+    ),
+    (
+        "nhn",
+        5,
+        "네트워크 주소 · 게이트웨이 · DHCP/SNAT용 2개 · 브로드캐스트",
+        "NHN Cloud VPC 콘솔 가이드(docs.nhncloud.com Network/VPC console-guide)의 "
+        "예약 주소 표 — 192.168.0.0/24 예시로 5개를 열거한다. (2026-07-24 확인)",
+    ),
+    (
+        "ncp",
+        7,
+        "네트워크 주소 · 브로드캐스트 · 내부 관리용 최초 5개",
+        "NAVER Cloud 'Subnet Management'(guide.ncloud-docs.com "
+        "vpc-subnetmanage-vpc): \"/24인 경우 249개 … 사용 가능\" — 256−249=7로 "
+        "산술이 프리픽스 3종(/24·/25·/26)에서 일관된다. (2026-07-24 확인)",
     ),
 )
 
@@ -87,11 +128,13 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
         {
             "rules": len(rules.rules),
             "note": (
-                "**손으로 적은 사이징 상수.** networkinfo.yaml이 aws·gcp의 서브넷 예약 "
-                "IP를 비워 두었고 기계 판독 소스를 찾지 못해(아카이브·404·언급 0건) "
-                "여기 담는다. 값이 의심스러워서가 아니라 **출처가 기계 판독이 아니라서** "
-                "산출물을 갈라 두었다 — 진짜 소스가 생기면 이 파일만 지우면 된다. "
-                "항목마다 사람이 확인할 곳을 적었다."
+                "**손으로 적은 사이징 상수.** networkinfo.yaml이 비워 둔 프로바이더의 "
+                "서브넷 예약 IP를, 각 CSP 공식 문서를 사람이 읽어 담는다(기계 판독 "
+                "소스 없음 — 아카이브·404·언급 0건). 값이 의심스러워서가 아니라 "
+                "**출처가 기계 판독이 아니라서** 산출물을 갈라 두었다 — 진짜 소스가 "
+                "생기면 이 파일만 지우면 된다. 항목마다 사람이 확인할 곳을 적었다. "
+                "**openstack(구성에 따라 가변)·kt(고정 수 명시 없음)는 일부러 안 "
+                "담았다** — 모르면 도구가 모른다고 답한다."
             ),
         }
     ]
