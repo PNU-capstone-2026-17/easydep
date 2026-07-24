@@ -365,7 +365,10 @@ def compose(design: dict) -> DeploymentPlan:
     # --- 4. 통신 선 ------------------------------------------------------
     known = {n.id for n in plan.nodes}
     for src, dst, label in sync_calls:
-        if src in known and dst in known:
+        # src == dst 는 한 배포 단위 안의 호출이다(easydep 단일 컴포넌트 어댑터가
+        # 내부 비동기를 남긴다) — 배포 선이 아니므로 그리지 않는다. any_async
+        # 신호는 이미 위에서 집계돼 큐 노드는 선다.
+        if src in known and dst in known and src != dst:
             is_async = dst in async_targets and src in components
             plan.edges.append(PlanEdge(
                 src, dst, label, ORIGIN_DESIGN,
@@ -677,6 +680,46 @@ def deployment_answer(design: dict, diagram: bool = True) -> str:
     if problems:
         # **우리가 만든 그림을 우리가 검사한 결과**다. 숨기면 검사가 무의미해진다.
         text += "\n\n⚠ 자체 검증에서 걸린 것:\n" + "\n".join(f"  - {p}" for p in problems)
+    return text
+
+
+def deployment_answer_from_easydep(
+    name: str,
+    *,
+    api_spec: dict | None = None,
+    class_puml: str = "",
+    sequence_puml: str = "",
+    erd_puml: str = "",
+    resource_spec: dict | None = None,
+    diagram: bool = True,
+) -> str:
+    """easydep 최종 산출물 → 배포 답변. **easydep 배포 다이어그램 노드의 진입점**(P1c).
+
+    어댑터가 못 읽은 것·추정한 것과 제약 계약 위반을 답변 끝에 그대로 싣는다 —
+    어댑터의 휴리스틱을 조용히 삼키면 부분 답이 완전한 답처럼 읽힌다.
+    """
+    from appkb.contract import validate_request
+    from appkb.easydep import design_from_easydep
+
+    design, skipped = design_from_easydep(
+        name,
+        api_spec=api_spec,
+        class_puml=class_puml,
+        sequence_puml=sequence_puml,
+        erd_puml=erd_puml,
+        resource_spec=resource_spec,
+    )
+    text = deployment_answer(design, diagram=diagram)
+    if resource_spec is not None:
+        problems = validate_request(resource_spec)
+        if problems:
+            text += "\n\n[제약(RESOURCE_SPEC) 검증]\n" + "\n".join(
+                f"  - {p}" for p in problems
+            )
+    if skipped:
+        text += "\n\n[어댑터가 읽지 못한 것·추정한 것]\n" + "\n".join(
+            f"  - {s}" for s in skipped
+        )
     return text
 
 
