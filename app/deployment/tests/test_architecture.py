@@ -25,6 +25,7 @@ tools/는 실험 하네스라 에이전트 전체를 조립한다.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +35,7 @@ KB_PACKAGES = {
     "bundlekb",
     "capacitykb",
     "costkb",
+    "envkb",
     "graphkb",
     "perfkb",
     "sizingkb",
@@ -44,16 +46,17 @@ ALL_PACKAGES = KB_PACKAGES | {"kbcommon", "nim_agent"}
 # 돌려준다 — 조인에는 값이 필요하다는 것이 goal2 작업에서 확인된 구분이다.
 PUBLIC_MODULES = {"agent_api", "dataset", "model", "query"}
 
+# 표준 모양과 다른 KB의 공개 표면. envkb는 축마다 모듈 하나가 곧 표면이다
+# (코드 이동이지 재작성이 아니라 모양을 소급 통일하지 않았다). cloudinfo는
+# regions의 파서라 비공개다.
+PUBLIC_PER_PACKAGE = {
+    "envkb": {"carbon", "latency", "regions", "lifecycle", "cbspider", "images"},
+}
+
 # (파일, 임포트한 모듈) → 사유. 항목이 실제 위반과 1:1이 아니면 검사가 실패한다.
+# 2026-07-24: 헬퍼 차용 2건(capacitykb↔graphkb)은 본체를 kbcommon.fetch로 올려
+# 해소했다 — 남은 한 건은 예외가 아니라 설계다.
 EXCEPTIONS: dict[tuple[str, str], str] = {
-    ("capacitykb/parsers/gcp.py", "graphkb.parsers.gcp"): (
-        "같은 GCP yaml 원본을 읽는 비공개 헬퍼(_list_config_files·_load_yaml)를 "
-        "빌려 씀 — P2 잔여에서 kbcommon으로 올려 해소 예정"
-    ),
-    ("graphkb/parsers/avm.py", "capacitykb.parsers.azure"): (
-        "Azure 문서 상대경로 fetch 비공개 헬퍼(_fetch_relative)를 빌려 씀 — "
-        "P2 잔여에서 kbcommon으로 올려 해소 예정"
-    ),
     ("perfkb/cli.py", "costkb.dataset"): (
         "미러 전제: perfkb는 costkb가 미러한 스펙 카탈로그(BUILT_FILENAME)에 성능 "
         "주석을 다는 축이다 — 의도된 단방향 의존이라 숨기지 않고 여기 남긴다"
@@ -96,13 +99,14 @@ def _violations() -> dict[tuple[str, str], str]:
                 # nim_agent → KB: 공개 표면만.
                 if top not in KB_PACKAGES or top == "appkb":
                     continue  # kbcommon·appkb는 전부 공개
+                public = PUBLIC_PER_PACKAGE.get(top, PUBLIC_MODULES)
                 if len(parts) == 1:
                     # `from costkb import agent_api` 꼴 — 가져온 이름이 곧 모듈이다.
-                    hidden = [n for n in names if n not in PUBLIC_MODULES]
+                    hidden = [n for n in names if n not in public]
                     if hidden:
                         found[key] = f"KB 공개 표면이 아님: {', '.join(hidden)}"
-                elif parts[1] not in PUBLIC_MODULES:
-                    found[key] = "KB 공개 표면(agent_api·dataset·model·query)이 아님"
+                elif parts[1] not in public:
+                    found[key] = f"KB 공개 표면({', '.join(sorted(public))})이 아님"
                 elif private := [n for n in names if n.startswith("_")]:
                     found[key] = f"비공개 이름 임포트: {', '.join(private)}"
     return found
@@ -125,3 +129,20 @@ def test_import_rules_match_exception_table() -> None:
 def test_exceptions_all_carry_reasons() -> None:
     """예외는 사유가 있어야 예외다 — 빈 사유는 규약을 조용히 넓힌다."""
     assert all(why.strip() for why in EXCEPTIONS.values())
+
+
+def test_kbcommon_owns_no_datasets() -> None:
+    """**kbcommon에는 데이터셋이 없다.** 자체 산출물을 소유하면 그것은 KB다.
+
+    리전·탄소·지연·수명주기·드라이버 커버리지·이미지가 "공용 배관" 안에서
+    ~1,900줄짜리 KB 여섯으로 자랐던 일(→ envkb로 분리, 재편 계획 ⑤)의 재발
+    방지다. 소유의 표식은 `ARTIFACT = "….json"` 선언 — 이 규약은 모든 KB가
+    따르므로 이것만 봐도 충분하다.
+    """
+    pattern = re.compile(r"^_?(DEFAULT_)?ARTIFACT\s*=", re.M)
+    owners = [
+        path.name
+        for path in sorted((ROOT / "kbcommon").glob("*.py"))
+        if pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert owners == [], f"kbcommon이 산출물을 소유한다 — KB로 분리하세요: {owners}"

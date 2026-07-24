@@ -207,7 +207,9 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
             ibm · ncp · kt · nhn · openstack.
     """
     print(f"\n[용량질의] 리전 해석: {place!r} provider={provider!r}")
-    return agent_api.region_lookup(place, provider)
+    from envkb.regions import region_lookup
+
+    return region_lookup(place, provider)
 
 
 @function_tool
@@ -238,7 +240,7 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
         provider: aws · azure · gcp.
         region: 리전 코드(선택). 예: 'asia-northeast3', 'ap-northeast-2'.
     """
-    from kbcommon import carbon
+    from envkb import carbon
 
     print(f"\n[용량질의] 리전 탄소: {provider!r} region={region!r}")
     return carbon.describe(provider, region)
@@ -259,7 +261,7 @@ def cap_region_latency(source_region: str, target_region: str | None = None) -> 
         source_region: `프로바이더-리전` 꼴. 예: 'aws-ap-northeast-2'.
         target_region: 같은 꼴(선택). 주면 그 쌍만.
     """
-    from kbcommon import latency
+    from envkb import latency
 
     print(f"\n[용량질의] 리전 지연: {source_region!r} → {target_region!r}")
     return latency.describe(source_region, target_region)
@@ -285,7 +287,7 @@ def cap_basic_image(
         region: 리전 코드(선택). Azure처럼 리전 무관인 경우 'common'.
         architecture: 'x86_64' | 'arm64' (선택).
     """
-    from kbcommon import images
+    from envkb import images
 
     print(
         f"\n[용량질의] 기본 이미지: {provider!r} region={region!r} arch={architecture!r}"
@@ -305,7 +307,7 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
         service: 제품 이름 또는 리소스 타입. 예: 'amazon-eks', 'AWS::RDS::DBInstance'.
         version: 버전(선택). 예: '1.28', '8.0'.
     """
-    from kbcommon import lifecycle
+    from envkb import lifecycle
 
     print(f"\n[용량질의] 수명주기: {service!r} version={version!r}")
     return lifecycle.describe(service, version)
@@ -340,7 +342,7 @@ def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str
         resource: 코어 리소스. vNet · subnet · securityGroup · sshKey · vm · nlb ·
             k8sCluster · k8sNodeGroup · dataDisk · customImage.
     """
-    from kbcommon import cbspider
+    from envkb import cbspider
 
     print(f"\n[용량질의] CSP 지원: csp={csp!r} resource={resource!r}")
     return cbspider.describe(csp, resource)

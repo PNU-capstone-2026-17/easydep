@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from kbcommon import lifecycle
+from envkb import lifecycle
 
 PRODUCT_MD = """---
 title: Amazon EKS

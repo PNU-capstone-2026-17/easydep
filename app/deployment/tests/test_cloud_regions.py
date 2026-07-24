@@ -15,9 +15,8 @@ import json
 
 import pytest
 
-from capacitykb import agent_api
-from kbcommon import cloudinfo
-from kbcommon import regions as regions_mod
+from envkb import cloudinfo
+from envkb import regions as regions_mod
 
 RAW = {
     "cloud": {
@@ -164,19 +163,19 @@ def test_compass_name_is_not_mapped_to_a_city(built) -> None:
 
 
 def test_unknown_place_is_not_claimed_absent(built) -> None:
-    text = agent_api.region_lookup("화성", output_dir=built)
+    text = regions_mod.region_lookup("화성", output_dir=built)
     assert "못 알아들었다" in text
     assert "없다는 뜻이 아니라" in text
 
 
 def test_multi_provider_answer_warns_about_codes(built) -> None:
     """프로바이더마다 코드가 다르다는 걸 답이 말해야 한다."""
-    text = agent_api.region_lookup("서울", output_dir=built)
+    text = regions_mod.region_lookup("서울", output_dir=built)
     assert "프로바이더마다 리전 코드가 다릅니다" in text
     assert "[gcp] asia-northeast3" in text
 
 
 def test_missing_artifact_guides_to_build(tmp_path) -> None:
     regions_mod._catalog.cache_clear()
-    assert "build-regions" in agent_api.region_lookup("서울", output_dir=tmp_path)
+    assert "build-regions" in regions_mod.region_lookup("서울", output_dir=tmp_path)
     regions_mod._catalog.cache_clear()

@@ -47,6 +47,9 @@ from kbcommon.sources import SOURCES
 from kbcommon.type_ids import make_type_id
 
 DEFAULT_TAG = SOURCES["kcc-crd"].pin
+#: graphkb의 KCC 파서와 같은 저장소를 본다 — 캐시 접두(kcc-tree)도 같아서
+#: 한쪽이 이미 빌드했으면 트리 목록에 네트워크를 안 탄다.
+_API_BASE = "https://api.github.com/repos/GoogleCloudPlatform/k8s-config-connector"
 
 #: 설명문이 `Immutable.`로 시작 — KCC의 표기 규약. 원본이 명시한 것이지 우리 짐작이 아니다.
 EVIDENCE_PREFIX = "kcc-immutable-prefix"
@@ -282,21 +285,23 @@ def build(
     provider: bool = True,
 ) -> CapacitySet:
     """CRD를 받아 파싱하고 output에 저장한 뒤 결과를 반환한다."""
-    from graphkb.parsers.gcp import _list_config_files, _load_yaml
-    from kbcommon.fetch import fetch_cached
+    from kbcommon.fetch import fetch_cached, list_github_tree, load_yaml_lenient
 
     crds: list[dict] = []
     read_paths: list[Path] = []
 
     if crd_dir is not None:
         for path in sorted(Path(crd_dir).glob("*.yaml")):
-            doc = _load_yaml(path)
+            doc = load_yaml_lenient(path)
             if isinstance(doc, dict) and doc.get("kind") == "CustomResourceDefinition":
                 read_paths.append(path)
                 crds.append(doc)
     else:
-        # graphkb와 **같은 캐시 파일명**을 쓴다. 그래프를 이미 빌드했으면 네트워크를 안 탄다.
-        for rel in _list_config_files(tag, refresh=refresh):
+        # graphkb와 **같은 캐시 파일명**(kcc-tree-…)을 쓴다. 그래프를 이미
+        # 빌드했으면 네트워크를 안 탄다.
+        for rel in list_github_tree(
+            _API_BASE, tag, "config", cache_prefix="kcc-tree", refresh=refresh
+        ):
             if not rel.startswith("crds/resources/"):
                 continue
             path = fetch_cached(
@@ -304,7 +309,7 @@ def build(
                 f"kcc-{tag}-{Path(rel).name}",
                 refresh=refresh,
             )
-            doc = _load_yaml(path)
+            doc = load_yaml_lenient(path)
             if isinstance(doc, dict):
                 read_paths.append(path)
                 crds.append(doc)

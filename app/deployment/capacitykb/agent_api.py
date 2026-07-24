@@ -745,67 +745,8 @@ def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -
     return "\n".join(lines)
 
 
-_REGIONS_MISSING = (
-    "리전 산출물이 없습니다. `python -m kbcommon build-regions` 로 생성하세요."
-)
-
-
-def region_lookup(
-    query: str,
-    provider: str | None = None,
-    *,
-    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
-) -> str:
-    """사람이 쓴 말('서울')을 리전 코드로 옮긴다. 프로바이더 10곳을 안다.
-
-    이게 없어서 실측에서 "서울 리전에서 GPU 인스턴스"에 답하지 못했다. 데이터는
-    `aws-regions.json`에 있었고 `ap-northeast-2`라는 키만 못 만들고 있었다.
-
-    **서울은 프로바이더마다 다르다** — aws `ap-northeast-2`, gcp `asia-northeast3`,
-    azure `koreacentral`. `provider`를 주면 그 안에서만 찾는다.
-    """
-    from kbcommon.regions import catalog, providers, resolve_region
-
-    found = resolve_region(query, provider=provider, output_dir=str(output_dir))
-    if not found:
-        known = catalog(provider=provider, output_dir=str(output_dir))
-        if not known:
-            if provider and catalog(output_dir=str(output_dir)):
-                have = ", ".join(providers(output_dir=str(output_dir)))
-                return (
-                    f"'{provider}' 프로바이더의 리전 정보가 없습니다. "
-                    f"아는 프로바이더: {have}"
-                )
-            return _REGIONS_MISSING
-        scope = f"{provider} " if provider else ""
-        return (
-            f"'{query}' 에서 {scope}리전을 알아보지 못했습니다 — 그런 리전이 없다는 "
-            f"뜻이 아니라 **우리가 못 알아들었다**는 뜻입니다.\n"
-            "  리전 코드(`ap-northeast-2`)나 영어 이름(`Seoul`)으로 다시 물어보세요.\n"
-            f"  아는 {scope}리전 {len(known)}곳 중 몇 가지: "
-            + ", ".join(f"{r.code}({r.name})" for r in known[:5])
-        )
-
-    scope = f" ({provider})" if provider else ""
-    lines = [f"'{query}'{scope} → 리전 {len(found)}곳"]
-    for region in found[:12]:
-        how = {
-            "code": "리전 코드",
-            "name": "원본 표시 이름",
-            "alias": "우리가 더한 한국어 번역",
-        }[region.matched_by]
-        lines.append(
-            f"  - [{region.provider}] {region.code} — {region.name} ({how})"
-        )
-    if len(found) > 12:
-        lines.append(f"  … 외 {len(found) - 12}곳")
-    if len({r.provider for r in found}) > 1:
-        lines.append(
-            "  → **프로바이더마다 리전 코드가 다릅니다.** 어느 프로바이더인지 정해서 "
-            "그 코드를 쓰세요 — 다른 프로바이더의 코드를 넘기면 데이터가 있어도 "
-            "못 찾습니다."
-        )
-    return "\n".join(lines)
+# `region_lookup`(지명 → 리전 코드)은 envkb.regions로 이사했다(재편 계획 ⑤) —
+# 리전 카탈로그는 envkb의 산출물이고, capacitykb가 그걸 임포트하면 KB→KB가 된다.
 
 
 # --------------------------------------------------------------------------

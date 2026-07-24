@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from kbcommon import carbon
+from envkb import carbon
 
 CORE_TS = """
 export const US_NERC_REGIONS_EMISSIONS_FACTORS: { [k: string]: number } = {

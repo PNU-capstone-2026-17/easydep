@@ -199,12 +199,14 @@ def extract_constraints(
 
 
 def _fetch_relative(base: str, rel_path: str, *, refresh: bool) -> Path:
-    """base가 로컬 디렉터리면 그 안에서 찾고, 아니면 URL로 조립해 받는다."""
-    local = Path(base) / rel_path
-    if local.exists():
-        return local
-    url = f"{base.rstrip('/')}/{rel_path}"
-    return fetch_cached(url, "azure-" + rel_path.replace("/", "_"), refresh=refresh)
+    """base가 로컬 디렉터리면 그 안에서 찾고, 아니면 URL로 조립해 받는다.
+
+    본체는 kbcommon.fetch로 올렸다(graphkb AVM이 이 비공개를 빌려 쓰던 관통을
+    끊음). 캐시 파일명("azure-…")은 그대로다.
+    """
+    from kbcommon.fetch import fetch_relative
+
+    return fetch_relative(base, rel_path, cache_prefix="azure-", refresh=refresh)
 
 
 def build(

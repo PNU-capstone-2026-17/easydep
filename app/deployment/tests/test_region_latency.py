@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from kbcommon.latency import (
+from envkb.latency import (
     annotate_distance,
     describe,
     faster_than_light,

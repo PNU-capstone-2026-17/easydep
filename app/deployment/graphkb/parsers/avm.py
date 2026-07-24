@@ -153,14 +153,17 @@ def parse_tarball(tar: Path, *, type_index: AzureTypeIndex) -> tuple[Graph, Repo
 
 
 def build(output: Path, *, refresh: bool = False) -> Graph:
-    from capacitykb.parsers.azure import _fetch_relative
+    from kbcommon.fetch import fetch_relative
     from kbcommon.type_ids import read_azure_index
 
     source = SOURCES["avm-bicep"]
     tar = fetch_cached(source.url, f"avm-{source.pin[:12]}.tar.gz", refresh=refresh)
 
-    index_path = _fetch_relative(
-        SOURCES["bicep-types-az"].url, "index.json", refresh=refresh
+    # capacitykb의 Azure 파서와 같은 캐시 접두("azure-")를 쓴다 — index.json을
+    # 한쪽이 이미 받았으면 재다운로드하지 않는다.
+    index_path = fetch_relative(
+        SOURCES["bicep-types-az"].url, "index.json",
+        cache_prefix="azure-", refresh=refresh,
     )
     type_index = read_azure_index(json.loads(index_path.read_text(encoding="utf-8")))
 

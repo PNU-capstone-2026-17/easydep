@@ -325,25 +325,16 @@ def parse_crds(
 
 
 def _list_config_files(tag: str, *, refresh: bool) -> list[str]:
-    """git trees API로 config/ 아래 파일 경로 목록을 얻는다 (캐시됨)."""
-    root_path = fetch_cached(
-        f"{API_BASE}/git/trees/{tag}", f"kcc-tree-root-{tag}.json", refresh=refresh
+    """git trees API로 config/ 아래 파일 경로 목록을 얻는다 (캐시됨).
+
+    본체는 kbcommon.fetch로 올렸다 — capacitykb가 이 비공개 함수를 빌려 쓰던
+    관통을 끊기 위해서다. 캐시 파일명(`kcc-tree-…`)은 그대로다.
+    """
+    from kbcommon.fetch import list_github_tree
+
+    return list_github_tree(
+        API_BASE, tag, "config", cache_prefix="kcc-tree", refresh=refresh
     )
-    root = json.loads(root_path.read_text(encoding="utf-8"))
-    config_sha = next(
-        (e["sha"] for e in root.get("tree", []) if e.get("path") == "config"), None
-    )
-    if config_sha is None:
-        raise FileNotFoundError("config/ 디렉터리를 저장소 트리에서 찾지 못했습니다.")
-    sub_path = fetch_cached(
-        f"{API_BASE}/git/trees/{config_sha}?recursive=1",
-        f"kcc-tree-config-{tag}.json",
-        refresh=refresh,
-    )
-    sub = json.loads(sub_path.read_text(encoding="utf-8"))
-    if sub.get("truncated"):
-        print("경고: config/ 트리 목록이 잘렸습니다 — 일부 CRD가 누락될 수 있음", file=sys.stderr)
-    return [e["path"] for e in sub.get("tree", []) if e.get("type") == "blob"]
 
 
 def _crd_service(filename: str) -> str | None:
@@ -358,11 +349,9 @@ def _crd_service(filename: str) -> str | None:
 
 
 def _load_yaml(path: Path) -> dict | None:
-    try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        print(f"경고: YAML 파싱 실패, 건너뜀 — {path.name}: {exc}", file=sys.stderr)
-        return None
+    from kbcommon.fetch import load_yaml_lenient
+
+    return load_yaml_lenient(path)
 
 
 def build(

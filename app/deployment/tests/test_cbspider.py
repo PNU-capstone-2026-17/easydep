@@ -19,7 +19,7 @@ import tarfile
 
 import pytest
 
-from kbcommon import cbspider
+from envkb import cbspider
 
 REAL = """
 package resources

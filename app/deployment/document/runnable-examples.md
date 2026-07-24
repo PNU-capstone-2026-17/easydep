@@ -236,7 +236,7 @@ uv run python -m costkb build                 # 미러 (pgdumplib 필요: uv syn
 uv run python -m perfkb build
 uv run python -m graphkb build --source svcmap        # 앱 개념 ↔ 관리형 서비스
 uv run python -m bundlekb build --source avm
-uv run python -m kbcommon build-regions
+uv run python -m envkb build-regions          # 환경 사실 KB (탄소·지연 등도 build-<축>)
 
 # 재배포 허가 문구가 없어 커밋하지 않는 둘 (NOTICE 참조)
 uv run python -m costkb build-azure-pricing   # 39개 리전 · 약 7분

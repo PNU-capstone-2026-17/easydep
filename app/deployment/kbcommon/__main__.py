@@ -123,94 +123,11 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
                         help="산출물 디렉터리 (기본: output)")
 
-    # 리전 이름은 네 KB가 다 쓰는 공용 축이라 여기서 빌드한다(어느 KB에도 안 속한다).
-    regions = sub.add_parser(
-        "build-regions", help="프로바이더별 리전 이름·위치 (cb-tumblebug cloudinfo)"
-    )
-    regions.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    regions.add_argument("--output", type=Path, help="출력 경로 (기본: output/cloud-regions.json)")
-
-    images_cmd = sub.add_parser(
-        "build-images", help="리전별 기본 OS 이미지 (cb-tumblebug 큐레이션)"
-    )
-    images_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    images_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/basic-images.json)")
-
-    latency_cmd = sub.add_parser(
-        "build-latency", help="리전 간 네트워크 지연 (cb-tumblebug 벤치마크 실측)"
-    )
-    latency_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    latency_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/region-latency.json)")
-
-    carbon_cmd = sub.add_parser(
-        "build-carbon", help="리전별 탄소 (GCP 발표 + Cloud Carbon Footprint 추정)"
-    )
-    carbon_cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    carbon_cmd.add_argument("--output", type=Path, help="출력 경로 (기본: output/region-carbon.json)")
-
-    life = sub.add_parser(
-        "build-lifecycle", help="관리형 서비스 버전별 지원 종료일 (endoflife.date)"
-    )
-    life.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    life.add_argument("--output", type=Path, help="출력 경로 (기본: output/service-lifecycle.json)")
-
-    spider = sub.add_parser(
-        "build-cbspider", help="CSP별로 무엇을 만들 수 있는가 (cb-spider 드라이버)"
-    )
-    spider.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    spider.add_argument("--output", type=Path, help="출력 경로 (기본: output/cbspider-support.json)")
+    # build-* 명령들은 envkb로 이사했다(재편 계획 ⑤) — 리전·탄소·지연·수명주기·
+    # 드라이버 커버리지·이미지는 자체 산출물을 소유하는 지식베이스지 공용 배관이
+    # 아니다. `python -m envkb build-<축>`을 쓰세요.
 
     args = parser.parse_args(argv)
-
-    if args.command == "build-cbspider":
-        from kbcommon import cbspider
-
-        cbspider.build(
-            args.output or (DEFAULT_OUTPUT / "cbspider-support.json"),
-            refresh=args.refresh,
-        )
-        return 0
-
-    if args.command == "build-lifecycle":
-        from kbcommon import lifecycle
-
-        lifecycle.build(
-            args.output or (DEFAULT_OUTPUT / "service-lifecycle.json"),
-            refresh=args.refresh,
-        )
-        return 0
-
-    if args.command == "build-regions":
-        from kbcommon import cloudinfo
-
-        cloudinfo.build(
-            args.output or (DEFAULT_OUTPUT / "cloud-regions.json"), refresh=args.refresh
-        )
-        return 0
-
-    if args.command == "build-images":
-        from kbcommon import images
-
-        images.build(
-            args.output or (DEFAULT_OUTPUT / "basic-images.json"), refresh=args.refresh
-        )
-        return 0
-
-    if args.command == "build-latency":
-        from kbcommon import latency
-
-        latency.build(
-            args.output or (DEFAULT_OUTPUT / "region-latency.json"), refresh=args.refresh
-        )
-        return 0
-
-    if args.command == "build-carbon":
-        from kbcommon import carbon
-
-        carbon.build(
-            args.output or (DEFAULT_OUTPUT / "region-carbon.json"), refresh=args.refresh
-        )
-        return 0
 
     if not args.output.exists():
         print(f"산출물 디렉터리가 없습니다: {args.output} — 먼저 빌드하세요.", file=sys.stderr)

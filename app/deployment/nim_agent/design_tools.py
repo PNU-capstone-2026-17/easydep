@@ -489,7 +489,7 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
     text = "요청에 이미지 ID를 줘야 합니다 — 설계 산출물에는 없는 정보입니다"
     origin, source = ORIGIN_KB, "bundlekb"
     if provider:
-        from kbcommon.images import describe
+        from envkb.images import describe
 
         found = describe(provider, requirements.get("region"), "x86_64", limit=1)
         first = next(

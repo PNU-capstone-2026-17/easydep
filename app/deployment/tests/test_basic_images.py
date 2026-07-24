@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from kbcommon.images import describe, project
+from envkb.images import describe, project
 
 ROWS = [
     {

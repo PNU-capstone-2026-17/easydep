@@ -96,6 +96,76 @@ def fetch_cached(
     return dest
 
 
+def fetch_relative(
+    base: str, rel_path: str, *, cache_prefix: str, refresh: bool = False
+) -> Path:
+    """base가 로컬 디렉터리면 그 안에서 찾고, 아니면 URL로 조립해 받는다.
+
+    capacitykb의 Azure 파서가 만들었고 graphkb(AVM)가 **비공개인 채로 빌려
+    쓰던** 헬퍼다 — KB끼리 관통하던 자리라 여기로 올렸다(아키텍처 예외표 해소).
+
+    Args:
+        cache_prefix: 캐시 파일명 접두("azure-" 등). 기존 캐시 이름을 그대로
+            유지하기 위한 것이다 — 이름이 바뀌면 캐시 전체가 재다운로드된다.
+    """
+    local = Path(base) / rel_path
+    if local.exists():
+        return local
+    url = f"{base.rstrip('/')}/{rel_path}"
+    return fetch_cached(url, cache_prefix + rel_path.replace("/", "_"), refresh=refresh)
+
+
+def list_github_tree(
+    api_base: str, tag: str, subdir: str, *, cache_prefix: str, refresh: bool = False
+) -> list[str]:
+    """GitHub git trees API로 태그의 subdir 아래 blob 경로 목록 (캐시됨).
+
+    graphkb의 KCC 파서가 만들었고 capacitykb(GCP)가 빌려 쓰던 헬퍼 — 위와 같은
+    이유로 올렸다. 캐시 파일명은 원래 이름(`kcc-tree-root-…`)이 나오도록
+    cache_prefix로 맞춘다.
+    """
+    import sys
+
+    root_path = fetch_cached(
+        f"{api_base}/git/trees/{tag}", f"{cache_prefix}-root-{tag}.json", refresh=refresh
+    )
+    root = json.loads(root_path.read_text(encoding="utf-8"))
+    sub_sha = next(
+        (e["sha"] for e in root.get("tree", []) if e.get("path") == subdir), None
+    )
+    if sub_sha is None:
+        raise FileNotFoundError(f"{subdir}/ 디렉터리를 저장소 트리에서 찾지 못했습니다.")
+    sub_path = fetch_cached(
+        f"{api_base}/git/trees/{sub_sha}?recursive=1",
+        f"{cache_prefix}-{subdir}-{tag}.json",
+        refresh=refresh,
+    )
+    sub = json.loads(sub_path.read_text(encoding="utf-8"))
+    if sub.get("truncated"):
+        print(
+            f"경고: {subdir}/ 트리 목록이 잘렸습니다 — 일부 파일이 누락될 수 있음",
+            file=sys.stderr,
+        )
+    return [e["path"] for e in sub.get("tree", []) if e.get("type") == "blob"]
+
+
+def load_yaml_lenient(path: Path) -> dict | None:
+    """YAML을 읽되 파싱 실패는 경고 후 None.
+
+    수천 파일 배치에서 한 파일의 오류가 전체 빌드를 세우지 않게 한다 —
+    건너뛴 사실은 stderr에 남는다.
+    """
+    import sys
+
+    import yaml
+
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        print(f"경고: YAML 파싱 실패, 건너뜀 — {path.name}: {exc}", file=sys.stderr)
+        return None
+
+
 def _cache_matches(dest: Path, url: str) -> bool:
     """캐시된 파일이 **이 URL에서** 온 것인지.
 
