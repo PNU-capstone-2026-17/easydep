@@ -53,6 +53,9 @@ class Source:
 
         "denied"      원본이 재배포를 명시적으로 막는다 → **산출물을 커밋하지 않는다**
         "not-stated"  허가 문구를 찾지 못했다. 금지 문구도 없다 → 넣되 `NOTICE`에 밝힌다
+        "fair-use"    라이선스 부여는 없으나(All rights reserved 등) **교육 목적
+                      공정이용 판단으로 수록** — 판단 주체·날짜를 note에, 사실 전부를
+                      `NOTICE`와 파일 안 `_note`에 밝히고, 권리자가 요청하면 제거한다
         ""            판단하지 않음 (대부분의 오픈소스 라이선스 소스)
 
     `not-stated`와 `denied`는 `NOTICE`에 이름이 나와야 한다 —
@@ -558,6 +561,29 @@ SOURCES: dict[str, Source] = {
             "(`aws-apigateway-lambda`) 코드를 파싱하지 않고도 신호가 나온다 — CDK나 "
             "SAM은 코드라 비용이 크다. 서비스→리소스 타입 매핑은 우리가 하며 "
             "모호한 것은 담지 않는다."
+        ),
+    ),
+    "aws-well-architected": Source(
+        key="aws-well-architected",
+        url=(
+            "https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/"
+            "wellarchitected-framework.pdf"
+        ),
+        pin_kind="digest",
+        pin="(고정 불가)",
+        redistribution="fair-use",
+        note=(
+            "AWS Well-Architected Framework **공식 화이트페이퍼 PDF**(patternkb, "
+            "자문 전용). HTML 문서는 사이트 약관이 자동 수집을 금지해 막혔지만, "
+            "이 PDF는 **docs.aws.amazon.com이 내려받으라고 배포하는 정식 "
+            "산출물**이라 수집이 정당하다(재조사 2026-07-25, 사용자 제안). "
+            "법적 고지는 'All rights reserved'뿐 — 라이선스 부여 조항이 없다"
+            "(실측 2026-07-25, 2쪽). 산문 저작물이라 부여 없음은 기본 재배포 "
+            "불가로 읽히지만, **졸업과제의 교육 목적 공정이용 판단으로 수록한다**"
+            "(사용자 결정 2026-07-25) — 그 판단과 사실 전부를 NOTICE·파일 "
+            "`_note`·문서별 attribution에 밝히고, 권리자가 요청하면 제거한다.\n"
+            "버전 표기가 URL에 없어 digest 핀. 구조는 실측: 1,002쪽, PDF 책갈피 "
+            "1,334개(계층·쪽 번호 포함)라 산문 휴리스틱 없이 목차로 자른다."
         ),
     ),
     "aws-cfn-templates": Source(

@@ -70,8 +70,10 @@ def test_unpinnable_sources_are_declared_as_such() -> None:
     받은 응답의 sha256은 남기므로 **바뀐 사실은 놓치지 않는다.**
     """
     keys = {s.key for s in unpinnable()}
+    # aws-well-architected: 공식 배포 PDF인데 버전 있는 URL이 없다(2026-07-25).
+    # 재배포는 denied라 산출물이 저장소에 실리지 않으므로 재현성 부담도 로컬에 갇힌다.
     assert keys == {"cfn-schema", "azure-retail-prices", "ibm-global-catalog",
-                    "gcp-architecture-framework"}, (
+                    "gcp-architecture-framework", "aws-well-architected"}, (
         f"고정 불가 소스가 예상과 다르다: {keys}"
     )
 

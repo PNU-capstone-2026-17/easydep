@@ -5,6 +5,8 @@
 
     denied      원본이 재배포를 명시적으로 막는다      → 산출물이 `data/`에 있으면 실패
     not-stated  허가 문구가 없다(금지 문구도 없다)     → `NOTICE`에 이름이 없으면 실패
+    fair-use    라이선스 부여 없음, 교육 목적 공정이용  → `NOTICE`와 파일 `_note`에
+                판단으로 수록(사용자 결정)               고지가 없으면 실패
     ""          따로 판단하지 않았다                   → 아무 요구도 하지 않는다
 
 빈 값이 "괜찮다"가 아니라 **"안 봤다"**인 것이 요점이다. 소스 40개를 다 감사하지
@@ -62,6 +64,21 @@ def test_denied_sources_are_named_in_notice_too(key: str) -> None:
     assert key in _notice_text() or "Price List" in _notice_text()
 
 
+@pytest.mark.parametrize(
+    "key", sorted(k for k, s in SOURCES.items() if s.redistribution == "fair-use")
+)
+def test_fair_use_sources_disclose_the_judgment_in_notice(key: str) -> None:
+    """공정이용은 허가가 아니라 **판단**이다 — 판단이면 판단이라고 적어야 한다.
+
+    수록 근거(교육 목적)·허가 아님·요청 시 제거, 셋이 NOTICE에 있어야 한다.
+    """
+    # 줄바꿈이 문구 중간에 올 수 있다 — 공백을 정규화하고 본다 (한국어 부분
+    # 문자열 함정의 문서판).
+    text = " ".join(_notice_text().split())
+    assert key in text, f"'{key}'가 NOTICE에 없다"
+    assert "공정이용" in text and "요청하면" in text and "허가를 받았다는 뜻이 아니" in text
+
+
 def test_no_artifact_from_a_denied_source_is_committed() -> None:
     if not artifact.BUNDLED_DIR.exists():
         return
@@ -99,8 +116,13 @@ def test_committed_artifacts_declare_their_source(bundled) -> None:
 def test_unstated_artifacts_carry_the_disclosure_in_the_file_itself(bundled) -> None:
     """**NOTICE만으로는 부족하다.** 산출물은 저장소 밖으로도 나간다 — 파일 하나만
     떼어 봐도 어디서 왔고 허가가 어떤 상태인지 보여야 한다.
+
+    fair-use 소스도 같은 규율이다 — 공정이용 판단은 파일에 실려 함께 다녀야 한다.
     """
-    unstated = {k for k, s in SOURCES.items() if s.redistribution == "not-stated"}
+    unstated = {
+        k for k, s in SOURCES.items()
+        if s.redistribution in ("not-stated", "fair-use")
+    }
     checked = 0
     for name, data in bundled:
         keys = {row.get("source") for row in data.get("_source") or []}
@@ -108,7 +130,7 @@ def test_unstated_artifacts_carry_the_disclosure_in_the_file_itself(bundled) -> 
             continue
         checked += 1
         note = data.get("_note") or ""
-        assert "재배포" in note, (
+        assert "재배포" in note or "공정이용" in note, (
             f"{name}은 재배포 허가가 없는 소스에서 왔는데 `_note`에 그 사실이 없다"
         )
     if bundled and unstated:

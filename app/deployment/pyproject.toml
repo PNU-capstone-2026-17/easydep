@@ -38,6 +38,10 @@ costkb = [
 perfkb = [
     "pgdumplib>=4",
 ]
+# build-aws-waf(로컬 전용) 전용 — 코퍼스를 읽기만 하는 환경에는 필요 없다.
+patternkb = [
+    "pypdf>=5",
+]
 
 [dependency-groups]
 dev = [

@@ -263,7 +263,9 @@ def test_bundled_corpus_docs_all_carry_license_and_attribution() -> None:
     docs = dataset.all_docs()
     assert docs, "코퍼스가 output/에도 data/에도 없다"
     for doc in docs:
-        assert doc.license in ("CC-BY-4.0", "MIT"), doc.id
+        # All-rights-reserved는 aws 로컬 전용 코퍼스에서만 온다 — 커밋 금지는
+        # test_patternkb_aws_waf.py가 지키고, 여기서는 표시 규율만 본다.
+        assert doc.license in ("CC-BY-4.0", "MIT", "All-rights-reserved"), doc.id
         assert doc.attribution, doc.id
         assert doc.path, doc.id
 

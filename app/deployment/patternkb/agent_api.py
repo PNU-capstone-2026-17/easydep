@@ -13,12 +13,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from kbcommon.display import evidence_name
-from patternkb.dataset import is_built, load_warnings, sections
+from patternkb.dataset import aws_built, is_built, load_warnings, sections
 from patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
 from patternkb.query import search
 
 _MISSING = (
     "설계 패턴 코퍼스가 없습니다. `python -m patternkb build` 로 빌드하세요."
+)
+
+#: aws 코퍼스 부재는 "없다"가 아니라 "이 환경에 안 실렸다"다 — 그 구분을 문장으로.
+_AWS_UNBUILT = (
+    "AWS Well-Architected 지침 코퍼스가 이 환경에 없습니다 — "
+    "`python -m patternkb build-aws-waf`로 빌드하면 검색에 포함됩니다."
 )
 
 _SECTION_KOREAN = {
@@ -29,6 +35,7 @@ _SECTION_KOREAN = {
     "twelve-factor": "12factor 배포 원칙",
     "well-architected": "Well-Architected 지침",
     "gcp-framework": "GCP 아키텍처 프레임워크",
+    "aws-well-architected": "AWS Well-Architected 지침",
 }
 
 
@@ -72,7 +79,11 @@ def coverage_text(output_dir: Path | str | None = None) -> str:
     parts = " · ".join(
         f"{_SECTION_KOREAN.get(k, k)} {v}편" for k, v in sorted(counts.items())
     )
-    return (
+    lines = [
         f"설계 지침 문서 {sum(counts.values())}편 ({parts}). "
-        "전부 산문이라 값·한도는 담지 않습니다.\n" + ADVISORY_NOTICE
-    )
+        "전부 산문이라 값·한도는 담지 않습니다."
+    ]
+    if not aws_built(output_dir):
+        lines.append(_AWS_UNBUILT)
+    lines.append(ADVISORY_NOTICE)
+    return "\n".join(lines)

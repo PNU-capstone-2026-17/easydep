@@ -157,7 +157,7 @@
 | **bundlekb** | 이것을 쓰면 무엇이 따라오나 | 동봉 부품 목록 | 번들 578 + 동시출현 2,400 |
 | **sizingkb** | 도구·플랫폼이 요구하는 최소 규모 | 설치 요건표 | 규칙 65 (일부러 좁게) |
 | **envkb** | 리전·탄소·지연·수명주기 같은 환경 사실 | 지도와 달력 | 리전 188 · 지연쌍 10,890 · 탄소 161 · 수명주기 17 |
-| **patternkb** | 설계 지침 산문 (자문 전용) | 선배의 조언 모음 | 문서 346편 (4소스) |
+| **patternkb** | 설계 지침 산문 (자문 전용) | 선배의 조언 모음 | 문서 523편 (5소스) |
 | **appkb** | 설계 JSON 계약·검증·다이어그램 | 설계도 접수창구 | 계약 1벌 + 예제 + 렌더러 |
 | **kbcommon** | 위 전부가 쓰는 공용 규율 (핀·산출물·근거·표시·포장) | 공용 공구함 | 소스 핀 46종 · 근거 라벨 54종 |
 | **nim_agent** | 에이전트와 도구 계층 (축 조인은 여기서만) | 접수원 | 도구 41개 |
@@ -673,7 +673,7 @@ SQL(UPDATE 문)을 파싱해 98%를 채웠습니다. 큐레이션된 서드파�
 > 고지가 붙고, 근거 라벨은 `pattern-advisory`(inferred) 하나뿐입니다. 가격·한도
 > 같은 사실 질문은 다른 축으로 가라고 답 자체가 안내합니다.
 
-### 코퍼스 — 4소스 346편 (2026-07-24)
+### 코퍼스 — 5소스 523편 (2026-07-25)
 
 | 소스 | 내용 | 라이선스 |
 |---|---|---|
@@ -681,12 +681,21 @@ SQL(UPDATE 문)을 파싱해 98%를 채웠습니다. 큐레이션된 서드파�
 | Azure Well-Architected | 5기둥 지침 + 트레이드오프 문서 | CC-BY-4.0 |
 | GCP Architecture Framework | GCP판 지침 | CC-BY-4.0 |
 | 12factor | 배포 원칙 고전 | MIT |
+| **AWS Well-Architected** | 화이트페이퍼 PDF 177편 | **All rights reserved — 공정이용 수록** |
 
 GCP 프레임워크는 **이 저장소의 유일한 렌더링-HTML 소스**입니다. 마크다운 저장소가
 없어 웹페이지를 받는데(digest 핀), 자문 전용이라서만 허용됐습니다 — **사실 축에 이
-소스를 쓰면 안 됩니다.** AWS Well-Architected는 수록하지 못했습니다: 문서가 공개
-저장소·재배포 가능 라이선스 어느 쪽으로도 제공되지 않습니다(권리 장벽 — 기술
-문제가 아니므로 재조사 금지 목록에 있습니다).
+소스를 쓰면 안 됩니다.**
+
+AWS Well-Architected는 사연이 하나 더 깁니다. HTML 문서는 사이트 약관이 자동
+수집을 금지해 막혔다가, **공식 배포 PDF**(내려받으라고 만든 산출물이라 수집이
+정당)를 통해 열렸습니다. 단 라이선스 부여가 없어(법적 고지가 "All rights
+reserved"뿐 — CC-BY가 명시된 Azure·GCP와 다른 점) 재배포 근거는 라이선스가
+아니라 **교육 목적 공정이용 판단**(사용자 결정 2026-07-25)입니다. 그 판단은
+허가가 아니므로 세 곳(NOTICE·산출물 `_note`·문서별 attribution)에 명시되고,
+권리자가 요청하면 제거합니다(17장). 추출은 산문 휴리스틱이 아니라 **PDF 책갈피
+1,334개**(계층·쪽 번호)로 자릅니다 — 1,002쪽짜리 문서가 목차 구조를 기계로
+주는데 정규식으로 자르는 것은 함정을 자초하는 일입니다.
 
 ### 검색 — 벡터가 아니라 FTS5
 
@@ -1030,6 +1039,7 @@ tp-alicloud · tp-tencent · tp-oracle · tp-ibm · tp-nhn · tp-ncp · tp-opens
 | azure-limits-doc | commit | Azure 한도 문서 |
 | ms-architecture-center | commit | 서비스 비교표 — svcmap 1차 근거 (CC-BY-4.0) |
 | azure-well-architected | commit | WAF 지침 산문 — patternkb (CC-BY-4.0) |
+| aws-well-architected | **digest** | WAF 화이트페이퍼 PDF — patternkb (공정이용 수록, 17장) |
 | gcp-architecture-framework | **digest** | **유일한 렌더링-HTML 소스** — 자문 전용 |
 | twelve-factor | commit | 12factor 산문 (MIT) |
 
@@ -1069,14 +1079,19 @@ tp-alicloud · tp-tencent · tp-oracle · tp-ibm · tp-nhn · tp-ncp · tp-opens
 | 허용 (MIT·Apache·MPL·MIT-0) | 재배포 가능 | `data/`에 커밋, NOTICE에 표기 |
 | **CC-BY-4.0** | 재배포 가능하되 **저작자 표시 의무** | NOTICE + 문서별 attribution 칸 |
 | **명시 없음** (azure-retail-prices·ibm-global-catalog) | 공개 API지만 재배포 허락이 적혀 있지 않음 | 수록하되 NOTICE에 그 사실을 공시 |
+| **공정이용** (aws-well-architected) | 라이선스 부여 없음(All rights reserved) — **교육 목적 공정이용 판단으로 수록** | NOTICE·`_note`·attribution 3곳에 판단 명시, 요청 시 제거 |
 | **거부** (AWS Price List 약관) | 가격 데이터 재배포 금지 | **커밋 자체가 불가능한 구조** |
 
-마지막 줄이 AWS 관리형 가격입니다. 데이터는 공개 API로 받을 수 있지만 약관이
+거부 줄이 AWS 관리형 가격입니다. 데이터는 공개 API로 받을 수 있지만 약관이
 재배포를 금지하므로: 빌드는 **로컬 전용**(`python -m costkb build-aws-managed`,
 사용자 환경에서), `data/`에 그 파일이 존재하면 테스트가 실패하고, `kbcommon pack`은
-파일 이름을 보고 포장을 거부합니다. AWS Well-Architected 문서를 patternkb에 못
-넣은 것도 같은 부류입니다 — 기술 문제가 아니라 권리 장벽이고, 그래서 재조사
-금지 목록에 있습니다.
+파일 이름을 보고 포장을 거부합니다.
+
+공정이용 줄은 이 넷 중 유일하게 **라이선스가 아니라 판단**입니다 — 허가가 있는
+것처럼 굴지 않는 것이 핵심이라, "허가를 받았다는 뜻이 아니며 요청 시 제거한다"는
+문장까지 테스트가 강제합니다. 사실 데이터(가격·스펙 — 저작권 보호가 얇음)와 산문
+저작물(저작권의 본체)의 차이를 인지한 상태에서, 비영리 졸업과제라는 용도에 기대
+내린 결정입니다.
 
 ---
 
@@ -1240,7 +1255,7 @@ Azure 확장 중 `read-only-not-required` 위반 6건으로 빌드가 멈췄는�
 | Magic Modules YAML | 선언한 교차 조건의 12.7%가 생성물에서 조용히 증발 |
 | ec2instances.info 서빙 파일 | 파생물인데 핀은 상류만 됨 → 상류 소스 저장소를 커밋 핀으로 채택 |
 | AWS 서비스 쿼터 API | 자격증명 필수. 공개 문서 저장소는 삭제됐거나 멈춤 |
-| AWS Well-Architected 문서 | **권리 장벽** — 공개 저장소도 재배포 라이선스도 없음 |
+| ~~AWS Well-Architected 문서~~ | **해소(2026-07-25)** — HTML은 막혔으나 공식 PDF로 수록(10·17장). "권리 장벽" 판정이 소스 형태 하나에 갇혀 있었다 |
 | 벡터 RAG(임베딩) | 두 번 실측으로 기각(10장). 재상정 조건 기록됨 |
 | 규모→스펙 사이징 | 근거가 될 공개 소스가 없음(조사 확정) — sizingkb는 좁게 |
 | 벤치마크·SLA 수치 | 조건 의존이 심해 한 값으로 담는 순간 거짓 |

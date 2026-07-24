@@ -105,3 +105,21 @@ VPC 인스턴스 프로필의 성능 신호(대역폭·포트 속도·NIC 수·N
 AWS 관리형 서비스의 과금 축(`aws-managed-pricing.json`)은 같은 이유로
 **로컬 빌드 전용**입니다 — `python -m costkb build-aws-managed`로 각자
 받아 `output/`에만 두며, `data/`에 커밋되면 안 됩니다(테스트가 막습니다).
+
+## 교육 목적 공정이용으로 수록한 소스
+
+### data/aws-pattern-corpus.json.gz — `aws-well-architected`
+
+AWS Well-Architected Framework 공식 화이트페이퍼 PDF에서 유도한 설계 지침
+코퍼스입니다(자문 전용 — 답변마다 "설계 지침이지 사실 아님" 고지가 붙습니다).
+
+    https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf
+    Copyright © Amazon Web Services, Inc. and/or its affiliates. All rights reserved.
+
+이 PDF는 AWS가 내려받으라고 배포하는 공식 산출물이지만, 재배포를 허가하는
+라이선스 조항이 없습니다(2026-07-25 확인 — CC-BY가 명시된 Azure·GCP 지침과
+다른 점). 이 저장소는 **비영리 졸업과제(교육 목적)이며, 검색·발췌 인용
+용도의 수록을 공정이용으로 판단**하여 포함합니다(2026-07-25). 허가를
+받았다는 뜻이 아니며, **권리자가 요청하면 즉시 제거합니다.** 같은 고지가
+산출물 `_note`와 문서별 attribution에도 실려, 파일 하나만 떼어 봐도 이
+상태가 보입니다.

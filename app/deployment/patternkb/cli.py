@@ -28,6 +28,13 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     build.add_argument("--refresh", action="store_true")
 
+    aws_waf = sub.add_parser(
+        "build-aws-waf",
+        help="AWS WAF 화이트페이퍼 PDF → 코퍼스 (공정이용 수록 — NOTICE 참조)",
+    )
+    aws_waf.add_argument("--output", type=Path, default=None)
+    aws_waf.add_argument("--refresh", action="store_true")
+
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--top", type=int, default=3)
@@ -40,6 +47,15 @@ def _cmd_build(args: argparse.Namespace) -> int:
     from patternkb.parsers import corpus
 
     corpus.build(args.output, refresh=args.refresh)
+    return 0
+
+
+def _cmd_build_aws_waf(args: argparse.Namespace) -> int:
+    from patternkb.dataset import AWS_CORPUS_FILE
+    from patternkb.parsers import aws_waf
+
+    output = args.output or (Path("output") / AWS_CORPUS_FILE)
+    aws_waf.build(output, refresh=args.refresh)
     return 0
 
 
@@ -61,6 +77,9 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    return {"build": _cmd_build, "search": _cmd_search, "coverage": _cmd_coverage}[
-        args.command
-    ](args)
+    return {
+        "build": _cmd_build,
+        "build-aws-waf": _cmd_build_aws_waf,
+        "search": _cmd_search,
+        "coverage": _cmd_coverage,
+    }[args.command](args)
