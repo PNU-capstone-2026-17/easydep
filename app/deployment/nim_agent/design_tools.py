@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from agents import function_tool
 
@@ -237,24 +237,24 @@ def _compute_note(spec: dict) -> str:
     return body + (f" · ${hourly:.4f}/h" if hourly else " · 단가 미상")
 
 
-def compose(design: dict) -> DeploymentPlan:
-    """설계 JSON → 배포 계획. **계약 검증을 통과한 입력만 들어온다고 가정하지 않는다.**"""
-    problems = validate_design(design)
-    if problems:
-        plan = DeploymentPlan(name=design.get("name") or "(이름 없음)")
-        plan.unresolved = [f"입력 계약 위반: {p}" for p in problems]
-        return plan
+@dataclass(frozen=True)
+class _Signals:
+    """설계 산출물에서 모은 결정론 신호 — compose 단계들이 공유하는 읽기 전용 값."""
 
-    requirements = design.get("requirements") or {}
-    provider = (requirements.get("provider") or "").strip().lower() or None
-    region = (requirements.get("region") or "").strip() or None
+    has_api: set[str]
+    needs_secret: set[str]
+    uploads: set[str]
+    owners: dict[str, list[str]]
+    engine_of: dict[str, str]
+    archetype_hint_of: dict[str, str]
+    exposed: set[str]
+    async_targets: set[str]
+    sync_calls: list[tuple[str, str, str]]
+    any_async: bool
 
-    plan = DeploymentPlan(name=design["name"])
-    components = {c["id"]: c for c in design["components"]}
-    #: 시간당 단가가 붙는 컴퓨트만. 서버리스는 여기 안 들어간다.
-    _priced_computes: set[str] = set()
 
-    # --- 1. 신호 모으기 ---------------------------------------------------
+def _collect_signals(design: dict) -> _Signals:
+    """1단계 — 신호 모으기. 산출물이 말한 사실만 모은다(결론은 뒤 단계의 몫)."""
     has_api = {a["componentId"] for a in _artifacts(design, "openapi")}
     needs_secret = {
         a["componentId"] for a in _artifacts(design, "openapi")
@@ -304,12 +304,22 @@ def compose(design: dict) -> DeploymentPlan:
             src_id = src.get("componentId") or src.get("externalId") or src["id"]
             dst_id = dst.get("componentId") or dst.get("externalId") or dst["id"]
             sync_calls.append((src_id, dst_id, message.get("label") or ""))
+    return _Signals(
+        has_api=has_api, needs_secret=needs_secret, uploads=uploads,
+        owners=owners, engine_of=engine_of, archetype_hint_of=archetype_hint_of,
+        exposed=exposed, async_targets=async_targets, sync_calls=sync_calls,
+        any_async=any_async,
+    )
 
-    # --- 2. 컴퓨트 노드 ---------------------------------------------------
-    #: 어느 컴퓨트 방식이 실제로 쓰였나 — 공유 인프라를 무엇으로 세울지 정한다.
-    compute_kinds: set[str] = set()
+
+def _add_computes(
+    plan: DeploymentPlan, components: dict, s: _Signals,
+    provider: str | None, region: str | None,
+) -> tuple[dict[str, str], set[str]]:
+    """2단계 — 컴퓨트 노드. `(컴포넌트별 방식, 값이 붙는 컴퓨트)`를 돌려준다."""
     #: 컴포넌트별 방식 — 진입점(LB)을 세울지 말지가 여기 달렸다(VM만 NLB 대상).
     kind_of: dict[str, str] = {}
+    priced: set[str] = set()
     for cid, component in components.items():
         hint = component.get("deployHint")
         notes: list[Note] = []
@@ -324,10 +334,10 @@ def compose(design: dict) -> DeploymentPlan:
         else:
             origin = ORIGIN_INFERRED
             kind = "vm"
-            if cid in has_api:
+            if cid in s.has_api:
                 notes.append(Note("OpenAPI 산출물이 있어 HTTP 서비스로 봄",
                                   ORIGIN_INFERRED, "openapi"))
-            elif cid in async_targets:
+            elif cid in s.async_targets:
                 notes.append(Note("비동기 메시지의 수신자라 워커로 봄",
                                   ORIGIN_INFERRED, "sequence"))
             else:
@@ -340,9 +350,8 @@ def compose(design: dict) -> DeploymentPlan:
                 "컴퓨트 방식은 VM으로 가정했습니다 — 설계가 지정하지 않았습니다"
                 "(deployHint로 바꿀 수 있습니다)", ORIGIN_INFERRED, "",
             ))
-        compute_kinds.add(kind)
         kind_of[cid] = kind
-        if cid in exposed:
+        if cid in s.exposed:
             notes.append(Note("시퀀스에서 actor가 직접 호출 — 공개 노출",
                               ORIGIN_DESIGN, "sequence"))
             if kind == "kubernetes":
@@ -406,20 +415,20 @@ def compose(design: dict) -> DeploymentPlan:
             origin=origin, notes=tuple(notes),
         ))
         if kind == "vm":
-            _priced_computes.add(cid)
+            priced.add(cid)
+    return kind_of, priced
 
-    for external in design.get("externals") or []:
-        plan.nodes.append(PlanNode(
-            id=external["id"], label=external["name"], role="external",
-            origin=ORIGIN_DESIGN,
-            notes=(Note("설계가 외부 시스템으로 선언", ORIGIN_DESIGN, "externals"),),
-        ))
 
-    # --- 3. 관리형 서비스 -------------------------------------------------
+def _add_managed_services(
+    plan: DeploymentPlan, components: dict, s: _Signals,
+    provider: str | None, region: str | None,
+) -> None:
+    """3단계 — 관리형 서비스 (저장소·큐·비밀·파일)."""
+
     def add_managed(node_id: str, label: str, concept: str, why: Note,
                     extra: tuple[Note, ...] = (),
                     origin: str = ORIGIN_INFERRED) -> None:
-        types = _pick_flavor(_svcmap_types(concept, provider), engine_of.get(node_id))
+        types = _pick_flavor(_svcmap_types(concept, provider), s.engine_of.get(node_id))
         notes = [why, *extra]
         if not provider:
             notes.append(Note("프로바이더 미지정이라 특정 클라우드로 좁히지 못함",
@@ -447,9 +456,9 @@ def compose(design: dict) -> DeploymentPlan:
             notes=tuple(notes),
         ))
 
-    for cid, entities in sorted(owners.items()):
-        engine = engine_of.get(cid)
-        hint_concept = archetype_hint_of.get(cid)
+    for cid, entities in sorted(s.owners.items()):
+        engine = s.engine_of.get(cid)
+        hint_concept = s.archetype_hint_of.get(cid)
         node_origin = ORIGIN_INFERRED
         extra: tuple[Note, ...] = ()
         if hint_concept:
@@ -482,21 +491,21 @@ def compose(design: dict) -> DeploymentPlan:
                     extra, origin=node_origin)
         plan.edges.append(PlanEdge(cid, f"{cid}-db", "읽기/쓰기", ORIGIN_INFERRED))
 
-    if any_async:
+    if s.any_async:
         add_managed(
             "message-queue", "메시지 큐", "messageQueue",
             Note("시퀀스에 비동기 메시지가 있어 큐가 필요하다고 봄",
                  ORIGIN_INFERRED, "sequence"),
         )
-    for cid in sorted(needs_secret):
+    for cid in sorted(s.needs_secret):
         plan.edges.append(PlanEdge(cid, "secret-store", "자격 증명 조회", ORIGIN_INFERRED))
-    if needs_secret:
+    if s.needs_secret:
         add_managed(
             "secret-store", "비밀 저장소", "secretStore",
             Note("OpenAPI에 securitySchemes가 있어 자격 증명 보관이 필요하다고 봄",
                  ORIGIN_INFERRED, "openapi"),
         )
-    for cid in sorted(uploads):
+    for cid in sorted(s.uploads):
         add_managed(
             f"{cid}-files", f"{components[cid]['name']} 파일 저장소", "objectStorage",
             Note("OpenAPI에 파일 업로드 본문(multipart/octet-stream)이 있어 "
@@ -504,23 +513,25 @@ def compose(design: dict) -> DeploymentPlan:
         )
         plan.edges.append(PlanEdge(cid, f"{cid}-files", "파일 저장/조회", ORIGIN_INFERRED))
 
-    # --- 3.5 공유 인프라 (bundlekb) --------------------------------------
-    _add_shared_infra(plan, compute_kinds, provider, requirements, _priced_computes)
 
-    # --- 4. 통신 선 ------------------------------------------------------
+def _wire_edges(
+    plan: DeploymentPlan, components: dict, s: _Signals,
+    kind_of: dict[str, str], provider: str | None, region: str | None,
+) -> None:
+    """4단계 — 통신 선 + 사용자·진입점(LB)."""
     known = {n.id for n in plan.nodes}
-    for src, dst, label in sync_calls:
+    for src, dst, label in s.sync_calls:
         # src == dst 는 한 배포 단위 안의 호출이다(easydep 단일 컴포넌트 어댑터가
         # 내부 비동기를 남긴다) — 배포 선이 아니므로 그리지 않는다. any_async
         # 신호는 이미 위에서 집계돼 큐 노드는 선다.
         if src in known and dst in known and src != dst:
-            is_async = dst in async_targets and src in components
+            is_async = dst in s.async_targets and src in components
             plan.edges.append(PlanEdge(
                 src, dst, label, ORIGIN_DESIGN,
-                async_=bool(is_async and any_async),
+                async_=bool(is_async and s.any_async),
             ))
     # actor는 컴포넌트가 아니라 사람이다 — 노출된 컴포넌트마다 하나 세운다.
-    for cid in sorted(exposed):
+    for cid in sorted(s.exposed):
         if "end-user" not in known:
             plan.nodes.append(PlanNode(
                 id="end-user", label="사용자", role="actor", origin=ORIGIN_DESIGN,
@@ -587,15 +598,12 @@ def compose(design: dict) -> DeploymentPlan:
             # NLB 대상이 아니다 — 설계가 말한 직접 호출을 그대로 그린다.
             plan.edges.append(PlanEdge("end-user", cid, "요청", ORIGIN_DESIGN))
 
-    # --- 5. 값 ------------------------------------------------------------
-    if provider:
-        _attach_values(plan, provider, region, requirements, _priced_computes)
-    else:
-        plan.notes.append(Note(
-            "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
-            ORIGIN_KB, "requirements",
-        ))
 
+def _global_notices(
+    plan: DeploymentPlan, requirements: dict,
+    provider: str | None, region: str | None, exposed: set[str],
+) -> None:
+    """5단계 — 전역 고지 (레지던시 대조·이그레스·관리형 가격)."""
     # 레지던시 대조 자료 — 판정이 아니다. 리전의 원본 표시 이름을 그대로 싣고,
     # 국가 판정은 하지 않는다(부합 판정문이 "판정 불가"를 명시한다 — verify).
     if requirements.get("dataResidency") and provider and region:
@@ -664,6 +672,51 @@ def compose(design: dict) -> DeploymentPlan:
                 "`python -m costkb build-aws-managed`로 로컬 빌드하면 붙습니다."
             )
         plan.notes.append(Note(text, ORIGIN_KB, "costkb"))
+
+
+def compose(design: dict) -> DeploymentPlan:
+    """설계 JSON → 배포 계획. **계약 검증을 통과한 입력만 들어온다고 가정하지 않는다.**
+
+    단계별 헬퍼로 나뉘어 있다(신호→컴퓨트→관리형→공유 인프라→선·진입점→값→고지) —
+    각 단계의 본문과 순서는 427줄짜리 단일 함수 시절과 동일하고, 결정론 출력의
+    전후 대조로 확인했다. 노드·선이 붙는 **순서가 곧 출력 순서**라 단계 순서를
+    바꾸면 안 된다."""
+    problems = validate_design(design)
+    if problems:
+        plan = DeploymentPlan(name=design.get("name") or "(이름 없음)")
+        plan.unresolved = [f"입력 계약 위반: {p}" for p in problems]
+        return plan
+
+    requirements = design.get("requirements") or {}
+    provider = (requirements.get("provider") or "").strip().lower() or None
+    region = (requirements.get("region") or "").strip() or None
+
+    plan = DeploymentPlan(name=design["name"])
+    components = {c["id"]: c for c in design["components"]}
+
+    s = _collect_signals(design)
+    kind_of, priced = _add_computes(plan, components, s, provider, region)
+
+    for external in design.get("externals") or []:
+        plan.nodes.append(PlanNode(
+            id=external["id"], label=external["name"], role="external",
+            origin=ORIGIN_DESIGN,
+            notes=(Note("설계가 외부 시스템으로 선언", ORIGIN_DESIGN, "externals"),),
+        ))
+
+    _add_managed_services(plan, components, s, provider, region)
+    _add_shared_infra(plan, set(kind_of.values()), provider, requirements, priced)
+    _wire_edges(plan, components, s, kind_of, provider, region)
+
+    if provider:
+        _attach_values(plan, provider, region, requirements, priced)
+    else:
+        plan.notes.append(Note(
+            "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
+            ORIGIN_KB, "requirements",
+        ))
+
+    _global_notices(plan, requirements, provider, region, s.exposed)
     return plan
 
 
