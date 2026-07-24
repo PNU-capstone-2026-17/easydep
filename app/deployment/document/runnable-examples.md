@@ -238,8 +238,9 @@ uv run python -m graphkb build --source svcmap        # 앱 개념 ↔ 관리형
 uv run python -m bundlekb build --source avm
 uv run python -m envkb build-regions          # 환경 사실 KB (탄소·지연 등도 build-<축>)
 
-# 재배포 허가 문구가 없어 커밋하지 않는 둘 (NOTICE 참조)
-uv run python -m costkb build-azure-pricing   # 39개 리전 · 약 7분
+# 재배포 허가 문구가 없는 것들 (NOTICE 참조 — 명시 조건으로 커밋됨)
+uv run python -m costkb build-azure-pricing   # VM 할인가, 39개 리전 · 약 7분
+uv run python -m costkb build-azure-managed   # 관리형 과금 축, 39개 리전 · 약 3분
 uv run python -m perfkb build-ibm
 ```
 

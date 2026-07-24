@@ -52,6 +52,13 @@ VM의 스팟·예약·저축 플랜 가격만 담습니다. 온디맨드는 cb-t
 for internal analysis and price comparison"*입니다. 버전이 없는 API라
 재현이 원리적으로 안 되며, 받은 응답의 sha256만 `_source`에 남습니다.
 
+### data/azure-managed-pricing.json.gz — `azure-retail-prices`
+
+위와 같은 API에서 받은 값에서 유도했습니다. 관리형 서비스(Redis·PostgreSQL·
+Cosmos DB·Service Bus·Key Vault·Functions)의 **과금 축 목록**만 담습니다 —
+인스턴스-시간·용량-비례·사용량 축의 단위와 단가이며, 합계나 예상 비용은
+만들지 않습니다. 재배포 상태는 위 항목과 같습니다.
+
 ### data/ibm-perf.json.gz — `ibm-global-catalog`
 
 IBM Cloud Global Catalog에서 받은 값에서 유도했습니다.

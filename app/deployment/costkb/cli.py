@@ -71,6 +71,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, help="출력 경로 (기본: output/azure-discount-pricing.json)"
     )
 
+    managed = sub.add_parser(
+        "build-azure-managed",
+        help="Azure 관리형 서비스 과금 축 (Retail Prices API, 아키타입 6종)",
+    )
+    managed.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
+    managed.add_argument(
+        "--region", action="append", dest="regions",
+        help="리전 하나만(여러 번 줄 수 있음). 기본은 미러의 azure 리전 전부",
+    )
+    managed.add_argument(
+        "--output", type=Path, help="출력 경로 (기본: output/azure-managed-pricing.json)"
+    )
+
     query = sub.add_parser("query", help="요구사항으로 스펙 후보 조회")
     query.add_argument("--vcpu-min", type=int, default=0, help="최소 vCPU")
     query.add_argument("--mem-min", type=float, default=0, help="최소 메모리(GiB, 미러 기준)")
@@ -238,12 +251,38 @@ def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_azure_managed(args: argparse.Namespace) -> int:
+    from costkb.dataset import AZURE_MANAGED_FILENAME
+    from costkb.parsers import azure_managed
+
+    mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
+    if not mirror.exists():
+        print(
+            "미러가 없습니다. 먼저 `python -m costkb build`로 미러를 만드세요 — "
+            "리전 목록을 미러에서 가져옵니다.",
+            file=sys.stderr,
+        )
+        return 1
+    output = args.output or (DEFAULT_OUTPUT_DIR / AZURE_MANAGED_FILENAME)
+    azure_managed.build(
+        output, mirror=mirror, regions=args.regions, refresh=args.refresh
+    )
+    print(
+        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
+        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
+        "포장하세요.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     handlers = {
         "build": _cmd_build,
         "build-gcp-pricing": _cmd_build_gcp_pricing,
         "build-azure-pricing": _cmd_build_azure_pricing,
+        "build-azure-managed": _cmd_build_azure_managed,
         "query": _cmd_query,
         "coverage": _cmd_coverage,
     }

@@ -159,6 +159,47 @@ def _pick_flavor(types: list[str], engine: str | None) -> list[str]:
     return narrowed or types
 
 
+def _managed_axes_note(archetype: str, provider: str | None,
+                       region: str | None) -> Note | None:
+    """관리형 노드의 **과금 축** 노트 (azure만 수록 — ⑥-B).
+
+    단가 한 칸이 아니다: 인스턴스-시간형만 시간당 단가가 성립하고, 용량-비례형은
+    곱할 수량이 사이징 결과이며, 사용량형은 트래픽을 알아야 한다(조사 문서).
+    미빌드(None)와 "봤는데 없음"([])은 뜻이 반대라 그대로 가른다.
+    """
+    if provider != "azure" or not region:
+        return None
+    from costkb import dataset as cost_dataset
+
+    axes = cost_dataset.managed_axes(archetype, region)
+    if axes is None:
+        return None  # 미빌드 — 전역 고지("가격 없음")가 그대로 참이다
+    if not axes:
+        return Note(
+            "과금 축 수록 없음 — azure 관리형 수록분에 이 아키타입·리전이 없습니다"
+            "(무료라는 뜻이 아닙니다)", ORIGIN_KB, "costkb",
+        )
+    by_axis: dict[str, list[dict]] = {}
+    for record in axes:
+        by_axis.setdefault(record["axis"], []).append(record)
+    parts = []
+    if instance := by_axis.get("instanceHour"):
+        lo = min(r["unitPriceUSD"] for r in instance)
+        hi = max(r["unitPriceUSD"] for r in instance)
+        span = f"${lo:.4f}/h" if lo == hi else f"${lo:.4f}~${hi:.4f}/h"
+        parts.append(f"인스턴스-시간 {len(instance)}종 {span}")
+    if capacity := by_axis.get("capacityRate"):
+        parts.append(
+            f"용량-비례 {len(capacity)}종(vCore·RU·GB/월 단가 — 곱할 수량은 사이징 결과)"
+        )
+    if usage := by_axis.get("usage"):
+        parts.append(f"사용량 {len(usage)}종(오퍼레이션·실행 등 — 트래픽을 알아야 함)")
+    return Note(
+        f"과금 축(azure {region}, 단가 한 칸이 아님): " + " · ".join(parts)
+        + " — 합계는 없습니다", ORIGIN_KB, "costkb",
+    )
+
+
 def _compute_note(spec: dict) -> str:
     hourly = spec.get("hourlyUSD")
     body = (
@@ -261,9 +302,11 @@ def compose(design: dict) -> DeploymentPlan:
         if spec["concept"]:
             types = _svcmap_types(spec["concept"], provider)
             notes.append(Note(
-                "서버리스는 호출당 과금이라 이 데이터셋에 단가가 없습니다 — "
+                "서버리스는 호출당 과금이라 시간당 단가가 없습니다 — "
                 "값을 붙이지 않습니다", ORIGIN_KB, "costkb",
             ))
+            if axes_note := _managed_axes_note(spec["concept"], provider, region):
+                notes.append(axes_note)
             if len(types) == 1:
                 notes.append(Note(f"svcmap: app::{spec['concept']} → {types[0]}",
                                   ORIGIN_KB, "svcmap"))
@@ -309,6 +352,8 @@ def compose(design: dict) -> DeploymentPlan:
         if not provider:
             notes.append(Note("프로바이더 미지정이라 특정 클라우드로 좁히지 못함",
                               ORIGIN_INFERRED, "requirements"))
+        if axes_note := _managed_axes_note(concept, provider, region):
+            notes.append(axes_note)
         chosen, candidates = "", ()
         if len(types) == 1:
             chosen = types[0]
@@ -394,11 +439,24 @@ def compose(design: dict) -> DeploymentPlan:
             ORIGIN_KB, "requirements",
         ))
 
-    plan.notes.append(Note(
-        "관리형 서비스 가격은 이 데이터셋에 없어 값이 붙지 않습니다. "
-        "**합계를 내지 않습니다** — 값 없는 것을 0으로 두면 실제보다 낮아집니다.",
-        ORIGIN_KB, "costkb",
-    ))
+    # 관리형 가격 고지 — azure 수록분이 붙었으면 "없다"는 고지가 거짓이 된다.
+    if any(
+        note.source == "costkb" and "과금 축" in note.text
+        for node in plan.nodes for note in node.notes
+    ):
+        plan.notes.append(Note(
+            "관리형 서비스는 값이 한 칸이 아니라 **과금 축 목록**으로 붙습니다"
+            "(azure만 수록 — 인스턴스-시간형만 시간당 단가가 성립합니다). "
+            "**합계를 내지 않습니다** — 용량·사용량 축의 수량을 모르는 채로 더하면 "
+            "실제보다 낮아집니다.",
+            ORIGIN_KB, "costkb",
+        ))
+    else:
+        plan.notes.append(Note(
+            "관리형 서비스 가격은 이 데이터셋에 없어 값이 붙지 않습니다. "
+            "**합계를 내지 않습니다** — 값 없는 것을 0으로 두면 실제보다 낮아집니다.",
+            ORIGIN_KB, "costkb",
+        ))
     return plan
 
 
