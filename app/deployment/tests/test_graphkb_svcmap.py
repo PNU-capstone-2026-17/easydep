@@ -70,6 +70,23 @@ def test_gcp_cdn_is_deliberately_absent() -> None:
     assert "gcp" not in CONCEPTS["cdn"]["bindings"]
 
 
+def test_expansion_concepts_exist(  # 보강 2 (2026-07-24)
+) -> None:
+    """관리형 k8s·검색·스트림·API 게이트웨이 — 클라우드 네이티브에서 흔한데
+    대응이 통째로 없던 축. 같은 근거 규율(독립 소스 둘·손검수엔 사유)을 탄다."""
+    for concept in ("containerService", "searchIndex", "eventStream", "apiGateway"):
+        assert concept in CONCEPTS, concept
+
+
+def test_pubsub_carries_both_queue_and_stream_on_purpose() -> None:
+    """Pub/Sub는 큐·스트림 축을 하나가 겸한다(GCP의 설계). 한쪽만 담으면
+    'GCP엔 스트림이 없다'로 읽힌다 — 겸한다는 노트가 바인딩에 있어야 한다."""
+    queue = CONCEPTS["messageQueue"]["bindings"]["gcp"][0]
+    stream = CONCEPTS["eventStream"]["bindings"]["gcp"][0]
+    assert queue["type_id"] == stream["type_id"] == "gcp::PubSubTopic"
+    assert "겸한다" in stream["note"]
+
+
 # --- MS 표 매칭 ----------------------------------------------------------------
 
 def test_keyword_matches_link_text_not_description() -> None:

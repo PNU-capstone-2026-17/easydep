@@ -253,6 +253,27 @@ def test_redis_hint_routes_to_cache_not_relational(design) -> None:
     assert compose(design).node("order-api-db").archetype == "app::keyValueCache"
 
 
+def test_elasticsearch_hint_routes_to_search_index(design) -> None:
+    """보강 2 — 검색 엔진을 관계형으로 몰던 자리가 searchIndex로 풀린다."""
+    design["artifacts"][1]["engineHint"] = "elasticsearch"
+    plan = compose(design)
+    node = plan.node("order-api-db")
+    assert node.archetype == "app::searchIndex"
+    assert node.type_id == "aws::AWS::OpenSearchService::Domain"
+    assert not plan.unresolved
+
+
+def test_kafka_hint_stays_deliberately_unmapped(design) -> None:
+    """ER 저장소로서의 kafka는 큐·스트림·저장 어느 축인지 설계 의도에 달렸다 —
+    한 개념으로 몰면 조용히 틀린 서비스가 나온다. eventStream 개념이 생겼어도
+    이 결정은 유지된다(미결 + 패턴 자문)."""
+    from nim_agent.design_tools import _ENGINE_CONCEPT
+
+    assert "kafka" not in _ENGINE_CONCEPT
+    design["artifacts"][1]["engineHint"] = "kafka"
+    assert any("kafka" in item for item in compose(design).unresolved)
+
+
 def test_contract_violation_short_circuits(design) -> None:
     """계약을 어긴 입력으로 계획을 만들면 짐작이 섞인다 — 만들지 않는다."""
     design["artifacts"][0]["componentId"] = "ghost"

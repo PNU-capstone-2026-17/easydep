@@ -85,6 +85,10 @@ _SHARED_LABEL = {
 }
 
 #: engineHint → app:: 개념. 모르는 힌트는 관계형으로 몰지 않고 **미결로 올린다.**
+#:
+#: **kafka는 일부러 안 담는다** — ER 저장소로서의 kafka는 큐·스트림·저장 어느
+#: 축인지가 설계 의도에 달려 있어(이벤트 소싱? 버퍼?) 한 개념으로 몰면 조용히
+#: 틀린 서비스가 나온다. 미결 + 패턴 자문(pattern-advisory)으로 남긴다.
 _ENGINE_CONCEPT = {
     "postgresql": "relationalDatabase", "postgres": "relationalDatabase",
     "mysql": "relationalDatabase", "mariadb": "relationalDatabase",
@@ -92,6 +96,7 @@ _ENGINE_CONCEPT = {
     "redis": "keyValueCache", "memcached": "keyValueCache",
     "mongodb": "nosqlDatabase", "dynamodb": "nosqlDatabase",
     "cassandra": "nosqlDatabase", "firestore": "nosqlDatabase",
+    "elasticsearch": "searchIndex", "opensearch": "searchIndex",
 }
 
 #: engineHint가 벤더 flavor까지 좁히는 경우. svcmap이 한 개념에 여러 타입을 줄 때

@@ -3,8 +3,8 @@
 ## 왜 필요한가
 
 core 층 13개는 전부 인프라(vm·vNet·subnet…)라 **앱 설계도가 말하는 것들 —
-DB·큐·캐시·객체 스토리지 — 에 대응이 없었다.** 이 파서가 `app::` 개념 9종을 만들고
-벤더 타입에 잇는다. `kb_equivalent_types`가 병합 그래프를 타므로, 이 파일이 생기는
+DB·큐·캐시·객체 스토리지 — 에 대응이 없었다.** 이 파서가 `app::` 개념 13종(P1의
+9종 + 보강 2의 관리형 k8s·검색·스트림·API 게이트웨이)을 만들고 벤더 타입에 잇는다. `kb_equivalent_types`가 병합 그래프를 타므로, 이 파일이 생기는
 순간 "DynamoDB는 Azure에서 뭐야?"가 관리형 서비스에서도 답이 된다.
 
 ## 근거 구조 — 다리를 건너면 등급이 떨어진다
@@ -209,6 +209,78 @@ CONCEPTS: dict[str, dict] = {
             "oracle": [_b("oracle::oci_vault_secret", (), ("Vault",))],
         },
     },
+    # --- 이하 4종은 확장(보강 2, 2026-07-24) — 같은 근거 규율이다 ---
+    "containerService": {
+        "display": "관리형 쿠버네티스",
+        "bindings": {
+            "aws": [_b("aws::AWS::EKS::Cluster",
+                       ("Elastic Kubernetes Service", "Amazon EKS"), ("EKS",))],
+            "azure": [_b("azure::Microsoft.ContainerService/managedClusters",
+                         ("Azure Kubernetes Service",), ("AKS", "KubernetesServices"))],
+            "gcp": [_b("gcp::ContainerCluster",
+                       ("Google Kubernetes Engine", "GKE"), ("GKE", "KubernetesEngine"))],
+            "alibaba": [_b("alibaba::alicloud_cs_managed_kubernetes", (),
+                           ("ContainerService", "ACK"),
+                           "타입 이름이 용도를 말한다(cs = Container Service)")],
+            "oracle": [_b("oracle::oci_containerengine_cluster", (),
+                          ("ContainerEngine", "OKE"),
+                          "타입 이름이 용도를 말한다(OKE)")],
+            "ibm": [_b("ibm::ibm_container_vpc_cluster", (), ("IKS",),
+                       "IBM Kubernetes Service(VPC). classic용 ibm_container_cluster는 "
+                       "구세대라 하나만 담는다")],
+            "openstack": [_b("openstack::openstack_containerinfra_cluster_v1", (), (),
+                             "Magnum. 타입 이름이 용도를 말한다")],
+        },
+    },
+    "searchIndex": {
+        "display": "관리형 검색 인덱스",
+        "bindings": {
+            "aws": [_b("aws::AWS::OpenSearchService::Domain",
+                       ("OpenSearch",), ("ElasticsearchService",))],
+            "azure": [_b("azure::Microsoft.Search/searchServices",
+                         ("Azure AI Search", "Cognitive Search", "Azure Search"),
+                         ("SearchServices",))],
+            "alibaba": [_b("alibaba::alicloud_elasticsearch_instance", (),
+                           ("ElasticSearch", "OpenSearch"),
+                           "타입 이름이 용도를 말한다")],
+            "oracle": [_b("oracle::oci_opensearch_opensearch_cluster", (), (),
+                          "타입 이름이 용도를 말한다")],
+        },
+    },
+    "eventStream": {
+        "display": "이벤트 스트림",
+        "bindings": {
+            "aws": [_b("aws::AWS::Kinesis::Stream", ("Kinesis",),
+                       ("KinesisDataStreams", "Kinesis"))],
+            "azure": [_b("azure::Microsoft.EventHub/namespaces",
+                         ("Event Hubs",), ("EventHubs",))],
+            # Pub/Sub는 큐·스트림 축을 하나가 겸한다(GCP의 설계) — messageQueue에도
+            # 대응돼 있다. 한쪽만 담으면 "GCP엔 스트림이 없다"로 읽혀 둘 다 담고
+            # 겸한다는 사실을 노트로 남긴다.
+            "gcp": [_b("gcp::PubSubTopic", ("Pub/Sub",), ("PubSub", "Pubsub"),
+                       "Pub/Sub 하나가 큐·스트림을 겸한다 — app::messageQueue에도 대응")],
+            "alibaba": [_b("alibaba::alicloud_alikafka_instance", (), (),
+                           "AliKafka. 타입 이름이 용도를 말한다")],
+            "oracle": [_b("oracle::oci_streaming_stream", (), (),
+                          "OCI Streaming. 타입 이름이 용도를 말한다(실측 확인)")],
+        },
+    },
+    "apiGateway": {
+        "display": "API 게이트웨이",
+        "bindings": {
+            "aws": [_b("aws::AWS::ApiGateway::RestApi",
+                       ("API Gateway", "Amazon API Gateway"), ("APIGateway",))],
+            "azure": [_b("azure::Microsoft.ApiManagement/service",
+                         ("API Management",), ("APIManagement",))],
+            "gcp": [_b("gcp::APIGatewayGateway", ("API Gateway", "Apigee"),
+                       ("APIGateway",),
+                       "게이트웨이 본체 타입. Apigee는 별도 제품이라 담지 않는다")],
+            "alibaba": [_b("alibaba::alicloud_api_gateway_group", (), (),
+                           "API 그룹이 게이트웨이의 배포 단위(도메인이 그룹에 붙는다)")],
+            "oracle": [_b("oracle::oci_apigateway_gateway", (), (),
+                          "타입 이름이 용도를 말한다")],
+        },
+    },
 }
 
 
@@ -386,6 +458,12 @@ _SKIPPED = {
     "nosqlDatabase": "tencent(같은 이유) · gcp Bigtable(와이드칼럼이라 문서 DB와 묶지 않음)",
     "cdn": "gcp(Cloud CDN은 백엔드 서비스의 플래그라 1:1 타입이 없다)",
     "messageQueue": "azure Storage Queue(ServiceBus와 별개 서비스 — 하나만 대면 오해)",
+    "containerService": "nhn(containerinfra 타입이 우리 그래프에 없다 — 실측) · tencent(규칙 동일)",
+    "searchIndex": (
+        "gcp(KCC에 1:1 관리형 검색 타입이 없다 — Vertex AI Search는 리소스 타입이 "
+        "아니다) · ibm(ibm_resource_instance는 범용 타입이라 대면 오해)"
+    ),
+    "apiGateway": "tencent(규칙 동일)",
 }
 
 
