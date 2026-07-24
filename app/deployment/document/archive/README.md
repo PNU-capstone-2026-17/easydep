@@ -19,6 +19,7 @@
 | pattern-sources-2026-07-23.md | 패턴 소스 조사 |
 | pipeline-restructure-plan-2026-07-24.md | 재편 계획 (①~⑥, 완결) |
 | managed-pricing-research-2026-07-24.md | 관리형 가격 조사 (⑥-B 게이트 + 추기) |
+| easydep-agenda-2026-07-24.md | easydep 팀 합의 안건 4건 (제안 스냅샷 — 결과는 커밋이 기록) |
 | end-to-end-example.md · runnable-examples.md | 실행 예제 스냅샷 (07-23 출력 기준) |
 | kb-test-queries.md | 수동 검증 질의집 (도구 목록은 코드가 진실) |
 | cloud-kb-guide.md · plain-language-overview.md | 구세대 해설서 (KB 3개 시절 — kb-book으로 대체) |
