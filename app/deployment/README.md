@@ -132,8 +132,8 @@ uv run python -m costkb build --tag v0.12.25 --refresh
 uv run python -m costkb build --rows-file rows.tsv  # pg_restore 우회 경로
 ```
 
-> graphkb/capacitykb는 산출물이 없으면 도구가 빌드 명령을 안내합니다. 자세한 설명(비전문가용)은
-> [`document/cloud-kb-guide.md`](document/cloud-kb-guide.md) 참고.
+> graphkb/capacitykb는 산출물이 없으면 도구가 빌드 명령을 안내합니다. 자세한 설명은
+> [`document/kb-book.md`](document/kb-book.md) 참고.
 
 지식베이스 **사이**의 정합성은 빌드와 분리된 명령으로 확인합니다 (단방향 규약상 어느
 빌드에도 넣을 수 없어, 완성된 산출물을 데이터로 읽습니다):
@@ -155,18 +155,14 @@ uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 �
 
 ### 문서 어디부터 읽나
 
+살아있는 문서는 셋뿐입니다 — 나머지는 전부 날짜 박힌 **불변 기록**입니다
+(`document/archive/`, 완료 후에는 갱신하지 않으며 최신 상태는 코드·테스트·git log가 진실).
+
 | 문서 | 무엇 |
 |---|---|
-| [`cloud-kb-guide.md`](document/cloud-kb-guide.md) | 전체 해설 — 출처(§18)·안전장치(§19)·남은 설계 질문(§20) |
-| [`dependency-extraction.md`](document/dependency-extraction.md) | 의존성을 어떻게 알아냈나 (문외한용, 예시 중심) |
-| [`kb-design-2026-07-21.md`](document/kb-design-2026-07-21.md) | **데이터 우선 설계** — 진단·바깥 사례 조사·실행 순서(D1~D6) |
-| [`gcp-source-decision-2026-07-21.md`](document/gcp-source-decision-2026-07-21.md) | KCC vs Magic Modules — 왜 KCC를 뼈대로, 프로바이더를 값으로 |
-| [`kb-guidance-test-2026-07-21.md`](document/kb-guidance-test-2026-07-21.md) | 사용자에게 보이는 문장을 직접 태워 본 결과 |
-| [`source-survey-2026-07-21.md`](document/source-survey-2026-07-21.md) | **추가 소스 조사** — 안 쓰던 소스 순위와 함정, 그리고 내 오답 정정 3건 |
-| [`agent-probe-2026-07-21.md`](document/agent-probe-2026-07-21.md) | **에이전트 실측·회귀** — 데이터가 실제 답변으로 이어지는가. `RUN_AGENT_TESTS=1 pytest tests/test_agent_regression.py` |
-| [`session-2026-07-21.md`](document/session-2026-07-21.md) | **최근 작업 기록 + 다음 과제** — 이어서 작업한다면 여기부터 |
-| [`kb-data-audit-2026-07-20.md`](document/kb-data-audit-2026-07-20.md) | 데이터 결함 전수 감사 + 재조사 결과 |
-| [`kb-test-queries.md`](document/kb-test-queries.md) | 손으로 확인하는 질의집 |
+| [`kb-book.md`](document/kb-book.md) | **유일한 가이드** — 처음부터 다시 만들 수 있게 쓴 전체 설명 |
+| [`research.md`](document/research.md) | 과제 원문 (목표 1~4) |
+| [`document/archive/`](document/archive/) | 조사·계획·실측 기록 (날짜순, 불변) — 색인은 그 안의 README |
 
 ## 클라우드 리소스/비용 산정 (cloud_sizing)
 
@@ -266,13 +262,13 @@ uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 | `kbcommon/basis.py` | 근거의 성격 — 사실(stated)인가 짐작(inferred)인가 |
 | `kbcommon/type_ids.py` | KB 사이 조인 키 정규화 (Azure 표기 흔들림 흡수) |
 | `graphkb/reviewed/` | **사람이 채운 표** — 프로그램이 못 푸는 것을 손으로 적는다 |
-| `document/` | 요구사항 브리프 + 비전문가용 해설서 + 수동 테스트 질의집 |
+| `document/` | 가이드(kb-book) + 과제 원문 + 불변 기록(archive/) |
 | `main.py` | 대화형 루프 진입점 |
 
 ## 테스트
 
 ```bash
-uv run pytest        # 443개, 전부 오프라인 (fixture 기반)
+uv run pytest        # 전부 오프라인 (fixture 기반) — 개수는 pytest가 진실
 ```
 
 `costkb` 테스트는 `tests/conftest.py`가 `output_dir`을 빈 임시 디렉터리로 고정해 **항상 번들
@@ -281,5 +277,5 @@ uv run pytest        # 443개, 전부 오프라인 (fixture 기반)
 (덤프 34 MB 다운로드 불필요).
 
 **pytest가 못 잡는 것** — "모델이 실제로 도구를 부르는가"는 자동 검사로 고정하기 어렵습니다.
-그건 [`document/kb-test-queries.md`](document/kb-test-queries.md)의 질의집으로 손으로 확인합니다
-(축별 스모크 · 교차 축 · 함정 질의 · 체크리스트). **모델을 바꿨다면 여기부터 돌려보세요.**
+그건 [`document/archive/kb-test-queries.md`](document/archive/kb-test-queries.md)의 질의집으로
+손으로 확인합니다(작성 시점 스냅샷 — 도구 목록은 코드가 진실). **모델을 바꿨다면 여기부터.**

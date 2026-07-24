@@ -20,7 +20,7 @@ bicep 생성기는 이를 writable&readable로 접어 `flags: None`으로 만든
 > 다만 "bicep이 제약을 잃는다"는 일반화는 **틀렸다.** `pattern` 920 · `maxLength` 827 ·
 > `minValue` 446 · `maxValue` 337은 그대로 있고 이 파서가 전부 소비한다. 잃는 건
 > **불변성 하나**다. 상류를 볼 이유가 있다면 그 필드 때문이지 제약 일반 때문이 아니다.
-> — `document/source-survey-2026-07-21.md`
+> — `git 히스토리의 source-survey-2026-07-21.md`
 
 실측상 제약이 붙은 스칼라로 resolve되는 프로퍼티는 2.39%뿐이고, `diskSizeGB` 같은
 간판 필드에는 제약이 없다. 그래도 ContainerService/Network 쪽은 값이 잘 붙어 있다.

@@ -14,7 +14,7 @@ vCPU 2"는 워크로드 성격(요청당 CPU 시간, 캐시 히트율, 런타임
 갈린다. 그런 "정답"을 담는 KB를 만들면 **그게 바로 환각을 권위 있게 포장하는 것**이다.
 
 `kb-roadmap.md` §7이 조사 전에 이미 그렇게 판단했고, 조사 결과도 같았다
-(`document/bundle-sizing-research-2026-07-22.md`).
+(`document/archive/bundle-sizing-research-2026-07-22.md`).
 
 ## 그래서 담는 것은 넷뿐이다
 

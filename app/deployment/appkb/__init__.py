@@ -33,5 +33,5 @@ PlantUML 다이어그램은 그 JSON의 **표현**일 뿐이다. 우리가 정�
    변수라는 실측 그대로).
 
 스키마: `appkb/schema.json` · 예제: `appkb/examples/` · 의미 검증: `appkb/contract.py`
-설계 근거: `document/design-input-contract-2026-07-23.md`
+설계 근거: `document/archive/design-input-contract-2026-07-23.md`
 """

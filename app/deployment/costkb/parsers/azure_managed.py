@@ -1,6 +1,6 @@
 """Azure Retail Prices API → 관리형 서비스 **과금 축** (재편 계획 ⑥-B).
 
-게이트는 조사 문서(document/managed-pricing-research-2026-07-24.md)다. 요지 셋:
+게이트는 조사 문서(document/archive/managed-pricing-research-2026-07-24.md)다. 요지 셋:
 
 1. **관리형 가격은 한 종류가 아니다.** 인스턴스-시간형(Redis — VM과 같은 모양) /
    용량-비례형(PostgreSQL vCore, Cosmos RU — 단가에 곱할 수량이 사이징 결과다) /
