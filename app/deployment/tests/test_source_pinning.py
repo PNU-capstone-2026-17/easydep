@@ -61,12 +61,17 @@ def test_unpinnable_sources_are_declared_as_such() -> None:
         cfn-schema           AWS가 zip 하나를 계속 덮어쓴다. 버전 URL이 없다.
         azure-retail-prices  가격 API라 고정할 대상 자체가 없다(질의가 곧 URL).
         ibm-global-catalog   카탈로그 API라 마찬가지.
+        gcp-architecture-framework
+                             사이트 렌더링뿐이라 저장소·버전이 없다. **첫 HTML
+                             소스**(사용자 승인 2026-07-24) — patternkb 산문
+                             전용이고 재편은 최소 편수 불변식이 잡는다.
 
-    뒤의 둘은 **재배포 허가도 확인하지 못해** 산출물을 `data/`에 커밋하지 않는다.
+    azure-retail-prices·ibm은 **재배포 허가도 확인하지 못해** 별도 고지가 붙는다.
     받은 응답의 sha256은 남기므로 **바뀐 사실은 놓치지 않는다.**
     """
     keys = {s.key for s in unpinnable()}
-    assert keys == {"cfn-schema", "azure-retail-prices", "ibm-global-catalog"}, (
+    assert keys == {"cfn-schema", "azure-retail-prices", "ibm-global-catalog",
+                    "gcp-architecture-framework"}, (
         f"고정 불가 소스가 예상과 다르다: {keys}"
     )
 

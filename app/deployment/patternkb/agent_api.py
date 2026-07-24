@@ -28,6 +28,7 @@ _SECTION_KOREAN = {
     "best-practices": "실무 지침",
     "twelve-factor": "12factor 배포 원칙",
     "well-architected": "Well-Architected 지침",
+    "gcp-framework": "GCP 아키텍처 프레임워크",
 }
 
 

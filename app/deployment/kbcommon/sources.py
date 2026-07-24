@@ -262,6 +262,21 @@ SOURCES: dict[str, Source] = {
             "저장소이고, 태그가 없어 커밋 SHA로 고정한다."
         ),
     ),
+    "gcp-architecture-framework": Source(
+        key="gcp-architecture-framework",
+        url="https://cloud.google.com/architecture/framework",
+        pin_kind="digest",
+        pin="(고정 불가)",
+        note=(
+            "GCP Architecture Framework **지침 산문**. 페이지 푸터가 CC-BY-4.0을 "
+            "명시하고('Except as otherwise noted…'), robots.txt 차단 없음, 색인에서 "
+            "하위 66링크가 기계 열거된다(전부 실측 2026-07-24). **이 저장소의 첫 "
+            "렌더링 HTML 소스다**(사용자 승인 2026-07-24) — git 저장소가 없어 "
+            "digest 핀이고, 재편은 patternkb의 최소 편수 불변식이 잡는다. 용도가 "
+            "산문 검색(patternkb)이라 구조 파싱 없이 본문 텍스트만 추출한다 — "
+            "사실 축에 이 소스를 쓰면 안 된다."
+        ),
+    ),
     "azure-well-architected": Source(
         key="azure-well-architected",
         url="https://raw.githubusercontent.com/MicrosoftDocs/well-architected/1353bbb66e53121b702a46baed0d64e1f6284bb5",

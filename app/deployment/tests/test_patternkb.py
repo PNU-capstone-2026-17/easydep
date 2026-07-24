@@ -187,6 +187,58 @@ def test_invariants_catch_section_collapse_and_empty_docs() -> None:
     assert not run({"docs": duplicated}, _invariants()).ok
 
 
+# --- GCP 프레임워크 (첫 HTML 소스 — 승인된 예외) --------------------------------
+
+_HTML = """
+<html><head><title>x</title></head><body>
+<nav>사이드바 쓰레기</nav>
+<article>
+<devsite-toc>목차 쓰레기</devsite-toc>
+<h1>Optimize continuously</h1>
+<p>First paragraph of guidance.</p>
+<script>evil()</script>
+<h2>Recommendations</h2>
+<li>Do the thing.</li>
+</article>
+<footer>푸터 쓰레기</footer>
+</body></html>
+"""
+
+
+def test_html_extraction_takes_article_body_only() -> None:
+    """구조 파싱이 아니라 본문 추출이다 — nav·script·toc·푸터는 버리고,
+    article 밖은 아예 안 본다(HTML 변주에 파서가 깨지지 않게)."""
+    from patternkb.parsers.gcp_framework import extract_text
+
+    title, body = extract_text(_HTML)
+    assert title == "Optimize continuously"
+    assert "First paragraph" in body and "Do the thing." in body
+    assert "쓰레기" not in body and "evil" not in body
+
+
+def test_html_without_article_yields_nothing() -> None:
+    """article 영역이 없으면 담지 않는다 — 빈 문서보다 부재가 낫고,
+    급감은 최소 편수 불변식이 잡는다."""
+    from patternkb.parsers.gcp_framework import extract_text
+
+    assert extract_text("<html><body><p>x</p></body></html>") == ("", "")
+
+
+def test_page_enumeration_excludes_printable_duplicates() -> None:
+    from patternkb.parsers.gcp_framework import enumerate_pages
+
+    index = (
+        '<a href="/architecture/framework/cost-optimization">a</a>'
+        '<a href="/architecture/framework/cost-optimization/printable">b</a>'
+        '<a href="/architecture/framework/security/optimize-ai#frag">c</a>'
+        '<a href="/other/page">d</a>'
+    )
+    assert enumerate_pages(index) == [
+        "/architecture/framework/cost-optimization",
+        "/architecture/framework/security/optimize-ai",
+    ]
+
+
 # --- 커밋된 코퍼스 (data/pattern-corpus.json.gz) --------------------------------
 
 def test_bundled_corpus_docs_all_carry_license_and_attribution() -> None:

@@ -30,6 +30,12 @@ patternkb(설계 지침 검색, advisory 전용)의 코퍼스로, 아래 문서�
 - **MicrosoftDocs/well-architected** — Copyright Microsoft Corporation,
   **CC BY 4.0**. `well-architected/` 하위 지침 199편. 변경 사항 동일.
       https://github.com/MicrosoftDocs/well-architected
+- **Google Cloud Architecture Framework** — Copyright Google LLC,
+  **CC BY 4.0**(페이지 푸터 명시: "Except as otherwise noted…").
+  cloud.google.com/architecture/framework 하위 지침 페이지의 본문을 HTML에서
+  추출해 수록. 변경 사항: HTML 태그·내비게이션 제거, 본문 텍스트만 발췌.
+  버전 없는 소스라 받은 시점의 sha256만 산출물 `_source`에 남습니다.
+      https://cloud.google.com/architecture/framework
 - **heroku/12factor** — Copyright (c) 2012 Adam Wiggins, **MIT**.
   `content/en` 하위 15편(목차 제외).
       https://github.com/heroku/12factor

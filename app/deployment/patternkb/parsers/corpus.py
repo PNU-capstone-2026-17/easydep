@@ -61,11 +61,14 @@ _ARCH_SECTIONS = (
 _TWELVE_MIN = 12  # 12요소보다 적으면 뭔가 잘못됐다
 _WAF_MIN = 150  # 실측 199편 — 급감하면 저장소 재편
 
+_GCP_FW_MIN = 40  # 실측 60± — 급감하면 사이트 재편(첫 HTML 소스라 특히 지켜본다)
+
 #: 섹션별 최소 편수 — 불변식과 테스트가 공유한다(두 벌이면 드리프트한다).
 SECTION_MINIMUMS: dict[str, int] = {
     **{section: minimum for _, section, minimum in _ARCH_SECTIONS},
     "twelve-factor": _TWELVE_MIN,
     "well-architected": _WAF_MIN,
+    "gcp-framework": _GCP_FW_MIN,
 }
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
@@ -246,10 +249,13 @@ def _invariants() -> list[Invariant]:
 def build(output: Path, *, refresh: bool = False) -> dict:
     from kbcommon.artifact import write_dataset
 
+    from patternkb.parsers import gcp_framework
+
     arch_docs, arch_paths = _arch_docs(refresh)
     twelve_docs, twelve_paths = _twelve_docs(refresh)
     waf_docs, waf_paths = _waf_docs(refresh)
-    docs = arch_docs + twelve_docs + waf_docs
+    gcpfw_docs, gcpfw_paths = gcp_framework.fetch_docs(refresh)
+    docs = arch_docs + twelve_docs + waf_docs + gcpfw_docs
 
     coverage: dict[str, int] = {}
     for doc in docs:
@@ -262,6 +268,7 @@ def build(output: Path, *, refresh: bool = False) -> dict:
             describe_source_set(arch_paths, _ARCH),
             describe_source_set(twelve_paths, _TWELVE),
             describe_source_set(waf_paths, _WAF),
+            describe_source_set(gcpfw_paths, "gcp-architecture-framework"),
         ],
     }
     result = write_dataset(output, dataset, schema(), _invariants())

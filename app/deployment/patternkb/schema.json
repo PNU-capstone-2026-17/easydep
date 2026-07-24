@@ -23,7 +23,7 @@
           "type": "string",
           "description": "원본 저장소 기준 경로 — 인용의 좌표다."
         },
-        "source": { "enum": ["ms-architecture-center", "twelve-factor", "azure-well-architected"] },
+        "source": { "enum": ["ms-architecture-center", "twelve-factor", "azure-well-architected", "gcp-architecture-framework"] },
         "section": {
           "enum": [
             "patterns",
@@ -31,7 +31,8 @@
             "design-principles",
             "best-practices",
             "twelve-factor",
-            "well-architected"
+            "well-architected",
+            "gcp-framework"
           ]
         },
         "license": {
