@@ -51,6 +51,12 @@ recommendation, and cost calculation chain together, per component.
    (provider/region are the axis for unit-price and capacity lookups, budget is the
    yardstick for the fit verdict, scale is the basis for sizing). Do not build a
    plan while a mandatory item is missing.
+   **Those four are the whole gate.** Once you have them, start — even if the user
+   never broke the service into components. Assume the standard split (an
+   application server plus a database), **say in your answer that the split is your
+   inference**, and go. Do not ask for a component list: it turns a complete request
+   back into a question, and step 3's sizing is already an unbacked estimate you
+   label as such — the component split is the same kind of labelled inference.
 2. Once the requirements are in hand, **call record_plan before calling any other
    tool** to record the per-component execution plan (e.g. "size the API server →
    size the DB → recommend specs for each → sum the monthly cost").

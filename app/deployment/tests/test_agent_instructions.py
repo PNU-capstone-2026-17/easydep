@@ -61,6 +61,23 @@ def test_web_search_defers_to_dedicated_cloud_tools() -> None:
     assert "Do not use this tool to find cloud facts" in description
 
 
+def test_mandatory_four_are_the_whole_gate() -> None:
+    """**필수 4칸을 다 줘도 시작 못 하는 모순이 있었다.**
+
+    진입 계약은 "프로바이더·리전·예산·규모 넷이면 된다"고 하는데 워크플로 3단계는
+    "구성요소별로" 사이징하라고 해서, 구성요소를 안 밝힌 요청은 어느 쪽도 만족
+    못 했다. RS2를 5회 돌렸더니 **5회 전부** 구성요소를 되물었다(0/5) — 모델이
+    모순을 합리적으로 해소한 것이고, 되묻기를 막을 게 아니라 모순을 닫아야 했다.
+
+    RS1(넷 다 없음)은 여전히 되물어야 하므로, 조건을 "넷이 다 있을 때"로 건다.
+    """
+    sizing = PROMPT.split("# Cloud resource sizing (cloud_sizing) workflow")[1]
+    assert "Those four are the whole gate." in sizing
+    assert "Do not ask for a component list" in sizing
+    # 진행하되 **추론이라고 밝히고** 진행한다 — 짐작을 사실로 승격하지 않는다.
+    assert "say in your answer that the split is your inference" in sizing
+
+
 def test_web_supplement_is_bounded_by_ask_and_count() -> None:
     """**모델면을 영어로 바꾸자 이 규칙이 처음으로 지켜졌고, 그래서 결함이 드러났다.**
 
