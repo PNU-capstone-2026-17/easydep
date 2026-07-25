@@ -4,6 +4,7 @@
     python tools/agent_probe.py --only 3-9       # 하나만
     python tools/agent_probe.py --strict         # 실패가 있으면 종료코드 1
     python tools/agent_probe.py --out out.json   # 결과 저장
+    python tools/agent_probe.py --repeat 5       # 각 프로브를 5회 — 통과율로 본다
 
 **도구 호출 기록이 핵심이다.** 답이 그럴듯해 보여도 도구를 안 부르고 모델이 지어낸
 것일 수 있고, 그게 이 프로젝트가 반복적으로 겪은 실패 양상이다. 답만 읽으면 그 둘이
@@ -25,6 +26,21 @@
 다음엔 계획 게이트에 3번 부딪힌 뒤 성공). 그래서 실패하면 **한 번 다시 해 보고**,
 재시도에서 통과하면 실패가 아니라 **불안정(flaky)**으로 기록한다. 불안정도 신호다 —
 조용히 재시도만 하면 "가끔 틀린다"는 사실이 사라진다.
+
+## --repeat: 흔들림을 재는 자리 (재시도로는 못 잰다)
+
+한 번 돌린 결과로 A/B를 하면 안 된다. **실측(2026-07-25)**: 지시문·도구 설명을
+영어로 바꾸는 실험에서 3회차가 전부 54/58로 같았는데, **실패한 4건이 매번 달랐다** —
+50건은 3회 전부 통과, 1건은 3회 전부 실패, **7건이 회차마다 뒤집혔다**. 총점이 같은
+것은 뒤집힌 것들이 우연히 상쇄된 결과였고, 그 폭이 실험이 만든 효과보다 컸다.
+"다축이 7→8→9로 올랐다"는 서사를 쓸 뻔했는데 다축 10건 중 4건이 그 뒤집히는
+프로브였다.
+
+`--repeat N`은 같은 프로브를 N회 **독립 실행**해 `통과 k/N`으로 낸다. 이때
+**재시도를 끈다** — 재시도는 실패를 통과로 덮어써(flaky) 흔들림을 *가리는* 장치이고,
+여기서 재려는 것이 바로 그 흔들림이다. 둘을 같이 켜면 통과율이 위로 편향된다.
+
+안정적인 프로브까지 N배로 돌릴 이유는 없다. `--only`로 흔들리는 것만 좁혀 쓴다.
 """
 
 from __future__ import annotations
@@ -587,6 +603,38 @@ class Result:
         }
 
 
+@dataclass
+class Repeated:
+    """한 프로브를 N회 독립 실행한 것. **판정 단위가 통과/실패가 아니라 통과율이다.**"""
+
+    probe: Probe
+    runs: list[Result] = field(default_factory=list)
+
+    @property
+    def passes(self) -> int:
+        return sum(r.ok for r in self.runs)
+
+    @property
+    def attempts(self) -> int:
+        return len(self.runs)
+
+    @property
+    def stable(self) -> bool:
+        """N회가 전부 같은 결과였다.
+
+        **A/B에 쓸 수 있는 프로브는 이것뿐이다.** 흔들리는 프로브의 한 회차 결과로
+        "고쳐졌다/깨졌다"를 말하면, 재는 것은 변경이 아니라 주사위다.
+        """
+        return self.passes in (0, self.attempts)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.probe.id, "why": self.probe.why,
+            "attempts": self.attempts, "passes": self.passes,
+            "stable": self.stable, "runs": [r.to_dict() for r in self.runs],
+        }
+
+
 def _tool_names(result) -> list[str]:
     return [
         item.raw_item.name
@@ -679,6 +727,59 @@ async def run_probes(
     return out
 
 
+async def run_repeated(
+    probes: tuple[Probe, ...], *, max_turns: int, repeat: int
+) -> list[Repeated]:
+    """각 프로브를 repeat회 독립 실행한다.
+
+    **재시도를 쓰지 않는다** — 재시도는 실패를 통과로 덮어써 흔들림을 가리는데,
+    여기서 재려는 것이 그 흔들림이다(모듈 docstring).
+    """
+    agent = build_agent()
+    out: list[Repeated] = []
+    for probe in probes:
+        runs: list[Result] = []
+        for n in range(1, repeat + 1):
+            started = time.monotonic()
+            tools, answer, error, outputs = await _run_once(agent, probe, max_turns)
+            verdict = claim_check.check(
+                answer, outputs, probe.query,
+                called_tools=tools, known_tools=_known_tool_names(),
+            )
+            runs.append(Result(
+                probe=probe, tools=tools, answer=answer, error=error,
+                tool_outputs=outputs,
+                unsupported=[f"[{f.kind}] {f.token}" for f in verdict.unsupported],
+                claims_checked=verdict.checked,
+                seconds=time.monotonic() - started,
+                failures=[] if error else probe.failures(tools, answer),
+            ))
+            last = runs[-1]
+            print(f"  [{probe.id}] {n}/{repeat} {'통과' if last.ok else '실패'} "
+                  f"({last.seconds:.0f}s, 도구 {len(last.tools)}회)")
+        record = Repeated(probe=probe, runs=runs)
+        out.append(record)
+        _report_repeated(record)
+    return out
+
+
+def _report_repeated(r: Repeated) -> None:
+    """실패 **사유별로 몇 회**인지 낸다 — 흔들리는 프로브는 회차마다 다르게 깨진다."""
+    mark = "✓" if r.passes == r.attempts else ("✗" if r.passes == 0 else "~")
+    print(f"\n{'=' * 74}\n{mark} [{r.probe.id}] 통과 {r.passes}/{r.attempts}"
+          f"   {r.probe.query[:56]}")
+    reasons: dict[str, int] = {}
+    for run in r.runs:
+        for line in run.failures or ([run.error] if run.error else []):
+            reasons[line] = reasons.get(line, 0) + 1
+    for line, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        print(f"  ✗ {n}/{r.attempts}회: {line}")
+    calls = [len(run.tools) for run in r.runs]
+    if calls and max(calls) != min(calls):
+        # 통과/실패가 같아도 호출 수가 출렁이면 그것도 불안정이다.
+        print(f"  · 도구 호출 수가 회차마다 다름: {calls}")
+
+
 def _report(r: Result) -> None:
     mark = "✗" if not r.ok else ("~" if r.flaky else "✓")
     print(f"\n{'=' * 74}\n{mark} [{r.probe.id}] {r.probe.query}")
@@ -716,6 +817,40 @@ def _report(r: Result) -> None:
         print(f"  답변: {cut}{more}")
 
 
+def _repeat_mode(probes: tuple[Probe, ...], args) -> int:
+    """통과율 모드. **안정/흔들림을 가르는 것이 목적**이고, 총점은 내지 않는다.
+
+    총점을 내면 다시 한 숫자로 A/B를 하게 되는데, 이 모드는 바로 그게 못 미더워서
+    만든 것이다.
+    """
+    results = asyncio.run(
+        run_repeated(probes, max_turns=args.max_turns, repeat=args.repeat)
+    )
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps([r.to_dict() for r in results], ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        print(f"\n결과 저장: {args.out}")
+
+    always, never, wobbly = [], [], []
+    for r in results:
+        (always if r.passes == r.attempts else never if r.passes == 0 else wobbly).append(r)
+
+    print(f"\n{'=' * 74}")
+    print(f"{len(results)}건 × {args.repeat}회")
+    print(f"  안정 통과 {len(always)}건")
+    if never:
+        print(f"  안정 실패 {len(never)}건 — {', '.join(r.probe.id for r in never)}")
+    if wobbly:
+        print(f"  흔들림 {len(wobbly)}건 "
+              "— **이 프로브들의 한 회차 결과로 A/B 하지 말 것**")
+        for r in sorted(wobbly, key=lambda r: r.passes):
+            print(f"    ~ [{r.probe.id}] {r.passes}/{r.attempts}")
+    print("\n안정 통과·안정 실패만 변경의 효과를 재는 데 쓸 수 있습니다.")
+    return 1 if (args.strict and len(always) != len(results)) else 0
+
+
 def main() -> int:
     use_utf8()
     parser = argparse.ArgumentParser(description="에이전트 회귀 하네스")
@@ -723,6 +858,9 @@ def main() -> int:
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--retries", type=int, default=1,
                         help="실패 시 재시도 횟수 (기본 1 — 비결정성 때문)")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="각 프로브를 N회 독립 실행해 통과율로 낸다. "
+                             "재시도는 자동으로 꺼진다(통과율이 위로 편향되므로)")
     parser.add_argument("--strict", action="store_true",
                         help="실패가 있으면 종료코드 1")
     parser.add_argument("--out", help="결과 JSON 경로")
@@ -735,6 +873,9 @@ def main() -> int:
         if not probes:
             print(f"해당 항목이 없습니다: {sorted(wanted)}")
             return 1
+
+    if args.repeat > 1:
+        return _repeat_mode(probes, args)
 
     results = asyncio.run(
         run_probes(probes, max_turns=args.max_turns, retries=args.retries)
