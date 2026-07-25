@@ -36,13 +36,13 @@ COMPONENT_ID = "app"
 
 #: 결정론 렌더러의 클래스 선언: `class Name <<Stereotype>> {`.
 #: 이름은 렌더러가 [A-Za-z0-9_]로 소독해 주므로 그 밖의 모양은 나오지 않는다.
-_CLASS = re.compile(r"^\s*class\s+([A-Za-z0-9_]+)(?:\s*<<([^>]+)>>)?", re.M)
+_CLASS = re.compile(r"^\s*class\s+([A-Za-z0-9_]+)(?:\s*<<([^>]+)>>)?", re.MULTILINE)
 
 #: 시퀀스 참가자 선언. PlantUML이 허용하는 종류 키워드 전부.
 _PARTICIPANT = re.compile(
     r"^\s*(actor|participant|boundary|control|entity|database|collections|queue)\s+"
     r'(?:"([^"]+)"|(\S+))(?:\s+as\s+(\S+))?\s*$',
-    re.M,
+    re.MULTILINE,
 )
 
 #: 시퀀스 화살표. 흔한 네 꼴만 안다: `->` `-->` `->>` `-->>`.
@@ -50,18 +50,18 @@ _PARTICIPANT = re.compile(
 _ARROW = re.compile(
     r'^\s*(?:"([^"]+)"|([\w.]+))\s*(-{1,2}>{1,2})\s*(?:"([^"]+)"|([\w.]+))\s*'
     r"(?::\s*(.+?))?\s*$",
-    re.M,
+    re.MULTILINE,
 )
 
 #: ERD 엔티티 선언: `entity Name` · `entity "표시 이름" as alias`.
 _ENTITY = re.compile(
-    r'^\s*entity\s+(?:"([^"]+)"|([A-Za-z0-9_]+))(?:\s+as\s+(\w+))?', re.M
+    r'^\s*entity\s+(?:"([^"]+)"|([A-Za-z0-9_]+))(?:\s+as\s+(\w+))?', re.MULTILINE
 )
 
 #: 시퀀스에 저장소가 참가자로 나오면 건너뛴다 — ER에서 이미 저장소 노드를
 #: 세우므로 두 번 그리면 같은 것이 다른 두 상자가 된다. **걸러냈다는 사실은
 #: 반환 목록에 적는다** (조용한 휴리스틱은 두지 않는다).
-_STORE_LIKE = re.compile(r"(db|database|repository|저장소)", re.I)
+_STORE_LIKE = re.compile(r"(db|database|repository|저장소)", re.IGNORECASE)
 
 #: RESOURCE_SPEC에서 설계 계약의 requirements로 내려가는 칸(투영).
 _REQ_FIELDS = (
@@ -121,7 +121,7 @@ def parse_sequence(
         label = (m.group(6) or "").strip()
         is_async = arrow.endswith(">>")
         (dashed if arrow.startswith("--") else solid).append((src, dst, label, is_async))
-    return kinds, (solid if solid else dashed)
+    return kinds, (solid or dashed)
 
 
 #: ERD PlantUML의 아키타입 주석. **합의 안건 2(2026-07-24)의 우리 몫이다.**
@@ -133,7 +133,7 @@ def parse_sequence(
 #: 이제 메운다.
 #:
 #: PlantUML 주석은 `'`로 시작한다. 값은 스키마의 enum과 **한 곳에서** 맞춘다.
-_ARCHETYPE = re.compile(r"^\s*'\s*archetype\s*:\s*([A-Za-z]+)\s*$", re.M)
+_ARCHETYPE = re.compile(r"^\s*'\s*archetype\s*:\s*([A-Za-z]+)\s*$", re.MULTILINE)
 
 
 def archetype_values() -> tuple[str, ...]:

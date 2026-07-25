@@ -20,7 +20,6 @@ import pytest
 
 from app.deployment.capacitykb.prose import _unit_from_name, _unit_of, extract_ranges
 
-
 # --- 이름이 단위를 말할 때 ---
 
 @pytest.mark.parametrize(

@@ -17,8 +17,8 @@ from pathlib import Path
 
 from app.deployment.graphkb.fetch import fetch_cached
 from app.deployment.graphkb.model import Edge, Graph, Node
-from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.fetch import describe_source
+from app.deployment.kbcommon.invariants import announce
 
 DEFAULT_SWAGGER_URL = (
     "https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.11.8/"

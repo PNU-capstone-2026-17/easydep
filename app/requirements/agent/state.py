@@ -5,10 +5,10 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NotRequired
 
 from langgraph.graph.message import add_messages
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class RequirementItem(TypedDict):

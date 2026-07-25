@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -133,13 +132,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    from app.deployment.kbcommon import tumblebug_dump as dump_reader
     from app.deployment.costkb.invariants import INVARIANTS
-    from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
-    from app.deployment.kbcommon.invariants import announce
-    from app.deployment.kbcommon.fetch import describe_source
-
     from app.deployment.costkb.parsers.tumblebug import build_dataset, format_audit
+    from app.deployment.kbcommon import tumblebug_dump as dump_reader
+    from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
+    from app.deployment.kbcommon.fetch import describe_source
+    from app.deployment.kbcommon.invariants import announce
 
     if args.rows_file:
         rows = dump_reader.iter_rows_from_copy_file(args.rows_file)

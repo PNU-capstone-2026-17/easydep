@@ -11,7 +11,12 @@ from pathlib import Path
 
 from app.deployment.capacitykb import agent_api
 from app.deployment.capacitykb.model import CapacitySet, Constraint
-from app.deployment.capacitykb.parsers.aws_limits import VOLUME, cross_check, read_botocore, read_price_list
+from app.deployment.capacitykb.parsers.aws_limits import (
+    VOLUME,
+    cross_check,
+    read_botocore,
+    read_price_list,
+)
 
 PRICE = {
     "products": {

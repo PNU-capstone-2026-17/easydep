@@ -70,11 +70,10 @@ def test_updatable_is_stated_not_guessed(capacity) -> None:
 
 def test_schema_allows_the_new_value() -> None:
     """산출물 검증이 새 값을 통과시켜야 빌드가 저장된다."""
-    import io
     import json
     from pathlib import Path
 
-    schema = json.load(io.open(Path(__file__).resolve().parent.parent / "capacitykb/model/schema.json", encoding="utf-8"))
+    schema = json.load(open(Path(__file__).resolve().parent.parent / "capacitykb/model/schema.json", encoding="utf-8"))
     text = json.dumps(schema, ensure_ascii=False)
     assert "updatable" in text
 

@@ -7,7 +7,7 @@ dict 인접 리스트 + BFS + Kahn 위상정렬로 처리한다.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.deployment.graphkb.model import Edge, Graph, Node
 

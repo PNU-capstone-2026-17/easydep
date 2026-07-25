@@ -59,7 +59,7 @@ _PATH = re.compile(r"/cloud-driver/drivers/([a-z0-9]+)/resources/(\w+Handler)\.g
 
 #: 미구현 표시. 주 메서드가 이것만 돌려주면 스텁이다.
 _UNSUPPORTED = re.compile(
-    r"(?:not\s+supported|does\s+not\s+support|unsupported|미지원|지원하지\s*않)", re.I
+    r"(?:not\s+supported|does\s+not\s+support|unsupported|미지원|지원하지\s*않)", re.IGNORECASE
 )
 
 _SKIP_CSP = {"mock"}

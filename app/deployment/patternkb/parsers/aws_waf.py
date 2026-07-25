@@ -69,9 +69,9 @@ _SKIP_TITLES = frozenset({
 
 #: 모든 쪽에 찍히는 머리글 — 본문에서 뗀다.
 _RUNNING_HEADER = re.compile(
-    r"^AWS Well-Architected Framework\s*(Framework)?\s*$", re.M
+    r"^AWS Well-Architected Framework\s*(Framework)?\s*$", re.MULTILINE
 )
-_PAGE_NUMBER_LINE = re.compile(r"^\s*\d{1,4}\s*$", re.M)
+_PAGE_NUMBER_LINE = re.compile(r"^\s*\d{1,4}\s*$", re.MULTILINE)
 
 _MIN_TEXT = 200          # 이보다 짧으면 컨테이너 절이다 — 담지 않고 센다
 _MIN_DOCS = 100          # 실측 ~150편 — 급감하면 PDF 재편

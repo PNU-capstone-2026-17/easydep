@@ -7,11 +7,10 @@
 from __future__ import annotations
 
 from app.deployment.kbcommon.basis import INFERRED, STATED, basis_of
-from app.deployment.perfkb.parsers.azure_sizes import parse_tables
 from app.deployment.perfkb.parsers.azure_sizes import enrich as azure_enrich
-from app.deployment.perfkb.parsers.gcp_series import parse_series_sql
+from app.deployment.perfkb.parsers.azure_sizes import parse_tables
 from app.deployment.perfkb.parsers.gcp_series import enrich as gcp_enrich
-
+from app.deployment.perfkb.parsers.gcp_series import parse_series_sql
 
 # --- 근거 등급 -----------------------------------------------------------------
 

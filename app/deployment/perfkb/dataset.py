@@ -14,8 +14,6 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-import jsonschema
-
 from app.deployment.kbcommon import artifact
 from app.deployment.kbcommon.artifact import read_dataset
 

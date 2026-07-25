@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
@@ -158,7 +157,7 @@ def test_every_schema_field_is_shown_or_deliberately_excluded() -> None:
     스키마에 칸을 더하고 표시 목록에 안 넣으면 그 데이터는 어느 도구에도 안 보인다.
     빠뜨리려면 `_NOT_DISPLAY_FIELDS`에 이유와 함께 적어야 한다.
     """
-    schema = json.load(io.open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
+    schema = json.load(open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
     declared = {f.key for f in FIELDS} | _NOT_DISPLAY_FIELDS
     missing = set(schema["$defs"]["spec"]["properties"]) - declared
     assert not missing, f"표시되지 않는 칸: {sorted(missing)}"
@@ -166,7 +165,7 @@ def test_every_schema_field_is_shown_or_deliberately_excluded() -> None:
 
 def test_excluded_fields_still_exist_in_schema() -> None:
     """제외 목록이 스키마 변경 뒤에 남아 유령이 되지 않도록."""
-    schema = json.load(io.open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
+    schema = json.load(open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
     props = set(schema["$defs"]["spec"]["properties"])
-    assert _NOT_DISPLAY_FIELDS <= props
+    assert props >= _NOT_DISPLAY_FIELDS
     assert {f.key for f in FIELDS} <= props

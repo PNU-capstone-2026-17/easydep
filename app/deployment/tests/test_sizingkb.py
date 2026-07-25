@@ -122,7 +122,6 @@ def test_hand_entered_value_says_so(built) -> None:
     것처럼 들린다. `networkinfo.yaml`이 aws·gcp를 비워 두었고 아카이브된 AWS 문서도
     비어 있어서 손으로 적은 값이다.
     """
-    from app.deployment.sizingkb.model import Rule
 
     rules = dict(RULES)
     rules["rules"] = RULES["rules"] + [{

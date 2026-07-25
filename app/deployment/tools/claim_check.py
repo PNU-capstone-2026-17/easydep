@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """답변의 **구체적 주장**이 도구 출력에 근거하는지 기계적으로 대조한다.
 
 **왜 프롬프트가 아니라 이것인가.** 실측에서 반복되는 최악의 실패는 모델이 자기
@@ -176,8 +175,8 @@ def misattributed(
 #:     조건 38가지 중 **840가지에서 가능**, 98가지에서 불가입니다.
 #:       가능: ap-northeast-2; us-east-1; …
 #:       불가: ap-east-1; …
-_POSSIBLE_LINE = re.compile(r"^\s*가능:\s*(.+)$", re.M)
-_DENIED_LINE = re.compile(r"^\s*불가:\s*(.+)$", re.M)
+_POSSIBLE_LINE = re.compile(r"^\s*가능:\s*(.+)$", re.MULTILINE)
+_DENIED_LINE = re.compile(r"^\s*불가:\s*(.+)$", re.MULTILINE)
 
 #: 답변이 **못 한다고 단언하는** 표현. 우리 도구가 쓰는 말이 아니라 모델이 쓰는 말이다.
 _NEGATION = regex_negation = re.compile(

@@ -23,9 +23,9 @@ from contextlib import AsyncExitStack
 
 from agents.exceptions import MaxTurnsExceeded
 
+from app.deployment.kbcommon.console import use_utf8
 from app.deployment.nim_agent.agent import build_agent
 from app.deployment.nim_agent.session import SessionState
-from app.deployment.kbcommon.console import use_utf8
 from app.deployment.nim_agent.tumblebug_mcp import optional_tumblebug_mcp
 from app.deployment.nim_agent.verbose import DEFAULT_MAX_TURNS, run_agent
 

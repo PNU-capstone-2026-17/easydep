@@ -33,7 +33,7 @@ from app.deployment.sizingkb.model import PRESET, Rule, RuleSet
 EVIDENCE = "bitnami-preset"
 
 #: `"nano" (dict` 로 시작하는 블록을 이름 단위로 자른다.
-_PRESET_BLOCK = re.compile(r'"([a-z0-9]+)"\s*\(dict\s*(.*?)\n\s*\)', re.S)
+_PRESET_BLOCK = re.compile(r'"([a-z0-9]+)"\s*\(dict\s*(.*?)\n\s*\)', re.DOTALL)
 #: 그 안의 `"requests" (dict "cpu" "100m" "memory" "128Mi" ...)`.
 _SECTION = re.compile(r'"(requests|limits)"\s*\(dict\s*([^)]*)\)')
 _PAIR = re.compile(r'"([\w-]+)"\s+"([^"]+)"')

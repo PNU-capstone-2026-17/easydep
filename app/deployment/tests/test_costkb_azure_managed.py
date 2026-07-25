@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.deployment.kbcommon.artifact import DEFAULT_OUTPUT
-
 from app.deployment.costkb.dataset import managed_axes
 from app.deployment.costkb.parsers.azure_managed import (
     AXIS_CAPACITY,
@@ -25,7 +23,7 @@ from app.deployment.costkb.parsers.azure_managed import (
     axis_of,
     classify,
 )
-
+from app.deployment.kbcommon.artifact import DEFAULT_OUTPUT
 
 # --- 축 분류 --------------------------------------------------------------------
 

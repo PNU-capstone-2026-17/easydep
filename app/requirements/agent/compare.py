@@ -26,7 +26,6 @@ from app.requirements.agent.steps.step3_specifications import _validate_spec
 from app.requirements.config import settings
 from app.requirements.schemas import CoverageJudgment
 
-
 # --- D. 복합 FR 가드 ---------------------------------------------------------
 # FR 텍스트에 정량 품질(NFR성) 제약이 융합돼 있으면 원자성 위반으로 플래그한다(결정론 감시).
 # clarify가 성능/보안/원자성 제약을 FR 문장에 녹여 넣으면(예: "...within 1 second"),

@@ -20,8 +20,8 @@ import json
 import sys
 from pathlib import Path
 
-from app.deployment.kbcommon.invariants import Violation
 from app.deployment.kbcommon.console import use_utf8
+from app.deployment.kbcommon.invariants import Violation
 
 DEFAULT_OUTPUT = Path("output")
 

@@ -313,7 +313,7 @@ def _ms_rows(files: tuple[str, ...]) -> list[str]:
     return rows
 
 
-_CLASS = re.compile(r"^class\s+([A-Za-z0-9_]+)\s*[(:]", re.M)
+_CLASS = re.compile(r"^class\s+([A-Za-z0-9_]+)\s*[(:]", re.MULTILINE)
 
 _LINK_TEXT = re.compile(r"\[([^\]]+)\]")
 

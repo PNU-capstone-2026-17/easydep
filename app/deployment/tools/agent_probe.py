@@ -58,10 +58,9 @@ from agents import Runner
 from agents.exceptions import MaxTurnsExceeded
 
 from app.deployment.kbcommon.console import use_utf8
-from app.deployment.tools import claim_check
 from app.deployment.nim_agent.agent import build_agent
 from app.deployment.nim_agent.session import SessionState
-
+from app.deployment.tools import claim_check
 
 #: `want_any` 실패의 머리말. 심판을 부를지 가르는 데 쓰므로 **문자열을 한 곳에 둔다.**
 _MISSING_PHRASE = "답변에 없음"

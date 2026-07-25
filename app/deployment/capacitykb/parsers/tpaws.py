@@ -39,18 +39,18 @@ _SCHEMA_MAP = "map[string]*schema.Schema{"
 #: 리소스가 스스로 밝히는 Terraform 타입 이름.
 _ANNOTATION = re.compile(r'@(?:SDK|Framework)Resource\(\s*"([a-z0-9_]+)"')
 #: `func resourceX() *schema.Resource {` — 애너테이션 바로 아래에 온다.
-_FUNC = re.compile(r"^func [Rr]esource\w*\(\)\s*\*schema\.Resource\s*\{", re.M)
+_FUNC = re.compile(r"^func [Rr]esource\w*\(\)\s*\*schema\.Resource\s*\{", re.MULTILINE)
 
-_SERVICE = re.compile(r'service\s+"([a-z0-9_]+)"\s*\{(.*?)\n\}', re.S)
+_SERVICE = re.compile(r'service\s+"([a-z0-9_]+)"\s*\{(.*?)\n\}', re.DOTALL)
 _ARN_NS = re.compile(r'arn_namespace\s*=\s*"([^"]+)"')
 
 _ATTRS = {
-    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.M),
-    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
-    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
-    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
-    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.M),
-    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.M),
+    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.MULTILINE),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.MULTILINE),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.MULTILINE),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.MULTILINE),
+    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.MULTILINE),
+    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.MULTILINE),
     "IntBetween": re.compile(r"validation\.IntBetween\((-?\d+),\s*(-?\d+)\)"),
     "StringInSlice": re.compile(r"validation\.StringInSlice\(\[\]string\{([^}]*)\}"),
     "ExactlyOneOf": re.compile(r"ExactlyOneOf:\s*\[\]string\{([^}]*)\}"),
@@ -347,9 +347,9 @@ _FW_ENTRY = re.compile(r'(?:"([a-z0-9_]+)"|names\.Attr(\w+)):\s*schema\.\w+\{')
 _FW_ATTRS = {
     # RequiresReplace가 SDK의 ForceNew에 해당한다.
     "RequiresReplace": re.compile(r"RequiresReplace(?:IfConfigured)?\(\)"),
-    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
-    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
-    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.MULTILINE),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.MULTILINE),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.MULTILINE),
     "OneOf": re.compile(r"\w+validator\.OneOf\(([^)]*)\)"),
     "Between": re.compile(r"\w+validator\.Between\((-?\d+),\s*(-?\d+)\)"),
     "AtLeast": re.compile(r"\w+validator\.AtLeast\((-?\d+)\)"),

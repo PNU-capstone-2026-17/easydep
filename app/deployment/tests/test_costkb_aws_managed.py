@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.deployment.costkb.dataset import managed_axes, managed_built
 from app.deployment.costkb.parsers.aws_managed import (
     AXIS_CAPACITY,
@@ -22,9 +24,6 @@ from app.deployment.costkb.parsers.aws_managed import (
     axis_of,
     classify,
 )
-
-import pytest
-
 
 # --- 커밋 금지 ------------------------------------------------------------------
 

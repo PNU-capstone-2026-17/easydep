@@ -74,7 +74,7 @@ PRODUCTS: dict[str, str | None] = {
 }
 
 #: frontmatter는 `---` 두 줄 사이에 있다. 그 뒤(본문)는 **읽지 않는다** — 라이선스가 다르다.
-_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.S)
+_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 
 SCHEMA = {
     "type": "object",

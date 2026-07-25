@@ -53,9 +53,9 @@ EVIDENCE = "kcc-sample"
 PROVIDER = "gcp"
 
 _SAMPLES = "/config/samples/resources/"
-_DOC = re.compile(r"^---\s*$", re.M)
-_KIND = re.compile(r"^kind:\s*(\w+)", re.M)
-_APIVERSION = re.compile(r"^apiVersion:\s*([\w./-]+)", re.M)
+_DOC = re.compile(r"^---\s*$", re.MULTILINE)
+_KIND = re.compile(r"^kind:\s*(\w+)", re.MULTILINE)
+_APIVERSION = re.compile(r"^apiVersion:\s*([\w./-]+)", re.MULTILINE)
 
 #: 쿠버네티스 살림. 클라우드 리소스가 아니다.
 _NOT_CLOUD = {"Namespace", "Secret", "ConfigMap", "ServiceAccount"}

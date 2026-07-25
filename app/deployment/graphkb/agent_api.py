@@ -20,8 +20,10 @@ from app.deployment.graphkb.query import (
     dependency_chain_detail,
     dependents,
     equivalents,
-    rank_types as _rank_types,
     resolve_node,
+)
+from app.deployment.graphkb.query import (
+    rank_types as _rank_types,
 )
 from app.deployment.kbcommon import artifact
 from app.deployment.kbcommon.basis import describe, is_fact, needs_hedge

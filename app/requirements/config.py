@@ -53,4 +53,4 @@ class Settings(BaseSettings):
 
 # api_key 등 필수 필드는 .env/환경변수에서 런타임에 주입된다. 타입 체커는 이를 모르고
 # "인자 누락"으로 오판하므로 무시한다. (값이 없으면 여기서 ValidationError로 즉시 실패)
-settings = Settings()  # pyright: ignore[reportCallIssue]
+settings = Settings()  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]

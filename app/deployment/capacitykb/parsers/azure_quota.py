@@ -103,7 +103,7 @@ def _column_roles(header: list[str]) -> list[str] | None:
     roles = ["name"]
     for cell in header[1:]:
         label = cell.strip().lower()
-        if "maximum" in label or "max " == label[:4]:
+        if "maximum" in label or label[:4] == "max ":
             roles.append("maximum")
         elif "default" in label or "limit" in label:
             roles.append("default")

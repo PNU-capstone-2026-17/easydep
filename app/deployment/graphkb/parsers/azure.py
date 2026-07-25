@@ -31,8 +31,8 @@ from pathlib import Path
 from app.deployment.graphkb.fetch import fetch_cached
 from app.deployment.graphkb.model import Edge, Graph, Node
 from app.deployment.graphkb.parsers.review import apply_review, check_freshness, load_reference_map
-from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.sources import SOURCES
 from app.deployment.kbcommon.type_ids import read_azure_index
 

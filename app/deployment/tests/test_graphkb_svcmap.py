@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from app.deployment.graphkb.parsers.svcmap import (
@@ -24,7 +22,6 @@ from app.deployment.graphkb.parsers.svcmap import (
 )
 from app.deployment.kbcommon.basis import INFERRED, basis_of, needs_hedge
 from app.deployment.kbcommon.display import evidence_name
-
 
 # --- 근거 규율 -----------------------------------------------------------------
 

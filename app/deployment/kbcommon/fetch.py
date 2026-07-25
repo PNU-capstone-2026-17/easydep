@@ -181,7 +181,7 @@ def _cache_matches(dest: Path, url: str) -> bool:
     한 번은 전부 재다운로드되지만, 그 대가로 캐시의 정체가 확실해진다.
     """
     record = provenance(dest)
-    return bool(record) and record.get("url") == url
+    return record is not None and record.get("url") == url
 
 
 def _write_provenance(dest: Path, record: dict) -> None:

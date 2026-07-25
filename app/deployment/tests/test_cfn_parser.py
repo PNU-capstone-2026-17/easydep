@@ -269,4 +269,3 @@ def test_nested_readonly_pointer_does_not_skip_whole_property() -> None:
     assert not _one([schema, {"typeName": "AWS::EC2::VPC", "properties": {}}]).edges
 
 
-    

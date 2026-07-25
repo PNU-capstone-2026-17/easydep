@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from app.deployment.appkb.plan import DeploymentPlan, PlanNode, needs_hedge
+from app.deployment.appkb.plan import DeploymentPlan, PlanNode
 
 _STEREOTYPE = {
     "designer": "specified by the designer",
@@ -138,8 +138,8 @@ def parse_back(uml: str) -> tuple[set[str], set[tuple[str, str]]]:
     import re
 
     # 중첩이 들어오면서 줄 앞에 들여쓰기가, 줄 끝에 `{`가 붙는다 — 둘 다 허용한다.
-    aliases = set(re.findall(r'^\s*\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.M))
+    aliases = set(re.findall(r'^\s*\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.MULTILINE))
     # `-{1,2}>`다. `-->?`로 쓰면 `--`가 필수라 **동기 화살표 `->`가 통째로 빠진다**
     # (되파싱 검증이 잡았다 — 5개 선 중 4개가 조용히 사라졌다).
-    edges = set(re.findall(r'^"([^"]+)"\s+-{1,2}>\s+"([^"]+)"', uml, re.M))
+    edges = set(re.findall(r'^"([^"]+)"\s+-{1,2}>\s+"([^"]+)"', uml, re.MULTILINE))
     return aliases, edges

@@ -19,13 +19,17 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.step1_requirements import intake, clarify, classify
+from app.requirements.agent.steps.step1_requirements import clarify, classify, intake
 from app.requirements.agent.steps.step2_usecases import (
-    identify_actors, identify_use_cases, check_coverage,
+    check_coverage,
+    identify_actors,
+    identify_use_cases,
 )
-from app.requirements.agent.steps.step3_specifications import generate_specs, check_specs
+from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
 from app.requirements.agent.steps.step4_diagram import (
-    identify_relationships, check_relationships, render_diagram,
+    check_relationships,
+    identify_relationships,
+    render_diagram,
 )
 
 

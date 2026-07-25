@@ -41,7 +41,7 @@ _API = "https://api.github.com/repos/Cyclenerd/google-cloud-compute-machine-type
 
 _STATEMENT = re.compile(
     r"UPDATE\s+instances\s+SET\s+(?P<sets>.*?)\s+WHERE\s+name\s+LIKE\s+'(?P<pattern>[^']+)'\s*;",
-    re.S | re.I,
+    re.DOTALL | re.IGNORECASE,
 )
 _PAIR = re.compile(r"(\w+)\s*=\s*'([^']*)'")
 

@@ -35,14 +35,14 @@ EVIDENCE = "aws-cross-checked"
 VOLUME = "aws::AWS::EC2::Volume"
 
 #: `"16 TiB"` · `"1 TiB"` 같은 반쯤 산문인 값.
-_SIZE = re.compile(r"^\s*([\d.,]+)\s*(TiB|GiB)\s*$", re.I)
+_SIZE = re.compile(r"^\s*([\d.,]+)\s*(TiB|GiB)\s*$", re.IGNORECASE)
 #: `"80000"` — 순수 숫자만 받는다. `"250 - based on 1 MiB I/O size"`는 안 받는다.
 _NUMBER = re.compile(r"^\s*([\d,]+)\s*$")
 #: 설명문의 `gp2 : 1 - 16,384 GiB` / `st1 and sc1 : 125 - 16,384 GiB`
 _RANGE = re.compile(
     r"\b([a-z][a-z0-9]*(?:\s+and\s+[a-z][a-z0-9]*)*)\s*:\s*"
     r"([\d,]+)\s*(?:\([^)]*\)\s*)?-\s*([\d,]+)\s*(GiB|IOPS|MiB/s)?",
-    re.I,
+    re.IGNORECASE,
 )
 
 _UNITS = {"tib": 1024, "gib": 1}
@@ -89,7 +89,7 @@ def read_botocore(model: dict) -> dict[str, dict[str, tuple[int, int]]]:
         for match in _RANGE.finditer(plain):
             low = int(match.group(2).replace(",", ""))
             high = int(match.group(3).replace(",", ""))
-            for name in re.split(r"\s+and\s+", match.group(1).strip(), flags=re.I):
+            for name in re.split(r"\s+and\s+", match.group(1).strip(), flags=re.IGNORECASE):
                 name = name.strip().lower()
                 # "valid ranges" 같은 머리말이 걸리지 않게 실재 종류만 받는다
                 if name in _KNOWN_TYPES:

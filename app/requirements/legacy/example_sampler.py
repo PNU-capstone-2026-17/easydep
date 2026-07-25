@@ -27,8 +27,8 @@ import math
 import os
 import re
 from collections import Counter
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -231,7 +231,7 @@ class _Ranking:
 
 
 def _rank(query: str, texts: tuple[str, ...], backend: str, model_path: str,
-          dataset_path: str, embed_model: Optional[str] = None) -> _Ranking:
+          dataset_path: str, embed_model: str | None = None) -> _Ranking:
     if backend == "tfidf":
         doc_vecs, idf = _build_tfidf(texts)
         q = _tfidf_vec(query, idf)
@@ -286,9 +286,9 @@ def sample_examples(
     sample_size: int = 5,
     strategy: str = "random",
     backend: str = "tfidf",
-    model_path: Optional[str] = None,
-    embed_model: Optional[str] = None,
-    seed: Optional[int] = None,
+    model_path: str | None = None,
+    embed_model: str | None = None,
+    seed: int | None = None,
     mmr_lambda: float = 0.7,
 ) -> list[tuple[str, float]]:
     """전략에 따라 예시 (문장, 점수) 리스트를 반환.
@@ -352,9 +352,9 @@ def compare_strategies(
     sample_size: int = 5,
     backend: str = "tfidf",
     strategies: tuple[str, ...] = ("random", "cosine", "mmr"),
-    seed: Optional[int] = 42,
-    model_path: Optional[str] = None,
-    embed_model: Optional[str] = None,
+    seed: int | None = 42,
+    model_path: str | None = None,
+    embed_model: str | None = None,
 ) -> dict:
     """여러 전략을 같은 쿼리로 돌려 정량 지표와 함께 반환.
 

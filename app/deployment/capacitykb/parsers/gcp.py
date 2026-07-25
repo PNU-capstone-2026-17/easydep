@@ -38,8 +38,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-import yaml
-
 from app.deployment.capacitykb.model import CapacitySet, Constraint
 from app.deployment.kbcommon.fetch import describe_source_set
 from app.deployment.kbcommon.invariants import announce

@@ -53,6 +53,7 @@ def build_llm() -> ChatOpenAI:
 def warmup_llm() -> float:
     """NIM 콜드 스타트를 미리 1회 지불한다(배치 시작 전 호출용). 소요 초를 반환."""
     import time
+
     from langchain_core.messages import HumanMessage
 
     t = time.time()

@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import math
 from pathlib import Path
 

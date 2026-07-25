@@ -6,23 +6,27 @@
 """
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from typing import cast
+
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step2_usecases import (
-    check_coverage,
+    check_coverage,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
     identify_actors,
     identify_use_cases,
 )
 from app.requirements.agent.steps.step3_specifications import generate_specs
-from app.requirements.agent.steps.step4_diagram import identify_relationships, render_diagram
+from app.requirements.agent.steps.step4_diagram import (
+    identify_relationships,
+    render_diagram,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
+)
 from app.requirements.schemas import FeedbackIntent
 
 # 선형 stage 순서와 하위 재실행 함수 이름(런타임 globals 조회 → 테스트에서 monkeypatch 가능).
+# 이름으로만 참조하므로 정적 분석에는 위 두 임포트가 미사용으로 보인다 — noqa 참고.
 _ORDER = ["actors", "use_cases", "coverage", "specs", "relationships", "diagram"]
 _STAGE_FN_NAME = {
     "use_cases": "identify_use_cases",

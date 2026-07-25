@@ -16,11 +16,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from app.deployment.kbcommon.basis import describe
 from app.deployment.perfkb.dataset import (
     BUILT_FILENAME,
     DEFAULT_OUTPUT_DIR,
@@ -106,12 +106,10 @@ def _cmd_build_ibm(args: argparse.Namespace) -> int:
 
 def _cmd_build(args: argparse.Namespace) -> int:
     from app.deployment.kbcommon import tumblebug_dump as dump_reader
-    from app.deployment.perfkb.invariants import INVARIANTS
     from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
-    from app.deployment.kbcommon.basis import describe
-    from app.deployment.kbcommon.invariants import announce
     from app.deployment.kbcommon.fetch import describe_source
-
+    from app.deployment.kbcommon.invariants import announce
+    from app.deployment.perfkb.invariants import INVARIANTS
     from app.deployment.perfkb.parsers.build import build_dataset, format_audit
 
     if args.rows_file:
@@ -146,7 +144,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
     # azure 크기 표도 같은 이유로 같은 빌드 안에서 — 별도 명령이면 조용히 사라진다.
     if not args.no_azure_sizes:
         from app.deployment.kbcommon.fetch import describe_source_set
-
         from app.deployment.perfkb.parsers import azure_sizes
 
         try:
@@ -163,7 +160,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
     if not args.no_gcp_series:
         from app.deployment.kbcommon.fetch import describe_source_set
-
         from app.deployment.perfkb.parsers import gcp_series
 
         try:

@@ -16,6 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.requirements.config import settings
 from app.requirements.runner import (
     ARTIFACTS_DIR,
     INPUTS_DIR,
@@ -23,7 +24,6 @@ from app.requirements.runner import (
     persist_run,
     run_pipeline,
 )
-from app.requirements.config import settings
 
 
 def _reconfigure_utf8() -> None:

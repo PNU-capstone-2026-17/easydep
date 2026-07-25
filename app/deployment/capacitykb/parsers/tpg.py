@@ -34,25 +34,25 @@ from app.deployment.kbcommon.type_ids import make_type_id
 
 #: 생성 코드에서 리소스 스키마의 시작.
 _SCHEMA_MAP = "map[string]*schema.Schema{"
-_FUNC = re.compile(r"^func (Resource[A-Za-z0-9]+)\(\) \*schema\.Resource \{", re.M)
+_FUNC = re.compile(r"^func (Resource[A-Za-z0-9]+)\(\) \*schema\.Resource \{", re.MULTILINE)
 _ENTRY = re.compile(r'"([a-z0-9_]+)":\s*\{')
 
 EVIDENCE = "tpg-schema"
 
 #: 속성 본문에서 뽑을 것. 값이 있는 것은 첫 그룹을 쓴다.
 _ATTRS = {
-    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.M),
-    "Default": re.compile(r"^\s*Default:\s*(.+?),\s*$", re.M),
-    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.M),
-    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.M),
+    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.MULTILINE),
+    "Default": re.compile(r"^\s*Default:\s*(.+?),\s*$", re.MULTILINE),
+    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.MULTILINE),
+    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.MULTILINE),
     "Enum": re.compile(r"verify\.ValidateEnum\(\[\]string\{([^}]*)\}\)"),
     "ExactlyOneOf": re.compile(r"ExactlyOneOf:\s*\[\]string\{([^}]*)\}"),
     "AtLeastOneOf": re.compile(r"AtLeastOneOf:\s*\[\]string\{([^}]*)\}"),
     "ConflictsWith": re.compile(r"ConflictsWith:\s*\[\]string\{([^}]*)\}"),
     "RequiredWith": re.compile(r"RequiredWith:\s*\[\]string\{([^}]*)\}"),
-    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
-    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
-    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.MULTILINE),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.MULTILINE),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.MULTILINE),
 }
 _GROUP_KINDS = {
     "ExactlyOneOf": "exactly_one_of",
@@ -158,7 +158,7 @@ def resource_to_kind(name: str, known: set[str]) -> str | None:
     lowered = {k.lower(): k for k in known}
     for cand in (
         name,
-        name[:-1] if name.endswith("s") else name,
+        name.removesuffix("s"),
         re.sub(r"Gcp", "GCP", name),
         re.sub(r"Api", "API", name),
         re.sub(r"Iam", "IAM", name),

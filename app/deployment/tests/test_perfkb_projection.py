@@ -9,12 +9,10 @@ from __future__ import annotations
 import json
 
 import jsonschema
-import pytest
 
 from app.deployment.perfkb.dataset import _schema
 from app.deployment.perfkb.parsers.build import build_dataset, format_audit, project_rows
 from app.deployment.perfkb.parsers.project import project_row
-
 from app.deployment.tests.test_perfkb_details import (
     EBS_INFO,
     NETWORK_INFO,

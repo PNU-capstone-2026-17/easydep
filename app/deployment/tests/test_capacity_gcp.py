@@ -9,9 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-import yaml
-
 from app.deployment.capacitykb import agent_api
 from app.deployment.capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
 

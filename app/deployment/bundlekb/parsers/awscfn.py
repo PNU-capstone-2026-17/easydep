@@ -53,7 +53,7 @@ PROVIDER = "aws"
 
 #: `  Type: AWS::EC2::Instance` / `"Type": "AWS::EC2::Instance"` 둘 다.
 _TYPE = re.compile(
-    r"""^\s+["']?Type["']?\s*:\s*["']?(AWS::[A-Za-z0-9]+::[A-Za-z0-9]+)""", re.M
+    r"""^\s+["']?Type["']?\s*:\s*["']?(AWS::[A-Za-z0-9]+::[A-Za-z0-9]+)""", re.MULTILINE
 )
 #: 템플릿이 아닌 파일(워크플로 등)을 거른다.
 _MARKERS = ("AWSTemplateFormatVersion", "Resources")

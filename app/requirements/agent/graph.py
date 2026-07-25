@@ -29,11 +29,16 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.subgraphs import build_stage_subgraphs
 from app.requirements.agent.steps.feedback_gates import (
-    route_gate, gate_requirements, gate_use_cases, gate_specs, gate_relationships,
+    gate_relationships,
+    gate_requirements,
+    gate_specs,
+    gate_use_cases,
+    route_gate,
 )
+from app.requirements.agent.subgraphs import build_stage_subgraphs
 from app.requirements.config import settings
+
 
 def _build_plain_graph():
     """게이트 없는 플랫 파이프라인: 4단계가 순서대로 이어지고 끝난다.

@@ -15,8 +15,8 @@ from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState, RequirementItem
 from app.requirements.classifier import bert_available, classify_bert
 from app.requirements.config import settings
-from app.requirements.schemas import *
 from app.requirements.legacy.auto_clarify import *
+from app.requirements.schemas import *
 
 
 def intake(state: AgentState) -> dict:

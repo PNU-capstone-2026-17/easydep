@@ -13,8 +13,9 @@
 
 from __future__ import annotations
 
-import regex
 from pathlib import Path
+
+import regex
 
 #: 저장소 기준 경로. CWD 기준으로 열면 easydep 루트에서 돌 때 파일을 못 찾고,
 #: exists() 가드가 있는 곳은 실패 대신 **조용히 스킵**된다(병합 때 실제로 그랬다).

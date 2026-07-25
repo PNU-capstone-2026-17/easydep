@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from app.requirements.agent import resume_analysis, start_analysis
 from app.requirements.config import settings

@@ -79,7 +79,7 @@ def property_of(filename: str, available: set[str]) -> str | None:
     그럴 땐 **뒤에서부터 잘라가며** 실재하는 이름을 찾는다. 못 찾으면 None —
     없는 속성 이름을 지어내면 그 제약은 영원히 아무 것에도 안 걸린다.
     """
-    stem = filename[: -len("_enum.json")] if filename.endswith("_enum.json") else filename
+    stem = filename.removesuffix("_enum.json")
     tokens = stem.split("_")
     lowered = {p.lower(): p for p in available}
     for start in range(len(tokens)):

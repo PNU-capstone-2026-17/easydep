@@ -34,7 +34,7 @@ from collections import Counter
 from pathlib import Path
 
 from app.deployment.capacitykb.model import CapacitySet, Constraint
-from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.fetch import describe_source_set
 from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.sources import SOURCES
 from app.deployment.kbcommon.type_ids import AzureTypeIndex, make_type_id, read_azure_index

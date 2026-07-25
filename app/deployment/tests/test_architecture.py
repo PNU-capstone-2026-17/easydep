@@ -147,7 +147,7 @@ def test_kbcommon_owns_no_datasets() -> None:
     방지다. 소유의 표식은 `ARTIFACT = "….json"` 선언 — 이 규약은 모든 KB가
     따르므로 이것만 봐도 충분하다.
     """
-    pattern = re.compile(r"^_?(DEFAULT_)?ARTIFACT\s*=", re.M)
+    pattern = re.compile(r"^_?(DEFAULT_)?ARTIFACT\s*=", re.MULTILINE)
     owners = [
         path.name
         for path in sorted((ROOT / "kbcommon").glob("*.py"))

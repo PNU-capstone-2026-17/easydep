@@ -43,8 +43,8 @@ CCF는 **메트릭톤/kWh**, GCP는 **g/kWh**다. 산출물은 g/kWh로 맞춘�
 from __future__ import annotations
 
 import csv
-from functools import lru_cache
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from app.deployment.kbcommon.artifact import load_json, resolve, write_dataset
@@ -102,7 +102,7 @@ def parse_nerc(text: str) -> dict[str, float]:
     """미국 NERC 지역 상수. 계수 표가 이걸 참조한다."""
     return {
         name: float(value)
-        for name, value in re.findall(r"^\s*([A-Z]{2,5}):\s*([0-9.]+),", text, re.M)
+        for name, value in re.findall(r"^\s*([A-Z]{2,5}):\s*([0-9.]+),", text, re.MULTILINE)
     }
 
 
@@ -139,7 +139,7 @@ def parse_ccf(files: dict[str, str]) -> tuple[list[dict], Report]:
     nerc = parse_nerc(files["core"])
 
     aws_codes = dict(
-        re.findall(r"^\s*([A-Z0-9_]+)\s*=\s*'([^']+)'", files["aws_regions"], re.M)
+        re.findall(r"^\s*([A-Z0-9_]+)\s*=\s*'([^']+)'", files["aws_regions"], re.MULTILINE)
     )
     aws_block = files["aws_factors"]
     aws_block = aws_block[aws_block.index("AWS_EMISSIONS_FACTORS_METRIC_TON_PER_KWH"):]

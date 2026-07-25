@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.deployment.kbcommon.basis import describe
 from app.deployment.kbcommon.display import evidence_name
 from app.deployment.sizingkb.dataset import (
     all_rules,

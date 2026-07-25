@@ -127,7 +127,7 @@ class _BuildLock:
         self.path = dest.with_name(dest.name + ".lock")
         self.acquired = False
 
-    def __enter__(self) -> "_BuildLock":
+    def __enter__(self) -> _BuildLock:
         deadline = time.monotonic() + _LOCK_WAIT_SECONDS
         while True:
             try:

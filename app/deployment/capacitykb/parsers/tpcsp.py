@@ -89,20 +89,20 @@ _SCHEMA_MAP = "map[string]*schema.Schema{"
 
 #: `func resourceAliCloudInstance() *schema.Resource {` — 리소스 함수 정의.
 #: 파일마다 이걸로 한 번만 훑고 등록표와 교집합을 취한다.
-_RESOURCE_FUNC = re.compile(r"^func (\w+)\(\)\s*\*schema\.Resource\s*\{", re.M)
+_RESOURCE_FUNC = re.compile(r"^func (\w+)\(\)\s*\*schema\.Resource\s*\{", re.MULTILINE)
 
 #: Terraform이 만들어내는 칸이라 클라우드 리소스의 속성이 아니다.
 _TF_ONLY = {"id", "timeouts", "tags", "region", "count", "provider", "lifecycle"}
 
 _ATTRS = {
-    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.M),
-    "Computed": re.compile(r"^\s*Computed:\s*true,", re.M),
-    "Optional": re.compile(r"^\s*Optional:\s*true,", re.M),
-    "Required": re.compile(r"^\s*Required:\s*true,", re.M),
-    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.M),
-    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.M),
+    "ForceNew": re.compile(r"^\s*ForceNew:\s*true,", re.MULTILINE),
+    "Computed": re.compile(r"^\s*Computed:\s*true,", re.MULTILINE),
+    "Optional": re.compile(r"^\s*Optional:\s*true,", re.MULTILINE),
+    "Required": re.compile(r"^\s*Required:\s*true,", re.MULTILINE),
+    "MaxItems": re.compile(r"^\s*MaxItems:\s*(\d+)", re.MULTILINE),
+    "MinItems": re.compile(r"^\s*MinItems:\s*(\d+)", re.MULTILINE),
     "IntBetween": re.compile(r"validation\.IntBetween\((-?\d+),\s*(-?\d+)\)"),
-    "StringInSlice": re.compile(r"validation\.StringInSlice\(\[\]string\{([^}]*)\}", re.S),
+    "StringInSlice": re.compile(r"validation\.StringInSlice\(\[\]string\{([^}]*)\}", re.DOTALL),
 }
 
 

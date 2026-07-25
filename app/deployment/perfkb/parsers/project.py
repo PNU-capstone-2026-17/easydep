@@ -30,6 +30,7 @@ B가 아닌 새 버스트 패밀리가 생기면 놓친다 — 그래서 신뢰�
 from __future__ import annotations
 
 import re
+
 from app.deployment.kbcommon.basis import basis_of
 
 from .details import (

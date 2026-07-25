@@ -12,7 +12,7 @@ import pytest
 
 from app.deployment.bundlekb import dataset
 from app.deployment.bundlekb.agent_api import describe_named_bundle, list_bundles, resource_bundle
-from app.deployment.bundlekb.model import ALWAYS, OPTIONAL, REQUIRED, Bundle, Companion, Member
+from app.deployment.bundlekb.model import REQUIRED, Bundle, Companion, Member
 from app.deployment.kbcommon.basis import OBSERVED, STATED, describe, is_fact, needs_hedge
 
 VM = "azure::Microsoft.Compute/virtualMachines"

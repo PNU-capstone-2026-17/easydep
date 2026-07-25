@@ -7,7 +7,10 @@ import tarfile
 from pathlib import Path
 
 from app.deployment.capacitykb.parsers.tpaws import (
-    parse_provider, read_service_namespaces, resolve_type, tf_path_to_cfn,
+    parse_provider,
+    read_service_namespaces,
+    resolve_type,
+    tf_path_to_cfn,
 )
 
 HCL = '''

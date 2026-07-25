@@ -186,7 +186,6 @@ def test_description_name_is_corrected_to_the_real_kind(monkeypatch) -> None:
 def test_alias_table_targets_are_real_kinds() -> None:
     """별칭의 도착지는 실재하는 종류여야 한다 — 오타 나면 조용히 허구가 하나 더 생긴다."""
     import json
-    from pathlib import Path
 
     path = _ROOT / "graphkb/reviewed/gcp-kind-aliases.json"
     if not path.exists():

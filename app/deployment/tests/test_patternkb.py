@@ -25,7 +25,6 @@ from app.deployment.patternkb.parsers.corpus import (
     _parse_markdown,
 )
 
-
 # --- 근거 규율 -----------------------------------------------------------------
 
 def test_advisory_label_is_inferred_and_never_a_fact() -> None:

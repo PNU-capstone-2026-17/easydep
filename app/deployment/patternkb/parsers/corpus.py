@@ -71,11 +71,11 @@ SECTION_MINIMUMS: dict[str, int] = {
     "gcp-framework": _GCP_FW_MIN,
 }
 
-_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
-_TITLE_LINE = re.compile(r"^title:\s*(.+?)\s*$", re.M)
+_FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+_TITLE_LINE = re.compile(r"^title:\s*(.+?)\s*$", re.MULTILINE)
 #: h1만 제목이다. `-content.md`(본문 조각)는 h1이 없고 첫 `##`가 "Context and
 #: problem" 같은 절 제목이라, h2까지 받으면 제목이 절 이름이 된다 — 실측.
-_HEADING = re.compile(r"^#\s+(.+?)\s*$", re.M)
+_HEADING = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 
 def _parse_markdown(raw: str, fallback_title: str) -> tuple[str, str]:
@@ -248,7 +248,6 @@ def _invariants() -> list[Invariant]:
 
 def build(output: Path, *, refresh: bool = False) -> dict:
     from app.deployment.kbcommon.artifact import write_dataset
-
     from app.deployment.patternkb.parsers import gcp_framework
 
     arch_docs, arch_paths = _arch_docs(refresh)

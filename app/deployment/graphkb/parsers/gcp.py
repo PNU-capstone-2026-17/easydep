@@ -22,18 +22,15 @@ DCL 기반 CRD는 description이 generic이라 1번 없이는 대상을 알 수 
 from __future__ import annotations
 
 import collections
-import json
 import re
 import sys
 from pathlib import Path
 
-import yaml
-
 from app.deployment.graphkb.fetch import fetch_cached
 from app.deployment.graphkb.model import Edge, Graph, Node
 from app.deployment.graphkb.parsers.review import apply_review, check_freshness, load_kind_aliases
-from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.invariants import announce
 from app.deployment.kbcommon.sources import SOURCES
 
 # 고정 태그는 kbcommon/sources.py에서 관리한다 (--tag로 덮어쓸 수 있다).

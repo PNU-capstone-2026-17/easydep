@@ -7,7 +7,6 @@ hedge를 답에 싣는 것까지다.
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 

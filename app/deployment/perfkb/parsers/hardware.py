@@ -27,11 +27,10 @@
 
 from __future__ import annotations
 
-import sys
 from collections import Counter
 from pathlib import Path
 
-from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.fetch import fetch_cached
 from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "ec2-hardware-probe"

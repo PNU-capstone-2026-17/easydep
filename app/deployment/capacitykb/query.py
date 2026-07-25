@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
-import regex
 from dataclasses import dataclass, field
+
+import regex
 
 from app.deployment.capacitykb.model import CapacitySet, Constraint, Quota
 from app.deployment.kbcommon.basis import describe
 from app.deployment.kbcommon.display import evidence_name
+
 
 def resolve_type(capacity: CapacitySet, name: str) -> str:
     """이름으로 타입 id를 찾는다.

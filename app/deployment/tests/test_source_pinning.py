@@ -21,7 +21,6 @@ import pytest
 from app.deployment.kbcommon import fetch
 from app.deployment.kbcommon.sources import SOURCES, unpinnable
 
-
 # --- 1. 고정 ref가 한 곳에서 관리되는가 ---
 
 

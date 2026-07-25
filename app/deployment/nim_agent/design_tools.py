@@ -1296,7 +1296,7 @@ def deployment_puml_from_easydep(
         resource_spec=resource_spec,
         diagram=True,
     )
-    match = re.search(r"```plantuml\n(.*?)\n```", text, re.S)
+    match = re.search(r"```plantuml\n(.*?)\n```", text, re.DOTALL)
     if match is None:
         # 계약 실패 등 그림이 없는 답 — 빈 그림 대신 **실패를 그린 문서**를 남긴다.
         body = "\n".join(ln for ln in text.splitlines() if ln.strip())
