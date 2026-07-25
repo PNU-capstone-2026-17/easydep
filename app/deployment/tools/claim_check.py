@@ -195,6 +195,37 @@ _CLAUSE = re.compile(
 )
 
 
+#: 값이 아니라 **산문 인용**을 돌려주는 도구. 이것만 부른 턴은 값 대조를 건너뛴다.
+_ADVISORY_TOOLS = frozenset({"pattern_search"})
+
+
+def _rounds_from(token: str, haystack: str) -> bool:
+    """도구 출력의 어떤 수를 **반올림하면** 이 토큰이 되는가.
+
+    실측(2026-07-25): 도구가 동시출현 비율을 `73.8%`·`35.7%`로 주는데 답변은
+    `74%`·`36%`로 적는다. 반올림은 지어내기가 아닌데 근거 없음으로 잡혔고,
+    분류해 보니 **49건 중 진짜는 1건**이었다. 오탐이 이 정도면 다음 사람은
+    이 신호를 아예 안 본다 — 신호를 지키려면 잡음을 깎아야 한다.
+
+    **자릿수를 늘려 주지는 않는다.** 답변이 소수점 한 자리로 쓰면 도구 값도 그
+    자리에서 비교한다. `900`과 `901`처럼 반올림으로 닿지 않는 값은 그대로
+    걸린다 — 느슨하게 만들면 잡아야 할 것을 놓친다.
+    """
+    try:
+        wanted = float(token.replace(",", ""))
+    except ValueError:
+        return False
+    digits = len(token.rsplit(".", 1)[1]) if "." in token else 0
+    for found in _NUMBER.finditer(haystack):
+        try:
+            value = float(found.group(0).replace(",", ""))
+        except ValueError:
+            continue
+        if round(value, digits) == wanted:
+            return True
+    return False
+
+
 def _values_of(line: str) -> set[str]:
     """`가능: a; b; c 외 5가지` → {a, b, c}."""
     body = re.sub(r"외\s*\d+가지.*$", "", line)
@@ -317,6 +348,17 @@ def check(
     verdict = Verdict()
     seen: set[str] = set()
 
+    # **자문 축만 부른 턴은 값 대조 대상이 아니다.** patternkb는 값이 아니라 산문
+    # 인용을 돌려주고 스스로 "advisory, not fact"라고 밝힌다. 설계 지침 질문에
+    # 모델이 "back-off 30s, threshold 50% of 20 calls" 같은 관례를 덧붙이는 것은
+    # 클라우드 사실을 지어내는 것이 아니라 답을 쓸모 있게 만드는 일이고, 실제
+    # 답변에서도 "Typical implementation" 열 아래에 있었다(실측 CF5).
+    #
+    # 세면 잡음만 는다: 124회에서 숫자 표시 42건 중 **26건이 이 한 프로브**였고
+    # 진짜는 1건이었다. 오탐이 그 비율이면 다음 사람은 신호를 아예 안 본다.
+    if called_tools and set(called_tools) <= _ADVISORY_TOOLS:
+        return verdict
+
     for pattern, kind in ((_NUMBER, "number"), (_IDENTIFIER, "identifier")):
         for match in pattern.finditer(text):
             token = match.group(0)
@@ -327,6 +369,8 @@ def check(
                 continue
             verdict.checked += 1
             if token in haystack:
+                continue
+            if kind == "number" and _rounds_from(token, haystack):
                 continue
             verdict.unsupported.append(Finding(kind, token, _context_of(text, token)))
 

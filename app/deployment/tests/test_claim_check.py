@@ -53,3 +53,48 @@ def test_prefixed_instance_classes_are_recognized() -> None:
     """
     verdict = check("대신 db.r5.large 를 쓰세요.", ["db.t3.medium 가능"])
     assert {f.token for f in verdict.unsupported} == {"db.r5.large"}
+
+
+def test_rounding_is_not_invention() -> None:
+    """도구가 `73.8%`라 하고 답변이 `74%`라 쓰는 것은 지어내기가 아니다.
+
+    실측(2026-07-25) 분류에서 이 종류가 오탐으로 나왔다. **자릿수를 늘려 주지는
+    않는다** — 답변이 쓴 자리에서만 비교하므로 `900` vs `901`은 그대로 걸린다.
+    """
+    from tools.claim_check import check
+
+    grounded = check("co-occurs in 74% of templates", ["… 73.8% AWS::EC2::VPC …"], "")
+    assert not [f for f in grounded.unsupported if f.token == "74"]
+
+    invented = check("the max is 900 seconds", ["… max 901 seconds …"], "")
+    assert [f for f in invented.unsupported if f.token == "900"]
+
+
+def test_advisory_only_turns_are_not_value_checked() -> None:
+    """**patternkb는 값이 아니라 산문 인용을 준다.**
+
+    설계 지침 답변에 모델이 "back-off 30s" 같은 관례를 덧붙이는 것은 클라우드
+    사실을 지어내는 것이 아니다(실측 CF5: 답변에서도 "Typical implementation"
+    열 아래에 있었다). 세면 잡음만 는다 — 124회에서 숫자 표시 42건 중 26건이
+    이 한 프로브였고 진짜는 1건이었다.
+    """
+    from tools.claim_check import check
+
+    advisory = check(
+        "Configure a capped back-off (e.g., 30 s) and 3-5 attempts.",
+        ["Design guidance search (2) — evidence: design pattern document"],
+        "",
+        called_tools=["pattern_search"],
+        known_tools=frozenset({"pattern_search"}),
+    )
+    assert not advisory.unsupported
+
+    # 값 축을 **함께** 불렀으면 다시 대조 대상이다 — 그때는 사실을 말하고 있다.
+    mixed = check(
+        "Configure a capped back-off (e.g., 30 s); the max volume is 99999 GiB.",
+        ["Design guidance search (2)", "Size: max 16384 GiB"],
+        "",
+        called_tools=["pattern_search", "cap_check_value"],
+        known_tools=frozenset({"pattern_search", "cap_check_value"}),
+    )
+    assert [f for f in mixed.unsupported if f.token == "99999"]
