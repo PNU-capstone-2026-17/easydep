@@ -1,0 +1,68 @@
+[
+  { "$type": "StringType" },
+  { "$type": "StringLiteralType", "value": "Microsoft.ContainerService/managedClusters" },
+  { "$type": "StringLiteralType", "value": "2025-01-01" },
+  { "$type": "StringType", "minLength": 1, "maxLength": 63, "pattern": "^[a-zA-Z0-9]$" },
+  { "$type": "IntegerType", "minValue": 0, "maxValue": 2048 },
+  { "$type": "IntegerType" },
+  { "$type": "StringLiteralType", "value": "Linux" },
+  { "$type": "StringLiteralType", "value": "Windows" },
+  {
+    "$type": "UnionType",
+    "elements": [{ "$ref": "#/6" }, { "$ref": "#/7" }, { "$ref": "#/0" }]
+  },
+  {
+    "$type": "ObjectType",
+    "name": "ManagedClusterAgentPoolProfile",
+    "properties": {
+      "name": { "type": { "$ref": "#/3" }, "flags": 1, "description": "Unique name of the agent pool profile." },
+      "osDiskSizeGB": { "type": { "$ref": "#/4" }, "flags": 0, "description": "OS Disk Size in GB." },
+      "count": { "type": { "$ref": "#/5" }, "flags": 0, "description": "Number of agents." },
+      "osType": { "type": { "$ref": "#/8" }, "flags": 0, "description": "The operating system type." },
+      "nodeImageVersion": { "type": { "$ref": "#/0" }, "flags": 2, "description": "The version of node image (읽기 전용)." }
+    }
+  },
+  { "$type": "ArrayType", "itemType": { "$ref": "#/9" }, "minLength": 1, "maxLength": 100 },
+  { "$type": "IntegerType", "minValue": 0, "maxValue": 64000 },
+  {
+    "$type": "ObjectType",
+    "name": "ManagedClusterLoadBalancerProfile",
+    "properties": {
+      "allocatedOutboundPorts": { "type": { "$ref": "#/11" }, "flags": 0, "description": "The desired number of allocated SNAT ports per VM." },
+      "sku": { "type": { "$ref": "#/17" }, "flags": 0, "description": "The SKU of the load balancer." }
+    }
+  },
+  {
+    "$type": "ObjectType",
+    "name": "ManagedClusterProperties",
+    "properties": {
+      "agentPoolProfiles": { "type": { "$ref": "#/10" }, "flags": 0, "description": "The agent pool properties." },
+      "networkProfile": { "type": { "$ref": "#/12" }, "flags": 0, "description": "The network configuration profile." },
+      "fqdn": { "type": { "$ref": "#/0" }, "flags": 2, "description": "The FQDN of the master pool (읽기 전용)." }
+    }
+  },
+  {
+    "$type": "ObjectType",
+    "name": "Microsoft.ContainerService/managedClusters",
+    "properties": {
+      "id": { "type": { "$ref": "#/0" }, "flags": 10, "description": "The resource id" },
+      "name": { "type": { "$ref": "#/3" }, "flags": 1, "description": "The resource name" },
+      "type": { "type": { "$ref": "#/1" }, "flags": 10, "description": "The resource type" },
+      "apiVersion": { "type": { "$ref": "#/2" }, "flags": 10, "description": "The resource api version" },
+      "location": { "type": { "$ref": "#/0" }, "flags": 1, "description": "The geo-location where the resource lives" },
+      "properties": { "type": { "$ref": "#/13" }, "flags": 0, "description": "Properties of a managed cluster." }
+    }
+  },
+  { "$type": "StringLiteralType", "value": "Standard" },
+  { "$type": "StringLiteralType", "value": "Basic" },
+  { "$type": "UnionType", "elements": [{ "$ref": "#/15" }, { "$ref": "#/16" }] },
+  { "$type": "StringType" },
+  { "$type": "StringType" },
+  {
+    "$type": "ResourceType",
+    "name": "Microsoft.ContainerService/managedClusters@2025-01-01",
+    "body": { "$ref": "#/14" },
+    "readableScopes": 8,
+    "writableScopes": 8
+  }
+]

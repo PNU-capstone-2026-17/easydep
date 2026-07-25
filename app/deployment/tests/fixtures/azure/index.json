@@ -1,0 +1,29 @@
+{
+  "resources": {
+    "Microsoft.Network/virtualNetworks@2025-01-01": {
+      "$ref": "network/microsoft.network/2025-01-01/types.json#/11"
+    },
+    "Microsoft.Network/virtualNetworks@2026-01-01-preview": {
+      "$ref": "network/microsoft.network/2026-01-01-preview/types.json#/11"
+    },
+    "Microsoft.Network/virtualNetworks/subnets@2025-01-01": {
+      "$ref": "network/microsoft.network/2025-01-01/types.json#/14"
+    },
+    "Microsoft.Network/networkSecurityGroups@2025-01-01": {
+      "$ref": "network/microsoft.network/2025-01-01/types.json#/17"
+    },
+    "Microsoft.Network/networkInterfaces@2025-01-01": {
+      "$ref": "network/microsoft.network/2025-01-01/types.json#/25"
+    },
+    "Microsoft.Storage/storageAccounts@2024-01-01": {
+      "$ref": "storage/microsoft.storage/2024-01-01/types.json#/0"
+    },
+    "Microsoft.Storage/storageAccounts/blobServices@2024-01-01": {
+      "$ref": "storage/microsoft.storage/2024-01-01/types.json#/1"
+    },
+    "Microsoft.Storage/storageAccounts/blobServices/containers@2024-01-01": {
+      "$ref": "storage/microsoft.storage/2024-01-01/types.json#/2"
+    }
+  },
+  "resourceFunctions": {}
+}
