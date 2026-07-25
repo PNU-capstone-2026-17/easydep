@@ -63,6 +63,10 @@ from nim_agent.agent import build_agent
 from nim_agent.session import SessionState
 
 
+#: `want_any` 실패의 머리말. 심판을 부를지 가르는 데 쓰므로 **문자열을 한 곳에 둔다.**
+_MISSING_PHRASE = "답변에 없음"
+
+
 @dataclass(frozen=True)
 class Probe:
     """질의 하나와 **틀리면 진짜 결함인 것**."""
@@ -125,7 +129,7 @@ class Probe:
         if not self.no_tools and not self.tools_optional and not tools:
             out.append("도구를 아예 안 불렀다")
         if self.want_any and not any(w in _normalized(answer) for w in self.want_any):
-            out.append(f"답변에 없음 (후보: {', '.join(self.want_any)})")
+            out.append(f"{_MISSING_PHRASE} (후보: {', '.join(self.want_any)})")
         return out
 
 
@@ -715,6 +719,13 @@ class Result:
     flaky: bool = False
     """첫 시도에 실패하고 재시도에서 통과했다. 실패는 아니지만 **조용히 넘기지 않는다.**"""
 
+    suspect: str = ""
+    """`want_any`가 못 찾았는데 **심판은 답이 그 뜻을 담았다고 본** 경우의 사유.
+
+    **통과/실패에는 안 들어간다.** 판정은 결정론으로 남기고, 이건 "내 후보
+    목록을 다시 보라"는 표시다 — 오늘 여섯 번 옳은 답을 실패로 찍었다.
+    """
+
     leaked: list[str] = field(default_factory=list)
     """답변이 사용자에게 드러낸 내부 용어(도구 이름·ID 접두어).
 
@@ -736,6 +747,7 @@ class Result:
             "unsupported": self.unsupported, "claims_checked": self.claims_checked,
             "seconds": round(self.seconds, 1), "failures": self.failures,
             "flaky": self.flaky, "ok": self.ok, "leaked": self.leaked,
+            "suspect": self.suspect,
         }
 
 
@@ -769,6 +781,85 @@ class Repeated:
             "attempts": self.attempts, "passes": self.passes,
             "stable": self.stable, "runs": [r.to_dict() for r in self.runs],
         }
+
+
+#: 심판에게 주는 지시. **판정이 아니라 2차 의견이다** — 통과/실패는 안 바꾼다.
+_JUDGE_PROMPT = """A probe checked an agent's answer by looking for any of these
+strings, and found none of them:
+
+  {candidates}
+
+Those strings are a hand-written stand-in for an idea. The probe is protecting this:
+
+  {why}
+
+Decide whether the answer expresses that idea **in any wording** — Korean or
+English, paraphrased, reordered, it does not matter. You are not grading the
+answer's quality, only whether the hand-written string list missed it.
+
+Reply with exactly one line: `PASS` if the answer does express it (so the string
+list was too narrow), or `FAIL` if it genuinely does not. Then a tab, then at most
+15 words.
+
+## QUESTION
+{question}
+
+## THE ANSWER
+{answer}
+"""
+
+#: 심판 호출당 표. 하나만 물으면 흔들린다(검증에서 14건 중 1건이 뒤집혔다).
+_JUDGE_VOTES = 3
+
+
+async def second_opinion(probe: Probe, answer: str) -> str:
+    """`want_any`가 못 찾았을 때 **후보 목록이 틀린 것인지** 모델에게 물어본다.
+
+    **판정을 바꾸지 않는다.** 통과/실패 숫자는 결정론으로 남고 이건 표시만
+    붙인다 — 이 저장소가 "답변이 잘 쓰였는지는 판정하지 않는다"고 정한 것을
+    지키면서, 오늘 여섯 번 겪은 **"옳은 답을 실패로 찍는"** 것만 걸러 낸다.
+
+    검증(2026-07-25): 손으로 판정한 14건과 **14/14 일치**했다. 그중 8건이
+    문자열 판정이 오판했던 사례다(`트레이드‑오프`의 U+2011, "추정값",
+    `not include` 대 `ot included`).
+
+    실패하면 빈 문자열 — 심판이 죽어도 프로브는 돌아야 한다.
+    """
+    try:
+        import os
+
+        from nim_agent.config import build_client
+
+        client = build_client()
+        prompt = _JUDGE_PROMPT.format(
+            candidates=", ".join(probe.want_any),
+            why=probe.why.splitlines()[0][:300],
+            question=probe.query[:600],
+            answer=answer[:2500],
+        )
+        votes = []
+        for _ in range(_JUDGE_VOTES):
+            reply = await client.chat.completions.create(
+                model=os.environ["MODEL"],
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                # **추론 예산을 넉넉히.** gpt-oss는 추론을 reasoning_content에 쓰고
+                # content는 그 뒤다. 짧게 주면 content가 None으로 끝나고, 그걸
+                # 실패로 세면 심판이 상수가 된다(실측: 14건 전부 FAIL로 읽혔다).
+                max_tokens=800,
+            )
+            text = (reply.choices[0].message.content or "").strip()
+            if text:
+                votes.append(text)
+        if not votes:
+            return ""
+        passed = sum(v.upper().startswith("PASS") for v in votes)
+        if passed * 2 <= len(votes):
+            return ""
+        reason = next(v for v in votes if v.upper().startswith("PASS"))
+        return reason.split("	")[-1].strip()[:90]
+    except Exception:  # noqa: BLE001 — 심판이 죽어도 프로브는 돌아야 한다
+        return ""
 
 
 def _tool_names(result) -> list[str]:
@@ -829,8 +920,17 @@ async def _run_once(
         return [], "", f"{type(exc).__name__}: {exc}", []
 
 
+async def _suspect_of(probe: Probe, failures: list[str], answer: str, judge: bool) -> str:
+    """`want_any` 실패일 때만 심판을 부른다 — 통과한 것에는 부르지 않는다."""
+    if not judge or not answer:
+        return ""
+    if not any(f.startswith(_MISSING_PHRASE) for f in failures):
+        return ""
+    return await second_opinion(probe, answer)
+
+
 async def run_probes(
-    probes: tuple[Probe, ...], *, max_turns: int, retries: int
+    probes: tuple[Probe, ...], *, max_turns: int, retries: int, judge: bool = True
 ) -> list[Result]:
     agent = build_agent()
     out: list[Result] = []
@@ -857,6 +957,7 @@ async def run_probes(
             unsupported=[f"[{f.kind}] {f.token}" for f in verdict.unsupported],
             claims_checked=verdict.checked,
             leaked=[f.token for f in verdict.leaked],
+            suspect=await _suspect_of(probe, failures, answer, judge),
             seconds=time.monotonic() - started, failures=failures, flaky=flaky,
         )
         out.append(record)
@@ -865,7 +966,7 @@ async def run_probes(
 
 
 async def run_repeated(
-    probes: tuple[Probe, ...], *, max_turns: int, repeat: int
+    probes: tuple[Probe, ...], *, max_turns: int, repeat: int, judge: bool = True
 ) -> list[Repeated]:
     """각 프로브를 repeat회 독립 실행한다.
 
@@ -892,6 +993,9 @@ async def run_repeated(
                 seconds=time.monotonic() - started,
                 failures=[] if error else probe.failures(tools, answer),
             ))
+            runs[-1].suspect = await _suspect_of(
+                probe, runs[-1].failures, answer, judge
+            )
             last = runs[-1]
             print(f"  [{probe.id}] {n}/{repeat} {'통과' if last.ok else '실패'} "
                   f"({last.seconds:.0f}s, 도구 {len(last.tools)}회)")
@@ -912,6 +1016,9 @@ def _report_repeated(r: Repeated) -> None:
             reasons[line] = reasons.get(line, 0) + 1
     for line, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
         print(f"  ✗ {n}/{r.attempts}회: {line}")
+    suspects = [run.suspect for run in r.runs if run.suspect]
+    if suspects:
+        print(f"  ⟲ 오판 의심 {len(suspects)}/{r.attempts}회 — {suspects[0]}")
     leaks = [run.leaked for run in r.runs if run.leaked]
     if leaks:
         shown = sorted({t for group in leaks for t in group})
@@ -953,6 +1060,9 @@ def _report(r: Result) -> None:
             f"  ⚑ 주장 대조: 구체값 {r.claims_checked}개 중 "
             f"{len(rest)}개가 도구 출력에 없음 — {shown}{more}"
         )
+    if r.suspect:
+        # **판정이 아니라 표시다.** 실패는 실패로 남기고, 후보 목록을 의심하라는 신호만 준다.
+        print(f"  ⟲ 오판 의심 — 답은 그 뜻을 담고 있다고 심판이 봄: {r.suspect}")
     if r.leaked:
         # 실패가 아니라 신호다 — 지시문의 스타일 규칙("도구 이름·내부 접두어를
         # 답변에 쓰지 마세요")이 깨진 것이고, 답이 틀렸다는 뜻은 아니다.
@@ -970,7 +1080,8 @@ def _repeat_mode(probes: tuple[Probe, ...], args) -> int:
     만든 것이다.
     """
     results = asyncio.run(
-        run_repeated(probes, max_turns=args.max_turns, repeat=args.repeat)
+        run_repeated(probes, max_turns=args.max_turns, repeat=args.repeat,
+                     judge=not args.no_judge)
     )
     if args.out:
         Path(args.out).write_text(
@@ -1007,6 +1118,9 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, default=1,
                         help="각 프로브를 N회 독립 실행해 통과율로 낸다. "
                              "재시도는 자동으로 꺼진다(통과율이 위로 편향되므로)")
+    parser.add_argument("--no-judge", action="store_true",
+                        help="want_any 실패에 2차 의견을 묻지 않는다 "
+                             "(기본은 물어본다 — 오늘 여섯 번 옳은 답을 실패로 찍었다)")
     parser.add_argument("--strict", action="store_true",
                         help="실패가 있으면 종료코드 1")
     parser.add_argument("--out", help="결과 JSON 경로")
@@ -1024,7 +1138,8 @@ def main() -> int:
         return _repeat_mode(probes, args)
 
     results = asyncio.run(
-        run_probes(probes, max_turns=args.max_turns, retries=args.retries)
+        run_probes(probes, max_turns=args.max_turns, retries=args.retries,
+                   judge=not args.no_judge)
     )
     if args.out:
         Path(args.out).write_text(
@@ -1042,6 +1157,14 @@ def main() -> int:
         print(f"  ✗ [{r.probe.id}] {'; '.join(r.failures) or r.error}")
     for r in flaky:
         print(f"  ~ [{r.probe.id}] 재시도로 통과 — 가끔 틀린다는 뜻이다")
+    suspect = [r for r in results if r.suspect]
+    if suspect:
+        print(
+            f"\n⟲ 오판 의심 {len(suspect)}건 — `want_any` 후보가 좁아 **옳은 답을 "
+            "실패로 찍었을 수 있습니다.** 답변을 읽고 후보를 넓히세요."
+        )
+        for r in suspect:
+            print(f"  ⟲ [{r.probe.id}] {r.suspect}")
 
     flagged = [r for r in results if r.unsupported]
     if flagged:
