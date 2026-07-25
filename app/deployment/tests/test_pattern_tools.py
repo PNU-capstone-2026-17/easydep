@@ -24,12 +24,28 @@ def test_tool_description_scopes_it_to_advisory() -> None:
     """도구 설명이 LLM에게 가장 가깝게 작동한다(web_search 선례) — 값·한도
     질문에 쓰지 말라는 규칙이 설명에 있어야 한다."""
     # 설명이 영어가 되면서 줄바꿈이 구절 중간에 걸린다 — 공백을 눌러 대조한다.
-    description = " ".join((pattern_search.description or "").split())
+    # 대소문자도 누른다: 문장 위치가 바뀌면 첫 글자가 바뀌는데(and do -> Do),
+    # 그건 규칙이 사라진 것이 아니라 문장이 옮겨진 것이다.
+    description = " ".join((pattern_search.description or "").split()).lower()
     assert "design guidance, not a cloud fact" in description
     assert "advisory only" in description
     assert "do not use it for" in description
     # 코퍼스가 영어라 질의어도 영어여야 한다는 규칙이 설명에 있어야 한다.
-    assert "English keywords" in description
+    assert "english keywords" in description
+
+
+def test_tradeoff_questions_route_here_too() -> None:
+    """**"패턴"이라는 말이 없는 질문도 이 축이다.**
+
+    X6("비용을 아끼면서 신뢰성을 지키는 트레이드오프 지침이 있어?")이 5회 중 2회
+    도구를 아예 안 부르고 기억으로 답했다. 코퍼스 1위 히트가 `Reliability
+    tradeoffs`인데도 그랬다 — 설명의 "Use it for" 줄이 retry·queue·CQRS 같은
+    **패턴 어휘만** 나열해서, '지침'·'트레이드오프'로 묻는 질문에 갈 길이 없었다.
+    어휘를 넣자 5/5가 됐다(X1은 5/5 유지 — 대조군).
+    """
+    description = " ".join((pattern_search.description or "").split()).lower()
+    assert "trade-offs between competing goals" in description
+    assert "well-architected trade-off document per pillar" in description
 
 
 def _order_demo_with_engine(engine: str) -> dict:

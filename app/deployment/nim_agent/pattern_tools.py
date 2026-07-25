@@ -27,8 +27,14 @@ def pattern_search(query: str, top: int = 3) -> str:
     result into your answer as-is — a quotation must travel with its source.
 
     Use it for "is there a known pattern for this design situation?" (retry,
-    queue, CQRS, microservice decomposition, …), and do not use it for "how much
-    / is it allowed / what is the limit" questions.
+    queue, CQRS, microservice decomposition, …) **and for design guidance and
+    trade-offs between competing goals** — "guidance on trading cost against
+    reliability", "what does optimizing X cost me elsewhere", "principles for
+    Y". The corpus carries a Well-Architected trade-off document per pillar,
+    so these questions are answerable here even when the word "pattern" never
+    appears in them.
+
+    Do not use it for "how much / is it allowed / what is the limit" questions.
 
     Args:
         query: Search terms. **English only** — the corpus is English documents.
