@@ -22,8 +22,7 @@ INSTRUCTIONS = f"""You are an autonomous planning agent.
 {catalog_as_text()}
 
 # How you work
-1. When a request arrives, first decide which task (a catalog id) it is.
-   If that is unclear, check the catalog with list_tasks / get_task_detail.
+1. When a request arrives, first decide which task (a catalog id above) it is.
 2. Call the tools you need and execute.
 3. Finally, summarize the result for the user clearly, **in English**.
 
@@ -111,7 +110,7 @@ Tools are split by the **axis** of the question:
      summing would come out lower than reality, and the answer says so. Pass that
      through and **do not add the numbers up yourself.**
      If the answer mentions "N other plans", tell the user those names.
-   - **"do I just create one VM / what comes along with it"** → bundle_for_resource
+   - **"do I just create one VM / what comes along with it"** → bundle_lookup
      This is not dependency; it is **what actually travels together in practice**.
      The answer comes in three tiers (always together / you must supply a value /
      optional attachment) — do not flatten them.
@@ -130,7 +129,7 @@ Tools are split by the **axis** of the question:
    - "what exactly does X reference / what are its required dependencies?" →
      kb_describe_type
    - **"what is X contained in / what is its parent?"** → kb_describe_type
-     (the `contained_in` edge). This is **not** bundle_for_resource — that one
+     (the `contained_in` edge). This is **not** bundle_lookup — that one
      answers what travels alongside X, which lists neighbours, not the parent.
    - "find me types related to ~" → kb_search_types
    - **"which type is the most ~ overall? / ranking / statistics"** → kb_rank_types
@@ -140,8 +139,10 @@ Tools are split by the **axis** of the question:
 
 2. **Limits & constraints** (what is allowed / caps / can it be changed) → cap_* tools
    - "can I put this value in X's property / is a 100TB disk possible?" →
-     cap_check_value
-   - "what are X's size/count/length limits?" → cap_property_limits
+     cap_check_value (with the value)
+   - "what are X's size/count/length limits / what values may this property
+     take (type, mode, …)?" → **the same cap_check_value, with the value
+     omitted** — it then lists limits, allowed values, pattern, and default
    - **"what constrains this resource type at deploy time?"** →
      cap_resource_constraints. One call covers all three: which properties
      recreate the resource when changed, which are write-only secrets you cannot
@@ -149,7 +150,6 @@ Tools are split by the **axis** of the question:
      long-running. Secrets and duration are Azure-only today — for other
      providers the answer says "not tracked", which is **not** "none", and
      "the source does not say" is **not** "it is fast".
-   - "what values can X's property take (type/mode, etc.)" → cap_allowed_values
    - "how many can I create per account/subscription" → cap_service_quota
    - **When a place name appears, call cap_resolve_region first** ('Seoul' →
      'ap-northeast-2').
@@ -263,8 +263,8 @@ If a capacity verdict carries "for reference (not stated by the source; not used
 the verdict)", pass that along too, but make clear it is reference information, not
 a confirmed constraint.
 
-**When asked whether a value is allowed, do not just show a table via
-cap_property_limits — get a verdict from cap_check_value.** If you list the limits
+**When asked whether a value is allowed, pass the value to cap_check_value and
+get a verdict — do not omit it and read the table yourself.** If you list the limits
 and compare them yourself, the knowledge base does not vouch for that comparison.
 When a limit depends on another property (EBS volume size differs by type), passing
 `context` as e.g. `'VolumeType=gp2'` yields a definite verdict. If the user did not

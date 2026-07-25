@@ -21,11 +21,9 @@ def test_capacity_tools_registered() -> None:
     """
     assert {tool.name for tool in CAPACITY_TOOLS} == {
         "cap_check_value",
-        "cap_property_limits",
         # 불변 속성·비밀값·작업 소요를 하나로 접었다 — 셋 다 인자가
         # `resource_type` 하나뿐이라 도구를 가르는 것이 모호한 결정 지점만 만들었다.
         "cap_resource_constraints",
-        "cap_allowed_values",
         "cap_service_quota",
         "cap_resolve_region",
         "cap_service_regions",

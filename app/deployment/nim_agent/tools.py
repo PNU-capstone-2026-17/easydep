@@ -16,7 +16,6 @@ from ddgs import DDGS
 
 from .bundle_tools import BUNDLE_TOOLS
 from .capacity_tools import CAPACITY_TOOLS
-from .catalog import catalog_as_text, get_task
 from .cost_tools import COST_TOOLS
 from .design_tools import DESIGN_TOOLS
 from .graph_tools import GRAPHKB_TOOLS
@@ -27,21 +26,10 @@ from .session import SessionState
 from .sizing_tools import SIZING_TOOLS
 
 
-@function_tool
-def list_tasks() -> str:
-    """Return the catalog of tasks this agent can perform (id / title / description)."""
-    return catalog_as_text()
-
-
-@function_tool
-def get_task_detail(task_id: str) -> str:
-    """Return the detailed description of the given task id, or a notice if absent."""
-    task = get_task(task_id)
-    if task is None:
-        return f"'{task_id}' is not a task in the catalog. Use list_tasks to see what is available."
-    return f"[{task.id}] {task.title}\n{task.description}"
-
-
+# `list_tasks`·`get_task_detail`은 뺐다(2026-07-25). 카탈로그는 **이미
+# INSTRUCTIONS에 통째로 주입**돼 있어(`catalog_as_text()`) 같은 정보를 도구로 다시
+# 주는 것이었고, 프로브 58건 중 어느 것도 이 둘을 기대하지 않았다. 상시 노출되는
+# 도구 하나하나가 라우팅 결정 지점을 늘린다.
 @function_tool
 def record_plan(ctx: RunContextWrapper[SessionState], steps: list[str]) -> str:
     """Record a plan **before you start executing**, for work that coordinates
@@ -113,8 +101,6 @@ def web_search(query: str, max_results: int = 5) -> str:
 # 에이전트에 등록할 로컬 도구 목록
 # (의존성 그래프 + 용량·제약 + 스펙·가격 + 성능 특성 지식베이스 질의 도구 포함).
 LOCAL_TOOLS: list[Tool] = [
-    list_tasks,
-    get_task_detail,
     record_plan,
     web_search,
     *COST_TOOLS,

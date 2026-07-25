@@ -13,7 +13,7 @@ KB끼리는 import하지 않는다(단방향 규약). 그래서 축을 엮는 �
 > 특정 리소스를 선택하는 경우 **연계되는 다양한 리소스 군을 획득**할 수 있어야 하며,
 > 사용자가 클라우드 리소스를 선택할 수 있는 **가이드라인(비용, 성능 등)** 제공이 필요하다
 
-앞 절은 `bundle_for_resource`가, 뒤 절은 `cost_recommend_specs`가 각각 답했는데
+앞 절은 `bundle_lookup`이, 뒤 절은 `cost_recommend_specs`가 각각 답했는데
 **둘을 잇는 답이 없었다.** "VM 하나 만들면 NIC·디스크가 딸린다"까지는 답하면서
 "그 구성이 얼마"는 답하지 못했다.
 
@@ -288,7 +288,7 @@ async def resource_guideline(
 
     Use it when the question asks for **both the group and the value**, as in
     "what do I need to bring up one VM, and how much is it?". If only the group
-    is asked, bundle_for_resource is right; if only the value,
+    is asked, bundle_lookup is right; if only the value,
     cost_recommend_specs.
 
     **No total is produced** — some members have no price axis, so summing would

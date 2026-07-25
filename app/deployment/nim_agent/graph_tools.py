@@ -91,7 +91,7 @@ def kb_describe_type(resource_type: str) -> str:
     **"What is X contained in / what is its parent?"** is answered here, by the
     `contained_in` edge (e.g. gcp ComputeDisk → Project). Containment is not the
     same question as "what else do I need alongside it" — that one is
-    `bundle_for_resource`.
+    `bundle_lookup`.
 
     Args:
         resource_type: Type name.

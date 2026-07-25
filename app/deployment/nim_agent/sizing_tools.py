@@ -31,50 +31,48 @@ def sizing_subnet_capacity(prefix_length: int, provider: str) -> str:
     return agent_api.subnet_capacity(prefix_length, provider)
 
 
+# **도구 셋을 하나로 접었다(2026-07-25).** 셋 다 "이 워크로드에 무엇이 필요한가"에
+# 답하는데 모델이 매번 갈라야 했다. 컨테이너 프리셋은 scope와 무관하게 270 tok으로
+# 고정이라 **scope를 밝힌 질문에는 붙이지 않는다** — K8s 최소사양을 물었는데
+# 프리셋 7종이 딸려오면 그건 답이 아니라 소음이다.
 @function_tool
-def sizing_requirements(scope: str = "") -> str:
-    """Look up minimum requirements and required counts.
+def sizing_rules(scope: str = "") -> str:
+    """Sizing rules this source states — minimums, required counts, and the
+    per-workload examples.
 
-    For questions like "what is the minimum for a K8s node?" or "how many
-    subnets do I need for a cluster?". Empty gives every stored requirement.
+    **Most answers on this axis should be "we do not know", and that is
+    correct.** Only conversion rules the source wrote down are stored; "N
+    concurrent users → M vCPU" has no source and is deliberately absent. Do not
+    fill that gap yourself.
+
+    - **`scope` given** → the minimums and required counts for it (e.g.
+      `'k8s-node'` for the node floor, `'aws'` for that provider's rules), plus
+      any workload reference points matching it.
+    - **`scope` omitted** → every stored rule, plus the container size presets
+      (nano~2xlarge).
+
+    ⚠️ Reference points are **examples, not correct answers.** The source does
+    not say "t3.small is the right web server"; it says "this source's web
+    server example is t3.small". Pass them on as reference points; do not
+    recommend them as-is. The presets likewise carry the source's own "not for
+    production" sentence — **do not strip it**, and note they are container
+    sizes, not instance sizes.
 
     Args:
-        scope: 'k8s-node' | 'aws' | 'azure', etc.
+        scope: 'k8s-node' | 'aws' | 'azure' | 'web' | 'llm' | 'gpu', etc.
+            Omit to see everything.
     """
-    print(f"\n[sizing query] requirements: {scope!r}")
-    return agent_api.requirements(scope or None)
-
-
-@function_tool
-def sizing_reference_points(keyword: str = "") -> str:
-    """Look up per-workload spec **reference points**.
-
-    ⚠️ **These are examples, not correct answers.** It does not say "t3.small is
-    the right web server"; it says "this source's web server example is
-    t3.small". Do not recommend it as-is — pass it on as a reference point.
-
-    Args:
-        keyword: 'web' | 'llm' | 'gpu', etc.
-    """
-    print(f"\n[sizing query] reference points: {keyword!r}")
-    return agent_api.reference_points(keyword or None)
-
-
-@function_tool
-def sizing_container_presets() -> str:
-    """Return the CPU and memory of the container size presets (nano~2xlarge).
-
-    The source states that these are "not for production", and that sentence
-    comes with the result — **do not strip it.** These are container sizes, not
-    instance sizes.
-    """
-    print("\n[sizing query] container presets")
-    return agent_api.container_presets()
+    print(f"\n[sizing query] rules: {scope!r}")
+    parts = [
+        agent_api.requirements(scope or None),
+        agent_api.reference_points(scope or None),
+    ]
+    if not scope:
+        parts.append(agent_api.container_presets())
+    return "\n\n".join(parts)
 
 
 SIZING_TOOLS = [
     sizing_subnet_capacity,
-    sizing_requirements,
-    sizing_reference_points,
-    sizing_container_presets,
+    sizing_rules,
 ]

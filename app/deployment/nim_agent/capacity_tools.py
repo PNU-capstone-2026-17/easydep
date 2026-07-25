@@ -22,15 +22,25 @@ from capacitykb import agent_api
 @function_tool
 def cap_check_value(
     resource_type: str,
-    property_name: str,
-    value: str,
+    property_name: str | None = None,
+    value: str | None = None,
     context: str | None = None,
 ) -> str:
-    """Judge whether a value you intend to set on a property is allowed.
+    """What a property may hold — and, if you name a value, whether it is allowed.
 
-    **Whether an instance type is usable in a given region is judged here too**
-    — `cap_check_value('AWS::EC2::Instance', 'InstanceType', 'p5.48xlarge',
-    context='Region=af-south-1')`.
+    Two modes, one question ("can this property take this?"):
+
+    - **`value` given → a verdict.** Prefer this whenever the user asks whether
+      something is possible. If you instead read a table and compare it
+      yourself, the knowledge base does not vouch for that comparison.
+      Whether an instance type is usable in a given region is judged here too —
+      `('AWS::EC2::Instance', 'InstanceType', 'p5.48xlarge',
+      context='Region=af-south-1')`.
+    - **`value` omitted → the limits, allowed values (enum), pattern, and
+      default.** Omit `property_name` as well to see the whole type's
+      constraints. Allowed values that differ per region live here too:
+      `('AWS::EC2::Instance', 'InstanceType')` lists the instance types for all
+      38 regions with their conditions.
 
     A constraint the source did not state (one extracted from prose) is never
     used as grounds to reject a value; it is reported for reference only.
@@ -40,9 +50,9 @@ def cap_check_value(
             'aws::AWS::Lambda::Function',
             'Microsoft.ContainerService/managedClusters'.
         property_name: Property name. e.g. 'Size', 'Timeout',
-            'EphemeralStorage/Size'.
+            'EphemeralStorage/Size'. Omit to see the whole type.
         value: The value to set. A number is read as a number. e.g. '100000',
-            'gp3'.
+            'gp3'. Omit to see what is allowed instead of judging one value.
         context: Other properties decided alongside it. Join `name=value` pairs
             with commas, as in `'VolumeType=gp2'`, `'Region=af-south-1'`.
             **If the limit or the allowed values depend on something else, this
@@ -52,6 +62,22 @@ def cap_check_value(
             Without it, the tool lists "which condition gives which value" and
             tells you what it needs.
     """
+    if value is None:
+        # 값이 없으면 **판정할 것이 없다** — 한도와 허용값을 보여 준다.
+        # 예전에는 이것이 cap_property_limits·cap_allowed_values 두 도구였는데,
+        # 키가 (타입, 속성)으로 같고 답하는 질문도 같아 결정 지점만 늘렸다.
+        where = f"{resource_type}" + (f".{property_name}" if property_name else "")
+        print(f"\n[capacity query] what is allowed: {where}")
+        parts = [agent_api.property_limits(resource_type, property_name)]
+        if property_name:
+            parts.append(agent_api.allowed_values(resource_type, property_name))
+        return "\n\n".join(parts) + _perf_pointer(resource_type)
+
+    if not property_name:
+        return (
+            "To judge a value I need the property name — "
+            f"which property of {resource_type} is this value for?"
+        )
     parsed = _parse_context(context)
     shown = f" ({context})" if parsed else ""
     print(f"\n[capacity query] value verdict: {resource_type}.{property_name} = {value!r}{shown}")
@@ -122,21 +148,6 @@ def _perf_pointer(resource_type: str) -> str:
     )
 
 
-@function_tool
-def cap_property_limits(resource_type: str, property_name: str | None = None) -> str:
-    """Return the constraints on a resource type (or one property), with
-    evidence and confidence.
-
-    Args:
-        resource_type: Type name. e.g. 'AWS::EC2::Volume'.
-        property_name: Set to look at one property only. Omit for the whole
-            type.
-    """
-    print(f"\n[capacity query] constraints: {resource_type}" + (f".{property_name}" if property_name else ""))
-    return agent_api.property_limits(resource_type, property_name) + _perf_pointer(
-        resource_type
-    )
-
 
 # **도구 셋을 하나로 접었다(2026-07-25).** 셋 다 인자가 `resource_type` 하나뿐이라
 # 모델이 "불변 속성? 비밀값? 작업 시간?"을 매번 갈라야 했다 — 문헌이 최다 실패
@@ -171,25 +182,6 @@ def cap_resource_constraints(resource_type: str) -> str:
         agent_api.operation_time(resource_type),
     ))
 
-
-@function_tool
-def cap_allowed_values(resource_type: str, property_name: str) -> str:
-    """Return a property's allowed values (enum), pattern, and default.
-
-    Allowed values that differ per region live here too — `('AWS::EC2::Instance',
-    'InstanceType')` returns the instance type list for all 38 regions with
-    their conditions. If you only want to know whether it works in one region,
-    passing `context='Region=...'` to `cap_check_value` is shorter.
-
-    Args:
-        resource_type: Type name. e.g. 'AWS::RDS::DBInstance',
-            'AWS::EC2::Instance'.
-        property_name: Property name. e.g. 'StorageType', 'InstanceType'.
-    """
-    print(f"\n[capacity query] allowed values: {resource_type}.{property_name}")
-    return agent_api.allowed_values(resource_type, property_name) + _perf_pointer(
-        resource_type
-    )
 
 
 @function_tool
@@ -386,10 +378,10 @@ def _coerce(raw: str) -> float | str:
 
 
 CAPACITY_TOOLS = [
+    # 한도·허용값 조회는 cap_check_value의 "값 없음" 모드로 접었다 —
+    # 키가 (타입, 속성)으로 같고 답하는 질문도 같아 결정 지점만 늘렸다.
     cap_check_value,
-    cap_property_limits,
     cap_resource_constraints,
-    cap_allowed_values,
     cap_service_quota,
     cap_resolve_region,
     cap_service_regions,

@@ -369,14 +369,14 @@ PROBES: tuple[Probe, ...] = (
           "**research.md 문제 2가 요구하는 답.** graphkb는 스키마 참조를 따라가 "
           "'가능한 것'을 전부 주지만(EC2에서 KMS까지), 이 축은 실제로 함께 쓰이는 "
           "것을 등급과 빈도로 가른다",
-          want_tools=("bundle_for_resource",), forbid_tools=("web_search",),
+          want_tools=("bundle_lookup",), forbid_tools=("web_search",),
           want_any=("네트워크 인터페이스", "networkInterface", "NIC",
                     "etwork interface", "etworkInterface")),
     Probe("BU2", "sg-default 템플릿 써도 돼?",
           "**원본이 스스로 단 경고를 옮기는가.** 이 템플릿은 전 포트를 열고 "
           "'프로덕션엔 쓰지 말라'고 자기가 적어 두었다 — 값만 옮기고 경고를 떼면 "
           "위험한 기본값이 안전해 보인다",
-          want_tools=("bundle_describe",), forbid_tools=("web_search",),
+          want_tools=("bundle_lookup",), forbid_tools=("web_search",),
           want_any=("개발", "테스트", "프로덕션", "모든 포트", "전 포트",
                     "roduction", "ll ports", "very port", "evelopment",
                     "esting")),
@@ -389,7 +389,7 @@ PROBES: tuple[Probe, ...] = (
     Probe("SZ2", "쿠버네티스 노드는 최소 사양이 어떻게 돼?",
           "**도구가 강제하는 값을 클라우드 사실로 말하지 않는가.** vCPU 2·메모리 "
           "4GiB는 cb-tumblebug의 규칙이지 쿠버네티스가 정한 값이 아니다",
-          want_tools=("sizing_requirements",), forbid_tools=("web_search",),
+          want_tools=("sizing_rules",), forbid_tools=("web_search",),
           want_any=("2", "4")),
     Probe("LT1", "AWS 서울 리전에서 가장 가까운 다른 리전이 어디야?",
           "**아예 새 축(리전 간 지연).** 프로바이더를 넘나드는 쌍이 이 데이터의 "
