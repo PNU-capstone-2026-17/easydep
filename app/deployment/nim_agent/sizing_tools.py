@@ -48,6 +48,12 @@ def sizing_rules(scope: str = "") -> str:
     - **`scope` given** → the minimums and required counts for it (e.g.
       `'k8s-node'` for the node floor, `'aws'` for that provider's rules), plus
       any workload reference points matching it.
+
+    **"How many X do I need?" is answered here**, not by the dependency or
+    limits axes — e.g. "how many subnets does a Kubernetes cluster need?"
+    (`scope='aws'` → `requiredSubnetCount: 2`). A schema says whether a field is
+    required; it does not say **how many**, and answering from the schema alone
+    produces "optional, one", which is wrong for a cluster.
     - **`scope` omitted** → every stored rule, plus the container size presets
       (nano~2xlarge).
 

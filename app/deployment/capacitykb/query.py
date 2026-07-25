@@ -315,6 +315,17 @@ def _condition_holds(constraint: Constraint, context: dict | None) -> bool | Non
     return None if unknown else True
 
 
+def _as_number(value):
+    """문자열로 온 수를 숫자로. 못 읽으면 None — **짐작해서 통과시키지 않는다.**"""
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        number = float(str(value).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
 def check_value(
     capacity: CapacitySet,
     type_id: str,
@@ -356,6 +367,24 @@ def check_value(
         weak = facts_only and not constraint.is_fact
         breached = False
         label = ""
+        if constraint.kind in ("min", "max") and not isinstance(value, (int, float)):
+            # **조용히 넘기지 않는다.** 예전엔 아래 `else: continue`로 빠져
+            # `checked`가 0이 되고 결론이 "알려진 제약이 없습니다"였다 — 제약을
+            # 쥐고도 **없다고 말한 것**이다(실측 2026-07-25: 문자열 '20000'으로
+            # Lambda Timeout을 물으면 max 900을 두고도 "제약 없음"이라 답했다).
+            # 도구 층이 숫자로 바꿔 주긴 하지만, 사실이 부르는 쪽의 타입에
+            # 좌우되면 안 된다 — 여기서 한 번 더 시도하고, 그래도 안 되면
+            # 못 쟀다는 사실을 남긴다.
+            number = _as_number(value)
+            if number is None:
+                unevaluated.append(
+                    f"{constraint.property}: there is a {constraint.kind} constraint "
+                    f"({brief(constraint.value)}), but the value given is not a number "
+                    f"so it could not be compared "
+                    f"(evidence {evidence_name(constraint.evidence)})"
+                )
+                continue
+            value = number
         if constraint.kind == "min" and isinstance(value, (int, float)):
             breached, label = value < constraint.value, "min"
         elif constraint.kind == "max" and isinstance(value, (int, float)):

@@ -76,6 +76,29 @@ def rules_of(
     )
 
 
+def search_rules(text: str, output_dir: Path | str | None = None) -> tuple[Rule, ...]:
+    """규칙을 **내용으로** 찾는다 — id·지표·설명까지 본다.
+
+    scope로만 찾으면 닿지 않는 것이 있다. 클러스터의 서브넷 개수 규칙은 scope가
+    `'aws'`인데(프로바이더별로 값이 다르므로 옳은 분류다), 사람은 '쿠버네티스'나
+    '클러스터'로 묻는다. 그때 "이 데이터셋에 없습니다"가 나가면 **있는 것을 없다고
+    말하는 것**이다 — bundlekb의 접두어 결함과 같은 계보(2026-07-25).
+
+    scope 정확 일치를 **대체하지 않고 보완한다.** `'aws'`는 여전히 프로바이더를
+    뜻해야 한다.
+    """
+    low = text.strip().lower()
+    if not low:
+        return ()
+    return tuple(
+        r
+        for r in all_rules(output_dir)
+        if low in " ".join(
+            str(x) for x in (r.id, r.metric, r.note or "", r.scope)
+        ).lower()
+    )
+
+
 def reserved_ips(provider: str, output_dir: Path | str | None = None) -> Rule | None:
     """이 프로바이더의 서브넷 예약 IP 수. **모르면 None** — 0이 아니다."""
     from sizingkb.model import RESERVED_IPS

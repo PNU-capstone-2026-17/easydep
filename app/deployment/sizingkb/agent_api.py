@@ -103,6 +103,16 @@ def requirements(
         for kind in (MINIMUM, REQUIRED_COUNT)
         for r in rules_of(kind, scope, output_dir)
     ]
+    if not found and scope:
+        # scope로 못 찾으면 **내용으로** 한 번 더 본다. 클러스터 서브넷 규칙은
+        # scope가 프로바이더('aws')라 '쿠버네티스'·'클러스터'로는 안 닿았다.
+        from sizingkb.dataset import search_rules
+
+        found = [
+            r
+            for r in search_rules(scope, output_dir)
+            if r.kind in (MINIMUM, REQUIRED_COUNT)
+        ]
     if not found:
         known = ", ".join(sorted({r.scope for r in all_rules(output_dir)}))
         return (

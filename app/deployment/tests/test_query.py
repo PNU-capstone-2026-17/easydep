@@ -290,23 +290,28 @@ def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) 
     assert "aws::accesspoint" not in flat
 
 
-def test_known_property_without_a_limit_is_not_called_missing() -> None:
+def test_hint_never_suggests_the_name_that_was_asked() -> None:
     """**있는 속성을 "없다"고 말하면서 같은 이름을 제안하던 자리.**
 
     `_property_hint`의 `known`은 *제약이 기록된* 속성 목록이라, 물어본 이름이 이미
     그 안에 있으면 difflib가 자기 자신을 닮은 이름으로 돌려줬다. 실측(2026-07-25):
     `AWS::Lambda::Function.Timeout` → "이 타입에 그런 속성이 없습니다. 혹시
-    Timeout?" — **거짓이고**(Lambda에 Timeout은 있다) 모델이 그대로 따르면 같은
-    질의를 반복하는 막다른 길이다.
+    Timeout?" — **거짓이고** 모델이 그대로 따르면 같은 질의를 반복하는 막다른 길이다.
 
-    맞는 말은 "안다, 다만 기록된 한도가 없다"이고, 그건 **무제한과 다르다**.
+    (그 실측을 좇다 더 깊은 원인도 나왔다: 숫자 제약에 문자열 값이 오면 조용히
+    건너뛰어 "제약 없음"이 됐다. 그건 `check_value` 쪽에서 고쳤다.)
     """
-    from capacitykb.agent_api import check
+    from capacitykb.agent_api import _property_hint, load_merged
+    from capacitykb.query import resolve_type
 
-    answer = check("AWS::Lambda::Function", "Timeout", "20000")
-    assert "no such property" not in answer
-    assert "we do know this property" in answer
-    assert "not the same as unlimited" in answer.replace("**", "")
+    capacity = load_merged()
+    assert capacity is not None, "산출물이 없다"
+    type_id = resolve_type(capacity, "AWS::Lambda::Function")
+
+    hint = _property_hint(capacity, type_id, "Timeout")
+    assert "no such property" not in hint
+    assert "we do know this property" in hint
+    assert "not the same as unlimited" in hint.replace("**", "")
 
 
 def test_a_genuinely_wrong_property_still_gets_pointed_at_the_right_one() -> None:
