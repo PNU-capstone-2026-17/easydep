@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from kbcommon.artifact import load_json, resolve
+from app.deployment.kbcommon.artifact import load_json, resolve
 
 ARTIFACT = "cloud-regions.json"
 

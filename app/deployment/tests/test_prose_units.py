@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from capacitykb.prose import _unit_from_name, _unit_of, extract_ranges
+from app.deployment.capacitykb.prose import _unit_from_name, _unit_of, extract_ranges
 
 
 # --- 이름이 단위를 말할 때 ---

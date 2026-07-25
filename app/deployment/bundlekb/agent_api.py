@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bundlekb.dataset import (
+from app.deployment.bundlekb.dataset import (
     MIN_SAMPLES,
     all_bundles,
     bundles_for,
@@ -31,9 +31,9 @@ from bundlekb.dataset import (
     is_built,
     load_warnings,
 )
-from bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
-from kbcommon.basis import describe
-from kbcommon.display import evidence_name
+from app.deployment.bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
+from app.deployment.kbcommon.basis import describe
+from app.deployment.kbcommon.display import evidence_name
 
 _MISSING = (
     "No resource-group dataset found. Build it with `python -m bundlekb build "

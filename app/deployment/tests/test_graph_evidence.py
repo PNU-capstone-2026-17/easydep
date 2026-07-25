@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import pytest
 
-from graphkb.agent_api import (
+from app.deployment.graphkb.agent_api import (
     _evidence_footer,
     _weakest_link,
     creation_order,
     deletion_impact,
     equivalent_types,
 )
-from graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.model import Edge, Graph, Node
 
 
 def _node(node_id: str, provider: str, layer: str = "vendor") -> Node:
@@ -59,7 +59,7 @@ def graph() -> Graph:
 
 def test_equivalent_types_shows_basis(graph, tmp_path, monkeypatch) -> None:
     """짐작이 단언으로 나가지 않도록 근거가 줄마다 붙는다."""
-    monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
+    monkeypatch.setattr("app.deployment.graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = equivalent_types("AWS::EC2::VPC", output_dir=tmp_path)
     flat = " ".join(text.split()).lower()
     assert "gcp::computenetwork" in flat
@@ -77,7 +77,7 @@ def test_transitive_equivalence_takes_the_weakest_link(graph) -> None:
 
 def test_guessed_equivalence_gets_a_warning(graph, tmp_path, monkeypatch) -> None:
     """클라우드마다 리소스를 나누는 결이 달라 딱 맞는 짝이 없을 수 있다."""
-    monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
+    monkeypatch.setattr("app.deployment.graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = equivalent_types("AWS::EC2::VPC", output_dir=tmp_path)
     flat = " ".join(text.split()).lower()
     assert "say 'the closest thing is', not 'x is y'" in flat
@@ -85,7 +85,7 @@ def test_guessed_equivalence_gets_a_warning(graph, tmp_path, monkeypatch) -> Non
 
 def test_deletion_impact_summarises_evidence(graph, tmp_path, monkeypatch) -> None:
     """466건짜리 목록에 줄마다 붙이면 노이즈라 **블록당 한 번** 밝힌다."""
-    monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
+    monkeypatch.setattr("app.deployment.graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = deletion_impact("AWS::EC2::VPC", output_dir=tmp_path)
     flat = " ".join(text.split()).lower()
     assert "evidence for these relationships" in flat
@@ -94,7 +94,7 @@ def test_deletion_impact_summarises_evidence(graph, tmp_path, monkeypatch) -> No
 
 
 def test_creation_order_shows_evidence(graph, tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
+    monkeypatch.setattr("app.deployment.graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = creation_order("AWS::EC2::Subnet", output_dir=tmp_path)
     flat = " ".join(text.split()).lower()
     assert "evidence for these relationships" in flat
@@ -114,7 +114,7 @@ def test_reviewed_guess_still_reads_as_a_guess(graph) -> None:
     g = Graph()
     for n in ("a", "b"):
         g.add_node(_node(f"aws::{n}", "aws"))
-    from kbcommon.basis import describe
+    from app.deployment.kbcommon.basis import describe
 
     assert "a guess" in describe(reviewed_guess.basis, reviewed_guess.reviewed)
     assert "reviewed" in describe(reviewed_guess.basis, reviewed_guess.reviewed)

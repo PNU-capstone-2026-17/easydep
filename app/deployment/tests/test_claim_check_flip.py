@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from tools.claim_check import check, flipped
+from app.deployment.tools.claim_check import check, flipped
 
 # `cap_check_value`의 조건부 판정 출력 그대로.
 TOOL = (
@@ -64,7 +64,7 @@ def test_version_numbers_survive_clause_splitting() -> None:
     절을 `[.!?]`로 자르면 `16.4`가 `16`과 `4`로 쪼개져 통째로 사라진다 —
     처음 구현에서 실제로 그랬고, 위 회귀 테스트가 잡았다.
     """
-    from tools.claim_check import _CLAUSE
+    from app.deployment.tools.claim_check import _CLAUSE
 
     assert _CLAUSE.split("16.4는 안 됩니다.") == ["16.4는 안 됩니다", ""]
     # 문장 끝 마침표는 여전히 자른다

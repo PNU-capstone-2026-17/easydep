@@ -55,9 +55,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import cache_dir
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import cache_dir
+from app.deployment.kbcommon.sources import SOURCES
 
 PROVIDER = "ibm"
 
@@ -258,7 +258,7 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
             }
         ],
     }
-    from perfkb.dataset import schema
+    from app.deployment.perfkb.dataset import schema
 
     write_dataset(output, payload, schema())
     print(f"IBM 성능 신호: {len(records)}건 → {output}")

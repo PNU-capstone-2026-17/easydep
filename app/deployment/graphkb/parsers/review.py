@@ -49,7 +49,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
-from graphkb.model import Edge, Graph
+from app.deployment.graphkb.model import Edge, Graph
 
 REVIEW_DIR = Path(__file__).resolve().parent.parent / "reviewed"
 

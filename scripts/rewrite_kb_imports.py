@@ -33,6 +33,7 @@ from pathlib import Path
 PACKAGES = frozenset({
     "appkb", "bundlekb", "capacitykb", "costkb", "envkb", "graphkb",
     "kbcommon", "nim_agent", "patternkb", "perfkb", "sizingkb",
+    "tools",  # 실험 하네스 — 테스트가 여기서 임포트한다
 })
 
 #: AST가 못 보는 곳에 모듈 경로가 문자열로 있는 자리. 손으로 고칠 목록을 만든다.

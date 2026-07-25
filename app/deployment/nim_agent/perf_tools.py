@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from perfkb import agent_api
+from app.deployment.perfkb import agent_api
 
 
 @function_tool

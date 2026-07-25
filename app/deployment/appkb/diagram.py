@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from appkb.plan import DeploymentPlan, PlanNode, needs_hedge
+from app.deployment.appkb.plan import DeploymentPlan, PlanNode, needs_hedge
 
 _STEREOTYPE = {
     "designer": "specified by the designer",

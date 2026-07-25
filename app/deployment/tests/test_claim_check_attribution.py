@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from tools.claim_check import check, leaked_internals, misattributed
+from app.deployment.tools.claim_check import check, leaked_internals, misattributed
 
 KNOWN = frozenset({
     "cap_allowed_values", "cost_describe_spec", "perf_instance_profile",

@@ -41,7 +41,11 @@ def cache_dir(namespace: str = DEFAULT_NAMESPACE) -> Path:
         namespace: 캐시를 나눌 이름. 기본값은 모든 KB가 공유하는 "cloudkb".
     """
     env = os.environ.get("CLOUDKB_CACHE_DIR") or os.environ.get("GRAPHKB_CACHE_DIR")
-    return Path(env) if env else Path(".cache") / namespace
+    if env:
+        return Path(env)
+    # 저장소 기준이다. CWD 기준이면 easydep처럼 다른 데서 부르는 프로세스마다
+    # 캐시가 흩어진다 — artifact.resolve()가 산출물에 대해 이미 내린 결론과 같다.
+    return Path(__file__).resolve().parent.parent / ".cache" / namespace
 
 
 def fetch_cached(
@@ -203,7 +207,7 @@ def describe_source(path: Path, source_key: str | None = None) -> dict:
     프로버넌스가 없으면(로컬 파일을 직접 넘긴 경우 등) 그 자리에서 해시를 계산한다 —
     "무엇을 썼는지 모른다"는 답이 산출물에 남지 않게 한다.
     """
-    from kbcommon.sources import SOURCES
+    from app.deployment.kbcommon.sources import SOURCES
 
     record = provenance(path) or {}
     if "sha256" not in record and path.exists():
@@ -251,7 +255,7 @@ def describe_source_set(paths: list[Path], source_key: str | None = None) -> dic
         "files": len(parts),
         "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
-    from kbcommon.sources import SOURCES as _S
+    from app.deployment.kbcommon.sources import SOURCES as _S
 
     if source_key and (source := _S.get(source_key)):
         record = {

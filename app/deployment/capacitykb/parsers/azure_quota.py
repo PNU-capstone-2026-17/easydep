@@ -27,10 +27,10 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Quota
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.invariants import announce
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Quota
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.sources import SOURCES
 
 DEFAULT_BASE_URL = SOURCES["azure-limits-doc"].url
 #: 기본은 **전체**다(핀 SHA 기준 `includes/*-limits*.md` 95개 — 산출물 `_source.files`와

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import jsonschema
 
-from kbcommon import artifact
-from kbcommon.artifact import read_dataset
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.artifact import read_dataset
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 

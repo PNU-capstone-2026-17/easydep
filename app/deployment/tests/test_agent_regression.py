@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _results():
-    from tools.agent_probe import PROBES, run_probes
+    from app.deployment.tools.agent_probe import PROBES, run_probes
 
     if not hasattr(_results, "cache"):
         # 질의 하나당 한 번만 태운다 — 테스트마다 다시 부르면 9배가 된다.

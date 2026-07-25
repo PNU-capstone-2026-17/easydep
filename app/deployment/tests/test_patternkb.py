@@ -13,12 +13,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kbcommon.basis import INFERRED, basis_of, is_fact, needs_hedge
-from kbcommon.display import evidence_name
-from patternkb import dataset, query
-from patternkb.agent_api import _MISSING, coverage_text, search_patterns
-from patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
-from patternkb.parsers.corpus import (
+from app.deployment.kbcommon.basis import INFERRED, basis_of, is_fact, needs_hedge
+from app.deployment.kbcommon.display import evidence_name
+from app.deployment.patternkb import dataset, query
+from app.deployment.patternkb.agent_api import _MISSING, coverage_text, search_patterns
+from app.deployment.patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
+from app.deployment.patternkb.parsers.corpus import (
     SECTION_MINIMUMS,
     _fallback_title,
     _invariants,
@@ -184,7 +184,7 @@ def test_content_fragments_fall_back_to_filename_not_section_heading() -> None:
 
 def test_invariants_catch_section_collapse_and_empty_docs() -> None:
     """문서 재편(하위 증발)과 빈 문서를 빌드가 잡는다 — svcmap 행수 검사 계보."""
-    from kbcommon.invariants import run
+    from app.deployment.kbcommon.invariants import run
 
     good_docs = []
     for section, minimum in SECTION_MINIMUMS.items():
@@ -225,7 +225,7 @@ _HTML = """
 def test_html_extraction_takes_article_body_only() -> None:
     """구조 파싱이 아니라 본문 추출이다 — nav·script·toc·푸터는 버리고,
     article 밖은 아예 안 본다(HTML 변주에 파서가 깨지지 않게)."""
-    from patternkb.parsers.gcp_framework import extract_text
+    from app.deployment.patternkb.parsers.gcp_framework import extract_text
 
     title, body = extract_text(_HTML)
     assert title == "Optimize continuously"
@@ -236,13 +236,13 @@ def test_html_extraction_takes_article_body_only() -> None:
 def test_html_without_article_yields_nothing() -> None:
     """article 영역이 없으면 담지 않는다 — 빈 문서보다 부재가 낫고,
     급감은 최소 편수 불변식이 잡는다."""
-    from patternkb.parsers.gcp_framework import extract_text
+    from app.deployment.patternkb.parsers.gcp_framework import extract_text
 
     assert extract_text("<html><body><p>x</p></body></html>") == ("", "")
 
 
 def test_page_enumeration_excludes_printable_duplicates() -> None:
-    from patternkb.parsers.gcp_framework import enumerate_pages
+    from app.deployment.patternkb.parsers.gcp_framework import enumerate_pages
 
     index = (
         '<a href="/architecture/framework/cost-optimization">a</a>'

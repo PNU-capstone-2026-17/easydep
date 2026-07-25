@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from graphkb.model import Edge, Graph
-from graphkb.parsers.cfn import parse_schemas
+from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.parsers.cfn import parse_schemas
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 CFN_DIR = FIXTURE_DIR / "cfn"

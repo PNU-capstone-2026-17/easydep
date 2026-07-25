@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 import jsonschema
 
-from kbcommon.basis import basis_of, is_fact
+from app.deployment.kbcommon.basis import basis_of, is_fact
 
 ConstraintKind = Literal[
     "min",
@@ -377,13 +377,13 @@ class CapacitySet:
         Returns:
             불변식 결과. `report` 등급 위반은 **호출자가 알려야 한다.**
         """
-        from capacitykb.invariants import INVARIANTS
-        from kbcommon.artifact import write_dataset
+        from app.deployment.capacitykb.invariants import INVARIANTS
+        from app.deployment.kbcommon.artifact import write_dataset
 
         return write_dataset(path, self.to_dict(), _schema(), INVARIANTS)
 
     @classmethod
     def load(cls, path: Path) -> CapacitySet:
-        from kbcommon.artifact import load_json
+        from app.deployment.kbcommon.artifact import load_json
 
         return cls.from_dict(load_json(path))

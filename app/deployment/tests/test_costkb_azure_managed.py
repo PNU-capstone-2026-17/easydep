@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import pytest
 
-from kbcommon.artifact import DEFAULT_OUTPUT
+from app.deployment.kbcommon.artifact import DEFAULT_OUTPUT
 
-from costkb.dataset import managed_axes
-from costkb.parsers.azure_managed import (
+from app.deployment.costkb.dataset import managed_axes
+from app.deployment.costkb.parsers.azure_managed import (
     AXIS_CAPACITY,
     AXIS_INSTANCE,
     AXIS_USAGE,
@@ -175,7 +175,7 @@ def test_azure_plan_managed_nodes_carry_billing_axes(costkb_committed) -> None:
     import json
     from pathlib import Path
 
-    from nim_agent.design_tools import _render_plan_text, compose
+    from app.deployment.nim_agent.design_tools import _render_plan_text, compose
 
     design = json.loads(
         (Path(__file__).resolve().parent.parent / "appkb" / "examples"
@@ -196,7 +196,7 @@ def test_aws_plan_keeps_the_no_price_notice() -> None:
     import json
     from pathlib import Path
 
-    from nim_agent.design_tools import _render_plan_text, compose
+    from app.deployment.nim_agent.design_tools import _render_plan_text, compose
 
     design = json.loads(
         (Path(__file__).resolve().parent.parent / "appkb" / "examples"

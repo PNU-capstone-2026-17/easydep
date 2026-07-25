@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from capacitykb import agent_api
+from app.deployment.capacitykb import agent_api
 
 
 # 실측에서 에이전트가 바로 이 질문에 도구를 하나도 부르지 않고 "리전별 제공 여부는
@@ -125,9 +125,9 @@ def _perf_pointer(resource_type: str) -> str:
     perfkb를 import할 수 없고, 양쪽을 다 보는 층은 여기뿐이다.
     """
     try:
-        from capacitykb.agent_api import load_merged
-        from capacitykb.query import resolve_type
-        from perfkb.agent_api import hardware_summary
+        from app.deployment.capacitykb.agent_api import load_merged
+        from app.deployment.capacitykb.query import resolve_type
+        from app.deployment.perfkb.agent_api import hardware_summary
 
         capacity = load_merged()
         if capacity is None:
@@ -224,7 +224,7 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
             tencent · ibm · ncp · kt · nhn · openstack.
     """
     print(f"\n[capacity query] resolve region: {place!r} provider={provider!r}")
-    from envkb.regions import region_lookup
+    from app.deployment.envkb.regions import region_lookup
 
     return region_lookup(place, provider)
 
@@ -261,7 +261,7 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
         region: Region code (optional). e.g. 'asia-northeast3',
             'ap-northeast-2'.
     """
-    from envkb import carbon
+    from app.deployment.envkb import carbon
 
     print(f"\n[capacity query] region carbon: {provider!r} region={region!r}")
     return carbon.describe(provider, region)
@@ -284,7 +284,7 @@ def cap_region_latency(source_region: str, target_region: str | None = None) -> 
         source_region: `provider-region` form. e.g. 'aws-ap-northeast-2'.
         target_region: Same form (optional). Given, only that pair.
     """
-    from envkb import latency
+    from app.deployment.envkb import latency
 
     print(f"\n[capacity query] region latency: {source_region!r} → {target_region!r}")
     return latency.describe(source_region, target_region)
@@ -315,7 +315,7 @@ def cap_basic_image(
             Azure.
         architecture: 'x86_64' | 'arm64' (optional).
     """
-    from envkb import images
+    from app.deployment.envkb import images
 
     print(
         f"\n[capacity query] basic image: {provider!r} region={region!r} arch={architecture!r}"
@@ -339,7 +339,7 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
             'AWS::RDS::DBInstance'.
         version: Version (optional). e.g. '1.28', '8.0'.
     """
-    from envkb import lifecycle
+    from app.deployment.envkb import lifecycle
 
     print(f"\n[capacity query] lifecycle: {service!r} version={version!r}")
     return lifecycle.describe(service, version)
@@ -366,7 +366,7 @@ def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str
         resource: Core resource. vNet · subnet · securityGroup · sshKey · vm ·
             nlb · k8sCluster · k8sNodeGroup · dataDisk · customImage.
     """
-    from envkb import cbspider
+    from app.deployment.envkb import cbspider
 
     print(f"\n[capacity query] CSP support: csp={csp!r} resource={resource!r}")
     return cbspider.describe(csp, resource)

@@ -33,11 +33,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.invariants import announce
-from kbcommon.sources import SOURCES
-from kbcommon.type_ids import AzureTypeIndex, make_type_id, read_azure_index
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.kbcommon.type_ids import AzureTypeIndex, make_type_id, read_azure_index
 
 # graphkb/parsers/azure.py와 **같은 커밋**을 봐야 한다 (kbcommon/sources.py에서 관리).
 DEFAULT_BASE_URL = SOURCES["bicep-types-az"].url
@@ -204,7 +204,7 @@ def _fetch_relative(base: str, rel_path: str, *, refresh: bool) -> Path:
     본체는 kbcommon.fetch로 올렸다(graphkb AVM이 이 비공개를 빌려 쓰던 관통을
     끊음). 캐시 파일명("azure-…")은 그대로다.
     """
-    from kbcommon.fetch import fetch_relative
+    from app.deployment.kbcommon.fetch import fetch_relative
 
     return fetch_relative(base, rel_path, cache_prefix="azure-", refresh=refresh)
 

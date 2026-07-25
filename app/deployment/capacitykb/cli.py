@@ -21,7 +21,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from capacitykb.model import CapacitySet
+from app.deployment.capacitykb.model import CapacitySet
 
 DEFAULT_OUTPUTS = {
     "cfn": Path("output") / "aws-capacity.json",
@@ -54,7 +54,7 @@ def _tpcsp_keys() -> frozenset[str]:
     `nhn-capacity.json`에 Azure 쿼터 542건이 쓰였다. 조용히 틀린 산출물이 나오는
     쪽이 빌드가 죽는 것보다 나쁘다.
     """
-    from capacitykb.parsers.tpcsp import PROVIDERS
+    from app.deployment.capacitykb.parsers.tpcsp import PROVIDERS
 
     return frozenset(PROVIDERS)
 
@@ -119,50 +119,50 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
     if args.source == "cfn":
-        from capacitykb.parsers import cfn
+        from app.deployment.capacitykb.parsers import cfn
 
         kwargs: dict = {"prose": args.prose, "refresh": args.refresh}
         if args.zip_url:
             kwargs["zip_url"] = args.zip_url
         cfn.build(output, **kwargs)
     elif args.source == "aws-limits":
-        from capacitykb.parsers import aws_limits
+        from app.deployment.capacitykb.parsers import aws_limits
 
         aws_limits.build(output, refresh=args.refresh)
     elif args.source == "aws-tf":
-        from capacitykb.parsers import tpaws
+        from app.deployment.capacitykb.parsers import tpaws
 
         tpaws.build(output, refresh=args.refresh)
     elif args.source == "aws-regions":
-        from capacitykb.parsers import cfnlint
+        from app.deployment.capacitykb.parsers import cfnlint
 
         cfnlint.build(output, refresh=args.refresh)
     elif args.source == "aws-conditional":
-        from capacitykb.parsers import cfnlint
+        from app.deployment.capacitykb.parsers import cfnlint
 
         cfnlint.build_conditions(output, refresh=args.refresh)
     elif args.source in _tpcsp_keys():
-        from capacitykb.parsers import tpcsp
+        from app.deployment.capacitykb.parsers import tpcsp
 
         tpcsp.build(output, key=args.source, refresh=args.refresh)
     elif args.source == "aws-endpoints":
-        from capacitykb.parsers import aws_endpoints
+        from app.deployment.capacitykb.parsers import aws_endpoints
 
         aws_endpoints.build(output, refresh=args.refresh)
     elif args.source == "azure-mutability":
-        from capacitykb.parsers import azure_mutability
+        from app.deployment.capacitykb.parsers import azure_mutability
 
         azure_mutability.build(output, refresh=args.refresh)
     elif args.source == "azure-secret":
-        from capacitykb.parsers import azure_secret
+        from app.deployment.capacitykb.parsers import azure_secret
 
         azure_secret.build(output, refresh=args.refresh)
     elif args.source == "azure-operations":
-        from capacitykb.parsers import azure_operations
+        from app.deployment.capacitykb.parsers import azure_operations
 
         azure_operations.build(output, refresh=args.refresh)
     elif args.source == "gcp":
-        from capacitykb.parsers import gcp
+        from app.deployment.capacitykb.parsers import gcp
 
         kwargs = {"refresh": args.refresh, "provider": args.provider}
         if args.tag:
@@ -171,7 +171,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["crd_dir"] = args.crd_dir
         gcp.build(output, **kwargs)
     elif args.source == "azure":
-        from capacitykb.parsers import azure
+        from app.deployment.capacitykb.parsers import azure
 
         kwargs = {"refresh": args.refresh}
         if args.base_url:
@@ -182,7 +182,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             )
         azure.build(output, **kwargs)
     else:
-        from capacitykb.parsers import azure_quota
+        from app.deployment.capacitykb.parsers import azure_quota
 
         kwargs = {"refresh": args.refresh}
         if args.base_url:
@@ -218,8 +218,8 @@ def _coerce(raw: str) -> float | str:
 
 
 def _cmd_query(args: argparse.Namespace) -> int:
-    from capacitykb import agent_api
-    from capacitykb.query import (
+    from app.deployment.capacitykb import agent_api
+    from app.deployment.capacitykb.query import (
         check_value,
         find_quota,
         immutable_properties,
@@ -292,9 +292,9 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     정답이 있는 시험지라 정밀도 프록시가 된다 — 불일치가 1건이라도 나오면
     정규식 버그 신호이므로 실패로 처리한다.
     """
-    from capacitykb.parsers.cfn import DEFAULT_ZIP_URL, _scalar_type, iter_schemas
-    from capacitykb.prose import extract_ranges
-    from kbcommon.fetch import fetch_cached
+    from app.deployment.capacitykb.parsers.cfn import DEFAULT_ZIP_URL, _scalar_type, iter_schemas
+    from app.deployment.capacitykb.prose import extract_ranges
+    from app.deployment.kbcommon.fetch import fetch_cached
 
     zip_path = fetch_cached(
         args.zip_url or DEFAULT_ZIP_URL, "CloudformationSchema.zip", refresh=args.refresh

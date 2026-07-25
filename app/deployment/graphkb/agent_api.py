@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from graphkb.model import Graph
-from graphkb.query import (
+from app.deployment.graphkb.model import Graph
+from app.deployment.graphkb.query import (
     _dependency_edges,
     dependency_chain_detail,
     dependents,
@@ -23,9 +23,9 @@ from graphkb.query import (
     rank_types as _rank_types,
     resolve_node,
 )
-from kbcommon import artifact
-from kbcommon.basis import describe, is_fact, needs_hedge
-from kbcommon.display import display, evidence_name
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.basis import describe, is_fact, needs_hedge
+from app.deployment.kbcommon.display import display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
 GRAPH_FILES = (

@@ -34,9 +34,9 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import cache_dir
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import cache_dir
+from app.deployment.kbcommon.sources import SOURCES
 
 _UA = "cloudkb-build (https://github.com/cloud-barista)"
 

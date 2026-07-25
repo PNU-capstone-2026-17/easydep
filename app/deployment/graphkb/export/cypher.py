@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphkb.model import Graph
-from graphkb.neo4j_load import cypher_script
+from app.deployment.graphkb.model import Graph
+from app.deployment.graphkb.neo4j_load import cypher_script
 
 
 def write_cypher(graph: Graph, path: Path) -> None:

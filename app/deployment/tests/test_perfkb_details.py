@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from perfkb.parsers.details import (
+from app.deployment.perfkb.parsers.details import (
     DetailsMismatch,
     go_bool,
     go_field,
@@ -161,7 +161,7 @@ def test_region_fold_is_conservative_not_first_wins() -> None:
     성능 KB에서는 과대 진술이 과소 진술보다 해롭다 — "이 정도는 난다"고 했다가
     안 나는 것이 "더 날 수도 있다"보다 나쁘다.
     """
-    from perfkb.dataset import _fold_regions
+    from app.deployment.perfkb.dataset import _fold_regions
 
     records = [
         {"provider": "aws", "specName": "c8gn.48xlarge", "region": "me-central-1",
@@ -178,7 +178,7 @@ def test_region_fold_is_conservative_not_first_wins() -> None:
 
 
 def test_region_fold_leaves_invariant_fields_alone() -> None:
-    from perfkb.dataset import _fold_regions
+    from app.deployment.perfkb.dataset import _fold_regions
 
     records = [
         {"provider": "aws", "specName": "t3.micro", "region": "us-east-1",
@@ -197,8 +197,8 @@ def test_region_invariance_assumption_is_checked_not_assumed() -> None:
     가정을 주석에 적어 두는 것과 검사하는 것은 다르다. 상류가 리전별로 다른 값을
     주기 시작하면 접기가 조용히 임의의 답을 낸다.
     """
-    from kbcommon.invariants import run
-    from perfkb.invariants import INVARIANTS
+    from app.deployment.kbcommon.invariants import run
+    from app.deployment.perfkb.invariants import INVARIANTS
 
     ok = {"specs": [
         {"provider": "aws", "specName": "t3.micro", "sustainedCpu": {"value": False}},

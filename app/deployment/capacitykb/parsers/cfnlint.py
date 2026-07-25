@@ -30,9 +30,9 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import describe_source_set
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "cfn-lint-region"
 #: `us-east-1` · `ap-northeast-2` 꼴만 리전으로 본다. `"all"`은 리전이 아니다.
@@ -151,8 +151,8 @@ def parse_wheel(
 
 
 def build(output: Path, *, refresh: bool = False) -> CapacitySet:
-    from capacitykb.parsers.cfn import iter_schemas
-    from kbcommon.fetch import fetch_cached
+    from app.deployment.capacitykb.parsers.cfn import iter_schemas
+    from app.deployment.kbcommon.fetch import fetch_cached
 
     source = SOURCES["cfn-lint"]
     wheel = fetch_cached(source.url, f"cfn-lint-{source.pin}.whl", refresh=refresh)
@@ -319,8 +319,8 @@ def parse_conditions(
 
 
 def build_conditions(output: Path, *, refresh: bool = False) -> CapacitySet:
-    from capacitykb.parsers.cfn import iter_schemas
-    from kbcommon.fetch import fetch_cached
+    from app.deployment.capacitykb.parsers.cfn import iter_schemas
+    from app.deployment.kbcommon.fetch import fetch_cached
 
     source = SOURCES["cfn-lint"]
     wheel = fetch_cached(source.url, f"cfn-lint-{source.pin}.whl", refresh=refresh)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.model import Edge, Graph, Node
 
 # 생성 순서 제약으로 취급하는 엣지 종류 (equivalent_to는 순서와 무관)
 _DEPENDENCY_EDGE_TYPES = frozenset({"references", "contained_in"})

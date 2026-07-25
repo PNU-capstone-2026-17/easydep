@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from appkb.diagram import parse_back, render
-from appkb.plan import (
+from app.deployment.appkb.diagram import parse_back, render
+from app.deployment.appkb.plan import (
     ORIGIN_DESIGN,
     ORIGIN_DESIGNER,
     ORIGIN_INFERRED,
@@ -21,7 +21,7 @@ from appkb.plan import (
     PlanNode,
     needs_hedge,
 )
-from appkb.verify import (
+from app.deployment.appkb.verify import (
     unhedged_claims,
     verify_against_requirements,
     verify_diagram,

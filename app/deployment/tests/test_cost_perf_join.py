@@ -18,8 +18,8 @@ import json
 
 import pytest
 
-from costkb import agent_api as cost_api
-from perfkb import dataset as perf_dataset
+from app.deployment.costkb import agent_api as cost_api
+from app.deployment.perfkb import dataset as perf_dataset
 
 
 # --- 1. costkb annotate 확장점 (perfkb 없이) ---
@@ -136,7 +136,7 @@ def perf_absent(tmp_path, monkeypatch):
 
 
 def test_bridge_warns_on_known_burst_spec(perf_built) -> None:
-    from nim_agent.cost_tools import _perf_annotate
+    from app.deployment.nim_agent.cost_tools import _perf_annotate
 
     warning = _perf_annotate(
         {"id": "aws+us-east-1+t3a.medium", "provider": "aws", "specName": "t3a.medium"}
@@ -150,7 +150,7 @@ def test_bridge_joins_bundled_spec_without_id(perf_built) -> None:
     예전엔 여기서 조용히 None이 나왔고, 번들이 t3.*/B*/e2-*라 추천 상위가 통째로
     무경고였다.
     """
-    from nim_agent.cost_tools import _perf_annotate
+    from app.deployment.nim_agent.cost_tools import _perf_annotate
 
     warning = _perf_annotate({"provider": "aws", "specName": "t3.medium"})
     assert warning is not None and "크레딧" in warning
@@ -158,7 +158,7 @@ def test_bridge_joins_bundled_spec_without_id(perf_built) -> None:
 
 def test_bridge_distinguishes_untracked_from_ok(perf_built) -> None:
     """**C4 회귀**: 미추적·레코드없음·정상이 서로 다른 출력을 낸다."""
-    from nim_agent.cost_tools import _perf_annotate
+    from app.deployment.nim_agent.cost_tools import _perf_annotate
 
     untracked = _perf_annotate({"provider": "alibaba", "specName": "ecs.t5-lc1m2.large"})
     no_record = _perf_annotate({"provider": "aws", "specName": "t3.large"})
@@ -172,7 +172,7 @@ def test_bridge_distinguishes_untracked_from_ok(perf_built) -> None:
 
 def test_bridge_failopens_when_perfkb_absent(perf_absent) -> None:
     """미빌드는 경고를 지어내지 않는다 — 후보 줄은 비우고 꼬리말로만 알린다."""
-    from nim_agent.cost_tools import _perf_annotate, _perf_footer
+    from app.deployment.nim_agent.cost_tools import _perf_annotate, _perf_footer
 
     spec = {"id": "aws+us-east-1+t3a.medium", "provider": "aws", "specName": "t3a.medium"}
     assert _perf_annotate(spec) is None
@@ -182,7 +182,7 @@ def test_bridge_failopens_when_perfkb_absent(perf_absent) -> None:
 
 def test_bridge_survives_corrupted_output(tmp_path, monkeypatch) -> None:
     """잘린 산출물에 추천 전체가 죽지 않는다 (결함 (마)의 조인 측)."""
-    from nim_agent.cost_tools import _perf_annotate
+    from app.deployment.nim_agent.cost_tools import _perf_annotate
 
     (tmp_path / "tumblebug-perf.json").write_text('{"_note": "잘림", "spe', encoding="utf-8")
     monkeypatch.setattr(perf_dataset, "DEFAULT_OUTPUT_DIR", tmp_path)
@@ -194,7 +194,7 @@ def test_bridge_survives_corrupted_output(tmp_path, monkeypatch) -> None:
 
 
 def test_footer_explains_silence_when_built(perf_built) -> None:
-    from nim_agent.cost_tools import _perf_footer
+    from app.deployment.nim_agent.cost_tools import _perf_footer
 
     footer = _perf_footer([{"provider": "aws", "specName": "c5.large"}])
     assert footer is not None
@@ -206,7 +206,7 @@ def test_footer_does_not_call_partial_candidates_confirmed(perf_partial) -> None
     `_warning_for`가 아무것도 못 찾는다. 그걸 `ok`와 같이 다루면 꼬리말이
     "경고가 없는 후보는 성능 확인됨"이라고 **거짓말**한다.
     """
-    from nim_agent.cost_tools import _perf_footer
+    from app.deployment.nim_agent.cost_tools import _perf_footer
 
     mixed = _perf_footer([
         {"provider": "aws", "specName": "c5.large"},
@@ -220,7 +220,7 @@ def test_footer_speaks_when_every_candidate_is_partial(perf_partial) -> None:
     """후보가 **전부** partial이면 두 갈래에 안 걸려 꼬리말이 통째로 사라졌다 —
     그러면 다시 침묵이 안전 신호로 읽힌다(결함 C4가 되돌아오는 자리).
     """
-    from nim_agent.cost_tools import _perf_footer
+    from app.deployment.nim_agent.cost_tools import _perf_footer
 
     footer = _perf_footer([{"provider": "ibm", "specName": "bx2-2x8"}])
     assert footer is not None
@@ -232,7 +232,7 @@ def test_footer_speaks_when_every_candidate_is_partial(perf_partial) -> None:
 
 def test_bundle_mode_recommendation_carries_warning(perf_built) -> None:
     """conftest가 강제하는 번들 36건 모드에서 t3.medium이 경고와 함께 1순위로 나온다."""
-    from nim_agent.cost_tools import _perf_annotate, _perf_footer
+    from app.deployment.nim_agent.cost_tools import _perf_annotate, _perf_footer
 
     # limit=4: t3.medium(us-east-1) / t3.medium(ap-northeast-2) / t3.large / c5.large
     # — 세 상태(경고·정보없음·정상)가 한 블록에 다 나오는 최소 크기다.

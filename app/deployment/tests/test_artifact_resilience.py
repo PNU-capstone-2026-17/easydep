@@ -17,9 +17,9 @@ import json
 
 import pytest
 
-from costkb import agent_api as cost_api
-from costkb import dataset as cost_dataset
-from kbcommon.artifact import ArtifactInvalid, read_dataset, write_dataset
+from app.deployment.costkb import agent_api as cost_api
+from app.deployment.costkb import dataset as cost_dataset
+from app.deployment.kbcommon.artifact import ArtifactInvalid, read_dataset, write_dataset
 
 _SCHEMA = {
     "type": "object",

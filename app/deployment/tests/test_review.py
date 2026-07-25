@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness, load_review
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.parsers.review import apply_review, check_freshness, load_review
 
 
 def _node(id_: str) -> Node:

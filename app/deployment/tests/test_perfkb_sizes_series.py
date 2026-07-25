@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-from kbcommon.basis import INFERRED, STATED, basis_of
-from perfkb.parsers.azure_sizes import parse_tables
-from perfkb.parsers.azure_sizes import enrich as azure_enrich
-from perfkb.parsers.gcp_series import parse_series_sql
-from perfkb.parsers.gcp_series import enrich as gcp_enrich
+from app.deployment.kbcommon.basis import INFERRED, STATED, basis_of
+from app.deployment.perfkb.parsers.azure_sizes import parse_tables
+from app.deployment.perfkb.parsers.azure_sizes import enrich as azure_enrich
+from app.deployment.perfkb.parsers.gcp_series import parse_series_sql
+from app.deployment.perfkb.parsers.gcp_series import enrich as gcp_enrich
 
 
 # --- 근거 등급 -----------------------------------------------------------------
@@ -68,7 +68,7 @@ def test_generation_flags_false_only_and_never_current_sizes() -> None:
     최신 주장으로 승격하지 않는다(False만 표시, 미기재는 None 유지)."""
     import re
 
-    from perfkb.parsers.azure_sizes import _GENERATION_TABLE
+    from app.deployment.perfkb.parsers.azure_sizes import _GENERATION_TABLE
 
     patterns = [re.compile(p) for pats in _GENERATION_TABLE.values() for p in pats]
 
@@ -88,7 +88,7 @@ def test_generation_flags_false_only_and_never_current_sizes() -> None:
 def test_generation_enrich_marks_false_without_claiming_true() -> None:
     import re
 
-    from perfkb.parsers.azure_sizes import enrich
+    from app.deployment.perfkb.parsers.azure_sizes import enrich
 
     patterns = [re.compile(r"^standard_d\d+_v2$")]
     specs = [

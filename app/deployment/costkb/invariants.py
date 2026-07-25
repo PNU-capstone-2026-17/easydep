@@ -18,7 +18,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 
-from kbcommon.invariants import (
+from app.deployment.kbcommon.invariants import (
     Invariant,
     Violation,
     accelerator_fields_agree,

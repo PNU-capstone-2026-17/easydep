@@ -26,9 +26,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
-from sizingkb.model import PRESET, Rule, RuleSet
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.sizingkb.model import PRESET, Rule, RuleSet
 
 EVIDENCE = "bitnami-preset"
 
@@ -97,7 +97,7 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, out.to_dict(), _schema())
     print(f"프리셋 사이징: 규칙 {len(rules)}개 ({len(seen)}종) → {output}")

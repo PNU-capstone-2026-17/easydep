@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from perfkb import agent_api, dataset
-from perfkb.parsers.ibm_catalog import DROPPED_CONSTANT_FIELDS, to_record
+from app.deployment.perfkb import agent_api, dataset
+from app.deployment.perfkb.parsers.ibm_catalog import DROPPED_CONSTANT_FIELDS, to_record
 
 PROFILE = {
     "name": "bx2-16x64",
@@ -154,7 +154,7 @@ def test_record_with_signals_is_still_ok(built) -> None:
 
 def test_committed_artifact_discloses_its_redistribution_status() -> None:
     """저장소에 넣기로 한 이상 **파일 하나만 떼어 봐도** 출처와 허가 상태가 보여야 한다."""
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     packed = artifact.BUNDLED_DIR / f"{dataset.EXTRA_FILENAMES[0]}.gz"
     if not packed.exists():

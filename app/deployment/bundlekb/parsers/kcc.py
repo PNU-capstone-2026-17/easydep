@@ -45,9 +45,9 @@ import sys
 import tarfile
 from pathlib import Path
 
-from bundlekb.model import ALWAYS, Bundle, BundleSet, Member
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.bundlekb.model import ALWAYS, Bundle, BundleSet, Member
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "kcc-sample"
 PROVIDER = "gcp"
@@ -173,7 +173,7 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, bundles.to_dict(), _schema())
     print(f"kcc 번들: {len(bundles.bundles)}개 / 시나리오 {report.scenarios}개 → {output}")

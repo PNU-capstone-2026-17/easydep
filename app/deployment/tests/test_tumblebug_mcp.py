@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 
-from nim_agent import tumblebug_mcp
+from app.deployment.nim_agent import tumblebug_mcp
 
 
 class FakeServer:

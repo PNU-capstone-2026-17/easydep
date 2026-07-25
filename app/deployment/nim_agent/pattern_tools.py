@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from patternkb.agent_api import search_patterns
+from app.deployment.patternkb.agent_api import search_patterns
 
 
 @function_tool

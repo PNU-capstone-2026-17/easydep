@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kbcommon.display import evidence_name
-from patternkb.dataset import aws_built, is_built, load_warnings, sections
-from patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
-from patternkb.query import search
+from app.deployment.kbcommon.display import evidence_name
+from app.deployment.patternkb.dataset import aws_built, is_built, load_warnings, sections
+from app.deployment.patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
+from app.deployment.patternkb.query import search
 
 _MISSING = (
     "No design-pattern corpus found. Build it with `python -m patternkb build`."

@@ -11,14 +11,14 @@ import json
 
 import pytest
 
-from sizingkb import dataset
-from sizingkb.agent_api import (
+from app.deployment.sizingkb import dataset
+from app.deployment.sizingkb.agent_api import (
     container_presets,
     reference_points,
     requirements,
     subnet_capacity,
 )
-from sizingkb.model import Rule, usable_ips
+from app.deployment.sizingkb.model import Rule, usable_ips
 
 RULES = {
     "rules": [
@@ -122,7 +122,7 @@ def test_hand_entered_value_says_so(built) -> None:
     것처럼 들린다. `networkinfo.yaml`이 aws·gcp를 비워 두었고 아카이브된 AWS 문서도
     비어 있어서 손으로 적은 값이다.
     """
-    from sizingkb.model import Rule
+    from app.deployment.sizingkb.model import Rule
 
     rules = dict(RULES)
     rules["rules"] = RULES["rules"] + [{
@@ -146,7 +146,7 @@ def test_hand_entered_value_says_so(built) -> None:
 def test_reviewed_reserved_ips_all_carry_a_verification_pointer() -> None:
     """손 검수 값은 **사람이 확인할 곳**이 있어야 검증 가능하다 — 확인처 없는
     항목이 늘어나는 순간 이 파일이 출처 불명 상수 모음이 된다."""
-    from sizingkb.parsers.reviewed import build_rules
+    from app.deployment.sizingkb.parsers.reviewed import build_rules
 
     rules = build_rules().rules
     assert len(rules) >= 6  # aws·gcp + ⑥-D의 tencent·oracle·nhn·ncp
@@ -159,7 +159,7 @@ def test_openstack_and_kt_are_deliberately_absent() -> None:
     """openstack은 구성에 따라 가변(Neutron)이고 kt는 고정 수 명시를 찾지 못했다
     (조사 2026-07-24). 조용히 들어오면 그 조사 결론이 무효가 된다 — 넣으려면
     공식 문서의 고정 수 명시가 먼저다."""
-    from sizingkb.parsers.reviewed import build_rules
+    from app.deployment.sizingkb.parsers.reviewed import build_rules
 
     scopes = {r.scope for r in build_rules().rules}
     assert "openstack" not in scopes
@@ -169,8 +169,8 @@ def test_openstack_and_kt_are_deliberately_absent() -> None:
 def test_ncp_reserved_count_matches_the_documented_arithmetic() -> None:
     """확인처가 말하는 것은 예약 수가 아니라 **가용 수(/24→249)**다 — 우리가
     산술로 뒤집은 값(7)이 그 문서 수치를 그대로 재현해야 한다."""
-    from sizingkb.model import usable_ips
-    from sizingkb.parsers.reviewed import build_rules
+    from app.deployment.sizingkb.model import usable_ips
+    from app.deployment.sizingkb.parsers.reviewed import build_rules
 
     ncp = next(r for r in build_rules().rules if r.scope == "ncp")
     assert usable_ips(24, int(ncp.value)) == 249

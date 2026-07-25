@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from envkb import carbon
+from app.deployment.envkb import carbon
 
 
 def flat(text: str) -> str:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from costkb.cli import main
+from app.deployment.costkb.cli import main
 
 
 def test_query_lists_candidates(capsys) -> None:

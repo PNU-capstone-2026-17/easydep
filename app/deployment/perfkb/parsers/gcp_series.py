@@ -32,8 +32,8 @@ from pathlib import Path
 
 import yaml
 
-from kbcommon.fetch import fetch_cached, list_github_tree
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.fetch import fetch_cached, list_github_tree
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "cyclenerd-gcp-catalog"
 

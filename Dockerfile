@@ -4,13 +4,13 @@ FROM eclipse-temurin:21-jdk-jammy AS jdk
 # (GitHub 파일당 100MiB 한도) 한 번 이어 붙여야 한다.
 # 별도 stage에서 하고 결과만 가져와야 조각과 완성본이 이미지에 함께 남지 않는다.
 # 런타임에는 이미 준비된 상태라 파드 기동에 재조립 비용이 없다.
-FROM python:3.12-slim-bookworm AS weights
+FROM python:3.13-slim-bookworm AS weights
 WORKDIR /build
 COPY materials/BERT_FR_NFR_Classifier/bert_model ./materials/BERT_FR_NFR_Classifier/bert_model
 COPY app/requirements/model_assets.py ./app/requirements/model_assets.py
 RUN python app/requirements/model_assets.py --dest /opt/bert_model
 
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-bookworm
 
 COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
 ENV JAVA_HOME=/opt/java/openjdk

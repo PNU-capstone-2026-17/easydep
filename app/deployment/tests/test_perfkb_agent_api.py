@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from perfkb import agent_api, dataset
+from app.deployment.perfkb import agent_api, dataset
 
 
 @pytest.fixture()
@@ -160,7 +160,7 @@ def test_ebs_baseline_filter_excludes_below_threshold(perf_built) -> None:
 
 def test_network_burst_warning_sits_under_network_line(tmp_path) -> None:
     """경고는 네트워크 줄 바로 밑에 — 블록 끝에 붙이면 EBS 줄에 달린 것처럼 읽힌다 (결함 ⑤)."""
-    from perfkb.agent_api import _describe
+    from app.deployment.perfkb.agent_api import _describe
 
     text = _describe({
         "networkPerformance": "Up to 5 Gigabit",

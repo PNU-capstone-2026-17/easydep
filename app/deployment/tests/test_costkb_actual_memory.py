@@ -17,9 +17,9 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.dataset import filter_specs
-from costkb.parsers.tumblebug import CORRECTIONS, correct_memory
+from app.deployment.costkb import dataset
+from app.deployment.costkb.dataset import filter_specs
+from app.deployment.costkb.parsers.tumblebug import CORRECTIONS, correct_memory
 
 # 원본 15.625 (실제 16 GiB) — 상류 버그의 전형적인 지문
 BUGGY_ROW_MEM = 15.625

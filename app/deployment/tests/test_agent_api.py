@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from graphkb import agent_api
-from graphkb.model import Edge, Graph, Node
-from graphkb.query import equivalents
+from app.deployment.graphkb import agent_api
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.query import equivalents
 
 
 def flat(text: str) -> str:

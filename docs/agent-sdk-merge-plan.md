@@ -86,16 +86,23 @@ git merge --allow-unrelated-histories agent-sdk-graft/master
 
 ### 2. 배치 정리
 
-- `app/deployment/tests/` → `tests/kb/` (아래 위험 3)
+**계획을 하나 뒤집었다: 테스트를 옮기지 않는다.** `tests/kb/`로 빼려던 것을
+`app/deployment/tests/` 그대로 두었다. 그 테스트들의 `ROOT = parent.parent`가 새
+위치에서 정확히 `app/deployment/`를 가리켜, 구조 잠금 테스트 2종과 경로 상수
+(`/"appkb"`·`/"data"`·`/"NOTICE"`)가 **무수정으로** 맞는다. 옮겼다면 전부 다시
+계산해야 했다. conftest 분리라는 목적은 디렉터리가 다른 것만으로 이미 달성된다.
+
 - `app/deployment/{pyproject.toml,uv.lock}` 삭제 — 의존성은 `requirements.txt`로 간다
-- `app/deployment/main.py` → `app/deployment/cli.py`로 개명. easydep `.gitignore`가 `/main.py`를
-  루트 앵커로 막고 있어 혼동을 부르고, easydep에는 `server.py`라는 진입점이 이미 있다
-- `app/deployment/{README.md,CLAUDE.md}` → 내용을 easydep `README.md`의 에이전트 표에 한 행,
-  나머지는 `app/deployment/document/`로. `NOTICE`는 **루트에 둔다** (재배포 고지는 저장소
-  단위 문서다) — 단, `tests/kb/test_redistribution_notice.py`의 경로를 맞춘다
-- `.gitignore` 병합: `output/`·`.cache/`·`.claude/worktrees/`·`token_budget.json`·
-  `tool_count.json` 규칙을 easydep 쪽으로. **빠뜨리면 KB 빌드 산출물이 커밋된다**
-- `pytest.ini`의 `testpaths`에 `tests/kb` 추가
+- `app/deployment/__init__.py` 신설 — `app/design/`과 같은 모양의 패키지로 만든다
+- `main.py`는 그대로 둔다. easydep `.gitignore`의 `/main.py`는 **루트 앵커**라
+  `app/deployment/main.py`는 걸리지 않는다(추적됨을 확인)
+- `NOTICE`도 `app/deployment/` 안에 둔다 — `test_redistribution_notice.py`가
+  `ROOT/NOTICE`로 찾고, 그 고지가 덮는 것이 이 하위 시스템의 데이터다
+- `.gitignore`: `/app/deployment/{output,.cache,.claude}/`·`token_budget.json`·
+  `tool_count.json`. **빠뜨리면 KB 빌드 산출물이 커밋된다**
+- `.dockerignore`: `output/`·`.cache/`·`tests/` 제외. 이미지는 커밋된 `data/`만 쓴다
+- `pytest.ini`: `testpaths`에 `app/deployment/tests` 추가 + `--import-mode=importlib`
+  (양쪽에 `test_cli.py`가 하나씩이라 기본 모드는 basename이 충돌한다)
 
 ### 3. 임포트 재작성
 
@@ -118,15 +125,35 @@ parser = argparse.ArgumentParser(prog="costkb")  # CLI 이름
 `tests/kb/test_evidence_labels.py`·`test_claim_check*.py`가 무너진다. **바꾸는 것은
 임포트 경로뿐이고, 라벨·prog 이름·아티팩트 이름은 그대로 둔다.**
 
-손으로 고칠 것 (도구 대상 밖):
+도구가 못 보는 자리는 실측하니 **넷**이었다(계획에서 예상한 것보다 넓다):
 
-| 파일 | 무엇 |
-|---|---|
-| `app/deployment/envkb/__main__.py:52` | `import_module(f"envkb.{...}")` → `app.deployment.envkb.` |
-| `tests/kb/test_architecture.py` | `KB_PACKAGES`/`ALL_PACKAGES` 집합, `ROOT`, 예외표 경로 |
-| `tests/kb/test_docs_structure.py` | `ROOT`, `packages` 튜플, `document/` 경로 규약 |
-| `tests/kb/` 경로 상수 | `parent.parent / "appkb"`, `/ "data"`, `/ "NOTICE"` — 깊이가 바뀐다 |
-| `app/deployment/document/kb-book.md`, README | `python -m costkb build` → `python -m app.deployment.costkb build` |
+| 무엇 | 건수 | 처리 |
+|---|---|---|
+| `tools/` 패키지 임포트 | 11 | 도구의 `PACKAGES`에 `tools` 추가 후 재실행 |
+| `monkeypatch.setattr("graphkb.…")` 문자열 대상 | 6 | 첫 인자만 좁혀서 치환 |
+| `import_module(f"envkb.{…}")` | 1 | **패키지 상대**로 바꿈 — 절대 경로를 박으면 다음 이동 때 또 남는다 |
+| 형제 테스트 임포트 `from test_perfkb_details import` | 1 | 전체 경로로 |
+
+`test_architecture.py`는 `ROOT`가 그대로 맞아 `PACKAGE_PREFIX` 한 줄만 더했다. 규약
+검사가 접두를 떼고 판정하지 않으면 모든 임포트의 top이 `app`이 되어 **위반을 한 건도
+안 잡으면서 통과하는** 검사가 된다.
+
+#### CWD 상대 경로 — 초록불 뒤에 숨어 있던 것
+
+배치를 옮기니 CWD가 agent-sdk 루트에서 easydep 루트로 바뀌었고, 그때 **11곳**이
+드러났다. 넷은 실패로 드러났지만 나머지는 그러지 않았다:
+
+- `test_costkb_determinism.py`·`test_gcp_parser.py`·`test_source_pinning.py`·
+  `test_capacity_cfn.py` — `exists()` 가드가 있어 **실패 대신 조용히 스킵**됐다.
+  통과 수가 1365 → 1362로 줄고 스킵이 21 → 24로 는 것이 유일한 신호였다.
+- `test_basis_hedge.py` — `Path(kb).rglob("*.py")`가 빈 결과를 내서 검사가
+  **아무것도 안 훑고 통과**했다. 그 파일의 docstring이 경고하던 바로 그 모양이다.
+
+전부 `_ROOT = Path(__file__).resolve().parent.parent` 기준으로 앵커링했다. 프로덕션
+코드의 상대 `Path("output")`은 **고치지 않는다** — `artifact.resolve()`가 상대 경로를
+`REPO_ROOT` 기준으로 해석하도록 이미 만들어져 있고, `test_artifact_cwd.py`가 그
+동작을 지킨다. 단 `kbcommon/fetch.py`의 `cache_dir()`은 그 경로를 안 거쳐 CWD에
+`.cache/`를 만들고 있어 같은 기준으로 앵커링했다.
 
 ### 4. 의존성 통합
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from kbcommon.basis import OBSERVED, basis_of, is_fact
+from app.deployment.kbcommon.basis import OBSERVED, basis_of, is_fact
 
 #: 구성원 등급. 순서가 곧 강도다.
 ALWAYS = "always"

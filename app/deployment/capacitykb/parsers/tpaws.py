@@ -29,10 +29,10 @@ import tarfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.parsers.tpg import _parse_schema_map, _scan
-from kbcommon.fetch import describe_source_set
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.parsers.tpg import _parse_schema_map, _scan
+from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "tpaws-schema"
 _SCHEMA_MAP = "map[string]*schema.Schema{"
@@ -277,7 +277,7 @@ def _emit(text: str, start: int, type_id: str, capacity: CapacitySet, report: Re
 
 
 def build(output: Path, *, refresh: bool = False, cfn_types: set[str] | None = None) -> CapacitySet:
-    from kbcommon.fetch import fetch_cached
+    from app.deployment.kbcommon.fetch import fetch_cached
 
     source = SOURCES["tpaws-provider"]
     tar_path = fetch_cached(source.url, f"tpaws-{source.pin}.tar.gz", refresh=refresh)

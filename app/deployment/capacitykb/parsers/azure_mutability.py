@@ -57,10 +57,10 @@ import tarfile
 from collections import Counter
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
-from kbcommon.type_ids import AzureTypeIndex
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.kbcommon.type_ids import AzureTypeIndex
 
 EVIDENCE = "swagger-mutability"
 
@@ -209,8 +209,8 @@ def parse_tarball(tar: Path, *, type_index: AzureTypeIndex) -> tuple[CapacitySet
 
 
 def build(output: Path, *, refresh: bool = False) -> CapacitySet:
-    from capacitykb.parsers.azure import _fetch_relative
-    from kbcommon.type_ids import read_azure_index
+    from app.deployment.capacitykb.parsers.azure import _fetch_relative
+    from app.deployment.kbcommon.type_ids import read_azure_index
 
     source = SOURCES["azure-rest-api-specs"]
     tar = fetch_cached(source.url, f"azure-specs-{source.pin[:12]}.tar.gz", refresh=refresh)

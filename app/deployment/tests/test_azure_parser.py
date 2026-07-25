@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from graphkb.model import Edge, Graph
-from graphkb.parsers.azure import extract_references, parse_index
+from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.parsers.azure import extract_references, parse_index
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "azure"
 
@@ -151,7 +151,7 @@ def _types_with_wrapper(wrapper_name: str) -> list[dict]:
 
 def build_with_table(table: dict, monkeypatch) -> Graph:
     monkeypatch.setattr(
-        "graphkb.parsers.azure.load_reference_map", lambda _provider: table
+        "app.deployment.graphkb.parsers.azure.load_reference_map", lambda _provider: table
     )
     g, _ = parse_index(load_index())
     extract_references(g, load_types(), heuristics=False)
@@ -201,7 +201,7 @@ def test_unknown_wrapper_makes_no_edge_but_is_reported(monkeypatch) -> None:
 
     조용히 넘어가면 "관계가 없는 것"과 "아직 안 본 것"이 겉보기에 같아진다.
     """
-    from graphkb.parsers import azure
+    from app.deployment.graphkb.parsers import azure
 
     azure.UNRESOLVED_REFS.clear()
     monkeypatch.setattr(azure, "load_reference_map", lambda _provider: {})
@@ -221,7 +221,7 @@ def test_table_resolves_what_the_name_cannot(monkeypatch) -> None:
     단서는 프로퍼티 이름인데 sourceVault→KeyVault처럼 그것도 어긋나므로,
     자동 규칙으로는 원리적으로 못 푼다.
     """
-    from graphkb.parsers import azure
+    from app.deployment.graphkb.parsers import azure
 
     azure.UNRESOLVED_REFS.clear()
     monkeypatch.setattr(
@@ -243,7 +243,7 @@ def test_unique_name_still_resolves_without_the_table(monkeypatch) -> None:
 
     그러지 않으면 껍데기 158종을 전부 손으로 적어야 한다(실제로는 125종이었다).
     """
-    from graphkb.parsers import azure
+    from app.deployment.graphkb.parsers import azure
 
     azure.UNRESOLVED_REFS.clear()
     g = build_with_table({}, monkeypatch)

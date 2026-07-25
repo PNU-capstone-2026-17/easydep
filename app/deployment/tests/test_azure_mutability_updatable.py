@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.query import immutable_properties
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.query import immutable_properties
 
 CASSANDRA = "azure::Microsoft.DocumentDB/cassandraClusters"
 APIM = "azure::Microsoft.ApiManagement/service"
@@ -74,14 +74,14 @@ def test_schema_allows_the_new_value() -> None:
     import json
     from pathlib import Path
 
-    schema = json.load(io.open(Path("capacitykb/model/schema.json"), encoding="utf-8"))
+    schema = json.load(io.open(Path(__file__).resolve().parent.parent / "capacitykb/model/schema.json", encoding="utf-8"))
     text = json.dumps(schema, ensure_ascii=False)
     assert "updatable" in text
 
 
 def test_label_says_who_said_it() -> None:
     """'변경 가능'만 적으면 우리 판단처럼 읽힌다 — 명세가 그렇게 표시했다고 밝힌다."""
-    from capacitykb.agent_api import _describe
+    from app.deployment.capacitykb.agent_api import _describe
 
     text = _describe(Constraint(
         type_id=CASSANDRA, property="location", kind="mutability",

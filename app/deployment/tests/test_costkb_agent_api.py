@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from costkb.agent_api import (
+from app.deployment.costkb.agent_api import (
     HOURS_PER_MONTH,
     coverage_text,
     estimate_monthly_cost,
@@ -118,7 +118,7 @@ def test_running_total_is_computed_by_the_tool_not_the_model() -> None:
 
     사용자가 예산을 대는 바로 그 숫자라 근거가 없으면 안 된다.
     """
-    from costkb.agent_api import estimate_monthly_cost
+    from app.deployment.costkb.agent_api import estimate_monthly_cost
 
     first = estimate_monthly_cost(0.0468, 1, 730)
     assert "34.16" in first
@@ -134,7 +134,7 @@ def test_running_total_is_computed_by_the_tool_not_the_model() -> None:
 
 def test_the_prompt_tells_the_model_to_thread_the_running_total() -> None:
     """도구에 칸을 만들어도 지시문이 안 가리키면 안 쓰인다 — 축 표 교훈과 같다."""
-    from nim_agent.agent import INSTRUCTIONS
+    from app.deployment.nim_agent.agent import INSTRUCTIONS
 
     flat = " ".join(INSTRUCTIONS.split())
     assert "running_total_usd" in flat

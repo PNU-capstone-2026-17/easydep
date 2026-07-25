@@ -20,8 +20,8 @@ import json
 import sys
 from pathlib import Path
 
-from kbcommon.invariants import Violation
-from kbcommon.console import use_utf8
+from app.deployment.kbcommon.invariants import Violation
+from app.deployment.kbcommon.console import use_utf8
 
 DEFAULT_OUTPUT = Path("output")
 
@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "pack":
-        from kbcommon.artifact import BUNDLED_DIR
+        from app.deployment.kbcommon.artifact import BUNDLED_DIR
 
         return pack_artifacts(args.names, args.output, BUNDLED_DIR)
 

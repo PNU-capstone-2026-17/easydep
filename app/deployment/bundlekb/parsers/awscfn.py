@@ -42,11 +42,11 @@ import sys
 import tarfile
 from pathlib import Path
 
-from bundlekb.dataset import MIN_SAMPLES
-from bundlekb.model import BundleSet, Companion
-from bundlekb.parsers.aqt import MIN_HITS
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.bundlekb.dataset import MIN_SAMPLES
+from app.deployment.bundlekb.model import BundleSet, Companion
+from app.deployment.bundlekb.parsers.aqt import MIN_HITS
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "awscfn-corpus"
 PROVIDER = "aws"
@@ -165,7 +165,7 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, out.to_dict(), _schema())
     print(

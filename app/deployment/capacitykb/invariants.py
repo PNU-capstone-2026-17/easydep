@@ -10,7 +10,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 
-from kbcommon.invariants import Invariant, Violation, one_basis_per_evidence
+from app.deployment.kbcommon.invariants import Invariant, Violation, one_basis_per_evidence
 
 
 def _by_property(dataset: dict) -> dict[tuple[str, str], dict[str, dict]]:

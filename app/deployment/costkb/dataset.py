@@ -29,8 +29,8 @@ from pathlib import Path
 
 import jsonschema
 
-from kbcommon import artifact
-from kbcommon.artifact import REBUILD_HINT, read_dataset
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.artifact import REBUILD_HINT, read_dataset
 
 _SPECS_PATH = Path(__file__).with_name("specs.json")
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")

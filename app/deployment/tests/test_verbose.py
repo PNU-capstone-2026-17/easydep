@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from nim_agent.verbose import describe_event, describe_usage
+from app.deployment.nim_agent.verbose import describe_event, describe_usage
 
 
 def tool_call_event(name: str, arguments: str) -> SimpleNamespace:
@@ -89,7 +89,7 @@ def test_color_applied_when_requested() -> None:
 
 
 def test_use_color_respects_env(monkeypatch) -> None:
-    from nim_agent.verbose import use_color
+    from app.deployment.nim_agent.verbose import use_color
 
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("FORCE_COLOR", raising=False)

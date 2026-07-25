@@ -16,9 +16,13 @@ from __future__ import annotations
 import regex
 from pathlib import Path
 
+#: 저장소 기준 경로. CWD 기준으로 열면 easydep 루트에서 돌 때 파일을 못 찾고,
+#: exists() 가드가 있는 곳은 실패 대신 **조용히 스킵**된다(병합 때 실제로 그랬다).
+_ROOT = Path(__file__).resolve().parent.parent
+
 import pytest
 
-from kbcommon.basis import INFERRED, STATED, is_fact, needs_hedge
+from app.deployment.kbcommon.basis import INFERRED, STATED, is_fact, needs_hedge
 
 
 @pytest.mark.parametrize(
@@ -55,7 +59,7 @@ def test_unknown_basis_hedges() -> None:
 _INLINE_RULE = regex.compile(r"""basis[^\n]{0,40}?[!=]=\s*["'](?:stated|inferred)["']""")
 
 _ALLOWED = {
-    Path("kbcommon/basis.py"),  # 정의가 사는 곳
+    _ROOT / "kbcommon/basis.py",  # 정의가 사는 곳
 }
 
 
@@ -82,7 +86,7 @@ def test_no_kb_reinlines_the_rule() -> None:
     """
     offenders = []
     for kb in ("graphkb", "capacitykb", "costkb", "perfkb", "kbcommon", "nim_agent"):
-        for path in Path(kb).rglob("*.py"):
+        for path in (_ROOT / kb).rglob("*.py"):
             if path in _ALLOWED:
                 continue
             for num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

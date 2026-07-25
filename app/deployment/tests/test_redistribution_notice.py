@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from kbcommon import artifact
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.sources import SOURCES
 
 _NOTICE = Path(__file__).resolve().parent.parent / "NOTICE"
 

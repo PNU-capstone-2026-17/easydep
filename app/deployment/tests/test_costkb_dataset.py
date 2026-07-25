@@ -11,8 +11,8 @@ import json
 import jsonschema
 import pytest
 
-from costkb import dataset
-from costkb.dataset import coverage, dataset_note, filter_specs, load_specs
+from app.deployment.costkb import dataset
+from app.deployment.costkb.dataset import coverage, dataset_note, filter_specs, load_specs
 
 # 번들 36건을 보도록 output_dir을 고정하는 픽스처는 `tests/conftest.py`에 있다(autouse).
 

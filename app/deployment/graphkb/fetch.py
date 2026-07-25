@@ -7,6 +7,6 @@
 
 from __future__ import annotations
 
-from kbcommon.fetch import cache_dir, fetch_cached
+from app.deployment.kbcommon.fetch import cache_dir, fetch_cached
 
 __all__ = ["cache_dir", "fetch_cached"]

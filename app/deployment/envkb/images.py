@@ -35,8 +35,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from kbcommon import artifact
-from kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.fetch import describe_source_set
 
 EVIDENCE = "tumblebug-basic-image"
 
@@ -133,7 +133,7 @@ _ARTIFACT = "basic-images.json"
 
 
 def build(output: Path, *, refresh: bool = False) -> dict:
-    from kbcommon.tumblebug_dump import fetch_dump, iter_table_rows
+    from app.deployment.kbcommon.tumblebug_dump import fetch_dump, iter_table_rows
 
     dump = fetch_dump(refresh=refresh)
     images, stats = project(iter_table_rows(dump, "image_infos"))

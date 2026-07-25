@@ -6,8 +6,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from kbcommon import artifact
-from sizingkb.model import Rule
+from app.deployment.kbcommon import artifact
+from app.deployment.sizingkb.model import Rule
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 
@@ -101,7 +101,7 @@ def search_rules(text: str, output_dir: Path | str | None = None) -> tuple[Rule,
 
 def reserved_ips(provider: str, output_dir: Path | str | None = None) -> Rule | None:
     """이 프로바이더의 서브넷 예약 IP 수. **모르면 None** — 0이 아니다."""
-    from sizingkb.model import RESERVED_IPS
+    from app.deployment.sizingkb.model import RESERVED_IPS
 
     found = rules_of(RESERVED_IPS, provider, output_dir)
     return found[0] if found else None

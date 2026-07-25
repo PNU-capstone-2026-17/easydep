@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from tools.claim_check import check
+from app.deployment.tools.claim_check import check
 
 
 def test_hangul_does_not_break_word_boundaries() -> None:
@@ -61,7 +61,7 @@ def test_rounding_is_not_invention() -> None:
     실측(2026-07-25) 분류에서 이 종류가 오탐으로 나왔다. **자릿수를 늘려 주지는
     않는다** — 답변이 쓴 자리에서만 비교하므로 `900` vs `901`은 그대로 걸린다.
     """
-    from tools.claim_check import check
+    from app.deployment.tools.claim_check import check
 
     grounded = check("co-occurs in 74% of templates", ["… 73.8% AWS::EC2::VPC …"], "")
     assert not [f for f in grounded.unsupported if f.token == "74"]
@@ -78,7 +78,7 @@ def test_advisory_only_turns_are_not_value_checked() -> None:
     열 아래에 있었다). 세면 잡음만 는다 — 124회에서 숫자 표시 42건 중 26건이
     이 한 프로브였고 진짜는 1건이었다.
     """
-    from tools.claim_check import check
+    from app.deployment.tools.claim_check import check
 
     advisory = check(
         "Configure a capped back-off (e.g., 30 s) and 3-5 attempts.",

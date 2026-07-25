@@ -5,7 +5,7 @@ from __future__ import annotations
 import jsonschema
 import pytest
 
-from graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.model import Edge, Graph, Node
 
 
 def make_node(node_id: str = "core::vNet") -> Node:

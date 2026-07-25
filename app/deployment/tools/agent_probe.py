@@ -57,10 +57,10 @@ from pathlib import Path
 from agents import Runner
 from agents.exceptions import MaxTurnsExceeded
 
-from kbcommon.console import use_utf8
-from tools import claim_check
-from nim_agent.agent import build_agent
-from nim_agent.session import SessionState
+from app.deployment.kbcommon.console import use_utf8
+from app.deployment.tools import claim_check
+from app.deployment.nim_agent.agent import build_agent
+from app.deployment.nim_agent.session import SessionState
 
 
 #: `want_any` 실패의 머리말. 심판을 부를지 가르는 데 쓰므로 **문자열을 한 곳에 둔다.**
@@ -828,7 +828,7 @@ async def second_opinion(probe: Probe, answer: str) -> str:
     try:
         import os
 
-        from nim_agent.config import build_client
+        from app.deployment.nim_agent.config import build_client
 
         client = build_client()
         prompt = _JUDGE_PROMPT.format(
@@ -877,7 +877,7 @@ def _known_tool_names() -> frozenset[str]:
 
     답변이 부르지도 않은 도구를 출처로 대는 걸 잡는 데 쓴다(`claim_check.misattributed`).
     """
-    from nim_agent.agent import LOCAL_TOOLS
+    from app.deployment.nim_agent.agent import LOCAL_TOOLS
 
     return frozenset(
         name for tool in LOCAL_TOOLS if (name := getattr(tool, "name", None))

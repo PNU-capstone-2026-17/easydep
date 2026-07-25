@@ -11,11 +11,16 @@ import json
 import jsonschema
 import pytest
 
-from perfkb.dataset import _schema
-from perfkb.parsers.build import build_dataset, format_audit, project_rows
-from perfkb.parsers.project import project_row
+from app.deployment.perfkb.dataset import _schema
+from app.deployment.perfkb.parsers.build import build_dataset, format_audit, project_rows
+from app.deployment.perfkb.parsers.project import project_row
 
-from test_perfkb_details import EBS_INFO, NETWORK_INFO, PROCESSOR_INFO, VCPU_INFO
+from app.deployment.tests.test_perfkb_details import (
+    EBS_INFO,
+    NETWORK_INFO,
+    PROCESSOR_INFO,
+    VCPU_INFO,
+)
 
 
 def _details(pairs) -> str:

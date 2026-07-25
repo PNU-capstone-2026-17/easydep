@@ -45,9 +45,9 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "botocore-endpoints"
 

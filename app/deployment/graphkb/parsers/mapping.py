@@ -14,9 +14,9 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from graphkb.model import Edge, Graph, Node
-from kbcommon.invariants import announce
-from kbcommon.fetch import describe_source
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.fetch import describe_source
 
 SOURCE = "cb-spider-mapping"
 

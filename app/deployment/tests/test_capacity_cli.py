@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from capacitykb.cli import main
+from app.deployment.capacitykb.cli import main
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "capacity"
 AZURE_BASE = str(FIXTURE_DIR / "azure")

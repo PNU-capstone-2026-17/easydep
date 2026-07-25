@@ -19,7 +19,7 @@ import json
 
 import pytest
 
-from perfkb.parsers.details import DetailsMismatch, go_field, parse_details
+from app.deployment.perfkb.parsers.details import DetailsMismatch, go_field, parse_details
 
 # 실측에서 azure가 어긋나는 자리 그대로 — 알파벳 역순이다.
 AZURE_LIKE = [

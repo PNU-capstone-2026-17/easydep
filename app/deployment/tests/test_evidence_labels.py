@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from capacitykb.parsers.tpcsp import PROVIDERS
-from kbcommon.basis import BASIS_OF_EVIDENCE
-from kbcommon.display import evidence_name
+from app.deployment.capacitykb.parsers.tpcsp import PROVIDERS
+from app.deployment.kbcommon.basis import BASIS_OF_EVIDENCE
+from app.deployment.kbcommon.display import evidence_name
 
 # 여러 프로바이더가 공유하는 라벨 — 특정 벤더 이름이 박히면 안 된다.
 _SHARED = ("tpcsp-schema",)

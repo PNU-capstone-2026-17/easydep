@@ -19,7 +19,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from graphkb.model import Graph
+from app.deployment.graphkb.model import Graph
 
 DEFAULT_OUTPUTS = {
     "tumblebug": Path("output") / "core-graph.json",
@@ -155,7 +155,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     heuristics_on = True if args.heuristics is None else args.heuristics
 
     if args.source == "tumblebug":
-        from graphkb.parsers import tumblebug
+        from app.deployment.graphkb.parsers import tumblebug
 
         kwargs: dict = {
             "heuristics": bool(args.heuristics),
@@ -165,7 +165,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["swagger_url"] = args.swagger_url
         tumblebug.build(output, **kwargs)
     elif args.source == "cfn":
-        from graphkb.parsers import cfn
+        from app.deployment.graphkb.parsers import cfn
 
         kwargs = {
             "heuristics": heuristics_on,
@@ -178,7 +178,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["oob_url"] = args.oob_url
         cfn.build(output, **kwargs)
     elif args.source == "azure":
-        from graphkb.parsers import azure
+        from app.deployment.graphkb.parsers import azure
 
         kwargs = {"heuristics": heuristics_on, "refresh": args.refresh}
         if args.base_url:
@@ -189,15 +189,15 @@ def _cmd_build(args: argparse.Namespace) -> int:
             )
         azure.build(output, **kwargs)
     elif args.source == "avm":
-        from graphkb.parsers import avm
+        from app.deployment.graphkb.parsers import avm
 
         avm.build(output, refresh=args.refresh)
     elif args.source == "svcmap":
-        from graphkb.parsers import svcmap
+        from app.deployment.graphkb.parsers import svcmap
 
         svcmap.build(output)
     elif args.source == "gcp":
-        from graphkb.parsers import gcp
+        from app.deployment.graphkb.parsers import gcp
 
         kwargs = {"heuristics": heuristics_on, "refresh": args.refresh}
         if args.tag:
@@ -210,14 +210,14 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["crd_dir"] = args.crd_dir
         gcp.build(output, **kwargs)
     else:  # mapping
-        from graphkb.parsers import mapping
+        from app.deployment.graphkb.parsers import mapping
 
         mapping.build(output, mapping_file=args.mapping_file)
     return 0
 
 
 def _cmd_suggest_mapping(args: argparse.Namespace) -> int:
-    from graphkb.parsers.mapping import write_candidates
+    from app.deployment.graphkb.parsers.mapping import write_candidates
 
     if not args.core_graph.exists():
         raise FileNotFoundError(
@@ -259,7 +259,7 @@ def _load_graphs(paths: list[Path] | None) -> Graph:
 
 
 def _cmd_query(args: argparse.Namespace) -> int:
-    from graphkb.query import (
+    from app.deployment.graphkb.query import (
         dependency_chain_detail,
         dependents,
         rank_types,
@@ -313,15 +313,15 @@ def _cmd_export(args: argparse.Namespace) -> int:
     suffixes = {"graphml": ".graphml", "dot": ".dot", "cypher": ".cypher"}
     output = args.output or args.graph.with_suffix(suffixes[args.format])
     if args.format == "graphml":
-        from graphkb.export import write_graphml
+        from app.deployment.graphkb.export import write_graphml
 
         write_graphml(graph, output)
     elif args.format == "dot":
-        from graphkb.export import write_dot
+        from app.deployment.graphkb.export import write_dot
 
         write_dot(graph, output)
     else:
-        from graphkb.export import write_cypher
+        from app.deployment.graphkb.export import write_cypher
 
         write_cypher(graph, output)
     print(f"내보내기 완료 → {output}")
@@ -331,7 +331,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
 def _cmd_load_neo4j(args: argparse.Namespace) -> int:
     import os
 
-    from graphkb.neo4j_load import load_to_neo4j
+    from app.deployment.graphkb.neo4j_load import load_to_neo4j
 
     graph = _load_graphs(args.graph)
     password = args.password or os.environ.get("NEO4J_PASSWORD")

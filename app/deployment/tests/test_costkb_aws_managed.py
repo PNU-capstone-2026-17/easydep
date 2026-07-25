@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import json
 
-from costkb.dataset import managed_axes, managed_built
-from costkb.parsers.aws_managed import (
+from app.deployment.costkb.dataset import managed_axes, managed_built
+from app.deployment.costkb.parsers.aws_managed import (
     AXIS_CAPACITY,
     AXIS_INSTANCE,
     AXIS_USAGE,
@@ -31,7 +31,7 @@ import pytest
 def test_aws_managed_is_never_committed() -> None:
     """**이 테스트가 이 축의 라이선스 방벽이다.** data/에 aws 가격 산출물이
     보이면 재배포 위반 — 지우고, 왜 들어갔는지부터 찾을 것."""
-    from kbcommon.artifact import BUNDLED_DIR
+    from app.deployment.kbcommon.artifact import BUNDLED_DIR
 
     assert not (BUNDLED_DIR / "aws-managed-pricing.json.gz").exists()
     assert not (BUNDLED_DIR / "aws-managed-pricing.json").exists()
@@ -154,7 +154,7 @@ _FIXTURE = {
 
 
 def test_locally_built_file_joins_managed_axes(tmp_path) -> None:
-    from costkb import dataset
+    from app.deployment.costkb import dataset
 
     (tmp_path / "aws-managed-pricing.json").write_text(
         json.dumps(_FIXTURE, ensure_ascii=False), encoding="utf-8"
@@ -172,7 +172,7 @@ def test_unbuilt_aws_is_not_built_even_when_azure_is(tmp_path) -> None:
     """**미빌드(안 봤다)와 수록 없음(봤는데 없다)의 구분** — 합쳐진 맵에서는
     리전만으로 못 가르므로 managed_built가 프로바이더 단위로 가른다. aws는
     커밋되지 않아 이게 기본 상태다."""
-    from costkb import dataset
+    from app.deployment.costkb import dataset
 
     (tmp_path / "azure-managed-pricing.json").write_text(
         json.dumps({"_note": "f", "records": [], "_source": []}), encoding="utf-8"
@@ -191,7 +191,7 @@ def test_aws_plan_without_local_build_points_at_the_build_command() -> None:
     import json as _json
     from pathlib import Path
 
-    from nim_agent.design_tools import _render_plan_text, compose
+    from app.deployment.nim_agent.design_tools import _render_plan_text, compose
 
     design = _json.loads(
         (Path(__file__).resolve().parent.parent / "appkb" / "examples"

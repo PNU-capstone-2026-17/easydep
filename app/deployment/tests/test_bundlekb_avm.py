@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
-from bundlekb.parsers.avm import classify, resolve_types
+from app.deployment.bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
+from app.deployment.bundlekb.parsers.avm import classify, resolve_types
 
 # 실제 AVM 컴파일 결과의 모양 그대로. languageVersion 2.0은 resources가 dict다.
 VM_LIKE = {

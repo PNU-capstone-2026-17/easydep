@@ -28,7 +28,7 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from kbcommon.fetch import fetch_cached
+from app.deployment.kbcommon.fetch import fetch_cached
 
 DEFAULT_TAG = "v0.12.25"
 _RAW_URL = (

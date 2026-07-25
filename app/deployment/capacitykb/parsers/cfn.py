@@ -27,11 +27,11 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.prose import extract_default, extract_enum, extract_ranges
-from kbcommon.fetch import describe_source, fetch_cached
-from kbcommon.invariants import announce
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.prose import extract_default, extract_enum, extract_ranges
+from app.deployment.kbcommon.fetch import describe_source, fetch_cached
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.sources import SOURCES
 
 # ⚠️ 고정 불가 — kbcommon/sources.py의 `cfn-schema` 항목 참조.
 DEFAULT_ZIP_URL = SOURCES["cfn-schema"].url

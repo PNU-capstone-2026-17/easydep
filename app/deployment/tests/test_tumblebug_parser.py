@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from graphkb.model import Edge, Graph
-from graphkb.parsers.tumblebug import parse_swagger
-from graphkb.query import dependency_chain
+from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.parsers.tumblebug import parse_swagger
+from app.deployment.graphkb.query import dependency_chain
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tumblebug-swagger-min.json"
 

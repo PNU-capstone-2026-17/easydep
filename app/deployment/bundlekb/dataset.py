@@ -11,8 +11,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from bundlekb.model import ALWAYS, Bundle, Companion
-from kbcommon import artifact
+from app.deployment.bundlekb.model import ALWAYS, Bundle, Companion
+from app.deployment.kbcommon import artifact
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 

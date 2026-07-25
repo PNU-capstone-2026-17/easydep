@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from perfkb.parsers.hardware import _cpu_fields, _gpu_fields, enrich
+from app.deployment.perfkb.parsers.hardware import _cpu_fields, _gpu_fields, enrich
 
 
 def test_zero_is_not_a_fact() -> None:
@@ -64,7 +64,7 @@ def test_enrich_touches_only_matching_aws_specs() -> None:
 
 def test_profile_shows_hardware_separately() -> None:
     """하드웨어는 성능 신호와 **따로 묶어** 보여준다. 소스가 다르기 때문이다."""
-    from perfkb.agent_api import _describe
+    from app.deployment.perfkb.agent_api import _describe
 
     text = _describe({
         "provider": "aws", "specName": "g5g.xlarge", "clockGHz": 2.5,
@@ -87,7 +87,7 @@ def test_capacity_points_at_perf_for_compute_types() -> None:
     우리는 GPU 571건을 쥐고 있었는데 **다른 축에** 있었다. 같은 질문을
     "몇 개, 어떤 모델이야?"로 물으면 성능 도구로 바로 갔다 — 문구 하나 차이다.
     """
-    from nim_agent.capacity_tools import _perf_pointer
+    from app.deployment.nim_agent.capacity_tools import _perf_pointer
 
     text = _perf_pointer("AWS::EC2::Instance")
     # 도구 이름이 아니라 **축**으로 가리켜야 한다 — 이 줄은 사용자에게 옮겨진다.
@@ -97,7 +97,7 @@ def test_capacity_points_at_perf_for_compute_types() -> None:
 
 def test_perf_pointer_is_silent_for_other_types() -> None:
     """인스턴스 종류를 고르는 자리가 아니면 조용하다 — 줄마다 붙으면 노이즈다."""
-    from nim_agent.capacity_tools import _perf_pointer
+    from app.deployment.nim_agent.capacity_tools import _perf_pointer
 
     assert _perf_pointer("AWS::EC2::Volume") == ""
     assert _perf_pointer("존재하지않는타입") == ""
@@ -105,7 +105,7 @@ def test_perf_pointer_is_silent_for_other_types() -> None:
 
 def test_hardware_summary_counts_only_real_hardware() -> None:
     """하드웨어 근거가 있는 레코드만 센다."""
-    from perfkb.agent_api import hardware_summary
+    from app.deployment.perfkb.agent_api import hardware_summary
 
     text = hardware_summary("aws")
     assert text and "of them with a GPU" in " ".join(text.split())
@@ -125,9 +125,10 @@ def test_accelerator_filter_uses_costkb_own_field() -> None:
     (296종/9개 프로바이더 vs perfkb 50종/aws만, perfkb에만 있는 것 0종).
     """
     import json
+    from pathlib import Path
 
-    cost = json.load(open("output/tumblebug-cost.json", encoding="utf-8"))["specs"]
-    perf = json.load(open("output/tumblebug-perf.json", encoding="utf-8"))["specs"]
+    cost = json.load(open(Path(__file__).resolve().parent.parent / "output/tumblebug-cost.json", encoding="utf-8"))["specs"]
+    perf = json.load(open(Path(__file__).resolve().parent.parent / "output/tumblebug-perf.json", encoding="utf-8"))["specs"]
     by_perf = {(s["provider"], s["specName"]) for s in perf if s.get("gpuModel")}
     by_cost = {(s["provider"], s["specName"]) for s in cost if s.get("acceleratorCount")}
     assert by_perf <= by_cost, "perfkb에만 있는 가속기 스펙이 생겼다 — 필터 근거를 다시 보라"
@@ -145,7 +146,7 @@ def test_accelerator_filter_runs_before_sorting(tmp_path) -> None:
     """
     import json
 
-    from costkb.dataset import BUILT_FILENAME, _load_cached, filter_specs
+    from app.deployment.costkb.dataset import BUILT_FILENAME, _load_cached, filter_specs
 
     def spec(name, hourly, accel):
         return {
@@ -179,7 +180,7 @@ def test_accelerator_filter_runs_before_sorting(tmp_path) -> None:
 
 def test_empty_result_says_the_accelerator_condition_is_on() -> None:
     """가속기 조건 때문에 비었으면 그걸 밝힌다 — 안 밝히면 엉뚱한 데를 조정한다."""
-    from costkb import agent_api as cost
+    from app.deployment.costkb import agent_api as cost
 
     text = cost.recommend_specs(500, 0, "aws", "ap-northeast-2", "cost", 3,
                                 architecture=None, require_accelerator=True)

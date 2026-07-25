@@ -18,8 +18,8 @@ import json
 
 import pytest
 
-from kbcommon import fetch
-from kbcommon.sources import SOURCES, unpinnable
+from app.deployment.kbcommon import fetch
+from app.deployment.kbcommon.sources import SOURCES, unpinnable
 
 
 # --- 1. 고정 ref가 한 곳에서 관리되는가 ---
@@ -83,16 +83,16 @@ def test_graphkb_and_capacitykb_read_the_same_bicep_commit() -> None:
 
     따로 상수를 들고 있던 시절에는 한쪽만 갱신되면 조용히 다른 세계를 봤다.
     """
-    from capacitykb.parsers import azure as cap_azure
-    from graphkb.parsers import azure as graph_azure
+    from app.deployment.capacitykb.parsers import azure as cap_azure
+    from app.deployment.graphkb.parsers import azure as graph_azure
 
     assert graph_azure.DEFAULT_BASE_URL == cap_azure.DEFAULT_BASE_URL
     assert SOURCES["bicep-types-az"].pin in graph_azure.DEFAULT_BASE_URL
 
 
 def test_both_cfn_parsers_read_the_same_zip() -> None:
-    from capacitykb.parsers import cfn as cap_cfn
-    from graphkb.parsers import cfn as graph_cfn
+    from app.deployment.capacitykb.parsers import cfn as cap_cfn
+    from app.deployment.graphkb.parsers import cfn as graph_cfn
 
     assert graph_cfn.DEFAULT_ZIP_URL == cap_cfn.DEFAULT_ZIP_URL
 
@@ -210,7 +210,7 @@ def test_describe_source_set_changes_when_any_file_changes(tmp_path) -> None:
 
 
 def test_graph_roundtrips_provenance(tmp_path) -> None:
-    from graphkb.model import Graph, Node
+    from app.deployment.graphkb.model import Graph, Node
 
     graph = Graph()
     graph.add_node(Node(id="core::vm", layer="core", provider="common",
@@ -224,7 +224,7 @@ def test_graph_roundtrips_provenance(tmp_path) -> None:
 
 
 def test_capacity_roundtrips_provenance(tmp_path) -> None:
-    from capacitykb.model import CapacitySet, Constraint
+    from app.deployment.capacitykb.model import CapacitySet, Constraint
 
     caps = CapacitySet()
     caps.add_constraint(Constraint(type_id="aws::AWS::EC2::Volume", property="Size",
@@ -241,7 +241,7 @@ def test_shipped_artifacts_declare_their_source(name) -> None:
     """빌드된 산출물에는 출처가 실려 있어야 한다 (없으면 skip — 빌드 전일 수 있다)."""
     from pathlib import Path
 
-    path = Path("output") / name
+    path = Path(__file__).resolve().parent.parent / "output" / name
     if not path.exists():
         pytest.skip(f"{name} 미빌드")
     data = json.loads(path.read_text(encoding="utf-8"))

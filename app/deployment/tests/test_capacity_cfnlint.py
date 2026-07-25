@@ -7,8 +7,8 @@ import json
 import zipfile
 from pathlib import Path
 
-from capacitykb import agent_api
-from capacitykb.parsers.cfnlint import parse_wheel, property_of
+from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb.parsers.cfnlint import parse_wheel, property_of
 
 EXT = "cfnlint/data/schemas/extensions/"
 SCHEMAS = {
@@ -141,7 +141,7 @@ def test_conditions_of_ignores_target_markers() -> None:
     요구하려고 넣은 것이라, 조건으로 읽으면 "DBInstanceClass가 아무 값일 때"라는
     뜻 없는 조건이 생긴다.
     """
-    from capacitykb.parsers.cfnlint import _conditions_of
+    from app.deployment.capacitykb.parsers.cfnlint import _conditions_of
 
     got = _conditions_of({
         "properties": {
@@ -162,8 +162,8 @@ def test_a_definite_mismatch_beats_an_unknown() -> None:
     938블록이 전부 미결로 남아 아무것도 못 답한다. 실측: Engine만 줘도
     후보가 67개로 좁혀지고 "67가지 전부 불가"라는 확정 답이 나온다.
     """
-    from capacitykb.model import Constraint
-    from capacitykb.query import _condition_holds
+    from app.deployment.capacitykb.model import Constraint
+    from app.deployment.capacitykb.query import _condition_holds
 
     c = Constraint(
         type_id="aws::AWS::RDS::DBInstance", property="DBInstanceClass",
@@ -189,7 +189,7 @@ def test_broken_regex_is_unknown_not_false() -> None:
     False로 치면 아는 제약을 통째로 버리고, True로 치면 엉뚱한 조건의 한도를
     적용한다. 실측상 이 데이터셋에 컴파일 안 되는 정규식이 205건 있다.
     """
-    from capacitykb.query import _one_condition
+    from app.deployment.capacitykb.query import _one_condition
 
     cond = {"property": "V", "op": "matches", "value": "*{1,2}"}
     assert _one_condition(cond, {"V": "x"}) is None

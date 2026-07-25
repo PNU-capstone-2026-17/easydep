@@ -1,5 +1,5 @@
 import sys
 
-from bundlekb.cli import main
+from app.deployment.bundlekb.cli import main
 
 sys.exit(main())

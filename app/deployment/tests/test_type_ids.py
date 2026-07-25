@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from kbcommon.type_ids import make_type_id, read_azure_index
+from app.deployment.kbcommon.type_ids import make_type_id, read_azure_index
 
 # 실제 index.json의 모양 — 같은 타입이 API 버전마다 다른 표기로 등재된다.
 INDEX = {
@@ -77,8 +77,8 @@ def test_both_parsers_agree_on_the_representative_spelling() -> None:
 
     두 파서가 각자 복사본을 들고 있던 시절에 여기가 갈렸다.
     """
-    from capacitykb.parsers.azure import select_latest
-    from graphkb.parsers.azure import parse_index
+    from app.deployment.capacitykb.parsers.azure import select_latest
+    from app.deployment.graphkb.parsers.azure import parse_index
 
     graph, graph_latest = parse_index(INDEX)
     assert set(select_latest(INDEX)) == set(graph_latest)

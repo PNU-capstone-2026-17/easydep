@@ -16,11 +16,15 @@ import io
 import json
 from pathlib import Path
 
+#: 저장소 기준 경로. CWD 기준으로 열면 easydep 루트에서 돌 때 파일을 못 찾고,
+#: exists() 가드가 있는 곳은 실패 대신 **조용히 스킵**된다(병합 때 실제로 그랬다).
+_ROOT = Path(__file__).resolve().parent.parent
+
 import pytest
 
-from perfkb import dataset
-from perfkb.agent_api import compare, instance_profile, recommend_note
-from perfkb.fields import COMPARE_FIELDS, FIELDS
+from app.deployment.perfkb import dataset
+from app.deployment.perfkb.agent_api import compare, instance_profile, recommend_note
+from app.deployment.perfkb.fields import COMPARE_FIELDS, FIELDS
 
 # 레코드를 식별하거나, 다른 칸의 주석으로 쓰이거나, 별도 블록에서 다루는 것들.
 # **여기 없고 FIELDS에도 없으면 그 칸은 아무 도구에도 안 보인다** — 그게 결함이었다.
@@ -154,7 +158,7 @@ def test_every_schema_field_is_shown_or_deliberately_excluded() -> None:
     스키마에 칸을 더하고 표시 목록에 안 넣으면 그 데이터는 어느 도구에도 안 보인다.
     빠뜨리려면 `_NOT_DISPLAY_FIELDS`에 이유와 함께 적어야 한다.
     """
-    schema = json.load(io.open(Path("perfkb/schema.json"), encoding="utf-8"))
+    schema = json.load(io.open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
     declared = {f.key for f in FIELDS} | _NOT_DISPLAY_FIELDS
     missing = set(schema["$defs"]["spec"]["properties"]) - declared
     assert not missing, f"표시되지 않는 칸: {sorted(missing)}"
@@ -162,7 +166,7 @@ def test_every_schema_field_is_shown_or_deliberately_excluded() -> None:
 
 def test_excluded_fields_still_exist_in_schema() -> None:
     """제외 목록이 스키마 변경 뒤에 남아 유령이 되지 않도록."""
-    schema = json.load(io.open(Path("perfkb/schema.json"), encoding="utf-8"))
+    schema = json.load(io.open(_ROOT / "perfkb/schema.json", encoding="utf-8"))
     props = set(schema["$defs"]["spec"]["properties"])
     assert _NOT_DISPLAY_FIELDS <= props
     assert {f.key for f in FIELDS} <= props

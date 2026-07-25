@@ -6,8 +6,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-from kbcommon import artifact
-from patternkb.model import Doc
+from app.deployment.kbcommon import artifact
+from app.deployment.patternkb.model import Doc
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 
@@ -64,7 +64,7 @@ def clear_caches() -> None:
     _load_file.cache_clear()
     schema.cache_clear()
     # 색인은 문서 튜플에서 만들므로 함께 비워야 한다 — 아니면 옛 코퍼스를 검색한다.
-    from patternkb import query
+    from app.deployment.patternkb import query
 
     query.clear_caches()
 

@@ -10,8 +10,8 @@ import re
 
 import pytest
 
-from capacitykb import prose
-from capacitykb.prose import extract_default, extract_enum, extract_ranges
+from app.deployment.capacitykb import prose
+from app.deployment.capacitykb.prose import extract_default, extract_enum, extract_ranges
 
 # --- 실제 스키마에서 그대로 가져온 description ---
 

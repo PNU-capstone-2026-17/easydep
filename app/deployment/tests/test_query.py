@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from graphkb.model import Edge, Graph, Node
-from graphkb.query import (
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.query import (
     dependency_chain,
     dependency_chain_detail,
     dependents,
@@ -244,7 +244,7 @@ def test_creation_order_orders_only_the_required_chain(monkeypatch, tmp_path) ->
 
     실측: S3::BucketPolicy가 15단계에 순환 3그룹으로 나왔는데 실제 답은 2단계였다.
     """
-    from graphkb import agent_api
+    from app.deployment.graphkb import agent_api
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Policy")
@@ -262,7 +262,7 @@ def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
     스키마상 required가 아닌 실질 의존이 많아 469개 타입이 그렇게 된다 —
     APS::Scraper는 실제로 구역·작업공간이 필요한데도 필수 체인이 자기뿐이다.
     """
-    from graphkb import agent_api
+    from app.deployment.graphkb import agent_api
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket")
@@ -277,7 +277,7 @@ def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
 
 
 def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) -> None:
-    from graphkb import agent_api
+    from app.deployment.graphkb import agent_api
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket", required_only=True)
@@ -301,8 +301,8 @@ def test_hint_never_suggests_the_name_that_was_asked() -> None:
     (그 실측을 좇다 더 깊은 원인도 나왔다: 숫자 제약에 문자열 값이 오면 조용히
     건너뛰어 "제약 없음"이 됐다. 그건 `check_value` 쪽에서 고쳤다.)
     """
-    from capacitykb.agent_api import _property_hint, load_merged
-    from capacitykb.query import resolve_type
+    from app.deployment.capacitykb.agent_api import _property_hint, load_merged
+    from app.deployment.capacitykb.query import resolve_type
 
     capacity = load_merged()
     assert capacity is not None, "산출물이 없다"
@@ -317,7 +317,7 @@ def test_hint_never_suggests_the_name_that_was_asked() -> None:
 def test_a_genuinely_wrong_property_still_gets_pointed_at_the_right_one() -> None:
     """정정이 **원래 하던 일을 죽이면 안 된다.** RDS에 EC2의 이름을 물으면
     여전히 진짜 후보를 가리켜야 하고, 물어본 이름 자신은 후보에서 빠져야 한다."""
-    from capacitykb.agent_api import check
+    from app.deployment.capacitykb.agent_api import check
 
     answer = check("AWS::RDS::DBInstance", "InstanceType", "db.t3.medium")
     assert "no such property" in answer

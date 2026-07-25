@@ -41,9 +41,9 @@ from pathlib import Path
 
 import yaml
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import describe_source, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import describe_source, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 try:  # C 로더가 3.8MB YAML을 10배 빠르게 읽는다
     _Loader = yaml.CSafeLoader
@@ -149,7 +149,7 @@ def build_records(pricing: dict, mirror_specs: list[dict]) -> tuple[list[dict], 
 
 
 def build(output: Path, *, refresh: bool = False) -> dict:
-    from costkb.dataset import load_specs
+    from app.deployment.costkb.dataset import load_specs
 
     source = SOURCES["cyclenerd-gcp-pricing"]
     path = fetch_cached(

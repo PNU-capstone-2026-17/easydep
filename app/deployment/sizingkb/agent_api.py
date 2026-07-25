@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kbcommon.basis import describe
-from kbcommon.display import evidence_name
-from sizingkb.dataset import (
+from app.deployment.kbcommon.basis import describe
+from app.deployment.kbcommon.display import evidence_name
+from app.deployment.sizingkb.dataset import (
     all_rules,
     is_built,
     load_warnings,
@@ -22,7 +22,7 @@ from sizingkb.dataset import (
     rules_of,
     scopes,
 )
-from sizingkb.model import (
+from app.deployment.sizingkb.model import (
     MINIMUM,
     PRESET,
     REFERENCE_POINT,
@@ -106,7 +106,7 @@ def requirements(
     if not found and scope:
         # scope로 못 찾으면 **내용으로** 한 번 더 본다. 클러스터 서브넷 규칙은
         # scope가 프로바이더('aws')라 '쿠버네티스'·'클러스터'로는 안 닿았다.
-        from sizingkb.dataset import search_rules
+        from app.deployment.sizingkb.dataset import search_rules
 
         found = [
             r

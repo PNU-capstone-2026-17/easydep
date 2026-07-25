@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from agents import FunctionTool
 
-from nim_agent.agent import INSTRUCTIONS
-from nim_agent.capacity_tools import CAPACITY_TOOLS, _coerce
-from nim_agent.tools import LOCAL_TOOLS
+from app.deployment.nim_agent.agent import INSTRUCTIONS
+from app.deployment.nim_agent.capacity_tools import CAPACITY_TOOLS, _coerce
+from app.deployment.nim_agent.tools import LOCAL_TOOLS
 
 
 def test_capacity_tools_registered() -> None:

@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from envkb.latency import (
+from app.deployment.envkb.latency import (
     annotate_distance,
     describe,
     faster_than_light,

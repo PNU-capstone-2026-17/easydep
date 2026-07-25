@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from nim_agent.design_tools import _pattern_advisory, compose
-from nim_agent.pattern_tools import PATTERN_TOOLS, pattern_search
-from nim_agent.tools import LOCAL_TOOLS
+from app.deployment.nim_agent.design_tools import _pattern_advisory, compose
+from app.deployment.nim_agent.pattern_tools import PATTERN_TOOLS, pattern_search
+from app.deployment.nim_agent.tools import LOCAL_TOOLS
 
 
 def test_pattern_search_is_registered() -> None:

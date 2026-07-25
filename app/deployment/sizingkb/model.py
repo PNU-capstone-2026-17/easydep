@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from kbcommon.basis import basis_of, is_fact
+from app.deployment.kbcommon.basis import basis_of, is_fact
 
 #: 규칙 종류.
 RESERVED_IPS = "reserved_ips"

@@ -30,6 +30,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+#: easydep 병합(2026-07-25) 이후 이 하위 시스템의 임포트 접두. 규약은 접두를 뗀
+#: 이름으로 따진다 — 이 검사가 말하는 "프로젝트"는 저장소 전체가 아니라
+#: `app/deployment` 다. 접두를 떼지 않으면 모든 임포트의 top이 "app"이 되어
+#: 위반이 한 건도 안 잡히는, 통과하지만 아무것도 안 지키는 검사가 된다.
+PACKAGE_PREFIX = "app.deployment."
+
 KB_PACKAGES = {
     "appkb",
     "bundlekb",
@@ -83,6 +89,7 @@ def _violations() -> dict[tuple[str, str], str]:
         for path in sorted((ROOT / pkg).rglob("*.py")):
             rel = path.relative_to(ROOT).as_posix()
             for module, names in _project_imports(path):
+                module = module.removeprefix(PACKAGE_PREFIX)
                 parts = module.split(".")
                 top = parts[0]
                 if top not in ALL_PACKAGES or top == pkg:

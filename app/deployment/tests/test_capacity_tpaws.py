@@ -6,7 +6,7 @@ import io
 import tarfile
 from pathlib import Path
 
-from capacitykb.parsers.tpaws import (
+from app.deployment.capacitykb.parsers.tpaws import (
     parse_provider, read_service_namespaces, resolve_type, tf_path_to_cfn,
 )
 
@@ -84,7 +84,7 @@ def test_service_is_joined_by_the_providers_own_table() -> None:
     """
     ns = read_service_namespaces(HCL)
     assert ns["amp"] == "aps"
-    from capacitykb.parsers.tpaws import index_cfn
+    from app.deployment.capacitykb.parsers.tpaws import index_cfn
     got = resolve_type("amp", "aws_prometheus_scraper",
                        namespaces=ns, cfn=index_cfn(CFN))
     assert got == "aws::AWS::APS::Scraper"

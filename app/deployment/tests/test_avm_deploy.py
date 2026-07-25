@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from graphkb.parsers.avm import type_pairs
+from app.deployment.graphkb.parsers.avm import type_pairs
 
 TEMPLATE = {
     "resources": {

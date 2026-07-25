@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from envkb import lifecycle
+from app.deployment.envkb import lifecycle
 
 
 def flat(text: str) -> str:

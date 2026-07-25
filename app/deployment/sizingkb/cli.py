@@ -13,14 +13,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from sizingkb.agent_api import (
+from app.deployment.sizingkb.agent_api import (
     container_presets,
     coverage_text,
     reference_points,
     requirements,
     subnet_capacity,
 )
-from sizingkb.dataset import is_built
+from app.deployment.sizingkb.dataset import is_built
 
 DEFAULT_OUTPUTS = {
     "tumblebug": Path("output") / "tumblebug-sizing.json",
@@ -56,15 +56,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
     if args.source == "tumblebug":
-        from sizingkb.parsers import tumblebug
+        from app.deployment.sizingkb.parsers import tumblebug
 
         tumblebug.build(output, refresh=args.refresh)
     elif args.source == "reviewed":
-        from sizingkb.parsers import reviewed
+        from app.deployment.sizingkb.parsers import reviewed
 
         reviewed.build(output, refresh=args.refresh)
     else:
-        from sizingkb.parsers import presets
+        from app.deployment.sizingkb.parsers import presets
 
         presets.build(output, refresh=args.refresh)
     return 0

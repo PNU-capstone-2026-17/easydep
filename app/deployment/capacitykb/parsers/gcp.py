@@ -40,11 +40,11 @@ from pathlib import Path
 
 import yaml
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import describe_source_set
-from kbcommon.invariants import announce
-from kbcommon.sources import SOURCES
-from kbcommon.type_ids import make_type_id
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.kbcommon.type_ids import make_type_id
 
 DEFAULT_TAG = SOURCES["kcc-crd"].pin
 #: graphkb의 KCC 파서와 같은 저장소를 본다 — 캐시 접두(kcc-tree)도 같아서
@@ -286,7 +286,7 @@ def build(
     provider: bool = True,
 ) -> CapacitySet:
     """CRD를 받아 파싱하고 output에 저장한 뒤 결과를 반환한다."""
-    from kbcommon.fetch import fetch_cached, list_github_tree, load_yaml_lenient
+    from app.deployment.kbcommon.fetch import fetch_cached, list_github_tree, load_yaml_lenient
 
     crds: list[dict] = []
     read_paths: list[Path] = []
@@ -339,8 +339,8 @@ def build(
 
 def _add_provider(capacity: CapacitySet, *, refresh: bool) -> CapacitySet:
     """프로바이더 릴리스에서 값을 보강한다 (실패해도 빌드를 죽이지 않는다)."""
-    from capacitykb.parsers import tpg
-    from kbcommon.fetch import fetch_cached
+    from app.deployment.capacitykb.parsers import tpg
+    from app.deployment.kbcommon.fetch import fetch_cached
 
     source = SOURCES["tpg-provider"]
     try:

@@ -36,9 +36,9 @@ import tarfile
 from collections import Counter
 from pathlib import Path
 
-from bundlekb.model import ALWAYS, REQUIRED, Bundle, BundleSet, Member
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.bundlekb.model import ALWAYS, REQUIRED, Bundle, BundleSet, Member
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE_DYNAMIC = "tumblebug-dynamic"
 EVIDENCE_TEMPLATE = "tumblebug-template"
@@ -256,7 +256,7 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, bundles.to_dict(), _schema())
     print(f"tumblebug 번들: {len(bundles.bundles)}개 → {output}")

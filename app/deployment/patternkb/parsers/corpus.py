@@ -31,10 +31,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from kbcommon.fetch import describe_source_set, fetch_cached, list_github_tree
-from kbcommon.invariants import Invariant, Violation, announce
-from kbcommon.sources import SOURCES
-from patternkb.dataset import schema
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached, list_github_tree
+from app.deployment.kbcommon.invariants import Invariant, Violation, announce
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.patternkb.dataset import schema
 
 _ARCH = "ms-architecture-center"
 _TWELVE = "twelve-factor"
@@ -247,9 +247,9 @@ def _invariants() -> list[Invariant]:
 
 
 def build(output: Path, *, refresh: bool = False) -> dict:
-    from kbcommon.artifact import write_dataset
+    from app.deployment.kbcommon.artifact import write_dataset
 
-    from patternkb.parsers import gcp_framework
+    from app.deployment.patternkb.parsers import gcp_framework
 
     arch_docs, arch_paths = _arch_docs(refresh)
     twelve_docs, twelve_paths = _twelve_docs(refresh)

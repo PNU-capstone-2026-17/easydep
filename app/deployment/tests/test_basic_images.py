@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from envkb.images import describe, project
+from app.deployment.envkb.images import describe, project
 
 
 def flat(text: str) -> str:

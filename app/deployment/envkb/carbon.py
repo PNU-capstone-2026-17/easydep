@@ -47,9 +47,9 @@ from functools import lru_cache
 import re
 from pathlib import Path
 
-from kbcommon.artifact import load_json, resolve, write_dataset
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import load_json, resolve, write_dataset
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 #: 메트릭톤 → 그램
 _TON_TO_GRAM = 1_000_000

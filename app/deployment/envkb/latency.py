@@ -39,10 +39,10 @@ import json
 import math
 from pathlib import Path
 
-from kbcommon import artifact
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.invariants import Invariant, Violation
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.invariants import Invariant, Violation
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "tumblebug-latency"
 

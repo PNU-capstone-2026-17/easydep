@@ -143,7 +143,7 @@ def archetype_values() -> tuple[str, ...]:
     한 번 빗나갔고, 스키마를 재구성할 때마다 조용히 빈 목록을 돌려주면 **모든
     아키타입 지정이 "모르는 값"으로 거부된다.**
     """
-    from appkb.contract import schema
+    from app.deployment.appkb.contract import schema
 
     def walk(node) -> tuple[str, ...]:
         if isinstance(node, dict):

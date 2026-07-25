@@ -10,11 +10,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+#: 저장소 기준 경로. CWD 기준으로 열면 easydep 루트에서 돌 때 파일을 못 찾고,
+#: exists() 가드가 있는 곳은 실패 대신 **조용히 스킵**된다(병합 때 실제로 그랬다).
+_ROOT = Path(__file__).resolve().parent.parent
+
 import pytest
 import yaml
 
-from graphkb.model import Edge, Graph
-from graphkb.parsers.gcp import parse_crds
+from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.parsers.gcp import parse_crds
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gcp"
 
@@ -134,7 +138,7 @@ def test_prose_words_are_not_treated_as_kinds() -> None:
     없는 부품까지 만들었다(진짜 대상은 IAMServiceAccount). 판별은 KCC 작명 규칙 —
     종류 이름은 예외 없이 PascalCase다.
     """
-    from graphkb.parsers.gcp import _KIND_NAME
+    from app.deployment.graphkb.parsers.gcp import _KIND_NAME
 
     for word in ("externally", "parent", "private", "service", "certificatemanager"):
         assert not _KIND_NAME.fullmatch(word), word
@@ -148,7 +152,7 @@ def test_kind_without_crd_still_yields_a_relationship() -> None:
     스키마가 없어도 "이게 있어야 한다"는 사실 자체가 답이 된다 —
     ComputeInstanceTemplate은 fixture에 CRD가 없지만 의존은 실재한다.
     """
-    from graphkb.parsers.gcp import _KIND_NAME
+    from app.deployment.graphkb.parsers.gcp import _KIND_NAME
 
     assert _KIND_NAME.fullmatch("ComputeInstanceTemplate")
 
@@ -162,7 +166,7 @@ def test_description_name_is_corrected_to_the_real_kind(monkeypatch) -> None:
     **검수 파일의 rejected+added로 처리하면 안 된다.** 엣지만 지워지고 파서가 만든
     허구 종류 노드(`gcp::Secret`)는 그대로 남는다. 그래서 id를 만들기 전에 고친다.
     """
-    from graphkb.parsers import gcp
+    from app.deployment.graphkb.parsers import gcp
 
     monkeypatch.setattr(gcp, "_KIND_ALIASES", {"Secret": "SecretManagerSecret"})
     resolved = gcp._resolve_target(
@@ -184,11 +188,11 @@ def test_alias_table_targets_are_real_kinds() -> None:
     import json
     from pathlib import Path
 
-    path = Path("graphkb/reviewed/gcp-kind-aliases.json")
+    path = _ROOT / "graphkb/reviewed/gcp-kind-aliases.json"
     if not path.exists():
         return
     aliases = json.loads(path.read_text(encoding="utf-8"))["aliases"]
-    graph_path = Path("output/gcp-graph.json")
+    graph_path = _ROOT / "output/gcp-graph.json"
     if not graph_path.exists():
         return  # 빌드 전이면 건너뛴다
     nodes = json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]
@@ -235,7 +239,7 @@ def test_project_ref_becomes_containment() -> None:
     Azure는 타입 이름이 계층적이라 공짜로 나오지만 GCP는 이름이 평평해서
     이 참조가 **유일한 계층 신호**다. 이게 없으면 담김 축이 통째로 빈다.
     """
-    from graphkb.parsers.gcp import parse_crds
+    from app.deployment.graphkb.parsers.gcp import parse_crds
 
     graph = parse_crds([
         _project_crd(),
@@ -255,7 +259,7 @@ def test_hierarchy_naming_does_not_override_a_resolved_target() -> None:
     Apigee의 `organizationRef`는 GCP 조직이 아니라 ApigeeOrganization을 가리킨다.
     이름 규약을 먼저 적용하면 이걸 틀리게 된다.
     """
-    from graphkb.parsers.gcp import parse_crds
+    from app.deployment.graphkb.parsers.gcp import parse_crds
 
     apigee_org = {"kind": "CustomResourceDefinition",
                   "spec": {"names": {"kind": "ApigeeOrganization"},
@@ -272,7 +276,7 @@ def test_hierarchy_naming_does_not_override_a_resolved_target() -> None:
 
 
 def test_plain_reference_is_still_a_reference() -> None:
-    from graphkb.parsers.gcp import parse_crds
+    from app.deployment.graphkb.parsers.gcp import parse_crds
 
     net = {"kind": "CustomResourceDefinition",
            "spec": {"names": {"kind": "ComputeNetwork"},

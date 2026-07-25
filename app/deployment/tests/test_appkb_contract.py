@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from appkb.contract import validate_design
+from app.deployment.appkb.contract import validate_design
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
 

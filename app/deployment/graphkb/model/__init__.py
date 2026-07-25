@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from graphkb.model.graph import Edge, Graph, Node
+from app.deployment.graphkb.model.graph import Edge, Graph, Node
 
 __all__ = ["Edge", "Graph", "Node"]

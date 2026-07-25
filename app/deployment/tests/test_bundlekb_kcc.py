@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from bundlekb.parsers.kcc import anchor_of, kinds_in
+from app.deployment.bundlekb.parsers.kcc import anchor_of, kinds_in
 
 MULTI_DOC = """apiVersion: alloydb.cnrm.cloud.google.com/v1beta1
 kind: AlloyDBCluster

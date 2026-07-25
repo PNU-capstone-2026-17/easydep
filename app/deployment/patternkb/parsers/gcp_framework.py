@@ -24,8 +24,8 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
-from kbcommon.fetch import fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.fetch import fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 _BASE = "https://cloud.google.com"
 _INDEX = "/architecture/framework"

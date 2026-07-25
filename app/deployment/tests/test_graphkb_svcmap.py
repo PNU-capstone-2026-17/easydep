@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from graphkb.parsers.svcmap import (
+from app.deployment.graphkb.parsers.svcmap import (
     CONCEPTS,
     EVIDENCE_CROSS,
     EVIDENCE_DIAGRAMS,
@@ -22,8 +22,8 @@ from graphkb.parsers.svcmap import (
     EVIDENCE_REVIEWED,
     _row_matches,
 )
-from kbcommon.basis import INFERRED, basis_of, needs_hedge
-from kbcommon.display import evidence_name
+from app.deployment.kbcommon.basis import INFERRED, basis_of, needs_hedge
+from app.deployment.kbcommon.display import evidence_name
 
 
 # --- 근거 규율 -----------------------------------------------------------------
@@ -112,7 +112,7 @@ def test_keyword_is_substring_of_link_text() -> None:
 def _bundled(name: str) -> dict:
     from pathlib import Path
 
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     path = artifact.resolve(Path("output"), name)
     assert path is not None, f"{name}이 output/에도 data/에도 없다"
@@ -122,7 +122,7 @@ def _bundled(name: str) -> dict:
 def test_every_binding_type_exists_in_some_graph() -> None:
     """**대응의 벤더 쪽 끝은 실재하는 타입 id여야 한다.** 아니면 capacitykb·
     graphkb 조인이 그 자리에서 끊긴다 (core 매핑의 '전부 대조, 0건 실패' 선례)."""
-    from graphkb.agent_api import GRAPH_FILES
+    from app.deployment.graphkb.agent_api import GRAPH_FILES
 
     known: set[str] = set()
     for name in GRAPH_FILES:
@@ -176,7 +176,7 @@ def test_coverage_keeps_the_matched_source_rows() -> None:
 # --- 답의 계약 -----------------------------------------------------------------
 
 def test_equivalent_types_reaches_managed_services_and_draws_the_boundary() -> None:
-    from graphkb import agent_api
+    from app.deployment.graphkb import agent_api
 
     agent_api._load_merged_cached.cache_clear()
     try:
@@ -194,7 +194,7 @@ def test_equivalent_types_reaches_managed_services_and_draws_the_boundary() -> N
 def test_core_concept_is_not_polluted_by_app_layer() -> None:
     """벤더 DB 타입에서 core_concept를 물으면 **None이어야 한다** — app 개념이
     core로 잡히면 비용 조인이 관리형 서비스에 VM 단가를 붙인다."""
-    from graphkb import agent_api
+    from app.deployment.graphkb import agent_api
 
     agent_api._load_merged_cached.cache_clear()
     agent_api.concepts_with_spec.cache_clear()

@@ -17,7 +17,7 @@ SSH 키: 별도 요금이 부과되지 않음(무료)"*이라고 적었다.
 
 from __future__ import annotations
 
-from tools.claim_check import check, priced_as_free
+from app.deployment.tools.claim_check import check, priced_as_free
 
 # `resource_guideline` 출력 그대로.
 TOOL = (

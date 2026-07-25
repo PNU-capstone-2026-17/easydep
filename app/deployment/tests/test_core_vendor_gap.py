@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from graphkb.agent_api import _practical_prerequisites, creation_order
-from graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.agent_api import _practical_prerequisites, creation_order
+from app.deployment.graphkb.model import Edge, Graph, Node
 
 
 def flat(text: str) -> str:
@@ -119,7 +119,7 @@ def test_unmapped_vendor_type_gets_nothing(graph) -> None:
 
 def test_creation_order_includes_the_note(graph, tmp_path, monkeypatch) -> None:
     """조회 API 전체 경로에서도 붙는지 — 문구가 아니라 존재를 본다."""
-    monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
+    monkeypatch.setattr("app.deployment.graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = creation_order("AWS::EC2::Instance", output_dir=tmp_path)
     assert (
         "the schema leaves these optional, but in practice they are usually needed"

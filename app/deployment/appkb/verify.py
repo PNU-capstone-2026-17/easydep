@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import re
 
-from appkb.plan import DeploymentPlan, needs_hedge
-from appkb.diagram import parse_back
+from app.deployment.appkb.plan import DeploymentPlan, needs_hedge
+from app.deployment.appkb.diagram import parse_back
 
 #: 계획의 노드 id가 지켜야 하는 모양. 계약의 `components[].id`와 같은 규칙이라
 #: 여기서 어긋나면 우리가 조립 중에 망가뜨린 것이다.

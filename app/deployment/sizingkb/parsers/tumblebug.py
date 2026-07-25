@@ -31,9 +31,9 @@ from pathlib import Path
 
 import yaml
 
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
-from sizingkb.model import (
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.sizingkb.model import (
     MINIMUM,
     REFERENCE_POINT,
     REQUIRED_COUNT,
@@ -216,7 +216,7 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, rules.to_dict(), _schema())
     print(f"tumblebug 사이징: 규칙 {len(rules.rules)}개 → {output}")

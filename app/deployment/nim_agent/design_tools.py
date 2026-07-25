@@ -37,9 +37,9 @@ from dataclasses import dataclass, replace
 
 from agents import function_tool
 
-from appkb.contract import validate_design
-from appkb.diagram import render
-from appkb.plan import (
+from app.deployment.appkb.contract import validate_design
+from app.deployment.appkb.diagram import render
+from app.deployment.appkb.plan import (
     ORIGIN_DESIGN,
     ORIGIN_DESIGNER,
     ORIGIN_INFERRED,
@@ -50,7 +50,7 @@ from appkb.plan import (
     PlanNode,
     needs_hedge,
 )
-from appkb.verify import (
+from app.deployment.appkb.verify import (
     unhedged_claims,
     verify_against_requirements,
     verify_diagram,
@@ -119,8 +119,8 @@ def _vendor_of(core_id: str, provider: str | None) -> tuple[str, bool]:
     """
     if not provider:
         return "", False
-    from graphkb.agent_api import load_merged
-    from graphkb.query import equivalents
+    from app.deployment.graphkb.agent_api import load_merged
+    from app.deployment.graphkb.query import equivalents
 
     graph = load_merged()
     if graph is None or core_id not in graph.nodes:
@@ -133,7 +133,7 @@ def _vendor_of(core_id: str, provider: str | None) -> tuple[str, bool]:
 
 def _svcmap_types(concept: str, provider: str | None) -> list[str]:
     """app:: 개념의 벤더 타입 후보. provider를 주면 그 프로바이더만."""
-    from graphkb.agent_api import load_merged
+    from app.deployment.graphkb.agent_api import load_merged
 
     graph = load_merged()
     if graph is None:
@@ -159,7 +159,7 @@ def _pattern_advisory(query: str) -> Note | None:
     노트로 달고 그 성격을 문장에 함께 싣는 것까지가 자문의 전부다 — 근거 라벨은
     `pattern-advisory`이고 basis는 영원히 inferred다.
     """
-    from patternkb.query import search
+    from app.deployment.patternkb.query import search
 
     hits = search(query, limit=1)
     if not hits:
@@ -194,7 +194,7 @@ def _managed_axes_note(archetype: str, provider: str | None,
     """
     if provider not in ("azure", "gcp", "aws") or not region:
         return None
-    from costkb import dataset as cost_dataset
+    from app.deployment.costkb import dataset as cost_dataset
 
     if not cost_dataset.managed_built(provider):
         # 이 프로바이더의 산출물이 없다(aws는 로컬 빌드 전용이라 이게 기본) —
@@ -639,9 +639,9 @@ def _method_comparison_notes(
     """
     if not unhinted or not provider:
         return [], None
-    from costkb import dataset as cost_dataset
-    from sizingkb.dataset import rules_of
-    from sizingkb.model import MINIMUM, REQUIRED_COUNT
+    from app.deployment.costkb import dataset as cost_dataset
+    from app.deployment.sizingkb.dataset import rules_of
+    from app.deployment.sizingkb.model import MINIMUM, REQUIRED_COUNT
 
     from .cost_tools import _perf_note
 
@@ -798,7 +798,7 @@ def _global_notices(
     # 레지던시 대조 자료 — 판정이 아니다. 리전의 원본 표시 이름을 그대로 싣고,
     # 국가 판정은 하지 않는다(부합 판정문이 "판정 불가"를 명시한다 — verify).
     if requirements.get("dataResidency") and provider and region:
-        from envkb.regions import name_of
+        from app.deployment.envkb.regions import name_of
 
         display = name_of(region, provider=provider)
         if display:
@@ -821,7 +821,7 @@ def _global_notices(
     # 사용량형이라 곱하지 않는다 — 대표로 기본(전 세계) 첫 구간 단가만 보이고
     # 목적지·구간별 축 개수를 함께 밝힌다.
     if provider and region and exposed:
-        from costkb import dataset as cost_dataset
+        from app.deployment.costkb import dataset as cost_dataset
 
         egress_axes = cost_dataset.managed_axes("networkEgress", region)
         if egress_axes:
@@ -943,7 +943,7 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
     앱에 VPC가 2개 그려진다 — tumblebug이 스스로 "연결당 공유라 이미 있으면
     재사용한다"고 밝힌 것과도 어긋난다.
     """
-    from bundlekb.dataset import default_bundle_for
+    from app.deployment.bundlekb.dataset import default_bundle_for
 
     anchors = []
     if "vm" in kinds:
@@ -1023,7 +1023,7 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
             "not carry that")
     origin, source = ORIGIN_KB, "bundlekb"
     if provider:
-        from envkb.images import describe
+        from app.deployment.envkb.images import describe
 
         found = describe(provider, requirements.get("region"), "x86_64", limit=1)
         first = next(
@@ -1043,8 +1043,8 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
 
 def _node_group_notes() -> list[Note]:
     """노드 그룹의 최소 사양. **cb-tumblebug이 정한 값이지 쿠버네티스가 정한 게 아니다.**"""
-    from sizingkb.dataset import rules_of
-    from sizingkb.model import MINIMUM
+    from app.deployment.sizingkb.dataset import rules_of
+    from app.deployment.sizingkb.model import MINIMUM
 
     notes = []
     for rule in rules_of(MINIMUM, "k8s-node"):
@@ -1058,8 +1058,8 @@ def _node_group_notes() -> list[Note]:
 
 def _subnet_notes(provider: str | None, requirements: dict) -> list[Note]:
     """서브넷에 붙는 사이징 사실 — 개수와 용량. 둘 다 sizingkb가 답한다."""
-    from sizingkb.dataset import rules_of
-    from sizingkb.model import REQUIRED_COUNT
+    from app.deployment.sizingkb.dataset import rules_of
+    from app.deployment.sizingkb.model import REQUIRED_COUNT
 
     notes: list[Note] = []
     if provider:
@@ -1078,7 +1078,7 @@ def _subnet_notes(provider: str | None, requirements: dict) -> list[Note]:
             ORIGIN_DESIGN, "requirements",
         ))
     if provider:
-        from sizingkb.agent_api import subnet_capacity
+        from app.deployment.sizingkb.agent_api import subnet_capacity
 
         first = subnet_capacity(24, provider).splitlines()[0]
         notes.append(Note(f"For reference — {first}", ORIGIN_KB, "sizingkb"))
@@ -1093,7 +1093,7 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
     서버리스는 호출당 과금이라 안 붙고, 쿠버네티스 컴포넌트는 파드라 안 붙는다 —
     대신 파드가 도는 **노드 그룹**이 값을 받는다.
     """
-    from costkb import dataset as cost_dataset
+    from app.deployment.costkb import dataset as cost_dataset
 
     from .cost_tools import _perf_note
 
@@ -1141,7 +1141,7 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
 
 def _render_plan_text(plan: DeploymentPlan) -> str:
     """계획을 사람이 읽는 텍스트로. **근거를 줄마다 붙인다.**"""
-    from appkb.plan import ORIGIN_LABEL
+    from app.deployment.appkb.plan import ORIGIN_LABEL
 
     lines = [f"{plan.name} — deployment plan"]
     for role, title in (("actor", "End user"),
@@ -1204,7 +1204,7 @@ def deployment_answer(design: dict, diagram: bool = True) -> str:
 
     # 요구사항 대조 — research.md 목표 1의 "부합 측정". 판정문이라 항상 싣는다:
     # "기준 없음"도 판정이다(침묵이면 부분 답이 완전한 답처럼 읽힌다).
-    from costkb.agent_api import HOURS_PER_MONTH
+    from app.deployment.costkb.agent_api import HOURS_PER_MONTH
 
     conformance = verify_against_requirements(
         plan, design.get("requirements"), HOURS_PER_MONTH
@@ -1243,8 +1243,8 @@ def deployment_answer_from_easydep(
     어댑터가 못 읽은 것·추정한 것과 제약 계약 위반을 답변 끝에 그대로 싣는다 —
     어댑터의 휴리스틱을 조용히 삼키면 부분 답이 완전한 답처럼 읽힌다.
     """
-    from appkb.contract import validate_request
-    from appkb.easydep import design_from_easydep
+    from app.deployment.appkb.contract import validate_request
+    from app.deployment.appkb.easydep import design_from_easydep
 
     design, skipped = design_from_easydep(
         name,

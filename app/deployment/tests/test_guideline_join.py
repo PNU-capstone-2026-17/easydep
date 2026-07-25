@@ -15,9 +15,9 @@ import json
 
 import pytest
 
-from bundlekb import dataset as bundle_dataset
-from graphkb import agent_api as graph_api
-from nim_agent.guideline_tools import _guideline
+from app.deployment.bundlekb import dataset as bundle_dataset
+from app.deployment.graphkb import agent_api as graph_api
+from app.deployment.nim_agent.guideline_tools import _guideline
 
 VM = "core::vm"
 NODE_GROUP = "core::k8sNodeGroup"
@@ -121,7 +121,7 @@ def built(tmp_path):
     graph_api._load_merged_cached.cache_clear()
     graph_api.concepts_with_spec.cache_clear()
     bundle_dataset.clear_caches()
-    from costkb import dataset as cost_dataset
+    from app.deployment.costkb import dataset as cost_dataset
 
     cost_dataset.clear_caches()
     cost_dataset.DEFAULT_OUTPUT_DIR = out

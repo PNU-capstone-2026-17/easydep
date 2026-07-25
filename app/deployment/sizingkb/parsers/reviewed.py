@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sizingkb.model import RESERVED_IPS, Rule, RuleSet
+from app.deployment.sizingkb.model import RESERVED_IPS, Rule, RuleSet
 
 EVIDENCE = "human-review"
 
@@ -143,7 +143,7 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, rules.to_dict(), _schema())
     print(f"손 검수 사이징: 규칙 {len(rules.rules)}개 → {output}")

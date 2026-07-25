@@ -9,14 +9,14 @@
 
 from __future__ import annotations
 
-from capacitykb.parsers.tpcsp import (
+from app.deployment.capacitykb.parsers.tpcsp import (
     PROVIDERS,
     _emit,
     _is_output_only,
     _registration,
     Report,
 )
-from capacitykb.model import CapacitySet
+from app.deployment.capacitykb.model import CapacitySet
 
 
 def test_alicloud_registration_form() -> None:

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from sizingkb import agent_api
+from app.deployment.sizingkb import agent_api
 
 
 # 예약 수를 0으로 두면 251대 자리에 256대가 됩니다.

@@ -71,9 +71,9 @@ import urllib.request
 from collections import Counter
 from pathlib import Path
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import cache_dir
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import cache_dir
+from app.deployment.kbcommon.sources import SOURCES
 
 #: 예약 기간 → 시간. `retailPrice`가 기간 총액이라 이걸로 나눠야 시간당이 된다.
 TERM_HOURS = {"1 Year": 8760, "3 Years": 26280, "5 Years": 43800}

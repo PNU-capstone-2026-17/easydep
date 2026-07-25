@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capacitykb import agent_api
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.parsers.aws_limits import VOLUME, cross_check, read_botocore, read_price_list
+from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.parsers.aws_limits import VOLUME, cross_check, read_botocore, read_price_list
 
 PRICE = {
     "products": {

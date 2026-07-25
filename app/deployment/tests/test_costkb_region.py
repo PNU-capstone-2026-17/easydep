@@ -20,9 +20,9 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.agent_api import recommend_specs
-from costkb.dataset import filter_specs, resolve_region
+from app.deployment.costkb import dataset
+from app.deployment.costkb.agent_api import recommend_specs
+from app.deployment.costkb.dataset import filter_specs, resolve_region
 
 
 def _spec(provider: str, region: str, name: str, price: float | None = 0.05) -> dict:
@@ -131,7 +131,7 @@ def test_source_note_admits_the_deviations() -> None:
     같은 문단이 바로 다음 문장에서 memGiB를 보정했다고 말한다 — 한 문단 안의 모순이다.
     일부러 다르게 하는 곳 셋을 이름으로 적는다.
     """
-    from costkb.parsers.tumblebug import SOURCE_NOTE
+    from app.deployment.costkb.parsers.tumblebug import SOURCE_NOTE
 
     assert "not always identical" in SOURCE_NOTE
     for deviation in ("memGiB", "unknown price", "exact match"):

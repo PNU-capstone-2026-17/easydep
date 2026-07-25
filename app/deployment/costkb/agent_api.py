@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from costkb.dataset import (
+from app.deployment.costkb.dataset import (
     DEFAULT_ARCHITECTURE,
     _load_azure_discount,
     _resolve,

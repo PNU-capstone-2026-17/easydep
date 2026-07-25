@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from capacitykb.model.records import CapacitySet, Constraint, Quota
+from app.deployment.capacitykb.model.records import CapacitySet, Constraint, Quota
 
 __all__ = ["CapacitySet", "Constraint", "Quota"]

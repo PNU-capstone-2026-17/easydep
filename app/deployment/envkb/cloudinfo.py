@@ -39,9 +39,9 @@ from pathlib import Path
 
 import yaml
 
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import describe_source, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import describe_source, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 try:
     _Loader = yaml.CSafeLoader

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from bundlekb.model import ALWAYS, Bundle, Member
-from bundlekb.parsers.tumblebug import _member_of_template
+from app.deployment.bundlekb.model import ALWAYS, Bundle, Member
+from app.deployment.bundlekb.parsers.tumblebug import _member_of_template
 
 # 실제 `init/templates/*.json`의 모양 그대로.
 INFRA_MULTI = {

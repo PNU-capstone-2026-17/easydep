@@ -28,8 +28,8 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from kbcommon.fetch import fetch_cached, list_github_tree
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.fetch import fetch_cached, list_github_tree
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "azure-sizes-doc"
 

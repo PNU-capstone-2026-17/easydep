@@ -31,8 +31,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "ec2-hardware-probe"
 
@@ -120,7 +120,7 @@ def enrich(specs: list[dict], hardware: dict) -> Report:
 
 
 def fetch(refresh: bool = False) -> tuple[dict, Path]:
-    from kbcommon.artifact import load_json
+    from app.deployment.kbcommon.artifact import load_json
 
     source = SOURCES["ec2-hardware"]
     path = fetch_cached(source.url, f"ec2-hardware-{source.pin[:12]}.json", refresh=refresh)

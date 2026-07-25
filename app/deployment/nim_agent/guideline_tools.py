@@ -43,14 +43,14 @@ from __future__ import annotations
 
 from agents import RunContextWrapper, function_tool
 
-from bundlekb import dataset as bundle_dataset
-from bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
-from costkb import dataset as cost_dataset
-from costkb.agent_api import HOURS_PER_MONTH
-from graphkb import agent_api as graph_api
-from graphkb.agent_api import concepts_with_spec, core_concept
-from kbcommon.display import evidence_name
-from perfkb import agent_api as perf_api
+from app.deployment.bundlekb import dataset as bundle_dataset
+from app.deployment.bundlekb.model import ALWAYS, OPTIONAL, REQUIRED
+from app.deployment.costkb import dataset as cost_dataset
+from app.deployment.costkb.agent_api import HOURS_PER_MONTH
+from app.deployment.graphkb import agent_api as graph_api
+from app.deployment.graphkb.agent_api import concepts_with_spec, core_concept
+from app.deployment.kbcommon.display import evidence_name
+from app.deployment.perfkb import agent_api as perf_api
 
 from .cost_tools import _perf_note
 from .session import SessionState

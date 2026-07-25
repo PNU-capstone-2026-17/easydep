@@ -12,9 +12,9 @@ import asyncio
 
 from agents.tool_context import ToolContext
 
-from nim_agent.cost_tools import cost_estimate_monthly, cost_recommend_specs
-from nim_agent.session import SessionState
-from nim_agent.tools import record_plan
+from app.deployment.nim_agent.cost_tools import cost_estimate_monthly, cost_recommend_specs
+from app.deployment.nim_agent.session import SessionState
+from app.deployment.nim_agent.tools import record_plan
 
 
 def invoke(tool, context, args: str) -> str:
@@ -99,7 +99,7 @@ def test_context_param_is_not_in_tool_schema() -> None:
 
 def test_kb_tools_are_not_gated() -> None:
     """지식베이스 질의는 단순 조회라 계획을 요구하지 않는다."""
-    from nim_agent.graph_tools import kb_search_types
+    from app.deployment.nim_agent.graph_tools import kb_search_types
 
     assert "ctx" not in kb_search_types.params_json_schema.get("properties", {})
     out = invoke(kb_search_types, SessionState(), '{"keyword": "subnet"}')

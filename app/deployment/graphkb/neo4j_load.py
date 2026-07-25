@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from graphkb.model import Graph
+from app.deployment.graphkb.model import Graph
 
 CONSTRAINT = (
     "CREATE CONSTRAINT graphkb_resource_type_id IF NOT EXISTS "

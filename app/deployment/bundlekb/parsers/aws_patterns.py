@@ -33,9 +33,9 @@ import sys
 import tarfile
 from pathlib import Path
 
-from bundlekb.model import ALWAYS, Bundle, BundleSet, Member
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.bundlekb.model import ALWAYS, Bundle, BundleSet, Member
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "aws-solutions-construct"
 PROVIDER = "aws"
@@ -174,7 +174,7 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             ),
         }
     ]
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     artifact.write_dataset(output, bundles.to_dict(), _schema())
     print(f"aws 패턴 번들: {report.kept}/{report.patterns}개 → {output}")

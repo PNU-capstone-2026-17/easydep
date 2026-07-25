@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from capacitykb.agent_api import CAPACITY_FILES
-from capacitykb.cli import DEFAULT_OUTPUTS, _tpcsp_keys
-from capacitykb.parsers.tpcsp import PROVIDERS
-from graphkb.agent_api import GRAPH_FILES
+from app.deployment.capacitykb.agent_api import CAPACITY_FILES
+from app.deployment.capacitykb.cli import DEFAULT_OUTPUTS, _tpcsp_keys
+from app.deployment.capacitykb.parsers.tpcsp import PROVIDERS
+from app.deployment.graphkb.agent_api import GRAPH_FILES
 
 
 @pytest.mark.parametrize("key", sorted(PROVIDERS))
@@ -48,7 +48,7 @@ def test_output_filename_matches_the_provider_namespace(key) -> None:
 
 @pytest.mark.parametrize("key", sorted(PROVIDERS))
 def test_source_is_pinned(key) -> None:
-    from kbcommon.sources import SOURCES
+    from app.deployment.kbcommon.sources import SOURCES
 
     source = SOURCES[PROVIDERS[key]["source"]]
     assert source.pin and source.pin_kind in ("tag", "commit", "digest", "bundled")

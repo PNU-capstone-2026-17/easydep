@@ -15,8 +15,8 @@ import tarfile
 
 import pytest
 
-from capacitykb.parsers.azure_secret import _walk_secret, parse_tarball
-from kbcommon.type_ids import AzureTypeIndex
+from app.deployment.capacitykb.parsers.azure_secret import _walk_secret, parse_tarball
+from app.deployment.kbcommon.type_ids import AzureTypeIndex
 
 
 @pytest.fixture

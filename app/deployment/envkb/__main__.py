@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from kbcommon.console import use_utf8
+from app.deployment.kbcommon.console import use_utf8
 
 DEFAULT_OUTPUT = Path("output")
 
@@ -49,7 +49,9 @@ def main(argv: list[str] | None = None) -> int:
     module_name, filename, _ = _AXES[axis]
     import importlib
 
-    module = importlib.import_module(f"envkb.{module_name}")
+    # 패키지 상대로 부른다 — 절대 경로를 박아 두면 패키지가 옮겨질 때마다
+    # AST 재작성이 못 보는 자리가 하나 남는다(easydep 병합에서 실제로 그랬다).
+    module = importlib.import_module(f".{module_name}", __package__)
     module.build(args.output or (DEFAULT_OUTPUT / filename), refresh=args.refresh)
     return 0
 

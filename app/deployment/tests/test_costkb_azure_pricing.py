@@ -14,9 +14,9 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.agent_api import AZURE_DISCOUNT_MISSING, azure_discount_pricing
-from costkb.parsers.azure_pricing import TERM_HOURS, _index, _is_vm, kind_of
+from app.deployment.costkb import dataset
+from app.deployment.costkb.agent_api import AZURE_DISCOUNT_MISSING, azure_discount_pricing
+from app.deployment.costkb.parsers.azure_pricing import TERM_HOURS, _index, _is_vm, kind_of
 
 VM = "Standard_B2s_v2"
 
@@ -131,7 +131,7 @@ def test_committed_artifact_discloses_its_redistribution_status() -> None:
     떼어 봐도 어디서 왔고 허가가 어떤 상태인지 보여야 한다 — 산출물은 저장소 밖으로도
     나간다. `NOTICE` 쪽 강제는 `test_redistribution_notice.py`에 있다.
     """
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     packed = artifact.BUNDLED_DIR / f"{dataset.AZURE_DISCOUNT_FILENAME}.gz"
     if not packed.exists():

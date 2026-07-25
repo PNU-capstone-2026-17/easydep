@@ -30,10 +30,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.invariants import Invariant, Violation, announce
-from kbcommon.sources import SOURCES
-from patternkb.dataset import schema
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.invariants import Invariant, Violation, announce
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.patternkb.dataset import schema
 
 _SOURCE = "aws-well-architected"
 SECTION = "aws-well-architected"
@@ -220,7 +220,7 @@ def _invariants() -> list[Invariant]:
 
 
 def build(output: Path, *, refresh: bool = False) -> dict:
-    from kbcommon.artifact import write_dataset
+    from app.deployment.kbcommon.artifact import write_dataset
 
     docs, paths, skipped = fetch_docs(refresh)
     dataset = {

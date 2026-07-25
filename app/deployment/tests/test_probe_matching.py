@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from tools.agent_probe import Probe, _normalized
+from app.deployment.tools.agent_probe import Probe, _normalized
 
 
 def test_normalizes_lookalike_hyphen() -> None:

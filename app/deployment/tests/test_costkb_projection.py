@@ -11,8 +11,8 @@ from __future__ import annotations
 import jsonschema
 import pytest
 
-from costkb.dataset import _schema
-from costkb.parsers.tumblebug import (
+from app.deployment.costkb.dataset import _schema
+from app.deployment.costkb.parsers.tumblebug import (
     SYSTEM_NAMESPACE,
     build_dataset,
     correct_memory,

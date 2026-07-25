@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from patternkb import agent_api, dataset
-from patternkb.parsers.aws_waf import (
+from app.deployment.patternkb import agent_api, dataset
+from app.deployment.patternkb.parsers.aws_waf import (
     OutlineEntry,
     _clean_page_text,
     split_sections,
@@ -29,7 +29,7 @@ LONG = "steady content line for a guidance section. " * 10  # > _MIN_TEXT
 
 def test_committed_aws_corpus_carries_the_fair_use_note() -> None:
     """수록은 허가가 아니라 판단이다 — 판단이 파일 안에 실려 함께 다녀야 한다."""
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     packed = BUNDLED_DIR / "aws-pattern-corpus.json.gz"
     assert packed.exists(), (

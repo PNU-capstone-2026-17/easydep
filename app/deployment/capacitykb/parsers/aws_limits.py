@@ -27,9 +27,9 @@ import re
 import sys
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "aws-cross-checked"
 VOLUME = "aws::AWS::EC2::Volume"

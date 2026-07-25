@@ -10,8 +10,8 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from capacitykb.model import CapacitySet
-from capacitykb.query import (
+from app.deployment.capacitykb.model import CapacitySet
+from app.deployment.capacitykb.query import (
     _cond_text,
     brief,
     check_value,
@@ -20,9 +20,9 @@ from capacitykb.query import (
     limits_for,
     resolve_type,
 )
-from kbcommon import artifact
-from kbcommon.basis import describe
-from kbcommon.display import backend_caveat, display, evidence_name
+from app.deployment.kbcommon import artifact
+from app.deployment.kbcommon.basis import describe
+from app.deployment.kbcommon.display import backend_caveat, display, evidence_name
 
 DEFAULT_OUTPUT_DIR = Path("output")
 CAPACITY_FILES = (
@@ -445,7 +445,7 @@ def secrets(
     배포 계획에 쓰인다 — 이 값들은 잃어버리면 다시 조회할 수 없으므로 Key Vault
     등으로 따로 관리해야 한다. 지금은 Azure만 이 표시(`x-ms-secret`)를 준다.
     """
-    from capacitykb.query import secret_properties
+    from app.deployment.capacitykb.query import secret_properties
 
     capacity = load_merged(output_dir)
     if capacity is None:

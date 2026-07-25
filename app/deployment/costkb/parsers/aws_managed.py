@@ -47,14 +47,14 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from costkb.parsers.azure_managed import (
+from app.deployment.costkb.parsers.azure_managed import (
     AXIS_CAPACITY,
     AXIS_INSTANCE,
     AXIS_USAGE,
     SCHEMA,
 )
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import cache_dir
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import cache_dir
 
 _BASE = "https://pricing.us-east-1.amazonaws.com"
 _UA = "cloudkb-build (https://github.com/cloud-barista)"

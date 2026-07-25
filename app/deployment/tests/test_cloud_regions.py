@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from envkb import cloudinfo
-from envkb import regions as regions_mod
+from app.deployment.envkb import cloudinfo
+from app.deployment.envkb import regions as regions_mod
 
 
 def flat(text: str) -> str:

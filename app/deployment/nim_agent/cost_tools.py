@@ -20,10 +20,10 @@ from __future__ import annotations
 
 from agents import RunContextWrapper, function_tool
 
-from costkb import agent_api
-from costkb.agent_api import HOURS_PER_MONTH
-from perfkb import agent_api as perf_api
-from perfkb import dataset as perf_dataset
+from app.deployment.costkb import agent_api
+from app.deployment.costkb.agent_api import HOURS_PER_MONTH
+from app.deployment.perfkb import agent_api as perf_api
+from app.deployment.perfkb import dataset as perf_dataset
 
 from .session import SessionState
 
@@ -291,8 +291,8 @@ def _perf_hint(spec_name: str, provider: str | None) -> str:
     않는 규약이라 이 조인은 도구 계층에서 한다(`capacity_tools._perf_pointer`와 같다).
     """
     try:
-        from costkb.dataset import find_by_name
-        from perfkb.agent_api import hardware_facts, recommend_note
+        from app.deployment.costkb.dataset import find_by_name
+        from app.deployment.perfkb.agent_api import hardware_facts, recommend_note
 
         rows = find_by_name(spec_name, provider)
         if not rows:

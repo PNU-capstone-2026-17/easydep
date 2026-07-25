@@ -19,8 +19,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from costkb.agent_api import HOURS_PER_MONTH
-from costkb.dataset import (
+from app.deployment.costkb.agent_api import HOURS_PER_MONTH
+from app.deployment.costkb.dataset import (
     AZURE_DISCOUNT_FILENAME,
     BUILT_FILENAME,
     DEFAULT_OUTPUT_DIR,
@@ -133,13 +133,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    from kbcommon import tumblebug_dump as dump_reader
-    from costkb.invariants import INVARIANTS
-    from kbcommon.artifact import ArtifactInvalid, write_dataset
-    from kbcommon.invariants import announce
-    from kbcommon.fetch import describe_source
+    from app.deployment.kbcommon import tumblebug_dump as dump_reader
+    from app.deployment.costkb.invariants import INVARIANTS
+    from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
+    from app.deployment.kbcommon.invariants import announce
+    from app.deployment.kbcommon.fetch import describe_source
 
-    from costkb.parsers.tumblebug import build_dataset, format_audit
+    from app.deployment.costkb.parsers.tumblebug import build_dataset, format_audit
 
     if args.rows_file:
         rows = dump_reader.iter_rows_from_copy_file(args.rows_file)
@@ -239,7 +239,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_gcp_pricing(args: argparse.Namespace) -> int:
-    from costkb.parsers import gcp_pricing
+    from app.deployment.costkb.parsers import gcp_pricing
 
     output = args.output or (DEFAULT_OUTPUT_DIR / "gcp-spot-commit.json")
     if not (DEFAULT_OUTPUT_DIR / BUILT_FILENAME).exists():
@@ -254,7 +254,7 @@ def _cmd_build_gcp_pricing(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
-    from costkb.parsers import azure_pricing
+    from app.deployment.costkb.parsers import azure_pricing
 
     mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
     if not mirror.exists():
@@ -278,8 +278,8 @@ def _cmd_build_azure_pricing(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_azure_managed(args: argparse.Namespace) -> int:
-    from costkb.dataset import AZURE_MANAGED_FILENAME
-    from costkb.parsers import azure_managed
+    from app.deployment.costkb.dataset import AZURE_MANAGED_FILENAME
+    from app.deployment.costkb.parsers import azure_managed
 
     mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
     if not mirror.exists():
@@ -303,8 +303,8 @@ def _cmd_build_azure_managed(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_gcp_managed(args: argparse.Namespace) -> int:
-    from costkb.dataset import GCP_MANAGED_FILENAME
-    from costkb.parsers import gcp_managed
+    from app.deployment.costkb.dataset import GCP_MANAGED_FILENAME
+    from app.deployment.costkb.parsers import gcp_managed
 
     mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
     if not mirror.exists():
@@ -320,8 +320,8 @@ def _cmd_build_gcp_managed(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_aws_managed(args: argparse.Namespace) -> int:
-    from costkb.dataset import AWS_MANAGED_FILENAME
-    from costkb.parsers import aws_managed
+    from app.deployment.costkb.dataset import AWS_MANAGED_FILENAME
+    from app.deployment.costkb.parsers import aws_managed
 
     mirror = DEFAULT_OUTPUT_DIR / BUILT_FILENAME
     if not mirror.exists():

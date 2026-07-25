@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from graphkb.cli import main
+from app.deployment.graphkb.cli import main
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 SWAGGER_FIXTURE = str(FIXTURE_DIR / "tumblebug-swagger-min.json")

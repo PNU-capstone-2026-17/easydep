@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.parsers.azure import extract_constraints, select_latest
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.parsers.azure import extract_constraints, select_latest
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "capacity" / "azure"
 AKS = "azure::Microsoft.ContainerService/managedClusters"
@@ -154,9 +154,9 @@ def test_only_latest_api_version_is_read() -> None:
     **못 채우는 칸을 채우라고** 하게 된다. 실측: workbooks.properties.userId가
     2015-05-01에선 required(1), 2023-06-01에선 read_only(2)였다.
     """
-    from capacitykb.model import CapacitySet
-    from capacitykb.parsers.azure import extract_constraints
-    from kbcommon.type_ids import read_azure_index
+    from app.deployment.capacitykb.model import CapacitySet
+    from app.deployment.capacitykb.parsers.azure import extract_constraints
+    from app.deployment.kbcommon.type_ids import read_azure_index
 
     index = {"resources": {
         "Microsoft.Insights/workbooks@2015-05-01": {"$ref": "old.json#/1"},
@@ -182,7 +182,7 @@ def test_full_scope_leaves_no_scope_marker() -> None:
     scope가 있으면 covers()가 "목록 밖은 안 봤음"으로 답하는데, 전체를 읽고도
     이걸 남기면 훑은 타입까지 '안 봤음'이 되어 거짓말이 된다.
     """
-    from capacitykb.parsers.azure import DEFAULT_PROVIDERS
+    from app.deployment.capacitykb.parsers.azure import DEFAULT_PROVIDERS
     assert DEFAULT_PROVIDERS == (), "기본은 전체여야 한다 (손으로 고른 목록 없음)"
 
 
@@ -196,7 +196,7 @@ def test_arm_type_reads_the_alternation_not_the_braces() -> None:
     거르면 그걸 타입으로 읽어 `.../virtualMachineInstances/default`라는 없는
     타입이 나온다(실측 21종 27건).
     """
-    from capacitykb.parsers.azure_mutability import arm_type
+    from app.deployment.capacitykb.parsers.azure_mutability import arm_type
 
     base = "/subscriptions/{s}/resourceGroups/{g}/providers/"
     assert arm_type(base + "Microsoft.ContainerService/managedClusters/{n}") == (
@@ -212,7 +212,7 @@ def test_arm_type_reads_the_alternation_not_the_braces() -> None:
 
 def test_arm_type_uses_the_last_providers_segment() -> None:
     """`/providers/`가 두 번 나오면 뒤쪽이 진짜 타입이다 (실측 10종)."""
-    from capacitykb.parsers.azure_mutability import arm_type
+    from app.deployment.capacitykb.parsers.azure_mutability import arm_type
 
     url = (
         "/subscriptions/{s}/resourceGroups/{g}/providers/Microsoft.Sql/servers/{n}"
@@ -227,7 +227,7 @@ def test_only_create_without_update_becomes_immutable() -> None:
     읽기 전용은 `bicep-flags`가 이미 4,704건 담고 있어 중복이고, 라벨 하나에
     성격 하나라는 규칙상 섞으면 안 된다.
     """
-    from capacitykb.parsers.azure_mutability import parse_tarball
+    from app.deployment.capacitykb.parsers.azure_mutability import parse_tarball
 
     # 순수 함수 부분만 본다 — tarball 없이 판정 규칙을 고정한다.
     def verdict(mutability):

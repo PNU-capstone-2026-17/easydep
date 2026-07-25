@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.agent_api import discount_pricing
-from costkb.parsers.gcp_pricing import build_records
+from app.deployment.costkb import dataset
+from app.deployment.costkb.agent_api import discount_pricing
+from app.deployment.costkb.parsers.gcp_pricing import build_records
 
 PRICING = {
     "compute": {

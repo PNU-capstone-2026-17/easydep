@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from costkb.dataset import DEFAULT_OUTPUT_DIR, managed_axes
+from app.deployment.costkb.dataset import DEFAULT_OUTPUT_DIR, managed_axes
 
 
 def _gcs_axes() -> list[dict]:
@@ -50,7 +50,7 @@ def test_standard_has_no_retrieval_axis() -> None:
 def test_no_multi_region_location_leaks_into_the_region_axis() -> None:
     """멀티/듀얼 리전(asia1·asia-multi)은 리전 체계가 다르다 — 섞이면 리전 칸이
     두 체계의 잡탕이 된다."""
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     path = artifact.resolve("output", "gcp-managed-pricing.json")
     data = artifact.load_json(path)
@@ -62,7 +62,7 @@ def test_no_multi_region_location_leaks_into_the_region_axis() -> None:
 def test_only_sourced_archetypes_are_claimed() -> None:
     """소스에 있는 것이 objectStorage·networkEgress뿐이다(1층 ②에서 이그레스
     추가) — 다른 아키타입이 나타나면 그건 지어낸 것이다."""
-    from kbcommon import artifact
+    from app.deployment.kbcommon import artifact
 
     path = artifact.resolve("output", "gcp-managed-pricing.json")
     data = artifact.load_json(path)
@@ -95,7 +95,7 @@ def test_azure_and_gcp_regions_do_not_collide() -> None:
 
 
 def test_unbuilt_is_none_not_empty(tmp_path) -> None:
-    from costkb import dataset
+    from app.deployment.costkb import dataset
 
     dataset.clear_caches()
     try:

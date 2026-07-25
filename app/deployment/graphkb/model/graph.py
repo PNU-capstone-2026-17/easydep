@@ -14,7 +14,7 @@ from typing import Literal
 
 import jsonschema
 
-from kbcommon.basis import basis_of, is_fact
+from app.deployment.kbcommon.basis import basis_of, is_fact
 
 #: `app`은 svcmap이 만든 **애플리케이션 개념 층**이다(관계형 DB·큐·객체 스토리지 등).
 #: core 층(cb-tumblebug 스웨거 미러)에 우리 개념을 섞으면 미러가 오염되므로 층을
@@ -244,8 +244,8 @@ class Graph:
         Returns:
             불변식 결과. `report` 등급 위반은 **호출자가 알려야 한다.**
         """
-        from graphkb.invariants import INVARIANTS
-        from kbcommon.artifact import write_dataset
+        from app.deployment.graphkb.invariants import INVARIANTS
+        from app.deployment.kbcommon.artifact import write_dataset
 
         return write_dataset(path, self.to_dict(), _schema(), INVARIANTS)
 

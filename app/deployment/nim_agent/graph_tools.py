@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from capacitykb import agent_api as capacity_api
-from graphkb import agent_api
+from app.deployment.capacitykb import agent_api as capacity_api
+from app.deployment.graphkb import agent_api
 
 
 @function_tool

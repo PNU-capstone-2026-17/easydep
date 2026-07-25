@@ -12,8 +12,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from patternkb.agent_api import _MISSING, coverage_text, search_patterns
-from patternkb.dataset import CORPUS_FILE, is_built
+from app.deployment.patternkb.agent_api import _MISSING, coverage_text, search_patterns
+from app.deployment.patternkb.dataset import CORPUS_FILE, is_built
 
 DEFAULT_OUTPUT = Path("output") / CORPUS_FILE
 
@@ -44,15 +44,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    from patternkb.parsers import corpus
+    from app.deployment.patternkb.parsers import corpus
 
     corpus.build(args.output, refresh=args.refresh)
     return 0
 
 
 def _cmd_build_aws_waf(args: argparse.Namespace) -> int:
-    from patternkb.dataset import AWS_CORPUS_FILE
-    from patternkb.parsers import aws_waf
+    from app.deployment.patternkb.dataset import AWS_CORPUS_FILE
+    from app.deployment.patternkb.parsers import aws_waf
 
     output = args.output or (Path("output") / AWS_CORPUS_FILE)
     aws_waf.build(output, refresh=args.refresh)

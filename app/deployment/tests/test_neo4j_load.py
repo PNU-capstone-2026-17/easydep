@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from graphkb.model import Edge, Graph, Node
-from graphkb.neo4j_load import CONSTRAINT, REL_TYPES, cypher_script
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.neo4j_load import CONSTRAINT, REL_TYPES, cypher_script
 
 
 def make_graph() -> Graph:

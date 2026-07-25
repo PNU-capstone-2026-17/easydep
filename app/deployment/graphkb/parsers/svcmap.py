@@ -43,10 +43,10 @@ import re
 import sys
 from pathlib import Path
 
-from graphkb.model import Edge, Graph, Node
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.invariants import announce
-from kbcommon.sources import SOURCES
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE_CROSS = "svcmap-cross-checked"
 EVIDENCE_MS = "ms-learn-comparison"
@@ -345,8 +345,8 @@ def _diagram_vocab(provider: str) -> set[str]:
 
 def _existing_node_ids(output_dir: Path) -> set[str]:
     """다른 그래프 산출물의 노드 id 전부 — 바인딩 검증 대상."""
-    from graphkb.agent_api import GRAPH_FILES
-    from kbcommon import artifact
+    from app.deployment.graphkb.agent_api import GRAPH_FILES
+    from app.deployment.kbcommon import artifact
 
     ids: set[str] = set()
     for name in GRAPH_FILES:
@@ -490,7 +490,7 @@ def build(output: Path, *, output_dir: Path | None = None) -> Graph:
     ms_paths = []
     for rel in MS_AWS_FILES + MS_GCP_FILES:
         cache = f"ms-architecture-center-{rel.replace('/', '-')}"
-        from kbcommon.fetch import cache_dir
+        from app.deployment.kbcommon.fetch import cache_dir
 
         candidate = cache_dir() / cache
         if candidate.exists():

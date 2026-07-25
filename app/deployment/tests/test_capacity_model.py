@@ -5,8 +5,8 @@ from __future__ import annotations
 import jsonschema
 import pytest
 
-from capacitykb.model import CapacitySet, Constraint, Quota
-from kbcommon.artifact import ArtifactInvalid
+from app.deployment.capacitykb.model import CapacitySet, Constraint, Quota
+from app.deployment.kbcommon.artifact import ArtifactInvalid
 
 
 def make_constraint(**overrides) -> Constraint:

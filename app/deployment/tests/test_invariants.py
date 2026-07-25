@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from capacitykb.invariants import INVARIANTS as CAPACITY_INVARIANTS
-from kbcommon.artifact import ArtifactInvalid, write_dataset
-from kbcommon.invariants import (
+from app.deployment.capacitykb.invariants import INVARIANTS as CAPACITY_INVARIANTS
+from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
+from app.deployment.kbcommon.invariants import (
     Invariant,
     Violation,
     accelerator_fields_agree,
@@ -95,7 +95,7 @@ def test_report_severity_writes_and_returns_the_violation(tmp_path) -> None:
         {"provider": "kt", "specName": "g", "acceleratorType": "gpu",
          "acceleratorCount": 0},
     ]}
-    from costkb.invariants import INVARIANTS as COST
+    from app.deployment.costkb.invariants import INVARIANTS as COST
 
     result = write_dataset(path, dataset, ANY_SCHEMA, COST)
 
@@ -213,8 +213,8 @@ def test_mirror_and_derived_kb_disagree_on_severity() -> None:
 
     미러가 상류 모순을 고쳐 쓰면 그 순간 미러가 아니게 된다.
     """
-    from costkb.invariants import INVARIANTS as COST
-    from perfkb.invariants import INVARIANTS as PERF
+    from app.deployment.costkb.invariants import INVARIANTS as COST
+    from app.deployment.perfkb.invariants import INVARIANTS as PERF
 
     bad = {"specs": [{"provider": "kt", "specName": "g", "acceleratorType": "gpu",
                       "acceleratorCount": 0}]}
@@ -232,7 +232,7 @@ def test_negative_measurement_blocks_the_write(tmp_path) -> None:
     실측: 상류가 `disk_size_gb = -1`로 37,466건을 보낸다. 그대로 실으면 소비자가
     계산에 넣는다.
     """
-    from costkb.invariants import INVARIANTS as COST
+    from app.deployment.costkb.invariants import INVARIANTS as COST
 
     bad = {"specs": [{"provider": "aws", "specName": "d2.8xlarge", "diskSizeGB": -1.0}]}
     result = run(bad, COST)
@@ -246,7 +246,7 @@ def test_zero_disk_is_reported_not_rewritten() -> None:
     Azure에서 이름상 로컬 디스크가 확실한 v6 계열이 0으로 오는가 하면(미기입),
     0이 맞는 스펙도 있다. 애매한 값을 고쳐 쓰면 그 순간 미러가 아니게 된다.
     """
-    from costkb.invariants import INVARIANTS as COST
+    from app.deployment.costkb.invariants import INVARIANTS as COST
 
     data = {"specs": [{"provider": "azure", "specName": "Standard_E48ads_v6",
                        "diskSizeGB": 0}]}
@@ -256,7 +256,7 @@ def test_zero_disk_is_reported_not_rewritten() -> None:
 
 
 def test_disk_size_parser_maps_minus_one_to_none() -> None:
-    from costkb.parsers.tumblebug import _disk_size
+    from app.deployment.costkb.parsers.tumblebug import _disk_size
 
     assert _disk_size(-1) is None
     assert _disk_size(0) == 0        # 0은 건드리지 않는다

@@ -15,8 +15,8 @@
 
 from __future__ import annotations
 
-from appkb.contract import validate_design
-from appkb.easydep import (
+from app.deployment.appkb.contract import validate_design
+from app.deployment.appkb.easydep import (
     COMPONENT_ID,
     design_from_easydep,
     parse_classes,
@@ -235,7 +235,7 @@ def test_adapter_output_passes_the_design_contract() -> None:
 
 def test_easydep_entrypoint_carries_verdicts_and_adapter_notes() -> None:
     """easydep 배포 노드가 부를 진입점 — 부합 판정과 어댑터 고지가 답에 실린다."""
-    from nim_agent.design_tools import deployment_answer_from_easydep
+    from app.deployment.nim_agent.design_tools import deployment_answer_from_easydep
 
     text = deployment_answer_from_easydep(
         "주문 서비스", api_spec=_API_SPEC, class_puml=_CLASS_PUML,
@@ -248,7 +248,7 @@ def test_easydep_entrypoint_carries_verdicts_and_adapter_notes() -> None:
 
 
 def test_easydep_entrypoint_reports_invalid_resource_spec() -> None:
-    from nim_agent.design_tools import deployment_answer_from_easydep
+    from app.deployment.nim_agent.design_tools import deployment_answer_from_easydep
 
     text = deployment_answer_from_easydep(
         "주문 서비스", api_spec=_API_SPEC, class_puml=_CLASS_PUML,
@@ -261,8 +261,8 @@ def test_easydep_entrypoint_reports_invalid_resource_spec() -> None:
 def test_puml_document_carries_evidence_as_comments() -> None:
     """easydep 저장은 스테이지당 단일 문서(PUML)다 — 근거·판정을 버리면 이 교체의
     요점이 사라지므로 PlantUML 주석으로 같은 문서에 싣는다(팀 결정 2026-07-24)."""
-    from appkb.diagram import parse_back
-    from nim_agent.design_tools import deployment_puml_from_easydep
+    from app.deployment.appkb.diagram import parse_back
+    from app.deployment.nim_agent.design_tools import deployment_puml_from_easydep
 
     doc = deployment_puml_from_easydep(
         "주문 서비스", api_spec=_API_SPEC, class_puml=_CLASS_PUML,
@@ -282,7 +282,7 @@ def test_puml_document_carries_evidence_as_comments() -> None:
 
 
 def test_contract_failure_becomes_a_drawn_failure_not_an_empty_diagram() -> None:
-    from nim_agent.design_tools import deployment_puml_from_easydep
+    from app.deployment.nim_agent.design_tools import deployment_puml_from_easydep
 
     doc = deployment_puml_from_easydep("빈 설계")
     assert doc.startswith("@startuml")
@@ -292,9 +292,9 @@ def test_contract_failure_becomes_a_drawn_failure_not_an_empty_diagram() -> None
 def test_adapter_output_composes_into_a_plan() -> None:
     """끝에서 끝까지: easydep 산출물 모양 → 계약 → 배포 계획. 저장소·큐·공개
     노출·값이 전부 나오고, 자체 검증을 통과한다."""
-    from appkb.diagram import render
-    from appkb.verify import verify_diagram, verify_plan
-    from nim_agent.design_tools import compose
+    from app.deployment.appkb.diagram import render
+    from app.deployment.appkb.verify import verify_diagram, verify_plan
+    from app.deployment.nim_agent.design_tools import compose
 
     design, _ = _adapt()
     plan = compose(design)
@@ -317,7 +317,7 @@ def test_archetype_comment_resolves_the_ambiguous_engine() -> None:
     지정하면 계획이 실제로 달라져야 하고(관계형 → 스트림), 근거는 **설계자 지정**
     등급으로 hedge돼야 한다 — 주장이지 검증된 사실이 아니다.
     """
-    from nim_agent.design_tools import deployment_answer_from_easydep
+    from app.deployment.nim_agent.design_tools import deployment_answer_from_easydep
 
     erd = 'entity "Order" {\n id\n}'
     spec = {"provider": "aws", "region": "ap-northeast-2"}
@@ -335,7 +335,7 @@ def test_archetype_comment_resolves_the_ambiguous_engine() -> None:
 
 def test_archetype_is_case_insensitive_but_never_invented() -> None:
     """설계자가 `eventstream`이라 적어도 받는다. 다만 **모르는 값은 지어내지 않는다.**"""
-    from appkb.easydep import archetype_values, parse_archetype
+    from app.deployment.appkb.easydep import archetype_values, parse_archetype
 
     assert parse_archetype("' archetype: eventstream")[0] == "eventStream"
     value, problem = parse_archetype("' archetype: nope")
@@ -347,7 +347,7 @@ def test_archetype_is_case_insensitive_but_never_invented() -> None:
 
 def test_a_wrong_archetype_is_reported_not_swallowed() -> None:
     """조용히 무시하면 **지정했다고 믿는 사람과 지정 없는 계획 사이에 신호가 없다.**"""
-    from appkb.easydep import design_from_easydep
+    from app.deployment.appkb.easydep import design_from_easydep
 
     _, skipped = design_from_easydep(
         "t", erd_puml="' archetype: nope\nentity \"Order\" {\n id\n}"
@@ -357,7 +357,7 @@ def test_a_wrong_archetype_is_reported_not_swallowed() -> None:
 
 def test_archetype_without_any_entity_is_reported() -> None:
     """붙일 저장소 노드가 없으면 그 사실을 말한다 — 지정이 증발하면 안 된다."""
-    from appkb.easydep import design_from_easydep
+    from app.deployment.appkb.easydep import design_from_easydep
 
     _, skipped = design_from_easydep("t", erd_puml="' archetype: eventStream")
     assert any("no storage node" in line for line in skipped)

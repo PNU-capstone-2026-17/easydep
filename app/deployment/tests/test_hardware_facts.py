@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from perfkb import dataset
-from perfkb.agent_api import hardware_facts
+from app.deployment.perfkb import dataset
+from app.deployment.perfkb.agent_api import hardware_facts
 
 GPU = {
     "id": "aws+us-east-1+g5g.xlarge", "provider": "aws", "specName": "g5g.xlarge",
@@ -77,7 +77,7 @@ def test_unknown_spec_is_none(built) -> None:
 
 def test_probe_can_accept_either_tool() -> None:
     """한 사실을 두 도구가 답할 수 있으면 **경로가 아니라 사실**을 고정해야 한다."""
-    from tools.agent_probe import Probe
+    from app.deployment.tools.agent_probe import Probe
 
     probe = Probe("T", "q", "why", want_any_tool=("a", "b"))
     assert probe.failures(["b"], "") == []

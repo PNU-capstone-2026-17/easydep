@@ -12,7 +12,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from bundlekb.dataset import (
+from app.deployment.bundlekb.dataset import (
     MIN_SAMPLES,
     all_bundles,
     all_companions,
@@ -54,27 +54,27 @@ def _build_parser() -> argparse.ArgumentParser:
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
     if args.source == "avm":
-        from bundlekb.parsers import avm
+        from app.deployment.bundlekb.parsers import avm
 
         avm.build(output, refresh=args.refresh)
     elif args.source == "tumblebug":
-        from bundlekb.parsers import tumblebug
+        from app.deployment.bundlekb.parsers import tumblebug
 
         tumblebug.build(output, refresh=args.refresh)
     elif args.source == "aqt":
-        from bundlekb.parsers import aqt
+        from app.deployment.bundlekb.parsers import aqt
 
         aqt.build(output, refresh=args.refresh)
     elif args.source == "aws-patterns":
-        from bundlekb.parsers import aws_patterns
+        from app.deployment.bundlekb.parsers import aws_patterns
 
         aws_patterns.build(output, refresh=args.refresh)
     elif args.source == "awscfn":
-        from bundlekb.parsers import awscfn
+        from app.deployment.bundlekb.parsers import awscfn
 
         awscfn.build(output, refresh=args.refresh)
     elif args.source == "kcc":
-        from bundlekb.parsers import kcc
+        from app.deployment.bundlekb.parsers import kcc
 
         kcc.build(output, refresh=args.refresh)
     else:  # pragma: no cover - argparse가 막는다

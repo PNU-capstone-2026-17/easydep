@@ -6,8 +6,8 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from graphkb.export import write_dot, write_graphml
-from graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.export import write_dot, write_graphml
+from app.deployment.graphkb.model import Edge, Graph, Node
 
 
 @pytest.fixture

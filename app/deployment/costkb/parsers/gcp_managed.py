@@ -32,10 +32,10 @@ from pathlib import Path
 
 import yaml
 
-from costkb.parsers.azure_managed import AXIS_CAPACITY, AXIS_USAGE, SCHEMA
-from kbcommon.artifact import write_dataset
-from kbcommon.fetch import describe_source, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.costkb.parsers.azure_managed import AXIS_CAPACITY, AXIS_USAGE, SCHEMA
+from app.deployment.kbcommon.artifact import write_dataset
+from app.deployment.kbcommon.fetch import describe_source, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 try:  # gcp_pricing과 같은 이유 — C 로더가 3.8MB YAML을 10배 빠르게 읽는다
     _Loader = yaml.CSafeLoader

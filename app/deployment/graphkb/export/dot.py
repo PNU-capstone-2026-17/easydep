@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphkb.model import Graph
+from app.deployment.graphkb.model import Graph
 
 
 def _quote(value: str) -> str:

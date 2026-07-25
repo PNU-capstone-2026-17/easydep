@@ -33,12 +33,12 @@ import sys
 import zipfile
 from pathlib import Path
 
-from graphkb.fetch import fetch_cached
-from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness
-from kbcommon.invariants import announce
-from kbcommon.fetch import describe_source
-from kbcommon.sources import SOURCES
+from app.deployment.graphkb.fetch import fetch_cached
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.parsers.review import apply_review, check_freshness
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.fetch import describe_source
+from app.deployment.kbcommon.sources import SOURCES
 
 # ⚠️ AWS는 이 zip을 계속 덮어쓴다 — 고정할 ref가 없다. 받은 바이트의 sha256을
 # 프로버넌스에 남기는 것이 최선이다 (kbcommon/sources.py 참조).

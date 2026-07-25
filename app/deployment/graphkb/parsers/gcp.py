@@ -29,12 +29,12 @@ from pathlib import Path
 
 import yaml
 
-from graphkb.fetch import fetch_cached
-from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness, load_kind_aliases
-from kbcommon.invariants import announce
-from kbcommon.fetch import describe_source_set
-from kbcommon.sources import SOURCES
+from app.deployment.graphkb.fetch import fetch_cached
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.parsers.review import apply_review, check_freshness, load_kind_aliases
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.sources import SOURCES
 
 # 고정 태그는 kbcommon/sources.py에서 관리한다 (--tag로 덮어쓸 수 있다).
 DEFAULT_TAG = SOURCES["kcc-crd"].pin
@@ -330,7 +330,7 @@ def _list_config_files(tag: str, *, refresh: bool) -> list[str]:
     본체는 kbcommon.fetch로 올렸다 — capacitykb가 이 비공개 함수를 빌려 쓰던
     관통을 끊기 위해서다. 캐시 파일명(`kcc-tree-…`)은 그대로다.
     """
-    from kbcommon.fetch import list_github_tree
+    from app.deployment.kbcommon.fetch import list_github_tree
 
     return list_github_tree(
         API_BASE, tag, "config", cache_prefix="kcc-tree", refresh=refresh
@@ -349,7 +349,7 @@ def _crd_service(filename: str) -> str | None:
 
 
 def _load_yaml(path: Path) -> dict | None:
-    from kbcommon.fetch import load_yaml_lenient
+    from app.deployment.kbcommon.fetch import load_yaml_lenient
 
     return load_yaml_lenient(path)
 

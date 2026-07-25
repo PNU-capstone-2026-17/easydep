@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from agents import FunctionTool
 
-from nim_agent.graph_tools import GRAPHKB_TOOLS
-from nim_agent.tools import LOCAL_TOOLS
+from app.deployment.nim_agent.graph_tools import GRAPHKB_TOOLS
+from app.deployment.nim_agent.tools import LOCAL_TOOLS
 
 
 def test_graphkb_tools_defined() -> None:
@@ -27,7 +27,7 @@ def test_graphkb_tools_defined() -> None:
 
 def test_aggregate_tool_exists_for_whole_graph_questions() -> None:
     """전체 대상 순위 질문을 타입별 도구로 풀면 턴이 소진된다 → 집계 도구 필요."""
-    from nim_agent.agent import INSTRUCTIONS
+    from app.deployment.nim_agent.agent import INSTRUCTIONS
 
     assert "kb_rank_types" in INSTRUCTIONS
     assert "aggregate" in INSTRUCTIONS

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from agents import function_tool
 
-from bundlekb import agent_api, dataset
+from app.deployment.bundlekb import agent_api, dataset
 
 
 def _is_named_bundle(query: str) -> bool:

@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-from nim_agent.agent import INSTRUCTIONS
-from nim_agent.tools import record_plan, web_search
+from app.deployment.nim_agent.agent import INSTRUCTIONS
+from app.deployment.nim_agent.tools import record_plan, web_search
 
 
 def flat(text: str) -> str:
@@ -189,9 +189,9 @@ def test_no_tool_output_hands_the_model_our_own_tool_names() -> None:
     없다.** 이 검사는 그 구분을 구조로 고정한다 — 새 교차 참조를 만들 때 같은
     실수를 반복하지 않도록.
     """
-    from nim_agent.capacity_tools import _perf_pointer
-    from nim_agent.graph_tools import _capacity_pointer
-    from nim_agent.tools import LOCAL_TOOLS
+    from app.deployment.nim_agent.capacity_tools import _perf_pointer
+    from app.deployment.nim_agent.graph_tools import _capacity_pointer
+    from app.deployment.nim_agent.tools import LOCAL_TOOLS
 
     names = {tool.name for tool in LOCAL_TOOLS}
     samples = [
@@ -226,7 +226,7 @@ def test_every_tool_family_has_a_place_in_the_axis_table() -> None:
 
     도구를 새로 만들거나 이름을 바꿀 때 이 검사가 자리를 잊지 않게 한다.
     """
-    from nim_agent.tools import LOCAL_TOOLS
+    from app.deployment.nim_agent.tools import LOCAL_TOOLS
 
     axes = PROMPT.split("Tools are split by the **axis** of the question:")[1]
     families = {

@@ -19,7 +19,7 @@ import tarfile
 
 import pytest
 
-from envkb import cbspider
+from app.deployment.envkb import cbspider
 
 
 def flat(text: str) -> str:

@@ -9,8 +9,8 @@
 
 from __future__ import annotations
 
-from capacitykb.parsers.azure_operations import action_type, parse_tarball
-from kbcommon.type_ids import AzureTypeIndex
+from app.deployment.capacitykb.parsers.azure_operations import action_type, parse_tarball
+from app.deployment.kbcommon.type_ids import AzureTypeIndex
 
 
 def test_action_segment_is_stripped_before_typing() -> None:
@@ -26,7 +26,7 @@ def test_action_segment_is_stripped_before_typing() -> None:
 
 def test_action_type_differs_from_raw_arm_type() -> None:
     """액션을 안 떼면 다른(없는) 타입이 나온다 — 이 차이가 버그의 정체였다."""
-    from capacitykb.parsers.azure_mutability import arm_type
+    from app.deployment.capacitykb.parsers.azure_mutability import arm_type
 
     url = (
         "/subscriptions/{s}/providers/Microsoft.Compute/locations/{l}"

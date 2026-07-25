@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from capacitykb.model import Quota
-from capacitykb.parsers.azure_quota import parse_markdown
+from app.deployment.capacitykb.model import Quota
+from app.deployment.capacitykb.parsers.azure_quota import parse_markdown
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "capacity" / "azure-limits"
 
@@ -141,7 +141,7 @@ def test_default_reads_every_limits_doc() -> None:
     예전엔 2개만 읽었고 그 둘을 고른 이유가 "코어 리소스를 덮는다"는 우리 판단뿐이라,
     나머지 80개 문서의 쿼터는 물어봐도 "없음"이 나왔다.
     """
-    from capacitykb.parsers.azure_quota import DEFAULT_INCLUDES
+    from app.deployment.capacitykb.parsers.azure_quota import DEFAULT_INCLUDES
     assert DEFAULT_INCLUDES == (), "기본은 전체여야 한다"
 
 
@@ -151,7 +151,7 @@ def test_coverage_states_that_only_azure_has_quotas(tmp_path) -> None:
     AWS Service Quotas와 GCP Cloud Quotas는 자격증명이 필요해 이 빌드에서 못 받는다.
     그 사실이 산출물에 적혀 있어야 사용자가 침묵을 오해하지 않는다.
     """
-    from capacitykb.model import CapacitySet, Quota
+    from app.deployment.capacitykb.model import CapacitySet, Quota
     capacity = CapacitySet()
     capacity.add_quota(Quota(provider="azure", name="X", source_doc="d.md",
                              evidence="azure-limits-doc"))
@@ -167,7 +167,7 @@ def test_empty_include_list_does_not_silently_read_nothing(tmp_path) -> None:
 
     로컬 디렉터리를 넘기는 경로에서 실제로 이 버그가 났고, CLI 테스트가 잡았다.
     """
-    from capacitykb.parsers.azure_quota import build
+    from app.deployment.capacitykb.parsers.azure_quota import build
 
     doc = tmp_path / "docs"
     doc.mkdir()

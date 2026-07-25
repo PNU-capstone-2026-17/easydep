@@ -33,7 +33,7 @@ import fastjsonschema
 import jsonschema
 import orjson
 
-from kbcommon.invariants import Invariant, Result, run
+from app.deployment.kbcommon.invariants import Invariant, Result, run
 
 
 class ArtifactInvalid(Exception):

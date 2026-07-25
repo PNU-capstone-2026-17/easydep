@@ -15,7 +15,7 @@ from __future__ import annotations
 import collections
 from collections.abc import Iterable
 
-from kbcommon.invariants import Invariant, Violation, accelerator_fields_agree
+from app.deployment.kbcommon.invariants import Invariant, Violation, accelerator_fields_agree
 
 # 리전에 무관하다고 **믿고 있는** 신호. 경고 판단이 여기 걸려 있다.
 _ASSUMED_REGION_INVARIANT = ("sustainedCpu", "currentGeneration")

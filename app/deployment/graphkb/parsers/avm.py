@@ -42,10 +42,10 @@ import tarfile
 from collections import Counter
 from pathlib import Path
 
-from graphkb.model import Edge, Graph, Node
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
-from kbcommon.type_ids import AzureTypeIndex
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.kbcommon.type_ids import AzureTypeIndex
 
 EVIDENCE = "avm-dependson"
 
@@ -153,8 +153,8 @@ def parse_tarball(tar: Path, *, type_index: AzureTypeIndex) -> tuple[Graph, Repo
 
 
 def build(output: Path, *, refresh: bool = False) -> Graph:
-    from kbcommon.fetch import fetch_relative
-    from kbcommon.type_ids import read_azure_index
+    from app.deployment.kbcommon.fetch import fetch_relative
+    from app.deployment.kbcommon.type_ids import read_azure_index
 
     source = SOURCES["avm-bicep"]
     tar = fetch_cached(source.url, f"avm-{source.pin[:12]}.tar.gz", refresh=refresh)

@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from graphkb.model import Graph, Node
-from graphkb.parsers.mapping import (
+from app.deployment.graphkb.model import Graph, Node
+from app.deployment.graphkb.parsers.mapping import (
     build_graph,
     load_mappings,
     suggest,

@@ -29,8 +29,8 @@ import re
 import tarfile
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from kbcommon.type_ids import make_type_id
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.kbcommon.type_ids import make_type_id
 
 #: 생성 코드에서 리소스 스키마의 시작.
 _SCHEMA_MAP = "map[string]*schema.Schema{"

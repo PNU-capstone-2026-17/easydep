@@ -8,7 +8,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from graphkb.model import Graph
+from app.deployment.graphkb.model import Graph
 
 _NS = "http://graphml.graphdrawing.org/xmlns"
 

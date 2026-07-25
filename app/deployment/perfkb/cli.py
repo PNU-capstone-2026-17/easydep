@@ -21,7 +21,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from perfkb.dataset import (
+from app.deployment.perfkb.dataset import (
     BUILT_FILENAME,
     DEFAULT_OUTPUT_DIR,
     coverage,
@@ -29,7 +29,7 @@ from perfkb.dataset import (
     is_built,
     schema,
 )
-from perfkb.fields import FIELDS
+from app.deployment.perfkb.fields import FIELDS
 
 _MISSING = (
     "성능 데이터셋이 없습니다. `python -m perfkb build`로 먼저 빌드하세요 "
@@ -81,9 +81,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build_ibm(args: argparse.Namespace) -> int:
-    from costkb.dataset import BUILT_FILENAME as MIRROR_FILENAME
-    from perfkb.dataset import EXTRA_FILENAMES
-    from perfkb.parsers import ibm_catalog
+    from app.deployment.costkb.dataset import BUILT_FILENAME as MIRROR_FILENAME
+    from app.deployment.perfkb.dataset import EXTRA_FILENAMES
+    from app.deployment.perfkb.parsers import ibm_catalog
 
     mirror = DEFAULT_OUTPUT_DIR / MIRROR_FILENAME
     if not mirror.exists():
@@ -105,14 +105,14 @@ def _cmd_build_ibm(args: argparse.Namespace) -> int:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    from kbcommon import tumblebug_dump as dump_reader
-    from perfkb.invariants import INVARIANTS
-    from kbcommon.artifact import ArtifactInvalid, write_dataset
-    from kbcommon.basis import describe
-    from kbcommon.invariants import announce
-    from kbcommon.fetch import describe_source
+    from app.deployment.kbcommon import tumblebug_dump as dump_reader
+    from app.deployment.perfkb.invariants import INVARIANTS
+    from app.deployment.kbcommon.artifact import ArtifactInvalid, write_dataset
+    from app.deployment.kbcommon.basis import describe
+    from app.deployment.kbcommon.invariants import announce
+    from app.deployment.kbcommon.fetch import describe_source
 
-    from perfkb.parsers.build import build_dataset, format_audit
+    from app.deployment.perfkb.parsers.build import build_dataset, format_audit
 
     if args.rows_file:
         rows = dump_reader.iter_rows_from_copy_file(args.rows_file)
@@ -132,7 +132,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     # **하드웨어 사실을 같은 빌드 안에서 덧붙인다.** 별도 명령으로 두면 perfkb를
     # 다시 빌드할 때 조용히 사라진다 — 사라져도 아무 표시가 없는 종류의 실패다.
     if not args.no_hardware:
-        from perfkb.parsers import hardware
+        from app.deployment.perfkb.parsers import hardware
 
         try:
             table, hw_path = hardware.fetch(refresh=args.refresh)
@@ -145,9 +145,9 @@ def _cmd_build(args: argparse.Namespace) -> int:
 
     # azure 크기 표도 같은 이유로 같은 빌드 안에서 — 별도 명령이면 조용히 사라진다.
     if not args.no_azure_sizes:
-        from kbcommon.fetch import describe_source_set
+        from app.deployment.kbcommon.fetch import describe_source_set
 
-        from perfkb.parsers import azure_sizes
+        from app.deployment.perfkb.parsers import azure_sizes
 
         try:
             sizes_table, size_paths = azure_sizes.fetch(refresh=args.refresh)
@@ -162,9 +162,9 @@ def _cmd_build(args: argparse.Namespace) -> int:
             )
 
     if not args.no_gcp_series:
-        from kbcommon.fetch import describe_source_set
+        from app.deployment.kbcommon.fetch import describe_source_set
 
-        from perfkb.parsers import gcp_series
+        from app.deployment.perfkb.parsers import gcp_series
 
         try:
             rules, instances, series_paths = gcp_series.fetch(refresh=args.refresh)

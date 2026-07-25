@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from appkb.plan import ORIGIN_DESIGN, ORIGIN_DESIGNER, ORIGIN_INFERRED, ORIGIN_KB
-from nim_agent.design_tools import (
+from app.deployment.appkb.plan import ORIGIN_DESIGN, ORIGIN_DESIGNER, ORIGIN_INFERRED, ORIGIN_KB
+from app.deployment.nim_agent.design_tools import (
     _VM_ASSUMED,
     _render_plan_text,
     compose,
@@ -478,7 +478,7 @@ def test_kafka_hint_stays_deliberately_unmapped(design) -> None:
     """ER 저장소로서의 kafka는 큐·스트림·저장 어느 축인지 설계 의도에 달렸다 —
     한 개념으로 몰면 조용히 틀린 서비스가 나온다. eventStream 개념이 생겼어도
     이 결정은 유지된다(미결 + 패턴 자문)."""
-    from nim_agent.design_tools import _ENGINE_CONCEPT
+    from app.deployment.nim_agent.design_tools import _ENGINE_CONCEPT
 
     assert "kafka" not in _ENGINE_CONCEPT
     design["artifacts"][1]["engineHint"] = "kafka"

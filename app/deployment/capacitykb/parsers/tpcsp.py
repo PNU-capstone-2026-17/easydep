@@ -47,10 +47,10 @@ import tarfile
 from collections import Counter
 from pathlib import Path
 
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.parsers.tpg import _parse_schema_map, _scan
-from kbcommon.fetch import describe_source_set, fetch_cached
-from kbcommon.sources import SOURCES
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.parsers.tpg import _parse_schema_map, _scan
+from app.deployment.kbcommon.fetch import describe_source_set, fetch_cached
+from app.deployment.kbcommon.sources import SOURCES
 
 EVIDENCE = "tpcsp-schema"
 

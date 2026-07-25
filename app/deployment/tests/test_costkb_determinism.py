@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.dataset import filter_specs
+from app.deployment.costkb import dataset
+from app.deployment.costkb.dataset import filter_specs
 
 
 def _spec(provider: str, name: str, region: str, price: float, vcpu: int = 2) -> dict:
@@ -110,7 +110,7 @@ def test_no_unknown_architecture_slips_in_silently() -> None:
     import gzip
     from pathlib import Path
 
-    packed = Path("data/tumblebug-cost.json.gz")
+    packed = Path(__file__).resolve().parent.parent / "data/tumblebug-cost.json.gz"
     if not packed.exists():
         pytest.skip("커밋된 미러 번들이 없습니다")
     with gzip.open(packed, "rt", encoding="utf-8") as fh:

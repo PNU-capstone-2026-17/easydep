@@ -13,9 +13,9 @@ import json
 
 import pytest
 
-from costkb import dataset
-from costkb.agent_api import describe_spec
-from costkb.dataset import find_by_name, name_suggestions
+from app.deployment.costkb import dataset
+from app.deployment.costkb.agent_api import describe_spec
+from app.deployment.costkb.dataset import find_by_name, name_suggestions
 
 GCP = {
     "id": "gcp+us-central1+n2-highmem-8", "provider": "gcp", "region": "us-central1",

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from kbcommon import artifact
+from app.deployment.kbcommon import artifact
 
 
 def test_relative_output_dir_is_repo_anchored(tmp_path, monkeypatch) -> None:

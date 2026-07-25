@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from appkb.contract import (
+from app.deployment.appkb.contract import (
     REQUIRED_WHY,
     SCALE_FIELDS,
     request_schema,

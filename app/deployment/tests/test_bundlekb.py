@@ -10,10 +10,10 @@ import json
 
 import pytest
 
-from bundlekb import dataset
-from bundlekb.agent_api import describe_named_bundle, list_bundles, resource_bundle
-from bundlekb.model import ALWAYS, OPTIONAL, REQUIRED, Bundle, Companion, Member
-from kbcommon.basis import OBSERVED, STATED, describe, is_fact, needs_hedge
+from app.deployment.bundlekb import dataset
+from app.deployment.bundlekb.agent_api import describe_named_bundle, list_bundles, resource_bundle
+from app.deployment.bundlekb.model import ALWAYS, OPTIONAL, REQUIRED, Bundle, Companion, Member
+from app.deployment.kbcommon.basis import OBSERVED, STATED, describe, is_fact, needs_hedge
 
 VM = "azure::Microsoft.Compute/virtualMachines"
 NIC = "azure::Microsoft.Network/networkInterfaces"
@@ -183,7 +183,7 @@ def test_bare_vendor_type_resolves_to_the_prefixed_key() -> None:
     벤더 타입 자체가 `::`를 품으므로(`AWS::EC2::Instance`) 접두어 유무를 문자열로
     판정할 수 없다. 데이터에 키가 있는지 먼저 보는 방식이라 두 형태가 다 통한다.
     """
-    from bundlekb.dataset import resolve_type_id
+    from app.deployment.bundlekb.dataset import resolve_type_id
 
     assert resolve_type_id("Microsoft.Compute/virtualMachines") == (
         "azure::Microsoft.Compute/virtualMachines",
@@ -197,8 +197,8 @@ def test_bare_vendor_type_resolves_to_the_prefixed_key() -> None:
 def test_unknown_type_is_still_reported_missing() -> None:
     """넓히기가 **없는 것을 있다고 만들지는 않는다.** 못 찾으면 받은 것을 그대로
     돌려주고, 없다는 판정은 부르는 쪽이 한다."""
-    from bundlekb.agent_api import resource_bundle
-    from bundlekb.dataset import resolve_type_id
+    from app.deployment.bundlekb.agent_api import resource_bundle
+    from app.deployment.bundlekb.dataset import resolve_type_id
 
     assert resolve_type_id("aws::AWS::Nope::Nothing") == ("aws::AWS::Nope::Nothing",)
     missing = " ".join(resource_bundle("aws::AWS::Nope::Nothing").split()).lower()
@@ -207,6 +207,6 @@ def test_unknown_type_is_still_reported_missing() -> None:
 
 def test_bare_type_reaches_the_cross_confirmed_member() -> None:
     """BU1이 요구하는 사실 — 접두어 없이 물어도 NIC(교차 확인 100%)에 닿아야 한다."""
-    from bundlekb.agent_api import resource_bundle
+    from app.deployment.bundlekb.agent_api import resource_bundle
 
     assert "networkInterfaces" in resource_bundle("Microsoft.Compute/virtualMachines")

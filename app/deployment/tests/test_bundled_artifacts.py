@@ -10,7 +10,7 @@ from __future__ import annotations
 import gzip
 import json
 
-from kbcommon import artifact
+from app.deployment.kbcommon import artifact
 
 
 def test_output_wins_over_bundled(tmp_path, monkeypatch) -> None:
@@ -74,7 +74,7 @@ def test_pack_refuses_forbidden_and_roundtrips(tmp_path) -> None:
     import gzip
     import json
 
-    from kbcommon.__main__ import pack_artifacts
+    from app.deployment.kbcommon.__main__ import pack_artifacts
 
     out = tmp_path / "output"; out.mkdir()
     data = tmp_path / "data"; data.mkdir()

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from patternkb.dataset import _resolve, all_docs
+from app.deployment.patternkb.dataset import _resolve, all_docs
 
 #: 질의에서 살리는 토큰. 한글도 살린다 — 코퍼스가 영어라 매칭은 안 되지만,
 #: 토큰이 0개가 되어 "결과 없음"의 이유가 사라지는 것보다 낫다.

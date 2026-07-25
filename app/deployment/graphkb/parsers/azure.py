@@ -28,13 +28,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from graphkb.fetch import fetch_cached
-from graphkb.model import Edge, Graph, Node
-from graphkb.parsers.review import apply_review, check_freshness, load_reference_map
-from kbcommon.invariants import announce
-from kbcommon.fetch import describe_source_set
-from kbcommon.sources import SOURCES
-from kbcommon.type_ids import read_azure_index
+from app.deployment.graphkb.fetch import fetch_cached
+from app.deployment.graphkb.model import Edge, Graph, Node
+from app.deployment.graphkb.parsers.review import apply_review, check_freshness, load_reference_map
+from app.deployment.kbcommon.invariants import announce
+from app.deployment.kbcommon.fetch import describe_source_set
+from app.deployment.kbcommon.sources import SOURCES
+from app.deployment.kbcommon.type_ids import read_azure_index
 
 # 고정 ref는 kbcommon/sources.py 한 곳에서 관리한다 — 같은 소스를 capacitykb도 쓰므로
 # 양쪽이 따로 들고 있으면 조용히 다른 커밋을 보게 된다.

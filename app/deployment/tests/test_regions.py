@@ -15,8 +15,8 @@ import json
 
 import pytest
 
-from capacitykb import agent_api
-from capacitykb.parsers import aws_endpoints
+from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb.parsers import aws_endpoints
 
 
 def flat(text: str) -> str:

@@ -27,8 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from kbcommon.basis import needs_hedge
-from perfkb.dataset import (
+from app.deployment.kbcommon.basis import needs_hedge
+from app.deployment.perfkb.dataset import (
     find,
     get_by_id,
     get_by_spec_name,
@@ -36,7 +36,7 @@ from perfkb.dataset import (
     load_perf,
     tracked_providers,
 )
-from perfkb.fields import COMPARE_FIELDS, FIELDS
+from app.deployment.perfkb.fields import COMPARE_FIELDS, FIELDS
 
 _OLD_GEN_NOTE = (
     "This is a previous-generation instance — a current generation may offer "

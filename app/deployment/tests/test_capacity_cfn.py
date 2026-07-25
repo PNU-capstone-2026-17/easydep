@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from capacitykb import prose
-from capacitykb.model import CapacitySet, Constraint
-from capacitykb.parsers.cfn import parse_schemas
+from app.deployment.capacitykb import prose
+from app.deployment.capacitykb.model import CapacitySet, Constraint
+from app.deployment.capacitykb.parsers.cfn import parse_schemas
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "capacity" / "cfn"
 
@@ -237,7 +237,9 @@ def test_type_id_convention_matches_graphkb(capacity: CapacitySet) -> None:
 
 # ---------------------------------------------------------------- 전수 감사 스냅샷
 
-CACHED_ZIP = Path(".cache") / "cloudkb" / "CloudformationSchema.zip"
+CACHED_ZIP = (
+    Path(__file__).resolve().parent.parent / ".cache" / "cloudkb" / "CloudformationSchema.zip"
+)
 AUDIT_FILE = Path(__file__).parent / "fixtures" / "capacity" / "prose-audit.json"
 
 
@@ -251,7 +253,7 @@ def test_prose_only_ranges_match_reviewed_snapshot() -> None:
     대상이 31개뿐이라 샘플링 없이 전부 검토했다. 정규식을 고쳐 새 항목이 생기거나
     값이 바뀌면 여기서 실패하므로 사람이 다시 검토하게 된다.
     """
-    from capacitykb.parsers.cfn import parse_zip
+    from app.deployment.capacitykb.parsers.cfn import parse_zip
 
     approved = json.loads(AUDIT_FILE.read_text(encoding="utf-8"))["approved"]
     built = parse_zip(CACHED_ZIP)

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from capacitykb import agent_api
-from capacitykb.model import CapacitySet, Constraint, Quota
-from capacitykb.query import (
+from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb.model import CapacitySet, Constraint, Quota
+from app.deployment.capacitykb.query import (
     check_value,
     find_quota,
     immutable_properties,
@@ -276,7 +276,7 @@ def test_out_of_scope_answer_does_not_claim_absence() -> None:
     실측: graphkb가 아는 벤더 타입 5,547종 중 3,634종에 제약 레코드가 없고,
     GCP 527종은 capacitykb가 아예 안 읽어서 없는 것이다.
     """
-    from capacitykb.agent_api import _nothing_found
+    from app.deployment.capacitykb.agent_api import _nothing_found
 
     capacity = CapacitySet()
     capacity.coverage = [{"provider": "aws"}]
@@ -408,7 +408,7 @@ def test_type_summary_is_silent_on_unknown_types(wide: Path) -> None:
 
 def test_capacity_pointer_survives_broken_output(monkeypatch) -> None:
     """용량 산출물이 깨져도 그래프 질의는 답해야 한다. 이 줄은 덤이다."""
-    from nim_agent import graph_tools
+    from app.deployment.nim_agent import graph_tools
 
     def boom(*args, **kwargs):
         raise RuntimeError("산출물 손상")
@@ -448,8 +448,8 @@ def test_search_does_not_contradict_its_own_results(monkeypatch, wide: Path) -> 
     값 안내를 무조건 붙였더니 'subnet' 검색이 타입 12개를 찾아 놓고 바로 밑에
     모순된 말을 했다(실측). 막다른 길일 때만 다른 길을 가리킨다.
     """
-    from graphkb import agent_api as graph_api
-    from nim_agent import graph_tools
+    from app.deployment.graphkb import agent_api as graph_api
+    from app.deployment.nim_agent import graph_tools
 
     agent_api._value_index.cache_clear()
     monkeypatch.setattr(agent_api, "DEFAULT_OUTPUT_DIR", wide)

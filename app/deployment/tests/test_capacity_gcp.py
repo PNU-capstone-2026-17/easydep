@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from capacitykb import agent_api
-from capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
+from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
 
 
 def flat(text: str) -> str:
@@ -154,7 +154,7 @@ def test_backend_survives_roundtrip(tmp_path: Path) -> None:
     got = parse_crds([labelled("A", {"properties": {
         "x": {"type": "string", "description": "Immutable. x"}}}, "tf2crd")])
     got.save(tmp_path / "gcp-capacity.json")
-    from capacitykb.model import CapacitySet
+    from app.deployment.capacitykb.model import CapacitySet
     assert CapacitySet.load(tmp_path / "gcp-capacity.json").constraints[0].backend == "tf2crd"
 
 
@@ -197,8 +197,8 @@ def test_internal_labels_never_reach_the_user(tmp_path: Path) -> None:
 
 # --- 프로바이더 릴리스 보강 (D6) ---
 
-from capacitykb.parsers import tpg
-from capacitykb.parsers.gcp import merge_provider
+from app.deployment.capacitykb.parsers import tpg
+from app.deployment.capacitykb.parsers.gcp import merge_provider
 
 GO = '''
 func ResourceComputeSubnetwork() *schema.Resource {
@@ -296,7 +296,7 @@ def test_tf_path_conversion() -> None:
 
 def test_provider_wins_only_over_stale_backend(tmp_path: Path) -> None:
     """tf2crd만 프로바이더가 이긴다. direct는 KCC가 이긴다."""
-    from capacitykb.model import CapacitySet, Constraint
+    from app.deployment.capacitykb.model import CapacitySet, Constraint
     kcc = CapacitySet()
     for backend in ("tf2crd", "direct"):
         kcc.add_constraint(Constraint(
@@ -319,7 +319,7 @@ def test_provider_absence_removes_stale_immutability(tmp_path: Path) -> None:
 
     이게 없으면 ComputeSubnetwork.purpose가 2023년판 'Immutable.' 표기 그대로 남는다.
     """
-    from capacitykb.model import CapacitySet, Constraint
+    from app.deployment.capacitykb.model import CapacitySet, Constraint
     kcc = CapacitySet()
     kcc.add_constraint(Constraint(
         type_id="gcp::ComputeSubnetwork", property="purpose", kind="mutability",
@@ -333,7 +333,7 @@ def test_provider_absence_removes_stale_immutability(tmp_path: Path) -> None:
 
 def test_absence_alone_is_not_enough(tmp_path: Path) -> None:
     """프로바이더가 **모르는** 속성은 손대지 않는다 — 침묵은 근거가 아니다."""
-    from capacitykb.model import CapacitySet, Constraint
+    from app.deployment.capacitykb.model import CapacitySet, Constraint
     kcc = CapacitySet()
     kcc.add_constraint(Constraint(
         type_id="gcp::ComputeSubnetwork", property="somethingElse", kind="mutability",
