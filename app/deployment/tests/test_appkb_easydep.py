@@ -305,3 +305,59 @@ def test_adapter_output_composes_into_a_plan() -> None:
     assert not any(e.from_id == e.to_id for e in plan.edges)  # 자기 선 없음
     assert verify_plan(plan) == []
     assert verify_diagram(plan, render(plan)) == []
+
+
+def test_archetype_comment_resolves_the_ambiguous_engine() -> None:
+    """**합의 안건 2(2026-07-24)의 우리 몫.**
+
+    `engineHint`가 kafka류면 우리는 일부러 분류하지 않고 미결로 둔다 — 몰아서
+    찍으면 짐작이 결정이 된다. 그 해소를 설계자가 쥐도록 한 것이 ERD PlantUML의
+    `' archetype:` 주석이고, 최종본이 PlantUML이라는 현 구조와도 맞는다.
+
+    지정하면 계획이 실제로 달라져야 하고(관계형 → 스트림), 근거는 **설계자 지정**
+    등급으로 hedge돼야 한다 — 주장이지 검증된 사실이 아니다.
+    """
+    from nim_agent.design_tools import deployment_answer_from_easydep
+
+    erd = 'entity "Order" {\n id\n}'
+    spec = {"provider": "aws", "region": "ap-northeast-2"}
+    plain = deployment_answer_from_easydep(
+        "t", class_puml="class S <<Service>>", erd_puml=erd, resource_spec=spec
+    )
+    hinted = deployment_answer_from_easydep(
+        "t", class_puml="class S <<Service>>",
+        erd_puml="' archetype: eventStream\n" + erd, resource_spec=spec,
+    )
+    assert "RDS::DBInstance" in plain
+    assert "Kinesis::Stream" in hinted
+    assert "specified by the designer" in hinted
+
+
+def test_archetype_is_case_insensitive_but_never_invented() -> None:
+    """설계자가 `eventstream`이라 적어도 받는다. 다만 **모르는 값은 지어내지 않는다.**"""
+    from appkb.easydep import archetype_values, parse_archetype
+
+    assert parse_archetype("' archetype: eventstream")[0] == "eventStream"
+    value, problem = parse_archetype("' archetype: nope")
+    assert value is None
+    assert problem and "nope" in problem
+    # 허용값은 **스키마가 진실**이다 — 목록을 두 번 적지 않는다.
+    assert "eventStream" in archetype_values()
+
+
+def test_a_wrong_archetype_is_reported_not_swallowed() -> None:
+    """조용히 무시하면 **지정했다고 믿는 사람과 지정 없는 계획 사이에 신호가 없다.**"""
+    from appkb.easydep import design_from_easydep
+
+    _, skipped = design_from_easydep(
+        "t", erd_puml="' archetype: nope\nentity \"Order\" {\n id\n}"
+    )
+    assert any("nope" in line for line in skipped)
+
+
+def test_archetype_without_any_entity_is_reported() -> None:
+    """붙일 저장소 노드가 없으면 그 사실을 말한다 — 지정이 증발하면 안 된다."""
+    from appkb.easydep import design_from_easydep
+
+    _, skipped = design_from_easydep("t", erd_puml="' archetype: eventStream")
+    assert any("no storage node" in line for line in skipped)

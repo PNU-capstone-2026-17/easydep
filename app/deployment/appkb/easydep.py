@@ -124,6 +124,67 @@ def parse_sequence(
     return kinds, (solid if solid else dashed)
 
 
+#: ERD PlantUML의 아키타입 주석. **합의 안건 2(2026-07-24)의 우리 몫이다.**
+#:
+#: `engineHint`가 kafka류(큐·스트림·저장 어느 축인지 설계 의도에 달린 엔진)면
+#: 우리는 **일부러 분류하지 않고** 미결로 둔다 — 몰아서 찍으면 짐작이 결정이 된다.
+#: 그 해소 경로를 설계자가 쥐도록 한 것이 이 주석이고, 최종본이 PlantUML이라는
+#: 현 구조와도 맞는다. 스키마 설명이 "어댑터 경로에서는 빈다"고 적어 둔 자리를
+#: 이제 메운다.
+#:
+#: PlantUML 주석은 `'`로 시작한다. 값은 스키마의 enum과 **한 곳에서** 맞춘다.
+_ARCHETYPE = re.compile(r"^\s*'\s*archetype\s*:\s*([A-Za-z]+)\s*$", re.M)
+
+
+def archetype_values() -> tuple[str, ...]:
+    """계약이 허용하는 아키타입. **목록을 두 번 적지 않는다** — 스키마가 진실이다.
+
+    경로로 짚지 않고 훑는다. 산출물 분기가 `$ref`로 빠져 있어 고정 경로는 이미
+    한 번 빗나갔고, 스키마를 재구성할 때마다 조용히 빈 목록을 돌려주면 **모든
+    아키타입 지정이 "모르는 값"으로 거부된다.**
+    """
+    from appkb.contract import schema
+
+    def walk(node) -> tuple[str, ...]:
+        if isinstance(node, dict):
+            found = node.get("archetypeHint")
+            if isinstance(found, dict) and found.get("enum"):
+                return tuple(found["enum"])
+            for value in node.values():
+                if hit := walk(value):
+                    return hit
+        elif isinstance(node, list):
+            for value in node:
+                if hit := walk(value):
+                    return hit
+        return ()
+
+    return walk(schema())
+
+
+def parse_archetype(erd_puml: str) -> tuple[str | None, str | None]:
+    """ERD 주석에서 아키타입을 읽는다 → (값, 못 읽은 사유).
+
+    **틀린 값을 조용히 버리지 않는다.** 설계자가 `' archetype: eventstream`처럼
+    적었는데 말없이 무시하면, 지정했다고 믿는 사람과 지정이 안 된 계획 사이에
+    아무 신호가 없다. 오타는 오타라고 말해야 다음 시도가 달라진다.
+    """
+    found = _ARCHETYPE.search(erd_puml or "")
+    if not found:
+        return None, None
+    value = found.group(1)
+    allowed = archetype_values()
+    if value in allowed:
+        return value, None
+    match = [a for a in allowed if a.lower() == value.lower()]
+    if match:
+        return match[0], None
+    return None, (
+        f"The ERD comment asks for archetype {value!r}, which is not one the "
+        f"contract knows — it went unused. Known: {', '.join(allowed)}"
+    )
+
+
 def design_from_easydep(
     name: str,
     *,
@@ -175,13 +236,24 @@ def design_from_easydep(
             "Could not read a single entity from the ERD — the only syntax we know is "
             "`entity Name`. The plan is built without a storage node"
         )
+    archetype, archetype_problem = parse_archetype(erd_puml or "")
+    if archetype_problem:
+        skipped.append(archetype_problem)
     if entities:
         artifacts.append({
             "id": "er-1", "kind": "er",
+            **({"archetypeHint": archetype} if archetype else {}),
             "entities": [
                 {"name": entity, "ownerComponentId": COMPONENT_ID} for entity in entities
             ],
         })
+    elif archetype:
+        # 엔티티가 없으면 붙일 산출물이 없다. **조용히 버리지 않는다** —
+        # 설계자는 지정했는데 계획에는 그 흔적이 없게 된다.
+        skipped.append(
+            f"The ERD names archetype {archetype!r}, but not one entity could be "
+            "read from it, so there is no storage node to attach it to"
+        )
 
     if sequence_puml:
         kinds, messages = parse_sequence(sequence_puml)
