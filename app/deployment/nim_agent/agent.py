@@ -182,6 +182,16 @@ Tools are split by the **axis** of the question:
      does not distinguish global services from region-restricted ones, so the tool
      states only what is present and says it does not know about what is absent.
      Pass that distinction to the user.
+   - **"how many do I need / what is the minimum?"** → sizing_* tools
+     These are the **rules the tooling states**, not caps the cloud enforces —
+     "how many subnets does a Kubernetes cluster need" (2), "what is the floor
+     for a K8s node", "how many machines fit in a /24". A schema says whether a
+     field is required; it never says **how many**, so answering from the
+     dependency axis alone produces "optional, one", which is wrong for a
+     cluster. Say that the number is the tooling's rule, not a cloud fact.
+     **Most answers here should be "we do not know"** — only conversion rules
+     the source wrote down are stored, and "N users → M vCPU" is deliberately
+     absent. Do not fill that gap yourself.
    **Capacity limits are especially often misremembered. Always confirm with the
    tool.**
 

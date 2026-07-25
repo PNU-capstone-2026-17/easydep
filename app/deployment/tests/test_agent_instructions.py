@@ -214,3 +214,26 @@ def test_style_rule_covers_the_shapes_that_actually_slip() -> None:
     # 규칙이 315줄 프롬프트의 꼬리에만 있으면 늦게 읽힌다 — 앞에도 포인터를 둔다.
     head = PROMPT.split("# How you work")[1].split("##")[0]
     assert "never in ours" in head
+
+
+def test_every_tool_family_has_a_place_in_the_axis_table() -> None:
+    """**축 표에 자리가 없으면 그 도구는 못 찾아진다.**
+
+    두 번 같은 모양으로 겪었다. `pattern_search`는 축 5(설계도 JSON) 안에만 있어
+    "트레이드오프 지침 있어?"에 도달하지 못했고(X6 3/5), `sizing_*`은 축 표에 **0번**
+    나오고 cloud_sizing 워크플로 안에만 있어 "클러스터에 서브넷 몇 개?"가 의존성
+    축으로 샜다(CF6 0~2/5). 워크플로 문단은 모델이 그 작업으로 인식했을 때만 읽힌다.
+
+    도구를 새로 만들거나 이름을 바꿀 때 이 검사가 자리를 잊지 않게 한다.
+    """
+    from nim_agent.tools import LOCAL_TOOLS
+
+    axes = PROMPT.split("Tools are split by the **axis** of the question:")[1]
+    families = {
+        name.split("_")[0] + "_"
+        for tool in LOCAL_TOOLS
+        for name in (tool.name,)
+        if "_" in name and name.split("_")[0] in {"kb", "cap", "cost", "perf", "bundle", "sizing", "pattern"}
+    }
+    missing = sorted(f for f in families if f not in axes)
+    assert not missing, f"축 표에 자리가 없는 도구 계열: {missing}"
