@@ -12,6 +12,9 @@ python-dotenv==1.2.2
 langchain-openai>=0.2.0
 langchain-core>=0.3.0
 pydantic-settings>=2.5.0
+# step1_requirements → legacy.auto_clarify → legacy.example_sampler 가 쓴다.
+# 목록에 없어서 requirements.txt 만으로는 임포트조차 안 됐다.
+pandas>=2.0
 # 요구사항 FR/NFR BERT 검증 분류기 (materials의 파인튜닝 모델 로드)
 torch>=2.2.0
 transformers>=4.44.0
@@ -23,11 +26,17 @@ safetensors>=0.4.0
 openai>=2.45.0,<3
 # MySQL 산출물 저장소
 sqlalchemy==2.0.44
-pymysql==1.4.6
+# 1.4.6 으로 고정돼 있었으나 PyMySQL에 그런 버전이 없다(최신이 1.2.0). 이 핀 때문에
+# requirements.txt 가 통째로 설치 불가였다 — 두 에이전트를 합친 3015778 이후 계속.
+pymysql==1.2.0
 
 # --- 시스템 구현 에이전트(OpenHands SDK 기반 restricted editor worker) ---
 openhands-sdk==1.36.1
 openhands-tools==1.36.1
+# openhands-sdk 가 litellm>=1.84.1 만 요구해서 최신(1.93.0)을 잡는데, 그 버전은
+# 휠 없이 sdist 만 올라와 있어 Rust 툴체인을 요구하며 설치가 실패한다.
+# 휠이 있는 마지막 계열로 막는다.
+litellm<1.92
 
 # --- 배포 에이전트(클라우드 지식베이스) ---
 # 산출물은 app/deployment/data 에 커밋돼 있어 읽기 경로에는 빌드가 필요 없다.
