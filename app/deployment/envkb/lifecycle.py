@@ -233,7 +233,7 @@ def _check_types(products: list[dict], graph_dir: Path) -> list[str]:
 ARTIFACT = "service-lifecycle.json"
 
 _MISSING = (
-    "No lifecycle artifact. Build it with `python -m kbcommon build-lifecycle`."
+    "No lifecycle artifact. Build it with `python -m envkb build-lifecycle`."
 )
 
 

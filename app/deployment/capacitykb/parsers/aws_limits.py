@@ -184,8 +184,9 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         "types": 1,
         "type_ids": [VOLUME],
         "note": (
-            "EBS 볼륨의 종류별 한도만. 두 공식 소스(Price List·botocore)가 같은 값을 "
-            "말한 것만 담는다 — 어긋나면 담지 않고 보고한다."
+            "EBS volume limits by volume type only. a value is included only when "
+            "both official sources (Price List · botocore) state the same thing — "
+            "where they disagree it is dropped and reported."
         ),
     }]
 

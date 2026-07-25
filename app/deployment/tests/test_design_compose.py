@@ -143,7 +143,8 @@ def test_shared_infra_maps_to_vendor_types_and_says_it_is_a_guess(design) -> Non
 def test_tumblebug_caveat_travels_with_the_shared_infra(design) -> None:
     """'클라우드가 요구하는 게 아니라 이 도구가 만드는 것'이 빠지면 오독된다."""
     notes = compose(design).node("vnet").notes
-    assert any("이 도구가 만드는 것" in n.text for n in notes)
+    assert any("what this tool creates, not what the cloud requires" in flat(n.text)
+               for n in notes)
 
 
 def test_multi_zone_requirement_is_finally_read(design) -> None:
@@ -383,8 +384,10 @@ def test_gcp_exposed_plan_notes_egress(design, costkb_committed) -> None:
     plan = compose(design)
     egress = [flat(n.text) for n in plan.notes if "Internet egress" in flat(n.text)]
     assert egress and "we do not multiply it out" in egress[0]
-    # 구간 이름은 costkb 데이터셋(data/*.gz) 원문이라 여전히 한국어다.
-    assert "월 0~1TB 구간" in egress[0]
+    # 구간 이름은 costkb 데이터셋(data/*.gz) 값이다. `design_tools`가 이 문자열을
+    # 리터럴로 걸러 대표 단가를 고르므로(`"0-1TB" in meter`), 여기서 함께 고정한다 —
+    # 어긋나면 대표 단가가 **조용히** 빠진다.
+    assert "0-1TB/month band" in egress[0]
 
 
 def test_azure_exposed_plan_notes_egress_too(design, costkb_committed) -> None:

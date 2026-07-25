@@ -261,7 +261,7 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 ARTIFACT = "region-carbon.json"
 
 _MISSING = (
-    "No carbon artifact. Build it with `python -m kbcommon build-carbon`."
+    "No carbon artifact. Build it with `python -m envkb build-carbon`."
 )
 
 #: 방법론이 다른 값을 나란히 놓으면 비교로 읽힌다. 실측상 같은 도시에서 순서까지

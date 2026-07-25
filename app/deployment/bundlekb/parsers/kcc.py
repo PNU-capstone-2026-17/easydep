@@ -135,10 +135,11 @@ def parse_tarball(tar: Path) -> tuple[BundleSet, Report]:
                 members=tuple(
                     Member(f"{PROVIDER}::{kind}", ALWAYS) for kind in sorted(kinds)
                 ),
-                description=f"Config Connector 샘플 — {scenario}",
+                description=f"Config Connector sample — {scenario}",
                 caveat=(
-                    "**Google이 예시로 고른 최소 동작 구성**입니다. 적용하면 다 "
-                    "만들어지지만, API가 이 집합을 강제한다는 뜻은 아닙니다."
+                    "**This is the minimal working configuration Google picked as "
+                    "an example.** Applying it creates all of them, but that does "
+                    "not mean the API enforces this set."
                 ),
             )
         )
@@ -160,13 +161,15 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": PROVIDER,
             "bundles": len(bundles.bundles),
             "note": (
-                f"Config Connector 샘플 시나리오 {report.scenarios}개 중 리소스가 "
-                f"2종 이상인 {len(bundles.bundles)}개. 하나짜리 {report.single}개는 "
-                "'리소스 군'이 아니라 담지 않았다. 앵커를 못 정한 시나리오 "
-                f"{report.no_anchor}개는 앵커 없이 담았다(디렉터리 이름과 같은 kind가 "
-                "없는 경우). **Google이 예시로 고른 구성이지 API가 강제하는 최소 "
-                "집합이 아니다.** Terraform 모듈(cloud-foundation-fabric)로는 이 축을 "
-                "못 열었다 — 리소스 선언 719개 중 6.4%만 조건이 풀렸다."
+                f"{len(bundles.bundles)} of {report.scenarios} Config Connector "
+                "sample scenarios, the ones with 2 or more resource types. The "
+                f"{report.single} single-resource ones are not a 'resource group' "
+                f"and were left out. {report.no_anchor} scenarios are included "
+                "without an anchor (no kind matching the directory name). **This "
+                "is a configuration Google picked as an example, not the minimal "
+                "set the API enforces.** Terraform modules "
+                "(cloud-foundation-fabric) could not open this axis — only 6.4% "
+                "of 719 resource declarations had their conditions resolved."
             ),
         }
     ]

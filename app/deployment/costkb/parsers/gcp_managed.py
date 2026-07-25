@@ -93,9 +93,9 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
                 })
 
     add(_single_region_classes(storage.get("bucket")),
-        "storage", "GB/월", AXIS_CAPACITY)
+        "storage", "GB/month", AXIS_CAPACITY)
     add(_single_region_classes(storage.get("retrieval")),
-        "retrieval", "GB(검색당)", AXIS_USAGE)
+        "retrieval", "GB (per retrieval)", AXIS_USAGE)
     multi_skipped = sum(
         1 for section in ("bucket", "retrieval")
         for name in (storage.get(section) or {})
@@ -115,8 +115,8 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
             destinations["worldwide"] = spec or {}
         else:
             destinations[key] = (spec or {}).get("cost") or {}
-    _TIER_LABEL = {"0-1": "월 0~1TB 구간", "1-10": "월 1~10TB 구간",
-                   "10n": "월 10TB 초과 구간"}
+    _TIER_LABEL = {"0-1": "0-1TB/month band", "1-10": "1-10TB/month band",
+                   "10n": "over 10TB/month band"}
     for dest, tiers in sorted(destinations.items()):
         for tier, regions_map in sorted((tiers or {}).items()):
             label = _TIER_LABEL.get(tier, tier)
@@ -144,15 +144,17 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
     axis_counts = Counter(r["axis"] for r in records)
     payload = {
         "_note": (
-            "GCP 관리형 서비스의 **과금 축 목록**입니다 — 수록은 objectStorage"
-            "(Cloud Storage 저장·검색)와 networkEgress(인터넷 이그레스)이고, "
-            "그것이 소스의 전부입니다(Cyclenerd pricing.yml에 Cloud SQL·"
-            "Memorystore·Pub/Sub 없음 — 실측). 저장은 GB/월 단가(용량-비례형 — "
-            "곱할 용량은 사이징 결과)이고, 콜드 클래스의 검색과 이그레스는 GB당 "
-            "요금(사용량형 — 검색량·트래픽을 알아야 함)입니다. 이그레스는 "
-            "목적지(전 세계 기본·중국·호주)와 월간 구간(TB)으로 단가가 갈립니다. "
-            "합계는 만들지 않습니다. 값은 스냅샷이며 실제 청구서가 아닙니다. "
-            "Apache-2.0(Cyclenerd/google-cloud-pricing-cost-calculator)."
+            "A **list of billing axes** for GCP managed services — what is included "
+            "is objectStorage (Cloud Storage storage & retrieval) and networkEgress "
+            "(internet egress), and that is all the source has (no Cloud SQL, "
+            "Memorystore or Pub/Sub in Cyclenerd pricing.yml — measured). Storage is "
+            "a GB/month unit price (capacity-proportional — the capacity to multiply "
+            "by is a sizing result); cold-class retrieval and egress are per-GB "
+            "charges (usage-based — you have to know the retrieval volume and "
+            "traffic). Egress unit price splits by destination (worldwide default, "
+            "China, Australia) and by monthly band (TB). No total is produced. "
+            "Values are a snapshot, not an actual bill. "
+            "Apache-2.0 (Cyclenerd/google-cloud-pricing-cost-calculator)."
         ),
         "records": records,
         "_coverage": [
@@ -163,10 +165,11 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
                 "byAxis": dict(axis_counts),
                 "dropped": dict(dropped),
                 "note": (
-                    f"멀티/듀얼 리전 클래스 {multi_skipped}종은 리전 체계가 달라"
-                    "(asia1·asia-multi) 담지 않았습니다 — 단일 리전 코드와 "
-                    "조인되지 않습니다. standard에는 검색 요금이 없습니다"
-                    "(원본에 없음 — 무료라는 뜻이 아니라 축이 없다는 뜻)."
+                    f"{multi_skipped} multi/dual-region classes are not included "
+                    "because their region scheme differs (asia1, asia-multi) — they "
+                    "do not join to a single region code. standard has no retrieval "
+                    "charge (absent in the source — that does not mean it is free, "
+                    "it means the axis is not there)."
                 ),
             }
         ],

@@ -49,46 +49,48 @@ _RESERVED: tuple[tuple[str, int, str, str], ...] = (
     (
         "aws",
         5,
-        "네트워크 주소 · VPC 라우터 · Amazon DNS · 향후 사용 예약 · 브로드캐스트",
-        "AWS VPC 사용 설명서 'Subnet CIDR blocks' (기계 판독 소스 없음 — "
-        "awsdocs/amazon-vpc-user-guide는 2023-06-15 아카이브되며 비워짐)",
+        "network address · VPC router · Amazon DNS · reserved for future use · broadcast",
+        "AWS VPC User Guide 'Subnet CIDR blocks' (no machine-readable source — "
+        "awsdocs/amazon-vpc-user-guide was archived 2023-06-15 and emptied)",
     ),
     (
         "gcp",
         4,
-        "네트워크 주소 · 기본 게이트웨이 · 끝에서 두 번째(향후 사용) · 브로드캐스트",
-        "GCP VPC 문서 'Subnet ranges' (기계 판독 소스 없음)",
+        "network address · default gateway · second-to-last (future use) · broadcast",
+        "GCP VPC docs 'Subnet ranges' (no machine-readable source)",
     ),
     (
         "tencent",
         3,
-        "처음 두 주소 · 마지막 주소",
-        "Tencent Cloud VPC 'Limits' 문서(tencentcloud.com/document/product/215/31804): "
+        "first two addresses · last address",
+        "Tencent Cloud VPC 'Limits' doc (tencentcloud.com/document/product/215/31804): "
         "\"For each subnet, Tencent Cloud reserves its first two IPs and the last "
-        "one for IP networking.\" (2026-07-24 확인)",
+        "one for IP networking.\" (checked 2026-07-24)",
     ),
     (
         "oracle",
         3,
-        "CIDR의 처음 두 주소 · 마지막 주소",
+        "first two addresses of the CIDR · last address",
         "OCI 'Overview of VCNs and Subnets': \"the first two addresses and the "
         "last in the subnet's CIDR are reserved by the Networking service.\" "
-        "(2026-07-24 확인)",
+        "(checked 2026-07-24)",
     ),
     (
         "nhn",
         5,
-        "네트워크 주소 · 게이트웨이 · DHCP/SNAT용 2개 · 브로드캐스트",
-        "NHN Cloud VPC 콘솔 가이드(docs.nhncloud.com Network/VPC console-guide)의 "
-        "예약 주소 표 — 192.168.0.0/24 예시로 5개를 열거한다. (2026-07-24 확인)",
+        "network address · gateway · 2 for DHCP/SNAT · broadcast",
+        "NHN Cloud VPC console guide (docs.nhncloud.com Network/VPC console-guide), "
+        "reserved address table — it lists 5 for the 192.168.0.0/24 example. "
+        "(checked 2026-07-24)",
     ),
     (
         "ncp",
         7,
-        "네트워크 주소 · 브로드캐스트 · 내부 관리용 최초 5개",
-        "NAVER Cloud 'Subnet Management'(guide.ncloud-docs.com "
-        "vpc-subnetmanage-vpc): \"/24인 경우 249개 … 사용 가능\" — 256−249=7로 "
-        "산술이 프리픽스 3종(/24·/25·/26)에서 일관된다. (2026-07-24 확인)",
+        "network address · broadcast · first 5 for internal management",
+        "NAVER Cloud 'Subnet Management' (guide.ncloud-docs.com "
+        "vpc-subnetmanage-vpc): \"/24인 경우 249개 … 사용 가능\" (\"for a /24, 249 … "
+        "are usable\") — 256−249=7, and the arithmetic is consistent across three "
+        "prefixes (/24 · /25 · /26). (checked 2026-07-24)",
     ),
 )
 
@@ -103,11 +105,12 @@ def build_rules() -> RuleSet:
                 scope=provider,
                 metric="reservedIps",
                 value=reserved,
-                unit="개",
+                unit="IPs",
                 evidence=EVIDENCE,
                 note=what,
                 caveat=(
-                    f"**기계 판독 소스가 없어 사람이 적은 값**입니다. 확인처: {where}"
+                    "**A hand-entered value — there is no machine-readable "
+                    f"source.** Check it against: {where}"
                 ),
             )
         )
@@ -120,21 +123,23 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
         {
             "source": EVIDENCE,
             "pin_kind": "bundled",
-            "pin": "(손 검수)",
-            "note": "이 저장소에 직접 적어 넣은 값. git이 곧 버전 관리다.",
+            "pin": "(hand review)",
+            "note": "Values entered directly into this repo. git is the version control.",
         }
     ]
     rules.coverage = [
         {
             "rules": len(rules.rules),
             "note": (
-                "**손으로 적은 사이징 상수.** networkinfo.yaml이 비워 둔 프로바이더의 "
-                "서브넷 예약 IP를, 각 CSP 공식 문서를 사람이 읽어 담는다(기계 판독 "
-                "소스 없음 — 아카이브·404·언급 0건). 값이 의심스러워서가 아니라 "
-                "**출처가 기계 판독이 아니라서** 산출물을 갈라 두었다 — 진짜 소스가 "
-                "생기면 이 파일만 지우면 된다. 항목마다 사람이 확인할 곳을 적었다. "
-                "**openstack(구성에 따라 가변)·kt(고정 수 명시 없음)는 일부러 안 "
-                "담았다** — 모르면 도구가 모른다고 답한다."
+                "**Hand-entered sizing constants.** Subnet reserved IPs for the "
+                "providers networkinfo.yaml left blank, read out of each CSP's "
+                "official docs by hand (no machine-readable source — archived, 404, "
+                "zero mentions). The dataset is kept separate not because the values "
+                "are doubtful but because **the source is not machine-readable** — "
+                "if a real source appears, delete just this file. Every entry states "
+                "where a human can check it. **openstack (varies with the "
+                "configuration) and kt (no fixed count stated) are left out on "
+                "purpose** — if we do not know, the tool says it does not know."
             ),
         }
     ]

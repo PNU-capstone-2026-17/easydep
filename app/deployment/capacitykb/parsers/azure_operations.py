@@ -194,10 +194,12 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     records, report = parse_tarball(tar, type_index=type_index)
     dataset = {
         "_note": (
-            "Azure 작업이 오래 걸리는가(x-ms-long-running-operation). true는 비동기라 "
-            "완료를 기다려야 하고, false는 응답이 곧 완료다. 값이 없으면 원본이 그 "
-            "메서드를 말하지 않은 것이다 — '빠르다'가 아니라 '모른다'. 같은 타입을 "
-            "파일마다 다르게 말하는 것은 담지 않았다."
+            "whether an Azure operation takes a long time "
+            "(x-ms-long-running-operation). true is asynchronous, so you must wait "
+            "for completion; false means the response is the completion. no value "
+            "means the source did not describe that method — that is 'unknown', not "
+            "'fast'. types the source describes differently from file to file are "
+            "not included."
         ),
         "_source": [describe_source_set([tar], source.key)],
         "conflicting": len(report.conflicting),

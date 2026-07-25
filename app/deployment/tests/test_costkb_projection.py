@@ -217,8 +217,9 @@ def test_build_dataset_validates_against_schema() -> None:
     dataset, _ = build_dataset([row(), gcp_row()])
     jsonschema.validate(dataset, _schema())
     assert len(dataset["specs"]) == 2
-    assert "미러" in dataset["_note"]
-    assert "2.4% 낮" in dataset["_note"]  # 상위 버그 고지
+    note = " ".join(dataset["_note"].split()).lower()
+    assert "mirror" in note
+    assert "2.4% lower" in note  # 상위 버그 고지
 
 
 def test_unknown_provider_fails_schema_validation() -> None:

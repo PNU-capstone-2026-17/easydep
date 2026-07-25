@@ -90,7 +90,7 @@ def _b(type_id: str, ms: tuple[str, ...] = (), dg: tuple[str, ...] = (),
 #: 실재하지 않으면 빌드가 죽는다(core 매핑의 "후보 전부 대조, 0건 실패" 선례).
 CONCEPTS: dict[str, dict] = {
     "relationalDatabase": {
-        "display": "관계형 데이터베이스",
+        "display": "relational database",
         "bindings": {
             "aws": [_b("aws::AWS::RDS::DBInstance", ("Amazon RDS",), ("RDS",))],
             "azure": [
@@ -104,14 +104,14 @@ CONCEPTS: dict[str, dict] = {
             "alibaba": [_b("alibaba::alicloud_db_instance", (),
                           ("RelationalDatabaseService", "ApsaradbPostgresql"))],
             "ibm": [_b("ibm::ibm_database", (), ("Cloudant",),
-                       "ICD(Databases for …) — PostgreSQL/MySQL은 플랜으로 갈린다")],
+                       "ICD (Databases for …) — PostgreSQL/MySQL are split by plan")],
             "openstack": [_b("openstack::openstack_db_instance_v1", (), (),
-                             "Trove. 타입 이름이 용도를 말한다")],
+                             "Trove. The type name states what it is for")],
             "oracle": [_b("oracle::oci_database_db_system", (), ("DatabaseService", "Dbcs"))],
         },
     },
     "nosqlDatabase": {
-        "display": "NoSQL 데이터베이스",
+        "display": "NoSQL database",
         "bindings": {
             # MS 표의 링크 텍스트가 "Amazon" 없이 `[DynamoDB]`다(실측).
             "aws": [_b("aws::AWS::DynamoDB::Table", ("Amazon DynamoDB", "DynamoDB"), ("Dynamodb",))],
@@ -122,7 +122,7 @@ CONCEPTS: dict[str, dict] = {
         },
     },
     "keyValueCache": {
-        "display": "인메모리 캐시",
+        "display": "in-memory cache",
         "bindings": {
             "aws": [_b("aws::AWS::ElastiCache::CacheCluster",
                        ("Amazon ElastiCache", "ElastiCache"), ("Elasticache",))],
@@ -130,11 +130,11 @@ CONCEPTS: dict[str, dict] = {
                          ("Azure Cache for Redis",), ("CacheForRedis",))],
             "gcp": [_b("gcp::RedisInstance", ("Memorystore",), ("Memorystore",))],
             "alibaba": [_b("alibaba::alicloud_kvstore_instance", (), ("ApsaradbRedis",),
-                           "KVStore(Redis 계열)")],
+                           "KVStore (Redis family)")],
         },
     },
     "messageQueue": {
-        "display": "메시지 큐",
+        "display": "message queue",
         "bindings": {
             "aws": [_b("aws::AWS::SQS::Queue",
                        ("Simple Queue Service", "Amazon SQS", "(SQS)"), ("SQS",))],
@@ -142,16 +142,16 @@ CONCEPTS: dict[str, dict] = {
                          ("Service Bus",), ("ServiceBus",))],
             "gcp": [_b("gcp::PubSubTopic", ("Pub/Sub",), ("PubSub", "Pubsub"))],
             "alibaba": [_b("alibaba::alicloud_mns_queue", (), (),
-                           "MNS. 타입 이름이 용도를 말한다")],
+                           "MNS. The type name states what it is for")],
         },
     },
     "objectStorage": {
-        "display": "객체 스토리지",
+        "display": "object storage",
         "bindings": {
             "aws": [_b("aws::AWS::S3::Bucket", ("Amazon S3", "(S3)"), ("S3",))],
             "azure": [_b("azure::Microsoft.Storage/storageAccounts",
                          ("Blob Storage", "Blob storage"), ("BlobStorage",),
-                         "Blob은 storageAccounts 하위 서비스다 — 전용 최상위 타입이 없다")],
+                         "Blob is a sub-service of storageAccounts — no dedicated top-level type")],
             "gcp": [_b("gcp::StorageBucket", ("Cloud Storage",), ("Storage", "GCS"))],
             "alibaba": [_b("alibaba::alicloud_oss_bucket", (), ("ObjectStorageService", "Oss"))],
             "ibm": [_b("ibm::ibm_cos_bucket", (), ("ObjectStorage",))],
@@ -159,19 +159,19 @@ CONCEPTS: dict[str, dict] = {
             "openstack": [_b("openstack::openstack_objectstorage_container_v1", (),
                              ("ObjectStore", "Swift"))],
             "nhn": [_b("nhn::nhncloud_objectstorage_container_v1", (), (),
-                       "타입 이름이 용도를 말한다")],
+                       "the type name states what it is for")],
         },
     },
     "serverlessFunction": {
-        "display": "서버리스 함수",
+        "display": "serverless function",
         "bindings": {
             "aws": [_b("aws::AWS::Lambda::Function", ("AWS Lambda", "Lambda"), ("Lambda",))],
             "azure": [_b("azure::Microsoft.Web/sites",
                          ("Azure Functions",), ("FunctionApps",),
-                         "Functions 전용 타입이 없다 — Web/sites(kind=functionapp)로 배포된다")],
+                         "no dedicated Functions type — it deploys as Web/sites (kind=functionapp)")],
             "gcp": [_b("gcp::CloudFunctions2Function", ("Cloud Functions",), ("Functions",))],
             "alibaba": [_b("alibaba::alicloud_fc_function", (), (),
-                           "Function Compute. 타입 이름이 용도를 말한다")],
+                           "Function Compute. The type name states what it is for")],
         },
     },
     "cdn": {
@@ -185,21 +185,22 @@ CONCEPTS: dict[str, dict] = {
         },
     },
     "dnsZone": {
-        "display": "DNS 존",
+        "display": "DNS zone",
         "bindings": {
             "aws": [_b("aws::AWS::Route53::HostedZone",
                        ("Amazon Route 53", "Route 53"), ("Route53",))],
             "azure": [_b("azure::Microsoft.Network/dnsZones", ("Azure DNS",), ("DNSZones",))],
             "gcp": [_b("gcp::DNSManagedZone", ("Cloud DNS",), ("DNS",))],
-            "ibm": [_b("ibm::ibm_dns_zone", (), (), "타입 이름이 용도를 말한다")],
+            "ibm": [_b("ibm::ibm_dns_zone", (), (), "the type name states what it is for")],
             "oracle": [_b("oracle::oci_dns_zone", (), (),
-                       "diagrams oci 모듈에 DNS 클래스가 없다(실측) — 타입 이름이 용도를 말한다")],
+                       "the diagrams oci module has no DNS class (measured) — "
+                       "the type name states what it is for")],
             "openstack": [_b("openstack::openstack_dns_zone_v2", (), (), "Designate")],
-            "nhn": [_b("nhn::nhncloud_dns_zone_v2", (), (), "타입 이름이 용도를 말한다")],
+            "nhn": [_b("nhn::nhncloud_dns_zone_v2", (), (), "the type name states what it is for")],
         },
     },
     "secretStore": {
-        "display": "비밀 저장소",
+        "display": "secret store",
         "bindings": {
             "aws": [_b("aws::AWS::SecretsManager::Secret",
                        ("Secrets Manager",), ("SecretsManager",))],
@@ -211,7 +212,7 @@ CONCEPTS: dict[str, dict] = {
     },
     # --- 이하 4종은 확장(보강 2, 2026-07-24) — 같은 근거 규율이다 ---
     "containerService": {
-        "display": "관리형 쿠버네티스",
+        "display": "managed Kubernetes",
         "bindings": {
             "aws": [_b("aws::AWS::EKS::Cluster",
                        ("Elastic Kubernetes Service", "Amazon EKS"), ("EKS",))],
@@ -221,19 +222,19 @@ CONCEPTS: dict[str, dict] = {
                        ("Google Kubernetes Engine", "GKE"), ("GKE", "KubernetesEngine"))],
             "alibaba": [_b("alibaba::alicloud_cs_managed_kubernetes", (),
                            ("ContainerService", "ACK"),
-                           "타입 이름이 용도를 말한다(cs = Container Service)")],
+                           "the type name states what it is for (cs = Container Service)")],
             "oracle": [_b("oracle::oci_containerengine_cluster", (),
                           ("ContainerEngine", "OKE"),
-                          "타입 이름이 용도를 말한다(OKE)")],
+                          "the type name states what it is for (OKE)")],
             "ibm": [_b("ibm::ibm_container_vpc_cluster", (), ("IKS",),
-                       "IBM Kubernetes Service(VPC). classic용 ibm_container_cluster는 "
-                       "구세대라 하나만 담는다")],
+                       "IBM Kubernetes Service (VPC). ibm_container_cluster for classic "
+                       "is the older generation, so only one is included")],
             "openstack": [_b("openstack::openstack_containerinfra_cluster_v1", (), (),
-                             "Magnum. 타입 이름이 용도를 말한다")],
+                             "Magnum. The type name states what it is for")],
         },
     },
     "searchIndex": {
-        "display": "관리형 검색 인덱스",
+        "display": "managed search index",
         "bindings": {
             "aws": [_b("aws::AWS::OpenSearchService::Domain",
                        ("OpenSearch",), ("ElasticsearchService",))],
@@ -242,13 +243,13 @@ CONCEPTS: dict[str, dict] = {
                          ("SearchServices",))],
             "alibaba": [_b("alibaba::alicloud_elasticsearch_instance", (),
                            ("ElasticSearch", "OpenSearch"),
-                           "타입 이름이 용도를 말한다")],
+                           "the type name states what it is for")],
             "oracle": [_b("oracle::oci_opensearch_opensearch_cluster", (), (),
-                          "타입 이름이 용도를 말한다")],
+                          "the type name states what it is for")],
         },
     },
     "eventStream": {
-        "display": "이벤트 스트림",
+        "display": "event stream",
         "bindings": {
             "aws": [_b("aws::AWS::Kinesis::Stream", ("Kinesis",),
                        ("KinesisDataStreams", "Kinesis"))],
@@ -258,15 +259,16 @@ CONCEPTS: dict[str, dict] = {
             # 대응돼 있다. 한쪽만 담으면 "GCP엔 스트림이 없다"로 읽혀 둘 다 담고
             # 겸한다는 사실을 노트로 남긴다.
             "gcp": [_b("gcp::PubSubTopic", ("Pub/Sub",), ("PubSub", "Pubsub"),
-                       "Pub/Sub 하나가 큐·스트림을 겸한다 — app::messageQueue에도 대응")],
+                       "Pub/Sub alone serves as both queue and stream — "
+                       "also mapped to app::messageQueue")],
             "alibaba": [_b("alibaba::alicloud_alikafka_instance", (), (),
-                           "AliKafka. 타입 이름이 용도를 말한다")],
+                           "AliKafka. The type name states what it is for")],
             "oracle": [_b("oracle::oci_streaming_stream", (), (),
-                          "OCI Streaming. 타입 이름이 용도를 말한다(실측 확인)")],
+                          "OCI Streaming. The type name states what it is for (measured)")],
         },
     },
     "apiGateway": {
-        "display": "API 게이트웨이",
+        "display": "API gateway",
         "bindings": {
             "aws": [_b("aws::AWS::ApiGateway::RestApi",
                        ("API Gateway", "Amazon API Gateway"), ("APIGateway",))],
@@ -274,11 +276,13 @@ CONCEPTS: dict[str, dict] = {
                          ("API Management",), ("APIManagement",))],
             "gcp": [_b("gcp::APIGatewayGateway", ("API Gateway", "Apigee"),
                        ("APIGateway",),
-                       "게이트웨이 본체 타입. Apigee는 별도 제품이라 담지 않는다")],
+                       "the gateway resource type itself. Apigee is a separate "
+                       "product, so it is not included")],
             "alibaba": [_b("alibaba::alicloud_api_gateway_group", (), (),
-                           "API 그룹이 게이트웨이의 배포 단위(도메인이 그룹에 붙는다)")],
+                           "the API group is the gateway's deployment unit "
+                           "(domains attach to the group)")],
             "oracle": [_b("oracle::oci_apigateway_gateway", (), (),
-                          "타입 이름이 용도를 말한다")],
+                          "the type name states what it is for")],
         },
     },
 }
@@ -454,16 +458,28 @@ def build_graph(output_dir: Path) -> tuple[Graph, list[dict], list[str]]:
 
 #: 일부러 안 담은 조합과 이유. 지우면 다음 사람이 다시 넣는다.
 _SKIPPED = {
-    "relationalDatabase": "tencent(독립 소스 없음 — mingrammer에 tencentcloud 모듈이 없다)",
-    "nosqlDatabase": "tencent(같은 이유) · gcp Bigtable(와이드칼럼이라 문서 DB와 묶지 않음)",
-    "cdn": "gcp(Cloud CDN은 백엔드 서비스의 플래그라 1:1 타입이 없다)",
-    "messageQueue": "azure Storage Queue(ServiceBus와 별개 서비스 — 하나만 대면 오해)",
-    "containerService": "nhn(containerinfra 타입이 우리 그래프에 없다 — 실측) · tencent(규칙 동일)",
-    "searchIndex": (
-        "gcp(KCC에 1:1 관리형 검색 타입이 없다 — Vertex AI Search는 리소스 타입이 "
-        "아니다) · ibm(ibm_resource_instance는 범용 타입이라 대면 오해)"
+    "relationalDatabase": (
+        "tencent (no independent source — mingrammer has no tencentcloud module)"
     ),
-    "apiGateway": "tencent(규칙 동일)",
+    "nosqlDatabase": (
+        "tencent (same reason) · gcp Bigtable (wide-column, so not grouped with "
+        "document DBs)"
+    ),
+    "cdn": "gcp (Cloud CDN is a flag on a backend service, so there is no 1:1 type)",
+    "messageQueue": (
+        "azure Storage Queue (a separate service from ServiceBus — naming only one "
+        "misleads)"
+    ),
+    "containerService": (
+        "nhn (the containerinfra type is not in our graph — measured) · tencent "
+        "(same rule)"
+    ),
+    "searchIndex": (
+        "gcp (KCC has no 1:1 managed search type — Vertex AI Search is not a "
+        "resource type) · ibm (ibm_resource_instance is a generic type, so naming "
+        "it misleads)"
+    ),
+    "apiGateway": "tencent (same rule)",
 }
 
 
@@ -490,7 +506,10 @@ def build(output: Path, *, output_dir: Path | None = None) -> Graph:
         "sha256": "0" * 64,
         "bytes": None,
         "fetched_at": None,
-        "note": "교차 확인용 클래스 어휘. 태그 고정이라 핀이 곧 재현 정보다.",
+        "note": (
+            "Class vocabulary used for cross-checking. Pinned to a tag, so the "
+            "pin itself is the reproduction info."
+        ),
     })
     payload = graph.to_dict()
     payload["_coverage"] = coverage

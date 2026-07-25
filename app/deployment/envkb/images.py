@@ -201,7 +201,7 @@ def describe(
     if data is None:
         return (
             "No basic image data. Build it with "
-            "`python -m kbcommon build-images`."
+            "`python -m envkb build-images`."
         )
     prov = provider.strip().lower()
     rows = [i for i in data["images"] if i["provider"] == prov]

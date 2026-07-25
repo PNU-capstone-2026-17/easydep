@@ -223,7 +223,7 @@ ARTIFACT = "cbspider-support.json"
 
 _MISSING = (
     "No cb-spider support artifact. Build it with "
-    "`python -m kbcommon build-cbspider`."
+    "`python -m envkb build-cbspider`."
 )
 
 

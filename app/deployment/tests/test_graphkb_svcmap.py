@@ -84,7 +84,7 @@ def test_pubsub_carries_both_queue_and_stream_on_purpose() -> None:
     queue = CONCEPTS["messageQueue"]["bindings"]["gcp"][0]
     stream = CONCEPTS["eventStream"]["bindings"]["gcp"][0]
     assert queue["type_id"] == stream["type_id"] == "gcp::PubSubTopic"
-    assert "겸한다" in stream["note"]
+    assert "both queue and stream" in stream["note"]
 
 
 # --- MS 표 매칭 ----------------------------------------------------------------

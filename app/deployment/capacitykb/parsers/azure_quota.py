@@ -158,7 +158,7 @@ def parse_markdown(text: str, source_doc: str) -> list[Quota]:
         non_numeric = any(isinstance(v, str) for v in (default, maximum) if v is not None)
         note = None
         if footnoted:
-            note = "원문에 각주가 있어 조건에 따라 값이 다를 수 있음"
+            note = "the source carries a footnote here, so the value may differ by condition"
         quotas.append(
             Quota(
                 provider=PROVIDER,
@@ -249,11 +249,11 @@ def build(
         "provider": "azure",
         "types": len({q.type_id for q in capacity.quotas if q.type_id}),
         "note": (
-            f"azure-docs의 includes/*-limits.md {len(read_paths)}개를 읽는다. "
-            "**쿼터는 Azure만 수록한다** — AWS Service Quotas와 GCP Cloud Quotas는 "
-            "둘 다 자격증명이 필요해 이 빌드에서 받을 수 없다. "
-            "타입 연결은 사람이 검수한 표(azure_quota_types.json)에 있는 것만 되고, "
-            "나머지는 **이름 검색으로만** 찾힌다."
+            f"reads {len(read_paths)} includes/*-limits.md files from azure-docs. "
+            "**quotas are included for Azure only** — AWS Service Quotas and GCP "
+            "Cloud Quotas both need credentials, so this build cannot fetch them. "
+            "a quota is linked to a type only if it is in the human-reviewed table "
+            "(azure_quota_types.json); the rest are found **by name search only**."
         ),
     }]
     announce(capacity.save(output), "capacitykb/azure_quota")

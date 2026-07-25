@@ -136,9 +136,10 @@ def test_committed_artifact_discloses_its_redistribution_status() -> None:
     packed = artifact.BUNDLED_DIR / f"{dataset.AZURE_DISCOUNT_FILENAME}.gz"
     if not packed.exists():
         pytest.skip("아직 빌드·포장하지 않은 환경")
-    note = artifact.load_json(packed).get("_note") or ""
-    assert "재배포" in note and "찾지 못했습니다" in note
-    assert "허가를 받았다는 뜻이 아닙니다" in note
+    note = " ".join((artifact.load_json(packed).get("_note") or "").split()).lower()
+    assert "redistribution" in note
+    assert "found no wording granting redistribution" in note
+    assert "does not mean permission was granted" in note
 
 
 def test_missing_artifact_says_how_to_get_it_not_that_there_is_no_discount(tmp_path) -> None:

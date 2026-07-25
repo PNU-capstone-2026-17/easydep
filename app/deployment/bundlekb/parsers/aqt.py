@@ -159,13 +159,16 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": PROVIDER,
             "templates": report.templates,
             "note": (
-                f"실제 ARM 템플릿 {report.templates:,}개에서 센 동시 출현. 타입 "
-                f"{report.types:,}종 중 표본 {MIN_SAMPLES}개 이상인 앵커 "
-                f"{report.anchors_kept}종만 담았다(버린 앵커 {report.anchors_dropped}종). "
-                "**코퍼스의 사실이지 클라우드의 사실이 아니다** — basis=observed. "
-                "표본 편향이 있다: Quickstart는 데모·튜토리얼 쪽으로 기울어, VM과 "
-                "스토리지 계정이 함께 나오는 비율에는 옛 부트 진단 관행이 섞여 있다. "
-                "**값을 보정하지 않았다** — 보정하면 그게 짐작이 된다."
+                f"Co-occurrence counted over {report.templates:,} real ARM "
+                f"templates. Of {report.types:,} types, only the "
+                f"{report.anchors_kept} anchors with {MIN_SAMPLES} or more samples "
+                f"are included ({report.anchors_dropped} anchors dropped). **This "
+                "is a fact about the corpus, not about the cloud** — "
+                "basis=observed. There is sample bias: Quickstart leans toward "
+                "demos and tutorials, so the ratio at which VMs and storage "
+                "accounts co-occur carries the old boot-diagnostics practice. "
+                "**The values were not corrected** — correcting them would make "
+                "them a guess."
             ),
         }
     ]

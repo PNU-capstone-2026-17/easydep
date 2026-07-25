@@ -276,8 +276,11 @@ def _burst_plan() -> DeploymentPlan:
         plan.nodes[0],
         hourly_usd=0.05,
         notes=plan.nodes[0].notes + (
-            Note("버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 "
-                 "떨어집니다.", ORIGIN_KB, "perfkb"),
+            # perfkb 데이터셋(`_NOTE_AWS_BURST`)의 실제 문구 그대로. 판정이
+            # 이 문자열의 `burst`에 걸리므로 픽스처가 원문에서 멀어지면
+            # **검사만 통과하고 실물은 못 잡는** 상태가 된다.
+            Note("Burstable instance — performance drops to baseline once the "
+                 "CPU credits run out.", ORIGIN_KB, "perfkb"),
         ),
     )
     return plan

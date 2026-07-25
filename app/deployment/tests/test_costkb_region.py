@@ -133,6 +133,6 @@ def test_source_note_admits_the_deviations() -> None:
     """
     from costkb.parsers.tumblebug import SOURCE_NOTE
 
-    assert "항상 같지는 않고" in SOURCE_NOTE
-    for deviation in ("memGiB", "가격 미상", "정확 일치"):
+    assert "not always identical" in SOURCE_NOTE
+    for deviation in ("memGiB", "unknown price", "exact match"):
         assert deviation in SOURCE_NOTE

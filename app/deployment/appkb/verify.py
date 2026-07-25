@@ -192,13 +192,13 @@ def verify_against_requirements(
         # **부재**를 "버스트 아님"으로 읽는 건 침묵 오독이라, 값이 붙은 노드가
         # 있을 때만(=성능 조인이 실제로 돌았을 때만) 그렇게 말한다 — partial·
         # untracked는 노트가 붙으므로 부재와 구분된다.
-        # 노트 원문은 perfkb 데이터셋에서 온다 — 데이터셋이 아직 한국어라
-        # 두 표기를 모두 본다.
+        # 노트 원문은 perfkb 데이터셋에서 온다. 데이터셋을 영어로 다시 빌드했으므로
+        # 한국어 후보는 뺐다 — 두 언어를 다 받으면 "어느 쪽이 진짜인지"가 흐려지고,
+        # 다음 사람이 데이터셋을 되돌려도 검사가 통과해 버린다.
         burst = sorted(
             n.id for n in plan.nodes
             if any(
-                x.source == "perfkb"
-                and ("burst" in x.text.lower() or "버스트" in x.text)
+                x.source == "perfkb" and "burst" in x.text.lower()
                 for x in n.notes
             )
         )

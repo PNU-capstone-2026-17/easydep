@@ -255,21 +255,24 @@ def build(
     records.sort(key=lambda r: (r["region"], r["specName"]))
     payload = {
         "_note": (
-            "Azure Retail Prices API의 스팟·예약·저축 플랜입니다. 온디맨드는 미러"
-            "(cb-tumblebug)를 그대로 쓰고 이 파일은 **보강만** 합니다. "
-            "예약가는 원본이 기간 총액으로 주고 단위 칸은 '1 Hour'라고 적으므로 "
-            "기간 시간(1년 8,760 / 3년 26,280)으로 나눠 시간당으로 담았습니다 — "
-            "저축 플랜은 원본이 이미 시간당입니다. Windows 값과 Cloud Services "
-            "제품은 담지 않습니다(같은 SKU 이름을 쓰는 다른 것). Dev/Test와 "
-            "Low Priority도 담지 않습니다 — 적용 조건이 따로 있어 일반 가격이 "
-            "아닙니다.\n"
-            "**출처와 재배포 상태**: Microsoft Azure Retail Prices API"
-            "(https://prices.azure.com/api/retail/prices)에서 받은 값에서 유도했습니다. "
-            "가격 데이터의 권리는 Microsoft에 있습니다. **재배포를 허가하는 문구를 "
-            "찾지 못했고 금지하는 문구도 찾지 못했습니다** — 무인증으로 공개된 API라 "
-            "편의를 위해 유도 산출물을 저장소에 포함했을 뿐, 허가를 받았다는 뜻이 "
-            "아닙니다. 권리자가 요청하면 제거합니다. 값은 스냅샷이며 실제 청구서가 "
-            "아닙니다."
+            "Spot, reserved and savings plan prices from the Azure Retail Prices "
+            "API. On-demand comes straight from the mirror (cb-tumblebug); this file "
+            "**only supplements**. The source gives reserved prices as period totals "
+            "while writing '1 Hour' in the unit field, so they are divided by the "
+            "term hours (1 year 8,760 / 3 years 26,280) and stored as hourly rates — "
+            "savings plan prices are already hourly in the source. Windows-priced "
+            "values and Cloud Services products are not included (different things "
+            "under the same SKU name). Dev/Test and Low Priority are not included "
+            "either — they have their own conditions of application and are not "
+            "general prices.\n"
+            "**Source and redistribution status**: derived from values fetched from "
+            "the Microsoft Azure Retail Prices API "
+            "(https://prices.azure.com/api/retail/prices). Rights to the price data "
+            "belong to Microsoft. **We found no wording granting redistribution, and "
+            "none forbidding it either** — it is a publicly readable API with no "
+            "auth, so we include the derived artifact in the repository for "
+            "convenience; that does not mean permission was granted. We will remove "
+            "it if the rights holder asks. Values are a snapshot, not an actual bill."
         ),
         "records": records,
         "_coverage": [
@@ -282,12 +285,14 @@ def build(
                 "ambiguousSkus": ambiguous,
                 "dropped": dict(dropped),
                 "note": (
-                    "온디맨드가 미러와 일치하는지 레코드마다 확인해 담았습니다"
-                    f"(허용 오차 {_MIRROR_TOLERANCE:.1%}). 일치는 독립 소스 둘이 같은 "
-                    "값을 말한다는 뜻이라 **미러의 교차 확인**이기도 합니다. "
-                    "`ambiguousSkus`는 한 SKU에 값이 여럿이라 담지 않은 것입니다 — "
-                    "Windows·Cloud Services를 거르면 0이어야 하므로, 0이 아니면 "
-                    "우리가 모르는 축이 생겼다는 신호입니다."
+                    "Every record was checked against the mirror for on-demand "
+                    f"agreement before being included (tolerance "
+                    f"{_MIRROR_TOLERANCE:.1%}). Agreement means two independent "
+                    "sources state the same value, so it is also a **cross-check of "
+                    "the mirror**. `ambiguousSkus` is what was not included because "
+                    "one SKU had several values — filtering out Windows and Cloud "
+                    "Services should make it 0, so anything other than 0 signals an "
+                    "axis we do not know about."
                 ),
             }
         ],
@@ -304,8 +309,9 @@ def build(
                 "fetched_at": None,
                 "regions": len(wanted),
                 "note": (
-                    "버전이 없는 API라 재현이 원리적으로 안 됩니다. 리전별 응답의 "
-                    "sha256을 합쳐 해시했으므로 **바뀐 사실은 놓치지 않습니다.**"
+                    "The API has no version, so reproduction is impossible in "
+                    "principle. We hash the combined sha256 of each region's "
+                    "response, so **a change never goes unnoticed.**"
                 ),
             }
         ],

@@ -225,12 +225,14 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         "types": len({c.type_id for c in capacity.constraints}),
         "type_ids": sorted({c.type_id for c in capacity.constraints}),
         "note": (
-            "Azure REST 명세의 x-ms-mutability. bicep-types에는 이 정보가 0건인데 "
-            "원본에 없어서가 아니라 생성기가 떨어뜨리기 때문이다. 교차 검증할 짝이 "
-            "없는 단일 소스다. **표시가 붙은 속성만 담는다** — 표시가 없다고 바꿀 수 "
-            "있다는 뜻이 아니다(대부분의 타입에는 아예 표시가 없다). ARM 규약으로 "
-            "일반화하지 않는 이유는 반례를 셌기 때문이다: location에 update를 허용한 "
-            "타입이 2종 있다(DocumentDB/cassandraClusters, Capacity/reservationOrders)."
+            "x-ms-mutability from the Azure REST specification. bicep-types carries "
+            "0 of these, not because the source lacks them but because the generator "
+            "drops them. a single source with no counterpart to cross-check. **only "
+            "properties that carry the marker are included** — no marker does not "
+            "mean the property can be changed (most types carry no marker at all). "
+            "we do not generalize this into an ARM convention because we counted the "
+            "counter-examples: 2 types allow update on location "
+            "(DocumentDB/cassandraClusters, Capacity/reservationOrders)."
         ),
     }]
 

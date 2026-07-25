@@ -51,12 +51,21 @@ _READ_AT_PIN = "v0.12.25"
 #: 넷 다 **연결(connection)당 공유**이고, 없으면 `CreateSharedResourceWithOptions`로
 #: 만든다. 이미 있으면 재사용하므로 "매번 새로 생긴다"는 뜻은 아니다.
 _DYNAMIC_MEMBERS: tuple[tuple[str, str, str], ...] = (
-    ("vNet", ALWAYS, "연결당 공유. 없으면 기본 vNet을 만든다"),
-    ("subnet", ALWAYS, "vNet과 같은 이름이 기본. 존을 지정하면 그 존의 서브넷"),
-    ("sshKey", ALWAYS, "연결당 공유. 없으면 만든다"),
-    ("securityGroup", ALWAYS, "연결당 공유. 템플릿으로 정책을 바꿀 수 있다"),
-    ("image", REQUIRED, "요청에 이미지 ID를 줘야 한다. DB에 없으면 CSP에서 자동 등록"),
-    ("vm", ALWAYS, "요청한 것 자체"),
+    ("vNet", ALWAYS, "shared per connection. A default vNet is created if there is none"),
+    (
+        "subnet",
+        ALWAYS,
+        "same name as the vNet by default. If a zone is given, a subnet in that zone",
+    ),
+    ("sshKey", ALWAYS, "shared per connection. Created if there is none"),
+    ("securityGroup", ALWAYS, "shared per connection. A template can change the policy"),
+    (
+        "image",
+        REQUIRED,
+        "the request must supply an image ID. If it is not in the DB it is "
+        "registered from the CSP automatically",
+    ),
+    ("vm", ALWAYS, "the thing you asked for"),
 )
 
 #: 우리 core 층 타입 이름과 그대로 맞춘다 — graphkb의 `core::vNet` 등.
@@ -67,7 +76,7 @@ def dynamic_bundle() -> Bundle:
     """VM 하나 → 리소스 군. **core 층으로 담는다** (CSP 중립이라서)."""
     return Bundle(
         id="tumblebug::dynamic-vm",
-        name="tumblebug 동적 VM 생성",
+        name="tumblebug dynamic VM creation",
         provider=_CORE,
         evidence=EVIDENCE_DYNAMIC,
         anchor=f"{_CORE}::vm",
@@ -75,13 +84,14 @@ def dynamic_bundle() -> Bundle:
             Member(f"{_CORE}::{name}", tier, note) for name, tier, note in _DYNAMIC_MEMBERS
         ),
         description=(
-            "cb-tumblebug에 VM 하나를 동적으로 요청하면 함께 확보되는 리소스. "
-            f"provisioning.go를 {_READ_AT_PIN} 시점에 읽어 확정했다."
+            "Resources acquired along with a single VM when you request one "
+            "dynamically from cb-tumblebug. Confirmed by reading provisioning.go "
+            f"as of {_READ_AT_PIN}."
         ),
         caveat=(
-            "**클라우드가 요구하는 것이 아니라 이 도구가 만드는 것**입니다. "
-            "네 리소스(vNet·subnet·sshKey·securityGroup)는 연결당 공유라 이미 있으면 "
-            "재사용합니다."
+            "**This is what this tool creates, not what the cloud requires.** "
+            "The four resources (vNet·subnet·sshKey·securityGroup) are shared per "
+            "connection, so existing ones are reused."
         ),
     )
 
@@ -96,6 +106,11 @@ def _positive(value: object, default: int = 1) -> int:
     except (TypeError, ValueError):
         return default
     return number if number >= 1 else default
+
+
+def _plural(count: int, noun: str) -> str:
+    """`2 node groups` / `1 node group` — 개수 1에 복수형을 붙이지 않는다."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
@@ -115,13 +130,13 @@ def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
             # 여기 담지 않는다 — 타입과 값을 같은 칸에 섞지 않는다.
             total = sum(_positive(g.get("nodeGroupSize")) for g in groups)
             members.append(
-                Member(f"{_CORE}::vm", ALWAYS, f"노드 그룹 {len(groups)}개", count=total)
+                Member(f"{_CORE}::vm", ALWAYS, _plural(len(groups), "node group"), count=total)
             )
             anchor = f"{_CORE}::vm"
     elif kind == "securityGroup":
         rules = (doc.get("securityGroupReq") or {}).get("firewallRules") or []
         members.append(
-            Member(f"{_CORE}::securityGroup", ALWAYS, f"인바운드 규칙 {len(rules)}개")
+            Member(f"{_CORE}::securityGroup", ALWAYS, _plural(len(rules), "inbound rule"))
         )
         anchor = f"{_CORE}::securityGroup"
     elif kind == "vNet":
@@ -133,7 +148,11 @@ def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
         listed = (doc.get("vNetReq") or {}).get("subnetInfoList") or []
         count = _positive(policy.get("subnetCount"), default=0) or len(listed)
         if count:
-            note = "CIDR까지 지정됨" if listed else "CSP 중립 정책(프로비저닝 때 조정됨)"
+            note = (
+                "CIDR is specified too"
+                if listed
+                else "CSP-neutral policy (adjusted at provisioning time)"
+            )
             members.append(Member(f"{_CORE}::subnet", ALWAYS, note, count=count))
         anchor = f"{_CORE}::vNet"
     elif kind == "k8sCluster":
@@ -149,7 +168,7 @@ def _member_of_template(doc: dict) -> tuple[str, list[Member], str | None]:
                 Member(
                     f"{_CORE}::k8sNodeGroup",
                     ALWAYS,
-                    f"클러스터마다 하나 · 희망 노드 합계 {nodes}대",
+                    f"one per cluster · desired nodes total {nodes}",
                     count=len(clusters),
                 )
             )
@@ -226,12 +245,14 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": _CORE,
             "bundles": len(bundles.bundles),
             "note": (
-                "cb-tumblebug이 만드는 리소스 군. **클라우드가 요구하는 것이 아니라 "
-                "우리 실행 경로가 만드는 것**이다. 동적 번들 1개는 provisioning.go를 "
-                f"{_READ_AT_PIN} 시점에 **사람이 읽어** 확정했고(정규식으로 Go 조건 "
-                "분기를 긁으면 놓친다), 나머지는 `init/templates/*.json`을 기계로 "
-                f"읽었다({dict(report.kinds)}). 유스케이스 템플릿의 스펙 id는 구성원이 "
-                "아니라 **사이징 참조점**이라 note에만 남겼다."
+                "Resource groups that cb-tumblebug creates. **This is what our "
+                "execution path creates, not what the cloud requires.** The 1 "
+                "dynamic bundle was confirmed by **a human reading** "
+                f"provisioning.go as of {_READ_AT_PIN} (scraping Go conditional "
+                "branches with a regex misses them); the rest were read "
+                f"mechanically from `init/templates/*.json` ({dict(report.kinds)}). "
+                "Spec ids in the use-case templates are a **sizing reference "
+                "point**, not members, so they were left in the note only."
             ),
         }
     ]

@@ -271,7 +271,7 @@ def _emit(text: str, start: int, type_id: str, capacity: CapacitySet, report: Re
     for tf_path, pred in _FORCE_NEW_IF.findall(text[func.end():body_end]):
         prop = tf_path_to_cfn(tf_path)
         add(prop, "mutability", "update_restricted",
-            note=f"조건부로만 재생성된다 (판정 함수: {pred})")
+            note=f"recreated only conditionally (predicate function: {pred})")
         report.force_new_if.append((type_id, prop, pred))
     return True
 
@@ -296,10 +296,10 @@ def build(output: Path, *, refresh: bool = False, cfn_types: set[str] | None = N
         "provider": "aws",
         "types": len({c.type_id for c in capacity.constraints}),
         "note": (
-            "terraform-provider-aws의 SDK 스키마. CloudFormation이 표현 못 하는 "
-            "교차 필드 조건과 조건부 불변이 여기 있다. **Terraform의 판단이지 "
-            "API의 판단이 아니다** — ForceNew는 '재생성한다'이고 IntBetween은 "
-            "프로바이더 작성자의 주장이다."
+            "the terraform-provider-aws SDK schema. the cross-field conditions and "
+            "conditional immutability that CloudFormation cannot express live here. "
+            "**this is Terraform's judgment, not the API's** — ForceNew means 'it "
+            "recreates', and IntBetween is the provider author's claim."
         ),
     }]
 

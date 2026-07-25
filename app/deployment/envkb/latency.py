@@ -302,7 +302,7 @@ def describe(
     if data is None:
         return (
             "No region latency data. Build it with "
-            "`python -m kbcommon build-latency`."
+            "`python -m envkb build-latency`."
         )
     wanted = source.strip().lower()
     rows = [

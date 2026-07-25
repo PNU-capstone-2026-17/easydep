@@ -172,9 +172,10 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         "types": len({c.type_id for c in capacity.constraints}),
         "type_ids": sorted({c.type_id for c in capacity.constraints}),
         "note": (
-            "cfn-lint가 별도 관리하는 리전별 허용값. CloudFormation 레지스트리에는 "
-            "표현할 방법이 없어 따로 있는 데이터라 겹치지 않는다. 리전을 모르면 "
-            "판정할 수 없으므로 condition으로 담는다."
+            "per-region allowed values that cfn-lint maintains separately. the "
+            "CloudFormation registry has no way to express them, which is why the "
+            "data lives apart and does not overlap. without the region code there is "
+            "no verdict, so they are stored as a condition."
         ),
     }]
 
@@ -338,8 +339,9 @@ def build_conditions(output: Path, *, refresh: bool = False) -> CapacitySet:
         "types": len({c.type_id for c in capacity.constraints}),
         "type_ids": sorted({c.type_id for c in capacity.constraints}),
         "note": (
-            "cfn-lint의 if/then 조건 블록. 조건이 둘인 것이 대부분이라(엔진 × 버전) "
-            "단일 조건으로는 담을 수 없었고, 이 때문에 condition을 목록으로 넓혔다."
+            "cfn-lint if/then condition blocks. most of them carry two conditions "
+            "(engine × version), which a single condition could not hold, so "
+            "condition was widened into a list."
         ),
     }]
 

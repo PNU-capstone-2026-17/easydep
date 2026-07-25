@@ -160,5 +160,6 @@ def test_committed_artifact_discloses_its_redistribution_status() -> None:
     if not packed.exists():
         pytest.skip("아직 빌드·포장하지 않은 환경")
     note = artifact.load_json(packed).get("_note") or ""
-    assert "재배포" in note and "찾지 못했습니다" in note
-    assert "허가를 받았다는 뜻이 아닙니다" in note
+    note = " ".join(note.split()).lower()
+    assert "found no wording granting redistribution" in note
+    assert "does not mean permission was granted" in note

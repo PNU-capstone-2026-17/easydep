@@ -77,11 +77,11 @@ PROVIDERS = {
 #: 프로바이더별로 덧붙일 한계 고지. 공통 문구로 못 담는 것만.
 _EXTRA_NOTE = {
     "nhn": (
-        " NHN Cloud 프로바이더는 **OpenStack 프로바이더를 리브랜딩한 것**이다 — "
-        "구현 파일 111개 중 90개가 resource_openstack_*.go 그대로다. 그래서 "
-        "openstack 타입과 이름이 84/110 겹치지만 **그건 교차 검증이 아니라 같은 "
-        "코드다.** 등록돼 있다는 것은 '프로바이더가 노출한다'는 뜻이지 'NHN Cloud가 "
-        "지원한다'는 뜻이 아니다."
+        " the NHN Cloud provider is **a rebranding of the OpenStack provider** — "
+        "90 of its 111 implementation files are resource_openstack_*.go verbatim. "
+        "so 84 of 110 type names overlap with openstack, but **that is the same "
+        "code, not a cross-check.** being registered means 'the provider exposes "
+        "it', not 'NHN Cloud supports it'."
     ),
 }
 
@@ -310,10 +310,11 @@ def build(output: Path, *, key: str, refresh: bool = False) -> CapacitySet:
         "types": len(constrained),
         "type_ids": sorted(constrained),
         "note": (
-            f"{key} Terraform provider의 스키마. 타입 이름이 Terraform 것이다 — "
-            "이 CSP에는 우리가 쓸 공개 리소스 스키마가 없다. **대조할 짝이 없는 "
-            "단일 소스**라 ForceNew·validation은 프로바이더 작성자의 주장이며 "
-            "API가 그대로 강제한다는 보장은 없다."
+            f"the {key} Terraform provider schema. the type names are Terraform's — "
+            "this CSP has no public resource schema we can use. **a single source "
+            "with no counterpart to check against**, so ForceNew and validation are "
+            "the provider author's claim, with no guarantee that the API enforces "
+            "them as written."
         ) + _EXTRA_NOTE.get(key, ""),
     }]
 

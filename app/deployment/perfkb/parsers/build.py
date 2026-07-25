@@ -14,11 +14,12 @@ from typing import Any
 from .project import SYSTEM_NAMESPACE, project_row
 
 SOURCE_NOTE = (
-    "cb-tumblebug spec_infos의 details 컬럼(CSP 원본 응답) 미러입니다. costkb와 같은 행에서 "
-    "나오며 id로 조인됩니다. **프로바이더 간 성능 비교는 불가능합니다** — ACU는 Azure에만, "
-    "클럭은 AWS에만 있습니다. Azure ACU는 37.7%만 채워져 있고 결측이 세대로 설명되지 않으므로, "
-    "값이 없으면 '느리다'가 아니라 '모른다'입니다. 상시 CPU 판정은 프로바이더마다 다른 "
-    "메커니즘에서 오므로 레코드마다 근거(evidence)와 그 성격(basis)을 함께 담습니다."
+    "Mirror of the details column (raw CSP response) of cb-tumblebug spec_infos. It comes "
+    "from the same rows as costkb and joins by id. **Performance cannot be compared across "
+    "providers** — ACU exists only on Azure, clock speed only on AWS. Azure ACU is filled "
+    "for only 37.7% and the gaps are not explained by generation, so a missing value means "
+    "'unknown', not 'slow'. The sustained-CPU verdict comes from a different mechanism per "
+    "provider, so every record carries its evidence and the basis of that evidence."
 )
 
 # 성능 신호를 추적한 프로바이더. 나머지 7개는 details 구조를 조사하지 않아 '모름'으로 둔다.

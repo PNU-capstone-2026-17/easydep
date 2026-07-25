@@ -151,7 +151,7 @@ def test_reviewed_reserved_ips_all_carry_a_verification_pointer() -> None:
     rules = build_rules().rules
     assert len(rules) >= 6  # aws·gcp + ⑥-D의 tencent·oracle·nhn·ncp
     for rule in rules:
-        assert rule.caveat and "확인처" in rule.caveat, rule.id
+        assert rule.caveat and "Check it against" in rule.caveat, rule.id
         assert rule.evidence == "human-review", rule.id
 
 

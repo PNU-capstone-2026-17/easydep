@@ -667,9 +667,9 @@ def _method_comparison_notes(
             if spec.get("hourlyUSD")
             else f"cheapest {spec['specName']} (unit price unknown)"
         )
-        # perfkb 노트 원문은 데이터셋에서 온다 — 아직 한국어라 두 표기를 모두 본다.
+        # perfkb 노트 원문은 데이터셋에서 온다. 영어로 다시 빌드했으므로 한 표기만 본다.
         perf_text = _perf_note(spec).text or ""
-        burst = "burst" in perf_text.lower() or "버스트" in perf_text
+        burst = "burst" in perf_text.lower()
         if steady and burst:
             conflicts["vm"].append(
                 "sustained load but the cheapest spec is burstable — review with a "
@@ -825,9 +825,13 @@ def _global_notices(
 
         egress_axes = cost_dataset.managed_axes("networkEgress", region)
         if egress_axes:
+            # `meter`는 데이터셋 값이다. 영어화로 `월 0~1TB 구간` → `0-1TB/month
+            # band`가 되면서 이 리터럴이 조용히 아무것도 안 맞게 됐다 — 대표 단가가
+            # 빠진 채 축 개수만 남는다. 실패가 **조용하다**는 것이 위험한 지점이라
+            # 두 표기를 다 받는 대신 새 표기 하나로 고정하고 테스트로 묶는다.
             base = next(
                 (r for r in egress_axes
-                 if r["sku"] == "worldwide" and "0~1TB" in r["meter"]),
+                 if r["sku"] == "worldwide" and "0-1TB" in r["meter"]),
                 None,
             )
             head = (

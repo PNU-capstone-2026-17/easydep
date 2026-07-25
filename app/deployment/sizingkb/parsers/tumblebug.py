@@ -55,7 +55,7 @@ _K8S_NODE_MIN = (("vCPU", 2, None), ("memoryGiB", 4.0, "GiB"))
 #: k8sclusterinfo.yaml에서 규모에 해당하는 칸만 뽑는다. 나머지(버전 목록 등)는
 #: 사이징이 아니라 호환성이라 여기 담지 않는다.
 _K8S_COUNT_FIELDS = {
-    "requiredSubnetCount": ("서브넷", "클러스터를 만들 때 필요한 서브넷 수"),
+    "requiredSubnetCount": ("subnets", "subnets required to create a cluster"),
 }
 
 
@@ -103,7 +103,7 @@ def parse_tarball(tar: Path) -> tuple[RuleSet, Report]:
                         scope=csp,
                         metric="reservedIps",
                         value=int(reserved),
-                        unit="개",
+                        unit="IPs",
                         evidence=EVIDENCE_NETWORK,
                         note=(subnet.get("reserved-ips") or {}).get("description"),
                     )
@@ -164,11 +164,12 @@ def parse_tarball(tar: Path) -> tuple[RuleSet, Report]:
                         evidence=EVIDENCE_TEMPLATE,
                         note=(
                             f"{doc.get('description') or stem}"
-                            + (f" · 루트 디스크 {disk}GB" if disk else "")
+                            + (f" · root disk {disk}GB" if disk else "")
                         ),
                         caveat=(
-                            "이 소스의 **예시**입니다. 정답이 아니며 워크로드 성격에 "
-                            "따라 크게 달라집니다 — 부하 테스트로 검증하세요."
+                            "An **example** from this source, not the right answer — "
+                            "it varies widely with the nature of the workload. "
+                            "Verify it with a load test."
                         ),
                     )
                 )
@@ -185,10 +186,10 @@ def parse_tarball(tar: Path) -> tuple[RuleSet, Report]:
                 value=value,
                 unit=unit,
                 evidence=EVIDENCE_CODE,
-                note=f"recommendation.go를 {_READ_AT_PIN} 시점에 읽어 확정",
+                note=f"fixed by reading recommendation.go at {_READ_AT_PIN}",
                 caveat=(
-                    "**이 도구가 강제하는 최소치**이지 쿠버네티스나 클라우드가 "
-                    "정한 값이 아닙니다."
+                    "**A minimum this tool enforces**, not a value set by "
+                    "Kubernetes or the cloud."
                 ),
             )
         )
@@ -205,12 +206,13 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
         {
             "rules": len(rules.rules),
             "note": (
-                f"cb-tumblebug 자산에서 뽑은 사이징 규칙 {dict(report.kinds)}. "
-                "**예약 IP는 원본이 적은 CSP만 담았다** — 비어 있는 "
-                f"{len(report.no_reserved)}곳({', '.join(report.no_reserved)})은 "
-                "'예약이 없다'가 아니라 '이 파일이 안 적었다'이다. AWS가 실제로 그 "
-                "경우이고, 0으로 읽으면 251대 자리에 256대라고 답하게 된다. "
-                "참조점은 이 소스의 **예시**이지 정답이 아니다."
+                f"Sizing rules taken from cb-tumblebug assets {dict(report.kinds)}. "
+                "**Reserved IPs are included only for the CSPs the source states "
+                f"them for** — the {len(report.no_reserved)} blank ones "
+                f"({', '.join(report.no_reserved)}) mean 'this file did not state "
+                "it', not 'there are none'. AWS is exactly such a case, and reading "
+                "a blank as 0 makes the answer 256 where it should be 251. "
+                "Reference points are this source's **examples**, not the right answer."
             ),
         }
     ]

@@ -147,18 +147,21 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": PROVIDER,
             "templates": report.templates,
             "note": (
-                f"CFN 템플릿 {report.templates}개에서 센 동시 출현"
-                f"({report.per_corpus}). 타입 "
-                f"{report.types}종 중 표본 {MIN_SAMPLES}개 이상인 앵커 "
-                f"{report.anchors_kept}종만 담았다. **Azure 코퍼스(1,152개·43앵커)보다 "
-                "여전히 얇다** — 비율만 보면 두 코퍼스가 같은 무게로 읽히므로 그 차이를 "
-                "여기 적어 둔다. **성격이 다른 둘을 섞었다**: 공식 샘플은 서비스별 "
-                "데모, widdix는 운영용 스택이라 편향 방향이 다르다. "
-                "**RDS(15건)·EKS(2건)는 임계에 못 미쳐 여전히 구멍이다** — 채운 척하지 "
-                "않는다. basis=observed이며 클라우드의 사실이 아니다. "
-                "분포가 '구조적 필수'와 '관행'을 갈라 보여준다 — Lambda는 실행 역할이 "
-                "없으면 안 되므로 100%가 나오고, EC2는 기본 VPC·SG를 쓸 수 있어 "
-                "90%대에 머문다. **값을 보정하지 않았다.**"
+                f"Co-occurrence counted over {report.templates} CFN templates "
+                f"({report.per_corpus}). Of {report.types} types, only the "
+                f"{report.anchors_kept} anchors with {MIN_SAMPLES} or more samples "
+                "are included. **Still thinner than the Azure corpus (1,152 "
+                "templates · 43 anchors)** — ratios alone make the two corpora "
+                "read as equally weighty, so the difference is recorded here. "
+                "**Two corpora of different character are mixed**: the official "
+                "samples are per-service demos and widdix is production stacks, so "
+                "their bias runs in different directions. **RDS (15) and EKS (2) "
+                "fall below the threshold and are still holes** — no pretending "
+                "they are filled. basis=observed, and not a fact about the cloud. "
+                "The distribution separates 'structurally required' from "
+                "'convention' — Lambda cannot run without an execution role so it "
+                "comes out at 100%, while EC2 can use the default VPC and SG so it "
+                "stays in the 90s. **The values were not corrected.**"
             ),
         }
     ]

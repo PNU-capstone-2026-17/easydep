@@ -45,9 +45,10 @@ _ATTRIBUTION = (
 
 #: 산출물 파일 자체에 실리는 재배포 상태 — 파일이 저장소를 떠나도 판단이 따라간다.
 _NOTE = (
-    "AWS 공식 화이트페이퍼 PDF에서 유도. 원본은 All rights reserved로 재배포 "
-    "라이선스가 없으며, 졸업과제의 교육 목적 공정이용 판단으로 수록했다"
-    "(사용자 결정 2026-07-25). 권리자가 요청하면 제거한다 — NOTICE 참조."
+    "derived from the official AWS whitepaper PDF. the original is All rights "
+    "reserved and grants no redistribution license; it is included as a fair use "
+    "judgment for the educational purpose of this capstone project (user decision "
+    "2026-07-25). it will be removed if the rights holder asks — see NOTICE."
 )
 
 #: 문서 경계로 삼는 책갈피 깊이 (0 = 최상위). 실측 분포:

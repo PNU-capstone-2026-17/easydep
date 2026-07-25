@@ -203,20 +203,23 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
     records.sort(key=lambda r: r["id"])
     payload = {
         "_note": (
-            "IBM Global Catalog의 인스턴스 프로필 성능 신호입니다. **값이 하나뿐인 칸은 "
-            "담지 않았습니다** — 특히 `freqency`(원본 철자)는 310건 전부 2000이라, "
-            "담았으면 모든 IBM 스펙에 '2.0 GHz'라는 확신에 찬 오답이 됐을 것입니다. "
-            "`sustainedCpu`(버스트 여부)와 `currentGeneration`(세대)은 **원본에 없어 "
-            "만들지 않았습니다** — `vcpuTenancy`가 dedicated인 것을 보고 '상시 CPU "
-            "보장'이라 적는 것은 우리 추론이지 원본이 한 말이 아닙니다. 그래서 이 "
-            "프로바이더의 후보에는 성능 경고가 붙지 않고, 조회 계층이 그 사실을 "
-            "'확인됨'이 아니라 '신호 없음'으로 밝힙니다.\n"
-            "**출처와 재배포 상태**: IBM Cloud Global Catalog"
-            "(https://globalcatalog.cloud.ibm.com/api/v1)에서 받은 값에서 "
-            "유도했습니다. 카탈로그 데이터의 권리는 IBM에 있습니다. **재배포를 "
-            "허가하는 문구를 찾지 못했고 금지하는 문구도 찾지 못했습니다** — "
-            "무인증으로 공개된 API라 편의를 위해 유도 산출물을 저장소에 포함했을 뿐, "
-            "허가를 받았다는 뜻이 아닙니다. 권리자가 요청하면 제거합니다."
+            "Performance signals from the IBM Global Catalog instance profiles. **Fields "
+            "with only one distinct value are not included** — in particular `freqency` "
+            "(the source's own spelling) is 2000 for all 310 entries, so including it "
+            "would have put a confident wrong answer, '2.0 GHz', on every IBM spec. "
+            "`sustainedCpu` (burstable or not) and `currentGeneration` (generation) are "
+            "**not in the source, so we did not invent them** — writing 'sustained CPU "
+            "guaranteed' because `vcpuTenancy` is dedicated would be our inference, not "
+            "something the source said. So candidates from this provider carry no "
+            "performance warning, and the query layer states that as 'no signal' rather "
+            "than 'verified'.\n"
+            "**Source and redistribution status**: derived from values fetched from the "
+            "IBM Cloud Global Catalog (https://globalcatalog.cloud.ibm.com/api/v1). "
+            "Rights to the catalog data belong to IBM. **We found no wording granting "
+            "redistribution, and none prohibiting it either** — the API is open without "
+            "authentication, and we include the derived artifact in this repository only "
+            "for convenience; that does not mean permission was granted. We will remove "
+            "it if the rights holder asks."
         ),
         "specs": records,
         "_coverage": [
@@ -230,10 +233,11 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
                 "unmatched": len(unmatched),
                 "droppedConstantFields": list(DROPPED_CONSTANT_FIELDS),
                 "note": (
-                    "`mirrorAgreed`는 카탈로그의 cpu·ram이 미러와 같은 건수입니다 — "
-                    "독립 소스 둘이 같은 값을 말한다는 뜻이라 교차 확인입니다. "
-                    "`unmatched`는 카탈로그에 있으나 미러에 없는 프로필로, 담지 "
-                    "않습니다(조인할 대상이 없으면 답할 길도 없습니다)."
+                    "`mirrorAgreed` counts the entries whose cpu and ram in the catalog "
+                    "match the mirror — two independent sources stating the same value, "
+                    "which is a cross-check. `unmatched` is the profiles present in the "
+                    "catalog but absent from the mirror; they are not included (with "
+                    "nothing to join to, there is no way to answer)."
                 ),
             }
         ],
@@ -247,8 +251,9 @@ def build(output: Path, *, mirror: Path, refresh: bool = False) -> dict:
                 "bytes": None,
                 "fetched_at": None,
                 "note": (
-                    "버전이 없는 API라 재현이 원리적으로 안 됩니다. 받은 응답의 "
-                    "sha256을 남겨 **바뀐 사실은 놓치지 않습니다.**"
+                    "The API has no version, so reproduction is impossible in principle. "
+                    "We record the sha256 of the response we received, so **a changed "
+                    "fact is never missed.**"
                 ),
             }
         ],
