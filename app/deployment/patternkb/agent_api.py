@@ -18,24 +18,24 @@ from patternkb.model import ADVISORY_NOTICE, EVIDENCE_ADVISORY
 from patternkb.query import search
 
 _MISSING = (
-    "설계 패턴 코퍼스가 없습니다. `python -m patternkb build` 로 빌드하세요."
+    "No design-pattern corpus found. Build it with `python -m patternkb build`."
 )
 
 #: aws 코퍼스 부재는 "없다"가 아니라 "이 환경에 안 실렸다"다 — 그 구분을 문장으로.
 _AWS_UNBUILT = (
-    "AWS Well-Architected 지침 코퍼스가 이 환경에 없습니다 — "
-    "`python -m patternkb build-aws-waf`로 빌드하면 검색에 포함됩니다."
+    "The AWS Well-Architected guidance corpus is not in this environment — "
+    "build it with `python -m patternkb build-aws-waf` to include it in search."
 )
 
 _SECTION_KOREAN = {
-    "patterns": "클라우드 설계 패턴",
-    "architecture-styles": "아키텍처 스타일",
-    "design-principles": "설계 원칙",
-    "best-practices": "실무 지침",
-    "twelve-factor": "12factor 배포 원칙",
-    "well-architected": "Well-Architected 지침",
-    "gcp-framework": "GCP 아키텍처 프레임워크",
-    "aws-well-architected": "AWS Well-Architected 지침",
+    "patterns": "cloud design patterns",
+    "architecture-styles": "architecture styles",
+    "design-principles": "design principles",
+    "best-practices": "best practices",
+    "twelve-factor": "12factor deployment principles",
+    "well-architected": "Well-Architected guidance",
+    "gcp-framework": "GCP Architecture Framework",
+    "aws-well-architected": "AWS Well-Architected guidance",
 }
 
 
@@ -50,24 +50,25 @@ def search_patterns(
     hits = search(query, limit=max(1, min(top, 5)), output_dir=output_dir)
     if not hits:
         known = " · ".join(
-            f"{_SECTION_KOREAN.get(k, k)} {v}편"
+            f"{_SECTION_KOREAN.get(k, k)} {v}"
             for k, v in sorted(sections(output_dir).items())
         )
         return (
-            f"'{query}'에 맞는 지침 문서가 없습니다. 코퍼스: {known}.\n"
-            "영어 키워드로 다시 시도해 보세요 — 코퍼스가 영어 문서입니다.\n"
+            f"No guidance document matches '{query}'. Corpus: {known}.\n"
+            "Try again with English keywords — the corpus is English documents.\n"
             + ADVISORY_NOTICE
         )
 
     lines = [
-        f"설계 지침 검색 {len(hits)}건 — 근거: {evidence_name(EVIDENCE_ADVISORY)}"
+        f"Design guidance search ({len(hits)}) — "
+        f"evidence: {evidence_name(EVIDENCE_ADVISORY)}"
     ]
     for i, hit in enumerate(hits, 1):
         lines.append(
             f"{i}. {hit.title} [{_SECTION_KOREAN.get(hit.section, hit.section)}]"
         )
         lines.append(f"   {hit.quote}")
-        lines.append(f"   문서: {hit.path} · {hit.attribution} ({hit.license})")
+        lines.append(f"   document: {hit.path} · {hit.attribution} ({hit.license})")
     lines.append(ADVISORY_NOTICE)
     return "\n".join(lines)
 
@@ -77,11 +78,11 @@ def coverage_text(output_dir: Path | str | None = None) -> str:
         return _MISSING
     counts = sections(output_dir)
     parts = " · ".join(
-        f"{_SECTION_KOREAN.get(k, k)} {v}편" for k, v in sorted(counts.items())
+        f"{_SECTION_KOREAN.get(k, k)} {v}" for k, v in sorted(counts.items())
     )
     lines = [
-        f"설계 지침 문서 {sum(counts.values())}편 ({parts}). "
-        "전부 산문이라 값·한도는 담지 않습니다."
+        f"{sum(counts.values())} design guidance documents ({parts}). "
+        "All prose, so no values or limits are included."
     ]
     if not aws_built(output_dir):
         lines.append(_AWS_UNBUILT)

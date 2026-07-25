@@ -151,8 +151,9 @@ def test_missing_artifact_says_how_to_get_it_not_that_there_is_no_discount(tmp_p
     try:
         text = azure_discount_pricing("Standard_D2s_v5", "koreasouth", output_dir=tmp_path)
         assert text == AZURE_DISCOUNT_MISSING
-        assert "build-azure-pricing" in text
-        assert "할인이 없다는 뜻이 아닙니다" in text
+        flat = " ".join(text.split())
+        assert "build-azure-pricing" in flat
+        assert "not that there are no discounts" in flat
     finally:
         dataset.clear_caches()
 
@@ -187,7 +188,8 @@ def test_answer_carries_the_share_not_just_the_number(built) -> None:
 def test_answer_discloses_the_unit_conversion(built) -> None:
     """환산했다는 사실이 빠지면 사용자가 원본과 대조할 때 안 맞는다."""
     text = azure_discount_pricing("Standard_D2s_v5", "koreasouth", output_dir=built)
-    assert "기간 총액" in text and "환산" in text
+    flat = " ".join(text.split())
+    assert "period totals in the source" in flat and "converted here to hourly" in flat
 
 
 def test_case_insensitive_join(built) -> None:
@@ -197,7 +199,7 @@ def test_case_insensitive_join(built) -> None:
 
 def test_unknown_spec_says_dataset_not_world(built) -> None:
     text = azure_discount_pricing("Standard_Nope", "koreasouth", output_dir=built)
-    assert "이 데이터셋에 없다" in text
+    assert "it is not in this dataset" in " ".join(text.split())
 
 
 def test_suggestions_stay_inside_this_dataset(built) -> None:
@@ -206,5 +208,6 @@ def test_suggestions_stay_inside_this_dataset(built) -> None:
     처음엔 미러 전체에서 찾아서, `m5.large`에 m5n.large·m5d.large를 줄줄이 권했다.
     """
     text = azure_discount_pricing("m5.large", "koreasouth", output_dir=built)
-    assert "이 데이터셋에 없다" in text
-    assert "m5n.large" not in text and "m5d.large" not in text
+    flat = " ".join(text.split())
+    assert "it is not in this dataset" in flat
+    assert "m5n.large" not in flat and "m5d.large" not in flat

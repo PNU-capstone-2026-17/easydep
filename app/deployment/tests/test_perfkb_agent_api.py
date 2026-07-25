@@ -61,13 +61,13 @@ def test_burstable_instance_warns_with_mechanism(perf_built) -> None:
 def test_network_burst_is_not_a_recommend_warning(perf_built) -> None:
     """네트워크 버스트는 AWS의 절반이라 추천 경고에 넣으면 노이즈다."""
     warning = agent_api.recommend_warning("aws+us-east-1+t3a.medium")
-    assert "네트워크" not in warning  # sustainedCpu 경고는 나오되 네트워크 버스트는 아님
+    assert "network" not in warning.lower()  # sustainedCpu 경고는 나오되 네트워크 버스트는 아님
 
 
 def test_old_generation_warns(perf_built) -> None:
     warning = agent_api.recommend_warning("aws+us-east-1+m5.large")
     assert warning is not None
-    assert "구세대" in warning
+    assert "previous-generation instance" in " ".join(warning.split())
 
 
 def test_clean_instance_has_no_warning(perf_built) -> None:
@@ -104,22 +104,23 @@ def test_no_build_returns_none(tmp_path, monkeypatch) -> None:
 
 def test_profile_hedges_when_inferred(perf_built) -> None:
     text = agent_api.instance_profile("azure", "Standard_B2s")
-    assert "이름 규칙에서 짐작" in text  # 이름 추론임을 사람에게 밝힌다
+    # 이름 추론임을 사람에게 밝힌다
+    assert "(a guess from the naming convention)" in " ".join(text.split())
 
 
 def test_profile_of_missing_spec_is_graceful(perf_built) -> None:
     text = agent_api.instance_profile("aws", "no-such-spec")
-    assert "성능 데이터가 없습니다" in text
+    assert "No performance data for aws no-such-spec." in " ".join(text.split())
 
 
 # --- compare: 승자를 뽑지 않고, 프로바이더 간은 거부 ---
 
 
 def test_compare_lays_out_axes_without_declaring_winner(perf_built) -> None:
-    text = agent_api.compare("aws", ["m5.large", "m7i.large"])
-    assert "m5.large" in text and "m7i.large" in text
-    assert "클럭" in text and "GHz" in text  # AWS 전용 축
-    assert "승자를 단정하지 않습니다" in text
+    flat = " ".join(agent_api.compare("aws", ["m5.large", "m7i.large"]).split())
+    assert "m5.large" in flat and "m7i.large" in flat
+    assert "clock speed" in flat and "GHz" in flat  # AWS 전용 축
+    assert "no winner is declared" in flat
 
 
 def test_compare_marks_generation_difference(perf_built) -> None:
@@ -129,32 +130,32 @@ def test_compare_marks_generation_difference(perf_built) -> None:
     검사하지 않았고, 그래서 `_COMPARE_AXES`에 `currentGeneration`이 없다는 사실이
     통과하는 테스트 뒤에 가려져 있었다.
     """
-    text = agent_api.compare("aws", ["m5.large", "m7i.large"])
-    assert "상시 CPU 성능" in text
-    assert "구세대" in text and "최신 세대" in text
+    flat = " ".join(agent_api.compare("aws", ["m5.large", "m7i.large"]).split())
+    assert "Sustained CPU performance" in flat
+    assert "previous generation" in flat and "current generation" in flat
 
 
 def test_compare_needs_two_found_specs(perf_built) -> None:
-    text = agent_api.compare("aws", ["m5.large", "does-not-exist"])
-    assert "2개 이상 필요" in text
-    assert "does-not-exist" in text  # 못 찾은 것을 밝힌다
+    flat = " ".join(agent_api.compare("aws", ["m5.large", "does-not-exist"]).split())
+    assert "Comparing needs at least 2 aws specs." in flat
+    assert "does-not-exist" in flat  # 못 찾은 것을 밝힌다
 
 
 def test_compare_azure_uses_acu_axis(perf_built) -> None:
-    text = agent_api.compare("azure", ["Standard_B2s", "Standard_D2s_v3"])
-    assert "ACU" in text  # Azure 전용 축
-    assert "클럭" not in text  # AWS 축은 안 나와야 함
+    flat = " ".join(agent_api.compare("azure", ["Standard_B2s", "Standard_D2s_v3"]).split())
+    assert "ACU" in flat  # Azure 전용 축
+    assert "clock speed" not in flat  # AWS 축은 안 나와야 함
 
 
 def test_ebs_baseline_filter_ranks_and_notes_burst(perf_built) -> None:
-    text = agent_api.specs_meeting_ebs_baseline(600)
-    assert "m5.large" in text  # baseline 650 >= 600
-    assert "지속" in text and "버스트 최대" in text  # baseline vs max 구분
+    flat = " ".join(agent_api.specs_meeting_ebs_baseline(600).split())
+    assert "m5.large" in flat  # baseline 650 >= 600
+    assert "sustained" in flat and "burst max" in flat  # baseline vs max 구분
 
 
 def test_ebs_baseline_filter_excludes_below_threshold(perf_built) -> None:
-    text = agent_api.specs_meeting_ebs_baseline(10000)
-    assert "찾지 못했습니다" in text
+    flat = " ".join(agent_api.specs_meeting_ebs_baseline(10000).split())
+    assert "Found no AWS spec with sustained EBS bandwidth" in flat
 
 
 def test_network_burst_warning_sits_under_network_line(tmp_path) -> None:
@@ -167,7 +168,7 @@ def test_network_burst_warning_sits_under_network_line(tmp_path) -> None:
         "ebsBaselineMbps": 347.0,
         "ebsMaxMbps": 2085.0,
     })
-    lines = text.split("\n")
-    warn = next(i for i, l in enumerate(lines) if "버스트" in l)
-    assert "네트워크" in lines[warn - 1], f"경고가 엉뚱한 줄에 붙었다: {lines[warn - 1]!r}"
-    assert "EBS" not in lines[warn - 1]
+    lines = [line.lower() for line in text.split("\n")]
+    warn = next(i for i, l in enumerate(lines) if "burst" in l)
+    assert "network" in lines[warn - 1], f"경고가 엉뚱한 줄에 붙었다: {lines[warn - 1]!r}"
+    assert "ebs" not in lines[warn - 1]

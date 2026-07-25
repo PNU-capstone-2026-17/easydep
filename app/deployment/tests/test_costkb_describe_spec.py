@@ -69,8 +69,9 @@ def test_answer_carries_the_core_facts(built) -> None:
 def test_price_range_not_a_single_number(built) -> None:
     """리전마다 단가가 다르다 — 하나만 고르면 그게 대표값인 양 읽힌다."""
     text = describe_spec("n2-highmem-8", output_dir=built)
-    assert "0.5241" in text and "0.8385" in text
-    assert "리전마다 다름" in text
+    flat = " ".join(text.split())
+    assert "0.5241" in flat and "0.8385" in flat
+    assert "(varies by region)" in flat
 
 
 def test_specific_region_narrows(built) -> None:
@@ -82,8 +83,9 @@ def test_specific_region_narrows(built) -> None:
 def test_missing_region_is_told_apart(built) -> None:
     """그 리전에 없는 것과 스펙이 없는 것은 다른 답이다."""
     text = describe_spec("n2-highmem-8", region="eu-west-9", output_dir=built)
-    assert "리전에는 없습니다" in text
-    assert "asia-east1" in text  # 있는 리전을 알려준다
+    flat = " ".join(text.split())
+    assert "Not present in region 'eu-west-9'." in flat
+    assert "asia-east1" in flat  # 있는 리전을 알려준다
 
 
 def test_name_collision_shows_both(built) -> None:
@@ -102,8 +104,9 @@ def test_provider_disambiguates(built) -> None:
 def test_unknown_name_suggests_and_does_not_deny(built) -> None:
     """**없다고 단정하지 않는다** — 우리 데이터셋에 없을 뿐이다."""
     text = describe_spec("n2-highmem-oops", output_dir=built)
-    assert "이 데이터셋에 없다" in text
-    assert "n2-highmem-8" in text  # 비슷한 이름 제안
+    flat = " ".join(text.split())
+    assert "it is not in this dataset" in flat
+    assert "n2-highmem-8" in flat  # 비슷한 이름 제안
 
 
 def test_suggestions_are_close_matches(built) -> None:
@@ -113,4 +116,4 @@ def test_suggestions_are_close_matches(built) -> None:
 def test_unpriced_spec_says_so(built) -> None:
     """가격 없음을 0으로 떨어뜨리지 않는다."""
     text = describe_spec("m1.small", provider="aws", output_dir=built)
-    assert "가격 정보 없음" in text
+    assert "no price data" in " ".join(text.split())

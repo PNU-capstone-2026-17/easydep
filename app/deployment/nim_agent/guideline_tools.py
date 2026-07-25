@@ -66,9 +66,9 @@ def graph_default():
 
 
 _TIER_LABEL = {
-    ALWAYS: "반드시 함께 만들어짐",
-    REQUIRED: "값을 반드시 줘야 함",
-    OPTIONAL: "붙일 수 있음",
+    ALWAYS: "always created together",
+    REQUIRED: "you must supply a value",
+    OPTIONAL: "optional attachment",
 }
 
 
@@ -90,15 +90,15 @@ def _pick_spec(
                                           output_dir=output_dir)
         if not found:
             near = cost_dataset.name_suggestions(spec_name, output_dir=output_dir)
-            hint = f" 비슷한 이름: {', '.join(near)}" if near else ""
-            return None, f"'{spec_name}' 스펙을 찾지 못했습니다.{hint}"
+            hint = f" Similar names: {', '.join(near)}" if near else ""
+            return None, f"Spec '{spec_name}' not found.{hint}"
         if region:
             same = [s for s in found if s.get("region") == region]
             if not same:
                 where = sorted({s.get("region", "?") for s in found})[:5]
                 return found[0], (
-                    f"'{spec_name}'이 {region}에는 없어 {found[0].get('region')} 단가로 "
-                    f"보여줍니다(있는 리전: {', '.join(where)})."
+                    f"'{spec_name}' is not in {region}, so the {found[0].get('region')} "
+                    f"unit price is shown (regions it is in: {', '.join(where)})."
                 )
             found = same
         return found[0], None
@@ -109,9 +109,9 @@ def _pick_spec(
     )
     if not candidates:
         return None, (
-            f"{provider}"
-            f"{f'/{region}' if region else ''}에서 vCPU {vcpu} · 메모리 {mem_gib}GiB "
-            "이상인 스펙을 찾지 못했습니다. 리전 이름이나 조건을 확인하세요."
+            f"No spec with vCPU {vcpu} · memory {mem_gib}GiB or more was found in "
+            f"{provider}{f'/{region}' if region else ''}. "
+            "Check the region code or the criteria."
         )
     return candidates[0], None
 
@@ -130,17 +130,19 @@ def _priced_lines(member, spec: dict) -> list[str]:
     )
     hourly = spec.get("hourlyUSD")
     if not hourly:
-        return [head + "  단가 미상(이 리전의 가격이 카탈로그에 없음)"]
+        return [head + "  unit price unknown (this region's price is not in the catalog)"]
     # 시간 기준(730)을 **답에 함께 싣는다.** 안 실으면 모델이 그 숫자를 기억에서
     # 꺼내 쓰고, 주장 대조에 "도구 출력에 없는 값"으로 걸린다(실측에서 걸렸다).
     lines = [head + f"  ${hourly:.4f}/h"]
     if member.count == 1:
-        lines.append(f"      월 약 ${hourly * HOURS_PER_MONTH:,.2f} ({HOURS_PER_MONTH}시간 기준)")
+        lines.append(
+            f"      about ${hourly * HOURS_PER_MONTH:,.2f}/month ({HOURS_PER_MONTH} hours)"
+        )
     else:
         total = hourly * member.count
         lines.append(
-            f"      {member.count}대 × ${hourly:.4f}/h = ${total:.4f}/h"
-            f"  (월 약 ${total * HOURS_PER_MONTH:,.2f}, {HOURS_PER_MONTH}시간 기준)"
+            f"      {member.count} × ${hourly:.4f}/h = ${total:.4f}/h"
+            f"  (about ${total * HOURS_PER_MONTH:,.2f}/month, {HOURS_PER_MONTH} hours)"
         )
     note = _perf_note(spec)
     if note.status == perf_api.NOTE_WARN:
@@ -173,20 +175,20 @@ def _guideline(
     if plan:
         bundle = bundle_dataset.find_bundle(plan, output_dir)
         if bundle is None:
-            return f"'{plan}' 리소스 군을 찾지 못했습니다."
+            return f"Resource group '{plan}' not found."
     else:
         bundle = bundle_dataset.default_bundle_for(lookup, output_dir)
     if bundle is None:
         if link is None:
             return (
-                f"'{type_id}' 가 core 층의 무엇인지 모릅니다. 비용·성능 축은 core "
-                "개념 단위로만 붙어서, 대응이 없으면 값을 붙일 수 없습니다. "
-                "**그 리소스가 공짜라는 뜻이 아닙니다** — 이 데이터셋에 가격 축이 "
-                "없다는 뜻입니다."
+                f"We do not know what '{type_id}' is in the core layer. The cost and "
+                "performance axes attach per core concept only, so with no mapping no "
+                "value can be attached. **This does not mean that resource is free** "
+                "— it means this dataset has no price axis for it."
             )
         return (
-            f"'{type_id}' 가 중심인 리소스 군 정보가 없습니다. **없다는 뜻이 아니라 "
-            "이 데이터셋에 없다**는 뜻입니다."
+            f"There is no resource group centred on '{type_id}'. **That does not mean "
+            "none exists — it means it is not in this dataset.**"
         )
 
     priceable = concepts_with_spec(str(output_dir or graph_default()))
@@ -203,7 +205,7 @@ def _guideline(
             provider, region, spec_name, vcpu, mem_gib, output_dir=output_dir
         )
 
-    lines = [f"{_short(type_id)} 을(를) 고르면 — 리소스 군과 그 값  [{bundle.name}]"]
+    lines = [f"If you pick {_short(type_id)} — the resource group and its values  [{bundle.name}]"]
     priced: list[str] = []
     unpriced: dict[str, list[str]] = {}
     # **"값이 안 붙는다"의 이유가 둘인데 뜻이 반대다.** 가격 축이 아예 없는 것과,
@@ -223,46 +225,48 @@ def _guideline(
             priced.extend(_priced_lines(member, spec))
 
     if priced:
-        lines.append("\n[값을 매길 수 있는 것]")
+        lines.append("\n[What can be given a value]")
         lines.extend(priced)
     if unresolved:
-        lines.append("\n[값이 붙는 것인데 이번엔 못 골랐음]")
+        lines.append("\n[Would get a value, but none could be picked this time]")
         lines.append(f"  {' · '.join(unresolved)} — {why}")
     if unpriced:
-        lines.append("\n[값을 매길 수 없는 것 — 이 데이터셋에 가격 축이 없음]")
+        lines.append("\n[What cannot be given a value — this dataset has no price axis]")
         for label, names in unpriced.items():
             lines.append(f"  ({label}) {' · '.join(names)}")
         # **실측에서 모델이 이 칸을 "무료"로 옮겼다.** 도구가 "모른다"고 한 것을
         # 답변이 "0원"이라 단언한 것이라, 모르는 것을 0으로 채우는 그 실패다.
         # 값과 떼어 놓으면 안 되는 문장이라 칸 바로 아래에 붙인다.
         lines.append(
-            "  ※ **무료라는 뜻이 아닙니다.** 이 데이터셋에 그 리소스의 가격 축이 "
-            "없다는 뜻이며, 실제로는 과금될 수 있습니다(예: 공인 IP·데이터 전송)."
+            "  ※ **This does not mean free.** It means this dataset has no price axis "
+            "for that resource; it may well be billed (e.g. public IP · data transfer)."
         )
     elif why and not unresolved:
         lines.append(f"\n⚠ {why}")
 
     lines.append(
-        "\n※ **합계를 내지 않습니다.** 위 목록 중 값이 없는 것을 0으로 두고 더하면 "
-        "실제보다 낮은 숫자가 나옵니다. 값이 나온 것도 VM 온디맨드 정가뿐이고 "
-        "스토리지·데이터 전송·관리형 서비스는 들어 있지 않습니다."
+        "\n※ **No total is produced.** Treating the entries above that have no value "
+        "as 0 and summing would come out lower than reality. Even the values shown are "
+        "VM on-demand list price only — storage, data transfer, and managed services "
+        "are not included."
     )
-    lines.append(f"※ 리소스 군 근거: {evidence_name(bundle.evidence)}")
+    lines.append(f"※ Resource group evidence: {evidence_name(bundle.evidence)}")
     if bundle.caveat:
         lines.append(f"⚠ [{bundle.name}] {bundle.caveat}")
     if link is not None and link.hedged:
         lines.append(
-            f"⚠ '{_short(type_id)}' → {link.core_id} 대응은 **짐작(검수됨)**입니다. "
-            "cb-spider 드라이버를 읽어 사람이 맞춘 것이지 원본이 선언한 관계가 "
-            "아닙니다 — 값은 그 대응을 거쳐 붙었습니다."
+            f"⚠ The '{_short(type_id)}' → {link.core_id} mapping is **a guess "
+            "(reviewed)**. A person matched it by reading the cb-spider driver; the "
+            "source never declared the relation — and the values were attached "
+            "through that mapping."
         )
     others = [b.name for b in bundle_dataset.bundles_for(lookup, output_dir)
               if b.id != bundle.id]
     if others:
         lines.append(
-            f"※ 같은 리소스를 중심으로 한 다른 계획 {len(others)}개도 있습니다"
+            f"※ There are also {len(others)} other plans centred on the same resource "
             f"({', '.join(others[:5])}{' …' if len(others) > 5 else ''}). "
-            "이름을 주면 그 계획으로 답합니다."
+            "Give a name and the answer will use that plan."
         )
     return "\n".join(lines)
 

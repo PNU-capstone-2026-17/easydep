@@ -42,7 +42,8 @@ def test_advisory_label_display_says_not_a_fact() -> None:
     읽힌다."""
     label = evidence_name(EVIDENCE_ADVISORY)
     assert label != EVIDENCE_ADVISORY
-    assert "지침" in label and "사실 아님" in label
+    flat = " ".join(label.split()).lower()
+    assert "advisory" in flat and "not fact" in flat
 
 
 # --- 픽스처 코퍼스 -------------------------------------------------------------

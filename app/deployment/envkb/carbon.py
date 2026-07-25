@@ -116,7 +116,7 @@ def _factors(
         code = codes.get(key)
         raw = raw.strip()
         if code is None:
-            report.unresolved.append(f"{label}:{key}(리전 이름을 못 찾음)")
+            report.unresolved.append(f"{label}:{key}(region name not found)")
             continue
         found = re.match(r"US_NERC_REGIONS_EMISSIONS_FACTORS\.([A-Z]+)", raw)
         if found:
@@ -219,11 +219,12 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     )
     dataset = {
         "_note": (
-            "리전별 탄소. **프로바이더 안에서만 비교하세요** — GCP는 Google이 직접 "
-            "발표한 값(provider-published)이고 AWS·Azure는 공개 그리드 데이터 "
-            "추정(grid-estimate)이라 방법론이 다릅니다. 실측상 같은 도시에서 값이 "
-            "다르고 순서까지 뒤집힙니다. 단위는 gCO2eq/kWh이며 CCF 원본은 "
-            "메트릭톤/kWh입니다(×1,000,000)."
+            "Carbon by region. **Compare only within one provider** — GCP values "
+            "are published by Google (provider-published) while AWS and Azure are "
+            "estimated from public grid data (grid-estimate), so the methodologies "
+            "differ. In measured runs the values differ within the same city and "
+            "the ordering even flips. The unit is gCO2eq/kWh; the CCF source is "
+            "metric tons/kWh (×1,000,000)."
         ),
         "_source": [
             describe_source_set([gcp_path], gcp_src.key),
@@ -238,13 +239,13 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     for rec in records:
         counts[rec["provider"]] = counts.get(rec["provider"], 0) + 1
     print(
-        "region-carbon: 리전 "
+        "region-carbon: regions "
         + " · ".join(f"{p} {n}" for p, n in sorted(counts.items()))
-        + f" (합계 {len(records)})"
+        + f" (total {len(records)})"
     )
     if report.unresolved:
         print(
-            f"  참조를 못 풀어 담지 않은 것 {len(report.unresolved)}건: "
+            f"  {len(report.unresolved)} dropped, reference unresolved: "
             + ", ".join(report.unresolved[:4])
         )
     return dataset
@@ -260,20 +261,21 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 ARTIFACT = "region-carbon.json"
 
 _MISSING = (
-    "탄소 산출물이 없습니다. `python -m kbcommon build-carbon` 로 생성하세요."
+    "No carbon artifact. Build it with `python -m kbcommon build-carbon`."
 )
 
 #: 방법론이 다른 값을 나란히 놓으면 비교로 읽힌다. 실측상 같은 도시에서 순서까지
 #: 뒤집히므로(서울은 gcp가 최저, 도쿄는 aws가 최저) 이 고지를 빼면 안 된다.
 _METHOD_CAVEAT = (
-    "※ **프로바이더끼리 비교하지 마세요.** GCP는 Google이 직접 발표한 값이고 "
-    "AWS·Azure는 공개 그리드 데이터 추정이라 방법론이 다릅니다 — 같은 도시에서도 "
-    "값이 다르고 순서가 뒤집힙니다. 같은 프로바이더 안에서 리전을 고를 때만 쓰세요."
+    "※ **Do not compare providers against each other.** GCP values are published "
+    "by Google while AWS and Azure are estimated from public grid data, so the "
+    "methodologies differ — even within the same city the values differ and the "
+    "ordering flips. Use it only to pick a region within one provider."
 )
 
 _METHOD_NAMES = {
-    "provider-published": "프로바이더 발표값",
-    "grid-estimate": "공개 그리드 데이터 추정",
+    "provider-published": "published by the provider",
+    "grid-estimate": "estimated from public grid data",
 }
 
 
@@ -312,7 +314,7 @@ def cleanest(
 def _line(rec: dict) -> str:
     text = f"  - {rec['region']}: {rec['gramsPerKWh']:,.1f} gCO2eq/kWh"
     if rec.get("carbonFreeEnergy") is not None:
-        text += f" · 무탄소 에너지 {rec['carbonFreeEnergy'] * 100:.0f}%"
+        text += f" · carbon-free energy {rec['carbonFreeEnergy'] * 100:.0f}%"
     if rec.get("location"):
         text += f" ({rec['location']})"
     return text
@@ -327,9 +329,9 @@ def describe(
     wanted = provider.strip().lower()
     if wanted not in {"aws", "azure", "gcp"}:
         return (
-            f"'{provider}'의 탄소 데이터가 없습니다. 지금 수록된 프로바이더는 "
-            "aws · azure · gcp 셋입니다 — 다른 프로바이더는 '탄소가 없다'가 아니라 "
-            "**이 축을 추적하지 않는다**는 뜻입니다."
+            f"No carbon data for '{provider}'. The providers included today are "
+            "aws · azure · gcp — for any other provider this does not mean 'it "
+            "has no carbon', it means **we do not track this axis**."
         )
 
     if region is not None:
@@ -337,23 +339,24 @@ def describe(
         if rec is None:
             known = cleanest(wanted, limit=100, output_dir=output_dir)
             return (
-                f"{wanted} '{region}' 리전의 탄소 값이 없습니다 — 그 리전이 깨끗하다는 "
-                f"뜻이 아니라 **이 소스에 없다**는 뜻입니다(수록 {len(known)}곳).\n"
-                "  수록된 리전 예: "
+                f"No carbon value for {wanted} region '{region}' — that does not "
+                f"mean the region is clean, it means **it is not in this source** "
+                f"({len(known)} regions included).\n"
+                "  Regions included, for example: "
                 + ", ".join(r["region"] for r in known[:6])
             )
         method = _METHOD_NAMES.get(rec["method"], rec["method"])
         return (
-            f"{wanted} {rec['region']} 탄소:\n{_line(rec)}\n"
-            f"  근거: {method}\n{_METHOD_CAVEAT}"
+            f"{wanted} {rec['region']} carbon:\n{_line(rec)}\n"
+            f"  Basis: {method}\n{_METHOD_CAVEAT}"
         )
 
     rows = cleanest(wanted, output_dir=output_dir)
     if not rows:
-        return f"{wanted}의 탄소 데이터가 없습니다."
+        return f"No carbon data for {wanted}."
     method = _METHOD_NAMES.get(rows[0]["method"], rows[0]["method"])
-    lines = [f"{wanted} 리전 중 탄소집약도가 낮은 순 {len(rows)}곳:"]
+    lines = [f"{wanted} regions by lowest carbon intensity ({len(rows)}):"]
     lines.extend(_line(r) for r in rows)
-    lines.append(f"  근거: {method}")
+    lines.append(f"  Basis: {method}")
     lines.append(_METHOD_CAVEAT)
     return "\n".join(lines)

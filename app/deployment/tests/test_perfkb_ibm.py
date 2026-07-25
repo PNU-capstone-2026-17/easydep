@@ -144,7 +144,7 @@ def test_record_without_burst_signals_is_partial_not_ok(built) -> None:
     """
     note = agent_api.recommend_note("ibm", "bx2-16x64", output_dir=built)
     assert note.status == agent_api.NOTE_PARTIAL
-    assert "판정 불가" in (note.text or "")
+    assert "Cannot judge burst or generation" in " ".join((note.text or "").split())
 
 
 def test_record_with_signals_is_still_ok(built) -> None:

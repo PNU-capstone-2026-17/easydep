@@ -45,7 +45,7 @@ def test_minimal_valid_spec_passes() -> None:
 def test_missing_required_says_why(field: str) -> None:
     """누락 메시지에 칸 이름과 **왜 필요한지**가 같이 있어야 한다."""
     problems = validate_request(_spec(**{field: None}))
-    matching = [p for p in problems if p.startswith(f"[필수] {field}")]
+    matching = [p for p in problems if p.startswith(f"[required] {field}")]
     assert len(matching) == 1
     assert REQUIRED_WHY[field] in matching[0]
 
@@ -59,7 +59,7 @@ def test_scale_signal_either_field_satisfies() -> None:
 
 def test_no_scale_signal_is_a_named_violation() -> None:
     problems = validate_request(_spec(expectedConcurrentUsers=None))
-    scale = [p for p in problems if "규모 신호" in p]
+    scale = [p for p in problems if "no scale signal" in p]
     assert len(scale) == 1
     for field in SCALE_FIELDS:
         assert field in scale[0]
@@ -87,7 +87,7 @@ def test_empty_spec_lists_every_required_at_once() -> None:
     problems = validate_request({})
     for field in ("schemaVersion", *REQUIRED_WHY):
         assert any(field in p for p in problems), field
-    assert any("규모 신호" in p for p in problems)
+    assert any("no scale signal" in p for p in problems)
 
 
 # --- 설계 계약과의 드리프트 방지 ------------------------------------------------

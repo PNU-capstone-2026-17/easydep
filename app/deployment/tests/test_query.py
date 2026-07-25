@@ -59,7 +59,7 @@ def test_resolve_display_name_case_insensitive(core_graph: Graph) -> None:
 
 
 def test_resolve_unknown_raises(core_graph: Graph) -> None:
-    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+    with pytest.raises(ValueError, match="Node not found"):
         resolve_node(core_graph, "nope")
 
 
@@ -67,7 +67,7 @@ def test_resolve_ambiguous_lists_candidates() -> None:
     graph = Graph()
     graph.add_node(node("core::subnet"))
     graph.add_node(node("aws::Subnet", layer="vendor", provider="aws"))
-    with pytest.raises(ValueError, match="모호"):
+    with pytest.raises(ValueError, match="The name is ambiguous"):
         resolve_node(graph, "subnet")
 
 
@@ -248,11 +248,12 @@ def test_creation_order_orders_only_the_required_chain(monkeypatch, tmp_path) ->
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Policy")
+    flat = " ".join(text.split())
 
-    assert "1. aws::Bucket" in text
-    assert "2. aws::Policy ← 대상" in text
+    assert "1. aws::Bucket" in flat
+    assert "2. aws::Policy ← target" in flat
     # 저장소의 선택 의존(접근점·로그그룹)은 정책의 순서에 끼어들지 않는다
-    assert "aws::AccessPoint" not in text
+    assert "aws::AccessPoint" not in flat
 
 
 def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
@@ -265,13 +266,14 @@ def test_creation_order_still_lists_optional_dependencies(monkeypatch) -> None:
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket")
+    flat = " ".join(text.split()).lower()
 
-    assert "바로 생성" not in text, "침묵을 허가로 바꿔 말하고 있다"
-    assert "필수로 표시한" in text
-    assert "함께 쓸 수 있는 것 (2개" in text
-    assert "aws::AccessPoint" in text and "aws::LogGroup" in text
+    assert "right away" not in flat, "침묵을 허가로 바꿔 말하고 있다"
+    assert "marks no prerequisite as required" in flat
+    assert "can be used alongside (2, optional" in flat
+    assert "aws::accesspoint" in flat and "aws::loggroup" in flat
     # 대상 자신만 있는 목록은 정보가 아니므로 찍지 않는다
-    assert "1. aws::Bucket" not in text
+    assert "1. aws::bucket" not in flat
 
 
 def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) -> None:
@@ -279,9 +281,10 @@ def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) 
 
     monkeypatch.setattr(agent_api, "load_merged", lambda *a, **k: _order_graph())
     text = agent_api.creation_order("aws::Bucket", required_only=True)
+    flat = " ".join(text.split()).lower()
 
     # required_only 분기도 같은 계약을 지킨다. 예전에는 이쪽만 "바로 생성할 수
     # 있습니다"라고 말했다 — 바로 위 테스트가 그걸 거짓말이라고 적어 놓고도.
-    assert "바로 생성" not in text
-    assert "필수로 표시한" in text
-    assert "aws::AccessPoint" not in text
+    assert "right away" not in flat
+    assert "marks no prerequisite as required" in flat
+    assert "aws::accesspoint" not in flat

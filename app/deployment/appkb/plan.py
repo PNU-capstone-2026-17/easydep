@@ -33,10 +33,10 @@ ORIGINS = (ORIGIN_DESIGN, ORIGIN_DESIGNER, ORIGIN_KB, ORIGIN_INFERRED)
 _HEDGED = {ORIGIN_INFERRED, ORIGIN_DESIGNER}
 
 ORIGIN_LABEL = {
-    ORIGIN_DESIGN: "설계 산출물",
-    ORIGIN_DESIGNER: "설계자 지정",
-    ORIGIN_KB: "지식베이스",
-    ORIGIN_INFERRED: "우리 추론",
+    ORIGIN_DESIGN: "design artifact",
+    ORIGIN_DESIGNER: "specified by the designer",
+    ORIGIN_KB: "knowledge base",
+    ORIGIN_INFERRED: "we inferred",
 }
 
 
@@ -61,7 +61,7 @@ class Note:
 
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
-            raise ValueError(f"알 수 없는 근거: {self.origin!r} (가능: {ORIGINS})")
+            raise ValueError(f"unknown origin: {self.origin!r} (allowed: {ORIGINS})")
 
 
 @dataclass(frozen=True)
@@ -96,10 +96,10 @@ class PlanNode:
 
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
-            raise ValueError(f"알 수 없는 근거: {self.origin!r}")
+            raise ValueError(f"unknown origin: {self.origin!r}")
         if self.type_id and self.candidates:
             raise ValueError(
-                f"{self.id}: 타입이 정해졌는데 후보 목록도 있다 — 둘 중 하나만"
+                f"{self.id}: the type is fixed but a candidate list is also set — only one"
             )
 
 
@@ -115,7 +115,7 @@ class PlanEdge:
 
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
-            raise ValueError(f"알 수 없는 근거: {self.origin!r}")
+            raise ValueError(f"unknown origin: {self.origin!r}")
 
 
 @dataclass

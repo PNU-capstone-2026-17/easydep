@@ -85,7 +85,7 @@ def test_observed_always_hedges() -> None:
 
 def test_observed_label_says_what_was_counted() -> None:
     """"실측"이라고만 쓰면 클라우드를 잰 것처럼 읽힌다."""
-    assert "템플릿" in describe(OBSERVED)
+    assert "templates" in " ".join(describe(OBSERVED).split()).lower()
 
 
 # --- 모델 --------------------------------------------------------------------
@@ -129,22 +129,23 @@ def test_bundles_for_ignores_optional_membership(built) -> None:
 def test_answer_separates_stated_from_observed(built) -> None:
     """두 근거를 한 줄에 섞으면 코퍼스 통계가 클라우드 사실처럼 읽힌다."""
     text = resource_bundle(VM, output_dir=built)
-    assert "[값을 반드시 줘야 함]" in text
-    assert "[실제 템플릿에서 함께 나온 비율]" in text
-    assert "클라우드가 강제한다는 뜻이 아닙니다" in text
+    flat = " ".join(text.split()).lower()
+    assert "[you must supply a value]" in flat
+    assert "[ratio at which they co-occurred in real templates]" in flat
+    assert "it does not mean the cloud enforces it" in flat
 
 
 def test_cross_check_marks_agreement(built) -> None:
     """AVM(명시)과 코퍼스(실측)가 같은 답을 낸 것만 표시한다."""
     text = resource_bundle(VM, output_dir=built)
-    assert "교차 확인" in text
+    assert "✓ cross-checked (real templates 100%)" in text
 
 
 def test_low_ratio_member_is_not_cross_checked(built) -> None:
     """18/330(5.5%)짜리에 교차 확인이 붙으면 표시의 뜻이 사라진다."""
     text = resource_bundle(VM, output_dir=built)
     lock_line = next(l for l in text.splitlines() if "locks" in l and l.startswith("  - "))
-    assert "교차 확인" not in lock_line
+    assert "cross-checked" not in lock_line
 
 
 def test_source_caveat_travels_with_the_bundle(built) -> None:
@@ -155,7 +156,8 @@ def test_source_caveat_travels_with_the_bundle(built) -> None:
 
 def test_missing_type_says_dataset_not_world(built) -> None:
     text = resource_bundle("azure::Microsoft.Nope/nope", output_dir=built)
-    assert "이 데이터셋에 없다" in text
+    flat = " ".join(text.split()).lower()
+    assert "that does not mean none exists, it means it is not in this dataset" in flat
 
 
 def test_unbuilt_says_how_to_build(tmp_path) -> None:
@@ -199,7 +201,8 @@ def test_unknown_type_is_still_reported_missing() -> None:
     from bundlekb.dataset import resolve_type_id
 
     assert resolve_type_id("aws::AWS::Nope::Nothing") == ("aws::AWS::Nope::Nothing",)
-    assert "없습니다" in resource_bundle("aws::AWS::Nope::Nothing")
+    missing = " ".join(resource_bundle("aws::AWS::Nope::Nothing").split()).lower()
+    assert "no resource group centred on 'aws::aws::nope::nothing'" in missing
 
 
 def test_bare_type_reaches_the_cross_confirmed_member() -> None:

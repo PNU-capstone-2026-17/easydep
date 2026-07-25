@@ -44,8 +44,8 @@ def resolve_type(capacity: CapacitySet, name: str) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        raise ValueError(f"타입을 찾을 수 없습니다: {name!r}")
-    raise ValueError(f"이름이 모호합니다: {name!r} → 후보: {', '.join(candidates)}")
+        raise ValueError(f"type not found: {name!r}")
+    raise ValueError(f"ambiguous name: {name!r} → candidates: {', '.join(candidates)}")
 
 
 def limits_for(
@@ -174,7 +174,7 @@ def brief(value) -> str:
     목록으로 뒤덮여 정작 "되나 안 되나"가 안 보인다.
     """
     if isinstance(value, list) and len(value) > 6:
-        return f"{len(value)}개 중 하나 (예: {', '.join(map(str, value[:3]))} …)"
+        return f"one of {len(value)} (e.g. {', '.join(map(str, value[:3]))} …)"
     return str(value)
 
 
@@ -188,15 +188,16 @@ def _scope(constraint: Constraint) -> str:
     """
     if not constraint.conditions:
         return ""
-    return " 그리고 ".join(_cond_text(c) for c in constraint.conditions) + " 일 때, "
+    return "when " + " and ".join(_cond_text(c) for c in constraint.conditions) + ", "
 
 
 def _violation(constraint: Constraint, value, label: str) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     note = f" — {constraint.note}" if constraint.note else ""
     return (
-        f"{constraint.property}: {value}{unit}는 {label} {brief(constraint.value)}{unit}"
-        f"을(를) 벗어남 ({_scope(constraint)}근거 {evidence_name(constraint.evidence)}, "
+        f"{constraint.property}: {value}{unit} is outside {label} "
+        f"{brief(constraint.value)}{unit}"
+        f" ({_scope(constraint)}evidence {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){note}"
     )
 
@@ -211,7 +212,7 @@ def _reference(constraint: Constraint, label: str) -> str:
     note = f" — {constraint.note}" if constraint.note else ""
     return (
         f"{constraint.property}: {label} {brief(constraint.value)}{unit} "
-        f"({_scope(constraint)}근거 {evidence_name(constraint.evidence)}, "
+        f"({_scope(constraint)}evidence {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){note}"
     )
 
@@ -234,21 +235,21 @@ def _cond_text(cond: dict) -> str:
     if len(shown) > _COND_VALUE_MAX:
         shown = shown[: _COND_VALUE_MAX - 1] + "…'"
     if cond.get("op") == "matches":
-        return f"{prop}이 {shown} 패턴"
+        return f"{prop} matches {shown}"
     return f"{prop}={shown}"
 
 
 def _conditional(constraint: Constraint, breached: bool | None) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
-    label = {"min": "최소", "max": "최대", "enum": "허용값"}.get(
+    label = {"min": "min", "max": "max", "enum": "allowed values"}.get(
         constraint.kind, constraint.kind
     )
-    verdict = "" if breached is None else ("  → 불가" if breached else "  → 가능")
-    where = " 그리고 ".join(_cond_text(c) for c in constraint.conditions) or "무조건"
+    verdict = "" if breached is None else ("  → not allowed" if breached else "  → allowed")
+    where = " and ".join(_cond_text(c) for c in constraint.conditions) or "unconditional"
     return (
-        f"{where} 일 때 "
+        f"when {where}: "
         f"{label} {brief(constraint.value)}{unit} "
-        f"(근거 {evidence_name(constraint.evidence)}, "
+        f"(evidence {evidence_name(constraint.evidence)}, "
         f"{describe(constraint.basis)}){verdict}"
     )
 
@@ -356,15 +357,15 @@ def check_value(
         breached = False
         label = ""
         if constraint.kind == "min" and isinstance(value, (int, float)):
-            breached, label = value < constraint.value, "최소"
+            breached, label = value < constraint.value, "min"
         elif constraint.kind == "max" and isinstance(value, (int, float)):
-            breached, label = value > constraint.value, "최대"
+            breached, label = value > constraint.value, "max"
         elif constraint.kind == "max_length" and isinstance(value, str):
-            breached, label = len(value) > constraint.value, "최대 길이"
+            breached, label = len(value) > constraint.value, "max length"
         elif constraint.kind == "min_length" and isinstance(value, str):
-            breached, label = len(value) < constraint.value, "최소 길이"
+            breached, label = len(value) < constraint.value, "min length"
         elif constraint.kind == "enum" and isinstance(constraint.value, list):
-            breached, label = value not in constraint.value, "허용값"
+            breached, label = value not in constraint.value, "allowed values"
         elif constraint.kind == "pattern" and isinstance(value, str):
             # **벤더 문법 그대로 읽는다.** 파이썬 `re`로는 205건이 안 돌았는데
             # 그중 194건은 원본이 틀린 게 아니라 .NET/PCRE 문법(`\p{L}` 계열)이라
@@ -375,18 +376,19 @@ def check_value(
             # 엄격함을 지어내는 것이 된다.
             try:
                 breached = regex.search(constraint.value, value) is None
-                label = "패턴"
+                label = "pattern"
             except regex.error:
                 # **조용히 넘기지 않는다.** 예전엔 `continue`라, 우리가 패턴을
                 # 쥐고도 평가하지 못한다는 사실이 답변에서 통째로 사라졌다.
                 unevaluated.append(
-                    f"{constraint.property}: 패턴 제약이 있으나 우리가 읽을 수 없는 "
-                    f"정규식입니다 (근거 {evidence_name(constraint.evidence)}) — "
+                    f"{constraint.property}: there is a pattern constraint, but its "
+                    f"regex is one we cannot read "
+                    f"(evidence {evidence_name(constraint.evidence)}) — "
                     f"{brief(constraint.value)}"
                 )
                 continue
         elif constraint.kind == "mutability" and constraint.value == "read_only":
-            violations.append(f"{constraint.property}: 읽기 전용이라 설정할 수 없음")
+            violations.append(f"{constraint.property}: read-only, cannot be set")
             checked += 1
             continue
         else:
@@ -394,7 +396,7 @@ def check_value(
 
         if weak:
             if breached:
-                advisories.append(_violation(constraint, value, label) + " [참고]")
+                advisories.append(_violation(constraint, value, label) + " [for reference]")
             else:
                 references.append((constraint.kind, _reference(constraint, label)))
             continue

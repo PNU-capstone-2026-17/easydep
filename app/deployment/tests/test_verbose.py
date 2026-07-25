@@ -21,12 +21,12 @@ def test_tool_call_shows_name_and_arguments() -> None:
     line = describe_event(tool_call_event("kb_creation_order", '{"resource_type": "vm"}'))
     assert "kb_creation_order" in line
     assert '"resource_type": "vm"' in line
-    assert line.startswith("[verbose] 도구 호출")
+    assert line.startswith("[verbose] tool call →")
 
 
 def test_long_arguments_truncated() -> None:
     line = describe_event(tool_call_event("t", "x" * 500))
-    assert "…(+" in line
+    assert "…(+300 chars)" in line
     assert len(line) < 300
 
 
@@ -36,7 +36,7 @@ def test_tool_output_truncated_and_flattened() -> None:
         item=SimpleNamespace(type="tool_call_output_item", output="줄1\n줄2\n" + "y" * 500),
     )
     line = describe_event(event)
-    assert line.startswith("[verbose] 도구 결과")
+    assert line.startswith("[verbose] tool result ←")
     assert "\n" not in line
     assert "줄1 줄2" in line
 
@@ -65,7 +65,7 @@ def test_describe_usage_format() -> None:
     line = describe_usage(usage)
     assert "1,234" in line
     assert "567" in line
-    assert "3회" in line
+    assert "(3 LLM requests)" in line
 
 
 def test_color_off_by_default() -> None:

@@ -71,10 +71,10 @@ def _perf_footer(specs: list[dict]) -> str | None:
             damaged = None
         if damaged:
             # 손상과 미빌드는 사용자가 할 일이 다르다 — 하나는 지우고 다시, 하나는 그냥 빌드.
-            return f"성능 경고를 붙이지 못했습니다 — {damaged}"
+            return f"Could not attach performance warnings — {damaged}"
         return (
-            "성능 지식베이스가 없어 성능 함정(버스트·구세대)을 확인하지 못했습니다 "
-            "— python -m perfkb build"
+            "The performance knowledge base is missing, so performance traps "
+            "(burst, previous generation) were not checked — python -m perfkb build"
         )
     # **"주석이 없는 후보"라고 뭉뚱그리면 안 된다.** IBM처럼 레코드는 있는데
     # 버스트·세대 신호가 없는 프로바이더가 섞이면 그 후보도 "확인됨"으로 읽힌다 —
@@ -83,24 +83,30 @@ def _perf_footer(specs: list[dict]) -> str | None:
     confirmed = any(n.status == perf_api.NOTE_OK for n in notes)
     if confirmed and partial:
         return (
-            "⚠ 표시가 없고 · 표시도 없는 후보만 성능 확인됨(상시 CPU 보장·최신 세대). "
-            "· 가 붙은 것은 확인한 것이 아닙니다."
+            "Only candidates with no ⚠ mark and no · mark are performance-confirmed "
+            "(sustained CPU guaranteed, current generation). "
+            "A · does not mean we confirmed it."
         )
     if confirmed:
-        return "주석이 없는 후보는 성능 확인됨(상시 CPU 보장·최신 세대)."
+        return (
+            "Candidates with no annotation are performance-confirmed "
+            "(sustained CPU guaranteed, current generation)."
+        )
     if partial:
         # 후보가 **전부** partial이면 위 두 갈래에 안 걸려 꼬리말이 통째로 사라진다.
         # 그러면 다시 침묵이 안전 신호로 읽힌다 — 결함 C4가 되돌아오는 자리다.
         return (
-            "이번 후보들은 버스트·세대를 판정할 신호가 원본에 없어 "
-            "**성능을 확인하지 못했습니다.** 경고가 없는 것이 이상 없다는 뜻이 아닙니다."
+            "For these candidates the source carries no signal to judge burst or "
+            "generation, so **performance was not confirmed.** No warning does not "
+            "mean nothing is wrong."
         )
     return None
 
 _PLAN_REQUIRED = (
-    "먼저 record_plan으로 계획을 기록하세요. 클라우드 리소스 산정은 구성요소별 사이징 → "
-    "스펙 추천 → 비용 합산으로 이어지는 다단계 작업이라, 계획을 남긴 뒤에 실행합니다. "
-    "record_plan을 호출한 다음 이 도구를 다시 부르세요."
+    "STOP. Record a plan with record_plan first. Cloud resource sizing is a "
+    "multi-step task — per-component sizing → spec recommendation → cost total — so "
+    "it runs only after a plan is on record. Call record_plan, then call this tool "
+    "again."
 )
 
 
@@ -148,14 +154,14 @@ def cost_recommend_specs(
             arm64, so architecture='any' may be needed.
     """
     if _needs_plan(ctx):
-        print("\n[스펙추천] 계획 없음 → 거부")
+        print("\n[spec recommend] no plan → refused")
         return _PLAN_REQUIRED
     arch = None if architecture.lower() == "any" else architecture
     print(
-        f"\n[스펙추천] vcpu>={vcpu_min}, mem>={mem_min_gib}GiB, "
+        f"\n[spec recommend] vcpu>={vcpu_min}, mem>={mem_min_gib}GiB, "
         f"provider={provider or 'any'}, region={region or 'any'}, "
         f"arch={arch or 'any'}, sort={sort_by}"
-        + (", 가속기 있는 것만" if require_accelerator else "")
+        + (", accelerator only" if require_accelerator else "")
     )
     return agent_api.recommend_specs(
         vcpu_min, mem_min_gib, provider, region, sort_by, limit,
@@ -184,12 +190,12 @@ def cost_estimate_monthly(
         hours_per_month: Monthly running hours (default 730 = always on).
     """
     if _needs_plan(ctx):
-        print("\n[비용추정] 계획 없음 → 거부")
+        print("\n[cost estimate] no plan → refused")
         return _PLAN_REQUIRED
     total = hourly_usd * hours_per_month * count
     print(
-        f"\n[비용추정] ${hourly_usd}/h × {hours_per_month}h × {count}대 "
-        f"= ${round(total, 2)}/월"
+        f"\n[cost estimate] ${hourly_usd}/h × {hours_per_month}h × {count} nodes "
+        f"= ${round(total, 2)}/month"
     )
     return agent_api.estimate_monthly_cost(hourly_usd, count, hours_per_month)
 
@@ -227,15 +233,16 @@ def cost_discount_pricing(
             shown.
     """
     key = provider.strip().lower()
-    print(f"\n[비용질의] 할인 가격: {key} {spec_name!r} region={region!r}")
+    print(f"\n[cost query] discount pricing: {key} {spec_name!r} region={region!r}")
     if key == "gcp":
         return agent_api.discount_pricing(spec_name, region)
     if key == "azure":
         return agent_api.azure_discount_pricing(spec_name, region)
     return (
-        f"'{provider}'의 할인(스팟·예약) 가격은 이 데이터셋에 없습니다. "
-        f"담긴 것은 {', '.join(_DISCOUNT_PROVIDERS)}뿐입니다. "
-        "**그 프로바이더에 할인이 없다는 뜻이 아니라 우리가 안 담았다는 뜻**입니다."
+        f"Discount (spot / reserved) pricing for '{provider}' is not in this dataset. "
+        f"Only {', '.join(_DISCOUNT_PROVIDERS)} are included. "
+        "**This does not mean that provider has no discounts — it means we did not "
+        "include them.**"
     )
 
 
@@ -260,7 +267,7 @@ def cost_describe_spec(
         provider: Needed only when the name collides across providers.
         region: When you want the unit price of one region only.
     """
-    print(f"\n[비용질의] 스펙 조회: {spec_name!r} provider={provider!r} region={region!r}")
+    print(f"\n[cost query] describe spec: {spec_name!r} provider={provider!r} region={region!r}")
     text = agent_api.describe_spec(spec_name, provider, region)
     return text + _perf_hint(spec_name, provider)
 
@@ -291,15 +298,15 @@ def _perf_hint(spec_name: str, provider: str | None) -> str:
         out += f"\n\n⚠ {note.text}"
     elif note.status not in ("no_record", "untracked", "not_built"):
         out += (
-            f"\n\n※ 성능 특성(버스트 여부·세대·EBS 대역폭)은 "
-            f"perf_instance_profile('{prov}', '{name}') 로 보세요."
+            f"\n\n※ Performance characteristics (burst or not · generation · EBS "
+            f"bandwidth) are in perf_instance_profile('{prov}', '{name}')."
         )
     # **하드웨어는 가리키지 말고 실어 준다.** 이름 조회 도구를 만들자 모델이 GPU
     # 질문에도 이걸 부르기 시작했고, 답은 근거가 있었지만 성능 축에만 있는
     # 아키텍처(`Turing`)와 정확한 SKU(`A100-SXM4-40GB`)가 답에서 사라졌다.
     # 가리키기만 하면 모델은 이미 답을 얻었다고 보고 더 안 부른다.
     if hardware:
-        out += f"\n\n하드웨어(성능 축): {hardware}"
+        out += f"\n\nHardware (performance axis): {hardware}"
     return out
 
 

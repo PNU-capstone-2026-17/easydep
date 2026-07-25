@@ -38,9 +38,9 @@ def resolve_node(graph: Graph, name: str) -> Node:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        raise ValueError(f"노드를 찾을 수 없습니다: {name!r}")
+        raise ValueError(f"Node not found: {name!r}")
     ids = ", ".join(sorted(node.id for node in candidates))
-    raise ValueError(f"이름이 모호합니다: {name!r} → 후보: {ids}")
+    raise ValueError(f"The name is ambiguous: {name!r} → candidates: {ids}")
 
 
 def _dependency_edges(graph: Graph, *, required_only: bool = False) -> list[Edge]:
@@ -180,7 +180,7 @@ def dependency_chain_detail(
         required_only: True면 required 엣지만 제약으로 취급.
     """
     if node_id not in graph.nodes:
-        raise ValueError(f"노드를 찾을 수 없습니다: {node_id!r}")
+        raise ValueError(f"Node not found: {node_id!r}")
 
     edges = _dependency_edges(graph, required_only=required_only)
     forward: dict[str, list[str]] = {}
@@ -277,7 +277,7 @@ def rank_types(
         (노드, 개수) 튜플 목록. 개수 내림차순, 동점이면 id 사전순.
     """
     if by not in ("dependencies", "dependents"):
-        raise ValueError(f"by는 'dependencies' 또는 'dependents'여야 합니다: {by!r}")
+        raise ValueError(f"by must be 'dependencies' or 'dependents': {by!r}")
 
     # 엣지가 아니라 **서로 다른 상대 타입 수**를 센다
     # (한 타입을 여러 프로퍼티로 참조해도 의존 대상은 하나다).
@@ -308,7 +308,7 @@ def equivalents(graph: Graph, node_id: str) -> list[Node]:
     자기 자신은 포함하지 않는다.
     """
     if node_id not in graph.nodes:
-        raise ValueError(f"노드를 찾을 수 없습니다: {node_id!r}")
+        raise ValueError(f"Node not found: {node_id!r}")
 
     undirected: dict[str, list[str]] = {}
     for edge in graph.edges:
@@ -335,7 +335,7 @@ def dependents(graph: Graph, node_id: str) -> list[Node]:
     역방향 폐포를 BFS로 수집하며, 자기 자신은 포함하지 않는다.
     """
     if node_id not in graph.nodes:
-        raise ValueError(f"노드를 찾을 수 없습니다: {node_id!r}")
+        raise ValueError(f"Node not found: {node_id!r}")
 
     reverse: dict[str, list[str]] = {}
     for edge in _dependency_edges(graph):

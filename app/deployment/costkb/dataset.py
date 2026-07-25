@@ -121,8 +121,9 @@ def _load_cached(output_dir: str) -> _Loaded:
         return _Loaded(bundle)
     return _Loaded(
         bundle,
-        f"빌드 산출물을 쓸 수 없어 번들 {len(bundle['specs'])}건으로 답합니다 "
-        f"({error}). {REBUILD_HINT}: python -m costkb build",
+        f"The build artifact is unusable, so this answers from the bundled "
+        f"{len(bundle['specs'])} specs ({error}). {REBUILD_HINT}: "
+        "python -m costkb build",
     )
 
 

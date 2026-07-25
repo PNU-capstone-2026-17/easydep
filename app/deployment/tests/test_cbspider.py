@@ -21,6 +21,12 @@ import pytest
 
 from envkb import cbspider
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 REAL = """
 package resources
 
@@ -85,7 +91,7 @@ def test_real_implementation_is_recognised() -> None:
 def test_stub_is_not_counted_as_supported() -> None:
     ok, reason = cbspider.classify(STUB, "CreateCluster")
     assert not ok
-    assert "스텁" in reason
+    assert "only returns an unsupported error (a stub)" in flat(reason)
 
 
 def test_partial_limitation_is_not_a_stub() -> None:
@@ -97,7 +103,7 @@ def test_partial_limitation_is_not_a_stub() -> None:
 def test_missing_method_is_reported() -> None:
     ok, reason = cbspider.classify(REAL, "CreateCluster")
     assert not ok
-    assert "메서드가 없습니다" in reason
+    assert "the CreateCluster method is missing" in flat(reason)
 
 
 def _tar(tmp_path, files: dict[tuple[str, str], str]):
@@ -125,9 +131,11 @@ def test_matrix_separates_missing_from_stub(tmp_path) -> None:
     rows = {r["core"]: r for r in records[0]["resources"]}
     assert rows["vNet"]["supported"] is True
     assert rows["k8sCluster"]["supported"] is False
-    assert "스텁" in rows["k8sCluster"]["reason"]
+    assert "only returns an unsupported error (a stub)" in flat(
+        rows["k8sCluster"]["reason"]
+    )
     assert rows["nlb"]["supported"] is False
-    assert "파일이 없습니다" in rows["nlb"]["reason"]
+    assert "the handler file is missing" in flat(rows["nlb"]["reason"])
     assert stats["stub"] == 2 and stats["missing"] >= 1
 
 
@@ -150,13 +158,15 @@ def test_answer_is_tool_coverage_not_a_cloud_fact(built) -> None:
     "KT Cloud에 쿠버네티스가 없다"로 읽히면 거짓을 말한 것이다. 우리는 배포기가
     아니라 가이드라인 지식베이스를 만든다.
     """
-    text = cbspider.describe("kt", "k8sCluster", output_dir=str(built))
-    assert "그 CSP에 해당 기능이 없다는 뜻이 아닙니다" in text
-    assert "이 데이터가 답하지 않습니다" in text
+    text = flat(cbspider.describe("kt", "k8sCluster", output_dir=str(built)))
+    assert "**This does not mean that CSP lacks the feature**" in text
+    assert (
+        "Whether that CSP offers this service is not what this data answers" in text
+    )
 
 
 def test_unknown_csp_is_rejected_clearly(built) -> None:
     """모르는 CSP도 '없다'가 아니라 '커버리지 밖'이다."""
-    text = cbspider.describe("vultr", output_dir=str(built))
-    assert "커버리지 밖" in text
-    assert "그런 CSP가 없다는 뜻이 아니라" in text
+    text = flat(cbspider.describe("vultr", output_dir=str(built)))
+    assert "**outside this tool's coverage**" in text
+    assert "that does not mean no such CSP exists" in text

@@ -93,15 +93,15 @@ def _out(tmp_path: Path) -> Path:
 def test_context_decides_which_limit_applies(tmp_path: Path) -> None:
     out = _out(tmp_path)
     assert agent_api.check(VOLUME, "Size", 30000, context={"VolumeType": "gp2"},
-                           output_dir=out).startswith("불가")
+                           output_dir=out).startswith("not allowed:")
     assert agent_api.check(VOLUME, "Size", 30000, context={"VolumeType": "gp3"},
-                           output_dir=out).startswith("가능")
+                           output_dir=out).startswith("allowed:")
 
 
 def test_without_context_it_says_what_it_needs(tmp_path: Path) -> None:
     """조건을 모르면 '모른다'가 아니라 '무엇을 알려주면 되는지'를 말한다."""
-    text = agent_api.check(VOLUME, "Size", 30000, output_dir=_out(tmp_path))
-    assert "조건에 따라 다릅니다" in text
+    text = " ".join(agent_api.check(VOLUME, "Size", 30000, output_dir=_out(tmp_path)).split())
+    assert "depends on the condition:" in text
     assert "VolumeType" in text
     assert "16384" in text and "65536" in text, "어느 조건에서 얼마인지 다 보여준다"
 
@@ -110,4 +110,4 @@ def test_unknown_volume_type_does_not_silently_pass(tmp_path: Path) -> None:
     """모르는 종류를 주면 어떤 조건도 성립하지 않는다 — 통과시키면 안 된다."""
     text = agent_api.check(VOLUME, "Size", 99999,
                            context={"VolumeType": "nope"}, output_dir=_out(tmp_path))
-    assert not text.startswith("가능")
+    assert not text.startswith("allowed:")

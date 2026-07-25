@@ -84,8 +84,8 @@ def built(tmp_path):
 
 def test_compare_says_old_generation(built) -> None:
     """**핵심 회귀.** 세대는 aws에서 100% 채워진 칸인데 비교 축 목록에만 빠져 있었다."""
-    text = compare("aws", ["m5.large", "c6a.large"], output_dir=built)
-    assert "구세대" in text and "최신 세대" in text
+    flat = " ".join(compare("aws", ["m5.large", "c6a.large"], output_dir=built).split())
+    assert "previous generation" in flat and "current generation" in flat
 
 
 def test_compare_and_recommend_agree_word_for_word(built) -> None:
@@ -104,24 +104,24 @@ def test_compare_warns_only_about_the_spec_that_has_it(built) -> None:
 
 def test_gcp_profile_is_not_one_line(built) -> None:
     """gcp는 100% 채워진 칸 3개를 갖고도 프로파일이 상시 CPU 한 줄뿐이었다."""
-    text = instance_profile("gcp", "n2-highmem-8", output_dir=built)
-    assert "최대 영구 디스크 수" in text
-    assert "벤더 설명" in text  # CLI만 출력하고 에이전트는 못 보던 칸
+    flat = " ".join(instance_profile("gcp", "n2-highmem-8", output_dir=built).split())
+    assert "max persistent disks" in flat
+    assert "vendor description" in flat  # CLI만 출력하고 에이전트는 못 보던 칸
 
 
 def test_azure_profile_shows_its_own_axes(built) -> None:
-    text = instance_profile("azure", "Standard_D2s_v5", output_dir=built)
-    for label in ("캐시 디스크 IOPS", "가속 네트워킹", "프리미엄 IO", "계열"):
-        assert label in text
+    flat = " ".join(instance_profile("azure", "Standard_D2s_v5", output_dir=built).split())
+    for label in ("cached disk IOPS", "accelerated networking", "premium IO", "family"):
+        assert label in flat
 
 
 # --- 표시 규약 -------------------------------------------------------------
 
 def test_booleans_are_not_raw_python(built) -> None:
     """`최신 세대: False`는 파이썬을 읽는 사람에게만 뜻이 통한다."""
-    text = instance_profile("aws", "m5.large", output_dir=built)
-    assert "False" not in text and "True" not in text
-    assert "세대: 구세대" in text
+    flat = " ".join(instance_profile("aws", "m5.large", output_dir=built).split())
+    assert "False" not in flat and "True" not in flat
+    assert "generation: previous generation" in flat
 
 
 def test_counts_have_no_decimal_point(built) -> None:
@@ -134,7 +134,7 @@ def test_burst_axis_is_labelled_as_burst() -> None:
     """최대 대역폭을 숨기면 데이터를 버리는 것이고, 그냥 '최대'면 지속으로 읽힌다."""
     for key in ("ebsMaxMbps", "ebsMaxIops"):
         field = next(f for f in FIELDS if f.key == key)
-        assert "버스트" in field.label
+        assert "burst" in field.label
 
 
 # --- 구조 불변식 -----------------------------------------------------------

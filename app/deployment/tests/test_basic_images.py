@@ -12,6 +12,12 @@ import pytest
 
 from envkb.images import describe, project
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 ROWS = [
     {
         "provider_name": "AWS", "region_list": '["ap-northeast-2"]',
@@ -89,24 +95,24 @@ def test_architecture_narrows(built) -> None:
 
 
 def test_missing_architecture_lists_what_exists(built) -> None:
-    text = describe("aws", "ap-northeast-2", "riscv64", output_dir=built)
-    assert "있는 아키텍처" in text and "arm64" in text
+    text = flat(describe("aws", "ap-northeast-2", "riscv64", output_dir=built))
+    assert "Architectures present" in text and "arm64" in text
 
 
 def test_answer_says_it_is_a_default_not_the_best(built) -> None:
-    text = describe("aws", "ap-northeast-2", output_dir=built)
-    assert "가장 좋은 이미지가 아니라" in text
+    text = flat(describe("aws", "ap-northeast-2", output_dir=built))
+    assert "**Not the best image — the one cb-tumblebug picked as its default.**" in text
 
 
 def test_unknown_provider_says_not_flagged(built) -> None:
     """'없다'가 아니라 '이 표시가 안 붙어 있다'."""
-    text = describe("oracle", output_dir=built)
-    assert "표시가" in text and "안 붙어" in text
+    text = flat(describe("oracle", output_dir=built))
+    assert "That does not mean none exists" in text and "this flag is not set" in text
 
 
 def test_unknown_region_lists_known(built) -> None:
-    text = describe("aws", "us-east-1", output_dir=built)
-    assert "담긴 리전 예" in text
+    text = flat(describe("aws", "us-east-1", output_dir=built))
+    assert "Regions included, for example" in text
 
 
 def test_unbuilt_says_how_to_build(tmp_path) -> None:

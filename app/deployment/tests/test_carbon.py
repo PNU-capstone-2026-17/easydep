@@ -15,6 +15,12 @@ import pytest
 
 from envkb import carbon
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 CORE_TS = """
 export const US_NERC_REGIONS_EMISSIONS_FACTORS: { [k: string]: number } = {
   RFC: 0.0003761283186,
@@ -128,14 +134,15 @@ def test_cross_provider_comparison_is_blocked(built) -> None:
         carbon.describe("gcp", output_dir=str(built)),
         carbon.describe("aws", "ap-northeast-2", output_dir=str(built)),
     ):
-        assert "프로바이더끼리 비교하지 마세요" in text
+        assert "**Do not compare providers against each other.**" in flat(text)
 
 
 def test_method_is_named_in_the_answer(built) -> None:
     gcp = carbon.describe("gcp", "asia-northeast3", output_dir=str(built))
     aws = carbon.describe("aws", "ap-northeast-2", output_dir=str(built))
-    assert "프로바이더 발표값" in gcp
-    assert "공개 그리드 데이터 추정" in aws
+    # 방법론 이름은 고지문에도 비슷한 말이 나오므로 `Basis:` 줄로 잡는다.
+    assert "Basis: published by the provider" in flat(gcp)
+    assert "Basis: estimated from public grid data" in flat(aws)
 
 
 def test_cleanest_is_sorted(built) -> None:
@@ -146,12 +153,12 @@ def test_cleanest_is_sorted(built) -> None:
 def test_untracked_provider_is_distinguished(built) -> None:
     """'탄소 없음'이 아니라 '이 축을 추적 안 함'이다."""
     text = carbon.describe("tencent", output_dir=str(built))
-    assert "추적하지 않는다" in text
+    assert "**we do not track this axis**" in flat(text)
 
 
 def test_missing_region_is_not_called_clean(built) -> None:
     text = carbon.describe("aws", "nonexistent-1", output_dir=str(built))
-    assert "깨끗하다는 뜻이 아니라" in text
+    assert "does not mean the region is clean" in flat(text)
 
 
 def test_missing_artifact_guides_to_build(tmp_path) -> None:

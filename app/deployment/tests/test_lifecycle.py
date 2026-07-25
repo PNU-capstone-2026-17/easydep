@@ -16,6 +16,12 @@ import pytest
 
 from envkb import lifecycle
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 PRODUCT_MD = """---
 title: Amazon EKS
 category: service
@@ -50,7 +56,7 @@ def test_false_eol_is_not_a_date() -> None:
     record = lifecycle.parse_product("amazon-eks", PRODUCT_MD, None)
     undated = next(r for r in record["releases"] if r["cycle"] == "9.9")
     assert undated["eol"] is None
-    assert lifecycle._status(undated, "2026-07-22") == "종료일 미정"
+    assert lifecycle._status(undated, "2026-07-22") == "end date undetermined"
 
 
 def test_extended_support_is_reported() -> None:
@@ -58,15 +64,15 @@ def test_extended_support_is_reported() -> None:
     record = lifecycle.parse_product("amazon-eks", PRODUCT_MD, None)
     ended = next(r for r in record["releases"] if r["cycle"] == "1.30")
     text = lifecycle._status(ended, "2026-01-01")
-    assert "연장 지원은 2026-07-23까지" in text
+    assert "extended support until 2026-07-23" in flat(text)
 
 
 def test_status_flips_with_today() -> None:
     """오늘이 지나면 '지원'에서 '종료'로 바뀐다."""
     record = lifecycle.parse_product("amazon-eks", PRODUCT_MD, None)
     live = next(r for r in record["releases"] if r["cycle"] == "1.33")
-    assert "2027-07-29까지 지원" in lifecycle._status(live, "2026-07-22")
-    assert "지원 종료" in lifecycle._status(live, "2028-01-01")
+    assert "supported until 2027-07-29" in flat(lifecycle._status(live, "2026-07-22"))
+    assert "support ended" in flat(lifecycle._status(live, "2028-01-01"))
 
 
 @pytest.fixture
@@ -91,12 +97,12 @@ def test_lookup_by_resource_type(built) -> None:
 def test_unknown_service_is_not_claimed_endless(built) -> None:
     """수록 안 된 것을 '종료일 없음'으로 답하면 안 된다."""
     text = lifecycle.describe("cassandra", output_dir=str(built))
-    assert "수록되지 않았다" in text
+    assert "it is not in this source" in flat(text)
 
 
 def test_unknown_version_lists_known_ones(built) -> None:
     text = lifecycle.describe("amazon-eks", "0.1", output_dir=str(built))
-    assert "찾지 못했습니다" in text
+    assert "version '0.1' not found" in flat(text)
     assert "1.33" in text
 
 

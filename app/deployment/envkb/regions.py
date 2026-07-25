@@ -292,7 +292,7 @@ def _retag(region: RegionMatch, how: str) -> RegionMatch:
     )
 
 
-_MISSING = "리전 산출물이 없습니다. `python -m envkb build-regions` 로 생성하세요."
+_MISSING = "No region artifact. Build it with `python -m envkb build-regions`."
 
 
 def region_lookup(
@@ -319,36 +319,37 @@ def region_lookup(
             if provider and catalog(output_dir=output_dir):
                 have = ", ".join(providers(output_dir=output_dir))
                 return (
-                    f"'{provider}' 프로바이더의 리전 정보가 없습니다. "
-                    f"아는 프로바이더: {have}"
+                    f"No region data for provider '{provider}'. "
+                    f"Providers we know: {have}"
                 )
             return _MISSING
         scope = f"{provider} " if provider else ""
         return (
-            f"'{query}' 에서 {scope}리전을 알아보지 못했습니다 — 그런 리전이 없다는 "
-            f"뜻이 아니라 **우리가 못 알아들었다**는 뜻입니다.\n"
-            "  리전 코드(`ap-northeast-2`)나 영어 이름(`Seoul`)으로 다시 물어보세요.\n"
-            f"  아는 {scope}리전 {len(known)}곳 중 몇 가지: "
+            f"Could not make out any {scope}region in '{query}' — that does not "
+            f"mean no such region exists, it means **we did not understand it**.\n"
+            "  Ask again with a region code (`ap-northeast-2`) or the English "
+            "name (`Seoul`).\n"
+            f"  A few of the {len(known)} {scope}regions we know: "
             + ", ".join(f"{r.code}({r.name})" for r in known[:5])
         )
 
     scope = f" ({provider})" if provider else ""
-    lines = [f"'{query}'{scope} → 리전 {len(found)}곳"]
+    lines = [f"'{query}'{scope} → {len(found)} regions"]
     for region in found[:12]:
         how = {
-            "code": "리전 코드",
-            "name": "원본 표시 이름",
-            "alias": "우리가 더한 한국어 번역",
+            "code": "region code",
+            "name": "the source's display name",
+            "alias": "a Korean alias we added",
         }[region.matched_by]
         lines.append(
             f"  - [{region.provider}] {region.code} — {region.name} ({how})"
         )
     if len(found) > 12:
-        lines.append(f"  … 외 {len(found) - 12}곳")
+        lines.append(f"  … and {len(found) - 12} more")
     if len({r.provider for r in found}) > 1:
         lines.append(
-            "  → **프로바이더마다 리전 코드가 다릅니다.** 어느 프로바이더인지 정해서 "
-            "그 코드를 쓰세요 — 다른 프로바이더의 코드를 넘기면 데이터가 있어도 "
-            "못 찾습니다."
+            "  → **Region codes differ by provider.** Pick a provider and use "
+            "its code — passing another provider's code finds nothing even when "
+            "the data is there."
         )
     return "\n".join(lines)

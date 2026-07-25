@@ -36,8 +36,8 @@ from kbcommon.basis import describe
 from kbcommon.display import evidence_name
 
 _MISSING = (
-    "리소스 군 데이터셋이 없습니다. `python -m bundlekb build --source avm` "
-    "(또는 tumblebug|aqt|aws-patterns)으로 빌드하세요."
+    "No resource-group dataset found. Build it with `python -m bundlekb build "
+    "--source avm` (or tumblebug|aqt|aws-patterns)."
 )
 
 #: 명시 소스가 '필수'라 했는데 코퍼스도 이만큼 나오면 교차 확인으로 본다.
@@ -47,14 +47,18 @@ _AGREE_RATIO = 0.9
 _SHOW = 8
 
 _TIER_LABEL = {
-    ALWAYS: "반드시 함께 만들어짐",
-    REQUIRED: "값을 반드시 줘야 함",
-    OPTIONAL: "붙일 수 있음",
+    ALWAYS: "always together",
+    REQUIRED: "you must supply a value",
+    OPTIONAL: "optional attachment",
 }
 
 
 def _short(type_id: str) -> str:
     return type_id.split("::", 1)[-1]
+
+
+def _kinds(count: int) -> str:
+    return f"{count} type" if count == 1 else f"{count} types"
 
 
 def _named(member) -> str:
@@ -86,12 +90,13 @@ def resource_bundle(
     corpus = _corpus_index(type_id, output_dir)
     if not found and not corpus:
         return (
-            f"'{type_id}' 가 중심인 리소스 군 정보가 없습니다. **없다는 뜻이 아니라 "
-            "이 데이터셋에 없다**는 뜻입니다 — 지금 담긴 것은 Azure(AVM·템플릿 코퍼스), "
-            "AWS(Solutions Constructs), core(cb-tumblebug)입니다."
+            f"No resource group centred on '{type_id}'. **That does not mean none "
+            "exists, it means it is not in this dataset** — what is included is "
+            "Azure (AVM, template corpus), AWS (Solutions Constructs), and "
+            "core (cb-tumblebug)."
         )
 
-    lines = [f"{_short(type_id)} 를 만들 때 함께 다뤄야 하는 것:"]
+    lines = [f"What you have to handle alongside {_short(type_id)}:"]
 
     # --- 1. 명시된 것 ---
     for tier in (ALWAYS, REQUIRED, OPTIONAL):
@@ -106,14 +111,14 @@ def resource_bundle(
         seen: dict[str, tuple[str, object]] = {}
         for member, source in rows:
             seen.setdefault(member.type_id, (source, member))
-        lines.append(f"\n[{_TIER_LABEL[tier]}] {len(seen)}종")
+        lines.append(f"\n[{_TIER_LABEL[tier]}] {_kinds(len(seen))}")
         for member_id, (source, member) in list(seen.items())[:_SHOW]:
             mark = ""
             note = member.note
             ratio = corpus.get(member_id)
             if ratio is not None and tier in (ALWAYS, REQUIRED) and ratio >= _AGREE_RATIO:
                 # 독립인 두 근거가 같은 답을 냈다.
-                mark = f"  ✓ 교차 확인 (실제 템플릿 {ratio:.0%})"
+                mark = f"  ✓ cross-checked (real templates {ratio:.0%})"
             detail = f" — {note}" if note else ""
             # **번들이 여럿이면 출처를 반드시 밝힌다.** 안 밝히면 특정 패턴에만
             # 있는 것(CosmosDB·복구 자격 증명 모음)이 이 리소스의 일반 요구처럼
@@ -121,24 +126,24 @@ def resource_bundle(
             origin = f"  ({source})" if len(found) > 1 else ""
             lines.append(f"  - {_named(member)}{detail}{origin}{mark}")
         if len(seen) > _SHOW:
-            lines.append(f"  … 외 {len(seen) - _SHOW}종")
+            lines.append(f"  … and {len(seen) - _SHOW} more")
 
     # --- 2. 실측 (절을 나눈다) ---
     if corpus:
         samples = companions_of(type_id, output_dir=output_dir)[0].samples
         lines.append(
-            f"\n[실제 템플릿에서 함께 나온 비율] 표본 {samples}개"
+            f"\n[ratio at which they co-occurred in real templates] {samples} samples"
         )
         for member_id, ratio in list(corpus.items())[:_SHOW]:
             lines.append(f"  {ratio:6.1%}  {_short(member_id)}")
         lines.append(
-            "  ※ **코퍼스에서 센 값이지 클라우드가 강제한다는 뜻이 아닙니다.** "
-            "표본은 데모·튜토리얼 쪽으로 기웁니다."
+            "  ※ **This is counted in the corpus; it does not mean the cloud "
+            "enforces it.** The sample leans toward demos and tutorials."
         )
 
     if found:
         sources = sorted({evidence_name(b.evidence) for b in found})
-        lines.append(f"\n근거: {', '.join(sources)}")
+        lines.append(f"\nEvidence: {', '.join(sources)}")
         for bundle in found:
             if bundle.caveat:
                 lines.append(f"⚠ [{bundle.name}] {bundle.caveat}")
@@ -159,8 +164,8 @@ def describe_named_bundle(name: str, *, output_dir: Path | str | None = None) ->
             for b in all_bundles(output_dir)
             if name.strip().lower() in b.name.lower()
         ][:6]
-        hint = f"\n  이름이 비슷한 것: {', '.join(near)}" if near else ""
-        return f"'{name}' 리소스 군을 찾지 못했습니다.{hint}"
+        hint = f"\n  Similar names: {', '.join(near)}" if near else ""
+        return f"Resource group '{name}' not found.{hint}"
 
     lines = [f"{bundle.name} ({bundle.provider})"]
     if bundle.description:
@@ -169,14 +174,14 @@ def describe_named_bundle(name: str, *, output_dir: Path | str | None = None) ->
         members = bundle.by_tier(tier)
         if not members:
             continue
-        lines.append(f"\n[{_TIER_LABEL[tier]}] {len(members)}종")
+        lines.append(f"\n[{_TIER_LABEL[tier]}] {_kinds(len(members))}")
         for member in members[:_SHOW]:
             detail = f" — {member.note}" if member.note else ""
             lines.append(f"  - {_named(member)}{detail}")
         if len(members) > _SHOW:
-            lines.append(f"  … 외 {len(members) - _SHOW}종")
+            lines.append(f"  … and {len(members) - _SHOW} more")
     lines.append(
-        f"\n근거: {evidence_name(bundle.evidence)}, {describe(bundle.basis)}"
+        f"\nEvidence: {evidence_name(bundle.evidence)}, {describe(bundle.basis)}"
     )
     if bundle.caveat:
         lines.append(f"⚠ {bundle.caveat}")
@@ -198,13 +203,13 @@ def list_bundles(
             if low in b.name.lower() or low in (b.description or "").lower()
         ]
     if not found:
-        return f"'{keyword}' 에 해당하는 리소스 군이 없습니다."
+        return f"No resource group matches '{keyword}'."
     shown = found[: max(1, limit)]
-    lines = [f"리소스 군 {len(found)}개 중 {len(shown)}개:"]
+    lines = [f"{len(shown)} of {len(found)} resource groups:"]
     for bundle in shown:
         always = len(bundle.by_tier(ALWAYS))
         lines.append(
-            f"  - {bundle.name} ({bundle.provider}) — 반드시 {always}종"
+            f"  - {bundle.name} ({bundle.provider}) — {always} always together"
             f"{f' · {bundle.description[:56]}' if bundle.description else ''}"
         )
     return "\n".join(lines)
@@ -216,8 +221,9 @@ def coverage_text(output_dir: Path | str | None = None) -> str:
     by_provider: dict[str, int] = {}
     for bundle in bundles:
         by_provider[bundle.provider] = by_provider.get(bundle.provider, 0) + 1
-    parts = ", ".join(f"{p} {n}개" for p, n in sorted(by_provider.items()))
+    parts = ", ".join(f"{p} {n}" for p, n in sorted(by_provider.items()))
     return (
-        f"리소스 군 {len(bundles)}개 ({parts}). 동시 출현은 Azure 템플릿 코퍼스에서만 "
-        f"셌고 표본 {MIN_SAMPLES}개 이상인 앵커만 담았습니다."
+        f"{len(bundles)} resource groups ({parts}). Co-occurrence was counted only "
+        f"over the Azure template corpus, and only anchors with {MIN_SAMPLES} or more "
+        f"samples are included."
     )

@@ -142,16 +142,16 @@ def read_dataset(path: Path, schema: dict) -> tuple[dict | None, str | None]:
         # 조용히 "빌드 안 됨"으로 떨어진다 — 실제로 그렇게 한 번 새어 나갔다.
         data = load_json(path)
     except (OSError, UnicodeDecodeError) as exc:
-        return None, f"{path}를 읽을 수 없습니다: {exc}"
+        return None, f"cannot read {path}: {exc}"
     except json.JSONDecodeError as exc:
-        return None, f"{path}가 온전한 JSON이 아닙니다(쓰다 만 파일일 수 있음): {exc}"
+        return None, f"{path} is not intact JSON (it may be a half-written file): {exc}"
     error = _validate_fast(data, schema)
     if error:
-        return None, f"{path}가 스키마를 위반합니다 — {error}"
+        return None, f"{path} violates the schema — {error}"
     return data, None
 
 
-REBUILD_HINT = "다시 빌드하거나 파일을 지우세요"
+REBUILD_HINT = "rebuild it or delete the file"
 
 
 # --- 저장소에 커밋된 산출물 ------------------------------------------------

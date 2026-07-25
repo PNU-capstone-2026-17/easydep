@@ -145,7 +145,10 @@ def annotate_distance(
         record["distanceKm"] = round(distance, 1)
         joined += 1
         if faster_than_light(distance, record["latencyMs"]):
-            record["suspect"] = "왕복 광속보다 빠름 — 좌표나 값 중 하나가 틀렸다"
+            record["suspect"] = (
+                "faster than round-trip light speed — either the coordinates or "
+                "the value is wrong"
+            )
             violations += 1
     return {"withDistance": joined, "fasterThanLight": violations}
 
@@ -203,7 +206,10 @@ def _invariants() -> list[Invariant]:
     return [
         Invariant(
             name="latency-beats-light",
-            question="지연이 왕복 광속보다 짧은 쌍이 있나? (좌표나 값 중 하나가 틀렸다는 신호)",
+            question=(
+                "Is any pair's latency shorter than round-trip light speed? "
+                "(a sign that either the coordinates or the value is wrong)"
+            ),
             # **지우지 않고 보고한다** — 조용히 버리면 다음 사람이 같은 것을 다시 발견한다.
             severity="report",
             check=physics,
@@ -212,12 +218,14 @@ def _invariants() -> list[Invariant]:
 
 
 NOTE = (
-    "리전 간 네트워크 지연(왕복, ms). **cb-tumblebug이 실제로 VM을 띄워 잰 값**이고 "
-    "벤더가 보장한 SLA가 아닙니다 — 어느 시점의 관측입니다. **측정 시각은 원본에 "
-    "없습니다**(DB의 measured_at은 적재 시각). 검증: 양방향 4,851쌍 중 99.9%가 서로 "
-    "다른 값이라 전치 복사가 아니고, 대권거리와 상관계수 0.817로 물리적으로 정합합니다. "
-    "다만 왕복 광속을 앞지르는 쌍이 소수 있어 `suspect`로 표시했습니다 — 좌표나 값 중 "
-    "하나가 틀린 것입니다."
+    "Network latency between regions (round-trip, ms). **A value cb-tumblebug "
+    "measured by actually launching VMs**, not a vendor-guaranteed SLA — an "
+    "observation at some point in time. **The source carries no measurement "
+    "time** (the DB's measured_at is the load time). Checks: 99.9% of the 4,851 "
+    "bidirectional pairs hold different values, so this is not a transpose copy, "
+    "and it correlates with great-circle distance at 0.817, which is physically "
+    "consistent. A few pairs do beat round-trip light speed and are marked "
+    "`suspect` — for those, either the coordinates or the value is wrong."
 )
 
 
@@ -244,11 +252,12 @@ def build(output: Path, *, refresh: bool = False, regions: Path | None = None) -
                     {(r["sourceProvider"], r["sourceRegion"]) for r in records}
                 ),
                 "note": (
-                    f"프로바이더 {len(providers)}곳 · 리전 쌍 {len(records):,}건. "
-                    f"좌표를 붙인 쌍 {distance_stats['withDistance']:,}건, 그중 "
-                    f"물리 하한 위반 {distance_stats['fasterThanLight']}건은 "
-                    "`suspect`로 표시했다(지우지 않았다). "
-                    "**프로바이더를 넘나드는 쌍이 있다** — 같은 도시의 AWS↔Azure처럼."
+                    f"{len(providers)} providers · {len(records):,} region pairs. "
+                    f"{distance_stats['withDistance']:,} pairs carry a distance, "
+                    f"and the {distance_stats['fasterThanLight']} of those that "
+                    "break the physical lower bound are marked `suspect` (not "
+                    "deleted). **Cross-provider pairs exist** — AWS↔Azure in the "
+                    "same city, for instance."
                 ),
             }
         ],
@@ -256,8 +265,8 @@ def build(output: Path, *, refresh: bool = False, regions: Path | None = None) -
     }
     result = artifact.write_dataset(output, dataset, _schema(), _invariants())
     print(
-        f"region-latency: 쌍 {len(records):,}건 "
-        f"(프로바이더 {len(providers)}곳) → {output}"
+        f"region-latency: {len(records):,} pairs "
+        f"({len(providers)} providers) → {output}"
     )
     summary = result.summary()
     if summary:
@@ -292,8 +301,8 @@ def describe(
     data = _load(output_dir)
     if data is None:
         return (
-            "리전 지연 데이터가 없습니다. `python -m kbcommon build-latency` 로 "
-            "빌드하세요."
+            "No region latency data. Build it with "
+            "`python -m kbcommon build-latency`."
         )
     wanted = source.strip().lower()
     rows = [
@@ -304,8 +313,9 @@ def describe(
     if not rows:
         known = sorted({f"{p['sourceProvider']}-{p['sourceRegion']}" for p in data["pairs"]})
         return (
-            f"'{source}' 를 출발지로 하는 측정이 없습니다. **없다는 뜻이 아니라 이 "
-            f"벤치마크가 안 쟀다**는 뜻입니다. 잰 리전 {len(known)}곳 예: "
+            f"No measurement with '{source}' as the source. **That does not mean "
+            f"none exists — this benchmark did not measure it.** A few of the "
+            f"{len(known)} regions it did measure: "
             + ", ".join(known[:6])
         )
     if target:
@@ -314,17 +324,21 @@ def describe(
             p for p in rows if f"{p['targetProvider']}-{p['targetRegion']}".lower() == low
         ]
         if not rows:
-            return f"'{source}' → '{target}' 측정이 없습니다."
+            return f"No measurement for '{source}' → '{target}'."
 
     rows.sort(key=lambda p: p["latencyMs"])
-    lines = [f"{source} 기준 왕복 지연 (가까운 순, {len(rows)}곳 중 {min(limit, len(rows))}곳):"]
+    lines = [
+        f"Round-trip latency from {source} "
+        f"(nearest first, {min(limit, len(rows))} of {len(rows)}):"
+    ]
     for pair in rows[: max(1, limit)]:
         name = f"{pair['targetProvider']}-{pair['targetRegion']}"
         distance = f" · {pair['distanceKm']:,.0f} km" if pair.get("distanceKm") else ""
-        suspect = "  ⚠ 좌표나 값이 의심됨" if pair.get("suspect") else ""
+        suspect = "  ⚠ coordinates or value suspect" if pair.get("suspect") else ""
         lines.append(f"  {pair['latencyMs']:8.1f} ms  {name}{distance}{suspect}")
     lines.append(
-        "\n※ cb-tumblebug이 **실제로 VM을 띄워 잰 값**이며 벤더가 보장한 SLA가 "
-        "아닙니다. 측정 시각은 원본에 없습니다 — 지금 값과 다를 수 있습니다."
+        "\n※ **A value cb-tumblebug measured by actually launching VMs**, not a "
+        "vendor-guaranteed SLA. The source carries no measurement time — it may "
+        "differ from the value today."
     )
     return "\n".join(lines)

@@ -87,4 +87,6 @@ def test_label_says_who_said_it() -> None:
         type_id=CASSANDRA, property="location", kind="mutability",
         value="updatable", evidence="swagger-mutability",
     ))
-    assert "변경 가능" in text and "명세가" in text
+    flat = " ".join(text.split())
+    assert "can be changed after creation" in flat
+    assert "the spec marks update as allowed" in flat

@@ -33,9 +33,9 @@ def test_build_cfn_and_query_limits(cfn_zip, tmp_path, capsys) -> None:
     assert main([
         "query", "--limits", "AWS::EC2::Volume", "--property", "Size", "--data", str(out)
     ]) == 0
-    stdout = capsys.readouterr().out
-    assert "최대 65536 GiB" in stdout
-    assert "조건부" in stdout
+    stdout = " ".join(capsys.readouterr().out.split())
+    assert "max 65536 GiB" in stdout
+    assert "conditional" in stdout
 
 
 def test_check_rejects_when_a_stated_limit_is_broken(cfn_zip, tmp_path, capsys) -> None:
@@ -107,7 +107,7 @@ def test_build_azure(tmp_path, capsys) -> None:
         "query", "--limits", "Microsoft.ContainerService/managedClusters",
         "--property", "properties.agentPoolProfiles.osDiskSizeGB", "--data", str(out),
     ]) == 0
-    assert "최대 2048" in capsys.readouterr().out
+    assert "max 2048" in " ".join(capsys.readouterr().out.split())
 
 
 def test_build_azure_quota_and_search(tmp_path, capsys) -> None:

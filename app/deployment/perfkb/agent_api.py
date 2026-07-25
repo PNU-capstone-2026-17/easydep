@@ -38,7 +38,10 @@ from perfkb.dataset import (
 )
 from perfkb.fields import COMPARE_FIELDS, FIELDS
 
-_OLD_GEN_NOTE = "구세대 인스턴스입니다 — 최신 세대에 더 나은 가격/성능이 있을 수 있습니다."
+_OLD_GEN_NOTE = (
+    "This is a previous-generation instance — a current generation may offer "
+    "better price/performance."
+)
 
 #: 경고를 만들 수 있는 신호. **레코드에 이 중 하나도 없으면 "확인했다"고 말할 수 없다.**
 #:
@@ -61,7 +64,9 @@ def _warning_for(rec: dict) -> str | None:
     sustained = rec.get("sustainedCpu")
     if sustained and sustained["value"] is False:
         # note가 메커니즘(크레딧/공유코어/B계열)을 담고 있다. 없으면 일반 문구.
-        parts.append(sustained.get("note") or "상시 CPU 성능이 보장되지 않습니다.")
+        parts.append(
+            sustained.get("note") or "Sustained CPU performance is not guaranteed."
+        )
     if rec.get("currentGeneration") is False:
         parts.append(_OLD_GEN_NOTE)
     return " ".join(parts) if parts else None
@@ -120,15 +125,16 @@ def recommend_note(
 
     if rec is None:
         if provider and provider.lower() not in tracked_providers(output_dir):
-            tracked = "/".join(sorted(tracked_providers(output_dir))) or "없음"
+            tracked = "/".join(sorted(tracked_providers(output_dir))) or "none"
             return PerfNote(
                 NOTE_UNTRACKED,
-                f"성능 정보 없음 — {provider}는 성능 신호를 추적하지 않습니다"
-                f"({tracked}만 수록).",
+                f"No performance data — performance signals are not tracked for "
+                f"{provider} (only {tracked} are included).",
             )
         return PerfNote(
             NOTE_NO_RECORD,
-            f"성능 정보 없음 — 성능 지식베이스에 {spec_name} 레코드가 없습니다.",
+            f"No performance data — the performance knowledge base has no record "
+            f"for {spec_name}.",
         )
 
     warning = _warning_for(rec)
@@ -138,8 +144,8 @@ def recommend_note(
         # **"경고가 없다"와 "판정할 수 없다"는 다른 말이다.**
         return PerfNote(
             NOTE_PARTIAL,
-            f"버스트·세대 판정 불가 — {provider}는 원본에 그 신호가 없습니다"
-            "(다른 성능 값은 있습니다).",
+            f"Cannot judge burst or generation — the source carries no such signal "
+            f"for {provider} (other performance values are present).",
         )
     return PerfNote(NOTE_OK)
 
@@ -148,12 +154,12 @@ def _describe(rec: dict) -> str:
     lines = []
     sustained = rec.get("sustainedCpu")
     if sustained is not None:
-        mark = "보장됨" if sustained["value"] else "보장 안 됨"
+        mark = "guaranteed" if sustained["value"] else "not guaranteed"
         # 유보를 붙일지는 `kbcommon.basis`가 정한다 — 여기서 리터럴로 비교하면
         # 같은 규칙이 KB마다 한 벌씩 생긴다.
         guessed = needs_hedge(sustained.get("basis", ""), sustained.get("reviewed", False))
-        hedge = " (이름 규칙에서 짐작)" if guessed else ""
-        lines.append(f"  상시 CPU 성능: {mark}{hedge}")
+        hedge = " (a guess from the naming convention)" if guessed else ""
+        lines.append(f"  Sustained CPU performance: {mark}{hedge}")
         if sustained.get("note"):
             lines.append(f"    ⚠ {sustained['note']}")
     for field in FIELDS:
@@ -164,7 +170,9 @@ def _describe(rec: dict) -> str:
         # 그러면 네트워크 이야기가 마지막 줄(EBS 최대 대역폭)에 달린 것처럼 읽혔다.
         # EBS 버스트와 네트워크 버스트는 다른 사안이라 오해가 판단을 바꾼다.
         if field.key == "networkPerformance" and rec.get("networkIsBurst"):
-            lines.append("    ⚠ 네트워크 대역폭이 버스트('Up to')라 지속 값이 아닙니다.")
+            lines.append(
+                "    ⚠ Network bandwidth is burst ('Up to'), not a sustained value."
+            )
 
     # **하드웨어 사실은 따로 묶는다.** 위쪽은 cb-tumblebug에서 온 성능 신호이고
     # 이쪽은 다른 소스(실제 인스턴스에서 확인한 것)라, 섞으면 어느 값이 어디서
@@ -180,16 +188,16 @@ def _describe(rec: dict) -> str:
     if rec.get("cpuModel"):
         detail = []
         if rec.get("cpuCores"):
-            detail.append(f"{rec['cpuCores']}코어")
+            detail.append(f"{rec['cpuCores']} cores")
         if rec.get("cpuThreads"):
-            detail.append(f"{rec['cpuThreads']}스레드")
+            detail.append(f"{rec['cpuThreads']} threads")
         suffix = f" ({' · '.join(detail)})" if detail else ""
         hardware.append(f"  CPU: {rec['cpuModel']}{suffix}")
     if rec.get("memorySpeedMHz"):
-        hardware.append(f"  메모리 속도: {rec['memorySpeedMHz']} MHz")
+        hardware.append(f"  Memory speed: {rec['memorySpeedMHz']} MHz")
     if hardware:
         checked = rec.get("hardwareCheckedAt")
-        lines.append(f"  — 하드웨어{f' ({checked} 확인)' if checked else ''}")
+        lines.append(f"  — Hardware{f' (checked {checked})' if checked else ''}")
         lines.extend(hardware)
     return "\n".join(lines)
 
@@ -204,11 +212,12 @@ def instance_profile(
     found = find(provider=provider, spec_name=spec_name, output_dir=output_dir)
     if not found:
         return (
-            f"{provider} {spec_name}의 성능 데이터가 없습니다. "
-            "성능 지식베이스가 빌드되지 않았거나(python -m perfkb build), "
-            "성능 신호를 추적하지 않는 프로바이더일 수 있습니다(aws/azure/gcp만 수록)."
+            f"No performance data for {provider} {spec_name}. "
+            "The performance knowledge base may not be built "
+            "(python -m perfkb build), or the provider may not be tracked for "
+            "performance signals (only aws/azure/gcp are included)."
         )
-    return f"{provider} {spec_name} 성능 프로파일:\n{_describe(found[0])}"
+    return f"{provider} {spec_name} performance profile:\n{_describe(found[0])}"
 
 
 def compare(
@@ -236,29 +245,37 @@ def compare(
     if len(recs) < 2:
         got = [r["specName"] for r in recs]
         return (
-            f"비교하려면 {provider}의 스펙이 2개 이상 필요합니다. "
-            f"찾음: {got or '없음'} / 못 찾음: {missing or '없음'}. "
-            "성능 데이터가 없거나(빌드 필요) 프로바이더가 달라 비교할 수 없습니다."
+            f"Comparing needs at least 2 {provider} specs. "
+            f"Found: {got or 'none'} / not found: {missing or 'none'}. "
+            "Either there is no performance data (build needed) or the providers "
+            "differ, so they cannot be compared."
         )
 
-    lines = [f"{provider} 스펙 성능 비교 ({', '.join(r['specName'] for r in recs)}):"]
+    lines = [
+        f"{provider} spec performance comparison "
+        f"({', '.join(r['specName'] for r in recs)}):"
+    ]
 
     def _row(label: str, values: list[str], incomplete: bool = False) -> str:
         cells = " / ".join(f"{r['specName']}={v}" for r, v in zip(recs, values))
-        return f"  {label}: {cells}" + (" (일부 값이 없어 비교 불완전)" if incomplete else "")
+        return f"  {label}: {cells}" + (
+            " (incomplete — some values are missing)" if incomplete else ""
+        )
 
     # 상시 CPU는 모든 프로바이더 공통 축이다.
     sustained = []
     for r in recs:
         s = r.get("sustainedCpu")
-        sustained.append("보장" if s and s["value"] else "미보장" if s else "모름")
-    lines.append(_row("상시 CPU 성능", sustained))
+        sustained.append(
+            "guaranteed" if s and s["value"] else "not guaranteed" if s else "unknown"
+        )
+    lines.append(_row("Sustained CPU performance", sustained))
 
     for field in COMPARE_FIELDS:
         vals = [r.get(field.key) for r in recs]
         if all(v is None for v in vals):
             continue  # 아무도 이 축 값이 없으면 행을 만들지 않는다 — 축은 저절로 갈린다
-        cells = [field.render(v) if v is not None else "모름" for v in vals]
+        cells = [field.render(v) if v is not None else "unknown" for v in vals]
         lines.append(_row(field.label, cells, incomplete=any(v is None for v in vals)))
 
     # **판단이 갈리는 것은 여기서 같은 문구로 말한다.** 축 값만 나열하면 "구세대"라는
@@ -270,8 +287,8 @@ def compare(
             lines.append(f"  ⚠ {rec['specName']}: {warning}")
 
     lines.append(
-        "※ '더 빠르다'는 워크로드(CPU 바운드/IO 바운드)에 따라 다르므로 승자를 단정하지 "
-        "않습니다. 프로바이더 간 비교는 기준 축이 달라 불가능합니다."
+        "※ 'Faster' depends on the workload (CPU-bound vs IO-bound), so no winner "
+        "is declared. Cross-provider comparison is impossible because the axes differ."
     )
     return "\n".join(lines)
 
@@ -294,15 +311,22 @@ def specs_meeting_ebs_baseline(
             hits[r["specName"]] = (base, r.get("ebsMaxMbps"))
     if not hits:
         return (
-            f"지속 EBS 대역폭 {min_mbps:g} Mbps 이상인 AWS 스펙을 찾지 못했습니다. "
-            "성능 데이터가 빌드됐는지, 기준이 너무 높지 않은지 확인하세요."
+            f"Found no AWS spec with sustained EBS bandwidth of {min_mbps:g} Mbps or "
+            "more. Check that the performance data is built and that the threshold "
+            "is not too high."
         )
     ranked = sorted(hits.items(), key=lambda kv: -kv[1][0])[: max(1, limit)]
-    lines = [f"지속 EBS 대역폭 {min_mbps:g} Mbps 이상 AWS 스펙 {len(hits)}종 중 상위 {len(ranked)}:"]
+    lines = [
+        f"AWS specs with sustained EBS bandwidth of {min_mbps:g} Mbps or more — "
+        f"{len(hits)} found, top {len(ranked)}:"
+    ]
     for name, (base, mx) in ranked:
-        mx_text = f", 버스트 최대 {mx:g}" if mx else ""
-        lines.append(f"  - {name}: 지속 {base:g} Mbps{mx_text}")
-    lines.append("※ 가격·크기는 cost_recommend_specs로 확인하세요. 여기 값은 지속 대역폭입니다.")
+        mx_text = f", burst max {mx:g}" if mx else ""
+        lines.append(f"  - {name}: sustained {base:g} Mbps{mx_text}")
+    lines.append(
+        "※ Check price and size with cost_recommend_specs. The values here are "
+        "sustained bandwidth."
+    )
     return "\n".join(lines)
 
 
@@ -338,7 +362,7 @@ def hardware_facts(
     if not parts:
         return None
     checked = rec.get("hardwareCheckedAt")
-    return " · ".join(parts) + (f" ({checked} 확인)" if checked else "")
+    return " · ".join(parts) + (f" (checked {checked})" if checked else "")
 
 
 def hardware_summary(provider: str, output_dir: Path | str | None = None) -> str | None:
@@ -364,8 +388,8 @@ def hardware_summary(provider: str, output_dir: Path | str | None = None) -> str
         return None
     checked = sorted({r.get("hardwareCheckedAt") for r in specs
                       if r.get("provider") == provider and r.get("hardwareCheckedAt")})
-    when = f", {checked[0]}~{checked[-1]} 확인" if checked else ""
+    when = f", checked {checked[0]}~{checked[-1]}" if checked else ""
     return (
-        f"CPU·GPU 모델을 아는 종류 {len(names):,}개"
-        f"{f' (그중 GPU 있는 것 {len(gpus)}개)' if gpus else ''}{when}"
+        f"{len(names):,} spec types with a known CPU/GPU model"
+        f"{f' ({len(gpus)} of them with a GPU)' if gpus else ''}{when}"
     )

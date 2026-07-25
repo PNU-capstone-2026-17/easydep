@@ -18,6 +18,12 @@ import pytest
 from envkb import cloudinfo
 from envkb import regions as regions_mod
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 RAW = {
     "cloud": {
         "aws": {
@@ -163,15 +169,15 @@ def test_compass_name_is_not_mapped_to_a_city(built) -> None:
 
 
 def test_unknown_place_is_not_claimed_absent(built) -> None:
-    text = regions_mod.region_lookup("화성", output_dir=built)
-    assert "못 알아들었다" in text
-    assert "없다는 뜻이 아니라" in text
+    text = flat(regions_mod.region_lookup("화성", output_dir=built))
+    assert "**we did not understand it**" in text
+    assert "does not mean no such region exists" in text
 
 
 def test_multi_provider_answer_warns_about_codes(built) -> None:
     """프로바이더마다 코드가 다르다는 걸 답이 말해야 한다."""
-    text = regions_mod.region_lookup("서울", output_dir=built)
-    assert "프로바이더마다 리전 코드가 다릅니다" in text
+    text = flat(regions_mod.region_lookup("서울", output_dir=built))
+    assert "**Region codes differ by provider.**" in text
     assert "[gcp] asia-northeast3" in text
 
 

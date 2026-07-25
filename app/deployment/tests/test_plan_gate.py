@@ -49,7 +49,7 @@ def test_recommend_specs_refuses_without_plan() -> None:
     state = SessionState()
     out = invoke(cost_recommend_specs, state, '{"vcpu_min": 2, "mem_min_gib": 4}')
     assert "record_plan" in out
-    assert "먼저" in out
+    assert "record a plan with record_plan first" in " ".join(out.split()).lower()
 
 
 def test_estimate_cost_refuses_without_plan() -> None:
@@ -66,11 +66,11 @@ def test_tools_work_after_plan_recorded() -> None:
         cost_recommend_specs, state, '{"vcpu_min": 2, "mem_min_gib": 4, "provider": "aws"}'
     )
     assert "record_plan" not in specs
-    assert "추천 후보" in specs
+    assert "recommended candidates" in " ".join(specs.split()).lower()
 
     cost = invoke(cost_estimate_monthly, state, '{"hourly_usd": 0.05, "count": 2}')
     assert "record_plan" not in cost
-    assert "월 예상 비용" in cost
+    assert "estimated monthly cost" in " ".join(cost.split()).lower()
 
 
 def test_gate_is_per_request() -> None:

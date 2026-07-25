@@ -16,6 +16,11 @@ from capacitykb import agent_api
 from capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def crd(kind: str, spec: dict) -> dict:
     return {
         "kind": "CustomResourceDefinition",
@@ -81,8 +86,8 @@ def test_coverage_lists_types_so_empty_ones_resolve(tmp_path: Path) -> None:
     got.save(tmp_path / "gcp-capacity.json")
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.immutable("BigLakeDatabase", output_dir=tmp_path)
-    assert "찾을 수 없습니다" not in text
-    assert "없습니다" in text
+    assert "type not found" not in flat(text)
+    assert "no property is known to be unchangeable" in flat(text)
 
 
 def test_immutable_folds_children_of_immutable_parent(tmp_path: Path) -> None:
@@ -102,8 +107,8 @@ def test_immutable_folds_children_of_immutable_parent(tmp_path: Path) -> None:
     got.save(tmp_path / "gcp-capacity.json")
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.immutable("DataprocCluster", output_dir=tmp_path)
-    assert "속성 1개" in text
-    assert "하위 속성 2개" in text
+    assert "1 property that recreates the resource when changed" in flat(text)
+    assert "2 child properties folded away" in flat(text)
     assert "config.a" not in text, "부모가 불변이면 자식은 접는다"
 
 
@@ -168,8 +173,8 @@ def test_stale_backend_is_disclosed_once_not_per_line(tmp_path: Path) -> None:
     got.save(tmp_path / "gcp-capacity.json")
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.immutable("A", output_dir=tmp_path)
-    assert text.count("낡았을 수 있습니다") == 1, "줄마다 붙으면 안 된다"
-    assert "3건은" in text
+    assert flat(text).count("so it may be outdated") == 1, "줄마다 붙으면 안 된다"
+    assert "all 3 entries:" in flat(text)
 
 
 def test_fresh_backend_says_nothing(tmp_path: Path) -> None:
@@ -177,7 +182,7 @@ def test_fresh_backend_says_nothing(tmp_path: Path) -> None:
         "a": {"type": "string", "description": "Immutable. x"}}}, None)])
     got.save(tmp_path / "gcp-capacity.json")
     agent_api._load_merged_cached.cache_clear()
-    assert "낡았" not in agent_api.immutable("A", output_dir=tmp_path)
+    assert "may be outdated" not in flat(agent_api.immutable("A", output_dir=tmp_path))
 
 
 def test_internal_labels_never_reach_the_user(tmp_path: Path) -> None:

@@ -22,6 +22,12 @@ from envkb.latency import (
     parse_matrix,
 )
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 MATRIX = (
     ",aws-ap-northeast-2,aws-ap-northeast-1,azure-koreacentral\n"
     "aws-ap-northeast-2,0.446,34.243,3.272\n"
@@ -118,8 +124,9 @@ def built(tmp_path):
 
 
 def test_answer_says_it_is_not_an_sla(built) -> None:
-    text = describe("aws-ap-northeast-2", output_dir=built)
-    assert "SLA가 아닙니다" in text and "측정 시각은 원본에 없습니다" in text
+    text = flat(describe("aws-ap-northeast-2", output_dir=built))
+    assert "not a vendor-guaranteed SLA" in text
+    assert "The source carries no measurement time" in text
 
 
 def test_answer_sorts_by_closest(built) -> None:
@@ -131,8 +138,8 @@ def test_answer_sorts_by_closest(built) -> None:
 
 def test_missing_source_says_not_measured(built) -> None:
     """'없다'가 아니라 '이 벤치마크가 안 쟀다'."""
-    text = describe("gcp-nowhere", output_dir=built)
-    assert "안 쟀다" in text
+    text = flat(describe("gcp-nowhere", output_dir=built))
+    assert "this benchmark did not measure it" in text
 
 
 def test_unbuilt_says_how_to_build(tmp_path) -> None:

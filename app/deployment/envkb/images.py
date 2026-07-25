@@ -121,11 +121,12 @@ def _schema() -> dict:
 
 
 NOTE = (
-    "리전별 **기본 OS 이미지**. cb-tumblebug이 `is_basic_image`로 표시해 둔 것이며 "
-    "**'가장 좋은 이미지'가 아니라 이 도구가 기본으로 고른 것**입니다. 벤더 권장도 "
-    "최신도 아닙니다. **아키텍처를 맞춰야 합니다** — arm64 스펙(g5g 등)에 x86_64 "
-    "이미지를 쓰면 뜨지 않습니다. GPU 플래그는 45.6%가 켜져 있어 큐레이션 신호가 "
-    "아니므로 담지 않았습니다."
+    "The **default OS image** per region. What cb-tumblebug marked with "
+    "`is_basic_image` — **not the 'best image' but the one this tool picked as "
+    "its default**. Neither vendor-recommended nor the newest. **Match the "
+    "architecture** — an x86_64 image on an arm64 spec (g5g and the like) will "
+    "not boot. The GPU flag is set on 45.6% of rows, so it is not a curation "
+    "signal and is not included."
 )
 
 _ARTIFACT = "basic-images.json"
@@ -149,12 +150,14 @@ def build(output: Path, *, refresh: bool = False) -> dict:
                 "images": len(images),
                 "regions": len(regions),
                 "note": (
-                    f"image_infos {stats['seen']:,}행 중 큐레이션 플래그가 켜진 "
-                    f"{stats['kept']:,}건만 담았다(3.3%). **is_gpu_image는 45.6%가 "
-                    "켜져 있어 큐레이션이 아니라 '돌아갈 수 있음'에 가깝고, 79,478건이 "
-                    "AWS 하나라 쓰지 않았다.** 아키텍처 "
-                    f"{', '.join(arches)}. 실측상 전부 Linux/UNIX이며 **Windows 기본 "
-                    "이미지는 없다** — '없다'가 아니라 '이 표시가 안 붙어 있다'로 읽을 것."
+                    f"Of {stats['seen']:,} image_infos rows, only the "
+                    f"{stats['kept']:,} with a curation flag set are kept (3.3%). "
+                    "**is_gpu_image is set on 45.6% of rows, so it means closer to "
+                    "'it can run' than to curation, and 79,478 of those are AWS "
+                    "alone — it is not used.** Architectures "
+                    f"{', '.join(arches)}. In measured runs every row is "
+                    "Linux/UNIX and **there is no default Windows image** — read "
+                    "that as 'this flag is not set', not as 'it does not exist'."
                 ),
             }
         ],
@@ -165,8 +168,8 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     }
     artifact.write_dataset(output, dataset, _schema())
     print(
-        f"basic-images: {len(images):,}건 (프로바이더 {len(providers)}곳 · "
-        f"리전 {len(regions)}곳) → {output}"
+        f"basic-images: {len(images):,} images ({len(providers)} providers · "
+        f"{len(regions)} regions) → {output}"
     )
     return dataset
 
@@ -197,16 +200,16 @@ def describe(
     data = _load(output_dir)
     if data is None:
         return (
-            "기본 이미지 데이터가 없습니다. `python -m kbcommon build-images` 로 "
-            "빌드하세요."
+            "No basic image data. Build it with "
+            "`python -m kbcommon build-images`."
         )
     prov = provider.strip().lower()
     rows = [i for i in data["images"] if i["provider"] == prov]
     if not rows:
         known = sorted({i["provider"] for i in data["images"]})
         return (
-            f"'{provider}'의 기본 이미지가 없습니다. **없다는 뜻이 아니라 이 표시가 "
-            f"안 붙어 있다**는 뜻입니다. 담긴 프로바이더: {', '.join(known)}"
+            f"No basic image for '{provider}'. **That does not mean none exists "
+            f"— this flag is not set.** Providers included: {', '.join(known)}"
         )
     if region:
         low = region.strip().lower()
@@ -214,8 +217,8 @@ def describe(
         if not narrowed:
             spots = sorted({r for i in rows for r in i["regions"]})[:10]
             return (
-                f"{provider} '{region}' 리전의 기본 이미지가 없습니다. "
-                f"담긴 리전 예: {', '.join(spots)}"
+                f"No basic image for {provider} region '{region}'. "
+                f"Regions included, for example: {', '.join(spots)}"
             )
         rows = narrowed
     if architecture:
@@ -224,13 +227,14 @@ def describe(
         if not matched:
             have = sorted({i["osArchitecture"] for i in rows if i["osArchitecture"]})
             return (
-                f"{provider} {region or ''} 에 '{architecture}' 기본 이미지가 "
-                f"없습니다. 있는 아키텍처: {', '.join(have) or '없음'}"
+                f"No '{architecture}' basic image for {provider} "
+                f"{region or ''}. Architectures present: "
+                f"{', '.join(have) or 'none'}"
             )
         rows = matched
 
     shown = rows[: max(1, limit)]
-    lines = [f"{provider} 기본 이미지 {len(rows)}건 중 {len(shown)}건:"]
+    lines = [f"{len(shown)} of {len(rows)} basic images for {provider}:"]
     for image in shown:
         tags = "/".join(k.replace("is_", "").replace("_image", "") for k in image["kinds"])
         lines.append(
@@ -239,7 +243,8 @@ def describe(
             f"{f'  [{tags}]' if tags else ''}"
         )
     lines.append(
-        "\n※ **가장 좋은 이미지가 아니라 cb-tumblebug이 기본으로 고른 것**입니다. "
-        "아키텍처를 스펙과 맞추세요 — arm64 스펙에 x86_64 이미지는 뜨지 않습니다."
+        "\n※ **Not the best image — the one cb-tumblebug picked as its default.** "
+        "Match the architecture to the spec — an x86_64 image on an arm64 spec "
+        "will not boot."
     )
     return "\n".join(lines)

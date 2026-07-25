@@ -84,7 +84,7 @@ def test_missing_node_group_size_counts_as_one_not_zero() -> None:
 
 def test_duplicate_members_stop_the_build() -> None:
     """조용히 합치지 않는다 — note를 어떻게 할지는 **파서가 원본을 보고** 정할 일이다."""
-    with pytest.raises(ValueError, match="두 번"):
+    with pytest.raises(ValueError, match="appears twice"):
         Bundle(
             id="x",
             name="x",

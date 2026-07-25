@@ -71,8 +71,9 @@ def test_profile_shows_hardware_separately() -> None:
         "gpuModel": "NVIDIA T4G", "gpuCount": 1, "gpuArchitecture": "Turing",
         "hardwareCheckedAt": "2025-12-10", "hardwareEvidence": "ec2-hardware-probe",
     })
-    assert "— 하드웨어 (2025-12-10 확인)" in text
-    assert "NVIDIA T4G ×1, Turing" in text
+    flat = " ".join(text.split())
+    assert "— Hardware (checked 2025-12-10)" in flat
+    assert "NVIDIA T4G ×1, Turing" in flat
 
 
 # --- 축 간 교차 참조 (용량 → 성능) ---
@@ -106,7 +107,7 @@ def test_hardware_summary_counts_only_real_hardware() -> None:
     from perfkb.agent_api import hardware_summary
 
     text = hardware_summary("aws")
-    assert text and "GPU 있는 것" in text
+    assert text and "of them with a GPU" in " ".join(text.split())
     assert hardware_summary("존재하지않는프로바이더") is None
 
 
@@ -181,4 +182,4 @@ def test_empty_result_says_the_accelerator_condition_is_on() -> None:
 
     text = cost.recommend_specs(500, 0, "aws", "ap-northeast-2", "cost", 3,
                                 architecture=None, require_accelerator=True)
-    assert "가속기가 달린 것만" in text
+    assert "Searching only for specs with an accelerator" in " ".join(text.split())

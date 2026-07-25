@@ -18,6 +18,12 @@ import pytest
 from capacitykb import agent_api
 from capacitykb.parsers import aws_endpoints
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 RAW = {
     "partitions": [
         {
@@ -96,23 +102,24 @@ def test_global_flag_is_none_when_source_is_silent(built):
 
 def test_presence_is_stated_absence_is_not(built):
     """엔드포인트가 하나뿐이어도 '거기서만 된다'고 말하지 않는다."""
-    text = agent_api.where_available("devicefarm", output_dir=built)
+    text = flat(agent_api.where_available("devicefarm", output_dir=built))
     assert "us-east-1" in text
-    assert "모른다" in text
-    assert "못 쓴다" not in text.replace("'못 쓴다'가 아니라", "")
+    assert "**this data does not know**" in text
+    assert "unusable" not in text.replace("is not 'unusable'", "")
 
 
 def test_global_service_is_not_reported_as_one_region(built):
     """CloudFront를 'us-east-1에서만 됩니다'로 답하면 확신에 찬 오답이다."""
-    text = agent_api.where_available("cloudfront", output_dir=built)
-    assert "글로벌" in text
+    text = flat(agent_api.where_available("cloudfront", output_dir=built))
+    assert "a **global service**" in text
     assert "us-east-1" not in text
 
 
 def test_cfn_type_joins_by_hyphen_normalisation(built):
     """`acmpca` → `acm-pca`. 실측으로 충돌이 0건이라 안전한 정규화다."""
     text = agent_api.where_available("aws::AWS::ACMPCA::CertificateAuthority", output_dir=built)
-    assert text.startswith("acm-pca:")
+    # 답의 머리가 붙인 서비스 id다. 영어가 되며 구분자가 `:` → `—`로 바뀌었다.
+    assert flat(text).startswith("acm-pca — ")
 
 
 def test_unmappable_service_refuses_instead_of_guessing(built):
@@ -120,6 +127,6 @@ def test_unmappable_service_refuses_instead_of_guessing(built):
 
     짐작으로 붙이면 **엉뚱한 서비스의 리전을 자신 있게 답하게 된다.**
     """
-    text = agent_api.where_available("AWS::CloudWatch::Alarm", output_dir=built)
-    assert "확정할 수 없습니다" in text
+    text = flat(agent_api.where_available("AWS::CloudWatch::Alarm", output_dir=built))
+    assert "our data cannot pin down which AWS SDK service" in text
     assert "monitoring" in text  # 사용자가 다시 물을 수 있도록 알려는 준다

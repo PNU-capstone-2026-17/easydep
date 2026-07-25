@@ -132,13 +132,13 @@ def classify(text: str, method: str) -> tuple[bool, str | None]:
     """
     body = _method_body(text, method)
     if body is None:
-        return False, f"{method} 메서드가 없습니다"
+        return False, f"the {method} method is missing"
     for line in body.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("//") or stripped.startswith("/*"):
             continue
         if stripped.startswith("return") and _UNSUPPORTED.search(stripped):
-            return False, f"{method}가 미지원 오류만 돌려줍니다 (스텁)"
+            return False, f"{method} only returns an unsupported error (a stub)"
         break  # 첫 실행문이 미지원 반환이 아니면 구현으로 본다
     return True, None
 
@@ -171,7 +171,7 @@ def parse_tarball(tar: Path) -> tuple[list[dict], dict]:
         for handler, (cores, method) in HANDLERS.items():
             text = files.get((csp, handler))
             if text is None:
-                ok, reason = False, "핸들러 파일이 없습니다"
+                ok, reason = False, "the handler file is missing"
             else:
                 ok, reason = classify(text, method)
             if ok:
@@ -199,18 +199,18 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 
     dataset = {
         "_note": (
-            "cb-spider 드라이버가 CSP별로 어떤 리소스를 다루는가. **도구의 커버리지이지 "
-            "클라우드의 사실이 아니다** — 여기서 미지원이면 'CSP에 그 기능이 없다'가 "
-            "아니라 '이 도구로는 못 다룬다'는 뜻이다. 멀티클라우드 도구를 고려할 때 "
-            "쓰는 정보다."
+            "Which resources the cb-spider drivers handle per CSP. **This is the "
+            "tool's coverage, not a fact about the cloud** — unsupported here "
+            "does not mean 'the CSP lacks that feature', it means 'this tooling "
+            "cannot handle it'. Use it when weighing a multi-cloud tool."
         ),
         "_source": [describe_source_set([tar], source.key)],
         "csps": records,
     }
     write_dataset(output, dataset, SCHEMA)
     print(
-        f"cbspider-support: CSP {stats['csps']}곳 · 지원 {stats['supported']} · "
-        f"핸들러 없음 {stats['missing']} · 스텁 {stats['stub']}"
+        f"cbspider-support: {stats['csps']} CSPs · supported {stats['supported']} · "
+        f"no handler {stats['missing']} · stub {stats['stub']}"
     )
     return dataset
 
@@ -222,8 +222,8 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 ARTIFACT = "cbspider-support.json"
 
 _MISSING = (
-    "cb-spider 지원 산출물이 없습니다. `python -m kbcommon build-cbspider` 로 "
-    "생성하세요."
+    "No cb-spider support artifact. Build it with "
+    "`python -m kbcommon build-cbspider`."
 )
 
 
@@ -260,37 +260,40 @@ def describe(csp: str | None = None, core: str | None = None, *, output_dir: str
         key = csp.strip().lower()
         if key not in data:
             return (
-                f"'{csp}'는 cb-spider가 다루지 않는 CSP입니다 — 그런 CSP가 없다는 "
-                f"뜻이 아니라 **이 도구의 커버리지 밖**입니다.\n"
-                f"  다루는 CSP: {', '.join(sorted(data))}"
+                f"cb-spider does not handle the CSP '{csp}' — that does not mean "
+                f"no such CSP exists, it is **outside this tool's coverage**.\n"
+                f"  CSPs handled: {', '.join(sorted(data))}"
             )
         rows = data[key]
         if core is not None:
             record = rows.get(core)
             if record is None:
                 return (
-                    f"{key}: '{core}'는 우리가 추적하는 리소스가 아닙니다.\n"
-                    f"  추적하는 것: {', '.join(sorted(rows))}"
+                    f"{key}: '{core}' is not a resource we track.\n"
+                    f"  Tracked: {', '.join(sorted(rows))}"
                 )
             if record["supported"]:
                 return (
-                    f"{key}에서 {core}: **cb-spider가 다룹니다** "
+                    f"{core} on {key}: **cb-spider handles it** "
                     f"({record['handler']}.{record['method']})"
                 )
             return (
-                f"{key}에서 {core}: **cb-spider 드라이버가 다루지 않습니다** "
+                f"{core} on {key}: **the cb-spider driver does not handle it** "
                 f"({record['reason']}).\n"
-                "  **그 CSP에 해당 기능이 없다는 뜻이 아닙니다** — 멀티클라우드 도구로 "
-                "한 방식으로 다루려면 별도 방법이 필요하다는 뜻입니다. 그 CSP가 이 "
-                "서비스를 제공하는지는 이 데이터가 답하지 않습니다."
+                "  **This does not mean that CSP lacks the feature** — it means "
+                "handling it one uniform way through the multi-cloud tool needs a "
+                "separate route. Whether that CSP offers this service is not what "
+                "this data answers."
             )
         ok = sorted(c for c, r in rows.items() if r["supported"])
         no = sorted(c for c, r in rows.items() if not r["supported"])
-        lines = [f"{key}에서 cb-spider가 다루는 리소스 {len(ok)}종: {', '.join(ok)}"]
+        lines = [
+            f"Resources cb-spider handles on {key} ({len(ok)}): {', '.join(ok)}"
+        ]
         if no:
             lines.append(
-                f"  이 도구가 안 다루는 것: {', '.join(no)} — CSP에 없다는 뜻이 "
-                "아니라 드라이버가 없다는 뜻입니다."
+                f"  Not handled by this tool: {', '.join(no)} — this means there "
+                "is no driver, not that the CSP lacks it."
             )
         return "\n".join(lines)
 
@@ -298,13 +301,15 @@ def describe(csp: str | None = None, core: str | None = None, *, output_dir: str
         yes = sorted(c for c, rows in data.items() if (rows.get(core) or {}).get("supported"))
         no = sorted(c for c, rows in data.items() if core in rows and not rows[core]["supported"])
         if not yes and not no:
-            return f"'{core}'는 우리가 추적하는 리소스가 아닙니다."
-        lines = [f"{core}을(를) cb-spider가 다루는 CSP {len(yes)}곳: {', '.join(yes)}"]
+            return f"'{core}' is not a resource we track."
+        lines = [
+            f"CSPs where cb-spider handles {core} ({len(yes)}): {', '.join(yes)}"
+        ]
         if no:
             lines.append(
-                f"  드라이버가 없는 곳: {', '.join(no)} — 그 CSP에 기능이 없다는 "
-                "뜻이 아닙니다."
+                f"  No driver: {', '.join(no)} — this does not mean those CSPs "
+                "lack the feature."
             )
         return "\n".join(lines)
 
-    return f"cb-spider가 다루는 CSP {len(data)}곳: {', '.join(sorted(data))}"
+    return f"CSPs cb-spider handles ({len(data)}): {', '.join(sorted(data))}"

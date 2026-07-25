@@ -52,14 +52,14 @@ def test_sequence_participant_must_point_at_exactly_one_thing(design) -> None:
     seq["participants"].append({"id": "ghost", "name": "정체불명"})
     seq["messages"].append({"from": "ghost", "to": "api", "async": False})
     problems = validate_design(design)
-    assert any("정확히 하나" in p for p in problems)
+    assert any("**exactly one**" in p for p in problems)
 
 
 def test_participant_pointing_at_two_things_is_also_wrong(design) -> None:
     seq = design["artifacts"][3]
     seq["participants"][1]["actor"] = True  # componentId도 있는데 actor까지
     problems = validate_design(design)
-    assert any("정확히 하나" in p for p in problems)
+    assert any("**exactly one**" in p for p in problems)
 
 
 def test_message_endpoints_must_be_participants(design) -> None:
@@ -75,13 +75,13 @@ def test_typo_in_field_name_fails_loudly(design) -> None:
     artifact = design["artifacts"][0]
     artifact["comonentId"] = artifact.pop("componentId")
     problems = validate_design(design)
-    assert problems and all(p.startswith("[스키마]") for p in problems)
+    assert problems and all(p.startswith("[schema]") for p in problems)
 
 
 def test_component_id_charset_matches_cloud_name_rules(design) -> None:
     """id는 리소스 이름 씨앗이다 — 클라우드 이름 규칙과 어긋난 문자를 처음부터 안 받는다."""
     design["components"][0]["id"] = "Order_API!"
-    assert any("[스키마]" in p for p in validate_design(design))
+    assert any("[schema]" in p for p in validate_design(design))
 
 
 def test_rendering_extras_go_into_meta_not_new_fields(design) -> None:
@@ -115,7 +115,7 @@ def test_openapi_2_is_rejected(design) -> None:
 
 def test_duplicate_ids_between_components_and_externals(design) -> None:
     design["externals"].append({"id": "order-api", "name": "충돌"})
-    assert any("겹친다" in p for p in validate_design(design))
+    assert any("external system id collide" in p for p in validate_design(design))
 
 
 @pytest.mark.parametrize("index,kind,break_it,expect", [
@@ -141,4 +141,4 @@ def test_schema_errors_come_before_reference_noise(design) -> None:
     design["schemaVersion"] = "2"
     design["artifacts"][0]["componentId"] = "ghost"
     problems = validate_design(design)
-    assert all(p.startswith("[스키마]") for p in problems)
+    assert all(p.startswith("[schema]") for p in problems)

@@ -12,6 +12,11 @@ from graphkb.model import Edge, Graph, Node
 from graphkb.query import equivalents
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def node(node_id: str, layer: str = "core", provider: str = "common") -> Node:
     return Node(
         id=node_id,
@@ -91,7 +96,7 @@ def test_creation_order_text(output_dir: Path) -> None:
     text = agent_api.creation_order("vm", output_dir=output_dir)
     items = [line for line in text.splitlines() if line and line[0].isdigit()]
     assert any("core::vNet" in line for line in items)
-    assert items[-1].endswith("← 대상")
+    assert items[-1].endswith("← target")
     assert "core::vm" in items[-1]
     vnet_pos = next(i for i, line in enumerate(items) if "core::vNet" in line)
     vm_pos = next(i for i, line in enumerate(items) if "core::vm" in line)
@@ -105,10 +110,10 @@ def test_creation_order_leaf(output_dir: Path) -> None:
     스키마상 선택이라 필수 목록이 비지만 NIC 없이는 만들 수 없다. 침묵을 허가로
     바꿔 말하면 fail-open이 아니라 그냥 틀린 말이 된다.
     """
-    text = agent_api.creation_order("vNet", output_dir=output_dir)
-    assert "바로 생성" not in text, "침묵을 허가로 바꿔 말하고 있다"
-    assert "필수로 표시한" in text
-    assert "실제로 아무것도 필요 없다는 뜻이 아닙니다" in text
+    text = flat(agent_api.creation_order("vNet", output_dir=output_dir))
+    assert "can be created" not in text, "침묵을 허가로 바꿔 말하고 있다"
+    assert "**marks no prerequisite as required**" in text
+    assert "does not mean nothing is actually needed" in text
 
 
 def test_deletion_impact_text(output_dir: Path) -> None:
@@ -128,33 +133,33 @@ def test_describe_type_text(output_dir: Path) -> None:
     # 내부 id의 `core::` 접두사는 사용자에게 보이지 않는다 (kbcommon.display)
     assert "references → subnet" in text
     assert "core::" not in text
-    assert "필수" in text
+    assert "via x (required, one," in flat(text)
 
 
 def test_search_types(output_dir: Path) -> None:
     text = agent_api.search_types("vpc", output_dir=output_dir)
     assert "aws::AWS::EC2::VPC" in text
     text2 = agent_api.search_types("vpc", provider="gcp", output_dir=output_dir)
-    assert "없습니다" in text2
+    assert "No type matches 'vpc'" in flat(text2)
 
 
 def test_agent_api_rank_types(output_dir: Path) -> None:
     """subnet→vNet, vm→subnet 이라 둘 다 의존 1개 (동점은 id 사전순으로 결정적)."""
-    text = agent_api.rank_types("dependencies", output_dir=output_dir)
-    assert "core::subnet — 1개" in text
-    assert "core::vm — 1개" in text
-    assert "core::vNet" not in text.split("상위")[1]  # vNet은 의존하는 게 없다
+    text = flat(agent_api.rank_types("dependencies", output_dir=output_dir))
+    assert "core::subnet — 1" in text
+    assert "core::vm — 1" in text
+    assert "core::vNet" not in text.split("Top")[1]  # vNet은 의존하는 게 없다
 
 
 def test_agent_api_rank_types_by_dependents(output_dir: Path) -> None:
-    text = agent_api.rank_types("dependents", output_dir=output_dir)
+    text = flat(agent_api.rank_types("dependents", output_dir=output_dir))
     assert "core::vNet" in text
-    assert "삭제 시 영향" in text
+    assert "what is affected when you delete it" in text
 
 
 def test_agent_api_rank_types_provider_filter(output_dir: Path) -> None:
     text = agent_api.rank_types("dependencies", provider="gcp", output_dir=output_dir)
-    assert "없습니다" in text
+    assert "No types available to rank" in flat(text)
 
 
 def test_agent_api_rank_types_bad_axis(output_dir: Path) -> None:
@@ -163,7 +168,7 @@ def test_agent_api_rank_types_bad_axis(output_dir: Path) -> None:
 
 def test_unknown_name_returns_message_not_exception(output_dir: Path) -> None:
     text = agent_api.creation_order("nope", output_dir=output_dir)
-    assert "찾을 수 없습니다" in text
+    assert "Node not found: 'nope'" in flat(text)
 
 
 def test_missing_output_dir_message(tmp_path) -> None:

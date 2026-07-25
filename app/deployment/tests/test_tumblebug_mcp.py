@@ -61,8 +61,8 @@ def test_body_exception_is_not_reported_as_connect_failure(fake_tumblebug, capsy
         asyncio.run(scenario())
 
     stdout = capsys.readouterr().out
-    assert "연결 실패" not in stdout
-    assert "[MCP 연결됨]" in stdout
+    assert "connection failed" not in stdout
+    assert "[MCP connected]" in stdout
     assert server.cleaned  # 예외가 나도 정리는 된다
 
 
@@ -90,8 +90,8 @@ def test_connect_failure_falls_back_to_none(fake_tumblebug, capsys) -> None:
 
     assert asyncio.run(scenario()) is None
     stdout = capsys.readouterr().out
-    assert "연결 실패" in stdout
-    assert "연결 거부됨" in stdout
+    assert "cb-tumblebug connection failed" in stdout
+    assert "연결 거부됨" in stdout  # FakeServer가 던진 예외 원문이 그대로 실린다
     assert "costkb" in stdout
     assert server.cleaned  # 실패해도 정리 시도는 한다
 

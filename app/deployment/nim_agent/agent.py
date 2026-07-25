@@ -25,7 +25,7 @@ INSTRUCTIONS = f"""You are an autonomous planning agent.
 1. When a request arrives, first decide which task (a catalog id) it is.
    If that is unclear, check the catalog with list_tasks / get_task_detail.
 2. Call the tools you need and execute.
-3. Finally, summarize the result for the user clearly, **in Korean**.
+3. Finally, summarize the result for the user clearly, **in English**.
 
 ## When to use record_plan
 Call it once, **only for work that coordinates several steps, and before you start

@@ -29,6 +29,11 @@ from appkb.verify import (
 )
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def _plan() -> DeploymentPlan:
     plan = DeploymentPlan(name="데모")
     plan.nodes = [
@@ -121,20 +126,25 @@ def test_containment_replaces_the_edge_explosion() -> None:
 
 def test_diagram_carries_the_hedge_marks() -> None:
     """그림은 잘려 돌아다닌다 — 범례에만 적어 두면 부족하다."""
-    assert "<<추론>>" in render(_plan())
+    assert "<<inferred>>" in render(_plan())
 
 
 def test_missing_node_in_diagram_is_caught() -> None:
     """조립하다 노드를 흘리면 그림이 조용히 작아진다 — 눈으로는 안 걸린다."""
     plan = _plan()
-    uml = render(plan).replace('database "저장소\\naws::AWS::RDS::DBInstance" as "order-api-db" <<추론>>\n', "")
-    assert any("그림에 없는 노드" in p for p in verify_diagram(plan, uml))
+    uml = render(plan).replace(
+        'database "저장소\\naws::AWS::RDS::DBInstance" as "order-api-db" <<inferred>>\n',
+        "",
+    )
+    assert any("nodes in the plan but not in the diagram" in flat(p)
+               for p in verify_diagram(plan, uml))
 
 
 def test_invented_node_in_diagram_is_caught() -> None:
     """계획에 없는 상자가 그림에 생기는 것은 **답변에서 없는 값을 만드는 것의 그림판**이다."""
     uml = render(_plan()).replace("@enduml", 'node "유령" as "ghost"\n@enduml')
-    assert any("계획에 없는데 그림에 있는" in p for p in verify_diagram(_plan(), uml))
+    assert any("nodes in the diagram but not in the plan" in flat(p)
+               for p in verify_diagram(_plan(), uml))
 
 
 # --- 계획 정합성 ---------------------------------------------------------------
@@ -142,14 +152,16 @@ def test_invented_node_in_diagram_is_caught() -> None:
 def test_edge_to_nowhere_is_caught() -> None:
     plan = _plan()
     plan.edges.append(PlanEdge("order-api", "no-such-node", "", ORIGIN_DESIGN))
-    assert any("없는 노드를 가리킨다" in p for p in verify_plan(plan))
+    assert any("a connection points at a missing node" in flat(p)
+               for p in verify_plan(plan))
 
 
 def test_node_id_must_match_resource_name_rules() -> None:
     """계약이 막은 문자가 조립 중에 들어오면 우리가 망가뜨린 것이다."""
     plan = _plan()
     plan.nodes.append(PlanNode("Bad_Id", "X", "compute", ORIGIN_KB))
-    assert any("리소스 이름 규칙" in p for p in verify_plan(plan))
+    assert any("node id breaks the resource name rule" in flat(p)
+               for p in verify_plan(plan))
 
 
 def test_empty_managed_node_must_be_reported_as_unresolved() -> None:
@@ -158,7 +170,7 @@ def test_empty_managed_node_must_be_reported_as_unresolved() -> None:
     plan = _plan()
     plan.nodes.append(PlanNode("mystery", "무언가", "managed", ORIGIN_INFERRED,
                                notes=(Note("필요해 보임", ORIGIN_INFERRED),)))
-    assert any("타입도 후보도 없고" in p for p in verify_plan(plan))
+    assert any("it has no type, no candidates" in flat(p) for p in verify_plan(plan))
     plan.unresolved.append("mystery: 대응 타입을 찾지 못했습니다")
     assert verify_plan(plan) == []
 
@@ -192,7 +204,7 @@ def test_budget_overrun_is_confirmed_from_the_floor_alone() -> None:
     lines = verify_against_requirements(
         _priced_plan(1.0), {"monthlyBudgetUSD": 500}, _HOURS
     )
-    assert any("초과 확정" in ln for ln in lines)
+    assert any("**over, confirmed**" in flat(ln) for ln in lines)
 
 
 def test_under_floor_is_never_called_compliant() -> None:
@@ -201,20 +213,20 @@ def test_under_floor_is_never_called_compliant() -> None:
     lines = verify_against_requirements(
         _priced_plan(1.0), {"monthlyBudgetUSD": 1000}, _HOURS
     )
-    budget_line = next(ln for ln in lines if ln.startswith("예산"))
-    assert "부합 단정 불가" in budget_line
+    budget_line = flat(next(ln for ln in lines if ln.startswith("Budget")))
+    assert "**cannot be asserted to fit**" in budget_line
     assert "order-api-db" in budget_line  # 미가격 구성원의 이름이 보인다
-    assert "부합" not in budget_line.replace("부합 단정 불가", "")
+    assert "fit" not in budget_line.replace("**cannot be asserted to fit**", "")
 
 
 def test_no_priced_nodes_means_no_verdict_not_zero() -> None:
     lines = verify_against_requirements(_plan(), {"monthlyBudgetUSD": 500}, _HOURS)
-    assert any("판정 불가" in ln for ln in lines)
+    assert any("no verdict" in flat(ln) for ln in lines)
 
 
 def test_no_budget_is_said_not_skipped() -> None:
     lines = verify_against_requirements(_plan(), {}, _HOURS)
-    assert any("기준 없음" in ln for ln in lines)
+    assert any("Budget: no yardstick" in flat(ln) for ln in lines)
 
 
 def test_scale_gets_an_explicit_cannot_judge() -> None:
@@ -223,7 +235,8 @@ def test_scale_gets_an_explicit_cannot_judge() -> None:
     lines = verify_against_requirements(
         _plan(), {"expectedConcurrentUsers": 200}, _HOURS
     )
-    assert any("판정하지 못합니다" in ln and "200" in ln for ln in lines)
+    assert any("cannot judge whether the spec is sufficient" in flat(ln) and "200" in ln
+               for ln in lines)
     rps = verify_against_requirements(
         _plan(), {"approxRequestsPerSecond": 30}, _HOURS
     )
@@ -235,25 +248,26 @@ def test_multizone_unreflected_is_flagged() -> None:
     plan.nodes.append(PlanNode("vnet", "VPC", "shared", ORIGIN_KB,
                                type_id="aws::AWS::EC2::VPC"))
     lines = verify_against_requirements(plan, {"multiZone": True}, _HOURS)
-    assert any("미반영" in ln for ln in lines)
+    assert any("multiZone: **not reflected**" in flat(ln) for ln in lines)
 
 
 def test_multizone_reflected_when_subnet_carries_the_note() -> None:
     plan = _plan()
     plan.nodes.append(PlanNode(
         "subnet", "서브넷", "shared", ORIGIN_KB, type_id="aws::AWS::EC2::Subnet",
-        notes=(Note("여러 가용영역에 나눠 둬야 합니다", ORIGIN_DESIGN, "requirements"),),
+        notes=(Note("The requirement is multiZone, so the subnets have to be spread "
+                    "across several availability zones", ORIGIN_DESIGN, "requirements"),),
     ))
     lines = verify_against_requirements(plan, {"multiZone": True}, _HOURS)
-    assert any("반영됨" in ln for ln in lines)
+    assert any("multiZone: reflected" in flat(ln) for ln in lines)
 
 
 def test_multizone_on_serverless_plan_is_not_a_false_violation() -> None:
     """전부 서버리스면 VM 네트워크가 없다 — 그걸 '미반영'이라 벌하면 없는 것을
     그리라는 요구가 된다."""
     lines = verify_against_requirements(_plan(), {"multiZone": True}, _HOURS)
-    assert any("해당 구성 없음" in ln for ln in lines)
-    assert not any("미반영" in ln for ln in lines)
+    assert any("multiZone: nothing to check" in flat(ln) for ln in lines)
+    assert not any("**not reflected**" in flat(ln) for ln in lines)
 
 
 def _burst_plan() -> DeploymentPlan:
@@ -275,15 +289,15 @@ def test_steady_traffic_on_burst_spec_is_a_conflict() -> None:
     lines = verify_against_requirements(
         _burst_plan(), {"trafficPattern": "steady"}, _HOURS
     )
-    conflict = next(ln for ln in lines if ln.startswith("trafficPattern"))
-    assert "상충" in conflict and "order-api" in conflict
+    conflict = flat(next(ln for ln in lines if ln.startswith("trafficPattern")))
+    assert "**conflict**" in conflict and "order-api" in conflict
 
 
 def test_spiky_traffic_on_burst_spec_is_not_flagged() -> None:
     lines = verify_against_requirements(
         _burst_plan(), {"trafficPattern": "spiky"}, _HOURS
     )
-    assert any("알려진 상충 없음" in ln for ln in lines)
+    assert any("no known conflict with the burst instances" in flat(ln) for ln in lines)
 
 
 def test_no_burst_note_is_only_trusted_when_values_joined() -> None:
@@ -292,11 +306,12 @@ def test_no_burst_note_is_only_trusted_when_values_joined() -> None:
     lines = verify_against_requirements(
         _priced_plan(0.05), {"trafficPattern": "steady"}, _HOURS
     )
-    assert any("버스트 경고가 없습니다" in ln for ln in lines)
+    assert any("no burst warning on the plan's specs" in flat(ln) for ln in lines)
     unjoined = verify_against_requirements(
         _plan(), {"trafficPattern": "steady"}, _HOURS
     )
-    assert any("판정 불가" in ln for ln in unjoined if ln.startswith("trafficPattern"))
+    assert any("no verdict" in flat(ln)
+               for ln in unjoined if ln.startswith("trafficPattern"))
 
 
 def test_stateful_app_with_serverless_is_a_flagged_inference() -> None:
@@ -310,8 +325,8 @@ def test_stateful_app_with_serverless_is_a_flagged_inference() -> None:
         notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
     ))
     lines = verify_against_requirements(plan, {"stateless": False}, _HOURS)
-    conflict = next(ln for ln in lines if "서버리스" in ln)
-    assert "상충 가능성" in conflict and "우리 추론" in conflict and "worker" in conflict
+    conflict = flat(next(ln for ln in lines if "serverless" in ln))
+    assert "**possible conflict (we inferred)**" in conflict and "worker" in conflict
 
 
 def test_serverless_without_statefulness_claim_is_said() -> None:
@@ -323,7 +338,7 @@ def test_serverless_without_statefulness_claim_is_said() -> None:
         notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
     ))
     lines = verify_against_requirements(plan, {}, _HOURS)
-    assert any("상태성 미확인" in ln for ln in lines)
+    assert any("Statefulness unconfirmed" in flat(ln) for ln in lines)
 
 
 def test_foreign_provider_type_in_plan_is_caught() -> None:
@@ -331,10 +346,10 @@ def test_foreign_provider_type_in_plan_is_caught() -> None:
     plan.nodes.append(PlanNode("cache", "캐시", "managed", ORIGIN_KB,
                                type_id="gcp::redis.googleapis.com/Instance"))
     lines = verify_against_requirements(plan, {"provider": "aws"}, _HOURS)
-    assert any("불일치" in ln and "cache" in ln for ln in lines)
+    assert any("**mismatch**" in flat(ln) and "cache" in ln for ln in lines)
 
 
 def test_matching_provider_is_stated_positively() -> None:
     lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
-    assert any("일치합니다" in ln for ln in lines)
-    assert not any("불일치" in ln for ln in lines)
+    assert any("every vendor type in the plan matches" in flat(ln) for ln in lines)
+    assert not any("**mismatch**" in flat(ln) for ln in lines)

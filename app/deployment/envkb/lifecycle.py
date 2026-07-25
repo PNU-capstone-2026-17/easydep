@@ -181,9 +181,11 @@ def build(output: Path, *, refresh: bool = False, graph_dir: Path | None = None)
 
     dataset = {
         "_note": (
-            "관리형 서비스의 버전별 지원 종료일(endoflife.date). YAML frontmatter의 "
-            "releases만 담는다 — 본문 산문은 라이선스가 달라(CC BY-SA) 읽지 않는다. "
-            "eol이 null이면 '이미 종료'가 아니라 **종료일 미정**이다."
+            "End-of-support dates per version of managed services "
+            "(endoflife.date). Only `releases` from the YAML frontmatter is kept "
+            "— the prose body carries a different license (CC BY-SA) and is not "
+            "read. A null eol is not 'already ended', it is **end date "
+            "undetermined**."
         ),
         "_source": [describe_source_set(paths, source.key)],
         "unmapped_types": unmapped,
@@ -194,13 +196,13 @@ def build(output: Path, *, refresh: bool = False, graph_dir: Path | None = None)
     cycles = sum(len(p["releases"]) for p in products)
     mapped = sum(1 for p in products if p["type_id"])
     print(
-        f"service-lifecycle: 제품 {len(products)}종 · 버전 {cycles:,}개 "
-        f"(타입 매핑 {mapped}종)"
+        f"service-lifecycle: {len(products)} products · {cycles:,} versions "
+        f"({mapped} type-mapped)"
     )
     if unmapped:
         print(
-            f"  ⚠ graphkb에 없는 타입 {len(unmapped)}개 — 손매핑을 고쳐야 합니다: "
-            + ", ".join(unmapped)
+            f"  ⚠ {len(unmapped)} types not in graphkb — the hand mapping needs "
+            "fixing: " + ", ".join(unmapped)
         )
     return dataset
 
@@ -231,7 +233,7 @@ def _check_types(products: list[dict], graph_dir: Path) -> list[str]:
 ARTIFACT = "service-lifecycle.json"
 
 _MISSING = (
-    "수명주기 산출물이 없습니다. `python -m kbcommon build-lifecycle` 로 생성하세요."
+    "No lifecycle artifact. Build it with `python -m kbcommon build-lifecycle`."
 )
 
 
@@ -271,13 +273,13 @@ def _status(release: dict, today: str) -> str:
     """오늘 기준 한 버전의 상태. **미정과 종료를 구분한다.**"""
     eol = release.get("eol")
     if eol is None:
-        return "종료일 미정"
+        return "end date undetermined"
     if eol <= today:
         extended = release.get("eoes")
         if extended and extended > today:
-            return f"지원 종료({eol}) · 연장 지원은 {extended}까지"
-        return f"지원 종료됨 ({eol})"
-    return f"{eol}까지 지원"
+            return f"support ended ({eol}) · extended support until {extended}"
+        return f"support ended ({eol})"
+    return f"supported until {eol}"
 
 
 def describe(
@@ -297,9 +299,9 @@ def describe(
     if not found:
         known = ", ".join(p["product"] for p in _load(output_dir)[:8])
         return (
-            f"'{query}'의 수명주기 정보가 없습니다 — 그 서비스에 종료일이 없다는 뜻이 "
-            f"아니라 **이 소스에 수록되지 않았다**는 뜻입니다.\n"
-            f"  수록된 제품 예: {known}"
+            f"No lifecycle data for '{query}' — that does not mean the service "
+            f"has no end date, it means **it is not in this source**.\n"
+            f"  Products included, for example: {known}"
         )
 
     product = found[0]
@@ -310,23 +312,24 @@ def describe(
         if not match:
             near = ", ".join(r["cycle"] for r in releases[:8])
             return (
-                f"{product['title']}: '{want}' 버전을 찾지 못했습니다.\n"
-                f"  수록된 버전: {near}"
+                f"{product['title']}: version '{want}' not found.\n"
+                f"  Versions included: {near}"
             )
         releases = match
 
-    lines = [f"{product['title']} 지원 종료일 (오늘 {stamp} 기준):"]
+    lines = [f"{product['title']} end-of-support dates (as of {stamp}):"]
     for release in releases[:10]:
         line = f"  - {release['cycle']}: {_status(release, stamp)}"
         if release.get("latest"):
-            line += f" · 최신 {release['latest']}"
+            line += f" · latest {release['latest']}"
         lines.append(line)
     if len(releases) > 10:
-        lines.append(f"  … 외 {len(releases) - 10}개 버전")
+        lines.append(f"  … and {len(releases) - 10} more versions")
     if len(found) > 1:
         others = ", ".join(p["product"] for p in found[1:5])
-        lines.append(f"  ※ 같은 이름으로 걸린 다른 제품: {others}")
+        lines.append(f"  ※ Other products matching the same name: {others}")
     lines.append(
-        "  ※ eol이 '종료일 미정'인 것은 아직 안 정해진 것이지 종료된 게 아닙니다."
+        "  ※ 'end date undetermined' means it is not set yet, not that support "
+        "has ended."
     )
     return "\n".join(lines)

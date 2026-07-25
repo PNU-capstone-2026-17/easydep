@@ -27,7 +27,7 @@ def sizing_subnet_capacity(prefix_length: int, provider: str) -> str:
         prefix_length: Prefix length. e.g. 24 (= /24).
         provider: 'aws' | 'azure' | 'gcp' | 'alibaba' | 'ibm', etc.
     """
-    print(f"\n[사이징질의] 서브넷 용량: /{prefix_length} {provider}")
+    print(f"\n[sizing query] subnet capacity: /{prefix_length} {provider}")
     return agent_api.subnet_capacity(prefix_length, provider)
 
 
@@ -41,7 +41,7 @@ def sizing_requirements(scope: str = "") -> str:
     Args:
         scope: 'k8s-node' | 'aws' | 'azure', etc.
     """
-    print(f"\n[사이징질의] 요구사항: {scope!r}")
+    print(f"\n[sizing query] requirements: {scope!r}")
     return agent_api.requirements(scope or None)
 
 
@@ -56,7 +56,7 @@ def sizing_reference_points(keyword: str = "") -> str:
     Args:
         keyword: 'web' | 'llm' | 'gpu', etc.
     """
-    print(f"\n[사이징질의] 참조점: {keyword!r}")
+    print(f"\n[sizing query] reference points: {keyword!r}")
     return agent_api.reference_points(keyword or None)
 
 
@@ -68,7 +68,7 @@ def sizing_container_presets() -> str:
     comes with the result — **do not strip it.** These are container sizes, not
     instance sizes.
     """
-    print("\n[사이징질의] 컨테이너 프리셋")
+    print("\n[sizing query] container presets")
     return agent_api.container_presets()
 
 

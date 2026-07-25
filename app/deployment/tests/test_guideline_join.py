@@ -160,9 +160,11 @@ def test_unmapped_type_is_not_forced_onto_core(built) -> None:
 
 def test_answer_never_totals(built) -> None:
     """**가장 중요한 계약.** 값 없는 구성원을 0으로 두고 더하면 예산이 틀어진다."""
-    text = _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, None, output_dir=built)
-    assert "합계를 내지 않습니다" in text
-    assert "가격 축이 없음" in text
+    text = " ".join(
+        _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, None, output_dir=built).split()
+    ).lower()
+    assert "**no total is produced.**" in text
+    assert "[what cannot be given a value — this dataset has no price axis]" in text
 
 
 def test_priced_and_unpriced_are_separate_sections(built) -> None:
@@ -173,29 +175,33 @@ def test_priced_and_unpriced_are_separate_sections(built) -> None:
 
 def test_hedge_travels_with_the_price(built) -> None:
     """짐작을 거쳐 붙은 값이 원본이 선언한 값처럼 읽히면 안 된다."""
-    text = _guideline("aws::AWS::EC2::Instance", "aws", "ap-northeast-2", None,
-                      2, 4, None, output_dir=built)
-    assert "짐작" in text and "core::vm" in text
+    text = " ".join(_guideline("aws::AWS::EC2::Instance", "aws", "ap-northeast-2", None,
+                               2, 4, None, output_dir=built).split()).lower()
+    assert "mapping is **a guess (reviewed)**" in text and "core::vm" in text
 
 
 def test_core_query_carries_no_hedge(built) -> None:
-    text = _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, None, output_dir=built)
-    assert "대응은 **짐작" not in text
+    text = " ".join(
+        _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, None, output_dir=built).split()
+    ).lower()
+    assert "mapping is **a guess" not in text
 
 
 def test_no_price_axis_is_not_the_same_as_could_not_pick(built) -> None:
     """뜻이 반대다 — 한 칸에 넣으면 '조건을 바꾸면 나온다'와 '원래 공짜'가 섞인다."""
-    text = _guideline(VM, "aws", "nowhere-9", None, 2, 4, None, output_dir=built)
-    assert "이번엔 못 골랐음" in text
-    assert "리전 이름" in text
+    text = " ".join(
+        _guideline(VM, "aws", "nowhere-9", None, 2, 4, None, output_dir=built).split()
+    ).lower()
+    assert "[would get a value, but none could be picked this time]" in text
+    assert "check the region code or the criteria" in text
     # vNet은 여전히 '가격 축이 없음' 쪽이다
-    assert "가격 축이 없음" in text
+    assert "[what cannot be given a value — this dataset has no price axis]" in text
 
 
 def test_count_multiplies_but_is_labelled_as_such(built) -> None:
-    text = _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, "infra-many",
-                      output_dir=built)
-    assert "×4" in text and "4대 ×" in text
+    text = " ".join(_guideline(VM, "aws", "ap-northeast-2", None, 2, 4, "infra-many",
+                               output_dir=built).split())
+    assert "×4" in text and "4 × $0.1000/h = " in text
 
 
 def test_one_plan_at_a_time(built) -> None:
@@ -203,7 +209,8 @@ def test_one_plan_at_a_time(built) -> None:
     text = _guideline(VM, "aws", "ap-northeast-2", None, 2, 4, None, output_dir=built)
     # 값이 붙은 줄이 계획마다 한 번씩 찍히던 것이 이 검사가 막는 것이다.
     assert text.count("$0.1000/h") == 1
-    assert "다른 계획 1개도 있습니다" in text
+    flat = " ".join(text.split()).lower()
+    assert "there are also 1 other plans centred on the same resource" in flat
 
 
 def test_default_plan_is_what_happens_without_choosing(built) -> None:

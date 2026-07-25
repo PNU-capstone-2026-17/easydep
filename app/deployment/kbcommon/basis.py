@@ -237,15 +237,15 @@ def needs_hedge(basis: str, reviewed: bool = False) -> bool:
 
 # 화면에 보여줄 말. 숫자 대신 **무엇을 근거로 아는지**를 그대로 적는다.
 _WORDS = {
-    STATED: "원본에 명시됨",
-    INFERRED: "짐작",
+    STATED: "stated by the source",
+    INFERRED: "a guess",
     # "실측"이라고만 쓰면 클라우드를 잰 것처럼 읽힌다. 무엇을 셌는지 밝힌다.
-    OBSERVED: "실제 템플릿에서 센 값",
+    OBSERVED: "counted in real templates",
 }
 
 
 def describe(basis: str, reviewed: bool = False) -> str:
     """사람이 읽을 한 마디. `0.8` 같은 숫자보다 이쪽이 실제 정보를 준다."""
     if basis == INFERRED and reviewed:
-        return "짐작(검수됨)"
-    return _WORDS.get(basis, "출처 불명")
+        return "a guess (reviewed)"
+    return _WORDS.get(basis, "source unknown")

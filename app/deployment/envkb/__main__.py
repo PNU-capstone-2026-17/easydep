@@ -16,27 +16,33 @@ DEFAULT_OUTPUT = Path("output")
 #: 축 이름 → (모듈 이름, 기본 산출물 파일, 도움말).
 _AXES = {
     "regions": ("cloudinfo", "cloud-regions.json",
-                "프로바이더별 리전 이름·위치 (cb-tumblebug cloudinfo)"),
+                "Region names and locations per provider (cb-tumblebug cloudinfo)"),
     "images": ("images", "basic-images.json",
-               "리전별 기본 OS 이미지 (cb-tumblebug 큐레이션)"),
+               "Default OS image per region (cb-tumblebug curation)"),
     "latency": ("latency", "region-latency.json",
-                "리전 간 네트워크 지연 (cb-tumblebug 벤치마크 실측)"),
+                "Network latency between regions (cb-tumblebug benchmark)"),
     "carbon": ("carbon", "region-carbon.json",
-               "리전별 탄소 (GCP 발표 + Cloud Carbon Footprint 추정)"),
+               "Carbon per region (GCP published + Cloud Carbon Footprint estimate)"),
     "lifecycle": ("lifecycle", "service-lifecycle.json",
-                  "관리형 서비스 버전별 지원 종료일 (endoflife.date)"),
+                  "End-of-support dates per managed service version (endoflife.date)"),
     "cbspider": ("cbspider", "cbspider-support.json",
-                 "CSP별로 무엇을 만들 수 있는가 (cb-spider 드라이버)"),
+                 "What can be created on each CSP (cb-spider drivers)"),
 }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="envkb", description="클라우드 환경 사실 KB 빌드")
+    parser = argparse.ArgumentParser(
+        prog="envkb", description="Build the cloud environment facts KB"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     for axis, (_, filename, help_text) in _AXES.items():
         cmd = sub.add_parser(f"build-{axis}", help=help_text)
-        cmd.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-        cmd.add_argument("--output", type=Path, help=f"출력 경로 (기본: output/{filename})")
+        cmd.add_argument(
+            "--refresh", action="store_true", help="Ignore the cache and re-fetch"
+        )
+        cmd.add_argument(
+            "--output", type=Path, help=f"Output path (default: output/{filename})"
+        )
 
     args = parser.parse_args(argv)
     axis = args.command.removeprefix("build-")

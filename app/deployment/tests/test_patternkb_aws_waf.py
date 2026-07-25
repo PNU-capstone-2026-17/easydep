@@ -134,8 +134,8 @@ def test_aws_corpus_merges_and_built_state_is_distinguished(tmp_path: Path) -> N
         docs = dataset.all_docs(tmp_path)
         assert len(docs) == 2
         assert dataset.sections(tmp_path)["aws-well-architected"] == 1
-        text = agent_api.coverage_text(tmp_path)
+        text = " ".join(agent_api.coverage_text(tmp_path).split())
         assert "build-aws-waf" not in text
-        assert "AWS Well-Architected 지침 1편" in text
+        assert "AWS Well-Architected guidance 1" in text
     finally:
         dataset.clear_caches()
