@@ -3,9 +3,7 @@ from __future__ import annotations
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.api_spec.generator import generate_api_spec_with_llm
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
-from app.design.services.deployment_diagram.generator import (
-    generate_deployment_diagram_with_llm,
-)
+from app.design.services.deployment_diagram.kb import generate_deployment_puml
 from app.design.services.erd.generator import generate_erd_with_llm
 from app.design.services.sequence_diagram.generator import generate_sequence_diagram_with_llm
 
@@ -55,13 +53,9 @@ def generate_erd(state: ArchitectureState) -> ArchitectureState:
 
 
 def generate_deployment_diagram(state: ArchitectureState) -> ArchitectureState:
-    deployment_puml = generate_deployment_diagram_with_llm(
-        usecase_spec_text(state),
-        state.get("class_diagram_puml", ""),
-        state.get("sequence_diagram_puml", ""),
-        state.get("api_spec", {}),
-        state.get("erd_puml", ""),
-    )
+    # LLM 자유 생성에서 지식베이스 구성으로 교체(2026-07-25) — 근거·판정이
+    # PlantUML 주석으로 문서에 함께 실린다. deployment_diagram/kb.py 참고.
+    deployment_puml = generate_deployment_puml(dict(state))
     validation = validate_puml_artifact(deployment_puml)
     return {
         "deployment_diagram_puml": deployment_puml,
