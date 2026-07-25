@@ -183,25 +183,27 @@ openai==2.44.0   →   openai>=2.45.0,<3
 Dockerfile: `python:3.12-slim-bookworm` → `python:3.13-slim-bookworm` (2곳),
 `COPY app ./app`가 `app/deployment/data`(9.1MB)를 함께 가져간다.
 
-### 5. 검증
+### 5. 검증 — **완료**
 
-```bash
-python -m pytest -q                # 목표: 1365 passed + easydep 기존 테스트
-python -m app.deployment.cli               # KB CLI 진입점
+```
+1365 passed, 21 skipped   (app/deployment/tests, 2026-07-25)
 ```
 
-**완료 기준**: agent-sdk 테스트 1365건이 **전건 그대로** 통과. 숫자가 줄면 그 차이가
-곧 병합이 깨뜨린 것이다. 산출물 무결성은 `tests/kb/test_bundled_artifacts.py`·
-`test_source_pinning.py`가 이미 지킨다.
+베이스라인과 **정확히 같다**. 도중에 1362/24가 나왔던 것이 위의 조용한 스킵이고,
+그 3의 차이가 유일한 신호였다. 이 게이트를 다시 돌리려면 로컬에
+`app/deployment/{output,.cache}/`가 있어야 한다(둘 다 gitignore — 각자 빌드한다).
 
-### 6. 되돌려진 삽입 복원
+### 6. 되돌려진 삽입 복원 — **완료**
 
-병합이 green이면 e2c6a5b가 하려던 것을 다시 넣는다 — 이번엔 경로 의존이 아니라
-같은 저장소 안이라 `pip install -e`가 필요 없고, 그 하드 에러 자체가 사라진다.
+- `app/design/services/deployment_diagram/kb.py` (그새 서비스가 하위 패키지로
+  갈려서 e2c6a5b의 `services/kb_deployment.py` 자리와 다르다)
+- `generate_deployment_diagram` 노드 교체, LLM 생성기 삭제
+- **`PREREQUISITES`에 `resource_spec`은 넣지 않았다.** 이 계획서가 위에서 그렇게
+  적었던 것이 틀렸다 — 생산자가 없는 산출물을 전제로 걸면 배포 단계가 통째로
+  도달 불가가 된다. 요구사항 쪽이 만들기 시작하면 그때 넣는다(합의 안건 1)
 
-- `app/design/services/kb_deployment.py` 부활 (임포트만 `app.deployment.nim_agent.design_tools`로)
-- `app/design/nodes/artifact_generation.py`의 `generate_deployment_diagram` 교체
-- `server.py`의 `PREREQUISITES`에 `resource_spec` 추가 — HANDOFF가 예고한 그 줄
+실측: 제약을 주면 88줄·근거 주석 67개, 제약이 없으면 69줄로 **실패하지 않고**
+무엇을 판정하지 못했는지가 주석에 남는다.
 
 ## 위험 (실측된 것만)
 
@@ -245,6 +247,17 @@ KB를 부르는 방향(`app/design` → `app/deployment/nim_agent`)은 이 검�
 `app/deployment/`를 택한 이유는 **easydep의 기존 이름이 전부 에이전트 이름**이기
 때문이다(`app/requirements`·`app/design`·`app/implementation`). 이 합류자도
 에이전트이고, 지식베이스는 그 에이전트가 답을 만드는 수단이다.
+
+## 아직 안 한 것
+
+1. **easydep 기존 테스트가 이 머신에서 한 번도 안 돌았다** (위험 5). `langgraph`·
+   `langchain_core` 미설치라 병합 전 베이스라인도, 병합 후 확인도 없다.
+   `pip install -r requirements.txt` 후 `pytest tests` 가 먼저다.
+2. **`openai` 2.45 승격을 설계 에이전트로 확인하지 않았다.** 핀만 올렸다.
+3. **이미지를 빌드해 보지 않았다.** 파이썬 3.13 휠은 확인했지만 실제 빌드는 미실행.
+4. **배포 다이어그램 피드백이 여전히 LLM 직접 수정이다.** 근거 라벨이 값의 전부인
+   문서를 LLM이 고치면 근거가 조용히 깨진다 — 이 스테이지는 수정보다 재생성이
+   맞는다는 것이 e2c6a5b 때부터의 미결이다.
 
 ## 병합 후 (합의 문서의 우리 몫)
 
