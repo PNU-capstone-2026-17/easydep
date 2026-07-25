@@ -28,6 +28,11 @@ from graphkb.agent_api import _practical_prerequisites, creation_order
 from graphkb.model import Edge, Graph, Node
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def _node(node_id: str, provider: str, layer: str = "vendor") -> Node:
     return Node(
         id=node_id, layer=layer, provider=provider,
@@ -84,7 +89,10 @@ def test_vendor_answer_carries_practical_prerequisites(graph) -> None:
     text = _practical_prerequisites(graph, "aws::AWS::EC2::Instance")
     assert text is not None
     assert "vNet" in text and "subnet" in text
-    assert "실무에서는 보통 필요합니다" in text
+    assert (
+        "the schema leaves these optional, but in practice they are usually needed"
+        in flat(text)
+    )
 
 
 def test_optional_core_dependency_is_not_promoted(graph) -> None:
@@ -96,7 +104,7 @@ def test_optional_core_dependency_is_not_promoted(graph) -> None:
 def test_schema_silence_is_not_permission(graph) -> None:
     """스키마가 안 막는다고 그것만으로 쓸 수 있다는 뜻이 아니다."""
     text = _practical_prerequisites(graph, "aws::AWS::EC2::Instance")
-    assert "쓸 수 있는 구성이 된다는 뜻은 아닙니다" in text
+    assert "not that it alone gives you a usable setup" in flat(text)
 
 
 def test_core_type_does_not_get_the_note(graph) -> None:
@@ -113,4 +121,7 @@ def test_creation_order_includes_the_note(graph, tmp_path, monkeypatch) -> None:
     """조회 API 전체 경로에서도 붙는지 — 문구가 아니라 존재를 본다."""
     monkeypatch.setattr("graphkb.agent_api.load_merged", lambda output_dir=None: graph)
     text = creation_order("AWS::EC2::Instance", output_dir=tmp_path)
-    assert "실무에서는 보통 필요합니다" in text
+    assert (
+        "the schema leaves these optional, but in practice they are usually needed"
+        in flat(text)
+    )

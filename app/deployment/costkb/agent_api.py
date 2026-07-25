@@ -36,7 +36,9 @@ from costkb.dataset import (
 HOURS_PER_MONTH = 730
 
 _COST_DISCLAIMER = (
-    "정가·컴퓨트 비용만 반영이며 스토리지/네트워크/관리형 서비스/약정할인은 미포함입니다."
+    "An estimate based on on-demand list price and a representative region, not an "
+    "actual bill (storage / egress / managed services / commitment discounts not "
+    "included)."
 )
 
 
@@ -44,21 +46,21 @@ def coverage_text(output_dir: Path | str | None = None) -> str:
     """데이터셋이 어디까지 커버하는지 — 조건 불만족 시 안내에 쓴다."""
     if is_built(output_dir):
         return "\n".join(
-            f"  - {row['provider']}: {row['count']:,}건, 리전 {row['regions']}개, "
-            f"vCPU 최대 {row['vcpu_max']}, 메모리 최대 {row['mem_max_gib']:g} GiB"
+            f"  - {row['provider']}: {row['count']:,} specs, {row['regions']} regions, "
+            f"max vCPU {row['vcpu_max']}, max memory {row['mem_max_gib']:g} GiB"
             for row in provider_summary(output_dir)
         )
     return "\n".join(
-        f"  - {row['provider']} {row['region']}: {row['count']}건, "
+        f"  - {row['provider']} {row['region']}: {row['count']} specs, "
         f"vCPU {row['vcpu_min']}~{row['vcpu_max']}, "
-        f"메모리 {row['mem_min_gib']}~{row['mem_max_gib']} GiB"
+        f"memory {row['mem_min_gib']}~{row['mem_max_gib']} GiB"
         for row in coverage(output_dir)
     )
 
 
 def _describe(spec: dict) -> str:
     hourly = spec["hourlyUSD"]
-    price = f"${hourly:.4f}/h" if hourly is not None else "가격 미상"
+    price = f"${hourly:.4f}/h" if hourly is not None else "price unknown"
     # `memGiB`가 곧 실제 값이다 — 빌드가 상위 버그를 고쳐서 담는다(_corrections).
     # 예전에는 표시와 필터가 서로 다른 칸을 봐서 답이 자리마다 갈렸다.
     mem_text = f"{spec['memGiB']:g} GiB"
@@ -67,7 +69,7 @@ def _describe(spec: dict) -> str:
     folded = spec.get("_foldedRegions") or []
     where = spec["region"]
     if folded:
-        where += f" 외 {len(folded)}개 리전"
+        where += f" and {len(folded)} more regions"
     return (
         f"- {spec['provider'].upper()} {spec['specName']} ({where}): "
         f"{spec['vCPU']} vCPU / {mem_text}, {price}"
@@ -87,15 +89,16 @@ def _region_fallback_note(
     regions, how = resolve_region(region, output_dir)
     if how == "none":
         return (
-            f"※ '{region}'과 이름이 겹치는 리전이 데이터셋에 없어 리전 조건을 "
-            "만족하는 후보가 없습니다."
+            f"※ No region in the dataset matches the name '{region}', so no "
+            "candidate meets the region condition."
         )
     if how == "exact":
         return None
     shown = ", ".join(sorted(regions)[:6]) + (" …" if len(regions) > 6 else "")
     return (
-        f"※ '{region}'은 정확히 그 이름인 리전이 없어 **{len(regions)}개 리전을 "
-        f"묶어** 답했습니다({shown}). 리전마다 단가가 다르니 하나로 읽지 마세요."
+        f"※ No region is named exactly '{region}', so this answer **groups "
+        f"{len(regions)} regions** ({shown}). Unit price differs by region — "
+        "do not read it as one."
     )
 
 
@@ -147,19 +150,20 @@ def recommend_specs(
         # **무엇 때문에 비었는지 밝힌다.** 가속기 조건으로 걸러 비었는데 "조건을
         # 조정하세요"만 말하면 사용자는 vCPU·메모리만 낮추다가 끝난다.
         extra = (
-            "\n(가속기가 달린 것만 찾고 있습니다 — 이 조건을 빼면 후보가 더 있습니다.)"
+            "\n(Searching only for specs with an accelerator — drop that condition "
+            "and there are more candidates.)"
             if require_accelerator else ""
         )
         # 리전 이름이 원인이면 그걸 먼저 말한다. 안 그러면 사용자는 vCPU·메모리만
         # 낮추다가 끝난다 — 가속기 조건에서 이미 겪은 실패 모양이다.
         if region and resolve_region(region, output_dir)[1] == "none":
             extra = (
-                f"\n('{region}'과 이름이 겹치는 리전이 데이터셋에 없습니다 — "
-                "리전 이름부터 확인하세요.)"
+                f"\n(No region in the dataset matches the name '{region}' — "
+                "check the region name first.)"
             ) + extra
         return (
-            "조건을 만족하는 스펙이 데이터셋에 없습니다. 이 데이터셋의 커버리지는 "
-            f"다음과 같으니 조건을 조정하세요:{extra}\n{coverage_text(output_dir)}"
+            "No spec in the dataset meets these conditions. This dataset's coverage "
+            f"is below, so adjust the conditions:{extra}\n{coverage_text(output_dir)}"
         )
 
     lines = []
@@ -169,7 +173,7 @@ def recommend_specs(
         if note:
             line += f"\n    {note}"
         lines.append(line)
-    text = "추천 후보(온디맨드 정가, 시간당 단가):\n" + "\n".join(lines)
+    text = "Recommended candidates (on-demand list price, hourly rate):\n" + "\n".join(lines)
 
     mixed = _region_fallback_note(region, output_dir)
     if mixed:
@@ -181,8 +185,8 @@ def recommend_specs(
     )
     if unpriced:
         text += (
-            f"\n\n※ 조건에 맞지만 가격 정보가 없는 후보가 {unpriced}건 더 있습니다. "
-            "라이브 가격은 cb-tumblebug MCP로 확인하세요."
+            f"\n\n※ {unpriced} more candidates meet the conditions but have no "
+            "price data. Check live prices with the cb-tumblebug MCP."
         )
 
     degraded = load_warning(output_dir)
@@ -195,8 +199,9 @@ def recommend_specs(
         text += f"\n\n※ {tail}"
     return (
         text
-        + "\n\n월 비용은 estimate_monthly_cost 도구로 계산하세요 "
-        "(대수·가동시간이 반영되고 한계 고지가 붙습니다). 직접 곱하지 마세요."
+        + "\n\nCompute monthly cost with the estimate_monthly_cost tool "
+        "(it accounts for node count and hours, and attaches the limitation "
+        "notice). Do not multiply it out yourself."
     )
 
 
@@ -218,10 +223,10 @@ def describe_spec(
     rows = find_by_name(spec_name, provider, output_dir)
     if not rows:
         near = name_suggestions(spec_name, output_dir=output_dir)
-        hint = f"\n  이름이 비슷한 것: {', '.join(near)}" if near else ""
+        hint = f"\n  Similar names: {', '.join(near)}" if near else ""
         return (
-            f"'{spec_name}' 스펙을 카탈로그에서 찾지 못했습니다 — 그런 스펙이 없다는 "
-            f"뜻이 아니라 **이 데이터셋에 없다**는 뜻입니다.{hint}"
+            f"Spec '{spec_name}' was not found in the catalog — that does not mean "
+            f"no such spec exists, it means **it is not in this dataset**.{hint}"
         )
 
     lines = []
@@ -232,39 +237,41 @@ def describe_spec(
         regions = sorted({r["region"] for r in group})
 
         lines.append(f"{prov.upper()} {head['specName']}")
-        lines.append(f"  vCPU {head['vCPU']} · 메모리 {head['memGiB']:g} GiB")
+        lines.append(f"  vCPU {head['vCPU']} · memory {head['memGiB']:g} GiB")
         if head.get("architecture"):
             lines[-1] += f" · {head['architecture']}"
         accel = head.get("acceleratorCount") or 0
         if accel:
-            model = head.get("acceleratorModel") or head.get("acceleratorType") or "가속기"
-            lines.append(f"  가속기 {model} {accel}개")
+            model = (
+                head.get("acceleratorModel") or head.get("acceleratorType") or "accelerator"
+            )
+            lines.append(f"  Accelerator {model} ×{accel}")
 
         if region is not None:
             here = [r for r in group if r["region"].lower() == region.strip().lower()]
             if not here:
                 lines.append(
-                    f"  '{region}' 리전에는 없습니다. 있는 리전: "
+                    f"  Not present in region '{region}'. Regions it is in: "
                     + ", ".join(regions[:8])
                 )
             elif here[0]["hourlyUSD"] is None:
-                lines.append(f"  {here[0]['region']}: 가격 정보 없음")
+                lines.append(f"  {here[0]['region']}: no price data")
             else:
                 lines.append(f"  {here[0]['region']}: ${here[0]['hourlyUSD']:.4f}/h")
         elif not priced:
-            lines.append(f"  리전 {len(regions)}곳 · 가격 정보 없음")
+            lines.append(f"  {len(regions)} regions · no price data")
         else:
             low = min(r["hourlyUSD"] for r in priced)
             high = max(r["hourlyUSD"] for r in priced)
             span = f"${low:.4f}/h" if low == high else f"${low:.4f} ~ ${high:.4f}/h"
-            lines.append(f"  리전 {len(regions)}곳 · 시간당 {span} (리전마다 다름)")
-        lines.append(f"  리전: {', '.join(regions[:10])}" + (" …" if len(regions) > 10 else ""))
+            lines.append(f"  {len(regions)} regions · hourly {span} (varies by region)")
+        lines.append(f"  Regions: {', '.join(regions[:10])}" + (" …" if len(regions) > 10 else ""))
 
     degraded = load_warning(output_dir)
     if degraded:
         lines.append(f"\n⚠ {degraded}")
     lines.append(
-        "\n※ 온디맨드 정가 스냅샷입니다. " + _COST_DISCLAIMER
+        "\n※ An on-demand list-price snapshot. " + _COST_DISCLAIMER
     )
     return "\n".join(lines)
 
@@ -278,12 +285,17 @@ def _discount_line(rec: dict) -> str:
     parts = []
     spot = rec.get("hourSpotUSD")
     if spot is not None:
-        parts.append(f"스팟 ${spot:.4f}/h")
-    for label, key in (("1년 약정", "month1yUSD"), ("3년 약정", "month3yUSD")):
+        parts.append(f"spot ${spot:.4f}/h")
+    for label, key in (
+        ("1-year commitment", "month1yUSD"),
+        ("3-year commitment", "month3yUSD"),
+    ):
         month = rec.get(key)
         if month is not None:
-            parts.append(f"{label} ${month / HOURS_PER_MONTH:.4f}/h (월 ${month:,.2f})")
-    return " · ".join(parts) if parts else "값 없음"
+            parts.append(
+                f"{label} ${month / HOURS_PER_MONTH:.4f}/h (${month:,.2f}/month)"
+            )
+    return " · ".join(parts) if parts else "no value"
 
 
 def discount_pricing(
@@ -313,26 +325,29 @@ def discount_pricing(
             if near:
                 rec = spot_commit_for(spec_name, near[0], output_dir)
                 note = (
-                    f"('{region}'는 없는 리전이라 가장 가까운 '{near[0]}'로 답합니다) "
+                    f"(no region named '{region}' — answering with the closest, "
+                    f"'{near[0]}') "
                 )
-                lines = [f"{spec_name} 스팟·약정 가격 (GCP) {note}:"]
+                lines = [f"{spec_name} spot & commitment pricing (GCP) {note}:"]
                 lines.append(f"  - {rec['region']}: {_discount_line(rec)}")
                 extra = ""
                 if not rec.get("snapshotMatchesMirror", True):
                     ref = rec.get("hourRefUSD")
-                    lines[-1] += f"  ※ 기준 온디맨드 ${ref:.4f}/h" if ref else ""
+                    lines[-1] += f"  ※ baseline on-demand ${ref:.4f}/h" if ref else ""
                     extra = (
-                        "\n※ 이 소스의 온디맨드가 미러와 5% 넘게 다릅니다 — 스냅샷 "
-                        "시점 차이라 스팟·약정도 그 온디맨드 기준입니다."
+                        "\n※ This source's on-demand differs from the mirror by more "
+                        "than 5% — a snapshot timing difference, so spot and "
+                        "commitment are based on that on-demand."
                     )
                 return (
                     "\n".join(lines)
-                    + "\n\n※ 출처: Cyclenerd GCP 가격표(2026-07-16 스냅샷, Apache-2.0)."
+                    + "\n\n※ Source: Cyclenerd GCP price table "
+                    "(2026-07-16 snapshot, Apache-2.0)."
                     + extra
                 )
             return (
-                f"{spec_name}: '{region}' 리전의 스팟·약정 정보가 없습니다. "
-                f"이 스펙이 정보를 가진 리전: "
+                f"{spec_name}: no spot or commitment data for region '{region}'. "
+                f"Regions this spec has data for: "
                 + ", ".join(available[:8])
             )
         recs = [rec]
@@ -342,24 +357,26 @@ def discount_pricing(
             return _no_discount(spec_name)
         recs = sorted(recs, key=lambda r: r["region"])[:6]
 
-    lines = [f"{spec_name} 스팟·약정 가격 (GCP):"]
+    lines = [f"{spec_name} spot & commitment pricing (GCP):"]
     diverged = False
     for rec in recs:
         line = f"  - {rec['region']}: {_discount_line(rec)}"
         if not rec.get("snapshotMatchesMirror", True):
             diverged = True
             ref = rec.get("hourRefUSD")
-            line += f"  ※ 기준 온디맨드 ${ref:.4f}/h" if ref else ""
+            line += f"  ※ baseline on-demand ${ref:.4f}/h" if ref else ""
         lines.append(line)
     footer = (
-        "\n\n※ 출처: Cyclenerd GCP 가격표(2026-07-16 스냅샷, Apache-2.0). "
-        "온디맨드는 costkb 미러(cb-tumblebug)를 쓰고 스팟·약정만 이 소스로 보강합니다."
+        "\n\n※ Source: Cyclenerd GCP price table (2026-07-16 snapshot, Apache-2.0). "
+        "On-demand comes from the costkb mirror (cb-tumblebug); only spot and "
+        "commitment are supplemented from this source."
     )
     if diverged:
         footer += (
-            "\n※ '기준 온디맨드'가 붙은 리전은 이 소스의 온디맨드가 우리 미러와 5% "
-            "넘게 다릅니다 — 가격 스냅샷 시점 차이라, 스팟·약정도 그 온디맨드 기준입니다. "
-            "정확한 현재가는 cb-tumblebug MCP로 확인하세요."
+            "\n※ In regions marked 'baseline on-demand', this source's on-demand "
+            "differs from our mirror by more than 5% — a price snapshot timing "
+            "difference, so spot and commitment are based on that on-demand. "
+            "Check the exact current price with the cb-tumblebug MCP."
         )
     return "\n".join(lines) + footer
 
@@ -371,25 +388,26 @@ def _azure_line(rec: dict) -> str:
     base = rec.get("mirrorUSD")
     parts = []
     for key, label in (
-        ("spotUSD", "스팟"),
-        ("reserved1yUSD", "1년 예약"),
-        ("reserved3yUSD", "3년 예약"),
-        ("savings1yUSD", "1년 저축플랜"),
-        ("savings3yUSD", "3년 저축플랜"),
+        ("spotUSD", "spot"),
+        ("reserved1yUSD", "1-year reserved"),
+        ("reserved3yUSD", "3-year reserved"),
+        ("savings1yUSD", "1-year savings plan"),
+        ("savings3yUSD", "3-year savings plan"),
     ):
         value = rec.get(key)
         if value is None:
             continue
         share = f" ({value / base:.0%})" if base else ""
         parts.append(f"{label} ${value:.4f}/h{share}")
-    return " · ".join(parts) if parts else "할인 정보 없음"
+    return " · ".join(parts) if parts else "no discount data"
 
 
 AZURE_DISCOUNT_MISSING = (
-    "Azure 할인 가격(스팟·예약·저축 플랜)이 이 환경에 없습니다. **데이터가 없다는 "
-    "뜻이지 할인이 없다는 뜻이 아닙니다.** 이 축은 Azure Retail Prices API에서 "
-    "받는데 재배포 허가가 없어 저장소에 넣지 않으므로, 쓰려면 직접 받아야 합니다: "
-    "`python -m costkb build-azure-pricing`"
+    "Azure discount pricing (spot / reserved / savings plan) is not in this "
+    "environment. **That means we did not include the data, not that there are no "
+    "discounts.** This axis comes from the Azure Retail Prices API, and we have no "
+    "redistribution permission so it is not kept in the repository — to use it, "
+    "fetch it yourself: `python -m costkb build-azure-pricing`"
 )
 
 
@@ -425,13 +443,16 @@ def azure_discount_pricing(
             near = difflib.get_close_matches(region, available, n=1, cutoff=0.8)
             if not near:
                 return (
-                    f"{spec_name}: '{region}' 리전의 할인 정보가 없습니다. "
-                    "이 스펙이 정보를 가진 리전: " + ", ".join(available[:8])
+                    f"{spec_name}: no discount data for region '{region}'. "
+                    "Regions this spec has data for: " + ", ".join(available[:8])
                 )
             # GCP 쪽에서 실측으로 겪은 실패다 — 모델이 리전을 한 글자 틀리면
             # "정보 없음"을 "그 리전엔 스팟이 없다"로 오해해 틀린 답을 냈다.
             rec = azure_discount_for(spec_name, near[0], output_dir)
-            prefix = f"('{region}'는 없는 리전이라 가장 가까운 '{near[0]}'로 답합니다) "
+            prefix = (
+                f"(no region named '{region}' — answering with the closest, "
+                f"'{near[0]}') "
+            )
         else:
             prefix = ""
         recs = [rec]
@@ -442,24 +463,29 @@ def azure_discount_pricing(
         if not recs:
             return _no_azure_discount(spec_name, output_dir)
 
-    lines = [f"{spec_name} 할인 가격 (Azure) {prefix}:".replace(" :", ":")]
+    lines = [f"{spec_name} discount pricing (Azure) {prefix}:".replace(" :", ":")]
     diverged = False
     for rec in recs:
         base = rec.get("mirrorUSD")
-        head = f"  - {rec['region']}: 온디맨드 ${base:.4f}/h" if base else f"  - {rec['region']}:"
+        head = (
+            f"  - {rec['region']}: on-demand ${base:.4f}/h"
+            if base else f"  - {rec['region']}:"
+        )
         lines.append(f"{head} · {_azure_line(rec)}")
         if not rec.get("matchesMirror", True):
             diverged = True
     footer = (
-        "\n\n※ 출처: Azure Retail Prices API(무인증). 온디맨드는 costkb 미러"
-        "(cb-tumblebug)를 쓰고 할인만 이 소스로 보강합니다. **예약가는 원본이 기간 "
-        "총액으로 주므로 시간당으로 환산한 값**입니다(1년 8,760h · 3년 26,280h). "
-        "Windows 라이선스가 붙는 값과 Dev/Test 전용가는 담지 않았습니다."
+        "\n\n※ Source: Azure Retail Prices API (no auth). On-demand comes from the "
+        "costkb mirror (cb-tumblebug); only discounts are supplemented from this "
+        "source. **Reserved prices are period totals in the source, converted here "
+        "to hourly** (1 year 8,760h · 3 years 26,280h). Prices that bundle a Windows "
+        "license and Dev/Test-only prices are not included."
     )
     if diverged:
         footer += (
-            "\n※ 이 소스의 온디맨드가 우리 미러와 다른 리전이 있습니다 — 스냅샷 시점 "
-            "차이일 수 있으니 할인가도 그만큼 어긋날 수 있습니다."
+            "\n※ In some regions this source's on-demand differs from our mirror — "
+            "it may be a snapshot timing difference, so the discount prices may be "
+            "off by as much."
         )
     return "\n".join(lines) + footer
 
@@ -475,10 +501,10 @@ def _no_azure_discount(spec_name: str, output_dir: Path | str | None) -> str:
 
     known = sorted({name for name, _ in _load_azure_discount(_resolve(output_dir))})
     near = difflib.get_close_matches(spec_name.strip().lower(), known, n=5, cutoff=0.6)
-    hint = f" Azure 쪽에서 비슷한 이름: {', '.join(near)}" if near else ""
+    hint = f" Similar names on the Azure side: {', '.join(near)}" if near else ""
     return (
-        f"'{spec_name}'의 Azure 할인 정보가 없습니다. **없다는 뜻이 아니라 이 "
-        f"데이터셋에 없다**는 뜻입니다(Azure VM만 담습니다).{hint}"
+        f"No Azure discount data for '{spec_name}'. **That means it is not in this "
+        f"dataset, not that it does not exist** (only Azure VMs are included).{hint}"
     )
 
 
@@ -487,12 +513,13 @@ def _no_discount(spec_name: str) -> str:
     if not spec_name.startswith(("n1", "n2", "n4", "e2", "c2", "c3", "c4", "t2",
                                  "a2", "a3", "g2", "m1", "m2", "m3", "z3")):
         return (
-            f"'{spec_name}'의 스팟·약정 정보가 없습니다. 이 보강은 **GCP 전용**입니다 "
-            "(Cyclenerd). AWS·Azure의 스팟은 지금 수록돼 있지 않습니다."
+            f"No spot or commitment data for '{spec_name}'. This supplement is "
+            "**GCP-only** (Cyclenerd). AWS and Azure spot are not included here."
         )
     return (
-        f"{spec_name}의 스팟·약정 정보를 찾지 못했습니다. GCP 스팟·약정 보강이 빌드되지 "
-        "않았거나(python -m costkb build-gcp-pricing) 미러에 없는 스펙일 수 있습니다."
+        f"Could not find spot or commitment data for {spec_name}. The GCP spot and "
+        "commitment supplement may not be built "
+        "(python -m costkb build-gcp-pricing), or the spec may not be in the mirror."
     )
 
 
@@ -505,7 +532,7 @@ def estimate_monthly_cost(
     per_node = hourly_usd * hours_per_month
     total = per_node * count
     return (
-        f"월 예상 비용: ${total:,.2f} "
-        f"(대당 ${per_node:,.2f} × {count}대, {hours_per_month:.0f}h/월 기준). "
+        f"Estimated monthly cost: ${total:,.2f} "
+        f"(${per_node:,.2f} per node × {count} nodes, at {hours_per_month:.0f}h/month). "
         f"{_COST_DISCLAIMER}"
     )

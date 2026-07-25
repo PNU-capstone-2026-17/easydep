@@ -184,11 +184,11 @@ def test_azure_plan_managed_nodes_carry_billing_axes(costkb_committed) -> None:
     design["requirements"]["provider"] = "azure"
     design["requirements"]["region"] = "koreasouth"
     plan = compose(design)
-    db_notes = [n.text for n in plan.node("order-api-db").notes]
-    assert any("과금 축" in t for t in db_notes)
-    text = _render_plan_text(plan)
-    assert "과금 축 목록" in text  # 전역 고지가 "가격 없음"에서 바뀐다
-    assert "합계를 내지 않습니다" in text
+    db_notes = [" ".join(n.text.split()) for n in plan.node("order-api-db").notes]
+    assert any("Billing axes" in t for t in db_notes)
+    flat = " ".join(_render_plan_text(plan).split())
+    assert "**list of billing axes**" in flat  # 전역 고지가 "가격 없음"에서 바뀐다
+    assert "**No total is produced**" in flat
 
 
 def test_aws_plan_keeps_the_no_price_notice() -> None:
@@ -203,6 +203,6 @@ def test_aws_plan_keeps_the_no_price_notice() -> None:
          / "order-demo.json").read_text(encoding="utf-8")
     )
     plan = compose(design)
-    text = _render_plan_text(plan)
-    assert "과금 축" not in text
-    assert "관리형 서비스 가격은 이 데이터셋에 없어" in text
+    flat = " ".join(_render_plan_text(plan).split())
+    assert "Billing axes" not in flat
+    assert "Managed service prices are not in this dataset" in flat

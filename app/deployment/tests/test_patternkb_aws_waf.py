@@ -37,7 +37,10 @@ def test_committed_aws_corpus_carries_the_fair_use_note() -> None:
         "python -m patternkb build-aws-waf 후 kbcommon pack."
     )
     data = artifact.load_json(packed)
-    assert "공정이용" in (data.get("_note") or "")
+    # 산출물 `_note`는 영어로 옮겼다. 지키려는 것은 **공정이용 판단이 파일에
+    # 실려 함께 다니는가**이지 그 문장의 언어가 아니다 — 두 표기를 다 받는다.
+    note = " ".join((data.get("_note") or "").split()).lower()
+    assert "공정이용" in note or "fair use" in note
     assert data.get("docs"), "커밋된 코퍼스가 비어 있다"
 
 
@@ -134,8 +137,8 @@ def test_aws_corpus_merges_and_built_state_is_distinguished(tmp_path: Path) -> N
         docs = dataset.all_docs(tmp_path)
         assert len(docs) == 2
         assert dataset.sections(tmp_path)["aws-well-architected"] == 1
-        text = agent_api.coverage_text(tmp_path)
+        text = " ".join(agent_api.coverage_text(tmp_path).split())
         assert "build-aws-waf" not in text
-        assert "AWS Well-Architected 지침 1편" in text
+        assert "AWS Well-Architected guidance 1" in text
     finally:
         dataset.clear_caches()

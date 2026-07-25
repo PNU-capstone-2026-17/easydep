@@ -258,11 +258,11 @@ def build(
         # 이걸 남기면 훑은 타입까지 '안 봤음'이 되므로, 좁혔을 때만 적는다.
         entry["scope"] = sorted(providers)
         entry["note"] = (
-            "bicep-types의 이 네임스페이스만 읽었다. 목록 밖 타입은 "
-            "'제약 없음'이 아니라 '안 봤음'이다."
+            "only these bicep-types namespaces were read. a type outside the list is "
+            "'not looked at', not 'no constraint'."
         )
     else:
-        entry["note"] = "bicep-types 전체를 읽는다 (최신 안정 버전 기준)."
+        entry["note"] = "reads all of bicep-types (latest stable version)."
     capacity.coverage = [entry]
     announce(capacity.save(output), "capacitykb/azure")
     by_evidence: Counter = Counter(c.evidence for c in capacity.constraints)

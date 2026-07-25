@@ -246,22 +246,25 @@ def build(
     axis_counts = Counter(r["axis"] for r in records)
     payload = {
         "_note": (
-            "Azure 관리형 서비스의 **과금 축 목록**입니다 — 단가 한 칸이 아닙니다. "
-            "인스턴스-시간형(instanceHour)만 시간당 단가가 성립하고, 용량-비례형"
-            "(capacityRate)은 단가에 곱할 수량(vCore·RU·GB)이 사이징 결과이며, "
-            "사용량형(usage)은 트래픽을 알아야 비용이 나옵니다 — 사용량형에 숫자 "
-            "하나를 붙이면 모르는 것을 채우는 것이라 붙이지 않습니다. 합계도 "
-            "만들지 않습니다. 이 파일은 **azure 수록분**(아키타입 11종 + 진입점용 "
-            "loadBalancer — LB는 원본이 리전 무관 Global로 공표)입니다. gcp는 "
-            "objectStorage·networkEgress만 별도 파일(gcp-managed-pricing)에 있고, "
-            "AWS는 재배포가 명시적으로 금지라 미수록입니다.\n"
-            "**출처와 재배포 상태**: Microsoft Azure Retail Prices API"
-            "(https://prices.azure.com/api/retail/prices)에서 받은 값에서 유도했습니다. "
-            "가격 데이터의 권리는 Microsoft에 있습니다. **재배포를 허가하는 문구를 "
-            "찾지 못했고 금지하는 문구도 찾지 못했습니다** — 무인증으로 공개된 API라 "
-            "편의를 위해 유도 산출물을 저장소에 포함했을 뿐, 허가를 받았다는 뜻이 "
-            "아닙니다. 권리자가 요청하면 제거합니다. 값은 스냅샷이며 실제 청구서가 "
-            "아닙니다."
+            "A **list of billing axes** for Azure managed services — not a single "
+            "unit-price cell. Only instance-hour (instanceHour) has a valid hourly "
+            "rate; for capacity-rate (capacityRate) the quantity to multiply the "
+            "unit price by (vCore, RU, GB) is a sizing result; and usage-based "
+            "(usage) needs the traffic before a cost exists — attaching one number "
+            "to a usage axis would be filling in what we do not know, so we do not. "
+            "No total is produced either. This file is the **azure portion** "
+            "(11 archetypes + loadBalancer for the entry point — the source "
+            "publishes LB as region-independent Global). gcp has only objectStorage "
+            "and networkEgress, in a separate file (gcp-managed-pricing), and AWS is "
+            "not included because redistribution is explicitly forbidden.\n"
+            "**Source and redistribution status**: derived from values fetched from "
+            "the Microsoft Azure Retail Prices API "
+            "(https://prices.azure.com/api/retail/prices). Rights to the price data "
+            "belong to Microsoft. **We found no wording granting redistribution, and "
+            "none forbidding it either** — it is a publicly readable API with no "
+            "auth, so we include the derived artifact in the repository for "
+            "convenience; that does not mean permission was granted. We will remove "
+            "it if the rights holder asks. Values are a snapshot, not an actual bill."
         ),
         "records": records,
         "_coverage": [
@@ -272,10 +275,11 @@ def build(
                 "byAxis": dict(axis_counts),
                 "dropped": dict(dropped),
                 "note": (
-                    "`boundary-bleed`는 serviceName이 아키타입 경계를 안 지켜 거른 "
-                    "것(예: PostgreSQL 서비스 안의 Cosmos DB 제품)이고, `ambiguous`는 "
-                    "같은 미터에 값이 여럿이라 담지 않은 것입니다 — 조용히 하나를 "
-                    "고르지 않습니다."
+                    "`boundary-bleed` is what was dropped because serviceName does "
+                    "not respect archetype boundaries (e.g. a Cosmos DB product "
+                    "inside the PostgreSQL service); `ambiguous` is what was not "
+                    "included because one meter had several values — we do not "
+                    "silently pick one."
                 ),
             }
         ],
@@ -292,8 +296,9 @@ def build(
                 "fetched_at": None,
                 "regions": len(wanted),
                 "note": (
-                    "버전이 없는 API라 재현이 원리적으로 안 됩니다. (서비스,리전)별 "
-                    "응답의 sha256을 합쳐 해시했으므로 바뀐 사실은 놓치지 않습니다."
+                    "The API has no version, so reproduction is impossible in "
+                    "principle. We hash the combined sha256 of each "
+                    "(service, region) response, so a change never goes unnoticed."
                 ),
             }
         ],

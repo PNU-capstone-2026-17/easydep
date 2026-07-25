@@ -83,7 +83,7 @@ def test_aws_burstable_is_not_sustained_and_is_stated() -> None:
     assert rec["sustainedCpu"]["value"] is False
     assert rec["sustainedCpu"]["evidence"] == "aws-burstable-field"
     assert rec["sustainedCpu"]["basis"] == "stated"
-    assert "크레딧" in rec["sustainedCpu"]["note"]
+    assert "credits" in rec["sustainedCpu"]["note"]
 
 
 def test_aws_non_burstable_is_an_inference_not_a_statement() -> None:
@@ -98,7 +98,7 @@ def test_aws_non_burstable_is_an_inference_not_a_statement() -> None:
     assert rec["sustainedCpu"]["value"] is True
     assert rec["sustainedCpu"]["evidence"] == "aws-non-burstable-inferred"
     assert rec["sustainedCpu"]["basis"] == "inferred"
-    assert "추론" in rec["sustainedCpu"]["note"]
+    assert "inferred" in rec["sustainedCpu"]["note"]
 
 
 def test_aws_burstable_is_stated_by_the_field() -> None:
@@ -115,8 +115,8 @@ def test_gcp_shared_cpu_is_a_different_mechanism_than_aws_burst() -> None:
     assert rec["sustainedCpu"]["value"] is False
     assert rec["sustainedCpu"]["evidence"] == "gcp-shared-cpu-field"
     assert rec["sustainedCpu"]["basis"] == "stated"
-    assert "공유" in rec["sustainedCpu"]["note"]
-    assert "크레딧" not in rec["sustainedCpu"]["note"]
+    assert "shared" in rec["sustainedCpu"]["note"].lower()
+    assert "credit" not in rec["sustainedCpu"]["note"].lower()
 
 
 def test_azure_family_inference_is_marked_as_a_guess() -> None:
@@ -214,7 +214,7 @@ def test_build_dataset_matches_schema() -> None:
     dataset, _ = build_dataset(rows)
     jsonschema.validate(dataset, _schema())
     assert len(dataset["specs"]) == 4
-    assert "프로바이더 간 성능 비교는 불가능" in dataset["_note"]
+    assert "Performance cannot be compared across providers" in dataset["_note"]
 
 
 def test_audit_counts_the_findings_that_produce_warnings() -> None:

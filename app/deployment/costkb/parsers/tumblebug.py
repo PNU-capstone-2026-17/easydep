@@ -45,16 +45,18 @@ import collections
 from typing import Any
 
 SOURCE_NOTE = (
-    "cb-tumblebug의 spec_infos 테이블(assets.dump.gz) 미러입니다. 에이전트의 라이브 경로인 "
-    "cb-tumblebug MCP recommend_vm_spec이 **같은 테이블**을 읽습니다. 다만 답이 항상 "
-    "같지는 않고, 우리가 일부러 다르게 하는 곳이 셋입니다. (1) memGiB는 **보정된 실제 "
-    "값**입니다 — 상위 CB-Spider 버그로 원본은 GCP·Azure가 실제보다 2.4% 낮게 적혀 있어 "
-    "×1.024로 복원했습니다(_corrections 참조). (2) 가격 미상 후보는 기본으로 제외합니다 — "
-    "Tumblebug은 999999로 뒤로 밀 뿐 빼지 않으므로, 미가격 비율이 높은 프로바이더에서 "
-    "갈립니다(그 건수는 답에 함께 적습니다). (3) 리전은 정확 일치를 우선하되 그런 리전이 "
-    "없으면 부분 일치로 넓히고, 넓혔다는 사실을 답에 밝힙니다. "
-    "가격은 스냅샷이라 시간이 지나면 드리프트하며 실제 청구서가 "
-    "아닙니다. 라이브 정확도가 필요하면 cb-tumblebug MCP를 쓰세요."
+    "A mirror of cb-tumblebug's spec_infos table (assets.dump.gz). The agent's live "
+    "path, cb-tumblebug MCP recommend_vm_spec, reads **the same table**. The answers "
+    "are not always identical, though — there are three places where we deliberately "
+    "differ. (1) memGiB is the **corrected actual value** — an upstream CB-Spider bug "
+    "records GCP and Azure 2.4% lower than reality, so it is restored by ×1.024 (see "
+    "_corrections). (2) Candidates with an unknown price are excluded by default — "
+    "Tumblebug only pushes them to the back with 999999 instead of dropping them, so "
+    "answers diverge for providers with a high unpriced ratio (that count is stated "
+    "in the answer). (3) Regions prefer an exact match, but where no such region "
+    "exists we widen to a partial match and say in the answer that we widened. "
+    "Prices are a snapshot, they drift over time, and they are not an actual bill. "
+    "If you need live accuracy, use the cb-tumblebug MCP."
 )
 
 # spec_infos의 namespace. 실측상 73,083행 전부 'system'이라 사실상 no-op이지만,
@@ -222,9 +224,10 @@ CORRECTIONS = [
         "providers": sorted(_MEMORY_BUG_PROVIDERS),
         "operation": f"×{_MEMORY_BUG_FACTOR}",
         "reason": (
-            "상위 CB-Spider의 ConvertMBToMiBInt64가 MB→MiB 비율을 한 번만, 그것도 "
-            "이미 MiB인 값에 적용해 실제보다 2.4% 낮게 기록된다. 원본으로 되돌리려면 "
-            f"이 값을 {_MEMORY_BUG_FACTOR}로 나눈다."
+            "Upstream CB-Spider's ConvertMBToMiBInt64 applies the MB→MiB ratio only "
+            "once, and to a value that is already MiB, so the value is recorded 2.4% "
+            "below reality. To get back to the original, divide this value by "
+            f"{_MEMORY_BUG_FACTOR}."
         ),
     }
 ]

@@ -24,7 +24,7 @@ def test_storage_is_capacity_rate_not_hourly() -> None:
     사이징 결과라는 사실이 사라진다."""
     storage = [a for a in _gcs_axes() if a["meter"] == "storage"]
     assert storage
-    assert all(a["axis"] == "capacityRate" and a["unit"] == "GB/월" for a in storage)
+    assert all(a["axis"] == "capacityRate" and a["unit"] == "GB/month" for a in storage)
 
 
 def test_cold_classes_carry_their_retrieval_fee() -> None:
@@ -76,13 +76,13 @@ def test_egress_is_usage_only_with_destination_and_tier() -> None:
     assert axes and all(a["axis"] == "usage" and a["unit"] == "GB" for a in axes)
     assert {a["sku"] for a in axes} == {"worldwide", "australia", "china"}
     tiers = {a["meter"] for a in axes}
-    assert any("0~1TB" in t for t in tiers) and any("10TB 초과" in t for t in tiers)
+    assert any("0-1TB" in t for t in tiers) and any("over 10TB" in t for t in tiers)
 
 
 def test_egress_worldwide_differs_from_china() -> None:
     """목적지 축이 실제로 값을 가르는지 — 같으면 축을 나눈 의미가 없다."""
     axes = managed_axes("networkEgress", "asia-northeast3", output_dir=DEFAULT_OUTPUT_DIR)
-    tier0 = {a["sku"]: a["unitPriceUSD"] for a in axes if "0~1TB" in a["meter"]}
+    tier0 = {a["sku"]: a["unitPriceUSD"] for a in axes if "0-1TB" in a["meter"]}
     assert tier0["china"] != tier0["worldwide"]
 
 

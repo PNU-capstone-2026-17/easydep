@@ -25,7 +25,7 @@ def _require(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(
-            f".env에 {name}가 없습니다. API_KEY / BASE_URL / MODEL을 확인하세요."
+            f"{name} is missing from .env. Check API_KEY / BASE_URL / MODEL."
         )
     return value
 

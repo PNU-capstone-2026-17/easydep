@@ -48,8 +48,8 @@ GRAPH_FILES = (
 )
 
 _MISSING_MESSAGE = (
-    "그래프 산출물이 없습니다. 먼저 `python -m graphkb build --source "
-    "tumblebug|cfn|azure|gcp|mapping` 으로 그래프를 생성하세요."
+    "No graph artifact found. Build one first with `python -m graphkb build --source "
+    "tumblebug|cfn|azure|gcp|mapping`."
 )
 
 
@@ -193,10 +193,10 @@ def creation_order(
     # 비지만, NIC 없이는 만들 수 없다. 침묵을 허가로 바꾸면 fail-open이 아니라
     # 그냥 틀린 말이 된다.
     _SCHEMA_CAVEAT = (
-        "스키마가 **필수로 표시한** 선행 리소스가 없다는 뜻이며, 실제로 아무것도 "
-        "필요 없다는 뜻이 아닙니다. 스키마가 선택으로 두지만 실무에서는 있어야 하는 "
-        "것이 있습니다(예: Azure VM의 네트워크 인터페이스). 아래 '함께 쓸 수 있는 것'을 "
-        "함께 보세요."
+        "the schema **marks no prerequisite as required**, which does not mean "
+        "nothing is actually needed. Some things the schema leaves optional are "
+        "needed in practice (an Azure VM's network interface, for example). Read the "
+        "'can be used alongside' list below as well."
     )
 
     if len(result.ordered) == 1 and (required_only or not optional):
@@ -207,19 +207,20 @@ def creation_order(
         # 목록을 찍지 않는다 — 대상 자기 자신뿐이라 "1. 대상"은 정보가 아니다.
         lines.append(f"{node.id} — {_SCHEMA_CAVEAT}")
     else:
-        lines.append(f"{node.id} 생성에 반드시 먼저 있어야 하는 것 (이 순서대로):")
+        lines.append(f"What must exist before {node.id} is created (in this order):")
         for i, step in enumerate(result.steps, start=1):
             if not step.cyclic:
                 item = step.nodes[0]
-                suffix = " ← 대상" if item.id == node.id else ""
+                suffix = " ← target" if item.id == node.id else ""
                 lines.append(f"{i}. {item.id}{suffix}")
                 continue
             # 순환 그룹은 한 단계로 묶는다 — 이 안의 순서는 스키마로 정할 수 없다.
             lines.append(
-                f"{i}. (아래 {len(step.nodes)}개는 서로 참조해 순서를 정할 수 없습니다)"
+                f"{i}. (the {len(step.nodes)} below reference each other, so their "
+                "order cannot be determined)"
             )
             for item in step.nodes:
-                suffix = " ← 대상" if item.id == node.id else ""
+                suffix = " ← target" if item.id == node.id else ""
                 lines.append(f"   - {item.id}{suffix}")
 
     if result.has_cycle:
@@ -227,14 +228,15 @@ def creation_order(
         # 모델은 순서가 위상순이 아니라는 걸 알 방법이 없었다(결함 C1).
         groups = len(result.cyclic_steps)
         lines.append(
-            f"\n⚠ 의존성 순환이 {groups}곳 있습니다. 묶인 항목끼리는 스키마만으로 "
-            "선후를 정할 수 없으니, 실제 생성 시에는 참조를 나중에 채우거나"
-            "(예: 생성 후 업데이트) 순환을 끊는 방식을 검토하세요."
+            f"\n⚠ Dependency cycles: {groups}. Items grouped together "
+            "cannot be ordered from the schema alone, so when you actually create "
+            "them, consider filling the reference in later (create, then update) or "
+            "breaking the cycle."
         )
 
     if optional and not required_only:
         lines.append(
-            f"\n함께 쓸 수 있는 것 ({len(optional)}개, 선택이라 순서를 강제하지 않습니다):"
+            f"\nCan be used alongside ({len(optional)}, optional so no order is enforced):"
         )
         lines.extend(f"- {t}" for t in optional)
 
@@ -315,10 +317,11 @@ def _practical_prerequisites(graph, type_id: str) -> str | None:
         return None
     names = ", ".join(sorted(n.replace("core::", "") for n in needed))
     return (
-        f"\n※ **스키마는 선택으로 두지만 실무에서는 보통 필요합니다**: {names}.\n"
-        f"  위 '필수' 목록은 이 CSP의 IaC 스키마(CloudFormation·ARM 등)가 "
-        f"required로 표시한 것만입니다 — 스키마가 받아준다는 뜻이지 그것만으로 "
-        f"쓸 수 있는 구성이 된다는 뜻은 아닙니다."
+        f"\n※ **the schema leaves these optional, but in practice they are usually "
+        f"needed**: {names}.\n"
+        f"  The 'required' list above holds only what this CSP's IaC schema "
+        f"(CloudFormation, ARM, and so on) marks as required — that means the schema "
+        f"accepts it, not that it alone gives you a usable setup."
     )
 
 
@@ -334,8 +337,8 @@ def deletion_impact(
         return error
     affected = dependents(graph, node.id)
     if not affected:
-        return f"{node.id} 를 삭제해도 스키마상 직접 영향받는 타입은 없습니다."
-    lines = [f"{node.id} 삭제 시 영향받는 타입 {len(affected)}개:"]
+        return f"Deleting {node.id} affects no type directly, per the schema."
+    lines = [f"Types affected when {node.id} is deleted ({len(affected)}):"]
     lines.extend(f"- {item.id}" for item in affected)
     footer = _evidence_footer(graph, {item.id for item in affected}, node.id)
     if footer:
@@ -367,14 +370,15 @@ def _evidence_footer(graph, affected: set[str], target: str) -> str | None:
     total = sum(counts.values())
     # **"짐작"이었다는 사실은 검수 뒤에도 남는다.** `describe`가 "짐작(검수됨)"을
     # 주므로 그대로 쓴다 — 검수는 확인이지 원본이 선언했다는 뜻이 아니다.
-    guessed = sum(n for (_, mark), n in counts.items() if "짐작" in mark)
-    top = ", ".join(f"{name} {n}건({mark})" for (name, mark), n in counts.most_common(3))
-    line = f"\n※ 이 관계들의 근거: {top}"
+    guessed = sum(n for (_, mark), n in counts.items() if "a guess" in mark)
+    top = ", ".join(f"{name} {n} ({mark})" for (name, mark), n in counts.most_common(3))
+    line = f"\n※ Evidence for these relationships: {top}"
     if guessed:
         line += (
-            f"\n※ 그중 **{guessed}건({guessed / total:.0%})이 이름 추론에서 나온 "
-            "것**입니다. 사람이 확인했지만 원본이 관계를 선언한 것은 아니므로, "
-            "삭제 계획에 쓸 때는 실제 참조를 함께 확인하세요."
+            f"\n※ Of those, **{guessed} ({guessed / total:.0%}) came out of name "
+            "inference**. A person checked them, but the source never declared the "
+            "relationship, so confirm the actual references before acting on a "
+            "deletion plan."
         )
     return line
 
@@ -392,10 +396,10 @@ def equivalent_types(
     peers = equivalents(graph, node.id)
     if not peers:
         return (
-            f"{node.id} 의 동치 타입 정보가 없습니다 "
-            "(mapping-graph.json이 없거나 매핑 미등록)."
+            f"No equivalent-type information for {node.id} "
+            "(mapping-graph.json is missing, or the mapping is not registered)."
         )
-    lines = [f"{node.id} 와 같은 것을 가리키는 타입:"]
+    lines = [f"Types that point at the same thing as {node.id}:"]
     guessed = 0
     for item in peers:
         edge = _weakest_link(graph, node.id, item.id)
@@ -410,26 +414,27 @@ def equivalent_types(
         if needs_hedge(edge.basis, edge.reviewed):
             guessed += 1
         lines.append(
-            f"- {item.id} ({item.provider}) — 근거 {evidence_name(edge.evidence)}, {mark}"
+            f"- {item.id} ({item.provider}) — evidence {evidence_name(edge.evidence)}, {mark}"
         )
     if guessed:
         # **짐작을 단언으로 옮기지 못하게 한다.** 실측에서 "AWS ALB는 GCP에서 뭐야?"에
         # 모델이 `ComputeForwardingRule`을 단언했다 — 데이터의 basis는 짐작이었는데
         # 출력에 안 실려서 모델이 알 방법이 없었다.
         lines.append(
-            f"\n※ 위 {guessed}건은 **짐작**입니다. 클라우드마다 리소스를 나누는 결이 "
-            "달라 딱 맞는 짝이 없는 경우가 있습니다(예: GCP 방화벽은 네트워크 단위 "
-            "규칙이라 인스턴스에 붙는 AWS 보안 그룹과 같은 것이 아닙니다). "
-            "'대응한다'가 아니라 '가장 가까운 것'으로 전하세요."
+            f"\n※ Entries above marked **a guess**: {guessed}. Clouds divide resources "
+            "along different lines, so an exact counterpart sometimes does not exist "
+            "(a GCP firewall is a network-scoped rule, so it is not the same thing as "
+            "an AWS security group, which attaches to an instance). Say 'the closest "
+            "thing is', not 'X is Y'."
         )
     if node.layer == "app" or any(item.layer == "app" for item in peers):
         # 관리형 서비스 대응은 svcmap이 잇는다 — **안내이지 배포 가능이 아니다.**
         # cb-tumblebug 실행 경로는 VM·k8s까지라, 이 구분을 빼면 "우리 도구로
         # 만들 수 있다"로 읽힌다(cap_csp_supports가 하는 것과 같은 구분).
         lines.append(
-            "\n※ 관리형 서비스 대응은 **안내**입니다 — cb-tumblebug 실행 경로(VM·k8s)로 "
-            "이 서비스들을 만들 수 있다는 뜻이 아닙니다. 배포는 각 클라우드 콘솔·IaC로 "
-            "해야 합니다."
+            "\n※ A managed-service counterpart is **guidance, not a guarantee it can "
+            "be deployed** — it does not mean cb-tumblebug's execution path (VM, k8s) "
+            "can create these services. Deploy them from each cloud's console or IaC."
         )
     return "\n".join(lines)
 
@@ -482,13 +487,13 @@ def describe_type(
         return error
     lines = [
         display(node.id),
-        f"- 레이어: {node.layer} / 프로바이더: {node.provider} / 출처: {node.source}",
+        f"- layer: {node.layer} / provider: {node.provider} / source: {node.source}",
     ]
     outgoing = [e for e in graph.edges if e.from_id == node.id]
     if outgoing:
-        lines.append("- 의존(나가는 엣지):")
+        lines.append("- dependencies (outgoing edges):")
         for edge in sorted(outgoing, key=lambda e: (not e.is_fact, e.to_id)):
-            required = "필수" if edge.required else "선택"
+            required = "required" if edge.required else "optional"
             via = f" via {edge.via_property}" if edge.via_property else ""
             lines.append(
                 f"  · {edge.type} → {display(edge.to_id)}{via} "
@@ -496,7 +501,7 @@ def describe_type(
                 f"{describe(edge.basis, edge.reviewed)})"
             )
     else:
-        lines.append("- 의존(나가는 엣지): 없음")
+        lines.append("- dependencies (outgoing edges): none")
     return "\n".join(lines)
 
 
@@ -520,17 +525,17 @@ def rank_types(
         return str(exc)
     if not ranked:
         scope = f" (provider={provider})" if provider else ""
-        return f"순위를 낼 수 있는 타입이 없습니다{scope}."
+        return f"No types available to rank{scope}."
 
     label = (
-        "직접 의존하는 타입 수(이 타입을 만들려면 필요한 것)"
+        "number of types it directly depends on (what you need to create it)"
         if by == "dependencies"
-        else "이 타입에 의존하는 타입 수(삭제 시 영향받는 것)"
+        else "number of types that depend on it (what is affected when you delete it)"
     )
     scope = f"{provider} " if provider else ""
-    lines = [f"{scope}타입 중 {label} 상위 {len(ranked)}개:"]
+    lines = [f"Top {len(ranked)} {scope}types by {label}:"]
     for i, (node, count) in enumerate(ranked, start=1):
-        lines.append(f"{i}. {node.id} — {count}개")
+        lines.append(f"{i}. {node.id} — {count}")
     return "\n".join(lines)
 
 
@@ -576,9 +581,9 @@ def search_types(
     matches = _matching_nodes(graph, keyword, provider)
     if not matches:
         scope = f" (provider={provider})" if provider else ""
-        return f"'{keyword}'{scope} 에 해당하는 타입이 없습니다."
+        return f"No type matches '{keyword}'{scope}."
     total = len(matches)
     shown = sorted(matches, key=lambda n: n.id)[: max(1, limit)]
-    lines = [f"'{keyword}' 검색 결과 {total}개 중 {len(shown)}개:"]
+    lines = [f"Search results for '{keyword}': {len(shown)} of {total}"]
     lines.extend(f"- {node.id}" for node in shown)
     return "\n".join(lines)

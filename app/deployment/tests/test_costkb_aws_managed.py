@@ -198,5 +198,6 @@ def test_aws_plan_without_local_build_points_at_the_build_command() -> None:
          / "order-demo.json").read_text(encoding="utf-8")
     )
     text = _render_plan_text(compose(design))  # conftest가 costkb를 빈 tmp로 고정
-    assert "build-aws-managed" in text
-    assert "재배포가 금지된" in text
+    flat = " ".join(text.split()).lower()
+    assert "build-aws-managed" in flat
+    assert "forbids redistribution" in flat

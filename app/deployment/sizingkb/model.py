@@ -40,7 +40,7 @@ class Rule:
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
-            raise ValueError(f"알 수 없는 종류: {self.kind!r} (가능: {KINDS})")
+            raise ValueError(f"unknown kind: {self.kind!r} (allowed: {KINDS})")
 
     @property
     def basis(self) -> str:
@@ -105,6 +105,6 @@ def usable_ips(prefix_length: int, reserved: int) -> int:
     돌려주면 "마이너스 3대 띄울 수 있다"는 답이 나온다.
     """
     if not 0 <= prefix_length <= 32:
-        raise ValueError(f"프리픽스 길이가 범위를 벗어납니다: {prefix_length}")
+        raise ValueError(f"Prefix length out of range: {prefix_length}")
     total = 1 << (32 - prefix_length)
     return max(0, total - reserved)

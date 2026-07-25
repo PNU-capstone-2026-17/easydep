@@ -21,7 +21,8 @@ from costkb.agent_api import (
 
 def test_recommend_lists_candidates_with_hourly_price() -> None:
     out = recommend_specs(vcpu_min=2, mem_min_gib=4, provider="aws", region="us-east-1")
-    assert "추천 후보" in out
+    flat = " ".join(out.split())
+    assert "Recommended candidates (on-demand list price, hourly rate):" in flat
     assert "/h" in out
     assert "vCPU" in out
     assert "GiB" in out
@@ -33,15 +34,18 @@ def test_recommend_does_not_include_monthly_cost() -> None:
     도구 분해상으로도 추천은 카탈로그+단가, 월 계산은 전용 도구의 몫이다.
     """
     out = recommend_specs(limit=5)
-    assert "/월" not in out.split("월 비용은")[0]  # 후보 목록 안에 월 수치가 없어야
+    flat = " ".join(out.split())
+    # 후보 목록 안에 월 수치가 없어야 (꼬리말의 "Compute monthly cost with ..." 앞부분)
+    assert "/month" not in flat.split("Compute monthly cost with")[0]
     assert "≈" not in out
 
 
 def test_recommend_points_to_the_cost_tool() -> None:
     """다음에 뭘 해야 하는지 도구 출력 자체가 알려준다 (docstring보다 가까운 압력)."""
     out = recommend_specs(limit=2)
-    assert "estimate_monthly_cost" in out
-    assert "직접 곱하지 마세요" in out
+    flat = " ".join(out.split())
+    assert "estimate_monthly_cost" in flat
+    assert "Do not multiply it out yourself." in flat
 
 
 def test_recommend_respects_filters() -> None:
@@ -53,8 +57,9 @@ def test_recommend_respects_filters() -> None:
 def test_recommend_out_of_range_explains_coverage() -> None:
     """경계를 넘으면 침묵하지 않고 커버리지를 알려준다."""
     out = recommend_specs(vcpu_min=1024)
-    assert "없습니다" in out
-    assert "커버리지" in out or "ap-northeast-2" in out
+    flat = " ".join(out.split())
+    assert "No spec in the dataset meets these conditions." in flat
+    assert "coverage" in flat or "ap-northeast-2" in flat
 
 
 # --- estimate_monthly_cost: 월 계산 + 한계 고지 ---
@@ -62,27 +67,30 @@ def test_recommend_out_of_range_explains_coverage() -> None:
 
 def test_estimate_computes_total_and_per_node() -> None:
     out = estimate_monthly_cost(0.1, count=2)
-    assert "$146.00" in out  # 0.1 × 730 × 2
-    assert "$73.00" in out  # 대당
-    assert "2대" in out
+    flat = " ".join(out.split())
+    assert "$146.00" in flat  # 0.1 × 730 × 2
+    assert "$73.00" in flat  # 대당
+    assert "× 2 nodes" in flat
 
 
 def test_estimate_default_hours_is_always_on() -> None:
     assert HOURS_PER_MONTH == 730
-    assert "730h/월" in estimate_monthly_cost(0.1)
+    assert "at 730h/month" in " ".join(estimate_monthly_cost(0.1).split())
 
 
 def test_estimate_honours_partial_uptime() -> None:
     out = estimate_monthly_cost(0.1, count=1, hours_per_month=100)
-    assert "$10.00" in out
-    assert "100h/월" in out
+    flat = " ".join(out.split())
+    assert "$10.00" in flat
+    assert "at 100h/month" in flat
 
 
 def test_estimate_carries_the_disclaimer() -> None:
     """이 고지가 답변에 실리는 게 이 도구를 반드시 부르게 하는 이유 중 하나다."""
     out = estimate_monthly_cost(0.1)
-    assert "정가" in out
-    assert "미포함" in out
+    flat = " ".join(out.split())
+    assert "on-demand list price" in flat
+    assert "not included" in flat
 
 
 # --- coverage_text ---

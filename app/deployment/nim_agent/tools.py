@@ -38,7 +38,7 @@ def get_task_detail(task_id: str) -> str:
     """Return the detailed description of the given task id, or a notice if absent."""
     task = get_task(task_id)
     if task is None:
-        return f"'{task_id}'는 카탈로그에 없는 작업입니다. list_tasks로 가능한 작업을 확인하세요."
+        return f"'{task_id}' is not a task in the catalog. Use list_tasks to see what is available."
     return f"[{task.id}] {task.title}\n{task.description}"
 
 
@@ -58,13 +58,13 @@ def record_plan(ctx: RunContextWrapper[SessionState], steps: list[str]) -> str:
     Args:
         steps: the plan steps, in the order you will execute them.
     """
-    print("\n[계획 수립됨]")
+    print("\n[plan recorded]")
     for i, step in enumerate(steps, 1):
         print(f"  {i}. {step}")
     print()
     if isinstance(ctx.context, SessionState):
         ctx.context.plan_steps = list(steps)
-    return f"{len(steps)}단계 계획을 기록했습니다. 이제 계획대로 실행하세요."
+    return f"Recorded a {len(steps)}-step plan. Now execute it as planned."
 
 
 @function_tool
@@ -94,19 +94,19 @@ def web_search(query: str, max_results: int = 5) -> str:
         query: the search terms.
         max_results: how many results to fetch (default 5, max 10).
     """
-    print(f"\n[웹검색] {query!r} (max_results={max_results})")
+    print(f"\n[web search] {query!r} (max_results={max_results})")
     count = max(1, min(max_results, 10))
     try:
         results = DDGS().text(query, max_results=count)
     except Exception as exc:  # noqa: BLE001 - 검색 실패는 에이전트가 읽을 메시지로 되돌린다.
-        return f"웹검색에 실패했습니다: {exc}"
+        return f"Web search failed: {exc}"
 
     if not results:
-        return f"'{query}'에 대한 검색 결과가 없습니다."
+        return f"No search results for '{query}'."
 
     lines = []
     for i, r in enumerate(results, 1):
-        lines.append(f"{i}. {r.get('title', '(제목 없음)')}\n   {r.get('href', '')}\n   {r.get('body', '')}")
+        lines.append(f"{i}. {r.get('title', '(no title)')}\n   {r.get('href', '')}\n   {r.get('body', '')}")
     return "\n\n".join(lines)
 
 

@@ -129,8 +129,12 @@ def test_unstated_artifacts_carry_the_disclosure_in_the_file_itself(bundled) -> 
         if not (keys & unstated):
             continue
         checked += 1
-        note = data.get("_note") or ""
-        assert "재배포" in note or "공정이용" in note, (
+        # 산출물 `_note`는 모델이 보는 면이라 영어로 옮겼다. **고지가 사라지지
+        # 않았는지**가 이 검사의 요점이므로 두 언어를 다 받는다 — 한국어 후보를
+        # 지우면 아직 안 옮긴 산출물의 고지 누락을 못 잡는다.
+        note = " ".join((data.get("_note") or "").split()).lower()
+        assert ("재배포" in note or "공정이용" in note
+                or "redistribution" in note or "fair use" in note), (
             f"{name}은 재배포 허가가 없는 소스에서 왔는데 `_note`에 그 사실이 없다"
         )
     if bundled and unstated:

@@ -69,13 +69,13 @@ async def optional_tumblebug_mcp():
     try:
         await server.connect()
     except Exception as exc:  # noqa: BLE001 - 서버가 없으면 costkb 단독으로 폴백한다.
-        print(f"[MCP 건너뜀] cb-tumblebug 연결 실패({url}): {exc}")
-        print("          → 스펙·가격은 costkb(cost_* 도구)로 동작합니다.")
+        print(f"[MCP skipped] cb-tumblebug connection failed ({url}): {exc}")
+        print("          → specs and prices run on costkb (the cost_* tools).")
         await close_quietly(server)
         yield None
         return
 
-    print(f"[MCP 연결됨] cb-tumblebug ({url})")
+    print(f"[MCP connected] cb-tumblebug ({url})")
     try:
         yield server  # 본문 예외는 가로채지 않고 그대로 전파시킨다.
     finally:

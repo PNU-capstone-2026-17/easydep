@@ -27,14 +27,19 @@ _KIND_BRANCH = {"openapi": 0, "er": 1, "class": 2, "sequence": 3}
 #: 잴 수 없다"는 판정식이다. 이 문장은 그대로 상류(easydep clarify 게이트)의
 #: 되묻기 질문이 된다 — 무엇이 왜 필요한지 없이 되물으면 사용자는 임의로 채운다.
 REQUIRED_WHY = {
-    "provider": "값 조인 전부(비용·성능·번들·벤더 타입 대응)의 축입니다",
-    "region": "단가·용량·탄소 데이터가 리전 코드로 색인되어 있습니다"
-    " (지명이면 리전 해석을 거쳐 코드로)",
-    "monthlyBudgetUSD": "비용이 요구에 부합하는지 판정할 기준값입니다 (USD)",
+    "provider": "it is the axis for every value join"
+    " (cost, performance, bundle, vendor type mapping)",
+    "region": "unit price, capacity, and carbon data are indexed by region code"
+    " (a place name has to be resolved to a code first)",
+    "monthlyBudgetUSD": "it is the yardstick for judging whether cost fits the"
+    " requirement (USD)",
 }
 #: 규모 신호 — 둘 중 하나면 된다. 사이징 판정의 기준이라 필수다.
 SCALE_FIELDS = ("expectedConcurrentUsers", "approxRequestsPerSecond")
-SCALE_WHY = "사이징 판정의 기준입니다 — 없으면 스펙 추천이 전부 임의가 됩니다"
+SCALE_WHY = (
+    "it is the basis for the sizing verdict; without it every spec recommendation"
+    " is arbitrary"
+)
 
 
 @lru_cache(maxsize=1)
@@ -56,24 +61,26 @@ def validate_request(spec: dict) -> list[str]:
     """
     problems: list[str] = []
     if not isinstance(spec, dict):
-        return [f"[스키마] 제약은 객체여야 합니다 (지금 {type(spec).__name__})"]
+        return [f"[schema] the constraint must be an object (got {type(spec).__name__})"]
 
     validator = jsonschema.Draft202012Validator(request_schema())
     for error in validator.iter_errors(spec):
         # 최상위 required·anyOf(규모 신호)는 아래에서 '왜'와 함께 따로 말한다.
         if not error.absolute_path and error.validator in ("required", "anyOf"):
             continue
-        where = "/".join(str(p) for p in error.absolute_path) or "(최상위)"
-        problems.append(f"[스키마] {where}: {error.message[:140]}")
+        where = "/".join(str(p) for p in error.absolute_path) or "(top level)"
+        problems.append(f"[schema] {where}: {error.message[:140]}")
 
     if "schemaVersion" not in spec:
-        problems.append("[필수] schemaVersion 없음 — 계약 버전 표시입니다 (\"1\")")
+        problems.append(
+            "[required] schemaVersion missing — it marks the contract version (\"1\")"
+        )
     for field_name, why in REQUIRED_WHY.items():
         if field_name not in spec:
-            problems.append(f"[필수] {field_name} 없음 — {why}")
+            problems.append(f"[required] {field_name} missing — {why}")
     if not any(f in spec for f in SCALE_FIELDS):
         problems.append(
-            f"[필수] 규모 신호 없음({' 또는 '.join(SCALE_FIELDS)}) — {SCALE_WHY}"
+            f"[required] no scale signal ({' or '.join(SCALE_FIELDS)}) — {SCALE_WHY}"
         )
     return problems
 
@@ -87,7 +94,7 @@ def validate_design(design: dict) -> list[str]:
     problems: list[str] = []
     validator = jsonschema.Draft202012Validator(schema())
     for error in validator.iter_errors(design):
-        where = "/".join(str(p) for p in error.absolute_path) or "(최상위)"
+        where = "/".join(str(p) for p in error.absolute_path) or "(top level)"
         # artifacts가 oneOf라 실패 메시지가 "is not valid under any of the given
         # schemas"로 뭉개진다 — **어느 칸이 왜 틀렸는지가 삼켜진다.** 실측에서
         # ownerComponentId 누락이 그 문구에 묻혀 안 보였고, best_match 휴리스틱은
@@ -104,9 +111,9 @@ def validate_design(design: dict) -> list[str]:
             if best is not None:
                 inner = "/".join(str(p) for p in best.path)
                 spot = f"{where}/{inner}" if inner else where
-                problems.append(f"[스키마] {spot}: {best.message[:140]}")
+                problems.append(f"[schema] {spot}: {best.message[:140]}")
                 continue
-        problems.append(f"[스키마] {where}: {error.message[:140]}")
+        problems.append(f"[schema] {where}: {error.message[:140]}")
     if problems:
         # 모양이 틀렸으면 참조 검증은 소음이 된다 — 스키마 문제부터 보여준다.
         return problems
@@ -114,26 +121,32 @@ def validate_design(design: dict) -> list[str]:
     components = {c["id"] for c in design["components"]}
     externals = {e["id"] for e in design.get("externals") or []}
     if len(components) != len(design["components"]):
-        problems.append("[참조] 컴포넌트 id가 겹친다")
+        problems.append("[reference] component ids collide")
     if components & externals:
-        problems.append(f"[참조] 컴포넌트와 외부 시스템의 id가 겹친다: {sorted(components & externals)}")
+        problems.append(
+            "[reference] a component id and an external system id collide: "
+            f"{sorted(components & externals)}"
+        )
 
     artifact_ids: set[str] = set()
     for artifact in design["artifacts"]:
         aid = artifact["id"]
         if aid in artifact_ids:
-            problems.append(f"[참조] 산출물 id 중복: {aid}")
+            problems.append(f"[reference] duplicate artifact id: {aid}")
         artifact_ids.add(aid)
         kind = artifact["kind"]
 
         if kind == "openapi":
             if artifact["componentId"] not in components:
                 problems.append(
-                    f"[참조] {aid}: componentId '{artifact['componentId']}'가 components에 없다"
+                    f"[reference] {aid}: componentId "
+                    f"'{artifact['componentId']}' is not in components"
                 )
             version = str(artifact["openapi"].get("openapi", ""))
             if not version.startswith("3."):
-                problems.append(f"[참조] {aid}: OpenAPI 3.x가 아니다 (openapi={version!r})")
+                problems.append(
+                    f"[reference] {aid}: not OpenAPI 3.x (openapi={version!r})"
+                )
 
         elif kind == "er":
             names = set()
@@ -141,22 +154,23 @@ def validate_design(design: dict) -> list[str]:
                 names.add(entity["name"])
                 if entity["ownerComponentId"] not in components:
                     problems.append(
-                        f"[참조] {aid}/{entity['name']}: ownerComponentId "
-                        f"'{entity['ownerComponentId']}'가 components에 없다"
+                        f"[reference] {aid}/{entity['name']}: ownerComponentId "
+                        f"'{entity['ownerComponentId']}' is not in components"
                     )
             for relation in artifact.get("relations") or []:
                 for end in ("from", "to"):
                     if relation[end] not in names:
                         problems.append(
-                            f"[참조] {aid}: 관계의 '{relation[end]}'가 entities에 없다"
+                            f"[reference] {aid}: the relation's "
+                            f"'{relation[end]}' is not in entities"
                         )
 
         elif kind == "class":
             for cls in artifact["classes"]:
                 if cls["componentId"] not in components:
                     problems.append(
-                        f"[참조] {aid}/{cls['name']}: componentId "
-                        f"'{cls['componentId']}'가 components에 없다"
+                        f"[reference] {aid}/{cls['name']}: componentId "
+                        f"'{cls['componentId']}' is not in components"
                     )
 
         elif kind == "sequence":
@@ -171,27 +185,27 @@ def validate_design(design: dict) -> list[str]:
                 ]
                 if sum(refs) != 1:
                     problems.append(
-                        f"[참조] {aid}/{pid}: componentId·externalId·actor 중 "
-                        f"**정확히 하나**를 가리켜야 한다 (지금 {sum(refs)}개)"
+                        f"[reference] {aid}/{pid}: must point at **exactly one** of "
+                        f"componentId · externalId · actor (got {sum(refs)})"
                     )
                     continue
                 if participant.get("componentId") is not None \
                         and participant["componentId"] not in components:
                     problems.append(
-                        f"[참조] {aid}/{pid}: componentId "
-                        f"'{participant['componentId']}'가 components에 없다"
+                        f"[reference] {aid}/{pid}: componentId "
+                        f"'{participant['componentId']}' is not in components"
                     )
                 if participant.get("externalId") is not None \
                         and participant["externalId"] not in externals:
                     problems.append(
-                        f"[참조] {aid}/{pid}: externalId "
-                        f"'{participant['externalId']}'가 externals에 없다"
+                        f"[reference] {aid}/{pid}: externalId "
+                        f"'{participant['externalId']}' is not in externals"
                     )
             for i, message in enumerate(artifact["messages"]):
                 for end in ("from", "to"):
                     if message[end] not in participant_ids:
                         problems.append(
-                            f"[참조] {aid}/messages[{i}]: '{message[end]}'가 "
-                            "participants에 없다"
+                            f"[reference] {aid}/messages[{i}]: '{message[end]}' is "
+                            "not in participants"
                         )
     return problems

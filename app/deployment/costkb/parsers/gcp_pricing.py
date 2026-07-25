@@ -162,10 +162,11 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 
     dataset = {
         "_note": (
-            "GCP 스팟·약정 가격(Cyclenerd, Apache-2.0). costkb 미러의 보강이며 "
-            "온디맨드는 tumblebug를 쓴다. 이 값은 다른 스냅샷이라 온디맨드가 "
-            "미러와 어긋난 곳(snapshotMatchesMirror=false)에서는 스팟·약정도 다른 "
-            "가격 세계 기준이다."
+            "GCP spot and commitment pricing (Cyclenerd, Apache-2.0). A supplement "
+            "to the costkb mirror; on-demand comes from tumblebug. These values are "
+            "a different snapshot, so wherever on-demand diverges from the mirror "
+            "(snapshotMatchesMirror=false) spot and commitment are based on a "
+            "different price world too."
         ),
         "_source": [describe_source(path, source.key)],
         "records": records,

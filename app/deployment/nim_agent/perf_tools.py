@@ -42,7 +42,7 @@ def perf_instance_profile(provider: str, spec_name: str) -> str:
             performance).
         spec_name: CSP spec name. e.g. 't3.medium', 'm5.large', 'Standard_D2s_v3'.
     """
-    print(f"\n[성능질의] 프로파일: {provider} {spec_name}")
+    print(f"\n[perf query] profile: {provider} {spec_name}")
     return agent_api.instance_profile(provider, spec_name)
 
 
@@ -61,7 +61,7 @@ def perf_compare(provider: str, spec_names: list[str]) -> str:
         spec_names: CSP spec names to compare (2 or more). e.g. ['m5.large',
             'm6i.large'].
     """
-    print(f"\n[성능질의] 비교: {provider} {spec_names}")
+    print(f"\n[perf query] compare: {provider} {spec_names}")
     return agent_api.compare(provider, spec_names)
 
 
@@ -79,7 +79,7 @@ def perf_specs_by_ebs_baseline(min_mbps: float, limit: int = 10) -> str:
             Mbps.
         limit: Number of specs to return (default 10).
     """
-    print(f"\n[성능질의] EBS baseline >= {min_mbps} Mbps (AWS)")
+    print(f"\n[perf query] EBS baseline >= {min_mbps} Mbps (AWS)")
     return agent_api.specs_meeting_ebs_baseline(min_mbps, limit)
 
 

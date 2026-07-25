@@ -50,7 +50,7 @@ def test_recommend_specs_skips_none_annotation() -> None:
 def test_recommend_specs_without_annotate_is_unchanged() -> None:
     """조인이 옵션이라는 것 — annotate 없이도 기존대로 동작한다."""
     text = cost_api.recommend_specs(vcpu_min=2, mem_min_gib=4, provider="aws", limit=2)
-    assert "추천 후보" in text
+    assert "Recommended candidates (on-demand list price, hourly rate):" in " ".join(text.split())
     assert "⚠" not in text
 
 
@@ -197,7 +197,8 @@ def test_footer_explains_silence_when_built(perf_built) -> None:
     from nim_agent.cost_tools import _perf_footer
 
     footer = _perf_footer([{"provider": "aws", "specName": "c5.large"}])
-    assert footer is not None and "확인됨" in footer
+    assert footer is not None
+    assert "performance-confirmed" in " ".join(footer.split())
 
 
 def test_footer_does_not_call_partial_candidates_confirmed(perf_partial) -> None:
@@ -211,7 +212,8 @@ def test_footer_does_not_call_partial_candidates_confirmed(perf_partial) -> None
         {"provider": "aws", "specName": "c5.large"},
         {"provider": "ibm", "specName": "bx2-2x8"},
     ])
-    assert mixed is not None and "확인한 것이 아닙니다" in mixed
+    assert mixed is not None
+    assert "does not mean we confirmed it" in " ".join(mixed.split())
 
 
 def test_footer_speaks_when_every_candidate_is_partial(perf_partial) -> None:
@@ -221,7 +223,8 @@ def test_footer_speaks_when_every_candidate_is_partial(perf_partial) -> None:
     from nim_agent.cost_tools import _perf_footer
 
     footer = _perf_footer([{"provider": "ibm", "specName": "bx2-2x8"}])
-    assert footer is not None and "확인하지 못했습니다" in footer
+    assert footer is not None
+    assert "**performance was not confirmed.**" in " ".join(footer.split())
 
 
 # --- 3. 전 구간: 번들 모드에서 실제로 경고가 붙는가 (C3의 최종 형태) ---
@@ -237,7 +240,8 @@ def test_bundle_mode_recommendation_carries_warning(perf_built) -> None:
         vcpu_min=2, mem_min_gib=4, provider="aws", limit=4,
         annotate=_perf_annotate, footer=_perf_footer,
     )
-    assert "t3.medium" in text
-    assert "⚠" in text and "크레딧" in text
-    assert "· 성능 정보 없음" in text  # t3.large — 레코드 없음
-    assert "확인됨" in text  # c5.large — 정상
+    flat = " ".join(text.split())
+    assert "t3.medium" in flat
+    assert "⚠" in flat and "크레딧" in flat  # 버스트 note는 산출물(한국어) 그대로다
+    assert "· No performance data" in flat  # t3.large — 레코드 없음
+    assert "performance-confirmed" in flat  # c5.large — 정상

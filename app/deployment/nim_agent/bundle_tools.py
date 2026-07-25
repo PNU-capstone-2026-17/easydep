@@ -32,7 +32,7 @@ def bundle_for_resource(resource_type: str) -> str:
             'azure::Microsoft.Compute/virtualMachines', 'core::vm',
             'aws::AWS::Lambda::Function'.
     """
-    print(f"\n[번들질의] 리소스 군: {resource_type!r}")
+    print(f"\n[bundle query] resource group: {resource_type!r}")
     return agent_api.resource_bundle(resource_type)
 
 
@@ -47,7 +47,7 @@ def bundle_describe(name: str) -> str:
     Args:
         name: Resource group name.
     """
-    print(f"\n[번들질의] 이름 조회: {name!r}")
+    print(f"\n[bundle query] describe by name: {name!r}")
     return agent_api.describe_named_bundle(name)
 
 
@@ -58,7 +58,7 @@ def bundle_search(keyword: str = "") -> str:
     Args:
         keyword: 'web', 'lambda', 'kubernetes', etc.
     """
-    print(f"\n[번들질의] 검색: {keyword!r}")
+    print(f"\n[bundle query] search: {keyword!r}")
     return agent_api.list_bundles(keyword or None)
 
 

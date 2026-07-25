@@ -70,16 +70,21 @@ _SERVICE_TYPE = {
 
 #: 매핑하지 않는 이름과 그 이유. **조용히 빠뜨리지 않는다.**
 _UNMAPPED_REASON = {
-    "fargate": "ECS 서비스·태스크정의·클러스터 중 무엇인지 이름만으로는 갈린다",
-    "dynamodbstreams": "스트림은 테이블의 속성이지 별도 타입이 아니다",
-    "elasticsearch": "OpenSearch로 이름이 바뀌어 어느 쪽을 가리키는지 모호하다",
-    "kibana": "리소스 타입이 아니라 기능이다",
-    "pipes": "EventBridge Pipes — 조합 안에서 역할이 갈린다",
-    "oai": "CloudFront OAI는 배포의 부속이다",
-    "constructs": "패턴이 아니라 팩토리 모음",
-    "apigatewayv2websocket": "REST API와 타입이 달라 대표를 하나로 못 정한다",
-    "route53": "레코드셋인지 호스팅존인지 갈린다",
-    "iotanalytics": "여러 타입의 묶음이다",
+    "fargate": (
+        "the name alone does not say whether this is the ECS service, task "
+        "definition, or cluster"
+    ),
+    "dynamodbstreams": "a stream is a property of the table, not a type of its own",
+    "elasticsearch": "renamed to OpenSearch, so which one it means is ambiguous",
+    "kibana": "a feature, not a resource type",
+    "pipes": "EventBridge Pipes — its role varies across combinations",
+    "oai": "a CloudFront OAI is an attachment of the distribution",
+    "constructs": "a collection of factories, not a pattern",
+    "apigatewayv2websocket": (
+        "a different type from the REST API, so no single representative can be chosen"
+    ),
+    "route53": "record set or hosted zone — it varies",
+    "iotanalytics": "a group of several types",
 }
 
 
@@ -119,7 +124,7 @@ def parse_tarball(tar: Path) -> tuple[BundleSet, Report]:
                 report.unmapped[service] += 1
                 continue
             members.append(
-                Member(f"{PROVIDER}::{type_name}", ALWAYS, f"패턴 이름의 '{service}'")
+                Member(f"{PROVIDER}::{type_name}", ALWAYS, f"'{service}' in the pattern name")
             )
         # 같은 타입이 두 번 나오는 이름이 있다(중복 제거).
         unique = {m.type_id: m for m in members}
@@ -135,11 +140,12 @@ def parse_tarball(tar: Path) -> tuple[BundleSet, Report]:
                 provider=PROVIDER,
                 evidence=EVIDENCE,
                 members=tuple(unique.values()),
-                description=f"AWS Solutions Constructs 패턴 — {' + '.join(services)}",
+                description=f"AWS Solutions Constructs pattern — {' + '.join(services)}",
                 caveat=(
-                    "조합은 AWS가 공식으로 묶은 것이고, **서비스 이름을 리소스 타입으로 "
-                    "옮긴 것은 우리**입니다. 패턴이 실제로 만드는 IAM 역할·로그 그룹 "
-                    "같은 부속은 포함되지 않았습니다."
+                    "AWS officially grouped the combination, and **mapping the "
+                    "service names to resource types is ours**. Attachments the "
+                    "pattern actually creates, such as IAM roles and log groups, "
+                    "are not included."
                 ),
             )
         )
@@ -157,12 +163,14 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": PROVIDER,
             "bundles": len(bundles.bundles),
             "note": (
-                f"AWS Solutions Constructs 패턴 {report.patterns}개 중 {report.kept}개. "
-                "**조합은 AWS가 선언했고 서비스→타입 매핑은 우리가 했다** — 모호한 "
-                f"이름은 매핑하지 않았다({unmapped}). 이유는 파서의 "
-                "`_UNMAPPED_REASON`에 이름별로 적혀 있다. 패턴이 실제로 만드는 IAM "
-                "역할·로그 그룹 같은 부속은 이름에 안 드러나므로 **담기지 않았다** — "
-                "'부속이 없다'가 아니라 '이 소스로는 모른다'로 읽을 것."
+                f"{report.kept} of {report.patterns} AWS Solutions Constructs "
+                "patterns. **AWS declared the combination and the service→type "
+                "mapping is ours** — ambiguous names were left unmapped "
+                f"({unmapped}). The reason is written per name in the parser's "
+                "`_UNMAPPED_REASON`. Attachments the pattern actually creates, "
+                "such as IAM roles and log groups, do not show in the name, so "
+                "they are **not included** — read that as 'this source does not "
+                "tell us', not as 'there are no attachments'."
             ),
         }
     ]

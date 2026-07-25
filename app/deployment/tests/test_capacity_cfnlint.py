@@ -19,6 +19,11 @@ SCHEMAS = {
 }
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def _wheel(tmp_path: Path, payload: dict, name: str = "instancetype_enum.json") -> Path:
     path = tmp_path / "w.whl"
     with zipfile.ZipFile(path, "w") as zf:
@@ -88,7 +93,7 @@ def test_region_decides_the_answer(tmp_path: Path) -> None:
                          context={"Region": "us-east-1"}, output_dir=tmp_path)
     no = agent_api.check("AWS::EC2::Instance", "InstanceType", "p5.48xlarge",
                          context={"Region": "af-south-1"}, output_dir=tmp_path)
-    assert ok.startswith("가능") and no.startswith("불가")
+    assert ok.startswith("allowed:") and no.startswith("not allowed:")
 
 
 def test_without_region_it_counts_where_it_works(tmp_path: Path) -> None:
@@ -106,7 +111,7 @@ def test_without_region_it_counts_where_it_works(tmp_path: Path) -> None:
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.check("AWS::EC2::Instance", "InstanceType", "p5.48xlarge",
                            output_dir=tmp_path)
-    assert "1가지에서 가능" in text
+    assert "**1 allow it**" in flat(text)
     assert "us-east-1" in text and "eu-west-1" in text
 
 
@@ -122,7 +127,7 @@ def test_long_value_lists_are_summarized(tmp_path: Path) -> None:
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.check("AWS::EC2::Instance", "InstanceType", "nope",
                            context={"Region": "us-east-1"}, output_dir=tmp_path)
-    assert "50개 중 하나" in text
+    assert "one of 50" in flat(text)
     assert text.count("t4.micro") == 0 or len(text) < 400, "목록을 통째로 찍으면 안 된다"
 
 

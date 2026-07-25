@@ -27,7 +27,7 @@ def kb_creation_order(resource_type: str, required_only: bool = False) -> str:
         required_only: If True, compute only the dependencies that are required
             for creation.
     """
-    print(f"\n[그래프질의] 선행 체인: {resource_type!r} (required_only={required_only})")
+    print(f"\n[graph query] prerequisite chain: {resource_type!r} (required_only={required_only})")
     return agent_api.creation_order(resource_type, required_only=required_only)
 
 
@@ -39,7 +39,7 @@ def kb_deletion_impact(resource_type: str) -> str:
     Args:
         resource_type: Type name. e.g. 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
     """
-    print(f"\n[그래프질의] 삭제 영향: {resource_type!r}")
+    print(f"\n[graph query] deletion impact: {resource_type!r}")
     return agent_api.deletion_impact(resource_type)
 
 
@@ -51,7 +51,7 @@ def kb_equivalent_types(resource_type: str) -> str:
     Args:
         resource_type: Type name. e.g. 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
     """
-    print(f"\n[그래프질의] 동치 타입: {resource_type!r}")
+    print(f"\n[graph query] equivalent types: {resource_type!r}")
     return agent_api.equivalent_types(resource_type)
 
 
@@ -96,7 +96,7 @@ def kb_describe_type(resource_type: str) -> str:
     Args:
         resource_type: Type name.
     """
-    print(f"\n[그래프질의] 타입 상세: {resource_type!r}")
+    print(f"\n[graph query] type detail: {resource_type!r}")
     return agent_api.describe_type(resource_type) + _capacity_pointer(resource_type)
 
 
@@ -109,7 +109,7 @@ def kb_search_types(keyword: str, provider: str | None = None, limit: int = 20) 
         provider: 'common' | 'aws' | 'azure' | 'gcp'. All of them if unset.
         limit: Maximum number of results to return (default 20).
     """
-    print(f"\n[그래프질의] 타입 검색: {keyword!r} (provider={provider or 'any'})")
+    print(f"\n[graph query] type search: {keyword!r} (provider={provider or 'any'})")
     found = agent_api.search_types(keyword, provider=provider, limit=limit)
     # 여기가 **실제로 부딪히는 막다른 길**이다. describe_type에만 값 안내를 붙였더니
     # 3차 실측에서도 실패했다 — 에이전트는 search_types에서 "타입이 없습니다"를 받고
@@ -146,7 +146,7 @@ def kb_rank_types(
         required_only: If True, count only required dependencies.
     """
     print(
-        f"\n[그래프질의] 타입 순위: by={by}, provider={provider or 'any'}, limit={limit}"
+        f"\n[graph query] type ranking: by={by}, provider={provider or 'any'}, limit={limit}"
     )
     return agent_api.rank_types(
         by, provider=provider, limit=limit, required_only=required_only

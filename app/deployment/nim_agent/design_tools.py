@@ -75,13 +75,13 @@ _COMPUTE_KIND = {
 #: 연결당 공유이므로 컴포넌트마다가 아니라 **계획에 한 벌만** 세운다 — 아니면
 #: 컴포넌트 2개짜리 앱에 VPC가 2개 그려진다.
 _SHARED_LABEL = {
-    "core::vNet": "가상 네트워크",
-    "core::subnet": "서브넷",
-    "core::securityGroup": "보안 그룹",
-    "core::sshKey": "SSH 키",
-    "core::image": "OS 이미지",
-    "core::k8sCluster": "쿠버네티스 클러스터",
-    "core::k8sNodeGroup": "노드 그룹",
+    "core::vNet": "virtual network",
+    "core::subnet": "subnet",
+    "core::securityGroup": "security group",
+    "core::sshKey": "SSH key",
+    "core::image": "OS image",
+    "core::k8sCluster": "Kubernetes cluster",
+    "core::k8sNodeGroup": "node group",
 }
 
 #: engineHint → app:: 개념. 모르는 힌트는 관계형으로 몰지 않고 **미결로 올린다.**
@@ -166,7 +166,8 @@ def _pattern_advisory(query: str) -> Note | None:
         return None
     hit = hits[0]
     return Note(
-        f"참고 지침 '{hit.title}'({hit.path}) — 설계 지침이지 클라우드 사실이 아닙니다",
+        f"Reference guidance '{hit.title}' ({hit.path}) — design guidance, not a "
+        "cloud fact",
         ORIGIN_KB, "pattern-advisory",
     )
 
@@ -204,8 +205,9 @@ def _managed_axes_note(archetype: str, provider: str | None,
         return None  # 미빌드 — 전역 고지("가격 없음")가 그대로 참이다
     if not axes:
         return Note(
-            f"과금 축 수록 없음 — {provider} 관리형 수록분에 이 아키타입·리전이 없습니다"
-            "(무료라는 뜻이 아닙니다)", ORIGIN_KB, "costkb",
+            f"Billing axes: not included — {provider}'s managed pricing has no entry "
+            "for this archetype and region (that does not mean it is free)",
+            ORIGIN_KB, "costkb",
         )
     by_axis: dict[str, list[dict]] = {}
     for record in axes:
@@ -215,16 +217,20 @@ def _managed_axes_note(archetype: str, provider: str | None,
         lo = min(r["unitPriceUSD"] for r in instance)
         hi = max(r["unitPriceUSD"] for r in instance)
         span = f"${lo:.4f}/h" if lo == hi else f"${lo:.4f}~${hi:.4f}/h"
-        parts.append(f"인스턴스-시간 {len(instance)}종 {span}")
+        parts.append(f"instance-hour {len(instance)} kinds {span}")
     if capacity := by_axis.get("capacityRate"):
         parts.append(
-            f"용량-비례 {len(capacity)}종(vCore·RU·GB/월 단가 — 곱할 수량은 사이징 결과)"
+            f"capacity-rate {len(capacity)} kinds (per vCore · RU · GB/month — the "
+            "quantity to multiply by is a sizing result)"
         )
     if usage := by_axis.get("usage"):
-        parts.append(f"사용량 {len(usage)}종(오퍼레이션·검색·실행 등 — 사용량을 알아야 함)")
+        parts.append(
+            f"usage {len(usage)} kinds (operations · searches · executions — you have "
+            "to know the usage)"
+        )
     return Note(
-        f"과금 축({provider} {region}, 단가 한 칸이 아님): " + " · ".join(parts)
-        + " — 합계는 없습니다", ORIGIN_KB, "costkb",
+        f"Billing axes ({provider} {region}, not a single unit price): "
+        + " · ".join(parts) + " — no total is produced", ORIGIN_KB, "costkb",
     )
 
 
@@ -234,7 +240,7 @@ def _compute_note(spec: dict) -> str:
         f"{spec.get('provider')} {spec.get('region')} {spec.get('specName')} "
         f"{spec.get('vCPU')} vCPU / {spec.get('memGiB')} GiB"
     )
-    return body + (f" · ${hourly:.4f}/h" if hourly else " · 단가 미상")
+    return body + (f" · ${hourly:.4f}/h" if hourly else " · unit price unknown")
 
 
 @dataclass(frozen=True)
@@ -327,7 +333,7 @@ def _add_computes(
             origin = ORIGIN_DESIGNER
             kind = hint["compute"]
             notes.append(Note(
-                f"설계자가 {kind}로 지정"
+                f"The designer specified {kind}"
                 + (f" — {hint['reason']}" if hint.get("reason") else ""),
                 ORIGIN_DESIGNER, "deployHint",
             ))
@@ -335,31 +341,33 @@ def _add_computes(
             origin = ORIGIN_INFERRED
             kind = "vm"
             if cid in s.has_api:
-                notes.append(Note("OpenAPI 산출물이 있어 HTTP 서비스로 봄",
-                                  ORIGIN_INFERRED, "openapi"))
+                notes.append(Note("An OpenAPI artifact exists, so we read it as an "
+                                  "HTTP service", ORIGIN_INFERRED, "openapi"))
             elif cid in s.async_targets:
-                notes.append(Note("비동기 메시지의 수신자라 워커로 봄",
-                                  ORIGIN_INFERRED, "sequence"))
+                notes.append(Note("It receives async messages, so we read it as a "
+                                  "worker", ORIGIN_INFERRED, "sequence"))
             else:
-                notes.append(Note("배포 형태를 정할 신호가 설계에 없음",
-                                  ORIGIN_INFERRED, ""))
+                notes.append(Note("The design carries no signal for deciding the "
+                                  "deployment form", ORIGIN_INFERRED, ""))
                 plan.unresolved.append(
-                    f"{cid}: OpenAPI도 비동기 수신도 없어 배포 형태를 정하지 못했습니다"
+                    f"{cid}: no OpenAPI and no async reception, so we could not decide "
+                    "the deployment form"
                 )
             notes.append(Note(
-                f"{_VM_ASSUMED} — 설계가 지정하지 않았습니다"
-                "(deployHint로 바꿀 수 있습니다)", ORIGIN_INFERRED, "",
+                f"{_VM_ASSUMED} — the design did not specify one"
+                " (deployHint can change it)", ORIGIN_INFERRED, "",
             ))
         kind_of[cid] = kind
         if cid in s.exposed:
-            notes.append(Note("시퀀스에서 actor가 직접 호출 — 공개 노출",
-                              ORIGIN_DESIGN, "sequence"))
+            notes.append(Note("An actor calls it directly in the sequence — publicly "
+                              "exposed", ORIGIN_DESIGN, "sequence"))
             if kind == "kubernetes":
                 # k8s의 노출은 클러스터 안(Service/Ingress)에서 일어난다 — 그 층의
                 # 대응 축이 없으므로 NLB를 억지로 세우지 않고 사실만 적는다.
                 notes.append(Note(
-                    "공개 노출은 클러스터의 Service/Ingress 층에서 처리됩니다 — "
-                    "이 지식베이스에 그 층의 대응이 없어 구성을 답하지 않습니다",
+                    "Public exposure is handled in the cluster's Service/Ingress "
+                    "layer — this knowledge base has no mapping for that layer, so we "
+                    "do not answer how it is laid out",
                     ORIGIN_INFERRED, "",
                 ))
             if kind == "vm":
@@ -367,11 +375,13 @@ def _add_computes(
                 # (targetGroup.subGroupId), 동적 생성이 subGroupSize를 받는다.
                 # **대수는 사이징이라 우리가 정하지 못한다** — 그 정직함이 이 노트의 절반이다.
                 notes.append(Note(
-                    "수평 확장 단위입니다 — 실행 경로 스펙이 NLB 대상을 VM "
-                    "서브그룹으로 참조하고(targetGroup.subGroupId) 동적 생성이 "
-                    "서브그룹 크기(subGroupSize)를 받습니다. **몇 대가 필요한지는 "
-                    "이 지식베이스가 정하지 못합니다** — 부하 테스트·사이징 "
-                    "참조점으로 정하세요. 값이 붙는 경우 단가·월 하한은 1대 기준입니다.",
+                    "This is the horizontal scaling unit — the execution-path spec "
+                    "references the NLB target as a VM subgroup "
+                    "(targetGroup.subGroupId) and dynamic creation takes the subgroup "
+                    "size (subGroupSize). **How many instances you need is not "
+                    "something this knowledge base can decide** — settle it with a "
+                    "load test or a sizing reference point. Where a value is attached, "
+                    "the unit price and the monthly floor are for one instance.",
                     ORIGIN_KB, "graphkb",
                 ))
 
@@ -381,8 +391,8 @@ def _add_computes(
         if spec["concept"]:
             types = _svcmap_types(spec["concept"], provider)
             notes.append(Note(
-                "서버리스는 호출당 과금이라 시간당 단가가 없습니다 — "
-                "값을 붙이지 않습니다", ORIGIN_KB, "costkb",
+                "Serverless is billed per invocation, so it has no hourly rate — "
+                "we attach no value", ORIGIN_KB, "costkb",
             ))
             if axes_note := _managed_axes_note(spec["concept"], provider, region):
                 notes.append(axes_note)
@@ -398,7 +408,7 @@ def _add_computes(
             ))
             if not types:
                 plan.unresolved.append(
-                    f"{cid}: 서버리스 함수에 대응하는 타입을 찾지 못했습니다"
+                    f"{cid}: found no type matching a serverless function"
                     + (f" (provider={provider})" if provider else "")
                 )
             continue
@@ -407,7 +417,8 @@ def _add_computes(
             # **파드가 도는 곳은 노드 그룹이다.** 컴포넌트마다 VM 단가를 붙이면
             # 같은 노드에 여러 파드가 올라가는 구조가 지워지고, 합치면 중복이 된다.
             notes.append(Note(
-                "파드로 배포됩니다 — 값은 이 컴포넌트가 아니라 노드 그룹에 붙습니다",
+                "It deploys as pods — the value attaches to the node group, not to "
+                "this component",
                 ORIGIN_INFERRED, "",
             ))
         plan.nodes.append(PlanNode(
@@ -431,8 +442,8 @@ def _add_managed_services(
         types = _pick_flavor(_svcmap_types(concept, provider), s.engine_of.get(node_id))
         notes = [why, *extra]
         if not provider:
-            notes.append(Note("프로바이더 미지정이라 특정 클라우드로 좁히지 못함",
-                              ORIGIN_INFERRED, "requirements"))
+            notes.append(Note("No provider specified, so we could not narrow it to "
+                              "one cloud", ORIGIN_INFERRED, "requirements"))
         if axes_note := _managed_axes_note(concept, provider, region):
             notes.append(axes_note)
         chosen, candidates = "", ()
@@ -442,12 +453,13 @@ def _add_managed_services(
         elif types:
             candidates = tuple(types)
             notes.append(Note(
-                f"svcmap: app::{concept}에 후보 {len(types)}개 — 하나를 고르지 않음",
+                f"svcmap: app::{concept} has {len(types)} candidates — we do not "
+                "pick one",
                 ORIGIN_KB, "svcmap",
             ))
         else:
             plan.unresolved.append(
-                f"{node_id}: app::{concept}에 대응하는 타입을 찾지 못했습니다"
+                f"{node_id}: found no type matching app::{concept}"
                 + (f" (provider={provider})" if provider else "")
             )
         plan.nodes.append(PlanNode(
@@ -468,50 +480,56 @@ def _add_managed_services(
             concept = hint_concept
             node_origin = ORIGIN_DESIGNER
             extra = (Note(
-                f"설계자가 {hint_concept}로 지정 (archetypeHint)"
-                + (f" — engineHint '{engine}'의 축을 설계자가 가른 것" if engine else ""),
+                f"The designer specified {hint_concept} (archetypeHint)"
+                + (f" — the designer settled which axis engineHint '{engine}' is on"
+                   if engine else ""),
                 ORIGIN_DESIGNER, "archetypeHint",
             ),)
         else:
             concept = _ENGINE_CONCEPT.get((engine or "").lower(), "relationalDatabase")
             if engine and (engine or "").lower() not in _ENGINE_CONCEPT:
                 plan.unresolved.append(
-                    f"{cid}: engineHint '{engine}'를 아는 개념으로 옮기지 못해 "
-                    "관계형으로 가정했습니다"
+                    f"{cid}: could not map engineHint '{engine}' to a concept we know, "
+                    "so we assumed a relational database"
                 )
                 # 분류가 애매한 바로 그 자리에만 산문 자문을 단다 — 지침이지 사실이
                 # 아니라서 분류·미결 판정은 그대로 둔다.
                 if advisory := _pattern_advisory(engine):
                     extra = (advisory,)
         why = Note(
-            f"엔티티 {len(entities)}개를 소유({', '.join(entities[:3])}) → 영속 저장소 필요",
+            f"Owns {len(entities)} entities ({', '.join(entities[:3])}) → needs "
+            "persistent storage",
             ORIGIN_INFERRED, "er",
         )
-        add_managed(f"{cid}-db", f"{components[cid]['name']} 저장소", concept, why,
+        add_managed(f"{cid}-db", f"{components[cid]['name']} storage", concept, why,
                     extra, origin=node_origin)
-        plan.edges.append(PlanEdge(cid, f"{cid}-db", "읽기/쓰기", ORIGIN_INFERRED))
+        plan.edges.append(PlanEdge(cid, f"{cid}-db", "read/write", ORIGIN_INFERRED))
 
     if s.any_async:
         add_managed(
-            "message-queue", "메시지 큐", "messageQueue",
-            Note("시퀀스에 비동기 메시지가 있어 큐가 필요하다고 봄",
+            "message-queue", "message queue", "messageQueue",
+            Note("The sequence has async messages, so we read it as needing a queue",
                  ORIGIN_INFERRED, "sequence"),
         )
     for cid in sorted(s.needs_secret):
-        plan.edges.append(PlanEdge(cid, "secret-store", "자격 증명 조회", ORIGIN_INFERRED))
+        plan.edges.append(
+            PlanEdge(cid, "secret-store", "credential lookup", ORIGIN_INFERRED)
+        )
     if s.needs_secret:
         add_managed(
-            "secret-store", "비밀 저장소", "secretStore",
-            Note("OpenAPI에 securitySchemes가 있어 자격 증명 보관이 필요하다고 봄",
-                 ORIGIN_INFERRED, "openapi"),
+            "secret-store", "secret store", "secretStore",
+            Note("OpenAPI has securitySchemes, so we read it as needing credential "
+                 "storage", ORIGIN_INFERRED, "openapi"),
         )
     for cid in sorted(s.uploads):
         add_managed(
-            f"{cid}-files", f"{components[cid]['name']} 파일 저장소", "objectStorage",
-            Note("OpenAPI에 파일 업로드 본문(multipart/octet-stream)이 있어 "
-                 "객체 스토리지가 필요하다고 봄", ORIGIN_INFERRED, "openapi"),
+            f"{cid}-files", f"{components[cid]['name']} file storage", "objectStorage",
+            Note("OpenAPI has a file-upload body (multipart/octet-stream), so we read "
+                 "it as needing object storage", ORIGIN_INFERRED, "openapi"),
         )
-        plan.edges.append(PlanEdge(cid, f"{cid}-files", "파일 저장/조회", ORIGIN_INFERRED))
+        plan.edges.append(
+            PlanEdge(cid, f"{cid}-files", "store/fetch files", ORIGIN_INFERRED)
+        )
 
 
 def _wire_edges(
@@ -534,8 +552,8 @@ def _wire_edges(
     for cid in sorted(s.exposed):
         if "end-user" not in known:
             plan.nodes.append(PlanNode(
-                id="end-user", label="사용자", role="actor", origin=ORIGIN_DESIGN,
-                notes=(Note("시퀀스의 actor", ORIGIN_DESIGN, "sequence"),),
+                id="end-user", label="End user", role="actor", origin=ORIGIN_DESIGN,
+                notes=(Note("An actor in the sequence", ORIGIN_DESIGN, "sequence"),),
             ))
             known.add("end-user")
         # **공개 노출된 VM 앞에는 진입점(로드밸런서)을 둔다.** 설계가 그린 것은
@@ -546,12 +564,13 @@ def _wire_edges(
         if kind_of.get(cid) == "vm":
             lb_id = f"{cid}-lb"
             lb_notes = [Note(
-                "actor가 직접 호출하는 공개 서비스라 진입점(로드밸런서)을 앞에 "
-                "둡니다 — 설계가 지정한 것이 아니라 우리 권고입니다",
+                "An actor calls this public service directly, so we put an entry "
+                "point (load balancer) in front — this is our recommendation, not "
+                "something the design specified",
                 ORIGIN_INFERRED, "sequence",
             ), Note(
-                "실행 경로(cb-tumblebug)의 NLB가 대상으로 VM을 참조합니다 "
-                "(스펙에 명시)", ORIGIN_KB, "graphkb",
+                "The execution path's (cb-tumblebug) NLB references VMs as its target "
+                "(stated in the spec)", ORIGIN_KB, "graphkb",
             )]
             if provider:
                 # LB 과금 축 — azure는 원본이 리전 무관(Global)으로 공표한다
@@ -566,37 +585,39 @@ def _wire_edges(
                     lb_notes.append(axes_note)
                     if provider == "azure":
                         lb_notes.append(Note(
-                            "위 LB 단가는 원본이 리전 무관(Global)으로 공표한 값입니다",
+                            "The LB unit price above is a value the source publishes "
+                            "as region-independent (Global)",
                             ORIGIN_KB, "costkb",
                         ))
                 else:
                     lb_notes.append(Note(
-                        "로드밸런서 가격은 이 데이터셋에 없어 값이 붙지 않습니다",
-                        ORIGIN_KB, "costkb",
+                        "Load balancer prices are not in this dataset, so no value is "
+                        "attached", ORIGIN_KB, "costkb",
                     ))
             type_id, hedged = _vendor_of("core::nlb", provider)
             if type_id:
                 lb_notes.append(Note(
                     f"core::nlb → {type_id}"
-                    + (" (대응은 짐작·검수됨 — cb-spider 드라이버를 읽어 사람이 맞춘 것)"
+                    + (" (the mapping is a guess (reviewed) — a person matched it by "
+                       "reading the cb-spider driver)"
                        if hedged else ""),
                     ORIGIN_KB, "mapping-graph",
                 ))
             elif provider:
                 plan.unresolved.append(
-                    f"{lb_id}: {provider}에서 core::nlb에 해당하는 타입을 찾지 못했습니다"
+                    f"{lb_id}: found no type for core::nlb on {provider}"
                 )
             plan.nodes.append(PlanNode(
-                id=lb_id, label=f"{components[cid]['name']} 로드밸런서",
+                id=lb_id, label=f"{components[cid]['name']} load balancer",
                 role="ingress", origin=ORIGIN_INFERRED, type_id=type_id,
                 notes=tuple(lb_notes),
             ))
-            plan.edges.append(PlanEdge("end-user", lb_id, "요청", ORIGIN_INFERRED))
-            plan.edges.append(PlanEdge(lb_id, cid, "요청 전달", ORIGIN_INFERRED))
+            plan.edges.append(PlanEdge("end-user", lb_id, "request", ORIGIN_INFERRED))
+            plan.edges.append(PlanEdge(lb_id, cid, "forward request", ORIGIN_INFERRED))
         else:
             # k8s(Service/Ingress가 클러스터 안)·서버리스(플랫폼 엔드포인트)는
             # NLB 대상이 아니다 — 설계가 말한 직접 호출을 그대로 그린다.
-            plan.edges.append(PlanEdge("end-user", cid, "요청", ORIGIN_DESIGN))
+            plan.edges.append(PlanEdge("end-user", cid, "request", ORIGIN_DESIGN))
 
 
 def _method_comparison_notes(
@@ -642,38 +663,54 @@ def _method_comparison_notes(
     burst = False
     if spec:
         vm_parts.append(
-            f"최저가 {spec['specName']} ${spec['hourlyUSD']:.4f}/h (1대 기준)"
-            if spec.get("hourlyUSD") else f"최저가 {spec['specName']} (단가 미상)"
+            f"cheapest {spec['specName']} ${spec['hourlyUSD']:.4f}/h (one instance)"
+            if spec.get("hourlyUSD")
+            else f"cheapest {spec['specName']} (unit price unknown)"
         )
-        burst = "버스트" in (_perf_note(spec).text or "")
+        # perfkb 노트 원문은 데이터셋에서 온다. 영어로 다시 빌드했으므로 한 표기만 본다.
+        perf_text = _perf_note(spec).text or ""
+        burst = "burst" in perf_text.lower()
         if steady and burst:
-            conflicts["vm"].append("상시 부하인데 최저가 스펙이 버스트형 — 고정 성능 스펙으로 재검토 필요")
+            conflicts["vm"].append(
+                "sustained load but the cheapest spec is burstable — review with a "
+                "fixed-performance spec"
+            )
     else:
-        holds["vm"].append("이 조건의 스펙을 찾지 못해 값 판정 불가")
+        holds["vm"].append("found no spec for these conditions, so no value verdict")
 
     # --- k8s (같은 스펙 경제 — 값은 노드 그룹에 붙는다) ---
     k8s_parts: list[str] = []
     for rule in rules_of(MINIMUM, "k8s-node"):
-        k8s_parts.append(f"노드 최소 {rule.metric} {rule.value}{rule.unit or ''} (도구 요구)")
+        k8s_parts.append(
+            f"node minimum {rule.metric} {rule.value}{rule.unit or ''}"
+            " (required by the tooling)"
+        )
     for rule in rules_of(REQUIRED_COUNT, provider):
         if rule.metric == "requiredSubnetCount":
-            k8s_parts.append(f"서브넷 {rule.value}개 필요")
-    k8s_parts.append("값은 컴포넌트가 아니라 노드 그룹 기준")
+            k8s_parts.append(f"{rule.value} subnets required")
+    k8s_parts.append("the value is per node group, not per component")
     if steady and burst:
-        conflicts["kubernetes"].append("노드도 같은 스펙 경제라 버스트 상충이 동일")
+        conflicts["kubernetes"].append(
+            "nodes run on the same spec economy, so the burst conflict is identical"
+        )
 
     # --- 서버리스 ---
-    sls_parts: list[str] = ["시간당 단가 없음(호출·사용량 과금)"]
+    sls_parts: list[str] = ["no hourly rate (billed per invocation and usage)"]
     sls_types = _svcmap_types("serverlessFunction", provider)
     if not sls_types:
-        conflicts["serverless"].append(f"{provider}에 대응 타입이 수록돼 있지 않음")
+        conflicts["serverless"].append(
+            f"no matching type is included for {provider}"
+        )
     if stateless is False:
-        conflicts["serverless"].append("stateless=false — 인스턴스에 상태를 두는 앱과 상충 가능성(우리 추론)")
+        conflicts["serverless"].append(
+            "stateless=false — possible conflict with an app that keeps state on the "
+            "instance (we inferred)"
+        )
     elif stateless is None:
-        holds["serverless"].append("stateless 미확인 — 적합 판정 보류")
+        holds["serverless"].append("stateless unconfirmed — fit verdict held")
 
     def _fmt(name: str, parts: list[str], key: str) -> str:
-        line = f"  {name}: " + (" · ".join(parts) if parts else "판정 축 없음")
+        line = f"  {name}: " + (" · ".join(parts) if parts else "no axis to judge on")
         for c in conflicts[key]:
             line += f" · ✗ {c}"
         for h in holds[key]:
@@ -681,10 +718,11 @@ def _method_comparison_notes(
         return line
 
     body = "\n".join([
-        f"컴퓨트 방식 비교 판정 — deployHint 없는 컴포넌트 {unhinted}개 (현재 VM 가정):",
+        f"Compute method comparison — {unhinted} components with no deployHint "
+        "(currently assumed VM):",
         _fmt("VM", vm_parts, "vm"),
         _fmt("k8s", k8s_parts, "kubernetes"),
-        _fmt("서버리스", sls_parts, "serverless"),
+        _fmt("Serverless", sls_parts, "serverless"),
     ])
     notes = [Note(body, ORIGIN_KB, "costkb·perfkb·sizingkb·svcmap")]
 
@@ -694,31 +732,34 @@ def _method_comparison_notes(
     label = _METHOD_LABEL
     if len(clean) == 1 and len(conflicted) == 2:
         notes.append(Note(
-            f"권고: {label[clean[0]]} — 잰 축에서 유일하게 상충이 없습니다. "
-            "**우리 권고이지 검증된 사실이 아니며**, 잰 축 밖의 입력(팀 역량·"
-            "지연 요건·운영 모델)은 이 판정에 없습니다. deployHint로 확정하세요.",
+            f"Recommendation: {label[clean[0]]} — on the axes we measured it is the "
+            "only one with no conflict. **This is our recommendation, not a verified "
+            "fact**, and inputs outside the measured axes (team skills, latency "
+            "requirements, operating model) are not in this verdict. Fix it with "
+            "deployHint.",
             ORIGIN_INFERRED, "method-comparison",
         ))
         return notes, clean[0]
     else:
         survivors = ", ".join(label[m] for m in ("vm", "kubernetes", "serverless")
-                              if not conflicts[m]) or "없음"
+                              if not conflicts[m]) or "none"
         notes.append(Note(
-            f"권고 없음 — 상충 없는 방식: {survivors}. 잰 축만으로 하나를 "
-            "고를 근거가 없어 고르지 않습니다(임의 선택이 이 저장소가 막아 온 "
-            "실패). 결정 입력(팀 역량·지연 요건 등)은 이 판정 밖입니다 — "
-            "deployHint로 지정하면 그대로 따릅니다.",
+            f"No recommendation — methods with no conflict: {survivors}. The measured "
+            "axes alone give no ground for picking one, so we do not pick (an "
+            "arbitrary pick is the failure this repository guards against). The "
+            "deciding inputs (team skills, latency requirements, and the like) are "
+            "outside this verdict — specify one with deployHint and we follow it.",
             ORIGIN_INFERRED, "method-comparison",
         ))
     return notes, None
 
 
 #: 컴퓨트 방식의 사람 이름. 비교 판정과 가정 뒤집기가 **같은 말을 써야** 한다.
-_METHOD_LABEL = {"vm": "VM", "kubernetes": "k8s", "serverless": "서버리스"}
+_METHOD_LABEL = {"vm": "VM", "kubernetes": "k8s", "serverless": "serverless"}
 
 #: 컴퓨트 방식 가정을 적는 노트의 머리말. 이 문장을 고치면 `_flag_assumption_against`가
 #: 붙을 자리를 잃으므로 두 곳을 같이 고쳐야 한다(테스트가 고정한다).
-_VM_ASSUMED = "컴퓨트 방식은 VM으로 가정했습니다"
+_VM_ASSUMED = "We assumed VM as the compute method"
 
 
 def _flag_assumption_against(plan: DeploymentPlan, recommended: str) -> None:
@@ -739,9 +780,10 @@ def _flag_assumption_against(plan: DeploymentPlan, recommended: str) -> None:
             amended.append(note)
             if note.text.startswith(_VM_ASSUMED):
                 amended.append(Note(
-                    "**이 계획은 VM 가정 위에 세워졌지만, 아래 비교 판정의 권고는 "
-                    f"{_METHOD_LABEL[recommended]}입니다** — 아래 값과 다이어그램은 "
-                    "VM 기준이니 그대로 확정하지 마세요",
+                    "**This plan is built on the VM assumption, but the comparison "
+                    f"verdict below recommends {_METHOD_LABEL[recommended]}** — the "
+                    "values and the diagram below are on a VM basis, so do not fix "
+                    "them as they stand",
                     ORIGIN_INFERRED, "method-comparison",
                 ))
         if len(amended) != len(node.notes):
@@ -761,16 +803,18 @@ def _global_notices(
         display = name_of(region, provider=provider)
         if display:
             plan.notes.append(Note(
-                f"레지던시 요구({requirements['dataResidency']}) 대조 자료 — "
-                f"{provider} {region}의 원본 표시 이름: '{display}'. 국가 판정은 "
-                "하지 않습니다(표시 이름은 원본 표기이지 판정 소스가 아닙니다)",
+                f"Residency requirement ({requirements['dataResidency']}), material "
+                f"to compare against — the original display name of {provider} "
+                f"{region}: '{display}'. We do not judge the country (a display name "
+                "is the source's wording, not a source for a verdict)",
                 ORIGIN_KB, "envkb",
             ))
         else:
             plan.notes.append(Note(
-                f"레지던시 요구({requirements['dataResidency']}) — {provider} "
-                f"{region}의 표시 이름이 리전 데이터셋에 없어 대조 자료를 싣지 "
-                "못했습니다", ORIGIN_KB, "envkb",
+                f"Residency requirement ({requirements['dataResidency']}) — the "
+                f"display name for {provider} {region} is not in the region dataset, "
+                "so we could not include material to compare against",
+                ORIGIN_KB, "envkb",
             ))
 
     # 이그레스 — 노출(트래픽이 밖으로 나가는 신호)이 있을 때만 알린다. 전부
@@ -781,44 +825,52 @@ def _global_notices(
 
         egress_axes = cost_dataset.managed_axes("networkEgress", region)
         if egress_axes:
+            # `meter`는 데이터셋 값이다. 영어화로 `월 0~1TB 구간` → `0-1TB/month
+            # band`가 되면서 이 리터럴이 조용히 아무것도 안 맞게 됐다 — 대표 단가가
+            # 빠진 채 축 개수만 남는다. 실패가 **조용하다**는 것이 위험한 지점이라
+            # 두 표기를 다 받는 대신 새 표기 하나로 고정하고 테스트로 묶는다.
             base = next(
                 (r for r in egress_axes
-                 if r["sku"] == "worldwide" and "0~1TB" in r["meter"]),
+                 if r["sku"] == "worldwide" and "0-1TB" in r["meter"]),
                 None,
             )
             head = (
-                f"기본(전 세계) {base['meter']} ${base['unitPriceUSD']}/GB · "
+                f"default (worldwide) {base['meter']} ${base['unitPriceUSD']}/GB · "
                 if base else ""
             )
             plan.notes.append(Note(
-                "인터넷 이그레스는 GB당 과금입니다(사용량형 — 트래픽을 알아야 "
-                f"하며, 곱하지 않습니다). {region} 기준 {head}경로·목적지·구간별 "
-                f"축 {len(egress_axes)}개", ORIGIN_KB, "costkb",
+                "Internet egress is billed per GB (usage-based — you have to know the "
+                f"traffic, and we do not multiply it out). For {region}: {head}"
+                f"{len(egress_axes)} axes by path, destination, and tier",
+                ORIGIN_KB, "costkb",
             ))
 
     # 관리형 가격 고지 — azure 수록분이 붙었으면 "없다"는 고지가 거짓이 된다.
     if any(
-        note.source == "costkb" and "과금 축" in note.text
+        note.source == "costkb" and "Billing axes" in note.text
         for node in plan.nodes for note in node.notes
     ):
         plan.notes.append(Note(
-            "관리형 서비스는 값이 한 칸이 아니라 **과금 축 목록**으로 붙습니다"
-            "(수록: azure 6종·gcp 객체 스토리지 — 인스턴스-시간형만 시간당 단가가 "
-            "성립합니다). **합계를 내지 않습니다** — 용량·사용량 축의 수량을 "
-            "모르는 채로 더하면 실제보다 낮아집니다.",
+            "Managed services carry not a single value but a **list of billing axes** "
+            "(included: 6 azure kinds, gcp object storage — only the instance-hour "
+            "kind yields an hourly rate). **No total is produced** — adding them up "
+            "without knowing the quantities on the capacity and usage axes comes out "
+            "lower than reality.",
             ORIGIN_KB, "costkb",
         ))
     else:
         text = (
-            "관리형 서비스 가격은 이 데이터셋에 없어 값이 붙지 않습니다. "
-            "**합계를 내지 않습니다** — 값 없는 것을 0으로 두면 실제보다 낮아집니다."
+            "Managed service prices are not in this dataset, so no value is attached. "
+            "**No total is produced** — treating what has no value as zero comes out "
+            "lower than reality."
         )
         if provider == "aws":
             # 없는 이유가 다르다 — 소스 부재가 아니라 재배포 금지다. 열 수 있는
             # 길(로컬 빌드)을 안내한다(azure-discount의 명령 안내 선례).
             text += (
-                " aws 관리형 가격은 재배포가 금지된 소스라 저장소에 없습니다 — "
-                "`python -m costkb build-aws-managed`로 로컬 빌드하면 붙습니다."
+                " aws managed prices come from a source that forbids redistribution, "
+                "so they are not in the repository — build them locally with "
+                "`python -m costkb build-aws-managed` and they attach."
             )
         plan.notes.append(Note(text, ORIGIN_KB, "costkb"))
 
@@ -832,8 +884,8 @@ def compose(design: dict) -> DeploymentPlan:
     바꾸면 안 된다."""
     problems = validate_design(design)
     if problems:
-        plan = DeploymentPlan(name=design.get("name") or "(이름 없음)")
-        plan.unresolved = [f"입력 계약 위반: {p}" for p in problems]
+        plan = DeploymentPlan(name=design.get("name") or "(no name)")
+        plan.unresolved = [f"input contract violation: {p}" for p in problems]
         return plan
 
     requirements = design.get("requirements") or {}
@@ -850,7 +902,8 @@ def compose(design: dict) -> DeploymentPlan:
         plan.nodes.append(PlanNode(
             id=external["id"], label=external["name"], role="external",
             origin=ORIGIN_DESIGN,
-            notes=(Note("설계가 외부 시스템으로 선언", ORIGIN_DESIGN, "externals"),),
+            notes=(Note("The design declares it as an external system",
+                        ORIGIN_DESIGN, "externals"),),
         ))
 
     _add_managed_services(plan, components, s, provider, region)
@@ -861,7 +914,8 @@ def compose(design: dict) -> DeploymentPlan:
         _attach_values(plan, provider, region, requirements, priced)
     else:
         plan.notes.append(Note(
-            "프로바이더가 없어 단가·리전 조인을 하지 않았습니다 — 임의로 고르지 않습니다",
+            "No provider, so we did not join unit prices or regions — we do not pick "
+            "one arbitrarily",
             ORIGIN_KB, "requirements",
         ))
 
@@ -904,7 +958,9 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
     for anchor in anchors:
         bundle = default_bundle_for(anchor)
         if bundle is None:
-            plan.unresolved.append(f"{anchor}: 함께 필요한 리소스 정보를 찾지 못했습니다")
+            plan.unresolved.append(
+                f"{anchor}: found no information on what has to come with it"
+            )
             continue
         for member in bundle.members:
             core_id = member.type_id
@@ -927,8 +983,9 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
                 # 이름 붙은 템플릿의 대수는 **그 템플릿의 것**이지 이 앱의 것이 아니다
                 # (k8scluster-across는 멀티클라우드 데모라 클러스터가 8개다).
                 notes.append(Note(
-                    f"위 개수({member.count})는 '{bundle.name}' 템플릿의 값이며 "
-                    "이 앱에 필요한 수가 아닙니다", ORIGIN_KB, "bundlekb",
+                    f"The count above ({member.count}) is the value in the "
+                    f"'{bundle.name}' template, not the number this app needs",
+                    ORIGIN_KB, "bundlekb",
                 ))
             if bundle.caveat:
                 notes.append(Note(bundle.caveat, ORIGIN_KB, "bundlekb"))
@@ -936,13 +993,14 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
             if type_id:
                 notes.append(Note(
                     f"{core_id} → {type_id}"
-                    + (" (대응은 짐작·검수됨 — cb-spider 드라이버를 읽어 사람이 맞춘 것)"
+                    + (" (the mapping is a guess (reviewed) — a person matched it by "
+                       "reading the cb-spider driver)"
                        if hedged else ""),
                     ORIGIN_KB, "mapping-graph",
                 ))
             elif provider:
                 plan.unresolved.append(
-                    f"{node_id}: {provider}에서 {core_id}에 해당하는 타입을 찾지 못했습니다"
+                    f"{node_id}: found no type for {core_id} on {provider}"
                 )
             if core_id == "core::subnet":
                 notes.extend(_subnet_notes(provider, requirements))
@@ -961,7 +1019,8 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
 def _add_image_note(plan: DeploymentPlan, provider: str | None,
                     requirements: dict, priced: set[str]) -> None:
     """OS 이미지는 **값**이라 노드가 아니라 컴퓨트의 노트로 붙인다."""
-    text = "요청에 이미지 ID를 줘야 합니다 — 설계 산출물에는 없는 정보입니다"
+    text = ("You have to give an image ID in the request — the design artifact does "
+            "not carry that")
     origin, source = ORIGIN_KB, "bundlekb"
     if provider:
         from envkb.images import describe
@@ -972,7 +1031,8 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
             "",
         )
         if first:
-            text = f"OS 이미지를 골라야 합니다. 이 리전의 기본 이미지 예: {first[1:].strip()}"
+            text = ("You have to pick an OS image. An example basic image in this "
+                    f"region: {first[1:].strip()}")
             source = "basic-images"
     plan.nodes[:] = [
         node if node.id not in priced
@@ -989,8 +1049,8 @@ def _node_group_notes() -> list[Note]:
     notes = []
     for rule in rules_of(MINIMUM, "k8s-node"):
         notes.append(Note(
-            f"노드 최소 {rule.metric} {rule.value}{rule.unit or ''} "
-            "(cb-tumblebug이 요구하는 값이며 쿠버네티스가 정한 값이 아닙니다)",
+            f"node minimum {rule.metric} {rule.value}{rule.unit or ''} "
+            "(a value cb-tumblebug requires, not one Kubernetes sets)",
             ORIGIN_KB, "sizingkb",
         ))
     return notes
@@ -1007,20 +1067,21 @@ def _subnet_notes(provider: str | None, requirements: dict) -> list[Note]:
             if rule.metric == "requiredSubnetCount":
                 # 원본 `unit`이 "서브넷"이라 그대로 붙이면 "2서브넷가"가 된다 — 실측.
                 notes.append(Note(
-                    f"이 프로바이더의 클러스터는 서브넷이 {rule.value}개 필요합니다",
+                    f"A cluster on this provider needs {rule.value} subnets",
                     ORIGIN_KB, "sizingkb",
                 ))
     if requirements.get("multiZone"):
         # 계약이 받아 놓고 안 읽던 칸이다.
         notes.append(Note(
-            "요구사항이 multiZone이라 서브넷을 여러 가용영역에 나눠 둬야 합니다",
+            "The requirement is multiZone, so the subnets have to be spread across "
+            "several availability zones",
             ORIGIN_DESIGN, "requirements",
         ))
     if provider:
         from sizingkb.agent_api import subnet_capacity
 
         first = subnet_capacity(24, provider).splitlines()[0]
-        notes.append(Note(f"참고 — {first}", ORIGIN_KB, "sizingkb"))
+        notes.append(Note(f"For reference — {first}", ORIGIN_KB, "sizingkb"))
     return notes
 
 
@@ -1045,8 +1106,9 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
     )
     if not specs:
         plan.unresolved.append(
-            f"{provider}{f'/{region}' if region else ''}에서 vCPU {vcpu}·메모리 "
-            f"{mem}GiB 이상인 스펙을 찾지 못해 컴퓨트 값을 붙이지 못했습니다"
+            f"found no spec with at least {vcpu} vCPU and {mem} GiB memory on "
+            f"{provider}{f'/{region}' if region else ''}, so no compute value was "
+            "attached"
         )
         return
     spec = specs[0]
@@ -1064,8 +1126,9 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
         notes.append(Note(note_text, ORIGIN_KB, "costkb"))
         if users:
             notes.append(Note(
-                f"동시 사용자 {users}명 기준 vCPU {vcpu}·메모리 {mem}GiB 이상으로 잡음 "
-                "(지식베이스 근거가 없는 추정)", ORIGIN_INFERRED, "requirements",
+                f"Sized at {vcpu}+ vCPU and {mem}+ GiB memory for {users} concurrent "
+                "users (an estimate with no knowledge-base backing)",
+                ORIGIN_INFERRED, "requirements",
             ))
         if perf.text:
             notes.append(Note(perf.text, ORIGIN_KB, "perfkb"))
@@ -1080,29 +1143,30 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
     """계획을 사람이 읽는 텍스트로. **근거를 줄마다 붙인다.**"""
     from appkb.plan import ORIGIN_LABEL
 
-    lines = [f"{plan.name} — 배포 구성"]
-    for role, title in (("actor", "사용자"),
-                        ("ingress", "진입점 (노출 서비스마다 하나)"),
-                        ("compute", "직접 배포"),
-                        ("managed", "관리형 서비스"),
-                        ("shared", "공유 인프라 (연결당 한 벌)"),
-                        ("external", "외부 시스템")):
+    lines = [f"{plan.name} — deployment plan"]
+    for role, title in (("actor", "End user"),
+                        ("ingress", "Entry point (one per exposed service)"),
+                        ("compute", "Deployed directly"),
+                        ("managed", "Managed services"),
+                        ("shared", "Shared infrastructure (one set per connection)"),
+                        ("external", "External systems")):
         nodes = [n for n in plan.nodes if n.role == role]
         if not nodes:
             continue
-        lines.append(f"\n[{title}] {len(nodes)}개")
+        lines.append(f"\n[{title}] {len(nodes)}")
         for node in nodes:
             mark = " ⚠" if needs_hedge(node.origin) else ""
             head = f"  - {node.label} ({node.id}){mark}"
             if node.type_id:
                 head += f" → {node.type_id}"
             elif node.candidates:
-                head += f" → 후보 {len(node.candidates)}개: " + ", ".join(node.candidates[:3])
+                head += (f" → {len(node.candidates)} candidates: "
+                         + ", ".join(node.candidates[:3]))
             lines.append(head)
             for note in node.notes:
                 lines.append(f"      · [{ORIGIN_LABEL[note.origin]}] {note.text}")
     if plan.edges:
-        lines.append(f"\n[연결] {len(plan.edges)}개")
+        lines.append(f"\n[Connections] {len(plan.edges)}")
         for edge in plan.edges:
             arrow = "⇢" if edge.async_ else "→"
             lines.append(
@@ -1111,14 +1175,15 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
                 f"  [{ORIGIN_LABEL[edge.origin]}]"
             )
     if plan.unresolved:
-        lines.append(f"\n[답하지 못한 것] {len(plan.unresolved)}건")
+        lines.append(f"\n[Could not answer] {len(plan.unresolved)}")
         lines.extend(f"  - {item}" for item in plan.unresolved)
     for note in plan.notes:
         lines.append(f"\n※ {note.text}")
     if plan.hedged_count:
         lines.append(
-            f"\n⚠ 위 {plan.hedged_count}건(⚠ 표시)은 **설계 신호에서 우리가 추론한 것**"
-            "이거나 설계자가 지정한 것이며, 검증된 사실이 아닙니다."
+            f"\n⚠ The {plan.hedged_count} items above (marked ⚠) are **what we "
+            "inferred from design signals** or what the designer specified, and are "
+            "not verified facts."
         )
     return "\n".join(lines)
 
@@ -1131,7 +1196,7 @@ def deployment_answer(design: dict, diagram: bool = True) -> str:
     """
     plan = compose(design)
     if plan.unresolved and not plan.nodes:
-        return "입력 계약을 통과하지 못했습니다:\n" + "\n".join(
+        return "The input did not pass the contract:\n" + "\n".join(
             f"  - {item}" for item in plan.unresolved
         )
 
@@ -1145,7 +1210,8 @@ def deployment_answer(design: dict, diagram: bool = True) -> str:
         plan, design.get("requirements"), HOURS_PER_MONTH
     )
     if conformance:
-        text += "\n\n[요구사항 대조]\n" + "\n".join(f"  - {c}" for c in conformance)
+        text += ("\n\n[Requirements comparison]\n"
+                 + "\n".join(f"  - {c}" for c in conformance))
 
     problems = verify_plan(plan)
     if diagram:
@@ -1154,10 +1220,11 @@ def deployment_answer(design: dict, diagram: bool = True) -> str:
         text += "\n\n```plantuml\n" + uml + "\n```"
     naked = unhedged_claims(plan)
     if naked:
-        problems.append(f"[계획] 근거 줄 없는 추론 노드: {naked}")
+        problems.append(f"[plan] inferred nodes with no evidence line: {naked}")
     if problems:
         # **우리가 만든 그림을 우리가 검사한 결과**다. 숨기면 검사가 무의미해진다.
-        text += "\n\n⚠ 자체 검증에서 걸린 것:\n" + "\n".join(f"  - {p}" for p in problems)
+        text += ("\n\n⚠ Caught by our own verification:\n"
+                 + "\n".join(f"  - {p}" for p in problems))
     return text
 
 
@@ -1191,11 +1258,11 @@ def deployment_answer_from_easydep(
     if resource_spec is not None:
         problems = validate_request(resource_spec)
         if problems:
-            text += "\n\n[제약(RESOURCE_SPEC) 검증]\n" + "\n".join(
+            text += "\n\n[Constraint (RESOURCE_SPEC) check]\n" + "\n".join(
                 f"  - {p}" for p in problems
             )
     if skipped:
-        text += "\n\n[어댑터가 읽지 못한 것·추정한 것]\n" + "\n".join(
+        text += "\n\n[What the adapter could not read · had to guess]\n" + "\n".join(
             f"  - {s}" for s in skipped
         )
     return text
@@ -1237,10 +1304,11 @@ def deployment_puml_from_easydep(
     uml = match.group(1).rstrip()
     evidence = (text[: match.start()] + text[match.end():]).strip()
     comments = "\n".join(f"' {ln}".rstrip() for ln in evidence.splitlines())
-    assert uml.endswith("@enduml"), "render()의 출력 계약이 바뀌었다"
+    assert uml.endswith("@enduml"), "the output contract of render() has changed"
     return (
         uml[: -len("@enduml")]
-        + "' ──── 이하 근거·판정 (agent-sdk 자동 생성 · 렌더링에는 나오지 않음)\n"
+        + "' ──── evidence and verdicts below"
+          " (generated by agent-sdk · not shown in the rendering)\n"
         + comments
         + "\n@enduml\n"
     )
@@ -1273,8 +1341,8 @@ def design_to_deployment(design_json: str, diagram: bool = True) -> str:
     try:
         design = json.loads(design_json)
     except json.JSONDecodeError as exc:
-        return f"설계 JSON을 읽지 못했습니다: {exc}"
-    print(f"\n[설계질의] 배포 구성: {design.get('name')!r}")
+        return f"Could not read the design JSON: {exc}"
+    print(f"\n[design query] deployment plan: {design.get('name')!r}")
     return deployment_answer(design, diagram=diagram)
 
 

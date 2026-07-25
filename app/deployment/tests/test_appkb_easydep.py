@@ -24,6 +24,11 @@ from appkb.easydep import (
     parse_sequence,
 )
 
+
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
 #: easydep 결정론 렌더러의 출력 모양 그대로.
 _CLASS_PUML = """@startuml
 allowmixing
@@ -132,7 +137,8 @@ def test_dashed_only_sequence_falls_back_instead_of_vanishing() -> None:
 def test_exactly_one_component_never_synthesized() -> None:
     design, _ = _adapt()
     assert [c["id"] for c in design["components"]] == [COMPONENT_ID]
-    assert "분해 신호가 원본에 없어" in design["components"][0]["summary"]
+    assert ("the source carries no signal for splitting it into deployment units"
+            in flat(design["components"][0]["summary"]))
 
 
 def test_app_classes_collapse_to_the_single_component() -> None:
@@ -167,7 +173,7 @@ def test_store_participants_are_skipped_and_said() -> None:
     seq = next(a for a in design["artifacts"] if a["kind"] == "sequence")
     ids = {p["id"] for p in seq["participants"]}
     assert not any("db" in i.lower() for i in ids)
-    assert any("OrderDB" in s and "휴리스틱" in s for s in skipped)
+    assert any("OrderDB" in flat(s) and "(heuristic)" in flat(s) for s in skipped)
 
 
 def test_unknown_participant_becomes_an_external() -> None:
@@ -187,7 +193,8 @@ def test_er_entities_are_owned_by_the_single_component() -> None:
 def test_unreadable_erd_is_reported_not_guessed() -> None:
     design, skipped = _adapt(erd_puml="@startuml\ntable(orders){}\n@enduml")
     assert not any(a["kind"] == "er" for a in design["artifacts"])
-    assert any("ERD" in s and "읽지 못했" in s for s in skipped)
+    assert any("ERD" in flat(s) and "Could not read a single entity" in flat(s)
+               for s in skipped)
 
 
 def test_non_3x_openapi_is_reported_not_forced() -> None:
@@ -200,13 +207,14 @@ def test_arrow_inference_is_disclosed() -> None:
     """계약의 async 칸은 '표기가 아니라 의미'를 받으라고 적혀 있다 — 최종본이
     PlantUML뿐이라 표기에서 추정했다는 사실을 밝힌다."""
     _, skipped = _adapt()
-    assert any("화살표 표기" in s and "추정" in s for s in skipped)
+    assert any("arrow notation" in flat(s) and "was guessed" in flat(s)
+               for s in skipped)
 
 
 def test_nothing_readable_says_the_contract_will_fail() -> None:
     design, skipped = design_from_easydep("빈 설계")
     assert design["artifacts"] == []
-    assert any("계약을 통과하지 못" in s for s in skipped)
+    assert any("does not pass the input contract" in flat(s) for s in skipped)
 
 
 # --- RESOURCE_SPEC 투영 ---------------------------------------------------------
@@ -234,8 +242,8 @@ def test_easydep_entrypoint_carries_verdicts_and_adapter_notes() -> None:
         sequence_puml=_SEQUENCE_PUML, erd_puml=_ERD_PUML,
         resource_spec=_RESOURCE_SPEC, diagram=True,
     )
-    assert "[요구사항 대조]" in text and "예산" in text
-    assert "[어댑터가 읽지 못한 것·추정한 것]" in text
+    assert "[Requirements comparison]" in text and "Budget" in text
+    assert "[What the adapter could not read · had to guess]" in text
     assert "@startuml" in text
 
 
@@ -246,8 +254,8 @@ def test_easydep_entrypoint_reports_invalid_resource_spec() -> None:
         "주문 서비스", api_spec=_API_SPEC, class_puml=_CLASS_PUML,
         resource_spec={"provider": "aws"}, diagram=False,
     )
-    assert "[제약(RESOURCE_SPEC) 검증]" in text
-    assert "monthlyBudgetUSD" in text and "규모 신호" in text
+    assert "[Constraint (RESOURCE_SPEC) check]" in text
+    assert "monthlyBudgetUSD" in text and "no scale signal" in text
 
 
 def test_puml_document_carries_evidence_as_comments() -> None:
@@ -264,8 +272,8 @@ def test_puml_document_carries_evidence_as_comments() -> None:
     assert doc.startswith("@startuml") and doc.rstrip().endswith("@enduml")
     comments = [ln for ln in doc.splitlines() if ln.startswith("'")]
     joined = "\n".join(comments)
-    assert "[요구사항 대조]" in joined and "예산" in joined
-    assert "검증된 사실이 아닙니다" in joined
+    assert "[Requirements comparison]" in joined and "Budget" in joined
+    assert "are not verified facts" in joined
     # 주석이 되파싱을 오염시키면 안 된다 — 주석 속 문장이 노드·선으로 읽히면
     # 그림 대조가 유령을 잡는다.
     with_comments = parse_back(doc)
@@ -278,7 +286,7 @@ def test_contract_failure_becomes_a_drawn_failure_not_an_empty_diagram() -> None
 
     doc = deployment_puml_from_easydep("빈 설계")
     assert doc.startswith("@startuml")
-    assert "계약" in doc and "note" in doc
+    assert "did not pass the contract" in doc and "note" in doc
 
 
 def test_adapter_output_composes_into_a_plan() -> None:

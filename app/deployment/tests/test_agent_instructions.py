@@ -165,11 +165,13 @@ def test_work_method_no_longer_orders_plan_before_every_task() -> None:
     assert "record_plan" not in work_method
 
 
-def test_answer_language_is_still_korean() -> None:
-    """1단계는 **모델이 읽는 면만** 영어로 옮긴다.
+def test_answer_language_is_english() -> None:
+    """**모델이 보는 면은 한 언어여야 한다.**
 
-    답변 언어까지 같이 바꾸면 프로브 58건의 한국어 `want_any`가 통째로 죽어서,
-    영어화가 라우팅을 개선했는지 잴 수 없게 된다 — 변수를 하나만 움직인다.
+    실측: 도구 설명이 영어인데 도구 결과 텍스트가 한국어였을 때, 모델은 영어 층을
+    따르고 도구 결과에 박힌 한국어 지시를 **무시했다**(계획 게이트). 반쪽 번역은
+    양극단보다 나쁘다 — 답변 언어까지 영어로 맞춘다.
     """
     work_method = PROMPT.split("# How you work")[1].split("##")[0]
-    assert "in Korean" in work_method
+    assert "in English" in work_method
+    assert "in Korean" not in work_method

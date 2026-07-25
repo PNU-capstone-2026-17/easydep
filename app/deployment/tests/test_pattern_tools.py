@@ -70,7 +70,10 @@ def test_unknown_engine_gets_advisory_note_but_stays_unresolved() -> None:
         if note.source == "pattern-advisory"
     ]
     assert advisories, "자문 노트가 없다 (코퍼스가 kafka를 못 찾았나?)"
-    assert all("설계 지침이지 클라우드 사실이 아닙니다" in n.text for n in advisories)
+    assert all(
+        "design guidance, not a cloud fact" in " ".join(n.text.split()).lower()
+        for n in advisories
+    )
 
 
 def test_known_engine_gets_no_advisory() -> None:

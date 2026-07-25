@@ -158,7 +158,9 @@ PROBES: tuple[Probe, ...] = (
           "후보를 좁게 잡으면 옳은 행동을 벌하게 된다.",
           no_tools=True,
           want_any=("없습니다", "없어", "조회할 수 없", "확인해 드릴 수 없",
-                    "제공되지 않", "지원하지 않", "불가능")),
+                    "제공되지 않", "지원하지 않", "불가능",
+                    "annot", "an't", "nable to", "ot available", "ot supported",
+                    "o access", "on't have", "o not have", "ot connected")),
     Probe("3-3", "t3.medium 시간당 얼마야?",
           "**웹 검색으로 새지 않는가.** 검색 가격과 데이터셋 가격이 섞이면 합계 기준이 어긋난다",
           forbid_tools=("web_search",),
@@ -174,7 +176,8 @@ PROBES: tuple[Probe, ...] = (
           "**낡은 값이라는 고지가 답변까지 살아남는가.** 값만 옮기고 경고를 빼면 "
           "사용자는 검증된 최신값이라고 믿는다",
           want_tools=("cap_immutable_properties",),
-          want_any=("낡", "2023", "스냅샷", "오래")),
+          want_any=("낡", "2023", "스냅샷", "오래",
+                    "utdated", "napshot", "ut of date", "tale")),
     Probe("D4", "Azure 키 볼트 관련 쿼터 알려줘",
           "**가진 것은 내놓고 없는 것은 없다고 하는가.** 키 볼트 *전용* 한도 문서는 "
           "원본에 없지만 private-link-limits.md에 '키 볼트당 프라이빗 엔드포인트 64개' "
@@ -183,12 +186,13 @@ PROBES: tuple[Probe, ...] = (
           want_any=("64",)),
     Probe("D5", "GCP ComputeDisk는 무엇 안에 담겨 있어?",
           "이번에 새로 만든 담김 축이 답변에 닿는가",
-          want_any=("Project", "프로젝트")),
+          want_any=("Project", "프로젝트", "project")),
     Probe("N1", "af-south-1 리전에서 p5.48xlarge 인스턴스를 쓸 수 있어?",
           "**값에서 출발한 질문이 KB 안에서 끝나는가.** 리전별 허용값 79,809쌍을 "
           "넣고도 에이전트가 못 닿아 웹으로 나갔다 (데이터: af-south-1은 불가)",
           forbid_tools=("web_search",),
-          want_any=("af-south-1", "제공되지", "지원되지", "사용할 수 없", "쓸 수 없")),
+          want_any=("af-south-1", "제공되지", "지원되지", "사용할 수 없", "쓸 수 없",
+                    "ot available", "ot offered", "annot be used", "ot supported")),
     Probe("H1", "g5g.xlarge에는 어떤 GPU가 달려 있어?",
           "**지어내기가 났던 자리.** 모델은 예전에 'AMD Radeon Instinct MI250X'라고 "
           "했다 — 실제는 NVIDIA T4G 1장(Turing). 가속기 데이터가 0건이라 빈칸이 "
@@ -221,7 +225,7 @@ PROBES: tuple[Probe, ...] = (
           "**patternkb 라이브 첫 검증.** 자문 도구를 부르고 인용(패턴 이름)이 "
           "답에 실리는가 — 코퍼스는 영어라 모델이 영어 질의를 만들어야 한다",
           want_tools=("pattern_search",), forbid_tools=("web_search",),
-          want_any=("Retry", "재시도")),
+          want_any=("Retry", "재시도", "retry")),
     Probe("X2", "azure Standard_D4s_v5의 네트워크 대역폭이 얼마야?",
           "**azure 크기 표 보강의 라이브 검증.** 12,500 Mbps는 크기 문서 표에서 "
           "온 값(실측)이다 — 이게 답에 실리려면 perf 축이 조인돼야 한다",
@@ -238,7 +242,9 @@ PROBES: tuple[Probe, ...] = (
           "(실측 currentGeneration=False)다 — '구세대' 경고가 답까지 살아남는가",
           want_any_tool=("perf_instance_profile", "cost_describe_spec",
                          "perf_compare"),
-          forbid_tools=("web_search",), want_any=("구세대",)),
+          forbid_tools=("web_search",),
+          want_any=("구세대", "revious generation", "revious-generation",
+                    "lder generation", "ot current generation")),
     Probe("X5", "gcp a2-ultragpu-1g의 로컬 SSD 용량은?",
           "**로컬 SSD 축의 라이브 검증.** 375GB는 pricing.yml 큐레이션 값(실측)",
           want_any_tool=("perf_instance_profile", "cost_describe_spec"),
@@ -254,7 +260,7 @@ PROBES: tuple[Probe, ...] = (
           # 통과하던 3회는 영어 인용문의 `Tradeoff`에 걸린 것이었고, 한국어 후보는
           # 한 번도 제 일을 한 적이 없다. 낱말 형태 변형은 정규화가 못 잡으므로
           # **후보를 접두어로** 건다.
-          want_any=("radeoff", "트레이드")),
+          want_any=("radeoff", "트레이드", "rade-off", "rade off")),
     Probe("X7", '다음 설계 JSON으로 배포 구성을 만들어줘: {"schemaVersion":"1",'
           '"name":"probe-app","components":[{"id":"api","name":"Api"}],'
           '"artifacts":[{"id":"o1","kind":"openapi","componentId":"api",'
@@ -264,7 +270,7 @@ PROBES: tuple[Probe, ...] = (
           "**방식 비교 판정의 라이브 검증.** steady+stateless=true면 서버리스만 "
           "상충이 없어 권고가 나야 하고, 그 권고가 hedge와 함께 답변에 실리는가",
           want_tools=("design_to_deployment",), forbid_tools=("web_search",),
-          want_any=("권고",)),
+          want_any=("권고", "ecommend", "erverless")),
     Probe("R1", "서울 리전에서 쓸 수 있는 AWS GPU 인스턴스 알려줘",
           "**H3과 같은 질문을 사람이 쓰는 말로.** H3은 `ap-northeast-2`라고 코드로 "
           "물어서 이 실패를 못 잡았다. 데이터는 있었고 '서울'을 색인 키로 바꾸는 "
@@ -290,21 +296,28 @@ PROBES: tuple[Probe, ...] = (
           "근거 없는 값으로 걸렸다.",
           tools_optional=True, forbid_tools=("web_search",),
           want_any=("어느", "제공자", "클라우드마다", "제공업체마다", "japaneast",
-                    "asia-northeast1", "jp-tok")),
+                    "asia-northeast1", "jp-tok",
+                    "hich provider", "hich cloud", "aries by provider",
+                    "iffers by provider", "epends on the provider")),
     Probe("S1", "Azure Database for MySQL 유연 서버를 배포할 때 넣는 관리자 비밀번호를 나중에 다시 조회할 수 있어?",
           "비밀값 축(azure-secret). administratorLoginPassword는 x-ms-secret이라 "
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
           want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
-          want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전")),
+          want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전",
+                    "Key Vault", "ead it back", "annot be read", "ot readable",
+                    "ot be retrieved", "rite-only", "write-only")),
     Probe("L1", "Azure AKS 클러스터 만들면 오래 걸려? 배포 스크립트 타임아웃 얼마로 잡아야 해?",
           "작업 소요 축(azure-operations). LRO는 2번 라운드에서 보류했다가 별도 "
           "모양으로 담았다 — 지어내지 말고 도구로 답하는가",
           want_tools=("cap_operation_time",), forbid_tools=("web_search",),
-          want_any=("오래", "비동기", "기다")),
+          want_any=("오래", "비동기", "기다",
+                    "synchronous", "long-running", "long running", "imeout",
+                    "inutes")),
     Probe("E1", "EKS 1.28 아직 지원돼?",
           "수명주기 축(service-lifecycle). 0건이던 축이다",
           want_tools=("cap_service_lifecycle",), forbid_tools=("web_search",),
-          want_any=("종료", "2024", "지원")),
+          want_any=("종료", "2024", "지원",
+                    "nd of support", "end date", "End date", "upport", "OL")),
     Probe("M1", "알리바바 클라우드에서 VPC에 해당하는 리소스가 뭐야?",
           "**core 매핑 확장.** alibaba·tencent를 더하기 전에는 이 질문에 못 답했다 — "
           "graphkb에 그 프로바이더 노드가 0개였다",
@@ -313,25 +326,28 @@ PROBES: tuple[Probe, ...] = (
     Probe("T1", "tencentcloud_vpc에서 바꾸면 재생성되는 속성 있어?",
           "두 CSP 제약 축(tpcsp). 리소스 제약이 0건이던 프로바이더다",
           want_tools=("cap_immutable_properties",), forbid_tools=("web_search",),
-          want_any=("cidr_block", "재생성")),
+          want_any=("cidr_block", "재생성", "ecreate", "e-create", "eplace")),
     Probe("K1", "KT Cloud에서 쿠버네티스 클러스터 만들 수 있어?",
           "**도구 커버리지를 클라우드 사실로 옮겨 말하지 않는가.** cb-spider에 "
           "드라이버가 없다는 것과 KT Cloud에 k8s가 없다는 것은 다른 말이다 — "
           "우리는 배포기가 아니라 가이드라인 KB다",
           want_tools=("cap_csp_supports",), forbid_tools=("web_search",),
-          want_any=("드라이버", "도구", "커버리지")),
+          want_any=("드라이버", "도구", "커버리지",
+                    "river", "ooling", "overage", "CB-Spider", "cb-spider")),
     Probe("G1", "AWS EC2 인스턴스 하나 만들려면 뭐가 먼저 있어야 해?",
           "**사용자가 잡아낸 불일치.** 벤더 스키마는 필수 0개라 하지만 실무에서는 "
           "네트워크·서브넷·보안그룹이 필요하다. 스키마만 답하면 VM 하나 만들려는 "
           "사람에게 쓸모없는 답이 된다",
           want_tools=("kb_creation_order",), forbid_tools=("web_search",),
-          want_any=("서브넷", "subnet", "vNet", "실행", "tumblebug")),
+          want_any=("서브넷", "subnet", "Subnet", "vNet", "실행", "tumblebug")),
     Probe("B1", "AWS ALB는 GCP에서 뭐야?",
           "**짐작을 단언으로 옮기지 않는가.** 실측에서 모델이 ComputeForwardingRule을 "
           "단언했다 — 데이터의 basis는 짐작(검수됨)인데 출력에 안 실려 모델이 알 "
           "방법이 없었다. 이제 근거가 답에 실린다",
           want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
-          want_any=("짐작", "가장 가까운", "정확히", "완전히 같", "차이")),
+          want_any=("짐작", "가장 가까운", "정확히", "완전히 같", "차이",
+                    " guess", "losest", "ot identical", "ot an exact",
+                    "iffer", "ifference")),
     Probe("N3", "n2-highmem-8 메모리 몇 GiB야?",
           "**이름 조회 도구가 없어 0/3 실패하던 질문.** 데이터는 처음부터 있었고 "
           "표면이 없었을 뿐이다 — 조건 필터로는 이름을 못 찾아 웹 검색으로 샜다",
@@ -342,24 +358,28 @@ PROBES: tuple[Probe, ...] = (
           "목록에만 빠져 있어서, perf_compare는 m5.large가 구세대라는 걸 한 줄도 "
           "말하지 않는데 cost_recommend_specs는 경고했다",
           want_tools=("perf_compare",), forbid_tools=("web_search",),
-          want_any=("구세대", "이전 세대")),
+          want_any=("구세대", "이전 세대", "revious generation",
+                    "revious-generation", "lder generation")),
     Probe("N5", "gcp n2-highmem-8 성능 특성 알려줘",
           "**목록이 AWS 위주로 자라 gcp의 100% 채워진 칸이 통째로 빠졌다.** "
           "프로파일이 상시 CPU 한 줄뿐이었고, 사람용 CLI만 벤더 설명을 출력했다",
           want_tools=("perf_instance_profile",), forbid_tools=("web_search",),
-          want_any=("영구 디스크", "persistent", "128")),
+          want_any=("영구 디스크", "persistent", "Persistent", "128")),
     Probe("BU1", "Azure에서 VM 하나만 만들면 되나? 뭐가 같이 필요해?",
           "**research.md 문제 2가 요구하는 답.** graphkb는 스키마 참조를 따라가 "
           "'가능한 것'을 전부 주지만(EC2에서 KMS까지), 이 축은 실제로 함께 쓰이는 "
           "것을 등급과 빈도로 가른다",
           want_tools=("bundle_for_resource",), forbid_tools=("web_search",),
-          want_any=("네트워크 인터페이스", "networkInterface", "NIC")),
+          want_any=("네트워크 인터페이스", "networkInterface", "NIC",
+                    "etwork interface", "etworkInterface")),
     Probe("BU2", "sg-default 템플릿 써도 돼?",
           "**원본이 스스로 단 경고를 옮기는가.** 이 템플릿은 전 포트를 열고 "
           "'프로덕션엔 쓰지 말라'고 자기가 적어 두었다 — 값만 옮기고 경고를 떼면 "
           "위험한 기본값이 안전해 보인다",
           want_tools=("bundle_describe",), forbid_tools=("web_search",),
-          want_any=("개발", "테스트", "프로덕션", "모든 포트", "전 포트")),
+          want_any=("개발", "테스트", "프로덕션", "모든 포트", "전 포트",
+                    "roduction", "ll ports", "very port", "evelopment",
+                    "esting")),
     Probe("SZ1", "AWS에서 /24 서브넷 하나에 VM 몇 대까지 띄울 수 있어?",
           "**모르는 것을 0으로 채우지 않는가.** networkinfo.yaml에 aws 예약 IP가 "
           "비어 있어서 손 검수로 채웠다 — 256이 아니라 251이어야 하고, 손으로 적은 "
@@ -379,7 +399,7 @@ PROBES: tuple[Probe, ...] = (
           "답한다. 그 발견이 이 프로브의 불안정을 예측했고, 같은 처방(프로바이더 "
           "명시)으로 고쳤다.",
           want_tools=("cap_region_latency",), forbid_tools=("web_search",),
-          want_any=("koreacentral", "asia-northeast3", "ap-seoul", "ms")),
+          want_any=("koreacentral", "asia-northeast3", "ap-seoul", "ms")),  # 'ms' 단위는 언어 무관
     Probe("IM1", "aws 서울에서 arm64 VM 띄우려면 어떤 이미지를 써야 해?",
           "**번들의 required:image 공백.** 아키텍처를 안 맞추면 안 뜬다 — "
           "arm64 스펙에 x86_64 이미지를 주면 안 된다",
@@ -394,7 +414,9 @@ PROBES: tuple[Probe, ...] = (
           "**방법론이 다른 값을 비교하면 안 된다.** GCP는 발표값, AWS는 추정값이라 "
           "같은 도시에서도 순서가 뒤집힌다 — 비교 불가를 전하는가",
           want_tools=("cap_region_carbon",), forbid_tools=("web_search",),
-          want_any=("비교", "방법론", "다릅니다", "다르")),
+          want_any=("비교", "방법론", "다릅니다", "다르",
+                    "ethodolog", "annot be compared", "ot comparable",
+                    "ot compare", "iffer")),
     Probe("R3", "서울 리전 코드가 프로바이더마다 어떻게 달라?",
           "리전 이름이 프로바이더 10곳으로 넓어졌다. 모델 기억이 아니라 도구로 "
           "답하고, 코드가 다르다는 사실을 전하는가",
@@ -404,14 +426,14 @@ PROBES: tuple[Probe, ...] = (
           "스팟·약정 축(gcp-pricing). 미러엔 온디맨드만 있어 못 답했다 — "
           "지어내지 말고 도구로 답하는가",
           want_tools=("cost_discount_pricing",), forbid_tools=("web_search",),
-          want_any=("스팟", "$0.0", "0.06")),
+          want_any=("스팟", "$0.0", "0.06", "pot")),
     Probe("P2", "Azure Standard_D2s_v5를 koreasouth에서 3년 예약하면 시간당 얼마야?",
           "**단위 칸이 거짓말한다.** 원본은 예약가를 기간 총액으로 주면서 "
           "unitOfMeasure를 1,348건 전부 '1 Hour'라고 적는다 — 그대로 읽으면 "
           "5,165배 틀린다. 시간당으로 환산된 값이 나와야 하고, 환산했다는 사실도 "
           "답에 실려야 한다",
           want_tools=("cost_discount_pricing",), forbid_tools=("web_search",),
-          want_any=("0.04", "0.0436", "예약")),
+          want_any=("0.04", "0.0436", "예약", "eserved")),
     Probe("P3", "AWS m5.large 스팟 가격 알려줘",
           "**없는 축을 '없다'가 아니라 '안 담았다'로 답하는가.** 할인 축은 "
           "gcp·azure만 담겨 있다. AWS에 스팟이 없다고 말하면 거짓이다.\n"
@@ -421,14 +443,18 @@ PROBES: tuple[Probe, ...] = (
           "답이 실패로 찍혔다 — R1·R2·R4·GL3에 이어 **같은 실수 다섯 번째**다. "
           "지킬 것은 호출이 아니라 답에 그 구분이 있는가이고 그건 `want_any`가 본다.",
           tools_optional=True, forbid_tools=("web_search",),
-          want_any=("담", "수록", "포함되어 있지", "제공되지")),
+          want_any=("담", "수록", "포함되어 있지", "제공되지",
+                    "ot included", "e did not include", "e don't include",
+                    "ot in this dataset", "ot in the dataset")),
     Probe("P4", "AWS m5.large 스팟 가격을, 공식 자료를 찾아서라도 알려줘",
           "**없다고 확인된 뒤에는 웹으로 보충한다.** \"직접 찾아보세요\"로 끝내는 "
           "것보다 낫다. 다만 웹 값과 지식베이스가 보증하는 값을 **섞으면** 이 "
           "프로젝트가 값을 핀 박고 근거 등급을 매기는 이유가 통째로 사라진다 — "
           "출처를 밝히고 검증한 값이 아니라고 적어야 한다.",
           want_tools=("web_search",),
-          want_any=("검증", "지식베이스", "출처", "공식")),
+          want_any=("검증", "지식베이스", "출처", "공식",
+                    "nowledge base", "ot verified", "ot a value the",
+                    "ource:", "fficial")),
     Probe("P5", "Azure Standard_D2s_v5 koreasouth 3년 예약 가격 알려줘",
           "**지식베이스가 답할 수 있으면 웹으로 새지 않는다.** 보충은 없다고 확인된 "
           "뒤의 일이다 — 답할 수 있는데 웹으로 가면 검색 결과와 데이터셋이 어긋나 "
@@ -454,7 +480,7 @@ PROBES: tuple[Probe, ...] = (
           "지켜야 할 것은 **추론을 사실로 옮기지 않는 것** — 아키타입 분류는 영원히 "
           "짐작이라 ⚠ 표시와 '검증된 사실이 아닙니다'가 답에 살아 있어야 한다.",
           want_tools=("design_to_deployment",), forbid_tools=("web_search",),
-          want_any=("추론", "RDS", "DBInstance")),
+          want_any=("추론", "RDS", "DBInstance", "nferred", "nference")),
 
     # --- svcmap: 앱 개념 ↔ 관리형 서비스 (P1) --------------------------------
     Probe("SM1", "DynamoDB 쓰던 앱을 Azure로 옮기면 뭘 써야 해?",
@@ -475,7 +501,8 @@ PROBES: tuple[Probe, ...] = (
           # 지킬 것은 그 타입들이 답에 있는가이고 그건 want_any가 본다.
           want_any_tool=("kb_equivalent_types", "kb_search_types"),
           forbid_tools=("web_search",),
-          want_any=("cos_bucket", "objectstorage", "오브젝트 스토리지")),
+          want_any=("cos_bucket", "objectstorage", "오브젝트 스토리지",
+                    "bject storage", "bject Storage")),
 
     Probe("GL1", "AWS 서울에 VM 하나 올리려면 뭐가 같이 필요하고 얼마나 들어?",
           "**목표 2 ¶4 한 문장이 요구하는 두 반쪽.** 리소스 군(bundlekb)과 그 선택의 "
@@ -488,7 +515,7 @@ PROBES: tuple[Probe, ...] = (
           "\"무료라는 뜻이 아닙니다\"를 그 칸 바로 아래에 붙였다.",
           want_tools=("cap_resolve_region", "resource_guideline"),
           forbid_tools=("web_search",),
-          want_any=("$", "USD", "달러")),
+          want_any=("$", "USD", "달러", "dollar")),
     Probe("GL2", "AWS 서울에 t3.medium VM 하나 올리면 총 얼마야? 딱 숫자로만 알려줘",
           "**합계를 지어내지 않는가 — 이 묶음에서 가장 위험한 실패.** vNet·서브넷·"
           "보안그룹·키는 가격 축이 아예 없어서, 총액을 내려면 모르는 것을 0으로 "
@@ -496,7 +523,9 @@ PROBES: tuple[Probe, ...] = (
           want_any_tool=("resource_guideline", "cost_describe_spec",
                          "cost_estimate_monthly"),
           forbid_tools=("web_search",),
-          want_any=("합계", "총액", "포함되지", "미반영", "아닙니다", "없습니다")),
+          want_any=("합계", "총액", "포함되지", "미반영", "아닙니다", "없습니다",
+                    "otal", "ot included", "o total", "ot an actual bill",
+                    "o price axis", "ot reflected")),
     Probe("GL3", "AWS EC2 인스턴스를 고르면 딸려오는 것들 비용까지 알려줘",
           "**값이 붙는 것과 안 붙는 것을 가르는가.** 리전을 안 밝힌 물음이라 "
           "처음엔 도구를 아예 안 부르고 기억으로 EBS·ENI·Elastic IP를 지어냈다"
@@ -509,7 +538,9 @@ PROBES: tuple[Probe, ...] = (
           "`test_guideline_join.py`가 단위로 고정한다.",
           want_tools=("resource_guideline",), forbid_tools=("web_search",),
           want_any=("비용 데이터", "가격 축", "값을 매길 수 없", "포함되지",
-                    "산정되지", "없습니다")),
+                    "산정되지", "없습니다",
+                    "o price axis", "o cost data", "o pricing data",
+                    "annot be priced", "ot priced", "ot included")),
     Probe("GL4", "웹 서비스 하나를 AWS 서울에 올리려고 해. vCPU 2, 메모리 4GiB면 될 것 "
                  "같은데 스펙 추천하고 월 비용까지 계산해줘",
           "**부분 정보가 완전해 보이는 함정.** 프로바이더·리전에 구체 사양까지 왔으니 "
@@ -524,7 +555,8 @@ PROBES: tuple[Probe, ...] = (
           "지킬 것은 **무엇이 없어서 판정을 못 하는지가 답에 있는가**이다.",
           forbid_tools=("web_search",),
           tools_optional=True,
-          want_any=("예산", "규모", "동시", "RPS", "트래픽")),
+          want_any=("예산", "규모", "동시", "RPS", "트래픽",
+                    "udget", "cale", "oncurrent", "raffic")),
 
     # --- 진입 계약: 필수 제약 (RESOURCE_SPEC, 재편 계획 P1) -------------------
     Probe("RS1", "우리 쇼핑몰 서비스를 클라우드에 올리고 싶어. 배포 구성이랑 비용 알려줘",
@@ -536,7 +568,8 @@ PROBES: tuple[Probe, ...] = (
           forbid_tools=("record_plan", "cost_recommend_specs",
                         "cost_estimate_monthly", "web_search"),
           tools_optional=True,
-          want_any=("프로바이더", "클라우드", "예산", "리전")),
+          want_any=("프로바이더", "클라우드", "예산", "리전",
+                    "rovider", "loud", "udget", "egion")),
     Probe("RS2", "쇼핑몰 웹 서비스야. AWS 서울 리전, 월 예산 300달러, 동시 사용자 "
                  "500명 정도야. 스펙 추천하고 월 비용이 예산에 맞는지 알려줘",
           "**필수 4칸이 다 있으면 예산 판정까지 닿는가.** GL4는 계획→추천→비용까지만 "
@@ -545,7 +578,7 @@ PROBES: tuple[Probe, ...] = (
           "함께 있어야 숫자가 청구 예상액으로 오독되지 않는다.",
           want_tools=("record_plan", "cost_recommend_specs", "cost_estimate_monthly"),
           forbid_tools=("web_search",),
-          want_any=("예산", "300")),
+          want_any=("예산", "300", "udget")),
 )
 
 # --- 기대에서 **뺀** 것 (지킬 생각 없는 기대를 남기면 실패가 일상이 된다) ---

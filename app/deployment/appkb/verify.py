@@ -32,15 +32,15 @@ def verify_plan(plan: DeploymentPlan) -> list[str]:
     seen = set()
     for node_id in ids:
         if node_id in seen:
-            problems.append(f"[계획] 노드 id 중복: {node_id}")
+            problems.append(f"[plan] duplicate node id: {node_id}")
         seen.add(node_id)
         if not _ID.match(node_id):
-            problems.append(f"[계획] 노드 id가 리소스 이름 규칙과 어긋난다: {node_id}")
+            problems.append(f"[plan] node id breaks the resource name rule: {node_id}")
 
     for edge in plan.edges:
         for end in (edge.from_id, edge.to_id):
             if end not in seen:
-                problems.append(f"[계획] 선이 없는 노드를 가리킨다: {end}")
+                problems.append(f"[plan] a connection points at a missing node: {end}")
 
     for node in plan.nodes:
         if node.role == "managed" and not node.type_id and not node.candidates:
@@ -48,7 +48,8 @@ def verify_plan(plan: DeploymentPlan) -> list[str]:
             # 조용히 두면 그림에 빈 상자가 남는다. 미결로 올려야 한다.
             if not any(node.id in item for item in plan.unresolved):
                 problems.append(
-                    f"[계획] {node.id}: 관리형인데 타입도 후보도 없고 미결에도 없다"
+                    f"[plan] {node.id}: managed, but it has no type, no candidates,"
+                    " and is not in the 'could not answer' list either"
                 )
     return problems
 
@@ -62,20 +63,32 @@ def verify_diagram(plan: DeploymentPlan, uml: str) -> list[str]:
     missing = plan_ids - aliases
     extra = aliases - plan_ids
     if missing:
-        problems.append(f"[그림] 계획에 있는데 그림에 없는 노드: {sorted(missing)}")
+        problems.append(
+            f"[diagram] nodes in the plan but not in the diagram: {sorted(missing)}"
+        )
     if extra:
         # 지어낸 노드다 — 답변에서 없는 값을 만드는 것과 같은 실패의 그림판.
-        problems.append(f"[그림] 계획에 없는데 그림에 있는 노드: {sorted(extra)}")
+        problems.append(
+            f"[diagram] nodes in the diagram but not in the plan: {sorted(extra)}"
+        )
 
     plan_edges = {(e.from_id, e.to_id) for e in plan.edges}
     if plan_edges - edges:
-        problems.append(f"[그림] 그림에 빠진 선: {sorted(plan_edges - edges)}")
+        problems.append(
+            f"[diagram] connections missing from the diagram: {sorted(plan_edges - edges)}"
+        )
     if edges - plan_edges:
-        problems.append(f"[그림] 계획에 없는 선: {sorted(edges - plan_edges)}")
+        problems.append(
+            f"[diagram] connections not in the plan: {sorted(edges - plan_edges)}"
+        )
 
     # 유보가 그림에 살아 있는가 — 그림은 잘려 돌아다닌다.
-    if plan.hedged_count and "추론" not in uml and "설계자 지정" not in uml:
-        problems.append("[그림] 추론·설계자 지정이 있는데 그림에 표시가 없다")
+    if plan.hedged_count and "inferred" not in uml \
+            and "specified by the designer" not in uml:
+        problems.append(
+            "[diagram] there are inferred / designer-specified items but the diagram"
+            " carries no mark"
+        )
     return problems
 
 
@@ -112,11 +125,13 @@ def verify_against_requirements(
         n.id for n in plan.nodes if n.role in _BILLABLE_ROLES and not n.hourly_usd
     )
     if budget is None:
-        out.append("예산: 기준 없음 — monthlyBudgetUSD가 없어 비용 부합을 판정하지 않습니다")
+        out.append(
+            "Budget: no yardstick — without monthlyBudgetUSD we do not judge cost fit"
+        )
     elif not priced:
         out.append(
-            f"예산(월 ${budget:,.2f}): 판정 불가 — 값이 붙은 노드가 없습니다"
-            "(프로바이더·리전 미지정이거나 가격 축이 없는 구성)"
+            f"Budget (${budget:,.2f}/month): no verdict — no node carries a value"
+            " (provider/region unspecified, or a layout with no price axis)"
         )
     else:
         floor = sum(n.hourly_usd for n in priced) * hours_per_month
@@ -125,42 +140,50 @@ def verify_against_requirements(
         # 없으면 하한이 "스케일아웃해도 이 값"으로 읽힌다.
         if floor > budget:
             out.append(
-                f"예산(월 ${budget:,.2f}): **초과 확정** — 값이 붙은 부분만의 월합"
-                f"(하한, 컴퓨트 각 1대 기준) ${floor:,.2f}이 이미 예산을 넘습니다. "
-                f"미가격 구성원 {len(unpriced)}종은 더하지도 않은 값입니다"
+                f"Budget (${budget:,.2f}/month): **over, confirmed** — the monthly sum"
+                f" of the priced part alone (a floor, one instance per compute) is "
+                f"${floor:,.2f}, already past the budget. "
+                f"{len(unpriced)} unpriced members are not even added in"
             )
         else:
             out.append(
-                f"예산(월 ${budget:,.2f}): 부합 단정 불가 — 값이 붙은 부분의 하한"
-                f"(컴퓨트 각 1대 기준)은 ${floor:,.2f}이지만 미가격 구성원 "
-                f"{len(unpriced)}종({', '.join(unpriced[:5])})의 값을 모르고, "
-                "수평 확장 대수도 정해지지 않았습니다. 모르는 것을 0으로 치지 않습니다"
+                f"Budget (${budget:,.2f}/month): **cannot be asserted to fit** — the "
+                f"floor of the priced part (one instance per compute) is ${floor:,.2f}, "
+                f"but we do not know the value of {len(unpriced)} unpriced members "
+                f"({', '.join(unpriced[:5])}), and the number of horizontally scaled "
+                "instances is not fixed either. We do not treat the unknown as zero"
             )
 
     users = req.get("expectedConcurrentUsers")
     rps = req.get("approxRequestsPerSecond")
     if users is not None or rps is not None:
-        scale = f"동시 사용자 {users}" if users is not None else f"약 {rps} RPS"
+        scale = (
+            f"{users} concurrent users" if users is not None else f"about {rps} RPS"
+        )
         out.append(
-            f"규모({scale}): 스펙 충분성은 이 지식베이스가 판정하지 못합니다 — "
-            "계획의 사이징은 근거 없는 추정으로 표시되어 있고, 부하 테스트나 "
-            "사이징 참조점으로 확인해야 합니다"
+            f"Scale ({scale}): this knowledge base cannot judge whether the spec is "
+            "sufficient — the plan's sizing is marked as an estimate with no backing, "
+            "and must be confirmed with a load test or a sizing reference point"
         )
 
     if req.get("multiZone"):
         if not any(n.role == "shared" for n in plan.nodes):
             out.append(
-                "multiZone: 해당 구성 없음 — VM 네트워크가 없는 계획입니다(서버리스)."
-                " 가용영역 분산은 이 계획이 다루지 않는 층에서 정해집니다"
+                "multiZone: nothing to check — this plan has no VM network (serverless)."
+                " Spreading across availability zones is decided in a layer this plan"
+                " does not cover"
             )
         else:
             subnet = plan.node("subnet")
-            if subnet and any("가용영역" in n.text for n in subnet.notes):
-                out.append("multiZone: 반영됨 — 서브넷에 가용영역 분산 요구가 붙어 있습니다")
+            if subnet and any("availability zone" in n.text for n in subnet.notes):
+                out.append(
+                    "multiZone: reflected — the subnet carries the availability-zone"
+                    " spread requirement"
+                )
             else:
                 out.append(
-                    "multiZone: **미반영** — 요구는 multiZone인데 계획에 가용영역 "
-                    "분산 흔적이 없습니다"
+                    "multiZone: **not reflected** — the requirement is multiZone but "
+                    "the plan shows no trace of an availability-zone spread"
                 )
 
     pattern = req.get("trafficPattern")
@@ -169,29 +192,37 @@ def verify_against_requirements(
         # **부재**를 "버스트 아님"으로 읽는 건 침묵 오독이라, 값이 붙은 노드가
         # 있을 때만(=성능 조인이 실제로 돌았을 때만) 그렇게 말한다 — partial·
         # untracked는 노트가 붙으므로 부재와 구분된다.
+        # 노트 원문은 perfkb 데이터셋에서 온다. 데이터셋을 영어로 다시 빌드했으므로
+        # 한국어 후보는 뺐다 — 두 언어를 다 받으면 "어느 쪽이 진짜인지"가 흐려지고,
+        # 다음 사람이 데이터셋을 되돌려도 검사가 통과해 버린다.
         burst = sorted(
             n.id for n in plan.nodes
-            if any(x.source == "perfkb" and "버스트" in x.text for x in n.notes)
+            if any(
+                x.source == "perfkb" and "burst" in x.text.lower()
+                for x in n.notes
+            )
         )
         if pattern == "steady" and burst:
             out.append(
-                f"trafficPattern(steady): **상충** — 상시 부하인데 버스트 인스턴스"
-                f"({', '.join(burst)})가 계획에 있습니다. CPU 크레딧이 소진되면 "
-                "baseline 성능으로 떨어집니다 — 고정 성능 스펙으로 재검토가 필요합니다"
+                f"trafficPattern(steady): **conflict** — the load is sustained but "
+                f"burst instances ({', '.join(burst)}) are in the plan. When CPU "
+                "credits run out, performance drops to baseline — review this with a "
+                "fixed-performance spec"
             )
         elif pattern == "spiky" and burst:
             out.append(
-                f"trafficPattern(spiky): 버스트 인스턴스({', '.join(burst)})와 알려진 "
-                "상충 없음 — 간헐 폭증에는 크레딧 모델이 맞을 수 있습니다"
+                f"trafficPattern(spiky): no known conflict with the burst instances "
+                f"({', '.join(burst)}) — a credit model can fit intermittent spikes"
             )
         elif any(n.hourly_usd for n in plan.nodes):
             out.append(
-                f"trafficPattern({pattern}): 계획의 스펙에 버스트 경고가 없습니다"
-                "(성능 축 확인 기준)"
+                f"trafficPattern({pattern}): no burst warning on the plan's specs"
+                " (as checked on the performance axis)"
             )
         else:
             out.append(
-                f"trafficPattern({pattern}): 판정 불가 — 값·성능 조인이 안 된 계획입니다"
+                f"trafficPattern({pattern}): no verdict — this plan has no value or "
+                "performance join"
             )
 
     stateless = req.get("stateless")
@@ -200,24 +231,27 @@ def verify_against_requirements(
     )
     if stateless is False and serverless:
         out.append(
-            f"stateless(false) × 서버리스({', '.join(serverless)}): **상충 가능성"
-            "(우리 추론)** — 서버리스 함수는 인스턴스에 상태를 보존하지 않는 실행 "
-            "모델이라, 상태를 관리형 저장소로 옮기는 재설계가 필요합니다"
+            f"stateless(false) × serverless ({', '.join(serverless)}): **possible "
+            "conflict (we inferred)** — a serverless function is an execution model "
+            "that keeps no state on the instance, so moving the state to managed "
+            "storage is a redesign you will need"
         )
     elif stateless is False:
         out.append(
-            "stateless(false): 컴퓨트에 둔 상태는 재생성·스케일 때 사라집니다 — "
-            "계획의 저장소 노드가 상태의 자리입니다 (우리 추론)"
+            "stateless(false): state kept on compute disappears on re-creation and "
+            "scaling — the plan's storage node is where state belongs (we inferred)"
         )
     elif stateless is None and serverless:
         # 서버리스가 계획에 있는데 상태성 주장을 못 받았다 — 침묵을 적합으로
         # 읽지 않도록 미확인을 명시한다.
         out.append(
-            f"상태성 미확인: 서버리스({', '.join(serverless)})가 계획에 있는데 "
-            "stateless 여부를 받지 못했습니다"
+            f"Statefulness unconfirmed: serverless ({', '.join(serverless)}) is in the "
+            "plan but we were not told whether it is stateless"
         )
     elif stateless is True:
-        out.append("stateless(true): 계획과 알려진 상충 없음 — 주장으로 기록됩니다")
+        out.append(
+            "stateless(true): no known conflict with the plan — recorded as a claim"
+        )
 
     residency = req.get("dataResidency")
     if residency:
@@ -226,9 +260,9 @@ def verify_against_requirements(
         # 판정하면 확신에 찬 오답이 된다. 대조 자료(원본 표시 이름)는 도구 계층이
         # 계획 노트로 싣는다.
         out.append(
-            f"dataResidency({residency}): **판정 불가** — 리전의 소속 국가를 기계 "
-            "판정할 소스가 없습니다. 계획 노트의 리전 원본 표시 이름과 대조해 "
-            "직접 확인하세요"
+            f"dataResidency({residency}): **no verdict** — we have no source that "
+            "decides a region's country by machine. Check it yourself against the "
+            "region's original display name in the plan notes"
         )
 
     provider = (req.get("provider") or "").strip().lower()
@@ -240,11 +274,13 @@ def verify_against_requirements(
         )
         if mismatched:
             out.append(
-                f"프로바이더({provider}): **불일치** — 다른 프로바이더 타입이 섞인 "
-                f"노드: {', '.join(mismatched)}"
+                f"Provider ({provider}): **mismatch** — nodes carrying another "
+                f"provider's type: {', '.join(mismatched)}"
             )
         else:
-            out.append(f"프로바이더({provider}): 계획의 벤더 타입이 전부 일치합니다")
+            out.append(
+                f"Provider ({provider}): every vendor type in the plan matches"
+            )
     return out
 
 

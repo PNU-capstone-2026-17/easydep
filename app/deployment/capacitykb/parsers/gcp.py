@@ -205,8 +205,9 @@ def parse_crds(crds: list[dict]) -> CapacitySet:
         "type_ids": sorted(make_type_id("gcp", k) for k in seen_kinds),
         "backends": dict(backends),
         "note": (
-            "KCC CRD 전체를 읽는다. **수치 한도(min/max)는 원본에 0건**이므로 "
-            "'GCP 한도를 모른다'는 안 뽑아서가 아니라 원본에 없어서다."
+            "reads all KCC CRDs. **the source carries 0 numeric limits (min/max)**, "
+            "so 'we do not know GCP limits' is because the source has none, not "
+            "because we failed to extract them."
         ),
     })
     return capacity

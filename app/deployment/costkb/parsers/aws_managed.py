@@ -233,14 +233,15 @@ def build(
     axis_counts = Counter(r["axis"] for r in records)
     payload = {
         "_note": (
-            "AWS 관리형 서비스의 **과금 축 목록**입니다 — 단가 한 칸이 아닙니다"
-            "(인스턴스-시간형만 시간당 단가가 성립하고, 용량-비례형은 곱할 수량이 "
-            "사이징 결과이며, 사용량형은 트래픽을 알아야 합니다). 합계는 만들지 "
-            "않습니다.\n"
-            "**재배포 금지 소스입니다.** AWS Price List의 가격 데이터는 재배포가 "
-            "명시적으로 금지되어, 이 파일은 로컬 빌드 산출물로만 존재해야 합니다 — "
-            "`data/`에 포장하거나 저장소에 커밋하지 마세요(테스트가 막습니다). "
-            "값은 받은 시점의 스냅샷이며 실제 청구서가 아닙니다."
+            "A **list of billing axes** for AWS managed services — not a single "
+            "unit-price cell (only instance-hour has a valid hourly rate; for "
+            "capacity-rate the quantity to multiply by is a sizing result; "
+            "usage-based needs the traffic). No total is produced.\n"
+            "**This source forbids redistribution.** Redistribution of AWS Price "
+            "List price data is explicitly forbidden, so this file must exist only "
+            "as a local build artifact — do not pack it into `data/` and do not "
+            "commit it to the repository (a test blocks that). Values are a snapshot "
+            "from when they were fetched, not an actual bill."
         ),
         "records": records,
         "_coverage": [
@@ -251,12 +252,13 @@ def build(
                 "byAxis": dict(axis_counts),
                 "dropped": dict(dropped),
                 "note": (
-                    "OnDemand 텀만 담습니다(예약·Savings Plan은 별개 축). "
-                    "`family-not-included`는 ELB 파일에서 NLB 외(ALB·GWLB·CLB)를, "
-                    "`boundary-bleed`는 S3 파일의 Data Transfer(이그레스)를 거른 "
-                    "것입니다. 리전에 없는 서비스: "
-                    + (", ".join(missing[:8]) or "없음")
-                    + (f" 외 {len(missing) - 8}건" if len(missing) > 8 else "")
+                    "Only the OnDemand term is included (reserved and Savings Plan "
+                    "are separate axes). `family-not-included` is what was dropped "
+                    "from the ELB file other than NLB (ALB, GWLB, CLB); "
+                    "`boundary-bleed` is Data Transfer (egress) dropped from the S3 "
+                    "file. Services not present in the region: "
+                    + (", ".join(missing[:8]) or "none")
+                    + (f" and {len(missing) - 8} more" if len(missing) > 8 else "")
                 ),
             }
         ],
@@ -270,9 +272,9 @@ def build(
                 "bytes": None,
                 "fetched_at": None,
                 "note": (
-                    "오퍼별 응답의 version 칸: "
+                    "The version field of each offer's response: "
                     + " · ".join(f"{k}={v}" for k, v in sorted(versions.items()))
-                    + " — 재현은 이 버전이 박힌 URL로 할 수 있습니다."
+                    + " — reproduce with the URL that pins this version."
                 ),
             }
         ],

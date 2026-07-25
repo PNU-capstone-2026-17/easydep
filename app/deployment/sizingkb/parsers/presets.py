@@ -64,7 +64,7 @@ def parse_template(text: str) -> tuple[list[Rule], str | None, Counter]:
                         metric=f"{section}.{key}",
                         value=value,
                         evidence=EVIDENCE,
-                        note=f"'{name}' 프리셋의 {section}",
+                        note=f"{section} of the '{name}' preset",
                         caveat=caveat,
                     )
                 )
@@ -84,15 +84,16 @@ def build(output: Path, *, refresh: bool = False) -> RuleSet:
         {
             "rules": len(rules),
             "note": (
-                f"bitnami 공용 차트의 컨테이너 규모 프리셋 {len(seen)}종"
+                f"{len(seen)} container size presets from the bitnami common chart "
                 f"({', '.join(sorted(seen))}). "
                 + (
-                    "**원본이 스스로 '프로덕션용이 아니다'라고 적어 두었고 그 문장을 "
-                    "값마다 함께 담았다.**"
+                    "**The source itself says they are 'not meant to be used in "
+                    "production', and that sentence ships with every value.**"
                     if caveat
-                    else "⚠ 원본 경고 문장을 못 찾았다 — 소스 형식이 바뀌었을 수 있다."
+                    else "⚠ Could not find the source's warning sentence — the "
+                    "source format may have changed."
                 )
-                + " 컨테이너 규모이지 인스턴스 규모가 아니다."
+                + " These are container sizes, not instance sizes."
             ),
         }
     ]

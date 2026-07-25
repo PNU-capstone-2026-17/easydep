@@ -65,7 +65,10 @@ def test_missing_file_is_not_an_error(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     ("content", "hint"),
-    [('{"specs": [1], ', "JSON"), ('{"specs": []}', "스키마")],
+    [
+        ('{"specs": [1], ', "is not intact JSON"),
+        ('{"specs": []}', "violates the schema"),
+    ],
     ids=["truncated", "schema-violation"],
 )
 def test_damaged_file_reports_instead_of_raising(tmp_path, content, hint) -> None:
@@ -117,10 +120,15 @@ def test_poisoned_build_falls_back_to_bundle(poisoned_build) -> None:
 def test_poisoned_build_is_disclosed_in_the_answer(poisoned_build) -> None:
     """조용한 폴백은 "커버리지가 왜 좁아졌지?"를 미궁으로 만든다."""
     warning = cost_dataset.load_warning()
-    assert warning is not None and "번들" in warning
+    assert warning is not None
+    assert "answers from the bundled 36 specs" in " ".join(warning.split()).lower()
 
-    text = cost_api.recommend_specs(vcpu_min=2, mem_min_gib=4, provider="aws", limit=2)
-    assert "번들" in text and "costkb build" in text
+    text = " ".join(
+        cost_api.recommend_specs(
+            vcpu_min=2, mem_min_gib=4, provider="aws", limit=2
+        ).split()
+    ).lower()
+    assert "answers from the bundled 36 specs" in text and "costkb build" in text
 
 
 def test_truncated_build_also_falls_back(tmp_path, monkeypatch) -> None:

@@ -22,8 +22,8 @@ from __future__ import annotations
 from appkb.plan import DeploymentPlan, PlanNode, needs_hedge
 
 _STEREOTYPE = {
-    "designer": "설계자 지정",
-    "inferred": "추론",
+    "designer": "specified by the designer",
+    "inferred": "inferred",
 }
 
 #: 역할별 PlantUML 요소. `rectangle`로 통일하지 않는 이유 — 모양이 다르면
@@ -51,7 +51,7 @@ def _node_line(node: PlanNode) -> str:
     if node.type_id:
         label += f"\\n{_quote(node.type_id)}"
     elif node.candidates:
-        label += f"\\n후보 {len(node.candidates)}개"
+        label += f"\\n{len(node.candidates)} candidates"
     stereotype = _STEREOTYPE.get(node.origin, "")
     tail = f" <<{stereotype}>>" if stereotype else ""
     # **별칭을 따옴표로 감싼다.** 계약이 컴포넌트 id에 하이픈을 허용하는데
@@ -72,7 +72,7 @@ def render(plan: DeploymentPlan) -> str:
     """계획 하나를 PlantUML 텍스트로."""
     lines = [
         "@startuml",
-        f"title {_quote(plan.name)} — 배포 구성",
+        f"title {_quote(plan.name)} — deployment plan",
         "skinparam shadowing false",
         "",
     ]
@@ -109,14 +109,20 @@ def render(plan: DeploymentPlan) -> str:
     hedged = plan.hedged_count
     lines.append("")
     lines.append("legend right")
-    lines.append("  근거: 설계 산출물 / 설계자 지정 / 지식베이스 / 우리 추론")
+    lines.append(
+        "  Evidence: design artifact / specified by the designer / knowledge base"
+        " / we inferred"
+    )
     if hedged:
         # **그림 안에 유보를 남긴다.** 범례만으로는 부족하다 — 그림은 잘려 돌아다닌다.
         lines.append(
-            f"  <<추론>>·<<설계자 지정>> 표시 {hedged}건은 검증된 사실이 아닙니다"
+            f"  The {hedged} items marked <<inferred>>·<<specified by the designer>>"
+            " are not verified facts"
         )
     if plan.unresolved:
-        lines.append(f"  답하지 못한 것 {len(plan.unresolved)}건 — 계획 본문 참조")
+        lines.append(
+            f"  {len(plan.unresolved)} items we could not answer — see the plan body"
+        )
     lines.append("endlegend")
     lines.append("@enduml")
     return "\n".join(lines)

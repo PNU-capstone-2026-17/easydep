@@ -376,7 +376,7 @@ def build(
     capacity.coverage = [{
         "provider": "aws",
         "types": len({c.type_id for c in capacity.constraints}),
-        "note": "CloudFormation 스키마 zip 전체를 읽는다.",
+        "note": "reads the whole CloudFormation schema zip.",
     }]
     announce(capacity.save(output), "capacitykb/cfn")
 

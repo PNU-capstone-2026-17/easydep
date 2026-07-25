@@ -39,9 +39,9 @@ class Member:
 
     def __post_init__(self) -> None:
         if self.tier not in TIERS:
-            raise ValueError(f"알 수 없는 등급: {self.tier!r} (가능: {TIERS})")
+            raise ValueError(f"unknown tier: {self.tier!r} (allowed: {TIERS})")
         if self.count < 1:
-            raise ValueError(f"count는 1 이상이어야 한다: {self.type_id} = {self.count}")
+            raise ValueError(f"count must be 1 or more: {self.type_id} = {self.count}")
 
     @property
     def rank(self) -> int:
@@ -78,9 +78,9 @@ class Bundle:
         for member in self.members:
             if member.type_id in seen:
                 raise ValueError(
-                    f"{self.id}: '{member.type_id}'가 두 번 들어 있다"
+                    f"{self.id}: '{member.type_id}' appears twice"
                     f" ({seen[member.type_id]} · {member.tier})."
-                    " 개수는 Member.count로 담는다."
+                    " Counts go in Member.count."
                 )
             seen[member.type_id] = member.tier
 

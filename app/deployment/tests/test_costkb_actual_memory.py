@@ -41,7 +41,7 @@ def test_corrections_are_recorded_as_metadata() -> None:
     entry = next(c for c in CORRECTIONS if c["field"] == "memGiB")
     assert set(entry["providers"]) == {"azure", "gcp"}
     assert "1.024" in entry["operation"]
-    assert "되돌리려면" in entry["reason"]
+    assert "To get back to the original" in entry["reason"]
 
 
 CORRECTED = {

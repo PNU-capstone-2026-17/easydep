@@ -156,9 +156,11 @@ def build(output: Path, *, refresh: bool = False) -> CapacitySet:
         "types": len(types),
         "type_ids": sorted(types),
         "note": (
-            "Azure REST 명세의 x-ms-secret 중 **PUT 본문**에 있는 것만. 배포 때 넣지만 "
-            "API로 다시 못 읽는 값이다. 응답 전용 secret은 읽을 수 있어 이 축의 뜻과 "
-            "어긋나므로 뺐다. x-ms-mutability와 직교하는 축이라 겹치지 않는다."
+            "x-ms-secret from the Azure REST specification, but only what appears in "
+            "the **PUT body**. these are values you set at deploy time and cannot "
+            "read back through the API. response-only secrets can be read, which "
+            "contradicts what this axis means, so they were left out. this axis is "
+            "orthogonal to x-ms-mutability, so the two do not overlap."
         ),
     }]
 

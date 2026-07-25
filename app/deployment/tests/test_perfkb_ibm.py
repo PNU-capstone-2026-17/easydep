@@ -144,7 +144,7 @@ def test_record_without_burst_signals_is_partial_not_ok(built) -> None:
     """
     note = agent_api.recommend_note("ibm", "bx2-16x64", output_dir=built)
     assert note.status == agent_api.NOTE_PARTIAL
-    assert "판정 불가" in (note.text or "")
+    assert "Cannot judge burst or generation" in " ".join((note.text or "").split())
 
 
 def test_record_with_signals_is_still_ok(built) -> None:
@@ -160,5 +160,6 @@ def test_committed_artifact_discloses_its_redistribution_status() -> None:
     if not packed.exists():
         pytest.skip("아직 빌드·포장하지 않은 환경")
     note = artifact.load_json(packed).get("_note") or ""
-    assert "재배포" in note and "찾지 못했습니다" in note
-    assert "허가를 받았다는 뜻이 아닙니다" in note
+    note = " ".join(note.split()).lower()
+    assert "found no wording granting redistribution" in note
+    assert "does not mean permission was granted" in note

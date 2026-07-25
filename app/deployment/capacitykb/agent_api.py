@@ -50,9 +50,26 @@ CAPACITY_FILES = (
 _SUMMARIZE_OVER = 8
 
 _MISSING_MESSAGE = (
-    "용량·제약 산출물이 없습니다. 먼저 `python -m capacitykb build --source "
-    "cfn|azure|azure-quota` 로 생성하세요."
+    "no capacity/constraint artifact. build it first with `python -m capacitykb "
+    "build --source cfn|azure|azure-quota`."
 )
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    """`1 constraints` 같은 비문을 막는다.
+
+    한국어에는 수 일치가 없어서 `f"{n}건"` 하나로 끝났다. 영어로 옮기면서
+    그 자리가 전부 복수형 리터럴이 됐고, n=1일 때 문장이 깨진다. 모델이 읽는
+    문장이므로 문법이 흐트러지면 신뢰도 신호가 같이 흐트러진다.
+    """
+    return f"{n} {one if n == 1 else many}"
+
+
+def _recreating(n: int) -> str:
+    """불변 속성 개수 문구. 명사와 동사가 **함께** 수 일치해야 한다."""
+    if n == 1:
+        return "1 property that recreates the resource when changed"
+    return f"{n} properties that recreate the resource when changed"
 
 
 @lru_cache(maxsize=4)
@@ -84,42 +101,42 @@ def _resolve(capacity: CapacitySet, name: str):
 def _describe(constraint) -> str:
     unit = f" {constraint.unit}" if constraint.unit else ""
     labels = {
-        "min": "최소",
-        "max": "최대",
-        "min_length": "최소 길이",
-        "max_length": "최대 길이",
-        "min_items": "최소 개수",
-        "max_items": "최대 개수",
-        "pattern": "패턴",
-        "enum": "허용값",
-        "default": "기본값",
-        "required": "필수",
-        "mutability": "변경",
+        "min": "min",
+        "max": "max",
+        "min_length": "min length",
+        "max_length": "max length",
+        "min_items": "min items",
+        "max_items": "max items",
+        "pattern": "pattern",
+        "enum": "allowed values",
+        "default": "default",
+        "required": "required",
+        "mutability": "mutability",
         # 형제 속성과의 관계. value가 관련 속성 목록이라 라벨만으로 뜻이 통해야 한다.
-        "exactly_one_of": "이 중 정확히 하나만",
-        "at_least_one_of": "이 중 최소 하나는",
-        "conflicts_with": "함께 못 쓰는 속성",
-        "required_with": "함께 있어야 하는 속성",
+        "exactly_one_of": "exactly one of these",
+        "at_least_one_of": "at least one of these",
+        "conflicts_with": "properties it cannot be used with",
+        "required_with": "properties it must be used with",
     }
     mutability_labels = {
-        "create_only": "생성 후 변경 불가 (바꾸면 리소스 재생성)",
-        "conditional_create_only": "조건부 변경 불가 (경우에 따라 재생성)",
+        "create_only": "cannot be changed after creation (changing it recreates the resource)",
+        "conditional_create_only": "conditionally unchangeable (recreates in some cases)",
         # **원본이 "바꿀 수 있다"고 적은 것.** 짐작으로 바꿀 수 있다는 뜻이 아니라,
         # 명세가 update를 허용 목록에 넣었다는 뜻이다.
-        "updatable": "생성 후 변경 가능 (명세가 update를 허용으로 표시)",
-        "read_only": "읽기 전용 (설정 불가)",
+        "updatable": "can be changed after creation (the spec marks update as allowed)",
+        "read_only": "read-only (cannot be set)",
         # 불변/가변 이분법에 안 담기는 축. "늘리는 건 되고 줄이면 재생성" 같은 것이라,
         # 무엇이 조건인지는 note에 붙는 판정 함수 이름으로만 알 수 있다.
-        "update_restricted": "조건부 재생성 (어떤 방향으로 바꾸느냐에 따라 다름)",
+        "update_restricted": "conditional recreate (depends on which direction you change it)",
     }
     if constraint.kind == "mutability":
         text = mutability_labels.get(constraint.value, constraint.value)
     elif constraint.kind == "required":
-        text = "필수 항목"
+        text = "required"
     elif constraint.kind == "secret":
         # 비밀값 — 배포 때 넣지만 API로 다시 못 읽는다. Key Vault 등으로 따로
         # 관리해야 한다는 신호라, 값(True)이 아니라 이 사실을 문장으로 보여준다.
-        text = "비밀값 (배포 시 설정, API로 다시 읽을 수 없음 — 안전하게 보관 필요)"
+        text = "secret value (set at deploy time, cannot be read back through the API — keep it safe)"
     else:
         # **긴 목록을 통째로 찍지 않는다.** 리전별 인스턴스 타입을 그대로 내보냈더니
         # 도구 응답 하나가 377,439자였다 — 모델 컨텍스트를 통째로 먹고 실측이 멈췄다.
@@ -130,11 +147,13 @@ def _describe(constraint) -> str:
     # 드러났다 — 어느 조건에서의 값인지가 그 줄의 뜻 전부인 경우가 있다.
     if constraint.conditions:
         tags.append(
-            " 그리고 ".join(_cond_text(c) for c in constraint.conditions) + " 일 때"
+            "when " + " and ".join(_cond_text(c) for c in constraint.conditions)
         )
     if constraint.conditional:
-        tags.append("조건부")
-    tags.append(f"근거 {evidence_name(constraint.evidence)}, {describe(constraint.basis)}")
+        tags.append("conditional")
+    tags.append(
+        f"evidence {evidence_name(constraint.evidence)}, {describe(constraint.basis)}"
+    )
     suffix = f" ({', '.join(tags)})"
     note = f"\n    ※ {constraint.note}" if constraint.note else ""
     return f"  - {constraint.property}: {text}{suffix}{note}"
@@ -157,9 +176,9 @@ def _backend_footer(constraints) -> str | None:
     total = sum(stale.values())
     text = "; ".join(stale)
     return (
-        f"{total}건은 {text}."
+        f"all {_plural(total, 'entry', 'entries')}: {text}."
         if total == len(constraints)
-        else f"위 {len(constraints)}건 중 {total}건은 {text}."
+        else f"{total} of the {len(constraints)} entries above: {text}."
     )
 
 
@@ -171,16 +190,16 @@ def _nothing_found(capacity: CapacitySet, type_id: str, what: str) -> str:
     아예 안 읽어서** 없는 것이다. "제약 없음"이라고 답하면 그건 거짓이다.
     """
     if capacity.covers(type_id):
-        return f"{what} 에 대해 알려진 제약이 없습니다 (수집 범위 안이므로 '없음'이 답입니다)."
+        return f"{what}: no known constraint (it is inside the collected scope, so 'none' is the answer)."
     provider = type_id.split("::", 1)[0]
     scanned = ", ".join(
-        f"{e['provider']}({'전체' if not e.get('scope') else '/'.join(e['scope'])})"
+        f"{e['provider']}({'all' if not e.get('scope') else '/'.join(e['scope'])})"
         for e in capacity.coverage
     )
     return "\n".join([
-        f"{what} 는 **수집 범위 밖**이라 제약을 모릅니다 — 제약이 없다는 뜻이 아닙니다.",
-        f"  지금 수집한 범위: {scanned or '(기록 없음)'}",
-        f"  {provider} 쪽을 넓히려면 capacitykb 빌드 범위를 늘려야 합니다.",
+        f"{what} is **outside the collected scope**, so we do not know its constraints — that does not mean there are none.",
+        f"  scope collected so far: {scanned or '(no record)'}",
+        f"  to widen {provider}, the capacitykb build scope has to be extended.",
     ])
 
 
@@ -202,10 +221,10 @@ def _property_hint(capacity: CapacitySet, type_id: str, prop: str) -> str:
         return ""
     close = difflib.get_close_matches(prop, known, n=5, cutoff=0.5)
     if close:
-        return f"  이 타입에 그런 속성은 없습니다. 혹시 이것인가요: {', '.join(close)}"
+        return f"  this type has no such property. did you mean: {', '.join(close)}"
     shown = ", ".join(known[:6])
-    more = f" 외 {len(known) - 6}개" if len(known) > 6 else ""
-    return f"  이 타입에 그런 속성은 없습니다. 아는 속성: {shown}{more}"
+    more = f" and {len(known) - 6} more" if len(known) > 6 else ""
+    return f"  this type has no such property. properties we know: {shown}{more}"
 
 
 def property_limits(
@@ -228,7 +247,7 @@ def property_limits(
         hint = _property_hint(capacity, type_id, property_name) if property_name else ""
         return f"{base}\n{hint}" if hint else base
     header = display(type_id) + (f".{property_name}" if property_name else "")
-    lines = [f"{header} 제약 {len(found)}건:"]
+    lines = [f"{header} — {_plural(len(found), 'constraint', 'constraints')}:"]
     lines.extend(_describe(c) for c in found)
     footer = _backend_footer(found)
     if footer:
@@ -268,11 +287,11 @@ def check(
             # 있는지까지 말한다.
             asked = result.missing
             head = (
-                f"조건에 따라 다릅니다: {target} 는 {', '.join(asked)} 에 따라 달라져서, "
-                "그 값을 알아야 확정할 수 있습니다."
+                f"depends on the condition: {target} varies with "
+                f"{', '.join(asked)}, so we need those values to be definite."
             )
-            allowed = [u for u in result.unresolved if u.endswith("→ 가능")]
-            denied = [u for u in result.unresolved if u.endswith("→ 불가")]
+            allowed = [u for u in result.unresolved if u.endswith("→ allowed")]
+            denied = [u for u in result.unresolved if u.endswith("→ not allowed")]
             # 조건이 몇 개 안 되면 **값을 그대로** 보여준다. 볼륨 종류 6가지에
             # "2가지에서 가능"만 말하면 정작 한도 숫자가 사라진다.
             # 리전 38개처럼 많을 때만 세어서 요약한다.
@@ -281,75 +300,77 @@ def check(
             # 조건이 38개(리전)씩 되면 전부 나열하는 게 답이 아니다.
             # **어디서 되고 어디서 안 되는지**를 세어 주는 편이 질문에 가깝다.
             lines = [
-                head + f" 조건 {len(result.unresolved)}가지 중 "
-                f"**{len(allowed)}가지에서 가능**, {len(denied)}가지에서 불가입니다."
+                head + f" of the {len(result.unresolved)} conditions, "
+                f"**{len(allowed)} allow it**, {len(denied)} do not."
             ]
-            for label, items in (("가능", allowed), ("불가", denied)):
+            for label, items in (("allowed", allowed), ("not allowed", denied)):
                 if not items:
                     continue
                 # 조건 절만 남긴다. 예전에는 `"= "`로 잘라 값만 뽑았는데, 조건이
                 # 둘이 되고 정규식이 들어오면서 그 파싱이 통째로 무의미해졌다.
-                names = [u.split(" 일 때", 1)[0] for u in items[:8]]
-                more = f" 외 {len(items) - 8}가지" if len(items) > 8 else ""
+                names = [u.split(": ", 1)[0].removeprefix("when ") for u in items[:8]]
+                more = f" and {len(items) - 8} more" if len(items) > 8 else ""
                 lines.append(f"  {label}: {'; '.join(names)}{more}")
             return "\n".join(lines)
         if not result.references and not result.unevaluated and result.excluded:
             # 제약은 있는데 **준 조합에 걸리는 게 없다.** "모른다"와 다른 말이다.
             given = ", ".join(f"{k}={v!r}" for k, v in (context or {}).items())
             return (
-                f"판정할 수 없습니다: {target} — 이 속성에 조건부 제약 "
-                f"{result.excluded}건이 있지만 주신 조합({given or '조건 없음'})에 "
-                "걸리는 것이 없습니다. 지식베이스가 그 조합을 모르는 것이니 "
-                "값(엔진·버전 표기 등)을 다시 확인하시거나 공식 문서를 보세요."
+                f"no verdict possible: {target} — this property has "
+                f"{result.excluded} conditional constraints, but none of them match "
+                f"the combination you gave ({given or 'no condition'}). the knowledge "
+                "base does not know that combination, so re-check the values (engine "
+                "and version spelling, etc.) or see the official documentation."
             )
         if not result.references and not result.unevaluated:
             hint = _property_hint(capacity, type_id, property_name)
             if hint:
                 return (
-                    f"{display(type_id)}.{property_name} 에 대해 아는 제약이 없습니다.\n"
+                    f"{display(type_id)}.{property_name}: no known constraint.\n"
                     + hint
                 )
             return (
-                f"{display(type_id)}.{property_name} 에 대해 알려진 제약이 없어 판정할 수 "
-                "없습니다. 지식베이스에 없는 값이므로 공식 문서를 확인하세요."
+                f"{display(type_id)}.{property_name}: no known constraint, so no "
+                "verdict. it is not in the knowledge base — check the official "
+                "documentation."
             )
         if not result.references:
             # 제약을 쥐고 있는데 평가만 못 한다. 이걸 "제약이 없다"로 답하면 거짓이다.
             return "\n".join([
-                f"확정 판정 불가: {target} — 제약은 있으나 그 정규식을 읽을 수 없습니다.",
+                f"no definite verdict: {target} — there is a constraint, but we cannot read its regex.",
                 *(f"  - {u}" for u in result.unevaluated),
-                "  원본 스키마의 정규식이 어느 엔진에서도 돌지 않습니다(상류 오류). "
-                "공식 문서를 확인하세요.",
+                "  the regex in the source schema does not run on any engine (an "
+                "upstream error). check the official documentation.",
             ])
         # 확정 근거는 없지만 참고 정보는 쥐고 있다 — 예전엔 이걸 버리고 "모른다"고 답했다.
         return "\n".join([
-            f"확정 판정 불가: {target} 를 판정할 확정 제약이 없습니다. "
-            "다만 아래 참고 정보가 있으니 함께 보세요.",
-            "  참고(원본이 명시한 것이 아니라 판정엔 쓰지 않음):",
+            f"no definite verdict: {target} — there is no confirmed constraint to "
+            "judge it by. the reference information below is what we do have.",
+            "  for reference (not stated by the source; not used in the verdict):",
             *(f"  - {r}" for r in result.references),
         ])
     if result.verdict == "violation":
-        lines = [f"불가: {target} 는 제약을 위반합니다."]
+        lines = [f"not allowed: {target} violates a constraint."]
         lines.extend(f"  - {v}" for v in result.violations)
     elif result.verdict == "advisory":
         # 확정 제약은 없지만 참고 정보상 벗어남 → "가능"이라고 하면 거짓 긍정이 된다
         lines = [
-            f"판정 보류: {target} 는 확정된 제약을 위반하진 않지만, "
-            "원본이 명시하지 않고 산문에서 뽑은 참고 정보상 범위를 벗어납니다. "
-            "공식 문서 확인을 권합니다."
+            f"verdict withheld: {target} does not violate any confirmed constraint, "
+            "but it falls outside reference information pulled from prose that the "
+            "source never stated. we suggest checking the official documentation."
         ]
     else:
-        lines = [f"가능: {target} 는 알려진 제약 {result.checked}건을 만족합니다."]
+        lines = [f"allowed: {target} satisfies the {result.checked} known constraints."]
 
     if result.unevaluated:
-        lines.append("  ※ 아래 제약은 정규식을 읽을 수 없어 판정에 넣지 못했습니다:")
+        lines.append("  ※ the constraints below could not go into the verdict — we cannot read their regex:")
         lines.extend(f"  - {u}" for u in result.unevaluated)
     if result.advisories or result.references:
-        lines.append("  참고(원본이 명시한 것이 아니라 판정엔 쓰지 않음):")
+        lines.append("  for reference (not stated by the source; not used in the verdict):")
         lines.extend(f"  - {a}" for a in result.advisories)
         lines.extend(f"  - {r}" for r in result.references)
     if result.unresolved:
-        lines.append("  다른 조건에서는 한도가 다릅니다:")
+        lines.append("  under other conditions the limit differs:")
         lines.extend(f"  - {u}" for u in result.unresolved)
     return "\n".join(lines)
 
@@ -368,7 +389,7 @@ def immutable(
     if not found:
         if not capacity.covers(type_id):
             return _nothing_found(capacity, type_id, display(type_id))
-        return f"{display(type_id)} 에 변경 불가로 알려진 속성이 없습니다."
+        return f"{display(type_id)}: no property is known to be unchangeable."
 
     # 부모가 이미 불변이면 자식은 접는다. GCP를 넣고 나서 이게 문제가 됐다 —
     # KCC는 `Immutable.`을 부모와 자식 모두에 달아서 실측상 2,003건 중 913건(45.6%)이
@@ -378,9 +399,12 @@ def immutable(
     shown = [c for c in found if not any(c.property.startswith(p + ".") for p in names)]
     folded = len(found) - len(shown)
 
-    head = f"{display(type_id)} 의 변경 시 재생성되는 속성 {len(shown)}개"
+    head = f"{display(type_id)} — {_recreating(len(shown))}"
     if folded:
-        head += f" (하위 속성 {folded}개는 부모가 이미 불변이라 접었습니다)"
+        head += (
+            f" ({_plural(folded, 'child property', 'child properties')} folded away"
+            " — the parent is already immutable)"
+        )
     # 낡음 고지를 **머리줄에** 붙인다. 꼬리말로 뒀더니 모델이 값만 옮기고 경고는
     # 뺐다 — 프롬프트로 "⚠는 반드시 옮기라"고 지시해도 그랬다(실측). 개수는 모델이
     # 반드시 옮기는 정보라, 거기 붙이면 경고만 따로 떼기 어렵다.
@@ -415,15 +439,17 @@ def secrets(
         provider = type_id.split("::", 1)[0]
         if provider != "azure":
             return (
-                f"{display(type_id)} 의 비밀값 정보가 없습니다 — 이 표시는 지금 "
-                f"Azure 명세만 제공합니다({provider}는 미수록). '비밀값 없음'이 "
-                "아니라 '이 축을 추적하지 않음'입니다."
+                f"{display(type_id)}: no secret-value information — only the Azure "
+                f"specification carries this marker right now ({provider} is not "
+                "included). that is 'this axis is not tracked', not 'no secret values'."
             )
-        return f"{display(type_id)} 에 비밀값으로 표시된 속성이 없습니다."
+        return f"{display(type_id)}: no property is marked as a secret value."
 
     lines = [
-        f"{display(type_id)} 의 비밀값 속성 {len(found)}개 "
-        "(배포 시 설정, API로 다시 읽을 수 없음 — Key Vault 등으로 관리):"
+        f"{display(type_id)} — "
+        f"{_plural(len(found), 'secret-value property', 'secret-value properties')} "
+        "(set at deploy time, cannot be read back through the API — manage them in "
+        "Key Vault or similar):"
     ]
     lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
@@ -450,8 +476,8 @@ def allowed_values(
     if not found:
         if not capacity.covers(type_id):
             return _nothing_found(capacity, type_id, f"{display(type_id)}.{property_name}")
-        return f"{display(type_id)}.{property_name} 에 알려진 허용값/패턴 정보가 없습니다."
-    lines = [f"{display(type_id)}.{property_name} 허용값 정보:"]
+        return f"{display(type_id)}.{property_name}: no known allowed-value or pattern information."
+    lines = [f"{display(type_id)}.{property_name} — allowed values:"]
     lines.extend(_describe(c) for c in found)
     return "\n".join(lines)
 
@@ -466,20 +492,20 @@ def service_quota(
     found = find_quota(capacity, keyword)
     if not found:
         return (
-            f"'{keyword}' 에 해당하는 쿼터가 없습니다. "
-            "현재 쿼터 데이터는 Azure만 수록돼 있습니다."
+            f"no quota matches '{keyword}'. "
+            "quota data currently covers Azure only."
         )
     shown = found[: max(1, limit)]
-    lines = [f"'{keyword}' 쿼터 {len(found)}건 중 {len(shown)}건:"]
+    lines = [f"'{keyword}' — {len(shown)} of {len(found)} quotas:"]
     for quota in shown:
-        parts = [f"기본 {quota.default}"] if quota.default is not None else []
+        parts = [f"default {quota.default}"] if quota.default is not None else []
         if quota.maximum is not None:
-            parts.append(f"최대 {quota.maximum}")
-        detail = ", ".join(parts) if parts else "값 없음"
+            parts.append(f"max {quota.maximum}")
+        detail = ", ".join(parts) if parts else "no value"
         note = f" ※ {quota.note}" if quota.note else ""
         lines.append(
             f"  - [{quota.provider}] {quota.name}: {detail} "
-            f"(출처 {quota.source_doc}, {describe(quota.basis)}){note}"
+            f"(source {quota.source_doc}, {describe(quota.basis)}){note}"
         )
     return "\n".join(lines)
 
@@ -513,7 +539,7 @@ def type_summary(
     if not immutables and not others:
         # **"제약 없음"과 "안 봤음"을 구분해서 말한다.** 침묵하면 모델이 둘을
         # 같은 뜻으로 읽고, 우리가 수록 범위 안이라고 아는 타입까지 웹으로 간다.
-        return "용량·제약(capacitykb): 수록 범위 안이지만 이 타입에 걸린 제약은 없습니다."
+        return "capacity & constraints (capacitykb): inside the collected scope, but no constraint is attached to this type."
 
     parts = []
     if others:
@@ -531,19 +557,20 @@ def type_summary(
             return (depth, -count, prop)
 
         top = sorted(by_prop.items(), key=rank)
-        named = ", ".join(f"{p}({n}건)" if n > 1 else p for p, n in top[:4])
-        more = f" 외 {len(top) - 4}개 속성" if len(top) > 4 else ""
-        parts.append(f"제약 {len(others)}건 — {named}{more}")
+        named = ", ".join(f"{p}({n})" if n > 1 else p for p, n in top[:4])
+        more = f" and {len(top) - 4} more properties" if len(top) > 4 else ""
+        parts.append(f"{len(others)} constraints — {named}{more}")
     if immutables:
         names = [c.property for c in immutables]
         shown = ", ".join(names[:3])
-        more = f" 외 {len(names) - 3}개" if len(names) > 3 else ""
-        parts.append(f"변경 시 재생성되는 속성 {len(names)}개 — {shown}{more}")
+        more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+        parts.append(f"{_recreating(len(names))} — {shown}{more}")
 
     return (
-        f"용량·제약(capacitykb): {' · '.join(parts)}\n"
-        "  → 값이 되는지 판정은 cap_check_value(조건은 context로), "
-        "허용값은 cap_allowed_values, 한도 전체는 cap_property_limits."
+        f"capacity & constraints (capacitykb): {' · '.join(parts)}\n"
+        "  → for a verdict on whether a value works use cap_check_value (conditions "
+        "go in context), for allowed values cap_allowed_values, for every limit "
+        "cap_property_limits."
     )
 
 
@@ -600,22 +627,23 @@ def value_lookup(
         return (-count, prop.count("/") + prop.count("."), type_id, prop)
 
     ranked = sorted(hits.items(), key=rank)
-    lines = [f"'{name}' 은(는) 타입이 아니라 **값**입니다. capacitykb에서 이 값이 나오는 곳:"]
+    lines = [f"'{name}' is not a type but a **value**. where it appears in capacitykb:"]
     for (type_id, prop), allowed in ranked[:4]:
         total = totals.get((type_id, prop), allowed)
         where = (
-            f"조건 {total}가지 중 {allowed}가지에서 허용"
+            f"allowed under {allowed} of {total} conditions"
             if total > 1
-            else "허용값에 포함"
+            else "included in the allowed values"
         )
         lines.append(f"  - {display(type_id)}.{prop} — {where}")
     if len(ranked) > 4:
-        lines.append(f"  … 외 {len(ranked) - 4}곳")
+        lines.append(f"  … and {len(ranked) - 4} more places")
     top_type, top_prop = ranked[0][0]
     lines.append(
-        f"  → 어느 조건에서 되는지는 "
+        f"  → for which condition allows it, "
         f"cap_check_value('{display(top_type)}', '{top_prop}', '{name}') "
-        "— 조건(리전·볼륨 종류 등)은 context로 주면 확정 판정이 나옵니다."
+        "— pass the condition (region, volume type, etc.) in context and you get a "
+        "definite verdict."
     )
     return "\n".join(lines)
 
@@ -631,16 +659,16 @@ def value_lookup(
 ENDPOINTS_FILE = "aws-endpoints.json"
 
 _ENDPOINTS_MISSING = (
-    "리전 산출물이 없습니다. `python -m capacitykb build --source aws-endpoints` "
-    "로 생성하세요."
+    "no region artifact. build it with `python -m capacitykb build --source "
+    "aws-endpoints`."
 )
 
 #: 엔드포인트가 목록에 없다는 것은 **못 쓴다는 뜻이 아니다.** 이 문장을 답변에
 #: 반드시 함께 내보낸다 — 빼면 침묵이 "없음"으로 읽힌다.
 _ABSENCE_CAVEAT = (
-    "※ 여기 없는 리전은 '못 쓴다'가 아니라 **이 데이터로는 모른다**입니다. "
-    "글로벌 서비스는 엔드포인트가 하나뿐인데, 그걸 구분하는 표시가 원본 서비스 "
-    "307개 중 22개에만 있습니다."
+    "※ a region not listed here is not 'unusable' — **this data does not know**. "
+    "a global service has only one endpoint, and the marker that tells one apart is "
+    "on only 22 of the 307 services in the source."
 )
 
 
@@ -648,8 +676,8 @@ _ABSENCE_CAVEAT = (
 #: 이제 cloudinfo로 프로바이더 10곳을 알지만(`region_lookup`), 이 축은 아니다.
 #: 밝히지 않으면 AWS만 본 답이 전체를 본 답처럼 보인다.
 _AWS_ONLY_CAVEAT = (
-    "※ 서비스가 어느 리전에 있는지는 **AWS만** 수록돼 있습니다(출처가 AWS SDK). "
-    "다른 프로바이더의 서비스 가용성은 이 도구가 답하지 않습니다."
+    "※ which regions a service is in is included for **AWS only** (the source is the "
+    "AWS SDK). this tool does not answer service availability for other providers."
 )
 
 
@@ -704,16 +732,16 @@ def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -
         # 확인할 수 있지만, 골라 버리면 틀렸을 때 확인할 방법이 없다.
         near = difflib.get_close_matches(unmatched, services, n=4, cutoff=0.6)
         lines = [
-            f"'{name}' 이(가) AWS SDK의 어느 서비스인지 우리 데이터로는 확정할 수 "
-            f"없습니다(찾아본 이름: '{unmatched}').",
-            "  이름이 규칙적이지 않은 서비스가 있습니다 — CloudWatch는 `monitoring`, "
-            "Cognito는 `cognito-idp`, Certificate Manager는 `acm`입니다.",
+            f"our data cannot pin down which AWS SDK service '{name}' is "
+            f"(name looked up: '{unmatched}').",
+            "  some service names are not regular — CloudWatch is `monitoring`, "
+            "Cognito is `cognito-idp`, Certificate Manager is `acm`.",
         ]
         if near:
-            lines.append(f"  이름이 비슷한 것: {', '.join(near)}")
+            lines.append(f"  similar names: {', '.join(near)}")
         lines.append(
-            "  → SDK 서비스 이름으로 다시 물어보세요. 짐작으로 붙이면 엉뚱한 "
-            "서비스의 리전을 자신 있게 답하게 되므로 붙이지 않았습니다."
+            "  → ask again with the SDK service name. matching it by guess would "
+            "confidently answer with the wrong service's regions, so we did not."
         )
         return "\n".join(lines)
 
@@ -723,23 +751,25 @@ def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -
 
     if body.get("global"):
         return (
-            f"{service}: **글로벌 서비스**입니다 — 원본이 리전에 매이지 않는다고 "
-            f"밝혔습니다(partitionEndpoint={body.get('partition_endpoint')}).\n"
-            "  리전을 골라 배포하는 대상이 아닙니다."
+            f"{service}: a **global service** — the source states it is not tied to "
+            f"a region (partitionEndpoint={body.get('partition_endpoint')}).\n"
+            "  it is not something you pick a region to deploy into."
         )
 
     if not regions:
         return (
-            f"{service}: 표준 파티션에서 엔드포인트를 하나도 찾지 못했습니다.\n"
+            f"{service}: no endpoint found in the standard partition.\n"
             f"  {_ABSENCE_CAVEAT}"
         )
 
-    lines = [f"{service}: 엔드포인트가 있는 리전 {len(regions)}곳"]
+    lines = [
+        f"{service} — {_plural(len(regions), 'region', 'regions')} with an endpoint"
+    ]
     for code in regions[:12]:
         label = (partitions.get(code) or {}).get("description")
         lines.append(f"  - {code}" + (f" ({label})" if label else ""))
     if len(regions) > 12:
-        lines.append(f"  … 외 {len(regions) - 12}곳")
+        lines.append(f"  … and {len(regions) - 12} more")
     lines.append(f"  {_ABSENCE_CAVEAT}")
     lines.append(f"  {_AWS_ONLY_CAVEAT}")
     return "\n".join(lines)
@@ -759,8 +789,8 @@ def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -
 OPERATIONS_FILE = "azure-operations.json"
 
 _OPERATIONS_MISSING = (
-    "작업 정보 산출물이 없습니다. `python -m capacitykb build --source "
-    "azure-operations` 로 생성하세요."
+    "no operation-info artifact. build it with `python -m capacitykb build --source "
+    "azure-operations`."
 )
 
 
@@ -802,34 +832,35 @@ def operation_time(
         provider = (type_id or resource_type).split("::", 1)[0]
         if provider != "azure":
             return (
-                f"'{resource_type}'의 작업 소요 정보가 없습니다 — 이 표시는 지금 "
-                "**Azure만** 제공합니다. '빠르다'가 아니라 '추적하지 않음'입니다."
+                f"no operation-duration information for '{resource_type}' — only "
+                "**Azure** carries this marker right now. that is 'not tracked', "
+                "not 'fast'."
             )
         return (
-            f"{display(type_id or resource_type)} 의 작업 소요 정보가 없습니다 "
-            "(원본이 이 타입의 작업을 말하지 않았습니다)."
+            f"{display(type_id or resource_type)}: no operation-duration information "
+            "(the source did not describe this type's operations)."
         )
 
     record = index[type_id]
-    lines = [f"{display(type_id)} 작업 소요:"]
-    for field, label in (("create", "생성"), ("delete", "삭제"), ("update", "수정")):
+    lines = [f"{display(type_id)} — operation duration:"]
+    for field, label in (("create", "create"), ("delete", "delete"), ("update", "update")):
         value = record.get(field)
         if value is None:
             # **없음과 즉시를 구분한다.** 원본이 말 안 한 것을 "빠르다"로 읽으면
             # 타임아웃을 짧게 잡게 된다.
-            lines.append(f"  - {label}: 원본이 말하지 않음 (모름)")
+            lines.append(f"  - {label}: the source does not say (unknown)")
         elif value:
-            lines.append(f"  - {label}: **오래 걸립니다** (비동기 — 완료를 기다려야 함)")
+            lines.append(f"  - {label}: **takes a long time** (asynchronous — you must wait for completion)")
         else:
-            lines.append(f"  - {label}: 즉시 (응답이 곧 완료)")
+            lines.append(f"  - {label}: immediate (the response is the completion)")
 
     actions = record.get("actions") or []
     if actions:
         slow = [a for a in actions if a["long_running"]]
-        lines.append(f"  액션 {len(actions)}개 (오래 걸리는 것 {len(slow)}개):")
+        lines.append(f"  {len(actions)} actions ({len(slow)} long-running):")
         for action in actions[:8]:
-            mark = "오래 걸림" if action["long_running"] else "즉시"
+            mark = "long-running" if action["long_running"] else "immediate"
             lines.append(f"    - {action['name']}: {mark}")
         if len(actions) > 8:
-            lines.append(f"    … 외 {len(actions) - 8}개")
+            lines.append(f"    … and {len(actions) - 8} more")
     return "\n".join(lines)

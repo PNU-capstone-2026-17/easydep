@@ -81,7 +81,7 @@ def test_footnote_switches_label_and_notes(subscription: list[Quota]) -> None:
     """각주가 붙은 값은 조건에 따라 달라질 수 있다 (EA vs 종량제 등)."""
     found = by_name(subscription, "vCPUs per subscription")
     assert found.basis == "inferred"
-    assert "각주" in found.note
+    assert "footnote" in found.note
     # 각주 없는 행은 0.9
     assert by_name(subscription, "DNS servers per subscription").basis == "stated"
 

@@ -20,6 +20,11 @@ VOLUME = "aws::AWS::EC2::Volume"
 SUBNET = "aws::AWS::EC2::Subnet"
 
 
+def flat(text: str) -> str:
+    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
+    return " ".join(text.split())
+
+
 def constraint(**overrides) -> Constraint:
     base = {
         "type_id": VOLUME,
@@ -105,7 +110,7 @@ def test_resolve_exact_and_short_name(capacity: CapacitySet) -> None:
 
 
 def test_resolve_unknown_raises(capacity: CapacitySet) -> None:
-    with pytest.raises(ValueError, match="찾을 수 없습니다"):
+    with pytest.raises(ValueError, match="type not found"):
         resolve_type(capacity, "nope")
 
 
@@ -121,9 +126,9 @@ def test_check_within_schema_range(capacity: CapacitySet) -> None:
 def test_check_above_schema_max(capacity: CapacitySet) -> None:
     result = check_value(capacity, VOLUME, "Iops", 100000)
     assert not result.ok
-    assert "최대 64000" in result.violations[0]
+    assert "is outside max 64000 IOPS" in flat(result.violations[0])
     # 근거는 계속 밝히되 내부 라벨(cfn-schema)이 아니라 사람 말로 — kbcommon.display
-    assert "CloudFormation 스키마" in result.violations[0]
+    assert "CloudFormation schema" in result.violations[0]
     assert "cfn-schema" not in result.violations[0]
 
 
@@ -132,7 +137,7 @@ def test_guess_is_advisory_not_verdict(capacity: CapacitySet) -> None:
     result = check_value(capacity, VOLUME, "Size", 100000)
     assert result.violations == []
     assert len(result.advisories) == 1
-    assert "참고" in result.advisories[0]
+    assert "[for reference]" in flat(result.advisories[0])
 
 
 def test_advisory_breach_is_not_reported_as_ok(capacity: CapacitySet) -> None:
@@ -158,20 +163,20 @@ def test_value_within_advisory_range_is_ok(capacity: CapacitySet) -> None:
 def test_guess_can_be_enforced_explicitly(capacity: CapacitySet) -> None:
     result = check_value(capacity, VOLUME, "Size", 100000, facts_only=False)
     assert not result.ok
-    assert "최대 65536 GiB" in result.violations[0]
+    assert "is outside max 65536 GiB" in flat(result.violations[0])
 
 
 def test_check_enum(capacity: CapacitySet) -> None:
     assert check_value(capacity, VOLUME, "VolumeType", "gp3").ok
     result = check_value(capacity, VOLUME, "VolumeType", "st1")
     assert not result.ok
-    assert "허용값" in result.violations[0]
+    assert "is outside allowed values" in flat(result.violations[0])
 
 
 def test_check_read_only_property(capacity: CapacitySet) -> None:
     result = check_value(capacity, SUBNET, "SubnetId", "subnet-123")
     assert not result.ok
-    assert "읽기 전용" in result.violations[0]
+    assert "read-only, cannot be set" in flat(result.violations[0])
 
 
 def test_check_unknown_property_is_not_a_verdict(capacity: CapacitySet) -> None:
@@ -211,35 +216,35 @@ def output_dir(tmp_path, capacity: CapacitySet) -> Path:
 
 def test_agent_api_check_rejects_with_evidence(output_dir: Path) -> None:
     text = agent_api.check("AWS::EC2::Volume", "Iops", 100000, output_dir=output_dir)
-    assert text.startswith("불가")
-    assert "CloudFormation 스키마" in text
+    assert text.startswith("not allowed:")
+    assert "CloudFormation schema" in text
     assert "cfn-schema" not in text
 
 
 def test_agent_api_check_advisory_is_held_not_allowed(output_dir: Path) -> None:
     """확정 제약이 없고 참고 정보상 벗어나면 '가능'이 아니라 '판정 보류'여야 한다."""
     text = agent_api.check("AWS::EC2::Volume", "Size", 100000, output_dir=output_dir)
-    assert text.startswith("판정 보류")
-    assert not text.startswith("가능")
+    assert text.startswith("verdict withheld:")
+    assert not text.startswith("allowed:")
     assert "65536" in text
     # **유보하는 이유가 답에 있어야 한다.** 예전엔 "신뢰도가 낮아"라고 적었는데,
     # 신뢰도라는 숫자는 폐기됐다(척도의 정의가 없어 임계값을 0.01 옮기면 판정이
     # 뒤집혔다). 지금 가르는 것은 `basis` 하나이므로 말도 그렇게 해야 한다.
-    assert "원본이 명시하지 않" in text
-    assert "신뢰도" not in text
+    assert "prose that the source never stated" in flat(text)
+    assert "confidence" not in flat(text).lower()
 
 
 def test_agent_api_immutable(output_dir: Path) -> None:
     text = agent_api.immutable("AWS::EC2::Subnet", output_dir=output_dir)
     assert "VpcId" in text
-    assert "재생성" in text
+    assert "properties that recreate the resource when changed" in flat(text)
     assert "SubnetId" not in text
 
 
 def test_agent_api_property_limits(output_dir: Path) -> None:
     text = agent_api.property_limits("AWS::EC2::Volume", "Iops", output_dir=output_dir)
-    assert "최대 64000 IOPS" in text
-    assert "최소 100 IOPS" in text
+    assert "max 64000 IOPS" in flat(text)
+    assert "min 100 IOPS" in flat(text)
 
 
 def test_agent_api_allowed_values(output_dir: Path) -> None:
@@ -248,7 +253,7 @@ def test_agent_api_allowed_values(output_dir: Path) -> None:
 
 
 def test_agent_api_unknown_type_message(output_dir: Path) -> None:
-    assert "찾을 수 없습니다" in agent_api.check("nope", "x", 1, output_dir=output_dir)
+    assert "type not found" in agent_api.check("nope", "x", 1, output_dir=output_dir)
 
 
 def test_agent_api_missing_output(tmp_path) -> None:
@@ -277,11 +282,11 @@ def test_out_of_scope_answer_does_not_claim_absence() -> None:
     capacity.coverage = [{"provider": "aws"}]
 
     covered = _nothing_found(capacity, "aws::AWS::EC2::Volume", "aws::AWS::EC2::Volume")
-    assert "없습니다" in covered
+    assert "no known constraint" in flat(covered)
 
     unknown = _nothing_found(capacity, "gcp::ComputeInstance", "gcp::ComputeInstance")
-    assert "수집 범위 밖" in unknown
-    assert "제약이 없다는 뜻이 아닙니다" in unknown
+    assert "outside the collected scope" in flat(unknown)
+    assert "that does not mean there are none" in flat(unknown)
 
 
 def test_weak_reference_survives_when_in_range(capacity: CapacitySet) -> None:
@@ -301,10 +306,10 @@ def test_weak_reference_survives_when_in_range(capacity: CapacitySet) -> None:
 def test_agent_api_unknown_still_reports_what_it_holds(output_dir: Path) -> None:
     """확정 판정을 못 해도 쥐고 있는 참고 정보는 내놓아야 한다."""
     text = agent_api.check("AWS::EC2::Volume", "Size", 30000, output_dir=output_dir)
-    assert "알려진 제약이 없어" not in text, "답을 쥐고도 모른다고 말하고 있다"
-    assert "확정 판정 불가" in text
+    assert "no known constraint" not in flat(text), "답을 쥐고도 모른다고 말하고 있다"
+    assert "no definite verdict" in flat(text)
     assert "65536" in text
-    assert "참고" in text
+    assert "for reference (not stated by the source; not used in the verdict)" in flat(text)
 
 
 def test_agent_api_hides_internal_ids(output_dir: Path) -> None:
@@ -354,8 +359,8 @@ def test_violation_names_the_condition(wide: Path) -> None:
         "AWS::EC2::Volume", "Size", 30000,
         context={"VolumeType": "gp2"}, output_dir=wide,
     )
-    assert "불가" in text
-    assert "VolumeType='gp2' 일 때" in text, "한도의 조건이 빠져 보편 상한처럼 읽힌다"
+    assert text.startswith("not allowed:")
+    assert "when VolumeType='gp2'," in flat(text), "한도의 조건이 빠져 보편 상한처럼 읽힌다"
 
 
 def test_property_limits_summarizes_and_scopes(wide: Path) -> None:
@@ -371,9 +376,9 @@ def test_property_limits_summarizes_and_scopes(wide: Path) -> None:
     text = agent_api.property_limits("AWS::EC2::Volume", "InstanceType", output_dir=wide)
     assert len(text) < 2000, f"응답이 {len(text):,}자 — 목록을 통째로 찍고 있다"
     assert "m0.large" not in text.split("…")[-1], "요약 뒤에도 전체 목록이 남아 있다"
-    assert "500개 중 하나" in text and "400개 중 하나" in text
+    assert "one of 500" in flat(text) and "one of 400" in flat(text)
     for region in ("us-east-1", "af-south-1"):
-        assert f"Region={region!r} 일 때" in text, f"{region} 줄이 어느 조건인지 모른다"
+        assert f"when Region={region!r}" in flat(text), f"{region} 줄이 어느 조건인지 모른다"
 
 
 # --- 축 간 교차 참조 (2차 실측) ---
@@ -419,7 +424,7 @@ def test_value_lookup_turns_a_dead_end_into_an_answer(wide: Path) -> None:
     text = agent_api.value_lookup("m3.large", output_dir=wide)
     assert text, "허용값인데 못 찾았다"
     assert "InstanceType" in text, "어느 속성의 값인지 안 알려준다"
-    assert "2가지 중 2가지" in text, "몇 개 조건에서 되는지 안 센다"
+    assert "allowed under 2 of 2 conditions" in flat(text), "몇 개 조건에서 되는지 안 센다"
     assert "cap_check_value" in text, "다음에 부를 도구를 안 가리킨다"
 
 
@@ -449,10 +454,10 @@ def test_search_does_not_contradict_its_own_results(monkeypatch, wide: Path) -> 
 
     hit = compose("Volume")  # 타입으로 실재하는 이름
     assert graph_api.count_types("Volume"), "전제가 깨졌다 — 타입이 있어야 한다"
-    assert "타입이 아니라" not in hit, "찾아 놓고 아니라고 말한다"
+    assert "is not a type but a" not in flat(hit), "찾아 놓고 아니라고 말한다"
 
     miss = compose("m3.large")  # 값이지 타입이 아닌 이름
-    assert "타입이 아니라" in miss, "막다른 길인데 다른 축을 안 가리킨다"
+    assert "is not a type but a" in flat(miss), "막다른 길인데 다른 축을 안 가리킨다"
 
 
 # --- 정규식 방언 ---
@@ -476,9 +481,9 @@ def test_vendor_dialect_patterns_are_evaluated(tmp_path) -> None:
     agent_api._load_merged_cached.cache_clear()
 
     ok = agent_api.check("AWS::EC2::Volume", "Name", "abc123", output_dir=tmp_path)
-    assert "가능" in ok, "방언 패턴을 여전히 못 읽는다"
+    assert ok.startswith("allowed:"), "방언 패턴을 여전히 못 읽는다"
     bad = agent_api.check("AWS::EC2::Volume", "Name", "a b!", output_dir=tmp_path)
-    assert "불가" in bad
+    assert bad.startswith("not allowed:")
 
 
 def test_unreadable_pattern_is_reported_not_swallowed(tmp_path) -> None:
@@ -497,8 +502,8 @@ def test_unreadable_pattern_is_reported_not_swallowed(tmp_path) -> None:
     agent_api._load_merged_cached.cache_clear()
 
     text = agent_api.check("AWS::EC2::Volume", "KmsKeyId", "abc", output_dir=tmp_path)
-    assert "알려진 제약이 없어" not in text, "쥐고 있는 제약을 없다고 말한다"
-    assert "읽을 수 없는" in text
+    assert "no known constraint" not in flat(text), "쥐고 있는 제약을 없다고 말한다"
+    assert "we cannot read its regex" in flat(text)
 
 
 def test_wrong_property_name_points_at_the_real_ones(wide: Path) -> None:
@@ -510,7 +515,7 @@ def test_wrong_property_name_points_at_the_real_ones(wide: Path) -> None:
     때와 같은 실패다.
     """
     text = agent_api.check("AWS::EC2::Volume", "InstanceTyp", "x", output_dir=wide)
-    assert "그런 속성은 없습니다" in text, "막다른 길을 그대로 준다"
+    assert "this type has no such property" in flat(text), "막다른 길을 그대로 준다"
     assert "InstanceType" in text, "우리가 아는 이름을 안 가리킨다"
 
 
@@ -519,4 +524,4 @@ def test_property_hint_is_silent_when_the_type_is_unknown(tmp_path) -> None:
     CapacitySet().save(tmp_path / "aws-capacity.json")
     agent_api._load_merged_cached.cache_clear()
     text = agent_api.check("AWS::EC2::Volume", "Size", 1, output_dir=tmp_path)
-    assert "혹시 이것인가요" not in text
+    assert "did you mean" not in flat(text)

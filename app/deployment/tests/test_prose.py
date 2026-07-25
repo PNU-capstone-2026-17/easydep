@@ -184,7 +184,7 @@ def test_sentinel_either_minus_one_drops_lower_bound() -> None:
     found = {e.kind: e for e in extract_ranges(REDSHIFT_MANUAL_SNAPSHOT)}
     assert "min" not in found
     assert found["max"].value == 3653
-    assert "특수값" in found["max"].note
+    assert "special values" in found["max"].note
 
 
 def test_sentinel_specify_zero_drops_lower_bound() -> None:

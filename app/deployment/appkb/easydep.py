@@ -145,7 +145,7 @@ def design_from_easydep(
     classes = parse_classes(class_puml or "")
     class_names = {c for c, _ in classes}
     if class_puml and not classes:
-        skipped.append("클래스 다이어그램에서 클래스를 하나도 읽지 못했습니다")
+        skipped.append("Could not read a single class from the class diagram")
     if classes:
         artifacts.append({
             "id": "class-1", "kind": "class",
@@ -165,14 +165,15 @@ def design_from_easydep(
             })
         else:
             skipped.append(
-                f"API 명세가 OpenAPI 3.x가 아니라 쓰지 못했습니다 (openapi={version!r})"
+                "The API spec is not OpenAPI 3.x, so it went unused "
+                f"(openapi={version!r})"
             )
 
     entities = parse_er_entities(erd_puml or "")
     if erd_puml and not entities:
         skipped.append(
-            "ERD에서 엔티티를 하나도 읽지 못했습니다 — 아는 문법은 `entity 이름`뿐입니다. "
-            "저장소 노드가 빠진 채 구성됩니다"
+            "Could not read a single entity from the ERD — the only syntax we know is "
+            "`entity Name`. The plan is built without a storage node"
         )
     if entities:
         artifacts.append({
@@ -186,8 +187,9 @@ def design_from_easydep(
         kinds, messages = parse_sequence(sequence_puml)
         if not messages:
             skipped.append(
-                "시퀀스에서 메시지를 하나도 읽지 못했습니다 — 아는 화살표는 "
-                "`->` `-->` `->>` `-->>`뿐입니다. 비동기·공개 노출 신호가 빠집니다"
+                "Could not read a single message from the sequence — the only arrows "
+                "we know are `->` `-->` `->>` `-->>`. The async and public-exposure "
+                "signals are missing"
             )
         else:
             participants: dict[str, dict] = {}
@@ -211,9 +213,9 @@ def design_from_easydep(
                     # 저장소·큐가 참가자로 나오면 건너뛴다 — ER·비동기 신호에서
                     # 이미 그 노드를 세우므로 두 번 그리면 같은 것이 다른 상자가 된다.
                     skipped.append(
-                        f"시퀀스 참가자 '{display}'는 저장소·큐로 보여 건너뛰었습니다 — "
-                        "ER·비동기 신호가 세우는 노드와 겹치지 않게 하기 위해서입니다"
-                        "(휴리스틱)"
+                        f"Skipped sequence participant '{display}' — it looks like a "
+                        "store or a queue, and this keeps it from doubling the node "
+                        "the ER and async signals already create (heuristic)"
                     )
                     id_of[raw] = None  # type: ignore[assignment]
                     return None
@@ -244,18 +246,20 @@ def design_from_easydep(
                 })
                 if any(m["async"] for m in contract_messages):
                     skipped.append(
-                        "비동기 여부는 화살표 표기(`->>`)에서 추정했습니다 — "
-                        "계약이 원래 요구하는 것은 의미이지 표기가 아닙니다"
+                        "Whether a message is async was guessed from the arrow "
+                        "notation (`->>`) — what the contract asks for is the meaning, "
+                        "not the notation"
                     )
 
     design: dict = {
         "schemaVersion": "1",
-        "name": name or "(이름 없음)",
+        "name": name or "(no name)",
         "components": [{
             "id": COMPONENT_ID,
-            "name": name or "애플리케이션",
-            "summary": "easydep 설계 전체 — 배포 단위 분해 신호가 원본에 없어 "
-                       "단일 컴포넌트로 옮겼습니다",
+            "name": name or "Application",
+            "summary": "The whole easydep design — the source carries no signal for "
+                       "splitting it into deployment units, so we moved it over as a "
+                       "single component",
         }],
         "artifacts": artifacts,
     }
@@ -269,7 +273,7 @@ def design_from_easydep(
             design["requirements"] = requirements
     if not artifacts:
         skipped.append(
-            "읽을 수 있는 산출물이 하나도 없었습니다 — 이 설계는 입력 계약을 "
-            "통과하지 못합니다"
+            "There was not a single readable artifact — this design does not pass the "
+            "input contract"
         )
     return design, skipped

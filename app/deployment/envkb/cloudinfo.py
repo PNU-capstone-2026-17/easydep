@@ -129,9 +129,11 @@ def build(output: Path, *, refresh: bool = False) -> dict:
 
     dataset = {
         "_note": (
-            "cb-tumblebug의 리전 정의(cloudinfo.yaml). 미러와 같은 저장소라 리전 "
-            "코드가 정확히 맞는다. 조인 키는 소문자이고 `code`에 원본 표기가 남는다 — "
-            "kt·ncp·nhn은 원본이 대문자(KR1)인데 미러는 소문자(kr1)다."
+            "cb-tumblebug's region definitions (cloudinfo.yaml). It lives in the "
+            "same repository as the mirror, so the region codes match exactly. "
+            "The join key is lowercased and `code` keeps the source's spelling — "
+            "kt·ncp·nhn are uppercase in the source (KR1) but lowercase in the "
+            "mirror (kr1)."
         ),
         "_source": [describe_source(path, source.key)],
         "providers": providers,
@@ -139,9 +141,9 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     write_dataset(output, dataset, SCHEMA)
 
     print(
-        f"cloud-regions: 프로바이더 {stats['providers']}곳 · 리전 {stats['regions']}개 "
-        f"(위경도 {stats['with_latlon']} · 가용영역 {stats['with_zones']})"
+        f"cloud-regions: {stats['providers']} providers · {stats['regions']} regions "
+        f"(lat/lon {stats['with_latlon']} · zones {stats['with_zones']})"
     )
     for csp, body in sorted(providers.items()):
-        print(f"  {csp:10} {len(body['regions']):3}개")
+        print(f"  {csp:10} {len(body['regions']):3} regions")
     return dataset

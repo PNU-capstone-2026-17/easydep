@@ -356,5 +356,5 @@ def _emit(text, match, kind, capacity, report, kcc_paths) -> None:
                 report.unmapped_paths += 1
                 continue
         add(prop, "mutability", "update_restricted",
-            note=f"조건부로만 재생성된다 (판정 함수: {pred})")
+            note=f"recreated only conditionally (predicate function: {pred})")
         report.force_new_if.append((kind, prop, pred))

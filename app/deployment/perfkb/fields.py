@@ -46,8 +46,8 @@ class Field:
     unit: str = ""
     kind: str = "number"  # number | bool | text
     compare: bool = True
-    yes: str = "예"
-    no: str = "아니오"
+    yes: str = "yes"
+    no: str = "no"
 
     def render(self, value: object) -> str:
         """값 하나를 사람이 읽는 문자열로. **불리언을 날것으로 내보내지 않는다.**
@@ -65,43 +65,46 @@ class Field:
 # 표시 순서. 프로바이더별로 나누지 않는다 — 레코드에 있는 칸만 나오므로 저절로 갈린다.
 FIELDS: tuple[Field, ...] = (
     # 공통 성격의 축 (실제로는 aws에만 있으나 개념은 프로바이더 공통)
-    Field("currentGeneration", "세대", kind="bool", yes="최신 세대", no="구세대"),
+    Field("currentGeneration", "generation", kind="bool",
+          yes="current generation", no="previous generation"),
     # AWS
-    Field("clockGHz", "클럭", " GHz"),
-    Field("threadsPerCore", "코어당 스레드"),
-    Field("bareMetal", "베어메탈", kind="bool"),
-    Field("networkPerformance", "네트워크", kind="text"),
-    Field("ebsBaselineMbps", "EBS 지속 대역폭", " Mbps"),
-    Field("ebsMaxMbps", "EBS 최대 대역폭(버스트)", " Mbps"),
-    Field("ebsBaselineIops", "EBS 지속 IOPS"),
-    Field("ebsMaxIops", "EBS 최대 IOPS(버스트)"),
+    Field("clockGHz", "clock speed", " GHz"),
+    Field("threadsPerCore", "threads per core"),
+    Field("bareMetal", "bare metal", kind="bool"),
+    Field("networkPerformance", "network", kind="text"),
+    Field("ebsBaselineMbps", "EBS sustained bandwidth", " Mbps"),
+    Field("ebsMaxMbps", "EBS max bandwidth (burst)", " Mbps"),
+    Field("ebsBaselineIops", "EBS sustained IOPS"),
+    Field("ebsMaxIops", "EBS max IOPS (burst)"),
     # Azure
-    Field("acu", "ACU (Azure 내부 비교용)"),
-    Field("diskIops", "디스크 IOPS"),
-    Field("cachedDiskIops", "캐시 디스크 IOPS"),
-    Field("acceleratedNetworking", "가속 네트워킹", kind="bool", yes="지원", no="미지원"),
-    Field("premiumIO", "프리미엄 IO", kind="bool", yes="지원", no="미지원"),
-    Field("family", "계열", kind="text", compare=False),
+    Field("acu", "ACU (Azure-internal comparison)"),
+    Field("diskIops", "disk IOPS"),
+    Field("cachedDiskIops", "cached disk IOPS"),
+    Field("acceleratedNetworking", "accelerated networking", kind="bool",
+          yes="supported", no="not supported"),
+    Field("premiumIO", "premium IO", kind="bool", yes="supported", no="not supported"),
+    Field("family", "family", kind="text", compare=False),
     # GCP
-    Field("maxPersistentDisks", "최대 영구 디스크 수"),
-    Field("maxPersistentDiskGB", "최대 영구 디스크 용량", " GB"),
-    Field("vendorDescription", "벤더 설명", kind="text", compare=False),
+    Field("maxPersistentDisks", "max persistent disks"),
+    Field("maxPersistentDiskGB", "max persistent disk capacity", " GB"),
+    Field("vendorDescription", "vendor description", kind="text", compare=False),
     # IBM (Global Catalog). **클럭은 없다** — 원본이 310건 전부 2000이라 담지 않았다.
-    Field("networkBandwidthMbps", "네트워크 대역폭", " Mbps"),
-    Field("portSpeedMbps", "포트 속도", " Mbps"),
-    Field("maxNics", "최대 네트워크 인터페이스 수"),
-    Field("numaCount", "NUMA 노드 수"),
+    Field("networkBandwidthMbps", "network bandwidth", " Mbps"),
+    Field("portSpeedMbps", "port speed", " Mbps"),
+    Field("maxNics", "max network interfaces"),
+    Field("numaCount", "NUMA nodes"),
     # IBM을 붙이며 드러난 구멍 — `cpuVendor`는 aws 61.9%·ibm 82.9%로 채워져 있는데
     # **어느 목록에도 없어서 화면에 한 번도 나온 적이 없었다.** 필드 목록이 세 벌로
     # 갈라졌던 그 문제의 잔재다.
-    Field("cpuVendor", "CPU 제조사", kind="text", compare=False),
-    Field("cpuFamily", "CPU 계열", kind="text", compare=False),
+    Field("cpuVendor", "CPU vendor", kind="text", compare=False),
+    Field("cpuFamily", "CPU family", kind="text", compare=False),
     # **`sustainedCpu`로 옮기지 않은 이유가 라벨에 있어야 한다.** dedicated를 보고
     # "상시 CPU 보장"이라 적으면 그건 우리 추론이지 원본이 한 말이 아니다.
-    Field("vcpuTenancy", "vCPU 점유 방식(원본 표기)", kind="text", compare=False),
-    Field("provisioningTimeoutSeconds", "프로비저닝 타임아웃", "초", compare=False),
-    Field("gpuMemoryGB", "GPU 메모리", " GB"),
-    Field("localSsdGB", "로컬 SSD", " GB"),
+    Field("vcpuTenancy", "vCPU tenancy (as the source states it)",
+          kind="text", compare=False),
+    Field("provisioningTimeoutSeconds", "provisioning timeout", " s", compare=False),
+    Field("gpuMemoryGB", "GPU memory", " GB"),
+    Field("localSsdGB", "local SSD", " GB"),
 )
 
 COMPARE_FIELDS: tuple[Field, ...] = tuple(f for f in FIELDS if f.compare)

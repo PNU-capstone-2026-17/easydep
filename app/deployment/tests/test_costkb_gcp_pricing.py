@@ -107,24 +107,27 @@ def built(tmp_path):
 
 def test_api_shows_spot_and_commitment(built) -> None:
     text = discount_pricing("e2-standard-4", "asia-northeast3", output_dir=built)
-    assert "스팟 $0.0647/h" in text
-    assert "1년 약정" in text and "3년 약정" in text
-    assert "Cyclenerd" in text  # 출처를 밝힌다
+    flat = " ".join(text.split())
+    assert "spot $0.0647/h" in flat
+    assert "1-year commitment" in flat and "3-year commitment" in flat
+    assert "Cyclenerd" in flat  # 출처를 밝힌다
 
 
 def test_api_warns_on_diverged_region(built) -> None:
     text = discount_pricing("n2d-standard-4", "asia-south1", output_dir=built)
-    assert "기준 온디맨드" in text
-    assert "스냅샷 시점 차이" in text
+    flat = " ".join(text.split())
+    assert "baseline on-demand" in flat
+    assert "a price snapshot timing difference" in flat
 
 
 def test_api_distinguishes_untracked_provider(built) -> None:
     """AWS 스펙엔 '없음'이 아니라 'GCP 전용 미수록'이라고 답한다."""
     text = discount_pricing("m5.large", output_dir=built)
-    assert "GCP 전용" in text
+    assert "**GCP-only** (Cyclenerd)" in " ".join(text.split())
 
 
 def test_api_lists_regions_when_region_unknown(built) -> None:
     text = discount_pricing("e2-standard-4", "nonexistent-region", output_dir=built)
-    assert "정보가 없습니다" in text
-    assert "asia-northeast3" in text  # 가진 리전을 안내
+    flat = " ".join(text.split())
+    assert "no spot or commitment data for region 'nonexistent-region'" in flat
+    assert "asia-northeast3" in flat  # 가진 리전을 안내

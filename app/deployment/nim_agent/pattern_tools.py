@@ -40,7 +40,7 @@ def pattern_search(query: str, top: int = 3) -> str:
         query: Search terms. **English only** — the corpus is English documents.
         top: How many documents to fetch (default 3, max 5).
     """
-    print(f"\n[지침검색] {query!r} (top={top})")
+    print(f"\n[guidance search] {query!r} (top={top})")
     return search_patterns(query, top=top)
 
 

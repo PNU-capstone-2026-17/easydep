@@ -72,7 +72,7 @@ def test_node_group_size_is_not_thrown_away() -> None:
     """**그룹 수가 아니라 VM 대수다.** 이걸 놓쳐서 34대를 17로 세고 있었다."""
     _, members, _ = _member_of_template(INFRA_MULTI)
     assert members[0].count == 5  # 2 + 2 + 1 이지 3이 아니다
-    assert "노드 그룹 3개" in (members[0].note or "")
+    assert "3 node groups" in (members[0].note or "")
 
 
 def test_missing_node_group_size_counts_as_one_not_zero() -> None:
@@ -84,7 +84,7 @@ def test_missing_node_group_size_counts_as_one_not_zero() -> None:
 
 def test_duplicate_members_stop_the_build() -> None:
     """조용히 합치지 않는다 — note를 어떻게 할지는 **파서가 원본을 보고** 정할 일이다."""
-    with pytest.raises(ValueError, match="두 번"):
+    with pytest.raises(ValueError, match="appears twice"):
         Bundle(
             id="x",
             name="x",
@@ -114,7 +114,7 @@ def test_k8s_node_groups_come_with_the_clusters() -> None:
     _, members, _ = _member_of_template(K8S_ACROSS)
     node_group = _by_type(members)["core::k8sNodeGroup"]
     assert node_group.count == 2
-    assert "3대" in (node_group.note or "")  # desiredNodeSize 1 + 2
+    assert "desired nodes total 3" in (node_group.note or "")  # desiredNodeSize 1 + 2
 
 
 # --- 3. 서브넷을 적는 방식이 템플릿마다 다르다 --------------------------------
@@ -131,7 +131,7 @@ def test_subnets_declared_as_a_policy_are_counted() -> None:
     _, members, _ = _member_of_template(VNET_POLICY)
     subnet = _by_type(members)["core::subnet"]
     assert subnet.count == 2
-    assert "정책" in (subnet.note or "")
+    assert "policy" in (subnet.note or "")
 
 
 def test_vnet_without_subnet_info_says_nothing_rather_than_zero() -> None:

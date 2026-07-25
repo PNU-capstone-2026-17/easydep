@@ -66,13 +66,13 @@ def _preview(text: str, limit: int) -> str:
     flattened = " ".join(str(text).split())
     if len(flattened) <= limit:
         return flattened
-    return f"{flattened[:limit]} …(+{len(flattened) - limit}자)"
+    return f"{flattened[:limit]} …(+{len(flattened) - limit} chars)"
 
 
 def describe_event(event: Any, *, color: bool = False) -> str | None:
     """스트림 이벤트를 사람이 읽을 한 줄로 요약한다. 표시할 게 없으면 None."""
     if getattr(event, "type", None) == "agent_updated_stream_event":
-        return _paint(f"[verbose] 에이전트 시작: {event.new_agent.name}", "agent", color)
+        return _paint(f"[verbose] agent start: {event.new_agent.name}", "agent", color)
     if getattr(event, "type", None) != "run_item_stream_event":
         return None
     item = event.item
@@ -82,25 +82,25 @@ def describe_event(event: Any, *, color: bool = False) -> str | None:
         name = getattr(raw, "name", None) or type(raw).__name__
         args = getattr(raw, "arguments", "") or ""
         return _paint(
-            f"[verbose] 도구 호출 → {name}({_preview(args, _ARGS_PREVIEW)})",
+            f"[verbose] tool call → {name}({_preview(args, _ARGS_PREVIEW)})",
             "tool_call",
             color,
         )
     if item_type == "tool_call_output_item":
         return _paint(
-            f"[verbose] 도구 결과 ← {_preview(str(item.output), _OUTPUT_PREVIEW)}",
+            f"[verbose] tool result ← {_preview(str(item.output), _OUTPUT_PREVIEW)}",
             "tool_output",
             color,
         )
     if item_type == "handoff_call_item":
-        return _paint("[verbose] 핸드오프 호출", "tool_call", color)
+        return _paint("[verbose] handoff call", "tool_call", color)
     return None
 
 
 def describe_usage(usage: Any, *, color: bool = False) -> str:
     line = (
-        f"[verbose] 토큰 사용: 입력 {usage.input_tokens:,} + 출력 {usage.output_tokens:,} "
-        f"= 총 {usage.total_tokens:,} (LLM 요청 {usage.requests}회)"
+        f"[verbose] tokens: input {usage.input_tokens:,} + output {usage.output_tokens:,} "
+        f"= total {usage.total_tokens:,} ({usage.requests} LLM requests)"
     )
     return _paint(line, "usage", color)
 

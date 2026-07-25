@@ -54,7 +54,7 @@ def cap_check_value(
     """
     parsed = _parse_context(context)
     shown = f" ({context})" if parsed else ""
-    print(f"\n[용량질의] 값 판정: {resource_type}.{property_name} = {value!r}{shown}")
+    print(f"\n[capacity query] value verdict: {resource_type}.{property_name} = {value!r}{shown}")
     return agent_api.check(resource_type, property_name, _coerce(value), context=parsed)
 
 
@@ -116,9 +116,9 @@ def _perf_pointer(resource_type: str) -> str:
     if not summary:
         return ""
     return (
-        "\n  ※ CPU·GPU 모델처럼 **인스턴스 종류마다 다른 하드웨어**는 이 축에 없고 "
-        f"성능 축에 있습니다({summary}).\n"
-        f"     perf_instance_profile('{provider}', '<인스턴스 종류>') 로 보세요."
+        "\n  ※ **Hardware that differs per instance type**, such as the CPU or "
+        f"GPU model, is not on this axis — it is on the performance axis ({summary}).\n"
+        f"     See perf_instance_profile('{provider}', '<instance type>')."
     )
 
 
@@ -132,7 +132,7 @@ def cap_property_limits(resource_type: str, property_name: str | None = None) ->
         property_name: Set to look at one property only. Omit for the whole
             type.
     """
-    print(f"\n[용량질의] 제약 조회: {resource_type}" + (f".{property_name}" if property_name else ""))
+    print(f"\n[capacity query] constraints: {resource_type}" + (f".{property_name}" if property_name else ""))
     return agent_api.property_limits(resource_type, property_name) + _perf_pointer(
         resource_type
     )
@@ -146,7 +146,7 @@ def cap_immutable_properties(resource_type: str) -> str:
     Args:
         resource_type: Type name. e.g. 'AWS::EC2::Subnet'.
     """
-    print(f"\n[용량질의] 불변 속성: {resource_type}")
+    print(f"\n[capacity query] immutable properties: {resource_type}")
     return agent_api.immutable(resource_type)
 
 
@@ -163,7 +163,7 @@ def cap_secret_properties(resource_type: str) -> str:
     Args:
         resource_type: Type name. e.g. 'Microsoft.DBforMySQL/flexibleServers'.
     """
-    print(f"\n[용량질의] 비밀값 속성: {resource_type}")
+    print(f"\n[capacity query] secret properties: {resource_type}")
     return agent_api.secrets(resource_type)
 
 
@@ -181,7 +181,7 @@ def cap_allowed_values(resource_type: str, property_name: str) -> str:
             'AWS::EC2::Instance'.
         property_name: Property name. e.g. 'StorageType', 'InstanceType'.
     """
-    print(f"\n[용량질의] 허용값: {resource_type}.{property_name}")
+    print(f"\n[capacity query] allowed values: {resource_type}.{property_name}")
     return agent_api.allowed_values(resource_type, property_name) + _perf_pointer(
         resource_type
     )
@@ -198,7 +198,7 @@ def cap_service_quota(keyword: str) -> str:
     Args:
         keyword: Search term. e.g. 'subnet', 'virtual network', 'vCPU'.
     """
-    print(f"\n[용량질의] 서비스 쿼터: {keyword!r}")
+    print(f"\n[capacity query] service quota: {keyword!r}")
     return agent_api.service_quota(keyword)
 
 
@@ -222,7 +222,7 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
         provider: Provider to narrow to (optional). aws · azure · gcp · alibaba ·
             tencent · ibm · ncp · kt · nhn · openstack.
     """
-    print(f"\n[용량질의] 리전 해석: {place!r} provider={provider!r}")
+    print(f"\n[capacity query] resolve region: {place!r} provider={provider!r}")
     from envkb.regions import region_lookup
 
     return region_lookup(place, provider)
@@ -238,7 +238,7 @@ def cap_service_regions(service: str) -> str:
     Args:
         service: CFN type (`AWS::EC2::Instance`) or SDK service name (`ec2`).
     """
-    print(f"\n[용량질의] 서비스 리전: {service!r}")
+    print(f"\n[capacity query] service regions: {service!r}")
     return agent_api.where_available(service)
 
 
@@ -262,7 +262,7 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
     """
     from envkb import carbon
 
-    print(f"\n[용량질의] 리전 탄소: {provider!r} region={region!r}")
+    print(f"\n[capacity query] region carbon: {provider!r} region={region!r}")
     return carbon.describe(provider, region)
 
 
@@ -285,7 +285,7 @@ def cap_region_latency(source_region: str, target_region: str | None = None) -> 
     """
     from envkb import latency
 
-    print(f"\n[용량질의] 리전 지연: {source_region!r} → {target_region!r}")
+    print(f"\n[capacity query] region latency: {source_region!r} → {target_region!r}")
     return latency.describe(source_region, target_region)
 
 
@@ -317,7 +317,7 @@ def cap_basic_image(
     from envkb import images
 
     print(
-        f"\n[용량질의] 기본 이미지: {provider!r} region={region!r} arch={architecture!r}"
+        f"\n[capacity query] basic image: {provider!r} region={region!r} arch={architecture!r}"
     )
     return images.describe(provider, region, architecture)
 
@@ -340,7 +340,7 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
     """
     from envkb import lifecycle
 
-    print(f"\n[용량질의] 수명주기: {service!r} version={version!r}")
+    print(f"\n[capacity query] lifecycle: {service!r} version={version!r}")
     return lifecycle.describe(service, version)
 
 
@@ -356,7 +356,7 @@ def cap_operation_time(resource_type: str) -> str:
     Args:
         resource_type: Type name. e.g. 'Microsoft.Compute/virtualMachines'.
     """
-    print(f"\n[용량질의] 작업 소요: {resource_type}")
+    print(f"\n[capacity query] operation time: {resource_type}")
     return agent_api.operation_time(resource_type)
 
 
@@ -379,7 +379,7 @@ def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str
     """
     from envkb import cbspider
 
-    print(f"\n[용량질의] CSP 지원: csp={csp!r} resource={resource!r}")
+    print(f"\n[capacity query] CSP support: csp={csp!r} resource={resource!r}")
     return cbspider.describe(csp, resource)
 
 

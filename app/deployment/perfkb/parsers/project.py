@@ -46,13 +46,24 @@ SYSTEM_NAMESPACE = "system"
 
 _AZURE_BURST_FAMILY = re.compile(r"^standardB", re.IGNORECASE)
 
-_NOTE_AWS_BURST = "버스트 인스턴스 — CPU 크레딧이 소진되면 baseline 성능으로 떨어집니다."
-_NOTE_GCP_SHARED = "공유 코어 — vCPU를 다른 인스턴스와 공유하므로 성능이 일정하지 않습니다."
-_NOTE_AZURE_BURST = "B계열(버스트) — 크레딧 모델이라 상시 부하에서 성능이 떨어집니다."
+_NOTE_AWS_BURST = (
+    "Burstable instance — performance drops to baseline once the CPU credits run out."
+)
+_NOTE_GCP_SHARED = (
+    "Shared core — the vCPU is shared with other instances, so performance is not steady."
+)
+_NOTE_AZURE_BURST = (
+    "B-series (burstable) — a credit model, so performance drops under sustained load."
+)
 # 상시 보장은 "버스트로 분류되지 않았다"에서 끌어낸 **추론**이다. 원본이 그렇게
 # 말한 게 아니므로 그 사실을 답변에도 남긴다.
-_NOTE_AWS_NOT_BURST = "AWS가 버스트로 분류하지 않은 타입 — 상시 성능은 그로부터의 추론입니다."
-_NOTE_GCP_DEDICATED = "GCP가 공유 코어로 표시하지 않은 타입 — 전용 vCPU는 그로부터의 추론입니다."
+_NOTE_AWS_NOT_BURST = (
+    "A type AWS does not classify as burstable — sustained performance is inferred "
+    "from that."
+)
+_NOTE_GCP_DEDICATED = (
+    "A type GCP does not mark as shared-core — the dedicated vCPU is inferred from that."
+)
 
 
 def _sustained_cpu(provider: str, det: dict[str, str]) -> dict | None:

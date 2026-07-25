@@ -84,7 +84,7 @@ def test_pubsub_carries_both_queue_and_stream_on_purpose() -> None:
     queue = CONCEPTS["messageQueue"]["bindings"]["gcp"][0]
     stream = CONCEPTS["eventStream"]["bindings"]["gcp"][0]
     assert queue["type_id"] == stream["type_id"] == "gcp::PubSubTopic"
-    assert "겸한다" in stream["note"]
+    assert "both queue and stream" in stream["note"]
 
 
 # --- MS 표 매칭 ----------------------------------------------------------------
@@ -181,10 +181,12 @@ def test_equivalent_types_reaches_managed_services_and_draws_the_boundary() -> N
     agent_api._load_merged_cached.cache_clear()
     try:
         text = agent_api.equivalent_types("AWS::DynamoDB::Table")
-        assert "Microsoft.DocumentDB/databaseAccounts" in text
-        assert "짐작" in text
+        flat = " ".join(text.split()).lower()
+        assert "microsoft.documentdb/databaseaccounts" in flat
+        assert "a guess" in flat
         # 실행 경계 — 이게 빠지면 "우리 도구로 만들 수 있다"로 읽힌다.
-        assert "만들 수 있다는 뜻이 아닙니다" in text
+        assert "guidance, not a guarantee it can be deployed" in flat
+        assert "does not mean cb-tumblebug's execution path (vm, k8s) can create" in flat
     finally:
         agent_api._load_merged_cached.cache_clear()
 

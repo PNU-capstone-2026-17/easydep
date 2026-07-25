@@ -171,9 +171,11 @@ def build(output: Path, *, refresh: bool = False) -> dict:
     dataset["provenance"] = [describe_source_set([path], source.key)]
     dataset["dropped_pseudo_regions"] = sum(report.dropped.values())
     dataset["note"] = (
-        "엔드포인트가 **있다**는 것만 담는다. 목록에 없는 (서비스, 리전) 조합은 "
-        "'못 쓴다'가 아니라 '이 데이터로는 모른다'이다 — 글로벌 서비스일 수 있는데 "
-        "판별자(isRegionalized)가 서비스 307개 중 22개에만 있어 구분되지 않는다."
+        "records only that an endpoint **exists**. a (service, region) pair that is "
+        "not listed does not mean 'you cannot use it' — it means 'this data does not "
+        "know'. it may be a global service, and the marker that tells one apart "
+        "(isRegionalized) is on only 22 of the 307 services, so the two cannot be "
+        "distinguished."
     )
 
     write_dataset(output, dataset, SCHEMA)

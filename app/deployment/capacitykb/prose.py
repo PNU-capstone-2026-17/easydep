@@ -293,7 +293,8 @@ def extract_ranges(description: str, prop: str | None = None) -> list[Extraction
     if max_cands:
         value, rule, block = max(max_cands, key=lambda item: item[0])
         sentinel_note = (
-            "범위 밖의 특수값(-1/0 등)이 따로 허용되어 하한은 기록하지 않음"
+            "special values outside the range (-1/0, etc.) are separately "
+            "allowed, so no lower bound is recorded"
             if sentinel
             else None
         )

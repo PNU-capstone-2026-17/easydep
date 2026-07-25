@@ -210,16 +210,19 @@ def build(output: Path, *, refresh: bool = False) -> BundleSet:
             "provider": PROVIDER,
             "bundles": len(bundles.bundles),
             "note": (
-                f"Azure Verified Modules {report.res + report.ptn}개"
-                f"(res {report.res} · ptn {report.ptn})가 배포하는 리소스 군. "
-                "**모듈 저자의 설계이지 API의 강제가 아니다** — graphkb의 avm-dependson과 "
-                "같은 경계다. 등급은 컴파일된 ARM의 condition/copy로 가른다: 폴백 없는 "
-                "루프가 '필수', coalesce/createArray 폴백이 있으면 '선택'. "
-                f"**`ptn`(패턴) {report.dropped_ptn_optional}개의 선택 층은 담지 "
-                "않았다** — 안에 든 `res`의 선택 리소스가 전부 전이돼, 패턴 하나가 "
-                "Cosmos의 Cassandra·Gremlin·Mongo·SQL API를 동시에 선택지로 갖는 "
-                "상태가 된다. 패턴에 대해 '선택 리소스가 없다'가 아니라 "
-                "**'우리가 담지 않았다'**로 읽을 것."
+                "Resource groups deployed by "
+                f"{report.res + report.ptn} Azure Verified Modules "
+                f"(res {report.res} · ptn {report.ptn}). **This is the module "
+                "author's design, not what the API enforces** — the same boundary "
+                "as graphkb's avm-dependson. Tiers are split by condition/copy in "
+                "the compiled ARM: a loop with no fallback is 'you must supply a "
+                "value', a coalesce/createArray fallback is 'optional "
+                f"attachment'. **The optional tier of {report.dropped_ptn_optional} "
+                "`ptn` (pattern) modules is not included** — the optional "
+                "resources of the `res` modules inside all carry over, so a single "
+                "pattern ends up offering Cosmos' Cassandra·Gremlin·Mongo·SQL APIs "
+                "as options at the same time. For patterns, read that as **'we did "
+                "not include them'**, not as 'there are no optional resources'."
             ),
         }
     ]

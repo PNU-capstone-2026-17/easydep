@@ -103,14 +103,15 @@ def test_filter_still_spans_on_fallback(built) -> None:
 def test_exact_query_says_nothing_extra(built) -> None:
     """사용자가 물은 그대로이므로 덧붙일 말이 없다."""
     text = recommend_specs(region="centralus", limit=5, output_dir=built)
-    assert "묶어" not in text
+    assert "groups" not in " ".join(text.split())
 
 
 def test_widened_query_discloses_the_mix(built) -> None:
     """**여러 리전 단가를 하나로 읽으면 틀린 비교가 된다.**"""
     text = recommend_specs(region="ap-northeast", limit=5, output_dir=built)
-    assert "2개 리전을 묶어" in text
-    assert "ap-northeast-1" in text and "ap-northeast-2" in text
+    flat = " ".join(text.split())
+    assert "**groups 2 regions**" in flat
+    assert "ap-northeast-1" in flat and "ap-northeast-2" in flat
 
 
 def test_unknown_region_names_the_culprit(built) -> None:
@@ -118,8 +119,8 @@ def test_unknown_region_names_the_culprit(built) -> None:
 
     범인이 리전 이름이면 그걸 먼저 말해야 한다 — 가속기 조건에서 이미 겪은 모양이다.
     """
-    text = recommend_specs(region="nowhere-9", limit=5, output_dir=built)
-    assert "nowhere-9" in text and "리전 이름" in text
+    flat = " ".join(recommend_specs(region="nowhere-9", limit=5, output_dir=built).split())
+    assert "nowhere-9" in flat and "check the region name first" in flat
 
 
 # --- 미러 이탈 고지 --------------------------------------------------------
@@ -132,6 +133,6 @@ def test_source_note_admits_the_deviations() -> None:
     """
     from costkb.parsers.tumblebug import SOURCE_NOTE
 
-    assert "항상 같지는 않고" in SOURCE_NOTE
-    for deviation in ("memGiB", "가격 미상", "정확 일치"):
+    assert "not always identical" in SOURCE_NOTE
+    for deviation in ("memGiB", "unknown price", "exact match"):
         assert deviation in SOURCE_NOTE

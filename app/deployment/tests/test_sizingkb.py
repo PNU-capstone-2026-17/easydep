@@ -97,9 +97,10 @@ def test_known_provider_calculates(built) -> None:
 def test_unknown_provider_refuses_to_guess(built) -> None:
     """**핵심.** AWS는 표가 비어 있다 — 0으로 두면 256대라고 답하게 된다."""
     text = subnet_capacity(24, "aws", output_dir=built)
-    assert "251" not in text
-    assert "모릅니다" in text
-    assert "없다는 뜻이 아니라" in text
+    flat = " ".join(text.split()).lower()
+    assert "251" not in flat
+    assert "does not know how many reserved ips 'aws' takes" in flat
+    assert "does not mean there are none" in flat
 
 
 def test_unknown_provider_still_gives_the_total(built) -> None:
@@ -108,7 +109,8 @@ def test_unknown_provider_still_gives_the_total(built) -> None:
 
 
 def test_bad_prefix_is_reported_not_raised(built) -> None:
-    assert "범위를 벗어납니다" in subnet_capacity(99, "azure", output_dir=built)
+    text = " ".join(subnet_capacity(99, "azure", output_dir=built).split()).lower()
+    assert "prefix length out of range: /99 (0-32)" in text
 
 
 # --- 경고가 값과 함께 간다 ----------------------------------------------------
@@ -149,7 +151,7 @@ def test_reviewed_reserved_ips_all_carry_a_verification_pointer() -> None:
     rules = build_rules().rules
     assert len(rules) >= 6  # aws·gcp + ⑥-D의 tencent·oracle·nhn·ncp
     for rule in rules:
-        assert rule.caveat and "확인처" in rule.caveat, rule.id
+        assert rule.caveat and "Check it against" in rule.caveat, rule.id
         assert rule.evidence == "human-review", rule.id
 
 
@@ -182,14 +184,16 @@ def test_tool_minimum_says_who_requires_it(built) -> None:
 
 def test_reference_point_is_not_an_answer(built) -> None:
     text = reference_points("web", output_dir=built)
-    assert "정답이 아니라" in text and "t3.small" in text
+    flat = " ".join(text.split()).lower()
+    assert "this source's examples, not the right answer" in flat and "t3.small" in flat
 
 
 def test_preset_carries_the_source_warning(built) -> None:
     """값만 옮기고 경고를 떼면 테스트용 숫자가 권장값이 된다."""
     text = container_presets(output_dir=built)
-    assert "not meant to be used in production" in text
-    assert "인스턴스 규모가 아닙니다" in text
+    flat = " ".join(text.split()).lower()
+    assert "not meant to be used in production" in flat
+    assert "these are **container** sizes, not instance sizes" in flat
 
 
 def test_every_answer_says_sizing_is_an_estimate(built) -> None:
@@ -199,7 +203,7 @@ def test_every_answer_says_sizing_is_an_estimate(built) -> None:
         reference_points("web", output_dir=built),
         container_presets(output_dir=built),
     ):
-        assert "부하 테스트로 검증" in text
+        assert "**verify it with a load test.**" in " ".join(text.split()).lower()
 
 
 # --- 모델 --------------------------------------------------------------------
@@ -210,8 +214,8 @@ def test_unknown_kind_is_rejected() -> None:
 
 
 def test_missing_scope_lists_what_is_known(built) -> None:
-    text = requirements("nope", output_dir=built)
-    assert "담긴 범위" in text
+    text = " ".join(requirements("nope", output_dir=built).split()).lower()
+    assert "no sizing requirement for 'nope' in this dataset. scopes included:" in text
 
 
 def test_unbuilt_says_how_to_build(tmp_path) -> None:
