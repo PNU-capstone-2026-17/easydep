@@ -68,7 +68,7 @@ _TOOL_NAME = re.compile(_LEFT + r"[a-z]+(?:_[a-z]+){1,3}" + _RIGHT)
 
 @dataclass
 class Finding:
-    kind: str          # "number" | "identifier" | "attribution" | "flip"
+    kind: str          # "number" | "identifier" | "attribution" | "flip" | "leak"
     token: str
     context: str
 
@@ -77,10 +77,57 @@ class Finding:
 class Verdict:
     unsupported: list[Finding] = field(default_factory=list)
     checked: int = 0
+    leaked: list[Finding] = field(default_factory=list)
+    """답변이 사용자에게 드러낸 **내부 용어**. `unsupported`와 섞지 않는다 —
+    저건 "근거 없는 주장"이고 이건 "근거는 있는데 말투가 틀린 것"이라, 한 통에
+    담으면 심각도가 다른 둘이 같은 숫자로 보인다."""
 
     @property
     def clean(self) -> bool:
         return not self.unsupported
+
+
+#: 답변에 나오면 안 되는 내부 ID 접두어. 지시문이 "풀어 쓰라"고 지정한 것들이다.
+_ID_PREFIX = re.compile(
+    r"\b(?:core|aws|azure|gcp|ibm|ncp|nhn|kt|tencent|alibaba|openstack)::"
+)
+
+
+def leaked_internals(answer: str, known: frozenset[str]) -> list[Finding]:
+    """답변이 **내부 용어를 사용자에게 드러냈는가** — 도구 이름과 ID 접두어.
+
+    지시문에 명시적 규칙이 있다: *"도구/함수 이름을 답변에 쓰지 마세요 …
+    메커니즘이 아니라 행위로 표현합니다"*, *"`core::vNet` 같은 내부 ID 접두어는
+    답변에서 풀어 씁니다"*. 그런데 **이걸 재는 프로브가 0건이었다.**
+
+    실측(110회): 도구 이름이 샌 답변 19회(17%) · 접두어가 샌 답변 15회(14%).
+    지시문이 있는데도 여섯 번에 한 번씩 깨지고 있었다.
+
+    `misattributed`와 다르다. 저건 **부르지도 않은** 도구를 출처로 댄 것만 세고,
+    부른 도구를 언급하는 것은 정당하다고 보아 거른다(출처를 밝히는 일이니까).
+    여기서는 **부른 도구를 언급해도 위반**이다 — 사용자는 우리 함수 이름을 알
+    필요가 없고, 알면 그 이름으로 되물어 온다.
+
+    실측에서 드러난 것 하나: `misattributed`가 "출처 세탁"이라 이름 붙인 것 중
+    상당수가 실은 **앞으로 쓰겠다는 예고**였다(RS1: 도구를 하나도 안 부른 되묻기
+    답변이 "리전 코드는 `cap_resolve_region` 도구로 확인해야 합니다"라고 적었다).
+    세탁이 아니라 누출이다 — 그래서 종류를 갈라 센다.
+    """
+    text = normalize(answer)
+    out, seen = [], set()
+    for match in _TOOL_NAME.finditer(text):
+        token = match.group(0)
+        if token in seen or token not in known:
+            continue
+        seen.add(token)
+        out.append(Finding("leak", token, _context_of(text, token)))
+    for match in _ID_PREFIX.finditer(text):
+        token = match.group(0)
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(Finding("leak", token, _context_of(text, token)))
+    return out
 
 
 def _context_of(text: str, token: str, width: int = 34) -> str:
@@ -282,6 +329,8 @@ def check(
             if token in haystack:
                 continue
             verdict.unsupported.append(Finding(kind, token, _context_of(text, token)))
+
+    verdict.leaked = leaked_internals(answer, known_tools)
 
     if known_tools:
         found = misattributed(answer, called_tools, known_tools, haystack)

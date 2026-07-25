@@ -18,3 +18,6 @@ output/
 # `tests/test_redistribution_notice.py`가 그 명시를 강제하고, **명시적으로 막힌**
 # 소스(AWS Price List)의 산출물이 들어오는 것도 함께 막는다.
 .cache/
+.claude/worktrees/
+token_budget.json
+tool_count.json

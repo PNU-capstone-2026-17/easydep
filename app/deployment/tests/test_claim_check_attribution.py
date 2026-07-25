@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from tools.claim_check import check, misattributed
+from tools.claim_check import check, leaked_internals, misattributed
 
 KNOWN = frozenset({
     "cap_allowed_values", "cost_describe_spec", "perf_instance_profile",
@@ -98,3 +98,51 @@ def test_attribution_counts_toward_checked() -> None:
     )
     assert verdict.checked >= 1
     assert not verdict.clean
+
+
+def test_leak_counts_called_tools_too_unlike_misattribution() -> None:
+    """**출처 세탁과 내부 용어 누출은 다른 결함이다.**
+
+    `misattributed`는 부르지도 않은 도구를 출처로 댄 것만 센다 — 부른 도구를
+    언급하는 것은 출처를 밝히는 정당한 행위라 거른다. 스타일 규칙은 반대다:
+    지시문이 "도구/함수 이름을 답변에 쓰지 마세요"라고 하므로 **부른 도구를
+    언급해도 위반**이다. 사용자는 우리 함수 이름을 알 필요가 없다.
+    """
+    known = frozenset({"cost_describe_spec", "cap_resolve_region"})
+    answer = "cost_describe_spec 도구로 조회한 결과 4 GiB입니다."
+
+    # 불렀으므로 세탁은 아니다.
+    assert not misattributed(answer, ["cost_describe_spec"], known)
+    # 그래도 이름이 답변에 있으므로 누출이다.
+    assert [f.token for f in leaked_internals(answer, known)] == [
+        "cost_describe_spec"
+    ]
+
+
+def test_leak_catches_prospective_mentions_that_are_not_laundering() -> None:
+    """**실측에서 세탁으로 잘못 이름 붙던 것.**
+
+    RS1(필수 4칸이 다 빈 질의)은 도구를 하나도 안 부르고 되묻는 것이 옳은데,
+    그 답변이 "리전 코드는 `cap_resolve_region` 도구로 확인해야 합니다"라고
+    적었다. 앞으로 쓰겠다는 **예고**이지 출처를 사칭한 것이 아니다 —
+    세탁으로 세면 심각도를 잘못 읽는다. 누출로는 맞게 잡힌다.
+    """
+    known = frozenset({"cap_resolve_region"})
+    answer = "리전 코드는 cap_resolve_region 도구로 확인해야 합니다."
+    assert [f.token for f in leaked_internals(answer, known)] == [
+        "cap_resolve_region"
+    ]
+
+
+def test_leak_ignores_prose_that_merely_describes_the_act() -> None:
+    """지시문이 요구하는 표현("메커니즘이 아니라 행위")은 걸리면 안 된다 —
+    걸리면 옳게 쓴 답변을 벌하게 된다."""
+    known = frozenset({"kb_creation_order", "cost_describe_spec"})
+    clean = "의존성 지식베이스에서 조회한 결과, vNet(가상 네트워크)이 먼저 필요합니다."
+    assert leaked_internals(clean, known) == []
+
+
+def test_leak_catches_internal_id_prefixes() -> None:
+    """`core::vNet`은 답변에서 풀어 써야 한다 — 지시문의 두 번째 스타일 규칙."""
+    found = leaked_internals("core::vNet은 aws::AWS::EC2::VPC입니다.", frozenset())
+    assert {f.token for f in found} == {"core::", "aws::"}

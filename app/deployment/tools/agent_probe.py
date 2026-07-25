@@ -613,6 +613,15 @@ class Result:
     flaky: bool = False
     """첫 시도에 실패하고 재시도에서 통과했다. 실패는 아니지만 **조용히 넘기지 않는다.**"""
 
+    leaked: list[str] = field(default_factory=list)
+    """답변이 사용자에게 드러낸 내부 용어(도구 이름·ID 접두어).
+
+    **통과/실패에 넣지 않는다.** 지시문에 명시적 규칙이 있지만 이건 답이 틀린 것이
+    아니라 말투가 틀린 것이고, 둘을 한 판정에 담으면 심각도가 뭉개진다. 대신
+    세어서 보여준다 — 실측 110회에서 도구 이름 17%·접두어 14%였고, 재는 것이
+    0건이라 아무도 몰랐다.
+    """
+
     @property
     def ok(self) -> bool:
         return not self.error and not self.failures
@@ -624,7 +633,7 @@ class Result:
             "tool_outputs": self.tool_outputs, "error": self.error,
             "unsupported": self.unsupported, "claims_checked": self.claims_checked,
             "seconds": round(self.seconds, 1), "failures": self.failures,
-            "flaky": self.flaky, "ok": self.ok,
+            "flaky": self.flaky, "ok": self.ok, "leaked": self.leaked,
         }
 
 
@@ -745,6 +754,7 @@ async def run_probes(
             tool_outputs=outputs,
             unsupported=[f"[{f.kind}] {f.token}" for f in verdict.unsupported],
             claims_checked=verdict.checked,
+            leaked=[f.token for f in verdict.leaked],
             seconds=time.monotonic() - started, failures=failures, flaky=flaky,
         )
         out.append(record)
@@ -776,6 +786,7 @@ async def run_repeated(
                 tool_outputs=outputs,
                 unsupported=[f"[{f.kind}] {f.token}" for f in verdict.unsupported],
                 claims_checked=verdict.checked,
+                leaked=[f.token for f in verdict.leaked],
                 seconds=time.monotonic() - started,
                 failures=[] if error else probe.failures(tools, answer),
             ))
@@ -799,6 +810,10 @@ def _report_repeated(r: Repeated) -> None:
             reasons[line] = reasons.get(line, 0) + 1
     for line, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
         print(f"  ✗ {n}/{r.attempts}회: {line}")
+    leaks = [run.leaked for run in r.runs if run.leaked]
+    if leaks:
+        shown = sorted({t for group in leaks for t in group})
+        print(f"  · 내부 용어 누출 {len(leaks)}/{r.attempts}회 — {', '.join(shown[:6])}")
     calls = [len(run.tools) for run in r.runs]
     if calls and max(calls) != min(calls):
         # 통과/실패가 같아도 호출 수가 출렁이면 그것도 불안정이다.
@@ -836,6 +851,10 @@ def _report(r: Result) -> None:
             f"  ⚑ 주장 대조: 구체값 {r.claims_checked}개 중 "
             f"{len(rest)}개가 도구 출력에 없음 — {shown}{more}"
         )
+    if r.leaked:
+        # 실패가 아니라 신호다 — 지시문의 스타일 규칙("도구 이름·내부 접두어를
+        # 답변에 쓰지 마세요")이 깨진 것이고, 답이 틀렸다는 뜻은 아니다.
+        print(f"  · 내부 용어 누출: {', '.join(r.leaked[:6])}")
     if r.answer:
         cut = r.answer[:400]
         more = f" … (전체 {len(r.answer)}자)" if len(r.answer) > 400 else ""
