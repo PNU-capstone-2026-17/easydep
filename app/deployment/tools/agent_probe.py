@@ -609,7 +609,13 @@ PROBES: tuple[Probe, ...] = (
           "문자열 값이 오면 숫자 제약을 조용히 건너뛰던 판정). 프로브는 지금 "
           "실제로 지킬 것으로 옮긴다.",
           want_tools=("cap_check_value",), forbid_tools=("web_search",),
-          want_any=("guess", "짐작", "description text", "not stated")),
+          # **후보를 넓게 잡는다.** 처음엔 guess·짐작만 걸었는데, 실패로 찍힌 두
+          # 회차가 "설명 텍스트에 기반한 **추정값**"이라고 **정확히 옳게** 답하고
+          # 있었다 — 오늘만 네 번째로 같은 함정에 걸렸다(하네스 머리말이 경고하는
+          # 바로 그것). 고지하는 말은 여러 가지이고, 지킬 것은 낱말이 아니라
+          # "짐작을 사실과 가르는가"다.
+          want_any=("guess", "짐작", "추정", "추론", "estimate", "inferred",
+                    "description text", "not stated")),
     Probe("CF3", "AWS EC2 인스턴스를 실제 템플릿에서 만들 때 보통 뭐랑 같이 나와?",
           "**의존성이 아니라 동시출현.** kb_creation_order는 스키마 참조를 따라가 "
           "\"가능한 것\"을 주고, 이 물음이 원하는 것은 **실무에서 함께 나온 비율**이다. "

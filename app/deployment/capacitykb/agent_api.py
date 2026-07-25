@@ -156,6 +156,12 @@ def _describe(constraint) -> str:
     )
     suffix = f" ({', '.join(tags)})"
     note = f"\n    ※ {constraint.note}" if constraint.note else ""
+    # **줄 앞에 짐작 표시를 붙였다가 되돌렸다(2026-07-25).** CF2가 3/5였을 때
+    # "등급이 줄 끝 괄호에 묻혀 답변에서 떨어진다"고 보고 `[a guess]`를 앞에
+    # 달았는데, 통과율이 3/5 그대로였다. 답변을 읽어 보니 **모델은 5회 전부
+    # 옳게 구분하고 있었고**("설명 텍스트에 기반한 추정값") 프로브 후보가 좁아
+    # 옳은 답이 실패로 찍힌 것이었다. 없던 문제를 고친 셈이라 되돌린다 —
+    # 줄마다 표시를 달면 표시가 뜻을 잃는다(_backend_footer 선례와 같은 이유).
     return f"  - {constraint.property}: {text}{suffix}{note}"
 
 
