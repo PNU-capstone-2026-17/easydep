@@ -168,3 +168,42 @@ def test_unbuilt_says_how_to_build(tmp_path) -> None:
 
 def test_search_finds_by_name(built) -> None:
     assert "sg-default" in list_bundles("sg", output_dir=built)
+
+
+def test_bare_vendor_type_resolves_to_the_prefixed_key() -> None:
+    """**있는 것을 없다고 말하던 자리.**
+
+    지시문은 `AWS::EC2::Subnet`처럼 접두어 없이 넘겨도 된다고 약속하는데, 이
+    데이터의 키는 `aws::AWS::EC2::Subnet`이라 어긋났다. 그때 도구는 "이 데이터셋에
+    없습니다"라고 답했고, 라이브 실측(BU1 10회 중 2회)에서 모델이 **그 문장을
+    그대로 사용자에게 인용**했다 — 데이터가 있는데도.
+
+    벤더 타입 자체가 `::`를 품으므로(`AWS::EC2::Instance`) 접두어 유무를 문자열로
+    판정할 수 없다. 데이터에 키가 있는지 먼저 보는 방식이라 두 형태가 다 통한다.
+    """
+    from bundlekb.dataset import resolve_type_id
+
+    assert resolve_type_id("Microsoft.Compute/virtualMachines") == (
+        "azure::Microsoft.Compute/virtualMachines",
+    )
+    assert resolve_type_id("AWS::EC2::Instance") == ("aws::AWS::EC2::Instance",)
+    assert resolve_type_id("vm") == ("core::vm",)
+    # 이미 전체 키면 그대로 — 접미사 넓히기가 끼어들면 안 된다.
+    assert resolve_type_id("core::vm") == ("core::vm",)
+
+
+def test_unknown_type_is_still_reported_missing() -> None:
+    """넓히기가 **없는 것을 있다고 만들지는 않는다.** 못 찾으면 받은 것을 그대로
+    돌려주고, 없다는 판정은 부르는 쪽이 한다."""
+    from bundlekb.agent_api import resource_bundle
+    from bundlekb.dataset import resolve_type_id
+
+    assert resolve_type_id("aws::AWS::Nope::Nothing") == ("aws::AWS::Nope::Nothing",)
+    assert "없습니다" in resource_bundle("aws::AWS::Nope::Nothing")
+
+
+def test_bare_type_reaches_the_cross_confirmed_member() -> None:
+    """BU1이 요구하는 사실 — 접두어 없이 물어도 NIC(교차 확인 100%)에 닿아야 한다."""
+    from bundlekb.agent_api import resource_bundle
+
+    assert "networkInterfaces" in resource_bundle("Microsoft.Compute/virtualMachines")

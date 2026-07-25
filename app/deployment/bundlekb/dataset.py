@@ -88,6 +88,50 @@ def _norm(type_name: str) -> str:
     return type_name.strip().lower()
 
 
+def resolve_type_id(
+    type_id: str, output_dir: Path | str | None = None
+) -> tuple[str, ...]:
+    """접두어 없는 벤더 타입을 **데이터에 있는 전체 키**로 넓힌다.
+
+    지시문은 `AWS::EC2::Subnet`처럼 그대로 넘겨도 된다고 약속하는데, 이 데이터의
+    키는 `aws::AWS::EC2::Subnet`이라 접두어 없이 물으면 정확히 어긋났다. 그때
+    돌아간 답이 **"이 데이터셋에 없습니다"** 였다 — 있는 것을 없다고 말한 것이고,
+    이 저장소가 가장 경계하는 오답이다(BU1 실측: 10회 중 2회가 이것이었고,
+    도구 출력의 그 문장이 답변에 그대로 인용됐다).
+
+    여럿에 걸리면 **고르지 않고 전부 돌려준다** — 임의로 하나를 고르는 것이
+    이 저장소가 막아 온 실패다. 못 찾으면 받은 것을 그대로 돌려준다(없다는
+    판정은 부르는 쪽의 몫이다).
+
+    **접두어가 붙었는지 문자열로 판정하지 않는다.** `AWS::EC2::Instance`는 접두어
+    없이도 `::`를 품고 있고, 소문자로 누르면 첫 마디가 `aws`라 프로바이더 토큰과
+    구별되지 않는다. 그래서 **데이터에 그 키가 있는지 먼저 보고**, 없을 때만
+    접미사로 넓힌다 — 추측이 필요 없다.
+    """
+    keys = _type_keys(output_dir)
+    wanted = _norm(type_id)
+    if wanted in keys:
+        return (keys[wanted],)
+    found = {
+        original: None
+        for normalized, original in keys.items()
+        if normalized.split("::", 1)[-1] == wanted
+    }
+    return tuple(found) or (type_id,)
+
+
+def _type_keys(output_dir: Path | str | None = None) -> dict[str, str]:
+    """데이터에 실제로 있는 타입 키 전부 — 소문자 키 → 원문."""
+    keys: dict[str, str] = {}
+    for bundle in all_bundles(output_dir):
+        for candidate in (bundle.anchor, *(m.type_id for m in bundle.members)):
+            if candidate:
+                keys.setdefault(_norm(candidate), candidate)
+    for companion in all_companions(output_dir):
+        keys.setdefault(_norm(companion.anchor), companion.anchor)
+    return keys
+
+
 def bundles_for(
     type_id: str, output_dir: Path | str | None = None
 ) -> tuple[Bundle, ...]:
@@ -96,13 +140,13 @@ def bundles_for(
     선택 구성원으로 걸린 것까지 주면 `roleAssignments`가 148개 번들을 물어 온다 —
     "이 리소스의 번들"이 아니라 "이걸 붙일 수 있는 모든 번들"이 되어 버린다.
     """
-    wanted = _norm(type_id)
+    wanted = {_norm(t) for t in resolve_type_id(type_id, output_dir)}
     out = []
     for bundle in all_bundles(output_dir):
-        if bundle.anchor and _norm(bundle.anchor) == wanted:
+        if bundle.anchor and _norm(bundle.anchor) in wanted:
             out.append(bundle)
             continue
-        if any(_norm(m.type_id) == wanted and m.tier == ALWAYS for m in bundle.members):
+        if any(_norm(m.type_id) in wanted and m.tier == ALWAYS for m in bundle.members):
             out.append(bundle)
     return tuple(out)
 
@@ -153,11 +197,11 @@ def companions_of(
     `min_samples` 아래는 **아예 돌려주지 않는다.** 17개 중 6개를 35.3%로 보여주면
     숫자에 없는 확신을 주게 된다.
     """
-    wanted = _norm(type_id)
+    wanted = {_norm(t) for t in resolve_type_id(type_id, output_dir)}
     found = [
         c
         for c in all_companions(output_dir)
-        if _norm(c.anchor) == wanted and c.samples >= min_samples and c.ratio >= min_ratio
+        if _norm(c.anchor) in wanted and c.samples >= min_samples and c.ratio >= min_ratio
     ]
     return tuple(sorted(found, key=lambda c: -c.ratio))
 
