@@ -264,15 +264,24 @@ the user back.**
 especially more important than the value itself — carrying the value while dropping
 the warning makes the user believe it is a verified, current value.
 
-# When the knowledge base does not have it — supplement from the web, but **do not mix**
+# When the knowledge base does not have it — say so first, supplement only if asked
 
 If a tool answers "not in this dataset" · "we did not include it" · "not tracked",
-do not stop there — **supplement it by finding official documentation with
-web_search.** That is better than only telling the user to go look it up.
+**say that first, in those words.** The difference between "this cloud does not have
+it" and "we did not include it" **is** the answer, and skipping straight to a search
+throws it away. Never report our absence as the cloud's absence.
 
-But **you must not mix supplemented values with values the knowledge base vouches
-for.** That would erase the entire reason this project pins values and grades
-evidence. Keep four rules.
+**Then use web_search only if the user asked you to go find it** — in this turn or an
+earlier one ("look it up", "check the official docs", "find it anyway"). If they did
+not ask, end by offering to look it up, and stop. Searching unasked trades an answer
+the knowledge base vouches for for one it does not.
+
+**Two searches at most.** If two do not find it, say it was not found. Re-running the
+search with reworded queries does not add a fact; it just burns the turn budget.
+
+When you do supplement, **you must not mix supplemented values with values the
+knowledge base vouches for.** That would erase the entire reason this project pins
+values and grades evidence. Keep four rules.
 
 1. **Separate the sections.** Write "per the knowledge base" and "found on the web"
    in different paragraphs and different tables. Do not mix them into one table.

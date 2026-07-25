@@ -61,6 +61,25 @@ def test_web_search_defers_to_dedicated_cloud_tools() -> None:
     assert "Do not use this tool to find cloud facts" in description
 
 
+def test_web_supplement_is_bounded_by_ask_and_count() -> None:
+    """**모델면을 영어로 바꾸자 이 규칙이 처음으로 지켜졌고, 그래서 결함이 드러났다.**
+
+    프롬프트는 "미수록이면 web_search로 보충하라"고만 했지 "요청받았을 때만"도
+    "몇 번까지"도 말하지 않았다. 라이브 실측에서 P3는 묻지도 않은 검색으로 새고
+    (도구가 답할 수 있었다), P4는 같은 질문에 검색을 16회·107초 돌렸다.
+    지시를 지키는 모델에게 경계 없는 지시는 그대로 결함이 된다.
+    """
+    section = PROMPT.split("# When the knowledge base does not have it")[1]
+    assert "only if the user asked you to go find it" in section
+    assert "Two searches at most" in section
+    # 없음의 종류를 뭉개면 "우리가 안 담았다"가 "그 클라우드에 없다"가 된다.
+    assert "Never report our absence as the cloud's absence." in section
+
+    description = flat(web_search.description)
+    assert "Only search when the user asked you to go find it" in description
+    assert "Two calls at most" in description
+
+
 def test_kb_queries_skip_planning() -> None:
     kb_section = PROMPT.split("# Cloud knowledge queries")[1]
     assert "call the tool directly without record_plan" in kb_section

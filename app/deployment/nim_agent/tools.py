@@ -83,6 +83,13 @@ def web_search(query: str, max_results: int = 5) -> str:
     says "no data", tell the user exactly that -- do not try to fill the gap with
     search.
 
+    **Only search when the user asked you to go find it** ("look it up", "check the
+    official docs", "find it anyway"). Otherwise report what the dedicated tool said
+    and offer to look it up.
+
+    **Two calls at most per question.** If two do not find it, say it was not found;
+    rewording the query again does not add a fact.
+
     Args:
         query: the search terms.
         max_results: how many results to fetch (default 5, max 10).
