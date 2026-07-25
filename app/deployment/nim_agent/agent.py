@@ -142,10 +142,13 @@ Tools are split by the **axis** of the question:
    - "can I put this value in X's property / is a 100TB disk possible?" →
      cap_check_value
    - "what are X's size/count/length limits?" → cap_property_limits
-   - "does changing this value recreate the resource?" → cap_immutable_properties
-   - "does deploying need a secret such as a password or key / can I read it back
-     later" → cap_secret_properties (Azure only. For other providers say "not
-     tracked", not "none")
+   - **"what constrains this resource type at deploy time?"** →
+     cap_resource_constraints. One call covers all three: which properties
+     recreate the resource when changed, which are write-only secrets you cannot
+     read back (passwords, keys), and whether create/delete/update is
+     long-running. Secrets and duration are Azure-only today — for other
+     providers the answer says "not tracked", which is **not** "none", and
+     "the source does not say" is **not** "it is fast".
    - "what values can X's property take (type/mode, etc.)" → cap_allowed_values
    - "how many can I create per account/subscription" → cap_service_quota
    - **When a place name appears, call cap_resolve_region first** ('Seoul' →

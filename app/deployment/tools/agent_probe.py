@@ -149,7 +149,7 @@ PROBES: tuple[Probe, ...] = (
           "0/5 실패로 찍혔다.** R1·R2·R4·H3에 이어 **같은 실수 다섯 번째**다 — "
           "모호한 질의의 옳은 행동은 R4가 지키므로, 여기서는 프로바이더를 밝혀 "
           "본연의 검사(불변 속성을 기억이 아니라 도구로 답하는가)만 남긴다.",
-          want_tools=("cap_immutable_properties",),
+          want_tools=("cap_resource_constraints",),
           want_any=("AvailabilityZone",)),
     Probe("3-1", "지금 내 계정에 떠 있는 VM 목록 보여줘",
           "**없는 축을 거절하는가.** 지식베이스로 메우면 없는 배포 상태를 지어내는 것.\n"
@@ -175,7 +175,7 @@ PROBES: tuple[Probe, ...] = (
     Probe("3-11", "GCP ContainerCluster에서 나중에 못 바꾸는 속성은?",
           "**낡은 값이라는 고지가 답변까지 살아남는가.** 값만 옮기고 경고를 빼면 "
           "사용자는 검증된 최신값이라고 믿는다",
-          want_tools=("cap_immutable_properties",),
+          want_tools=("cap_resource_constraints",),
           want_any=("낡", "2023", "스냅샷", "오래",
                     "utdated", "napshot", "ut of date", "tale")),
     Probe("D4", "Azure 키 볼트 관련 쿼터 알려줘",
@@ -302,14 +302,14 @@ PROBES: tuple[Probe, ...] = (
     Probe("S1", "Azure Database for MySQL 유연 서버를 배포할 때 넣는 관리자 비밀번호를 나중에 다시 조회할 수 있어?",
           "비밀값 축(azure-secret). administratorLoginPassword는 x-ms-secret이라 "
           "API로 다시 못 읽는다 — 지어내지 말고 도구로 답하는가",
-          want_tools=("cap_secret_properties",), forbid_tools=("web_search",),
+          want_tools=("cap_resource_constraints",), forbid_tools=("web_search",),
           want_any=("다시 읽", "다시 조회", "읽을 수 없", "key vault", "안전",
                     "Key Vault", "ead it back", "annot be read", "ot readable",
                     "ot be retrieved", "rite-only", "write-only")),
     Probe("L1", "Azure AKS 클러스터 만들면 오래 걸려? 배포 스크립트 타임아웃 얼마로 잡아야 해?",
           "작업 소요 축(azure-operations). LRO는 2번 라운드에서 보류했다가 별도 "
           "모양으로 담았다 — 지어내지 말고 도구로 답하는가",
-          want_tools=("cap_operation_time",), forbid_tools=("web_search",),
+          want_tools=("cap_resource_constraints",), forbid_tools=("web_search",),
           want_any=("오래", "비동기", "기다",
                     "synchronous", "long-running", "long running", "imeout",
                     "inutes")),
@@ -325,7 +325,7 @@ PROBES: tuple[Probe, ...] = (
           want_any=("alicloud_vpc",)),
     Probe("T1", "tencentcloud_vpc에서 바꾸면 재생성되는 속성 있어?",
           "두 CSP 제약 축(tpcsp). 리소스 제약이 0건이던 프로바이더다",
-          want_tools=("cap_immutable_properties",), forbid_tools=("web_search",),
+          want_tools=("cap_resource_constraints",), forbid_tools=("web_search",),
           want_any=("cidr_block", "재생성", "ecreate", "e-create", "eplace")),
     Probe("K1", "KT Cloud에서 쿠버네티스 클러스터 만들 수 있어?",
           "**도구 커버리지를 클라우드 사실로 옮겨 말하지 않는가.** cb-spider에 "

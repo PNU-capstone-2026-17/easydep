@@ -138,33 +138,38 @@ def cap_property_limits(resource_type: str, property_name: str | None = None) ->
     )
 
 
+# **도구 셋을 하나로 접었다(2026-07-25).** 셋 다 인자가 `resource_type` 하나뿐이라
+# 모델이 "불변 속성? 비밀값? 작업 시간?"을 매번 갈라야 했다 — 문헌이 최다 실패
+# 모드로 꼽는 **모호한 결정 지점**이고, 실제로 오늘 고친 실패가 대부분 오라우팅이었다.
+# 출력은 커지지만(합쳐서 252~753 tok) 호출 한 번이 요청 하나(입력 ≈12,000 tok)를
+# 아끼므로 총량은 오히려 준다.
 @function_tool
-def cap_immutable_properties(resource_type: str) -> str:
-    """Return the properties that delete and recreate the resource when changed
-    (essential for deployment / change plans).
+def cap_resource_constraints(resource_type: str) -> str:
+    """All deployment-time constraints of one resource type, in a single call:
+
+    - **which properties force a delete-and-recreate when changed** (needed for
+      any change plan)
+    - **which are write-only secrets** set at deploy time that the API cannot
+      read back (passwords, keys, connection strings) — advise managing those
+      separately, e.g. in a key vault, since a lost value cannot be recovered
+    - **whether create / delete / update is long-running**, plus the available
+      actions, so deployment scripts can set timeouts and split steps
+
+    Secrets and operation duration are carried only by the Azure specification
+    today. For other providers the answer says "not tracked" — **that is not the
+    same as "none", and "the source does not say" is not "it is fast"**. Pass
+    those distinctions through as-is.
 
     Args:
-        resource_type: Type name. e.g. 'AWS::EC2::Subnet'.
+        resource_type: Type name. e.g. 'AWS::EC2::Subnet',
+            'Microsoft.DBforMySQL/flexibleServers', 'gcp::ComputeDisk'.
     """
-    print(f"\n[capacity query] immutable properties: {resource_type}")
-    return agent_api.immutable(resource_type)
-
-
-@function_tool
-def cap_secret_properties(resource_type: str) -> str:
-    """Properties set at deploy time that cannot be read back through the API
-    (passwords, keys, connection strings).
-
-    Use this to advise that such values be managed separately (e.g. Key Vault),
-    since once lost they cannot be looked up again. Only Azure carries this
-    marking today — do not answer "no secret values" for other providers (they
-    are not tracked, which is not the same as none).
-
-    Args:
-        resource_type: Type name. e.g. 'Microsoft.DBforMySQL/flexibleServers'.
-    """
-    print(f"\n[capacity query] secret properties: {resource_type}")
-    return agent_api.secrets(resource_type)
+    print(f"\n[capacity query] resource constraints: {resource_type}")
+    return "\n\n".join((
+        agent_api.immutable(resource_type),
+        agent_api.secrets(resource_type),
+        agent_api.operation_time(resource_type),
+    ))
 
 
 @function_tool
@@ -344,20 +349,8 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
     return lifecycle.describe(service, version)
 
 
-@function_tool
-def cap_operation_time(resource_type: str) -> str:
-    """Whether creating, deleting, or updating this resource takes long, plus
-    the list of available actions.
-
-    Use it for timeouts and step splitting in deployment scripts. Only Azure
-    provides this today.
-    **"The source does not say" is not "it is fast"** — pass it through as-is.
-
-    Args:
-        resource_type: Type name. e.g. 'Microsoft.Compute/virtualMachines'.
-    """
-    print(f"\n[capacity query] operation time: {resource_type}")
-    return agent_api.operation_time(resource_type)
+# `cap_operation_time`은 `cap_resource_constraints`로 접었다 — 인자가 같고
+# (`resource_type`) 배포 계획을 세울 때 불변 속성·비밀값과 **함께** 필요한 사실이다.
 
 
 @function_tool
@@ -395,8 +388,7 @@ def _coerce(raw: str) -> float | str:
 CAPACITY_TOOLS = [
     cap_check_value,
     cap_property_limits,
-    cap_immutable_properties,
-    cap_secret_properties,
+    cap_resource_constraints,
     cap_allowed_values,
     cap_service_quota,
     cap_resolve_region,
@@ -405,6 +397,5 @@ CAPACITY_TOOLS = [
     cap_region_latency,
     cap_basic_image,
     cap_service_lifecycle,
-    cap_operation_time,
     cap_csp_supports,
 ]
