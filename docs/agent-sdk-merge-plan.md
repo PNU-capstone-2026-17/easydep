@@ -193,17 +193,44 @@ Dockerfile: `python:3.12-slim-bookworm` → `python:3.13-slim-bookworm` (2곳),
 그 3의 차이가 유일한 신호였다. 이 게이트를 다시 돌리려면 로컬에
 `app/deployment/{output,.cache}/`가 있어야 한다(둘 다 gitignore — 각자 빌드한다).
 
-### 6. 되돌려진 삽입 복원 — **완료**
+### 6. 배선 — **일부러 끊어 두었다 (2026-07-26)**
 
-- `app/design/services/deployment_diagram/kb.py` (그새 서비스가 하위 패키지로
-  갈려서 e2c6a5b의 `services/kb_deployment.py` 자리와 다르다)
-- `generate_deployment_diagram` 노드 교체, LLM 생성기 삭제
-- **`PREREQUISITES`에 `resource_spec`은 넣지 않았다.** 이 계획서가 위에서 그렇게
-  적었던 것이 틀렸다 — 생산자가 없는 산출물을 전제로 걸면 배포 단계가 통째로
-  도달 불가가 된다. 요구사항 쪽이 만들기 시작하면 그때 넣는다(합의 안건 1)
+배포 노드 교체를 한 번 넣었다가(ef8e067) 되돌렸다. **이 병합의 범위를 "합치기"로
+좁히기 위해서다** — 배선은 easydep 본체를 손보는 작업과 함께 간다.
 
-실측: 제약을 주면 88줄·근거 주석 67개, 제약이 없으면 69줄로 **실패하지 않고**
-무엇을 판정하지 못했는지가 주석에 남는다.
+그래서 지금 상태는: `app/deployment/`이 저장소 안에 있고 테스트가 돌지만,
+**easydep의 실행 경로는 병합 전과 한 글자도 다르지 않다.** 배포 다이어그램은
+여전히 `generate_deployment_diagram_with_llm`이 만든다.
+
+되돌린 커밋에 배선의 실물이 그대로 있으니, 할 때는 `git revert` 한 번으로 되돌아
+온다. 그때 함께 결정할 것:
+
+- **`PREREQUISITES`에 `resource_spec`을 넣을지.** 이 계획서가 처음에 넣는다고 적은
+  것은 틀렸다 — 생산자가 없는 산출물을 전제로 걸면 배포 단계가 통째로 도달 불가가
+  된다. 아래 "제약이 안 흐른다"가 풀린 뒤의 일이다.
+
+실측(배선했을 때): 제약을 주면 88줄·근거 주석 67개, 제약이 없으면 69줄로
+**실패하지 않고** 무엇을 판정하지 못했는지가 주석에 남는다.
+
+## 제약이 아직 안 흐른다
+
+배선을 하더라도 그것만으로는 절반이다. `RESOURCE_SPEC`은 **아무도 만들지 않는다** —
+`app/requirements/api.py`가 "resource_spec은 이 에이전트가 만들지 않으므로 비운다"고
+적고 있고, `save_stage` 호출 어디에도 없다. 사용자가 쓴 제약 원문
+(`apps.resource_constraints_text`)은 저장되지만 구조화되지 않는다.
+
+그래서 지금 배선하면 배포 다이어그램은 **제약 없이** 구성된다(위의 69줄 쪽). 예산
+부합·multiZone·프로바이더 일치 판정이 답에 실리지 않는다. 손으로 채우려면
+`POST /api/apps/{app_id}/stages/resource_spec/content` 뿐이다.
+
+이어지지 않은 나머지:
+
+| | 상태 |
+|---|---|
+| clarify 게이트 연동 (합의 안건 1) | 제약 산문 → 구조화, 누락 되묻기, `cap_resolve_region`으로 리전 확정 — 미착수 |
+| `archetypeHint` (합의 안건 2) | agent-sdk 어댑터는 읽을 준비 완료(9984245), easydep ERD 생성기가 주석을 안 쓴다 |
+| 대화형 배포 에이전트 | `nim_agent`의 도구 31종이 어떤 엔드포인트에도 안 붙어 있다 |
+| 프론트엔드 | `deployment_diagram`만 알고 `resource_spec` 입력 자리가 없다 |
 
 ## 위험 (실측된 것만)
 
