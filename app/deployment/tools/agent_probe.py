@@ -444,7 +444,7 @@ PROBES: tuple[Probe, ...] = (
           "지킬 것은 호출이 아니라 답에 그 구분이 있는가이고 그건 `want_any`가 본다.",
           tools_optional=True, forbid_tools=("web_search",),
           want_any=("담", "수록", "포함되어 있지", "제공되지",
-                    "ot included", "e did not include", "e don't include",
+                    "ot include", "e did not include", "e don't include",
                     "ot in this dataset", "ot in the dataset")),
     Probe("P4", "AWS m5.large 스팟 가격을, 공식 자료를 찾아서라도 알려줘",
           "**없다고 확인된 뒤에는 웹으로 보충한다.** \"직접 찾아보세요\"로 끝내는 "
@@ -524,7 +524,7 @@ PROBES: tuple[Probe, ...] = (
                          "cost_estimate_monthly"),
           forbid_tools=("web_search",),
           want_any=("합계", "총액", "포함되지", "미반영", "아닙니다", "없습니다",
-                    "otal", "ot included", "o total", "ot an actual bill",
+                    "otal", "ot include", "o total", "ot an actual bill",
                     "o price axis", "ot reflected")),
     Probe("GL3", "AWS EC2 인스턴스를 고르면 딸려오는 것들 비용까지 알려줘",
           "**값이 붙는 것과 안 붙는 것을 가르는가.** 리전을 안 밝힌 물음이라 "
@@ -540,7 +540,7 @@ PROBES: tuple[Probe, ...] = (
           want_any=("비용 데이터", "가격 축", "값을 매길 수 없", "포함되지",
                     "산정되지", "없습니다",
                     "o price axis", "o cost data", "o pricing data",
-                    "annot be priced", "ot priced", "ot included")),
+                    "annot be priced", "ot priced", "ot include")),
     Probe("GL4", "웹 서비스 하나를 AWS 서울에 올리려고 해. vCPU 2, 메모리 4GiB면 될 것 "
                  "같은데 스펙 추천하고 월 비용까지 계산해줘",
           "**부분 정보가 완전해 보이는 함정.** 프로바이더·리전에 구체 사양까지 왔으니 "

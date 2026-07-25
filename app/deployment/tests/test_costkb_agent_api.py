@@ -106,3 +106,36 @@ def test_coverage_text_lists_all_groups() -> None:
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
 def test_coverage_text_covers_each_provider(provider: str) -> None:
     assert provider in coverage_text()
+
+
+def test_running_total_is_computed_by_the_tool_not_the_model() -> None:
+    """**합계를 낼 도구가 없어서 모델이 암산할 수밖에 없었다.**
+
+    지시문은 "구성요소별·합계를 도구로 계산하라"와 "직접 암산하지 마라"를 동시에
+    요구했는데, `estimate_monthly_cost`는 구성요소 하나만 계산했다. 모델은 두 번
+    부른 뒤 스스로 더했고, 그 합계는 **어떤 도구 출력에도 없는 값**이 됐다
+    (실측 RS2: $285.28 — 주장 대조가 근거 없음으로 잡았다).
+
+    사용자가 예산을 대는 바로 그 숫자라 근거가 없으면 안 된다.
+    """
+    from costkb.agent_api import estimate_monthly_cost
+
+    first = estimate_monthly_cost(0.0468, 1, 730)
+    assert "34.16" in first
+    # 첫 구성요소에는 누적 줄이 붙지 않는다 — 더할 것이 없으므로.
+    assert "Running total" not in first
+
+    second = estimate_monthly_cost(0.344, 1, 730, 34.16)
+    assert "251.12" in second
+    assert "285.28" in second, "합계가 도구 출력에 없다"
+    # **어디서 왔는지 함께 낸다.** 합계만 주면 그것도 근거 없는 숫자로 보인다.
+    assert "34.16" in second and "so far" in second
+
+
+def test_the_prompt_tells_the_model_to_thread_the_running_total() -> None:
+    """도구에 칸을 만들어도 지시문이 안 가리키면 안 쓰인다 — 축 표 교훈과 같다."""
+    from nim_agent.agent import INSTRUCTIONS
+
+    flat = " ".join(INSTRUCTIONS.split())
+    assert "running_total_usd" in flat
+    assert "The total is arithmetic too." in flat

@@ -75,7 +75,12 @@ recommendation, and cost calculation chain together, per component.
    total, separately.
 4. Call cost_estimate_monthly with the chosen spec's hourly rate to compute the
    per-component and total monthly cost. **Do not do the monthly arithmetic in your
-   head** — computing it with the tool keeps the basis consistent. This rule applies
+   head** — computing it with the tool keeps the basis consistent.
+   **The total is arithmetic too.** From the second component on, pass
+   `running_total_usd` — the monthly cost the tool already returned for the
+   earlier ones — and it gives you the running total. Adding the components up
+   yourself produces a number that appears in no tool output, and that number is
+   the one the user sets a budget against. This rule applies
    **to candidate lists too**: put only the tool-provided hourly rate in the
    candidate table, and do not multiply out a monthly cost per candidate (that value
    is not in the tool's output). Monthly cost is computed with the tool only for the

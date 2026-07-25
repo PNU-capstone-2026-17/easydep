@@ -527,12 +527,29 @@ def estimate_monthly_cost(
     hourly_usd: float,
     count: int = 1,
     hours_per_month: float = HOURS_PER_MONTH,
+    running_total_usd: float = 0.0,
 ) -> str:
-    """시간당 단가로 월 비용을 계산해 텍스트로 반환한다."""
+    """시간당 단가로 월 비용을 계산해 텍스트로 반환한다.
+
+    `running_total_usd`는 **앞서 계산한 다른 구성요소의 월 비용 합**이다. 주면
+    이번 구성요소를 더한 누적 합계까지 함께 낸다.
+
+    **왜 합계를 여기서 내나.** 이 도구는 구성요소 하나만 계산했고 합계를 내는
+    도구는 없었다. 그런데 지시문은 "구성요소별·합계를 도구로 계산하라"와 "직접
+    암산하지 마라"를 동시에 요구했다 — 모델은 불가능한 요구를 받고 더할 수밖에
+    없었고, 그 합계는 어떤 도구 출력에도 없는 값이 됐다(실측 RS2: $285.28).
+    **사용자가 예산을 대는 바로 그 숫자**라 근거가 없으면 안 된다.
+    """
     per_node = hourly_usd * hours_per_month
     total = per_node * count
-    return (
+    line = (
         f"Estimated monthly cost: ${total:,.2f} "
         f"(${per_node:,.2f} per node × {count} nodes, at {hours_per_month:.0f}h/month). "
-        f"{_COST_DISCLAIMER}"
     )
+    if running_total_usd:
+        line += (
+            f"Running total across components: "
+            f"${running_total_usd + total:,.2f} "
+            f"(${running_total_usd:,.2f} so far + ${total:,.2f} for this one). "
+        )
+    return line + _COST_DISCLAIMER

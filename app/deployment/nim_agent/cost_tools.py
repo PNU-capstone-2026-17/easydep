@@ -176,6 +176,7 @@ def cost_estimate_monthly(
     hourly_usd: float,
     count: int = 1,
     hours_per_month: float = HOURS_PER_MONTH,
+    running_total_usd: float = 0.0,
 ) -> str:
     """Compute the monthly cost from an hourly rate (node count, uptime applied).
 
@@ -184,10 +185,18 @@ def cost_estimate_monthly(
     prices from web search). Never do the monthly arithmetic in your head —
     always compute it with this tool.
 
+    **That includes the total across components.** For the second and later
+    components pass `running_total_usd` — the monthly cost you already got back
+    for the earlier ones — and this tool returns the running total too. The
+    total is the number the user sets a budget against, so it must come from
+    here, not from adding the components up yourself.
+
     Args:
         hourly_usd: Hourly USD unit price of one instance.
         count: Number of instances (default 1).
         hours_per_month: Monthly running hours (default 730 = always on).
+        running_total_usd: Monthly cost already computed for the other
+            components. Omit for the first component.
     """
     if _needs_plan(ctx):
         print("\n[cost estimate] no plan → refused")
@@ -197,7 +206,9 @@ def cost_estimate_monthly(
         f"\n[cost estimate] ${hourly_usd}/h × {hours_per_month}h × {count} nodes "
         f"= ${round(total, 2)}/month"
     )
-    return agent_api.estimate_monthly_cost(hourly_usd, count, hours_per_month)
+    return agent_api.estimate_monthly_cost(
+        hourly_usd, count, hours_per_month, running_total_usd
+    )
 
 
 #: 할인 축이 있는 프로바이더. **여기 없으면 "할인이 없다"가 아니라 "안 담았다"다.**
