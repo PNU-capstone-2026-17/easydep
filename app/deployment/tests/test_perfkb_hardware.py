@@ -90,7 +90,8 @@ def test_capacity_points_at_perf_for_compute_types() -> None:
     from nim_agent.capacity_tools import _perf_pointer
 
     text = _perf_pointer("AWS::EC2::Instance")
-    assert "perf_instance_profile" in text, "성능 축을 안 가리킨다"
+    # 도구 이름이 아니라 **축**으로 가리켜야 한다 — 이 줄은 사용자에게 옮겨진다.
+    assert "performance axis" in text, "성능 축을 안 가리킨다"
     assert "GPU" in text
 
 

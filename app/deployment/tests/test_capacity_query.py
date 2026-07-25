@@ -394,7 +394,11 @@ def test_type_summary_points_at_the_data(wide: Path) -> None:
     """
     text = agent_api.type_summary("AWS::EC2::Volume", output_dir=wide)
     assert text and "InstanceType" in text, "제약이 걸린 속성 이름이 안 보인다"
-    assert "cap_check_value" in text, "다음에 부를 도구를 안 가리킨다"
+    # **축으로 가리킨다 — 도구 이름을 적지 않는다.** 예전엔 여기서 `cap_check_value`를
+    # 요구했는데, 그 줄은 사용자에게 옮겨지는 텍스트라 지시문이 금지한 내부 이름
+    # 노출을 우리가 유발했다(2026-07-25). 게다가 같이 적혀 있던 이름 둘은 도구
+    # 통합으로 사라져 **없는 도구를 가리키고 있었다.**
+    assert "limits & constraints axis" in text, "다음에 볼 축을 안 가리킨다"
 
 
 def test_type_summary_is_silent_on_unknown_types(wide: Path) -> None:
@@ -425,7 +429,11 @@ def test_value_lookup_turns_a_dead_end_into_an_answer(wide: Path) -> None:
     assert text, "허용값인데 못 찾았다"
     assert "InstanceType" in text, "어느 속성의 값인지 안 알려준다"
     assert "allowed under 2 of 2 conditions" in flat(text), "몇 개 조건에서 되는지 안 센다"
-    assert "cap_check_value" in text, "다음에 부를 도구를 안 가리킨다"
+    # **축으로 가리킨다 — 도구 이름을 적지 않는다.** 예전엔 여기서 `cap_check_value`를
+    # 요구했는데, 그 줄은 사용자에게 옮겨지는 텍스트라 지시문이 금지한 내부 이름
+    # 노출을 우리가 유발했다(2026-07-25). 게다가 같이 적혀 있던 이름 둘은 도구
+    # 통합으로 사라져 **없는 도구를 가리키고 있었다.**
+    assert "limits & constraints axis" in text, "다음에 볼 축을 안 가리킨다"
 
 
 def test_value_lookup_is_silent_on_unknown_names(wide: Path) -> None:

@@ -583,11 +583,15 @@ def type_summary(
         more = f" and {len(names) - 3} more" if len(names) > 3 else ""
         parts.append(f"{_recreating(len(names))} — {shown}{more}")
 
+    # **도구 이름을 적지 않는다.** 이 줄은 사용자에게 옮겨지는 텍스트라 내부 이름을
+    # 쥐여 주면 지시문이 금지한 노출을 우리가 유발한다. 게다가 여기 적혀 있던
+    # `cap_allowed_values`·`cap_property_limits`는 통합으로 **사라진 이름**이었다 —
+    # KB가 도구 층의 이름을 알면 그 층이 바뀔 때마다 조용히 거짓이 된다.
     return (
         f"capacity & constraints (capacitykb): {' · '.join(parts)}\n"
-        "  → for a verdict on whether a value works use cap_check_value (conditions "
-        "go in context), for allowed values cap_allowed_values, for every limit "
-        "cap_property_limits."
+        "  → ask the limits & constraints axis **with the value** for a verdict on "
+        "whether it works (put the conditions in context), or **without a value** "
+        "to see the allowed values and every limit."
     )
 
 
@@ -657,8 +661,8 @@ def value_lookup(
         lines.append(f"  … and {len(ranked) - 4} more places")
     top_type, top_prop = ranked[0][0]
     lines.append(
-        f"  → for which condition allows it, "
-        f"cap_check_value('{display(top_type)}', '{top_prop}', '{name}') "
+        f"  → to learn which condition allows it, ask the limits & constraints axis "
+        f"about {display(top_type)}.{top_prop} with the value {name!r} "
         "— pass the condition (region, volume type, etc.) in context and you get a "
         "definite verdict."
     )

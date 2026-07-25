@@ -141,10 +141,14 @@ def _perf_pointer(resource_type: str) -> str:
         return ""
     if not summary:
         return ""
+    # **도구 이름을 여기 적지 않는다.** 예전엔 `perf_instance_profile('aws', …)`이라
+    # 적었는데, 이 문장은 모델이 사용자에게 그대로 옮기는 텍스트 흐름에 섞여 있다 —
+    # 지시문이 금지한 내부 용어 노출을 **우리 손으로 쥐여 준 것**이었다(실측
+    # 2026-07-25: 누출 검출기를 만들고서야 보였다). 축만 가리켜도 라우팅은 선다.
     return (
         "\n  ※ **Hardware that differs per instance type**, such as the CPU or "
         f"GPU model, is not on this axis — it is on the performance axis ({summary}).\n"
-        f"     See perf_instance_profile('{provider}', '<instance type>')."
+        f"     Look it up there, for the specific {provider} instance type."
     )
 
 

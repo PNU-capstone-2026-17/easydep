@@ -175,3 +175,42 @@ def test_answer_language_is_english() -> None:
     work_method = PROMPT.split("# How you work")[1].split("##")[0]
     assert "in English" in work_method
     assert "in Korean" not in work_method
+
+
+def test_no_tool_output_hands_the_model_our_own_tool_names() -> None:
+    """**누출을 세는 코드와 누출을 만드는 코드가 같은 저장소에 있었다.**
+
+    지시문은 "도구 이름을 답변에 쓰지 마세요"라고 하는데, `_perf_pointer`는 도구
+    출력에 `perf_instance_profile('aws', …)`를 적어 보냈다 — 모델이 사용자에게
+    그대로 옮기는 텍스트 흐름에 우리 손으로 내부 이름을 쥐여 준 것이다(실측
+    2026-07-25, 누출 검출기를 만들고서야 보였다).
+
+    라우팅 신호 자체는 필요하다. 다만 **축으로 가리키면 되지 이름을 적을 필요는
+    없다.** 이 검사는 그 구분을 구조로 고정한다 — 새 교차 참조를 만들 때 같은
+    실수를 반복하지 않도록.
+    """
+    from nim_agent.capacity_tools import _perf_pointer
+    from nim_agent.graph_tools import _capacity_pointer
+    from nim_agent.tools import LOCAL_TOOLS
+
+    names = {tool.name for tool in LOCAL_TOOLS}
+    samples = [
+        _perf_pointer("aws::AWS::EC2::Instance"),
+        _perf_pointer("AWS::EC2::Instance"),
+        _capacity_pointer("AWS::EC2::Subnet"),
+        _capacity_pointer("p5.48xlarge"),
+    ]
+    for text in samples:
+        leaked = sorted(name for name in names if name in text)
+        assert not leaked, f"도구 출력이 내부 이름을 흘린다: {leaked}\n{text[:200]}"
+
+
+def test_style_rule_covers_the_shapes_that_actually_slip() -> None:
+    """예시가 '조회했다' 서술만 다루면 실제로 새는 두 형태를 못 막는다 —
+    실측에서 잡힌 것은 **출처 표기**("※ kb_describe_type 결과")와
+    **예고**("cap_resolve_region 도구로 확인해야 합니다")였다."""
+    style = PROMPT.split("# Answer style")[1]
+    assert "attributing" in style and "promising" in style
+    # 규칙이 315줄 프롬프트의 꼬리에만 있으면 늦게 읽힌다 — 앞에도 포인터를 둔다.
+    head = PROMPT.split("# How you work")[1].split("##")[0]
+    assert "never in ours" in head
