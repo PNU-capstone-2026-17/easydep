@@ -1,0 +1,23 @@
+{
+ "typeName": "AWS::EC2::Volume",
+ "description": "Specifies an Amazon Elastic Block Store (Amazon EBS) volume. You can create an empty volume, a volume from a snapshot, or a volume copy from an existing source volume.\n   +  When you use CFNlong to update an Amazon EBS volume that modifies ``Iops``, ``Size``, or ``VolumeType``, there is a cooldown period before another operation can occur. This can cause your stack to report being in ``UPDATE_IN_PROGRESS`` or ``UPDATE_ROLLBACK_IN_PROGRESS`` for long periods of time. Some common scenarios when you might encounter a cooldown period for Amazon EBS include:\n  +  You successfully update an Amazon EBS volume and the update succeeds. When you attempt another update within the cooldown window, that update will be subject to a cooldown period.\n  +  You successfully update an Amazon EBS volume and the update succeeds but another change in your ``update-stack`` call fails. The rollback will be subject to a cooldown period.\n  \n For more information, see [Requirements for EBS volume modifications](https://docs.aws.amazon.com/ebs/latest/userguide/modify-volume-requirements.html).\n  +  Amazon EBS does not support sizing down an Amazon EBS volume. CFNlong does not attempt to modify an Amazon EBS volume to a smaller size on rollback.\n  \n   *DeletionPolicy attribute* \n To control how CFNlong handles the volume when the stack is deleted, set a deletion policy for your volume. You can choose to retain the volume, to delete the volume, or to create a snapshot of the volume. For more information, see [DeletionPolicy attribute](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-attribute-deletionpolicy.html).\n  If you set a deletion policy that creates a snapshot, all tags on the volume are included in the snapshot.",
+ "additionalProperties": false,
+ "properties": {
+  "Size": {
+   "type": "integer",
+   "description": "The size of the volume, in GiBs.\n  +  Required for new empty volumes.\n  +  Optional for volumes created from snapshots and volume copies. In this case, the size defaults to the size of the snapshot or source volume. You can optionally specify a size that is equal to or larger than the size of the source snapshot or volume.\n  \n Supported volume sizes:\n  +  gp2: ``1 - 16,384`` GiB\n  +  gp3: ``1 - 65,536`` GiB\n  +  io1: ``4 - 16,384`` GiB\n  +  io2: ``4 - 65,536`` GiB\n  +  st1 and sc1: ``125 - 16,384`` GiB\n  +  standard: ``1 - 1024`` GiB"
+  },
+  "Iops": {
+   "type": "integer",
+   "description": "The number of I/O operations per second (IOPS) to provision for the volume. Required for ``io1`` and ``io2`` volumes. Optional for ``gp3`` volumes. Omit for all other volume types. \n Valid ranges:\n  +  gp3: ``3,000``(*default*)``- 80,000`` IOPS\n  +  io1: ``100 - 64,000`` IOPS\n  +  io2: ``100 - 256,000`` IOPS\n  \n  [Instances built on the Nitro System](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-nitro-instances.html) can support up to 256,000 IOPS. Other instances can support up to 32,000 IOPS."
+  },
+  "Throughput": {
+   "type": "integer",
+   "description": "The throughput to provision for a volume, with a maximum of 2,000 MiB/s.\n This parameter is valid only for ``gp3`` volumes. The default value is 125.\n Valid Range: Minimum value of 125. Maximum value of 2000.\n The maximum ratio of throughput to IOPS is 0.25 MiB/s per IOPS. For example, a volume with 3,000 IOPS can have a maximum throughput of 750 MiB/s (3,000 x 0.25)."
+  },
+  "VolumeType": {
+   "type": "string",
+   "description": "The volume type. This parameter can be one of the following values:\n  +  General Purpose SSD: ``gp2`` | ``gp3``\n  +  Provisioned IOPS SSD: ``io1`` | ``io2``\n  +  Throughput Optimized HDD: ``st1``\n  +  Cold HDD: ``sc1``\n  +  Magnetic: ``standard``\n  \n  Throughput Optimized HDD (``st1``) and Cold HDD (``sc1``) volumes can't be used as boot volumes.\n  For more information, see [Amazon EBS volume types](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-volume-types.html) in the *Amazon EBS User Guide*.\n Default: ``gp2``"
+  }
+ }
+}

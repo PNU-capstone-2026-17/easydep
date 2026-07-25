@@ -8,10 +8,20 @@
 | 요구사항 분석 | `app/requirements/` | 구체화·FR/NFR 분류 → 액터/유스케이스 → 유스케이스 명세 → 유스케이스 다이어그램 |
 | 시스템 설계 | `app/design/` | 클래스·시퀀스 다이어그램, API 명세, ERD, 배포 다이어그램 |
 | 시스템 구현 | `app/implementation/` | 구현 계획·실행, phase별 HITL 승인, 생성 파일 버전 저장 |
+| 배포 (지식베이스) | `app/deployment/` | 클라우드 지식베이스 9축 + 배포 계획 구성기. 줄마다 근거가 달리고 이 단계에는 LLM 호출이 없다 |
 | 시스템 테스트 | (미합류) | 구현 worker가 E2E 생성·검증까지 담당하며 독립 테스트 에이전트는 추후 합류 |
 
-세 에이전트는 **하나의 FastAPI 프로세스**(`server.py`)로 서빙되고,
+에이전트들은 **하나의 FastAPI 프로세스**(`server.py`)로 서빙되고,
 산출물은 **하나의 MySQL 저장소**(`app/db`, `app/repositories`)를 공유한다.
+
+`app/deployment/`은 2026-07-25에 별도 저장소(agent-sdk)에서 합류했다. 자기
+테스트(`app/deployment/tests/`)와 문서(`app/deployment/document/`)를 함께 갖고 있고,
+지식베이스 산출물은 `app/deployment/data/`에 커밋돼 있어 클론 직후 빌드 없이 돈다.
+
+합류는 main에 squash 한 커밋으로 들어왔다. **원본 커밋 198개는 태그
+`agent-sdk-history`에 있다** (`git log --oneline agent-sdk-history`). 그 저장소는
+리모트가 없었으므로 이 태그가 유일본이고, 그 코드의 판단 근거는 대부분 커밋
+메시지에만 적혀 있다 — 지우지 말 것.
 
 ## 에이전트가 이어지는 지점
 

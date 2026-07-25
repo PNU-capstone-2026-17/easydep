@@ -35,6 +35,15 @@ artifacts/
 # (Alistair Cockburn, Writing Effective Use Cases, Addison-Wesley 2001)
 materials/Usecase_Knowledge/
 
+# 배포 에이전트(지식베이스)의 빌드 산출물·캐시. data/ 는 **커밋한다** — 클론 직후
+# 빌드 없이 동작하게 하는 gzip 산출물이라 여기 규칙이 없어야 맞다.
+# output/ 은 각자 원본에서 빌드하는 결과라 재배포하지 않는다.
+/app/deployment/output/
+/app/deployment/.cache/
+/app/deployment/.claude/
+/app/deployment/token_budget.json
+/app/deployment/tool_count.json
+
 # Scratch files and report material, kept out of the project. Anchored to the
 # repository root so they cannot swallow real modules such as
 # app/requirements/main.py.

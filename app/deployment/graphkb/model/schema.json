@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scenfit/graphkb/schema.json",
+  "title": "graphkb dependency graph",
+  "type": "object",
+  "required": [
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "layer",
+          "provider",
+          "kind",
+          "display_name",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "layer": {
+            "enum": [
+              "core",
+              "vendor",
+              "app"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "type",
+          "via_property",
+          "required",
+          "cardinality",
+          "evidence",
+          "basis"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "enum": [
+              "references",
+              "contained_in",
+              "equivalent_to"
+            ]
+          },
+          "via_property": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "cardinality": {
+            "enum": [
+              "one",
+              "many"
+            ]
+          },
+          "evidence": {
+            "enum": [
+              "relationshipRef",
+              "cdk-oob",
+              "avm-dependson",
+              "swagger-field",
+              "heuristic",
+              "arm-id",
+              "arm-hierarchy",
+              "bicep-ref",
+              "kcc-ref",
+              "kcc-hierarchy",
+              "kcc-description",
+              "cb-spider-driver",
+              "human-review",
+              "svcmap-cross-checked",
+              "ms-learn-comparison",
+              "mingrammer-taxonomy",
+              "svcmap-reviewed"
+            ],
+            "description": "관계를 알아낸 방법. human-review는 소스에 있는데 파서가 못 뽑아 사람이 직접 채운 것으로, graphkb/reviewed/*.json에 이유가 적혀 있다."
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "stated",
+              "inferred"
+            ],
+            "description": "근거의 성격. stated는 원본이 그렇게 적어 놓은 것, inferred는 우리가 이름·산문·구조에서 짐작한 것이다. evidence 라벨에서 정해지며 라벨 하나에 성격 하나가 규칙이다(kbcommon/basis.py). 예전의 confidence(0.5~1.0)를 대신한다 — 그 숫자는 척도의 정의가 없었다."
+          },
+          "reviewed": {
+            "type": "boolean",
+            "description": "사람이 눈으로 보고 확인한 관계. graphkb/reviewed/*.json에서 온다."
+          },
+          "target_property": {
+            "type": "string",
+            "description": "대상 부품이 돌려주는 값 중 어느 것을 가져다 쓰는가. via_property가 '내 어느 칸에 적나'라면 이쪽은 '거기에 무슨 값을 적나'다. 소스별 이름: AWS propertyPath, GCP targetField, Azure는 ARM 관례상 id. 빈 값은 '모른다'는 뜻이다."
+          }
+        }
+      }
+    },
+    "_source": {
+      "type": "array",
+      "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",
+      "items": {
+        "type": "object",
+        "required": [
+          "sha256"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "kbcommon/sources.py의 키"
+          },
+          "pin_kind": {
+            "enum": [
+              "tag",
+              "commit",
+              "digest",
+              "bundled"
+            ]
+          },
+          "pin": {
+            "type": "string",
+            "description": "태그명·커밋 SHA. digest 소스는 '(고정 불가)'"
+          },
+          "url": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64
+          },
+          "bytes": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fetched_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_modified": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "etag": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_file": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "integer",
+            "description": "묶음 소스에서 실제로 읽은 파일 수"
+          }
+        }
+      }
+    }
+  }
+}

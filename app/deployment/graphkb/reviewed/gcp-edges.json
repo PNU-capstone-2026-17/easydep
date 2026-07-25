@@ -1,0 +1,991 @@
+{
+  "description": "GCP 의존성 엣지 사람 검수 결과. KCC 전체 136개 서비스(510 CRD) 기준. 형식은 graphkb/parsers/review.py 참조.",
+  "reviewed_against": {
+    "source": "kcc-crd",
+    "sha256": "3229656a0425015af944babfd127b55654864c1e2ce7a7e10af04f799df87df0",
+    "note": "전체 136개 서비스(510 CRD) 기준. 범위를 바꾸면 이 해시가 달라져 빌드가 경고한다."
+  },
+  "rejected": [
+    {
+      "to": "gcp::MonitoringMonitoredProject",
+      "evidence": "heuristic",
+      "reason": "projectRef의 설명문은 'The Project that this resource belongs to'로, 부품이 속한 GCP 프로젝트를 뜻한다. 이름 추론이 '~project로 끝나는 kind' 중 같은 서비스인 MonitoringMonitoredProject를 골라버렸다(MonitoringMonitoredProject는 모니터링 범위에 포함시킬 프로젝트를 등록하는 별개 부품이다). 아래 added에서 올바른 대상 Project로 다시 넣었다.",
+      "reviewed": "2026-07-20",
+      "edges": 10
+    },
+    {
+      "to": "gcp::NetworkServicesEdgeCacheService",
+      "evidence": "heuristic",
+      "reason": "serviceRef의 설명문이 'The URL of a BackendService to route traffic to. Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 '~service로 끝나는' 같은 서비스 kind를 골라 EdgeCacheService가 됐다. added에서 ComputeBackendService로 다시 넣었다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
+    },
+    {
+      "to": "gcp::AccessContextManagerServicePerimeterResource",
+      "evidence": "heuristic",
+      "reason": "resourceRef의 설명문이 'The GCP resource to set the IAM policy on (e.g. organization, project...)'로 특정 부품이 아니라 임의의 GCP 리소스를 가리킨다. IAMPolicy·IAMAuditConfig 등이 대상을 런타임에 정하는 칸이라 타입 수준 관계로 표현할 수 없다.",
+      "reviewed": "2026-07-20",
+      "edges": 5
+    },
+    {
+      "from": "gcp::DataplexLake",
+      "to": "gcp::DataprocJob",
+      "via_property": "metastore.serviceRef",
+      "reason": "설명문이 'Dataproc Metastore service'라고 명시한다 — Dataproc 작업이 아니라 메타스토어 서비스다. 올바른 대상은 added에 넣었다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "from": "gcp::NetworkServicesServiceBinding",
+      "to": "gcp::DataprocJob",
+      "via_property": "serviceRef",
+      "reason": "설명문이 'Service Directory service name'이라고 명시한다. 올바른 대상은 added에 넣었다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    }
+  ],
+  "confirmed": [
+    {
+      "evidence": "kcc-ref",
+      "reason": "구글이 준 것만 쓴 관계다. 713개 중 대부분은 servicemapping 파일(39개)이 '이 부품의 이 칸은 저 부품을 가리킨다'를 표로 명시한 것이고, 나머지는 CRD 설명문이 대상 이름을 백틱으로 정확히 적어준 것이다. 확대 전 51개를 설명문과 대조해 50개 일치를 확인했고(1개는 설명문이 비어 대조 불가), 대상 kind가 노드에 없는 경우는 0건이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "evidence": "heuristic",
+      "reason": "이름 추론 130개를 대상별로 전수 확인했다. 필드명과 대상 kind가 거의 그대로 대응한다(serviceAccountRef→IAMServiceAccount, cryptoKeyRef→KMSCryptoKey, secretRef→SecretManagerSecret, logSinkRef→LoggingLogSink …). KCC는 참조 필드가 `~Ref`로 끝나는 규약이라 후보 자체가 참조로 한정되고, kind 이름이 서비스 접두사를 달고 있어 충돌이 적다. 틀린 것 셋은 위 rejected로 뺐다 — 전부 필드명이 총칭(projectRef·serviceRef·resourceRef)일 때 같은 서비스 안의 동명 부품이 골라진 경우다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "to": "gcp::AccessContextManagerAccessLevel",
+      "evidence": "kcc-description",
+      "reason": "accessLevelRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ApigeeEnvgroup",
+      "evidence": "kcc-description",
+      "reason": "envgroupRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ApigeeEnvironment",
+      "evidence": "kcc-description",
+      "reason": "environmentRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ApigeeInstance",
+      "evidence": "kcc-description",
+      "reason": "instanceRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ApigeeOrganization",
+      "evidence": "kcc-description",
+      "reason": "apigeeOrganizationRef, organizationRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::AppEngineService",
+      "evidence": "kcc-description",
+      "reason": "serviceRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::AppHubApplication",
+      "evidence": "kcc-description",
+      "reason": "appHubApplicationRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BackupDRBackupPlan",
+      "evidence": "kcc-description",
+      "reason": "backupPlanRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BackupDRBackupVault",
+      "evidence": "kcc-description",
+      "reason": "backupVaultRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BigQueryAnalyticsHubDataExchange",
+      "evidence": "kcc-description",
+      "reason": "dataExchangeRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BigQueryDataset",
+      "evidence": "kcc-description",
+      "reason": "bigQueryDatasetRef, datasetRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::BigQueryTable",
+      "evidence": "kcc-description",
+      "reason": "tableRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BigtableCluster",
+      "evidence": "kcc-description",
+      "reason": "clusterRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BigtableInstance",
+      "evidence": "kcc-description",
+      "reason": "instanceRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::BigtableTable",
+      "evidence": "kcc-description",
+      "reason": "sourceTableRef, tableRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::BillingAccount",
+      "evidence": "kcc-description",
+      "reason": "billingAccountRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::CertificateManagerCertificate",
+      "evidence": "kcc-description",
+      "reason": "clientCertificateRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::CloudBuildRepository",
+      "evidence": "kcc-description",
+      "reason": "repositoryRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::CloudBuildWorkerPool",
+      "evidence": "kcc-description",
+      "reason": "workerPoolRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::CloudDMSConnectionProfile",
+      "evidence": "kcc-description",
+      "reason": "destinationRef, sourceRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::CloudDeployCustomTargetType",
+      "evidence": "kcc-description",
+      "reason": "customTargetTypeRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::CloudDeployTarget",
+      "evidence": "kcc-description",
+      "reason": "destinationTargetRef, targetRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::CloudIdentityGroup",
+      "evidence": "kcc-description",
+      "reason": "groupRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::CloudSecurityComplianceCloudControl",
+      "evidence": "kcc-description",
+      "reason": "cloudControlRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::CloudSecurityComplianceCloudControlGroup",
+      "evidence": "kcc-description",
+      "reason": "cloudControlGroupRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::CloudSecurityComplianceControl",
+      "evidence": "kcc-description",
+      "reason": "controlRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ColabRuntimeTemplate",
+      "evidence": "kcc-description",
+      "reason": "colabRuntimeTemplateRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ComputeBackendBucket",
+      "evidence": "kcc-description",
+      "reason": "backendBucketRef 5개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 5
+    },
+    {
+      "to": "gcp::ComputeBackendService",
+      "evidence": "kcc-description",
+      "reason": "backendServiceRef, serviceRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::ComputeDisk",
+      "evidence": "kcc-description",
+      "reason": "diskRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeFirewallPolicy",
+      "evidence": "kcc-description",
+      "reason": "firewallPolicyRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ComputeForwardingRule",
+      "evidence": "kcc-description",
+      "reason": "forwardingRuleRef, forwardingRuleRefs, targetServiceRef, urlRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::ComputeHTTPHealthCheck",
+      "evidence": "kcc-description",
+      "reason": "httpHealthCheckRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeHealthCheck",
+      "evidence": "kcc-description",
+      "reason": "healthCheckRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeImage",
+      "evidence": "kcc-description",
+      "reason": "imageRef 8개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 8
+    },
+    {
+      "to": "gcp::ComputeInstance",
+      "evidence": "kcc-description",
+      "reason": "computeInstanceRef, instanceRef, sourceInstanceRef, urlRef, virtualMachineRef, vmRef 9개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 9
+    },
+    {
+      "to": "gcp::ComputeInstanceGroup",
+      "evidence": "kcc-description",
+      "reason": "groupRef, instanceGroupRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeInstanceGroupManager",
+      "evidence": "kcc-description",
+      "reason": "instanceGroupManagerRef, targetRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeInstanceTemplate",
+      "evidence": "kcc-description",
+      "reason": "instanceTemplateRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeNetwork",
+      "evidence": "kcc-description",
+      "reason": "authorizedNetworkRef, computeNetworkRef, networkRef, peeredNetworkRef, uriRef, urlRef 외 32개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 32
+    },
+    {
+      "to": "gcp::ComputeNetworkAttachment",
+      "evidence": "kcc-description",
+      "reason": "composerNetworkAttachmentRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ComputeNetworkEndpointGroup",
+      "evidence": "kcc-description",
+      "reason": "networkEndpointGroupRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeNetworkFirewallPolicy",
+      "evidence": "kcc-description",
+      "reason": "firewallPolicyRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ComputeNodeGroup",
+      "evidence": "kcc-description",
+      "reason": "nodeGroupRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::ComputeSecurityPolicy",
+      "evidence": "kcc-description",
+      "reason": "securityPolicyRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ComputeSubnetwork",
+      "evidence": "kcc-description",
+      "reason": "subnetworkRef, urlRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::ConfigDeliveryResourceBundle",
+      "evidence": "kcc-description",
+      "reason": "resourceBundleRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::ContainerCluster",
+      "evidence": "kcc-description",
+      "reason": "clusterRef, gkeClusterTargetRef, resourceRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::ContainerNodePool",
+      "evidence": "kcc-description",
+      "reason": "nodePoolRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataCatalogEntry",
+      "evidence": "kcc-description",
+      "reason": "entryRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataCatalogEntryGroup",
+      "evidence": "kcc-description",
+      "reason": "entryGroupRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataCatalogPolicyTag",
+      "evidence": "kcc-description",
+      "reason": "policyTagRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataCatalogTagTemplate",
+      "evidence": "kcc-description",
+      "reason": "templateRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataCatalogTaxonomy",
+      "evidence": "kcc-description",
+      "reason": "taxonomyRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DatabaseMigrationConnectionProfile",
+      "evidence": "kcc-description",
+      "reason": "destinationRef, sourceRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::DataplexAspectType",
+      "evidence": "kcc-description",
+      "reason": "typeRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::DataplexLake",
+      "evidence": "kcc-description",
+      "reason": "lakeRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::DataprocCluster",
+      "evidence": "kcc-description",
+      "reason": "clusterRef, dataprocClusterRef 5개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 5
+    },
+    {
+      "to": "gcp::DatastreamPrivateConnection",
+      "evidence": "kcc-description",
+      "reason": "privateConnectionRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::DiscoveryEngineDataStore",
+      "evidence": "kcc-description",
+      "reason": "dataStoreRef, dataStoreRefs 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::DocumentAIProcessor",
+      "evidence": "kcc-description",
+      "reason": "processorRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::EventarcChannel",
+      "evidence": "kcc-description",
+      "reason": "channelRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::EventarcMessageBus",
+      "evidence": "kcc-description",
+      "reason": "messageBusRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::EventarcPipeline",
+      "evidence": "kcc-description",
+      "reason": "destinationRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::FirestoreDatabase",
+      "evidence": "kcc-description",
+      "reason": "databaseRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::Folder",
+      "evidence": "kcc-description",
+      "reason": "folderRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::GKEBackupBackup",
+      "evidence": "kcc-description",
+      "reason": "backupRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::GKEBackupBackupPlan",
+      "evidence": "kcc-description",
+      "reason": "backupPlanRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::GKEBackupRestorePlan",
+      "evidence": "kcc-description",
+      "reason": "restorePlanRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::IAMServiceAccount",
+      "evidence": "kcc-description",
+      "reason": "dataprocServiceAccountRef, metricsGcpServiceAccountRef, serviceAccountRef, targetServiceAccountRefs 14개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 14
+    },
+    {
+      "to": "gcp::KMSCryptoKey",
+      "evidence": "kcc-description",
+      "reason": "gcePdKmsKeyRef, kmsKeyRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::KMSKeyRing",
+      "evidence": "kcc-description",
+      "reason": "kmsKeyRingRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::LoggingLogBucket",
+      "evidence": "kcc-description",
+      "reason": "bucketRef, loggingLogBucketRef 3개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 3
+    },
+    {
+      "to": "gcp::ManagedKafkaCluster",
+      "evidence": "kcc-description",
+      "reason": "clusterRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::MemorystoreInstance",
+      "evidence": "kcc-description",
+      "reason": "instanceRef, memorystoreInstanceRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::MetastoreService",
+      "evidence": "kcc-description",
+      "reason": "metastoreServiceRef, serviceRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::MonitoringAlertPolicy",
+      "evidence": "kcc-description",
+      "reason": "alertPolicyRef, policyRefs 8개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 8
+    },
+    {
+      "to": "gcp::NetworkSecurityInterceptDeploymentGroup",
+      "evidence": "kcc-description",
+      "reason": "interceptDeploymentGroupRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::NetworkSecurityMirroringDeploymentGroup",
+      "evidence": "kcc-description",
+      "reason": "mirroringDeploymentGroupRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::Organization",
+      "evidence": "kcc-description",
+      "reason": "organizationRef 4개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::ParameterManagerParameter",
+      "evidence": "kcc-description",
+      "reason": "parameterRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::PrivateCACAPool",
+      "evidence": "kcc-description",
+      "reason": "caPoolRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::PrivateCACertificateTemplate",
+      "evidence": "kcc-description",
+      "reason": "certificateTemplateRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::Project",
+      "evidence": "kcc-description",
+      "reason": "projectRef 59개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 59
+    },
+    {
+      "to": "gcp::PubSubSubscription",
+      "evidence": "kcc-description",
+      "reason": "pubSubSubscriptionRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::PubSubTopic",
+      "evidence": "kcc-description",
+      "reason": "pubSubTopicRef, pubsubTopicRef, topicRef 7개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 7
+    },
+    {
+      "to": "gcp::RunRevision",
+      "evidence": "kcc-description",
+      "reason": "runRevisionRef 2개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::SecretManagerSecret",
+      "evidence": "kcc-description",
+      "reason": "secretRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::SecureSourceManagerInstance",
+      "evidence": "kcc-description",
+      "reason": "instanceRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::SpannerDatabase",
+      "evidence": "kcc-description",
+      "reason": "databaseRef, spannerDatabaseRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::StorageBucket",
+      "evidence": "kcc-description",
+      "reason": "bucketRef, stagingBucketRef, storageBucketRef, storagebucketRef 9개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 9
+    },
+    {
+      "to": "gcp::TagsTagKey",
+      "evidence": "kcc-description",
+      "reason": "parentRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::TagsTagValue",
+      "evidence": "kcc-description",
+      "reason": "tagValueRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::TrustConfig",
+      "evidence": "kcc-description",
+      "reason": "trustConfigRef 1개 경로가 이 종류를 가리킨다. KCC v1.153.0에는 아직 CRD가 없는 실제 GCP 리소스다 — 관계는 사실이지만 이 종류의 스키마는 우리에게 없다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::VMwareEngineExternalAddress",
+      "evidence": "kcc-description",
+      "reason": "externalAddressRef 2개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 2
+    },
+    {
+      "to": "gcp::VMwareEngineNetwork",
+      "evidence": "kcc-description",
+      "reason": "vmwareEngineNetworkRef 4개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 4
+    },
+    {
+      "to": "gcp::VMwareEngineNetworkPolicy",
+      "evidence": "kcc-description",
+      "reason": "networkPolicyRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::VMwareEnginePrivateCloud",
+      "evidence": "kcc-description",
+      "reason": "privateCloudRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::VertexAIDataset",
+      "evidence": "kcc-description",
+      "reason": "datasetRefs 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::VertexAITensorboard",
+      "evidence": "kcc-description",
+      "reason": "tensorboardRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::WorkflowsWorkflow",
+      "evidence": "kcc-description",
+      "reason": "workflowRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::WorkstationCluster",
+      "evidence": "kcc-description",
+      "reason": "parentRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::WorkstationConfig",
+      "evidence": "kcc-description",
+      "reason": "parentRef 1개 경로가 이 종류를 가리킨다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21",
+      "edges": 1
+    },
+    {
+      "to": "gcp::BigLakeCatalog",
+      "evidence": "kcc-description",
+      "reason": "parentCatalogRef → BigLakeCatalog. BigLakeDatabase가 속한 카탈로그. 설명문 표기는 gcp-kind-aliases.json에서 바로잡는다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21"
+    },
+    {
+      "to": "gcp::BigLakeDatabase",
+      "evidence": "kcc-description",
+      "reason": "parentDatabaseRef → BigLakeDatabase. BigLakeTable이 속한 데이터베이스. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21"
+    },
+    {
+      "to": "gcp::BigQueryReservationReservation",
+      "evidence": "kcc-description",
+      "reason": "reservationRef → BigQueryReservationReservation. 예약 할당이 가리키는 예약. 실재 종류명은 그룹 접두사가 붙은 형태다. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21"
+    },
+    {
+      "to": "gcp::CloudDeployDeliveryPipeline",
+      "evidence": "kcc-description",
+      "reason": "deliveryPipelineRef → CloudDeployDeliveryPipeline. 자동화가 붙는 배포 파이프라인. CRD로 존재가 확인된 종류다.",
+      "reviewed": "2026-07-21"
+    }
+  ],
+  "added": [
+    {
+      "from": "gcp::ComputeFirewallPolicyAssociation",
+      "to": "gcp::ComputeFirewallPolicy",
+      "via_property": "firewallPolicyRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "CRD 설명문에 'Allowed value: The Google Cloud resource name of a `ComputeFirewallPolicy` resource'로 대상이 명시돼 있는데, 파서가 아는 문구 형태('The `selfLink` field of a `X` resource')와 달라서 못 읽었다. 이름부터 '연결'인 부품이 관계 0개였던 원인이다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "columnLayout.columns.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "gridLayout.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "mosaicLayout.tiles.widget.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringDashboard",
+      "to": "gcp::Project",
+      "via_property": "rowLayout.rows.widgets.errorReportingPanel.projectRefs",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringGroup",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringMetricDescriptor",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringServiceLevelObjective",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringService",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::MonitoringUptimeCheckConfig",
+      "to": "gcp::Project",
+      "via_property": "projectRef",
+      "required": true,
+      "cardinality": "one",
+      "reason": "설명문이 'The Project that this resource belongs to'로 GCP 프로젝트를 명시한다. 이름 추론이 MonitoringMonitoredProject로 잘못 이어 rejected에서 뺀 것을 올바른 대상으로 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesGRPCRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesHTTPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesHTTPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.requestMirrorPolicy.destination.serviceRef",
+      "required": false,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesTCPRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::NetworkServicesTLSRoute",
+      "to": "gcp::ComputeBackendService",
+      "via_property": "rules.action.destinations.serviceRef",
+      "required": true,
+      "cardinality": "many",
+      "reason": "설명문이 'Allowed value: The Google Cloud resource name of a `ComputeBackendService` resource'로 대상을 명시한다. 이름 추론이 NetworkServicesEdgeCacheService로 잘못 이어 rejected에서 뺀 것을 다시 넣는다.",
+      "reviewed": "2026-07-20"
+    },
+    {
+      "from": "gcp::WorkstationConfig",
+      "to": "gcp::IAMServiceAccount",
+      "via_property": "encryptionKey.serviceAccountRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "위에서 지운 오탐의 올바른 대상. serviceAccountRef 46건 중 45건이 이미 IAMServiceAccount로 간다.",
+      "reviewed": "2026-07-21"
+    },
+    {
+      "from": "gcp::DataplexLake",
+      "to": "gcp::MetastoreService",
+      "via_property": "metastore.serviceRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "위에서 지운 오탐의 올바른 대상. 설명문이 'Dataproc Metastore service'라고 명시한다 — Dataproc 작업이 아니라 메타스토어 서비스다.",
+      "reviewed": "2026-07-21"
+    },
+    {
+      "from": "gcp::NetworkServicesServiceBinding",
+      "to": "gcp::ServiceDirectoryService",
+      "via_property": "serviceRef",
+      "required": false,
+      "cardinality": "one",
+      "reason": "위에서 지운 오탐의 올바른 대상. 설명문이 'Service Directory service name'이라고 명시한다.",
+      "reviewed": "2026-07-21"
+    }
+  ],
+  "notes": [
+    {
+      "topic": "못 넣은 참조 17개 — 파서 문제가 아니라 수집 범위 문제",
+      "detail": "설명문에 대상이 적혀 있는데 넣지 못한 것이 17개 있다. 14개는 대상이 Project(12)·Folder(2)로, 우리가 compute·container 두 서비스만 수집해서 그 부품 자체가 그래프에 없다. KCC v1.153.0에는 CRD가 510개(서비스 136종) 있으므로 수집 범위를 넓히면 자연히 해소된다. 나머지 3개는 아래 자기 참조 항목."
+    },
+    {
+      "topic": "자기 참조 5개를 버리고 있다",
+      "detail": "ComputeDisk.sourceDiskRef → ComputeDisk, ComputeImage.sourceImageRef → ComputeImage, ComputeTargetPool.backupTargetPoolRef → ComputeTargetPool, ComputeRouterInterface.redundantInterfaceRef → ComputeRouterInterface, ComputeDisk.asyncPrimaryDisk.diskRef → ComputeDisk. 그래프가 self-loop를 거부해서(Graph.add_edge) 들어가지 않는다. 부품 종류 수준에서는 자기 자신이지만 실제로는 '다른 디스크를 원본으로 삼는다'는 진짜 순서 제약이라, 타입 그래프에서 이걸 어떻게 표현할지는 미결이다."
+    },
+    {
+      "topic": "참조 아닌 것 1개",
+      "detail": "ComputeRouterPeer.ipAddress는 external/name 모양을 갖췄지만 실제로는 IP 주소 문자열이라 부품 참조가 아니다. 현재 엣지를 만들지 않으므로 조치 불필요."
+    }
+  ]
+}

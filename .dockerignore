@@ -13,3 +13,9 @@ README.md
 # 조각으로부터 직접 되살리므로 build context로 보낼 필요가 없다.
 .easydep/
 artifacts/
+
+# 배포 에이전트의 로컬 빌드 산출물·다운로드 캐시. 이미지는 커밋된 data/(9.1MB)만
+# 쓰고, output/ 이 함께 들어가면 KB가 커밋본 대신 그것을 보게 된다.
+app/deployment/output/
+app/deployment/.cache/
+app/deployment/tests/
