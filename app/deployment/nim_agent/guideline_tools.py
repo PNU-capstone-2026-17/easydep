@@ -278,29 +278,38 @@ async def resource_guideline(
     mem_min_gib: float = 4,
     plan: str = "",
 ) -> str:
-    """리소스를 하나 고르면 **무엇이 함께 따라오고 그중 무엇에 값이 붙는지**를
-    한 답으로 준다. 리소스 군(bundlekb) · 단가(costkb) · 성능 경고(perfkb)를 엮는다.
+    """Pick one resource and get, in a single answer, **what comes with it and
+    which of those get a value attached**. It weaves together the resource group
+    (bundlekb), unit prices (costkb), and performance warnings (perfkb).
 
-    "VM 하나 올리려면 뭐가 필요하고 얼마야?"처럼 **군과 값을 같이 묻는** 질문에 쓴다.
-    군만 물으면 bundle_for_resource, 값만 물으면 cost_recommend_specs가 맞다.
+    Use it when the question asks for **both the group and the value**, as in
+    "what do I need to bring up one VM, and how much is it?". If only the group
+    is asked, bundle_for_resource is right; if only the value,
+    cost_recommend_specs.
 
-    합계는 나오지 않는다 — 가격 축이 없는 구성원이 있어서 더하면 실제보다 낮아진다.
-    그 사실이 답에 함께 오니 그대로 전할 것.
+    **No total is produced** — some members have no price axis, so summing would
+    come out lower than reality. That fact comes with the answer; pass it
+    through as-is.
 
     Args:
-        resource_type: 'core::vm', 'AWS::EC2::Instance' 등. 벤더 타입이면 core 층으로
-            옮겨 값을 붙이고, 그 대응이 짐작이라는 사실을 답에 밝힌다.
-        provider: 값을 붙일 프로바이더(aws·azure·gcp·alibaba…). **필수** — 안 주면
-            어느 카탈로그의 단가인지 정할 수 없다.
-        region: 리전 **코드**. 지명이면 먼저 cap_resolve_region으로 바꿀 것.
-            **비워도 된다** — 그러면 전 리전에서 가장 싼 것으로 답하고 어느
-            리전인지 함께 밝힌다. 리전을 모른다고 이 도구를 건너뛰고 기억으로
-            답하지 말 것.
-        spec_name: 스펙 이름을 이미 정했으면(t3.medium 등). 비우면 조건에 맞는 최저가.
-        vcpu_min: spec_name이 없을 때 쓰는 최소 vCPU.
-        mem_min_gib: spec_name이 없을 때 쓰는 최소 메모리(GiB).
-        plan: 계획(리소스 군) 이름. 비우면 기본 동작으로 답하고, 다른 계획이
-            있으면 이름을 알려준다. 답 끝에 나온 이름을 그대로 넣으면 된다.
+        resource_type: 'core::vm', 'AWS::EC2::Instance', etc. A vendor type is
+            moved to the core tier to attach values, and the answer states that
+            the mapping is a guess.
+        provider: The provider to price against (aws, azure, gcp, alibaba, …).
+            **Required** — without it there is no way to decide whose catalog
+            the unit price comes from.
+        region: The region **code**. For a place name, convert it first with
+            cap_resolve_region. **May be left empty** — then the answer takes
+            the cheapest across all regions and states which region that was.
+            Do not skip this tool and answer from memory just because you do
+            not know the region.
+        spec_name: If the spec name is already decided (t3.medium, etc.). Empty
+            means the cheapest matching the criteria.
+        vcpu_min: Minimum vCPU, used when spec_name is absent.
+        mem_min_gib: Minimum memory in GiB, used when spec_name is absent.
+        plan: Plan (resource group) name. Empty answers with the default
+            behavior and, if other plans exist, tells you their names. Feed a
+            name printed at the end of that answer back in as-is.
     """
     return _guideline(
         resource_type.strip(),

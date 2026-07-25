@@ -24,19 +24,23 @@ from perfkb import agent_api
 
 @function_tool
 def perf_instance_profile(provider: str, spec_name: str) -> str:
-    """한 인스턴스 스펙의 성능 프로파일과 **장착 하드웨어 구성**을 반환한다.
+    """Return one instance spec's performance profile and **attached hardware**.
 
-    담는 축: 상시 CPU·세대(구세대 여부)·클럭·EBS·ACU·네트워크 대역폭·NIC 수·
-    **GPU 모델/개수·로컬 SSD 용량**·CPU 플랫폼. 특정 스펙에 "뭐가 달려 있나/
-    용량이 얼마나"를 물으면 cap_* 가 아니라 **이 도구**다 — cap_* 는 리소스
-    속성의 허용값이지 인스턴스에 장착된 하드웨어가 아니다.
+    Axes included: sustained CPU · generation (whether previous generation) ·
+    clock · EBS · ACU · network bandwidth · NIC count · **GPU model/count · local
+    SSD size** · CPU platform. When someone asks what is attached to a specific
+    spec, or how much of it is attached, **this tool** answers it, not cap_* —
+    cap_* holds allowed values of resource attributes, not the hardware attached
+    to an instance.
 
-    예: "t3.medium 상시 부하에 괜찮아?", "g2-standard-8에 어떤 GPU 달려 있어?",
-    "a2-ultragpu-1g 로컬 SSD 용량은?", "Standard_D4s_v5 네트워크 대역폭은?".
+    e.g. "is t3.medium okay under sustained load?", "which GPU is attached to
+    g2-standard-8?", "how much local SSD does a2-ultragpu-1g have?", "what is the
+    network bandwidth of Standard_D4s_v5?".
 
     Args:
-        provider: 'aws' | 'azure' | 'gcp' (성능은 이 셋만 수록).
-        spec_name: CSP 스펙명. 예: 't3.medium', 'm5.large', 'Standard_D2s_v3'.
+        provider: 'aws' | 'azure' | 'gcp' (only these three are included for
+            performance).
+        spec_name: CSP spec name. e.g. 't3.medium', 'm5.large', 'Standard_D2s_v3'.
     """
     print(f"\n[성능질의] 프로파일: {provider} {spec_name}")
     return agent_api.instance_profile(provider, spec_name)
@@ -44,15 +48,18 @@ def perf_instance_profile(provider: str, spec_name: str) -> str:
 
 @function_tool
 def perf_compare(provider: str, spec_names: list[str]) -> str:
-    """**같은 프로바이더**의 인스턴스 스펙들을 성능 축별로 나란히 비교한다.
+    """Compare instance specs of the **same provider** side by side, axis by axis.
 
-    승자를 단정하지 않는다 — '더 빠르다'는 워크로드(CPU/IO 바운드)에 따라 다르기 때문이다.
-    **프로바이더 간 비교(AWS vs Azure)는 할 수 없다**: 비교 축(ACU/클럭 등)이 프로바이더
-    전용이라 공통 기준이 없다. 그런 요청을 받으면 이 도구를 쓰지 말고 불가능하다고 답하세요.
+    It does not declare a winner — "faster" depends on the workload (CPU-bound vs
+    IO-bound). **Comparison across providers (AWS vs Azure) is not possible**: the
+    comparison axes (ACU, clock, etc.) are provider-specific, so there is no
+    common baseline. If you get such a request, do not use this tool — answer that
+    it cannot be done.
 
     Args:
-        provider: 'aws' | 'azure' | 'gcp'. 한 번에 한 프로바이더만.
-        spec_names: 비교할 CSP 스펙명 목록(2개 이상). 예: ['m5.large', 'm6i.large'].
+        provider: 'aws' | 'azure' | 'gcp'. One provider at a time.
+        spec_names: CSP spec names to compare (2 or more). e.g. ['m5.large',
+            'm6i.large'].
     """
     print(f"\n[성능질의] 비교: {provider} {spec_names}")
     return agent_api.compare(provider, spec_names)
@@ -60,15 +67,17 @@ def perf_compare(provider: str, spec_names: list[str]) -> str:
 
 @function_tool
 def perf_specs_by_ebs_baseline(min_mbps: float, limit: int = 10) -> str:
-    """지속(baseline) EBS 대역폭이 기준 이상인 AWS 스펙을 찾는다.
+    """Find AWS specs whose sustained (baseline) EBS bandwidth meets a threshold.
 
-    함정 방지: 흔히 보는 "최대 대역폭"은 버스트라 지속되지 않는다 — 이 도구는 baseline만
-    본다. **AWS 전용**(Azure는 IOPS, GCP는 별도라 축이 다르다). 가격·크기는 이후
-    cost_recommend_specs로 확인하세요.
+    Trap avoidance: the commonly quoted "maximum bandwidth" is burst and is not
+    sustained — this tool looks at baseline only. **AWS only** (Azure uses IOPS
+    and GCP is separate, so those are different axes). Check price and size
+    afterwards with cost_recommend_specs.
 
     Args:
-        min_mbps: 필요한 지속 EBS 대역폭(Mbps). 예: 500 MB/s ≈ 4000 Mbps.
-        limit: 반환할 스펙 수(기본 10).
+        min_mbps: Required sustained EBS bandwidth (Mbps). e.g. 500 MB/s ≈ 4000
+            Mbps.
+        limit: Number of specs to return (default 10).
     """
     print(f"\n[성능질의] EBS baseline >= {min_mbps} Mbps (AWS)")
     return agent_api.specs_meeting_ebs_baseline(min_mbps, limit)

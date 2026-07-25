@@ -17,6 +17,8 @@ from agents import function_tool
 from capacitykb import agent_api
 
 
+# 실측에서 에이전트가 바로 이 질문에 도구를 하나도 부르지 않고 "리전별 제공 여부는
+# 조회되지 않는다"고 답했다. 그런 말은 어디에도 없었지만, **된다는 말도 없었다.**
 @function_tool
 def cap_check_value(
     resource_type: str,
@@ -24,28 +26,31 @@ def cap_check_value(
     value: str,
     context: str | None = None,
 ) -> str:
-    """리소스 속성에 넣으려는 값이 허용 범위인지 판정한다.
+    """Judge whether a value you intend to set on a property is allowed.
 
-    **인스턴스 타입이 특정 리전에서 쓸 수 있는지도 여기서 판정한다** —
-    `cap_check_value('AWS::EC2::Instance', 'InstanceType', 'p5.48xlarge',
-    context='Region=af-south-1')`. 실측에서 에이전트가 바로 이 질문에 도구를
-    하나도 부르지 않고 "리전별 제공 여부는 조회되지 않는다"고 답했다. 그런
-    말은 어디에도 없었지만, **된다는 말도 없었다.**
+    **Whether an instance type is usable in a given region is judged here too**
+    — `cap_check_value('AWS::EC2::Instance', 'InstanceType', 'p5.48xlarge',
+    context='Region=af-south-1')`.
 
-    원본이 명시하지 않은(설명문에서 추출한) 제약은 값을 거부하는 근거로 쓰지 않고
-    참고로만 알려준다.
+    A constraint the source did not state (one extracted from prose) is never
+    used as grounds to reject a value; it is reported for reference only.
 
     Args:
-        resource_type: 타입 이름. 예: 'AWS::EC2::Volume', 'aws::AWS::Lambda::Function',
+        resource_type: Type name. e.g. 'AWS::EC2::Volume',
+            'aws::AWS::Lambda::Function',
             'Microsoft.ContainerService/managedClusters'.
-        property_name: 속성 이름. 예: 'Size', 'Timeout', 'EphemeralStorage/Size'.
-        value: 넣으려는 값. 숫자면 숫자로 해석한다. 예: '100000', 'gp3'.
-        context: 함께 정한 다른 속성. `'VolumeType=gp2'`, `'Region=af-south-1'` 처럼
-            `이름=값`을 쉼표로 잇는다.
-            **한도·허용값이 다른 것에 따라 달라지면 이걸 줘야 판정된다** — EBS 볼륨
-            크기 상한은 gp2 16,384 / gp3 65,536 / standard 1,024 GiB로 제각각이고,
-            인스턴스 타입 허용값은 리전 38곳마다 다르다.
-            안 주면 "어느 조건에서 얼마인지"를 나열하고 무엇이 필요한지 알려준다.
+        property_name: Property name. e.g. 'Size', 'Timeout',
+            'EphemeralStorage/Size'.
+        value: The value to set. A number is read as a number. e.g. '100000',
+            'gp3'.
+        context: Other properties decided alongside it. Join `name=value` pairs
+            with commas, as in `'VolumeType=gp2'`, `'Region=af-south-1'`.
+            **If the limit or the allowed values depend on something else, this
+            is required for a verdict** — the EBS volume size cap differs by
+            type (gp2 16,384 / gp3 65,536 / standard 1,024 GiB), and allowed
+            instance types differ across all 38 regions.
+            Without it, the tool lists "which condition gives which value" and
+            tells you what it needs.
     """
     parsed = _parse_context(context)
     shown = f" ({context})" if parsed else ""
@@ -119,11 +124,13 @@ def _perf_pointer(resource_type: str) -> str:
 
 @function_tool
 def cap_property_limits(resource_type: str, property_name: str | None = None) -> str:
-    """리소스 타입(또는 특정 속성)에 걸린 제약을 근거·신뢰도와 함께 반환한다.
+    """Return the constraints on a resource type (or one property), with
+    evidence and confidence.
 
     Args:
-        resource_type: 타입 이름. 예: 'AWS::EC2::Volume'.
-        property_name: 특정 속성만 볼 때 지정. 미지정이면 타입 전체.
+        resource_type: Type name. e.g. 'AWS::EC2::Volume'.
+        property_name: Set to look at one property only. Omit for the whole
+            type.
     """
     print(f"\n[용량질의] 제약 조회: {resource_type}" + (f".{property_name}" if property_name else ""))
     return agent_api.property_limits(resource_type, property_name) + _perf_pointer(
@@ -133,10 +140,11 @@ def cap_property_limits(resource_type: str, property_name: str | None = None) ->
 
 @function_tool
 def cap_immutable_properties(resource_type: str) -> str:
-    """변경하면 리소스가 삭제·재생성되는 속성들을 반환한다 (배포/변경 계획에 필수).
+    """Return the properties that delete and recreate the resource when changed
+    (essential for deployment / change plans).
 
     Args:
-        resource_type: 타입 이름. 예: 'AWS::EC2::Subnet'.
+        resource_type: Type name. e.g. 'AWS::EC2::Subnet'.
     """
     print(f"\n[용량질의] 불변 속성: {resource_type}")
     return agent_api.immutable(resource_type)
@@ -144,14 +152,16 @@ def cap_immutable_properties(resource_type: str) -> str:
 
 @function_tool
 def cap_secret_properties(resource_type: str) -> str:
-    """배포 때 넣지만 API로 다시 못 읽는 속성들(비밀번호·키·연결 문자열).
+    """Properties set at deploy time that cannot be read back through the API
+    (passwords, keys, connection strings).
 
-    인프라를 만들 때 이 값들은 잃어버리면 다시 조회할 수 없으니 Key Vault 등으로
-    따로 관리하도록 안내하는 데 쓴다. 지금은 Azure만 이 표시를 제공한다 — 다른
-    프로바이더에 "비밀값 없음"이라고 답하지 마세요(추적 안 함이지 없음이 아님).
+    Use this to advise that such values be managed separately (e.g. Key Vault),
+    since once lost they cannot be looked up again. Only Azure carries this
+    marking today — do not answer "no secret values" for other providers (they
+    are not tracked, which is not the same as none).
 
     Args:
-        resource_type: 타입 이름. 예: 'Microsoft.DBforMySQL/flexibleServers'.
+        resource_type: Type name. e.g. 'Microsoft.DBforMySQL/flexibleServers'.
     """
     print(f"\n[용량질의] 비밀값 속성: {resource_type}")
     return agent_api.secrets(resource_type)
@@ -159,15 +169,17 @@ def cap_secret_properties(resource_type: str) -> str:
 
 @function_tool
 def cap_allowed_values(resource_type: str, property_name: str) -> str:
-    """속성의 허용값(enum)·패턴·기본값을 반환한다.
+    """Return a property's allowed values (enum), pattern, and default.
 
-    리전마다 다른 허용값도 여기 있다 — `('AWS::EC2::Instance', 'InstanceType')`이면
-    리전 38곳의 인스턴스 타입 목록이 조건과 함께 나온다. 특정 리전에서 되는지만
-    알고 싶으면 `cap_check_value`에 `context='Region=...'`을 주는 쪽이 짧다.
+    Allowed values that differ per region live here too — `('AWS::EC2::Instance',
+    'InstanceType')` returns the instance type list for all 38 regions with
+    their conditions. If you only want to know whether it works in one region,
+    passing `context='Region=...'` to `cap_check_value` is shorter.
 
     Args:
-        resource_type: 타입 이름. 예: 'AWS::RDS::DBInstance', 'AWS::EC2::Instance'.
-        property_name: 속성 이름. 예: 'StorageType', 'InstanceType'.
+        resource_type: Type name. e.g. 'AWS::RDS::DBInstance',
+            'AWS::EC2::Instance'.
+        property_name: Property name. e.g. 'StorageType', 'InstanceType'.
     """
     print(f"\n[용량질의] 허용값: {resource_type}.{property_name}")
     return agent_api.allowed_values(resource_type, property_name) + _perf_pointer(
@@ -177,13 +189,14 @@ def cap_allowed_values(resource_type: str, property_name: str) -> str:
 
 @function_tool
 def cap_service_quota(keyword: str) -> str:
-    """계정/구독 단위 상한(서비스 쿼터)을 키워드로 찾는다.
+    """Find account/subscription-level caps (service quotas) by keyword.
 
-    예: "vNet당 서브넷 몇 개까지?" → keyword='subnet'.
-    현재 쿼터 데이터는 Azure만 수록돼 있다 (AWS/GCP는 공개 기계판독 소스가 없음).
+    e.g. "how many subnets per vNet?" → keyword='subnet'.
+    Quota data is currently included for Azure only (AWS/GCP have no public
+    machine-readable source).
 
     Args:
-        keyword: 검색어. 예: 'subnet', 'virtual network', 'vCPU'.
+        keyword: Search term. e.g. 'subnet', 'virtual network', 'vCPU'.
     """
     print(f"\n[용량질의] 서비스 쿼터: {keyword!r}")
     return agent_api.service_quota(keyword)
@@ -191,20 +204,23 @@ def cap_service_quota(keyword: str) -> str:
 
 @function_tool
 def cap_resolve_region(place: str, provider: str | None = None) -> str:
-    """사람이 쓴 지명을 리전 코드로 바꾼다. 프로바이더 10곳을 압니다.
+    """Turn a human place name into a region code. Knows 10 providers.
 
-    **다른 도구에 리전을 넘기기 전에 먼저 이걸 부르세요.** 나머지 도구는 리전
-    코드로 색인돼 있어서 '서울'을 그대로 넘기면 데이터가 있어도 못 찾습니다.
+    **Call this before passing a region to any other tool.** The other tools are
+    indexed by region code, so passing a plain place name like 'Seoul' finds
+    nothing even when the data exists.
 
-    **서울은 프로바이더마다 코드가 다릅니다** — aws `ap-northeast-2`,
+    **Seoul has a different code in every provider** — aws `ap-northeast-2`,
     gcp `asia-northeast3`, azure `koreacentral`, tencent `ap-seoul`.
-    그래서 GCP 질문이면 `provider='gcp'`를 주고 그 코드를 쓰세요. 다른
-    프로바이더의 코드를 넘기면 데이터가 있어도 "없다"는 답이 나옵니다.
+    So for a GCP question pass `provider='gcp'` and use that code. Passing
+    another provider's code yields "not found" even when the data exists.
 
     Args:
-        place: 지명이나 리전 이름. 예: '서울', '도쿄', 'Seoul', 'ap-northeast-2'.
-        provider: 좁힐 프로바이더(선택). aws · azure · gcp · alibaba · tencent ·
-            ibm · ncp · kt · nhn · openstack.
+        place: A place or region name, in **either Korean or English**, or a
+            region code. e.g. '서울', 'Seoul', '도쿄', 'Tokyo', 'ap-northeast-2'.
+            Pass the user's wording straight through — do not translate it first.
+        provider: Provider to narrow to (optional). aws · azure · gcp · alibaba ·
+            tencent · ibm · ncp · kt · nhn · openstack.
     """
     print(f"\n[용량질의] 리전 해석: {place!r} provider={provider!r}")
     from envkb.regions import region_lookup
@@ -214,13 +230,13 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
 
 @function_tool
 def cap_service_regions(service: str) -> str:
-    """이 서비스의 엔드포인트가 어느 리전에 있는지 본다.
+    """See which regions have an endpoint for this service.
 
-    **주의**: 목록에 없는 리전은 "못 쓴다"가 아니라 "이 데이터로는 모른다"입니다.
-    없다고 단정해서 답하지 마세요.
+    **Note**: a region missing from the list does not mean "unusable", it means
+    "this data does not say". Do not answer that it is unavailable.
 
     Args:
-        service: CFN 타입(`AWS::EC2::Instance`) 또는 SDK 서비스 이름(`ec2`).
+        service: CFN type (`AWS::EC2::Instance`) or SDK service name (`ec2`).
     """
     print(f"\n[용량질의] 서비스 리전: {service!r}")
     return agent_api.where_available(service)
@@ -228,17 +244,21 @@ def cap_service_regions(service: str) -> str:
 
 @function_tool
 def cap_region_carbon(provider: str, region: str | None = None) -> str:
-    """리전의 탄소집약도(gCO2eq/kWh). 리전을 안 주면 깨끗한 순으로 보여준다.
+    """Carbon intensity of a region (gCO2eq/kWh). Without a region, listed
+    cleanest first.
 
-    "같은 성능이면 어느 리전이 탄소를 덜 쓰나"에 답하는 데 쓴다. 지금은
-    aws·azure·gcp만 수록돼 있다 — 다른 프로바이더엔 "없다" 말고 "추적 안 함".
+    Use it to answer "at equal performance, which region emits less carbon".
+    Only aws · azure · gcp are included today — for other providers say "not
+    tracked", not "none".
 
-    **프로바이더끼리 비교하지 마세요.** GCP는 발표값, AWS·Azure는 추정값이라
-    방법론이 다릅니다. 도구가 붙이는 그 고지를 사용자에게 그대로 전하세요.
+    **Do not compare providers against each other.** GCP figures are published
+    values while AWS and Azure are estimates, so the methodologies differ. Pass
+    the limitation notice the tool attaches through to the user as-is.
 
     Args:
         provider: aws · azure · gcp.
-        region: 리전 코드(선택). 예: 'asia-northeast3', 'ap-northeast-2'.
+        region: Region code (optional). e.g. 'asia-northeast3',
+            'ap-northeast-2'.
     """
     from envkb import carbon
 
@@ -248,18 +268,20 @@ def cap_region_carbon(provider: str, region: str | None = None) -> str:
 
 @function_tool
 def cap_region_latency(source_region: str, target_region: str | None = None) -> str:
-    """리전 간 왕복 네트워크 지연(ms). 대상을 안 주면 가까운 순으로 보여준다.
+    """Round-trip network latency between regions (ms). Without a target,
+    listed nearest first.
 
-    "멀티 리전으로 두면 지연이 얼마나?", "서울에서 가장 가까운 리전은?" 같은
-    질문에 쓴다. **프로바이더를 넘나드는 쌍도 있다** — 같은 도시의 AWS↔Azure가
-    3.3 ms다.
+    Use it for questions like "how much latency does going multi-region add?"
+    or "which region is nearest to Seoul?". **Cross-provider pairs exist too**
+    — AWS↔Azure in the same city is 3.3 ms.
 
-    ⚠️ **벤더가 보장한 SLA가 아니라 cb-tumblebug이 VM을 띄워 잰 값**입니다.
-    측정 시각이 원본에 없으므로 "지금도 이렇다"고 말하지 마세요.
+    ⚠️ **Not a vendor-guaranteed SLA — a value cb-tumblebug measured by
+    launching VMs.** The source carries no measurement time, so do not say "it
+    is still this today".
 
     Args:
-        source_region: `프로바이더-리전` 꼴. 예: 'aws-ap-northeast-2'.
-        target_region: 같은 꼴(선택). 주면 그 쌍만.
+        source_region: `provider-region` form. e.g. 'aws-ap-northeast-2'.
+        target_region: Same form (optional). Given, only that pair.
     """
     from envkb import latency
 
@@ -267,25 +289,30 @@ def cap_region_latency(source_region: str, target_region: str | None = None) -> 
     return latency.describe(source_region, target_region)
 
 
+# 실측상 Linux만 있고 Windows 기본 이미지는 없습니다.
 @function_tool
 def cap_basic_image(
     provider: str, region: str | None = None, architecture: str | None = None
 ) -> str:
-    """이 리전에서 쓸 **기본 OS 이미지**를 반환한다.
+    """Return the **default OS image** to use in this region.
 
-    "VM 띄우려면 이미지 ID가 뭐야?"에 답한다. 리소스 군 도구가 "이미지는 필수"라고
-    말하는데 어느 것인지는 못 말하므로 이 도구가 그 자리를 메운다.
+    Answers "what image ID do I need to launch a VM?". The resource-family tools
+    say "an image is required" but cannot say which one, so this tool fills that
+    gap.
 
-    ⚠️ **아키텍처를 스펙과 맞추세요.** `g5g.xlarge` 같은 arm64 스펙에 x86_64 이미지를
-    쓰면 뜨지 않습니다. 스펙의 아키텍처는 `cost_describe_spec`이 알려 줍니다.
+    ⚠️ **Match the architecture to the spec.** An x86_64 image on an arm64 spec
+    such as `g5g.xlarge` will not boot. `cost_describe_spec` tells you a spec's
+    architecture.
 
-    **'가장 좋은 이미지'가 아니라 cb-tumblebug이 기본으로 고른 것**입니다 —
-    벤더 권장도 최신도 아닙니다. 실측상 Linux만 있고 Windows 기본 이미지는 없습니다.
+    **Not the "best image" — the one cb-tumblebug picked as its default.** It is
+    neither vendor-recommended nor the newest. Only Linux is present; there is
+    no default Windows image.
 
     Args:
         provider: aws · azure · gcp · alibaba · ibm · ncp · nhn · tencent · kt.
-        region: 리전 코드(선택). Azure처럼 리전 무관인 경우 'common'.
-        architecture: 'x86_64' | 'arm64' (선택).
+        region: Region code (optional). 'common' when region-agnostic, as with
+            Azure.
+        architecture: 'x86_64' | 'arm64' (optional).
     """
     from envkb import images
 
@@ -297,15 +324,19 @@ def cap_basic_image(
 
 @function_tool
 def cap_service_lifecycle(service: str, version: str | None = None) -> str:
-    """관리형 서비스 버전의 지원 종료일. "EKS 1.28 언제까지 쓸 수 있나".
+    """End-of-support date of a managed service version. "How long can EKS 1.28
+    be used?".
 
-    제품 이름(`amazon-eks`)이나 리소스 타입(`AWS::EKS::Cluster`)으로 물어도 된다.
-    **'종료일 미정'은 '종료됨'이 아닙니다** — 아직 안 정해진 것이니 그대로 전하세요.
-    수록 안 된 서비스는 "종료일이 없다"가 아니라 "이 소스에 없다"입니다.
+    You may ask by product name (`amazon-eks`) or by resource type
+    (`AWS::EKS::Cluster`).
+    **"End date undetermined" is not "ended"** — it is simply not set yet, so
+    pass it through as-is. For a service that is not included, the answer is
+    "not in this source", not "it has no end date".
 
     Args:
-        service: 제품 이름 또는 리소스 타입. 예: 'amazon-eks', 'AWS::RDS::DBInstance'.
-        version: 버전(선택). 예: '1.28', '8.0'.
+        service: Product name or resource type. e.g. 'amazon-eks',
+            'AWS::RDS::DBInstance'.
+        version: Version (optional). e.g. '1.28', '8.0'.
     """
     from envkb import lifecycle
 
@@ -315,13 +346,15 @@ def cap_service_lifecycle(service: str, version: str | None = None) -> str:
 
 @function_tool
 def cap_operation_time(resource_type: str) -> str:
-    """이 리소스의 생성·삭제·수정이 오래 걸리는지와, 쓸 수 있는 액션 목록.
+    """Whether creating, deleting, or updating this resource takes long, plus
+    the list of available actions.
 
-    배포 스크립트의 타임아웃과 단계 나누기에 쓴다. 지금은 Azure만 제공한다.
-    **"원본이 말하지 않음"은 "빠르다"가 아닙니다** — 그대로 전하세요.
+    Use it for timeouts and step splitting in deployment scripts. Only Azure
+    provides this today.
+    **"The source does not say" is not "it is fast"** — pass it through as-is.
 
     Args:
-        resource_type: 타입 이름. 예: 'Microsoft.Compute/virtualMachines'.
+        resource_type: Type name. e.g. 'Microsoft.Compute/virtualMachines'.
     """
     print(f"\n[용량질의] 작업 소요: {resource_type}")
     return agent_api.operation_time(resource_type)
@@ -329,18 +362,20 @@ def cap_operation_time(resource_type: str) -> str:
 
 @function_tool
 def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str:
-    """멀티클라우드 도구(cb-spider)가 이 CSP의 그 리소스를 다루는지.
+    """Whether the multi-cloud tool (cb-spider) handles that resource on this
+    CSP.
 
-    **도구의 커버리지이지 클라우드의 사실이 아닙니다.** 미지원이면 "그 CSP에 그
-    기능이 없다"가 **아니라** "이 도구로는 한 방식으로 못 다룬다"는 뜻입니다 —
-    그 구분을 반드시 그대로 전하세요. CSP가 그 서비스를 제공하는지는 이 도구가
-    답하지 않습니다.
+    **This is the tool's coverage, not a fact about the cloud.** Unsupported
+    does **not** mean "that CSP lacks the feature"; it means "this tool cannot
+    handle it in one uniform way" — always pass that distinction through as-is.
+    Whether the CSP offers the service is not what this tool answers.
 
     Args:
-        csp: 프로바이더. aws · azure · gcp · alibaba · tencent · ibm · ncp · nhn ·
-            kt · ktclassic · openstack · oracle. 생략하면 다루는 CSP 목록.
-        resource: 코어 리소스. vNet · subnet · securityGroup · sshKey · vm · nlb ·
-            k8sCluster · k8sNodeGroup · dataDisk · customImage.
+        csp: Provider. aws · azure · gcp · alibaba · tencent · ibm · ncp · nhn ·
+            kt · ktclassic · openstack · oracle. Omit for the list of CSPs
+            handled.
+        resource: Core resource. vNet · subnet · securityGroup · sshKey · vm ·
+            nlb · k8sCluster · k8sNodeGroup · dataDisk · customImage.
     """
     from envkb import cbspider
 

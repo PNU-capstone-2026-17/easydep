@@ -18,12 +18,14 @@ from graphkb import agent_api
 
 @function_tool
 def kb_creation_order(resource_type: str, required_only: bool = False) -> str:
-    """클라우드 리소스 타입을 만들기 위해 먼저 만들어야 하는 타입들을 순서대로 반환한다.
+    """Return, in creation order, the types that must be created first in order to
+    create a cloud resource type.
 
     Args:
-        resource_type: 타입 이름. 예: 'vm', 'core::vNet', 'AWS::EC2::Subnet',
+        resource_type: Type name. e.g. 'vm', 'core::vNet', 'AWS::EC2::Subnet',
             'Microsoft.Network/virtualNetworks', 'ComputeInstance'.
-        required_only: True면 생성에 필수(required)인 의존만 계산한다.
+        required_only: If True, compute only the dependencies that are required
+            for creation.
     """
     print(f"\n[그래프질의] 선행 체인: {resource_type!r} (required_only={required_only})")
     return agent_api.creation_order(resource_type, required_only=required_only)
@@ -31,10 +33,11 @@ def kb_creation_order(resource_type: str, required_only: bool = False) -> str:
 
 @function_tool
 def kb_deletion_impact(resource_type: str) -> str:
-    """클라우드 리소스 타입을 삭제하면 영향받는(그 타입에 의존하는) 타입들을 반환한다.
+    """Return the types affected by deleting a cloud resource type (the types that
+    depend on it).
 
     Args:
-        resource_type: 타입 이름. 예: 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
+        resource_type: Type name. e.g. 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
     """
     print(f"\n[그래프질의] 삭제 영향: {resource_type!r}")
     return agent_api.deletion_impact(resource_type)
@@ -42,10 +45,11 @@ def kb_deletion_impact(resource_type: str) -> str:
 
 @function_tool
 def kb_equivalent_types(resource_type: str) -> str:
-    """다른 클라우드(AWS/Azure/GCP)나 중립(코어) 레이어에서 같은 것을 가리키는 타입을 반환한다.
+    """Return the equivalent types that point to the same thing in another cloud
+    (AWS/Azure/GCP) or in the neutral (core) layer.
 
     Args:
-        resource_type: 타입 이름. 예: 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
+        resource_type: Type name. e.g. 'vNet', 'AWS::EC2::VPC', 'ComputeNetwork'.
     """
     print(f"\n[그래프질의] 동치 타입: {resource_type!r}")
     return agent_api.equivalent_types(resource_type)
@@ -80,11 +84,12 @@ def _capacity_pointer(resource_type: str) -> str:
 
 @function_tool
 def kb_describe_type(resource_type: str) -> str:
-    """리소스 타입의 레이어/프로바이더/출처, 의존 엣지 상세(참조 필드·필수 여부·신뢰도)와
-    이 타입에 용량·제약(cap_* 도구) 정보가 있는지를 반환한다.
+    """Return a resource type's layer/provider/source, its dependency edge details
+    (reference field, whether required, confidence), and whether limits &
+    constraints info (cap_* tools) exists for this type.
 
     Args:
-        resource_type: 타입 이름.
+        resource_type: Type name.
     """
     print(f"\n[그래프질의] 타입 상세: {resource_type!r}")
     return agent_api.describe_type(resource_type) + _capacity_pointer(resource_type)
@@ -92,12 +97,12 @@ def kb_describe_type(resource_type: str) -> str:
 
 @function_tool
 def kb_search_types(keyword: str, provider: str | None = None, limit: int = 20) -> str:
-    """키워드로 리소스 타입을 검색한다 (부분 문자열, 대소문자 무시).
+    """Search resource types by keyword (substring match, case-insensitive).
 
     Args:
-        keyword: 검색어. 예: 'subnet', 'loadbalancer', 'firewall'.
-        provider: 'common' | 'aws' | 'azure' | 'gcp'. 미지정이면 전체.
-        limit: 반환할 최대 개수(기본 20).
+        keyword: Search term. e.g. 'subnet', 'loadbalancer', 'firewall'.
+        provider: 'common' | 'aws' | 'azure' | 'gcp'. All of them if unset.
+        limit: Maximum number of results to return (default 20).
     """
     print(f"\n[그래프질의] 타입 검색: {keyword!r} (provider={provider or 'any'})")
     found = agent_api.search_types(keyword, provider=provider, limit=limit)
@@ -120,17 +125,20 @@ def kb_rank_types(
     limit: int = 10,
     required_only: bool = False,
 ) -> str:
-    """의존 관계가 가장 많은 리소스 타입 순위를 한 번에 반환한다 (전체 집계).
+    """Return, in one call, the ranking of the resource types with the most
+    dependency relationships (aggregate over everything).
 
-    "가장 의존성이 큰 타입", "가장 많이 참조되는 타입" 같은 **전체 대상 질문**에
-    쓴다. 타입을 하나씩 조회하지 말고 이 도구를 한 번 호출하면 된다.
+    Use this for **questions about the whole set**, such as "the type with the
+    largest dependencies" or "the most referenced type". Call this tool once
+    instead of looking types up one at a time.
 
     Args:
-        by: 'dependencies'면 그 타입이 의존하는 타입 수(만들려면 필요한 것),
-            'dependents'면 그 타입에 의존하는 타입 수(삭제 시 영향받는 것).
-        provider: 'common' | 'aws' | 'azure' | 'gcp'. 미지정이면 전체.
-        limit: 상위 몇 개를 볼지(기본 10).
-        required_only: True면 필수 의존만 센다.
+        by: 'dependencies' is the number of types that type depends on (what is
+            needed to create it); 'dependents' is the number of types that depend
+            on it (what is affected on deletion).
+        provider: 'common' | 'aws' | 'azure' | 'gcp'. All of them if unset.
+        limit: How many top entries to see (default 10).
+        required_only: If True, count only required dependencies.
     """
     print(
         f"\n[그래프질의] 타입 순위: by={by}, provider={provider or 'any'}, limit={limit}"

@@ -121,27 +121,31 @@ def cost_recommend_specs(
     architecture: str = "x86_64",
     require_accelerator: bool = False,
 ) -> str:
-    """요구사항을 만족하는 VM 스펙 후보와 시간당 단가를 추천한다(크레덴셜 불필요).
+    """Recommend VM spec candidates meeting the requirements, with hourly rates.
 
-    성능 지식베이스(perfkb)가 빌드돼 있으면 후보에 성능 경고가 함께 붙습니다 —
-    버스트 인스턴스나 구세대처럼 **가격만 보면 놓치는** 함정을 짚어줍니다.
+    No credentials are required. If the performance knowledge base (perfkb) is
+    built, performance warnings are attached to the candidates — they point out
+    traps such as burst instances or previous generation specs that **looking at
+    price alone would miss**.
 
-    **record_plan으로 계획을 먼저 기록해야 실행됩니다.**
+    **A plan must be recorded with record_plan before this runs.**
 
     Args:
-        vcpu_min: 최소 vCPU 수.
-        mem_min_gib: 최소 메모리(GiB).
+        vcpu_min: Minimum vCPU count.
+        mem_min_gib: Minimum memory (GiB).
         provider: 'aws' | 'azure' | 'gcp' | 'tencent' | 'alibaba' | 'ibm' | 'ncp' |
-            'kt' | 'nhn' | 'openstack'. 미지정이면 전체 프로바이더.
-        region: 리전 부분 문자열(예: 'us-east', 'ap-northeast'). 미지정이면 전체.
-        sort_by: 'cost'(저렴한 순, 기본) | 'vcpu' | 'memory'.
-        limit: 반환할 후보 수(기본 5).
-        architecture: 'x86_64'(기본) | 'arm64' | 'any'. cb-tumblebug의 라이브 추천과
-            같은 기본값이라, 값을 바꾸면 라이브 결과와 달라질 수 있습니다.
-        require_accelerator: True면 **가속기(GPU 등)가 달린 것만** 추립니다.
-            "이 리전에서 쓸 수 있는 GPU 인스턴스 알려줘" 같은 질문은 `region`과 함께
-            이걸로 한 번에 답합니다. GPU **모델명**은 perf_instance_profile로 보세요.
-            GPU 인스턴스는 arm64인 것도 있으니 architecture='any'가 필요할 수 있습니다.
+            'kt' | 'nhn' | 'openstack'. If unset, all providers.
+        region: Region substring (e.g. 'us-east', 'ap-northeast'). If unset, all.
+        sort_by: 'cost' (cheapest first, default) | 'vcpu' | 'memory'.
+        limit: Number of candidates to return (default 5).
+        architecture: 'x86_64' (default) | 'arm64' | 'any'. This is the same default
+            as cb-tumblebug's live recommendation, so changing it may make the
+            result differ from the live one.
+        require_accelerator: If True, keeps **only specs with an accelerator (GPU
+            etc.)**. A question like "tell me the GPU instances I can use in this
+            region" is answered in one call with this plus `region`. For GPU
+            **model names**, use perf_instance_profile. Some GPU instances are
+            arm64, so architecture='any' may be needed.
     """
     if _needs_plan(ctx):
         print("\n[스펙추천] 계획 없음 → 거부")
@@ -167,16 +171,17 @@ def cost_estimate_monthly(
     count: int = 1,
     hours_per_month: float = HOURS_PER_MONTH,
 ) -> str:
-    """시간당 단가로 월 비용을 계산한다(노드 수·가동 시간 반영).
+    """Compute the monthly cost from an hourly rate (node count, uptime applied).
 
-    **record_plan으로 계획을 먼저 기록해야 실행됩니다.**
-    단가는 cost_recommend_specs가 준 값을 쓰세요(웹 검색 가격과 섞지 마세요).
-    월 비용을 직접 암산하지 말고 반드시 이 도구로 계산하세요.
+    **A plan must be recorded with record_plan before this runs.**
+    Use the unit price that cost_recommend_specs gave you (do not mix it with
+    prices from web search). Never do the monthly arithmetic in your head —
+    always compute it with this tool.
 
     Args:
-        hourly_usd: 인스턴스 1대의 시간당 USD 단가.
-        count: 인스턴스 대수(기본 1).
-        hours_per_month: 월 가동 시간(기본 730 = 상시 가동).
+        hourly_usd: Hourly USD unit price of one instance.
+        count: Number of instances (default 1).
+        hours_per_month: Monthly running hours (default 730 = always on).
     """
     if _needs_plan(ctx):
         print("\n[비용추정] 계획 없음 → 거부")
@@ -193,28 +198,33 @@ def cost_estimate_monthly(
 _DISCOUNT_PROVIDERS = ("gcp", "azure")
 
 
+# azure 할인 축이 저장소에 없는 것이 기본인 이유: 재배포 허가가 없어 커밋하지 않는다.
 @function_tool
 def cost_discount_pricing(
     provider: str, spec_name: str, region: str | None = None
 ) -> str:
-    """스팟·예약·약정 가격을 조회한다. 미러엔 **온디맨드 정가만** 있어서 별도 축이다.
+    """Look up spot, reserved and committed prices — a separate axis.
 
-    프로바이더마다 소스와 담긴 종류가 다르다:
+    It is separate because the mirror holds **on-demand list price only**.
+    The source and what is included differ by provider:
 
-    - `gcp`   — 스팟 · 1년/3년 약정 (Cyclenerd 가격표). 온디맨드가 우리 미러와
-      **다른 스냅샷**이라, 어긋난 리전은 도구가 "기준 온디맨드"를 함께 밝힌다.
-    - `azure` — 스팟 · 1년/3년 예약 · 1년/3년 저축 플랜 (Azure Retail Prices API).
-      **이 축은 저장소에 없는 것이 기본**이다(재배포 허가가 없어 커밋하지 않는다).
-      없으면 도구가 받는 명령을 알려주니 그대로 전하세요 — "할인이 없다"가 아니다.
+    - `gcp`   — spot · 1-year/3-year committed (Cyclenerd price table). Its
+      on-demand is a **different snapshot** from our mirror, so for regions that
+      disagree the tool also states the "baseline on-demand".
+    - `azure` — spot · 1-year/3-year reserved · 1-year/3-year savings plans
+      (Azure Retail Prices API). **This axis is by default not in the
+      repository.** If it is missing, the tool tells you the command that fetches
+      it, so pass it through as-is — it does not mean "there is no discount".
 
-    **다른 프로바이더는 담지 않았다.** aws 등에 이 도구를 쓰면 "미수록"이라고
-    답하는데, 그건 **AWS에 스팟이 없다는 뜻이 아니라 우리가 안 담았다는 뜻**이다.
-    그 구분을 그대로 전하세요.
+    **Other providers are not included.** Using this tool on aws etc. answers
+    "not included", and that **does not mean AWS has no spot — it means we did
+    not include it**. Pass that distinction through as-is.
 
     Args:
-        provider: 'gcp' | 'azure'. **필수** — 소스가 갈린다.
-        spec_name: 스펙 이름. 예: 'e2-standard-4', 'Standard_D2s_v5'.
-        region: 리전(선택). 없으면 대표 리전 몇 곳을 보여준다.
+        provider: 'gcp' | 'azure'. **Required** — the source differs by provider.
+        spec_name: Spec name. e.g. 'e2-standard-4', 'Standard_D2s_v5'.
+        region: Region (optional). Without it, a few representative regions are
+            shown.
     """
     key = provider.strip().lower()
     print(f"\n[비용질의] 할인 가격: {key} {spec_name!r} region={region!r}")
@@ -229,23 +239,26 @@ def cost_discount_pricing(
     )
 
 
+# 이 도구가 있기 전에는 이름으로 묻는 질문이 웹 검색으로 샜습니다.
+# provider 인자가 필요한 경우: 실측상 이름이 겹치는 것은 `m1.*` 4종뿐.
 @function_tool
 def cost_describe_spec(
     spec_name: str, provider: str | None = None, region: str | None = None
 ) -> str:
-    """인스턴스 **하나**를 이름으로 조회한다 — vCPU·메모리·가격·리전.
+    """Look up **one** instance by name — vCPU, memory, price, regions.
 
-    "n2-highmem-8 메모리 몇 GiB?" 같은 질문에 이걸 쓰세요. `cost_recommend_specs`는
-    조건 필터라 이름을 모르면 못 찾습니다 — 그래서 예전에는 이 질문이 웹 검색으로
-    샜습니다.
+    Use this for a question like "how many GiB of memory does n2-highmem-8 have?".
+    `cost_recommend_specs` is a condition filter, so it cannot find a spec when
+    you only know its name.
 
-    리전을 안 주면 **가격 범위**가 나옵니다(리전마다 단가가 다릅니다).
-    성능 특성(버스트·세대·CPU/GPU 모델)은 `perf_instance_profile`에 있습니다.
+    Without a region you get a **price range** (the unit price differs by region).
+    Performance characteristics (burst, generation, CPU/GPU model) are in
+    `perf_instance_profile`.
 
     Args:
-        spec_name: 인스턴스 이름. 예: 'n2-highmem-8', 't3.medium', 'Standard_D2_v5'.
-        provider: 이름이 겹칠 때만 필요합니다(실측상 `m1.*` 4종뿐).
-        region: 특정 리전 단가만 볼 때.
+        spec_name: Instance name. e.g. 'n2-highmem-8', 't3.medium', 'Standard_D2_v5'.
+        provider: Needed only when the name collides across providers.
+        region: When you want the unit price of one region only.
     """
     print(f"\n[비용질의] 스펙 조회: {spec_name!r} provider={provider!r} region={region!r}")
     text = agent_api.describe_spec(spec_name, provider, region)

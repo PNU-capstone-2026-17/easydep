@@ -17,18 +17,23 @@ class Task:
 
 
 CATALOG: list[Task] = [
-    Task("web_search", "웹 검색", "web_search 도구(DuckDuckGo)로 최신 정보를 검색한다."),
+    Task(
+        "web_search",
+        "Web search",
+        "Search for up-to-date information with the web_search tool (DuckDuckGo).",
+    ),
     Task(
         "cloud_sizing",
-        "클라우드 리소스 산정",
-        "앱 요구사항으로부터 VM 스펙을 추천(cost_recommend_specs)하고 "
-        "월 비용을 추정(cost_estimate_monthly)한다.",
+        "Cloud resource sizing",
+        "Recommend VM specs from the app requirements (cost_recommend_specs) and "
+        "estimate the monthly cost (cost_estimate_monthly).",
     ),
     Task(
         "design_to_deployment",
-        "설계도 → 배포 구성",
-        "앱 설계 산출물(클래스·시퀀스·ER·OpenAPI를 담은 JSON)에서 배포 구성과 "
-        "PlantUML 다이어그램을 만든다. 줄마다 근거(설계/설계자/지식베이스/추론)가 붙는다.",
+        "Design → deployment configuration",
+        "Build a deployment configuration and a PlantUML diagram from app design "
+        "artifacts (JSON holding class/sequence/ER/OpenAPI). Every line carries "
+        "its origin (design / designer / knowledge base / inference).",
     ),
 ]
 

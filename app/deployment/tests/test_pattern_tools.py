@@ -23,10 +23,13 @@ def test_pattern_search_is_registered() -> None:
 def test_tool_description_scopes_it_to_advisory() -> None:
     """도구 설명이 LLM에게 가장 가깝게 작동한다(web_search 선례) — 값·한도
     질문에 쓰지 말라는 규칙이 설명에 있어야 한다."""
-    description = pattern_search.description
-    assert "지침" in description
-    assert "사실이 아닙니다" in description
-    assert "쓰지 마세요" in description
+    # 설명이 영어가 되면서 줄바꿈이 구절 중간에 걸린다 — 공백을 눌러 대조한다.
+    description = " ".join((pattern_search.description or "").split())
+    assert "design guidance, not a cloud fact" in description
+    assert "advisory only" in description
+    assert "do not use it for" in description
+    # 코퍼스가 영어라 질의어도 영어여야 한다는 규칙이 설명에 있어야 한다.
+    assert "English keywords" in description
 
 
 def _order_demo_with_engine(engine: str) -> dict:

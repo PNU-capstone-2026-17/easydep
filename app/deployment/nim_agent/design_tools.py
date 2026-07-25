@@ -1204,22 +1204,27 @@ def deployment_puml_from_easydep(
 
 @function_tool
 def design_to_deployment(design_json: str, diagram: bool = True) -> str:
-    """앱 설계 산출물(JSON)에서 **배포 구성**을 만든다 — 구성요소·관리형 서비스·연결.
+    """Build a **deployment plan** from an app design artifact (JSON) —
+    components, managed services, and connections.
 
-    입력은 `appkb/schema.json` 계약을 따르는 JSON이다(클래스·시퀀스·ER·OpenAPI를
-    한 문서에 담은 것). 계약을 어기면 **무엇이 어긋났는지 목록으로** 답한다.
+    The input is JSON following the `appkb/schema.json` contract (class,
+    sequence, ER, and OpenAPI held in one document). Input that violates the
+    contract produces **a list of what is wrong**.
 
-    답에는 근거가 줄마다 붙는다 — 설계 산출물이 말한 것 / 설계자가 지정한 것 /
-    지식베이스가 답한 것 / **우리가 추론한 것**. ⚠ 표시는 추론이므로 사용자에게
-    그대로 전하세요. 관리형 서비스는 가격 축이 없어 값이 안 붙고 **합계도 내지
-    않습니다** — 그 고지도 그대로 전하세요.
+    Every line of the answer carries its evidence — what the design artifact
+    said / what the designer specified / what the knowledge base answered /
+    **what we inferred**. A ⚠ mark means inference, so pass it to the user
+    as-is. Managed services have no price axis, so no value is attached and
+    **no total is produced either** — pass that notice through as-is too.
 
-    답 끝의 [요구사항 대조]는 예산·규모·multiZone 판정입니다. **"초과 확정"과
-    "부합 단정 불가"는 다른 판정입니다** — 뭉개지 말고 그대로 전하세요.
+    The requirements-comparison section at the end of the answer is the budget,
+    scale, and multiZone verdict. **"over, confirmed" and "cannot be asserted
+    to fit" are different verdicts** — do not blur them; pass them through
+    as-is.
 
     Args:
-        design_json: 설계 산출물 JSON 문자열.
-        diagram: True면 PlantUML 다이어그램도 함께 낸다.
+        design_json: The design artifact JSON string.
+        diagram: If True, emit a PlantUML diagram along with the answer.
     """
     try:
         design = json.loads(design_json)

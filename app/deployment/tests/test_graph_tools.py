@@ -30,7 +30,7 @@ def test_aggregate_tool_exists_for_whole_graph_questions() -> None:
     from nim_agent.agent import INSTRUCTIONS
 
     assert "kb_rank_types" in INSTRUCTIONS
-    assert "집계" in INSTRUCTIONS
+    assert "aggregate" in INSTRUCTIONS
 
 
 def test_tools_are_function_tools_with_docs() -> None:

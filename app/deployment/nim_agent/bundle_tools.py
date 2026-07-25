@@ -17,18 +17,20 @@ from bundlekb import agent_api
 
 @function_tool
 def bundle_for_resource(resource_type: str) -> str:
-    """리소스 하나를 만들 때 **함께 다뤄야 하는 리소스 군**을 반환한다.
+    """Return the **resource group** that must be handled together with one resource.
 
-    "VM 만들려면 뭐가 더 필요해?", "이거 하나만 만들면 되나?" 같은 질문에 쓰세요.
-    답은 세 층으로 옵니다 — 반드시 함께 만들어지는 것 / 값을 반드시 줘야 하는 것 /
-    붙일 수 있는 것.
+    Use this for questions like "what else do I need to create a VM?" or "is
+    creating just this one enough?". The answer comes in three tiers — always
+    together / you must supply a value / optional attachment.
 
-    **의존 관계 자체**(무엇이 무엇을 참조하나)는 `kb_creation_order`·
-    `kb_type_detail`이 답합니다. 이 도구는 "실무에서 무엇과 묶여 다니나"입니다.
+    **The dependency relationships themselves** (what references what) are
+    answered by `kb_creation_order` and `kb_type_detail`. This tool answers
+    "what travels bundled with what in practice".
 
     Args:
-        resource_type: 리소스 타입. 예: 'azure::Microsoft.Compute/virtualMachines',
-            'core::vm', 'aws::AWS::Lambda::Function'.
+        resource_type: Resource type. e.g.
+            'azure::Microsoft.Compute/virtualMachines', 'core::vm',
+            'aws::AWS::Lambda::Function'.
     """
     print(f"\n[번들질의] 리소스 군: {resource_type!r}")
     return agent_api.resource_bundle(resource_type)
@@ -36,13 +38,14 @@ def bundle_for_resource(resource_type: str) -> str:
 
 @function_tool
 def bundle_describe(name: str) -> str:
-    """이름 붙은 리소스 군 하나를 조회한다.
+    """Look up one named resource group.
 
-    `sg-default`, `aws-apigateway-lambda`, `avm/res/compute/virtual-machine` 처럼
-    소스가 이름을 붙여 둔 묶음입니다. 원본이 단 경고가 있으면 함께 옵니다.
+    These are bundles the source itself gave a name to, such as `sg-default`,
+    `aws-apigateway-lambda`, or `avm/res/compute/virtual-machine`. If the
+    original carries a warning, it comes with the result.
 
     Args:
-        name: 리소스 군 이름.
+        name: Resource group name.
     """
     print(f"\n[번들질의] 이름 조회: {name!r}")
     return agent_api.describe_named_bundle(name)
@@ -50,10 +53,10 @@ def bundle_describe(name: str) -> str:
 
 @function_tool
 def bundle_search(keyword: str = "") -> str:
-    """담긴 리소스 군을 키워드로 찾는다. 비우면 목록 앞부분.
+    """Search the stored resource groups by keyword. Empty gives the list head.
 
     Args:
-        keyword: 'web', 'lambda', 'kubernetes' 등.
+        keyword: 'web', 'lambda', 'kubernetes', etc.
     """
     print(f"\n[번들질의] 검색: {keyword!r}")
     return agent_api.list_bundles(keyword or None)

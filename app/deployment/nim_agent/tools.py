@@ -29,13 +29,13 @@ from .sizing_tools import SIZING_TOOLS
 
 @function_tool
 def list_tasks() -> str:
-    """수행 가능한 작업 카탈로그(작업 id/제목/설명)를 반환한다."""
+    """Return the catalog of tasks this agent can perform (id / title / description)."""
     return catalog_as_text()
 
 
 @function_tool
 def get_task_detail(task_id: str) -> str:
-    """주어진 작업 id의 상세 설명을 반환한다. 없으면 안내 메시지를 반환한다."""
+    """Return the detailed description of the given task id, or a notice if absent."""
     task = get_task(task_id)
     if task is None:
         return f"'{task_id}'는 카탈로그에 없는 작업입니다. list_tasks로 가능한 작업을 확인하세요."
@@ -44,17 +44,19 @@ def get_task_detail(task_id: str) -> str:
 
 @function_tool
 def record_plan(ctx: RunContextWrapper[SessionState], steps: list[str]) -> str:
-    """여러 단계를 조율해야 하는 작업에서, **실행을 시작하기 전에** 계획을 기록한다.
+    """Record a plan **before you start executing**, for work that coordinates
+    several steps.
 
-    도구를 한두 번 부르면 끝나는 단순 조회(지식베이스 질의, 검색, 파일 목록 등)에는
-    **호출하지 마세요.** 이미 실행한 일을 나중에 계획서처럼 적으면 사용자가 실행 순서를
-    오해합니다. 앞으로 할 일을 조율할 때만 쓰는 도구입니다.
+    **Do not call this** for simple lookups that finish in one or two tool calls
+    (knowledge-base queries, search, file listings). Writing up work you have
+    already done as if it were a plan misleads the user about the order things
+    happened in. This tool is only for coordinating work still ahead.
 
-    클라우드 리소스 산정(recommend_specs / estimate_monthly_cost)은 이 계획을 먼저
-    기록해야 실행할 수 있습니다.
+    Cloud resource sizing (recommend_specs / estimate_monthly_cost) cannot run
+    until this plan has been recorded first.
 
     Args:
-        steps: 앞으로 순서대로 실행할 계획 단계들.
+        steps: the plan steps, in the order you will execute them.
     """
     print("\n[계획 수립됨]")
     for i, step in enumerate(steps, 1):
@@ -67,20 +69,23 @@ def record_plan(ctx: RunContextWrapper[SessionState], steps: list[str]) -> str:
 
 @function_tool
 def web_search(query: str, max_results: int = 5) -> str:
-    """DuckDuckGo로 웹을 검색해 상위 결과(제목/URL/요약)를 반환한다. API 키 불필요.
+    """Search the web via DuckDuckGo and return top results (title / URL / snippet).
+    No API key needed.
 
-    **클라우드 관련 사실은 이 도구로 찾지 마세요. 전용 도구가 따로 있습니다:**
-    - 인스턴스 스펙·시간당 단가 → cost_recommend_specs, 월 비용 → cost_estimate_monthly
-    - 리소스 타입 의존성·순서·동치 → kb_* 도구
-    - 용량 한도·허용값·변경 가능성 → cap_* 도구
+    **Do not use this tool to find cloud facts. Dedicated tools exist:**
+    - instance specs and hourly rates -> cost_recommend_specs, monthly cost ->
+      cost_estimate_monthly
+    - resource type dependencies, ordering, equivalents -> kb_* tools
+    - capacity limits, allowed values, mutability -> cap_* tools
 
-    검색으로 가져온 가격을 섞으면 합계 기준이 어긋나고, 원하는 숫자가 나올 때까지
-    검색을 반복하게 됩니다. 전용 도구가 "데이터가 없다"고 하면 그대로 사용자에게
-    알리세요 — 검색으로 메우려 하지 마세요.
+    Mixing in a price pulled from search breaks the basis of the total, and it leads
+    to searching over and over until the desired number appears. If a dedicated tool
+    says "no data", tell the user exactly that -- do not try to fill the gap with
+    search.
 
     Args:
-        query: 검색어.
-        max_results: 가져올 결과 수(기본 5, 최대 10).
+        query: the search terms.
+        max_results: how many results to fetch (default 5, max 10).
     """
     print(f"\n[웹검색] {query!r} (max_results={max_results})")
     count = max(1, min(max_results, 10))
