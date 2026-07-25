@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 
 from appkb.plan import ORIGIN_DESIGN, ORIGIN_DESIGNER, ORIGIN_INFERRED, ORIGIN_KB
-from nim_agent.design_tools import _render_plan_text, compose, deployment_answer
+from nim_agent.design_tools import (
+    _VM_ASSUMED,
+    _render_plan_text,
+    compose,
+    deployment_answer,
+)
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
 
@@ -559,3 +564,44 @@ def test_class_only_design_answers_almost_nothing(design) -> None:
     # 공유 인프라는 나온다. **우리가 VM으로 가정한 결과**이고, 그 가정은
     # 컴포넌트 노트에 적혀 있다 — 가정을 숨긴 채 그리는 것과는 다르다.
     assert any("VM으로 가정" in n.text for n in plan.node("svc").notes)
+
+
+def _steady_stateless_design() -> dict:
+    """deployHint 없는 컴포넌트 1개 + steady·stateless=true —
+    비교 판정에서 서버리스만 상충이 없어 권고가 나는 입력(실측)."""
+    return {
+        "schemaVersion": "1", "name": "probe-app",
+        "components": [{"id": "api", "name": "Api"}],
+        "artifacts": [{
+            "id": "o1", "kind": "openapi", "componentId": "api",
+            "openapi": {"openapi": "3.0.0", "info": {"title": "api"}, "paths": {}},
+        }],
+        "requirements": {
+            "provider": "aws", "region": "ap-northeast-2",
+            "trafficPattern": "steady", "stateless": True,
+        },
+    }
+
+
+def test_recommendation_is_flagged_where_the_assumption_is_made() -> None:
+    """**권고가 각주로만 있으면 읽히지 않는다.**
+
+    라이브 실측(X7, 5회 중 4회)에서 도구는 서버리스를 권고했는데 모델은 "VM으로
+    가정했습니다"만 답에 옮겼다. 계획 본문·유일한 구체 가격·다이어그램이 전부 VM
+    위에 있고 권고는 27줄 뒤 한 줄이었으니, 문서에서 압도적인 쪽이 읽힌 것이다.
+    가정을 적은 **바로 그 노트 다음**에 권고가 붙어야 둘이 같이 읽힌다.
+    """
+    plan = compose(_steady_stateless_design())
+    texts = [n.text for node in plan.nodes for n in node.notes]
+    assumed = next(i for i, t in enumerate(texts) if t.startswith(_VM_ASSUMED))
+    assert "서버리스" in texts[assumed + 1], "가정 바로 다음에 권고가 없다"
+    assert "확정하지 마세요" in texts[assumed + 1]
+
+
+def test_plan_itself_stays_vm_when_recommendation_differs() -> None:
+    """**권고는 권고이지 결정이 아니다.** 계획을 임의로 서버리스로 바꾸면
+    이 저장소가 막아 온 실패(짐작을 결정으로 승격)가 된다 — 값·다이어그램은
+    VM 기준으로 남고, 다르다는 사실만 밝힌다."""
+    plan = compose(_steady_stateless_design())
+    api = next(n for n in plan.nodes if n.id == "api")
+    assert any("t3a" in n.text or "$" in n.text for n in api.notes), "VM 값이 사라졌다"

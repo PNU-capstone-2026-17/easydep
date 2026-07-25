@@ -347,7 +347,7 @@ def _add_computes(
                     f"{cid}: OpenAPI도 비동기 수신도 없어 배포 형태를 정하지 못했습니다"
                 )
             notes.append(Note(
-                "컴퓨트 방식은 VM으로 가정했습니다 — 설계가 지정하지 않았습니다"
+                f"{_VM_ASSUMED} — 설계가 지정하지 않았습니다"
                 "(deployHint로 바꿀 수 있습니다)", ORIGIN_INFERRED, "",
             ))
         kind_of[cid] = kind
@@ -602,8 +602,12 @@ def _wire_edges(
 def _method_comparison_notes(
     requirements: dict, provider: str | None, region: str | None,
     unhinted: int,
-) -> list[Note]:
+) -> tuple[list[Note], str | None]:
     """컴퓨트 방식 비교 판정 — **결정 대행이 아니라 근거 달린 권고다.**
+
+    권고한 방식의 키도 함께 돌려준다(없으면 None). 계획 본문은 VM 가정 위에
+    세워지므로, 권고가 VM이 아니면 **가정을 적은 자리에서** 그 사실을 밝혀야
+    한다(`_flag_assumption_against`).
 
     deployHint 없는 컴포넌트가 있을 때, VM·k8s·서버리스 각각에 대해 우리가
     **잴 수 있는 판정**(비용 하한·버스트 상충·stateless 적합·도구 최소사양·
@@ -613,7 +617,7 @@ def _method_comparison_notes(
     있다는 사실도 명시한다.
     """
     if not unhinted or not provider:
-        return []
+        return [], None
     from costkb import dataset as cost_dataset
     from sizingkb.dataset import rules_of
     from sizingkb.model import MINIMUM, REQUIRED_COUNT
@@ -687,7 +691,7 @@ def _method_comparison_notes(
     clean = [m for m in ("vm", "kubernetes", "serverless")
              if not conflicts[m] and not holds[m]]
     conflicted = [m for m in ("vm", "kubernetes", "serverless") if conflicts[m]]
-    label = {"vm": "VM", "kubernetes": "k8s", "serverless": "서버리스"}
+    label = _METHOD_LABEL
     if len(clean) == 1 and len(conflicted) == 2:
         notes.append(Note(
             f"권고: {label[clean[0]]} — 잰 축에서 유일하게 상충이 없습니다. "
@@ -695,6 +699,7 @@ def _method_comparison_notes(
             "지연 요건·운영 모델)은 이 판정에 없습니다. deployHint로 확정하세요.",
             ORIGIN_INFERRED, "method-comparison",
         ))
+        return notes, clean[0]
     else:
         survivors = ", ".join(label[m] for m in ("vm", "kubernetes", "serverless")
                               if not conflicts[m]) or "없음"
@@ -705,7 +710,42 @@ def _method_comparison_notes(
             "deployHint로 지정하면 그대로 따릅니다.",
             ORIGIN_INFERRED, "method-comparison",
         ))
-    return notes
+    return notes, None
+
+
+#: 컴퓨트 방식의 사람 이름. 비교 판정과 가정 뒤집기가 **같은 말을 써야** 한다.
+_METHOD_LABEL = {"vm": "VM", "kubernetes": "k8s", "serverless": "서버리스"}
+
+#: 컴퓨트 방식 가정을 적는 노트의 머리말. 이 문장을 고치면 `_flag_assumption_against`가
+#: 붙을 자리를 잃으므로 두 곳을 같이 고쳐야 한다(테스트가 고정한다).
+_VM_ASSUMED = "컴퓨트 방식은 VM으로 가정했습니다"
+
+
+def _flag_assumption_against(plan: DeploymentPlan, recommended: str) -> None:
+    """VM 가정 **바로 그 자리에** 권고가 다르다는 사실을 붙인다.
+
+    **실측(X7, 5회 중 4회)**: 도구는 서버리스를 권고했는데 모델은 "VM으로
+    가정했습니다"만 답에 옮기고 권고를 버렸다. 무리가 아니다 — 계획 본문도,
+    유일한 구체 가격($0.0468/h)도, PlantUML 다이어그램도 전부 VM 위에 세워져
+    있는데 권고는 27줄 뒤 각주 한 줄이었다. **문서에서 압도적인 쪽이 읽힌다.**
+
+    그래서 각주를 늘리지 않고 가정을 적은 자리에서 뒤집는다 — 둘이 한 화면에
+    있어야 같이 읽힌다. 계획 자체는 VM으로 남긴다(권고는 권고이지 결정이
+    아니고, 임의로 계획을 바꾸는 것이 이 저장소가 막아 온 실패다).
+    """
+    for i, node in enumerate(plan.nodes):
+        amended: list[Note] = []
+        for note in node.notes:
+            amended.append(note)
+            if note.text.startswith(_VM_ASSUMED):
+                amended.append(Note(
+                    "**이 계획은 VM 가정 위에 세워졌지만, 아래 비교 판정의 권고는 "
+                    f"{_METHOD_LABEL[recommended]}입니다** — 아래 값과 다이어그램은 "
+                    "VM 기준이니 그대로 확정하지 마세요",
+                    ORIGIN_INFERRED, "method-comparison",
+                ))
+        if len(amended) != len(node.notes):
+            plan.nodes[i] = replace(node, notes=tuple(amended))
 
 
 def _global_notices(
@@ -826,9 +866,13 @@ def compose(design: dict) -> DeploymentPlan:
         ))
 
     unhinted = sum(1 for c in components.values() if not c.get("deployHint"))
-    plan.notes.extend(
-        _method_comparison_notes(requirements, provider, region, unhinted)
+    method_notes, recommended = _method_comparison_notes(
+        requirements, provider, region, unhinted
     )
+    plan.notes.extend(method_notes)
+    if recommended and recommended != "vm":
+        # 계획은 VM 가정 위에 세워져 있다 — 권고가 다르면 가정한 자리에서 밝힌다.
+        _flag_assumption_against(plan, recommended)
     _global_notices(plan, requirements, provider, region, s.exposed)
     return plan
 
