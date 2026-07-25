@@ -213,13 +213,30 @@ def _property_hint(capacity: CapacitySet, type_id: str, prop: str) -> str:
 
     닮은 이름이 없으면 몇 개라도 보여준다. "그 이름이 아니다"만 알아도 다음 시도가
     달라진다.
+
+    **묻힌 이름을 다시 제안하지 않는다.** `known`은 *제약이 기록된* 속성 목록이라,
+    물어본 이름이 이미 그 안에 있으면 difflib가 자기 자신을 닮은 이름으로 돌려줬다.
+    그 결과가 `Timeout` → "이 타입에 그런 속성이 없습니다. 혹시 Timeout?"이었다
+    (실측 2026-07-25). **거짓이고**(Lambda에 Timeout은 있다) 모델이 그대로 따르면
+    같은 질의를 반복하는 막다른 길이다. 아는 이름이면 "안다, 다만 그 속성에
+    기록된 한도가 없다"가 맞는 말이고, 그건 "무제한"과 다르다.
     """
     import difflib
 
     known = sorted({c.property for c in limits_for(capacity, type_id)})
     if not known:
         return ""
-    close = difflib.get_close_matches(prop, known, n=5, cutoff=0.5)
+    folded = {name.casefold(): name for name in known}
+    if prop.casefold() in folded:
+        return (
+            "  we do know this property — there is simply no recorded limit for it. "
+            "**That is not the same as unlimited**; check the official documentation."
+        )
+    close = [
+        name
+        for name in difflib.get_close_matches(prop, known, n=5, cutoff=0.5)
+        if name.casefold() != prop.casefold()
+    ]
     if close:
         return f"  this type has no such property. did you mean: {', '.join(close)}"
     shown = ", ".join(known[:6])

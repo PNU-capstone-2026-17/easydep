@@ -288,3 +288,33 @@ def test_creation_order_required_only_suppresses_the_optional_list(monkeypatch) 
     assert "right away" not in flat
     assert "marks no prerequisite as required" in flat
     assert "aws::accesspoint" not in flat
+
+
+def test_known_property_without_a_limit_is_not_called_missing() -> None:
+    """**있는 속성을 "없다"고 말하면서 같은 이름을 제안하던 자리.**
+
+    `_property_hint`의 `known`은 *제약이 기록된* 속성 목록이라, 물어본 이름이 이미
+    그 안에 있으면 difflib가 자기 자신을 닮은 이름으로 돌려줬다. 실측(2026-07-25):
+    `AWS::Lambda::Function.Timeout` → "이 타입에 그런 속성이 없습니다. 혹시
+    Timeout?" — **거짓이고**(Lambda에 Timeout은 있다) 모델이 그대로 따르면 같은
+    질의를 반복하는 막다른 길이다.
+
+    맞는 말은 "안다, 다만 기록된 한도가 없다"이고, 그건 **무제한과 다르다**.
+    """
+    from capacitykb.agent_api import check
+
+    answer = check("AWS::Lambda::Function", "Timeout", "20000")
+    assert "no such property" not in answer
+    assert "we do know this property" in answer
+    assert "not the same as unlimited" in answer.replace("**", "")
+
+
+def test_a_genuinely_wrong_property_still_gets_pointed_at_the_right_one() -> None:
+    """정정이 **원래 하던 일을 죽이면 안 된다.** RDS에 EC2의 이름을 물으면
+    여전히 진짜 후보를 가리켜야 하고, 물어본 이름 자신은 후보에서 빠져야 한다."""
+    from capacitykb.agent_api import check
+
+    answer = check("AWS::RDS::DBInstance", "InstanceType", "db.t3.medium")
+    assert "no such property" in answer
+    hint = answer.split("did you mean:")[1]
+    assert "InstanceType," not in hint and not hint.strip().startswith("InstanceType")
