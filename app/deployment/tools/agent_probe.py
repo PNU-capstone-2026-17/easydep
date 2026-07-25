@@ -248,7 +248,13 @@ PROBES: tuple[Probe, ...] = (
           "인용되는가 — 지침이 사실로 승격되지 않고 advisory 고지가 붙는가는 "
           "도구 출력이 보장한다",
           want_tools=("pattern_search",), forbid_tools=("web_search",),
-          want_any=("radeoff", "트레이드오프")),
+          # **판정 아티팩트 6번째(2026-07-25).** 모델은 5회 전부 `트레이드‑오프`로
+          # 쓴다 — 가운데가 U+2011이라 `트레이드오프`와 절대 안 맞았다. 정규화는
+          # U+2011을 ASCII 하이픈으로 바꿀 뿐이라 여전히 `트레이드-오프`다.
+          # 통과하던 3회는 영어 인용문의 `Tradeoff`에 걸린 것이었고, 한국어 후보는
+          # 한 번도 제 일을 한 적이 없다. 낱말 형태 변형은 정규화가 못 잡으므로
+          # **후보를 접두어로** 건다.
+          want_any=("radeoff", "트레이드")),
     Probe("X7", '다음 설계 JSON으로 배포 구성을 만들어줘: {"schemaVersion":"1",'
           '"name":"probe-app","components":[{"id":"api","name":"Api"}],'
           '"artifacts":[{"id":"o1","kind":"openapi","componentId":"api",'
@@ -462,7 +468,13 @@ PROBES: tuple[Probe, ...] = (
           "**MS 표가 안 덮는 프로바이더를 diagrams 분류가 덮는다.** ibm_cos_bucket· "
           "openstack objectstorage가 나와야 하고, 근거가 다르다는 것(교차/단일)이 "
           "데이터에 있다",
-          want_tools=("kb_equivalent_types",), forbid_tools=("web_search",),
+          # **경로가 아니라 사실을 검사한다(H1 선례).** 실측에서 kb_search_types만
+          # 6회 불러 답한 회차가 있었는데, 답은 `ibm_cos_bucket_object`·
+          # `openstack_objectstorage_account_v1`을 정확히 대고 있었다 — 도구를
+          # 지목해 요구하면 **근거 있는 옳은 답이 경로 때문에 실패로 찍힌다.**
+          # 지킬 것은 그 타입들이 답에 있는가이고 그건 want_any가 본다.
+          want_any_tool=("kb_equivalent_types", "kb_search_types"),
+          forbid_tools=("web_search",),
           want_any=("cos_bucket", "objectstorage", "오브젝트 스토리지")),
 
     Probe("GL1", "AWS 서울에 VM 하나 올리려면 뭐가 같이 필요하고 얼마나 들어?",

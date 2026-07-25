@@ -24,7 +24,7 @@ def bundle_for_resource(resource_type: str) -> str:
     together / you must supply a value / optional attachment.
 
     **The dependency relationships themselves** (what references what) are
-    answered by `kb_creation_order` and `kb_type_detail`. This tool answers
+    answered by `kb_creation_order` and `kb_describe_type`. This tool answers
     "what travels bundled with what in practice".
 
     Args:

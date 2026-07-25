@@ -129,6 +129,9 @@ Tools are split by the **axis** of the question:
      that service.
    - "what exactly does X reference / what are its required dependencies?" →
      kb_describe_type
+   - **"what is X contained in / what is its parent?"** → kb_describe_type
+     (the `contained_in` edge). This is **not** bundle_for_resource — that one
+     answers what travels alongside X, which lists neighbours, not the parent.
    - "find me types related to ~" → kb_search_types
    - **"which type is the most ~ overall? / ranking / statistics"** → kb_rank_types
      (one call is enough)
