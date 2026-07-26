@@ -60,6 +60,21 @@ class UseCaseSpecItem(TypedDict):
     minimal_guarantee: list[str]
     issues: list[str]               # 검증 위반(정적+의미). reflection 루프 후 남은 것.
     repair_iters: int               # 반성 루프에서 재생성한 횟수
+    # 의미 검증(LLM)을 실제로 거쳤는지. "ok"|"disabled"|"failed"|"pending".
+    # issues가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없어서 둔다.
+    # 예전 spec item과 섞일 수 있으므로 NotRequired.
+    semantic_status: NotRequired[str]
+    # 생성이 성공했는지. False면 이 항목은 자리만 지키는 빈 명세다(형제를 살리려고
+    # 남긴다 — 목록에서 빼면 산출물에서 조용히 사라진다). 없으면 성공한 것으로 본다.
+    generated: NotRequired[bool]
+    # 반성 루프가 멈춘 이유.
+    #   "clean"          결함이 없어져서
+    #   "no_improvement" 재생성이 결함을 줄이지 못해서(개수가 같은 것도 포함)
+    #   "budget"         max_repair_iters를 다 써서
+    #   "error"          재생성 호출이 실패해서
+    #   "not_generated"  최초 생성부터 실패해 루프에 들어가지도 못해서
+    # 부분(수술적) 수정으로 바꿀 값어치가 있는지는 이 분포를 봐야 안다.
+    repair_stopped: NotRequired[str]
 
 
 class AgentState(TypedDict):

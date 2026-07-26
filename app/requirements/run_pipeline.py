@@ -16,6 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.runner import (
     ARTIFACTS_DIR,
@@ -38,6 +39,7 @@ def _reconfigure_utf8() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _reconfigure_utf8()
+    telemetry.configure_logging()
     parser = argparse.ArgumentParser(
         prog="python -m app.requirements.run_pipeline",
         description="요구사항 → 액터/유스케이스/명세/다이어그램 파이프라인 실행 + 아티팩트 저장",
@@ -70,7 +72,10 @@ def main(argv: list[str] | None = None) -> int:
         obj = load_input(path or name)
         classified = obj.get("classified") or []
         print(f"\n[run] {name}: 요구사항 {len(classified)}개 실행 중...")
-        state = run_pipeline(classified)
+        # 데이터셋마다 스코프를 연다 — 합계가 "무엇 하나에 대한 것"인지 분명해야
+        # 실행끼리 비교할 수 있다.
+        with telemetry.run_scope(f"batch:{name}") as stats:
+            state = run_pipeline(classified)
         run_dir = persist_run(
             obj, state, dataset_name=obj.get("name", name), artifact_root=Path(args.out)
         )
@@ -82,9 +87,23 @@ def main(argv: list[str] | None = None) -> int:
             f"coverage={cov.get('coverage_ratio')} "
             f"specs={len(state.get('use_case_specs', []))}"
         )
+        summary = stats.as_dict()
+        print(
+            f"    llm_calls={summary['llm_calls']} "
+            f"tokens={summary['prompt_tokens']}+{summary['completion_tokens']} "
+            f"fallbacks={summary['structured_fallbacks']} "
+            f"llm_seconds={summary['llm_seconds']}"
+        )
+        # 실행끼리 산출물을 비교할 때 지문이 다르면 그 차이를 코드 탓으로 돌릴 수 없다.
+        print(f"    backend={','.join(summary['model_fingerprints']) or '(미제공)'}")
         orphans = cov.get("orphan_fr_ids")
         if orphans:
             print(f"    [WARN] 고아 FR: {orphans}")
+        # 저하가 있으면 위 숫자들을 액면가로 읽으면 안 된다. 예를 들어 의미 검증이
+        # 죽은 채 돈 실행은 "결함 0"이 아니라 "결함을 안 본 것"이다.
+        for entry in summary["degradations"]:
+            subject = f" ({entry['subject']})" if entry["subject"] else ""
+            print(f"    [DEGRADED] {entry['component']}{subject}: {entry['reason']}")
     return 0
 
 

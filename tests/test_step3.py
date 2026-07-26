@@ -16,6 +16,7 @@ import pytest
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.agent.steps.step3_specifications import _clean, _validate_spec
+from app.requirements.common import telemetry
 from app.requirements.schemas import (
     Extension,
     ExtensionHandlingStep,
@@ -239,14 +240,66 @@ def test_reflection_loop_repairs_until_clean(monkeypatch):
     assert spec["repair_iters"] == 1
 
 
-def test_reflection_loop_stops_at_repair_budget(monkeypatch):
-    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
-    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _bad_spec())
+def test_reflection_loop_gives_up_when_regeneration_does_not_help(monkeypatch):
+    """나아지지 않는 재생성에 예산을 계속 쓰지 않는다.
 
+    예전에는 결함 **개수가 늘 때만** 거절했다. 그래서 결함 3개가 다른 결함 3개로
+    바뀌어도 채택하고 다음 반복까지 돌았다 — 나아진 것 없이 호출만 두 배로 썼다.
+    """
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        calls["n"] += 1
+        return _bad_spec()               # 몇 번을 물어도 같은 위반
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
+    assert spec["issues"]                        # 여전히 위반 → 표면화
+    assert spec["repair_stopped"] == "no_improvement"
+    assert spec["repair_iters"] == 1             # 시도는 1회에서 멈춘다
+    assert calls["n"] == 2                       # 최초 생성 + 재생성 1회뿐
+
+
+def test_reflection_loop_stops_at_repair_budget(monkeypatch):
+    """매번 조금씩 나아지지만 끝내 깨끗해지지 않으면 예산에서 멈춘다."""
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 2)
+    # 위반 스텝 3개 → 2개 → 1개. 위반은 **스텝마다** 하나씩 세므로 개수가 실제로 줄고,
+    # 그래서 매번 채택되어 예산이 먼저 소진된다.
+    bad, good = "User clicks it", "The user submits the order"
+    rounds = [
+        [bad, bad, bad],
+        [bad, bad, good],
+        [bad, good, good],
+    ]
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        sentences = rounds[min(calls["n"], len(rounds) - 1)]
+        calls["n"] += 1
+        return _clean_spec(
+            main_scenario=[_step(i, s) for i, s in enumerate(sentences, start=1)]
+        )
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+    spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
+
+    assert spec["repair_stopped"] == "budget"
     assert spec["repair_iters"] == 2     # 예산 소진
-    assert spec["issues"]                # 여전히 위반(안 고쳐짐) → 표면화
+    assert spec["issues"]                # 줄었지만 남아 있다 → 표면화
+
+
+def test_repair_stopped_is_aggregated_in_the_report(monkeypatch):
+    """왜 멈췄는지의 분포가 리포트에 있어야 부분 수정으로 바꿀 근거가 생긴다."""
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+
+    state = s3.generate_specs(
+        {"use_cases": [_uc("UC1"), _uc("UC2")], "classified": _CLASSIFIED, "actors": []}
+    )
+    report = s3.check_specs(state)["spec_report"]
+    assert report["repair_stopped"] == {"clean": 2}
 
 
 def test_semantic_validator_merges_and_drives_repair(monkeypatch):
@@ -263,6 +316,87 @@ def test_semantic_validator_merges_and_drives_repair(monkeypatch):
 
     assert any("[semantic]" in i for i in spec["issues"])  # 의미 결함이 병합됨
     assert spec["repair_iters"] == 1                        # 의미 결함이 재생성을 유발
+    assert spec["semantic_status"] == "ok"                  # 실제로 검증을 거쳤다
+
+
+def test_dead_semantic_validator_is_not_reported_as_clean(monkeypatch):
+    """검증기가 죽으면 "결함 없음"이 아니라 "확인하지 못함"이어야 한다.
+
+    예전에는 예외를 삼키고 빈 리스트를 돌려줘서, NIM이 내려가 있으면 모든 명세가
+    조용히 깨끗하게 통과했다. 리포트만 보고는 구별할 방법이 없었다.
+    """
+    monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
+
+    def fake(schema, messages):
+        if schema is UseCaseSpec:
+            return _clean_spec()              # 정적으론 깨끗
+        raise RuntimeError("NIM down")        # 의미 검증기는 죽어 있다
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+    with telemetry.run_scope("t") as stats:
+        state = s3.generate_specs(
+            {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+        )
+    spec = state["use_case_specs"][0]
+
+    assert spec["issues"] == []                        # 정적 검증만으로는 깨끗하고
+    assert spec["semantic_status"] == "failed"         # 그게 "검증했다"는 뜻은 아니다
+
+    report = s3.check_specs(state)["spec_report"]
+    assert report["unvalidated_ucs"] == ["UC1"]        # 리포트에서 구별된다
+
+    degraded = stats.as_dict()["degradations"]
+    assert [d["component"] for d in degraded] == ["spec.semantic_validator"]
+    assert degraded[0]["subject"] == "UC1"
+
+
+def test_one_failed_use_case_does_not_discard_its_siblings(monkeypatch):
+    """UC 하나가 죽어도 이미 끝난 형제는 살아남아야 한다.
+
+    예전에는 fut.result()의 예외가 그대로 올라가 노드 전체가 실패했고, 10개 중 9개가
+    끝나 있어도 그 9개까지 버려졌다.
+    """
+    monkeypatch.setattr(s3.settings, "enable_semantic_validator", False)
+
+    def fake(schema, messages):
+        if "Bravo" in messages[1].content:
+            raise RuntimeError("NIM 429 Too Many Requests")
+        return _clean_spec(trigger=messages[1].content.splitlines()[0])
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+    ucs = [_uc("UC1", name="Alpha"), _uc("UC2", name="Bravo"), _uc("UC3", name="Charlie")]
+    with telemetry.run_scope("t") as stats:
+        state = s3.generate_specs(
+            {"use_cases": ucs, "classified": _CLASSIFIED, "actors": []}
+        )
+
+    specs = state["use_case_specs"]
+    # 순서도 자리도 유지된다 — 실패한 UC가 목록에서 사라지지 않는다.
+    assert [s["use_case_id"] for s in specs] == ["UC1", "UC2", "UC3"]
+    assert [s.get("generated", True) for s in specs] == [True, False, True]
+    assert specs[0]["trigger"] == "Use case: Alpha"       # 형제는 온전하다
+    assert specs[2]["trigger"] == "Use case: Charlie"
+    assert "NIM 429" in specs[1]["issues"][0]             # 왜 비었는지가 적혀 있다
+
+    report = s3.check_specs(state)["spec_report"]
+    assert report["failed_ucs"] == ["UC2"]
+    degraded = stats.as_dict()["degradations"]
+    assert [(d["component"], d["subject"]) for d in degraded] == [("spec.generate", "UC2")]
+
+
+def test_disabled_semantic_validator_is_not_counted_as_failure(monkeypatch):
+    """끈 것과 죽은 것은 다르다 — 끈 것은 저하가 아니다."""
+    monkeypatch.setattr(s3.settings, "enable_semantic_validator", False)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+
+    with telemetry.run_scope("t") as stats:
+        state = s3.generate_specs(
+            {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}
+        )
+
+    assert state["use_case_specs"][0]["semantic_status"] == "disabled"
+    assert s3.check_specs(state)["spec_report"]["unvalidated_ucs"] == []
+    assert stats.as_dict()["degradations"] == []
 
 
 # ---------------------------------------------------------------------------

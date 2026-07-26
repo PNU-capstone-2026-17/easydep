@@ -364,6 +364,26 @@ class FeedbackIntent(BaseModel):
     )
 
 
+class FeedbackEdit(BaseModel):
+    """화면이 이미 아는 것을 추측하지 않고 그대로 보내는 구조화 피드백.
+
+    자연어 피드백은 LLM이 `{stage, scope, target_ids}`를 **추측**해야 한다. 그런데
+    화면은 사용자가 어느 단계의 어느 항목을 편집 중인지 이미 알고 있다. 알고 있는 것을
+    보내면 그 LLM 호출과 오분류가 통째로 사라진다.
+
+    `instruction`만 자연어로 남는다 — 무엇을 어떻게 바꿀지는 사람이 말해야 하고 그건
+    생성 모델의 몫이다. **자연어 경로를 대체하지 않는다**: 사용자가 use_cases 게이트에서
+    "액터에서 관리자를 분리해줘"라고 적으면 분류기가 actors로 보내 주는데, 그 기능은
+    그대로 둔다. 화면이 확신할 때만 이 형태를 쓴다.
+    """
+
+    stage: Literal["actors", "use_cases", "specs", "relationships"]
+    scope: Literal["local", "broad"] = "broad"
+    #: local일 때 대상 항목 id. broad면 비운다.
+    target_ids: list[str] = Field(default_factory=list)
+    instruction: str
+
+
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
 # ----------------------------------------------------------------------------
@@ -384,6 +404,9 @@ class AnalyzeRequest(BaseModel):
 
     requirements: list[str] | None = None
     answer: str | None = None
+    # 자연어 대신 보내는 구조화 편집(피드백 게이트 전용). answer와 함께 보낼 수 없다 —
+    # 둘 다 오면 무엇을 따를지가 모호해지므로 400으로 거절한다.
+    edit: FeedbackEdit | None = None
     thread_id: str | None = None
     # 대화형 게이트(step1 clarify + 각 스텝 피드백) 사용 여부. None이면 서버 기본값(설정)을 따른다.
     # 신규 세션 시작 시에만 의미가 있으며, 이후 재개(answer)는 세션이 시작된 모드를 유지한다.
@@ -403,6 +426,11 @@ class AnalyzeResponse(BaseModel):
     # status == need_feedback 일 때 채워짐(대화형 피드백 게이트)
     feedback_prompt: str | None = None
     feedback_summary: object | None = None
+    # 이 게이트에서 화면이 구조화 편집(FeedbackEdit)을 만들 때 쓸 재료.
+    # edit_stage는 이 게이트가 재생성할 수 있는 단계, edit_targets는 고를 수 있는 항목 id다.
+    # 화면이 이걸 쓰면 의도 분류 LLM 호출이 생략된다.
+    edit_stage: str | None = None
+    edit_targets: list[str] | None = None
     # status == completed 일 때 채워짐 (step1)
     requirements: list[RequirementItemOut] | None = None
     # step2~4 산출물 — 파이프라인은 항상 실행되지만, 게이트 interrupt로 중간에 멈춘
@@ -421,3 +449,7 @@ class AnalyzeResponse(BaseModel):
     # app_id를 보냈을 때만 채워지며, 화면이 "무엇이 저장됐는지"를 표시하는 데 쓴다.
     # 내용이 이전과 같으면 저장하지 않으므로 빈 리스트일 수 있다.
     saved_stages: list[str] | None = None
+    # 이번 호출에서 실제로 일어난 일: LLM 호출 수·토큰·폴백 횟수와 **저하 목록**.
+    # degradations가 비어 있지 않으면 산출물 일부가 검증을 못 거쳤다는 뜻이므로,
+    # 화면은 결과를 그대로 신뢰해서는 안 된다. (app/requirements/common/telemetry.py)
+    telemetry: dict | None = None

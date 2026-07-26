@@ -12,8 +12,14 @@ class Settings(BaseSettings):
     base_url: str = "https://integrate.api.nvidia.com/v1"
     # NIM에서 사용할 모델 ID. 요구사항 분석 에이전트 기본값은 gpt-oss-120b.
     model: str = "openai/gpt-oss-120b"
-    # 분류/구조화 작업 위주라 낮은 온도로 결정성을 높인다.
-    temperature: float = 0.2
+    # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다.
+    # (2026-07-26까지 0.2였다. 설계 원칙 1번이 재현성인데 그 값은 매 실행 다른 결과를
+    #  냈고, 같은 저장소의 설계 에이전트는 이미 temperature=0/seed=42를 쓰고 있었다.)
+    temperature: float = 0.0
+    # 같은 입력에 같은 표본을 요청한다. **보장이 아니라 요청이다** —
+    # OpenAI 호환 API의 seed는 best-effort이고, 백엔드가 바뀌면(아래 fingerprint 참고)
+    # 같은 seed라도 결과가 달라진다. None이면 파라미터를 보내지 않는다.
+    seed: int | None = 42
     # few-shot 예시 코사인 샘플링용 NIM 임베딩 모델(OpenAI 호환 embeddings 엔드포인트).
     # base_url/api_key 는 위 자격증명을 재사용한다. example_sampler 의 backend="nim" 참고.
     embed_model: str = "nvidia/llama-nemotron-embed-1b-v2"
@@ -43,6 +49,11 @@ class Settings(BaseSettings):
     enable_feedback_gates: bool = False
     # 정적 체크에 더해 LLM 의미 검증(hidden branching·scope creep 등)을 병합할지.
     enable_semantic_validator: bool = True
+    # 서빙 경로에서 대화형 세션(체크포인트+게이트 모드)을 MySQL에 저장할지.
+    # True면 서버가 재시작해도 진행 중인 분석이 이어지고, 파드를 여럿 띄울 수 있다.
+    # server.py가 기동 시 init_db()를 부르므로 서빙 경로는 어차피 MySQL을 요구한다.
+    # CLI·배치 러너는 이 값과 무관하게 항상 메모리를 쓴다(프로세스와 수명이 같다).
+    enable_session_persistence: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

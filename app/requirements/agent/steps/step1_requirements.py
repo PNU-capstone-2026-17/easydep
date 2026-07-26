@@ -14,11 +14,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState, RequirementItem
 from app.requirements.classifier import bert_available, classify_bert
+from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
 from app.requirements.legacy.auto_clarify import *
 from app.requirements.schemas import *
 
 
+@contract("intake", requires=("raw_requirements",))
 def intake(state: AgentState) -> dict:
     """입력 요구사항 배열을 첫 사용자 메시지로 그래프에 넣는다."""
     reqs = state.get("raw_requirements") or []
@@ -27,6 +29,8 @@ def intake(state: AgentState) -> dict:
     return {"messages": [human], "phase": "intake"}
 
 
+# 구체화본이 없으면 원문으로 분류한다. 둘 다 없을 때만 상류가 안 돈 것이다.
+@contract("classify", requires_any=("refined_requirements", "raw_requirements"))
 def classify(state: AgentState, feedback: str = "") -> dict:
     """refined 요구사항을 파인튜닝 BERT로 FR/NFR 분류한다(BERT 단독).
 
@@ -75,6 +79,7 @@ def _apply_constraint_links(classified: list[RequirementItem], links: list[dict]
 
 
 
+@contract("clarify", requires=("raw_requirements", "messages"))
 def clarify(state: AgentState) -> dict:
     """구체화 Few-Shot 예시가 포함된 프롬프트"""
     # few-shot 예시 선별 방법은 settings 로 전환(random | mmr+nim). mmr+nim 은

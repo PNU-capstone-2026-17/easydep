@@ -16,6 +16,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
+from app.requirements.common import telemetry
+from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
 from app.requirements.schemas import ActorResult, UseCaseResult
 
@@ -41,6 +43,7 @@ def _usecase_examples() -> str:
     return ""
 
 
+@contract("identify_actors", requires=("classified",))
 def identify_actors(state: AgentState, feedback: str = "") -> dict:
     """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시."""
     classified = state.get("classified") or []
@@ -108,6 +111,7 @@ def _local_edit_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
+@contract("identify_use_cases", requires=("classified", "actors"))
 def identify_use_cases(
     state: AgentState, feedback: str = "", target_ids: list[str] | None = None
 ) -> dict:
@@ -166,7 +170,13 @@ def identify_use_cases(
                 [SystemMessage(content=prompts.USECASES_SYSTEM), HumanMessage(content=repair)],
             )
         except Exception as exc:  # noqa: BLE001 - 재생성 실패 시 직전 목록 유지
-            print(f"[agent] usecase 커버리지 재생성 실패(직전본 유지): {exc}")
+            # 보충을 못 했으므로 고아 FR이 남은 채로 다음 단계로 간다. check_coverage가
+            # 그 사실 자체는 결정론으로 계산하지만, 왜 못 메웠는지는 여기에만 있다.
+            telemetry.record_degradation(
+                "use_cases.coverage_repair",
+                f"{type(exc).__name__}: {exc}",
+                subject=",".join(orphans),
+            )
             break
         # 보충이 오히려 커버리지를 줄이면 채택하지 않고 중단(회귀 방지).
         new_covered = {rid for uc in result.use_cases for rid in uc.requirement_ids}
@@ -178,6 +188,7 @@ def identify_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
+@contract("check_coverage", requires=("classified", "use_cases"))
 def check_coverage(state: AgentState) -> dict:
     """FR 커버리지를 결정론적으로 점검한다.
 

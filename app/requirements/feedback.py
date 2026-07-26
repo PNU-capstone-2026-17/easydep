@@ -11,6 +11,7 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
+from app.requirements.agent import stages
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step2_usecases import (
@@ -23,20 +24,21 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
 )
-from app.requirements.schemas import FeedbackIntent
+from app.requirements.common import telemetry
+from app.requirements.schemas import FeedbackEdit, FeedbackIntent
 
-# 선형 stage 순서와 하위 재실행 함수 이름(런타임 globals 조회 → 테스트에서 monkeypatch 가능).
-# 이름으로만 참조하므로 정적 분석에는 위 두 임포트가 미사용으로 보인다 — noqa 참고.
-_ORDER = ["actors", "use_cases", "coverage", "specs", "relationships", "diagram"]
-_STAGE_FN_NAME = {
-    "use_cases": "identify_use_cases",
-    "coverage": "check_coverage",
-    "specs": "generate_specs",
-    "relationships": "identify_relationships",
-    "diagram": "render_diagram",
-}
-# 사용자 피드백으로 재생성할 수 있는 stage(coverage/diagram은 상위에서 파생되는 결정론 stage).
-_EDITABLE = ("actors", "use_cases", "specs", "relationships")
+_log = telemetry.get_logger("feedback")
+
+# 선형 stage 순서·재실행 함수 이름·편집 가능 stage는 전부 단계 목록에서 파생한다
+# (app/requirements/agent/stages.py). 예전엔 여기 손으로 적혀 있어서, 파이프라인을
+# 바꾸면 그래프와 여기가 조용히 어긋날 수 있었다.
+#
+# 함수는 이름으로 찾아 globals()에서 꺼낸다 — 테스트가 이 모듈의 stage 함수를
+# monkeypatch할 수 있어야 하기 때문이다. 그래서 정적 분석에는 위 두 임포트가
+# 미사용으로 보인다(noqa 참고).
+_ORDER = list(stages.cascade_order())
+_STAGE_FN_NAME = stages.node_by_key()
+_EDITABLE = stages.editable_keys()
 
 
 def _clamp_editable_stage(up_to: str) -> str:
@@ -69,6 +71,25 @@ def classify_feedback(feedback: str, state: dict) -> FeedbackIntent:
         ),
     ]
     return invoke_structured(FeedbackIntent, messages)
+
+
+def resolve_intent(feedback: str | FeedbackEdit, state: dict) -> FeedbackIntent:
+    """피드백을 재생성 의도로 바꾼다.
+
+    구조화 편집(`FeedbackEdit`)이면 화면이 이미 아는 것이므로 그대로 쓴다 — LLM 호출도
+    오분류도 없다. 자연어면 예전처럼 분류기를 태운다. 어느 쪽을 탔는지는 계측에 남는데,
+    화면이 구조화 경로로 옮겨 가는지를 그 숫자로 확인할 수 있어야 하기 때문이다.
+    """
+    if isinstance(feedback, FeedbackEdit):
+        _log.debug("feedback routed structurally", extra={"stage": feedback.stage})
+        return FeedbackIntent(
+            stage=feedback.stage,
+            scope=feedback.scope,
+            # broad인데 대상이 붙어 오면 무시한다 — 둘이 어긋나면 scope가 진실이다.
+            target_ids=feedback.target_ids if feedback.scope == "local" else [],
+            instruction=feedback.instruction,
+        )
+    return classify_feedback(feedback, state)
 
 
 def _regenerate_stage(state: dict, intent: FeedbackIntent) -> None:
@@ -105,14 +126,18 @@ def _cascade(state: dict, edited_stage: str, up_to: str | None = None) -> list[s
     return ran
 
 
-def apply_feedback_upto(state: dict, feedback: str, up_to: str) -> tuple[FeedbackIntent, list[str]]:
-    """게이트용: 피드백을 분류해 대상 stage를 재생성하고, up_to stage까지만 cascade한다.
+def apply_feedback_upto(
+    state: dict, feedback: str | FeedbackEdit, up_to: str
+) -> tuple[FeedbackIntent, list[str]]:
+    """게이트용: 피드백에서 의도를 정해 대상 stage를 재생성하고, up_to stage까지만 cascade한다.
 
     게이트는 파이프라인을 아직 up_to까지만 진행한 상태이므로, 아직 생성되지 않은 하위는 건드리지
-    않는다. 분류가 up_to보다 하위 stage를 가리키면(아직 없는 산출물) up_to로 클램프한다.
-    반환: (분류 의도, 재실행된 하위 stage 목록).
+    않는다. 의도가 up_to보다 하위 stage를 가리키면(아직 없는 산출물) up_to로 클램프한다.
+    **클램프는 구조화 편집에도 똑같이 건다** — 화면이 보낸 값이라고 믿고 아직 없는 산출물을
+    재생성하려 들면 거기서 깨진다.
+    반환: (적용된 의도, 재실행된 하위 stage 목록).
     """
-    intent = classify_feedback(feedback, state)
+    intent = resolve_intent(feedback, state)
     if _ORDER.index(intent.stage) > _ORDER.index(up_to):
         # 아직 생성 안 된 하위를 지목 → up_to 이하의 '재생성 가능한' 최상위 stage로 클램프.
         # (coverage/diagram은 결정론 파생 stage라 재생성 대상이 아님 → 각각 use_cases/relationships로.)
@@ -136,12 +161,12 @@ def _consistency(state: dict) -> dict:
     }
 
 
-def apply_feedback(state: dict, feedback: str) -> tuple[dict, dict]:
+def apply_feedback(state: dict, feedback: str | FeedbackEdit) -> tuple[dict, dict]:
     """피드백을 적용해 대상 stage를 재생성하고 하위를 cascade 재실행한다.
 
     반환: (갱신된 state, 리포트). state는 in-place로도 갱신된다.
     """
-    intent = classify_feedback(feedback, state)
+    intent = resolve_intent(feedback, state)
     _regenerate_stage(state, intent)
     cascaded = _cascade(state, intent.stage)
     report = {

@@ -204,7 +204,11 @@ def test_identify_use_cases_empty_when_no_fr(monkeypatch):
         s2, "invoke_structured",
         lambda schema, messages: pytest.fail("no FR면 호출되면 안 됨"),
     )
-    out = s2.identify_use_cases({"classified": [{"id": "N1", "text": "x", "type": "NFR"}]})
+    # actors는 상류(identify_actors)가 항상 채운다 — FR이 없으면 빈 목록으로. 그 상태를
+    # 그대로 준다(키를 빼면 상태 계약이 배선 오류로 잡는다).
+    out = s2.identify_use_cases(
+        {"classified": [{"id": "N1", "text": "x", "type": "NFR"}], "actors": []}
+    )
     assert out["use_cases"] == []
 
 

@@ -24,6 +24,7 @@ from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step1_requirements import classify
 from app.requirements.agent.steps.step3_specifications import check_specs
 from app.requirements.agent.steps.step4_diagram import check_relationships
+from app.requirements.schemas import FeedbackEdit
 
 
 def apply_feedback_upto(state: dict, feedback: str, up_to: str):
@@ -37,18 +38,33 @@ def apply_feedback_upto(state: dict, feedback: str, up_to: str):
     return _impl(state, feedback, up_to)
 
 
-def _ask(stage: str, summary) -> str:
-    """피드백을 요청하는 interrupt. 재개 값(문자열)을 반환한다."""
+def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=()) -> object:
+    """피드백을 요청하는 interrupt. 재개 값을 그대로 반환한다.
+
+    재개 값은 자연어 문자열이거나 `FeedbackEdit`이다. `edit_stage`/`edit_targets`는
+    화면이 후자를 만들 때 쓰는 재료다 — 어느 단계를 재생성할 수 있고 어떤 항목을
+    고를 수 있는지. 화면이 그걸 보내면 의도 분류 LLM 호출이 생략된다.
+    """
     return interrupt({
         "stage": stage,
         "status": "need_feedback",
         "prompt": f"[{stage}] 결과에 대한 피드백을 입력하세요. 비워두면 다음 단계로 진행합니다.",
         "summary": summary,
+        "edit_stage": edit_stage,
+        "edit_targets": list(edit_targets),
     })
 
 
 def _empty(answer) -> bool:
+    """다음 단계로 진행하라는 신호인지. 구조화 편집은 지시가 비었을 때만 비어 있다."""
+    if isinstance(answer, FeedbackEdit):
+        return not answer.instruction.strip()
     return not str(answer or "").strip()
+
+
+def _as_text(answer) -> str:
+    """자연어만 받는 자리(step1 재분류)에 넘길 문자열."""
+    return answer.instruction if isinstance(answer, FeedbackEdit) else str(answer)
 
 
 def _pick(state: dict, keys: tuple[str, ...]) -> dict:
@@ -70,30 +86,49 @@ def gate_requirements(state: AgentState) -> dict:
     피드백이 있으면 재분류(classify: BERT 단독) 후 루프백, 없으면 다음 단계(step2)로 진행한다.
     (step1은 아직 액터/UC가 없어 의도 분류 대상이 아니므로 여기서는 분류 노드를 그대로 재실행한다.)
     """
-    answer = _ask("requirements", [f"{r['id']}:{r['type']} {r['text']}" for r in state.get("classified", [])])
+    # step1에는 재생성할 stage 선택지가 없다(분류는 BERT 단독 결정론). 그래서
+    # edit_stage를 주지 않는다 — 화면이 구조화 편집을 만들 재료가 없다는 뜻이다.
+    answer = _ask(
+        "requirements",
+        [f"{r['id']}:{r['type']} {r['text']}" for r in state.get("classified", [])],
+    )
     if _empty(answer):
         return {"gate_route": "advance"}
-    upd = classify(state, feedback=str(answer))  # BERT 단독 재분류
+    upd = classify(state, feedback=_as_text(answer))  # BERT 단독 재분류
     return {**upd, "gate_route": "loop"}
 
 
 def gate_use_cases(state: AgentState) -> dict:
-    """step2(액터/유스케이스) 말미 게이트. 의도 분류로 actors/use_cases를 범위대로 재생성."""
-    answer = _ask("use_cases", [u["name"] for u in state.get("use_cases", [])])
+    """step2(액터/유스케이스) 말미 게이트. 의도에 따라 actors/use_cases를 범위대로 재생성."""
+    use_cases = state.get("use_cases", [])
+    answer = _ask(
+        "use_cases",
+        [u["name"] for u in use_cases],
+        edit_stage="use_cases",
+        # id가 없는 항목은 고를 수 없으니 뺀다. 게이트가 사용자에게 물어보는 자리라
+        # 여기서 KeyError로 죽으면 세션이 통째로 끝난다.
+        edit_targets=[u["id"] for u in use_cases if u.get("id")],
+    )
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, str(answer), up_to="coverage")
+    apply_feedback_upto(st, answer, up_to="coverage")
     return {**_pick(st, ("actors", "use_cases", "coverage")), "gate_route": "loop"}
 
 
 def gate_specs(state: AgentState) -> dict:
     """step3(명세) 말미 게이트. specs local 피드백은 대상 UC 명세만 재생성한다."""
-    answer = _ask("specs", [s["use_case_id"] for s in state.get("use_case_specs", [])])
+    specs = state.get("use_case_specs", [])
+    answer = _ask(
+        "specs",
+        [s["use_case_id"] for s in specs],
+        edit_stage="specs",
+        edit_targets=[s["use_case_id"] for s in specs if s.get("use_case_id")],
+    )
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, str(answer), up_to="specs")
+    apply_feedback_upto(st, answer, up_to="specs")
     st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
     upd = _pick(st, ("actors", "use_cases", "coverage", "use_case_specs", "spec_report"))
     return {**upd, "gate_route": "loop"}
@@ -101,11 +136,14 @@ def gate_specs(state: AgentState) -> dict:
 
 def gate_relationships(state: AgentState) -> dict:
     """step4(관계/다이어그램) 말미 게이트."""
-    answer = _ask("relationships", state.get("relationships", {}))
+    # 관계는 항목 단위로 고르기 어렵다(연결의 집합이지 목록이 아니다) → broad만 제공.
+    answer = _ask(
+        "relationships", state.get("relationships", {}), edit_stage="relationships"
+    )
     if _empty(answer):
         return {"gate_route": "advance"}
     st = dict(state)
-    apply_feedback_upto(st, str(answer), up_to="diagram")
+    apply_feedback_upto(st, answer, up_to="diagram")
     st.update(check_specs(cast(AgentState, st)))          # 상위 stage 편집 시 명세도 바뀔 수 있어 갱신
     st.update(check_relationships(cast(AgentState, st)))  # relationship_report 갱신
     upd = _pick(st, (

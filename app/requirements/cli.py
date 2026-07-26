@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Callable
 
 from app.requirements.agent import resume_analysis, start_analysis
+from app.requirements.common import telemetry
 from app.requirements.config import settings
 
 
@@ -97,6 +98,7 @@ def _collect_requirements(args: argparse.Namespace, out: Callable[[str], None]) 
 
 def main(argv: list[str] | None = None) -> int:
     _reconfigure_utf8()
+    telemetry.configure_logging()
     parser = argparse.ArgumentParser(
         prog="python -m app.requirements.cli",
         description="클라우드 네이티브 요구사항 분석 에이전트 (FR/NFR 분류)",

@@ -15,7 +15,13 @@ from fastapi import APIRouter, HTTPException
 
 from app.repositories import artifact_repository
 from app.requirements.agent import resume_analysis, start_analysis
+from app.requirements.common import telemetry
+from app.requirements.config import settings
 from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse
+
+# 서버 진입점(server.py)은 이 에이전트의 것이 아니라 로깅 설정을 거기 둘 수 없다.
+# 라우터가 로드되는 시점에 한 번 설정한다 — 여러 번 불러도 핸들러가 겹치지 않는다.
+telemetry.configure_logging()
 
 router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
@@ -81,11 +87,22 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     app_id를 함께 보내면 단계가 끝날 때마다 그 앱의 저장소에 기록되고,
     이번 호출에서 저장된 stage 목록이 saved_stages로 돌아온다.
     """
-    # 답변 재개 경로
-    if req.answer is not None:
+    if req.answer is not None and req.edit is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="answer와 edit은 함께 보낼 수 없습니다. 둘 중 하나만 보내세요.",
+        )
+
+    # 재개 경로 — 자연어(answer) 또는 구조화 편집(edit).
+    resume = req.answer if req.answer is not None else req.edit
+    if resume is not None:
         if not req.thread_id:
-            raise HTTPException(status_code=400, detail="answer에는 thread_id가 필요합니다.")
-        payload = resume_analysis(req.answer, req.thread_id)
+            raise HTTPException(
+                status_code=400, detail="answer/edit 에는 thread_id가 필요합니다."
+            )
+        payload = resume_analysis(
+            resume, req.thread_id, persist=settings.enable_session_persistence
+        )
     else:
         # 신규 분석 시작 경로
         if not req.requirements:
@@ -94,7 +111,12 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
                 detail="requirements(요구사항 문장 배열) 또는 answer+thread_id가 필요합니다.",
             )
         thread_id = req.thread_id or str(uuid.uuid4())
-        payload = start_analysis(req.requirements, thread_id, req.feedback_gates)
+        payload = start_analysis(
+            req.requirements,
+            thread_id,
+            req.feedback_gates,
+            persist=settings.enable_session_persistence,
+        )
 
     if req.app_id:
         try:

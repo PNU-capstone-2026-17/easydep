@@ -2,6 +2,7 @@
 from app.requirements.agent import graph as g
 from app.requirements.agent import subgraphs as sg
 from app.requirements.agent.steps import feedback_gates as fg
+from app.requirements.schemas import FeedbackEdit
 
 
 def test_gate_advances_on_empty_feedback(monkeypatch):
@@ -69,6 +70,59 @@ def test_relationship_gate_loops_and_rerenders(monkeypatch):
     assert upd["gate_route"] == "loop"
     assert upd["diagram"] == "@startuml\n@enduml"
     assert upd["relationships"] == {"includes": [1]}
+
+
+def test_gate_offers_the_material_for_a_structured_edit(monkeypatch):
+    """게이트가 "어느 단계의 어느 항목을 고를 수 있는지"를 화면에 알려준다."""
+    asked = {}
+    monkeypatch.setattr(fg, "interrupt", lambda payload: asked.update(payload) or "")
+
+    fg.gate_use_cases({"use_cases": [{"id": "UC1", "name": "A"}, {"id": "UC2", "name": "B"}]})
+    assert asked["edit_stage"] == "use_cases"
+    assert asked["edit_targets"] == ["UC1", "UC2"]
+
+    asked.clear()
+    fg.gate_specs({"use_case_specs": [{"use_case_id": "UC1"}]})
+    assert asked["edit_stage"] == "specs"
+    assert asked["edit_targets"] == ["UC1"]
+
+    # 관계는 항목 단위로 고를 수 없다 → broad만.
+    asked.clear()
+    fg.gate_relationships({"relationships": {}})
+    assert asked["edit_stage"] == "relationships"
+    assert asked["edit_targets"] == []
+
+    # step1은 재생성할 단계 선택지가 없다(BERT 단독 결정론).
+    asked.clear()
+    fg.gate_requirements({"classified": []})
+    assert asked["edit_stage"] is None
+
+
+def test_gate_passes_a_structured_edit_through_untouched(monkeypatch):
+    """구조화 편집이 문자열로 뭉개지면 분류기가 다시 돌게 된다."""
+    edit = FeedbackEdit(
+        stage="use_cases", scope="local", target_ids=["UC2"], instruction="장바구니 UC를 합쳐줘"
+    )
+    monkeypatch.setattr(fg, "interrupt", lambda payload: edit)
+    seen = {}
+
+    def fake_apply(state, feedback, up_to):
+        seen["feedback"] = feedback
+        return None, []
+
+    monkeypatch.setattr(fg, "apply_feedback_upto", fake_apply)
+    upd = fg.gate_use_cases({"use_cases": [{"id": "UC1", "name": "A"}], "classified": []})
+
+    assert upd["gate_route"] == "loop"
+    assert seen["feedback"] is edit          # str()로 뭉개지 않는다
+
+
+def test_structured_edit_with_a_blank_instruction_advances(monkeypatch):
+    """지시가 비어 있으면 '다음 단계로'와 같다."""
+    edit = FeedbackEdit(stage="use_cases", instruction="   ")
+    monkeypatch.setattr(fg, "interrupt", lambda payload: edit)
+    upd = fg.gate_use_cases({"use_cases": [{"id": "UC1", "name": "A"}]})
+    assert upd["gate_route"] == "advance"
 
 
 _STAGE_NODES = ("refine_requirements", "model_use_cases", "write_specifications", "draw_diagram")

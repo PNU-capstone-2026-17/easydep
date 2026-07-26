@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import threading
 
+from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.model_assets import ensure_model_dir
 
@@ -48,8 +49,14 @@ def _load_bundle():
             model = BertForSequenceClassification.from_pretrained(model_dir)
             model.eval()
             _bundle = (tokenizer, model, torch)
-        except Exception as exc:  # noqa: BLE001 - 검증은 옵션 기능이라 실패해도 앱은 계속
-            print(f"[classifier] BERT 로드 실패 — 검증 노드 비활성화됨: {exc}")
+        except Exception as exc:  # noqa: BLE001 - 분류는 옵션 기능이라 실패해도 앱은 계속
+            # 이건 부가 기능의 저하가 아니다 — BERT가 없으면 step1이 모든 요구사항을
+            # FR로 강등하므로 NFR이 하나도 안 나온다. 산출물 전체의 의미가 바뀐다.
+            telemetry.record_degradation(
+                "classifier.bert",
+                f"로드 실패로 FR/NFR 분류를 못 한다(전부 FR로 강등됨): "
+                f"{type(exc).__name__}: {exc}",
+            )
             _bundle = False
             return None
     return _bundle

@@ -610,6 +610,7 @@
         <h2><span class="step-badge">✎</span> ${escapeHtml(phaseLabel(data.phase))} 결과에 대한 피드백</h2>
         <p class="hint">아래 결과를 확인하고, 수정하고 싶은 점을 자연어로 적으면 해당 단계를 재생성합니다. 없으면 <b>다음 단계로</b>를 누르세요.</p>
         <div class="status fb-summary"></div>
+        <div class="row fb-scope-row"><label class="hint">고칠 대상 <select class="fb-scope"></select></label></div>
         <textarea class="small fb-input" placeholder="예: UC3에 결제 실패 확장을 추가해줘 / 액터에서 관리자를 분리해줘"></textarea>
         <div class="row">
           <button class="fb-send">피드백 반영</button>
@@ -619,23 +620,63 @@
       const input = card.querySelector(".fb-input");
       const sendBtn = card.querySelector(".fb-send");
       const nextBtn = card.querySelector(".fb-next");
+      const scope = card.querySelector(".fb-scope");
 
-      // 이 카드를 히스토리로 고정: 버튼 줄을 '무엇을 했는지'로 교체하고 입력을 잠근다.
-      function lock(answer) {
-        const a = String(answer || "").trim();
-        card.querySelector(".row").innerHTML = a
-          ? `<span class="status">↳ 제출한 피드백: “${escapeHtml(a)}”</span>`
-          : `<span class="status">↳ 다음 단계로 진행</span>`;
-        if (a) { input.readOnly = true; } else { input.remove(); }
+      // 대상 선택 — 화면이 아는 것을 서버가 LLM으로 다시 추측하지 않게 한다.
+      // "자동"은 예전 그대로 자연어를 보내는 경로다. 이게 있어야 이 게이트가 아닌
+      // 다른 단계를 가리키는 피드백("액터에서 관리자를 분리해줘")이 계속 통한다.
+      const editStage = data.edit_stage || null;
+      const editTargets = data.edit_targets || [];
+      if (editStage) {
+        const options = [
+          { value: "auto", label: "자동 — 문장에서 판단" },
+          { value: "broad", label: `이 단계 전체 (${phaseLabel(data.phase)})` },
+          ...editTargets.map((id) => ({ value: "local:" + id, label: `${id} 만` })),
+        ];
+        scope.innerHTML = options
+          .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
+          .join("");
+      } else {
+        card.querySelector(".fb-scope-row").remove();   // step1엔 고를 단계가 없다
       }
 
-      async function act(answer, busyMsg) {
+      // 선택을 서버가 받는 형태로. "자동"이면 null을 돌려 자연어 경로를 쓰게 한다.
+      function buildEdit(instruction) {
+        if (!editStage || !scope || scope.value === "auto") return null;
+        if (scope.value === "broad") {
+          return { stage: editStage, scope: "broad", target_ids: [], instruction };
+        }
+        return {
+          stage: editStage, scope: "local",
+          target_ids: [scope.value.slice("local:".length)], instruction,
+        };
+      }
+
+      // 이 카드를 히스토리로 고정: 버튼 줄을 '무엇을 했는지'로 교체하고 입력을 잠근다.
+      function lock(text, edit) {
+        const a = String(text || "").trim();
+        const target = edit
+          ? (edit.scope === "local" ? ` → ${edit.target_ids.join(", ")}` : " → 이 단계 전체")
+          : "";
+        card.querySelector(".row").innerHTML = a
+          ? `<span class="status">↳ 제출한 피드백${escapeHtml(target)}: “${escapeHtml(a)}”</span>`
+          : `<span class="status">↳ 다음 단계로 진행</span>`;
+        if (a) { input.readOnly = true; if (scope) scope.disabled = true; }
+        else { input.remove(); card.querySelector(".fb-scope-row")?.remove(); }
+      }
+
+      // 서버는 answer(자연어)와 edit(구조화) 중 하나만 받는다 — 둘 다 보내면 400이다.
+      async function act(text, busyMsg) {
         setError(null);
         sendBtn.disabled = true; nextBtn.disabled = true;
         setBusy(true, busyMsg);
+        const edit = text ? buildEdit(text) : null;
         try {
-          const resp = await callAnalyze({ answer, thread_id: threadId });
-          lock(answer);      // 이 카드는 대화 기록으로 남기고
+          const body = edit
+            ? { edit, thread_id: threadId }
+            : { answer: text, thread_id: threadId };
+          const resp = await callAnalyze(body);
+          lock(text, edit);  // 이 카드는 대화 기록으로 남기고
           render(resp);      // 응답이 또 need_feedback이면 아래에 새 카드가 쌓인다
         } catch (e) {
           setError(e.message);

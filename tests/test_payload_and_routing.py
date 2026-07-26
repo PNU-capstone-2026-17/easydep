@@ -1,6 +1,8 @@
 """_result_payload 응답 변환 테스트."""
 from types import SimpleNamespace
 
+import pytest
+
 from app.requirements.agent.graph import _result_payload
 from app.requirements.schemas import AnalyzeResponse
 
@@ -72,3 +74,56 @@ def test_analyze_response_accepts_and_omits_pipeline_fields():
     # 파이프라인 미실행 → 해당 필드는 None.
     resp2 = AnalyzeResponse(**_result_payload({"classified": [req]}, "t"))
     assert resp2.diagram is None and resp2.use_cases is None and resp2.actors is None
+
+
+# ---------------------------------------------------------------------------
+# 구조화 편집(F) — 게이트가 준 재료가 응답까지 흘러가는가, 라우팅이 갈리는가.
+# ---------------------------------------------------------------------------
+def test_feedback_payload_carries_the_edit_material():
+    interrupt_obj = SimpleNamespace(value={
+        "stage": "specs", "status": "need_feedback", "prompt": "p", "summary": ["UC1"],
+        "edit_stage": "specs", "edit_targets": ["UC1", "UC2"],
+    })
+    out = _result_payload({"__interrupt__": [interrupt_obj]}, "tid")
+    assert out["status"] == "need_feedback"
+    assert out["edit_stage"] == "specs"
+    assert out["edit_targets"] == ["UC1", "UC2"]
+    # 스키마도 통과해야 화면까지 간다.
+    assert AnalyzeResponse(**out).edit_targets == ["UC1", "UC2"]
+
+
+def test_analyze_rejects_answer_and_edit_together():
+    """둘 다 오면 무엇을 따를지 모호하다 — 조용히 하나를 고르지 않는다."""
+    from fastapi import HTTPException
+
+    from app.requirements.api import analyze_endpoint
+    from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
+
+    req = AnalyzeRequest(
+        answer="자연어",
+        edit=FeedbackEdit(stage="specs", instruction="구조화"),
+        thread_id="t",
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        analyze_endpoint(req)
+    assert excinfo.value.status_code == 400
+
+
+def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
+    from app.requirements import api
+    from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
+
+    seen = {}
+
+    def fake_resume(answer, thread_id, *, persist=False):
+        seen.update(answer=answer, thread_id=thread_id, persist=persist)
+        return {"thread_id": thread_id, "phase": "specs", "status": "completed"}
+
+    monkeypatch.setattr(api, "resume_analysis", fake_resume)
+    monkeypatch.setattr(api.settings, "enable_session_persistence", True)
+    edit = FeedbackEdit(stage="specs", scope="local", target_ids=["UC1"], instruction="고쳐")
+    api.analyze_endpoint(AnalyzeRequest(edit=edit, thread_id="t-9"))
+
+    assert seen["answer"] is edit        # 문자열로 뭉개지 않고 그대로 넘어간다
+    assert seen["thread_id"] == "t-9"
+    assert seen["persist"] is True       # 서빙 경로는 세션을 DB에 남긴다

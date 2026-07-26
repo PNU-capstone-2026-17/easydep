@@ -13,6 +13,7 @@ import json
 import sys
 from pathlib import Path
 
+from app.requirements.common import telemetry
 from app.requirements.feedback import apply_feedback
 from app.requirements.runner import ARTIFACTS_DIR, load_state, persist_run
 
@@ -29,6 +30,7 @@ def _reconfigure_utf8() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _reconfigure_utf8()
+    telemetry.configure_logging()
     ap = argparse.ArgumentParser(prog="python -m app.requirements.apply_feedback")
     ap.add_argument("run_dir", help="피드백을 적용할 기존 artifacts/run_*/ 디렉토리")
     ap.add_argument("feedback", help="자연어 피드백")
