@@ -93,6 +93,10 @@ class AgentState(TypedDict):
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]
     coverage: dict                   # check_coverage의 결정론적 커버리지 결과
+    # review_model(독립 의미 검증자)의 판정. {issues, semantic_status, unexamined_rules}.
+    # 커버리지와 나란히 두는 이유: 하나는 "빠진 게 없나"(결정론), 다른 하나는 "모델이
+    # 규칙을 지켰나"(의미)이고 둘은 서로를 대신하지 못한다.
+    model_review: NotRequired[dict]
     # 3단계 — 유스케이스별 명세(병렬 생성) + 검증 요약
     use_case_specs: list[UseCaseSpecItem]
     spec_report: dict                # check_specs의 명세 검증 집계

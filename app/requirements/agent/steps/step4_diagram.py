@@ -7,53 +7,35 @@
 """
 from __future__ import annotations
 
-import json
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
+from app.requirements.agent import validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps import grounding
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
-from app.requirements.schemas import RelationshipCritique, RelationshipModel
+from app.requirements.knowledge import rules
+from app.requirements.schemas import RelationshipModel
 
 
 def _rel_findings(rel: dict) -> tuple[list[str], str]:
-    """관계에 대한 LLM 의미 검증(정적 참조검증이 못 잡는 안티패턴: 인증=precondition,
-    자동결과=비-include, extend 오용 등).
+    """관계에 대한 의미 검증을 독립 검증자에게 맡긴다.
+
+    검증자에게 주는 것은 **제안된 관계뿐이다** — 어떤 힌트로 그걸 뽑았는지, 사용자가 무슨
+    피드백을 줬는지는 주지 않는다. 물어야 하는 것은 결과가 규칙을 지켰는지다.
 
     `(결함 목록, 검증 상태)`를 돌려준다 — step3의 `_semantic_findings`와 같은 이유로,
     "결함 없음"과 "확인하지 못함"이 같은 값이 되면 안 된다.
-
-    검증자가 댄 규칙 id는 지식베이스와 대조한다(`steps/grounding.py`) — 없는 규칙을
-    인용한 지적은 버린다.
-
-    상태: "ok" | "disabled" | "failed" | "ungrounded"(근거 있는 지적을 하나도 못 받음).
     """
-    if not settings.enable_semantic_validator:
-        return [], "disabled"
     payload = {k: rel.get(k, []) for k in ("includes", "extends", "generalizations", "derived_use_cases")}
-    try:
-        crit: RelationshipCritique = invoke_structured(
-            RelationshipCritique,
-            [SystemMessage(content=prompts.RELATIONSHIP_VALIDATOR_SYSTEM),
-             HumanMessage(content=f"[PROPOSED RELATIONSHIPS]\n{json.dumps(payload, ensure_ascii=False)}")],
-        )
-    except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않음
-        telemetry.record_degradation("relationships.semantic_validator", f"{type(exc).__name__}: {exc}")
-        return [], "failed"
-    if crit.is_valid:
-        return [], "ok"
-    findings, ungrounded = grounding.grounded_findings(
-        crit.findings, prefix="rel", source="relationships.semantic_validator"
+    result = validator.review(
+        rules.DRAW_DIAGRAM, payload, prefix="rel", source="relationships.semantic_validator"
     )
-    if ungrounded and not findings:
-        return [], "ungrounded"
-    return findings, "ok"
+    return result.findings, result.status
 
 
 # include 후보 힌트를 관계 에이전트에 몇 개까지 노출할지.

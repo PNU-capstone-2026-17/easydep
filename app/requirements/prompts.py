@@ -19,14 +19,20 @@ from app.requirements.knowledge import rules as _rules
 def _validator_system(stage: str, role: str, do_not_flag: str) -> str:
     """의미 검증자 시스템 프롬프트를 규칙 지식베이스에서 조립한다.
 
-    세 가지를 모델에게 한꺼번에 준다:
+    네 가지를 모델에게 한꺼번에 준다:
       1. 판정 근거가 될 규칙 목록 — **이 목록 밖으로 나가지 말라**는 지시와 함께.
       2. 각 규칙의 출처와 그 성격(책이 적은 것인지 우리 판단인지).
       3. 이미 결정론으로 검사한 규칙 목록 — 두 번 지적하지 않도록.
+      4. **규칙마다 한 줄씩** 판정하라는 요구 — 훑고 넘어가는 것을 막는다.
 
     3번이 예전에는 산문에 손으로 적혀 있었다. 검출기를 하나 늘리면 그 문장도 고쳐야 했고,
     안 고치면 검증자가 이미 잡힌 것을 다시 지적했다.
+
+    4번은 early victory 방어다. "깨끗하다" 한 줄로 끝낼 수 있으면 검증자는 그렇게 한다 —
+    규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`agent/validator.py`).
     """
+    n = len(_rules.judged_by(stage, _rules.JUDGED_VALIDATOR))
+    count = f"{n} verdict" if n == 1 else f"{n} verdicts"
     already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
     return f"""You are a zero-tolerance {role}.
 
@@ -40,14 +46,20 @@ judge those rules just the same, but never present them as the source's own word
 Deterministic checks have ALREADY run for these rules — do NOT report them again:
 {already}
 
-For every defect, return ONE finding: rule_id copied EXACTLY from the list above, plus one
-short imperative repair directive. **If something looks wrong but matches no rule above, do
-NOT report it** — a finding without a rule is not a finding, and inventing a rule id makes the
-finding unusable.
+Return **exactly {count} — one per rule above, in the same order.** Copy each rule_id
+EXACTLY. Set violated=true only when the artifact really breaks that rule, and then give one
+short imperative repair directive; leave the directive empty otherwise.
+
+There are two ways to be wrong here, and both matter:
+- **Skipping a rule.** Every rule gets a verdict, including the ones whose answer is obviously
+  "not violated". A short list of verdicts is not a clean artifact, it is an unfinished review.
+- **Inventing a violation to fill a verdict.** A well-formed artifact violates few rules or
+  none. And a defect matching no rule above is not reported at all — there is no rule_id for
+  it, so nothing could act on it.
 
 Do NOT flag: {do_not_flag}
 
-Set is_valid=false if any listed rule is violated. Return the structured object only."""
+Return the structured object only."""
 
 # 요구사항이 유스케이스 도출에 충분히 구체적인지 판단하고,
 # 부족하면 clarifying questions 를, 충분하면 refined_requirements 를 만든다.
@@ -251,6 +263,15 @@ Produce:
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
 
+# STEP 2 — 액터·유스케이스 모델 의미 검증. 이 단계에는 예전에 의미 검증기가 아예 없었고,
+# 책이 명시한 결함(SuD는 액터가 아니다, p.59)조차 아무도 보지 않았다.
+MODEL_VALIDATOR_SYSTEM = _validator_system(
+    _rules.MODEL_USE_CASES,
+    "use-case model critic reviewing the actors and use cases of one system",
+    "a grouping you would have done differently; a missing actor or use case (that is coverage, "
+    "checked deterministically elsewhere); naming or wording preferences",
+)
+
 # STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). 규칙은 knowledge/rules.py에서 온다.
 SPEC_VALIDATOR_SYSTEM = _validator_system(
     _rules.WRITE_SPECIFICATIONS,
@@ -275,6 +296,25 @@ RELATIONSHIP_VALIDATOR_SYSTEM = _validator_system(
     "derived use cases (name the offending relationship in each directive)",
     "a small, clean relationship set; an ordinary association; a use case with no relationships",
 )
+
+#: 단계 → 검증 프롬프트. `agent/validator.py`가 단계 이름만 알고 프롬프트를 찾도록 한다 —
+#: 검증자가 단계별 상수 이름을 직접 알면 단계를 하나 더 넣을 때 그쪽도 고쳐야 한다.
+_VALIDATOR_SYSTEMS = {
+    _rules.MODEL_USE_CASES: MODEL_VALIDATOR_SYSTEM,
+    _rules.WRITE_SPECIFICATIONS: SPEC_VALIDATOR_SYSTEM,
+    _rules.DRAW_DIAGRAM: RELATIONSHIP_VALIDATOR_SYSTEM,
+}
+
+
+def validator_system_for(stage: str) -> str:
+    """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다."""
+    try:
+        return _VALIDATOR_SYSTEMS[stage]
+    except KeyError:  # pragma: no cover - 배선 오류
+        raise KeyError(
+            f"{stage}: 의미 검증 프롬프트가 없다. knowledge/rules.py에 규칙을 넣었다면 "
+            "여기에도 프롬프트를 등록해야 한다."
+        ) from None
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).

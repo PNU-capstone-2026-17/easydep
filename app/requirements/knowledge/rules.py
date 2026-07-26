@@ -36,8 +36,6 @@ filter-branch로 히스토리 전체에서). 그래서 이 파일에 담는 것�
 
   - `refine_requirements` 단계의 규칙이 하나도 없다. 구체성 rubric 조사가 저장소 밖으로
     나갔고(`e10c527`), 근거 없는 규칙을 지어 넣지는 않는다.
-  - `model_use_cases`에는 의미 검증기가 없어서, 이 단계의 `DEFECT` 규칙은 어디서도
-    판정되지 않는다. 규칙은 적어 두고 판정이 없다는 사실을 드러낸다.
   - 생성 프롬프트(`SPEC_SYSTEM`·`RELATIONSHIPS_SYSTEM`)는 아직 산문 그대로다. 검증
     프롬프트만 이 지식베이스에서 조립한다 — 인용이 산출물에 실려 값어치가 나는 곳이
     검증 쪽이고, 생성 프롬프트를 같은 판에 갈아엎으려면 회귀를 잡을 평가 세트가 먼저
@@ -149,7 +147,6 @@ class Rule:
 # ---------------------------------------------------------------------------
 RULES: tuple[Rule, ...] = (
     # --- 2단계: 액터 / 유스케이스 ---------------------------------------
-    # ⚠ 이 단계에는 의미 검증기가 없다. 규칙은 적혀 있고 판정하는 곳은 없다.
     Rule(
         id="actors.sud-is-not-an-actor",
         stage=MODEL_USE_CASES,
@@ -160,8 +157,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.59 (Ch. 4, Stakeholders and Actors)",
         evidence="cockburn-page",
-        # 2단계에는 의미 검증기가 없다. 책이 명시한 결함인데 아무도 보지 않는다.
-        judged_by=JUDGED_NOWHERE,
+        judged_by=JUDGED_VALIDATOR,
         pages=(59,),
         probe=("actor", "system under design"),
     ),

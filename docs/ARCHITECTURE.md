@@ -83,8 +83,13 @@ STEP 4 — 관계 · 다이어그램
   p.62). subfunction FR은 상위 UC의 `requirement_ids`로 흡수. NFR은 유스케이스가 아니라 `nfr_ids` 제약으로 부착.
   - **커버리지 강제-수리 루프**: 고아 FR(어떤 UC에도 안 걸린 FR)을 코드로 계산 → 그것만 담아 재프롬프트로
     보충(최대 `max_coverage_iters`). 요구 누락 원천 차단.
+- **review_model(의미=독립 검증자)**: 액터·유스케이스를 `agent/validator.py`에 넘겨 규칙 위반을 판정
+  (`model_review` = issues·semantic_status·unexamined_rules). 예전에는 이 단계에 의미 검증이 **아예 없어서**
+  책이 명시한 `actors.sud-is-not-an-actor`(p.59)조차 아무도 보지 않았다. **여기서 고치지는 않는다** —
+  원인이 `identify_actors`에 있어 되돌리려면 오케스트레이션이 필요하다(표면화 후 사람이 피드백으로 되돌린다).
 - **check_coverage(결정론)**: 집합 연산으로 `orphan_fr_ids`(누락)·`unattached_nfr_ids`(전역 제약 후보)·
-  `unknown_requirement_refs`(환각)·`coverage_ratio` 산출.
+  `unknown_requirement_refs`(환각)·`coverage_ratio` 산출. 의미 판정과 나란히 두는 이유: 하나는
+  "빠진 게 없나", 다른 하나는 "규칙을 지켰나"이고 서로를 대신하지 못한다.
 
 ### STEP 3 — 유스케이스 명세 (병렬 + 반성)
 `app/requirements/agent/steps/step3_specifications.py`
@@ -135,9 +140,16 @@ STEP 4 — 관계 · 다이어그램
 ### 4.1 하이브리드 검증 (정적 + 의미 + 반성)
 - **정적(코드)**: `check_coverage`, `_validate_spec`, 관계 참조검증·orphan 탐지, `render_diagram`.
   결정론이라 재현 가능하고 값싸다. 정적 결과는 LLM이 "말로 무마" 못 하게 코드에서 확정.
-- **의미(근거 LLM)**: `SPEC_VALIDATOR_SYSTEM`(명세), `RELATIONSHIP_VALIDATOR_SYSTEM`(관계). 정적이 못 잡는
-  안티패턴만 판정. `enable_semantic_validator`로 on/off.
+- **의미(독립 검증자, `agent/validator.py`)**: 생성기와 계보를 나눈 별도 호출. 단계는 "어느 단계인지"만
+  말하고 무엇을 볼지는 지식베이스가 정한다(`enable_semantic_validator`로 on/off). 세 가지를 지킨다:
+  - **black-box** — 산출물만 넘긴다. 생성 프롬프트도 사용자 피드백도 주지 않는다(주면 "규칙을 지켰나"가
+    아니라 "지시를 따랐나"를 보게 된다). `tests/test_validator.py`가 피드백 누출을 막는다.
+  - **early victory 방어** — `is_valid` 대신 **규칙마다 한 줄씩** 판정을 받는다(`schemas.RuleVerdict`).
+    훑고 넘어간 규칙이 응답에서 드러나고 저하로 기록된다(`unexamined_rules`).
+  - **근거 대조** — 지식베이스에 없는 규칙을 인용한 판정은 버린다. 전부 버려지면 "결함 없음"이 아니라
+    `ungrounded`다(= 판정을 얻지 못했다).
 - **반성 루프**: 검증 실패 → 수술적 지시로 재생성 → 재검증(bounded, 회귀 방지, 마지막 정상본 유지).
+  step2는 이 루프가 없다(위 `review_model` 참고).
 
 ### 4.2 Cockburn 그라운딩 — 규칙 지식베이스
 **규칙의 집은 `app/requirements/knowledge/`다.** 규범 문장(우리 표현)·인용 좌표·근거 등급·
@@ -268,10 +280,11 @@ app/
     graph.py         # StateGraph 조립 + 서빙 헬퍼
     state.py         # AgentState + TypedDict
     llm.py           # NIM 접속 + 구조화 출력(폴백)
+    validator.py     # 독립 의미 검증자 — 산출물만 보고 규칙 위반을 판정
+    grounding.py     # 검증자가 댄 rule_id 대조 — 없는 규칙 인용은 버린다
     steps/
-      grounding.py           # 검증자가 댄 rule_id 대조 — 없는 규칙 인용은 버린다
       step1_requirements.py  # 구체화·분류
-      step2_usecases.py      # 액터·유스케이스·커버리지
+      step2_usecases.py      # 액터·유스케이스·모델 검증·커버리지
       step3_specifications.py# 명세(병렬+반성)
       step4_diagram.py       # 관계(마이닝+검증)·PlantUML
       feedback_gates.py      # 각 스텝 말미 interrupt 게이트
@@ -294,6 +307,8 @@ tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통�
 - **규칙 불변식**(`tests/test_knowledge.py`): 짐작인 규칙은 유보 필수 · 라벨이 약속한 좌표 형식 준수 ·
   규칙↔검출기 양방향 맞물림 · **규칙 아닌 것은 어디에서도 강제되지 않음** · 판정자 없는 결함 규칙 목록 고정.
 - **인용 대조**(`tests/test_citations.py`): 로컬 도서 사본이 있으면 인용 18건을 대조하고, 없으면 건너뛴다.
+- **검증자 규율**(`tests/test_validator.py`): black-box 경계(피드백 누출 금지) · 훑고 넘어간 규칙이
+  기록되는지 · 근거 없는 판정이 버려지고 그때 "통과"가 아닌지 · 죽은/꺼진 검증기가 통과가 아닌지.
 
 ---
 

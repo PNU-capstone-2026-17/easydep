@@ -4,21 +4,24 @@ reconcile된 FR/NFR 목록에서 액터와 유스케이스를 *식별*한다(시
 - FR만 유스케이스가 되고, NFR은 유스케이스에 제약(nfr_ids)으로 붙는다. (Cockburn)
 - goal-leveling: subfunction FR은 상위 user-goal 유스케이스의 requirement_ids로 흡수하고,
   유스케이스 고도는 EBP(elementary business process) 기준으로 잡는다.
-- 도출(LLM)은 휴리스틱이고, check_coverage가 FR 커버리지를 결정론적으로 점검한다.
+- 도출(LLM)은 휴리스틱이고, 검증은 둘로 나뉜다:
+    * `review_model`   — 의미 결함(독립 검증자, `knowledge/rules.py`의 규칙으로 판정)
+    * `check_coverage` — FR 커버리지(결정론, 집합 연산)
 
-RAG("Writing Effective Use Cases" PDF / PURE few-shot)는 _usecase_examples() seam으로
-주입 예정이며, 현재 첫 구현은 프롬프트만 사용한다.
+few-shot 예제 주입 지점은 `_usecase_examples()` seam이다(현재는 비어 있다).
 """
 from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
+from app.requirements.agent import validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.knowledge import rules
 from app.requirements.schemas import ActorResult, UseCaseResult
 
 
@@ -186,6 +189,45 @@ def identify_use_cases(
 
     use_cases: list[UseCaseItem] = [_uc_dict(uc, f"UC{i}") for i, uc in enumerate(ucs, start=1)]
     return {"use_cases": use_cases, "phase": "use_cases"}
+
+
+@contract("review_model", requires=("actors", "use_cases"))
+def review_model(state: AgentState) -> dict:
+    """액터·유스케이스 모델을 독립 검증자에게 물어 의미 결함을 표면화한다.
+
+    **이 단계에는 의미 검증이 아예 없었다.** 커버리지(결정론)만 봤기 때문에, 책이 명시한
+    결함인 "SuD는 액터가 아니다"(p.59)조차 아무도 판정하지 않았다 — 규칙은 적혀 있고
+    판정하는 곳이 없는 상태가 `knowledge/rules.py`의 `judged_by="nowhere"`로 드러나 있었다.
+
+    검증자에게는 산출물(액터·유스케이스)만 준다. 어떤 요구사항에서 뽑았는지, 사용자가 무슨
+    피드백을 줬는지는 주지 않는다.
+
+    **여기서 고치지는 않는다.** 결함의 원인은 앞 단계(`identify_actors`)에 있고, 그걸
+    되돌리는 것은 이 노드의 권한이 아니다(그 층이 필요하면 오케스트레이션을 바꿔야 한다).
+    지금은 리포트와 응답에 실어 사람이 피드백으로 되돌릴 수 있게 한다.
+    """
+    payload = {
+        "actors": [
+            {k: a.get(k) for k in ("name", "description", "kind", "parent_actor")}
+            for a in (state.get("actors") or [])
+        ],
+        "use_cases": [
+            {k: uc.get(k) for k in ("name", "primary_actor", "level", "goal")}
+            for uc in (state.get("use_cases") or [])
+        ],
+    }
+    result = validator.review(
+        rules.MODEL_USE_CASES, payload, prefix="model", source="use_cases.semantic_validator"
+    )
+    return {
+        "model_review": {
+            "issues": result.findings,
+            "semantic_status": result.status,
+            # 검증자가 판정하지 않고 넘어간 규칙. 비어 있지 않으면 issues는 하한이다.
+            "unexamined_rules": list(result.unexamined),
+        },
+        "phase": "model_review",
+    }
 
 
 @contract("check_coverage", requires=("classified", "use_cases"))

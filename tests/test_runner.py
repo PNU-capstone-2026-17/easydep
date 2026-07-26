@@ -23,6 +23,7 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
 
     monkeypatch.setattr(runner, "identify_actors", stage("actors", "actors"))
     monkeypatch.setattr(runner, "identify_use_cases", stage("use_cases", "use_cases"))
+    monkeypatch.setattr(runner, "review_model", stage("review_model", "model_review"))
     monkeypatch.setattr(runner, "check_coverage", stage("coverage", "coverage"))
     monkeypatch.setattr(runner, "generate_specs", stage("specs", "use_case_specs"))
     monkeypatch.setattr(runner, "check_specs", stage("check_specs", "spec_report"))
@@ -32,8 +33,8 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
-    assert calls == ["actors", "use_cases", "coverage", "specs", "check_specs",
-                     "rel", "check_rel", "diagram"]
+    assert calls == ["actors", "use_cases", "review_model", "coverage", "specs",
+                     "check_specs", "rel", "check_rel", "diagram"]
     assert state["classified"][0]["id"] == "R1"      # 원본 입력 유지
     assert state["actors"] == "<actors>"
     assert state["diagram"] == "<diagram>"

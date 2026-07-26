@@ -26,6 +26,7 @@ from app.requirements.agent.steps.step2_usecases import (
     check_coverage,
     identify_actors,
     identify_use_cases,
+    review_model,
 )
 from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
 from app.requirements.agent.steps.step4_diagram import (
@@ -75,6 +76,7 @@ def run_pipeline(classified: list[dict]) -> dict:
     st = cast(AgentState, state)  # 노드 함수는 AgentState를 받는다(런타임엔 동일 dict)
     state.update(identify_actors(st))
     state.update(identify_use_cases(st))
+    state.update(review_model(st))
     state.update(check_coverage(st))
     state.update(generate_specs(st))
     state.update(check_specs(st))

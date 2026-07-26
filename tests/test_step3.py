@@ -17,12 +17,13 @@ from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.agent.steps.step3_specifications import _clean, _validate_spec
 from app.requirements.common import telemetry
+from app.requirements.knowledge import rules
 from app.requirements.schemas import (
     Extension,
     ExtensionHandlingStep,
+    Critique,
     MainScenarioStep,
-    RuleFinding,
-    SpecCritique,
+    RuleVerdict,
     UseCaseSpec,
 )
 from conftest import dataset_names, load_dataset
@@ -303,24 +304,52 @@ def test_repair_stopped_is_aggregated_in_the_report(monkeypatch):
     assert report["repair_stopped"] == {"clean": 2}
 
 
+def _patch_validator(monkeypatch, *, verdicts=None, error=None):
+    """의미 검증자는 별도 모듈이라 **별도로** 목킹한다 — 그게 독립 검증자의 형태다.
+
+    생성기(`s3.invoke_structured`)와 검증자(`s3.validator.invoke_structured`)가 서로 다른
+    호출 지점이라는 사실이 테스트에서도 그대로 보인다.
+    """
+    def fake(schema, messages):
+        assert schema is Critique, "검증자는 Critique만 요청한다"
+        if error is not None:
+            raise error
+        return Critique(verdicts=list(verdicts or []))
+
+    monkeypatch.setattr(s3.validator, "invoke_structured", fake)
+
+
+#: 이 단계에서 의미 검증자가 판정해야 하는 규칙 전부. 규칙마다 한 줄씩 답해야 하므로,
+#: 목킹도 전부 채워야 "빠뜨렸다"는 저하가 생기지 않는다.
+_SPEC_RULE_IDS = [
+    r.id for r in rules.judged_by(rules.WRITE_SPECIFICATIONS, rules.JUDGED_VALIDATOR)
+]
+
+
+def _all_clean(violated: dict[str, str] | None = None) -> list[RuleVerdict]:
+    """규칙 전체에 대한 판정 — `violated`에 있는 것만 위반으로."""
+    violated = violated or {}
+    return [
+        RuleVerdict(
+            rule_id=rid,
+            violated=rid in violated,
+            directive=violated.get(rid, ""),
+        )
+        for rid in _SPEC_RULE_IDS
+    ]
+
+
 def test_semantic_validator_merges_and_drives_repair(monkeypatch):
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
     monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
 
     def fake(schema, messages):
-        if schema is UseCaseSpec:
-            return _clean_spec()          # 정적으론 깨끗
-        return SpecCritique(
-            is_valid=False,
-            findings=[
-                RuleFinding(
-                    rule_id="spec.no-hidden-branching",
-                    directive="split hidden branching in step 2",
-                )
-            ],
-        )
+        return _clean_spec()          # 정적으론 깨끗
 
     monkeypatch.setattr(s3, "invoke_structured", fake)
+    _patch_validator(monkeypatch, verdicts=_all_clean(
+        {"spec.no-hidden-branching": "split hidden branching in step 2"}
+    ))
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert any("[semantic]" in i for i in spec["issues"])  # 의미 결함이 병합됨
@@ -339,15 +368,10 @@ def test_ungrounded_finding_is_dropped_and_not_reported_as_clean(monkeypatch):
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
     monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
 
-    def fake(schema, messages):
-        if schema is UseCaseSpec:
-            return _clean_spec()
-        return SpecCritique(
-            is_valid=False,
-            findings=[RuleFinding(rule_id="spec.made-up-rule", directive="do something")],
-        )
-
-    monkeypatch.setattr(s3, "invoke_structured", fake)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+    _patch_validator(monkeypatch, verdicts=[
+        RuleVerdict(rule_id="spec.made-up-rule", violated=True, directive="do something")
+    ])
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert spec["issues"] == []                       # 근거 없는 지적은 남지 않는다
@@ -366,12 +390,8 @@ def test_dead_semantic_validator_is_not_reported_as_clean(monkeypatch):
     """
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
 
-    def fake(schema, messages):
-        if schema is UseCaseSpec:
-            return _clean_spec()              # 정적으론 깨끗
-        raise RuntimeError("NIM down")        # 의미 검증기는 죽어 있다
-
-    monkeypatch.setattr(s3, "invoke_structured", fake)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _clean_spec())
+    _patch_validator(monkeypatch, error=RuntimeError("NIM down"))
     with telemetry.run_scope("t") as stats:
         state = s3.generate_specs(
             {"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []}

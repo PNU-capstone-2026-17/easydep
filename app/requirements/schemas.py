@@ -120,40 +120,47 @@ class UseCase(BaseModel):
     )
 
 
-class RuleFinding(BaseModel):
-    """규칙 위반 하나. **어느 규칙을 어겼는지 반드시 댄다.**
+class RuleVerdict(BaseModel):
+    """규칙 하나에 대한 판정. **어느 규칙을 봤는지 반드시 댄다.**
 
-    예전에는 findings가 자유문 목록이었다. 그러면 검증자가 지식베이스에 없는 기준을
-    스스로 만들어 지적해도 근거 있는 지적과 구별할 방법이 없었다 — 검증자의 환각이
-    산출물에서는 결함으로 보인다. rule_id를 요구하면 존재하지 않는 규칙을 인용한 지적을
-    걸러낼 수 있다(`app/requirements/knowledge/rules.py`의 `known_ids`).
+    처음에는 `is_valid` + 자유문 findings였다. 두 가지가 문제였다.
+
+    1. **근거 없는 지적을 구별할 수 없었다.** 검증자가 지식베이스에 없는 기준을 스스로
+       만들어 지적해도 근거 있는 지적과 같은 모양이었다. rule_id를 요구하면 대조할 수
+       있다(`app/requirements/knowledge/rules.py`의 `known_ids`).
+    2. **"봤는데 깨끗하다"와 "안 봤다"가 같은 값이었다.** 규칙 6개 중 2개만 훑고 깨끗하다고
+       답해도 결과가 같다. verification subagent의 알려진 실패 모드(early victory)가 이것이다.
+       그래서 규칙마다 한 줄씩 판정을 받고, 빠진 규칙은 세어 저하로 남긴다.
+
+    `is_valid`는 없앴다 — `violated`의 합에서 파생되므로 따로 두면 둘이 어긋날 수 있고,
+    실제로 어긋난 응답을 방어하는 코드가 있었다.
     """
 
     rule_id: str = Field(
-        description="The id of the violated rule, copied exactly from the rule list.",
+        description="The rule id, copied exactly from the rule list.",
+    )
+    violated: bool = Field(
+        description="True only if the artifact actually breaks this rule.",
     )
     directive: str = Field(
-        description="One short imperative repair directive (at most two sentences).",
+        default="",
+        description=(
+            "When violated, one short imperative repair directive (at most two "
+            "sentences). Empty when not violated."
+        ),
     )
 
 
-class SpecCritique(BaseModel):
-    """명세에 대한 LLM 의미 검증 결과(정적 체크로 못 잡는 부분만)."""
+class Critique(BaseModel):
+    """의미 검증자의 판정 한 벌 — 단계와 무관하다(어느 규칙을 보는지는 지식베이스가 정한다).
 
-    is_valid: bool = Field(description="True if no semantic defect was found.")
-    findings: list[RuleFinding] = Field(
+    예전에는 `SpecCritique`·`RelationshipCritique`로 나뉘어 있었지만 모양이 같았고 다른
+    점은 어느 규칙을 보느냐뿐이었다. 그건 이제 프롬프트가 지식베이스에서 조립한다.
+    """
+
+    verdicts: list[RuleVerdict] = Field(
         default_factory=list,
-        description="One finding per semantic defect, each citing its rule id (empty if valid).",
-    )
-
-
-class RelationshipCritique(BaseModel):
-    """관계(include/extend/generalization)에 대한 LLM 의미 검증 결과."""
-
-    is_valid: bool = Field(description="True if no relationship defect was found.")
-    findings: list[RuleFinding] = Field(
-        default_factory=list,
-        description="One finding per defect, each citing its rule id (empty if valid).",
+        description="One verdict per rule in the rule list, in the same order.",
     )
 
 

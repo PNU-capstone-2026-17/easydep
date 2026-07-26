@@ -7,12 +7,14 @@
 고약하다. 지적은 그 자체로 권위가 있어 보이고, 반성 루프는 그 지적을 고치려고 예산을
 태우며, 산출물에는 "결함 1건"으로 남는다.
 
-구조화 출력이 `rule_id`를 요구하니(`schemas.RuleFinding`) 대조할 수 있다. 지식베이스에
+구조화 출력이 `rule_id`를 요구하니(`schemas.RuleVerdict`) 대조할 수 있다. 지식베이스에
 없는 id를 댄 지적은 버리고, 버렸다는 사실을 저하로 남긴다. `app/deployment`가 "도구
 출력에 없는 값을 답에 쓰지 않는다"로 세운 규율과 같은 것이다.
 
 **대조는 id 존재 여부까지만 한다.** 그 규칙을 실제로 어겼는지는 판단하지 않는다 — 그건
 검증자의 일이고, 여기서 다시 판단하면 판정자가 둘이 된다.
+
+`agent/validator.py`만 이걸 쓴다(단계가 아니라 검증자의 도구라 `agent/` 아래에 둔다).
 """
 from __future__ import annotations
 
@@ -20,17 +22,17 @@ from collections.abc import Sequence
 
 from app.requirements.common import telemetry
 from app.requirements.knowledge import rules
-from app.requirements.schemas import RuleFinding
+from app.requirements.schemas import RuleVerdict
 
 
 def grounded_findings(
-    findings: Sequence[RuleFinding],
+    findings: Sequence[RuleVerdict],
     *,
     prefix: str,
     source: str,
     subject: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """`(쓸 수 있는 지적, 버린 규칙 id)`.
+    """`(쓸 수 있는 지적, 버린 규칙 id)`. 입력은 **위반이라고 판정된** verdict들이다.
 
     지적 문구는 `[prefix] 지시 [규칙id · 인용 · 우리 판단]` 형태다 — 꼬리표가 근거를
     들고 가고, 출처가 짐작인 규칙은 그 사실까지 함께 간다(`rules.Rule.tag`).

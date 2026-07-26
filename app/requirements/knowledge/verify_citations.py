@@ -90,14 +90,23 @@ def measure_offset(pages: list[str]) -> int:
     return votes.most_common(1)[0][0]
 
 
-def verify(pdf_path: Path = DEFAULT_BOOK) -> list[Verdict]:
-    """`probe`가 있는 규칙 전부를 대조한다. 없는 규칙은 대상이 아니다."""
+def load_pages(pdf_path: Path = DEFAULT_BOOK) -> list[str]:
+    """사본에서 페이지 텍스트를 뽑는다(소문자). 301쪽 파싱이라 값싸지 않다 — 재사용하라."""
     if not pdf_path.exists():
         raise SystemExit(
             f"로컬 사본이 없다: {pdf_path}\n"
             "저작물이라 저장소에 없다 — 각자 사본을 그 경로에 두면 된다(gitignore됨)."
         )
-    pages = _pages_text(pdf_path)
+    return _pages_text(pdf_path)
+
+
+def verify(pdf_path: Path = DEFAULT_BOOK) -> list[Verdict]:
+    """`probe`가 있는 규칙 전부를 대조한다. 없는 규칙은 대상이 아니다."""
+    return verify_pages(load_pages(pdf_path))
+
+
+def verify_pages(pages: list[str]) -> list[Verdict]:
+    """이미 뽑아 둔 페이지 텍스트로 대조한다(파싱을 한 번만 하고 싶을 때)."""
     offset = measure_offset(pages)
 
     verdicts: list[Verdict] = []

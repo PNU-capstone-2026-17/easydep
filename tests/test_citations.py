@@ -20,16 +20,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_every_book_citation_points_at_the_right_page():
-    verdicts = verify_citations.verify()
+@pytest.fixture(scope="module")
+def pages():
+    """301쪽 파싱은 10초쯤 걸린다 — 모듈에서 한 번만 한다."""
+    return verify_citations.load_pages()
+
+
+def test_every_book_citation_points_at_the_right_page(pages):
+    verdicts = verify_citations.verify_pages(pages)
     assert verdicts, "대조한 인용이 하나도 없다 — 규칙에 좌표가 빠졌다"
 
     failures = {v.rule_id: (v.citation, v.missing) for v in verdicts if not v.ok}
     assert not failures, f"인용이 그 페이지를 가리키지 않는다: {failures}"
 
 
-def test_printed_page_offset_is_measured_not_assumed():
+def test_printed_page_offset_is_measured_not_assumed(pages):
     """오프셋은 사본마다 다를 수 있으므로 측정한다. 측정이 되는지만 본다."""
-    pages = verify_citations._pages_text(verify_citations.DEFAULT_BOOK)
-    offset = verify_citations.measure_offset(pages)
-    assert 0 <= offset < len(pages)
+    assert 0 <= verify_citations.measure_offset(pages) < len(pages)

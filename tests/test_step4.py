@@ -21,11 +21,21 @@ from app.requirements.schemas import (
     ExtendRelation,
     GeneralizationRelation,
     IncludeRelation,
-    RelationshipCritique,
+    Critique,
     RelationshipModel,
-    RuleFinding,
+    RuleVerdict,
 )
+from app.requirements.knowledge import rules
 from conftest import dataset_names, load_dataset
+
+
+def _rel_verdicts(violated: dict[str, str] | None = None) -> Critique:
+    """이 단계의 규칙 **전부**에 대한 판정. 빠뜨리면 검증자가 훑고 넘어간 것으로 기록된다."""
+    violated = violated or {}
+    return Critique(verdicts=[
+        RuleVerdict(rule_id=r.id, violated=r.id in violated, directive=violated.get(r.id, ""))
+        for r in rules.judged_by(rules.DRAW_DIAGRAM, rules.JUDGED_VALIDATOR)
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -298,27 +308,24 @@ def test_relationship_reflection_removes_antipattern(monkeypatch):
     calls = {"gen": 0}
 
     def fake(schema, messages):
-        if schema is RelationshipModel:
-            calls["gen"] += 1
-            if calls["gen"] == 1:  # 첫 생성: 인증 include
-                return RelationshipModel(
-                    associations=[], extends=[], generalizations=[],
-                    includes=[IncludeRelation(base_use_case="Place order", included_use_case="Authenticate")],
-                    derived_use_cases=[DerivedUseCase(name="Authenticate", origin="factored_include")],
-                )
-            return RelationshipModel(associations=[], includes=[], extends=[], generalizations=[], derived_use_cases=[])
-        # RelationshipCritique: gen 1이면 invalid(지시), 재생성(gen 2) 후 valid.
-        return RelationshipCritique(
-            is_valid=calls["gen"] >= 2,
-            findings=[] if calls["gen"] >= 2 else [
-                RuleFinding(
-                    rule_id="rel.shared-authentication-is-a-precondition",
-                    directive="Remove the Authenticate include — it is a precondition (Log On).",
-                )
-            ],
-        )
+        calls["gen"] += 1
+        if calls["gen"] == 1:  # 첫 생성: 인증 include
+            return RelationshipModel(
+                associations=[], extends=[], generalizations=[],
+                includes=[IncludeRelation(base_use_case="Place order", included_use_case="Authenticate")],
+                derived_use_cases=[DerivedUseCase(name="Authenticate", origin="factored_include")],
+            )
+        return RelationshipModel(associations=[], includes=[], extends=[], generalizations=[], derived_use_cases=[])
+
+    # 검증자는 별도 모듈이라 별도로 목킹한다. gen 1은 위반, 재생성(gen 2)부터 깨끗.
+    def fake_critique(schema, messages):
+        violated = {"rel.shared-authentication-is-a-precondition":
+                    "Remove the Authenticate include — it is a precondition (Log On)."} \
+            if calls["gen"] < 2 else {}
+        return _rel_verdicts(violated)
 
     monkeypatch.setattr(s4, "invoke_structured", fake)
+    monkeypatch.setattr(s4.validator, "invoke_structured", fake_critique)
     state = {
         "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
         "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User"}],
@@ -339,23 +346,19 @@ def test_relationship_repair_gives_up_when_it_does_not_help(monkeypatch):
     calls = {"n": 0}
 
     def fake(schema, messages):
-        if schema is RelationshipModel:
-            calls["n"] += 1
-            return RelationshipModel(
-                associations=[], includes=[], extends=[],
-                generalizations=[], derived_use_cases=[],
-            )
-        return RelationshipCritique(
-            is_valid=False,
-            findings=[
-                RuleFinding(
-                    rule_id="rel.extend-is-only-optional-interruption",
-                    directive="still wrong",
-                )
-            ],
+        calls["n"] += 1
+        return RelationshipModel(
+            associations=[], includes=[], extends=[],
+            generalizations=[], derived_use_cases=[],
         )
 
     monkeypatch.setattr(s4, "invoke_structured", fake)
+    monkeypatch.setattr(
+        s4.validator, "invoke_structured",
+        lambda schema, messages: _rel_verdicts(
+            {"rel.extend-is-only-optional-interruption": "still wrong"}
+        ),
+    )
     state = {
         "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
         "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User"}],

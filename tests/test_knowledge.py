@@ -171,13 +171,16 @@ def test_rule_stages_match_the_pipeline():
     assert {r.stage for r in rules.RULES} <= set(stages.GROUPS)
 
 
-def test_unjudged_defects_do_not_grow_silently():
-    """결함이라 적어 놓고 아무도 판정하지 않는 규칙 — 지금 있는 그대로 고정한다.
+def test_every_defect_rule_has_a_judge():
+    """결함이라 적어 놓고 **아무도 판정하지 않는** 규칙이 없어야 한다.
 
-    비어 있는 것이 목표가 아니다. 2단계에는 의미 검증기가 없고, 그건 사실이다. 다만
-    새 규칙이 판정자 없이 슬며시 들어오면 이 테스트가 막는다.
+    한동안 하나 있었다 — `actors.sud-is-not-an-actor`(p.59). 2단계에 의미 검증기가 아예
+    없어서, 책이 명시한 결함인데 판정하는 곳이 없었다. `review_model`이 그 자리를 채웠다.
+
+    라벨(`JUDGED_NOWHERE`)은 남겨 둔다: 판정 없이 규칙을 적어야 할 때 **정직하게 그렇다고
+    적을 자리**가 필요하고, 그때 이 테스트가 깨져서 의식적인 결정이 되게 한다.
     """
-    assert [r.id for r in rules.unjudged_defects()] == ["actors.sud-is-not-an-actor"]
+    assert [r.id for r in rules.unjudged_defects()] == []
 
 
 def test_findings_carry_their_grounding():

@@ -19,7 +19,6 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
 """
 from __future__ import annotations
 
-import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import cast
@@ -27,14 +26,14 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
+from app.requirements.agent import validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState, RequirementItem, UseCaseItem, UseCaseSpecItem
-from app.requirements.agent.steps import grounding
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
-from app.requirements.knowledge import detectors
-from app.requirements.schemas import SpecCritique, UseCaseSpec
+from app.requirements.knowledge import detectors, rules
+from app.requirements.schemas import UseCaseSpec
 
 # 마크다운/특수문자 → plain 정규화 매핑.
 _REPLACEMENTS = {
@@ -109,55 +108,32 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
         "issues": [],
         "repair_iters": 0,
         # _check가 곧 덮어쓴다. 조립 시점에는 아직 아무 검증도 안 했다.
-        "semantic_status": "pending",
+        "semantic_status": validator.PENDING,
     }
 
 
 def _semantic_findings(item: UseCaseSpecItem) -> tuple[list[str], str]:
-    """정적 체크가 못 잡는 의미 결함을 LLM으로 검증한다.
+    """정적 체크가 못 잡는 의미 결함을 독립 검증자에게 묻는다.
+
+    판정은 `agent/validator.py`가 한다 — 무엇을 볼지는 지식베이스가 정하고, 검증자는
+    **산출물만** 받는다(생성 프롬프트도 사용자 피드백도 주지 않는다). 여기서 넘기는
+    payload가 그 경계다.
 
     `(결함 목록, 검증 상태)`를 돌려준다. 상태를 함께 내는 이유는 **"결함 없음"과
     "확인하지 못함"이 같은 값이 되면 안 되기 때문**이다. 예전에는 검증기가 예외로
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
-
-    검증자가 댄 규칙 id는 지식베이스와 대조한다. **없는 규칙을 인용한 지적은 버린다** —
-    그건 검증자가 스스로 만든 기준이고, 그대로 통과시키면 검증자의 환각이 산출물에서는
-    결함으로 보인다. 버린 사실은 저하로 남긴다.
-
-    상태: "ok"(검증함) | "disabled"(설정으로 끔) | "failed"(부르지 못함) |
-    "ungrounded"(불렀는데 근거 있는 지적이 하나도 없었다 — 답을 얻지 못한 것이다).
     """
-    if not settings.enable_semantic_validator:
-        return [], "disabled"
     payload = {k: item[k] for k in ("trigger", "preconditions", "main_scenario",
                                     "extensions", "success_guarantee")}
-    try:
-        critique: SpecCritique = invoke_structured(
-            SpecCritique,
-            [SystemMessage(content=prompts.SPEC_VALIDATOR_SYSTEM),
-             HumanMessage(content=f"[USE CASE SPEC UNDER REVIEW]\n{json.dumps(payload, ensure_ascii=False)}")],
-        )
-    except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않음
-        telemetry.record_degradation(
-            "spec.semantic_validator",
-            f"{type(exc).__name__}: {exc}",
-            subject=item.get("use_case_id"),
-        )
-        return [], "failed"
-    if critique.is_valid:
-        return [], "ok"
-    findings, ungrounded = grounding.grounded_findings(
-        critique.findings,
+    result = validator.review(
+        rules.WRITE_SPECIFICATIONS,
+        payload,
         prefix="semantic",
         source="spec.semantic_validator",
         subject=item.get("use_case_id"),
     )
-    # 지적이 전부 근거 없이 버려졌다면 우리는 판정을 **얻지 못했다.** 그걸 "결함 없음"과
-    # 같은 값으로 두면, 검증자가 헛소리만 한 실행이 깨끗한 실행처럼 보인다.
-    if ungrounded and not findings:
-        return [], "ungrounded"
-    return findings, "ok"
+    return result.findings, result.status
 
 
 def _check(item: UseCaseSpecItem) -> tuple[list[str], str]:
@@ -249,7 +225,7 @@ def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
         "minimal_guarantee": [],
         "issues": [f"[generation] 명세를 생성하지 못했다: {type(exc).__name__}: {exc}"],
         "repair_iters": 0,
-        "semantic_status": "failed",
+        "semantic_status": validator.FAILED,
         "repair_stopped": "not_generated",
         "generated": False,
     }
@@ -324,11 +300,11 @@ def check_specs(state: AgentState) -> dict:
         # 의미 검증을 못 거친 명세. issues가 비었다는 것과 "확인했는데 깨끗하다"는 것을
         # 리포트에서 구별할 수 있어야 한다 — 이 목록이 비어 있지 않으면 total_issues는
         # 하한일 뿐이다.
-        # "failed"(부르지 못함)와 "ungrounded"(불렀지만 근거 있는 지적을 못 받음)는 원인이
-        # 다르지만 결과는 같다 — 이 명세는 의미 검증을 **거치지 못했다.**
+        # 원인이 달라도 결과는 같다 — 이 명세는 의미 검증을 **거치지 못했다.**
+        # 어느 상태가 그에 해당하는지는 validator가 정한다(같은 목록을 두 번 적지 않는다).
         "unvalidated_ucs": [
             s["use_case_id"] for s in specs
-            if s.get("semantic_status") in ("failed", "ungrounded")
+            if s.get("semantic_status") in validator.UNVALIDATED
         ],
         # 생성 자체가 실패해 빈 자리로 남은 UC. 형제는 살아 있으므로 실행은 계속되지만
         # 이 UC의 명세는 없다 — 있는 척하지 않는다.

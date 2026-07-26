@@ -178,6 +178,13 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
 # ----------------------------------------------------------------------------
 # 서빙 헬퍼 (main.py에서 사용)
 # ----------------------------------------------------------------------------
+#: 응답에 실을 step2~4 산출물 키. 있을 때만 싣는다(파이프라인이 어디까지 갔는지에 따라 다르다).
+#: **한 곳에만 적는다** — 예전에는 게이트 응답과 완료 응답이 같은 목록을 따로 들고 있어서,
+#: 새 산출물을 추가하면 한쪽에만 들어가 화면에서 조용히 사라질 수 있었다.
+_ARTIFACT_KEYS = (
+    "actors", "use_cases", "model_review", "coverage", "use_case_specs", "spec_report",
+    "relationships", "relationship_report", "diagram",
+)
 def _result_payload(
     result: dict, thread_id: str, stats: telemetry.RunStats | None = None
 ) -> dict:
@@ -208,8 +215,7 @@ def _result_payload(
                 "requirements": result.get("classified", []),
             }
             # 게이트에서 멈춘 시점까지 누적된 step2~4 산출물도 함께 실어 UI가 진행 상황을 보여준다.
-            for key in ("actors", "use_cases", "coverage", "use_case_specs",
-                        "spec_report", "relationships", "relationship_report", "diagram"):
+            for key in _ARTIFACT_KEYS:
                 val = result.get(key)
                 if val:
                     payload[key] = val
@@ -229,8 +235,7 @@ def _result_payload(
         "requirements": result.get("classified", []),
     }
     # step2~4 산출물은 파이프라인이 돌았을 때만 존재하므로, 있을 때만 응답에 싣는다.
-    for key in ("actors", "use_cases", "coverage", "use_case_specs", "spec_report",
-                "relationships", "relationship_report", "diagram"):
+    for key in _ARTIFACT_KEYS:
         value = result.get(key)
         if value:
             payload[key] = value

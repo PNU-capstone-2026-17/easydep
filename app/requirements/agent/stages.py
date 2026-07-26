@@ -27,6 +27,7 @@ from app.requirements.agent.steps.step2_usecases import (
     check_coverage,
     identify_actors,
     identify_use_cases,
+    review_model,
 )
 from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
 from app.requirements.agent.steps.step4_diagram import (
@@ -68,6 +69,9 @@ PIPELINE: tuple[Stage, ...] = (
           key="actors", editable=True),
     Stage("identify_use_cases", identify_use_cases, group="model_use_cases",
           key="use_cases", editable=True),
+    # 의미 검증은 결정론 집계(check_coverage) 앞에 둔다 — check_* 노드가 그룹의 마지막
+    # 집계라는 성격을 지키고, 검증 결과는 자기 상태 키(model_review)로만 나간다.
+    Stage("review_model", review_model, group="model_use_cases"),
     Stage("check_coverage", check_coverage, group="model_use_cases", key="coverage"),
     Stage("generate_specs", generate_specs, group="write_specifications",
           key="specs", editable=True),
