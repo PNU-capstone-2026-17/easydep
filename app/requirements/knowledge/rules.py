@@ -102,6 +102,13 @@ class Rule:
     judged_by: str = JUDGED_NOWHERE
     #: 결정론 검출기 이름(`detectors.py`에 등록). `judged_by`가 검출기일 때만 있다.
     detector: str | None = None
+    #: 이 결함을 **낸 단계**의 논리 이름(`agent/stages.py`의 `key`). 되돌릴 대상이다.
+    #:
+    #: `stage`(그룹)와 다른 사실이다. `model_use_cases` 그룹에는 되돌릴 수 있는 단계가
+    #: 둘(actors·use_cases) 있고, 어느 쪽이 낸 결함인지는 규칙마다 다르다. 규칙 id 접두사로
+    #: 짐작할 수도 있지만, 라우팅 표를 접두사 규약에 걸어 두면 이름을 바꾸는 순간 조용히
+    #: 어긋난다. `DEFECT`만 갖는다 — 나머지는 되돌릴 대상이 아니다.
+    owner: str | None = None
     #: 인용을 **기계로 확인할** 인쇄 페이지 번호. 책 근거인 규칙에만 있다.
     pages: tuple[int, ...] = ()
     #: 그 페이지에 있어야 하는 짧은 단어들(소문자). 좌표가 맞는지 보는 열쇠일 뿐,
@@ -157,6 +164,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.59 (Ch. 4, Stakeholders and Actors)",
         evidence="cockburn-page",
+        owner="actors",
         judged_by=JUDGED_VALIDATOR,
         pages=(59,),
         probe=("actor", "system under design"),
@@ -206,6 +214,7 @@ RULES: tuple[Rule, ...] = (
         citation="easydep convention (traceability)",
         evidence="project-convention",
         caveat="추적성을 위해 우리가 정한 규칙이다. 판정은 `step2_usecases.check_coverage`가 한다.",
+        owner="use_cases",
         judged_by=JUDGED_STAGE,
     ),
     # --- 3단계: 명세 ------------------------------------------------------
@@ -223,6 +232,7 @@ RULES: tuple[Rule, ...] = (
             "단어 목록은 그가 **예로 든** UI 용어일 뿐이다. 책은 금지 단어목록을 "
             "명문화하지 않았으므로 이 목록은 완전하지 않다 — 없는 단어로도 위반할 수 있다."
         ),
+        owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="ui_terms",
         pages=(209,),
@@ -243,6 +253,7 @@ RULES: tuple[Rule, ...] = (
             "black-box 원칙과 페이지는 확인했다. 다만 금지 대상 목록(service·engine·store·"
             "cache·queue·database)은 그 원칙에서 우리가 끌어낸 것이다."
         ),
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
         pages=(41,),
         probe=("black box",),
@@ -257,6 +268,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, Ch. 7 (Scenarios and Steps), p.88~",
         evidence="cockburn-chapter",
+        owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="branch_words",
         pages=(88,),
@@ -272,6 +284,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, Ch. 7 (Scenarios and Steps), p.88~",
         evidence="cockburn-chapter",
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
         pages=(88,),
         probe=("scenarios and steps",),
@@ -286,6 +299,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.47-49 (scenario endings)",
         evidence="cockburn-page",
+        owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="control_tokens",
         pages=(47, 48, 49),
@@ -336,6 +350,7 @@ RULES: tuple[Rule, ...] = (
             "보증이 사후조건의 자리라는 것은 Ch. 6에서 확인했다. 다만 '자동결과(로깅·감사·"
             "암호화·확인 발송)는 스텝이 아니라 보증'이라는 구체적 적용은 우리가 끌어낸 것이다."
         ),
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
         pages=(83,),
         probe=("minimal guarantee",),
@@ -350,6 +365,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.81 (preconditions need not be checked)",
         evidence="cockburn-page",
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
         pages=(81,),
         probe=("precondition", "not be checked"),
@@ -365,6 +381,7 @@ RULES: tuple[Rule, ...] = (
         citation="easydep convention (hallucination guard)",
         evidence="project-convention",
         caveat="환각을 막기 위해 우리가 정한 규칙이다. 책의 규칙이 아니다.",
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
     ),
     Rule(
@@ -381,6 +398,7 @@ RULES: tuple[Rule, ...] = (
             "확장이 주 시나리오로 복귀한다(rejoin)는 개념과 페이지는 확인했다. "
             "'복귀 지점이 가정하는 상태를 실제로 회복해야 한다'는 요구는 우리가 세운 것이다."
         ),
+        owner="specs",
         judged_by=JUDGED_VALIDATOR,
         pages=(106,),
         probe=("rejoin",),
@@ -396,6 +414,7 @@ RULES: tuple[Rule, ...] = (
         citation="easydep convention (schema integrity)",
         evidence="project-convention",
         caveat="우리 스키마의 무결성 규칙이다 — 위반은 결정론적으로 참이지만, 규범을 정한 것은 우리다.",
+        owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="extension_refs",
     ),
@@ -410,6 +429,7 @@ RULES: tuple[Rule, ...] = (
         citation="easydep convention (fully-dressed template)",
         evidence="project-convention",
         caveat="풀 템플릿의 어느 칸을 필수로 볼지는 우리가 정했다.",
+        owner="specs",
         judged_by=JUDGED_DETECTOR,
         detector="contract_fields",
     ),
@@ -424,6 +444,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.81",
         evidence="cockburn-page",
+        owner="relationships",
         judged_by=JUDGED_VALIDATOR,
         pages=(81,),
         probe=("precondition", "log"),
@@ -443,6 +464,7 @@ RULES: tuple[Rule, ...] = (
             "보증이 사후조건의 자리라는 것은 Ch. 6에서 확인했다. 그것이 곧 "
             "'include로 뽑지 말라'는 뜻이라는 적용은 우리가 끌어낸 것이다."
         ),
+        owner="relationships",
         judged_by=JUDGED_VALIDATOR,
         pages=(83,),
         probe=("minimal guarantee",),
@@ -477,6 +499,7 @@ RULES: tuple[Rule, ...] = (
         ),
         citation=f"{_BOOK}, p.109 (Ch. 8, Extensions)",
         evidence="cockburn-page",
+        owner="relationships",
         judged_by=JUDGED_VALIDATOR,
         pages=(109,),
         probe=("extension", "fail"),
@@ -495,6 +518,7 @@ RULES: tuple[Rule, ...] = (
             "확장 유스케이스를 다루는 절과 페이지는 확인했다. 'optional·interrupting·"
             "electively triggered에만 쓴다'는 좁힘은 우리가 세운 것이다."
         ),
+        owner="relationships",
         judged_by=JUDGED_VALIDATOR,
         pages=(115,),
         probe=("extension use cases",),
@@ -506,6 +530,7 @@ RULES: tuple[Rule, ...] = (
         statement="A generalization must not invert or confuse the parent/child meaning.",
         citation="OMG UML, generalization semantics",
         evidence="uml-spec",
+        owner="relationships",
         judged_by=JUDGED_VALIDATOR,
     ),
     Rule(
@@ -532,6 +557,7 @@ RULES: tuple[Rule, ...] = (
         citation="easydep convention (schema integrity)",
         evidence="project-convention",
         caveat="우리 규약이다. 판정은 `step4_diagram.identify_relationships`가 결정론으로 한다.",
+        owner="relationships",
         judged_by=JUDGED_STAGE,
     ),
     Rule(
@@ -571,6 +597,29 @@ def rules_for(stage: str, severity: str | None = None) -> tuple[Rule, ...]:
         r for r in RULES
         if r.stage == stage and (severity is None or r.severity == severity)
     )
+
+
+def rule_of(issue: str) -> str | None:
+    """지적 문구가 인용한 규칙 id. 못 찾으면 None.
+
+    꼬리표는 우리가 만든다(`Rule.tag` → `[<id> · <좌표> …]`)므로 정확히 맞춰 찾는다.
+    문구를 파싱하는 대신 **아는 id로 조회**하는 방향이라, 새 규칙이 생겨도 이 함수는 그대로다.
+
+    지식베이스에 두는 이유: 채점(`evaluation/scorecard.py`)과 되돌리기 라우팅
+    (`agent/supervisor.py`)이 같은 되읽기를 필요로 한다. 두 벌이면 갈라진다.
+    """
+    for rule_id in _BY_ID:
+        if f"[{rule_id} ·" in issue:
+            return rule_id
+    return None
+
+
+def owner_of(issue: str) -> str | None:
+    """이 지적을 낸 단계의 논리 이름. 규칙을 못 찾거나 책임 단계가 없으면 None."""
+    rule_id = rule_of(issue)
+    if rule_id is None:
+        return None
+    return _BY_ID[rule_id].owner
 
 
 def tag_of(rule_id: str) -> str:

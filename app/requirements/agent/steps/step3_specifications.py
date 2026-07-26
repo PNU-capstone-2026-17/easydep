@@ -26,7 +26,7 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import validator
+from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState, RequirementItem, UseCaseItem, UseCaseSpecItem
 from app.requirements.common import telemetry
@@ -259,6 +259,7 @@ def generate_specs(
     feedback: 재생성 지시(대상 UC 생성에 반영).
     target_ids: 주어지면 그 UC만 재생성하고 나머지는 기존 use_case_specs를 그대로 둔다(local 피드백).
     """
+    feedback = supervisor.feedback_for(state, "specs", feedback)
     use_cases = state.get("use_cases") or []
     if not use_cases:
         return {"use_case_specs": [], "phase": "specs"}

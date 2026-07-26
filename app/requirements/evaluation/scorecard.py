@@ -44,13 +44,11 @@ UNTAGGED = "(untagged)"
 def rule_of(issue: str) -> str:
     """지적 문구가 인용한 규칙 id. 못 찾으면 `UNTAGGED`.
 
-    꼬리표는 우리가 만든다(`rules.Rule.tag` → `[<id> · <좌표> …]`)므로 정확히 맞춰 찾는다.
-    문구를 파싱하는 대신 **아는 id로 조회**하는 방향이라, 새 규칙이 생겨도 이 함수는 그대로다.
+    되읽기 자체는 지식베이스가 한다(`rules.rule_of`) — 채점과 되돌리기 라우팅
+    (`agent/supervisor.py`)이 같은 되읽기를 쓰므로 두 벌이면 갈라진다. 여기서는 못 찾은
+    것을 **세기 위한 이름**으로만 바꾼다(조용히 버리면 규칙별 합이 전체와 어긋난다).
     """
-    for rule_id in rules.known_ids():
-        if f"[{rule_id} ·" in issue:
-            return rule_id
-    return UNTAGGED
+    return rules.rule_of(issue) or UNTAGGED
 
 
 def _issues_of(state: dict) -> list[str]:

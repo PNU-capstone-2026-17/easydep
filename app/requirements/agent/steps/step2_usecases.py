@@ -15,7 +15,7 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import validator
+from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
 from app.requirements.common import telemetry
@@ -48,7 +48,11 @@ def _usecase_examples() -> str:
 
 @contract("identify_actors", requires=("classified",))
 def identify_actors(state: AgentState, feedback: str = "") -> dict:
-    """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시."""
+    """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시.
+
+    피드백은 인자로도 오고, 감독자가 되돌릴 때는 상태(`stage_feedback`)로도 온다.
+    """
+    feedback = supervisor.feedback_for(state, "actors", feedback)
     classified = state.get("classified") or []
     fr, _ = _split_fr_nfr(classified)
     if not fr:
@@ -124,6 +128,7 @@ def identify_use_cases(
     target_ids: 주어지면 그 UC만 지시대로 고치고 나머지 UC(및 그 id)는 그대로 보존한다(local 피드백).
         비면 전체를 새로 도출한다(broad).
     """
+    feedback = supervisor.feedback_for(state, "use_cases", feedback)
     classified = state.get("classified") or []
     fr, nfr = _split_fr_nfr(classified)
     actors = state.get("actors") or []

@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from app.requirements.agent import stages, supervisor
 from app.requirements.agent.rtm import build_rtm, render_rtm_md
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step2_usecases import (
@@ -71,8 +72,36 @@ def load_state(run_dir: str | Path) -> dict:
     }
 
 
+def _rerun_from(state: dict, owner: str) -> list[str]:
+    """`owner` 단계부터 끝까지 다시 돌린다. 실행한 노드 이름을 돌려준다.
+
+    순서는 `stages.PIPELINE`에서 파생한다 — 집계 노드(`check_*`)까지 포함해야 리포트가
+    새 산출물을 반영한다. 되돌릴 단계는 `stage_feedback`에서 지시를 읽는다.
+
+    **함수는 이름으로 이 모듈에서 찾는다**(`stages.Stage.fn`을 직접 쓰지 않는다). 정방향
+    패스가 `identify_actors(st)`처럼 모듈 속성을 부르기 때문에, 되돌리기가 import 시점에
+    묶인 참조를 쓰면 **한 단계를 가리키는 이름이 두 개**가 된다 — 테스트의 monkeypatch가
+    한쪽에만 걸리고, 그건 조용히 다른 코드를 재는 일이다(`feedback.py`가 같은 이유로
+    `globals()` 조회를 쓴다).
+    """
+    order = list(stages.PIPELINE)
+    start = next(i for i, s in enumerate(order) if s.key == owner)
+    ran: list[str] = []
+    for stage in order[start:]:
+        fn = globals().get(stage.node, stage.fn)
+        state.update(fn(cast(AgentState, state)))
+        ran.append(stage.node)
+    return ran
+
+
 def run_pipeline(classified: list[dict]) -> dict:
-    """step2~4를 순서대로 실행해 전체 상태(actors~diagram)를 반환한다."""
+    """step2~4를 순서대로 실행하고, 남은 결함은 **낸 단계로 되돌린다**.
+
+    그래프(`agent/graph.py`)는 되돌아가기를 조건부 엣지로 표현하는데, 이 러너는 그래프를
+    우회해 함수를 직접 부른다(그게 배치 경로의 규약이다). 그래서 같은 판단(`supervisor.decide`)을
+    여기서도 돌려야 한다 — **평가 세트가 재는 실행이 이 배치**이고, 여기에 되돌아가기가
+    없으면 C2의 효과가 측정에 잡히지 않는다.
+    """
     state: dict = {"classified": classified}
     st = cast(AgentState, state)  # 노드 함수는 AgentState를 받는다(런타임엔 동일 dict)
     state.update(identify_actors(st))
@@ -84,6 +113,25 @@ def run_pipeline(classified: list[dict]) -> dict:
     state.update(identify_relationships(st))
     state.update(check_relationships(st))
     state.update(render_diagram(st))
+
+    # 되돌아가기. 상한은 그래프와 같은 설정을 쓴다(`settings.max_redo_rounds`).
+    while True:
+        decision = supervisor.decide(state)
+        if decision.action != supervisor.REDO or not decision.owner:
+            break
+        state["stage_feedback"] = {decision.owner: decision.instruction}
+        state["redo_rounds"] = int(state.get("redo_rounds", 0) or 0) + 1
+        history = list(state.get("redo_history") or [])
+        ran = _rerun_from(state, decision.owner)
+        history.append({
+            "owner": decision.owner,
+            "reason": decision.reason,
+            "escalated": decision.escalated,
+            "rule_ids": list(decision.rule_ids),
+            "rerun": ran,
+        })
+        state["redo_history"] = history
+        state["stage_feedback"] = {}   # 낡은 지시를 다음 라운드로 넘기지 않는다
     return state
 
 

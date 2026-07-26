@@ -107,3 +107,15 @@ class AgentState(TypedDict):
     # 정적 라우팅 마커 — 피드백 게이트가 "advance"(다음 단계)/"loop"(재생성 후 재질문)를 써 두면
     # 서브그래프의 조건부 엣지(route_gate)가 이를 읽어 분기한다. Command(goto) 동적 라우팅 대체.
     gate_route: NotRequired[str]
+    # --- 되돌아가기(supervisor) ---
+    # 결함을 낸 단계로 몇 번 되돌렸는지. `settings.max_redo_rounds`로 묶인다.
+    redo_rounds: NotRequired[int]
+    # 되돌린 기록: {owner, reason, escalated, rule_ids}. 왜 그 단계가 다시 돌았는지가
+    # 남아 있지 않으면, 산출물만 보고는 되돌리기가 있었는지조차 알 수 없다.
+    redo_history: NotRequired[list[dict]]
+    # 되돌릴 단계에 들려 보내는 지시. 단계 함수가 `feedback` 인자 대신 여기서 읽는다 —
+    # 그래프 엣지로 되돌릴 때는 인자를 넘길 자리가 없다.
+    stage_feedback: NotRequired[dict[str, str]]
+    # 정적 라우팅 마커 — 감독 노드가 "advance" 또는 되돌릴 **그룹 이름**을 써 두면
+    # 조건부 엣지(route_redo)가 읽어 분기한다. gate_route와 같은 방식이다.
+    redo_route: NotRequired[str]

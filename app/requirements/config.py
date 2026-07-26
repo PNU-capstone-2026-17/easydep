@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     max_repair_iters: int = 2
     # step2 커버리지 강제-수리 루프: 고아 FR을 재프롬프트로 보충하는 최대 횟수.
     max_coverage_iters: int = 2
+    # 파이프라인 되돌아가기(supervisor) 최대 횟수. 결함을 낸 단계로 되돌리는 일은
+    # 되돌리기를 또 부를 수 있어서, 상한이 없으면 끝나지 않는다.
+    # 1회로 시작한다 — 되돌릴 때마다 그 아래 단계 전부가 다시 도므로 비용이 크다.
+    max_redo_rounds: int = 1
     # 대화형 모드 스위치. True면 모든 interrupt 기반 상호작용을 켠다:
     #  - step1 clarify(요구사항이 추상적일 때 질문) 루프
     #  - 각 스텝(1~4) 말미의 피드백 게이트(피드백 주면 재생성·루프, 빈 값이면 다음 단계)

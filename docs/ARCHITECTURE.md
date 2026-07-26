@@ -51,7 +51,9 @@ STEP 4 — 관계 · 다이어그램
 ```
 
 **매크로 흐름(4단계)은 고정** — 고정되는 것은 **실행 경로**이고 출력이 아니다(§4.1).
-표본화·검증·반성·피드백은 각 단계 **내부**에서만 일어난다.
+단, 흐름은 **되돌아갈 수 있다**: 각 그룹 뒤의 `supervise_*` 노드가 남은 결함을 **그것을 낸
+단계의 그룹으로** 돌려보낸다(조건부 엣지, `settings.max_redo_rounds`로 묶임 — §4.3).
+표본화·검증·반성은 각 단계 **내부**에서, 되돌아가기는 **그룹 사이**에서 일어난다.
 비대화형(gates off, 배치/자율)에서는 interrupt 없이 끝까지 진행한다.
 
 ---
@@ -193,7 +195,26 @@ python -m app.requirements.knowledge.verify_citations     # 도서 인용 18건 
 - "three to nine steps"는 관찰이지 제한 아님(p.208 Reminder 6) — `NON_RULE`로 기록해 **어디에서도
   강제하지 않는다**
 
-### 4.3 대화형 피드백 (2경로)
+### 4.3 되돌아가기 (supervisor)
+`app/requirements/agent/supervisor.py`
+
+반성 루프는 **단계 안에 갇혀 있었다**. 원인이 위에 있으면 그 자리에서 다시 써도 안 고쳐지고,
+`repair_stopped="no_improvement"`가 바로 그 신호인데 올려보낼 통로가 없었다. `review_model`이
+찾은 결함도 아무도 고치지 못했다(원인이 `identify_actors`에 있다).
+
+- **라우팅 표는 지식베이스다.** 지적은 규칙 id를 들고 다니고(`Rule.tag`), 규칙은 자기를 낸
+  단계를 안다(`Rule.owner`). 되돌릴 곳은 **찾아보면 되는 사실**이라 LLM에 묻지 않는다 —
+  유도 가능한 판단에 비결정성을 더할 이유가 없다(§4.1). LLM 감독자로 바꿀 자리는 `decide()`다.
+- **에스컬레이션**: 그 단계가 이미 포기했으면 같은 단계로 되돌리지 않고 위로 올린다
+  (specs→use_cases→actors). 지시에 "아래가 스스로 못 고쳤다"는 사실을 함께 싣는다.
+- **가장 위쪽 하나만** 되돌린다(위를 고치면 아래는 cascade로 다시 돈다). `max_redo_rounds`로 묶는다.
+- 되돌린 기록은 `redo_history`(owner·이유·escalated·rule_ids)로 남는다.
+- **배치 러너도 같은 판단을 돌린다**(`runner.run_pipeline`) — 평가 세트가 재는 실행이 배치라서,
+  여기에 없으면 되돌아가기의 효과가 측정에 잡히지 않는다.
+
+⚠ 게이트 그래프(대화형)는 아직 사람이 라우팅한다 — 되돌아가기는 평문(비대화형) 그래프에만 있다.
+
+### 4.4 대화형 피드백 (2경로)
 1. **그래프 게이트**(`app/requirements/agent/steps/feedback_gates.py`, `enable_feedback_gates`): 각 스텝(1~4) 말미에서
    `interrupt`로 피드백 요청. 피드백 주면 그 스텝 재생성 + 게이트로 루프백, 빈 값이면 forward 진행(하위 스텝은
    자연스럽게 fresh 재실행 = cascade). step1 clarify도 같은 스위치로 통일.
@@ -296,6 +317,7 @@ app/
     llm.py           # NIM 접속 + 구조화 출력(폴백)
     validator.py     # 독립 의미 검증자 — 산출물만 보고 규칙 위반을 판정
     grounding.py     # 검증자가 댄 rule_id 대조 — 없는 규칙 인용은 버린다
+    supervisor.py    # 되돌아가기 판단 — 결함을 낸 단계로, 포기했으면 그 위로
     steps/
       step1_requirements.py  # 구체화·분류
       step2_usecases.py      # 액터·유스케이스·모델 검증·커버리지

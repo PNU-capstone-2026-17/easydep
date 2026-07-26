@@ -12,7 +12,7 @@ import re
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import validator
+from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.common import telemetry
@@ -74,6 +74,7 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     관계 에이전트에 주 시나리오와 결정론 후보 힌트(공유 스텝→include, parent_actor→일반화)를
     함께 주고, parent_actor 일반화는 결정론적으로 보강한다. 주액터 association도 보강한다.
     """
+    feedback = supervisor.feedback_for(state, "relationships", feedback)
     use_cases = state.get("use_cases") or []
     empty = {
         "associations": [], "includes": [], "extends": [], "generalizations": [],

@@ -38,6 +38,7 @@ from app.requirements.agent.steps.feedback_gates import (
     route_gate,
 )
 from app.requirements.agent.subgraphs import build_stage_subgraphs
+from app.requirements.agent.supervisor import route_redo, supervise_for
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.schemas import FeedbackEdit
@@ -45,9 +46,21 @@ from app.requirements.session_store import SqlCheckpointSaver
 
 
 def _build_plain_graph(saver):
-    """게이트 없는 플랫 파이프라인: 4단계가 순서대로 이어지고 끝난다.
+    """게이트 없는 파이프라인 + **되돌아가기**.
 
-    START → refine_requirements → model_use_cases → write_specifications → draw_diagram → END
+    START → refine_requirements → model_use_cases → supervise_model
+          → write_specifications → supervise_specs → draw_diagram → supervise_diagram → END
+
+    각 `supervise_*`는 남은 결함을 보고 **그 결함을 낸 단계의 그룹으로 되돌린다**
+    (`agent/supervisor.py`). 되돌아가기가 없던 동안 두 가지가 막혀 있었다:
+    `review_model`이 찾은 결함은 아무도 고치지 못했고(원인이 `identify_actors`에 있다),
+    `repair_stopped="no_improvement"`는 "위에 원인이 있다"는 신호인데 올려보낼 통로가 없었다.
+
+    사이클을 **그래프 엣지로** 만드는 이유: 노드 안에서 상위 단계를 직접 부르면 그림
+    (`docs/graph/*.png`)이 실제 흐름을 말하지 않게 된다. 되돌아가기는 이 파이프라인의
+    구조이므로 구조로 드러나야 한다.
+
+    무한 루프는 `settings.max_redo_rounds`가 막는다(상태의 `redo_rounds`로 센다).
     """
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
@@ -55,12 +68,39 @@ def _build_plain_graph(saver):
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
     builder.add_node("draw_diagram", subs["draw_diagram"])
+    # 자리마다 되돌릴 수 있는 그룹이 다르다 — 아직 돌지 않은 그룹은 대상이 아니다.
+    builder.add_node("supervise_model", supervise_for("model_use_cases"))
+    builder.add_node("supervise_specs", supervise_for("model_use_cases", "write_specifications"))
+    builder.add_node(
+        "supervise_diagram",
+        supervise_for("model_use_cases", "write_specifications", "draw_diagram"),
+    )
 
     builder.add_edge(START, "refine_requirements")
     builder.add_edge("refine_requirements", "model_use_cases")
-    builder.add_edge("model_use_cases", "write_specifications")
-    builder.add_edge("write_specifications", "draw_diagram")
-    builder.add_edge("draw_diagram", END)
+    builder.add_edge("model_use_cases", "supervise_model")
+    builder.add_edge("write_specifications", "supervise_specs")
+    builder.add_edge("draw_diagram", "supervise_diagram")
+
+    # 되돌릴 수 있는 대상은 **이미 지나온 그룹**뿐이다. 아직 돌지 않은 그룹으로 "되돌리는"
+    # 것은 되돌리기가 아니라 건너뛰기이고, 그러면 산출물이 없는 채로 아래가 돈다.
+    builder.add_conditional_edges(
+        "supervise_model", route_redo,
+        {"advance": "write_specifications", "model_use_cases": "model_use_cases"},
+    )
+    builder.add_conditional_edges(
+        "supervise_specs", route_redo,
+        {"advance": "draw_diagram",
+         "model_use_cases": "model_use_cases",
+         "write_specifications": "write_specifications"},
+    )
+    builder.add_conditional_edges(
+        "supervise_diagram", route_redo,
+        {"advance": END,
+         "model_use_cases": "model_use_cases",
+         "write_specifications": "write_specifications",
+         "draw_diagram": "draw_diagram"},
+    )
 
     # 체크포인터는 상위 그래프에만 둔다 — 서브그래프의 interrupt도 상위로 전파돼 상위
     # invoke(Command(resume=...))로 재개된다(서브그래프는 무-체크포인터로 컴파일됨).
