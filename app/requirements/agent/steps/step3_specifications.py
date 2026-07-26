@@ -7,18 +7,19 @@ step2의 각 유스케이스에 대해 주 시나리오 + 확장(예외/대안) 
 
 LLM 출력을 그대로 믿지 않고 검증·반성한다:
   - _clean: 문장의 마크다운/특수문자 정리(모델이 **굵게** 등을 섞어도 방어).
-  - _validate_spec: 정적(결정론) 체크 — 분기/복귀 참조, 무분기, 제어토큰, black-box UI 용어,
-    계약 완결성.
+  - _validate_spec: 정적(결정론) 체크. 판정은 `knowledge/detectors.py`가 하고 여기서는
+    지적을 문자열로 바꾼다 — 규칙과 검출기가 지식베이스에 함께 있어야 지적이 인용을 들고 나간다.
   - _semantic_findings: LLM 의미 검증(hidden branching·scope creep 등, 정적이 못 잡는 것).
+    검증자가 댄 규칙 id를 지식베이스와 대조해, **없는 규칙을 인용한 지적은 버린다.**
   - _spec_for의 reflection 루프: 검증 실패 시 지시를 붙여 재생성(최대 max_repair_iters),
     회귀하면 직전본 유지.
 
-RAG("Writing Effective Use Cases" PDF)는 향후 SPEC 프롬프트에 few-shot으로 주입 예정.
+규칙의 출처(책이 적었나 / 우리가 정했나)는 `knowledge/rules.py`에 있다. 책 본문은 저장소에
+없다 — 저작물이라 지웠고(`d1a7ec5`), 담는 것은 우리 표현의 규범 문장과 인용 좌표다.
 """
 from __future__ import annotations
 
 import json
-import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import cast
@@ -28,9 +29,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState, RequirementItem, UseCaseItem, UseCaseSpecItem
+from app.requirements.agent.steps import grounding
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.knowledge import detectors
 from app.requirements.schemas import SpecCritique, UseCaseSpec
 
 # 마크다운/특수문자 → plain 정규화 매핑.
@@ -49,24 +52,6 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-# Cockburn: MSS/확장은 무분기(Ch.7) → 명시적 if/else만 빠르게 걸러낸다(미묘한 분기는 LLM 몫).
-_BRANCH = re.compile(r"\b(if|else)\b", re.IGNORECASE)
-# 'Success!'/'Fail!'는 Cockburn의 시나리오 종결 토큰 → 프로즈가 아니라 outcome 필드로 표현.
-_CONTROL_TOKEN = re.compile(r"(success!|fail!)", re.IGNORECASE)
-# black-box lint: Cockburn Reminder 7(p.209)의 "나쁜 예"에 실제 등장하는 UI 용어만.
-# ⚠ Cockburn은 금지 단어목록을 명문화하지 않았다(docs/research/cockburn-grounding.md C1).
-# 따라서 이 목록은 "예시일 뿐 완전목록 아님"이며, 그가 예로 든 단어(screen/field/button/click/
-# tab, p.209·p.91-92)로만 한정한다. page/menu/form 등은 그의 예시에 없어(오히려 form은 p.177에서
-# 긍정적으로 등장) 제외한다. 나머지 내부컴포넌트 누출 판단은 임의 사전이 아니라 LLM Validator에 위임.
-_UI_TERMS = ["screen", "field", "fields", "button", "click", "clicks", "clicked", "tab"]
-_UI_PATTERNS = {w: re.compile(rf"\b{re.escape(w)}\b", re.IGNORECASE) for w in _UI_TERMS}
-
-
-def _black_box_lint(text: str) -> list[str]:
-    """문장에서 Cockburn 예시 UI 용어를 찾아 반환한다(단어 경계 매칭)."""
-    return sorted(w for w, pat in _UI_PATTERNS.items() if pat.search(text))
-
-
 def _resolve(ids: list[str], by_id: dict[str, RequirementItem]) -> str:
     """요구 id 목록을 'id: text' 나열로 해석한다(없는 id는 조용히 건너뜀)."""
     lines = [f"- {i}: {by_id[i]['text']}" for i in ids if i in by_id]
@@ -76,54 +61,13 @@ def _resolve(ids: list[str], by_id: dict[str, RequirementItem]) -> str:
 def _validate_spec(spec: dict) -> list[str]:
     """명세를 결정론적으로 점검한다(생성은 LLM 휴리스틱, 이 점검은 확정적).
 
-    (1) 확장 분기/복귀 참조 무결성, (2) 문장 정적 체크(무분기·제어토큰·black-box UI 용어),
-    (3) 계약 완결성(precondition/success_guarantee). 위반은 issues 문자열로 반환.
+    판정은 `knowledge/detectors.py`가 한다 — 규칙과 검출기가 지식베이스에 함께 있어야
+    지적이 근거(규칙 id + 인용)를 들고 나간다. 여기서는 상태·리포트에 실릴 문자열로만 바꾼다.
+
+    예전에는 정규식과 UI 단어 목록이 이 파일 상단에 있었고, "그 목록은 완전목록이 아니다"는
+    사실이 **주석에만** 있었다. 그래서 지적을 받는 사람은 그 한계를 알 수 없었다.
     """
-    main = spec.get("main_scenario", [])
-    exts = spec.get("extensions", [])
-    step_nums = {s["step_number"] for s in main}
-    issues: list[str] = []
-
-    # (1) 확장 분기/복귀 참조 무결성
-    for ext in exts:
-        label = ext.get("label") or "?"
-        branch = ext.get("branch_step")
-        if branch is not None and branch not in step_nums:
-            issues.append(f"{label}: branch_step {branch}가 주 시나리오에 없음")
-        outcome = ext.get("outcome")
-        resume = ext.get("resume_at_step")
-        if outcome == "resume":
-            if resume is None:
-                issues.append(f"{label}: outcome=resume인데 resume_at_step 없음")
-            elif resume not in step_nums:
-                issues.append(f"{label}: resume_at_step {resume}가 주 시나리오에 없음")
-        elif resume is not None:
-            issues.append(f"{label}: outcome={outcome}인데 resume_at_step이 설정됨")
-
-    # (2) 문장 정적 체크 — trigger + MSS 스텝 + 확장 handling
-    def _locations():
-        yield "trigger", spec.get("trigger", "")
-        for s in main:
-            yield f"step {s['step_number']}", s["sentence"]
-        for e in exts:
-            for h in e.get("handling_steps", []):
-                yield h["sub_step"], h["sentence"]
-
-    for loc, sent in _locations():
-        if _BRANCH.search(sent):
-            issues.append(f"{loc}: 분기어(if/else) — 무분기여야 함(별도 확장으로 분리)")
-        if _CONTROL_TOKEN.search(sent):
-            issues.append(f"{loc}: 제어토큰(Success!/Fail!) — outcome 필드로 표현할 것")
-        ui = _black_box_lint(sent)
-        if ui:
-            issues.append(f"{loc}: UI 용어 {ui} — black-box 위반")
-
-    # (3) 계약 완결성
-    if not spec.get("preconditions"):
-        issues.append("preconditions 없음")
-    if not spec.get("success_guarantee"):
-        issues.append("success_guarantee 없음")
-    return issues
+    return [f.as_issue() for f in detectors.spec_findings(spec)]
 
 
 def _spec_human(uc: UseCaseItem, by_id: dict[str, RequirementItem], actors: list, feedback: str = "") -> str:
@@ -177,7 +121,12 @@ def _semantic_findings(item: UseCaseSpecItem) -> tuple[list[str], str]:
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
 
-    상태: "ok"(검증함) | "disabled"(설정으로 끔) | "failed"(부르지 못함).
+    검증자가 댄 규칙 id는 지식베이스와 대조한다. **없는 규칙을 인용한 지적은 버린다** —
+    그건 검증자가 스스로 만든 기준이고, 그대로 통과시키면 검증자의 환각이 산출물에서는
+    결함으로 보인다. 버린 사실은 저하로 남긴다.
+
+    상태: "ok"(검증함) | "disabled"(설정으로 끔) | "failed"(부르지 못함) |
+    "ungrounded"(불렀는데 근거 있는 지적이 하나도 없었다 — 답을 얻지 못한 것이다).
     """
     if not settings.enable_semantic_validator:
         return [], "disabled"
@@ -196,7 +145,18 @@ def _semantic_findings(item: UseCaseSpecItem) -> tuple[list[str], str]:
             subject=item.get("use_case_id"),
         )
         return [], "failed"
-    findings = [] if critique.is_valid else [f"[semantic] {f}" for f in critique.findings]
+    if critique.is_valid:
+        return [], "ok"
+    findings, ungrounded = grounding.grounded_findings(
+        critique.findings,
+        prefix="semantic",
+        source="spec.semantic_validator",
+        subject=item.get("use_case_id"),
+    )
+    # 지적이 전부 근거 없이 버려졌다면 우리는 판정을 **얻지 못했다.** 그걸 "결함 없음"과
+    # 같은 값으로 두면, 검증자가 헛소리만 한 실행이 깨끗한 실행처럼 보인다.
+    if ungrounded and not findings:
+        return [], "ungrounded"
     return findings, "ok"
 
 
@@ -364,8 +324,11 @@ def check_specs(state: AgentState) -> dict:
         # 의미 검증을 못 거친 명세. issues가 비었다는 것과 "확인했는데 깨끗하다"는 것을
         # 리포트에서 구별할 수 있어야 한다 — 이 목록이 비어 있지 않으면 total_issues는
         # 하한일 뿐이다.
+        # "failed"(부르지 못함)와 "ungrounded"(불렀지만 근거 있는 지적을 못 받음)는 원인이
+        # 다르지만 결과는 같다 — 이 명세는 의미 검증을 **거치지 못했다.**
         "unvalidated_ucs": [
-            s["use_case_id"] for s in specs if s.get("semantic_status") == "failed"
+            s["use_case_id"] for s in specs
+            if s.get("semantic_status") in ("failed", "ungrounded")
         ],
         # 생성 자체가 실패해 빈 자리로 남은 UC. 형제는 살아 있으므로 실행은 계속되지만
         # 이 UC의 명세는 없다 — 있는 척하지 않는다.

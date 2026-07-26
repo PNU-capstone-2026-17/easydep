@@ -1,7 +1,47 @@
 """요구사항 분석 에이전트의 시스템 프롬프트.
 
 전 단계 영어로 작성한다 (입력/출력 영어 중심 결정 + BERT는 영어 단문 학습).
+
+**검증 프롬프트는 여기서 쓰지 않는다** — `app/requirements/knowledge/rules.py`의 규칙
+레코드에서 조립한다(`_validator_system`). 규칙을 산문으로 여기 적으면 같은 규칙이
+프롬프트·검출기·문서에 세 벌로 갈라진다. 생성 프롬프트는 아직 산문 그대로다(그 이유는
+`knowledge/rules.py`의 "아직 없는 것" 절).
 """
+from app.requirements.knowledge import rules as _rules
+
+
+def _validator_system(stage: str, role: str, do_not_flag: str) -> str:
+    """의미 검증자 시스템 프롬프트를 규칙 지식베이스에서 조립한다.
+
+    세 가지를 모델에게 한꺼번에 준다:
+      1. 판정 근거가 될 규칙 목록 — **이 목록 밖으로 나가지 말라**는 지시와 함께.
+      2. 각 규칙의 출처와 그 성격(책이 적은 것인지 우리 판단인지).
+      3. 이미 결정론으로 검사한 규칙 목록 — 두 번 지적하지 않도록.
+
+    3번이 예전에는 산문에 손으로 적혀 있었다. 검출기를 하나 늘리면 그 문장도 고쳐야 했고,
+    안 고치면 검증자가 이미 잡힌 것을 다시 지적했다.
+    """
+    already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
+    return f"""You are a zero-tolerance {role}.
+
+The rules below are the ONLY grounds you may judge on. Each line is: rule id, where the rule
+comes from, then what it requires. Some lines add a note about how well the rule is grounded —
+judge those rules just the same, but never present them as the source's own words.
+
+[RULES YOU JUDGE]
+{_rules.validator_prompt_block(stage)}
+
+Deterministic checks have ALREADY run for these rules — do NOT report them again:
+{already}
+
+For every defect, return ONE finding: rule_id copied EXACTLY from the list above, plus one
+short imperative repair directive. **If something looks wrong but matches no rule above, do
+NOT report it** — a finding without a rule is not a finding, and inventing a rule id makes the
+finding unusable.
+
+Do NOT flag: {do_not_flag}
+
+Set is_valid=false if any listed rule is violated. Return the structured object only."""
 
 # 요구사항이 유스케이스 도출에 충분히 구체적인지 판단하고,
 # 부족하면 clarifying questions 를, 충분하면 refined_requirements 를 만든다.
@@ -205,31 +245,13 @@ Produce:
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
 
-# STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). generator와 같은 Cockburn 기준 공유.
-SPEC_VALIDATOR_SYSTEM = """You are a zero-tolerance Cockburn use-case critic. Deterministic
-static checks (branching words, control tokens, UI terms, broken step references, missing
-contract) have ALREADY run — do NOT repeat them. Judge ONLY the SEMANTIC defects static
-analysis cannot catch:
-
-- Hidden branching: a step whose behavior depends on an unstated outcome (must be split into
-  a separate extension), even without the literal word "if".
-- Internal-component / design leakage disguised in business words (naming an internal service,
-  engine, store, cache, or "the database/server") — the steps must stay black-box.
-- Scope creep: a step, condition, or handling that invents a capability absent from the given
-  functional requirements.
-- Broken remerge semantics: a resume/handling flow that does not actually re-establish the
-  state its resume step assumes.
-- Precondition re-check: an MSS step that re-verifies a state a precondition already guarantees.
-- Consequence-as-step: an automated system consequence or cross-cutting quality concern
-  (logging, auditing, encrypting stored data, sending a receipt/confirmation) written as a
-  main-scenario STEP — it is an internal success guarantee and must move to a guarantee, not
-  be a step (Cockburn: absorb system consequences into the driving goal).
-
-Do NOT flag: a step with more than one clause; the absence of an explicit "System validates"
-step; a use case having no extensions; slightly high/low goal level; wording preferences.
-
-Set is_valid=false if any semantic defect exists, and give ONE short imperative directive per
-defect in findings (max two sentences each). Return the structured object only."""
+# STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). 규칙은 knowledge/rules.py에서 온다.
+SPEC_VALIDATOR_SYSTEM = _validator_system(
+    _rules.WRITE_SPECIFICATIONS,
+    "use-case specification critic",
+    'a step with more than one clause; the absence of an explicit "System validates" step; '
+    "a use case having no extensions; slightly high/low goal level; wording preferences",
+)
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
 def spec_repair_user(base_user: str, directives: list[str]) -> str:
@@ -240,25 +262,13 @@ def spec_repair_user(base_user: str, directives: list[str]) -> str:
     )
 
 
-# STEP 4 — 관계 의미 검증(Cockburn 근거). 정적 참조검증이 못 잡는 안티패턴을 판정.
-RELATIONSHIP_VALIDATOR_SYSTEM = """You are a Cockburn use-case-relationship critic. Review the
-proposed relationships (includes, extends, generalizations, derived use cases) and flag ONLY
-these grounded defects:
-
-- Precondition-as-include: an <<include>> whose included sub-goal is actually a PRECONDITION
-  shared across use cases — especially login / authentication / authorization ("the user is
-  logged in / is authorized"). That is a precondition set up by a PRIOR use case (e.g. Log On),
-  NOT an include drawn from every use case. Flag it for removal. (Cockburn p.81)
-- Consequence-as-include: an <<include>> of a cross-cutting internal consequence (logging,
-  auditing, encrypting data, sending confirmations). These are success guarantees / NFRs, never
-  included sub-goals. Flag for removal. (Cockburn p.64)
-- Extend misuse: an <<extend>> used for a failure/edge case, or for ordinary sequential "after
-  A do B" ordering, instead of a genuinely optional, interrupting, electively-triggered behavior.
-- Generalization that inverts or confuses meaning.
-
-Return is_valid=false if any defect exists, with ONE concise imperative directive per defect
-(name the offending relationship). Otherwise is_valid=true with empty findings. Do not invent
-new defects; a small, clean relationship set is good."""
+# STEP 4 — 관계 의미 검증. 규칙은 knowledge/rules.py에서 온다.
+RELATIONSHIP_VALIDATOR_SYSTEM = _validator_system(
+    _rules.DRAW_DIAGRAM,
+    "use-case-relationship critic reviewing proposed includes, extends, generalizations and "
+    "derived use cases (name the offending relationship in each directive)",
+    "a small, clean relationship set; an ordinary association; a use case with no relationships",
+)
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).

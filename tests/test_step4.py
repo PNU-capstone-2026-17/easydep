@@ -23,6 +23,7 @@ from app.requirements.schemas import (
     IncludeRelation,
     RelationshipCritique,
     RelationshipModel,
+    RuleFinding,
 )
 from conftest import dataset_names, load_dataset
 
@@ -309,7 +310,12 @@ def test_relationship_reflection_removes_antipattern(monkeypatch):
         # RelationshipCritique: gen 1이면 invalid(지시), 재생성(gen 2) 후 valid.
         return RelationshipCritique(
             is_valid=calls["gen"] >= 2,
-            findings=[] if calls["gen"] >= 2 else ["Remove the Authenticate include — it is a precondition (Log On)."],
+            findings=[] if calls["gen"] >= 2 else [
+                RuleFinding(
+                    rule_id="rel.shared-authentication-is-a-precondition",
+                    directive="Remove the Authenticate include — it is a precondition (Log On).",
+                )
+            ],
         )
 
     monkeypatch.setattr(s4, "invoke_structured", fake)
@@ -339,7 +345,15 @@ def test_relationship_repair_gives_up_when_it_does_not_help(monkeypatch):
                 associations=[], includes=[], extends=[],
                 generalizations=[], derived_use_cases=[],
             )
-        return RelationshipCritique(is_valid=False, findings=["still wrong"])
+        return RelationshipCritique(
+            is_valid=False,
+            findings=[
+                RuleFinding(
+                    rule_id="rel.extend-is-only-optional-interruption",
+                    directive="still wrong",
+                )
+            ],
+        )
 
     monkeypatch.setattr(s4, "invoke_structured", fake)
     state = {

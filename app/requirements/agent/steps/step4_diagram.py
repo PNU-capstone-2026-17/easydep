@@ -15,6 +15,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements import prompts
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
+from app.requirements.agent.steps import grounding
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
@@ -27,7 +28,11 @@ def _rel_findings(rel: dict) -> tuple[list[str], str]:
 
     `(결함 목록, 검증 상태)`를 돌려준다 — step3의 `_semantic_findings`와 같은 이유로,
     "결함 없음"과 "확인하지 못함"이 같은 값이 되면 안 된다.
-    상태: "ok" | "disabled" | "failed".
+
+    검증자가 댄 규칙 id는 지식베이스와 대조한다(`steps/grounding.py`) — 없는 규칙을
+    인용한 지적은 버린다.
+
+    상태: "ok" | "disabled" | "failed" | "ungrounded"(근거 있는 지적을 하나도 못 받음).
     """
     if not settings.enable_semantic_validator:
         return [], "disabled"
@@ -41,14 +46,20 @@ def _rel_findings(rel: dict) -> tuple[list[str], str]:
     except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않음
         telemetry.record_degradation("relationships.semantic_validator", f"{type(exc).__name__}: {exc}")
         return [], "failed"
-    findings = [] if crit.is_valid else [f"[rel] {f}" for f in crit.findings]
+    if crit.is_valid:
+        return [], "ok"
+    findings, ungrounded = grounding.grounded_findings(
+        crit.findings, prefix="rel", source="relationships.semantic_validator"
+    )
+    if ungrounded and not findings:
+        return [], "ungrounded"
     return findings, "ok"
 
 
 # include 후보 힌트를 관계 에이전트에 몇 개까지 노출할지.
-# ⚠ 순수 엔지니어링 가드(프롬프트 크기 제한)일 뿐 Cockburn 규칙이 아니다. 출력(관계) 개수를
-# 제한하지 않는다 — 의미 필터(precondition-인증 제외·nameable sub-goal)는 프롬프트가 담당한다.
-# (docs/research/cockburn-grounding.md 오버피팅 플래그)
+# ⚠ 순수 엔지니어링 가드(프롬프트 크기 제한)일 뿐 규칙이 아니다. 출력(관계) 개수를 제한하지
+# 않는다 — 의미 필터는 프롬프트가 담당한다. 이 사실은 지식베이스에도 규칙이 **아닌 것**으로
+# 적혀 있다(`knowledge/rules.py`의 `rel.include-hint-cap`, severity=NON_RULE).
 _MAX_INCLUDE_HINTS = 6
 
 

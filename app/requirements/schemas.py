@@ -120,13 +120,30 @@ class UseCase(BaseModel):
     )
 
 
+class RuleFinding(BaseModel):
+    """규칙 위반 하나. **어느 규칙을 어겼는지 반드시 댄다.**
+
+    예전에는 findings가 자유문 목록이었다. 그러면 검증자가 지식베이스에 없는 기준을
+    스스로 만들어 지적해도 근거 있는 지적과 구별할 방법이 없었다 — 검증자의 환각이
+    산출물에서는 결함으로 보인다. rule_id를 요구하면 존재하지 않는 규칙을 인용한 지적을
+    걸러낼 수 있다(`app/requirements/knowledge/rules.py`의 `known_ids`).
+    """
+
+    rule_id: str = Field(
+        description="The id of the violated rule, copied exactly from the rule list.",
+    )
+    directive: str = Field(
+        description="One short imperative repair directive (at most two sentences).",
+    )
+
+
 class SpecCritique(BaseModel):
     """명세에 대한 LLM 의미 검증 결과(정적 체크로 못 잡는 부분만)."""
 
     is_valid: bool = Field(description="True if no semantic defect was found.")
-    findings: list[str] = Field(
+    findings: list[RuleFinding] = Field(
         default_factory=list,
-        description="One imperative repair directive per semantic defect (empty if valid).",
+        description="One finding per semantic defect, each citing its rule id (empty if valid).",
     )
 
 
@@ -134,9 +151,9 @@ class RelationshipCritique(BaseModel):
     """관계(include/extend/generalization)에 대한 LLM 의미 검증 결과."""
 
     is_valid: bool = Field(description="True if no relationship defect was found.")
-    findings: list[str] = Field(
+    findings: list[RuleFinding] = Field(
         default_factory=list,
-        description="One imperative repair directive per defect (empty if valid).",
+        description="One finding per defect, each citing its rule id (empty if valid).",
     )
 
 

@@ -60,7 +60,8 @@ class UseCaseSpecItem(TypedDict):
     minimal_guarantee: list[str]
     issues: list[str]               # 검증 위반(정적+의미). reflection 루프 후 남은 것.
     repair_iters: int               # 반성 루프에서 재생성한 횟수
-    # 의미 검증(LLM)을 실제로 거쳤는지. "ok"|"disabled"|"failed"|"pending".
+    # 의미 검증(LLM)을 실제로 거쳤는지.
+    # "ok"|"disabled"|"failed"|"ungrounded"(지식베이스에 없는 규칙만 인용해 버렸다)|"pending".
     # issues가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없어서 둔다.
     # 예전 spec item과 섞일 수 있으므로 NotRequired.
     semantic_status: NotRequired[str]

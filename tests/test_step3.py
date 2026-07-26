@@ -21,6 +21,7 @@ from app.requirements.schemas import (
     Extension,
     ExtensionHandlingStep,
     MainScenarioStep,
+    RuleFinding,
     SpecCritique,
     UseCaseSpec,
 )
@@ -309,14 +310,52 @@ def test_semantic_validator_merges_and_drives_repair(monkeypatch):
     def fake(schema, messages):
         if schema is UseCaseSpec:
             return _clean_spec()          # 정적으론 깨끗
-        return SpecCritique(is_valid=False, findings=["split hidden branching in step 2"])
+        return SpecCritique(
+            is_valid=False,
+            findings=[
+                RuleFinding(
+                    rule_id="spec.no-hidden-branching",
+                    directive="split hidden branching in step 2",
+                )
+            ],
+        )
 
     monkeypatch.setattr(s3, "invoke_structured", fake)
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert any("[semantic]" in i for i in spec["issues"])  # 의미 결함이 병합됨
+    # 지적이 근거를 들고 나간다 — 규칙 id와 인용 좌표가 문구에 함께 있다.
+    assert any("spec.no-hidden-branching" in i and "Ch. 7" in i for i in spec["issues"])
     assert spec["repair_iters"] == 1                        # 의미 결함이 재생성을 유발
     assert spec["semantic_status"] == "ok"                  # 실제로 검증을 거쳤다
+
+
+def test_ungrounded_finding_is_dropped_and_not_reported_as_clean(monkeypatch):
+    """검증자가 **없는 규칙**을 인용하면 그 지적은 버린다.
+
+    버리고 나서 남은 지적이 없으면 "결함 없음"이 아니라 "확인하지 못함"이다 — 검증자가
+    헛소리만 한 실행이 깨끗한 실행처럼 보이면 안 된다.
+    """
+    monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
+    monkeypatch.setattr(s3.settings, "max_repair_iters", 1)
+
+    def fake(schema, messages):
+        if schema is UseCaseSpec:
+            return _clean_spec()
+        return SpecCritique(
+            is_valid=False,
+            findings=[RuleFinding(rule_id="spec.made-up-rule", directive="do something")],
+        )
+
+    monkeypatch.setattr(s3, "invoke_structured", fake)
+    spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
+
+    assert spec["issues"] == []                       # 근거 없는 지적은 남지 않는다
+    assert spec["semantic_status"] == "ungrounded"    # 그러나 깨끗하다고 하지도 않는다
+    assert spec["repair_iters"] == 0                 # 헛지적으로 재생성 예산을 태우지 않는다
+
+    report = s3.check_specs({"use_case_specs": [spec]})["spec_report"]
+    assert report["unvalidated_ucs"] == ["UC1"]      # 리포트가 확인 못 한 사실을 싣는다
 
 
 def test_dead_semantic_validator_is_not_reported_as_clean(monkeypatch):
