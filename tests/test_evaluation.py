@@ -44,6 +44,20 @@ def test_every_detector_rule_has_a_seed():
     assert seeded.detection_report()["unseeded_detector_rules"] == []
 
 
+def test_the_seeded_payload_matches_what_the_pipeline_sends():
+    """눈금이 파이프라인과 다른 것을 보여 주면 그 수치는 파이프라인에 대한 말이 아니다.
+
+    `seeded.py`는 자격증명 없이 돌아야 해서 `step3`을 import할 수 없다(그 모듈이 설정·LLM
+    스택을 끌고 온다). 그래서 모양이 같은지는 import가 아니라 여기서 지킨다.
+    """
+    from app.requirements.agent.steps import step3_specifications as s3
+
+    assert seeded._REVIEWED_FIELDS == s3._REVIEWED_FIELDS
+    assert seeded._spec_payload(seeded.CLEAN) == s3.spec_review_payload(
+        seeded.CLEAN, seeded._REQUIREMENTS
+    )
+
+
 def test_seeded_check_runs_without_credentials():
     """이건 CI 게이트다 — API 키도 그래프도 없이 돌아야 한다.
 

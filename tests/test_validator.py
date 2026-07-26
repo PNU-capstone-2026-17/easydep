@@ -70,6 +70,47 @@ def test_findings_carry_the_rule_and_its_citation(monkeypatch):
     assert review.unexamined == ()
 
 
+def test_a_defect_needs_a_majority_of_ballots(monkeypatch):
+    """판정이 흔들리는 층에서는 **한 표로 결함을 확정하지 않는다.**
+
+    측정(2026-07-26): 같은 명세를 5번 물었을 때 (명세×규칙) 판정 24건 중 안정된 것이 4건.
+    한 표로 정하면 그 위에 쌓은 수 — 반성 루프, 실행 비교 — 가 전부 동전 던지기가 된다.
+    """
+    monkeypatch.setattr(validator.settings, "validator_votes", 3)
+    ballots = [
+        # 3표 중 2표: scope-creep은 살고, 1표뿐인 hidden-branching은 죽는다.
+        _all(violated={"spec.no-scope-creep": "a", "spec.no-hidden-branching": "b"}),
+        _all(violated={"spec.no-scope-creep": "a"}),
+        _all(violated={}),
+    ]
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        ballot = ballots[calls["n"]]
+        calls["n"] += 1
+        return ballot
+
+    monkeypatch.setattr(validator, "invoke_structured", fake)
+    review = validator.review(
+        _STAGE, {"trigger": "t"}, prefix="semantic", source="spec.semantic_validator"
+    )
+
+    assert calls["n"] == 3                      # 세 번 물었다
+    flagged = {rules.rule_of(f) for f in review.findings}
+    assert flagged == {"spec.no-scope-creep"}
+    assert review.status == validator.OK
+
+
+def test_a_single_vote_keeps_the_old_behaviour(monkeypatch):
+    """기본값 1이면 다수결 없이 한 번 묻는다(예전과 같다)."""
+    monkeypatch.setattr(validator.settings, "validator_votes", 1)
+    captured = _patch(monkeypatch, _all(violated={"spec.no-scope-creep": "a"}))
+    review = validator.review(
+        _STAGE, {"trigger": "t"}, prefix="semantic", source="spec.semantic_validator"
+    )
+    assert captured and len(review.findings) == 1
+
+
 def test_skipped_rules_are_counted_not_assumed_clean(monkeypatch):
     """규칙 6개 중 2개만 판정하고 깨끗하다고 하면, 그건 리뷰가 끝난 것이 아니다.
 

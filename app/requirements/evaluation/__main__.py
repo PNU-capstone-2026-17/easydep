@@ -66,6 +66,21 @@ def _cmd_semantic(args) -> int:
     return 0
 
 
+def _cmd_stability(args) -> int:
+    """판정 안정성 — 같은 명세를 N번 물어 흔들리는 판정을 센다. **실제 LLM 호출.**"""
+    from app.requirements.evaluation import semantic
+
+    payloads = semantic.payloads_from_run(args.run_dir)
+    report = semantic.measure_stability(payloads, repeats=args.repeats)
+    print(f"모델 {report['model']} · 명세 {report['n_specs']}개 × {report['repeats']}회\n")
+    print(f"{'규칙':52} {'항상':>5} {'때때로':>7} {'흔들림':>7}")
+    for rule_id, row in report["per_rule"].items():
+        print(f"{rule_id:52} {row['always']:>5} {row['sometimes']:>7} "
+              f"{row['unstable_share']:>7.0%}")
+    print(f"\n전체 흔들림 비율: {report['unstable_share']:.0%}")
+    return 0
+
+
 def _cmd_score(args) -> int:
     from app.requirements.evaluation import scorecard as sc
     from app.requirements.runner import load_state
@@ -116,6 +131,13 @@ def main(argv: list[str] | None = None) -> int:
     p_sem.add_argument("--stage", default=None,
                        help="한 단계만: write_specifications | draw_diagram | model_use_cases")
     p_sem.set_defaults(fn=_cmd_semantic)
+
+    p_stab = sub.add_parser(
+        "stability", help="실제 명세로 판정 안정성 측정 (실제 LLM 호출 · 게이트 아님)"
+    )
+    p_stab.add_argument("run_dir")
+    p_stab.add_argument("--repeats", type=int, default=3)
+    p_stab.set_defaults(fn=_cmd_stability)
 
     p_score = sub.add_parser("score", help="artifacts/run_*/ 를 채점한다")
     p_score.add_argument("run_dir")

@@ -112,6 +112,22 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
     }
 
 
+#: 검증자에게 보여줄 명세의 칸들. 여기 없는 것은 검증자가 못 본다.
+_REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
+                    "success_guarantee")
+
+
+def spec_review_payload(item: dict, requirements: list[dict] | None = None) -> dict:
+    """검증자가 받는 모양. **공개 함수인 이유는 평가가 같은 모양을 써야 하기 때문**이다.
+
+    평가(`evaluation/`)가 이 모양을 따로 알고 있으면, 파이프라인이 보여주는 것과 눈금이
+    재는 것이 조용히 달라진다 — 그러면 눈금 수치가 파이프라인에 대한 말이 아니게 된다.
+    """
+    payload: dict = {k: item[k] for k in _REVIEWED_FIELDS}
+    payload["requirements_it_must_cover"] = requirements or []
+    return payload
+
+
 def _semantic_findings(
     item: UseCaseSpecItem, requirements: list[dict] | None = None
 ) -> tuple[list[str], str]:
@@ -132,9 +148,7 @@ def _semantic_findings(
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
     """
-    payload: dict = {k: item[k] for k in ("trigger", "preconditions", "main_scenario",
-                                          "extensions", "success_guarantee")}
-    payload["requirements_it_must_cover"] = requirements or []
+    payload = spec_review_payload(item, requirements)
     result = validator.review(
         rules.WRITE_SPECIFICATIONS,
         payload,
@@ -145,7 +159,7 @@ def _semantic_findings(
     return result.findings, result.status
 
 
-def _requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list[dict]:
+def requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list[dict]:
     """이 UC가 다뤄야 할 요구사항(id + 문장). 검증자가 scope creep을 판정할 잣대다."""
     ids = list(uc.get("requirement_ids", [])) + list(uc.get("nfr_ids", []))
     return [{"id": rid, "text": by_id[rid]["text"]} for rid in ids if rid in by_id]
@@ -181,7 +195,7 @@ def _spec_for(
     """
     base_user = _spec_human(uc, by_id, actors, feedback)
     # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
-    requirements = _requirement_view(uc, by_id)
+    requirements = requirement_view(uc, by_id)
 
     def _generate(messages) -> UseCaseSpecItem:
         spec: UseCaseSpec = invoke_structured(UseCaseSpec, messages)

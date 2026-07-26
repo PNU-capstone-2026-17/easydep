@@ -176,10 +176,23 @@ _REQUIREMENTS = [
 ]
 
 
+#: 검증자가 받는 명세의 칸들. `step3._REVIEWED_FIELDS`와 같아야 한다.
+_REVIEWED_FIELDS = ("trigger", "preconditions", "main_scenario", "extensions",
+                    "success_guarantee")
+
+
 def _spec_payload(spec: dict) -> dict:
-    """`step3._semantic_findings`가 넘기는 모양 그대로."""
-    payload = {k: spec[k] for k in ("trigger", "preconditions", "main_scenario",
-                                    "extensions", "success_guarantee")}
+    """검증자가 받는 모양.
+
+    ⚠ `step3.spec_review_payload`를 **부르지 않고** 같은 모양을 여기서 조립한다. 그 모듈을
+    import하면 설정·LLM 스택이 딸려 와, 이 파일이 **자격증명 없이 도는 성질**을 잃는다
+    (`SEEDED_SEMANTIC`이 모듈 로드 시 조립되기 때문이다). 그건 CI 게이트의 전제다.
+
+    그래서 모양이 같은지는 import가 아니라 **테스트가** 지킨다
+    (`tests/test_evaluation.py::test_the_seeded_payload_matches_what_the_pipeline_sends`).
+    눈금이 파이프라인과 다른 것을 보여 주면 그 수치는 파이프라인에 대한 말이 아니다.
+    """
+    payload = {k: spec[k] for k in _REVIEWED_FIELDS}
     payload["requirements_it_must_cover"] = _REQUIREMENTS
     return payload
 

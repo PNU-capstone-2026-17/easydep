@@ -66,6 +66,7 @@ def load_state(run_dir: str | Path) -> dict:
         "use_cases": _j("use_cases.json", []),
         "coverage": _j("coverage.json", {}),
         "model_review": _j("model_review.json", {}),
+        **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
         "diagram": diagram_path.read_text(encoding="utf-8") if diagram_path.exists() else "",
@@ -166,6 +167,8 @@ def _summarize(state: dict) -> dict:
         # 의미 검증이 실제로 돌았는지. 이게 없으면 결함 0건이 "깨끗하다"인지
         # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
         "model_review": state.get("model_review", {}),
+        # 되돌아가기가 있었는지. 있었으면 이 실행의 비용은 한 바퀴 이상이다.
+        "redo_rounds": state.get("redo_rounds", 0),
         "relationships": {
             k: len(rel.get(k, []))
             for k in ("associations", "includes", "extends", "generalizations", "derived_use_cases")
@@ -195,6 +198,12 @@ def persist_run(
     # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
     # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
     _dump(run_dir / "model_review.json", state.get("model_review", {}))
+    # 되돌아가기 기록. 이게 없으면 산출물만 보고 **어느 단계가 왜 다시 돌았는지** 알 수 없다.
+    # (2026-07-26 C2 첫 측정 때 실제로 없어서, 호출 수로 추정해야 했다.)
+    _dump(run_dir / "redo.json", {
+        "redo_rounds": state.get("redo_rounds", 0),
+        "redo_history": state.get("redo_history", []),
+    })
     _dump(run_dir / "use_case_specs.json", state.get("use_case_specs", []))
     _dump(run_dir / "relationships.json", state.get("relationships", {}))
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")

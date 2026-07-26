@@ -100,6 +100,12 @@ def scorecard(state: dict) -> dict:
         "as_recorded": dict(sorted(recorded.items())),
         "statuses": _statuses(state),
         "unexamined_rules": _unexamined(state),
+        # 되돌아가기가 있었는지. 없으면 이 실행은 한 바퀴이고, 있으면 비용이 그만큼 더 들었다 —
+        # 결함 수만 비교하고 비용을 빼놓으면 "나아졌다"의 값을 모른다.
+        "redo": {
+            "rounds": int(state.get("redo_rounds", 0) or 0),
+            "owners": [entry.get("owner") for entry in (state.get("redo_history") or [])],
+        },
     }
 
 

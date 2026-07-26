@@ -35,7 +35,7 @@ from app.requirements.agent.llm import invoke_structured
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.knowledge import rules
-from app.requirements.schemas import Critique
+from app.requirements.schemas import Critique, RuleVerdict
 
 #: 검증을 실제로 거쳤는가. **"결함 없음"과 "확인 못 함"을 같은 값으로 두지 않기 위해 있다.**
 OK = "ok"                    # 판정을 받았다(결함이 있든 없든)
@@ -57,6 +57,50 @@ class Review:
     status: str = OK
     #: 검증자가 판정하지 않고 넘어간 규칙 id들(early victory의 흔적).
     unexamined: tuple[str, ...] = ()
+
+
+def _collect_ballots(
+    stage: str, artifact: dict, *, source: str, subject: str | None
+) -> list[Critique]:
+    """검증자에게 `settings.validator_votes`번 묻는다. 하나라도 받으면 그것으로 센다.
+
+    한 번도 못 받으면 빈 목록 — 부르지 못한 것과 결함 없는 것을 같은 값으로 두지 않는다.
+    """
+    system = prompts.validator_system_for(stage)
+    messages = [
+        SystemMessage(content=system),
+        HumanMessage(
+            content=f"[ARTIFACT UNDER REVIEW]\n{json.dumps(artifact, ensure_ascii=False)}"
+        ),
+    ]
+    ballots: list[Critique] = []
+    for _ in range(max(1, settings.validator_votes)):
+        try:
+            ballots.append(invoke_structured(Critique, messages))
+        except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않다
+            telemetry.record_degradation(source, f"{type(exc).__name__}: {exc}", subject=subject)
+    return ballots
+
+
+def _tally(ballots: list[Critique]) -> tuple[list[RuleVerdict], set[str]]:
+    """표를 모아 **과반으로 위반을 확정한다**. `(확정된 위반, 판정된 규칙 id)`.
+
+    왜 과반인가: 같은 명세를 5번 물었을 때 판정 24건 중 4건만 안정적이었다(흔들림 83%,
+    2026-07-26 측정). 한 번 물어 얻은 판정 위에 쌓은 수는 그 위에 쌓았다는 사실만으로
+    무의미해진다 — 반성 루프도, 실행 비교도.
+
+    지시문은 **과반 표 중 첫 것**을 쓴다. 표마다 문구가 다른데, 여러 개를 합치면 같은
+    결함이 여러 지적으로 보인다.
+    """
+    votes: dict[str, list[RuleVerdict]] = {}
+    examined: set[str] = set()
+    for ballot in ballots:
+        for verdict in ballot.verdicts:
+            examined.add(verdict.rule_id)
+            if verdict.violated:
+                votes.setdefault(verdict.rule_id, []).append(verdict)
+    threshold = len(ballots) // 2 + 1
+    return [v[0] for v in votes.values() if len(v) >= threshold], examined
 
 
 def review(
@@ -83,27 +127,17 @@ def review(
         # 이 단계에 의미 검증자가 볼 규칙이 없다. 호출은 낭비이고, 통과라고 말하면 거짓이다.
         return Review(status=DISABLED)
 
-    system = prompts.validator_system_for(stage)
-    try:
-        critique: Critique = invoke_structured(
-            Critique,
-            [
-                SystemMessage(content=system),
-                HumanMessage(content=f"[ARTIFACT UNDER REVIEW]\n{json.dumps(artifact, ensure_ascii=False)}"),
-            ],
-        )
-    except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않다
-        telemetry.record_degradation(source, f"{type(exc).__name__}: {exc}", subject=subject)
+    ballots = _collect_ballots(stage, artifact, source=source, subject=subject)
+    if not ballots:
         return Review(status=FAILED)
 
-    violated = [v for v in critique.verdicts if v.violated]
+    violated, examined = _tally(ballots)
     findings, dropped = grounding.grounded_findings(
         violated, prefix=prefix, source=source, subject=subject
     )
 
     # 판정을 받지 못한 규칙. 규칙 id를 안 세고 개수만 보면, 엉뚱한 규칙 하나를 대신 판정한
     # 응답이 "다 봤다"로 통과한다.
-    examined = {v.rule_id for v in critique.verdicts}
     unexamined = tuple(rule_id for rule_id in expected if rule_id not in examined)
     if unexamined:
         telemetry.record_degradation(
