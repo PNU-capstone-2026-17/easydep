@@ -64,6 +64,7 @@ def load_state(run_dir: str | Path) -> dict:
         "actors": _j("actors.json", []),
         "use_cases": _j("use_cases.json", []),
         "coverage": _j("coverage.json", {}),
+        "model_review": _j("model_review.json", {}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
         "diagram": diagram_path.read_text(encoding="utf-8") if diagram_path.exists() else "",
@@ -114,6 +115,9 @@ def _summarize(state: dict) -> dict:
         "coverage": state.get("coverage", {}),
         "n_specs": len(specs),
         "spec_issues": issues,  # 위반 있는 UC만
+        # 의미 검증이 실제로 돌았는지. 이게 없으면 결함 0건이 "깨끗하다"인지
+        # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
+        "model_review": state.get("model_review", {}),
         "relationships": {
             k: len(rel.get(k, []))
             for k in ("associations", "includes", "extends", "generalizations", "derived_use_cases")
@@ -140,6 +144,9 @@ def persist_run(
     _dump(run_dir / "actors.json", state.get("actors", []))
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
+    # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
+    # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
+    _dump(run_dir / "model_review.json", state.get("model_review", {}))
     _dump(run_dir / "use_case_specs.json", state.get("use_case_specs", []))
     _dump(run_dir / "relationships.json", state.get("relationships", {}))
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")

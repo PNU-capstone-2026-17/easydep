@@ -2,7 +2,8 @@
 
 > 자연어 요구사항으로부터 **FR/NFR 분류 → 액터·유스케이스 식별 → 유스케이스 명세(Cockburn) →
 > UML 관계·다이어그램**을 생성하는 LangGraph 기반 파이프라인. 전 과정을 Alistair Cockburn의
-> *Writing Effective Use Cases* 로 그라운딩하고, **환각 최소화·재현성·근거성**을 우선한다.
+> *Writing Effective Use Cases* 로 그라운딩하고, **환각 최소화·근거성·경로 고정**을 우선한다.
+> (출력 재현성은 목표가 아니다 — 이 모델에서는 얻을 수 없다. §4.1 참고.)
 >
 > 스택: LangGraph(그래프/interrupt) · Nvidia NIM(OpenAI 호환, gpt-oss-120b) · 파인튜닝 BERT
 > (FR/NFR) · FastAPI(서빙) · pydantic(구조화 출력).
@@ -49,7 +50,8 @@ STEP 4 — 관계 · 다이어그램
         └ (gates on) → feedback_relationships[interrupt]  → END
 ```
 
-**매크로 흐름(4단계)은 고정**(재현성). 표본화·검증·반성·피드백은 각 단계 **내부**에서만 일어난다.
+**매크로 흐름(4단계)은 고정** — 고정되는 것은 **실행 경로**이고 출력이 아니다(§4.1).
+표본화·검증·반성·피드백은 각 단계 **내부**에서만 일어난다.
 비대화형(gates off, 배치/자율)에서는 interrupt 없이 끝까지 진행한다.
 
 ---
@@ -140,6 +142,14 @@ STEP 4 — 관계 · 다이어그램
 ### 4.1 하이브리드 검증 (정적 + 의미 + 반성)
 - **정적(코드)**: `check_coverage`, `_validate_spec`, 관계 참조검증·orphan 탐지, `render_diagram`.
   결정론이라 재현 가능하고 값싸다. 정적 결과는 LLM이 "말로 무마" 못 하게 코드에서 확정.
+  **결정론이 필요한 판정은 반드시 이 층에 둔다** — 아래 이유로 LLM 층에서는 얻을 수 없다.
+
+  > ⚠ **출력 재현성은 이 모델에서 얻을 수 없다.** `gpt-oss-120b`는 MoE이고 라우팅이 함께
+  > 배치된 요청에 좌우된다. 배치가 바뀌면 부동소수 리덕션 순서도 바뀌어 로짓이 갈리고,
+  > argmax가 뒤집히는 토큰 하나로 출력이 갈라진다. `temperature=0`+`seed`는 분산을 줄이는
+  > 장치일 뿐이다(`agent/llm.py` docstring). 실측: **같은 입력을 5회 판정하니 답이 갈렸다**
+  > (곁따라 걸린 규칙이 케이스마다 1/5·2/5·4/5). **그래서 LLM 출력에 대한 주장은 한 번 돌려서 하지 않는다** —
+  > 표본을 반복해 비율로 낸다(`app/requirements/evaluation/semantic.py`).
 - **의미(독립 검증자, `agent/validator.py`)**: 생성기와 계보를 나눈 별도 호출. 단계는 "어느 단계인지"만
   말하고 무엇을 볼지는 지식베이스가 정한다(`enable_semantic_validator`로 on/off). 세 가지를 지킨다:
   - **black-box** — 산출물만 넘긴다. 생성 프롬프트도 사용자 피드백도 주지 않는다(주면 "규칙을 지켰나"가
@@ -271,6 +281,10 @@ app/
   feedback.py        # 완료본 피드백(의도분류+cascade)
   apply_feedback.py  # 피드백 CLI
   cli.py / main.py   # 터미널 / FastAPI 서빙
+  evaluation/        # 변경이 나아진 것인지 판정할 근거
+    scorecard.py     # 실행을 **규칙 단위로** 채점 + 두 채점표의 증감(무효 비교는 경고)
+    seeded.py        # 결함을 알고 심은 산출물 — 정적 5건(CI 게이트) + 의미 12건
+    semantic.py      # 의미 규칙 눈금을 N회 반복으로 (실제 LLM · 게이트 아님)
   knowledge/         # 규칙 지식베이스 (파이프라인을 모른다 = 개편을 따라온다)
     rules.py         # 규칙 레코드 27개 — 규범 문장·인용 좌표·근거 등급·유보 (단일 소스)
     basis.py         # 근거 등급(stated/inferred)과 프롬프트 고지 문구
@@ -309,6 +323,12 @@ tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통�
 - **인용 대조**(`tests/test_citations.py`): 로컬 도서 사본이 있으면 인용 18건을 대조하고, 없으면 건너뛴다.
 - **검증자 규율**(`tests/test_validator.py`): black-box 경계(피드백 누출 금지) · 훑고 넘어간 규칙이
   기록되는지 · 근거 없는 판정이 버려지고 그때 "통과"가 아닌지 · 죽은/꺼진 검증기가 통과가 아닌지.
+- **검사기 눈금 — 정적**(`tests/test_evaluation.py`): 규칙마다 심어 둔 결함을 잡는지(5/5) ·
+  대조군에서 오탐이 없는지 · 심어 두지 않은 검출기 규칙이 없는지 · 그 검사가 **자격증명 없이**
+  도는지. `python -m app.requirements.evaluation seeded`(눈금이 죽으면 exit 1).
+- **검사기 눈금 — 의미**(`tests/test_live_evaluation.py`, `RUN_LIVE_TESTS=1`): LLM 판정은 결정론이
+  아니라 CI 게이트가 될 수 없다. 대신 케이스마다 N회 돌려 **0/N인 규칙이 없는지**와 대조군
+  오탐률만 본다. `python -m app.requirements.evaluation semantic --repeats 3`.
 
 ---
 

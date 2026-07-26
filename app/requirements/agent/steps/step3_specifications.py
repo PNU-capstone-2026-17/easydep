@@ -112,20 +112,29 @@ def _assemble(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
     }
 
 
-def _semantic_findings(item: UseCaseSpecItem) -> tuple[list[str], str]:
+def _semantic_findings(
+    item: UseCaseSpecItem, requirements: list[dict] | None = None
+) -> tuple[list[str], str]:
     """정적 체크가 못 잡는 의미 결함을 독립 검증자에게 묻는다.
 
-    판정은 `agent/validator.py`가 한다 — 무엇을 볼지는 지식베이스가 정하고, 검증자는
-    **산출물만** 받는다(생성 프롬프트도 사용자 피드백도 주지 않는다). 여기서 넘기는
-    payload가 그 경계다.
+    판정은 `agent/validator.py`가 한다. 여기서 만드는 payload가 **black-box 경계**다:
+
+      - 넣는다: 산출물(명세)과 그 명세가 다뤄야 할 **요구사항**. 요구사항은 판정의 대상이
+        아니라 잣대다 — `spec.no-scope-creep`("주어진 요구에 없는 기능을 만들지 말라")은
+        요구사항을 못 보면 **판정 자체가 불가능하다.** 2026-07-26까지 실제로 그랬다:
+        규칙 목록에는 있는데 근거가 payload에 없어서, 검증자는 짐작으로 답할 수밖에 없었다.
+        평가 세트의 의미 규칙 눈금(`evaluation/seeded.py`)을 만들다 드러났다.
+      - 넣지 않는다: 생성 프롬프트·사용자 피드백·재생성 이력. 그걸 보여주면 검증자가
+        "규칙을 지켰나" 대신 "지시를 따랐나"를 보게 된다.
 
     `(결함 목록, 검증 상태)`를 돌려준다. 상태를 함께 내는 이유는 **"결함 없음"과
     "확인하지 못함"이 같은 값이 되면 안 되기 때문**이다. 예전에는 검증기가 예외로
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
     """
-    payload = {k: item[k] for k in ("trigger", "preconditions", "main_scenario",
-                                    "extensions", "success_guarantee")}
+    payload: dict = {k: item[k] for k in ("trigger", "preconditions", "main_scenario",
+                                          "extensions", "success_guarantee")}
+    payload["requirements_it_must_cover"] = requirements or []
     result = validator.review(
         rules.WRITE_SPECIFICATIONS,
         payload,
@@ -136,9 +145,17 @@ def _semantic_findings(item: UseCaseSpecItem) -> tuple[list[str], str]:
     return result.findings, result.status
 
 
-def _check(item: UseCaseSpecItem) -> tuple[list[str], str]:
+def _requirement_view(uc: UseCaseItem, by_id: dict[str, RequirementItem]) -> list[dict]:
+    """이 UC가 다뤄야 할 요구사항(id + 문장). 검증자가 scope creep을 판정할 잣대다."""
+    ids = list(uc.get("requirement_ids", [])) + list(uc.get("nfr_ids", []))
+    return [{"id": rid, "text": by_id[rid]["text"]} for rid in ids if rid in by_id]
+
+
+def _check(
+    item: UseCaseSpecItem, requirements: list[dict] | None = None
+) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
-    findings, status = _semantic_findings(item)
+    findings, status = _semantic_findings(item, requirements)
     return _validate_spec(cast(dict, item)) + findings, status
 
 
@@ -163,11 +180,13 @@ def _spec_for(
     이 값의 분포를 봐야 알 수 있고, 지금은 그 근거가 없다.
     """
     base_user = _spec_human(uc, by_id, actors, feedback)
+    # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
+    requirements = _requirement_view(uc, by_id)
 
     def _generate(messages) -> UseCaseSpecItem:
         spec: UseCaseSpec = invoke_structured(UseCaseSpec, messages)
         item = _assemble(spec, uc)
-        item["issues"], item["semantic_status"] = _check(item)
+        item["issues"], item["semantic_status"] = _check(item, requirements)
         return item
 
     item = _generate([SystemMessage(content=prompts.SPEC_SYSTEM), HumanMessage(content=base_user)])

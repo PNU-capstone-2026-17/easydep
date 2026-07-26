@@ -174,6 +174,33 @@ def test_the_validator_never_sees_the_user_feedback(monkeypatch):
     assert "records the order" in seen
 
 
+def test_the_validator_is_given_the_requirements_it_must_judge_against(monkeypatch):
+    """`spec.no-scope-creep`은 요구사항을 못 보면 **판정 자체가 불가능하다.**
+
+    2026-07-26까지 실제로 그랬다 — 규칙 목록에는 있는데 payload에 요구사항이 없어서
+    검증자는 짐작으로 답할 수밖에 없었다. 평가 세트의 의미 눈금을 만들다 드러났다.
+
+    요구사항은 지시가 아니라 **잣대**다. 이걸 주는 것은 black-box 위반이 아니다
+    (위 테스트가 지키는 것은 생성 지시가 새지 않는 것이다).
+    """
+    captured = _patch(monkeypatch, _all())
+    monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
+    monkeypatch.setattr(s3, "invoke_structured", lambda schema, messages: _spec_stub())
+
+    s3.generate_specs({
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User",
+                       "goal": "g", "requirement_ids": ["FR1"], "nfr_ids": ["NFR1"]}],
+        "classified": [
+            {"id": "FR1", "text": "A member can submit an order", "type": "FR"},
+            {"id": "NFR1", "text": "Orders are recorded within one second", "type": "NFR"},
+        ],
+        "actors": [],
+    })
+
+    assert "A member can submit an order" in captured["human"]
+    assert "Orders are recorded within one second" in captured["human"]
+
+
 def test_review_model_surfaces_what_it_could_not_examine(monkeypatch):
     """2단계 검증은 고치지 않고 표면화한다 — 무엇을 못 봤는지까지."""
     stage_rules = _rule_ids(rules.MODEL_USE_CASES)

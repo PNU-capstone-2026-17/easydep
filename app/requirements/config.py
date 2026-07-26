@@ -12,13 +12,13 @@ class Settings(BaseSettings):
     base_url: str = "https://integrate.api.nvidia.com/v1"
     # NIM에서 사용할 모델 ID. 요구사항 분석 에이전트 기본값은 gpt-oss-120b.
     model: str = "openai/gpt-oss-120b"
-    # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다.
-    # (2026-07-26까지 0.2였다. 설계 원칙 1번이 재현성인데 그 값은 매 실행 다른 결과를
-    #  냈고, 같은 저장소의 설계 에이전트는 이미 temperature=0/seed=42를 쓰고 있었다.)
+    # 분류·구조화 작업이라 표본을 넓힐 이유가 없다. 0으로 둔다(2026-07-26까지 0.2였다).
     temperature: float = 0.0
-    # 같은 입력에 같은 표본을 요청한다. **보장이 아니라 요청이다** —
-    # OpenAI 호환 API의 seed는 best-effort이고, 백엔드가 바뀌면(아래 fingerprint 참고)
-    # 같은 seed라도 결과가 달라진다. None이면 파라미터를 보내지 않는다.
+    # 같은 입력에 같은 표본을 **요청**한다. None이면 파라미터를 보내지 않는다.
+    #
+    # ⚠ 이 둘로 출력이 고정되지는 않는다. 이유는 서버가 seed를 무시할 수 있다는 정도가
+    # 아니라 구조적이다(MoE 라우팅이 배치 구성에 좌우된다) — `agent/llm.py`의
+    # "재현성 — 여기서 얻을 수 없는 것"에 한 곳에만 적어 둔다.
     seed: int | None = 42
     # few-shot 예시 코사인 샘플링용 NIM 임베딩 모델(OpenAI 호환 embeddings 엔드포인트).
     # base_url/api_key 는 위 자격증명을 재사용한다. example_sampler 의 backend="nim" 참고.
