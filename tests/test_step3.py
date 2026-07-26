@@ -348,13 +348,13 @@ def test_semantic_validator_merges_and_drives_repair(monkeypatch):
 
     monkeypatch.setattr(s3, "invoke_structured", fake)
     _patch_validator(monkeypatch, verdicts=_all_clean(
-        {"spec.no-hidden-branching": "split hidden branching in step 2"}
+        {"spec.remerge-re-establishes-state": "re-establish the state step 3 assumes"}
     ))
     spec = s3.generate_specs({"use_cases": [_uc("UC1")], "classified": _CLASSIFIED, "actors": []})["use_case_specs"][0]
 
     assert any("[semantic]" in i for i in spec["issues"])  # 의미 결함이 병합됨
     # 지적이 근거를 들고 나간다 — 규칙 id와 인용 좌표가 문구에 함께 있다.
-    assert any("spec.no-hidden-branching" in i and "Ch. 7" in i for i in spec["issues"])
+    assert any("spec.remerge-re-establishes-state" in i and "Ch. 8" in i for i in spec["issues"])
     assert spec["repair_iters"] == 1                        # 의미 결함이 재생성을 유발
     assert spec["semantic_status"] == "ok"                  # 실제로 검증을 거쳤다
 

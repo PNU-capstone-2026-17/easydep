@@ -101,6 +101,43 @@ def test_a_defect_needs_a_majority_of_ballots(monkeypatch):
     assert review.status == validator.OK
 
 
+def test_per_rule_mode_asks_once_per_rule_and_merges_the_answers(monkeypatch):
+    """규칙 6개를 한 응답에 판정하게 하면 확률이 0.5 근처였다(§7). 과제를 쪼갠 갈래.
+
+    한 규칙의 호출이 실패해도 나머지는 살아야 한다 — 형제를 버리면 그 표가 통째로 사라진다.
+    """
+    from app.requirements.common import telemetry
+
+    monkeypatch.setattr(validator.settings, "validator_per_rule", True)
+    monkeypatch.setattr(validator.settings, "validator_votes", 1)
+    asked: list[str] = []
+
+    def fake(schema, messages):
+        system = messages[0].content
+        rule_id = next(line.split()[1] for line in system.splitlines()
+                       if line.startswith("- spec."))
+        asked.append(rule_id)
+        if rule_id == "spec.no-precondition-recheck":
+            raise RuntimeError("이 규칙만 실패")
+        return Critique(verdicts=[RuleVerdict(
+            rule_id=rule_id,
+            violated=rule_id == "spec.no-scope-creep",
+            directive="drop it" if rule_id == "spec.no-scope-creep" else "",
+        )])
+
+    monkeypatch.setattr(validator, "invoke_structured", fake)
+    with telemetry.run_scope("t") as stats:
+        review = validator.review(
+            _STAGE, {"trigger": "t"}, prefix="semantic", source="spec.semantic_validator"
+        )
+
+    assert asked == _rule_ids()                       # 규칙마다 한 번씩, 목록 순서대로
+    assert len(review.findings) == 1                  # 위반은 하나
+    assert review.unexamined == ("spec.no-precondition-recheck",)   # 실패한 규칙은 안 본 것
+    components = [d["component"] for d in stats.as_dict()["degradations"]]
+    assert "spec.semantic_validator.per_rule" in components
+
+
 def test_a_single_vote_keeps_the_old_behaviour(monkeypatch):
     """기본값 1이면 다수결 없이 한 번 묻는다(예전과 같다)."""
     monkeypatch.setattr(validator.settings, "validator_votes", 1)

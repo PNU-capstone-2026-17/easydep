@@ -62,10 +62,14 @@ def test_the_clean_controls_are_mostly_left_alone(report):
 
 
 def test_every_validator_rule_is_actually_measured(report):
-    """측정에서 빠진 의미 규칙이 있으면 그 규칙은 눈금이 없는 것과 같다."""
+    """판정하는 규칙은 전부 재야 한다 — 빠진 규칙은 눈금이 없는 것과 같다.
+
+    강등된 규칙(`skipped`)은 예외다. 그건 "재지 못했다"가 아니라 **판정하지 않기로 정한**
+    것이고, seed는 다시 승격할 때를 위해 남겨 둔다(§7).
+    """
     from app.requirements.evaluation import seeded
 
     assert seeded.unseeded_validator_rules() == []
-    assert {c["rule_id"] for c in report["cases"]} == {
-        c.rule_id for c in seeded.SEEDED_SEMANTIC
-    }
+    measured = {c["rule_id"] for c in report["cases"]}
+    assert measured | set(report["skipped"]) == {c.rule_id for c in seeded.SEEDED_SEMANTIC}
+    assert not measured & set(report["skipped"])

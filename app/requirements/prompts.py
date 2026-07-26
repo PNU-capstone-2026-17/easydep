@@ -16,7 +16,9 @@
 from app.requirements.knowledge import rules as _rules
 
 
-def _validator_system(stage: str, role: str, do_not_flag: str) -> str:
+def _validator_system(
+    stage: str, role: str, do_not_flag: str, only: str | None = None
+) -> str:
     """의미 검증자 시스템 프롬프트를 규칙 지식베이스에서 조립한다.
 
     네 가지를 모델에게 한꺼번에 준다:
@@ -30,9 +32,19 @@ def _validator_system(stage: str, role: str, do_not_flag: str) -> str:
 
     4번은 early victory 방어다. "깨끗하다" 한 줄로 끝낼 수 있으면 검증자는 그렇게 한다 —
     규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`agent/validator.py`).
+
+    `only`를 주면 **그 규칙 하나만** 담는다. 6개를 한 번에 판정하게 하면 판정이 흔들린다는
+    측정(흔들림 90%, `docs/requirements-agent-improvements.md` §7) 때문에 생긴 갈래다 —
+    과제를 쪼개면 확률이 0.5에서 멀어지는지 보려는 것이다.
     """
-    n = len(_rules.judged_by(stage, _rules.JUDGED_VALIDATOR))
+    judged = _rules.judged_by(stage, _rules.JUDGED_VALIDATOR)
+    if only is not None:
+        judged = tuple(r for r in judged if r.id == only)
+        if not judged:
+            raise KeyError(f"{stage}에 의미 검증 규칙 {only!r}이 없다")
+    n = len(judged)
     count = f"{n} verdict" if n == 1 else f"{n} verdicts"
+    block = "\n".join(r.prompt_line() for r in judged)
     already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
     return f"""You are a zero-tolerance {role}.
 
@@ -41,7 +53,7 @@ comes from, then what it requires. Some lines add a note about how well the rule
 judge those rules just the same, but never present them as the source's own words.
 
 [RULES YOU JUDGE]
-{_rules.validator_prompt_block(stage)}
+{block}
 
 Deterministic checks have ALREADY run for these rules — do NOT report them again:
 {already}
@@ -263,21 +275,35 @@ Produce:
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
 
+#: 단계 → (역할, 안 잡을 것). 규칙 하나짜리 프롬프트를 만들 때 다시 쓴다.
+_VALIDATOR_ROLES = {
+    _rules.MODEL_USE_CASES: (
+        "use-case model critic reviewing the actors and use cases of one system",
+        "a grouping you would have done differently; a missing actor or use case (that is "
+        "coverage, checked deterministically elsewhere); naming or wording preferences",
+    ),
+    _rules.WRITE_SPECIFICATIONS: (
+        "use-case specification critic",
+        'a step with more than one clause; the absence of an explicit "System validates" step; '
+        "a use case having no extensions; slightly high/low goal level; wording preferences",
+    ),
+    _rules.DRAW_DIAGRAM: (
+        "use-case-relationship critic reviewing proposed includes, extends, generalizations and "
+        "derived use cases (name the offending relationship in each directive)",
+        "a small, clean relationship set; an ordinary association; a use case with no relationships",
+    ),
+}
+
+
 # STEP 2 — 액터·유스케이스 모델 의미 검증. 이 단계에는 예전에 의미 검증기가 아예 없었고,
 # 책이 명시한 결함(SuD는 액터가 아니다, p.59)조차 아무도 보지 않았다.
 MODEL_VALIDATOR_SYSTEM = _validator_system(
-    _rules.MODEL_USE_CASES,
-    "use-case model critic reviewing the actors and use cases of one system",
-    "a grouping you would have done differently; a missing actor or use case (that is coverage, "
-    "checked deterministically elsewhere); naming or wording preferences",
+    _rules.MODEL_USE_CASES, *_VALIDATOR_ROLES[_rules.MODEL_USE_CASES]
 )
 
 # STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). 규칙은 knowledge/rules.py에서 온다.
 SPEC_VALIDATOR_SYSTEM = _validator_system(
-    _rules.WRITE_SPECIFICATIONS,
-    "use-case specification critic",
-    'a step with more than one clause; the absence of an explicit "System validates" step; '
-    "a use case having no extensions; slightly high/low goal level; wording preferences",
+    _rules.WRITE_SPECIFICATIONS, *_VALIDATOR_ROLES[_rules.WRITE_SPECIFICATIONS]
 )
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
@@ -291,10 +317,7 @@ def spec_repair_user(base_user: str, directives: list[str]) -> str:
 
 # STEP 4 — 관계 의미 검증. 규칙은 knowledge/rules.py에서 온다.
 RELATIONSHIP_VALIDATOR_SYSTEM = _validator_system(
-    _rules.DRAW_DIAGRAM,
-    "use-case-relationship critic reviewing proposed includes, extends, generalizations and "
-    "derived use cases (name the offending relationship in each directive)",
-    "a small, clean relationship set; an ordinary association; a use case with no relationships",
+    _rules.DRAW_DIAGRAM, *_VALIDATOR_ROLES[_rules.DRAW_DIAGRAM]
 )
 
 #: 단계 → 검증 프롬프트. `agent/validator.py`가 단계 이름만 알고 프롬프트를 찾도록 한다 —
@@ -306,15 +329,20 @@ _VALIDATOR_SYSTEMS = {
 }
 
 
-def validator_system_for(stage: str) -> str:
-    """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다."""
-    try:
-        return _VALIDATOR_SYSTEMS[stage]
-    except KeyError:  # pragma: no cover - 배선 오류
+def validator_system_for(stage: str, only: str | None = None) -> str:
+    """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
+
+    `only`를 주면 **그 규칙 하나만** 담은 프롬프트를 만든다(`settings.validator_per_rule`).
+    """
+    if stage not in _VALIDATOR_SYSTEMS:  # pragma: no cover - 배선 오류
         raise KeyError(
             f"{stage}: 의미 검증 프롬프트가 없다. knowledge/rules.py에 규칙을 넣었다면 "
             "여기에도 프롬프트를 등록해야 한다."
-        ) from None
+        )
+    if only is None:
+        return _VALIDATOR_SYSTEMS[stage]
+    role, do_not_flag = _VALIDATOR_ROLES[stage]
+    return _validator_system(stage, role, do_not_flag, only=only)
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).

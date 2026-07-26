@@ -71,6 +71,10 @@ def _cmd_stability(args) -> int:
     from app.requirements.evaluation import semantic
 
     payloads = semantic.payloads_from_run(args.run_dir)
+    if args.limit:
+        # 표본을 줄이는 손잡이. **줄였다는 사실을 출력에 적는다** — 조용히 자르면
+        # 비교하는 두 수가 다른 표본에서 나온 것이 된다.
+        payloads = payloads[:args.limit]
     report = semantic.measure_stability(payloads, repeats=args.repeats)
     print(f"모델 {report['model']} · 명세 {report['n_specs']}개 × {report['repeats']}회\n")
     print(f"{'규칙':52} {'항상':>5} {'때때로':>7} {'흔들림':>7}")
@@ -137,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_stab.add_argument("run_dir")
     p_stab.add_argument("--repeats", type=int, default=3)
+    p_stab.add_argument("--limit", type=int, default=0,
+                        help="명세 수를 앞에서 N개로 제한(전후 비교 시 같은 값을 쓸 것)")
     p_stab.set_defaults(fn=_cmd_stability)
 
     p_score = sub.add_parser("score", help="artifacts/run_*/ 를 채점한다")

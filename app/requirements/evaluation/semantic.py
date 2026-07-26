@@ -87,7 +87,16 @@ def measure(repeats: int = 3, stage: str | None = None) -> dict:
             "그건 눈금이 죽은 것과 구별되지 않는다."
         )
 
-    cases = [c for c in seeded.SEEDED_SEMANTIC if stage is None or c.stage == stage]
+    wanted = [c for c in seeded.SEEDED_SEMANTIC if stage is None or c.stage == stage]
+    # 강등된 규칙(판정 대상이 아닌 것)의 seed는 **건너뛰되 기록한다.** 그대로 재면 0/N이
+    # 나오고, 그건 "눈금이 죽었다"로 읽힌다 — 실제로는 판정을 안 하기로 정한 것이다.
+    judged = {
+        r.id
+        for st in {c.stage for c in wanted}
+        for r in rules.judged_by(st, rules.JUDGED_VALIDATOR)
+    }
+    cases = [c for c in wanted if c.rule_id in judged]
+    skipped = [c.rule_id for c in wanted if c.rule_id not in judged]
     results = []
     for case in cases:
         detected = 0
@@ -95,9 +104,10 @@ def measure(repeats: int = 3, stage: str | None = None) -> dict:
         statuses: Counter[str] = Counter()
         unexamined: Counter[str] = Counter()
         for _ in range(repeats):
-            flagged, status, skipped = _review_once(case.stage, case.artifact)
+            # 이름을 `skipped`로 쓰면 위의 **강등 기록**을 덮어쓴다(mypy가 잡았다).
+            flagged, status, not_judged = _review_once(case.stage, case.artifact)
             statuses[status] += 1
-            for rule_id in skipped:
+            for rule_id in not_judged:
                 unexamined[rule_id] += 1
             if case.rule_id in flagged:
                 detected += 1
@@ -141,6 +151,8 @@ def measure(repeats: int = 3, stage: str | None = None) -> dict:
         "controls": controls,
         # 한 번도 못 잡은 규칙 — 이 규칙에 대한 모든 "0건"은 근거가 없다.
         "dead_gauges": [c["rule_id"] for c in results if c["detected"] == 0],
+        # 판정 대상이 아니어서 재지 않은 규칙(강등됨). seed는 남겨 둔다 — 다시 승격하면 쓴다.
+        "skipped": skipped,
         "model": settings.model,
     }
 

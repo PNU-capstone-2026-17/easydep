@@ -59,24 +59,52 @@ class Review:
     unexamined: tuple[str, ...] = ()
 
 
+def _ask(stage: str, artifact: dict, only: str | None = None) -> Critique:
+    """검증자에게 한 번 묻는다. `only`면 그 규칙 하나만 묻는다."""
+    return invoke_structured(
+        Critique,
+        [
+            SystemMessage(content=prompts.validator_system_for(stage, only)),
+            HumanMessage(
+                content=f"[ARTIFACT UNDER REVIEW]\n{json.dumps(artifact, ensure_ascii=False)}"
+            ),
+        ],
+    )
+
+
 def _collect_ballots(
     stage: str, artifact: dict, *, source: str, subject: str | None
 ) -> list[Critique]:
-    """검증자에게 `settings.validator_votes`번 묻는다. 하나라도 받으면 그것으로 센다.
+    """표를 모은다 — `settings.validator_votes`장. 하나도 못 받으면 빈 목록.
 
-    한 번도 못 받으면 빈 목록 — 부르지 못한 것과 결함 없는 것을 같은 값으로 두지 않는다.
+    `settings.validator_per_rule`이면 **규칙마다 따로 묻고** 그 답들을 한 장으로 합친다.
+    한 번에 6개 규칙을 판정하게 하면 판정이 흔들린다는 측정(흔들림 90%,
+    `docs/requirements-agent-improvements.md` §7) 때문에 생긴 갈래다 — 과제를 쪼개면
+    확률이 0.5에서 멀어지는지 보려는 것이다. 호출 수는 규칙 수만큼 늘고 응답은 짧아진다.
+
+    한 규칙의 호출이 실패해도 나머지 규칙은 살린다(형제를 버리지 않는다). 그러면 그 표에는
+    그 규칙의 판정이 없고, 그건 `unexamined`로 드러난다.
     """
-    system = prompts.validator_system_for(stage)
-    messages = [
-        SystemMessage(content=system),
-        HumanMessage(
-            content=f"[ARTIFACT UNDER REVIEW]\n{json.dumps(artifact, ensure_ascii=False)}"
-        ),
-    ]
+    per_rule = settings.validator_per_rule
+    rule_ids = [r.id for r in rules.judged_by(stage, rules.JUDGED_VALIDATOR)] if per_rule else []
+
     ballots: list[Critique] = []
     for _ in range(max(1, settings.validator_votes)):
         try:
-            ballots.append(invoke_structured(Critique, messages))
+            if not per_rule:
+                ballots.append(_ask(stage, artifact))
+                continue
+            verdicts: list[RuleVerdict] = []
+            for rule_id in rule_ids:
+                try:
+                    verdicts.extend(_ask(stage, artifact, only=rule_id).verdicts)
+                except Exception as exc:  # noqa: BLE001 - 규칙 하나 실패로 표를 버리지 않는다
+                    telemetry.record_degradation(
+                        f"{source}.per_rule", f"{rule_id}: {type(exc).__name__}: {exc}",
+                        subject=subject,
+                    )
+            if verdicts:
+                ballots.append(Critique(verdicts=verdicts))
         except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않다
             telemetry.record_degradation(source, f"{type(exc).__name__}: {exc}", subject=subject)
     return ballots
