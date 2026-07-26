@@ -274,22 +274,24 @@ RULES: tuple[Rule, ...] = (
         pages=(88,),
         probe=("scenarios and steps",),
     ),
-    # ⚠ 2026-07-26 강등(DEFECT → GUIDANCE): **판정할 수 없어서**다. 같은 명세를 5회 물은
-    # 측정에서 이 규칙의 "항상 걸림"이 네 조건 전부(1표/3표 다수결/규칙별 호출/부분표본)에서
-    # 0건이었다 — 잡음이 아니라 신호가 없다. `DEFECT`로 두면 반성 루프가 깜빡이는 결함을
-    # 쫓고 결함 수가 오염된다. 못 재는 것 위에 수를 쌓지 않는다.
-    # 생성 쪽 지침으로는 살아 있다(`prompts.SPEC_SYSTEM`의 무분기 지시).
-    # 되돌리려면: 판정이 안정된다는 근거를 먼저 만들고 `evaluation stability`로 보인다.
+    # 이 규칙은 하루 안에 강등됐다가 복구됐다. 그 경위가 측정 방법에 대한 교훈이다:
+    #   1. `toystore` 한 데이터셋에서 "안정된 판정 0건"이 나와 GUIDANCE로 내렸다.
+    #   2. 도메인 5종에서 **단독 프로브**로 다시 재니 안정 4 / 흔들림 15 / 없음 6이었다.
+    # 조합 프롬프트(규칙 6개를 한 번에)에서는 신호가 묻히고, 단독으로 물으면 나온다.
+    # **"신호가 없다"는 주장은 측정 조건을 함께 말해야 한다** — 안 그러면 프롬프트 구성을
+    # 규칙의 성질로 착각한다. (`docs/requirements-agent-improvements.md` §9)
     Rule(
         id="spec.no-hidden-branching",
         stage=WRITE_SPECIFICATIONS,
-        severity=GUIDANCE,
+        severity=DEFECT,
         statement=(
             "A step whose behaviour depends on an unstated outcome is still a branch, "
             "even without the word 'if'. Split it into a separate extension."
         ),
         citation=f"{_BOOK}, Ch. 7 (Scenarios and Steps), p.88~",
         evidence="cockburn-chapter",
+        owner="specs",
+        judged_by=JUDGED_VALIDATOR,
         pages=(88,),
         probe=("scenarios and steps",),
     ),
@@ -339,9 +341,9 @@ RULES: tuple[Rule, ...] = (
     Rule(
         id="spec.consequence-is-a-guarantee",
         stage=WRITE_SPECIFICATIONS,
-        # ⚠ 2026-07-26 강등(DEFECT → GUIDANCE). 사유는 위 `spec.no-hidden-branching`과 같다 —
-        # 네 조건 전부에서 "항상 걸림"이 0건이었다.
-        severity=GUIDANCE,
+        # 강등 → 복구. 경위는 위 `spec.no-hidden-branching` 주석과 같다(단독 프로브
+        # 4도메인에서 안정 3 / 흔들림 6 / 없음 11).
+        severity=DEFECT,
         statement=(
             "Automated system consequences and cross-cutting quality concerns (logging, "
             "auditing, encrypting stored data, sending a receipt) are internal success "
@@ -356,6 +358,8 @@ RULES: tuple[Rule, ...] = (
             "보증이 사후조건의 자리라는 것은 Ch. 6에서 확인했다. 다만 '자동결과(로깅·감사·"
             "암호화·확인 발송)는 스텝이 아니라 보증'이라는 구체적 적용은 우리가 끌어낸 것이다."
         ),
+        owner="specs",
+        judged_by=JUDGED_VALIDATOR,
         pages=(83,),
         probe=("minimal guarantee",),
     ),

@@ -329,6 +329,39 @@ _VALIDATOR_SYSTEMS = {
 }
 
 
+def probe_system_for(stage: str, rule_id: str) -> str:
+    """**어느 규칙이든** 하나만 담은 검증 프롬프트 — 측정 전용.
+
+    `validator_system_for`는 지금 판정 대상인 규칙(`judged_by=validator`)만 담는다. 그래서
+    강등된 규칙(`GUIDANCE`로 내린 것)은 그 경로로 물어볼 수 없는데, **강등이 옳았는지 다른
+    표본에서 다시 재려면 물어봐야 한다.** 승격 후보를 재는 데도 같은 자리다.
+
+    파이프라인은 이걸 쓰지 않는다 — 쓰면 강등이 강등이 아니게 된다.
+    """
+    rule = _rules.rule(rule_id)
+    if rule.stage != stage:
+        raise KeyError(f"{rule_id}는 {stage} 단계의 규칙이 아니다({rule.stage})")
+    role, do_not_flag = _VALIDATOR_ROLES[stage]
+    n = "1 verdict"
+    already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
+    return f"""You are a zero-tolerance {role}.
+
+The rule below is the ONLY ground you may judge on.
+
+[RULE YOU JUDGE]
+{rule.prompt_line()}
+
+Deterministic checks have ALREADY run for these rules — do NOT report them again:
+{already}
+
+Return **exactly {n}** for that rule. Copy the rule_id EXACTLY. Set violated=true only when
+the artifact really breaks it, and then give one short imperative repair directive.
+
+Do NOT flag: {do_not_flag}
+
+Return the structured object only."""
+
+
 def validator_system_for(stage: str, only: str | None = None) -> str:
     """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
 

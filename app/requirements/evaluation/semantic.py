@@ -30,15 +30,21 @@ LLM 판정은 같은 입력에 같은 답을 보장하지 않는다. 그래서 �
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.requirements import prompts
 from app.requirements.agent import validator
+from app.requirements.agent.llm import invoke_structured
 from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.evaluation import seeded
 from app.requirements.evaluation.scorecard import rule_of
 from app.requirements.knowledge import rules
+from app.requirements.schemas import Critique
 
 #: 이 측정에서 지적 문구에 붙이는 머리표(파이프라인 실행과 섞이지 않게).
 _PREFIX = "eval"
@@ -233,4 +239,64 @@ def measure_stability(payloads: list[tuple[str, dict]], repeats: int = 3) -> dic
             total_sometimes / (total_always + total_sometimes), 3
         ) if (total_always + total_sometimes) else 0.0,
         "model": settings.model,
+    }
+
+
+def probe_rule(
+    rule_id: str, payloads: list[tuple[str, dict]], repeats: int = 5
+) -> dict:
+    """**한 규칙만** 단독으로 물어 안정성을 잰다 — 강등/승격 판단용(측정 전용 경로).
+
+    `measure_stability`는 지금 판정 대상인 규칙만 본다. 강등한 규칙이 **다른 표본에서도**
+    신호가 없는지 확인하려면 그 규칙을 직접 물어야 하고, 그 자리가 여기다
+    (`prompts.probe_system_for`). 파이프라인은 이 경로를 쓰지 않는다.
+
+    `always`가 0이면 그 표본에서도 신호가 없다는 뜻이다.
+    """
+    if not settings.enable_semantic_validator:
+        raise ValidatorDisabled("enable_semantic_validator=False 다.")
+
+    rule = rules.rule(rule_id)
+    system = prompts.probe_system_for(rule.stage, rule_id)
+
+    def ask(artifact: dict) -> bool:
+        try:
+            critique = invoke_structured(
+                Critique,
+                [
+                    SystemMessage(content=system),
+                    HumanMessage(
+                        content=f"[ARTIFACT UNDER REVIEW]\n"
+                                f"{json.dumps(artifact, ensure_ascii=False)}"
+                    ),
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 - 한 건 실패로 측정을 버리지 않는다
+            telemetry.record_degradation(f"{_SOURCE}.probe", f"{type(exc).__name__}: {exc}")
+            return False
+        return any(v.violated and v.rule_id == rule_id for v in critique.verdicts)
+
+    jobs = [payload for _uc, payload in payloads for _ in range(repeats)]
+    workers = max(1, min(len(jobs), settings.spec_concurrency))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        # **submit마다 새로 감싼다.** Context 하나는 한 번만 진입할 수 있어서, 감싼 함수를
+        # 재사용하면 "already entered"로 죽는다(step3의 같은 주석 참고 — 그걸 어겼다가 봤다).
+        futures = [pool.submit(telemetry.bind_context(ask), job) for job in jobs]
+        hits = [f.result() for f in futures]
+
+    always = sometimes = 0
+    for index in range(len(payloads)):
+        fired = sum(hits[index * repeats:(index + 1) * repeats])
+        if fired == repeats:
+            always += 1
+        elif fired:
+            sometimes += 1
+    return {
+        "rule_id": rule_id,
+        "severity": rule.severity,
+        "repeats": repeats,
+        "n_specs": len(payloads),
+        "always": always,
+        "sometimes": sometimes,
+        "never": len(payloads) - always - sometimes,
     }
