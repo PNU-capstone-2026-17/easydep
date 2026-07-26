@@ -85,19 +85,69 @@ def _cmd_stability(args) -> int:
     return 0
 
 
-def _cmd_probe(args) -> int:
-    """규칙 하나를 단독으로 물어 안정성을 본다 — 강등/승격 판단용. **실제 LLM 호출.**"""
-    from app.requirements.evaluation import semantic
+def _rank(rows: list[dict]) -> None:
+    """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다."""
+    totals: dict[str, list[int]] = {}
+    for row in rows:
+        acc = totals.setdefault(row["rule_id"], [0, 0, 0])
+        acc[0] += row["always"]
+        acc[1] += row["sometimes"]
+        acc[2] += row["never"]
 
-    print(f"{'규칙':46} {'심각도':>9} {'항상':>5} {'때때로':>7} {'없음':>5}")
-    for run_dir in args.run_dirs:
+    conditions = sorted({(r["repeats"], r["n_specs"]) for r in rows})
+    domains = sorted({r["domain"] for r in rows})
+    print(f"\n[합계 — 단독 프로브] 도메인 {len(domains)}종 {domains}")
+    print(f"조건(반복, 명세수): {conditions}")
+    if len(conditions) > 1:
+        # 조건이 섞이면 순위로 쓸 수 없다 — 이 세션에서 결론을 두 번 뒤집은 원인이 그것이다.
+        print("⚠ 조건이 섞여 있다. 이 표는 순위가 아니다 — 같은 조건으로 다시 모아야 한다.")
+    print(f"{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8}")
+    ranked = sorted(
+        totals.items(),
+        key=lambda kv: (kv[1][1] / (kv[1][0] + kv[1][1])) if (kv[1][0] + kv[1][1]) else 1.0,
+    )
+    for rule_id, (always, sometimes, never) in ranked:
+        fired = always + sometimes
+        share = f"{sometimes / fired:.0%}" if fired else "안 걸림"
+        print(f"{rule_id:46} {always:>5} {sometimes:>7} {never:>5} {share:>8}")
+
+
+def _cmd_probe(args) -> int:
+    """규칙 하나를 단독으로 물어 안정성을 본다 — 강등/승격 판단용. **실제 LLM 호출.**
+
+    측정은 자주 중단된다(레이트 리밋·시간 상한). 그래서 행이 나올 때마다 `--out` 파일에
+    **즉시 덧붙인다** — 다음 시도가 이어서 쌓으면 되고 한 번에 다 돌지 않아도 된다.
+    `--summarize`는 쌓인 파일만 읽어 순위를 낸다(LLM 없음).
+    """
+    # 요약은 LLM도 설정도 필요 없다 — **무거운 import보다 먼저** 처리한다.
+    if args.summarize:
+        lines = Path(args.summarize).read_text(encoding="utf-8").splitlines()
+        rows = [json.loads(line) for line in lines if line.strip()]
+        # 같은 (도메인, 규칙)을 여러 번 재면 마지막 것을 쓴다.
+        _rank(list({(r["domain"], r["rule_id"]): r for r in rows}.values()))
+        return 0
+
+    from app.requirements.evaluation import dataset, semantic
+
+    print(f"{'도메인':18} {'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5}", flush=True)
+    rows = []
+    for run_dir in args.run_dirs or []:
+        domain = dataset.domain_of(run_dir)
         payloads = semantic.payloads_from_run(run_dir)
         if args.limit:
             payloads = payloads[:args.limit]
-        for rule_id in args.rules:
+        for rule_id in args.rules or []:
             row = semantic.probe_rule(rule_id, payloads, repeats=args.repeats)
-            print(f"{rule_id:46} {row['severity']:>9} {row['always']:>5} "
-                  f"{row['sometimes']:>7} {row['never']:>5}   ({row['n_specs']}개 명세)")
+            row["domain"] = domain
+            rows.append(row)
+            print(f"{domain:18} {rule_id:46} {row['always']:>5} "
+                  f"{row['sometimes']:>7} {row['never']:>5}", flush=True)
+            if args.out:
+                # 즉시 덧붙인다. 중단돼도 여기까지는 남는다.
+                with Path(args.out).open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if rows:
+        _rank(rows)
     return 0
 
 
@@ -187,8 +237,10 @@ def main(argv: list[str] | None = None) -> int:
     p_probe = sub.add_parser(
         "probe", help="규칙 하나를 단독으로 물어 안정성 확인 (강등/승격 판단 · 실제 LLM)"
     )
-    p_probe.add_argument("--rules", nargs="+", required=True, help="규칙 id들")
-    p_probe.add_argument("--run-dirs", nargs="+", required=True, dest="run_dirs")
+    p_probe.add_argument("--rules", nargs="+", help="규칙 id들")
+    p_probe.add_argument("--run-dirs", nargs="+", dest="run_dirs")
+    p_probe.add_argument("--out", help="행을 즉시 덧붙일 JSONL — 중단돼도 진행분이 남는다")
+    p_probe.add_argument("--summarize", help="쌓인 JSONL만 읽어 순위를 낸다(LLM 없음)")
     p_probe.add_argument("--repeats", type=int, default=5)
     p_probe.add_argument("--limit", type=int, default=0)
     p_probe.set_defaults(fn=_cmd_probe)

@@ -50,6 +50,17 @@ def _item_id(domain: str, use_case_id: str, sentences: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
 
 
+def domain_of(run_dir: str) -> str:
+    """실행이 어느 데이터셋인지. **매니페스트에서 읽는다** — 경로에서 뽑으면 아티팩트를
+    어디에 뒀는지에 따라 이름이 달라진다(실제로 toystore가 `r0_1`로 나왔다)."""
+    manifest = Path(run_dir) / "manifest.json"
+    if manifest.exists():
+        name = json.loads(manifest.read_text(encoding="utf-8")).get("dataset", "")
+        if name:
+            return name
+    return Path(run_dir).parent.name or Path(run_dir).name
+
+
 def _sentences(spec: dict) -> list[str]:
     """검증자가 보는 문장들 — 사람도 같은 것을 봐야 같은 것을 판정한다."""
     out = [f"trigger: {spec.get('trigger', '')}"]
@@ -77,13 +88,7 @@ def build(rule_id: str, run_dirs: list[str], per_domain: int = 5) -> dict:
     items = []
     for run_dir in run_dirs:
         state = load_state(run_dir)
-        # 도메인 이름은 **매니페스트**에서 읽는다. 경로에서 뽑으면 아티팩트를 어디에 뒀는지에
-        # 따라 이름이 달라진다(실제로 toystore가 `r0_1`로 나왔다).
-        manifest = Path(run_dir) / "manifest.json"
-        domain = ""
-        if manifest.exists():
-            domain = json.loads(manifest.read_text(encoding="utf-8")).get("dataset", "")
-        domain = domain or Path(run_dir).parent.name or Path(run_dir).name
+        domain = domain_of(run_dir)
         by_id = {r["id"]: r for r in (state.get("classified") or [])}
         ucs = {uc["id"]: uc for uc in (state.get("use_cases") or [])}
         for spec in (state.get("use_case_specs") or [])[:per_domain]:
