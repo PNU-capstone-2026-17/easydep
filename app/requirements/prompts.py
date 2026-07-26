@@ -6,6 +6,12 @@
 레코드에서 조립한다(`_validator_system`). 규칙을 산문으로 여기 적으면 같은 규칙이
 프롬프트·검출기·문서에 세 벌로 갈라진다. 생성 프롬프트는 아직 산문 그대로다(그 이유는
 `knowledge/rules.py`의 "아직 없는 것" 절).
+
+⚠ 그래서 **생성 프롬프트의 인용은 기계가 대조하지 못한다.** 실제로 하나가 틀려 있었다:
+자동결과 문단이 "Cockburn: absorb system consequences into the driving goal"이라고
+귀속했는데, `absorb`도 `driving goal`도 책에 없는 말이다(로컬 사본으로 확인, 2026-07-26).
+지금은 규칙 id를 가리킨다 — 근거는 지식베이스가 들고, 대조는 `verify_citations`가 한다.
+남은 산문 인용(`Cockburn label like '3a'` 등)도 KB로 옮기면 같은 대조를 받는다.
 """
 from app.requirements.knowledge import rules as _rules
 
@@ -226,7 +232,7 @@ Produce:
   Automated system consequences and cross-cutting quality concerns — logging, auditing,
   encrypting stored data, sending a receipt/confirmation — are INTERNAL success guarantees, NOT
   main-scenario steps. Put them in success_guarantee / minimal_guarantee, never as a step
-  (Cockburn: absorb system consequences into the driving goal).
+  (rule spec.consequence-is-a-guarantee).
 - extensions: exception and alternate flows. For EACH extension:
     * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
     * branch_step: the main_scenario step_number it branches from; use null for a global

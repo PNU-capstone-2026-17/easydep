@@ -46,15 +46,32 @@
 
 ### C1. 지식 접근을 도구로 — KB 검색 + 규칙 인용  *(1단계 착수 완료: `app/requirements/knowledge/`)*
 
-**착수 시점에 드러난 제약**: Cockburn PDF는 저작권 정리로 히스토리 전체에서 지워졌고
-(`d1a7ec5`), 페이지 교차검증 기록도 저장소 밖으로 나갔다(`e10c527`). 그래서 "PDF에 RAG"는
-갈 수 없는 길이다. 대신 **우리 표현의 규범 문장 + 인용 좌표**만 담는다(본문 없음).
-페이지를 댈 수 없는 규칙은 `cockburn-unpinned`으로 두어 짐작으로 강등하고 유보를 붙인다 —
-라벨이 곧 할 일 목록이다.
+**저작권 경계**: Cockburn PDF는 히스토리 전체에서 지워졌고(`d1a7ec5`) 앞으로도 저장소에
+없다. 로컬 사본은 `materials/Usecase_Knowledge/`(gitignore)에 두고 **참조만** 한다 —
+`Dockerfile:9`이 `materials/` 전체가 아니라 BERT 모델만 COPY하므로 이미지에도 안 들어간다.
+저장소에 담는 것은 우리 표현의 규범 문장 + 인용 좌표 + 좌표 대조용 열쇠 단어뿐이고,
+책에서 나온 문장은 없다.
 
-들어간 것: 규칙 레코드 27개(단일 소스) · 근거 등급(`stated`/`inferred`) · 규칙에 묶인
-결정론 검출기 5개 · **검증 프롬프트를 KB에서 조립** · 구조화 지적이 `rule_id`를 대도록
-강제하고 **지식베이스에 없는 규칙을 인용한 지적은 버린다**(`semantic_status="ungrounded"`).
+들어간 것: 규칙 레코드 27개(결함 19 · 지침 6 · **규칙 아님** 2) · 근거 등급
+(`stated` 11 / `inferred` 16) · 규칙에 묶인 결정론 검출기 5개 · **검증 프롬프트를 KB에서
+조립** · 구조화 지적이 `rule_id`를 대도록 강제하고 **지식베이스에 없는 규칙을 인용한 지적은
+버린다**(`semantic_status="ungrounded"`) · 도서 인용 18건을 로컬 사본과 대조하는 명령
+(`python -m app.requirements.knowledge.verify_citations`, 사본 없으면 테스트가 건너뜀).
+
+**인용 대조가 곧바로 잡은 것**(둘 다 "책이 그렇게 말했다"고 단언하던 상태였다):
+
+| 틀린 인용 | 실제 그 페이지 | 정정 |
+| --- | --- | --- |
+| `p.64` — 자동결과=guarantee (규칙 **2개**가 인용) | Ch. 5 Three Named Goal Levels (보증 얘기가 없다) | Ch. 6 Preconditions, Triggers, and Guarantees / Minimal Guarantees p.83 |
+| `p.207` — include가 기본 관계 | Reminder 5 "Who Has the Ball?" ("rule of thumb"이라는 말만 있다 — 그 단어로 찾다가 잘못 붙은 듯) | Ch. 10 Linking Use Cases p.114-117 |
+
+미확인이던 3건은 페이지를 찾아 승격했다(제어토큰 p.47-49 · 전제조건 재확인 금지 p.81 ·
+복귀 의미론 Ch. 8 p.106). 지금 `cockburn-unpinned`은 0건이고 테스트가 그 상태를 고정한다.
+
+라벨도 하나 갈렸다: **`cockburn-extrapolated`**(페이지는 확인했지만 구체적 적용은 우리 것)를
+`cockburn-unpinned`(페이지를 못 댐)과 분리했다. 한 라벨로 두면 프롬프트 고지가 거짓이 된다 —
+"책이 말한 적 없다"와 "페이지는 댔는데 결론이 우리 것"은 반대 방향의 한계다.
+
 남은 것: 생성 프롬프트는 아직 산문(회귀를 잡을 평가 세트가 없다) · LLM이 부르는 검색
 도구는 C2와 함께.
 

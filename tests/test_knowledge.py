@@ -58,8 +58,43 @@ def test_citation_matches_what_the_label_promises(evidence, needle):
 
 def test_book_citations_name_the_book():
     for rule in rules.RULES:
-        if rule.evidence.startswith("cockburn-"):
+        if rule.from_book:
             assert rule.citation.startswith("Writing Effective Use Cases"), rule.id
+
+
+def test_book_citations_are_machine_checkable():
+    """도서 인용은 로컬 사본으로 대조할 수 있어야 한다 — 페이지와 열쇠 단어가 있어야.
+
+    좌표가 없으면 그 인용은 아무도 확인하지 않는다. 손으로 옮겨 적은 인용은 틀리고,
+    실제로 두 건이 틀려 있었다(`verify_citations.py` docstring).
+
+    열쇠 단어는 소문자여야 한다 — 대조할 때 페이지 텍스트를 소문자로 낮춘다.
+    """
+    for rule in rules.RULES:
+        if not rule.from_book or rule.evidence == "cockburn-unpinned":
+            continue
+        assert rule.pages, f"{rule.id}: 도서 인용인데 대조할 페이지가 없다"
+        assert rule.probe, f"{rule.id}: 도서 인용인데 대조할 열쇠 단어가 없다"
+        for key in rule.probe:
+            assert key == key.lower(), f"{rule.id}: 열쇠 단어가 소문자가 아니다 ({key!r})"
+
+
+def test_no_book_citation_is_left_unpinned():
+    """지금은 모든 도서 인용의 페이지를 확인했다(2026-07-26, 로컬 사본).
+
+    다시 `cockburn-unpinned`이 생기면 그건 "확인하지 못한 인용이 들어왔다"는 신호다.
+    라벨을 없애지는 않는다 — 정말 못 찾는 경우에 정직하게 쓸 자리가 필요하다.
+    """
+    unpinned = [r.id for r in rules.RULES if r.evidence == "cockburn-unpinned"]
+    assert unpinned == []
+
+
+def test_pages_only_where_the_citation_is_from_the_book():
+    """우리 규약에 페이지가 붙어 있으면 그건 책 근거로 오해된다."""
+    for rule in rules.RULES:
+        if not rule.from_book:
+            assert rule.pages == (), rule.id
+            assert rule.probe == (), rule.id
 
 
 def test_rules_and_detectors_interlock_both_ways():
@@ -147,11 +182,16 @@ def test_unjudged_defects_do_not_grow_silently():
 
 def test_findings_carry_their_grounding():
     """지적 문구에 규칙 id·인용이 붙고, 짐작인 규칙은 그 사실까지 붙는다."""
-    stated = rules.rule("spec.consequence-is-a-guarantee")
-    assert stated.tag == "[spec.consequence-is-a-guarantee · p.64]"
+    stated = rules.rule("rel.failures-stay-inline-extensions")
+    assert stated.tag == "[rel.failures-stay-inline-extensions · p.109 (Ch. 8, Extensions)]"
 
+    # 예시에서 일반화한 규칙 — 목록이 완전하지 않다는 사실이 지적에 함께 간다.
     inferred = rules.rule("spec.black-box-no-ui-mechanics")
     assert "우리 판단" in inferred.tag
+
+    # 페이지는 확인했지만 결론이 우리 것인 규칙도 같은 표시를 받는다.
+    extrapolated = rules.rule("spec.consequence-is-a-guarantee")
+    assert "p.83" in extrapolated.tag and "우리 판단" in extrapolated.tag
 
 
 def test_unknown_rule_id_is_visible_not_silent():

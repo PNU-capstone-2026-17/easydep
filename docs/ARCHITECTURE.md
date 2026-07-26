@@ -15,7 +15,8 @@
 |---|---|
 | **정적=코드 / 의미=근거LLM** | 정적으로 판정 가능한 규칙(커버리지·참조무결성·분기어·계약)은 **코드**가, 의미 판단(내부컴포넌트 누출·안티패턴)은 **근거 프롬프트 LLM**이. |
 | **임의 사전 금지(오버피팅 방지)** | 근거 없는 키워드 목록·개수 상하한·ad-hoc 지침을 만들지 않는다. UI 용어 목록은 Cockburn 예시로만 한정, 개수 가드는 "엔지니어링일 뿐"으로 격하. |
-| **Cockburn 그라운딩** | 모든 프롬프트 지침은 도서 페이지 인용으로 교차검증(`cockburn-grounding.md`, 아래 §참고). |
+| **Cockburn 그라운딩** | 규칙은 `app/requirements/knowledge/`의 레코드가 단일 소스. 검증 프롬프트·검출기·지적 문구가 거기서 파생되고, 도서 인용은 로컬 사본으로 **기계 대조**한다(§4.2). |
+| **근거 없는 지적 금지** | 의미 검증자의 지적은 `rule_id`를 대야 하고, 지식베이스에 없는 규칙을 인용하면 버린다(`semantic_status="ungrounded"`) — 검증자의 환각도 환각이다. |
 | **생성 → 검증 → 반성(repair)** | 각 생성 뒤 정적+의미 검증을 병합하고, 실패 시 수술적 지시로 재생성(bounded). |
 | **전 구간 구조화 출력** | 모든 LLM 호출이 pydantic 스키마 강제(`with_structured_output`), 자유텍스트 파싱 제거. |
 | **추적성(provenance)** | 유스케이스는 `requirement_ids`로, 스텝은 `covered_req_ids`로 소스 FR을 태깅 → 커버리지를 코드로 검증. |
@@ -93,8 +94,9 @@ STEP 4 — 관계 · 다이어그램
   **extensions** · success/minimal guarantee.
   - **확장 구조화**: `label`(3a) · `branch_step`(int, 분기 스텝) · `handling_steps`(sub_step 코드) ·
     `outcome`(resume|alternate_success|fail) · `resume_at_step`. → 어디서 갈라지고 어디로 복귀/실패하는지 파싱 없이 구조로.
-  - **스텝 수는 목표 아님**: "3-9"는 Cockburn 관찰(p.208)이지 하드룰이 아니라 게이트하지 않음. 각 스텝은 하나의
-    sub-goal(Guideline 6). 자동 결과(로깅/감사/암호화/확인)는 스텝이 아니라 guarantee(p.64).
+  - **스텝 수는 목표 아님**: "three to nine"은 Cockburn 관찰(p.208, Reminder 6)이지 하드룰이 아니라 게이트하지 않음.
+    각 스텝은 하나의 sub-goal(Guideline 6, p.93). 자동 결과(로깅/감사/암호화/확인)는 스텝이 아니라
+    guarantee(Ch. 6, "Minimal Guarantees" p.83 — **구체적 적용은 우리 판단**).
 - **반성(reflection) 루프** — LLM 출력을 그대로 믿지 않음:
   - `_clean`: 마크다운/특수문자 정리(결정론).
   - `_validate_spec`(정적): 확장 분기/복귀 참조 무결성, 무분기(if/else), 제어토큰(Success!/Fail!),
@@ -112,7 +114,7 @@ STEP 4 — 관계 · 다이어그램
   1. **입력**: 액터 + 유스케이스 + **주 시나리오**(공유행위 판단 근거) + 결정론 **후보 힌트**(공유 스텝→include,
      `parent_actor`→일반화). include 힌트는 top-N만(프롬프트 크기 가드; 출력 개수 제한 아님).
   2. **LLM 도출**: association/include/extend/generalization/파생 UC.
-     - **include는 기본 관계**(Cockburn "first rule of thumb", p.207) — 실제 공유 sub-goal에 적극.
+     - **include는 기본 관계**(Ch. 10 Linking Use Cases, p.114-117 — **우선순위 정리는 우리 판단**) — 실제 공유 sub-goal에 적극.
      - **공유 인증/로그인/인가는 include 아님 = precondition**(선행 Log On 유스케이스, p.81).
      - 실패/에러/취소를 extend·파생 UC로 **승격 금지**(인라인 확장 유지, p.109). extend는 진짜 optional 인터럽션만.
   3. **의미검증 + 반성**(`RELATIONSHIP_VALIDATOR_SYSTEM`): precondition-as-include, consequence-as-include,
@@ -137,16 +139,37 @@ STEP 4 — 관계 · 다이어그램
   안티패턴만 판정. `enable_semantic_validator`로 on/off.
 - **반성 루프**: 검증 실패 → 수술적 지시로 재생성 → 재검증(bounded, 회귀 방지, 마지막 정상본 유지).
 
-### 4.2 Cockburn 그라운딩
-> 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖
-> `report/easydep-research/docs/research/` 로 옮겼다. 경로는 그 안에서의 상대 경로다.
+### 4.2 Cockburn 그라운딩 — 규칙 지식베이스
+**규칙의 집은 `app/requirements/knowledge/`다.** 규범 문장(우리 표현)·인용 좌표·근거 등급·
+유보 문구가 규칙 레코드 하나에 모여 있고, 검증 프롬프트·결정론 검출기·지적 문구가 전부
+거기서 파생된다. 예전에 이 자리를 지켰던 `docs/research/cockburn-grounding.md`는 저장소 밖
+(`report/easydep-research/`)이라 아무도 확인할 수 없었다 — 그래서 데이터로 들여왔다.
 
-Cockburn, *Writing Effective Use Cases* 로 프롬프트 지침을 항목별 교차검증
-(`docs/research/cockburn-grounding.md`, 페이지 인용). 도서는 저작물이라 저장소에 없다.
-핵심 교정:
-- 공유 인증 = **precondition**(include 아님, p.81) · 자동결과 = **guarantee**(스텝·include 아님, p.64)
-- include는 **권장 기본**, extend/generalize만 sparingly(p.207) · supporting 액터 오른쪽(p.243)
-- UI 금지 단어목록은 명문화되지 않음 → **예시 단어로만 한정**(p.209) · "3-9 steps"는 관찰이지 제한 아님(p.208)
+도서는 저작물이라 저장소에 없다(`d1a7ec5`, 히스토리 전체에서 삭제). 담는 것은 **좌표뿐이고
+본문은 없다.** 로컬 사본은 `materials/Usecase_Knowledge/`(gitignore)에 두고 대조에만 쓴다:
+
+```
+python -m app.requirements.knowledge.verify_citations     # 도서 인용 18건 대조
+```
+
+인쇄 페이지↔물리 페이지 오프셋은 측정하고, 사본이 없으면 `tests/test_citations.py`가
+건너뛴다(CI는 책 없이 돈다).
+
+**근거 등급**(`knowledge/basis.py`) — 지적이 어느 무게인지 산출물에서 구별되게 한다.
+`stated`(책·표준이 그렇게 적었고 페이지를 댈 수 있다) / `inferred`(우리가 정했거나, 예시에서
+일반화했거나, 페이지는 확인했지만 결론이 우리 것). `inferred`인 규칙은 유보 문구가 필수이고,
+검증 프롬프트와 지적 문구에 그 사실이 함께 실린다.
+
+핵심 교정(전부 로컬 사본으로 대조, 2026-07-26):
+- 공유 인증 = **precondition**(include 아님, p.81) · 전제조건은 스텝에서 재확인하지 않음(p.81)
+- 자동결과 = **guarantee**(스텝·include 아님) — Ch. 6 `Minimal Guarantees` **p.83**.
+  ~~p.64~~는 오기였다(그 페이지는 Ch. 5 목표 고도). 구체적 적용은 우리 판단.
+- include는 **권장 기본**, extend/generalize만 sparingly — Ch. 10 `Linking Use Cases`
+  **p.114-117**. ~~p.207~~은 오기였다(그 페이지는 Reminder 5 "Who Has the Ball?").
+- supporting 액터 오른쪽(Guideline 18, p.243) · 실패는 인라인 확장 유지(p.109)
+- UI 금지 단어목록은 명문화되지 않음 → **예시 단어로만 한정**(p.209 Reminder 7 "Keep the GUI Out")
+- "three to nine steps"는 관찰이지 제한 아님(p.208 Reminder 6) — `NON_RULE`로 기록해 **어디에서도
+  강제하지 않는다**
 
 ### 4.3 대화형 피드백 (2경로)
 1. **그래프 게이트**(`app/requirements/agent/steps/feedback_gates.py`, `enable_feedback_gates`): 각 스텝(1~4) 말미에서
@@ -228,7 +251,7 @@ relationships.json` · `diagram.puml` · `use_cases/uc_NN_<slug>/{use_case,spec}
 app/
   config.py          # 설정(단일 소스)
   schemas.py         # 모든 구조화 출력 pydantic 스키마
-  prompts.py         # 프롬프트 빌더(Cockburn 그라운딩) + 피드백/검증 프롬프트
+  prompts.py         # 생성·피드백 프롬프트 (검증 프롬프트는 knowledge/ 에서 조립)
   classifier.py      # 파인튜닝 BERT FR/NFR 로더·추론
   model_assets.py    # 저장소에 쪼개 넣은 BERT 가중치 재조립(로드 직전 1회)
   runner.py          # 배치 러너(run_pipeline/persist_run/load_state)
@@ -236,11 +259,17 @@ app/
   feedback.py        # 완료본 피드백(의도분류+cascade)
   apply_feedback.py  # 피드백 CLI
   cli.py / main.py   # 터미널 / FastAPI 서빙
+  knowledge/         # 규칙 지식베이스 (파이프라인을 모른다 = 개편을 따라온다)
+    rules.py         # 규칙 레코드 27개 — 규범 문장·인용 좌표·근거 등급·유보 (단일 소스)
+    basis.py         # 근거 등급(stated/inferred)과 프롬프트 고지 문구
+    detectors.py     # 규칙에 묶인 결정론 검출기 5개
+    verify_citations.py  # 로컬 도서 사본과 인용 대조 (로컬 전용 명령)
   agent/
     graph.py         # StateGraph 조립 + 서빙 헬퍼
     state.py         # AgentState + TypedDict
     llm.py           # NIM 접속 + 구조화 출력(폴백)
     steps/
+      grounding.py           # 검증자가 댄 rule_id 대조 — 없는 규칙 인용은 버린다
       step1_requirements.py  # 구체화·분류
       step2_usecases.py      # 액터·유스케이스·커버리지
       step3_specifications.py# 명세(병렬+반성)
@@ -249,7 +278,7 @@ app/
 inputs/              # 입력 데이터셋(*.json)
 artifacts/           # 실행별 산출물(.gitignore)
 scripts/             # 데이터셋 변환 · BERT 가중치 분할(shard_bert_model.py) 등
-materials/           # BERT 모델 · Cockburn PDF · PURE
+materials/           # BERT 모델(커밋) · Usecase_Knowledge/ 도서 사본(**gitignore**, 인용 대조 전용)
                      # 가중치는 GitHub 한도 때문에 bert_model/weights/ 에 45MiB 조각으로
                      # (조사·근거 문서 docs/research/ 는 저장소 밖 report/easydep-research/ 로 옮김)
 tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통합
@@ -262,10 +291,19 @@ tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통�
   헤르메틱(더미 키, BERT/의미검증 off).
 - **라이브(옵트인)**: `RUN_LIVE_TESTS=1` 시 실제 NIM으로 데이터셋별 parametrize end-to-end(`test_live_step2/3/4`).
 - 병렬성은 `threading.Barrier`로 동시성 증명, cascade·정합성은 스테이지 목킹으로 검증.
+- **규칙 불변식**(`tests/test_knowledge.py`): 짐작인 규칙은 유보 필수 · 라벨이 약속한 좌표 형식 준수 ·
+  규칙↔검출기 양방향 맞물림 · **규칙 아닌 것은 어디에서도 강제되지 않음** · 판정자 없는 결함 규칙 목록 고정.
+- **인용 대조**(`tests/test_citations.py`): 로컬 도서 사본이 있으면 인용 18건을 대조하고, 없으면 건너뛴다.
 
 ---
 
 ## 10. 근거 문서
-- `docs/research/cockburn-grounding.md` — 프롬프트/체크의 도서 페이지 인용 교차검증(핵심 교정 포함)
+- `app/requirements/knowledge/rules.py` — **규칙과 인용의 단일 소스**(옛 `cockburn-grounding.md`의 자리).
+  대조는 `python -m app.requirements.knowledge.verify_citations`.
+- `docs/requirements-agent-improvements.md` — 개편 후보(C1~C7) + 상용 방법론 조사
+
+> 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖 `report/easydep-research/docs/research/` 로
+> 옮겼다(`e10c527`). 경로는 그 안에서의 상대 경로다.
+
 - `docs/research/requirements-concreteness-and-gore.md` — 구체성 rubric·GORE 조사
 - `docs/research/reference-project-analysis.md` — 참고 프로젝트 기법 선별(적용/미적용 근거)

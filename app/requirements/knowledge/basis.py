@@ -56,10 +56,17 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     # 책이 **관찰로** 적은 것(예: 스텝 3~9개). 관찰은 규범이 아니다 —
     # 이걸 규칙으로 쓰면 개수를 맞추려고 내용을 늘리거나 자른다.
     "cockburn-observation": INFERRED,
-    # 책 내용이라고 알고 있으나 **저장소 안에서 페이지를 확인할 수 없다.**
-    # 책과 검수 기록이 모두 저장소 밖이다(모듈 docstring 참고). 페이지가 채워지면
-    # `cockburn-page`로 올라간다.
+    # 책 내용이라고 알고 있으나 **페이지를 확인하지 못했다.** 페이지가 확인되면
+    # `cockburn-page`로 올라간다. 지금은 하나도 없다 — 로컬 사본으로 전부 확인했다.
     "cockburn-unpinned": INFERRED,
+    # **페이지는 확인했지만 규범 문장이 우리 것이다.** 책이 개념(예: 보증이 사후조건의
+    # 자리다)을 말한 지점을 확인했고, 거기서 우리가 구체적 적용(예: 로깅·감사는 스텝이
+    # 아니라 보증이다)을 끌어냈다.
+    #
+    # 이 라벨은 `cockburn-unpinned`과 갈라야 했다. 둘을 한 라벨로 두면 고지가 거짓이
+    # 된다 — "페이지를 못 댄다"와 "페이지는 댔는데 결론이 우리 것"은 반대 방향의 한계다.
+    # (`basis.py`의 규율: 라벨 하나에 성격 하나. 갈리면 라벨을 쪼갠다.)
+    "cockburn-extrapolated": INFERRED,
     # --- 그 밖 ---
     # OMG UML 명세가 정한 표기(관계 화살표 방향 등).
     "uml-spec": STATED,
@@ -107,6 +114,9 @@ def describe(evidence: str) -> str:
 # 원칙이지만 페이지를 못 댄다"는 전혀 다른 말이다.
 _PROMPT_NOTES = {
     "cockburn-unpinned": "the source's principle, but this project could not verify the page",
+    "cockburn-extrapolated": (
+        "the cited page states the concept; this specific application is this project's reading"
+    ),
     "cockburn-example": (
         "generalised from the source's examples — the list is not exhaustive, so judge the "
         "intent rather than matching words"

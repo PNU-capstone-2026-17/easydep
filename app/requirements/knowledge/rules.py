@@ -18,12 +18,12 @@
 ## 책 본문은 여기 없다
 
 Cockburn의 *Writing Effective Use Cases*는 저작물이고 저장소에서 지워졌다(`d1a7ec5`,
-filter-branch로 히스토리 전체에서). 페이지 인용을 교차검증한 기록도 저장소 밖으로
-나갔다(`e10c527`). 그래서 이 파일에 담는 것은 **우리 표현의 규범 문장 + 인용 좌표**이고,
-본문은 담지 않는다 — 인용은 자기 사본을 가진 사람이 확인하는 좌표다.
+filter-branch로 히스토리 전체에서). 그래서 이 파일에 담는 것은 **우리 표현의 규범 문장 +
+인용 좌표 + 좌표를 대조할 짧은 열쇠 단어**이고, 본문은 담지 않는다.
 
-페이지를 댈 수 없는 규칙은 `cockburn-unpinned`로 두고 유보를 붙인다. 라벨이 곧 할 일
-목록이다(`basis.py` 참고).
+인용은 손으로 옮겨 적는 것이라 틀린다. 그래서 `pages`·`probe`로 **기계가 대조할 수 있게**
+해 두고, 로컬 사본을 가진 사람이 `verify_citations`로 확인한다. 2026-07-26에 그 검사가
+틀린 인용 둘을 잡았다(`p.64`·`p.207` — 그 모듈 docstring 참고).
 
 ## 심각도가 셋인 이유
 
@@ -104,11 +104,21 @@ class Rule:
     judged_by: str = JUDGED_NOWHERE
     #: 결정론 검출기 이름(`detectors.py`에 등록). `judged_by`가 검출기일 때만 있다.
     detector: str | None = None
+    #: 인용을 **기계로 확인할** 인쇄 페이지 번호. 책 근거인 규칙에만 있다.
+    pages: tuple[int, ...] = ()
+    #: 그 페이지에 있어야 하는 짧은 단어들(소문자). 좌표가 맞는지 보는 열쇠일 뿐,
+    #: 본문을 옮겨 담는 자리가 아니다 — 저작물을 저장소에 넣지 않기 위한 경계다.
+    probe: tuple[str, ...] = ()
 
     @property
     def hedged(self) -> bool:
         """지적할 때 출처의 한계를 함께 밝혀야 하는가."""
         return basis.needs_hedge(self.evidence)
+
+    @property
+    def from_book(self) -> bool:
+        """인용이 도서 좌표인가(→ 로컬 사본으로 대조할 수 있어야 한다)."""
+        return self.evidence.startswith("cockburn-")
 
     @property
     def short_citation(self) -> str:
@@ -148,10 +158,12 @@ RULES: tuple[Rule, ...] = (
             "The system under design is never an actor. Actors are external to it — "
             "primary actors initiate, supporting actors are called upon."
         ),
-        citation=f"{_BOOK}, p.59",
+        citation=f"{_BOOK}, p.59 (Ch. 4, Stakeholders and Actors)",
         evidence="cockburn-page",
         # 2단계에는 의미 검증기가 없다. 책이 명시한 결함인데 아무도 보지 않는다.
         judged_by=JUDGED_NOWHERE,
+        pages=(59,),
+        probe=("actor", "system under design"),
     ),
     Rule(
         id="actors.derived-from-functional-requirements",
@@ -170,8 +182,10 @@ RULES: tuple[Rule, ...] = (
             "Cluster use cases at the user-goal (elementary business process) level; "
             "absorb subfunction requirements into the use case that covers them."
         ),
-        citation=f"{_BOOK}, p.62",
+        citation=f"{_BOOK}, p.62 (Ch. 5, Three Named Goal Levels)",
         evidence="cockburn-page",
+        pages=(62,),
+        probe=("user goal",),
     ),
     Rule(
         id="usecases.nfr-is-a-constraint",
@@ -207,7 +221,7 @@ RULES: tuple[Rule, ...] = (
             "Steps must not name user-interface mechanics (screens, fields, buttons, "
             "clicks, tabs). Say what the system does for the actor."
         ),
-        citation=f"{_BOOK}, p.209 (Reminder 7); p.91-92",
+        citation=f'{_BOOK}, p.209 (Reminder 7: "Keep the GUI Out")',
         evidence="cockburn-example",
         caveat=(
             "단어 목록은 그가 **예로 든** UI 용어일 뿐이다. 책은 금지 단어목록을 "
@@ -215,6 +229,8 @@ RULES: tuple[Rule, ...] = (
         ),
         judged_by=JUDGED_DETECTOR,
         detector="ui_terms",
+        pages=(209,),
+        probe=("reminder 7", "gui"),
     ),
     Rule(
         id="spec.black-box-no-internal-components",
@@ -225,10 +241,15 @@ RULES: tuple[Rule, ...] = (
             "not even disguised in business words. Say what the system does, not which "
             "internal part does it."
         ),
-        citation=f"{_BOOK} (black-box use cases)",
-        evidence="cockburn-unpinned",
-        caveat="black-box 원칙은 책의 것이지만, 저장소 안에 페이지 근거가 없다(책이 저장소 밖이다).",
+        citation=f"{_BOOK}, p.41 (Ch. 3, Scope — black box)",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "black-box 원칙과 페이지는 확인했다. 다만 금지 대상 목록(service·engine·store·"
+            "cache·queue·database)은 그 원칙에서 우리가 끌어낸 것이다."
+        ),
         judged_by=JUDGED_VALIDATOR,
+        pages=(41,),
+        probe=("black box",),
     ),
     Rule(
         id="spec.no-branching-in-a-step",
@@ -238,10 +259,12 @@ RULES: tuple[Rule, ...] = (
             "A step states one thing that happens. Branching words (if/else) do not "
             "belong in a step — split the branch into an extension."
         ),
-        citation=f"{_BOOK}, Ch. 7",
+        citation=f"{_BOOK}, Ch. 7 (Scenarios and Steps), p.88~",
         evidence="cockburn-chapter",
         judged_by=JUDGED_DETECTOR,
         detector="branch_words",
+        pages=(88,),
+        probe=("scenarios and steps",),
     ),
     Rule(
         id="spec.no-hidden-branching",
@@ -251,9 +274,11 @@ RULES: tuple[Rule, ...] = (
             "A step whose behaviour depends on an unstated outcome is still a branch, "
             "even without the word 'if'. Split it into a separate extension."
         ),
-        citation=f"{_BOOK}, Ch. 7",
+        citation=f"{_BOOK}, Ch. 7 (Scenarios and Steps), p.88~",
         evidence="cockburn-chapter",
         judged_by=JUDGED_VALIDATOR,
+        pages=(88,),
+        probe=("scenarios and steps",),
     ),
     Rule(
         id="spec.no-control-tokens-in-prose",
@@ -263,19 +288,22 @@ RULES: tuple[Rule, ...] = (
             "Scenario-ending tokens ('Success!', 'Fail!') are not prose. Express the "
             "ending in the outcome field."
         ),
-        citation=f"{_BOOK} (scenario-ending notation)",
-        evidence="cockburn-unpinned",
-        caveat="종결 토큰이 그의 표기라는 것은 알지만 저장소 안에 페이지 근거가 없다.",
+        citation=f"{_BOOK}, p.47-49 (scenario endings)",
+        evidence="cockburn-page",
         judged_by=JUDGED_DETECTOR,
         detector="control_tokens",
+        pages=(47, 48, 49),
+        probe=("fail!",),
     ),
     Rule(
         id="spec.one-subgoal-per-step",
         stage=WRITE_SPECIFICATIONS,
         severity=GUIDANCE,
         statement="Each step carries exactly one sub-goal — one transaction.",
-        citation=f"{_BOOK}, Guideline 6",
+        citation=f'{_BOOK}, Guideline 6 ("Include a Reasonable Set of Actions"), p.93',
         evidence="cockburn-guideline",
+        pages=(93,),
+        probe=("guideline 6", "transaction"),
     ),
     Rule(
         id="spec.step-count-is-not-a-target",
@@ -285,12 +313,14 @@ RULES: tuple[Rule, ...] = (
             "The 3-to-9 step range is an observation about readable use cases, not a "
             "limit. Never pad or trim steps to hit a count; judge each step's level."
         ),
-        citation=f"{_BOOK}, p.208",
+        citation=f'{_BOOK}, p.208 (Reminder 6: "Get the Goal Level Right")',
         evidence="cockburn-observation",
         caveat=(
             "책이 관찰로 적은 범위다 — 규칙이 아니다. 개수로 게이트하면 개수를 맞추려고 "
             "내용을 늘리거나 자른다. **어디에서도 강제하지 않는다.**"
         ),
+        pages=(208,),
+        probe=("three to nine",),
     ),
     Rule(
         id="spec.consequence-is-a-guarantee",
@@ -301,9 +331,18 @@ RULES: tuple[Rule, ...] = (
             "auditing, encrypting stored data, sending a receipt) are internal success "
             "guarantees, never main-scenario steps."
         ),
-        citation=f"{_BOOK}, p.64",
-        evidence="cockburn-page",
+        # ⚠ 2026-07-26 정정: 예전 인용 `p.64`는 틀렸다. 그 페이지는 Ch. 5(Three Named
+        # Goal Levels)이고 guarantee를 다루지 않는다. 보증은 Ch. 6이고 "Minimal
+        # Guarantees" 절이 p.83이다(로컬 사본으로 확인).
+        citation=f"{_BOOK}, Ch. 6 (Preconditions, Triggers, and Guarantees), p.83",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "보증이 사후조건의 자리라는 것은 Ch. 6에서 확인했다. 다만 '자동결과(로깅·감사·"
+            "암호화·확인 발송)는 스텝이 아니라 보증'이라는 구체적 적용은 우리가 끌어낸 것이다."
+        ),
         judged_by=JUDGED_VALIDATOR,
+        pages=(83,),
+        probe=("minimal guarantee",),
     ),
     Rule(
         id="spec.no-precondition-recheck",
@@ -313,10 +352,11 @@ RULES: tuple[Rule, ...] = (
             "A precondition is a state the use case may assume. A main-scenario step "
             "must not re-verify what a precondition already guarantees."
         ),
-        citation=f"{_BOOK} (preconditions)",
-        evidence="cockburn-unpinned",
-        caveat="전제조건을 다시 확인하지 않는다는 것은 책의 개념이지만 페이지 근거가 저장소에 없다.",
+        citation=f"{_BOOK}, p.81 (preconditions need not be checked)",
+        evidence="cockburn-page",
         judged_by=JUDGED_VALIDATOR,
+        pages=(81,),
+        probe=("precondition", "not be checked"),
     ),
     Rule(
         id="spec.no-scope-creep",
@@ -339,10 +379,15 @@ RULES: tuple[Rule, ...] = (
             "An extension that resumes the main scenario must actually re-establish the "
             "state the resume step assumes."
         ),
-        citation=f"{_BOOK} (extension remerge)",
-        evidence="cockburn-unpinned",
-        caveat="복귀 의미론은 책의 개념이지만 페이지 근거가 저장소에 없다.",
+        citation=f"{_BOOK}, Ch. 8 (Extensions), rejoin at p.106",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "확장이 주 시나리오로 복귀한다(rejoin)는 개념과 페이지는 확인했다. "
+            "'복귀 지점이 가정하는 상태를 실제로 회복해야 한다'는 요구는 우리가 세운 것이다."
+        ),
         judged_by=JUDGED_VALIDATOR,
+        pages=(106,),
+        probe=("rejoin",),
     ),
     Rule(
         id="spec.extension-reference-integrity",
@@ -384,6 +429,8 @@ RULES: tuple[Rule, ...] = (
         citation=f"{_BOOK}, p.81",
         evidence="cockburn-page",
         judged_by=JUDGED_VALIDATOR,
+        pages=(81,),
+        probe=("precondition", "log"),
     ),
     Rule(
         id="rel.consequence-is-not-an-include",
@@ -393,9 +440,16 @@ RULES: tuple[Rule, ...] = (
             "Cross-cutting internal consequences (logging, auditing, encrypting, sending "
             "confirmations) are success guarantees, never included sub-goals."
         ),
-        citation=f"{_BOOK}, p.64",
-        evidence="cockburn-page",
+        # ⚠ 2026-07-26 정정: 예전 인용 `p.64`는 틀렸다(위 spec 쌍둥이 규칙 참고).
+        citation=f"{_BOOK}, Ch. 6 (Preconditions, Triggers, and Guarantees), p.83",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "보증이 사후조건의 자리라는 것은 Ch. 6에서 확인했다. 그것이 곧 "
+            "'include로 뽑지 말라'는 뜻이라는 적용은 우리가 끌어낸 것이다."
+        ),
         judged_by=JUDGED_VALIDATOR,
+        pages=(83,),
+        probe=("minimal guarantee",),
     ),
     Rule(
         id="rel.include-is-the-default-relationship",
@@ -405,8 +459,17 @@ RULES: tuple[Rule, ...] = (
             "<<include>> is the first rule of thumb for a genuine shared sub-goal; use "
             "extend and generalization sparingly."
         ),
-        citation=f"{_BOOK}, p.207",
-        evidence="cockburn-page",
+        # ⚠ 2026-07-26 정정: 예전 인용 `p.207`은 틀렸다. 그 페이지는 Reminder 5
+        # ("Who Has the Ball?")이고, 거기 있는 "rule of thumb"은 다른 이야기다 —
+        # 아마 그 단어로 찾다가 잘못 붙었다. 관계를 다루는 곳은 Ch. 10이다.
+        citation=f"{_BOOK}, Ch. 10 (Linking Use Cases), p.114-117",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "관계를 다루는 장과 페이지는 확인했다. 다만 'include가 기본이고 나머지는 "
+            "아껴 쓴다'는 우선순위는 우리가 정리한 것이다."
+        ),
+        pages=(117,),
+        probe=("include", "extend"),
     ),
     Rule(
         id="rel.failures-stay-inline-extensions",
@@ -416,9 +479,11 @@ RULES: tuple[Rule, ...] = (
             "Failures, errors, and cancellations stay inline extensions of their use "
             "case. Do not promote them to <<extend>> or to a derived use case."
         ),
-        citation=f"{_BOOK}, p.109",
+        citation=f"{_BOOK}, p.109 (Ch. 8, Extensions)",
         evidence="cockburn-page",
         judged_by=JUDGED_VALIDATOR,
+        pages=(109,),
+        probe=("extension", "fail"),
     ),
     Rule(
         id="rel.extend-is-only-optional-interruption",
@@ -428,10 +493,15 @@ RULES: tuple[Rule, ...] = (
             "<<extend>> is for genuinely optional, interrupting, electively triggered "
             "behaviour — not for failure cases and not for ordinary 'after A do B' order."
         ),
-        citation=f"{_BOOK} (extend usage)",
-        evidence="cockburn-unpinned",
-        caveat="extend의 좁은 용도는 책의 취지이지만, 이 문장 그대로의 페이지 근거는 저장소에 없다.",
+        citation=f"{_BOOK}, Ch. 10 (Linking Use Cases), Extension Use Cases at p.115",
+        evidence="cockburn-extrapolated",
+        caveat=(
+            "확장 유스케이스를 다루는 절과 페이지는 확인했다. 'optional·interrupting·"
+            "electively triggered에만 쓴다'는 좁힘은 우리가 세운 것이다."
+        ),
         judged_by=JUDGED_VALIDATOR,
+        pages=(115,),
+        probe=("extension use cases",),
     ),
     Rule(
         id="rel.generalization-keeps-meaning",
@@ -450,8 +520,10 @@ RULES: tuple[Rule, ...] = (
             "Draw primary actors to the left of the system boundary and supporting "
             "actors to the right."
         ),
-        citation=f"{_BOOK}, Guideline 18 (p.243)",
+        citation=f'{_BOOK}, Guideline 18 ("Supporting Actors on the Right"), p.243',
         evidence="cockburn-guideline",
+        pages=(243,),
+        probe=("guideline 18", "supporting actors on the right"),
     ),
     Rule(
         id="rel.reference-integrity",
