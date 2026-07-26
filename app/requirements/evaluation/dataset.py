@@ -133,10 +133,19 @@ def build(rule_id: str, run_dirs: list[str], per_domain: int = 5) -> dict:
     }
 
 
-def score(labelled: dict, repeats: int = 5) -> dict:
-    """라벨과 **측정한 모델 판정**을 맞춰 본다(프로브 N회, 과반을 모델의 답으로 본다).
+def score(
+    labelled: dict,
+    repeats: int = 5,
+    verdict_file: Path | None = None,
+    budget: int | None = None,
+) -> dict:
+    """라벨과 **측정한 모델 판정**을 맞춰 본다(프로브 N회).
 
     라벨이 빈 항목은 뺀다 — 사람이 판단을 보류한 것을 0이나 1로 채우면 안 된다.
+
+    `verdict_file`을 주면 판정을 항목마다 **즉시 덧붙이고, 이미 있는 항목은 다시 묻지 않는다.**
+    측정이 자주 중단되므로(레이트 리밋·시간 상한) 그래야 여러 번에 걸쳐 채울 수 있다.
+    `budget`은 이번 호출에서 새로 물어볼 항목 수 상한이다.
     """
     from app.requirements.evaluation import semantic
 
@@ -145,16 +154,38 @@ def score(labelled: dict, repeats: int = 5) -> dict:
     if not items:
         raise SystemExit("라벨이 하나도 없다. 파일의 `label`을 채운 뒤 다시 돌린다.")
 
+    cached: dict[str, bool] = {}
+    if verdict_file and verdict_file.exists():
+        for line in verdict_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                cached[row["id"]] = row["model_violated"]
+
     # **파일에 담긴 payload를 그대로 쓴다** — 아티팩트가 없어도 채점되고, 검증자가 파이프라인과
     # 같은 것을 본다(build의 `payload` 주석 참고).
     #
     # 모델의 답은 **N회 중 전부 걸렸을 때만** 위반으로 본다. 흔들리는 판정을 위반으로 세면
     # 정밀도가 동전 던지기의 함수가 된다 — 흔들림 자체는 `measure_stability`가 재는 것이고,
     # 여기서 재려는 것은 "안정된 판정이 옳은가"다.
-    verdicts: dict[str, bool] = {}
+    verdicts: dict[str, bool] = dict(cached)
+    asked = 0
     for item in items:
+        if item["id"] in verdicts:
+            continue
+        if budget is not None and asked >= budget:
+            break
         row = semantic.probe_rule(rule_id, [(item["id"], item["payload"])], repeats=repeats)
         verdicts[item["id"]] = row["always"] > 0
+        asked += 1
+        if verdict_file:
+            with verdict_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({
+                    "id": item["id"], "repeats": repeats,
+                    "model_violated": verdicts[item["id"]],
+                }, ensure_ascii=False) + "\n")
+
+    # 아직 안 물어본 항목은 **점수에서 뺀다.** 0으로 채우면 재현율이 조용히 낮아진다.
+    items = [i for i in items if i["id"] in verdicts]
 
     tp = sum(1 for i in items if i["label"] == VIOLATED and verdicts[i["id"]])
     fp = sum(1 for i in items if i["label"] == CLEAN and verdicts[i["id"]])
@@ -163,8 +194,13 @@ def score(labelled: dict, repeats: int = 5) -> dict:
     return {
         "rule_id": rule_id,
         "repeats": repeats,
-        "labelled": len(items),
-        "skipped_unlabelled": len(labelled["items"]) - len(items),
+        "scored": len(items),
+        "unlabelled": sum(1 for i in labelled["items"] if i.get("label") not in LABELS),
+        # 라벨은 있는데 아직 모델에 안 물어본 항목. 0으로 채우지 않고 뺀다.
+        "not_yet_asked": sum(
+            1 for i in labelled["items"]
+            if i.get("label") in LABELS and i["id"] not in verdicts
+        ),
         "true_positive": tp, "false_positive": fp,
         "false_negative": fn, "true_negative": tn,
         "precision": round(tp / (tp + fp), 3) if tp + fp else None,

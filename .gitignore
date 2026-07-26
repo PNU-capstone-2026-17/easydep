@@ -35,6 +35,13 @@ artifacts/
 # (Alistair Cockburn, Writing Effective Use Cases, Addison-Wesley 2001)
 materials/Usecase_Knowledge/
 
+# PURE 요구사항 코퍼스. **데이터셋 자체는 CC-BY-4.0**이지만, 큐레이터가 "포함된 요구사항
+# 문서들의 IP는 알지 못한다"고 명시한다(Zenodo 10.5281/zenodo.7118517). 위 도서와 같은
+# 취급을 한다 — 로컬에서 참조하고 저장소에는 **추출기와 인용만** 둔다.
+# 파생 입력(JSON)도 원문 문장을 담으므로 커밋하지 않는다: 기본 출력 경로가 이 아래다.
+# (Ferrari, Spagnolo, Gnesi. "PURE: A Dataset of Public Requirements Documents". RE'17)
+materials/PURE/
+
 # 배포 에이전트(지식베이스)의 빌드 산출물·캐시. data/ 는 **커밋한다** — 클론 직후
 # 빌드 없이 동작하게 하는 gzip 산출물이라 여기 규칙이 없어야 맞다.
 # output/ 은 각자 원본에서 빌드하는 결과라 재배포하지 않는다.

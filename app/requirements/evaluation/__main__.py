@@ -170,7 +170,12 @@ def _cmd_dataset_score(args) -> int:
     from app.requirements.evaluation import dataset
 
     labelled = json.loads(Path(args.labels).read_text(encoding="utf-8"))
-    _print(dataset.score(labelled, repeats=args.repeats))
+    _print(dataset.score(
+        labelled,
+        repeats=args.repeats,
+        verdict_file=Path(args.verdicts) if args.verdicts else None,
+        budget=args.budget or None,
+    ))
     return 0
 
 
@@ -259,6 +264,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_dscore.add_argument("--labels", required=True)
     p_dscore.add_argument("--repeats", type=int, default=5)
+    p_dscore.add_argument("--verdicts", help="모델 판정을 즉시 덧붙일 JSONL — 중단돼도 이어서 채운다")
+    p_dscore.add_argument("--budget", type=int, default=0,
+                          help="이번 호출에서 새로 물어볼 항목 수 상한(0=제한 없음)")
     p_dscore.set_defaults(fn=_cmd_dataset_score)
 
     p_score = sub.add_parser("score", help="artifacts/run_*/ 를 채점한다")

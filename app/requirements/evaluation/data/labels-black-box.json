@@ -1,8 +1,8 @@
 {
   "rule_id": "spec.black-box-no-internal-components",
-  "rule_statement": "Never name an internal service, engine, store, cache, queue, or database — not even disguised in business words. Say what the system does, not which internal part does it.",
+  "rule_statement": "Say what the system does for the actor, not which internal part does it. It is a violation to name a specific internal part as the actor of a step or as the place data goes: a named service ('the login service'), engine, cache, queue, or store ('records it in an audit log', 'in an immutable store').\n  It is NOT a violation when: (a) the given requirements themselves name that component — repeating it is requirement coverage, not leakage; (b) the reference is to the system as a whole, unqualified ('the service is unavailable'); (c) the step only says that something is logged, recorded or stored, without naming where ('System records the order'); (d) the sentence names a technology or protocol mechanism rather than a part (tokens, cipher suites, licences) — that is a different concern.",
   "citation": "Writing Effective Use Cases, p.41 (Ch. 3, Scope — black box)",
-  "caveat": "black-box 원칙과 페이지는 확인했다. 다만 금지 대상 목록(service·engine·store·cache·queue·database)은 그 원칙에서 우리가 끌어낸 것이다.",
+  "caveat": "black-box 원칙과 페이지는 확인했다. 다만 **어디까지가 '내부 부품'인지는 우리가 정했다** — 위 (a)~(d) 경계 넷은 책에 없다.\n그 넷은 2026-07-27에 라벨을 붙이다 정해졌다. 독립 평가자(fable-5)와 30건을 각자 판정했더니 28/30이 일치했고, 갈린 2건이 모두 '요구사항이 그 부품 이름을 이미 부르는' 경우였다 → (a). 나머지 셋은 그 평가자가 '규칙이 답을 안 정해 준다'고 지적한 자리다: 맨 'the service'(→b), `logs/records/stores` 어법(→c, 표본의 약 1/3에 나온다), JWT·RSA-256·DRM 같은 기전(→d). 판정이 흔들린 원인의 일부가 모델이 아니라 **이 문장이 회색지대를 남긴 것**이었다.",
   "instructions": "각 항목의 문장들을 읽고 `label`에 \"violated\"(규칙 위반) 또는 \"clean\"(위반 아님)을 적는다. 판단이 안 서면 비워 두면 된다 — 빈 항목은 채점에서 빠진다. 모델이 무엇을 지적했는지는 이 파일에 없다(끌려가지 않도록 일부러 뺐다). `note`에 근거를 적어 두면 나중에 규칙 문장을 다듬을 때 쓴다.",
   "sampling": "도메인마다 앞에서 5개 — **모델 판정을 보지 않고** 골랐다. 걸린 것만 뽑으면 재현율을 못 잰다.",
   "items": [
@@ -127,8 +127,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "JWT는 토큰 형식(기술 세부)이지 내부 부품 이름이 아니다. 'logs the error'는 저장소를 지목하지 않는다."
     },
     {
       "id": "093e0ca45d",
@@ -338,8 +338,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "violated",
+      "note": "'the login service is currently unavailable' — 수식어가 붙은 내부 서비스 이름. 요구사항은 'Bank of Anthos shall validate credentials'라고만 해서 (a) 면제에 해당하지 않는다."
     },
     {
       "id": "e697dfb916",
@@ -459,8 +459,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'logs the error for audit purposes' — 감사 목적은 밝히지만 저장소를 이름으로 부르지 않는다."
     },
     {
       "id": "3188f6a14f",
@@ -584,8 +584,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "정렬·페이지네이션은 기전이고 부품 이름이 아니다."
     },
     {
       "id": "5d2f6a880c",
@@ -674,8 +674,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     },
     {
       "id": "d022ca0aba",
@@ -853,8 +853,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "NFR-04가 'immutable audit logs'를 직접 요구한다 → 규칙 (a) 면제: 요구 커버리지이지 누출이 아니다. (2026-07-27 규칙 개정으로 violated→clean)"
     },
     {
       "id": "bc7d265acc",
@@ -995,8 +995,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'presents the calendar', 'reserves the slot' — 업무 개념뿐."
     },
     {
       "id": "a33667a34e",
@@ -1139,8 +1139,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "email/SMS는 외부 채널(지원 액터)이고 내부 부품이 아니다."
     },
     {
       "id": "63bafde592",
@@ -1286,8 +1286,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'secure video session'은 세션이지 부품 이름이 아니다."
     },
     {
       "id": "e88167a01d",
@@ -1479,8 +1479,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'restores the session state'는 내부 상태에 가깝지만 부품을 이름으로 부르지 않는다. ⚠경계."
     },
     {
       "id": "50bb1cf701",
@@ -1634,8 +1634,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "mutual TLS는 프로토콜 세부(다른 규칙 소관)이고 내부 부품이 아니다."
     },
     {
       "id": "7f50a19a78",
@@ -1813,8 +1813,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "violated",
+      "note": "'records the offending event in a dead-letter queue' — 목적지를 이름으로 부른다(규칙 본문). 요구사항은 파티션·스키마만 언급하고 dead-letter queue를 부르지 않는다."
     },
     {
       "id": "c0548e05a0",
@@ -1967,8 +1967,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'releases resources'는 뭉툭하지만 부품 이름이 아니다."
     },
     {
       "id": "6e6ecfaf29",
@@ -2177,8 +2177,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "dashboard/widget은 UI 개념(다른 규칙 소관)이고 내부 부품이 아니다."
     },
     {
       "id": "80dca86341",
@@ -2343,8 +2343,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "violated",
+      "note": "'records the alerting rule ... in an immutable store' — 목적지를 이름으로 부른다. NFR-05는 'immutable audit logging'(감사)이고 규칙 저장소가 아니므로 (a) 면제가 아니다. ⚠새 규칙에서 가장 가까운 판단."
     },
     {
       "id": "7b2d6a9ef3",
@@ -2469,8 +2469,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "카탈로그·추천은 업무 개념이다."
     },
     {
       "id": "2313fda155",
@@ -2707,8 +2707,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "DRM 라이선스는 외부에서 받아오는 것이고, 화질·네트워크는 기전이다. ⚠경계: white-box에 가깝다는 지적은 가능하나 부품 이름은 아니다."
     },
     {
       "id": "aff9212122",
@@ -2852,8 +2852,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "thumbnail preview는 UI(다른 규칙)."
     },
     {
       "id": "ec0f0e2e22",
@@ -3003,8 +3003,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     },
     {
       "id": "6011c1139e",
@@ -3133,8 +3133,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "FR-20이 'triggering a review workflow for moderators'라고 그 이름을 부른다 → 규칙 (a) 면제. (violated→clean)"
     },
     {
       "id": "ca1078acfd",
@@ -3237,8 +3237,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     },
     {
       "id": "e6da5da8d0",
@@ -3364,8 +3364,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "부품 이름 없음. (별건: 문장 안에 'covered_req_ids: FR-03'이 섞여 들어갔다 — 생성 결함이지만 이 규칙 소관은 아니다.)"
     },
     {
       "id": "f6995461f1",
@@ -3549,8 +3549,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'logs the error for audit', 'releases reserved seats' — 부품 이름 없음."
     },
     {
       "id": "9cb0c9bf66",
@@ -3682,8 +3682,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "PDF는 업무 산출물, email은 채널, portal은 접근 경로다."
     },
     {
       "id": "f461005ba6",
@@ -3800,8 +3800,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "'the service is currently unavailable'는 시스템 자신을 뭉툭하게 가리킨다 — 내부 부품 지목이 아니다. ⚠경계."
     },
     {
       "id": "e505bb3fb5",
@@ -3915,8 +3915,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "navigation menu는 UI(다른 규칙)."
     },
     {
       "id": "b64c7fe44c",
@@ -4038,8 +4038,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "violated",
+      "note": "'the search service is temporarily unavailable' — 수식어가 붙은 내부 서비스 이름. 요구사항은 'allow users to search'뿐이다."
     },
     {
       "id": "6c52301dcf",
@@ -4136,8 +4136,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     },
     {
       "id": "d542a76e6d",
@@ -4295,8 +4295,8 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     },
     {
       "id": "d2c405edac",
@@ -4450,8 +4450,26 @@
           }
         ]
       },
-      "label": "",
-      "note": ""
+      "label": "clean",
+      "note": "내부 부품 언급 없음."
     }
-  ]
+  ],
+  "labelling": {
+    "labeller": "claude-opus-5 (2026-07-27)",
+    "criterion": "규칙 문장 그대로 적용한다(2026-07-27 개정판): 부품을 행위자·목적지로 이름 부르면 위반, 단 (a) 요구사항이 그 이름을 부르면 면제 · (b) 맨 'the service'는 전체 지칭 · (c) 목적지 없는 logs/records/stores는 허용 · (d) 기전은 다른 소관.",
+    "rubric_source": "black-box 원칙 — Writing Effective Use Cases, p.41 (Ch.3 Scope). 다만 금지 대상 목록(service/engine/store/cache/queue/database)은 그 원칙에서 이 프로젝트가 끌어낸 것이다(규칙의 evidence=cockburn-extrapolated). 책 Ch.19 'Mistakes Fixed'의 완성된 예제는 대부분 UI 세부(p.191, p.195·197·199)이고 내부컴포넌트 누출 예제는 없다.",
+    "caveat": "**이 라벨은 근거가 약하다.** 붙인 것이 평가 대상과 같은 종류의 시스템(LLM)이고, 그 검증자의 규칙·프롬프트도 같은 손에서 나왔다 — 일치도가 부풀려진다. 그래서 이 라벨은 **정답이 아니라 감사 대상**이다: 항목마다 근거를 적어 두었으니 사람이 읽고 뒤집으면 된다. ⚠로 표시한 6건은 경계 사례라 사람 판단이 갈릴 수 있다. 규칙의 경계 자체가 우리 확장이므로, 불일치는 산출물이 아니라 **규칙 문장**을 고쳐야 한다는 신호일 수 있다.",
+    "counts": {
+      "violated": 4,
+      "clean": 26,
+      "boundary_cases": 4
+    },
+    "second_rater": {
+      "rater": "fable-5",
+      "protocol": "같은 30건을 **눈가림 사본**으로 독립 판정했다(내 라벨·근거·기준을 주지 않고, 저장소의 라벨 파일·프롬프트·픽스처를 읽지 말라고 지시했다). 규칙 개정 전 기준으로 판정한 것이다.",
+      "agreement_before_amendment": "28/30",
+      "agreement_after_amendment": "30/30",
+      "what_it_does_and_does_not_add": "다른 모델의 라벨도 LLM 라벨이라 **외부 정답이 되지 않는다.** 보강되는 것은 나로부터의 독립성이고, 갈린 지점이 곧 규칙 문장이 답을 안 정해 준 지점이었다 — 그 지적으로 규칙을 고쳤으니 이 호출의 값어치는 라벨보다 **규칙 문장**에 남았다."
+    }
+  }
 }

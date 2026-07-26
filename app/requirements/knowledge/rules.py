@@ -243,15 +243,29 @@ RULES: tuple[Rule, ...] = (
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,
         statement=(
-            "Never name an internal service, engine, store, cache, queue, or database — "
-            "not even disguised in business words. Say what the system does, not which "
-            "internal part does it."
+            "Say what the system does for the actor, not which internal part does it. It is a "
+            "violation to name a specific internal part as the actor of a step or as the place "
+            "data goes: a named service ('the login service'), engine, cache, queue, or store "
+            "('records it in an audit log', 'in an immutable store').\n"
+            "  It is NOT a violation when: (a) the given requirements themselves name that "
+            "component — repeating it is requirement coverage, not leakage; (b) the reference is "
+            "to the system as a whole, unqualified ('the service is unavailable'); (c) the step "
+            "only says that something is logged, recorded or stored, without naming where "
+            "('System records the order'); (d) the sentence names a technology or protocol "
+            "mechanism rather than a part (tokens, cipher suites, licences) — that is a "
+            "different concern."
         ),
         citation=f"{_BOOK}, p.41 (Ch. 3, Scope — black box)",
         evidence="cockburn-extrapolated",
         caveat=(
-            "black-box 원칙과 페이지는 확인했다. 다만 금지 대상 목록(service·engine·store·"
-            "cache·queue·database)은 그 원칙에서 우리가 끌어낸 것이다."
+            "black-box 원칙과 페이지는 확인했다. 다만 **어디까지가 '내부 부품'인지는 우리가 "
+            "정했다** — 위 (a)~(d) 경계 넷은 책에 없다.\n"
+            "그 넷은 2026-07-27에 라벨을 붙이다 정해졌다. 독립 평가자(fable-5)와 30건을 각자 "
+            "판정했더니 28/30이 일치했고, 갈린 2건이 모두 '요구사항이 그 부품 이름을 이미 "
+            "부르는' 경우였다 → (a). 나머지 셋은 그 평가자가 '규칙이 답을 안 정해 준다'고 "
+            "지적한 자리다: 맨 'the service'(→b), `logs/records/stores` 어법(→c, 표본의 약 "
+            "1/3에 나온다), JWT·RSA-256·DRM 같은 기전(→d). "
+            "판정이 흔들린 원인의 일부가 모델이 아니라 **이 문장이 회색지대를 남긴 것**이었다."
         ),
         owner="specs",
         judged_by=JUDGED_VALIDATOR,

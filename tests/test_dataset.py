@@ -124,5 +124,38 @@ def test_precision_and_recall_are_computed_from_the_labels(monkeypatch):
 def test_unlabelled_items_are_left_out_not_guessed(monkeypatch):
     """사람이 보류한 것을 0이나 1로 채우면 그 수는 사람의 판단이 아니다."""
     report = _score_with(monkeypatch, [(dataset.VIOLATED, True), ("", True)])
-    assert report["labelled"] == 1
-    assert report["skipped_unlabelled"] == 1
+    assert report["scored"] == 1
+    assert report["unlabelled"] == 1
+
+
+def test_items_not_yet_asked_are_left_out_too(monkeypatch, tmp_path):
+    """측정이 중단돼도 이어서 채운다 — 아직 안 물어본 항목을 0으로 채우면 재현율이 거짓이 된다."""
+    items = [
+        {"id": f"i{n}", "label": dataset.VIOLATED, "payload": {"main_scenario": []}}
+        for n in range(3)
+    ]
+    from app.requirements.evaluation import semantic
+
+    asked: list[str] = []
+
+    def fake(rule_id, payloads, repeats):
+        asked.append(payloads[0][0])
+        return {"always": 1, "sometimes": 0}
+
+    monkeypatch.setattr(semantic, "probe_rule", fake)
+    verdicts = tmp_path / "v.jsonl"
+
+    first = dataset.score(
+        {"rule_id": "spec.black-box-no-internal-components", "items": items},
+        repeats=1, verdict_file=verdicts, budget=2,
+    )
+    assert first["scored"] == 2 and first["not_yet_asked"] == 1
+    assert len(asked) == 2
+
+    second = dataset.score(
+        {"rule_id": "spec.black-box-no-internal-components", "items": items},
+        repeats=1, verdict_file=verdicts, budget=2,
+    )
+    # 이미 물어본 둘은 다시 묻지 않고, 남은 하나만 새로 묻는다.
+    assert second["scored"] == 3 and second["not_yet_asked"] == 0
+    assert len(asked) == 3
