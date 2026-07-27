@@ -15,7 +15,7 @@ from __future__ import annotations
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import supervisor, validator
+from app.requirements.agent import supervisor, traceability, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
 from app.requirements.common import telemetry
@@ -244,23 +244,16 @@ def check_coverage(state: AgentState) -> dict:
     - unattached NFR: 어떤 유스케이스에도 안 붙은 NFR (전역 제약 후보)
     - unknown refs: 제공되지 않은 id를 참조한 경우 (LLM 환각 표면화)
     """
-    classified = state.get("classified") or []
-    use_cases = state.get("use_cases") or []
-    fr, nfr = _split_fr_nfr(classified)
-    fr_ids = {r["id"] for r in fr}
-    nfr_ids = {r["id"] for r in nfr}
-
-    covered = {rid for uc in use_cases for rid in uc.get("requirement_ids", [])}
-    attached_nfr = {nid for uc in use_cases for nid in uc.get("nfr_ids", [])}
-
+    # 집계는 `agent/traceability.py` 한 곳에서 한다. 예전에는 여기서 따로 굴렸고,
+    # `rtm.build_rtm`이 같은 사실을 **다르게** 세고 있었다 — 환각 참조의 정의가 갈려
+    # 같은 상태에서 서로 겹치지도 않는 답이 나왔다(그 모듈 docstring에 경위).
+    trace = traceability.index(state)
     coverage = {
-        "fr_total": len(fr_ids),
-        "covered_fr_ids": sorted(fr_ids & covered),
-        "orphan_fr_ids": sorted(fr_ids - covered),
-        "unattached_nfr_ids": sorted(nfr_ids - attached_nfr),
-        "unknown_requirement_refs": sorted(covered - fr_ids),
-        "coverage_ratio": (
-            round(len(fr_ids & covered) / len(fr_ids), 4) if fr_ids else 1.0
-        ),
+        "fr_total": len(trace.fr_ids),
+        "covered_fr_ids": list(trace.covered_fr_ids),
+        "orphan_fr_ids": list(trace.orphan_fr_ids),
+        "unattached_nfr_ids": list(trace.unattached_nfr_ids),
+        "unknown_requirement_refs": list(trace.unknown_refs),
+        "coverage_ratio": trace.coverage_ratio,
     }
     return {"coverage": coverage, "phase": "coverage"}
