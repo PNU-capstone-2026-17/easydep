@@ -12,32 +12,21 @@
 
 ## 무엇이 배울 자격을 갖는가 — 우리 측정이 정한 것
 
-이 결정은 취향이 아니라 §7~§9의 수치에서 나온다. **LLM 판정은 도메인에 따라 78~90%가
-흔들린다.** 흔들리는 판정에서 배우면 잡음을 프롬프트에 영구히 굳힌다 — 그건 안 배우는
-것보다 나쁘다. 한 번 굳은 잡음은 다음 실행의 입력이 되어 스스로를 재생산한다.
-
-그래서 출처마다 문턱을 다르게 둔다:
-
-  - **결정론 검출기**(`knowledge/detectors.py`)가 낸 결함은 같은 산출물에 같은 답을 낸다.
-    잡음이 아니다 — 낮은 문턱.
-  - **LLM 의미 검증자**가 낸 결함은 **여러 실행에서 반복돼야** 자격을 얻는다. 한 실행에서
-    한 번 걸린 것은 판정 잡음과 구별되지 않는다.
+**LLM 판정은 도메인에 따라 78~90% 흔들린다**(§7~§9). 흔들리는 판정에서 배우면 잡음이
+프롬프트에 굳고, 그 프롬프트가 다음 실행의 입력이 되어 스스로를 재생산한다. 그래서 출처마다
+문턱이 다르다 — 결정론 검출기는 낮게, LLM 검증자는 높게, 사람이 한 말은 그 사이.
 
 ## 무엇을 담나 — "주의하라"가 아니라 **우리가 실제로 쓴 문장**
 
-"규칙 X에 주의하라"는 프롬프트를 늘릴 뿐 새 정보가 없다. 그 규칙은 이미 규칙 목록에
-있다(`rules.generation_prompt_block`). 플레이북이 더할 수 있는 것은 규칙이 말하지 못하는
-것 — **우리가 그 규칙을 어떻게 어겼는가**다. 그래서 실행 아티팩트에서 위반한 문장을 그대로
-꺼내 반례로 싣는다. 지어내지 않으므로 틀릴 수가 없고, 규칙 문장보다 구체적이다.
+"규칙 X에 주의하라"는 이미 규칙 목록에 있는 말이라 새 정보가 없다. 더할 수 있는 것은
+**우리가 그 규칙을 어떻게 어겼는가**뿐이라, 아티팩트에서 위반 문장을 그대로 꺼내 반례로
+싣는다. 지어내지 않으므로 틀릴 수가 없다.
 
-## 아직 없는 것 (그리고 그게 사실이다)
+## 아직 없는 것
 
-  - **반성자(Reflector)가 없다.** ACE/GEPA가 말하는 "트레이스를 LLM이 읽고 지침을 고쳐
-    쓴다"는 층은 여기 없다. 지금 쌓이는 것은 기계가 모은 반례뿐이다. 반례만으로 얼마나
-    가는지를 먼저 재고, 모자라면 그때 LLM 반성자를 얹는다 — 반대 순서로 하면 이득이
-    반성자에서 온 것인지 반례에서 온 것인지 못 가른다.
-  - **효과를 아직 재지 않았다.** 그래서 기본값은 꺼짐이다(`settings.playbook_enabled`).
-    이 저장소에서 켠 채로 두고 재지 않은 기능이 세 번 값을 못 냈다.
+**반성자(Reflector)가 없다.** ACE/GEPA의 "트레이스를 LLM이 읽고 지침을 고쳐 쓴다" 층은
+넣지 않았다 — 반례만으로 얼마나 가는지 먼저 재야 이득의 출처를 가른다. 효과를 아직 안 쟀고,
+그래서 기본값이 꺼짐이다(`settings.playbook_enabled`). 자세한 것은 §12.
 """
 from __future__ import annotations
 
@@ -53,6 +42,9 @@ from app.requirements.knowledge import rules
 MIN_RUNS_DETECTOR = 2
 #: 검증자가 낸 결함이 실릴 문턱. 판정이 흔들리므로 높다(§7~§9).
 MIN_RUNS_VALIDATOR = 3
+#: 사용자 피드백이 실릴 문턱. 검증자보다 낮다(사람이 한 말이라 판정 잡음이 아니다).
+#: 그래도 1은 아니다 — 한 번의 지시는 그 산출물에 대한 주문일 수 있다.
+MIN_RUNS_FEEDBACK = 2
 #: 단계 하나에 실을 항목 수 상한. 컨텍스트가 무너지는 것을 막는다 — ACE가 말하는
 #: context collapse는 "요약해서 잃는 것"이고, 여기서는 "늘려서 묻는 것"이 같은 값이다.
 MAX_ENTRIES_PER_STAGE = 6
@@ -123,6 +115,94 @@ class Entry:
             datasets=list(raw.get("datasets", [])),
             examples=list(raw.get("examples", [])),
         )
+
+
+@dataclass
+class FeedbackLesson:
+    """사용자가 되풀이해 요구한 것 하나.
+
+    규칙 위반과 **따로 둔다.** 규칙은 근거를 댈 수 있고 판정자가 있지만 이건 "사람이 그렇게
+    원했다"는 사실뿐이다. 한 목록에 섞으면 규칙처럼 읽히고, 그러면 다음 사람이 없는 근거를
+    찾는다.
+    """
+
+    #: 규칙 단계 그룹(`model_use_cases` 등). 생성 프롬프트가 단계별로 조립되기 때문이다.
+    stage: str
+    #: **사용자의 말 그대로.** 우리가 요약하지 않는다 — 요약하는 순간 우리 판단이 섞인다.
+    instruction: str
+    runs: list[str] = field(default_factory=list)
+    datasets: list[str] = field(default_factory=list)
+
+    @property
+    def times(self) -> int:
+        return len(set(self.runs))
+
+    @property
+    def qualifies(self) -> bool:
+        return self.times >= MIN_RUNS_FEEDBACK
+
+    def as_dict(self) -> dict:
+        return {
+            "stage": self.stage,
+            "instruction": self.instruction,
+            "runs": sorted(set(self.runs)),
+            "datasets": sorted(set(self.datasets)),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> FeedbackLesson:
+        return cls(
+            stage=raw["stage"],
+            instruction=raw["instruction"],
+            runs=list(raw.get("runs", [])),
+            datasets=list(raw.get("datasets", [])),
+        )
+
+
+def _stage_group_of(cascade_key: str) -> str | None:
+    """논리 단계(`specs`) → 규칙 단계 그룹(`write_specifications`). 단계 목록에서 파생한다.
+
+    함수 안에서 import하는 것은 import 순서 때문이다(이 모듈은 프롬프트 조립에서 불린다).
+    """
+    from app.requirements.agent import stages
+
+    return next((s.group for s in stages.PIPELINE if s.key == cascade_key), None)
+
+
+def _normalized(instruction: str) -> str:
+    """같은 요구인지 보려고 다듬은 형태. 저장은 원문으로 한다."""
+    return " ".join(instruction.split()).strip().casefold()
+
+
+def observe_feedback(
+    lessons: list[FeedbackLesson], intent, run_id: str, dataset: str = ""
+) -> list[FeedbackLesson]:
+    """적용된 피드백 하나를 배운 것에 반영한다.
+
+    **`broad`만 받는다.** `local`은 대상 id를 들고 오는 산출물 수술이지 다음 실행에 물릴
+    정책이 아니다 — "UC3 이름을 바꿔라"를 얹으면 다음 실행이 없는 UC3를 찾는다. 범위가 곧
+    일반화 가능성의 신호라 따로 판단할 필요가 없다.
+    """
+    instruction = (getattr(intent, "instruction", "") or "").strip()
+    if getattr(intent, "scope", "") != "broad" or not instruction:
+        return lessons
+    group = _stage_group_of(getattr(intent, "stage", ""))
+    if group is None:
+        return lessons
+
+    key = _normalized(instruction)
+    for lesson in lessons:
+        if lesson.stage == group and _normalized(lesson.instruction) == key:
+            if run_id not in lesson.runs:
+                lesson.runs.append(run_id)
+            if dataset and dataset not in lesson.datasets:
+                lesson.datasets.append(dataset)
+            return lessons
+    lessons.append(FeedbackLesson(
+        stage=group, instruction=instruction,
+        runs=[run_id], datasets=[dataset] if dataset else [],
+    ))
+    return lessons
 
 
 # ---------------------------------------------------------------------------
@@ -269,17 +349,36 @@ def load(path: Path | str) -> list[Entry]:
     return [Entry.from_dict(e) for e in raw.get("entries", [])]
 
 
-def save(path: Path | str, entries: list[Entry]) -> None:
+def load_feedback(path: Path | str) -> list[FeedbackLesson]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return [FeedbackLesson.from_dict(e) for e in raw.get("feedback", [])]
+
+
+def save(
+    path: Path | str,
+    entries: list[Entry],
+    lessons: list[FeedbackLesson] | None = None,
+) -> None:
     """항목을 파일로. **사람이 지울 수 있어야 한다** — 배운 것이 틀렸을 때 되돌리는 길이
-    그것뿐이다(프롬프트 안에 굳으면 지울 자리가 없다)."""
+    그것뿐이다(프롬프트 안에 굳으면 지울 자리가 없다).
+
+    `lessons`를 안 주면 파일에 있던 것을 그대로 둔다. 규칙 쪽만 갱신하는 호출이
+    **사용자 피드백을 조용히 지우는** 일이 없어야 한다.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if lessons is None:
+        lessons = load_feedback(path)
     body = {
         "note": (
-            "실행에서 관찰된 위반의 누적. 책 근거가 아니라 우리 로그가 근거다. "
-            "지워도 된다 — 다음 실행이 다시 쌓는다."
+            "실행에서 관찰된 위반(entries)과 사용자가 되풀이해 요구한 것(feedback)의 누적. "
+            "책 근거가 아니라 우리 로그가 근거다. 지워도 된다 — 다음 실행이 다시 쌓는다."
         ),
         "entries": [e.as_dict() for e in sorted(entries, key=lambda e: e.rule_id)],
+        "feedback": [f.as_dict() for f in sorted(lessons, key=lambda f: (f.stage, f.instruction))],
     }
     path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -291,6 +390,20 @@ def observe_run(path: Path | str, run_dir: Path | str) -> list[Entry]:
     return entries
 
 
+def record_feedback(path: Path | str, intent, run_id: str, dataset: str = "") -> None:
+    """적용된 피드백을 파일에 반영한다. **실패해도 조용히 넘어간다.**
+
+    요청 경로에서 불리므로, 배우는 층이 사용자의 요청을 실패시키면 안 된다.
+    """
+    try:
+        lessons = observe_feedback(load_feedback(path), intent, run_id, dataset)
+        save(path, load(path), lessons)
+    except Exception:  # noqa: BLE001 - 배우기 실패가 응답을 망가뜨리면 안 된다
+        from app.requirements.common import telemetry
+
+        telemetry.record_degradation("playbook.feedback", "피드백을 플레이북에 못 남겼다")
+
+
 # ---------------------------------------------------------------------------
 # 렌더 — 생성 프롬프트에 실리는 절
 # ---------------------------------------------------------------------------
@@ -300,25 +413,48 @@ def _ranked(entries: list[Entry], stage: str) -> Iterator[Entry]:
     yield from sorted(qualified, key=lambda e: (-e.runs, e.rule_id))[:MAX_ENTRIES_PER_STAGE]
 
 
-def render(entries: list[Entry], stage: str) -> str:
-    """생성 프롬프트에 붙일 절. 실을 것이 없으면 빈 문자열.
+def render(
+    entries: list[Entry], stage: str, lessons: list[FeedbackLesson] | None = None
+) -> str:
+    """생성 프롬프트에 붙일 절들. 실을 것이 없으면 빈 문자열.
 
-    **자기가 무엇인지 밝히고 시작한다.** 규칙 목록과 같은 판에 놓이면, 근거가 우리 로그일
-    뿐인 문장이 책 좌표를 단 문장과 같은 무게로 읽힌다.
+    **각 절이 자기가 무엇인지 밝히고 시작한다.** 규칙 목록과 같은 판에 놓이면, 근거가 우리
+    로그일 뿐인 문장이 책 좌표를 단 문장과 같은 무게로 읽힌다.
+
+    규칙 위반과 사용자 요구를 **다른 절로** 낸다. 앞엣것은 "우리가 틀렸다"이고 뒤엣것은
+    "사람이 이렇게 원한다"라서, 근거의 성격도 지켜야 할 이유도 다르다.
     """
-    lines = []
+    blocks = []
+
+    broken = []
     for entry in _ranked(entries, stage):
         where = f"{entry.runs} past runs"
         if entry.datasets:
             where += f" ({', '.join(sorted(set(entry.datasets))[:3])})"
-        lines.append(f"- ({entry.rule_id}) broken in {where}.")
-        for example in entry.examples:
-            lines.append(f'    we wrote: "{example}"')
-    if not lines:
-        return ""
-    return "\n".join([
-        "[WHAT WE GOT WRONG BEFORE]",
-        "Not rules — these are our own past outputs that broke the rules above. No source",
-        "beyond our run logs. Do not copy these sentences; do not write new ones like them.",
-        *lines,
-    ])
+        broken.append(f"- ({entry.rule_id}) broken in {where}.")
+        broken.extend(f'    we wrote: "{example}"' for example in entry.examples)
+    if broken:
+        blocks.append("\n".join([
+            "[WHAT WE GOT WRONG BEFORE]",
+            "Not rules — these are our own past outputs that broke the rules above. No source",
+            "beyond our run logs. Do not copy these sentences; do not write new ones like them.",
+            *broken,
+        ]))
+
+    asked = [
+        f'- asked {lesson.times}x: "{lesson.instruction}"'
+        for lesson in sorted(
+            (le for le in (lessons or []) if le.stage == stage and le.qualifies),
+            key=lambda le: (-le.times, le.instruction),
+        )[:MAX_ENTRIES_PER_STAGE]
+    ]
+    if asked:
+        blocks.append("\n".join([
+            "[WHAT USERS KEPT ASKING FOR]",
+            "Standing requests from the people this output is for, repeated across runs, in",
+            "their own words. Not rules — no source but their asking. Where one conflicts with",
+            "a rule above, follow the rule and leave the conflict visible.",
+            *asked,
+        ]))
+
+    return "\n\n".join(blocks)

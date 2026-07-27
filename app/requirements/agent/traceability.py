@@ -1,35 +1,12 @@
 """추적성 색인 — **누가 무엇을 커버한다고 주장하는가**를 한 곳에서 센다.
 
-## 왜 필요했나 — 두 곳이 같은 사실을 다르게 셌다
+집계는 여기서만 한다. `check_coverage`(파이프라인 게이트)도 `rtm.build_rtm`(추적 매트릭스)도
+여기서 파생한다. 예전에는 각자 굴렸고 환각 참조의 정의가 갈려 같은 상태에서 서로 겹치지도
+않는 답을 냈다 — 경위와 실제 사례는 `docs/requirements-agent-improvements.md` §15.
 
-추적 링크(`use_cases[].requirement_ids` / `nfr_ids` / `main_scenario[].covered_req_ids`)는
-상태에 흩어져 있고, 그걸 굴려 집계하는 코드가 최소 두 벌 있었다:
-
-  - `step2_usecases.check_coverage` — 파이프라인이 쓰는 커버리지 게이트
-  - `rtm.build_rtm`                 — 저장 시점에 물질화되는 추적 매트릭스
-
-둘이 "환각 참조"(없는 요구 id를 가리키는 것)를 **다르게 정의하고 있었고, 실제로 답이
-갈렸다.** 같은 상태에서:
-
-    check_coverage → ['NFR1']   # 실재하는 NFR인데 환각이라고 한다
-    rtm            → ['NFR9']   # 진짜 없는 id. 이쪽이 맞다
-
-원인은 `check_coverage`가 `requirement_ids`만 모아 **FR 목록하고만** 대조한 것이다:
-
-  - UC가 NFR을 `requirement_ids`에 적으면 → 실재하는 id인데 환각으로 **오탐**
-  - UC가 없는 id를 `nfr_ids`에 적으면     → 대조 대상이 아니라 **미탐**
-
-하필 파이프라인이 쓰는 쪽이 틀린 쪽이었고, 그 값이 채점표(`compare.py`)의
-`unknown_requirement_refs` 지표로도 나갔다. **환각 검출기가 환각을 세고 있었다.**
-
-## 이 파일의 규율
-
-집계는 여기서만 한다. `check_coverage`도 `build_rtm`도 여기서 파생한다 — 사본이 둘이면
-정의가 갈리고, 갈린 것을 알아채는 데 이번처럼 오래 걸린다.
-
-**링크 종류를 뭉개지 않는다.** `requirement_ids`(UC가 실현한다고 주장하는 FR)와
-`nfr_ids`(UC를 한정하는 제약)는 뜻이 다르므로 따로 센다. 환각 판정만 둘을 합쳐서 본다 —
-"이 id가 존재하는가"는 어느 칸에 적혔든 같은 질문이기 때문이다.
+**링크 종류를 뭉개지 않는다.** `requirement_ids`(실현 주장)와 `nfr_ids`(제약 부착)는 뜻이
+달라 따로 센다. 환각 판정만 둘을 합쳐서 본다 — "이 id가 존재하는가"는 어느 칸에 적혔든
+같은 질문이라서다.
 """
 from __future__ import annotations
 

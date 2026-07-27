@@ -242,3 +242,95 @@ def test_harvest_survives_a_partial_run(tmp_path, missing):
     run = _run_dir(tmp_path, "run_a", "toystore", [_issue(DETECTED)], "System uses a button.")
     (run / missing).unlink()
     playbook.harvest(run)  # 예외가 없으면 통과
+
+
+# ---------------------------------------------------------------------------
+# 사용자 피드백에서 배우기 — 과제 목표 1의 비어 있던 절반
+# ---------------------------------------------------------------------------
+class _Intent:
+    """`FeedbackIntent`처럼 생긴 것. 스키마를 끌어오지 않으려고 최소만 흉내낸다."""
+
+    def __init__(self, stage="specs", scope="broad", instruction="Keep steps shorter."):
+        self.stage, self.scope, self.instruction = stage, scope, instruction
+
+
+def _learn(intent, runs) -> list[playbook.FeedbackLesson]:
+    lessons: list[playbook.FeedbackLesson] = []
+    for run_id in runs:
+        lessons = playbook.observe_feedback(lessons, intent, run_id, dataset="toystore")
+    return lessons
+
+
+def test_feedback_repeated_across_runs_becomes_a_lesson():
+    """**과제 문구가 요구하는 고리.** 같은 요구를 두 번 받으면 다음 실행이 읽는다.
+
+    지금까지 피드백은 산출물만 고치고 사라졌다 — 같은 지적을 세 번 받아도 네 번째 실행이
+    같은 것을 냈다.
+    """
+    lessons = _learn(_Intent(), ["run_a", "run_b"])
+    assert lessons[0].times == 2
+    assert lessons[0].qualifies
+    block = playbook.render([], rules.WRITE_SPECIFICATIONS, lessons)
+    assert "Keep steps shorter." in block
+
+
+def test_one_off_feedback_is_not_a_standing_instruction():
+    """한 번의 지시는 그 산출물에 대한 주문일 수 있다 — 모든 다음 실행에 물리지 않는다."""
+    lessons = _learn(_Intent(), ["run_a"])
+    assert not lessons[0].qualifies
+    assert playbook.render([], rules.WRITE_SPECIFICATIONS, lessons) == ""
+
+
+def test_local_edits_are_never_learned():
+    """`local`은 대상 id를 들고 오는 산출물 수술이지 정책이 아니다.
+
+    "UC3 이름을 바꿔라"를 플레이북에 얹으면 다음 실행이 없는 UC3를 찾는다. 범위가 곧
+    일반화 가능성의 신호다.
+    """
+    intent = _Intent(scope="local", instruction="Rename UC3 to Checkout.")
+    assert _learn(intent, ["run_a", "run_b", "run_c"]) == []
+
+
+def test_the_same_run_asking_twice_counts_once():
+    """문턱은 **서로 다른 실행** 수로 센다 — 한 실행에서 두 번 고쳐도 한 번이다."""
+    lessons = _learn(_Intent(), ["run_a", "run_a"])
+    assert lessons[0].times == 1
+
+
+def test_wording_differences_do_not_split_the_same_request():
+    """공백·대소문자가 달라도 같은 요구다. 저장은 원문으로 한다."""
+    lessons: list[playbook.FeedbackLesson] = []
+    lessons = playbook.observe_feedback(lessons, _Intent(instruction="Keep steps shorter."), "r1")
+    lessons = playbook.observe_feedback(
+        lessons, _Intent(instruction="  keep   steps SHORTER.  "), "r2"
+    )
+    assert len(lessons) == 1
+    assert lessons[0].times == 2
+    assert lessons[0].instruction == "Keep steps shorter."   # 첫 원문을 유지한다
+
+
+def test_user_requests_render_apart_from_rule_violations():
+    """규칙 위반과 **다른 절**로 나간다.
+
+    앞엣것은 "우리가 틀렸다"이고 뒤엣것은 "사람이 이렇게 원한다"라서 근거의 성격이 다르다.
+    한 목록에 섞으면 사용자 요구가 규칙처럼 읽힌다.
+    """
+    block = playbook.render([], rules.WRITE_SPECIFICATIONS, _learn(_Intent(), ["r1", "r2"]))
+    assert "[WHAT USERS KEPT ASKING FOR]" in block
+    assert "Not rules" in block
+    # 규칙과 충돌하면 규칙이 이긴다는 것을 프롬프트가 말해야 한다.
+    assert "follow the rule" in block
+
+
+def test_saving_rules_does_not_wipe_learned_feedback(tmp_path):
+    """규칙 쪽만 갱신하는 호출이 **사용자 피드백을 조용히 지우면** 안 된다."""
+    path = tmp_path / "pb.json"
+    playbook.save(path, [], _learn(_Intent(), ["r1", "r2"]))
+    playbook.save(path, [])              # lessons 를 안 준다
+    assert len(playbook.load_feedback(path)) == 1
+
+
+def test_recording_feedback_never_breaks_the_request(tmp_path):
+    """요청 경로에서 불린다 — 배우기 실패가 사용자의 요청을 실패시키면 안 된다."""
+    playbook.record_feedback(tmp_path / "no" / "such" / "dir" / "x.json",
+                             _Intent(), "run_a")   # 예외가 없으면 통과

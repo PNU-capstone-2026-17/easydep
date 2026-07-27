@@ -104,54 +104,60 @@ def _balanced(rows: list[dict]) -> tuple[list[dict], list[str]]:
     return [r for r in rows if r["domain"] in complete], dropped
 
 
-def _rank(rows: list[dict]) -> None:
-    """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다.
+def _domains_per_rule(rows: list[dict]) -> dict[str, int]:
+    """규칙마다 **몇 개 도메인에서** 쟀는가."""
+    seen: dict[str, set[str]] = {}
+    for row in rows:
+        seen.setdefault(row["rule_id"], set()).add(row["domain"])
+    return {rule_id: len(domains) for rule_id, domains in seen.items()}
 
-    **순위로 쓸 수 있는지를 먼저 말한다.** 이 저장소에서 결론이 뒤집힌 원인은 언제나 표본
-    쪽이었지 계산 쪽이 아니었다(§8은 도메인 하나에 과적합, §9는 조건이 섞임). 그래서 표를
-    찍기 전에 "이 표가 순위인가"를 세 가지로 확인한다: 조건, 프롬프트 판, 도메인 균형.
+
+def _ranking_warnings(rows: list[dict]) -> list[str]:
+    """이 표를 순위로 읽으면 안 되는 이유들. 비어 있으면 읽어도 된다.
+
+    이 저장소에서 결론이 뒤집힌 원인은 언제나 표본 쪽이었지 계산 쪽이 아니었다(§8은 도메인
+    하나에 과적합, §9는 조건이 섞임). 그래서 표보다 **이 목록을 먼저** 찍는다.
     """
+    warnings = []
+    if len({(r["repeats"], r["n_specs"]) for r in rows}) > 1:
+        warnings.append("조건이 섞여 있다 — 같은 조건으로 다시 모아야 한다.")
+
+    # 캠페인은 몇 시간을 돈다. 그동안 프롬프트가 바뀌면 앞뒤 행이 다른 것을 잰 것이 되는데,
+    # 반복·명세수만 봐서는 안 보인다.
+    fingerprints = {json.dumps(r.get("prompts"), sort_keys=True) for r in rows if r.get("prompts")}
+    if len(fingerprints) > 1:
+        warnings.append(f"프롬프트 판이 {len(fingerprints)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다.")
+
+    coverage = set(_domains_per_rule(rows).values())
+    if len(coverage) > 1:
+        warnings.append(f"규칙마다 잰 도메인 수가 다르다 {sorted(coverage)} — "
+                        "적게 잰 규칙은 빼고 읽어야 한다.")
+    elif len({r["domain"] for r in rows}) < 2:
+        warnings.append("도메인이 하나다 — 한 데이터셋에서 나온 수로 규칙을 바꾸지 않는다(§9).")
+    return warnings
+
+
+def _rank(rows: list[dict]) -> None:
+    """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다."""
     totals: dict[str, list[int]] = {}
-    seen_domains: dict[str, set[str]] = {}
     for row in rows:
         acc = totals.setdefault(row["rule_id"], [0, 0, 0])
         acc[0] += row["always"]
         acc[1] += row["sometimes"]
         acc[2] += row["never"]
-        seen_domains.setdefault(row["rule_id"], set()).add(row["domain"])
 
-    conditions = sorted({(r["repeats"], r["n_specs"]) for r in rows})
     domains = sorted({r["domain"] for r in rows})
     print(f"\n[합계 — 단독 프로브] 도메인 {len(domains)}종 {domains}")
-    print(f"조건(반복, 명세수): {conditions}")
+    print(f"조건(반복, 명세수): {sorted({(r['repeats'], r['n_specs']) for r in rows})}")
+    if not any(r.get("prompts") for r in rows):
+        print("· 프롬프트 판 기록 없음(fingerprint 도입 전 데이터다)")
 
-    usable = True
-    if len(conditions) > 1:
-        # 조건이 섞이면 순위로 쓸 수 없다 — 이 세션에서 결론을 두 번 뒤집은 원인이 그것이다.
-        print("⚠ 조건이 섞여 있다. 이 표는 순위가 아니다 — 같은 조건으로 다시 모아야 한다.")
-        usable = False
+    warnings = _ranking_warnings(rows)
+    for warning in warnings:
+        print(f"⚠ {warning}")
+    print("→ 이 표는 **아직 순위가 아니다**" if warnings else "→ 순위로 읽어도 되는 표")
 
-    # **프롬프트 판이 섞였는지.** 캠페인은 몇 시간을 돌고, 그동안 규칙이나 프롬프트를 고치면
-    # 앞의 행과 뒤의 행이 다른 것을 잰 것이 된다. 조건(반복·명세수)만 봐서는 안 보인다.
-    fingerprints = {json.dumps(r.get("prompts"), sort_keys=True) for r in rows if r.get("prompts")}
-    if len(fingerprints) > 1:
-        print(f"⚠ 프롬프트 판이 {len(fingerprints)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다. 순위가 아니다.")
-        usable = False
-    elif not fingerprints:
-        print("· 프롬프트 판 기록 없음(이 표는 fingerprint 도입 전 데이터다)")
-
-    # **도메인 균형.** 규칙마다 잰 도메인 수가 다르면 합계는 순위가 아니라 표본 편향이다 —
-    # §9가 정확히 그것이었다(toystore 하나에서 나온 수로 규칙을 강등했다가 되돌렸다).
-    coverage = {rid: len(d) for rid, d in seen_domains.items()}
-    if coverage and len(set(coverage.values())) > 1:
-        print(f"⚠ 규칙마다 잰 도메인 수가 다르다 {sorted(set(coverage.values()))} — "
-              "적게 잰 규칙은 순위에서 빼고 읽어야 한다.")
-        usable = False
-    if usable and len(domains) < 2:
-        print("⚠ 도메인이 하나다. 한 데이터셋에서 나온 수로 규칙을 바꾸지 않는다(§9).")
-        usable = False
-    print("→ 순위로 읽어도 되는 표" if usable else "→ 이 표는 **아직 순위가 아니다**")
-
+    coverage = _domains_per_rule(rows)
     print(f"\n{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8} {'도메인':>7}")
     ranked = sorted(
         totals.items(),

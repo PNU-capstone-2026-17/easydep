@@ -50,15 +50,10 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
 
 
 def build_stage(group: str):
-    """한 스테이지의 서브그래프를 **단계 목록에서** 컴파일한다.
+    """한 스테이지의 서브그래프를 **단계 목록에서** 컴파일한다(노드·엣지 모두 §14).
 
-    노드도 엣지도 `stages.nodes_in(group)` 순서 그대로다. 예전에는 그룹마다 빌더가 하나씩
-    있고 엣지가 손으로 적혀 있었다 — 파이프라인 순서의 두 번째 사본이었고, 테스트가 그
-    사본을 목록과 대조하는 방식으로 지키고 있었다. 파생시키면 대조할 사본이 없어진다.
-
-    **함수는 이름으로 이 모듈에서 찾는다.** `stages.Stage.fn`을 직접 쓰면 단계를 가리키는
-    이름이 두 개가 되어(모듈 속성 / 목록에 묶인 참조) 테스트의 monkeypatch가 한쪽에만
-    걸린다 — `runner._run_stages`·`feedback.py`가 같은 이유로 같은 조회를 쓴다.
+    함수는 `globals()`로 찾는다 — `stages.Stage.fn`을 쓰면 한 단계를 가리키는 이름이 둘이
+    되어 monkeypatch가 한쪽에만 걸린다(`runner._run_stages`도 같은 이유).
     """
     nodes = stages.nodes_in(group)
     if not nodes:  # pragma: no cover - 배선 오류
