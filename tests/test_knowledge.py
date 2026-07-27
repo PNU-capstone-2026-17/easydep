@@ -142,6 +142,71 @@ def test_validator_prompts_are_assembled_from_the_knowledge_base():
             assert name in prompt
 
 
+#: 생성 프롬프트와 그 단계. 두 프롬프트 모두 `knowledge/rules.py`에서 조립된다.
+_GENERATION_PROMPTS = (
+    (rules.WRITE_SPECIFICATIONS, prompts.SPEC_SYSTEM),
+    (rules.DRAW_DIAGRAM, prompts.RELATIONSHIPS_SYSTEM),
+)
+
+
+def test_generation_prompt_carries_every_rule_it_will_be_judged_by():
+    """**쓰는 쪽이 판정 기준을 받아야 한다.**
+
+    이 불변식이 없던 동안 둘은 실제로 갈라졌다: 생성 프롬프트는 산문으로 규칙을 따로 적고
+    있었고, `GUIDANCE` 규칙은 어느 프롬프트에도 실리지 않았다. 판정할 규칙을 쓰는 쪽에
+    안 주면 결함은 "모델이 못 썼다"가 아니라 **"말해 주지 않았다"**가 된다.
+    """
+    for stage, prompt in _GENERATION_PROMPTS:
+        enforced = [
+            r for r in rules.rules_for(stage)
+            if r.severity in (rules.DEFECT, rules.GUIDANCE)
+        ]
+        assert enforced, f"{stage}: 강제되는 규칙이 하나도 없다"
+        for rule in enforced:
+            assert rule.id in prompt, f"{rule.id}: 판정은 하는데 생성 쪽에 알려 주지 않는다"
+            assert rule.statement.splitlines()[0] in prompt, rule.id
+
+
+def test_generation_prompt_says_which_knowledge_is_not_a_rule():
+    """과적합은 판정할 때가 아니라 **쓸 때** 일어난다.
+
+    "스텝 3~9개"를 목표로 알아들은 모델은 아홉 번째 스텝을 지어내거나 열 번째를 지운다.
+    그러니 `NON_RULE`을 받아야 하는 쪽은 판정자가 아니라 생성자다 — 판정 프롬프트에
+    들어가면 안 된다는 규율(`test_non_normative_knowledge_is_never_enforced`)의 반대쪽 짝이다.
+    """
+    for stage, prompt in _GENERATION_PROMPTS:
+        non_rules = rules.rules_for(stage, rules.NON_RULE)
+        assert non_rules, f"{stage}: 규칙이 아니라고 적어 둔 것이 하나도 없다"
+        for rule in non_rules:
+            assert rule.id in prompt, rule.id
+
+
+def test_generation_notes_stay_out_of_the_validator_prompt():
+    """예시는 쓰는 쪽에만 준다.
+
+    판정자에게 예시를 주면 규범이 아니라 예시에 맞는지를 보게 되고, 프롬프트가 길어지면
+    그 규칙만이 아니라 응답 전체가 흔들린다(§9). 규범은 `statement` 하나뿐이므로 둘이
+    갈라질 수는 없다 — 갈라질 수 있는 것은 **재료의 양**이고, 그건 의도한 것이다.
+    """
+    noted = [r for r in rules.RULES if r.generation_note]
+    assert noted, "이 테스트가 아무것도 지키지 않고 있다"
+    validators = prompts.SPEC_VALIDATOR_SYSTEM + prompts.RELATIONSHIP_VALIDATOR_SYSTEM
+    for rule in noted:
+        assert rule.generation_note not in validators, rule.id
+
+
+def test_generation_prompts_do_not_hand_write_citations():
+    """근거는 지식베이스가 든다 — 산문에 손으로 적은 좌표는 대조를 못 받는다.
+
+    이 파일이 이미 물린 자리다: 생성 프롬프트가 책에 없는 말을 Cockburn 인용으로 달고
+    있었고(`prompts.py` docstring), 산문이라서 `verify_citations`의 사정거리 밖이었다.
+    좌표를 규칙 레코드에만 두면 로컬 사본을 가진 사람이 전부 대조할 수 있다.
+    """
+    for _stage, prompt in _GENERATION_PROMPTS:
+        for needle in ("Cockburn p.", "Cockburn Ch.", "Cockburn Guideline"):
+            assert needle not in prompt, f"{needle}: 생성 프롬프트에 손으로 적은 인용이 있다"
+
+
 def test_validator_prompt_discloses_how_each_rule_is_grounded():
     """우리 규약을 책의 말처럼 내보내지 않게, 프롬프트가 성격을 밝혀야 한다.
 

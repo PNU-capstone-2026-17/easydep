@@ -16,84 +16,67 @@
 """
 from __future__ import annotations
 
+from itertools import pairwise
+
 from langgraph.graph import END, START, StateGraph
 
+from app.requirements.agent import stages
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.step1_requirements import clarify, classify, intake
-from app.requirements.agent.steps.step2_usecases import (
+
+# ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `build_stage`가
+# `globals()[노드이름]`으로 찾기 때문이다(이유는 그 함수 docstring). 린터에게는 안 쓰는
+# import로 보이지만 지우면 그래프가 만들어지지 않고, 테스트의 monkeypatch도 여기에 건다.
+# 자동 수정(`ruff --fix`)이 지우지 않도록 명시적으로 막는다.
+from app.requirements.agent.steps.step1_requirements import (  # noqa: F401
+    clarify,
+    classify,
+    intake,
+)
+from app.requirements.agent.steps.step2_usecases import (  # noqa: F401
     check_coverage,
     identify_actors,
     identify_use_cases,
     review_model,
 )
-from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
-from app.requirements.agent.steps.step4_diagram import (
+from app.requirements.agent.steps.step3_specifications import (  # noqa: F401
+    check_specs,
+    generate_specs,
+)
+from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     check_relationships,
     identify_relationships,
     render_diagram,
 )
 
 
-def build_refine_requirements():
-    """STEP 1 — 요구사항 구체화 및 분류: intake → clarify → classify."""
+def build_stage(group: str):
+    """한 스테이지의 서브그래프를 **단계 목록에서** 컴파일한다.
+
+    노드도 엣지도 `stages.nodes_in(group)` 순서 그대로다. 예전에는 그룹마다 빌더가 하나씩
+    있고 엣지가 손으로 적혀 있었다 — 파이프라인 순서의 두 번째 사본이었고, 테스트가 그
+    사본을 목록과 대조하는 방식으로 지키고 있었다. 파생시키면 대조할 사본이 없어진다.
+
+    **함수는 이름으로 이 모듈에서 찾는다.** `stages.Stage.fn`을 직접 쓰면 단계를 가리키는
+    이름이 두 개가 되어(모듈 속성 / 목록에 묶인 참조) 테스트의 monkeypatch가 한쪽에만
+    걸린다 — `runner._run_stages`·`feedback.py`가 같은 이유로 같은 조회를 쓴다.
+    """
+    nodes = stages.nodes_in(group)
+    if not nodes:  # pragma: no cover - 배선 오류
+        raise KeyError(f"{group}: 단계 목록에 이 그룹의 노드가 없다")
+
     b = StateGraph(AgentState)
-    b.add_node("intake", intake)
-    b.add_node("clarify", clarify)
-    b.add_node("classify", classify)
-    b.add_edge(START, "intake")
-    b.add_edge("intake", "clarify")
-    b.add_edge("clarify", "classify")
-    b.add_edge("classify", END)
-    return b.compile()
-
-
-def build_model_use_cases():
-    """STEP 2 — 액터/유스케이스 도출 + 의미 검증 + FR 커버리지 점검."""
-    b = StateGraph(AgentState)
-    b.add_node("identify_actors", identify_actors)
-    b.add_node("identify_use_cases", identify_use_cases)
-    b.add_node("review_model", review_model)
-    b.add_node("check_coverage", check_coverage)
-    b.add_edge(START, "identify_actors")
-    b.add_edge("identify_actors", "identify_use_cases")
-    b.add_edge("identify_use_cases", "review_model")
-    b.add_edge("review_model", "check_coverage")
-    b.add_edge("check_coverage", END)
-    return b.compile()
-
-
-def build_write_specifications():
-    """STEP 3 — 유스케이스별 명세 생성 + 검증 집계."""
-    b = StateGraph(AgentState)
-    b.add_node("generate_specs", generate_specs)
-    b.add_node("check_specs", check_specs)
-    b.add_edge(START, "generate_specs")
-    b.add_edge("generate_specs", "check_specs")
-    b.add_edge("check_specs", END)
-    return b.compile()
-
-
-def build_draw_diagram():
-    """STEP 4 — 관계 식별 + 검증 집계 + 다이어그램 렌더."""
-    b = StateGraph(AgentState)
-    b.add_node("identify_relationships", identify_relationships)
-    b.add_node("check_relationships", check_relationships)
-    b.add_node("render_diagram", render_diagram)
-    b.add_edge(START, "identify_relationships")
-    b.add_edge("identify_relationships", "check_relationships")
-    b.add_edge("check_relationships", "render_diagram")
-    b.add_edge("render_diagram", END)
+    for name in nodes:
+        b.add_node(name, globals()[name])
+    b.add_edge(START, nodes[0])
+    for src, dst in pairwise(nodes):
+        b.add_edge(src, dst)
+    b.add_edge(nodes[-1], END)
     return b.compile()
 
 
 def build_stage_subgraphs() -> dict:
     """4단계 순수 스테이지 서브그래프를 컴파일해 {동작이름: 컴파일된 서브그래프}로 반환한다.
 
-    키(=상위 그래프 노드명)는 스테이지 순서를 따른다.
+    키(=상위 그래프 노드명)도 순서도 `stages.GROUPS`에서 파생한다.
     """
-    return {
-        "refine_requirements": build_refine_requirements(),
-        "model_use_cases": build_model_use_cases(),
-        "write_specifications": build_write_specifications(),
-        "draw_diagram": build_draw_diagram(),
-    }
+    return {group: build_stage(group) for group in stages.GROUPS}

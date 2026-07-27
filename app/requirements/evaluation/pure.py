@@ -40,6 +40,24 @@ DOCUMENTS = PURE_ROOT / "req_documents"
 DERIVED = PURE_ROOT / "derived"
 
 _NS = "{req_document.xsd}"
+#: 산문에서 요구사항 문장을 고르는 신호. RFC 2119의 조동사이고, PURE 문서 16/18에 나온다.
+#: **완전하지 않다** — 조동사 없이 쓴 요구사항은 놓친다. 그 대신 잘못 넣는 것이 적다.
+_MODAL = re.compile(r"\b(shall|must|should)\b", re.IGNORECASE)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;])\s+")
+#: 조동사가 있어도 **요구사항이 아닌** 문장들. 실제로 뽑아 보고 걸러낸 것들이다:
+#:   themas   "Only those conditions expressed with the imperative \"shall\" are to be
+#:             interpreted as binding" — 문서가 자기 표기법을 설명하는 문장
+#:   peppol   "It should be noted that such a VCD concept currently does not exist."
+#:   blitdraft "Use Case: xxx Page, UC ID: UC_RR_xxx_xxx_000" — 채우지 않은 템플릿
+#: 이런 것을 요구사항으로 넣으면 그 아래 명세도 쓰레기가 되고, **외부 근거가 외부 잡음**이 된다.
+#: 완전한 목록이 아니다 — 남는 잡음은 파생 파일에 세어 적는다.
+_META = re.compile(
+    r"(should be noted|shall be (interpreted|construed)|is to be interpreted"
+    r"|are to be interp\s*reted|this (document|section|specification|srs)"
+    r"|following subsections|use case:\s*xxx|UC_[A-Z]{2}_|\bxxx\b"
+    r"|shall mean|for the purpose[s]? of this)",
+    re.IGNORECASE,
+)
 #: `REQ-12:` / `3.1.4` 같은 머리표를 문장에서 떼어낸다 — 우리 파이프라인은 문장을 받는다.
 _PREFIX = re.compile(r"^\s*(REQ[-_ ]?\d+[.:]?|\d+(\.\d+)*[.):]?)\s*", re.IGNORECASE)
 _WS = re.compile(r"\s+")
@@ -67,6 +85,47 @@ def documents() -> list[tuple[str, int, str]]:
     return out
 
 
+def _prose_sentences(root: ET.Element, min_words: int, max_words: int) -> list[str]:
+    """`<req>`가 없는 문서에서 요구사항 문장을 캔다.
+
+    PURE 18개 중 12개는 `<req>` 요소가 없고 요구사항이 단락(`p`·`item`) 산문에 들어 있다.
+    그 문서를 못 쓰면 외부 근거가 6개 문서로 줄어든다 — 그래서 조동사(shall/must/should)로
+    문장을 고른다. **재현율을 포기하고 정밀도를 택한 것이다**: 조동사 없이 쓴 요구사항은
+    놓치지만, 설명문을 요구사항으로 잘못 넣는 일이 적다.
+    """
+    out: list[str] = []
+    dropped = 0
+    for element in root.iter():
+        if element.tag not in (f"{_NS}p", f"{_NS}item"):
+            continue
+        text = _WS.sub(" ", " ".join(t.strip() for t in element.itertext() if t and t.strip()))
+        for sentence in _SENTENCE_SPLIT.split(text):
+            sentence = _PREFIX.sub("", sentence).strip()
+            if not _MODAL.search(sentence):
+                continue
+            if not (min_words <= len(sentence.split()) <= max_words):
+                continue
+            if _META.search(sentence):
+                dropped += 1
+                continue
+            out.append(sentence)
+    # 버린 수를 돌려준다 — 조용히 버리면 추출이 얼마나 걸러 냈는지 알 수 없다.
+    _prose_sentences.dropped_meta = dropped  # type: ignore[attr-defined]
+    return out
+
+
+def _even_sample(items: list[str], limit: int) -> list[str]:
+    """문서 전체에서 **고르게** 고른다.
+
+    앞에서 N개를 자르면 문서 구조에 편향된다 — cctns의 앞 40개를 뽑았더니 NFR 34 / FR 6이
+    나왔다(문서 앞부분이 사용성·도움말 절이었다). 고르게 뽑으면 그 편향이 사라진다.
+    """
+    if limit >= len(items):
+        return items
+    step = len(items) / limit
+    return [items[int(i * step)] for i in range(limit)]
+
+
 def _sentence(element: ET.Element) -> str:
     """`req` 하나의 텍스트를 한 문장으로 평평하게 만든다(머리표 제거)."""
     text = " ".join(t.strip() for t in element.itertext() if t and t.strip())
@@ -81,12 +140,15 @@ def extract(name: str, limit: int | None = None, min_words: int = 5) -> dict:
     """
     path = DOCUMENTS / f"{name}.xml"
     root = ET.parse(path).getroot()
-    sentences = [
+    tagged = [
         s for s in (_sentence(e) for e in root.iter() if e.tag == f"{_NS}req")
         if len(s.split()) >= min_words
     ]
+    # `<req>`가 있으면 그것이 문서가 스스로 표시한 요구사항이니 먼저 쓴다. 없으면 산문에서 캔다.
+    source_kind = "req-elements" if tagged else "prose-modal"
+    sentences = tagged or _prose_sentences(root, min_words, max_words=60)
     if limit:
-        sentences = sentences[:limit]
+        sentences = _even_sample(sentences, limit)
 
     from app.requirements.classifier import bert_available, classify_bert
 
@@ -115,6 +177,11 @@ def extract(name: str, limit: int | None = None, min_words: int = 5) -> dict:
         "source": {
             "corpus": "PURE",
             "document": path.name,
+            "extraction": source_kind,
+            # 조동사는 있었지만 요구사항이 아니라고 보고 버린 문장 수(`_META`).
+            # 남는 잡음이 있다는 뜻이기도 하다 — 목록이 완전하지 않다.
+            "dropped_meta": getattr(_prose_sentences, "dropped_meta", 0)
+            if source_kind == "prose-modal" else 0,
             "title": title,
             "citation": CITATION,
             "note": (

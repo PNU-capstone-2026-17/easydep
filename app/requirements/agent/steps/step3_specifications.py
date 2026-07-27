@@ -203,7 +203,11 @@ def _spec_for(
         item["issues"], item["semantic_status"] = _check(item, requirements)
         return item
 
-    item = _generate([SystemMessage(content=prompts.SPEC_SYSTEM), HumanMessage(content=base_user)])
+    # 명세 하나마다 **한 번** 조립한다(재생성에도 같은 것을 쓴다). 프롬프트가 재생성마다
+    # 달라지면 반성 루프가 무엇을 고쳤는지 알 수 없다.
+    system = prompts.generation_system_for(rules.WRITE_SPECIFICATIONS)
+
+    item = _generate([SystemMessage(content=system), HumanMessage(content=base_user)])
 
     attempts = 0
     stopped = "budget"
@@ -215,7 +219,7 @@ def _spec_for(
         attempts += 1
         try:
             candidate = _generate(
-                [SystemMessage(content=prompts.SPEC_SYSTEM), HumanMessage(content=repair_user)]
+                [SystemMessage(content=system), HumanMessage(content=repair_user)]
             )
         except Exception as exc:  # noqa: BLE001 - 재생성 실패 시 직전본 유지
             # 수리를 못 했으므로 이 명세에는 검증이 지적한 결함이 그대로 남아 있다.

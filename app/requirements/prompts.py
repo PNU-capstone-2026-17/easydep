@@ -2,17 +2,23 @@
 
 전 단계 영어로 작성한다 (입력/출력 영어 중심 결정 + BERT는 영어 단문 학습).
 
-**검증 프롬프트는 여기서 쓰지 않는다** — `app/requirements/knowledge/rules.py`의 규칙
-레코드에서 조립한다(`_validator_system`). 규칙을 산문으로 여기 적으면 같은 규칙이
-프롬프트·검출기·문서에 세 벌로 갈라진다. 생성 프롬프트는 아직 산문 그대로다(그 이유는
-`knowledge/rules.py`의 "아직 없는 것" 절).
+**규칙은 여기서 쓰지 않는다** — 검증도(`_validator_system`) 생성도(`_generation_system`)
+`app/requirements/knowledge/rules.py`의 규칙 레코드에서 조립한다. 규칙을 산문으로 여기 적으면
+같은 규칙이 프롬프트·검출기·문서에 여러 벌로 갈라진다.
 
-⚠ 그래서 **생성 프롬프트의 인용은 기계가 대조하지 못한다.** 실제로 하나가 틀려 있었다:
+이 파일에 남는 것은 **모양**뿐이다: 어떤 필드를 내는가, 번호를 어떻게 매기는가, 마크다운을
+쓰지 않는다, 어느 필드에 어느 id를 채우는가. 스키마가 강제하는 것이지 판정으로 가리는 것이
+아니다.
+
+⚠ **손으로 적은 인용은 기계가 대조하지 못한다.** 이 파일이 그걸로 두 번 물렸다:
 자동결과 문단이 "Cockburn: absorb system consequences into the driving goal"이라고
-귀속했는데, `absorb`도 `driving goal`도 책에 없는 말이다(로컬 사본으로 확인, 2026-07-26).
-지금은 규칙 id를 가리킨다 — 근거는 지식베이스가 들고, 대조는 `verify_citations`가 한다.
-남은 산문 인용(`Cockburn label like '3a'` 등)도 KB로 옮기면 같은 대조를 받는다.
+귀속했는데 `absorb`도 `driving goal`도 책에 없는 말이었고(로컬 사본으로 확인, 2026-07-26),
+생성 산문에 남아 있던 `Cockburn p.81`·`Ch.8`·`Guideline 6`도 `verify_citations`의 사정거리
+밖이었다(2026-07-27에 규칙 레코드로 옮겼다). **여기에 인용을 새로 적지 말 것** —
+`tests/test_knowledge.py`가 막는다.
 """
+import hashlib
+
 from app.requirements.knowledge import rules as _rules
 
 
@@ -227,7 +233,62 @@ def usecase_coverage_repair(base_user: str, orphan_listing: str, current_summary
 
 
 # STEP 3 — 단일 유스케이스의 Cockburn 명세(주 시나리오 + 확장 + 사전/사후조건).
-SPEC_SYSTEM = """You write a fully-dressed use-case specification (Cockburn style) for a
+def _generation_system(stage: str, shape: str, learned: str = "") -> str:
+    """생성 프롬프트를 **모양 + 지식베이스**로 조립한다.
+
+    ## 무엇이 나뉘었나
+
+      - **모양**(`shape`)은 여기 산문으로 남는다: 어떤 필드를 내는가, 번호를 어떻게 매기는가,
+        마크다운을 쓰지 않는다, 어느 필드에 어느 id를 채우는가. 이건 스키마가 강제하는 것이지
+        판정으로 가리는 것이 아니다.
+      - **규칙**은 `knowledge/rules.py`에서 온다. 무엇을 결함이라 부르는가는 이미 거기 있고,
+        검증 프롬프트가 그걸 쓰고 있었다.
+
+    ## 왜 이렇게 바꿨나
+
+    같은 규칙이 두 벌로 적혀 있었다 — 지식베이스에 한 벌, 이 파일 산문에 한 벌. 그래서
+    **이미 갈라져 있었다**:
+
+      - 산문은 `no protocols (HTTP/SQL)`을 금지했는데 그런 규칙은 없었고, 오히려
+        `spec.black-box-no-internal-components`의 경계 (d)는 프로토콜 언급을 위반이 아니라고
+        적어 둔다. → 규칙으로 적어 넣었다(`spec.no-protocol-mechanics`, GUIDANCE).
+      - 산문의 인용(`Cockburn Guideline 6`, `Cockburn p.81`, `Cockburn Ch.8`)은
+        `verify_citations`가 대조하지 못한다. 지식베이스 좌표로 바뀌면서 대조 범위에 들어온다.
+        이 파일에서 인용이 틀린 채로 살아 있던 전례가 있다(모듈 docstring 참고).
+
+    ## 값어치가 생기는 지점
+
+    `GUIDANCE`와 `NON_RULE`이 여기서 처음 일을 한다. 둘 다 "지적하지 않는다"는 표시라서
+    검증 프롬프트에는 안 들어가고, 그래서 지금까지 **어디에도 실리지 않았다.** 받아야 하는
+    쪽은 판정자가 아니라 쓰는 쪽이다 — 특히 `NON_RULE`은 과적합이 일어나는 자리가 생성이다
+    ("스텝 3~9개"를 목표로 알아들으면 아홉 번째를 지어낸다).
+    """
+    parts = [
+        shape.rstrip(),
+        "",
+        "[RULES YOU FOLLOW]",
+        "Each line is: rule id, then what it requires. The validator judges the finished",
+        "artifact against these same rules, by these same ids.",
+        _rules.generation_prompt_block(stage),
+    ]
+    non_rules = _rules.non_rules_block(stage)
+    if non_rules:
+        parts += [
+            "",
+            "[NOT RULES]",
+            "These are observations we wrote down precisely so they are not mistaken for",
+            "constraints. Never shape the artifact to satisfy them.",
+            non_rules,
+        ]
+    # 배운 것은 **맨 뒤에, 자기 절에** 온다(`agent/playbook.py`가 절 제목까지 만든다).
+    # 규칙 사이에 끼워 넣지 않는 것이 요점이다 — 근거가 우리 로그뿐인 문장이 책 좌표를 단
+    # 문장과 같은 무게로 읽히면, `basis.py`가 그은 선이 프롬프트에서 무너진다.
+    if learned:
+        parts += ["", learned]
+    return "\n".join(parts)
+
+
+_SPEC_SHAPE = """You write a fully-dressed use-case specification (Cockburn style) for a
 SINGLE use case.
 
 You are given the use case (name, primary actor, goal), the functional requirements (FRs)
@@ -235,28 +296,15 @@ it covers, and the non-functional requirements (NFRs) that constrain it.
 
 WRITING STYLE (applies to every sentence):
 - Plain prose only. NO markdown, NO bold, NO asterisks, NO backticks, NO emphasis.
-- Each step is a single black-box action whose subject is the primary actor or 'System'.
-- No UI micro-actions (clicks, buttons, pages, screens), no protocols (HTTP/SQL).
-- Black-box: say WHAT the system does for the actor, never WHICH internal part does it. Do
-  NOT name internal services, engines, stores, caches, queues, or databases. For example
-  write "System records the order" (not "saves the order to the order store"), "System
-  retrieves the toy list" (not "queries the catalog service"), "System confirms the member's
-  credentials" (not "checks the credential store").
+- Each step is a single action whose subject is the primary actor or 'System'.
 
 Produce:
 - preconditions: verifiable state true before the use case starts; never re-checked inside
   steps. Include any NFR that is a precondition (e.g. the actor is authenticated).
 - trigger: the business event that starts the use case.
 - main_scenario: the main SUCCESS scenario (happy path) as ordered steps. Number them from 1.
-  Each step is ONE sub-goal (one transaction). Write exactly the sub-goals the goal needs —
-  the number of steps is NOT a target: never pad or trim steps to hit a count; judge each
-  step's level, not the total (Cockburn Guideline 6). Derive steps from the goal and covered
-  FRs — every covered FR must appear in some step's covered_req_ids. Put the realizing FR
-  id(s) in each step's covered_req_ids.
-  Automated system consequences and cross-cutting quality concerns — logging, auditing,
-  encrypting stored data, sending a receipt/confirmation — are INTERNAL success guarantees, NOT
-  main-scenario steps. Put them in success_guarantee / minimal_guarantee, never as a step
-  (rule spec.consequence-is-a-guarantee).
+  Derive steps from the goal and covered FRs — every covered FR must appear in some step's
+  covered_req_ids. Put the realizing FR id(s) in each step's covered_req_ids.
 - extensions: exception and alternate flows. For EACH extension:
     * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
     * branch_step: the main_scenario step_number it branches from; use null for a global
@@ -274,6 +322,11 @@ Produce:
   is persisted; relevant NFRs such as data-at-rest encryption still hold).
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
+
+#: 명세 생성 프롬프트 — **플레이북 없는 판.** 지식베이스만으로 조립된 것이고, 측정에서
+#: 대조군이 되는 것도 이것이다. 플레이북을 켜면 `generation_system_for`가 여기에 절을 하나
+#: 더 붙인다.
+SPEC_SYSTEM = _generation_system(_rules.WRITE_SPECIFICATIONS, _SPEC_SHAPE)
 
 #: 단계 → (역할, 안 잡을 것). 규칙 하나짜리 프롬프트를 만들 때 다시 쓴다.
 _VALIDATOR_ROLES = {
@@ -362,6 +415,67 @@ Do NOT flag: {do_not_flag}
 Return the structured object only."""
 
 
+def _generation_shapes() -> dict[str, str]:
+    """단계 → 그 단계의 "모양" 산문.
+
+    함수인 이유는 배치다 — `_RELATIONSHIPS_SHAPE`가 이 아래에서 정의되므로, 모듈 수준
+    딕셔너리로 두면 import가 깨진다.
+    """
+    return {
+        _rules.WRITE_SPECIFICATIONS: _SPEC_SHAPE,
+        _rules.DRAW_DIAGRAM: _RELATIONSHIPS_SHAPE,
+    }
+
+
+def generation_system_for(stage: str) -> str:
+    """이 실행이 쓸 생성 프롬프트. 플레이북이 꺼져 있으면 상수와 **같은 문자열**이다.
+
+    같아야 하는 것이 중요하다 — 꺼짐이 곧 대조군이므로, 켜고 끄는 것 말고 아무것도 달라지지
+    않아야 차이를 플레이북 탓으로 돌릴 수 있다. (`tests/test_playbook.py`가 이걸 지킨다.)
+
+    파일을 못 읽으면 **끈 것과 같이** 간다. 배우는 층은 있으면 좋은 것이지 실행을 세울
+    이유가 아니다 — 아티팩트 디렉터리가 비었다고 파이프라인이 죽으면 안 된다.
+    """
+    from app.requirements.config import settings
+
+    shape = _generation_shapes().get(stage)
+    if shape is None:  # pragma: no cover - 배선 오류
+        raise KeyError(f"{stage}: 생성 프롬프트가 없다")
+    if not settings.playbook_enabled:
+        return _generation_system(stage, shape)
+
+    from app.requirements.agent import playbook
+
+    try:
+        learned = playbook.render(playbook.load(settings.playbook_path), stage)
+    except (OSError, ValueError, KeyError):
+        learned = ""
+    return _generation_system(stage, shape, learned)
+
+
+def fingerprint() -> dict[str, str]:
+    """지금 이 실행이 **어떤 프롬프트로** 도는지. 측정 결과에 함께 적기 위한 것.
+
+    이 저장소에서 수치가 못 쓰게 된 원인은 거의 언제나 조건이 섞인 것이었다. 그런데
+    측정마다 기록하는 조건은 반복 수·명세 수뿐이고 **프롬프트 자체는 기록하지 않았다.**
+    측정을 몇 시간 돌리는 동안 규칙을 하나 고치면 앞부분과 뒷부분이 다른 것을 잰 것이
+    되는데, 남는 표에는 그 사실이 없다 — 실제로 지금 캠페인 도중에 그렇게 될 뻔했다.
+
+    생성과 검증을 따로 낸다. 규칙 하나를 고치면 보통 둘 다 움직이지만, 이번처럼
+    **생성만** 바뀌는 변경이 있다(`generation_note`·`GUIDANCE` 편입). 한 값으로 뭉개면
+    "검증은 그대로였다"는 말을 할 수 없게 된다.
+
+    짧은 해시다. 내용을 복원하는 것이 목적이 아니라 **같은지 다른지**만 가리면 된다.
+    """
+    def digest(*parts: str) -> str:
+        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+    return {
+        "generation": digest(SPEC_SYSTEM, RELATIONSHIPS_SYSTEM, ACTORS_SYSTEM, USECASES_SYSTEM),
+        "validation": digest(*(_VALIDATOR_SYSTEMS[s] for s in sorted(_VALIDATOR_SYSTEMS))),
+    }
+
+
 def validator_system_for(stage: str, only: str | None = None) -> str:
     """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
 
@@ -379,7 +493,7 @@ def validator_system_for(stage: str, only: str | None = None) -> str:
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).
-RELATIONSHIPS_SYSTEM = """You identify the relationships of a UML use-case diagram from a
+_RELATIONSHIPS_SHAPE = """You identify the relationships of a UML use-case diagram from a
 set of actors and use cases (with their goals and, when available, their scenarios).
 
 Reference every actor and use case by its EXACT given name.
@@ -389,26 +503,14 @@ Identify:
   actor, add associations for supporting actors that a scenario hands off to.
 - includes: a genuine shared sub-goal that appears as an action STEP in two or more use cases
   (e.g. 'Send Notification', 'Process Payment'). Factor it into a NEW derived use case
-  (origin 'factored_include') and add an include from each base use case to it. Include is the
-  DEFAULT relation for real shared sub-goals — use it whenever one is genuinely present
-  (Cockburn's "first rule of thumb"). Factor only a meaningful, independently-nameable sub-goal,
-  not a generic step-fragment (validating input, displaying results) and NOT a cross-cutting
-  internal consequence or quality concern (logging, auditing, encrypting data) — those are
-  success guarantees / NFRs, never an included sub-goal drawn from every use case.
-  CRITICAL — a state that is merely required BEFORE a use case starts is a PRECONDITION, not an
-  include. In particular, shared login / authentication / authorization ("the user is logged
-  in") is a precondition established by a PRIOR use case (e.g. Log On) — NEVER draw an
-  <<include>> (or <<extend>>) for authentication from every use case. (Cockburn p.81: a
-  precondition implies another use case already ran.)
-- extends: genuinely OPTIONAL, electively-triggered behavior the goal does NOT require —
-  behavior an actor or account opts into (canonical example: an account configured for
-  multi-factor authentication -> "Perform Multi-Factor Authentication" extends "Authenticate").
-  Attach it to the base at an extension_point and add it to derived_use_cases
-  (origin 'promoted_extend'). Returning ZERO extends is common and correct.
-  DO NOT promote failures/exceptions to extend or to a use case: a condition that reports a
-  failure, error, timeout, cancel/abort, or empty/"no results" outcome is routine handling
-  that STAYS as the use case's Stage-3 extension — never emit a "Handle X Failure" use case,
-  a derived use case, or an extend for it (Cockburn Ch.8).
+  (origin 'factored_include') and add an include from each base use case to it. Factor only a
+  meaningful, independently-nameable sub-goal, not a generic step-fragment (validating input,
+  displaying results).
+- extends: behaviour the goal does NOT require, that an actor or account opts into (canonical
+  example: an account configured for multi-factor authentication -> "Perform Multi-Factor
+  Authentication" extends "Authenticate"). Attach it to the base at an extension_point and add
+  it to derived_use_cases (origin 'promoted_extend'). Returning ZERO extends is common and
+  correct.
 - generalizations: an actor that specializes another (e.g. Registered User -> Guest), or a
   use case that specializes another. Set kind to 'actor' or 'use_case'.
 - derived_use_cases: every NEW use case you introduced for an include or extend above.
@@ -423,6 +525,12 @@ a name. A relationship that references a name not present in the input will be d
 Only assert a relationship when the evidence is clear. Prefer few, well-justified relationships.
 Do not invent actors or use cases beyond those given plus the derived ones you explicitly
 declare."""
+
+#: 관계 생성 프롬프트. 산문에 있던 인용 둘(`Cockburn p.81`·`Cockburn Ch.8`)이 여기서
+#: 사라진 것은 규칙이 사라져서가 아니다 — 같은 규범이 `rel.shared-authentication-is-a-precondition`·
+#: `rel.failures-stay-inline-extensions`에 좌표까지 달려 있고, 이제 그쪽에서 실린다.
+#: **손으로 적은 인용은 대조를 못 받는다**는 것이 이 파일이 이미 한 번 물린 자리다.
+RELATIONSHIPS_SYSTEM = _generation_system(_rules.DRAW_DIAGRAM, _RELATIONSHIPS_SHAPE)
 
 
 # ----------------------------------------------------------------------------

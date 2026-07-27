@@ -146,6 +146,6 @@ def test_gate_nodes_present_only_when_gated():
 
 def test_stage_subgraphs_have_no_gate_nodes():
     # 게이트는 부모 레벨 전용 — 스테이지 서브그래프는 순수 작업 노드만 가진다.
-    s1 = sg.build_refine_requirements().get_graph().nodes
+    s1 = sg.build_stage("refine_requirements").get_graph().nodes
     assert "clarify" in s1 and "classify" in s1
     assert not any(str(n).startswith("gate_") for n in s1)

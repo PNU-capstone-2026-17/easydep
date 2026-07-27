@@ -1,13 +1,15 @@
 """단계 목록(app/requirements/agent/stages.py)이 실제 배선과 맞는지 고정한다.
 
-파이프라인 모양은 그 파일에서만 말하기로 했는데, 아직 파생시키지 않은 곳이 둘 있다:
-`subgraphs.py`의 그래프 엣지와 `runner.py`의 배치 실행 순서. 둘은 사람이 읽을 코드로
-남기는 편이 낫다고 봐서 그대로 뒀고, 대신 어긋나면 여기서 깨진다.
+**2026-07-27 이전에는 배선이 두 벌 더 있었다**: `subgraphs.py`의 그래프 엣지와
+`runner.run_pipeline`의 배치 실행 순서. 사람이 읽을 코드로 남기는 편이 낫다고 보고 사본을
+둔 채, 이 파일이 사본과 목록을 대조하는 방식으로 지켰다 — 배치 쪽은 `inspect.getsource`로
+**소스 텍스트를 검사**했다.
 
-이 테스트가 깨지면 둘 중 하나다 — 목록을 고치고 배선을 안 고쳤거나, 그 반대다.
+둘 다 목록에서 파생하도록 바꿨으므로 대조할 사본이 없다. 그래서 이 파일이 지키는 것도
+"두 벌이 같은가"에서 **"파생된 배선이 실제로 그 순서로 도는가"**로 바뀌었다. 소스 텍스트가
+아니라 동작을 본다 — 텍스트 검사는 호출을 리팩터링하는 순간 거짓 실패를 내고, 반대로
+호출 순서가 바뀌어도 텍스트만 맞으면 통과한다.
 """
-import inspect
-
 import pytest
 
 from app.requirements import feedback as fb
@@ -28,21 +30,44 @@ def _linear_order(compiled) -> list[str]:
 
 @pytest.mark.parametrize("group", stages.GROUPS)
 def test_subgraph_edges_follow_the_stage_registry(group):
-    builder = getattr(subgraphs, f"build_{group}")
-    assert _linear_order(builder()) == list(stages.nodes_in(group))
+    assert _linear_order(subgraphs.build_stage(group)) == list(stages.nodes_in(group))
 
 
 def test_top_graph_groups_match_the_registry():
     assert tuple(subgraphs.build_stage_subgraphs()) == stages.GROUPS
 
 
-def test_batch_runner_calls_the_same_stages_in_the_same_order():
-    """배치 러너는 그래프를 우회해 함수를 직접 부른다 — 순서가 같아야 같은 것을 잰다."""
-    source = inspect.getsource(runner.run_pipeline)
-    called = [s.node for s in stages.PIPELINE if f"{s.node}(st)" in source]
-    # step1(intake/clarify/classify)은 배치 입력이 이미 분류돼 있어 건너뛴다.
-    expected = [s.node for s in stages.PIPELINE if s.group != "refine_requirements"]
-    assert called == expected
+def test_batch_runner_actually_runs_the_registry_order(monkeypatch):
+    """배치 러너는 그래프를 우회해 함수를 직접 부른다 — **실제로** 부르는 순서를 본다.
+
+    예전에는 `run_pipeline`의 소스에 `<이름>(st)`가 있는지 문자열로 확인했다. 그 검사는
+    호출을 루프로 바꾸면 거짓으로 실패하고(사본이 없어졌을 뿐인데), 순서를 뒤집어도
+    텍스트만 맞으면 통과한다. 스텁을 끼워 넣고 실제 호출 순서를 기록한다.
+    """
+    called: list[str] = []
+
+    def recorder(name: str):
+        def stage(_state):
+            called.append(name)
+            return {}
+        return stage
+
+    for stage in stages.PIPELINE:
+        if hasattr(runner, stage.node):
+            monkeypatch.setattr(runner, stage.node, recorder(stage.node))
+    # 되돌아가기가 끼어들면 순서에 재실행이 섞인다 — 정방향만 본다.
+    monkeypatch.setattr(runner.settings, "max_redo_rounds", 0)
+
+    runner.run_pipeline([{"id": "FR1", "text": "x", "type": "FR"}])
+
+    assert called == [s.node for s in stages.batch_order()]
+
+
+def test_batch_order_skips_exactly_the_preclassified_group():
+    """배치가 step1을 건너뛴다는 사실은 **목록에 적힌 것**이지 코드 모양이 아니다."""
+    skipped = {s.node for s in stages.PIPELINE} - {s.node for s in stages.batch_order()}
+    assert skipped == set(stages.nodes_in(stages.PRECLASSIFIED_GROUP))
+    assert skipped, "건너뛰는 단계가 하나도 없다 — 상수가 실제 그룹 이름이 맞는가"
 
 
 def test_feedback_cascade_is_derived_not_restated():

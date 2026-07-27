@@ -125,7 +125,10 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     def _generate(user: str) -> dict:
         result: RelationshipModel = invoke_structured(
             RelationshipModel,
-            [SystemMessage(content=prompts.RELATIONSHIPS_SYSTEM), HumanMessage(content=user)],
+            [
+                SystemMessage(content=prompts.generation_system_for(rules.DRAW_DIAGRAM)),
+                HumanMessage(content=user),
+            ],
         )
         return {
             "associations": [{"actor": a.actor, "use_case": a.use_case} for a in result.associations],

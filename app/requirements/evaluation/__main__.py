@@ -85,23 +85,74 @@ def _cmd_stability(args) -> int:
     return 0
 
 
+def _balanced(rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """규칙을 **전부** 잰 도메인만 남긴다. 돌려주는 둘째 값은 버린 도메인.
+
+    캠페인은 예산이 떨어지면 도메인 중간에서 멈춘다. 그 도메인은 앞쪽 규칙만 측정돼 있어서,
+    합계에 넣으면 앞쪽 규칙이 표본을 한 도메인 더 갖는다 — 순위가 규칙의 성질이 아니라
+    **측정이 어디서 끊겼는지**를 반영하게 된다.
+
+    잘라낸 것을 부르는 쪽이 반드시 말하게 하려고 목록으로 돌려준다. 조용히 버리면 이 함수가
+    막으려는 것과 같은 종류의 사고가 된다.
+    """
+    all_rules = {r["rule_id"] for r in rows}
+    by_domain: dict[str, set[str]] = {}
+    for row in rows:
+        by_domain.setdefault(row["domain"], set()).add(row["rule_id"])
+    complete = {d for d, seen in by_domain.items() if seen == all_rules}
+    dropped = sorted(set(by_domain) - complete)
+    return [r for r in rows if r["domain"] in complete], dropped
+
+
 def _rank(rows: list[dict]) -> None:
-    """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다."""
+    """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다.
+
+    **순위로 쓸 수 있는지를 먼저 말한다.** 이 저장소에서 결론이 뒤집힌 원인은 언제나 표본
+    쪽이었지 계산 쪽이 아니었다(§8은 도메인 하나에 과적합, §9는 조건이 섞임). 그래서 표를
+    찍기 전에 "이 표가 순위인가"를 세 가지로 확인한다: 조건, 프롬프트 판, 도메인 균형.
+    """
     totals: dict[str, list[int]] = {}
+    seen_domains: dict[str, set[str]] = {}
     for row in rows:
         acc = totals.setdefault(row["rule_id"], [0, 0, 0])
         acc[0] += row["always"]
         acc[1] += row["sometimes"]
         acc[2] += row["never"]
+        seen_domains.setdefault(row["rule_id"], set()).add(row["domain"])
 
     conditions = sorted({(r["repeats"], r["n_specs"]) for r in rows})
     domains = sorted({r["domain"] for r in rows})
     print(f"\n[합계 — 단독 프로브] 도메인 {len(domains)}종 {domains}")
     print(f"조건(반복, 명세수): {conditions}")
+
+    usable = True
     if len(conditions) > 1:
         # 조건이 섞이면 순위로 쓸 수 없다 — 이 세션에서 결론을 두 번 뒤집은 원인이 그것이다.
         print("⚠ 조건이 섞여 있다. 이 표는 순위가 아니다 — 같은 조건으로 다시 모아야 한다.")
-    print(f"{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8}")
+        usable = False
+
+    # **프롬프트 판이 섞였는지.** 캠페인은 몇 시간을 돌고, 그동안 규칙이나 프롬프트를 고치면
+    # 앞의 행과 뒤의 행이 다른 것을 잰 것이 된다. 조건(반복·명세수)만 봐서는 안 보인다.
+    fingerprints = {json.dumps(r.get("prompts"), sort_keys=True) for r in rows if r.get("prompts")}
+    if len(fingerprints) > 1:
+        print(f"⚠ 프롬프트 판이 {len(fingerprints)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다. 순위가 아니다.")
+        usable = False
+    elif not fingerprints:
+        print("· 프롬프트 판 기록 없음(이 표는 fingerprint 도입 전 데이터다)")
+
+    # **도메인 균형.** 규칙마다 잰 도메인 수가 다르면 합계는 순위가 아니라 표본 편향이다 —
+    # §9가 정확히 그것이었다(toystore 하나에서 나온 수로 규칙을 강등했다가 되돌렸다).
+    coverage = {rid: len(d) for rid, d in seen_domains.items()}
+    if coverage and len(set(coverage.values())) > 1:
+        print(f"⚠ 규칙마다 잰 도메인 수가 다르다 {sorted(set(coverage.values()))} — "
+              "적게 잰 규칙은 순위에서 빼고 읽어야 한다.")
+        usable = False
+    if usable and len(domains) < 2:
+        print("⚠ 도메인이 하나다. 한 데이터셋에서 나온 수로 규칙을 바꾸지 않는다(§9).")
+        usable = False
+    print("→ 순위로 읽어도 되는 표" if usable else "→ 이 표는 **아직 순위가 아니다**")
+
+    print(f"\n{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8} {'도메인':>7}")
     ranked = sorted(
         totals.items(),
         key=lambda kv: (kv[1][1] / (kv[1][0] + kv[1][1])) if (kv[1][0] + kv[1][1]) else 1.0,
@@ -109,7 +160,8 @@ def _rank(rows: list[dict]) -> None:
     for rule_id, (always, sometimes, never) in ranked:
         fired = always + sometimes
         share = f"{sometimes / fired:.0%}" if fired else "안 걸림"
-        print(f"{rule_id:46} {always:>5} {sometimes:>7} {never:>5} {share:>8}")
+        print(f"{rule_id:46} {always:>5} {sometimes:>7} {never:>5} {share:>8} "
+              f"{coverage.get(rule_id, 0):>7}")
 
 
 def _cmd_probe(args) -> int:
@@ -123,8 +175,19 @@ def _cmd_probe(args) -> int:
     if args.summarize:
         lines = Path(args.summarize).read_text(encoding="utf-8").splitlines()
         rows = [json.loads(line) for line in lines if line.strip()]
-        # 같은 (도메인, 규칙)을 여러 번 재면 마지막 것을 쓴다.
-        _rank(list({(r["domain"], r["rule_id"]): r for r in rows}.values()))
+        # 같은 (도메인, 규칙, 명세)를 여러 번 재면 마지막 것을 쓴다. 명세 단위 행은
+        # `_rank`가 규칙별로 합치므로 그대로 넘긴다.
+        latest = {(r["domain"], r["rule_id"], r.get("spec_id")): r for r in rows}
+        rows = list(latest.values())
+        if args.balanced:
+            rows, dropped = _balanced(rows)
+            # 무엇을 버렸는지 **먼저** 말한다. 표를 보고 나서 알면 이미 읽은 뒤다.
+            print(f"[균형 표본] 규칙을 다 재지 못한 도메인 {len(dropped)}종을 뺐다: {dropped}"
+                  if dropped else "[균형 표본] 뺄 도메인이 없다 — 전부 규칙을 다 쟀다")
+            if not rows:
+                print("남는 행이 없다. 완주한 도메인이 아직 하나도 없다.")
+                return 1
+        _rank(rows)
         return 0
 
     from app.requirements.evaluation import dataset, semantic
@@ -148,6 +211,54 @@ def _cmd_probe(args) -> int:
                     fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     if rows:
         _rank(rows)
+    return 0
+
+
+def _cmd_campaign(args) -> int:
+    """무인 캠페인 — 몇 시간 동안 혼자 돌면서 쌓는다. **실제 LLM 호출.**"""
+    from app.requirements.evaluation import campaign
+
+    return campaign.run(
+        out_dir=Path(args.out_dir),
+        hours=args.hours,
+        run_dirs=args.run_dirs or [],
+        labels_path=Path(args.labels) if args.labels else None,
+        pure_docs=args.pure_docs or [],
+        repeats=args.repeats,
+        limit=args.limit,
+        concurrency=args.concurrency,
+        phases=args.phases,
+        pure_limit=args.pure_limit,
+    )
+
+
+def _cmd_playbook(args) -> int:
+    """실행에서 배운 것을 쌓고 보여 준다. **LLM 없음** — 아티팩트를 읽어 세는 것뿐이다.
+
+    쌓는 것과 쓰는 것을 갈라 둔다. 여기서 파일을 만들어도 파이프라인은 `PLAYBOOK_ENABLED=1`
+    이어야 읽는다 — 배운 것이 조용히 프롬프트에 들어가지 않도록.
+    """
+    from app.requirements.agent import playbook
+    from app.requirements.knowledge import rules
+
+    entries = playbook.load(args.path)
+    for run_dir in args.runs or []:
+        entries = playbook.curate(entries, playbook.harvest(run_dir))
+    if args.runs:
+        playbook.save(args.path, entries)
+        print(f"{len(args.runs)}개 실행을 반영했다 → {args.path}")
+
+    for entry in sorted(entries, key=lambda e: (-e.runs, e.rule_id)):
+        mark = "실린다" if entry.qualifies else "문턱 미달"
+        print(f"[{mark}] {entry.rule_id}  실행 {entry.runs}종"
+              f"  (검출기 {len(set(entry.detector_runs))} · 검증자 {len(set(entry.validator_runs))})")
+    if not entries:
+        print("아직 배운 것이 없다.")
+
+    for stage in (rules.WRITE_SPECIFICATIONS, rules.DRAW_DIAGRAM):
+        block = playbook.render(entries, stage)
+        if block:
+            print(f"\n--- {stage} 생성 프롬프트에 실릴 절 ---\n{block}")
     return 0
 
 
@@ -246,9 +357,42 @@ def main(argv: list[str] | None = None) -> int:
     p_probe.add_argument("--run-dirs", nargs="+", dest="run_dirs")
     p_probe.add_argument("--out", help="행을 즉시 덧붙일 JSONL — 중단돼도 진행분이 남는다")
     p_probe.add_argument("--summarize", help="쌓인 JSONL만 읽어 순위를 낸다(LLM 없음)")
+    p_probe.add_argument("--balanced", action="store_true",
+                         help="규칙을 다 재지 못한 도메인을 빼고 합친다. 중단된 캠페인의 "
+                              "마지막 도메인은 앞쪽 규칙만 재고 끝나므로, 그대로 합치면 "
+                              "순위가 '측정이 어디서 끊겼는지'를 반영한다")
     p_probe.add_argument("--repeats", type=int, default=5)
     p_probe.add_argument("--limit", type=int, default=0)
     p_probe.set_defaults(fn=_cmd_probe)
+
+    p_camp = sub.add_parser(
+        "campaign", help="무인 측정 캠페인 — 중단돼도 이어서 쌓는다 (실제 LLM)"
+    )
+    p_camp.add_argument("--out-dir", required=True, dest="out_dir")
+    p_camp.add_argument("--hours", type=float, default=8.0)
+    p_camp.add_argument("--run-dirs", nargs="+", dest="run_dirs")
+    p_camp.add_argument("--labels")
+    p_camp.add_argument("--pure-docs", nargs="+", dest="pure_docs")
+    p_camp.add_argument("--repeats", type=int, default=5)
+    p_camp.add_argument("--limit", type=int, default=5,
+                        help="프로브가 잴 명세 수(실행 하나당)")
+    p_camp.add_argument("--pure-limit", type=int, default=30, dest="pure_limit",
+                        help="PURE 문서 하나에서 뽑을 요구사항 수. 크면 실행 하나가 길어져 "
+                             "중단됐을 때 잃는 것이 많다")
+    p_camp.add_argument("--phases", nargs="+", default=["stability", "score", "pure"],
+                        choices=["stability", "score", "pure"],
+                        help="단계 순서. 앞의 것이 예산을 먼저 쓴다")
+    p_camp.add_argument("--concurrency", type=int, default=2,
+                        help="동시 호출 수. 높이면 스로틀에 걸려 오히려 느려진다(실측)")
+    p_camp.set_defaults(fn=_cmd_campaign)
+
+    p_pb = sub.add_parser(
+        "playbook", help="실행에서 배운 것을 쌓고 보여 준다 (LLM 없음)"
+    )
+    p_pb.add_argument("--path", default="artifacts/playbook.json",
+                      help="플레이북 파일. 파이프라인이 읽는 것과 같은 경로여야 한다")
+    p_pb.add_argument("--runs", nargs="+", help="반영할 실행 디렉터리. 없으면 보여 주기만 한다")
+    p_pb.set_defaults(fn=_cmd_playbook)
 
     p_build = sub.add_parser(
         "dataset-build", help="사람이 라벨 붙일 눈가림 파일 생성 (LLM 없음)"
