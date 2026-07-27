@@ -165,8 +165,15 @@ def _stamped(row: dict) -> dict:
 # ---------------------------------------------------------------------------
 def phase_stability(c: Campaign, run_dirs: list[str], rule_ids: list[str],
                     repeats: int, limit: int) -> None:
-    """규칙 × 도메인 단독 프로브. 조건(반복·명세수)을 고정해 기록한다."""
+    """규칙 × 도메인 단독 프로브. 조건(반복·명세수)을 고정해 기록한다.
+
+    명세는 **고르게** 뽑는다(`sampling.even_sample`). 앞에서 자르면 실행의 앞쪽 유스케이스만
+    재는데, 명세가 3~5개인 실행(PURE)은 상한이 안 걸리고 10~17개인 실행(내부 입력)은 걸려서
+    **한쪽 표에만 위치 편향이 생긴다** — 그러면 코퍼스 비교가 코퍼스가 아니라 뽑기 차이를
+    잰다. `limit`이 0 이하면 전부 잰다.
+    """
     from app.requirements.evaluation import dataset, semantic
+    from app.requirements.evaluation.sampling import even_sample
 
     out = c.out_dir / "probe-rank.jsonl"
     done = _jsonl_ids(out, "domain,rule_id,spec_id")
@@ -175,7 +182,7 @@ def phase_stability(c: Campaign, run_dirs: list[str], rule_ids: list[str],
     # 그렇게 잃었다). 잘게 쪼개면 죽어도 명세 하나(반복 수만큼)만 잃는다.
     for run_dir in run_dirs:
         domain = dataset.domain_of(run_dir)
-        payloads = semantic.payloads_from_run(run_dir)[:limit]
+        payloads = even_sample(semantic.payloads_from_run(run_dir), limit)
         for rule_id in rule_ids:
             for spec_id, payload in payloads:
                 key = json.dumps([domain, rule_id, spec_id], ensure_ascii=False)

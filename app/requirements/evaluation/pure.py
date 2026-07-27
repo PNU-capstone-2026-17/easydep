@@ -34,6 +34,8 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from app.requirements.evaluation.sampling import even_sample
+
 #: 원본이 놓이는 자리(gitignore됨). 파생 입력도 이 아래에 쓴다.
 PURE_ROOT = Path("materials/PURE")
 DOCUMENTS = PURE_ROOT / "req_documents"
@@ -114,18 +116,6 @@ def _prose_sentences(root: ET.Element, min_words: int, max_words: int) -> list[s
     return out
 
 
-def _even_sample(items: list[str], limit: int) -> list[str]:
-    """문서 전체에서 **고르게** 고른다.
-
-    앞에서 N개를 자르면 문서 구조에 편향된다 — cctns의 앞 40개를 뽑았더니 NFR 34 / FR 6이
-    나왔다(문서 앞부분이 사용성·도움말 절이었다). 고르게 뽑으면 그 편향이 사라진다.
-    """
-    if limit >= len(items):
-        return items
-    step = len(items) / limit
-    return [items[int(i * step)] for i in range(limit)]
-
-
 def _sentence(element: ET.Element) -> str:
     """`req` 하나의 텍스트를 한 문장으로 평평하게 만든다(머리표 제거)."""
     text = " ".join(t.strip() for t in element.itertext() if t and t.strip())
@@ -148,7 +138,7 @@ def extract(name: str, limit: int | None = None, min_words: int = 5) -> dict:
     source_kind = "req-elements" if tagged else "prose-modal"
     sentences = tagged or _prose_sentences(root, min_words, max_words=60)
     if limit:
-        sentences = _even_sample(sentences, limit)
+        sentences = even_sample(sentences, limit)
 
     from app.requirements.classifier import bert_available, classify_bert
 
