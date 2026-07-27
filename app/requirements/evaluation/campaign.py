@@ -141,12 +141,16 @@ def _append(path: Path, row: dict) -> None:
         fh.flush()
 
 
-def _stamped(row: dict) -> dict:
+def _stamped(row: dict, paths: list[str]) -> dict:
     """행마다 **어떤 프롬프트로 잰 것인지** 붙인다.
 
     캠페인은 몇 시간을 돈다. 그동안 규칙이나 프롬프트를 고치면 앞의 행과 뒤의 행이 다른
     것을 잰 것이 되는데, 지금까지 남는 조건은 반복 수·명세 수뿐이라 표만 봐서는 알 수
     없었다. 이 저장소에서 결론이 뒤집힌 원인은 거의 언제나 **조건이 섞인 것**이었다.
+
+    `paths`로 **이 측정이 실제로 쓴 프롬프트만** 찍는다. 전부 찍으면 상관없는 프롬프트가
+    바뀌었을 때 멀쩡한 측정이 무효로 표시된다 — 실제로 그렇게 5시간짜리 측정이 멈췄다
+    (`prompts.fingerprint` docstring).
     """
     from app.requirements import prompts
     from app.requirements.agent.llm import build_llm
@@ -155,7 +159,7 @@ def _stamped(row: dict) -> dict:
     # 달라졌다**(9분대에 멈추던 요청이 실패·재시도로 바뀐다). 프롬프트가 같아도 이 값이 다르면
     # 같은 표에 넣을 수 없다.
     return row | {
-        "prompts": prompts.fingerprint(),
+        "prompts": prompts.fingerprint(paths),
         "client": {"timeout": getattr(build_llm(), "request_timeout", None)},
     }
 
@@ -172,6 +176,7 @@ def phase_stability(c: Campaign, run_dirs: list[str], rule_ids: list[str],
     **한쪽 표에만 위치 편향이 생긴다** — 그러면 코퍼스 비교가 코퍼스가 아니라 뽑기 차이를
     잰다. `limit`이 0 이하면 전부 잰다.
     """
+    from app.requirements import prompts
     from app.requirements.evaluation import dataset, semantic
     from app.requirements.evaluation.sampling import even_sample
 
@@ -193,7 +198,7 @@ def phase_stability(c: Campaign, run_dirs: list[str], rule_ids: list[str],
                     return
                 row = semantic.probe_rule(rule_id, [(spec_id, payload)], repeats=repeats)
                 row |= {"domain": domain, "spec_id": spec_id, "phase": "probe"}
-                _append(out, _stamped(row))
+                _append(out, _stamped(row, [prompts.PROBE]))
                 c.log(
                     f"프로브 {domain}/{rule_id.split('.')[-1]}/{spec_id}: "
                     f"항상 {row['always']} 때때로 {row['sometimes']} · {c.spent()}"
@@ -217,6 +222,7 @@ def phase_dataset_score(c: Campaign, labels_path: Path, repeats: int) -> None:
 
 def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
     """PURE 외부 입력으로 파이프라인을 돌린다. 도메인마다 한 번, 이미 한 것은 건너뛴다."""
+    from app.requirements import prompts
     from app.requirements.evaluation import pure
     from app.requirements.runner import persist_run, run_pipeline
 
@@ -239,7 +245,7 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
             "document": name, "dataset": payload["name"], "run_dir": str(run_dir),
             "n_use_cases": len(state.get("use_cases", [])),
             "n_specs": len(state.get("use_case_specs", [])),
-        }))
+        }, [prompts.GENERATION]))
         c.log(f"PURE 실행 완료 {payload['name']} → {run_dir.name} · {c.spent()}")
 
 
@@ -273,6 +279,7 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
     §9의 내부 입력 수치는 옛 판이고 네 규칙은 조합 프롬프트에서 나왔다 — 그대로 PURE 표와
     나란히 놓으면 코퍼스가 바꾼 것과 판이 바꾼 것이 섞인다.
     """
+    from app.requirements import prompts
     from app.requirements.runner import load_input, persist_run, run_pipeline
 
     out = c.out_dir / "input-runs.jsonl"
@@ -294,7 +301,7 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
             "dataset": name, "run_dir": str(run_dir),
             "n_use_cases": len(state.get("use_cases", [])),
             "n_specs": len(state.get("use_case_specs", [])),
-        }))
+        }, [prompts.GENERATION]))
         c.log(f"내부 실행 완료 {name} → {run_dir.name} · {c.spent()}")
 
 

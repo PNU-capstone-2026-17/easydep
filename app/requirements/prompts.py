@@ -18,7 +18,9 @@
 `tests/test_knowledge.py`가 막는다.
 """
 import hashlib
+from collections.abc import Sequence
 
+from app.requirements.knowledge import concerns as _concerns
 from app.requirements.knowledge import rules as _rules
 
 
@@ -430,21 +432,109 @@ def generation_system_for(stage: str) -> str:
     return _generation_system(stage, shape, learned)
 
 
-def fingerprint() -> dict[str, str]:
-    """지금 실행이 **어떤 프롬프트 판으로** 도는지 — 측정 행마다 함께 찍는 표시(§13).
+def _concern_linker_system() -> str:
+    """클라우드 관심사 링크 프롬프트를 관심사 지식베이스에서 조립한다.
 
-    생성과 검증을 따로 낸다. 한 값으로 뭉개면 "생성만 바뀌었고 검증은 그대로였다"는 말을
-    할 수 없다. 내용 복원이 아니라 **같은지 다른지**만 가리면 되므로 짧은 해시다.
+    **판정 방향이 검증 프롬프트와 반대다.** 검증자는 산출물을 보고 위반을 찾지만, 여기서는
+    요구사항을 보고 **다뤄진 것**을 찾는다. 그래서 지시의 무게 중심도 반대다 — 검증자에게는
+    "없는 결함을 만들지 말라"고 하고, 여기서는 "느슨하게 갖다 붙이지 말라"고 해야 한다.
+    링크는 붙이기가 쉽고, 하나라도 붙으면 그 관심사는 '다뤄졌다'가 되어 인계에서 사라진다.
 
-    ⚠ `*_SYSTEM` 상수만 해싱한다 — `spec_repair_user`·`_spec_human`은 판에 안 잡힌다(§15).
+    모양만 여기 있다. 무엇을 묻는지는 `knowledge/concerns.py`가 정한다.
     """
-    def digest(*parts: str) -> str:
-        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+    return f"""You map requirements onto cloud-native concerns.
 
-    return {
-        "generation": digest(SPEC_SYSTEM, RELATIONSHIPS_SYSTEM, ACTORS_SYSTEM, USECASES_SYSTEM),
-        "validation": digest(*(_VALIDATOR_SYSTEMS[s] for s in sorted(_VALIDATOR_SYSTEMS))),
+You are given a list of requirements (each with an id) and a list of concerns. For EACH
+concern, list the ids of the requirements that actually address it. If none do, return an
+empty list for that concern — that is a normal and useful answer, not a failure.
+
+Rules of the mapping:
+- Answer for EVERY concern in the list, once each, using the concern id exactly as given.
+- Use ONLY requirement ids that appear in the given list. Never invent an id.
+- A requirement addresses a concern only if it CONSTRAINS or DECIDES it. A requirement that
+  merely operates in the same area does not. "The system stores user profiles" does not
+  address where data must reside; "user data must remain in Korea" does.
+- Do not judge whether the requirement is well written, complete, or correct. You are only
+  saying what it is about.
+- Being a cloud or web application does not by itself address any concern.
+
+Concerns:
+{_concerns.prompt_block()}
+"""
+
+
+#: 관심사 링크 프롬프트. `fingerprint()`가 해싱하므로 모듈 로드 시 한 번 조립한다.
+CONCERN_LINKER_SYSTEM = _concern_linker_system()
+
+
+#: 측정 경로 이름 — 무엇을 실제로 쓰는 실행인가.
+GENERATION = "generation"
+VALIDATION = "validation"
+CONCERNS = "concerns"
+#: 규칙 하나짜리 프로브(`probe_system_for`). **검증과 다른 프롬프트다** —
+#: `_VALIDATOR_SYSTEMS`는 여러 규칙을 한 번에 담고, 프로브는 하나만 담는다.
+PROBE = "probe"
+
+PATHS = (GENERATION, VALIDATION, PROBE, CONCERNS)
+
+
+def _digest(*parts: str) -> str:
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def _probe_digest() -> str:
+    """프로브가 실제로 던지는 프롬프트 전부의 해시.
+
+    규칙마다 프롬프트가 다르므로 전부 이어 붙여 해싱한다. 규칙 문장·근거 고지
+    (`basis.prompt_note`)·이미 검사한 규칙 목록이 바뀌면 여기서 잡힌다.
+    """
+    parts = []
+    for stage in sorted(_VALIDATOR_SYSTEMS):
+        for rule in _rules.rules_for(stage):
+            if rule.severity == _rules.NON_RULE:
+                continue
+            parts.append(probe_system_for(stage, rule.id))
+    return _digest(*parts)
+
+
+def fingerprint(paths: Sequence[str] | None = None) -> dict[str, str]:
+    """이 측정이 **실제로 쓴** 프롬프트의 판. 측정 행마다 함께 찍는다(§13).
+
+    ## 왜 경로별인가 — 전역 판은 두 방향으로 거짓말을 했다
+
+    처음에는 프롬프트 전부를 한 번에 찍었다. 그래서 2026-07-28에 관심사 프롬프트
+    (`CONCERN_LINKER_SYSTEM`)가 생기자, **프로브가 한 글자도 쓰지 않는 프롬프트가 바뀌었다는
+    이유로** 프로브 측정이 "조건이 섞였다"로 무효 처리됐다. 반대쪽 구멍도 있었다 —
+    프로브가 실제로 쓰는 `probe_system_for`는 어느 키에도 안 잡혀서, **진짜 변경은 놓쳤다.**
+
+    과잉 발동하는 조건 추적기는 과소 발동하는 것만큼 나쁘다. 곧 무시당하기 때문이다.
+
+    ## 쓰는 법
+
+    부르는 쪽이 **자기가 무엇을 썼는지** 말한다. `paths=None`이면 전부 낸다(사람이 읽는
+    용도이지, 측정 행에 찍는 값이 아니다).
+
+        fingerprint([PROBE])        # 단독 프로브 측정
+        fingerprint([GENERATION])   # 파이프라인 실행
+
+    ⚠ `*_SYSTEM` 상수와 프로브만 해싱한다 — `spec_repair_user`·`_spec_human`은 여전히
+    판에 안 잡힌다(§15).
+    """
+    builders = {
+        GENERATION: lambda: _digest(
+            SPEC_SYSTEM, RELATIONSHIPS_SYSTEM, ACTORS_SYSTEM, USECASES_SYSTEM
+        ),
+        VALIDATION: lambda: _digest(*(_VALIDATOR_SYSTEMS[s] for s in sorted(_VALIDATOR_SYSTEMS))),
+        PROBE: _probe_digest,
+        # 클라우드 관심사 링크는 생성도 검증도 아니다 — 산출물을 만들지도, 규칙 위반을
+        # 판정하지도 않고 "이 요구가 저 관심사를 건드리는가"만 묻는다.
+        CONCERNS: lambda: _digest(CONCERN_LINKER_SYSTEM),
     }
+    wanted = PATHS if paths is None else paths
+    unknown = [p for p in wanted if p not in builders]
+    if unknown:  # pragma: no cover - 배선 오류
+        raise KeyError(f"모르는 측정 경로 {unknown} — 아는 것은 {list(builders)}")
+    return {p: builders[p]() for p in wanted}
 
 
 def validator_system_for(stage: str, only: str | None = None) -> str:
