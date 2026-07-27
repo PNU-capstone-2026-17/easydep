@@ -235,6 +235,7 @@ def _cmd_campaign(args) -> int:
         concurrency=args.concurrency,
         phases=args.phases,
         pure_limit=args.pure_limit,
+        input_names=args.input_names,
     )
 
 
@@ -385,8 +386,10 @@ def main(argv: list[str] | None = None) -> int:
     p_camp.add_argument("--pure-limit", type=int, default=30, dest="pure_limit",
                         help="PURE 문서 하나에서 뽑을 요구사항 수. 크면 실행 하나가 길어져 "
                              "중단됐을 때 잃는 것이 많다")
+    p_camp.add_argument("--input-names", nargs="+", dest="input_names",
+                        help="`inputs/<name>.json` 중 파이프라인에 태울 것(inputs 단계)")
     p_camp.add_argument("--phases", nargs="+", default=["stability", "score", "pure"],
-                        choices=["stability", "score", "pure"],
+                        choices=["stability", "score", "pure", "inputs"],
                         help="단계 순서. 앞의 것이 예산을 먼저 쓴다")
     p_camp.add_argument("--concurrency", type=int, default=2,
                         help="동시 호출 수. 높이면 스로틀에 걸려 오히려 느려진다(실측)")

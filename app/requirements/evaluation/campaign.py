@@ -236,32 +236,66 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
         c.log(f"PURE 실행 완료 {payload['name']} → {run_dir.name} · {c.spent()}")
 
 
-def pure_run_dirs(c: Campaign) -> list[str]:
-    """이 캠페인이 이미 만든 PURE 실행 디렉터리들.
+def produced_run_dirs(c: Campaign) -> list[str]:
+    """이 캠페인이 만든 실행 디렉터리들(PURE·내부 입력 양쪽).
 
-    **단계가 서로를 먹여야 무인이 된다.** `pure`가 실행을 만들고 `stability`가 그 실행을
+    **단계가 서로를 먹여야 무인이 된다.** 생성 단계가 실행을 만들고 `stability`가 그 실행을
     재는데, 실행 목록을 명령줄로만 받으면 사람이 중간에 들어와 경로를 넘겨야 한다 —
     "몇 시간 혼자 돈다"는 이 러너의 전제가 거기서 깨진다. 누적 파일에서 읽으므로
     **이전 실행이 만든 것도 이어받는다.**
     """
-    out = c.out_dir / "pure-runs.jsonl"
-    if not out.exists():
-        return []
     dirs = []
-    for line in out.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
+    for name in ("pure-runs.jsonl", "input-runs.jsonl"):
+        out = c.out_dir / name
+        if not out.exists():
             continue
-        run_dir = json.loads(line).get("run_dir")
-        # 산출물이 지워졌을 수 있다 — 없는 경로를 프로브에 넘기면 그 도메인이 통째로 죽는다.
-        if run_dir and Path(run_dir).exists():
-            dirs.append(run_dir)
+        for line in out.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            run_dir = json.loads(line).get("run_dir")
+            # 산출물이 지워졌을 수 있다 — 없는 경로를 프로브에 넘기면 그 도메인이 통째로 죽는다.
+            if run_dir and Path(run_dir).exists():
+                dirs.append(run_dir)
     return dirs
+
+
+def phase_input_runs(c: Campaign, names: list[str]) -> None:
+    """`inputs/*.json`(우리가 쓴 입력)으로 파이프라인을 돌린다.
+
+    PURE와 **같은 프롬프트 판·같은 클라이언트 상한**으로 지금 다시 만드는 것이 요점이다.
+    §9의 내부 입력 수치는 옛 판이고 네 규칙은 조합 프롬프트에서 나왔다 — 그대로 PURE 표와
+    나란히 놓으면 코퍼스가 바꾼 것과 판이 바꾼 것이 섞인다.
+    """
+    from app.requirements.runner import load_input, persist_run, run_pipeline
+
+    out = c.out_dir / "input-runs.jsonl"
+    done = _jsonl_ids(out, "dataset")
+    for name in names:
+        if json.dumps([name], ensure_ascii=False) in done:
+            continue
+        if c.left() <= 0:
+            c.log("예산 소진 — 내부 입력 실행 중단")
+            return
+        payload = load_input(name)
+        c.log(f"내부 실행 시작 {name} (요구 {len(payload.get('classified', []))}건)")
+        state = run_pipeline(payload["classified"])
+        run_dir = persist_run(
+            payload, state, dataset_name=name,
+            artifact_root=c.out_dir / "input-artifacts",
+        )
+        _append(out, _stamped({
+            "dataset": name, "run_dir": str(run_dir),
+            "n_use_cases": len(state.get("use_cases", [])),
+            "n_specs": len(state.get("use_case_specs", [])),
+        }))
+        c.log(f"내부 실행 완료 {name} → {run_dir.name} · {c.spent()}")
 
 
 PHASES: dict[str, Callable] = {
     "stability": phase_stability,
     "score": phase_dataset_score,
     "pure": phase_pure_runs,
+    "inputs": phase_input_runs,
 }
 
 
@@ -276,6 +310,7 @@ def run(
     concurrency: int,
     phases: list[str],
     pure_limit: int = 30,
+    input_names: list[str] | None = None,
 ) -> int:
     """캠페인 한 번. 단계를 **우선순위 순서로** 돌린다.
 
@@ -284,6 +319,7 @@ def run(
     """
     from app.requirements.knowledge import rules
 
+    input_names = input_names or []
     c = Campaign(out_dir=out_dir, hours=hours, concurrency=concurrency)
     c.log("=" * 70)
     c.log(f"캠페인 시작 · 예산 {hours}시간 · 동시성 {concurrency} · 산출물 {out_dir}")
@@ -308,9 +344,9 @@ def run(
         if phase == "stability":
             # 명령줄로 받은 실행 + **이 캠페인이 만든 PURE 실행**. 뒤엣것이 있어야
             # `pure stability` 한 줄로 "외부 입력을 돌리고 그 결과를 잰다"가 끝난다.
-            targets = list(dict.fromkeys([*run_dirs, *pure_run_dirs(c)]))
+            targets = list(dict.fromkeys([*run_dirs, *produced_run_dirs(c)]))
             if not targets:
-                c.log(f"{head} 건너뜀 — 잴 실행이 없다(--run-dirs 도 없고 PURE 실행도 없다)")
+                c.log(f"{head} 건너뜀 — 잴 실행이 없다(--run-dirs 도 없고 만든 실행도 없다)")
                 continue
             c.log(f"{head} 규칙 × 도메인 단독 프로브 — 규칙 {len(rule_ids)}개 · 실행 {len(targets)}종")
             phase_stability(c, targets, rule_ids, repeats=repeats, limit=limit)
@@ -323,6 +359,9 @@ def run(
         elif phase == "pure":
             c.log(f"{head} PURE 외부 입력 실행 — 문서 {len(pure_docs)}건 · 문서당 요구 {pure_limit}건")
             phase_pure_runs(c, pure_docs, limit=pure_limit)
+        elif phase == "inputs":
+            c.log(f"{head} 내부 입력 실행 — 데이터셋 {len(input_names)}종")
+            phase_input_runs(c, input_names)
         else:
             c.log(f"{head} 알 수 없는 단계 {phase!r} — 건너뛴다")
 
