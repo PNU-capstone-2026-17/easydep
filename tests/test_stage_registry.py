@@ -90,5 +90,47 @@ def test_every_stage_declares_what_it_reads():
         assert contract.requires or contract.requires_any, f"{stage.node} 계약이 비었다"
 
 
+def test_every_stage_declares_what_it_produces():
+    """읽는 쪽만 선언하면 배선을 정적으로 검사할 수 없다.
+
+    "이 키를 아무도 만들지 않는다"는 오류가 **그 단계를 실제로 돌려 봐야만** 드러났다.
+    산출물 선언이 있어야 아래 두 검사가 성립한다.
+    """
+    for stage in stages.PIPELINE:
+        assert stage.contract.produces, f"{stage.node} 이 무엇을 내는지 선언하지 않았다"
+
+
+def _wiring_gaps(order, inputs: set[str]) -> list[str]:
+    """단계 순서를 따라가며 **채워지지 않는 입력**을 모은다."""
+    available = set(inputs)
+    gaps = []
+    for stage in order:
+        contract = stage.contract
+        gaps += [f"{stage.node}: {k!r} 를 아무도 만들지 않는다"
+                 for k in contract.requires if k not in available]
+        if contract.requires_any and not (set(contract.requires_any) & available):
+            gaps.append(f"{stage.node}: {contract.requires_any} 중 하나도 안 만들어진다")
+        available |= set(contract.produces)
+    return gaps
+
+
+def test_graph_pipeline_wiring_is_closed():
+    """그래프 경로: `raw_requirements` 하나로 시작해 끝까지 이어지는가.
+
+    단계를 옮기거나 쪼갤 때 **돌려 보지 않고** 깨진 걸 안다. 계약이 읽는 쪽만 선언하던
+    동안에는 이 검사가 아예 불가능했다.
+    """
+    assert _wiring_gaps(stages.PIPELINE, {"raw_requirements"}) == []
+
+
+def test_batch_pipeline_wiring_is_closed():
+    """배치 경로: 입력이 이미 분류돼 있으므로 `classified`로 시작한다.
+
+    그래프와 따로 본다 — 배치는 step1을 건너뛰므로, 건너뛴 단계가 만들던 키를 하류가
+    요구하면 **배치에서만** 깨진다. 평가 세트가 재는 실행이 이 배치다.
+    """
+    assert _wiring_gaps(stages.batch_order(), {"classified"}) == []
+
+
 def test_editable_stages_are_a_subset_of_the_cascade_order():
     assert set(stages.editable_keys()) <= set(stages.cascade_order())

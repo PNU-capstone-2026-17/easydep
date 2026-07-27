@@ -46,7 +46,7 @@ def _usecase_examples() -> str:
     return ""
 
 
-@contract("identify_actors", requires=("classified",))
+@contract("identify_actors", requires=("classified",), produces=("actors",))
 def identify_actors(state: AgentState, feedback: str = "") -> dict:
     """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시.
 
@@ -118,7 +118,8 @@ def _local_edit_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
-@contract("identify_use_cases", requires=("classified", "actors"))
+@contract("identify_use_cases", requires=("classified", "actors"),
+          produces=("use_cases",))
 def identify_use_cases(
     state: AgentState, feedback: str = "", target_ids: list[str] | None = None
 ) -> dict:
@@ -196,7 +197,7 @@ def identify_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
-@contract("review_model", requires=("actors", "use_cases"))
+@contract("review_model", requires=("actors", "use_cases"), produces=("model_review",))
 def review_model(state: AgentState) -> dict:
     """액터·유스케이스 모델을 독립 검증자에게 물어 의미 결함을 표면화한다.
 
@@ -235,7 +236,7 @@ def review_model(state: AgentState) -> dict:
     }
 
 
-@contract("check_coverage", requires=("classified", "use_cases"))
+@contract("check_coverage", requires=("classified", "use_cases"), produces=("coverage",))
 def check_coverage(state: AgentState) -> dict:
     """FR 커버리지를 결정론적으로 점검한다.
 

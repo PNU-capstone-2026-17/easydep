@@ -268,7 +268,8 @@ def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
     }
 
 
-@contract("generate_specs", requires=("use_cases", "classified"))
+@contract("generate_specs", requires=("use_cases", "classified"),
+          produces=("use_case_specs",))
 def generate_specs(
     state: AgentState, feedback: str = "", target_ids: list[str] | None = None
 ) -> dict:
@@ -322,7 +323,7 @@ def generate_specs(
     return {"use_case_specs": specs, "phase": "specs"}
 
 
-@contract("check_specs", requires=("use_case_specs",))
+@contract("check_specs", requires=("use_case_specs",), produces=("spec_report",))
 def check_specs(state: AgentState) -> dict:
     """생성된 명세의 검증 결과를 집계한다(결정론 요약 노드).
 

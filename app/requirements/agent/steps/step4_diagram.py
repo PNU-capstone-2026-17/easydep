@@ -67,7 +67,8 @@ def _mine_include_candidates(use_cases: list, specs_by_name: dict) -> dict[str, 
     return {k: sorted(v) for k, v in step_to_ucs.items() if len(v) >= 2}
 
 
-@contract("identify_relationships", requires=("use_cases", "actors"))
+@contract("identify_relationships", requires=("use_cases", "actors"),
+          produces=("relationships",))
 def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     """액터/유스케이스/명세로부터 다이어그램 관계를 도출한다. feedback 시 재생성 지시.
 
@@ -239,7 +240,8 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     return {"relationships": rel, "phase": "relationships"}
 
 
-@contract("check_relationships", requires=("relationships",))
+@contract("check_relationships", requires=("relationships",),
+          produces=("relationship_report",))
 def check_relationships(state: AgentState) -> dict:
     """관계 검증 결과를 집계한다(결정론 요약 노드).
 
@@ -271,7 +273,8 @@ def _san(name: str) -> str:
     return alias if alias[0].isalpha() else f"n_{alias}"
 
 
-@contract("render_diagram", requires=("relationships", "use_cases", "actors"))
+@contract("render_diagram", requires=("relationships", "use_cases", "actors"),
+          produces=("diagram",))
 def render_diagram(state: AgentState) -> dict:
     """관계 모델을 PlantUML 유스케이스 다이어그램으로 렌더링한다(결정론적 순수 함수)."""
     actors = state.get("actors") or []

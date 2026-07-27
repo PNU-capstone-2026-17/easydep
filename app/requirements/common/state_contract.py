@@ -52,14 +52,42 @@ def require_any(state: Mapping[str, Any], *keys: str, stage: str) -> None:
         raise MissingUpstreamState(stage, list(keys))
 
 
+class BrokenStageOutput(RuntimeError):
+    """단계가 내겠다고 선언한 키를 내지 않았다 — 그 단계 안의 결함이다."""
+
+    def __init__(self, stage: str, missing: list[str]) -> None:
+        self.stage = stage
+        self.missing = missing
+        super().__init__(
+            f"{stage}: 내겠다고 선언한 산출물이 없다 {missing}. "
+            "하류가 이 키를 요구하므로, 지금 실패하지 않으면 상류 배선 오류로 잘못 보고된다."
+        )
+
+
 @dataclass(frozen=True)
 class StateContract:
-    """한 단계가 상태에서 무엇을 읽는지에 대한 선언."""
+    """한 단계가 상태에서 무엇을 **읽고** 무엇을 **내는지**에 대한 선언."""
 
     stage: str
     requires: tuple[str, ...] = ()
     #: 이 중 하나만 있으면 되는 대체 입력.
     requires_any: tuple[str, ...] = field(default_factory=tuple)
+    #: 이 단계가 상태에 내놓는 산출물 키.
+    #:
+    #: **왜 뒤늦게 추가했나.** 계약이 읽는 쪽만 선언하는 동안, "이 키를 아무도 만들지
+    #: 않는다"는 배선 오류는 **실제로 그 단계를 돌려 봐야만** 드러났다. 파이프라인 순서를
+    #: 바꾸거나 단계를 옮기면 조용히 깨질 수 있었다는 뜻이다.
+    #:
+    #: 내는 쪽까지 있으면 두 가지가 생긴다:
+    #:   1. 파이프라인 전체를 **정적으로** 검사할 수 있다 — 어떤 단계의 `requires`가
+    #:      앞선 단계들의 `produces`(또는 파이프라인 입력)로 채워지는가.
+    #:   2. 단계가 선언한 것을 실제로 냈는지 런타임에 본다. 안 내면 하류가
+    #:      `MissingUpstreamState`로 죽는데, 그 메시지는 **엉뚱한 단계를 가리킨다** —
+    #:      진짜 범인은 아무것도 안 낸 상류다.
+    #:
+    #: 기록용 키(`phase`·`messages`)는 적지 않는다. 선언은 **하한**이라 여기 없는 키를
+    #: 더 내는 것은 괜찮다 — 지켜야 하는 것은 "선언한 것은 반드시 낸다"뿐이다.
+    produces: tuple[str, ...] = field(default_factory=tuple)
 
     def check(self, state: Mapping[str, Any]) -> None:
         if self.requires:
@@ -67,12 +95,21 @@ class StateContract:
         if self.requires_any:
             require_any(state, *self.requires_any, stage=self.stage)
 
+    def check_output(self, result: Any) -> None:
+        """단계가 선언한 산출물을 실제로 냈는지."""
+        if not self.produces or not isinstance(result, Mapping):
+            return
+        missing = [k for k in self.produces if k not in result]
+        if missing:
+            raise BrokenStageOutput(self.stage, missing)
+
 
 def contract(
     stage: str,
     *,
     requires: Sequence[str] = (),
     requires_any: Sequence[str] = (),
+    produces: Sequence[str] = (),
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """단계 함수에 상태 계약을 **선언부에** 붙인다.
 
@@ -88,13 +125,22 @@ def contract(
     계약은 함수에 붙으므로 그래프를 거치든 직접 부르든 항상 적용된다. 피드백 cascade는
     단계 함수를 직접 부르는데, 거기서 빠지면 계약의 의미가 없다.
     """
-    spec = StateContract(stage=stage, requires=tuple(requires), requires_any=tuple(requires_any))
+    spec = StateContract(
+        stage=stage,
+        requires=tuple(requires),
+        requires_any=tuple(requires_any),
+        produces=tuple(produces),
+    )
 
     def decorate(fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
         def guarded(state: Mapping[str, Any], *args: Any, **kwargs: Any) -> Any:
             spec.check(state)
-            return fn(state, *args, **kwargs)
+            result = fn(state, *args, **kwargs)
+            # 들어올 때만 보고 나갈 때는 안 보면, 아무것도 안 낸 단계의 잘못이
+            # **하류 단계의 이름으로** 보고된다.
+            spec.check_output(result)
+            return result
 
         guarded.state_contract = spec  # type: ignore[attr-defined]
         return guarded

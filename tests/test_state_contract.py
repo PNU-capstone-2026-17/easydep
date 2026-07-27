@@ -75,3 +75,37 @@ def test_missing_upstream_state_fails_loudly(call, missing):
 def test_empty_upstream_output_is_allowed(call):
     """상류가 돌았는데 결과가 없는 것은 판단할 문제가 아니다 — 그대로 통과시킨다."""
     assert call() is not None
+
+
+def test_a_stage_that_does_not_produce_what_it_declared_fails_at_the_stage():
+    """**범인을 그 자리에서 잡는다.**
+
+    선언한 산출물을 안 내면, 그 사실은 하류가 `MissingUpstreamState`로 죽을 때에야
+    드러난다 — 그런데 그 메시지는 **하류 단계의 이름**을 가리킨다. 진짜 범인은 아무것도
+    안 낸 상류이고, 그 어긋남이 배선 오류 디버깅을 어렵게 만든다.
+    """
+    from app.requirements.common.state_contract import BrokenStageOutput, contract
+
+    @contract("liar", requires=("x",), produces=("y",))
+    def liar(_state):
+        return {"phase": "liar"}      # y 를 안 낸다
+
+    with pytest.raises(BrokenStageOutput) as excinfo:
+        liar({"x": 1})
+    assert excinfo.value.stage == "liar"
+    assert excinfo.value.missing == ["y"]
+
+
+def test_declaring_output_is_a_floor_not_an_exact_set():
+    """선언에 없는 키를 더 내는 것은 괜찮다.
+
+    단계는 기록용 키(`phase` 등)를 함께 낸다. 정확히 일치를 요구하면 선언이 산출물의
+    사본이 되고, 사본은 갈린다 — 지켜야 하는 것은 "선언한 것은 반드시 낸다"뿐이다.
+    """
+    from app.requirements.common.state_contract import contract
+
+    @contract("generous", requires=("x",), produces=("y",))
+    def generous(_state):
+        return {"y": 1, "phase": "generous", "extra": 2}
+
+    assert generous({"x": 1})["extra"] == 2
