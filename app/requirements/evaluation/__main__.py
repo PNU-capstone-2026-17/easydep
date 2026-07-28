@@ -220,6 +220,23 @@ def _cmd_probe(args) -> int:
     return 0
 
 
+def _cmd_concerns(args) -> int:
+    """관심사 링크 층 측정 — 격자를 돌며 표를 한 장씩 쌓는다. **실제 LLM 호출.**"""
+    from app.requirements.evaluation import concern_campaign
+
+    return concern_campaign.run(
+        out_dir=Path(args.out_dir), hours=args.hours, repeats=args.repeats
+    )
+
+
+def _cmd_concern_report(args) -> int:
+    """쌓인 표를 집계한다. 캠페인이 도는 중에도 부분 집계가 나온다."""
+    from app.requirements.evaluation import concern_report
+
+    _print(concern_report.report(Path(args.dir), k=args.k))
+    return 0
+
+
 def _cmd_campaign(args) -> int:
     """무인 캠페인 — 몇 시간 동안 혼자 돌면서 쌓는다. **실제 LLM 호출.**"""
     from app.requirements.evaluation import campaign
@@ -394,6 +411,22 @@ def main(argv: list[str] | None = None) -> int:
     p_camp.add_argument("--concurrency", type=int, default=2,
                         help="동시 호출 수. 높이면 스로틀에 걸려 오히려 느려진다(실측)")
     p_camp.set_defaults(fn=_cmd_campaign)
+
+    p_cc = sub.add_parser(
+        "concerns", help="클라우드 관심사 링크 층 측정 — 1표씩 쌓는다 (실제 LLM)"
+    )
+    p_cc.add_argument("--out-dir", required=True, dest="out_dir")
+    p_cc.add_argument("--hours", type=float, default=8.0)
+    p_cc.add_argument("--repeats", type=int, default=10,
+                      help="같은 (도메인, 조건)을 몇 번 물을지. 흔들림은 반복에서만 보인다")
+    p_cc.set_defaults(fn=_cmd_concerns)
+
+    p_cr = sub.add_parser(
+        "concern-report", help="쌓인 관심사 표를 집계한다 (LLM 없음)"
+    )
+    p_cr.add_argument("--dir", required=True)
+    p_cr.add_argument("-k", type=int, default=3, help="다수결 표 수(표는 이미 쌓여 있다)")
+    p_cr.set_defaults(fn=_cmd_concern_report)
 
     p_pb = sub.add_parser(
         "playbook", help="실행에서 배운 것을 쌓고 보여 준다 (LLM 없음)"
