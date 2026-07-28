@@ -421,8 +421,23 @@ def _add_computes(
                 "this component",
                 ORIGIN_INFERRED, "",
             ))
+        if kind in ("vm", "kubernetes"):
+            # **서브넷 안에 그리는 것은 우리 읽기다.** 공통 층은 `vm references
+            # subnet`이라 말하지 담김이라 말하지 않는다(실측). 실무적으로 맞는
+            # 배치이지만 KB가 선언한 사실이 아니므로 근거를 그렇게 적는다 —
+            # 계획의 다른 자리에서 지키는 규율(짐작을 짐작이라 한다)과 같다.
+            placement = "subnet"
+            notes.append(Note(
+                "Drawn inside the subnet — the common layer says the VM "
+                "**references** a subnet, so the placement is our reading, "
+                "not something the source declared",
+                ORIGIN_INFERRED, "graphkb",
+            ))
+        else:
+            # 서버리스는 우리가 배치를 모른다(프로바이더가 정한다).
+            placement = "unknown"
         plan.nodes.append(PlanNode(
-            id=cid, label=component["name"], role="compute",
+            id=cid, label=component["name"], role="compute", placement=placement,
             origin=origin, notes=tuple(notes),
         ))
         if kind == "vm":
@@ -553,6 +568,8 @@ def _wire_edges(
         if "end-user" not in known:
             plan.nodes.append(PlanNode(
                 id="end-user", label="End user", role="actor", origin=ORIGIN_DESIGN,
+                # 행위자는 우리 네트워크 밖이라는 것을 **안다** — 모르는 게 아니다.
+                placement="none",
                 notes=(Note("An actor in the sequence", ORIGIN_DESIGN, "sequence"),),
             ))
             known.add("end-user")
@@ -817,6 +834,44 @@ def _global_notices(
                 ORIGIN_KB, "envkb",
             ))
 
+    # 탄소 — **요구가 있을 때만** 싣는다. 요구가 없는데 붙이면 계획마다 잡음이 늘고,
+    # 잡음이 되면 진짜 고지가 안 읽힌다(perfkb 주석에서 이미 겪은 실패).
+    #
+    # **판정이 아니라 대조 자료다.** 프로바이더마다 출처 등급이 다르고(GCP는 구글 직접
+    # 발표, AWS·Azure는 서드파티 추정) 방법론이 달라 **서로 비교할 수 없다** — 실측에서
+    # 같은 도시의 값이 다르고 순서까지 뒤집혔다. 그래서 같은 프로바이더 안에서만 견준다.
+    if requirements.get("lowCarbonPreferred") and provider and region:
+        from app.deployment.envkb import carbon
+
+        here = carbon.for_region(provider, region)
+        if here is None:
+            plan.notes.append(Note(
+                f"Low-carbon preference — no carbon figure for {provider} {region} "
+                "in this data, so there is nothing to compare against (that is not "
+                "a claim the region is clean or dirty)",
+                ORIGIN_KB, "envkb",
+            ))
+        else:
+            cleaner = [
+                r for r in carbon.cleanest(provider, limit=50)
+                if r["gramsPerKWh"] < here["gramsPerKWh"]
+            ]
+            text = (
+                f"Low-carbon preference — {provider} {region} is "
+                f"{here['gramsPerKWh']:,.1f} gCO2eq/kWh"
+            )
+            if cleaner:
+                names = ", ".join(r["region"] for r in cleaner[:3])
+                text += (
+                    f". **{len(cleaner)} regions of this provider are lower** "
+                    f"({names}{' and more' if len(cleaner) > 3 else ''}) — "
+                    "moving is a trade-off against latency and residency, so this "
+                    "is material for the decision, not a verdict"
+                )
+            else:
+                text += ". No region of this provider in this data is lower"
+            plan.notes.append(Note(text, ORIGIN_KB, "envkb"))
+
     # 이그레스 — 노출(트래픽이 밖으로 나가는 신호)이 있을 때만 알린다. 전부
     # 사용량형이라 곱하지 않는다 — 대표로 기본(전 세계) 첫 구간 단가만 보이고
     # 목적지·구간별 축 개수를 함께 밝힌다.
@@ -901,7 +956,9 @@ def compose(design: dict) -> DeploymentPlan:
     for external in design.get("externals") or []:
         plan.nodes.append(PlanNode(
             id=external["id"], label=external["name"], role="external",
-            origin=ORIGIN_DESIGN,
+            # 외부 시스템은 정의상 우리 네트워크 밖이다. "모른다"가 아니라
+            # **안다** — 설계도가 external로 선언한 것이 근거다.
+            placement="none", origin=ORIGIN_DESIGN,
             notes=(Note("The design declares it as an external system",
                         ORIGIN_DESIGN, "externals"),),
         ))
@@ -1010,10 +1067,39 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
             # 5개짜리 앱에 선이 20개 늘어 그림이 못 쓰게 된다(실측: 2개에 이미 15개).
             # 관계는 다이어그램의 **중첩**이 표현한다 — UML 배포 다이어그램의 정석이고,
             # tumblebug이 "연결당 공유"라 말한 것과도 맞는다.
+            placement, placement_note = _placement_of(core_id)
+            if placement_note is not None:
+                notes.append(placement_note)
             plan.nodes.append(PlanNode(
-                id=node_id, label=label, role="shared",
+                id=node_id, label=label, role="shared", placement=placement,
                 origin=ORIGIN_KB, type_id=type_id, notes=tuple(notes),
             ))
+
+
+#: 공통 층이 **담김이라고 말한** 쌍. `core-graph.json`의 `contained_in` 엣지에서
+#: 온다(현재 3건 중 네트워크 관련은 이것 하나).
+#:
+#: 상수로 둔 이유: 구성기가 매번 그래프를 읽으면 계획 구성이 산출물 로딩에 묶이고,
+#: 이 값은 **원본이 바뀌면 빌드가 알려 주는** 종류가 아니다. 대신 검사가 산출물과
+#: 대조한다(`tests/test_appkb_plan_diagram.py`) — 어긋나면 거기서 죽는다.
+_CORE_CONTAINMENT = {"core::subnet": "vnet"}
+
+
+def _placement_of(core_id: str) -> tuple[str, Note | None]:
+    """이 공유 리소스가 **어디에 놓이는가**와 그 근거.
+
+    셋을 가른다(`PlanNode.placement`) — 담긴다 / 안 담긴다 / **모른다**.
+    부재를 "밖"으로 승격하지 않는 것이 요점이다.
+    """
+    if core_id in _CORE_CONTAINMENT:
+        return _CORE_CONTAINMENT[core_id], Note(
+            f"{core_id} is contained in core::vNet (the common layer says so, "
+            "not a guess)",
+            ORIGIN_KB, "graphkb",
+        )
+    # 보안그룹·SSH키는 vNet을 **참조**할 뿐 담기지 않는다(공통 층이 그렇게 말한다).
+    # 네트워크 경계 안에 그리면 "그 안에 산다"는 주장이 되므로 최상위에 둔다.
+    return "none", None
 
 
 def _add_image_note(plan: DeploymentPlan, provider: str | None,
@@ -1315,7 +1401,11 @@ def deployment_puml_from_easydep(
 
 
 @function_tool
-def design_to_deployment(design_json: str, diagram: bool = True) -> str:
+def design_to_deployment(
+    design_json: str | None = None,
+    design_path: str | None = None,
+    diagram: bool = True,
+) -> str:
     """Build a **deployment plan** from an app design artifact (JSON) —
     components, managed services, and connections.
 
@@ -1335,13 +1425,58 @@ def design_to_deployment(design_json: str, diagram: bool = True) -> str:
     as-is.
 
     Args:
-        design_json: The design artifact JSON string.
+        design_json: The design artifact as a JSON string. Use this when the
+            user pasted the document into the conversation.
+        design_path: Path to a `.json` file holding the design artifact.
+            **Prefer this whenever the design lives in a file** — it saves you
+            from re-typing the whole document, which is where transcription
+            errors come from.
         diagram: If True, emit a PlantUML diagram along with the answer.
     """
+    return deployment_from_input(design_json, design_path, diagram=diagram)
+
+
+def deployment_from_input(
+    design_json: str | None = None,
+    design_path: str | None = None,
+    *,
+    diagram: bool = True,
+) -> str:
+    """도구 본체 — **데코레이터 밖에 둔다.**
+
+    `@function_tool`이 씌워지면 실행 문맥 없이는 못 부르고, 그러면 입력 처리(경로
+    읽기·JSON 오류 안내)를 단위 테스트로 못 잡는다. 라우팅은 도구가, 판단은 여기가.
+    """
+    # **경로를 받는 이유.** 실측(2026-07-28)에서 2KB짜리 설계 문서를 문자열로
+    # 넘기다가 첫 호출이 파싱 실패했다(`Expecting property name enclosed in double
+    # quotes: line 1 column 733`). 모델이 문서를 통째로 다시 타이핑해야 하는 구조라
+    # 한 번에 못 맞힌 것이고, 발표 중 30초를 잡아먹었다. 문서가 길수록 확률이
+    # 나빠지는데 설계 산출물은 원래 길다.
+    if design_path and not design_json:
+        from pathlib import Path
+
+        try:
+            design_json = Path(design_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            return f"Could not read the design file '{design_path}': {exc}"
+    if not design_json:
+        return (
+            "Give me the design artifact — either `design_json` (the JSON text) "
+            "or `design_path` (a path to the .json file)."
+        )
     try:
         design = json.loads(design_json)
     except json.JSONDecodeError as exc:
-        return f"Could not read the design JSON: {exc}"
+        # **어디가 틀렸는지 보여 준다.** 위치만 알려 주면 모델은 문서를 통째로 다시
+        # 쓰는 쪽을 고르고, 그러면 같은 실수를 다시 할 확률이 그대로다. 문제 조각을
+        # 보이면 그 자리만 고칠 수 있다.
+        around = design_json[max(0, exc.pos - 60):exc.pos + 60].replace("\n", " ")
+        return (
+            f"Could not read the design JSON: {exc}\n"
+            f"  near: …{around}…\n"
+            "  Fix that fragment and send it again — or pass `design_path` "
+            "instead so the document does not have to be re-typed."
+        )
     print(f"\n[design query] deployment plan: {design.get('name')!r}")
     return deployment_answer(design, diagram=diagram)
 

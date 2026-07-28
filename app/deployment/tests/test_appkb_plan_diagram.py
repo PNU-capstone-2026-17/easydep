@@ -352,3 +352,96 @@ def test_matching_provider_is_stated_positively() -> None:
     lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
     assert any("every vendor type in the plan matches" in flat(ln) for ln in lines)
     assert not any("**mismatch**" in flat(ln) for ln in lines)
+
+
+def test_placement_has_three_states_not_two() -> None:
+    """**밖에 그린 것이 "밖에 있다"로 읽히면 안 된다.**
+
+    감사(2026-07-28)에서 나온 요구다. 예전 렌더러는 `role == "compute"`인 노드만
+    안에 넣고 나머지를 전부 밖에 그렸는데, 관리형 서비스가 어느 네트워크에 놓이는지는
+    이 저장소가 **모른다** — `contained_in` 축은 네트워크 배치가 아니라 ARM 이름
+    계층(azure)·프로젝트 소속(gcp)이고 aws는 0건이다.
+
+    그래서 셋을 가른다: 담긴다 / 안 담긴다(안다) / 모른다. 부재를 "밖"으로 승격하지
+    않는 것은 `basis.py`·`perfkb`가 상태를 늘린 것과 같은 이유다.
+    """
+    plan = _plan()
+    states = {n.placement for n in plan.nodes}
+    assert states <= {"none", "unknown"} | {n.id for n in plan.nodes}, states
+
+
+def test_unknown_placement_is_declared_in_the_legend() -> None:
+    """모른다는 사실이 **그림 안에** 남아야 한다 — 그림은 잘려 돌아다닌다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode("db", "저장소", "managed", ORIGIN_KB))  # placement 기본값
+    uml = render(plan)
+    assert "their placement is not known" in uml
+    assert "not a claim that they sit outside" in uml
+
+
+def test_core_containment_constant_matches_the_artifact() -> None:
+    """구성기가 상수로 든 담김 쌍이 **산출물과 어긋나면 죽는다.**
+
+    `_CORE_CONTAINMENT`는 매번 그래프를 읽지 않으려고 둔 상수다. 상수는 조용히
+    낡으므로 대조를 검사에 둔다 — 이 저장소가 Azure 구세대 손 표에 쓴 것과 같은 장치
+    (문서 라벨과 손 표가 어긋나면 빌드가 죽는다).
+    """
+    import gzip
+    import json
+    from pathlib import Path
+
+    from app.deployment.nim_agent.design_tools import _CORE_CONTAINMENT
+
+    blob = Path(__file__).resolve().parent.parent / "data" / "core-graph.json.gz"
+    if not blob.exists():
+        pytest.skip("core-graph 미빌드")
+    graph = json.loads(gzip.decompress(blob.read_bytes()).decode("utf-8"))
+    declared = {
+        e["from"]: e["to"].split("::")[-1].lower()
+        for e in graph["edges"] if e.get("type") == "contained_in"
+    }
+    for core_id, container in _CORE_CONTAINMENT.items():
+        assert declared.get(core_id) == container, (
+            f"{core_id}: 상수는 {container}라는데 공통 층은 {declared.get(core_id)}라고 한다"
+        )
+
+
+# --- 탄소 요구의 소비자 (2026-07-28: 관심사 A갈래 첫 연결) ---
+
+
+def test_carbon_preference_yields_material_not_a_verdict() -> None:
+    """**데이터를 모아 두고 물을 자리가 없어 안 쓰이던 축**을 이었다.
+
+    envkb의 탄소 161건은 질의응답에만 쓰이고 계획에 닿지 않았다 — 요구사항 쪽에
+    `lowCarbonPreferred`를 물을 칸이 없었기 때문이다(관심사 `cn.carbon-constraint`가
+    소비자 없이 떠 있었다).
+
+    판정은 **하지 않는다.** 더 낮은 리전이 있다는 것은 사실이지만 옮기라는 권고가
+    아니다 — 지연·레지던시와의 상충을 우리가 못 잰다. 프로바이더 간 비교도 안 한다
+    (GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정이라 방법론이 다르고, 실측에서
+    같은 도시의 순서가 뒤집혔다).
+    """
+    plan = _plan()
+    plan.notes.append(Note(
+        "Low-carbon preference — aws ap-northeast-2 is 477.4 gCO2eq/kWh. "
+        "**23 regions of this provider are lower** (eu-north-1) — moving is a "
+        "trade-off",
+        ORIGIN_KB, "envkb",
+    ))
+    lines = verify_against_requirements(plan, {"lowCarbonPreferred": True}, _HOURS)
+    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
+    assert "lower-carbon regions exist" in verdict
+    assert "does not weigh" in verdict, "판정하지 않는다는 말이 빠졌다"
+
+
+def test_carbon_preference_without_data_says_no_verdict() -> None:
+    """**침묵이 "괜찮다"로 읽히면 안 된다.** 자료가 없으면 없다고 말한다."""
+    lines = verify_against_requirements(_plan(), {"lowCarbonPreferred": True}, _HOURS)
+    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
+    assert "**no verdict**" in verdict
+
+
+def test_carbon_verdict_is_absent_when_not_required() -> None:
+    """요구가 없으면 판정도 없다 — 잡음을 늘리지 않는다."""
+    lines = verify_against_requirements(_plan(), {}, _HOURS)
+    assert not any("lowCarbonPreferred" in ln for ln in lines)

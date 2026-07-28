@@ -65,6 +65,11 @@ def _node_line(node: PlanNode) -> str:
 #: 컴퓨트마다 공유 자원으로 선을 그으면 컴포넌트 5개짜리 앱에 선이 20개 늘어
 #: 그림이 못 쓰게 된다(실측: 2개에 이미 15개). 배포 다이어그램은 그 관계를
 #: **중첩**으로 표현하는 것이 정석이고, tumblebug이 "연결당 공유"라 말한 것과도 맞는다.
+#:
+#: **바깥→안 순서만 여기서 정한다.** 무엇이 무엇에 담기는지는 이제 계획이 들고
+#: 온다(`PlanNode.placement`) — 구성기가 그래프 축에 물어 채운 값이다. 이 상수가
+#: 남은 이유는 렌더링 순서(vnet을 먼저 열고 subnet을 그 안에)뿐이고, 담김 여부의
+#: 근거가 아니다.
 _CONTAINERS = ("vnet", "subnet")
 
 
@@ -78,7 +83,17 @@ def render(plan: DeploymentPlan) -> str:
     ]
     by_id = {n.id: n for n in plan.nodes}
     nesting = [cid for cid in _CONTAINERS if cid in by_id]
-    inside = {n.id for n in plan.nodes if n.role == "compute"}
+    # **담기는 것은 계획이 말한다.** 예전에는 `role == "compute"`로 정했는데, 그건
+    # "컴퓨트는 서브넷 안"이라는 우리 가정을 렌더러에 박아 둔 것이었다. 지금은
+    # 구성기가 `placement`에 근거와 함께 담고 여기서는 그 값을 읽기만 한다.
+    innermost = nesting[-1] if nesting else ""
+    inside = {n.id for n in plan.nodes if n.placement == innermost and innermost}
+    # 배치를 **모르는** 노드 — 밖에 그리되 그 사실을 범례가 말한다. 부재를 "밖"으로
+    # 승격하지 않는다(`PlanNode.placement`).
+    unplaced = [
+        n for n in plan.nodes
+        if n.placement == "unknown" and n.id not in nesting and n.role != "actor"
+    ]
 
     depth = 0
     for cid in nesting:
@@ -118,6 +133,17 @@ def render(plan: DeploymentPlan) -> str:
         lines.append(
             f"  The {hedged} items marked <<inferred>>·<<specified by the designer>>"
             " are not verified facts"
+        )
+    if unplaced:
+        # **밖에 그린 것이 "밖에 있다"로 읽히면 안 된다.** 관리형 서비스가 어느
+        # 네트워크에 놓이는지는 이 저장소가 모른다 — `contained_in` 축은 네트워크
+        # 배치가 아니라 이름 계층·프로젝트 소속이고, AWS는 그마저 비어 있다.
+        # 그리지 않는 것보다 나쁜 것은 모른다는 말 없이 밖에 그리는 것이다.
+        names = ", ".join(sorted(n.id for n in unplaced)[:6])
+        more = f" and {len(unplaced) - 6} more" if len(unplaced) > 6 else ""
+        lines.append(
+            f"  Drawn outside the network because **their placement is not known**"
+            f" ({len(unplaced)}): {names}{more} — not a claim that they sit outside"
         )
     if plan.unresolved:
         lines.append(

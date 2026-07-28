@@ -94,6 +94,26 @@ class PlanNode:
     노트 문장("$0.0468/h")을 되파싱하게 두면 문구 하나에 판정이 흔들린다.
     None은 0이 아니라 "값이 없다"다 — 더하는 쪽이 그 구분을 지켜야 한다."""
 
+    placement: str = "unknown"
+    """이 노드가 **어디에 놓이는가** — 다이어그램 중첩의 근거.
+
+        "<노드 id>"  그 노드 **안에** 그린다
+        "none"       담기지 않는다는 것을 **안다** (최상위 · 외부 시스템 · 행위자)
+        "unknown"    **배치를 모른다** (기본값)
+
+    `"unknown"`이 기본값인 것이 요점이다. 그림에서 상자가 밖에 있으면 "밖에 있다"는
+    주장으로 읽히는데, 관리형 서비스는 사실 **우리가 모르는 것**이다 — 실측(2026-07-28)
+    결과 `contained_in` 축은 **네트워크 배치가 아니다**(Azure는 ARM 이름 계층, GCP는
+    프로젝트 소속, AWS는 0건). "RDS가 서브넷에 산다"를 아는 축이 이 저장소에 없다.
+
+    그래서 셋을 가른다. 부재를 "밖"으로 승격하지 않는 것이 이 저장소의 규율이고
+    (`basis.py`·`perfkb`가 같은 이유로 상태를 늘렸다), 그림에서만 예외일 이유가 없다.
+
+    **누가 채우나**: 축을 합치는 일은 도구 계층의 몫이라(kb-book 3장의 단방향 규약)
+    `appkb`가 `graphkb`를 부를 수 없다. 구성기(`nim_agent/design_tools.py`)가 그래프
+    축에 물어 여기 담고, 렌더러는 계획만 읽는다.
+    """
+
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
             raise ValueError(f"unknown origin: {self.origin!r}")
@@ -147,6 +167,7 @@ class DeploymentPlan:
                     "origin": n.origin, "archetype": n.archetype,
                     "typeId": n.type_id, "candidates": list(n.candidates),
                     "hourlyUSD": n.hourly_usd,
+                    "placement": n.placement,
                     "notes": [
                         {"text": x.text, "origin": x.origin, "source": x.source}
                         for x in n.notes

@@ -4,13 +4,28 @@
   "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "provider", "region", "monthlyBudgetUSD"],
+  "required": [
+    "schemaVersion",
+    "provider",
+    "region",
+    "monthlyBudgetUSD"
+  ],
   "anyOf": [
-    { "required": ["expectedConcurrentUsers"] },
-    { "required": ["approxRequestsPerSecond"] }
+    {
+      "required": [
+        "expectedConcurrentUsers"
+      ]
+    },
+    {
+      "required": [
+        "approxRequestsPerSecond"
+      ]
+    }
   ],
   "properties": {
-    "schemaVersion": { "const": "1" },
+    "schemaVersion": {
+      "const": "1"
+    },
     "provider": {
       "type": "string",
       "description": "aws | azure | gcp | … 값 조인의 축. 실측된 라우팅 변수 — 없으면 비용·성능·번들·벤더 타입 대응이 전부 닫힌다."
@@ -43,7 +58,10 @@
       "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
     },
     "trafficPattern": {
-      "enum": ["steady", "spiky"],
+      "enum": [
+        "steady",
+        "spiky"
+      ],
       "description": "부하 모양 — steady(상시 부하) | spiky(간헐 폭증). 소비자: 버스트 적합 판정 — steady인데 계획의 스펙에 버스트 경고(perfkb)가 붙어 있으면 상충으로 판정한다. 이 칸이 없으면 버스트 경고는 경고로만 남고 이 앱에 문제인지는 판정하지 않는다."
     },
     "stateless": {
@@ -54,6 +72,12 @@
       "type": "string",
       "description": "데이터가 머물러야 하는 국가·지역, 사용자 표현 그대로(예: '한국', 'EU'). 소비자: 배포 계획이 리전의 **원본 표시 이름**(예: 'South Korea (Seoul)')을 대조 자료로 싣고, 부합 판정문은 **판정 불가를 명시**한다 — 리전의 국가를 기계 판정할 소스가 없다(표시 이름이 프로바이더마다 자유 서식 — 실측 2026-07-24). 산문에서 국가를 추출해 판정하면 확신에 찬 오답이 된다. 확인은 사용자 몫이고, 그 사실이 답에 실린다."
     },
-    "meta": { "type": "object" }
+    "lowCarbonPreferred": {
+      "type": "boolean",
+      "description": "요구사항이 에너지 사용·탄소 배출에 제약을 두는가. 소비자: 리전 탄소 판정 — 참인데 선택 리전보다 탄소집약도가 낮은 리전이 같은 프로바이더에 있으면 그 사실을 낸다. **판정이 아니라 대조다** — 탄소 수치의 출처 등급이 프로바이더마다 다르고(GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정) 방법론이 달라 서로 비교할 수 없다. 이 칸이 없으면 탄소 데이터 161건은 질의응답에만 쓰이고 계획에 닿지 않는다."
+    },
+    "meta": {
+      "type": "object"
+    }
   }
 }

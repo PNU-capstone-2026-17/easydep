@@ -225,6 +225,31 @@ def verify_against_requirements(
                 "performance join"
             )
 
+    if req.get("lowCarbonPreferred"):
+        # 계획에 실린 탄소 대조 자료를 읽는다 — `appkb`는 KB를 import하지 않으므로
+        # 구성기가 노트로 담아 준다(`trafficPattern`이 perfkb 노트를 읽는 것과 같은 결).
+        carbon_notes = [x.text for x in plan.notes if x.source == "envkb"
+                        and "carbon" in x.text.lower()]
+        lower = next((t for t in carbon_notes if "regions of this provider are lower" in t), None)
+        if lower:
+            # **판정하지 않는다.** 더 낮은 리전이 있다는 것은 사실이지만 옮기라는
+            # 권고가 아니다 — 지연·레지던시와의 상충을 우리가 잴 수 없다.
+            out.append(
+                "lowCarbonPreferred: **lower-carbon regions exist for this provider** "
+                "— see the plan note. Whether to move is a trade-off against latency "
+                "and residency, which this knowledge base does not weigh"
+            )
+        elif carbon_notes:
+            out.append(
+                "lowCarbonPreferred: reflected — no region of this provider in this "
+                "data is lower than the chosen one"
+            )
+        else:
+            out.append(
+                "lowCarbonPreferred: **no verdict** — this plan carries no carbon "
+                "figure (the provider or region is outside the carbon dataset)"
+            )
+
     stateless = req.get("stateless")
     serverless = sorted(
         n.id for n in plan.nodes if n.archetype == "app::serverlessFunction"
