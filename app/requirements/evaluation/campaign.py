@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.requirements.common.console import use_utf8_stdout
+from app.requirements.evaluation import jsonl
 
 #: 페이싱 탐색에 쓸 호출 수. 적게 던져 보고 결정한다.
 _PROBE_CALLS = 2
@@ -122,22 +123,15 @@ class Campaign:
 
 
 def _jsonl_ids(path: Path, key: str) -> set[str]:
-    """누적 파일에 이미 있는 키들. 없으면 빈 집합."""
-    if not path.exists():
-        return set()
-    done = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            done.add(json.dumps(
-                [json.loads(line).get(k) for k in key.split(",")], ensure_ascii=False
-            ))
-    return done
+    """누적 파일에 이미 있는 키들. 없으면 빈 집합.
 
-
-def _append(path: Path, row: dict) -> None:
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-        fh.flush()
+    읽기·쓰기 자체는 `evaluation/jsonl.py`가 한다 — **잘린 마지막 줄 관용**이 거기 있고,
+    예전에는 그 관용이 파일마다 있거나 없었다.
+    """
+    return {
+        json.dumps([row.get(k) for k in key.split(",")], ensure_ascii=False)
+        for row in jsonl.rows(path)
+    }
 
 
 def _stamped(row: dict, paths: list[str]) -> dict:
@@ -197,7 +191,7 @@ def phase_stability(c: Campaign, run_dirs: list[str], rule_ids: list[str],
                     return
                 row = semantic.probe_rule(rule_id, [(spec_id, payload)], repeats=repeats)
                 row |= {"domain": domain, "spec_id": spec_id, "phase": "probe"}
-                _append(out, _stamped(row, [prompts.PROBE]))
+                jsonl.append(out, _stamped(row, [prompts.PROBE]))
                 c.log(
                     f"프로브 {domain}/{rule_id.split('.')[-1]}/{spec_id}: "
                     f"항상 {row['always']} 때때로 {row['sometimes']} · {c.spent()}"
@@ -240,7 +234,7 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
             payload, state, dataset_name=payload["name"],
             artifact_root=c.out_dir / "pure-artifacts",
         )
-        _append(out, _stamped({
+        jsonl.append(out, _stamped({
             "document": name, "dataset": payload["name"], "run_dir": str(run_dir),
             "n_use_cases": len(state.get("use_cases", [])),
             "n_specs": len(state.get("use_case_specs", [])),
@@ -296,7 +290,7 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
             payload, state, dataset_name=name,
             artifact_root=c.out_dir / "input-artifacts",
         )
-        _append(out, _stamped({
+        jsonl.append(out, _stamped({
             "dataset": name, "run_dir": str(run_dir),
             "n_use_cases": len(state.get("use_cases", [])),
             "n_specs": len(state.get("use_case_specs", [])),

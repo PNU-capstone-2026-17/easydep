@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.model import Graph
 from app.deployment.graphkb.parsers.cfn import parse_schemas
+from app.deployment.tests._helpers import find_edges
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 CFN_DIR = FIXTURE_DIR / "cfn"
@@ -34,10 +35,6 @@ def load_oob() -> dict:
 @pytest.fixture(scope="module")
 def graph() -> Graph:
     return parse_schemas(load_schemas(), oob=load_oob(), heuristics=True)
-
-
-def find_edges(graph: Graph, from_id: str, to_id: str) -> list[Edge]:
-    return [e for e in graph.edges if e.from_id == from_id and e.to_id == to_id]
 
 
 def test_nodes_created_for_all_schemas(graph: Graph) -> None:

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.deployment.tests._helpers import find_edges
+
 #: 저장소 기준 경로. CWD 기준으로 열면 easydep 루트에서 돌 때 파일을 못 찾고,
 #: exists() 가드가 있는 곳은 실패 대신 **조용히 스킵**된다(병합 때 실제로 그랬다).
 _ROOT = Path(__file__).resolve().parent.parent
@@ -17,7 +19,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 import pytest
 import yaml
 
-from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.model import Graph
 from app.deployment.graphkb.parsers.gcp import parse_crds
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gcp"
@@ -40,10 +42,6 @@ def graph() -> Graph:
         servicemappings=[load("servicemappings-compute-min.yaml")],
         heuristics=True,
     )
-
-
-def find_edges(graph: Graph, from_id: str, to_id: str) -> list[Edge]:
-    return [e for e in graph.edges if e.from_id == from_id and e.to_id == to_id]
 
 
 def test_nodes_created(graph: Graph) -> None:

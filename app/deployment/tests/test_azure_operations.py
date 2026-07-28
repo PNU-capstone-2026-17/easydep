@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.deployment.capacitykb.parsers.azure_operations import action_type, parse_tarball
 from app.deployment.kbcommon.type_ids import AzureTypeIndex
+from app.deployment.tests._helpers import write_tar
 
 
 def test_action_segment_is_stripped_before_typing() -> None:
@@ -35,9 +36,7 @@ def test_action_type_differs_from_raw_arm_type() -> None:
     assert arm_type(url) != action_type(url)
 
 
-import io
 import json
-import tarfile
 
 INDEX = AzureTypeIndex(
     latest={"Microsoft.Compute/virtualMachines": ("2024-01-01", "x.json")},
@@ -49,17 +48,11 @@ BASE = "/subscriptions/{s}/providers/Microsoft.Compute/virtualMachines/{vm}"
 
 def _tar(tmp_path, docs: dict[str, dict]):
     tar = tmp_path / "specs.tar.gz"
-    with tarfile.open(tar, "w:gz") as archive:
-        for name, doc in docs.items():
-            member = (
-                f"specification/compute/resource-manager/Microsoft.Compute/"
-                f"stable/2024-01-01/{name}"
-            )
-            raw = json.dumps(doc).encode()
-            info = tarfile.TarInfo(member)
-            info.size = len(raw)
-            archive.addfile(info, io.BytesIO(raw))
-    return tar
+    return write_tar(tar, {
+        f"specification/compute/resource-manager/Microsoft.Compute/"
+        f"stable/2024-01-01/{name}": json.dumps(doc)
+        for name, doc in docs.items()
+    })
 
 
 def test_methods_and_actions_are_collected(tmp_path) -> None:

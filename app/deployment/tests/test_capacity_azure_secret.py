@@ -9,14 +9,13 @@
 
 from __future__ import annotations
 
-import io
 import json
-import tarfile
 
 import pytest
 
 from app.deployment.capacitykb.parsers.azure_secret import _walk_secret, parse_tarball
 from app.deployment.kbcommon.type_ids import AzureTypeIndex
+from app.deployment.tests._helpers import write_tar
 
 
 @pytest.fixture
@@ -52,12 +51,7 @@ def _build_tar(tmp_path, doc: dict):
         "stable/2023-01-01/mysql.json"
     )
     tar = tmp_path / "specs.tar.gz"
-    with tarfile.open(tar, "w:gz") as archive:
-        raw = json.dumps(doc).encode()
-        info = tarfile.TarInfo(member)
-        info.size = len(raw)
-        archive.addfile(info, io.BytesIO(raw))
-    return tar
+    return write_tar(tar, {member: json.dumps(doc)})
 
 
 def test_walk_collects_only_marked_properties() -> None:

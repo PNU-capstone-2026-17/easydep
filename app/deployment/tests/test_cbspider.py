@@ -13,14 +13,12 @@
 
 from __future__ import annotations
 
-import io
 import json
-import tarfile
 
 import pytest
 
 from app.deployment.envkb import cbspider
-from app.deployment.tests._helpers import flat
+from app.deployment.tests._helpers import flat, write_tar
 
 REAL = """
 package resources
@@ -103,17 +101,11 @@ def test_missing_method_is_reported() -> None:
 
 def _tar(tmp_path, files: dict[tuple[str, str], str]):
     tar = tmp_path / "spider.tar.gz"
-    with tarfile.open(tar, "w:gz") as archive:
-        for (csp, handler), text in files.items():
-            member = (
-                f"cb-spider-0.0/cloud-control-manager/cloud-driver/drivers/"
-                f"{csp}/resources/{handler}.go"
-            )
-            raw = text.encode()
-            info = tarfile.TarInfo(member)
-            info.size = len(raw)
-            archive.addfile(info, io.BytesIO(raw))
-    return tar
+    return write_tar(tar, {
+        f"cb-spider-0.0/cloud-control-manager/cloud-driver/drivers/"
+        f"{csp}/resources/{handler}.go": text
+        for (csp, handler), text in files.items()
+    })
 
 
 def test_matrix_separates_missing_from_stub(tmp_path) -> None:

@@ -16,12 +16,12 @@
 """
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 
 from app.requirements.agent.steps import step_cloud
+from app.requirements.evaluation import jsonl
 from app.requirements.knowledge import concerns
 
 
@@ -36,19 +36,14 @@ def load(dir_path: Path) -> list[dict]:
     막는 것은 러너 쪽이 옳지만(겹쳐 뜨지 않게 하는 것), 집계도 방어한다 — 실행이 여러 번
     끊기고 재개되는 상황에서 겹침은 배관 사고이지 예외 상황이 아니다.
     """
-    path = dir_path / "ballots.jsonl"
-    rows, seen = [], set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue  # 실행 중이면 마지막 줄이 잘려 있을 수 있다
+    kept, seen = [], set()
+    for row in jsonl.rows(dir_path / "ballots.jsonl"):
         cell = row.get("cell")
         if cell in seen:
             continue
         seen.add(cell)
-        rows.append(row)
-    return rows
+        kept.append(row)
+    return kept
 
 
 def _by_cell(rows: list[dict]) -> dict[tuple[str, int, str], list[list[str]]]:

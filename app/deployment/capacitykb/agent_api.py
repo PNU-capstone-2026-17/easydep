@@ -74,16 +74,9 @@ def _recreating(n: int) -> str:
 
 @lru_cache(maxsize=4)
 def _load_merged_cached(output_dir: str) -> CapacitySet | None:
-    base = Path(output_dir)
-    merged = CapacitySet()
-    found = False
-    for name in CAPACITY_FILES:
-        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
-        path = artifact.resolve(base, name)
-        if path is not None:
-            merged.merge(CapacitySet.from_dict(artifact.load_json(path)))
-            found = True
-    return merged if found else None
+    return artifact.load_merged(
+        output_dir, CAPACITY_FILES, CapacitySet, CapacitySet.from_dict
+    )
 
 
 def load_merged(output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> CapacitySet | None:

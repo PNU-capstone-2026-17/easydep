@@ -140,17 +140,9 @@ def _load_spot_commit(output_dir: str) -> dict[tuple[str, str], dict]:
     쪽이 "이 축은 안 붙었다"고 답한다. 미러 로드와 달리 번들 폴백이 없다(GCP 전용
     보강이라 폴백할 손 큐레이션이 없다).
     """
-    found = artifact.resolve(Path(output_dir), SPOT_COMMIT_FILENAME)
-    if found is None:
-        return {}
-    try:
-        # load_json이 `.gz`(data/ 배포 번들)와 평문 둘 다 처리한다. read_text로
-        # 직접 읽으면 gz 바이트를 UTF-8로 디코드하려다 죽는다(빌드 안 한 사용자 경로).
-        data = artifact.load_json(found)
-    except (OSError, ValueError):
-        return {}
     return {
-        (r["specName"], r["region"]): r for r in data.get("records") or []
+        (r["specName"], r["region"]): r
+        for r in artifact.load_records(output_dir, SPOT_COMMIT_FILENAME)
     }
 
 
@@ -166,15 +158,9 @@ def _load_azure_discount(output_dir: str) -> dict[tuple[str, str], dict]:
     스펙 이름은 소문자로 색인한다 — API의 `armSkuName`은 `Standard_D2s_v5`이고
     미러도 같은 표기지만, 대소문자로 조인이 깨진 적이 세 번 있었다(kt·ncp·nhn 리전).
     """
-    found = artifact.resolve(Path(output_dir), AZURE_DISCOUNT_FILENAME)
-    if found is None:
-        return {}
-    try:
-        data = artifact.load_json(found)
-    except (OSError, ValueError):
-        return {}
     return {
-        (r["specName"].lower(), r["region"]): r for r in data.get("records") or []
+        (r["specName"].lower(), r["region"]): r
+        for r in artifact.load_records(output_dir, AZURE_DISCOUNT_FILENAME)
     }
 
 
@@ -197,14 +183,7 @@ def _load_managed(output_dir: str) -> dict[tuple[str, str], list[dict]]:
     """
     out: dict[tuple[str, str], list[dict]] = {}
     for name in (AZURE_MANAGED_FILENAME, GCP_MANAGED_FILENAME, AWS_MANAGED_FILENAME):
-        found = artifact.resolve(Path(output_dir), name)
-        if found is None:
-            continue
-        try:
-            data = artifact.load_json(found)
-        except (OSError, ValueError):
-            continue
-        for record in data.get("records") or []:
+        for record in artifact.load_records(output_dir, name):
             out.setdefault((record["archetype"], record["region"]), []).append(record)
     return out
 

@@ -57,16 +57,7 @@ _MISSING_MESSAGE = (
 
 @lru_cache(maxsize=4)
 def _load_merged_cached(output_dir: str) -> Graph | None:
-    base = Path(output_dir)
-    merged = Graph()
-    found = False
-    for name in GRAPH_FILES:
-        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
-        path = artifact.resolve(base, name)
-        if path is not None:
-            merged.merge(Graph.from_dict(artifact.load_json(path)))
-            found = True
-    return merged if found else None
+    return artifact.load_merged(output_dir, GRAPH_FILES, Graph, Graph.from_dict)
 
 
 def load_merged(output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> Graph | None:
@@ -327,10 +318,127 @@ def _practical_prerequisites(graph, type_id: str) -> str | None:
     )
 
 
+#: 이 개수까지는 목록을 통째로 찍는다. 넘으면 묶어서 요약한다.
+#:
+#: **실측으로 정했다**(2026-07-28, 노드 9,822개 전수). 영향 개수는 중앙값 0·평균 2.3이고,
+#: 25를 넘는 노드는 **158개(1.6%)뿐**이다. 즉 이 문턱은 98.4%의 질문에서 답을 한 글자도
+#: 바꾸지 않고, 진짜 폭발 반경(VPC 466 · IAM Role 470 · KeyVault 561)만 요약으로 보낸다.
+#: 문턱을 20으로 낮춰도 대상이 177개(1.8%)라 거의 같아서, 읽히는 목록 길이 쪽을 택했다.
+_SUMMARY_THRESHOLD = 25
+
+#: 요약할 때 보여 줄 서비스 그룹 수와, 그룹마다 이름을 몇 개까지 뽑을지.
+_GROUPS_SHOWN = 8
+_NAMES_PER_GROUP = 4
+
+#: 묶어도 안 줄어들 때(그룹이 하나뿐) 대신 찍을 앞머리 개수.
+_PLAIN_HEAD = 15
+
+
+def _group_key(type_id: str) -> str:
+    """타입 id에서 **묶을 이름**. 서비스 부분이 있으면 서비스, 없으면 프로바이더.
+
+    두 경우뿐이고 **둘 다 id에 실제로 적혀 있는 것**이다.
+
+        aws::AWS::EC2::VPC                     → AWS::EC2        (구분자 `::`)
+        azure::Microsoft.KeyVault/vaults       → Microsoft.KeyVault (구분자 `/`)
+        gcp::ComputeNetwork · core::subnet     → gcp · core       (구분자 없음)
+
+    **CamelCase를 쪼개지 않는다.** `ComputeNetwork`를 `Compute`로 읽고 싶어지지만
+    `PubSubTopic`·`Organization`에서 같은 규칙이 무엇을 낼지 말할 수 없다. 이름을
+    짐작해 만든 그룹은 19장이 경고하는 "속성 이름을 짐작하지 마라"와 같은 실패다 —
+    묶이지 않는 층은 아래에서 **묶이지 않는다고 말한다.**
+    """
+    body = type_id.split("::", 1)[1] if "::" in type_id else type_id
+    if "::" in body:
+        return "::".join(body.split("::")[:2])
+    if "/" in body:
+        return body.split("/", 1)[0]
+    return type_id.split("::", 1)[0] if "::" in type_id else type_id
+
+
+def _leaf(type_id: str, key: str) -> str:
+    """그룹 안에서 그 줄을 **구별하는 부분**만. 못 떼면 통째로 돌려준다.
+
+    그룹 이름이 `AWS::EC2`인데 줄마다 `aws::AWS::EC2::`를 반복하면 70줄이 전부
+    같아 보인다 — 13장에서 리전 요약으로 이미 겪은 실패다(39줄이 똑같아 보였는데,
+    빠진 그 부분이 그 줄의 뜻 전부였다).
+    """
+    body = type_id.split("::", 1)[1] if "::" in type_id else type_id
+    for sep in ("::", "/"):
+        if body.startswith(key + sep):
+            return body[len(key) + len(sep) :]
+    return type_id
+
+
+def _summarise_affected(target: str, ids: list[str]) -> list[str]:
+    """긴 영향 목록을 서비스별로 묶는다. **버린 것은 반드시 센다.**"""
+    groups: dict[str, list[str]] = {}
+    for type_id in ids:
+        groups.setdefault(_group_key(type_id), []).append(type_id)
+
+    if len(groups) == 1:
+        # 묶어도 그룹 줄이 총계 줄과 똑같아진다 — 요약이 아니라 한 줄 늘리는 것이다.
+        # GCP(KCC)처럼 타입 이름에 서비스 부분이 없는 층이 여기 온다.
+        head = sorted(ids)[:_PLAIN_HEAD]
+        return [
+            f"Types affected when {target} is deleted ({len(ids)}) — too many to list "
+            f"in full, so these are the first {len(head)} by name:",
+            *[f"- {t}" for t in head],
+            f"… and {len(ids) - len(head)} more. **This is a cut list, not the whole "
+            "answer** — these type names carry no service part, so there is nothing "
+            "to group them by.",
+        ]
+
+    ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    shown, rest = ordered[:_GROUPS_SHOWN], ordered[_GROUPS_SHOWN:]
+    lines = [
+        f"Types affected when {target} is deleted ({len(ids)}) — too many to list in "
+        "full, so they are grouped by service. **The per-service counts are complete; "
+        "the names under each are a sample.**",
+    ]
+    for key, members in shown:
+        members = sorted(members)
+        names = ", ".join(_leaf(m, key) for m in members[:_NAMES_PER_GROUP])
+        more = (
+            f" … and {len(members) - _NAMES_PER_GROUP} more"
+            if len(members) > _NAMES_PER_GROUP
+            else ""
+        )
+        lines.append(f"- {key} ({len(members)}): {names}{more}")
+    if rest:
+        rest_types = sum(len(m) for _, m in rest)
+        singles = sum(1 for _, m in rest if len(m) == 1)
+        lines.append(
+            f"… and {len(rest)} more services covering {rest_types} types "
+            f"({singles} of them a single type)."
+        )
+    return lines
+
+
 def deletion_impact(
-    resource_type: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR
+    resource_type: str,
+    *,
+    full: bool = False,
+    output_dir: Path | str = DEFAULT_OUTPUT_DIR,
 ) -> str:
-    """리소스 타입 삭제 시 영향받는(의존하는) 타입 목록을 반환한다."""
+    """리소스 타입 삭제 시 영향받는(의존하는) 타입을 반환한다.
+
+    **목록을 통째로 찍지 않는다.** `AWS::EC2::VPC` 하나가 466줄, `KeyVault/vaults`가
+    561줄이었다. 한 응답이 377,439자였던 사고와 같은 모양이고(13장), 그 길이면
+    아래 붙는 근거 꼬리말 — *"이 중 32%는 이름 추론이니 실제 참조를 확인하라"* —
+    이 목록에 묻혀 안 읽힌다. **긴 목록이 진짜 경고를 가린다.**
+
+    그래서 `_SUMMARY_THRESHOLD`를 넘으면 서비스별로 묶는다. 요약이 지켜야 하는 것:
+
+    - **총계와 그룹별 개수는 완전하다.** 줄어드는 것은 이름 예시뿐이고, 예시라고 밝힌다.
+    - **버린 것을 센다.** "and N more services covering M types" — 조용한 절단은
+      "이게 전부"로 읽힌다.
+    - **묶을 수 없으면 묶을 수 없다고 말한다**(`_group_key` 참조).
+
+    `full=True`면 예전처럼 전부 돌려준다. 목록 전체가 필요한 프로그램 호출자를 위한
+    것이라, **이 사실을 답변 문자열에는 적지 않는다** — 도구 출력에 스위치 이름을
+    적으면 모델이 그대로 사용자에게 복사한다(13장의 실측 누출 3/3).
+    """
     graph = load_merged(output_dir)
     if graph is None:
         return _MISSING_MESSAGE
@@ -340,9 +448,17 @@ def deletion_impact(
     affected = dependents(graph, node.id)
     if not affected:
         return f"Deleting {node.id} affects no type directly, per the schema."
-    lines = [f"Types affected when {node.id} is deleted ({len(affected)}):"]
-    lines.extend(f"- {item.id}" for item in affected)
-    footer = _evidence_footer(graph, {item.id for item in affected}, node.id)
+
+    ids = [item.id for item in affected]
+    if full or len(ids) <= _SUMMARY_THRESHOLD:
+        lines = [f"Types affected when {node.id} is deleted ({len(ids)}):"]
+        lines.extend(f"- {type_id}" for type_id in ids)
+    else:
+        lines = _summarise_affected(node.id, ids)
+
+    # 근거 꼬리말은 **요약하든 아니든 전수 기준**이다. 보여 준 8개 그룹이 아니라
+    # 영향받는 466건 전체에서 짐작 비율을 내야 그 경고가 사실이다.
+    footer = _evidence_footer(graph, set(ids), node.id)
     if footer:
         lines.append(footer)
     return "\n".join(lines)

@@ -11,7 +11,37 @@
 
 from __future__ import annotations
 
+import io
+import tarfile
+from collections.abc import Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 타입만 — 헬퍼가 KB를 런타임에 끌어오지 않게 한다.
+    from app.deployment.graphkb.model import Edge, Graph
+
 
 def flat(text: str) -> str:
     """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
     return " ".join(text.split())
+
+
+def find_edges(graph: Graph, from_id: str, to_id: str) -> list[Edge]:
+    """두 노드 사이의 엣지들. 파서 테스트 넷이 같은 정의를 갖고 있었다."""
+    return [e for e in graph.edges if e.from_id == from_id and e.to_id == to_id]
+
+
+def write_tar(path: Path, members: Mapping[str, str | bytes]) -> Path:
+    """이름 → 내용으로 `.tar.gz` 하나를 만든다.
+
+    파서 테스트마다 이 여섯 줄(`TarInfo` → `size` → `addfile`)을 다시 적고 있었다.
+    **회원 경로 규칙은 각 테스트가 정한다** — 업스트림 저장소마다 디렉터리 모양이 달라서
+    그건 공유할 수 있는 것이 아니다. 공유되는 건 "문자열을 tar 회원으로 넣는 법"뿐이다.
+    """
+    with tarfile.open(path, "w:gz") as archive:
+        for name, body in members.items():
+            raw = body.encode("utf-8") if isinstance(body, str) else body
+            info = tarfile.TarInfo(name)
+            info.size = len(raw)
+            archive.addfile(info, io.BytesIO(raw))
+    return path

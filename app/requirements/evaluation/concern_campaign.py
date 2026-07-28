@@ -37,6 +37,7 @@ from app.requirements import prompts
 from app.requirements.agent.steps import step_cloud
 from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
+from app.requirements.evaluation import jsonl
 from app.requirements.knowledge import concerns
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -56,23 +57,9 @@ def _log(path: Path, message: str) -> None:
     print(line, flush=True)
 
 
-def _append(path: Path, row: dict) -> None:
-    """행 하나를 즉시 쓴다. **출력보다 먼저** — 출력이 죽어도 측정은 남는다."""
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-        fh.flush()
-
-
 def _done_cells(path: Path) -> set[str]:
-    if not path.exists():
-        return set()
-    done = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            done.add(json.loads(line)["cell"])
-        except (ValueError, KeyError):
-            continue  # 잘린 마지막 줄 — 그 칸은 다시 돈다
-    return done
+    """이미 잰 칸들. **잘린 마지막 줄은 `jsonl.rows`가 건너뛴다** — 그 칸은 다시 돈다."""
+    return {row["cell"] for row in jsonl.rows(path) if "cell" in row}
 
 
 def load_domains() -> list[tuple[str, list[dict]]]:
@@ -147,7 +134,7 @@ def run(out_dir: Path, hours: float, repeats: int) -> int:
                     _log(log_path, f"시간 종료 — {ran}칸 실행, 남은 계획 {planned - len(done) - ran}칸")
                     return 0
                 result = one_ballot(classified, chunk)
-                _append(rows_path, {
+                jsonl.append(rows_path, {
                     "cell": cell,
                     "domain": name,
                     "chunk": chunk,
