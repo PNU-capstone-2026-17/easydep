@@ -721,7 +721,7 @@ CONCERNS: tuple[Concern, ...] = (
             "리전마다 전력 구성이 다르고 그 값이 리전 코드로 색인돼 있다. 제약이 있으면 "
             "리전 선택이 좁아지므로 요구사항 단계에서 알아야 한다."
         ),
-        consumer=None,
+        consumer="RESOURCE_SPEC.lowCarbonPreferred",
         doc_id="gcp-framework/sustainability/low-carbon-regions",
         probe=("carbon", "low-carbon"),
         iso25010=(),        citation=f"{_GCP} — Use regions that consume low-carbon energy",

@@ -114,7 +114,7 @@ def test_the_three_way_split_covers_every_concern():
     boundary = [c for c in concerns.CONCERNS if c.out_of_scope]
 
     assert len(wired) + len(pending) + len(boundary) == len(concerns.CONCERNS)
-    assert (len(wired), len(pending), len(boundary)) == (6, 15, 8), (
+    assert (len(wired), len(pending), len(boundary)) == (7, 14, 8), (
         f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
     )
 

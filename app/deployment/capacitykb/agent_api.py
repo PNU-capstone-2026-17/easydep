@@ -565,12 +565,25 @@ def type_summary(
         more = f" and {len(names) - 3} more" if len(names) > 3 else ""
         parts.append(f"{_recreating(len(names))} — {shown}{more}")
 
+    # **낡음 고지가 여기에도 붙어야 한다.** 실측(2026-07-28)에서 "GCP
+    # ContainerCluster의 불변 속성은?"에 모델이 용량 축이 아니라 그래프 축으로
+    # 갔는데, 이 요약이 개수("75 properties that recreate…")는 주면서 **그 값의
+    # 44%가 2023-09 스냅샷에서 왔다는 사실은 안 줬다.** 그래서 답변에서 낡음
+    # 경고가 통째로 사라졌다 — 같은 질문이 어느 축으로 가느냐에 따라 고지가
+    # 붙기도 하고 안 붙기도 했다.
+    #
+    # 고지는 **입구마다** 있어야 한다. 축을 늘리는 것과 축에 닿게 하는 것이 다른
+    # 일인 것처럼(이 함수가 존재하는 이유 그대로), 고지를 다는 것과 그 고지가 모든
+    # 문으로 나가는 것도 다른 일이다.
+    footer = _backend_footer(immutables + others)
+    caveat = f"\n  ※ {footer}" if footer else ""
+
     # **도구 이름을 적지 않는다.** 이 줄은 사용자에게 옮겨지는 텍스트라 내부 이름을
     # 쥐여 주면 지시문이 금지한 노출을 우리가 유발한다. 게다가 여기 적혀 있던
     # `cap_allowed_values`·`cap_property_limits`는 통합으로 **사라진 이름**이었다 —
     # KB가 도구 층의 이름을 알면 그 층이 바뀔 때마다 조용히 거짓이 된다.
     return (
-        f"capacity & constraints (capacitykb): {' · '.join(parts)}\n"
+        f"capacity & constraints (capacitykb): {' · '.join(parts)}{caveat}\n"
         "  → ask the limits & constraints axis **with the value** for a verdict on "
         "whether it works (put the conditions in context), or **without a value** "
         "to see the allowed values and every limit."

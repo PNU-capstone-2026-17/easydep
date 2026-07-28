@@ -397,6 +397,38 @@ def test_type_summary_points_at_the_data(wide: Path) -> None:
     assert "limits & constraints axis" in text, "다음에 볼 축을 안 가리킨다"
 
 
+def test_type_summary_carries_the_staleness_caveat(tmp_path: Path) -> None:
+    """**고지는 입구마다 있어야 한다.**
+
+    실측(2026-07-28): "GCP ContainerCluster의 불변 속성은?"에 모델이 용량 축이 아니라
+    그래프 축으로 갔는데, 이 요약이 개수는 주면서 **그 값이 2023-09 스냅샷에서 왔다는
+    사실은 안 줬다.** 그래서 답변에서 낡음 경고가 통째로 사라졌다 — 같은 질문이 어느
+    축으로 가느냐에 따라 고지가 붙기도 하고 안 붙기도 했다.
+
+    축을 늘리는 것과 축에 닿게 하는 것이 다른 일인 것처럼, 고지를 다는 것과 그 고지가
+    **모든 문으로 나가는 것**도 다른 일이다.
+    """
+    caps = CapacitySet()
+    caps.add_constraint(Constraint(
+        type_id="gcp::ContainerCluster", property="clusterIpv4Cidr",
+        kind="mutability", value="create_only", evidence="kcc-crd-schema",
+        backend="tf2crd",
+    ))
+    caps.save(tmp_path / "gcp-capacity.json")
+    agent_api._load_merged_cached.cache_clear()
+
+    text = agent_api.type_summary("gcp::ContainerCluster", output_dir=tmp_path)
+    assert text and "2023-09-26" in text, "낡음 고지가 요약에 없다"
+    assert "may be outdated" in text
+    agent_api._load_merged_cached.cache_clear()
+
+
+def test_type_summary_stays_quiet_when_nothing_is_stale(wide: Path) -> None:
+    """고지가 **아무 데나 붙으면 잡음**이 되고, 잡음이 되면 다음 사람이 안 읽는다."""
+    text = agent_api.type_summary("AWS::EC2::Volume", output_dir=wide)
+    assert text and "may be outdated" not in text
+
+
 def test_type_summary_is_silent_on_unknown_types(wide: Path) -> None:
     """모르는 타입엔 아무 말도 하지 않는다 — 그래프 질의를 어지럽히면 안 된다."""
     assert agent_api.type_summary("AWS::Lambda::Function", output_dir=wide) is None
