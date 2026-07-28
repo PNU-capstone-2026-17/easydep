@@ -15,12 +15,7 @@ import json
 import pytest
 
 from app.deployment.envkb import lifecycle
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
-
+from app.deployment.tests._helpers import flat
 
 PRODUCT_MD = """---
 title: Amazon EKS

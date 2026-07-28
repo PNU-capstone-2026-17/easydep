@@ -94,6 +94,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core import advisory
 from app.requirements.knowledge import basis
 
 #: **메타 특성** — 무엇이 관심사가 될 수 있는지를 정하는 단일 기준(Nickerson 외 2013).
@@ -123,21 +124,16 @@ ISO25010: tuple[str, ...] = (
     "safety",
 )
 
-#: 이 축의 유일한 근거 라벨. `app/deployment/patternkb/model.py`의 같은 이름과 맞춘다.
-#: basis는 **영원히 `inferred`**다 — 설계 산문은 사람이 검수해도 클라우드 사실이 되지
-#: 않는다. 그래서 이 축에는 `stated`로 올라갈 길이 없다(규칙 축과 다른 점이다).
-EVIDENCE = "pattern-advisory"
-
-#: 관심사를 실은 모든 출력에 붙는 고지. **어떤 출력 경로에서도 떼면 안 된다.**
+#: 이 축의 유일한 근거 라벨과, 관심사를 실은 모든 출력에 붙는 고지.
+#: **어떤 출력 경로에서도 고지를 떼면 안 된다.**
 #:
-#: `app/deployment/patternkb/model.py`의 `ADVISORY_NOTICE`와 **같은 문자열이어야 한다.**
-#: 사본인 것을 알고 둔다 — `app/requirements`는 `app/deployment` 없이 돌아야 해서
-#: import할 수 없다. 사본이 갈라지는 것은 `verify_concerns`가 잡는다(대조는 사본을
-#: 없애 주지 않지만, 갈라진 것을 조용하지 않게는 만든다).
-ADVISORY_NOTICE = (
-    "※ This is design guidance, not a cloud fact — confirm values, limits, and "
-    "verdicts with the knowledge-base tools (kb_*/cap_*/cost_*)."
-)
+#: 둘 다 `patternkb`가 정의하고 여기서는 `app/core`를 거쳐 받는다. 한동안은 사본이었다 —
+#: `app/requirements`가 `app/deployment` 없이 돌아야 한다는 규약 때문이었고, 그래서
+#: 사본이 갈라졌는지 대조하는 검사까지 따로 있었다. 그 규약은 2026-07-28에 `app/core`가
+#: 문을 하나로 좁히면서 바뀌었고, **사본을 둘 이유도 그때 사라졌다.**
+#: basis는 영원히 `inferred`다 — 설계 산문은 사람이 검수해도 클라우드 사실이 되지 않는다.
+EVIDENCE = advisory.EVIDENCE
+ADVISORY_NOTICE = advisory.ADVISORY_NOTICE
 
 
 @dataclass(frozen=True)

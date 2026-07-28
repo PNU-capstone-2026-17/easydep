@@ -18,25 +18,6 @@ ReqType = Literal["FR", "NFR"]
 # ----------------------------------------------------------------------------
 # LLM 구조화 출력 스키마
 # ----------------------------------------------------------------------------
-class Assessment(BaseModel):
-    """요구사항이 유스케이스 도출에 충분히 구체적인지에 대한 LLM 판단."""
-
-    is_concrete: bool = Field(
-        description="True if every requirement is concrete enough to derive "
-        "actors and use cases without further clarification."
-    )
-    clarifying_questions: list[str] = Field(
-        default_factory=list,
-        description="Questions to ask the user when requirements are too abstract. "
-        "Empty when is_concrete is True.",
-    )
-    refined_requirements: list[str] = Field(
-        default_factory=list,
-        description="The current best set of concrete, single-sentence requirements "
-        "in English. Populated once enough information is available.",
-    )
-
-
 class ConstraintLink(BaseModel):
     """분리된 품질 제약(NFR)과 그것이 한정하는 기능 요구(FR)의 링크(추적성).
 

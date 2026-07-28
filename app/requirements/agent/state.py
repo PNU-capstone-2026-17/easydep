@@ -85,8 +85,6 @@ class AgentState(TypedDict):
     # Phase 2(RTM): clarify가 분리한 (constraint 문장 → qualify하는 functional 문장) 링크.
     # classify가 이 문장쌍을 id로 해소해 RequirementItem.qualifies를 채운다.
     constraint_links: NotRequired[list[dict]]
-    pending_questions: list[str]
-    is_concrete: bool
     classified: list[RequirementItem]
     phase: str
     # 클라우드 네이티브 관심사 커버리지(`steps/step_cloud.py`).

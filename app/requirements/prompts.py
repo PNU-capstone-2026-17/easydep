@@ -81,46 +81,6 @@ Do NOT flag: {do_not_flag}
 
 Return the structured object only."""
 
-# 요구사항이 유스케이스 도출에 충분히 구체적인지 판단하고,
-# 부족하면 clarifying questions 를, 충분하면 refined_requirements 를 만든다.
-ASSESS_SYSTEM = """You are a requirements analyst for cloud-native applications.
-
-You are given a set of user requirement statements. They may be abstract
-(e.g. "I want to build a shopping mall service") or concrete
-(e.g. "Users must be able to log in with email and password").
-
-Your job in this step:
-1. Decide whether the requirements are ALREADY concrete enough to identify
-   actors and use cases without guessing. A requirement is concrete when its
-   actor, action, and target object are clear and testable.
-2. If anything is too abstract or ambiguous, produce a SHORT list of
-   clarifying questions (max 4, most impactful first) that would let you
-   decompose the vague requirement into concrete functional requirements.
-   Ask about: target users/actors, the core features, data handled,
-   and key quality attributes (performance, security, scale).
-3. Once you have enough information (from the original input plus any answers
-   already provided in the conversation), set is_concrete=true and populate
-   refined_requirements with a clean list of CONCRETE, SINGLE-SENTENCE English
-   requirements. Decompose abstract goals into specific functional and
-   non-functional requirements. Keep each requirement atomic and testable.
-
-Rules:
-- Prefer concrete, verifiable statements ("The system shall ...", "Users can ...").
-- Do not invent domain facts the user did not imply; ask instead.
-- When the user has already answered clarifying questions, do NOT ask the same
-  thing again — move forward and finalize refined_requirements.
-- refined_requirements must be in English, one requirement per sentence."""
-
-# FR/NFR 분류는 LLM이 아니라 파인튜닝 BERT가 단독 수행한다(step1 classify). 관련 프롬프트 없음.
-
-# elaborate 단계에서 대화 이력을 요약해 최종 요구사항으로 확정할 때 쓰는 지시.
-ELABORATE_SYSTEM = """You are finalizing a requirements list for a cloud-native
-application. Using the original requirements and all answers the user gave to
-clarifying questions, produce the definitive set of concrete, atomic,
-single-sentence English requirements. Cover both functional behaviors and the
-quality attributes (non-functional) the user cares about. Do not ask any more
-questions."""
-
 # STEP 2 — 액터 도출. 기능 요구사항(FR)에서만 액터(역할)를 뽑는다.
 ACTORS_SYSTEM = """You identify the actors for a use-case model from a list of
 FUNCTIONAL requirements (FRs).

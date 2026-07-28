@@ -26,9 +26,9 @@
 
   1. 관심사가 가리키는 문서가 코퍼스에 실재하는가.
   2. `probe` 구절이 그 문서 본문에 실제로 있는가 — 좌표가 맞는지 보는 열쇠다.
-  3. **고지 문구가 갈라지지 않았는가.** `concerns.ADVISORY_NOTICE`는 patternkb의 같은
-     상수의 사본이다(import할 수 없어서). 사본은 갈라지는데, 갈라지면 요구사항 쪽 고지가
-     배포 쪽과 다른 말을 하게 된다.
+고지 문구 대조는 **없앴다**(2026-07-28). `concerns.ADVISORY_NOTICE`가 patternkb의
+사본이던 동안에는 갈라짐을 잡아야 했지만, 지금은 `app/core/advisory.py`를 거쳐 원본을
+그대로 받는다 — 갈라질 수가 없다. 대조는 사본을 없애 주지 않으므로, 사본을 없앴다.
 """
 from __future__ import annotations
 
@@ -69,13 +69,6 @@ def load_corpus() -> dict[str, str]:
     return {d.id: d.text.lower() for d in docs}
 
 
-def notice_matches() -> bool:
-    """고지 문구가 patternkb의 원본과 같은가."""
-    from app.deployment.patternkb.model import ADVISORY_NOTICE  # 런타임 경로가 아니다
-
-    return concerns.ADVISORY_NOTICE == ADVISORY_NOTICE
-
-
 def verify(corpus: dict[str, str] | None = None) -> list[Verdict]:
     """관심사 전부를 대조한다. `probe`가 없는 관심사는 없다(그 규율은 테스트가 지킨다)."""
     texts = load_corpus() if corpus is None else corpus
@@ -102,10 +95,6 @@ def main() -> int:
         elif verdict.missing:
             line += f"  <- 본문에 없다: {list(verdict.missing)}"
         print(line)
-
-    if not notice_matches():
-        print("\nFAIL 고지 문구가 patternkb의 ADVISORY_NOTICE와 갈라졌다.")
-        failed.append(Verdict("(advisory notice)", "-", doc_found=False))
 
     print(f"\n대조 {len(verdicts)}건 · 실패 {len(failed)}건")
     return 1 if failed else 0

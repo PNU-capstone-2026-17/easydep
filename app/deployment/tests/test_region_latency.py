@@ -21,12 +21,7 @@ from app.deployment.envkb.latency import (
     haversine_km,
     parse_matrix,
 )
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
-
+from app.deployment.tests._helpers import flat
 
 MATRIX = (
     ",aws-ap-northeast-2,aws-ap-northeast-1,azure-koreacentral\n"

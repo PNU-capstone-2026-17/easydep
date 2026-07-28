@@ -23,11 +23,7 @@ from app.deployment.appkb.easydep import (
     parse_er_entities,
     parse_sequence,
 )
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
+from app.deployment.tests._helpers import flat
 
 #: easydep 결정론 렌더러의 출력 모양 그대로.
 _CLASS_PUML = """@startuml

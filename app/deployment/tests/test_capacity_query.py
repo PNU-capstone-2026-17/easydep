@@ -15,14 +15,10 @@ from app.deployment.capacitykb.query import (
     limits_for,
     resolve_type,
 )
+from app.deployment.tests._helpers import flat
 
 VOLUME = "aws::AWS::EC2::Volume"
 SUBNET = "aws::AWS::EC2::Subnet"
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
 
 
 def constraint(**overrides) -> Constraint:

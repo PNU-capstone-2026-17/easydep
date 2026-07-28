@@ -11,11 +11,7 @@ from pathlib import Path
 
 from app.deployment.capacitykb import agent_api
 from app.deployment.capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
+from app.deployment.tests._helpers import flat
 
 
 def crd(kind: str, spec: dict) -> dict:

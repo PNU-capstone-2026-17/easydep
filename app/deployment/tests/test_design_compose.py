@@ -19,13 +19,9 @@ from app.deployment.nim_agent.design_tools import (
     compose,
     deployment_answer,
 )
+from app.deployment.tests._helpers import flat
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
 
 
 @pytest.fixture()

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.deployment.kbcommon.basis import OBSERVED, basis_of, is_fact
+from app.deployment.kbcommon.basis import basis_of, is_fact
 
 #: 구성원 등급. 순서가 곧 강도다.
 ALWAYS = "always"
@@ -195,7 +195,3 @@ class BundleSet:
             "_source": self.provenance,
         }
 
-
-def observed_only(companions: list[Companion]) -> list[Companion]:
-    """실측 근거만 남긴다 — 판정에 쓰면 안 되는 것을 걸러내는 데 쓴다."""
-    return [c for c in companions if c.basis == OBSERVED]

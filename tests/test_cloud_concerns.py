@@ -138,9 +138,17 @@ def test_citations_match_the_committed_corpus():
     assert not failed, f"코퍼스와 맞지 않는 좌표: {failed}"
 
 
-def test_the_advisory_notice_has_not_drifted_from_patternkb():
-    """고지는 patternkb 상수의 사본이다. 갈라지면 두 에이전트가 다른 말을 한다."""
-    assert verify_concerns.notice_matches()
+def test_the_advisory_notice_is_the_patternkb_constant_itself():
+    """**사본이 아니라 같은 객체다.**
+
+    예전에는 사본이었고 갈라짐을 대조로 잡았다(`verify_concerns.notice_matches`).
+    지금은 `app/core/advisory.py`를 거쳐 원본을 그대로 받으므로 갈라질 수가 없다 —
+    대조 대신 **같은 것인지**를 검사한다. 누가 여기에 문자열을 다시 적으면 이 검사가 문다.
+    """
+    from app.deployment.patternkb import model as patternkb
+
+    assert concerns.ADVISORY_NOTICE is patternkb.ADVISORY_NOTICE
+    assert concerns.EVIDENCE is patternkb.EVIDENCE_ADVISORY
 
 
 def test_prompt_carries_every_concern_and_the_notice():
