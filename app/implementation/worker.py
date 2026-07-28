@@ -198,7 +198,9 @@ class ImplementationWorker:
             lowered = relative.lower()
             if "/test/" in f"/{lowered}":
                 kind = TYPE_TEST_CODE
-            elif any(token in lowered for token in ("k8s/", "dockerfile", "helm/")):
+            elif relative == ".dockerignore" or any(
+                token in lowered for token in ("k8s/", "dockerfile", "helm/")
+            ):
                 kind = TYPE_DEPLOYMENT_FILE
             elif any(token in lowered for token in ("terraform/", ".tf", "pulumi/")):
                 kind = TYPE_IAC_CODE

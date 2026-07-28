@@ -21,7 +21,6 @@ TASK_PHASES = {
     "gateway-adapter": "outbound-adapters",
     "configuration": "wiring",
     "integration-test": "end-to-end",
-    "deployment": "deployment",
 }
 PHASE_DEPENDENCIES = {
     "control": (),
@@ -36,7 +35,6 @@ PHASE_DEPENDENCIES = {
         "outbound-adapters",
     ),
     "end-to-end": ("wiring",),
-    "deployment": ("end-to-end",),
 }
 
 

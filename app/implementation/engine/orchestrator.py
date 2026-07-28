@@ -17,7 +17,6 @@ from .design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
-    generate_deployment_tasks,
     generate_e2e_tasks,
     generate_gateway_adapter_tasks,
     generate_implementation_tasks,
@@ -26,7 +25,7 @@ from .design_context import (
 )
 
 
-OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud", "deploymentIntent")
+OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
 BCE_GENERATOR_VERSION = "0.2.0"
 IMPLEMENTATION_PIPELINE_VERSION = "0.3.0-ir"
 JAVA_BUILTIN_TYPES = {
@@ -720,25 +719,6 @@ def plan_e2e_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         return []
-    existing = {
-        item.get("task_id"): item
-        for item in manifest.get("implementation_tasks", [])
-    }
-    for task in tasks:
-        existing[task.task_id] = task.to_dict()
-    manifest["implementation_tasks"] = list(existing.values())
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task.to_dict() for task in tasks]
-
-
-def plan_deployment_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
-    """Add the Kubernetes deployment task to an existing run manifest."""
-    run_root = run_root.resolve()
-    tasks = generate_deployment_tasks(spec, run_root)
-    manifest_path = run_root / "reports" / "run-manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])

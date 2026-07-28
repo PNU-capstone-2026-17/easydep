@@ -49,7 +49,6 @@ class PrototypeClient:
         write("erd", "erd.puml", design.get("erd_puml"))
         write("deployment", "deployment-diagram.puml", design.get("deployment_diagram_puml"))
         write("cloud", "resource-spec.json", design.get("resource_spec"))
-        write("deploymentIntent", "deployment-intent.json", design.get("deployment_intent"))
         job = {
             "name": f"easydep-{app_id[:8]}",
             "workspaceRoot": str(self.settings.repository_root),
