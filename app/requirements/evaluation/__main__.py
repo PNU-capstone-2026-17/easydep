@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import argparse
+import collections
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -124,9 +126,20 @@ def _ranking_warnings(rows: list[dict]) -> list[str]:
 
     # 캠페인은 몇 시간을 돈다. 그동안 프롬프트가 바뀌면 앞뒤 행이 다른 것을 잰 것이 되는데,
     # 반복·명세수만 봐서는 안 보인다.
-    fingerprints = {json.dumps(r.get("prompts"), sort_keys=True) for r in rows if r.get("prompts")}
-    if len(fingerprints) > 1:
-        warnings.append(f"프롬프트 판이 {len(fingerprints)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다.")
+    #
+    # **"판이 다르다"와 "판이 안 찍혔다"를 가른다.** 예전 행은 `prompts`에 생성·검증 해시만
+    # 적었다(경로별 지문이 생기기 전이다). 그걸 "판이 3가지 섞였다"로 뭉뚱그리면, 실제로는
+    # 같은 프롬프트로 잰 표가 영원히 못 쓰는 표로 보인다 — 실측에서 정확히 그랬다.
+    # 미기록은 밖에서 대조할 수 있는 사실이라 **할 일**을 함께 적는다.
+    stamped = {r["prompts"]["probe"] for r in rows if (r.get("prompts") or {}).get("probe")}
+    unstamped = sum(1 for r in rows if not (r.get("prompts") or {}).get("probe"))
+    if len(stamped) > 1:
+        warnings.append(f"프로브 프롬프트 판이 {len(stamped)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다.")
+    if unstamped:
+        warnings.append(
+            f"프로브 판이 안 찍힌 행 {unstamped}개(옛 형식) — 그때 커밋의 `prompts.py`로 "
+            f"probe digest를 재계산해 지금 값과 같은지 확인해야 순위로 읽을 수 있다."
+        )
 
     coverage = set(_domains_per_rule(rows).values())
     if len(coverage) > 1:
@@ -234,6 +247,48 @@ def _cmd_concern_report(args) -> int:
     from app.requirements.evaluation import concern_report
 
     _print(concern_report.report(Path(args.dir), k=args.k))
+    return 0
+
+
+def _cmd_concern_differentiation(args) -> int:
+    """넓힌 코퍼스(PURE)에서 분화를 다시 잰다 — 결정론 층만, LLM 없음."""
+    from app.requirements.evaluation import concern_corpus
+
+    items = concern_corpus.requirements()
+    if args.show:
+        _print(concern_corpus.pair(args.show[0], args.show[1], items))
+        return 0
+    _print(concern_corpus.measure(items))
+    return 0
+
+
+def _cmd_concern_labels(args) -> int:
+    """사람이 라벨 붙일 눈가림 파일 + 열쇠를 만든다(LLM 없음).
+
+    **두 파일로 나누는 것이 요점이다.** 층 표시가 항목 파일에 있으면 눈가림이 아니다.
+    """
+    from app.requirements.evaluation import concern_labels
+
+    items, key = concern_labels.build(
+        Path(args.dir), chunk=args.chunk, k=args.k, controls=args.controls
+    )
+    for path, payload in ((Path(args.out), items), (Path(args.key), key)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    layers = collections.Counter(case["layer"] for case in key["key"].values())
+    print(f"{args.out} — 항목 {len(items['items'])}개 (분쟁 "
+          f"{layers['llm'] + layers['signal']}건 · 대조 {layers['both']}건)")
+    print(f"{args.key} — 열쇠. **라벨을 붙이는 동안 열지 않는다.**")
+    return 0
+
+
+def _cmd_concern_label_score(args) -> int:
+    """라벨 대비 층별 정밀도(LLM 없음)."""
+    from app.requirements.evaluation import concern_labels
+
+    labels = json.loads(Path(args.labels).read_text(encoding="utf-8"))
+    key = json.loads(Path(args.key).read_text(encoding="utf-8"))
+    _print(concern_labels.score(labels, key))
     return 0
 
 
@@ -349,6 +404,13 @@ def _cmd_diff(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # **콘솔 인코딩이 명령을 죽이지 못하게 한다.** 윈도우 콘솔은 cp949라 `—` 한 글자에
+    # `print`가 UnicodeEncodeError를 낸다. `campaign.py`가 같은 이유로 3시간짜리 실행을
+    # 잃고 나서 자기 안에 이 줄을 넣었는데, 그건 캠페인 안에서만 듣는다 — 산출물을 다
+    # 쓰고 나서 요약 한 줄에 죽는 명령이 그대로 남아 있었다.
+    with contextlib.suppress(Exception):  # 파이프·리다이렉트면 없을 수 있다
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
     parser = argparse.ArgumentParser(prog="python -m app.requirements.evaluation")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -427,6 +489,33 @@ def main(argv: list[str] | None = None) -> int:
     p_cr.add_argument("--dir", required=True)
     p_cr.add_argument("-k", type=int, default=3, help="다수결 표 수(표는 이미 쌓여 있다)")
     p_cr.set_defaults(fn=_cmd_concern_report)
+
+    p_cd = sub.add_parser(
+        "concern-differentiation",
+        help="넓힌 코퍼스(PURE)에서 관심사 분화를 다시 잰다 (LLM 없음)",
+    )
+    p_cd.add_argument("--show", nargs=2, metavar=("A", "B"),
+                      help="두 관심사의 한쪽만 거는 요구사항 문장을 낸다 — 등급은 사람이 매긴다")
+    p_cd.set_defaults(fn=_cmd_concern_differentiation)
+
+    p_cl = sub.add_parser(
+        "concern-labels", help="관심사 링크에 사람 라벨을 붙일 눈가림 파일 생성 (LLM 없음)"
+    )
+    p_cl.add_argument("--dir", required=True, help="쌓인 표가 있는 캠페인 디렉터리")
+    p_cl.add_argument("--out", required=True, help="라벨러가 채울 눈가림 파일")
+    p_cl.add_argument("--key", required=True, help="층 표시가 담긴 열쇠 — 라벨 중에는 열지 않는다")
+    p_cl.add_argument("--chunk", type=int, default=0)
+    p_cl.add_argument("-k", type=int, default=3, help="LLM 링크를 확정할 다수결 표 수")
+    p_cl.add_argument("--controls", type=int, default=16,
+                      help="두 층이 합의한 링크에서 뽑을 대조 항목 수")
+    p_cl.set_defaults(fn=_cmd_concern_labels)
+
+    p_cls = sub.add_parser(
+        "concern-label-score", help="라벨 대비 층별 정밀도 (LLM 없음)"
+    )
+    p_cls.add_argument("--labels", required=True)
+    p_cls.add_argument("--key", required=True)
+    p_cls.set_defaults(fn=_cmd_concern_label_score)
 
     p_pb = sub.add_parser(
         "playbook", help="실행에서 배운 것을 쌓고 보여 준다 (LLM 없음)"
