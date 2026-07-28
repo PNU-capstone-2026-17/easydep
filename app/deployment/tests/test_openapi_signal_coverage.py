@@ -100,14 +100,24 @@ TRUTH: dict[str, set[str]] = {
 
 #: **현재 파서가 놓치는 것** — 변형 이름 → 놓치는 신호.
 #: 고쳐서 잡히게 되면 여기서 빼야 테스트가 통과한다.
+#:
+#: 2026-07-28에 `upload-as-image-mime`이 빠졌다 — content-type 목록 대신 스펙이
+#: 주는 `schema.format == "binary"`를 보게 고쳤다. 나머지 다섯은 `$ref` 해소와
+#: webhooks 읽기가 필요해 아직 남아 있고, **대신 못 읽었다고 말한다**(`UNREAD`).
 MISSES: dict[str, set[str]] = {
     "security-behind-ref": {"secret"},
     "security-used-not-declared": {"secret"},
     "upload-behind-ref": {"upload"},
-    "upload-as-image-mime": {"upload"},
     "webhooks-only-31": {"async"},
     "callbacks": {"async"},
 }
+
+#: **놓치되 놓쳤다고 말해야 하는 것.** 이게 이 파일의 핵심 계약이다.
+#:
+#: 놓치는 것 자체는 파서의 한계이고 고치면 준다. 하지만 **놓쳤다는 말 없이 놓치는
+#: 것**은 거짓말이고, 그건 커버리지와 무관하게 언제나 결함이다. KB 축들이 "수집
+#: 범위 밖이라 모른다"를 문장으로 답하는 것과 같은 규율이다.
+UNREAD = set(MISSES)
 
 
 def _signals_for(spec: dict):
@@ -165,13 +175,32 @@ def test_the_known_gap_is_the_majority() -> None:
     문서가 먼저 늙지만, 여기 적으면 **코드와 함께 늙는다.**
     """
     complete = [n for n in VARIANTS if _extracted(VARIANTS[n]) == TRUTH[n]]
-    # inline(완전) + 신호가 애초에 없는 둘(empty-paths·servers-only-hint)
-    assert sorted(complete) == ["empty-paths", "inline", "servers-only-hint"], (
-        f"완전 추출되는 변형이 달라졌다: {sorted(complete)}"
-    )
+    # inline·upload-as-image-mime(완전) + 신호가 애초에 없는 둘
+    assert sorted(complete) == [
+        "empty-paths", "inline", "servers-only-hint", "upload-as-image-mime",
+    ], f"완전 추출되는 변형이 달라졌다: {sorted(complete)}"
     signal_bearing = [n for n in VARIANTS if TRUTH[n]]
     caught = [n for n in signal_bearing if _extracted(VARIANTS[n]) == TRUTH[n]]
-    assert len(caught) == 1, (
+    assert len(caught) == 2, (
         f"신호를 담은 변형 {len(signal_bearing)}종 중 완전 추출 {len(caught)}종 "
         "— 이 비율이 바뀌면 기록을 갱신하라"
     )
+
+
+@pytest.mark.parametrize("name", sorted(VARIANTS))
+def test_a_missed_signal_is_never_silent(name: str) -> None:
+    """**놓치는 것보다 나쁜 것은 놓쳤다는 말 없이 놓치는 것이다.**
+
+    같은 API를 표준 `$ref` 방식으로 쓰면 계획에서 노드 두 개(시크릿 저장소·객체
+    스토리지)가 조용히 사라졌다(실측 2026-07-28). 파서를 더 정교하게 만드는 것보다
+    **못 읽었다고 말하는 것이 먼저다** — 그래야 `$ref` 해소가 불완전해도 답이
+    거짓말이 되지 않는다.
+
+    KB 축들은 이 규율을 이미 지킨다("수집 범위 밖이라 모른다"). 입력 파서에만
+    없었다.
+    """
+    unread = _signals_for(VARIANTS[name]).unread
+    if name in UNREAD:
+        assert unread, f"{name}: 신호를 놓쳤는데 못 읽었다는 말이 없다"
+    else:
+        assert not unread, f"{name}: 다 읽었는데 못 읽었다고 한다 — {unread}"

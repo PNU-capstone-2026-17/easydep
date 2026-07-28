@@ -257,6 +257,21 @@ class _Signals:
     async_targets: set[str]
     sync_calls: list[tuple[str, str, str]]
     any_async: bool
+    unread: tuple[str, ...] = ()
+    """**읽지 못한 자리.** 신호가 있었을 수도 있는데 우리가 못 본 곳들.
+
+    나머지 필드가 전부 2상태(집합에 있거나 없거나)라, 여태 *"읽었고 없었다"*와
+    *"참조라 못 읽었다"*가 같은 값이었다. 그래서 같은 API를 표준 `$ref` 방식으로
+    쓰면 시크릿 저장소·객체 스토리지 노드가 **조용히 사라졌다**(실측 2026-07-28:
+    변형 9종 중 8종이 신호를 놓쳤고, 놓쳤다는 말은 어디에도 없었다).
+
+    KB 축들은 이 결함을 이미 두 번 고쳤다 — perfkb의 다섯 상태, capacitykb의
+    3상태, 질의 계층의 침묵 다섯 문장. **입력 파서에만 안 와 있었다.**
+
+    여기 담긴 것은 `plan.unresolved`로 올라가 계획 본문과 다이어그램 범례에
+    나온다. 파서를 더 정교하게 만드는 것보다 **못 읽었다고 말하는 것이 먼저다** —
+    그래야 `$ref` 해소가 불완전해도 답이 거짓말이 되지 않는다.
+    """
 
 
 def _collect_signals(design: dict) -> _Signals:
@@ -269,19 +284,60 @@ def _collect_signals(design: dict) -> _Signals:
     # 파일 업로드 본문 → 객체 스토리지 후보. securitySchemes→비밀 저장소와 같은
     # 계열의 결정론 신호다 — OpenAPI가 말한 사실에서 출발하되 결론은 inferred.
     uploads: set[str] = set()
+    unread: list[str] = []
     for openapi_artifact in _artifacts(design, "openapi"):
-        for path_item in (openapi_artifact["openapi"].get("paths") or {}).values():
+        cid = openapi_artifact["componentId"]
+        doc = openapi_artifact["openapi"]
+        # **못 읽은 자리를 센다.** 고치는 것보다 밝히는 것이 먼저다.
+        components = doc.get("components")
+        if isinstance(components, dict) and "$ref" in components:
+            unread.append(
+                f"{cid}: the OpenAPI `components` block is a $ref "
+                f"({components['$ref']}) — we did not resolve it, so we cannot tell "
+                "whether this service needs credential storage"
+            )
+        elif doc.get("security") and not (components or {}).get("securitySchemes"):
+            unread.append(
+                f"{cid}: the OpenAPI declares `security` but the schemes are not in "
+                "this document — we cannot tell what credential storage it needs"
+            )
+        if doc.get("webhooks") or any(
+            isinstance(op, dict) and op.get("callbacks")
+            for item in (doc.get("paths") or {}).values() if isinstance(item, dict)
+            for op in item.values()
+        ):
+            unread.append(
+                f"{cid}: the OpenAPI declares webhooks/callbacks — those are "
+                "asynchronous signals we do not read yet, so a queue or event stream "
+                "may be missing from this plan"
+            )
+        for path_item in (doc.get("paths") or {}).values():
             if not isinstance(path_item, dict):
                 continue
             for operation in path_item.values():
                 if not isinstance(operation, dict):
                     continue
-                content = (operation.get("requestBody") or {}).get("content") or {}
+                body = operation.get("requestBody") or {}
+                if "$ref" in body:
+                    unread.append(
+                        f"{cid}: a requestBody is a $ref ({body['$ref']}) — we did "
+                        "not resolve it, so we cannot tell whether this endpoint "
+                        "uploads files (object storage may be missing)"
+                    )
+                    continue
+                content = body.get("content") or {}
                 if any(
                     ct.startswith(("multipart/", "application/octet-stream"))
                     for ct in content
+                ) or any(
+                    # 스펙이 주는 **더 정확한 신호**다 — content-type 목록은 늘려도
+                    # 끝이 없고(image/png·application/pdf…), `format: binary`는
+                    # OpenAPI가 "이건 파일"이라고 직접 말한 것이다.
+                    isinstance(media, dict)
+                    and (media.get("schema") or {}).get("format") == "binary"
+                    for media in content.values()
                 ):
-                    uploads.add(openapi_artifact["componentId"])
+                    uploads.add(cid)
     owners: dict[str, list[str]] = {}
     engine_of: dict[str, str] = {}
     archetype_hint_of: dict[str, str] = {}
@@ -312,6 +368,7 @@ def _collect_signals(design: dict) -> _Signals:
             sync_calls.append((src_id, dst_id, message.get("label") or ""))
     return _Signals(
         has_api=has_api, needs_secret=needs_secret, uploads=uploads,
+        unread=tuple(unread),
         owners=owners, engine_of=engine_of, archetype_hint_of=archetype_hint_of,
         exposed=exposed, async_targets=async_targets, sync_calls=sync_calls,
         any_async=any_async,
@@ -951,6 +1008,9 @@ def compose(design: dict) -> DeploymentPlan:
     components = {c["id"]: c for c in design["components"]}
 
     s = _collect_signals(design)
+    # **못 읽은 자리를 계획에 올린다.** 이게 없으면 노드가 조용히 빠지고, 빠진 그림이
+    # "이게 전부"로 읽힌다 — 이 저장소가 다른 축에서 계속 막아 온 실패다.
+    plan.unresolved.extend(s.unread)
     kind_of, priced = _add_computes(plan, components, s, provider, region)
 
     for external in design.get("externals") or []:
