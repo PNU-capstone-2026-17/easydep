@@ -352,4 +352,23 @@ def region_lookup(
             "its code — passing another provider's code finds nothing even when "
             "the data is there."
         )
+    # **이 꼬리말은 조건부가 아니다.** 문장이 언제나 참이기 때문이다 — 이 도구는 리전
+    # 사실만 돌려주지 규제 준수를 판정한 적이 없다. 열쇠말로 "규제 질문일 때만" 붙이면
+    # 손으로 만든 금지어 목록이 되고, 그건 다음 표현에서 새어 나간다(19장).
+    #
+    # 실측(2026-07-28)에서 뚫린 자리다. "데이터가 한국에 있어야 하는데 ap-northeast-2면
+    # 되나?"에 모델이 이 도구를 부른 뒤 **"Yes … so data stored there stays within
+    # Korea"**라고 답했다. 도구는 리전 사실만 줬는데 모델이 준수 판정으로 결론냈다.
+    # `appkb`의 `dataResidency` 계약이 "판정할 수 없다(법적 판단)"고 못 박아 둔 것을
+    # 낱개 질의 경로가 지키지 않고 있었다.
+    #
+    # 주장 대조기로는 못 잡는다 — 숫자·식별자가 아니라 **문장의 뜻**이 넘어간 것이라
+    # 14장이 밝힌 대조기의 한계 그대로다. 그래서 도구 출력에 싣는다: 실측에서 도구
+    # 꼬리말은 최종 답변까지 살아남는다(3-11의 낡음 고지가 3/3).
+    lines.append(
+        "  ※ This is a **region fact, not a compliance judgment**. Whether a "
+        "deployment satisfies data-residency or regulatory obligations is a legal "
+        "determination this knowledge base does not make — compare the region "
+        "against the requirement and say the verdict cannot be given here."
+    )
     return "\n".join(lines)

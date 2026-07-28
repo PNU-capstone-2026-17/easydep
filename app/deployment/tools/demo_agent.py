@@ -316,7 +316,7 @@ async def _amain(args: argparse.Namespace) -> int:
     # **번호는 목차(`--list`) 기준으로 고정한다.** 걸러낸 뒤 다시 매기면
     # `--only 7`을 줬는데 화면에 `[1]`이 찍혀, 어느 질문을 본 것인지 알 수 없다.
     if args.ask:
-        numbered = [(1, Ask(args.ask, "즉석 질문"))]
+        numbered = [(1, Ask("즉석 질문", args.ask, "사용자가 그 자리에서 물은 것"))]
     else:
         numbered = list(enumerate(ASKS, 1))
         if args.core:

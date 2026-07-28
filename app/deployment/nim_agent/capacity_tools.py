@@ -216,6 +216,10 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
     So for a GCP question pass `provider='gcp'` and use that code. Passing
     another provider's code yields "not found" even when the data exists.
 
+    **This answers where a region is, never whether a rule is satisfied.** For a
+    data-residency or regulatory question, state the region fact and say the
+    compliance verdict is a legal determination this knowledge base does not make.
+
     Args:
         place: A place or region name, in **either Korean or English**, or a
             region code. e.g. '서울', 'Seoul', '도쿄', 'Tokyo', 'ap-northeast-2'.

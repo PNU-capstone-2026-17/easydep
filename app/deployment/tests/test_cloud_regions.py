@@ -176,6 +176,34 @@ def test_multi_provider_answer_warns_about_codes(built) -> None:
     assert "[gcp] asia-northeast3" in text
 
 
+def test_region_answer_refuses_to_be_a_compliance_verdict(built) -> None:
+    """리전 사실을 준수 판정으로 읽지 못하게 **답이 스스로 밝힌다.**
+
+    2026-07-28 실측에서 뚫린 자리다. *"데이터가 한국에 있어야 하는데 ap-northeast-2면
+    되나?"*에 모델이 이 도구를 부른 뒤 **"Yes … so data stored there stays within
+    Korea"**라고 답했다. 도구는 리전 사실만 줬는데 모델이 법적 판단으로 결론냈다 —
+    `appkb`의 `dataResidency` 계약이 "판정할 수 없다"고 못 박은 것을 낱개 질의
+    경로만 안 지키고 있었다.
+
+    **주장 대조기로는 못 잡는다** — 숫자가 아니라 문장의 뜻이 넘어간 것이라 14장이
+    밝힌 대조기의 한계 그대로다. 그래서 도구 출력에 싣는다(실측에서 도구 꼬리말은
+    최종 답변까지 살아남는다).
+
+    질의 내용과 무관하게 **리전을 찾은 모든 답**에 붙는다. 열쇠말로 "규제 질문일 때만"
+    붙이면 손으로 만든 금지어 목록이 되고, 그건 다음 표현에서 샌다(19장).
+
+    반대로 **못 찾은 답에는 안 붙는다** — 거기엔 준수 판정으로 오독될 리전 사실 자체가
+    없다. 고지를 아무 데나 붙이면 잡음이 되고, 잡음이 되면 다음 사람이 안 읽는다.
+    """
+    for query in ("서울", "koreacentral", "Seoul"):
+        text = flat(regions_mod.region_lookup(query, output_dir=built))
+        assert "not a compliance judgment" in text, query
+        assert "legal determination" in text, query
+
+    missed = flat(regions_mod.region_lookup("화성", output_dir=built))
+    assert "not a compliance judgment" not in missed
+
+
 def test_missing_artifact_guides_to_build(tmp_path) -> None:
     regions_mod._catalog.cache_clear()
     assert "build-regions" in regions_mod.region_lookup("서울", output_dir=tmp_path)
