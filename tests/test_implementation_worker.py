@@ -71,6 +71,30 @@ def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_p
     assert (tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json").is_file()
 
 
+def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path) -> None:
+    run = tmp_path / "run_repair"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(json.dumps({"input_hash": "input-hash"}), encoding="utf-8")
+    (reports / "repair-plan.json").write_text(json.dumps({
+        "entries": [{"revision": 1, "ownerTaskIds": ["repair-api"], "revalidationTaskIds": ["repair-e2e"]}]
+    }), encoding="utf-8")
+    approval = tmp_path / "approval.json"
+    approval.write_text(json.dumps({
+        "delegatedRepairApprovals": True,
+        "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": ["initial-wiring"], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+    }), encoding="utf-8")
+    record = {
+        "run_root": str(run),
+        "transmission_request": {"tasks": [{"taskId": "repair-api"}, {"taskId": "repair-e2e"}]},
+        "workflow": {"tasks": [{"attempts": 2}]},
+    }
+
+    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
+    record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
+    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
+
+
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
     monkeypatch.setenv("IMPLEMENTATION_AGENT_ROOT", "C:/old/prototype")
     monkeypatch.setenv("IMPLEMENTATION_AGENT_PYTHON", "C:/old/python.exe")

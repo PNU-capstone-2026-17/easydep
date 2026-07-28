@@ -801,6 +801,34 @@ void use(String... value) {}
             self.assertEqual("APPROVED_SCOPE_SUBSET", accepted["authorization"])
             self.assertEqual(full_request["requestId"], accepted["approvedRequestId"])
 
+    def test_workflow_approval_allows_delegated_repair_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_delegated"
+            reports = run / "reports"
+            reports.mkdir(parents=True)
+            task = {
+                "task_id": "repair-control", "task_type": "control", "prompt_sha256": "repair",
+                "source_artifacts": {}, "allowed_write_paths": ["application/Repair.java"],
+            }
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"input_hash": "input-hash", "implementation_tasks": [task]}), encoding="utf-8"
+            )
+            (reports / "repair-plan.json").write_text(
+                json.dumps({"entries": [{"revision": 1, "ownerTaskIds": ["repair-control"], "revalidationTaskIds": []}]}),
+                encoding="utf-8",
+            )
+            state = {"tasks": [{"taskId": "repair-control", "status": "PENDING", "attempts": 1}]}
+            request = write_transmission_request(run, state)
+            approval = reports / "approval.json"
+            approval.write_text(json.dumps({
+                "requestId": "initial-request", "approved": True, "delegatedRepairApprovals": True,
+                "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": [], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+            }), encoding="utf-8")
+
+            accepted = validate_workflow_approval(approval, request, state, run)
+
+            self.assertEqual("DELEGATED_RUN_SCOPE", accepted["authorization"])
+
     def test_transmission_request_is_limited_to_next_runnable_phase(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory) / "run_phase_scope"

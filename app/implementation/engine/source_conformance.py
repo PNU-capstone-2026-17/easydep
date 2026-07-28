@@ -111,7 +111,11 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
         components = {component.name for component in parse_components(bce_path.read_text(encoding="utf-8"))}
         aliases = _participant_aliases(sequence_path.read_text(encoding="utf-8"), components)
         invocations = _implementation_invocations(run_root, spec.base_package)
-        for source, target, method in _sequence_calls(sequence_path.read_text(encoding="utf-8")):
+        expected_by_source: dict[str, list[dict[str, str]]] = {}
+        for sequence_call in _sequence_calls(sequence_path.read_text(encoding="utf-8")):
+            source, target, method = (
+                sequence_call["source"], sequence_call["target"], sequence_call["method"]
+            )
             resolved_source, resolved_target = aliases.get(source, source), aliases.get(target, target)
             if resolved_source not in components or resolved_target not in components:
                 warnings.append({"code": "UNMAPPABLE_SEQUENCE_CALL",
@@ -128,6 +132,31 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                 violations.append({"code": "SEQUENCE_CALL_NOT_IMPLEMENTED",
                                    "path": "application/src/main/java",
                                    "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no matching source-to-target invocation."})
+                continue
+            expected_by_source.setdefault(resolved_source, []).append({
+                "method": method,
+                "branch": sequence_call["branch"],
+            })
+            branch_tokens = _branch_tokens(sequence_call["branch"])
+            if branch_tokens and not any(
+                any(token in item["source"].lower() for token in branch_tokens)
+                for item in invocations.get(resolved_source, [])
+            ):
+                violations.append({"code": "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
+                                   "path": "application/src/main/java",
+                                   "message": f"Sequence branch '{sequence_call['branch']}' for {method}(...) is not observable in {resolved_source}."})
+        for source, expected in expected_by_source.items():
+            ordered = any(_calls_in_order(item["calls"], [call["method"] for call in expected])
+                          for item in invocations.get(source, []))
+            checks.setdefault("sequenceOrder", []).append({
+                "source": source,
+                "methods": [call["method"] for call in expected],
+                "status": "PASSED" if ordered else "FAILED",
+            })
+            if not ordered:
+                violations.append({"code": "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
+                                   "path": "application/src/main/java",
+                                   "message": f"Sequence call order for {source} is not preserved in one implementation class."})
     else:
         warnings.append({"code": "MISSING_SEQUENCE_INPUT", "message": "Sequence call verification was skipped because no sequence/BCE input is available."})
 
@@ -264,12 +293,40 @@ def _participant_aliases(sequence: str, components: set[str]) -> dict[str, str]:
     return aliases
 
 
-def _sequence_calls(sequence: str) -> list[tuple[str, str, str]]:
-    calls: list[tuple[str, str, str]] = []
+def _sequence_calls(sequence: str) -> list[dict[str, str]]:
+    calls: list[dict[str, str]] = []
+    branches: list[str] = []
     pattern = re.compile(r"(?m)^\s*([A-Za-z_]\w*)\s*(?:-|--)+>\s*([A-Za-z_]\w*)\s*:\s*([A-Za-z_]\w*)\s*\(")
-    for match in pattern.finditer(sequence):
-        calls.append((match.group(1), match.group(2), match.group(3)))
+    for line in sequence.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("alt "):
+            branches.append(stripped[4:].strip())
+            continue
+        if stripped.startswith("else ") and branches:
+            branches[-1] = stripped[5:].strip()
+            continue
+        if stripped == "end" and branches:
+            branches.pop()
+            continue
+        match = pattern.match(line)
+        if match:
+            calls.append({"source": match.group(1), "target": match.group(2),
+                          "method": match.group(3), "branch": branches[-1] if branches else ""})
     return calls
+
+
+def _branch_tokens(value: str) -> set[str]:
+    return {token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z_0-9]{3,}", value)}
+
+
+def _calls_in_order(actual: list[str], expected: list[str]) -> bool:
+    cursor = 0
+    for method in expected:
+        try:
+            cursor = actual.index(method, cursor) + 1
+        except ValueError:
+            return False
+    return True
 
 
 def _implementation_invocations(run_root: Path, base_package: str) -> dict[str, list[dict[str, object]]]:
@@ -286,9 +343,10 @@ def _implementation_invocations(run_root: Path, base_package: str) -> dict[str, 
         # Only qualified calls count. A declaration with the same name must
         # not satisfy a sequence edge unless the source actually delegates to
         # a collaborator.
-        methods = set(re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", source))
+        methods = re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", source)
         for component in implemented:
             values.setdefault(component, []).extend(
-                {"method": method, "dependencies": dependencies} for method in methods
+                {"method": method, "dependencies": dependencies, "calls": methods, "source": source}
+                for method in set(methods)
             )
     return values

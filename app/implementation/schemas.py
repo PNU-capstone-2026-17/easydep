@@ -34,3 +34,4 @@ class ApprovalRequest(BaseModel):
     approved: bool
     approved_by: str = Field(default="EasyDep user", max_length=200)
     retry_failed: bool = False
+    delegate_repair_approvals: bool = True

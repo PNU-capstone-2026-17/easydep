@@ -94,8 +94,14 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
    - 실제 구매 흐름을 포함한 설계 기반 E2E 테스트
 6. 현재 실행 가능한 phase의 prompt·설계·관련 소스 hash로 외부 전송 요청 ID를 만들고
    `AWAITING_APPROVAL`에서 멈춘다.
-7. 정확히 일치하는 승인 후 OpenHands restricted editor로 해당 phase 전체를 실행한다.
-8. 매 task와 phase 뒤 컴파일·테스트·의미 품질 gate·완료 감사를 수행한다. 모든 unit/E2E
+7. 최초 승인에는 기본적으로 같은 run의 제한된 repair/revalidation 전송 위임도 포함한다.
+   위임은 run ID·설계 입력 hash·초기 implementation manifest의 전체 task ID·최대 3회 repair·
+   최대 50 task 시도에 묶인다. 따라서 최초 구현의 모든 정상 phase와 규칙 기반 repair plan에
+   기록된 task에 적용된다. 계약/설계 변경, 입력 hash 변경, manifest에 없던 task, 한도 초과는
+   위임 범위를 벗어나므로 새 승인이 필요하다. 사용자는 승인 요청의
+   `delegate_repair_approvals: false`로 이 동작을 끌 수 있다.
+8. 정확히 일치하는 승인 후 OpenHands restricted editor로 해당 phase 전체를 실행한다.
+9. 매 task와 phase 뒤 컴파일·테스트·의미 품질 gate·완료 감사를 수행한다. 모든 unit/E2E
    테스트가 통과한 최종 run에서는 LLM 대신 규칙 기반 소스 설계 적합성 gate를 추가로 수행한다.
    생성 직후 기록한 `reports/generated-source-contracts.json`의 BCE/OpenAPI Java hash와
    현재 파일을 먼저 비교한다. 해시가 다르면 클래스 종류·이름, 필드 이름·타입, 메서드 이름·
@@ -105,13 +111,17 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
    `reports/source-design-conformance.json`에 남으며 실패하면 artifact 저장과 배포 렌더링을
    진행하지 않는다. 별칭이나 외부 참여자처럼 정적으로 매핑할 수 없는 시퀀스 호출은 warning
    으로 기록해 오탐으로 인한 차단을 피한다.
-   스켈레톤 변경은 로컬 기준선으로 즉시 복원한다. 시퀀스 호출 위반은 보고서를 포함한 제한된
-   repair task와 E2E 재검증 task로 최대 3회 재계획하며, 새 외부 전송에는 새 승인이 필요하다.
-9. 검증 오류가 다른 phase의 소스를 가리키면 해당 파일의 소유 task를 수리 대상으로
+   스켈레톤 변경은 로컬 기준선으로 즉시 복원한 뒤 Gradle·완료 감사·적합성 검증을 다시
+   실행한다. 시퀀스 검증은 구현 주체가 대상 port를 의존하고 호출하는지, 동일 주체의 호출
+   순서가 다이어그램과 같은지, `alt`/`else`의 식별 가능한 조건 토큰이 소스에 있는지를
+   확인한다. 위반은 보고서를 포함한 제한된 repair task와 E2E 재검증 task로 최대 3회
+   재계획하며, 새 외부 전송에는 새 승인이 필요하다.
+10. 검증 오류가 다른 phase의 소스를 가리키면 해당 파일의 소유 task를 수리 대상으로
    되돌리고, 영향을 받는 Wiring과 E2E task를 자동으로 재계획한다. 파일 경로가 없는 E2E
    HTTP 실패는 관련 OpenAPI adapter를 우선 수리 대상으로 삼는다.
-10. 새 소스와 수리 증거를 반영해 후속 prompt와 요청 ID를 다시 만들고 다음 승인을 기다린다.
-11. 완료 감사와 소스 설계 적합성 gate가 모두 통과한 뒤 결정적 renderer로 배포 파일을 생성하고 파일 트리를 `SOURCE_CODE`,
+11. 위임 범위 안의 소스 적합성 수리와 컴파일·단위/E2E 실패의 cross-phase repair 전송은
+    자동으로 다음 실행을 시작하고, 범위를 벗어난 전송만 다음 승인을 기다린다.
+12. 완료 감사와 소스 설계 적합성 gate가 모두 통과한 뒤 결정적 renderer로 배포 파일을 생성하고 파일 트리를 `SOURCE_CODE`,
     `TEST_CODE`, `DEPLOYMENT_FILE`의 새 불변 버전으로 MySQL에 저장한다. `IAC_CODE`는
     후속 IaC 생성 단계에서 사용한다.
 
