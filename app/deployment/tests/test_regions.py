@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb import _aws_endpoints, agent_api
 from app.deployment.capacitykb.parsers import aws_endpoints
 from app.deployment.tests._helpers import flat
 
@@ -64,9 +64,9 @@ def built(tmp_path, monkeypatch):
     )
     aws_endpoints.build(out)
 
-    agent_api._endpoints.cache_clear()
+    _aws_endpoints._endpoints.cache_clear()
     yield tmp_path
-    agent_api._endpoints.cache_clear()
+    _aws_endpoints._endpoints.cache_clear()
 
 
 # --- 파서 -----------------------------------------------------------------
