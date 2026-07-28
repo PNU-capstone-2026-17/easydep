@@ -127,3 +127,28 @@ def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
     assert seen["answer"] is edit        # 문자열로 뭉개지 않고 그대로 넘어간다
     assert seen["thread_id"] == "t-9"
     assert seen["persist"] is True       # 서빙 경로는 세션을 DB에 남긴다
+
+
+def test_every_artifact_key_survives_the_response_schema():
+    """응답 스키마에 없는 산출물 키는 **조용히 사라진다** — pydantic이 모르는 키를 버린다.
+
+    실제로 `cloud_concerns`가 그 상태였다: 파이프라인이 만들고 `_result_payload`가 싣는데
+    화면은 못 받았다. 키를 하나 더 만들 때마다 같은 사고가 나므로 목록끼리 대조한다.
+    """
+    from app.requirements.agent.graph import _ARTIFACT_KEYS
+
+    missing = [k for k in _ARTIFACT_KEYS if k not in AnalyzeResponse.model_fields]
+    assert not missing, f"응답 스키마에 없는 산출물 키: {missing}"
+
+
+def test_feedback_payload_carries_the_resource_questions():
+    """되묻기가 응답까지 못 오면 화면이 `resource_answers`를 만들 수 없다."""
+    questions = [{"field": "region", "kind": "missing", "why": "w", "question": "q"}]
+    result = {"__interrupt__": [SimpleNamespace(value={
+        "status": "need_feedback", "stage": "requirements", "prompt": "p",
+        "summary": [], "resource_questions": questions,
+    })]}
+    out = _result_payload(result, "tid-r")
+
+    assert out["resource_questions"] == questions
+    assert AnalyzeResponse(**out).resource_questions == questions

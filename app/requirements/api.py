@@ -17,7 +17,7 @@ from app.repositories import artifact_repository
 from app.requirements.agent import resume_analysis, start_analysis
 from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse
+from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse, ResourceAnswer
 
 # 서버 진입점(server.py)은 이 에이전트의 것이 아니라 로깅 설정을 거기 둘 수 없다.
 # 라우터가 로드되는 시점에 한 번 설정한다 — 여러 번 불러도 핸들러가 겹치지 않는다.
@@ -40,7 +40,8 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
     선행조건 검사를 통과해 버리는 일도 없다.
 
     STAGE_ARTIFACTS(app/repositories/artifact_repository.py)에 이미 자리가 있어
-    스키마 변경은 필요 없다. resource_spec은 이 에이전트가 만들지 않으므로 비운다.
+    스키마 변경은 필요 없다. resource_spec은 **2026-07-28부터 이 에이전트가 만든다**
+    (`steps/step_resource.py`) — 계약을 만족한 실행에서만 온다.
     """
     if payload.get("status") not in ("need_feedback", "completed"):
         return []  # clarify 질문 응답에는 아직 산출물이 없다
@@ -73,6 +74,10 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
         )
 
     save("usecase_diagram", "usecase_diagram_puml", payload.get("diagram"))
+    # `RESOURCE_SPEC`. **계약을 만족한 것만 온다** — `build_resource_spec`이 통과하지
+    # 못한 초안은 `resource_intake`에만 남기고 이 키를 아예 내지 않는다. 그래서 여기서
+    # 다시 검사하지 않는다(같은 판정을 두 곳에 두면 한쪽만 고쳐진다).
+    save("resource_spec", "resource_spec", payload.get("resource_spec"))
     return saved
 
 
@@ -87,18 +92,29 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     app_id를 함께 보내면 단계가 끝날 때마다 그 앱의 저장소에 기록되고,
     이번 호출에서 저장된 stage 목록이 saved_stages로 돌아온다.
     """
-    if req.answer is not None and req.edit is not None:
+    # 재개 값은 **하나**다. 둘 이상 오면 무엇을 따를지가 모호하므로 거절한다 —
+    # 골라서 쓰면 화면이 보낸 것과 서버가 쓴 것이 조용히 갈린다.
+    given = [
+        name for name, value in (
+            ("answer", req.answer), ("edit", req.edit),
+            ("resource_answers", req.resource_answers),
+        ) if value is not None
+    ]
+    if len(given) > 1:
         raise HTTPException(
             status_code=400,
-            detail="answer와 edit은 함께 보낼 수 없습니다. 둘 중 하나만 보내세요.",
+            detail=f"{' / '.join(given)} 은 함께 보낼 수 없습니다. 하나만 보내세요.",
         )
 
-    # 재개 경로 — 자연어(answer) 또는 구조화 편집(edit).
-    resume = req.answer if req.answer is not None else req.edit
+    # 재개 경로 — 자연어(answer) · 구조화 편집(edit) · 되묻기의 답(resource_answers).
+    resume: object | None = req.answer if req.answer is not None else req.edit
+    if resume is None and req.resource_answers is not None:
+        resume = ResourceAnswer(answers=req.resource_answers)
     if resume is not None:
         if not req.thread_id:
             raise HTTPException(
-                status_code=400, detail="answer/edit 에는 thread_id가 필요합니다."
+                status_code=400,
+                detail="answer/edit/resource_answers 에는 thread_id가 필요합니다.",
             )
         payload = resume_analysis(
             resume, req.thread_id, persist=settings.enable_session_persistence
@@ -116,6 +132,7 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
             thread_id,
             req.feedback_gates,
             persist=settings.enable_session_persistence,
+            constraints_text=req.resource_constraints_text or "",
         )
 
     if req.app_id:

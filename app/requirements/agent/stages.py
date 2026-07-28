@@ -46,6 +46,7 @@ from app.requirements.agent.steps.step4_diagram import (
     render_diagram,
 )
 from app.requirements.agent.steps.step_cloud import link_cloud_concerns
+from app.requirements.agent.steps.step_resource import build_resource_spec
 from app.requirements.common.state_contract import StateContract, state_contract_of
 
 
@@ -87,6 +88,11 @@ PIPELINE: tuple[Stage, ...] = (
     # 그 이름으로 멈추기 때문이다). 게다가 cascade 순서의 맨 앞에 편집 불가 단계를 두면
     # `_clamp_editable_stage`가 자기 위에서 편집 가능한 단계를 못 찾는다.
     Stage("link_cloud_concerns", link_cloud_concerns, group="cover_cloud_concerns"),
+    # 제약 구조화(A 트랙)도 **자기 그룹**이다. 관심사(B)와 한 그룹에 두고 싶어지지만 둘은
+    # 방향이 반대다 — B는 "안 쓴 것"을 드러내고, 여기는 "쓴 것"을 계약 칸으로 옮긴다.
+    # 그룹을 갈라 두면 한쪽을 끄거나 다시 도는 것이 다른 쪽을 끌고 다니지 않는다.
+    # `key`를 주지 않는 이유는 `link_cloud_concerns`와 같다(입력에서 파생되는 결정론 단계).
+    Stage("build_resource_spec", build_resource_spec, group="structure_constraints"),
     Stage("identify_actors", identify_actors, group="model_use_cases",
           key="actors", editable=True),
     Stage("identify_use_cases", identify_use_cases, group="model_use_cases",

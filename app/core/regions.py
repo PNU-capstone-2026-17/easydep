@@ -53,6 +53,16 @@ def resolve(query: str, *, provider: str | None = None) -> tuple[RegionCandidate
     )
 
 
+def providers() -> tuple[str, ...]:
+    """리전 지식베이스가 **실제로 아는** 프로바이더 id들.
+
+    `RESOURCE_SPEC.provider`는 자유 문자열이라 스키마가 값을 제한하지 않는다. 그래서
+    생산자 쪽에 어휘가 필요한데, 손으로 적으면 그건 임의 사전이고 KB가 늘어날 때
+    조용히 뒤처진다. 조인이 실제로 도는 축을 그대로 쓴다.
+    """
+    return _regions.providers()
+
+
 def is_region_code(value: str, *, provider: str | None = None) -> bool:
     """이미 리전 **코드**인가 — 지명을 코드 자리에 넣은 것을 잡는다."""
     return any(c.code == value for c in resolve(value, provider=provider))
