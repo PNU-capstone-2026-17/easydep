@@ -59,6 +59,7 @@ from app.implementation.engine.deployment_renderer import (
     render_deployment,
     validate_intent,
 )
+from app.implementation.engine.iac_renderer import render_iac, validate_terraform
 from app.implementation.engine.source_conformance import (
     SourceDesignConformanceError,
     capture_generated_contracts,
@@ -1498,6 +1499,149 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             ).read_text(encoding="utf-8")
             self.assertIn("path: /readyz", deployment_source)
             self.assertIn("path: /livez", deployment_source)
+
+    def test_deterministic_iac_renderer_matches_deployment_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({
+                "provider": "azure",
+                "resources": [
+                    {"type": "Microsoft.ContainerRegistry/registries", "name": "demoacr"},
+                    {"type": "Microsoft.ContainerService/managedClusters", "name": "demoaks", "workloads": [{"name": "orders-api"}]},
+                    {"type": "Microsoft.KeyVault/vaults", "name": "demokv"},
+                ],
+            }), encoding="utf-8")
+            run = root / "run"
+            (run / "application/k8s/orders-api").mkdir(parents=True)
+            (run / "reports").mkdir(parents=True)
+            (run / "reports/deployment-intent.json").write_text(json.dumps({"workloads": [{"name": "orders-api"}]}), encoding="utf-8")
+
+            report = render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+
+            self.assertEqual("SUCCEEDED", report["sourceConformance"]["status"])
+            source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+            self.assertIn('resource "azurerm_kubernetes_cluster"', source)
+            self.assertIn('resource "azurerm_container_registry"', source)
+            self.assertIn('resource "azurerm_key_vault"', source)
+
+    def test_deterministic_iac_renderer_supports_aws_and_gcp(self) -> None:
+        cases = (
+            ("aws", [{"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders"}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment" "eks_ecr_pull"')),
+            ("gcp", [{"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders"}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull"')),
+        )
+        for provider, resources, expected in cases:
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cloud = root / "cloud.json"
+                cloud.write_text(json.dumps({"provider": provider, "resources": resources}), encoding="utf-8")
+                run = root / "run"
+                (run / "application/k8s/orders-api").mkdir(parents=True)
+                (run / "reports").mkdir(parents=True, exist_ok=True)
+                (run / "reports/deployment-intent.json").write_text(json.dumps({"workloads": [{"name": "orders-api"}]}), encoding="utf-8")
+                report = render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+                source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+                self.assertEqual("SUCCEEDED", report["sourceConformance"]["status"])
+                self.assertEqual(provider, report["provider"])
+                for marker in expected:
+                    self.assertIn(marker, source)
+
+    def test_iac_renderer_connects_networks_and_creates_cluster_nodes(self) -> None:
+        cases = (
+            (
+                "aws",
+                [{"type": "AWS::EC2::VPC", "name": "platform", "cidrBlock": "10.0.0.0/16"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "cidrBlock": "10.0.1.0/24"}, {"type": "AWS::EKS::Cluster", "name": "platform"}],
+                ("aws_vpc.platform.id", 'resource "aws_eks_node_group"'),
+            ),
+            (
+                "gcp",
+                [{"type": "compute.googleapis.com/Network", "name": "platform"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private-a", "ipCidrRange": "10.0.1.0/24"}, {"type": "container.googleapis.com/Cluster", "name": "platform"}],
+                ("network = google_compute_network.platform.id", 'resource "google_container_node_pool"'),
+            ),
+        )
+        for provider, resources, expected in cases:
+            with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                cloud = root / "cloud.json"
+                cloud.write_text(json.dumps({"provider": provider, "resources": resources}), encoding="utf-8")
+                run = root / "run"
+                report = render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+                source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+                self.assertIn(report["sourceConformance"]["status"], {"SUCCEEDED_WITH_WARNINGS", "SUCCEEDED"})
+                for marker in expected:
+                    self.assertIn(marker, source)
+
+    def test_iac_renderer_resolves_network_references_independent_of_resource_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "aws", "resources": [
+                {"type": "AWS::EKS::Cluster", "name": "platform"},
+                {"type": "AWS::EC2::Subnet", "name": "private-a"},
+                {"type": "AWS::EC2::VPC", "name": "platform"},
+            ]}), encoding="utf-8")
+            run = root / "run"
+            render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+            source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+            self.assertIn("vpc_id = aws_vpc.platform.id", source)
+            self.assertIn("subnet_ids = [aws_subnet.private_a.id]", source)
+
+    def test_iac_renderer_rejects_unknown_provider_resource_types(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "aws", "resources": [{"type": "AWS::S3::Bucket", "name": "assets"}]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not supported"):
+                render_iac(root / "run", SimpleNamespace(inputs={"cloud": cloud}))
+
+    def test_azure_iac_renderer_preserves_private_cluster_and_mysql_networking(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "azure", "resources": [
+                {"type": "Microsoft.Network/virtualNetworks", "name": "platform", "subnets": [{"name": "aks", "addressPrefix": "10.0.1.0/24"}, {"name": "mysql", "addressPrefix": "10.0.2.0/24", "delegations": ["Microsoft.DBforMySQL/flexibleServers"]}]},
+                {"type": "Microsoft.Network/privateDnsZones", "name": "private.mysql.database.azure.com"},
+                {"type": "Microsoft.ContainerService/managedClusters", "name": "platform", "nodePools": [{"name": "system", "vmSize": "Standard_D2s_v5", "count": 2, "enableAutoScaling": True, "minCount": 1, "maxCount": 3}], "networking": {"privateCluster": True, "subnet": "platform/aks"}},
+                {"type": "Microsoft.DBforMySQL/flexibleServers", "name": "platform-db", "networking": {"publicNetworkAccess": "Disabled", "delegatedSubnet": "platform/mysql", "privateDnsZone": "private.mysql.database.azure.com"}},
+            ]}), encoding="utf-8")
+            run = root / "run"
+            report = render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+            source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+            self.assertIn(report["sourceConformance"]["status"], {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS"})
+            for marker in ("private_cluster_enabled = true", "vnet_subnet_id = azurerm_subnet.platform_aks.id", "delegated_subnet_id = azurerm_subnet.platform_mysql.id", "private_dns_zone_id = azurerm_private_dns_zone.private_mysql_database_azure_com.id"):
+                self.assertIn(marker, source)
+
+    def test_infer_intent_uses_provider_specific_registry_images(self) -> None:
+        cases = (
+            ("aws", "AWS::EKS::Cluster", "AWS::ECR::Repository", ".dkr.ecr."),
+            ("gcp", "container.googleapis.com/Cluster", "artifactregistry.googleapis.com/Repository", "-docker.pkg.dev/"),
+        )
+        for provider, cluster_type, registry_type, marker in cases:
+            with self.subTest(provider=provider):
+                intent = infer_intent("orders", {"provider": provider, "resources": [{"type": cluster_type, "workloads": [{"name": "orders-api"}]}, {"type": registry_type, "name": "orders"}]})
+                self.assertIn(marker, intent["workloads"][0]["image"])
+
+    def test_aws_cloud_spec_renders_deployment_then_iac(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "aws", "resources": [
+                {"type": "AWS::EC2::VPC", "name": "platform"},
+                {"type": "AWS::EC2::Subnet", "name": "private-a"},
+                {"type": "AWS::ECR::Repository", "name": "orders"},
+                {"type": "AWS::EKS::Cluster", "name": "platform", "workloads": [{"name": "orders-api"}]},
+            ]}), encoding="utf-8")
+            spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
+            run = root / "run"
+            deployment = render_deployment(run, spec)
+            iac = render_iac(run, spec)
+            self.assertEqual("implementation-agent-inference", deployment["intentSource"])
+            self.assertEqual("aws", iac["provider"])
+            self.assertEqual("SUCCEEDED", iac["sourceConformance"]["status"])
+
+    @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
+    def test_terraform_validation_reports_when_binary_is_unavailable(self, _which: object) -> None:
+        self.assertEqual("SKIPPED", validate_terraform(Path("missing")).get("status"))
 
     def test_deployment_intent_rejects_incompatible_job_capabilities(self) -> None:
         intent = {

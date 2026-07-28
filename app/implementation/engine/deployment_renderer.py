@@ -213,8 +213,9 @@ def infer_intent(
     name: str, cloud: dict[str, Any], deployment_diagram: str = ""
 ) -> dict[str, Any]:
     resources = cloud.get("resources", [])
-    cluster = next((item for item in resources if item.get("type") == "Microsoft.ContainerService/managedClusters"), {})
-    registry = next((item.get("name") for item in resources if item.get("type") == "Microsoft.ContainerRegistry/registries"), "<acr-name>")
+    provider = cloud_provider(cloud)
+    cluster = next((item for item in resources if cloud_role(provider, item) == "cluster"), {})
+    registry = next((item.get("name") for item in resources if cloud_role(provider, item) == "registry"), None)
     networking = cluster.get("networking", {})
     exposed_aliases = deployment_exposed_aliases(deployment_diagram)
     workloads = []
@@ -253,7 +254,7 @@ def infer_intent(
         external_secret = source.get("externalSecret")
         workloads.append({
             "name": workload_name, "kind": "Deployment",
-            "image": f"{registry}.azurecr.io/{workload_name}:<tag>",
+            "image": registry_image(provider, registry, workload_name),
             "port": int(networking.get("containerPort", 8000)),
             "replicas": replicas, "resources": source.get("resources", {}),
             "health": {
@@ -640,10 +641,11 @@ def verify_cloud_resource_spec(
     warnings: list[str],
 ) -> None:
     resources = cloud.get("resources", [])
+    provider = cloud_provider(cloud)
     cluster = next(
         (
             item for item in resources
-            if item.get("type") == "Microsoft.ContainerService/managedClusters"
+            if cloud_role(provider, item) == "cluster"
         ),
         None,
     )
@@ -706,6 +708,40 @@ def verify_cloud_resource_spec(
                 errors.append(f"diagram-exposed workload {name} requires Service")
             if networking.get("ingressProtocol") == "HTTPS" and not capabilities.get("ingress"):
                 errors.append(f"diagram-exposed workload {name} requires Ingress for HTTPS")
+
+
+def cloud_provider(cloud: dict[str, Any]) -> str:
+    provider = str(cloud.get("provider", "azure")).lower()
+    return provider if provider in {"azure", "aws", "gcp"} else "azure"
+
+
+def cloud_role(provider: str, item: dict[str, Any]) -> str | None:
+    kind = str(item.get("type", "")).lower()
+    if provider == "azure":
+        if kind == "microsoft.containerservice/managedclusters":
+            return "cluster"
+        if kind == "microsoft.containerregistry/registries":
+            return "registry"
+    elif provider == "aws":
+        if "eks" in kind and "cluster" in kind:
+            return "cluster"
+        if "ecr" in kind and "repository" in kind:
+            return "registry"
+    elif provider == "gcp":
+        if "container" in kind and "cluster" in kind:
+            return "cluster"
+        if "artifact" in kind and "repository" in kind:
+            return "registry"
+    return None
+
+
+def registry_image(provider: str, registry: object, workload: str) -> str:
+    name = str(registry or {"azure": "<acr-name>", "aws": "<ecr-repository>", "gcp": "<artifact-repository>"}[provider])
+    if provider == "azure":
+        return f"{name}.azurecr.io/{workload}:<tag>"
+    if provider == "aws":
+        return f"<account-id>.dkr.ecr.<region>.amazonaws.com/{name}:{'<tag>'}"
+    return f"<region>-docker.pkg.dev/<project-id>/{name}/{workload}:<tag>"
 
 
 def resource(api: str, kind: str, name: str, namespace: str | None = None) -> str:

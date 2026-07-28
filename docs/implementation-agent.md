@@ -77,6 +77,28 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
 완전 개방 egress처럼 배포 전에 확정해야 할 사항은 render report의 warning으로 남긴다.
 검증된 결과는 새 `DEPLOYMENT_FILE` artifact 버전으로 저장된다.
 
+## 결정적 IaC 생성
+
+cloud resource spec의 `provider`가 `azure`, `aws`, `gcp` 중 하나이면 배포 파일 렌더링 직후
+implementation agent가 `application/terraform/`에 Terraform을 생성한다. Azure는 VNet, ACR,
+AKS, MySQL, Key Vault, Log Analytics를, AWS는 VPC/subnet, ECR, EKS, RDS, Secrets Manager,
+CloudWatch Logs를, GCP는 VPC/subnetwork, Artifact Registry, GKE, Cloud SQL, Secret Manager,
+Cloud Logging을 지원한다. 클러스터와 컨테이너 레지스트리가 함께 있으면 각 provider의
+이미지 pull 권한 연결(AcrPull, ECR read policy, Artifact Registry reader)을 함께 생성한다.
+EKS에는 managed node group을, GKE에는 node pool을 함께 생성하므로 생성된 Kubernetes
+manifest를 실제로 스케줄할 수 있다. AWS의 EKS cluster/node IAM role ARN·name과 region,
+GCP의 project/region 및 GKE node service account, Azure의 resource group/location 및 MySQL
+관리자 비밀번호는 배포 환경에서 Terraform 변수로 제공해야 한다.
+`reports/iac-render.json`은 resource spec 리소스의 Terraform 반영 여부와 deployment intent의
+workload가 Kubernetes manifest 및 이미지 pull 권한과 연결되는지, EKS/GKE node 구성과
+VPC·subnetwork 참조가 존재하는지를 검증한다. 오류가 있으면 IaC artifact를 저장하지 않는다. IaC는 `IAC_CODE`의
+불변 artifact 버전으로 저장된다.
+
+Terraform CLI가 설치된 환경에서는 `python -m app.implementation.engine.cli validate-iac <run>`으로
+격리된 임시 복사본에서 `terraform fmt -check`, `init -backend=false`, `validate`를 실행할 수 있다.
+동일 검증은 IaC renderer가 workflow 완료 전에 자동 실행하며, Terraform이 설치된 환경에서 실패하면
+`IAC_CODE` artifact를 저장하지 않는다. Terraform CLI가 없는 개발 환경에서는 report에 `SKIPPED`로 기록된다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,
