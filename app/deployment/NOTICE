@@ -14,6 +14,23 @@ cloud-barista / cb-tumblebug (v0.12.25) 의 `assets/assets.dump.gz`에서
 가격·스펙 값은 스냅샷이며 실제 청구서가 아닙니다. 각 산출물의 `_source`
 블록에 받은 시점의 태그와 sha256이 들어 있습니다.
 
+`data/tumblebug-perf.json.gz`에는 위 미러에 더해 **보강 소스 셋**의 값이
+필드 단위로 들어 있습니다. 어느 필드가 어디서 왔는지는 각 레코드의
+`*Evidence` 칸에 있습니다.
+
+- **MicrosoftDocs/azure-compute-docs** — Copyright Microsoft Corporation,
+  **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
+  VM 크기 문서(`articles/virtual-machines/sizes/`)의 **표**에서 NIC 수·네트워크
+  대역폭·세대 구분을 추출해 26,823개 필드에 수록(`azure-sizes-doc`).
+  변경 사항: 표 셀만 추출, 산문·마크업 제거.
+      https://github.com/MicrosoftDocs/azure-compute-docs
+- **vantage-sh/ec2instances.info** — MIT. 저장소에 커밋된
+  `manually_fetched_data.json`의 하드웨어 실측치(`ec2-hardware-probe`).
+      https://github.com/vantage-sh/ec2instances.info
+- **Cyclenerd/google-cloud-compute-machine-types** — Apache-2.0.
+  시리즈별 SQL에서 CPU 플랫폼·대역폭·GPU·로컬 SSD(`cyclenerd-gcp-catalog`).
+      https://github.com/Cyclenerd/google-cloud-compute-machine-types
+
 ## data/pattern-corpus.json.gz — 설계 패턴 산문 코퍼스
 
 patternkb(설계 지침 검색, advisory 전용)의 코퍼스로, 아래 문서의 **본문을

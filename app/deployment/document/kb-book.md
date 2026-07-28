@@ -5,10 +5,20 @@
 
 > **읽는 순서 안내**
 > 0장은 용어표입니다. 1부(1~3장)는 "왜 이런 게 필요한가"입니다. 급하면
-> 3장(전체 지도)부터 읽어도 됩니다. 각 축의 속사정은 3부(5~11장), 믿을 수 있게
+> 3장(전체 지도)부터 읽어도 됩니다 — 그 안의 **커버리지 격자**가 "어느 클라우드의
+> 무엇까지 답할 수 있나"의 지도입니다. 각 축의 속사정은 3부(5~11장), 믿을 수 있게
 > 만드는 장치는 4부(12~17장)에 있습니다. 실제로 만들려면 18장(재현 절차)으로
 > 가세요. 19장(함정 모음)은 **직접 겪은 실패**만 모은 곳이라, 만들 사람에게
 > 가장 값이 클 겁니다.
+>
+> **이 작업을 심사·평가하는 사람**이라면 순서가 다릅니다: 16장 머리(**왜 이
+> 소스들인가** — 선정 절차와 포화 기준) → 22장(**타당성 위협**) → 23장(**외부
+> 표준 매핑**, 표준에 있는데 우리에게 없는 칸 포함). 이 셋이 "돌아간다"가 아니라
+> "근거가 선다"를 묻는 자리입니다.
+>
+> 본문은 원리를 말하고 예시를 아낍니다. **실제 출력이 어떻게 생겼는지**가
+> 필요하면 **부록 A(실물 예시)**로 가세요 — 본문의 규율 하나하나가 실제로 어떤
+> 문장이 되어 나오는지를, 코드를 돌려 받은 답 그대로 실었습니다.
 >
 > 이 문서의 수치는 별도 표기가 없으면 **2026-07-24에 코드와 데이터에서 다시 뽑은
 > 실측값**입니다. 수치는 데이터와 함께 늙으므로, 현재값이 필요하면 문서가 아니라
@@ -150,8 +160,8 @@
 
 | 패키지 | 답하는 질문 | 비유 | 규모(2026-07-24 실측) |
 |---|---|---|---|
-| **graphkb** | 무엇이 무엇을 필요로 하나 + 회사 간 대응 | 부품 조립 순서도 | 12개 클라우드 노드 ~1만·엣지 ~6,500 |
-| **capacitykb** | 무엇이 허용되나 · 한도 · 바꿀 수 있나 | 부품 규격서 | 제약 141,377건 (12개 클라우드) |
+| **graphkb** | 무엇이 무엇을 필요로 하나 + 회사 간 대응 | 부품 조립 순서도 | 노드 10,157(10개 CSP) · 엣지 6,548(**3개 CSP만** — 아래 격자) |
+| **capacitykb** | 무엇이 허용되나 · 한도 · 바꿀 수 있나 | 부품 규격서 | 제약 141,377건 (**10개** 클라우드) |
 | **costkb** | 무엇을 살 수 있고 얼마인가 | 가격표 | 스펙 73,083 + 할인 32,073 + 스팟/약정 11,193 + 관리형 24,294 |
 | **perfkb** | 얼마나 빠른가 · 함정은 없나 | 성능 시험 성적서 | 신호 65,032 + IBM 2,002 |
 | **bundlekb** | 이것을 쓰면 무엇이 따라오나 | 동봉 부품 목록 | 번들 578 + 동시출현 2,400 |
@@ -159,8 +169,43 @@
 | **envkb** | 리전·탄소·지연·수명주기 같은 환경 사실 | 지도와 달력 | 리전 188 · 지연쌍 10,890 · 탄소 161 · 수명주기 17 |
 | **patternkb** | 설계 지침 산문 (자문 전용) | 선배의 조언 모음 | 문서 523편 (5소스) |
 | **appkb** | 설계 JSON 계약·검증·다이어그램 | 설계도 접수창구 | 계약 1벌 + 예제 + 렌더러 |
-| **kbcommon** | 위 전부가 쓰는 공용 규율 (핀·산출물·근거·표시·포장) | 공용 공구함 | 소스 핀 46종 · 근거 라벨 54종 |
-| **nim_agent** | 에이전트와 도구 계층 (축 조인은 여기서만) | 접수원 | 도구 41개 |
+| **kbcommon** | 위 전부가 쓰는 공용 규율 (핀·산출물·근거·표시·포장) | 공용 공구함 | 소스 핀 47종 · 근거 라벨 54종 |
+| **nim_agent** | 에이전트와 도구 계층 (축 조인은 여기서만) | 접수원 | 로컬 도구 31개(+ tumblebug MCP 도구는 실행 시 붙음) |
+
+### "12개 클라우드"는 축마다 다른 말이다 — 커버리지 격자 ★
+
+위 표를 세로로만 읽으면 **모든 축이 같은 범위를 덮는다고 읽힙니다.** 실제로는
+축마다 덮는 클라우드가 다릅니다. 아래는 산출물을 전수로 세어 프로바이더별로 가른
+값입니다(2026-07-28 실측).
+
+| | 노드 | **엣지** | 제약 | 정가 | 할인가 | 관리형가 | 성능 | 탄소 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| aws | 1,660 | 2,391 | 51,197 | 18,564 | **0** | 로컬만 | 18,564 | 39 |
+| azure | 3,582 | 2,935 | 44,336 | 34,846 | 32,073 | 23,563 | 34,846 | 78 |
+| gcp | 546 | 1,052 | 6,923 | 11,622 | 11,193 | 731 | 11,622 | 44 |
+| alibaba | 1,156 | **0** | 9,167 | 2,494 | 0 | 0 | **0** | 0 |
+| tencent | 1,330 | **0** | 11,222 | 2,865 | 0 | 0 | **0** | 0 |
+| oracle | 1,003 | **0** | 14,614 | **0** | 0 | 0 | **0** | 0 |
+| ibm | 572 | **0** | 1,987 | 2,002 | 0 | 0 | 2,002 | 0 |
+| openstack | 122 | **0** | 725 | 6 | 0 | 0 | **0** | 0 |
+| nhn | 112 | **0** | 779 | 71 | 0 | 0 | **0** | 0 |
+| ncp | 38 | **0** | 427 | 393 | 0 | 0 | **0** | 0 |
+| kt | 0 | 0 | 0 | 220 | 0 | 0 | **0** | 0 |
+| 공통·`app::` | 36 | 170 | — | — | — | — | — | — |
+| **합계** | **10,157** | **6,548** | **141,377** | **73,083** | **43,266** | **24,294** | **67,034** | **161** |
+
+**엣지가 aws·azure·gcp에만 있습니다.** 나머지 일곱은 Terraform provider 스키마에서
+타입은 뽑았지만 **관계를 뽑는 경로가 아직 없습니다.** 이건 결함이 아니라 **비어
+있는 축**이고(5장의 AWS 담김 축과 같은 성격), 이렇게 적어 두지 않으면 "12개
+클라우드 그래프"라는 말이 12곳 모두에서 의존 관계를 답한다는 뜻으로 읽힙니다.
+
+가장 오해하기 쉬운 칸은 **oracle**입니다 — 제약이 14,614건(전체 3위)인데 가격도
+성능도 관계도 0입니다. "지원 클라우드 목록에 이름이 있다"와 "그 클라우드 질문에
+답할 수 있다"는 다른 말입니다.
+
+> 이 격자를 3장에 두는 이유: **"무엇을 모르는지 말할 수 있게" 축을 나눴다면, 그
+> 말을 표로도 해야 합니다.** 축별 수집 범위 고지가 답변마다 붙지만(13장), 문서를
+> 읽는 사람은 답변을 보기 전에 이 지도를 봅니다.
 
 **중요한 규약이 하나 있습니다.**
 
@@ -454,6 +499,36 @@ ibm 1,987 · nhn 779 · openstack 725 · ncp 427)과 **쿼터 542건**.
 
 `kind`는 15종입니다 — mutability(바꿀 수 있나) · required · 길이/개수 한도 ·
 pattern · enum(허용 목록) · min/max · default · 교차 조건(`at_least_one_of` 등).
+
+### "제약 1건"이 무엇인지 — 세는 단위 ★
+
+141,377이라는 수는 **세는 단위를 밝히지 않으면 남이 다시 셀 수 없습니다.** 다른
+연구나 다른 KB와 비교할 때 단위가 다르면 비교 자체가 무의미해집니다. 그래서
+정의를 못 박습니다.
+
+> **1건 = `(타입, 속성, 제약 종류, 조건 집합)` 하나.**
+> 조건이 다르면 **다른 건**으로 셉니다.
+
+같은 데이터를 다른 단위로 세면 이렇게 됩니다(2026-07-28 실측).
+
+| 세는 단위 | 수 |
+|---|---:|
+| 레코드 (우리가 쓰는 단위) | **141,377** |
+| `(타입, 속성, 종류)` 고유 — 조건을 무시하면 | 139,697 |
+| `(타입, 속성)` 고유 — "몇 개 칸에 뭔가 알려져 있나" | 100,787 |
+
+**차이가 작아 보이는 데 이유가 있습니다.** 조건이 붙은 레코드는 1,371건(전체의
+**1.0%**)뿐입니다. 조건부 제약은 **드물지만 없으면 답이 거짓이 되는** 종류라
+(아래 "뭉뚱그린 범위"), 수가 적다고 중요도가 낮은 게 아닙니다. 쏠림도 극단적입니다
+— `AWS::RDS::DBInstance.DBInstanceClass` **하나**가 조건별로 938건입니다. 이
+칸에서 조건을 접으면 938건이 1건이 되고, 그 1건은 **어떤 실제 엔진 조합에도 맞지
+않는** 허용 목록이 됩니다.
+
+**한 가지 더 밝힐 것**: 완전히 같은 `(타입, 속성, 종류, 조건)` 키가 두 번 나오는
+경우가 **328건(레코드 656개)** 있습니다. 결함이 아니라 **서로 다른 소스가 같은
+사실을 말한 것**입니다 — 324건이 `cfn-schema` × `tpaws-schema` 쌍입니다. 근거가
+다르므로 레코드를 합치지 않지만, **총계는 그만큼 같은 사실을 두 번 셉니다.**
+교차 확인된 사실을 하나로 치면 141,049건입니다.
 
 ### 뭉뚱그린 범위 — 이 축이 존재하는 핵심 이유 ★
 
@@ -984,17 +1059,74 @@ API가 아예 만들지 않습니다 — 근거를 없애는 게 아니라 사�
 1위가 "출처 혼합"(4건)이었고 "관련 있는 걸 못 찾음"은 **0건**이라, RAG(벡터
 검색)를 넣지 않는 결정의 근거가 됐습니다.
 
-## 16. 소스 카탈로그 — 46종 전부
+## 16. 소스 카탈로그 — 47종 전부
 
-핀 등록부(`kbcommon/sources.py`)가 진실이고, 여기서는 2026-07-24 시점의 전체
-목록을 용도별로 요약합니다. 각 소스의 함정·정정 이력은 등록부의 주석에 있습니다.
+핀 등록부(`kbcommon/sources.py`)가 진실이고, 여기서는 전체 목록을 용도별로
+요약합니다. 각 소스의 함정·정정 이력은 등록부의 주석에 있습니다.
 
-**소스를 고른 원칙 둘**: ① **실측 전 착수 금지** — 소스가 그 값을 정말 주는지
-받아서 세어 보기 전에는 파서를 짜지 않습니다(기대가 틀려 있던 적이 반복됐습니다 —
-"botocore shape에 min/max가 없다"고 적어 뒀다가 세어 보니 있었고, "NHN은 공개
-프로바이더가 없다"고 적어 뒀다가 받아 보니 110종이 있었습니다). ② **이미 받은
-소스의 안 쓰는 부분부터** — 새 소스보다 이미 핀 박은 저장소의 미사용 파일이 싸고
-안전합니다(`botocore-endpoints`·`tumblebug-cloudinfo`·`tumblebug-src`가 그 사례).
+### 왜 이것들인가 — 선정 절차 ★
+
+"만들다 보니 필요해서 찾았다"는 답이 아닙니다. 실제로 쓰인 절차를 적습니다. 이걸
+적지 않으면 47종은 **편의표본**으로 읽히고, 그건 이 저장소가 요구사항 쪽 축에서
+이미 한 번 지적받아 고친 문제입니다.
+
+**① 탐색은 축의 공백에서 시작합니다.** 소스를 먼저 모으고 쓸 곳을 찾은 게 아니라,
+**답 못 하는 질문을 먼저 세고** 그걸 채울 소스를 찾았습니다. 그 공백 지도와 조사
+기록이 남아 있습니다.
+
+| 무엇을 못 답했나 | 조사 기록 |
+|---|---|
+| 축 전반의 빈 곳 (기준선) | `archive/gap-map-2026-07-22.md` |
+| 동반 리소스·최소 규모 | `archive/bundle-sizing-research-2026-07-22.md` |
+| 설계 지침 산문 | `archive/pattern-sources-2026-07-23.md` |
+| 인스턴스 특성·자연어 | `archive/instance-traits-nl-research-2026-07-24.md` |
+| 관리형 서비스 과금 | `archive/managed-pricing-research-2026-07-24.md` |
+
+**② 포함 기준 넷**을 모두 만족해야 채택합니다.
+
+| 기준 | 왜 |
+|---|---|
+| **기계가 읽으라고 공개됐나** | 산문은 표현이 제각각이고 자주 틀립니다(4장 ①). 예외는 세 부류뿐이고 전부 기록돼 있습니다 |
+| **핀을 박을 수 있나** | 못 박으면 "고쳤다"를 증명할 수 없습니다(4장 ②). 못 박는 소스는 **거부가 아니라 명시 등록** — 5종이 그렇게 들어와 있습니다 |
+| **재배포 판단이 되나** | 안 되면 로컬 빌드 전용이 되거나(AWS 관리형 가격) 별도 고지가 붙습니다(17장) |
+| **그 값을 정말 주나 (실측)** | 아래 ③ |
+
+**③ 실측 전 착수 금지.** 소스가 그 값을 정말 주는지 **받아서 세어 보기 전에는
+파서를 짜지 않습니다.** 이건 원칙이 아니라 **반복된 실패에서 나온 게이트**입니다.
+
+- "botocore shape에 min/max가 없다"고 적어 뒀다가 세어 보니 **있었습니다**
+  (EC2만 봐도 min 183·max 175·enum 457).
+- "NHN은 공개 프로바이더가 없다"고 적어 뒀다가 받아 보니 **110종이 있었습니다.**
+
+두 번 다 **우리 기대가 틀렸고 데이터가 맞았습니다.** 그래서 기대로 배제하지
+않습니다.
+
+**④ 배제 기준과 그 기록.** 기각한 후보는 이유와 함께 남깁니다 — 20장이 그
+목록입니다. 배제 사유는 세 종류로 갈라 적습니다: **근거가 없어서**(사이징
+소스) / **표현할 자리가 없어서**(Terraform 스키마 JSON) / **권리가 막아서**(AWS
+Price List 재배포). 이 셋을 뭉뚱그리면 리뷰어가 "안 한 것"과 "못 하는 것"을
+구별할 수 없습니다.
+
+**⑤ 값싼 순서로 훑습니다.** 새 소스를 찾기 전에 **이미 핀 박은 저장소의 안 쓰는
+파일**을 먼저 봅니다. 받는 비용도 검증 비용도 0에 가깝고 태그가 이미 맞기
+때문입니다 — `botocore-endpoints`·`tumblebug-cloudinfo`·`tumblebug-src`가 그렇게
+들어왔습니다.
+
+**⑥ 언제 멈추나 (포화).** 레코드 수는 포화 지표가 아닙니다 — 같은 종류의 사실이
+늘어난 것일 수 있습니다. 축이 포화했다고 보는 기준은 이것입니다.
+
+> **소스를 하나 더 넣어도 그 축이 답할 수 있는 질문의 종류가 늘지 않으면 포화.**
+
+이 기준으로 현재를 읽으면 축마다 다릅니다. **capacity는 포화에 가깝고**(12개
+CSP 중 소스가 있는 곳을 다 넣었습니다), **graph는 전혀 아닙니다**(7개 CSP의
+관계 축이 비어 있습니다 — 3장 격자). **perf는 조사로 포화가 확정된 경우**입니다:
+aws·azure·gcp 밖 아홉을 전수 조사해 **소스가 실재하는 곳은 IBM뿐**임을 확인하고
+나머지를 재조사 금지 목록에 올렸습니다(20장).
+
+> **한계도 적습니다.** 이 절은 **사후에 구성한 것**입니다(2026-07-28). 기준을
+> 먼저 문서로 정하고 그에 따라 고른 게 아니라, 실제로 쓰인 규칙을 나중에 말로
+> 옮겼습니다. 그래서 "사후 정당화가 아닌가"라는 의심은 정당하고, 반박 근거는
+> 위 표의 **조사 기록이 채택 이전 날짜로 남아 있다**는 것뿐입니다.
 
 ### 미러와 그 주변 (cb-tumblebug 계열)
 
@@ -1067,6 +1199,53 @@ tp-alicloud · tp-tencent · tp-oracle · tp-ibm · tp-nhn · tp-ncp · tp-opens
 | aws-solutions-constructs | tag | AWS 공식 패턴 83개 — **이름 자체가 조합** |
 | avm-bicep | commit | AVM 컴파일된 ARM의 dependsOn — 실무 배포 순서 |
 
+### 소스가 서로 독립인가 — 47종이 47개의 독립 근거가 아니다 ★
+
+**"두 소스가 같은 말을 하면 승급"**은 이 저장소의 핵심 장치입니다(5·9장의 교차
+확인). 그런데 그 두 소스가 사실 **같은 물건**이면 승급이 아니라 **같은 말을 두 번
+센 것**입니다. 그래서 독립성을 표의 칸으로 다룹니다.
+
+| 표시 | 뜻 | 교차 확인에 쓸 수 있나 |
+|---|---|---|
+| **독립** | 발행 주체도 생성 경로도 다름 | 쓸 수 있다 |
+| **같은 발행자** | 조직은 같고 산출 경로가 다름 | 약하게. "둘 다 틀릴" 상관이 남는다 |
+| **같은 상류의 다른 파일** | 같은 저장소·같은 ref | **못 쓴다** |
+| **복제** | 한쪽이 다른 쪽의 코드·데이터 사본 | **절대 못 쓴다** |
+
+아래가 **독립이 아닌 것 전부**입니다. 나머지는 독립으로 봅니다.
+
+| 묶음 | 표시 | 실측 |
+|---|---|---|
+| tumblebug-dump · src · latency · cloudinfo · swagger | **같은 상류의 다른 파일** | 5종이 한 저장소. 여기서 정가 73,083 · 성능 65,032 · 리전 188 · 지연 10,890 · 번들 23 · 공통층 13이 나옵니다 |
+| cb-spider · cb-spider-map | **같은 발행자**(cloud-barista) | 매핑표는 cb-spider를 근거로 만든 손 검수표입니다 |
+| botocore · botocore-endpoints | **같은 상류의 다른 파일** | 같은 태그 1.43.52 |
+| **tp-nhn ← tp-openstack** | **복제** | 구현 파일 111개 중 90개가 `resource_openstack_*.go` 그대로. 이름이 84/110 겹치는 것은 **교차 검증이 아니라 같은 코드** |
+| **kcc-crd(tf2crd) ↔ tpg-provider** | **복제(버전 차)** | KCC의 `tf2crd` 파이프라인은 terraform-provider-google **4.84.0(2023-09)을 벤더링한 것**이고, tpg-provider는 같은 생성기의 최신 산출물입니다 |
+| gcloud-machine-types · cyclenerd-gcp-pricing | **같은 발행자**(같은 저자의 다른 저장소) | 둘 다 커뮤니티 큐레이션이라 `inferred` |
+| azure-compute-docs · azure-limits-doc · azure-well-architected · ms-architecture-center | **같은 발행자**(MicrosoftDocs) | 저장소는 다르지만 편집 주체가 같습니다 |
+| cfn-schema · cdk-oob · botocore · aws-price-list · aws-cfn-templates · aws-solutions-constructs | **같은 발행자**(AWS) | AWS 디스크 한도의 "두 소스 교차 검증"(6장)은 **같은 회사의 두 산출물**입니다 |
+
+**가장 값이 큰 줄은 GCP입니다.** 실측하면(2026-07-28) GCP 제약 6,923건의 출처가
+이렇습니다.
+
+```
+tpg-schema        3,383   terraform-provider-google v7.40.0  (Magic Modules 산출물)
+kcc  tf2crd       1,572   같은 생성기의 4.84.0 벤더링본       ← 위와 같은 뿌리
+kcc  dcl2crd      1,098   다른 파이프라인
+kcc  direct         870   다른 파이프라인
+kcc  기타(불변성) 3,540 중 위 셋으로 나뉨
+```
+
+즉 **GCP 제약의 71.6%(4,955건)가 결국 같은 생성기에서 나옵니다** — 버전만 3개
+메이저 떨어져 있습니다. "KCC와 Terraform provider 둘 다 그렇게 말한다"를 교차
+확인으로 읽으면 안 되는 이유입니다. `backend` 칸을 등급이 아니라 **사실**로 적어
+둔 결정(6장)이 여기서 값을 합니다 — 그 칸이 없었으면 이 계산 자체가 불가능합니다.
+
+> **독립으로 남은 교차 확인**은 그래서 더 값이 있습니다: `ms-architecture-center`
+> (마이크로소프트) × `mingrammer-diagrams`(제3자 오픈소스)의 svcmap 교차 확인,
+> `azure-quickstart-templates`(마이크로소프트) × `aws-cfn-templates`·
+> `widdix-cf-templates`(AWS·제3자)의 동시 출현 방법 재현이 그렇습니다.
+
 ---
 
 ## 17. 라이선스와 재배포 — 법적 경계도 데이터다
@@ -1092,6 +1271,54 @@ tp-alicloud · tp-tencent · tp-oracle · tp-ibm · tp-nhn · tp-ncp · tp-opens
 문장까지 테스트가 강제합니다. 사실 데이터(가격·스펙 — 저작권 보호가 얇음)와 산문
 저작물(저작권의 본체)의 차이를 인지한 상태에서, 비영리 졸업과제라는 용도에 기대
 내린 결정입니다.
+
+### 위 표는 **분류가 끝난 목록이 아니다** ★
+
+여기가 이 문서가 **코드보다 자신 있게 말하던 유일한 자리**였습니다(감사
+2026-07-28). 위 5등급 표는 47종 전부가 분류된 것처럼 읽히지만, 실제로 등급이
+붙어 있던 소스는 **넷**뿐이었습니다 — 거부 1(`aws-price-list`) · 문구 없음
+2(`azure-retail-prices`·`ibm-global-catalog`) · 공정이용 1(`aws-well-architected`).
+나머지 43종은 `redistribution` 칸이 비어 있었고, 그 빈 칸의 뜻은 코드가 정확히
+적어 두고 있었습니다 — **"괜찮다"가 아니라 "따로 판단하지 않았다."**
+
+지금은 라이선스도 **등록부의 칸**입니다(`kbcommon/sources.py`의 `license`).
+현재 상태입니다.
+
+| 라이선스 | 소스 수 |
+|---|---:|
+| Apache-2.0 | 17 |
+| MPL-2.0 (Terraform provider 계열) | 9 |
+| MIT | 7 |
+| CC-BY-4.0 (**저작자 표시 의무**) | 5 |
+| MIT-0 | 1 |
+| `not-stated` (공개돼 있으나 부여 문구 없음) | 2 |
+| `all-rights-reserved` (공정이용 판단으로 수록) | 1 |
+| `bundled-own` (우리 파일) | 1 |
+| **빈 칸 — 아직 확인 안 함** | **4** |
+
+**빈 칸 넷을 감추지 않습니다.** `cfn-schema` · `cdk-oob` · `aws-price-list` ·
+`azure-rest-api-specs`이고, `unlicensed()`가 모으며 테스트가 이 목록을 못 박습니다
+(`test_unlicensed_sources_are_declared_as_such` — 목록이 자라면 빌드가 죽습니다).
+
+넷 중 셋은 **아직 안 본 것**이라 확인하면 채워집니다. `cfn-schema` 하나만
+**원리적으로 어렵습니다** — 저장소가 없고 AWS가 서빙하는 zip뿐이라 LICENSE 파일
+자체가 존재하지 않습니다. 하필 그 소스가 이 저장소 **최대 근거(46,911건)**입니다.
+
+> 규율은 `unpinnable()`과 같습니다: **모르는 것을 세어서 드러내면 다음 사람이
+> 착각하지 않습니다.** 라이선스 표기도 자유 서술이 아니라 정해진 어휘여야 하고
+> (`test_license_values_are_from_the_known_vocabulary`), 부여가 없는 소스는
+> **왜 수록했는지**가 반드시 적혀 있어야 합니다.
+
+**칸을 만들자마자 위반이 하나 나왔습니다.** CC-BY는 "넣어도 되나"가 아니라
+**"표시했나"**가 조건이라, 새 검사가 CC-BY 소스 전부에 대해 NOTICE에 이름이
+있는지를 봅니다. `azure-compute-docs`가 걸렸습니다 — 이 소스에서 나온 필드가
+`data/tumblebug-perf.json.gz`에 **26,823건** 들어 있는데 NOTICE에는 이름이
+없었습니다. **저작자 표시 의무를 지키지 않고 있던 것**이고, 사람이 표를 읽어서는
+못 찾았을 종류입니다(같은 파일의 주 소스인 cb-tumblebug만 표기돼 있었고, 보강
+소스 셋은 필드 단위로 들어가 있어 눈에 안 띕니다). 지금은 셋 다 NOTICE에 있습니다.
+
+> 이게 "규약은 문서가 아니라 검사로"의 값입니다. 라이선스 칸을 문서 표로만
+> 만들었다면 **표는 예뻐지고 위반은 남았을** 겁니다.
 
 ---
 
@@ -1277,19 +1504,251 @@ Azure 확장 중 `read-only-not-required` 위반 6건으로 빌드가 멈췄는�
 
 정직하게 미결로 둔 것들입니다(2026-07-24 기준).
 
-- **영어 전환** — 시스템 타겟이 영어로 확정됐는데 도구 출력·판정문·고지가
-  한국어입니다. 출력과 프로브 기대 문자열을 **같은 라운드에서** 바꿔야 합니다.
+- **영어 전환 — 절반 해소.** 도구 출력·판정문·고지가 영어로 넘어갔습니다(부록 A의
+  출력이 전부 영어인 것이 그 증거입니다). 남은 한국어는 셋인데, **성격이 다릅니다.**
+  - **코드 주석·docstring·CLI** — 만드는 사람이 읽는 면. 바꿀 이유가 없습니다.
+  - **라이브 프로브의 질문과 `want_any`** — 기존 64건은 한국어입니다. 이건 도구
+    문자열이 아니라 **모델의 답변**을 보는 검사라, 한국어로 물으면 한국어로
+    답하므로 지금도 맞습니다.
+  - **appkb 진입 계약의 설명문** — 외부 팀(easydep)과 공유하는 계약이라 합의 대상입니다.
+- **영어 질의 프로브 — 만들었고 아직 안 돌렸습니다.** 한국어 프로브 10건과
+  **짝지은** 영어판이 `tools/probe_en.py`에 있습니다(짝은 `PAIRED_WITH`).
+  배선은 검증했지만 **실제 모델을 태운 적이 없습니다.** 즉 공백이 "프로브가
+  없다"에서 **"프로브는 있고 안 돌렸다"**로 옮겨졌을 뿐입니다. 짝을 지은 이유가
+  중요합니다 — 짝이 없으면 영어 프로브가 실패했을 때 "영어라서"인지 "그 질문이
+  원래 어려워서"인지 갈리지 않습니다. 판정 기준은 **결과를 보기 전에** 적어
+  뒀습니다(해당 파일 docstring).
 - **easydep 통합 리허설** — 합의 안건(진입 계약 칸 채움 등)이 회신 대기이고,
   그쪽 실물 산출물로 끝까지 가 본 것은 샘플뿐입니다.
-- **소스 신선도 정책** — 핀 46종이 언제 낡는지 지켜보는 주기가 없습니다.
+- **소스 신선도 정책** — 핀 47종이 언제 낡는지 지켜보는 주기가 없습니다.
   digest 소스는 재빌드 때만 드리프트가 드러납니다.
+- **라이선스 미확인 4종** — 17장. 셋은 아직 안 본 것이고, `cfn-schema` 하나는
+  저장소가 없어 **원리적으로 어렵습니다.**
+- **정확성 측정** — 23장. 출처를 밝히는 일은 하지만 **"이 값이 실제와 맞는가"를
+  잰 적이 없습니다.** 정답지가 없습니다.
 - **대조기의 한계** — 임의 주장의 "뒤집기"(숫자가 아니라 뜻)는 여전히 못 잡습니다.
 - **실사용 질의 분포** — 프로브는 우리가 지어낸 질문입니다. 실사용 로그 →
   프로브 반영 루프가 운영 후 과제입니다.
 
 ---
 
-## 22. 한 장 요약
+## 22. 타당성 위협 — 이 결과를 무효로 만들 수 있는 것들
+
+19장은 **우리가 밟은 함정**이고 21장은 **아직 안 한 일**입니다. 이 장은 성격이
+다릅니다 — **이 지식베이스로 낸 결론을 다른 사람이 의심할 만한 이유**를 우리가
+먼저 적습니다. 고쳐서 없앨 수 있는 것도 있고, 구조적이라 밝히는 것 말고는 방법이
+없는 것도 있습니다. 후자를 안 적으면 **없는 게 아니라 숨긴 게 됩니다.**
+
+### (가) 소스 단일문화 — 47종이 47개의 독립 근거가 아니다 ★
+
+`cb-tumblebug` 계열이 47종 중 **7종**입니다. 개수보다 중요한 것은 **무엇을
+떠받치나**입니다.
+
+```
+cb-tumblebug ─┬─ 스펙·정가 73,083   (costkb의 (가) 전부)
+              ├─ 성능 신호 65,032   (perfkb의 뼈대 전부)
+              ├─ 리전 188 · 지연 10,890  (envkb의 절반)
+              ├─ 번들 23            (bundlekb의 이름 붙은 축 일부)
+              └─ 공통 층 13종       (graphkb의 기준점)
+```
+
+**상류 한 곳의 오류가 네 축에 동시에 번집니다.** 실제로 겪었습니다 — 메모리 단위
+변환 버그(7장)가 그것이고, 두 값을 다 싣는 것으로 막았습니다. 하지만 그건 **알려진
+하나**이고, 구조는 그대로입니다.
+
+같은 함정을 한 번은 스스로 잡았습니다: `tp-nhn`이 OpenStack 프로바이더의
+리브랜딩이라 이름이 84/110 겹치는 것은 **교차 검증이 아니라 같은 코드**라고 소스
+주석에 적어 뒀습니다. 그 관찰을 **일반화해 표의 칸으로 올린 것**이 16장의 독립성
+칸입니다.
+
+### (나) 벤더 치우침 — 일반화 가능성의 한계
+
+- 제약의 **67.7%**가 aws+azure(95,533 / 141,377).
+- 성능의 **79.9%**가 azure+aws. 관리형 가격의 **78.4%**가 azure 하나.
+- 국내 CSP(ncp 427 · nhn 779 · kt 220스펙)는 **전 축에서 1% 미만**입니다.
+
+원인은 명확하고 **우리 잘못이 아닙니다** — 공개 기계가독 소스가 그렇게
+분포합니다. 그러나 결론에는 영향이 있습니다: **"이 가이드라인이 국내 클라우드에도
+통하는가"에 지금 데이터로는 답할 수 없습니다.** 3장 격자가 이 사실의 지도입니다.
+
+### (다) 검수가 1인 코더다 — 일치도 수치가 없다
+
+`reviewed=true`는 사실 승격의 두 경로 중 하나인데(12장), 검수 절차 자체는
+문서화돼 있지 않습니다. 두 번째 코더가 없고, 일치도를 잰 적이 없으며,
+"가장 가깝다"의 기준이 재현 가능하게 적혀 있지 않습니다.
+
+부록 A.4가 이 위험을 그대로 보여 줍니다 — Azure VM의 관계 46건이 **94% 이름 추론 +
+사람 검수**입니다. 그 답의 신뢰도는 거의 전적으로 **한 사람의 판단**에 걸려
+있습니다. 답변에 그 비율을 실어 방어하고 있지만(**방어와 검증은 다릅니다**).
+
+**그래서 한 번 재봤습니다 (2026-07-28).** svcmap 엣지 69건 전부를 2차 코더가
+독립 재판정했습니다. 기준은 판정 **전에** 못 박고 전 건에 같게 적용했습니다.
+
+> "이 타입 **하나를 배포하면** 그 `app::` 개념의 기능을 얻는가?"
+> ① 같은 서비스 범주인가 ② 부모가 따로 필요한 하위 리소스가 아닌가
+
+| | |
+|---|---:|
+| 재판정 대상 (1차가 전부 `reviewed=True`로 승인) | 69건 |
+| 동의 | 66 |
+| 이견 | 1 |
+| 유보(타입 이름만으로 못 가름) | 2 |
+| **단순 일치율** | **95.7%** |
+| 유보 제외 시 | 98.5% |
+
+**결과보다 중요한 것은 어디서 갈렸나입니다.** 갈린 셋이 **전부 같은 라벨**에
+몰렸습니다.
+
+| 근거 라벨 | 건수 | 동의율 |
+|---|---:|---:|
+| `svcmap-cross-checked` (**두 소스가 같은 말 → 승급**) | 31 | **90.3%** |
+| `mingrammer-taxonomy` | 17 | 100% |
+| `svcmap-reviewed` (사람 검수만) | 16 | 100% |
+| `ms-learn-comparison` | 5 | 100% |
+
+**가장 강해야 할 라벨이 가장 약했습니다.** 이유가 설명됩니다 — 교차 확인은
+**서비스 이름 수준**('Amazon RDS ↔ Azure SQL')에서 두 소스가 일치하는지를 보는데,
+우리가 붙이는 것은 **타입 id 수준**입니다. 이름이 맞아도 입도가 어긋날 수
+있고, 갈린 셋이 정확히 그 자리입니다.
+
+- **이견 1건** — `app::relationalDatabase → azure::Microsoft.Sql/servers/databases`.
+  이건 **하위 리소스**라 부모 서버 없이는 존재할 수 없습니다. 같은 개념의 다른
+  Azure 엣지 둘(`flexibleServers`)은 최상위라 기준을 만족합니다. *두 판정 다
+  변호 가능합니다* — 1차는 "개념의 대응"으로, 2차는 "배포 단위"로 봤습니다.
+  그래서 **고치지 않고 남깁니다.** 불일치를 지우면 일치도를 잰 뜻이 없어집니다.
+- **유보 2건** — `serverlessFunction → Microsoft.Web/sites`(Azure에 함수 전용
+  타입이 없어 **다른 답이 없는데**, 그냥 배포하면 웹앱이 나옵니다) ·
+  `eventStream → gcp::PubSubTopic`(**`messageQueue`에도 같은 타입**이라 GCP에서는
+  두 설계 개념이 구별되지 않습니다). 둘 다 틀린 대응이 아니라 **타입 축만으로는
+  표현이 안 되는 자리**입니다.
+
+**이 수치의 한계를 분명히 적습니다.** 이건 **한쪽 방향만 본 검사**입니다 —
+1차 코더가 **기각한 후보는 데이터에 남지 않으므로**, 우리가 잡을 수 있는 것은
+"잘못 넣은 것"뿐이고 **"넣었어야 하는데 빠뜨린 것"은 못 잡습니다.** 같은 이유로
+카파(κ) 같은 일치도 계수는 **계산할 수 없습니다** — 1차 판정에 범주가 하나뿐이라
+우연 일치를 정의할 수 없습니다. 제대로 재려면 **기각 기록까지 남겨야** 합니다.
+
+빠뜨린 쪽을 대신 본 것이 커버리지 표입니다. 주요 3사에서 빈 칸은 둘뿐이고
+(`cdn → gcp` · `searchIndex → gcp`), 둘 다 **매핑 가능한지부터 확인이 필요한**
+자리입니다(GCP CDN은 로드밸런서 백엔드 설정이라 독립 타입이 아닐 수 있습니다).
+
+### (라) 측정 도구를 우리가 만들었다
+
+- 프로브 질문은 **우리가 지어낸 것**입니다(21장). 실사용 질의 분포가 아닙니다.
+- **영어 질의 프로브가 한 벌도 없습니다.** 도구 출력이 영어로 넘어갔는데
+  영어로 물어본 측정이 없습니다. 라우팅이 질의 언어에 민감하다는 것은 우리가
+  직접 쟀습니다(13장의 "로컬 SSD 용량" 누출) — 즉 **한국어에서 잰 결과가 영어에서
+  성립한다는 증거가 없습니다.**
+- 완화 장치는 있습니다: 무편향 조사는 **질문을 데이터 보기 전에 쓰고 정답지를
+  답변 읽기 전에 만드는** 방식이라, 아는 것만 검사하는 편향을 막습니다(15장).
+  이건 강점이므로 위협 목록에 함께 적어 둡니다.
+
+### (마) 관측 코퍼스의 표본 편향
+
+`observed` 값은 **"이 코퍼스에서 그렇게 나왔다"**이지 **"클라우드가 그렇게
+강제한다"가 아닙니다.** Azure Quickstart는 데모 쪽으로 기울어 있어 VM과 스토리지
+계정이 53.6%로 같이 나오는데, 그건 **옛 부트 진단 관행의 흔적**입니다. AWS 쪽은
+코퍼스가 얇아(362개) RDS·EKS 앵커가 임계에 못 미칩니다 — **채운 척하지 않습니다.**
+
+### (바) 재현 불가능한 소스가 5종, 그중 하나가 최대 근거다
+
+`digest` 핀 5종은 원리적으로 재현이 안 됩니다. 규모를 밝히면:
+**`cfn-schema` 하나가 전체 근거 라벨 중 최대인 46,911건**입니다. 즉 **이 저장소의
+최대 근거가 재현 불가능한 소스**입니다. 보관해 둔 zip을 `--source-file`로 넘기면
+그때 그 파일로 다시 만들 수 있지만, 그건 **우리 손에 있는 사본에 기댄 재현**이지
+독립적인 재현이 아닙니다.
+
+### (사) 스냅샷 하나뿐 — 신선도 정책이 없다
+
+핀 47종이 전부 2026년 7월 시점입니다. **언제 낡는지 지켜보는 주기가 없습니다**
+(21장). `digest` 소스는 재빌드할 때만 드리프트가 드러납니다. 부록 A.9가 나흘
+만에 생긴 드리프트를 보여 주는데, 그건 **수치가 얼마나 빨리 늙는지**의 증거이지
+갱신 절차가 아닙니다.
+
+### 이 장을 어떻게 쓸 것인가
+
+위 일곱 중 **(다)·(라)는 고쳐서 없앨 수 있고**(일치도 측정, 영어 프로브),
+**(가)·(나)·(마)·(바)는 구조적**이라 밝히는 것이 최선입니다. **(사)는 정책의
+문제**입니다. 무엇이 어느 쪽인지 갈라 적는 것이 이 장의 목적입니다 — 리뷰어가
+"안 한 것"과 "못 하는 것"을 구별할 수 있어야 합니다.
+
+---
+
+## 23. 밖에서는 뭐라고 부르나 — 외부 표준·문헌 매핑
+
+이 문서는 지금까지 **우리 말로만** 썼습니다. 그러면 규율끼리는 정합적인데
+**자기참조**가 됩니다 — "왜 이 설계가 옳은가"의 답이 이 문서 안에만 있습니다.
+그래서 여기서 밖에 댑니다.
+
+**중요한 전제 둘.** ① 우리가 발명했다고 생각한 것 상당수는 **이미 이름이 있습니다.**
+이름을 붙이면 방어가 쉬워집니다. ② 매핑은 **양방향**이어야 합니다 — 표준에 있는데
+우리에게 없는 칸을 함께 내지 않으면 유리한 쪽만 고른 것입니다.
+
+### (가) 우리가 만든 것 ↔ 이미 있는 이름
+
+| 이 문서의 규율 | 밖에서의 이름 | 얻는 것 |
+|---|---|---|
+| "수집 범위 안이라 '없음'이 답" vs "범위 밖이라 모름"(13장) | **국소 폐쇄세계 가정**(local closed-world assumption) — 지식그래프 완전성 문헌의 표준 장치 | 임기응변이 아니라 **알려진 해법의 구현**이 된다 |
+| 성립 / 불성립 / **모름** 3상태(6장) | **Kleene 강 3치 논리** — SQL의 NULL 의미론이 같은 것 | 조건 평가 순서 규칙("확실히 안 맞으면 불성립, 모르는 게 있으면 모름")이 **논리 규칙으로 정당화**된다 |
+| `evidence` + `basis` + `reviewed`(12장) | **W3C PROV** 계열 프로버넌스 모델 (Entity / Activity / Agent, `wasDerivedFrom`, `wasAttributedTo`) | 산출물이 **표준 어휘로 교환 가능**해진다 |
+| 핀 · sha256 · `_source`(4장 ②⑤) | **ISO/IEC 25012** 데이터 품질 특성의 *currentness · traceability · credibility* | 품질 주장이 **정의된 축**을 갖는다 |
+| `references` · `contained_in` · `equivalent_to`(5장) | **OASIS TOSCA**의 관계 타입 (`DependsOn` · `HostedOn` · `ConnectsTo`)과 Requirements/Capabilities | 그래프가 **표준 토폴로지 모델**에 얹힌다 |
+| `claim_check` 주장 대조기(14장) | **귀속성 평가**(생성문이 제시된 출처에 귀속되는가) · 그라운드니스 검증 | "프롬프트로는 못 고친다"에 **선행 연구의 자리**가 생긴다 |
+| 무편향 조사 — 질문 먼저, 정답지 먼저(15장) | **사전등록**(pre-registration) · 맹검 평가 | 이미 하고 있는 강점인데 **이름이 없어 강점으로 안 읽혔다** |
+| 라이선스 표기 어휘(17장) | **SPDX** 식별자 | 표기가 갈리지 않고 도구가 읽는다 |
+| 소스 선정 절차(16장) | 체계적 문헌고찰의 **포함/배제 기준 + 흐름 기록** | "편의표본"이라는 지적에 답할 수 있다 |
+| 22장 | 실험 소프트웨어공학의 **타당성 위협** 절 | 리뷰어가 찾는 자리가 생긴다 |
+
+> 요구사항 쪽 관심사 축은 이미 **ISO/IEC 25010**에 양방향 매핑돼 있습니다
+> (`docs/cloud-native-requirements.md`). 같은 저장소인데 **큰 축인 이쪽만 매핑이
+> 없던 것**이 감사에서 지적된 불균형이었습니다.
+
+### (나) 표준에 있는데 우리에게 없는 칸 ★
+
+이쪽이 더 값이 큽니다. 유리한 매핑만 적으면 매핑을 안 한 것과 같습니다.
+
+**TOSCA에 대고 보면**
+
+| TOSCA의 개념 | 우리 상태 |
+|---|---|
+| `HostedOn` (호스팅 관계) | **AWS는 통째로 비어 있음** — 스키마에 담김 어휘가 없어 일부러 비웠습니다(5장). 표준에 대고 말하면 이 공백이 **결정**으로 읽히고, 안 대고 말하면 **누락**으로 읽힙니다 |
+| Requirements / Capabilities 매칭 | **없음.** 우리는 "A가 B를 참조한다"만 말하고, "A가 요구하는 능력을 B가 제공한다"는 모델이 없습니다. 대체 후보를 고르는 일이 이 모델의 몫인데, 우리는 svcmap의 이름 대응으로 대신하고 있습니다 |
+| 생애주기 인터페이스 (create·configure·start·stop·delete) | **부분.** 생성 순서와 삭제 영향은 답하지만 **연산 단위 모델은 없습니다** |
+| Topology Template (실제 배치 인스턴스) | appkb의 배포 계획이 가장 가깝지만 **TOSCA 타입 체계가 아닙니다** |
+
+> **"왜 TOSCA를 안 썼나"에 대한 답**도 여기 적어 둡니다: TOSCA는 **토폴로지를
+> 기술하는 언어**이지 벤더 타입별 사실(한도·가격·성능)을 담는 창고가 아닙니다.
+> 우리가 필요한 것은 "이 값이 허용되나"에 근거를 달아 답하는 것이고, 그 자리는
+> TOSCA에 없습니다. 다만 **그래프 축의 관계 어휘는 TOSCA에 맞출 수 있고**,
+> 그러면 위 표가 곧 로드맵이 됩니다.
+
+**PROV에 대고 보면**
+
+| PROV의 개념 | 우리 상태 |
+|---|---|
+| `Entity` (산출물) · `wasDerivedFrom` | **있음** — 레코드와 `evidence`가 그것입니다 |
+| `Agent` (누가 했나) · `wasAttributedTo` | **없음.** `reviewed`가 **참/거짓 하나**라서 **누가 검수했는지가 어디에도 없습니다.** 22장 (다)의 "1인 코더" 위협이 여기서 구조로 드러납니다 — 코더가 여럿이 돼도 지금 자료구조로는 구별할 수 없습니다 |
+| `Activity` (언제 무엇이 돌았나) | **부분** — 소스를 받은 시각은 있으나 **파서 실행이 활동으로 기록되지 않습니다** |
+| `wasRevisionOf` (이전 판) | **없음.** 레코드가 바뀌었을 때 이전 값과의 관계를 남기지 않습니다 |
+
+**ISO/IEC 25012에 대고 보면**
+
+| 품질 특성 | 우리 상태 |
+|---|---|
+| *traceability* (추적성) | **강함** — 이 저장소의 중심 |
+| *credibility* (신뢰성) | **강함** — `basis`가 정확히 이것 |
+| *currentness* (최신성) | **절반** — "언제 것"은 알지만 **언제 낡는지 보는 주기가 없습니다**(22장 (사)) |
+| *consistency* (일관성) | **있음** — 쓰기 전 불변식(4장 ④) |
+| *completeness* (완전성) | **선언만 있고 측정이 없습니다.** "수집 범위"는 우리가 밝히는 것이지 잰 것이 아닙니다 |
+| *accuracy* (정확성) | **측정하지 않습니다.** 정답지(gold set)가 없어 "이 값이 실제와 맞는가"를 잰 적이 없습니다. 교차 검증(두 소스가 같은 말)이 대용이지만 **정확성 측정이 아닙니다** |
+
+마지막 두 줄이 이 표에서 가장 정직한 부분입니다. **우리는 "출처를 밝히는 일"은
+아주 잘하고, "맞는지 재는 일"은 하지 않았습니다.** 두 축이 다르고, 지금까지
+이 문서는 앞의 축만 이야기했습니다.
+
+---
+
+## 24. 한 장 요약
 
 만들 사람이 기억할 것을 줄이면 이것입니다.
 
@@ -1313,3 +1772,505 @@ Azure 확장 중 `read-only-not-required` 위반 6건으로 빌드가 멈췄는�
 > **재지 않고 판단하면 확신에 찬 오답이 나옵니다.** 만드는 사람도 예외가 아닙니다.
 > 이 문서의 수치는 전부 코드와 데이터에서 다시 뽑은 것이고, 그 과정에서 제 기억이
 > 여러 번 틀렸습니다.
+
+---
+
+# 부록 A — 실물 예시
+
+본문은 원리를 말하고 예시를 아낍니다. 그래서 "그래서 답이 어떻게 생겼는데?"에
+답하지 못합니다. 이 부록은 **본문의 규율 하나하나가 실제로 어떤 문장이 되어
+나오는지**를 실물로 보여 줍니다.
+
+아래 출력은 전부 **2026-07-28에 코드를 돌려 받은 것을 그대로** 붙인 것입니다.
+지어낸 것도, 다듬은 것도 없습니다(길이 때문에 잘라낸 곳은 `…`로 표시).
+재현하려면 저장소 루트에서 이렇게 부릅니다.
+
+```python
+from app.deployment.capacitykb import agent_api as cap
+from app.deployment.graphkb   import agent_api as graph
+from app.deployment.costkb    import agent_api as cost
+from app.deployment.perfkb    import agent_api as perf
+```
+
+---
+
+## A.1 조건이 답을 가른다 — 그리고 조건을 모르면 3상태 (6·13장)
+
+같은 질문, 조건만 다릅니다.
+
+```python
+cap.check("AWS::EC2::Volume", "Size", "30000", context={"VolumeType": "gp2"})
+```
+```
+not allowed: AWS::EC2::Volume.Size = 30000 violates a constraint.
+  - Size: 30000 GiB is outside max 16384 GiB (when VolumeType='gp2',
+    evidence cross-checked against two official AWS sources, stated by the source)
+```
+
+```python
+cap.check("AWS::EC2::Volume", "Size", "30000", context={"VolumeType": "gp3"})
+```
+```
+allowed: AWS::EC2::Volume.Size = 30000 satisfies the 2 known constraints.
+```
+
+조건을 안 주면 **한쪽으로 접지 않고 셋째 상태로 답합니다.**
+
+```python
+cap.check("AWS::EC2::Volume", "Size", "30000")
+```
+```
+depends on the condition: AWS::EC2::Volume.Size = 30000 varies with VolumeType,
+so we need those values to be definite. of the 14 conditions, **9 allow it**, 5 do not.
+  allowed:     VolumeType='gp2'; VolumeType='gp3'; VolumeType='io1'; VolumeType='io2'; …
+  not allowed: VolumeType='gp2'; VolumeType='io1'; VolumeType='sc1'; VolumeType='standard'
+```
+
+> **읽는 법.** `gp2`가 양쪽에 다 있는 것이 뭉뚱그린 범위를 막는 이유 그 자체입니다 —
+> 같은 종류 안에서도 다른 조건(리전·IOPS 조합)이 갈리므로, 제약을 최소·최대 한 쌍으로
+> 접으면 그 정보가 사라집니다.
+
+**부분 정보만 줘도 좁혀집니다.** 엔진은 알고 버전은 모르는 흔한 경우입니다.
+
+```python
+cap.check("AWS::RDS::DBInstance", "DBInstanceClass", "db.t3.micro",
+          context={"Engine": "aurora-mysql"})
+```
+```
+depends on the condition: … varies with EngineVersion, so we need those values to be
+definite. of the 67 conditions, **48 allow it**, 19 do not.
+  allowed:     Engine='aurora-mysql' and EngineVersion matches '^(10\.11\..+|10\.11)$'; …
+  not allowed: Engine='aurora-mysql' and EngineVersion matches '^(11\.21\..+|11\.21)$'; …
+```
+
+67개 조건 블록 중 엔진이 다른 것들은 **확실히 해당 없음**으로 걸러진 뒤 남은 수입니다.
+
+---
+
+## A.2 막다른 길을 답으로 (13장)
+
+값을 타입 이름인 줄 알고 물었을 때. **예전에는 "없습니다" 한 줄이었고, 모델은
+웹검색 13회·838초를 쓰고 "지식베이스에 없습니다"로 끝냈습니다.**
+
+```python
+cap.value_lookup("p5.48xlarge")
+```
+```
+'p5.48xlarge' is not a type but a **value**. where it appears in capacitykb:
+  - AWS::EC2::Instance.InstanceType — allowed under 14 of 38 conditions
+  - AWS::EMR::Cluster.InstanceType  — allowed under 12 of 38 conditions
+  → to learn which condition allows it, ask the limits & constraints axis about
+    AWS::EC2::Instance.InstanceType with the value 'p5.48xlarge' — pass the condition
+    (region, volume type, etc.) in context and you get a definite verdict.
+```
+
+살짝 틀린 속성 이름도 같습니다. RDS에는 `InstanceType`이 없고 `DBInstanceClass`입니다.
+
+```python
+cap.property_limits("AWS::RDS::DBInstance", "InstanceType")
+```
+```
+AWS::RDS::DBInstance.InstanceType: no known constraint
+  (it is inside the collected scope, so 'none' is the answer).
+  this type has no such property. did you mean: DBInstanceArn, StorageType,
+  InstanceCreateTime, DBInstanceClass, DBInstanceStatus
+```
+
+> 첫 줄이 **"수집 범위 안이라 '없음'이 답"**이고 둘째 줄이 **"그런데 그 속성 자체가
+> 없다"**입니다. 두 문장이 붙어 있어야 사용자가 오타를 의심합니다.
+
+---
+
+## A.3 네 가지 침묵을 네 문장으로 (13장)
+
+같은 "모른다"가 아닙니다.
+
+| 상황 | 실제 출력 |
+|---|---|
+| 수집 범위 안, 제약 없음 | `no known constraint (it is inside the collected scope, so 'none' is the answer)` |
+| 수집 범위 밖 | `a region not listed here is not 'unusable' — **this data does not know**` |
+| 조합이 안 걸림 | `of the 14 conditions, 9 allow it, 5 do not` (건수로 밝힌다) |
+| 추적 자체를 안 함 | `performance signals are not tracked for ncp (only aws/azure/gcp/ibm)` |
+
+수집 범위 밖의 실물입니다 — **부재를 허용으로도 금지로도 승격하지 않습니다.**
+
+```python
+cap.where_available("ec2")
+```
+```
+ec2 — 34 regions with an endpoint
+  - af-south-1 (Africa (Cape Town))
+  - ap-northeast-2 (Asia Pacific (Seoul))
+  … and 22 more
+  ※ a region not listed here is not 'unusable' — **this data does not know**.
+    a global service has only one endpoint, and the marker that tells one apart
+    is on only 22 of the 307 services in the source.
+  ※ which regions a service is in is included for **AWS only** (the source is the
+    AWS SDK). this tool does not answer service availability for other providers.
+```
+
+성능 경고의 다섯 상태는 반환값에 그대로 드러납니다(8장 — 예전엔 넷이 전부 `None`이라
+출력이 **바이트 단위로 같았습니다**).
+
+```python
+perf.recommend_note("aws", "t3.micro")   # → PerfNote(status='warn',      text='Burstable instance — …')
+perf.recommend_note("ncp", "whatever")   # → PerfNote(status='untracked', text='No performance data — …')
+```
+
+---
+
+## A.4 스키마의 "필수"는 실제 요건이 아니다 (5장)
+
+이 답 하나에 5장의 **두 번의 정정**이 다 들어 있습니다.
+
+```python
+graph.creation_order("Microsoft.Compute/virtualMachines")
+```
+```
+azure::Microsoft.Compute/virtualMachines — the schema **marks no prerequisite as
+required**, which does not mean nothing is actually needed. Some things the schema
+leaves optional are needed in practice (an Azure VM's network interface, for example).
+Read the 'can be used alongside' list below as well.
+
+Can be used alongside (18, optional so no order is enforced):
+- azure::Microsoft.Network/networkInterfaces
+- azure::Microsoft.KeyVault/vaults
+…
+※ Evidence for these relationships: Bicep reference declaration 46 (a guess (reviewed)),
+  ARM resource hierarchy 2 (stated by the source), deployment order in an Azure Verified
+  Module 1 (stated by the source)
+※ Of those, **46 (94%) came out of name inference**. A person checked them, but the
+  source never declared the relationship, so confirm the actual references before
+  acting on a deletion plan.
+※ **the schema leaves these optional, but in practice they are usually needed**:
+  securityGroup, sshKey, subnet, vNet.
+```
+
+읽을 것 셋입니다.
+
+1. **KeyVault가 "필수"에서 "같이 쓸 수 있음"으로 내려왔습니다** — 조상 필수성을 그대로
+   끌어올렸던 오류의 정정(오염 59종 → 25종).
+2. **"필수 없음"을 "바로 만들어도 됨"으로 바꾸지 않습니다** — 반대 방향 거짓말의 정정.
+3. **94%가 이름 추론이라고 밝힙니다** — 근거의 성격이 답에 실려 나옵니다. 같은 함수를
+   AWS EC2 인스턴스에 부르면 이 비율이 **3%**로 나오는데, 소스(CDK 관계표)가 다르기
+   때문입니다. 숫자 하나가 "이 답을 얼마나 믿을지"를 가릅니다.
+
+**"가장 가까운 것"이지 "같은 것"이 아니라고 말합니다.**
+
+```python
+graph.equivalent_types("AWS::SQS::Queue")
+```
+```
+Types that point at the same thing as aws::AWS::SQS::Queue:
+- app::messageQueue (app) — evidence Microsoft Learn service comparison table, a guess (reviewed)
+- azure::Microsoft.ServiceBus/namespaces — evidence MS comparison table + diagrams
+  taxonomy cross-checked, a guess (reviewed)
+- gcp::PubSubTopic — … cross-checked, a guess (reviewed)
+…
+※ Entries above marked **a guess**: 9. Clouds divide resources along different lines,
+  so an exact counterpart sometimes does not exist (a GCP firewall is a network-scoped
+  rule, so it is not the same thing as an AWS security group, which attaches to an
+  instance). Say 'the closest thing is', not 'X is Y'.
+※ A managed-service counterpart is **guidance, not a guarantee it can be deployed**.
+```
+
+마지막 줄이 중요합니다 — **대응이 있다는 것과 우리 실행 경로가 만들 수 있다는 것은
+다른 말**이고, 그 둘을 붙여 놓지 않으면 사용자가 "만들 수 있다"로 읽습니다.
+
+### 긴 목록이 진짜 경고를 가린다 (13장의 재발)
+
+`deletion_impact`가 목록을 통째로 찍고 있었습니다 — `AWS::EC2::VPC` 하나가 **466줄**,
+`Microsoft.KeyVault/vaults`가 **561줄**입니다. 13장의 "377,439자" 사고와 같은 모양인데,
+길이보다 나쁜 것은 **그 뒤에 붙는 근거 꼬리말이 묻힌다**는 점이었습니다. 정작 읽어야 할
+문장이 467번째 줄에 있었습니다.
+
+```python
+graph.deletion_impact("AWS::EC2::VPC")
+```
+```
+Types affected when aws::AWS::EC2::VPC is deleted (466) — too many to list in full,
+so they are grouped by service. **The per-service counts are complete; the names
+under each are a sample.**
+- AWS::EC2 (70): CarrierGateway, ClientVpnAuthorizationRule, ClientVpnEndpoint, … and 66 more
+- AWS::Cognito (18): IdentityPool, IdentityPoolPrincipalTag, … and 14 more
+- AWS::ApiGateway (17): ApiKey, Authorizer, BasePathMapping, … and 13 more
+…
+… and 127 more services covering 305 types (57 of them a single type).
+
+※ Evidence for these relationships: AWS CDK reference definition 709 (stated by the
+  source), name-convention guess 352 (a guess (reviewed)), …
+※ Of those, **352 (32%) came out of name inference**. A person checked them, but the
+  source never declared the relationship, so confirm the actual references before
+  acting on a deletion plan.
+```
+
+요약이 지킨 것 넷입니다.
+
+- **문턱 아래는 한 글자도 안 바뀝니다.** 실측(노드 9,822 전수)에서 영향 개수는 중앙값
+  0·평균 2.3이고 **25를 넘는 노드가 158개(1.6%)뿐**이라, 요약은 98.4%의 질문을
+  건드리지 않습니다. 문턱을 실측 없이 정했으면 흔한 답까지 잘랐을 것입니다.
+- **총계와 그룹별 개수는 완전합니다.** 줄어드는 것은 이름 예시뿐이고, 예시라고 밝힙니다.
+- **버린 것을 셉니다** — `and 127 more services covering 305 types`. 조용한 절단은
+  "이게 전부"로 읽힙니다.
+- **꼬리말의 비율은 전수 기준입니다.** 보여 준 8개 그룹만 세면 "32%"가 거짓이 됩니다.
+
+**묶을 수 없으면 묶을 수 없다고 말합니다.** GCP(KCC) 타입 이름에는 서비스 부분이
+없습니다 — `ComputeNetwork`를 `Compute`로 쪼개고 싶어지지만, 같은 규칙이
+`PubSubTopic`·`Organization`에서 무엇을 낼지 말할 수 없습니다. 이름을 짐작해 만든
+그룹은 19장의 "속성 이름을 짐작하지 마라"와 같은 실패입니다.
+
+```
+Types affected when gcp::Organization is deleted (391) — too many to list in full,
+so these are the first 15 by name:
+- gcp::AIPlatformModel
+…
+… and 376 more. **This is a cut list, not the whole answer** — these type names carry
+no service part, so there is nothing to group them by.
+```
+
+---
+
+## A.5 짐작한 자리를 짐작이라고 말한다 (12장)
+
+같은 함수, 두 인스턴스. **단정과 유보가 갈립니다.**
+
+```python
+perf.instance_profile("aws", "t3.micro")
+```
+```
+  Sustained CPU performance: not guaranteed
+    ⚠ Burstable instance — performance drops to baseline once the CPU credits run out.
+  generation: current generation
+```
+
+```python
+perf.instance_profile("aws", "m5.large")
+```
+```
+  Sustained CPU performance: guaranteed (a guess from the naming convention)
+    ⚠ A type AWS does not classify as burstable — sustained performance is inferred
+      from that.
+  generation: previous generation
+  network: Up to 10 Gigabit
+    ⚠ Network bandwidth is burst ('Up to'), not a sustained value.
+```
+
+`t3.micro`의 "not guaranteed"는 AWS가 **직접 말한 것**이고, `m5.large`의 "guaranteed"는
+**필드가 말하지 않은 것에서 우리가 뒤집어 얻은 것**입니다. 그래서 뒤에만 괄호가 붙습니다.
+이게 12장의 `aws-burstable-field`(stated) / `aws-non-burstable-inferred`(inferred) 두 라벨이
+답에서 어떻게 보이는지입니다.
+
+**승자를 선언하지 않습니다.**
+
+```python
+perf.compare("aws", ["t3.large", "m5.large"])
+```
+```
+  EBS sustained bandwidth: t3.large=695 Mbps / m5.large=650 Mbps
+  EBS max bandwidth (burst): t3.large=2780 Mbps / m5.large=4750 Mbps
+  ⚠ t3.large: Burstable instance — performance drops to baseline …
+  ⚠ m5.large: This is a previous-generation instance …
+※ 'Faster' depends on the workload (CPU-bound vs IO-bound), so no winner is declared.
+  Cross-provider comparison is impossible because the axes differ.
+```
+
+상시 대역폭은 t3가 높고 버스트 최대는 m5가 높습니다 — **한 줄로 접으면 어느 쪽으로 접든
+거짓**이라 접지 않습니다.
+
+---
+
+## A.6 합계를 내지 않는다 (7·11장)
+
+관리형 서비스 가격을 물으면 **값 하나가 아니라 축 목록**이 나옵니다.
+
+```
+Billing axes (aws ap-northeast-2, not a single unit price):
+  instance-hour  3217 kinds  $0.0180~$242.0062/h
+  capacity-rate   437 kinds  (per vCore · RU · GB/month — the quantity to multiply
+                              by is a sizing result)
+  usage            66 kinds  (operations · searches · executions — you have to know
+                              the usage)
+— no total is produced
+```
+
+그리고 값이 없는 후보를 **셉니다** — 목록이 짧아진 이유를 침묵으로 두지 않습니다.
+
+```python
+cost.recommend_specs(4, 16, "aws", limit=3)
+```
+```
+Recommended candidates (on-demand list price, hourly rate):
+- AWS t3a.xlarge (ap-south-1 and 16 more regions): 4 vCPU / 16 GiB, $0.0986/h
+- AWS m5a.xlarge (ap-south-1 and 15 more regions): 4 vCPU / 16 GiB, $0.1110/h
+※ 20 more candidates meet the conditions but have no price data.
+Compute monthly cost with the estimate_monthly_cost tool … Do not multiply it out yourself.
+```
+
+> **여기서 월 비용이 빠져 있는 것이 설계입니다.** 예전에는 후보마다 `≈ $121.47/월`을
+> 함께 줬는데, 그러면 모델이 월 비용을 이미 쥔 상태가 되어 계산 도구가 불필요해 보입니다 —
+> 실측에서 **5회 중 5회** 도구를 건너뛰고 직접 암산했습니다. 제거 후 **5/5 호출**.
+> 도구 출력의 **내용**이 아니라 **완결성**이 라우팅을 바꾼 사례입니다.
+
+---
+
+## A.7 설계도 → 배포 계획 (11장)
+
+`appkb/examples/order-demo.json`(주문 API + 워커 · aws/ap-northeast-2 · 동시 200명 ·
+multiZone)을 넣은 실제 결과입니다.
+
+```python
+from app.deployment.nim_agent.design_tools import compose
+from app.deployment.appkb import diagram, verify
+plan = compose(design); print(diagram.render(plan))
+```
+
+```
+@startuml
+title 주문 서비스 데모 — deployment plan
+
+rectangle "virtual network\naws::AWS::EC2::VPC" as "vnet" {
+  rectangle "subnet\naws::AWS::EC2::Subnet" as "subnet" {
+    node "OrderService" as "order-api"    <<inferred>>
+    node "OrderWorker"  as "order-worker" <<inferred>>
+  }
+}
+cloud    "PG사 결제 게이트웨이" as "pg-gateway"
+database "OrderService storage\naws::AWS::RDS::DBInstance"   as "order-api-db"  <<inferred>>
+database "message queue\naws::AWS::SQS::Queue"               as "message-queue" <<inferred>>
+database "secret store\naws::AWS::SecretsManager::Secret"    as "secret-store"  <<inferred>>
+hexagon  "OrderService load balancer\naws::AWS::ElasticLoadBalancingV2::LoadBalancer"
+                                                             as "order-api-lb"  <<inferred>>
+"order-api" -> "order-api-db" : read/write
+"order-api" -> "pg-gateway"   : 결제 승인 요청
+"order-api" --> "order-worker" : 주문 완료 이벤트
+"end-user"  -> "order-api-lb" : request
+
+legend right
+  Evidence: design artifact / specified by the designer / knowledge base / we inferred
+  The 10 items marked <<inferred>>·<<specified by the designer>> are not verified facts
+endlegend
+@enduml
+```
+
+**노드마다 origin이 붙습니다.** 노트 실물 몇 줄:
+
+```
+order-api      [design]   An actor calls it directly in the sequence — publicly exposed
+order-api      [inferred] An OpenAPI artifact exists, so we read it as an HTTP service
+order-api      [kb]       This is the horizontal scaling unit … **How many instances you
+                          need is not something this knowledge base can decide** — settle
+                          it with a load test or a sizing reference point.
+order-api-db   [inferred] Owns 2 entities (Order, OrderItem) → needs persistent storage
+order-api-db   [kb]       svcmap: app::relationalDatabase → aws::AWS::RDS::DBInstance
+subnet         [design]   The requirement is multiZone, so the subnets have to be spread
+                          across several availability zones
+subnet         [kb]       For reference — aws /24 subnet: of 256 addresses, minus 5
+                          reserved, **251** are usable.
+securitygroup  [kb]       **This is what this tool creates, not what the cloud requires.**
+order-api-lb   [inferred] An actor calls this public service directly, so we put an entry
+                          point in front — this is our recommendation, not something the
+                          design specified
+```
+
+**컴퓨트 방식은 고르지 않았습니다** — 상충 없는 후보가 셋이라서입니다(11장).
+
+```
+Compute method comparison — 2 components with no deployHint (currently assumed VM):
+  VM:         cheapest t3a.medium $0.0468/h (one instance)
+  k8s:        node minimum memoryGiB 4.0GiB · node minimum vCPU 2 · 2 subnets required
+              · the value is per node group, not per component
+  Serverless: no hourly rate (billed per invocation and usage) · ? stateless unconfirmed
+              — fit verdict held
+
+No recommendation — methods with no conflict: VM, k8s, serverless. The measured axes
+alone give no ground for picking one, so we do not pick (an arbitrary pick is the
+failure this repository guards against). The deciding inputs (team skills, latency
+requirements, and the like) are outside this verdict — specify one with deployHint
+and we follow it.
+```
+
+### 예산 판정의 비대칭 — 같은 계획, 예산만 다름
+
+```python
+verify.verify_against_requirements(plan, {**req, "monthlyBudgetUSD": 50}, 730)
+```
+```
+Budget ($50.00/month): **over, confirmed** — the monthly sum of the priced part alone
+(a floor, one instance per compute) is $68.33, already past the budget. 8 unpriced
+members are not even added in
+```
+
+```python
+verify.verify_against_requirements(plan, {**req, "monthlyBudgetUSD": 500}, 730)
+```
+```
+Budget ($500.00/month): **cannot be asserted to fit** — the floor of the priced part is
+$68.33, but we do not know the value of 8 unpriced members (message-queue, order-api-db,
+order-api-lb, secret-store, securitygroup), and the number of horizontally scaled
+instances is not fixed either. We do not treat the unknown as zero
+```
+
+> **같은 데이터에서 한쪽은 확정, 한쪽은 판정 불가입니다.** 하한이 예산을 넘으면 실제는 더
+> 넘으므로 확정이고, 하한이 예산 안이면 하한만 아니까 확정할 수 없습니다. 그리고 모르는
+> 8건을 **이름까지 대며** 셉니다 — "모르는 것을 0으로 치지 않는다"가 문장으로 나갑니다.
+
+나머지 판정도 성격이 갈립니다.
+
+```
+Scale (200 concurrent users): this knowledge base cannot judge whether the spec is
+  sufficient — the plan's sizing is marked as an estimate with no backing, and must be
+  confirmed with a load test or a sizing reference point
+multiZone: reflected — the subnet carries the availability-zone spread requirement
+Provider (aws): every vendor type in the plan matches
+```
+
+---
+
+## A.8 계약 위반은 지어내지 않고 목록으로 (11장)
+
+```python
+contract.validate_design({"schemaVersion": "1", "components": [{"id": "x", "name": "X"}]})
+```
+```
+[schema] (top level): 'name' is a required property
+[schema] (top level): 'artifacts' is a required property
+```
+
+`RESOURCE_SPEC` 쪽은 **왜 그 칸이 필수인지까지** 답합니다 — 필수의 기준이 목록이 아니라
+판정식이기 때문입니다("그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수").
+
+```python
+contract.validate_request({"schemaVersion": "1", "provider": "aws", "region": "서울"})
+```
+```
+[required] monthlyBudgetUSD missing — it is the yardstick for judging whether cost fits
+  the requirement (USD)
+[required] no scale signal (expectedConcurrentUsers or approxRequestsPerSecond) — it is
+  the basis for the sizing verdict; without it every spec recommendation is arbitrary
+```
+
+> `region`에 `"서울"`이 그대로 들어간 것은 **잡히지 않습니다.** 지명은 계약 진입 전에
+> 리전 해석 도구로 코드(`ap-northeast-2`)로 바꿔 담아야 하고, 그대로 오면 조인이
+> **조용히 빈 답**이 됩니다(실측). 계약이 못 잡는 것이 있다는 것도 실물로 봐 둘 값이 있습니다.
+
+---
+
+## A.9 2026-07-24 이후의 드리프트 (2026-07-28 실측)
+
+본문 수치는 2026-07-24 기준입니다. 나흘 뒤 다시 재 보니 이렇게 달라져 있었습니다.
+**이 표의 용도는 값을 갱신하는 게 아니라, 문서의 수치가 얼마나 빨리 늙는지를 보여 주는
+것**입니다(그래서 변하는 숫자의 집은 코드입니다).
+
+| 항목 | 본문(07-24) | 실측(07-28) | 비고 |
+|---|---:|---:|---|
+| 소스 핀 | 46종 | **47종** | tag 23 · commit 18 · digest 5 · bundled 1 |
+| 테스트 | 1,332건 | **1,386건** | 파일 100개 |
+| 근거 라벨 | 54종 | 54종 | stated 37 · inferred 15 · observed 2 |
+| costkb 프로바이더 | 10곳 | **11곳** | `kt` 220스펙이 늘었다 |
+
+그리고 본문이 세지 않은 것 하나 — **의존 그래프의 엣지는 aws·azure·gcp에만 있습니다.**
+alibaba(1,134노드)·tencent(1,320)·oracle(986)·ibm(558)·nhn(110)·ncp(33)·openstack(108)은
+**노드만 있고 엣지가 0건**입니다. Terraform provider 스키마에서 타입은 뽑았지만 관계를
+뽑는 경로가 아직 없기 때문입니다. 이건 결함이 아니라 **비어 있는 축**이고(5장의 AWS 담김
+축과 같은 성격), 이렇게 적어 두지 않으면 "12개 클라우드 그래프"라는 말이 12곳 모두에서
+의존 관계를 답한다는 뜻으로 읽힙니다.

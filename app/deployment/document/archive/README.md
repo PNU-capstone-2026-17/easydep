@@ -25,3 +25,5 @@
 | end-to-end-example.md · runnable-examples.md | 실행 예제 스냅샷 (07-23 출력 기준) |
 | kb-test-queries.md | 수동 검증 질의집 (도구 목록은 코드가 진실) |
 | cloud-kb-guide.md · plain-language-overview.md | 구세대 해설서 (KB 3개 시절 — kb-book으로 대체) |
+| kb-verification-2026-07-28.md | kb-book 외부 검증 — 수치 전수 재현(일치) · 논문 기준 공백 5 · 측정된 편향 6 · 드리프트 11건 |
+| kb-sourcebook-2026-07-28.md | 문외한용 해설 — 축×클라우드 커버리지 격자 + **소스 47종 전수** 설명 |
