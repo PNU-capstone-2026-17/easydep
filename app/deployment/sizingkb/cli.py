@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from app.deployment.kbcommon import cli as kb_cli
 from app.deployment.sizingkb.agent_api import (
     container_presets,
     coverage_text,
@@ -53,20 +54,15 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: 소스 이름 → 파서 모듈. 셋 다 `build(output, refresh=...)` 표준 모양이다.
+_PARSERS = {"tumblebug": "tumblebug", "reviewed": "reviewed", "presets": "presets"}
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
-    if args.source == "tumblebug":
-        from app.deployment.sizingkb.parsers import tumblebug
-
-        tumblebug.build(output, refresh=args.refresh)
-    elif args.source == "reviewed":
-        from app.deployment.sizingkb.parsers import reviewed
-
-        reviewed.build(output, refresh=args.refresh)
-    else:
-        from app.deployment.sizingkb.parsers import presets
-
-        presets.build(output, refresh=args.refresh)
+    kb_cli.build_source(
+        __package__, _PARSERS[args.source], output, refresh=args.refresh
+    )
     return 0
 
 

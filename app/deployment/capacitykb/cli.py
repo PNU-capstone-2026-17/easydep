@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from app.deployment.capacitykb.model import CapacitySet
+from app.deployment.kbcommon import cli as kb_cli
 
 DEFAULT_OUTPUTS = {
     "cfn": Path("output") / "aws-capacity.json",
@@ -116,63 +117,51 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: `build(output, refresh=...)` 표준 모양인 소스 → 파서 모듈.
+#: **여기서는 이름이 다른 것이 많아 표가 값을 한다**(`aws-tf` → `tpaws`,
+#: `aws-regions` → `cfnlint`). 인자가 다른 소스는 아래 분기에 그대로 남는다 —
+#: 표에 넣으면 무엇이 다른지가 안 보인다.
+_SIMPLE_PARSERS = {
+    "aws-limits": "aws_limits",
+    "aws-tf": "tpaws",
+    "aws-regions": "cfnlint",
+    "aws-endpoints": "aws_endpoints",
+    "azure-mutability": "azure_mutability",
+    "azure-secret": "azure_secret",
+    "azure-operations": "azure_operations",
+}
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
-    if args.source == "cfn":
-        from app.deployment.capacitykb.parsers import cfn
+    simple = _SIMPLE_PARSERS.get(args.source)
+    if simple is not None:
+        kb_cli.build_source(__package__, simple, output, refresh=args.refresh)
+        return 0
 
+    if args.source == "cfn":
         kwargs: dict = {"prose": args.prose, "refresh": args.refresh}
         if args.zip_url:
             kwargs["zip_url"] = args.zip_url
-        cfn.build(output, **kwargs)
-    elif args.source == "aws-limits":
-        from app.deployment.capacitykb.parsers import aws_limits
-
-        aws_limits.build(output, refresh=args.refresh)
-    elif args.source == "aws-tf":
-        from app.deployment.capacitykb.parsers import tpaws
-
-        tpaws.build(output, refresh=args.refresh)
-    elif args.source == "aws-regions":
-        from app.deployment.capacitykb.parsers import cfnlint
-
-        cfnlint.build(output, refresh=args.refresh)
+        kb_cli.build_source(__package__, "cfn", output, **kwargs)
     elif args.source == "aws-conditional":
+        # **`build`가 아니라 `build_conditions`다.** 공용 배관은 `build`만 부르므로
+        # 이 갈래는 직접 import한다 — 함수가 다른 것을 표 뒤에 숨기지 않는다.
         from app.deployment.capacitykb.parsers import cfnlint
 
         cfnlint.build_conditions(output, refresh=args.refresh)
     elif args.source in _tpcsp_keys():
-        from app.deployment.capacitykb.parsers import tpcsp
-
-        tpcsp.build(output, key=args.source, refresh=args.refresh)
-    elif args.source == "aws-endpoints":
-        from app.deployment.capacitykb.parsers import aws_endpoints
-
-        aws_endpoints.build(output, refresh=args.refresh)
-    elif args.source == "azure-mutability":
-        from app.deployment.capacitykb.parsers import azure_mutability
-
-        azure_mutability.build(output, refresh=args.refresh)
-    elif args.source == "azure-secret":
-        from app.deployment.capacitykb.parsers import azure_secret
-
-        azure_secret.build(output, refresh=args.refresh)
-    elif args.source == "azure-operations":
-        from app.deployment.capacitykb.parsers import azure_operations
-
-        azure_operations.build(output, refresh=args.refresh)
+        kb_cli.build_source(
+            __package__, "tpcsp", output, key=args.source, refresh=args.refresh
+        )
     elif args.source == "gcp":
-        from app.deployment.capacitykb.parsers import gcp
-
         kwargs = {"refresh": args.refresh, "provider": args.provider}
         if args.tag:
             kwargs["tag"] = args.tag
         if args.crd_dir:
             kwargs["crd_dir"] = args.crd_dir
-        gcp.build(output, **kwargs)
+        kb_cli.build_source(__package__, "gcp", output, **kwargs)
     elif args.source == "azure":
-        from app.deployment.capacitykb.parsers import azure
-
         kwargs = {"refresh": args.refresh}
         if args.base_url:
             kwargs["base_url"] = args.base_url
@@ -180,10 +169,8 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["providers"] = tuple(
                 p.strip() for p in args.providers.split(",") if p.strip()
             )
-        azure.build(output, **kwargs)
-    else:
-        from app.deployment.capacitykb.parsers import azure_quota
-
+        kb_cli.build_source(__package__, "azure", output, **kwargs)
+    else:  # azure-quota
         kwargs = {"refresh": args.refresh}
         if args.base_url:
             kwargs["base_url"] = args.base_url
@@ -191,7 +178,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["includes"] = tuple(
                 i.strip() for i in args.includes.split(",") if i.strip()
             )
-        azure_quota.build(output, **kwargs)
+        kb_cli.build_source(__package__, "azure_quota", output, **kwargs)
     return 0
 
 
