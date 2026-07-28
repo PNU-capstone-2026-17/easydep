@@ -26,15 +26,11 @@ PURE 문서는 1995~2010년의 국방·통신·임베디드 SRS다. 클라우드
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from itertools import combinations
 from pathlib import Path
 
 from app.requirements.agent.steps import step_cloud
+from app.requirements.evaluation import concern_report
 from app.requirements.knowledge import concerns
-
-#: 요구사항으로 세는 최소 길이. `pure.extract`와 같은 값이다 — 다르면 두 측정이 다른
-#: 문장 집합을 본다.
-MIN_WORDS = 5
 
 
 def requirements() -> list[dict]:
@@ -52,32 +48,25 @@ def requirements() -> list[dict]:
         )
     items: list[dict] = []
     for path in sorted(root_dir.glob("*.xml")):
-        root = ET.parse(path).getroot()
-        tagged = [
-            s for s in (pure._sentence(e) for e in root.iter() if e.tag == f"{pure._NS}req")
-            if len(s.split()) >= MIN_WORDS
-        ]
-        sentences = tagged or pure._prose_sentences(root, MIN_WORDS, max_words=60)
+        # 문장 선택 규칙은 `pure.sentences_of`가 정한다 — 여기 다시 적으면 이 측정만
+        # 다른 문장 집합을 보게 되고, 그 사실이 표에는 안 남는다.
+        sentences, _kind = pure.sentences_of(ET.parse(path).getroot())
         for index, text in enumerate(sentences, start=1):
             items.append({"id": f"{path.stem}#{index}", "text": text, "doc": path.stem})
     return items
 
 
 def measure(items: list[dict] | None = None) -> dict:
-    """열쇠말 층으로 잰 링크와 미분화 쌍. 판정 정의는 §6.7 그대로다."""
+    """열쇠말 층으로 잰 링크와 미분화 쌍.
+
+    **판정은 `concern_report.undifferentiated_pairs`가 한다.** 내부 입력 측정과 같은
+    함수를 써야 두 수를 나란히 놓을 수 있다 — 여기 다시 적으면 한쪽만 고쳐질 때
+    비교가 조용히 무너진다(이 모듈의 존재 이유가 그 비교다).
+    """
     items = items if items is not None else requirements()
     links = step_cloud._signal_links(items)
     sets = {cid: set(ids) for cid, ids in links.items()}
-
-    undifferentiated, tested = [], 0
-    for a, b in combinations(sorted(sets), 2):
-        A, B = sets[a], sets[b]
-        if not A or not B:
-            continue
-        tested += 1
-        if not (A - B) or not (B - A):
-            undifferentiated.append({"a": a, "b": b, "only_a": len(A - B),
-                                     "only_b": len(B - A), "shared": len(A & B)})
+    undifferentiated, tested = concern_report.undifferentiated_pairs(sets)
     return {
         "requirements": len(items),
         "documents": len({i["doc"] for i in items}),

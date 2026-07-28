@@ -75,7 +75,16 @@ def _empty(answer) -> bool:
 
 
 def _as_text(answer) -> str:
-    """자연어만 받는 자리(step1 재분류)에 넘길 문자열."""
+    """자연어만 받는 자리(step1 재분류·의도 분류)에 넘길 문자열.
+
+    **`ResourceAnswer`는 여기 오면 안 된다.** 되묻기의 답을 물어보지 않은 게이트로 보내면
+    `str(answer)`가 pydantic 표현을 만들어 그것이 자연어 피드백으로 흘러든다 — 사용자가
+    쓰지도 않은 문장으로 산출물이 재생성된다. 조용히 넘기느니 여기서 멈춘다.
+    """
+    if isinstance(answer, ResourceAnswer):
+        raise TypeError(
+            "되묻기의 답은 요구사항 게이트에서만 받는다 — 자연어 피드백으로 흘리지 않는다."
+        )
     return answer.instruction if isinstance(answer, FeedbackEdit) else str(answer)
 
 
@@ -114,7 +123,11 @@ def gate_requirements(state: AgentState) -> dict:
     # 다시 조립된다(그 배선이 이미 있어서 여기서 단계를 부르지 않는다).
     if isinstance(answer, ResourceAnswer):
         merged = {**(state.get("resource_answers") or {}), **answer.answers}
-        return {"resource_answers": merged, "gate_route": "loop"}
+        # **`answers` 경로로 돌아간다** — 일반 `loop`는 `cover_cloud_concerns`부터 다시
+        # 도는데, 이 분기는 `classify`를 안 돌려 `classified`가 그대로다. 관심사 링크는
+        # 그 입력의 순수 함수라 같은 답이 나오고, LLM 층을 켜면 그 재계산이 표당 24초짜리
+        # 호출 3벌이 된다(실측 396표: 중앙값 23.6초). 답 한 번에 1~2분을 버리는 셈이다.
+        return {"resource_answers": merged, "gate_route": "answers"}
 
     upd = classify(state, feedback=_as_text(answer))  # BERT 단독 재분류
     return {**upd, "gate_route": "loop"}

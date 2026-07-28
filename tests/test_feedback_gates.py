@@ -185,7 +185,8 @@ def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):
     state = {"classified": [], "resource_answers": {"region": "Seoul"}}
     out = fg.gate_requirements(state)  # type: ignore[arg-type]
 
-    assert out["gate_route"] == "loop"
+    # 관심사 커버리지를 다시 돌리지 않는 경로로 간다(입력이 안 바뀌었다).
+    assert out["gate_route"] == "answers"
     # 앞서 답한 것과 **합쳐진다** — 한 칸씩 답해도 앞의 답이 사라지지 않는다.
     assert out["resource_answers"] == {"region": "Seoul", "provider": "aws"}
 
@@ -198,3 +199,14 @@ def test_an_all_blank_resource_answer_advances(monkeypatch):
     monkeypatch.setattr(fg, "interrupt",
                         lambda _p: ResourceAnswer(answers={"provider": "  "}))
     assert fg.gate_requirements({"classified": []})["gate_route"] == "advance"  # type: ignore[arg-type]
+
+
+def test_a_resource_answer_never_becomes_natural_language_feedback():
+    """물어보지 않은 게이트로 흘러들면 pydantic 표현이 피드백 문장이 된다."""
+    import pytest
+
+    from app.requirements.agent.steps import feedback_gates as fg
+    from app.requirements.schemas import ResourceAnswer
+
+    with pytest.raises(TypeError):
+        fg._as_text(ResourceAnswer(answers={"provider": "aws"}))

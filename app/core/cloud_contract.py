@@ -33,6 +33,32 @@ def schema_fields() -> frozenset[str]:
     return frozenset(_contract.request_schema().get("properties", {}))
 
 
+@lru_cache(maxsize=1)
+def _properties() -> dict[str, dict]:
+    return dict(_contract.request_schema().get("properties", {}))
+
+
+def field_type(field: str) -> str:
+    """칸의 타입(`string`·`number`·`integer`·`boolean`). `enum` 칸이면 `"enum"`, 모르면 빈 문자열.
+
+    **생산자가 스키마 사실을 옮겨 적지 않게 하려고 연다.** 이것이 없으면 부르는 쪽이
+    "이 칸은 문자열", "이 칸은 steady|spiky"를 자기 목록으로 다시 적게 되고, 실제로 그
+    목록이 스키마와 어긋났다(`regionAsWritten`이 빠져 있었다).
+    """
+    spec = _properties().get(field)
+    if not spec:
+        return ""
+    if "enum" in spec:
+        return "enum"
+    kind = spec.get("type", "")
+    return kind if isinstance(kind, str) else ""
+
+
+def field_enum(field: str) -> tuple[str, ...]:
+    """`enum` 칸이 허용하는 값들. 아니면 빈 튜플."""
+    return tuple(_properties().get(field, {}).get("enum", ()))
+
+
 def validate(spec: dict) -> list[str]:
     """계약 검증. 빈 목록이면 통과.
 

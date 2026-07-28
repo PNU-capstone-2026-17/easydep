@@ -30,12 +30,12 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
 from app.requirements import prompts
 from app.requirements.agent.steps import step_cloud
+from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
 from app.requirements.knowledge import concerns
 
@@ -117,7 +117,7 @@ def one_ballot(classified: list[dict], chunk: int) -> dict:
 
 
 def run(out_dir: Path, hours: float, repeats: int) -> int:
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    use_utf8_stdout()
     out_dir.mkdir(parents=True, exist_ok=True)
     rows_path, log_path = out_dir / "ballots.jsonl", out_dir / "campaign.log"
 

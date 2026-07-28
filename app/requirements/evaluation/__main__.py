@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import argparse
 import collections
-import contextlib
 import json
 import sys
 from pathlib import Path
+
+from app.requirements.common.console import use_utf8_stdout
 
 # ⚠ `scorecard`·`seeded`는 명령 안에서 import한다. `seeded`는 자격증명 없이 돌아야 하고
 # (CI 게이트), `score`만 설정·아티팩트 경로가 필요하다. 상단에서 다 끌어오면 그 구분이 사라진다.
@@ -404,12 +405,9 @@ def _cmd_diff(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # **콘솔 인코딩이 명령을 죽이지 못하게 한다.** 윈도우 콘솔은 cp949라 `—` 한 글자에
-    # `print`가 UnicodeEncodeError를 낸다. `campaign.py`가 같은 이유로 3시간짜리 실행을
-    # 잃고 나서 자기 안에 이 줄을 넣었는데, 그건 캠페인 안에서만 듣는다 — 산출물을 다
-    # 쓰고 나서 요약 한 줄에 죽는 명령이 그대로 남아 있었다.
-    with contextlib.suppress(Exception):  # 파이프·리다이렉트면 없을 수 있다
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    # **콘솔 인코딩이 명령을 죽이지 못하게 한다**(`common/console.py`에 경위가 있다).
+    # 여기가 이 패키지의 진입점이라 한 번만 부르면 모든 하위 명령이 덮인다.
+    use_utf8_stdout()
 
     parser = argparse.ArgumentParser(prog="python -m app.requirements.evaluation")
     sub = parser.add_subparsers(dest="cmd", required=True)

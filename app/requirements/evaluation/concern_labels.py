@@ -70,11 +70,6 @@ INSTRUCTIONS = (
 )
 
 
-def _cited(rows: list[dict], chunk: int, k: int) -> tuple[dict, dict]:
-    """(LLM 다수결 링크, 열쇠말 링크). 둘 다 도메인 → 관심사 → 요구 id들."""
-    return concern_report.majority(rows, chunk, k), concern_report.signal_baseline()
-
-
 def _texts() -> dict[str, dict[str, str]]:
     """도메인 → 요구 id → 문장."""
     from app.requirements.evaluation import concern_campaign
@@ -91,22 +86,26 @@ def cases(rows: list[dict], chunk: int, k: int, controls: int) -> list[dict]:
     대조를 **고르게** 뽑는다(관심사별로 돌아가며) — 한 관심사에서 몰아 뽑으면 대조군이
     그 관심사의 성질을 재게 된다.
     """
-    llm, sig = _cited(rows, chunk, k)
+    # LLM 다수결 링크와 열쇠말 링크. 둘 다 도메인 → 관심사 → 요구 id들이다.
+    llm = concern_report.majority(rows, chunk, k)
+    sig = concern_report.signal_baseline()
+
+    def cases_of(domain: str, cid: str, layer: str, ids: set[str]) -> list[dict]:
+        return [{"domain": domain, "concern_id": cid, "requirement_id": r, "layer": layer}
+                for r in sorted(ids)]
+
     disputed: list[dict] = []
     agreed: list[dict] = []
     for domain in sorted(llm):
         for cid in concerns.all_ids():
             a = set(llm[domain].get(cid) or [])
             b = set(sig.get(domain, {}).get(cid) or [])
-            if a and not b:
-                disputed += [{"domain": domain, "concern_id": cid, "requirement_id": r,
-                              "layer": LAYER_LLM} for r in sorted(a)]
-            elif b and not a:
-                disputed += [{"domain": domain, "concern_id": cid, "requirement_id": r,
-                              "layer": LAYER_SIGNAL} for r in sorted(b)]
+            if bool(a) != bool(b):
+                # 한 층만 주장한 링크 = 분쟁. 어느 층인지는 열쇠 파일에만 남는다.
+                layer, ids = (LAYER_LLM, a) if a else (LAYER_SIGNAL, b)
+                disputed += cases_of(domain, cid, layer, ids)
             elif a and b:
-                agreed += [{"domain": domain, "concern_id": cid, "requirement_id": r,
-                            "layer": LAYER_BOTH} for r in sorted(a & b)]
+                agreed += cases_of(domain, cid, LAYER_BOTH, a & b)
 
     by_concern: dict[str, list[dict]] = defaultdict(list)
     for case in agreed:

@@ -149,7 +149,12 @@ def _build_gated_graph(saver):
     # 0이고, LLM 층을 켰을 때만 실제 비용이 된다.
     builder.add_conditional_edges(
         "gate_requirements", route_gate,
-        {"advance": "model_use_cases", "loop": "cover_cloud_concerns"},
+        {"advance": "model_use_cases",
+         "loop": "cover_cloud_concerns",
+         # 되묻기의 답만 온 경우. 이 분기는 `classify`를 안 돌려 `classified`가 그대로이고,
+         # 관심사 링크는 그 입력의 순수 함수다 — 같은 답을 다시 계산할 뿐이다. LLM 층을
+         # 켜면 그 재계산이 표 3벌(실측 중앙값 23.6초/표)이라 답 한 번에 1~2분을 버린다.
+         "answers": "structure_constraints"},
     )
     builder.add_edge("model_use_cases", "gate_use_cases")
     builder.add_conditional_edges(

@@ -48,8 +48,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from dataclasses import field as dc_field
+from functools import lru_cache
 
 from app.core import cloud_contract, regions
 from app.requirements.agent.state import AgentState
@@ -96,6 +97,11 @@ _PER_MONTH = r"(?:per\s+month|a\s+month|/\s*month|monthly|매달|월\s*간?|월�
 _PER_UNIT = re.compile(r"(?:per|/)\s*(?:gb|tb|mb|gib|tib|hour|hr|user|request|call|seat|일|시간)",
                        re.IGNORECASE)
 
+#: 환산 거부 사유. **문구를 상수로 둔다** — 예전에는 이 문장에 "USD"가 들어 있는지로
+#: 질문 종류(`UNCONVERTIBLE`)를 되뽑았다. 문구만 다듬어도 질문이 조용히 `MISSING`으로
+#: 강등되는 자리였다.
+WHY_NOT_USD = "USD가 아니다 — 계약이 환율 환산을 거부한다"
+
 #: USD가 아닌 통화. 계약이 환산을 거부하므로 **버리고 묻는** 대상이다.
 #:
 #: **금액에 붙어 있을 때만 통화다.** 낱말만 보면 안 된다 — `원`은 원본·지원·복원에 들어
@@ -105,6 +111,22 @@ _PER_UNIT = re.compile(r"(?:per|/)\s*(?:gb|tb|mb|gib|tib|hour|hr|user|request|ca
 _OTHER_CURRENCY = re.compile(
     r"(?:₩|krw|€|eur|£|gbp|¥|jpy|cny|rmb)\s*\d[\d,.\s]*"
     r"|\d[\d,.\s]*\s*(?:만|억|천)?\s*(?:원|엔|위안|유로|krw|eur|gbp|jpy|cny|rmb)",
+    re.IGNORECASE,
+)
+
+#: 규모 표현. **닫힌 집합(`_SCALE_SUBJECTS`) 바로 옆에서 한 번만 조립한다** — 문장마다
+#: 다시 만들면 "이 집합은 근거 있을 때만 넓힌다"는 규율이 그것을 쓰는 자리와 멀어진다.
+#: 순서는 숫자 → 동시성 → 주체, 그리고 동시성과 주체가 뒤바뀐 꼴까지 셋이다.
+_NUMBER_ANY = rf"(?:{_WORD_NUMBER}|{_NUMBER})"
+_SUBJECTS = "|".join(re.escape(s) for s in _SCALE_SUBJECTS)
+_CONCURRENT_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    rf"({_NUMBER_ANY})\s+(?:[\w-]+\s+){{0,3}}?{_CONCURRENCY}\s+(?:[\w-]+\s+){{0,3}}?({_SUBJECTS})\b",
+    rf"({_NUMBER_ANY})\s+(?:[\w-]+\s+){{0,3}}?({_SUBJECTS})\b[^.]{{0,40}}?{_CONCURRENCY}",
+    rf"{_CONCURRENCY}[^.]{{0,20}}?({_NUMBER_ANY})\s+(?:[\w-]+\s+){{0,3}}?({_SUBJECTS})\b",
+))
+_RPS_PATTERN = re.compile(
+    rf"({_NUMBER_ANY})\s*"
+    r"(?:requests?\s*(?:per|/)\s*(?:second|sec|s)\b|\brps\b|\btps\b|\bqps\b)",
     re.IGNORECASE,
 )
 
@@ -120,8 +142,9 @@ class Candidate:
     how: str      # 어느 규칙이 뽑았는가
 
     def as_dict(self) -> dict:
-        return {"field": self.field, "value": self.value, "as_written": self.as_written,
-                "source": self.source, "how": self.how}
+        # **손으로 나열하지 않는다.** 칸을 하나 늘리면 감사 추적(`provenance`)에서
+        # 조용히 빠지는데, 그게 이 클래스가 존재하는 이유다.
+        return asdict(self)
 
 
 @dataclass
@@ -168,6 +191,19 @@ def _sentences(state: AgentState) -> list[tuple[str, str]]:
 
 
 # --- 칸마다 하나씩 -----------------------------------------------------------
+@lru_cache(maxsize=1)
+def _provider_patterns() -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """프로바이더 id → 매칭식. 카탈로그가 바뀌지 않으므로 한 번만 만든다.
+
+    **낱말 경계로 본다.** 부분 문자열이면 `gcp`가 `gcpartner`에 걸린다 — 관심사
+    열쇠말 층에서 `"log"`가 `login`·`catalog`에 걸려 21건을 오탐한 그 자리다.
+    """
+    return tuple(
+        (name, re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE))
+        for name in regions.providers()
+    )
+
+
 def _extract_provider(text: str, source: str, out: Extraction) -> None:
     """리전 지식베이스가 **실제로 아는** 프로바이더 id만 센다.
 
@@ -175,8 +211,8 @@ def _extract_provider(text: str, source: str, out: Extraction) -> None:
     0건이라 별칭을 지을 근거가 없고, 근거 없는 사전이 바로 이 저장소가 금지하는 것이다.
     못 알아들으면 되묻는 편이 지어내는 것보다 낫다.
     """
-    for name in regions.providers():
-        if re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE):
+    for name, pattern in _provider_patterns():
+        if pattern.search(text):
             out.found.append(Candidate("provider", name, name, source, "provider-id"))
 
 
@@ -187,8 +223,9 @@ def _extract_region(text: str, source: str, out: Extraction, provider: str | Non
     쪽 리전 언급은 전부 "across multiple cloud regions" 같은 **성질 서술**이었고, 거기서
     지명을 캐면 확신에 찬 오답이 된다.
     """
-    for match in re.finditer(r"[A-Za-z][A-Za-z0-9-]{3,}", text):
-        token = match.group(0)
+    # 같은 낱말이 여러 번 나와도 한 번만 해석한다 — 해석기 호출이 문자열 길이에
+    # 비례해 늘고, 같은 후보가 근거 목록에 여러 줄로 쌓인다.
+    for token in dict.fromkeys(m.group(0) for m in re.finditer(r"[A-Za-z][A-Za-z0-9-]{3,}", text)):
         candidates = regions.resolve(token, provider=provider)
         if not candidates:
             continue
@@ -245,23 +282,13 @@ def _extract_budget(text: str, source: str, out: Extraction) -> None:
         )
 
     for match in _OTHER_CURRENCY.finditer(text):
-        out.reject("monthlyBudgetUSD", match.group(0).strip(), source,
-                   "USD가 아니다 — 계약이 환율 환산을 거부한다")
+        out.reject("monthlyBudgetUSD", match.group(0).strip(), source, WHY_NOT_USD)
 
 
 def _extract_scale(text: str, source: str, out: Extraction) -> None:
     """동시 사용자와 초당 요청. **주체를 본다** — 숫자+동시성만으로는 세지 않는다."""
-    number = rf"(?:{_WORD_NUMBER}|{_NUMBER})"
-    subjects = "|".join(re.escape(s) for s in _SCALE_SUBJECTS)
-
-    # 숫자 … 동시성 … 주체 (그리고 동시성과 주체가 뒤바뀐 순서도)
-    patterns = (
-        rf"({number})\s+(?:[\w-]+\s+){{0,3}}?{_CONCURRENCY}\s+(?:[\w-]+\s+){{0,3}}?({subjects})\b",
-        rf"({number})\s+(?:[\w-]+\s+){{0,3}}?({subjects})\b[^.]{{0,40}}?{_CONCURRENCY}",
-        rf"{_CONCURRENCY}[^.]{{0,20}}?({number})\s+(?:[\w-]+\s+){{0,3}}?({subjects})\b",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
+    for pattern in _CONCURRENT_PATTERNS:
+        for match in pattern.finditer(text):
             value = _to_number(match.group(1))
             if value is None or value < 1:
                 continue
@@ -270,10 +297,7 @@ def _extract_scale(text: str, source: str, out: Extraction) -> None:
                 "concurrent-subject",
             ))
 
-    for match in re.finditer(
-        rf"({number})\s*(?:requests?\s*(?:per|/)\s*(?:second|sec|s)\b|\brps\b|\btps\b|\bqps\b)",
-        text, re.IGNORECASE,
-    ):
+    for match in _RPS_PATTERN.finditer(text):
         value = _to_number(match.group(1))
         if value is not None and value > 0:
             out.found.append(Candidate(
@@ -322,7 +346,19 @@ def _extract_shape(text: str, source: str, out: Extraction) -> None:
 
 # --- 되묻기의 답 -------------------------------------------------------------
 #: 답을 그대로 받는 칸 — 계약이 "사용자 표현 그대로"를 요구한다.
-_AS_WRITTEN_FIELDS = ("dataResidency",)
+#:
+#: **처음에 이 목록이 뒤집혀 있었다.** `dataResidency`만 적어 두고 `regionAsWritten`을
+#: 빠뜨렸는데, 후자는 리전 후보가 갈릴 때 실제로 질문이 되는 칸이다 — 사용자가 답하면
+#: "계약에 없는 칸"이라고 버려졌다. 계약이 아는 칸을 우리 목록이 모르고 있던 셈이라,
+#: 이제 **스키마에서 판정한다**: 문자열 칸인데 전용 해석기가 없으면 그대로 받는다.
+_VERBATIM_EXCEPTIONS = ("provider", "region")   # 문자열이지만 해석기를 거쳐야 하는 칸
+
+
+def _reads_verbatim(field_name: str) -> bool:
+    """이 칸은 답을 그대로 받아도 되는가 — 계약 스키마가 정한다."""
+    if field_name in _VERBATIM_EXCEPTIONS:
+        return False
+    return cloud_contract.field_type(field_name) == "string"
 
 #: 예/아니오 칸. 답이 이 목록에 없으면 **채우지 않고 다시 묻는다.**
 _YES = ("yes", "y", "true", "예", "네", "응", "그렇다")
@@ -351,7 +387,7 @@ def answer_field(field_name: str, text: str, provider: str | None = None) -> Ext
     def keep(value: object, how: str) -> None:
         out.found.append(Candidate(field_name, value, body, ANSWER, how))
 
-    if field_name in _AS_WRITTEN_FIELDS:
+    if _reads_verbatim(field_name):
         keep(body, "answer-verbatim")
     elif field_name == "provider":
         _extract_provider(body, ANSWER, out)
@@ -364,8 +400,7 @@ def answer_field(field_name: str, text: str, provider: str | None = None) -> Ext
             out.reject(field_name, body, ANSWER, "리전으로 못 알아들었다")
     elif field_name == "monthlyBudgetUSD":
         if _OTHER_CURRENCY.search(body):
-            out.reject(field_name, body, ANSWER,
-                       "USD가 아니다 — 계약이 환율 환산을 거부한다")
+            out.reject(field_name, body, ANSWER, WHY_NOT_USD)
         elif _PER_UNIT.search(body):
             out.reject(field_name, body, ANSWER, "단가다(per <단위>) — 월 예산이 필요하다")
         else:
@@ -383,13 +418,16 @@ def answer_field(field_name: str, text: str, provider: str | None = None) -> Ext
         else:
             keep(int(value) if field_name == "expectedConcurrentUsers" else value,
                  "answer-number")
-    elif field_name == "trafficPattern":
+    elif cloud_contract.field_type(field_name) == "enum":
+        # 허용 값을 여기 적지 않는다 — 계약이 이미 안다(`steady|spiky`). 손으로 적으면
+        # 스키마가 늘 때 이 목록만 뒤처진다.
+        allowed = cloud_contract.field_enum(field_name)
         lowered = body.lower()
-        if lowered in ("steady", "spiky"):
+        if lowered in allowed:
             keep(lowered, "answer-enum")
         else:
-            out.reject(field_name, body, ANSWER, "steady 또는 spiky여야 한다")
-    elif field_name in ("multiZone", "stateless"):
+            out.reject(field_name, body, ANSWER, f"{' 또는 '.join(allowed)}여야 한다")
+    elif cloud_contract.field_type(field_name) == "boolean":
         lowered = body.lower()
         if lowered in _YES:
             keep(True, "answer-boolean")
@@ -417,8 +455,11 @@ def _collect(state: AgentState) -> Extraction:
     # 리전이 여전히 모호하다고 다시 묻게 된다 — 방금 준 답을 안 쓰고 물어보는 꼴이다.
     for source, text in sources:
         _extract_provider(text, source, out)
-    if "provider" in answers:
-        out.found.extend(answer_field("provider", answers["provider"]).found)
+    answered_provider = (
+        answer_field("provider", answers["provider"]) if "provider" in answers else None
+    )
+    if answered_provider:
+        out.found.extend(answered_provider.found)
     providers = {c.value for c in out.found if c.field == "provider"}
     provider = str(next(iter(providers))) if len(providers) == 1 else None
 
@@ -432,21 +473,20 @@ def _collect(state: AgentState) -> Extraction:
             _extract_region(text, source, out, provider)
 
     # 나머지 답. 사용자가 그 칸을 두고 답한 것이라 산문에서 캔 것보다 늦고 명시적이다
-    # (`_resolve_field`가 그 순서를 우선순위로 쓴다). `provider`는 위에서 이미 접었다 —
-    # 두 번 접으면 같은 값이 두 번 세어져 근거 목록이 부풀고, 거절 사유도 두 벌이 된다.
+    # (`_resolve_field`가 그 순서를 우선순위로 쓴다). `provider`는 위에서 이미 해석했으므로
+    # 거절 사유만 옮긴다 — 다시 부르면 같은 값이 두 번 세어져 근거 목록이 부푼다.
     for name, text in answers.items():
-        if name == "provider":
-            answered = answer_field(name, text)
-            out.rejected.extend(answered.rejected)   # 값은 위에서 이미 넣었다
+        answered = answered_provider if name == "provider" else answer_field(name, text, provider)
+        if answered is None:
             continue
-        answered = answer_field(name, text, provider)
-        out.found.extend(answered.found)
+        if name != "provider":
+            out.found.extend(answered.found)
         out.rejected.extend(answered.rejected)
     return out
 
 
-def _resolve_field(name: str, found: list[Candidate]) -> tuple[object | None, dict | None]:
-    """한 칸의 값을 정한다. 돌려주는 둘째 값은 **질문**(없으면 None).
+def _resolve_field(name: str, mine: list[Candidate]) -> tuple[object | None, dict | None]:
+    """한 칸의 후보들에서 값을 정한다. 돌려주는 둘째 값은 **질문**(없으면 None).
 
     규칙 셋:
       - 값이 하나로 모이면 채운다(같은 값이 여러 번 나온 것은 충돌이 아니다).
@@ -454,10 +494,10 @@ def _resolve_field(name: str, found: list[Candidate]) -> tuple[object | None, di
         순서는 되묻기의 답 > 제약 원문 > 요구사항 산문이다 — 답은 사용자가 **그 칸을
         두고** 한 말이라 가장 세다. 조용히 덮으면 밀려난 쪽이 사라지므로 충돌은 남긴다.
       - 그 외 서로 다른 값이 여럿이면 **채우지 않고** 묻는다.
+
+    후보를 칸별로 나누는 일은 부르는 쪽이 한 번에 한다 — 여기서 다시 훑으면 "후보가
+    칸에 어떻게 대응하는가"가 두 곳에 적힌다.
     """
-    mine = [c for c in found if c.field == name]
-    if not mine:
-        return None, None
     values = {c.value for c in mine}
     if len(values) == 1:
         return mine[0].value, None
@@ -487,21 +527,21 @@ def build_resource_spec(state: AgentState) -> dict:
     """제약 산문을 `RESOURCE_SPEC`으로 옮기고, 못 채운 칸은 계약의 이유를 들어 되묻는다."""
     extraction = _collect(state)
 
+    by_field: dict[str, list[Candidate]] = {}
+    for candidate in extraction.found:
+        by_field.setdefault(candidate.field, []).append(candidate)
+
+    # 계약이 모르는 칸은 **여기 오기 전에** 걸러진다(`answer_field`가 유일한 문이고,
+    # 추출기는 스키마 칸만 만든다). 그래서 조립 뒤에 다시 훑지 않는다 — 같은 불변식을
+    # 두 곳에서 지키면 한쪽만 고쳐진다.
     spec: dict = {"schemaVersion": SCHEMA_VERSION}
     questions: list[dict] = []
-    fields = sorted({c.field for c in extraction.found})
-    for name in fields:
-        value, question = _resolve_field(name, extraction.found)
+    for name, mine in sorted(by_field.items()):
+        value, question = _resolve_field(name, mine)
         if value is not None:
             spec[name] = value
         if question:
             questions.append(question)
-
-    # 계약이 아는 칸만 남긴다. 모르는 칸을 넣으면 `additionalProperties: false`에 걸려
-    # 스펙 전체가 무효가 된다 — 한 칸의 추출 실수가 나머지를 다 죽이면 안 된다.
-    unknown = sorted(set(spec) - cloud_contract.schema_fields())
-    for name in unknown:
-        extraction.reject(name, str(spec.pop(name)), "spec", "계약에 없는 칸이다")
 
     # 못 채운 필수 칸 → **계약이 적어 둔 이유를 그대로** 되묻는다. 이유 없이 물으면
     # 사용자가 아무 값이나 채운다는 것이 `REQUIRED_WHY`의 존재 이유다.
@@ -513,7 +553,7 @@ def build_resource_spec(state: AgentState) -> dict:
         questions.append({
             "field": name,
             "kind": UNCONVERTIBLE if any(
-                "USD" in r["why"] for r in rejected
+                r["why"] == WHY_NOT_USD for r in rejected
             ) else MISSING,
             "why": cloud_contract.why(name),
             "seen": rejected,
@@ -526,10 +566,11 @@ def build_resource_spec(state: AgentState) -> dict:
         "valid": not errors,
         "errors": errors,
         "questions": questions,
+        # 근거에 출처가 이미 붙어 있으므로 출처 목록을 따로 싣지 않는다 — 파생값을
+        # 나란히 두면 둘이 어긋날 수 있고, 어긋나면 어느 쪽이 참인지 알 수 없다.
         "provenance": [c.as_dict() for c in extraction.found],
         # 버린 후보를 남긴다 — 빈 칸이 "정보가 없어서"인지 "우리가 버려서"인지 구별된다.
         "rejected": extraction.rejected,
-        "sources": sorted({c.source for c in extraction.found}),
     }
 
     result: dict = {"resource_intake": intake, "phase": "resource_spec"}

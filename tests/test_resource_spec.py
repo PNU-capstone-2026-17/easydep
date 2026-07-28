@@ -270,3 +270,12 @@ def test_a_korean_place_name_also_leaves_its_original_wording():
 
     assert intake["draft"]["region"] == "ap-northeast-2"
     assert intake["draft"]["regionAsWritten"] == "서울"
+
+
+def test_a_provider_id_matches_as_a_word_not_a_substring():
+    """부분 문자열이면 `gcp`가 `gcpartner`에 걸린다 — 관심사 열쇠말 층이 물렸던 자리다."""
+    hit = sr.answer_field("provider", "gcp")
+    assert [c.value for c in hit.found] == ["gcp"]
+
+    _result, intake = _intake(constraints="We partner with gcpartner Inc.")
+    assert "provider" not in intake["draft"]

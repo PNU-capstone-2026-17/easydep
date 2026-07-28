@@ -156,20 +156,19 @@ def layer_gain(rows: list[dict], chunk: int, k: int) -> dict:
     }
 
 
-def differentiation(rows: list[dict], chunk: int, k: int) -> dict:
-    """LLM 링크로 다시 잰 분화 — 열쇠말로는 못 가리던 미분화 쌍의 결론.
+def undifferentiated_pairs(sets: dict[str, set]) -> tuple[list[dict], int]:
+    """(미분화 쌍, 검사한 쌍 수). **분화 판정의 정의는 여기 한 곳에 있다.**
 
-    분화 판정은 `docs/cloud-native-requirements.md` §6.7의 정의 그대로다: 두 관심사가
-    갈리려면 **한쪽만 다루는 요구사항이 양방향으로** 있어야 한다.
+    판정은 `docs/cloud-native-requirements.md` §6.7 그대로다: 두 관심사가 갈리려면
+    **한쪽만 거는 요구사항이 양방향으로** 있어야 한다. 양쪽 다 안 걸린 쌍은 검사 대상이
+    아니다(없는 것끼리는 비교할 수 없다).
+
+    이 함수가 따로 있는 이유는 **같은 정의를 두 코퍼스에 돌리기 때문**이다 — 내부 입력은
+    `differentiation()`이, PURE는 `concern_corpus.measure()`가 쓴다. 두 수를 나란히 놓고
+    비교하므로 정의가 한쪽만 바뀌면 두 수가 조용히 비교 불가능해진다.
     """
-    llm = majority(rows, chunk, k)
-    sets: dict[str, set[tuple[str, str]]] = {c.id: set() for c in concerns.CONCERNS}
-    for domain, links in llm.items():
-        for cid, ids in links.items():
-            sets[cid] |= {(domain, i) for i in ids}
-
     undiff, tested = [], 0
-    for a, b in combinations(concerns.all_ids(), 2):
+    for a, b in combinations(sorted(sets), 2):
         A, B = sets[a], sets[b]
         if not A or not B:
             continue
@@ -177,6 +176,18 @@ def differentiation(rows: list[dict], chunk: int, k: int) -> dict:
         if not (A - B) or not (B - A):
             undiff.append({"a": a, "b": b, "only_a": len(A - B), "only_b": len(B - A),
                            "shared": len(A & B)})
+    return undiff, tested
+
+
+def differentiation(rows: list[dict], chunk: int, k: int) -> dict:
+    """LLM 링크로 다시 잰 분화 — 열쇠말로는 못 가리던 미분화 쌍의 결론."""
+    llm = majority(rows, chunk, k)
+    sets: dict[str, set[tuple[str, str]]] = {c.id: set() for c in concerns.CONCERNS}
+    for domain, links in llm.items():
+        for cid, ids in links.items():
+            sets[cid] |= {(domain, i) for i in ids}
+
+    undiff, tested = undifferentiated_pairs(sets)
     empty = [c for c in concerns.all_ids() if not sets[c]]
     return {"tested_pairs": tested, "undifferentiated": undiff, "never_linked": empty}
 

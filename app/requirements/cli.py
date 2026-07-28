@@ -18,18 +18,8 @@ from collections.abc import Callable
 
 from app.requirements.agent import resume_analysis, start_analysis
 from app.requirements.common import telemetry
+from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
-
-
-def _reconfigure_utf8() -> None:
-    """Windows 콘솔(cp949)에서 한글/기호 출력이 깨지지 않도록 UTF-8로 전환."""
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure:
-            try:
-                reconfigure(encoding="utf-8")
-            except Exception:  # noqa: BLE001
-                pass
 
 
 def format_results(items: list[dict]) -> str:
@@ -97,7 +87,7 @@ def _collect_requirements(args: argparse.Namespace, out: Callable[[str], None]) 
 
 
 def main(argv: list[str] | None = None) -> int:
-    _reconfigure_utf8()
+    use_utf8_stdout()
     telemetry.configure_logging()
     parser = argparse.ArgumentParser(
         prog="python -m app.requirements.cli",

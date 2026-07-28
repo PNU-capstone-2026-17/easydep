@@ -31,13 +31,13 @@
 """
 from __future__ import annotations
 
-import contextlib
 import json
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from app.requirements.common.console import use_utf8_stdout
 
 #: 페이싱 탐색에 쓸 호출 수. 적게 던져 보고 결정한다.
 _PROBE_CALLS = 2
@@ -62,8 +62,7 @@ class Campaign:
         # 하나에 `print`가 UnicodeEncodeError를 낸다 — 실제로 3시간짜리 실행이 진행
         # 로그 한 줄 때문에 죽었다. 파일은 utf-8로 쓰고 있었으니 잃은 것은 순전히
         # 화면 출력 때문이다.
-        with contextlib.suppress(Exception):  # 파이프·리다이렉트면 없을 수 있다
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        use_utf8_stdout()
 
     # -- 기본기 ------------------------------------------------------------
     def log(self, message: str) -> None:

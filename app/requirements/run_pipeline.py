@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from app.requirements.common import telemetry
+from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
 from app.requirements.runner import (
     ARTIFACTS_DIR,
@@ -27,18 +28,8 @@ from app.requirements.runner import (
 )
 
 
-def _reconfigure_utf8() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure:
-            try:
-                reconfigure(encoding="utf-8")
-            except Exception:  # noqa: BLE001
-                pass
-
-
 def main(argv: list[str] | None = None) -> int:
-    _reconfigure_utf8()
+    use_utf8_stdout()
     telemetry.configure_logging()
     parser = argparse.ArgumentParser(
         prog="python -m app.requirements.run_pipeline",
