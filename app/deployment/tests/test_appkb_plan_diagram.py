@@ -445,3 +445,26 @@ def test_carbon_verdict_is_absent_when_not_required() -> None:
     """요구가 없으면 판정도 없다 — 잡음을 늘리지 않는다."""
     lines = verify_against_requirements(_plan(), {}, _HOURS)
     assert not any("lowCarbonPreferred" in ln for ln in lines)
+
+
+def test_undecided_replica_count_is_visible_in_the_diagram() -> None:
+    """**노트는 그림과 같이 안 다닌다.**
+
+    계획은 "몇 대인지 이 지식베이스가 정할 수 없다"고 노트로 말해 왔는데, 그림에는
+    상자가 하나뿐이라 **1대처럼 읽혔다.** 그림은 잘려 돌아다니므로 미정을 그림에도
+    남긴다(범례에 유보를 넣은 것과 같은 이유).
+
+    수를 우리가 정하지는 않는다 — 근거 없는 사이징은 이 저장소가 막아 온 것이다.
+    """
+    uml = render(_plan())
+    assert "×?" in uml, "미정 대수가 그림에 없다"
+    assert "not decided" in uml, "범례가 미정을 밝히지 않는다"
+
+
+def test_replica_marker_only_on_compute() -> None:
+    """공유 인프라·외부 시스템에 대수를 묻는 것은 잡음이다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode("vnet", "네트워크", "shared", ORIGIN_KB))
+    for line in render(plan).splitlines():
+        if '"vnet"' in line:
+            assert "×" not in line

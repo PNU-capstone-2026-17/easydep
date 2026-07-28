@@ -52,6 +52,12 @@ def _node_line(node: PlanNode) -> str:
         label += f"\\n{_quote(node.type_id)}"
     elif node.candidates:
         label += f"\\n{len(node.candidates)} candidates"
+    # **대수를 그림에 남긴다.** 계획은 "몇 대인지 우리가 정할 수 없다"고 노트로
+    # 말해 왔는데 그림에는 상자가 하나뿐이라 **1대처럼 읽혔다** — 노트는 그림과 같이
+    # 안 다닌다. 값이 붙는 역할(컴퓨트)에만 붙인다: 공유 인프라·외부 시스템에
+    # 대수를 물으면 잡음이다.
+    if node.role == "compute":
+        label += f"\\n×{node.replicas if node.replicas is not None else '?'}"
     stereotype = _STEREOTYPE.get(node.origin, "")
     tail = f" <<{stereotype}>>" if stereotype else ""
     # **별칭을 따옴표로 감싼다.** 계약이 컴포넌트 id에 하이픈을 허용하는데
@@ -133,6 +139,12 @@ def render(plan: DeploymentPlan) -> str:
         lines.append(
             f"  The {hedged} items marked <<inferred>>·<<specified by the designer>>"
             " are not verified facts"
+        )
+    undecided = [n for n in plan.nodes if n.role == "compute" and n.replicas is None]
+    if undecided:
+        lines.append(
+            f"  ×? on {len(undecided)} compute node(s): **how many instances is not "
+            "decided** — this plan shows one box per component, not one instance"
         )
     if unplaced:
         # **밖에 그린 것이 "밖에 있다"로 읽히면 안 된다.** 관리형 서비스가 어느
