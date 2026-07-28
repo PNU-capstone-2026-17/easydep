@@ -884,7 +884,7 @@ def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
     executable = gradle_command()
     started = time.monotonic()
     result = subprocess.run(
-        [*executable, "compileJava", "test", "--no-daemon"],
+        [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
         cwd=sandbox / "application",
         capture_output=True,
         text=True,
@@ -894,7 +894,7 @@ def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
         check=False,
     )
     evidence = {
-        "command": [*executable, "compileJava", "test", "--no-daemon"],
+        "command": [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
         "exitCode": result.returncode,
         "durationMs": int((time.monotonic() - started) * 1000),
         "stdout": result.stdout[-16000:],

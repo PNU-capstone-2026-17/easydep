@@ -26,6 +26,8 @@ class CommandEvidence:
 
 @dataclass
 class JobSpec:
+    job_type: str
+    feedback: str
     name: str
     workspace_root: Path
     inputs: dict[str, Path]

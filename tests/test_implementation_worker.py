@@ -12,13 +12,22 @@ from fastapi.testclient import TestClient
 from app.implementation.api import router
 from app.implementation.config import ImplementationSettings
 from app.implementation.engine.agent_runtime import gradle_command
+from app.implementation.engine.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.prototype_client import PrototypeClient, PrototypeExecutionError
-from app.implementation.schemas import CreateImplementationJobRequest
+from app.implementation.schemas import (
+    CreateImplementationFeedbackJobRequest,
+    CreateImplementationJobRequest,
+)
 from app.implementation.worker import ImplementationWorker, InvalidJobState
 
 
 def test_job_contract_preserves_automated_placeholder_policy() -> None:
     assert CreateImplementationJobRequest().allow_assumptions is True
+
+
+def test_feedback_request_trims_feedback() -> None:
+    request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
+    assert request.feedback == "rename the service"
 
 
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
@@ -69,11 +78,68 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
         False,
     )
     job = json.loads(path.read_text(encoding="utf-8"))
-    assert set(job["inputs"]) == {"bceClass", "sequence", "openapi", "erd", "deployment", "cloud"}
+    assert set(job["inputs"]) == {
+        "bceClass", "sequence", "openapi", "erd", "deployment", "cloud",
+    }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
     assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")
     assert job["tools"]["openapiGeneratorJar"].startswith("app/implementation/tools/")
+
+
+def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_feedback_job(
+        "job-feedback",
+        "12345678-0000-0000-0000-000000000000",
+        {
+            "class_diagram_puml": "@startuml\nclass Order\n@enduml",
+            "api_spec": {"openapi": "3.0.3", "paths": {}},
+        },
+        {
+            "src/main/java/com/example/OrderService.java": "class OrderService {}",
+            "src/test/java/com/example/OrderServiceTest.java": "class OrderServiceTest {}",
+        },
+        "Reject shipped order cancellation.",
+        "com.example",
+        False,
+    )
+    job = json.loads(path.read_text(encoding="utf-8"))
+    assert job["jobType"] == "FEEDBACK_REVISION"
+    assert job["requiredInputs"] == ["baseSnapshot"]
+    snapshot = json.loads(
+        (tmp_path / job["inputs"]["baseSnapshot"]).read_text(encoding="utf-8")
+    )
+    assert "application/src/main/java/com/example/OrderService.java" in snapshot["files"]
+
+
+def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
+    tmp_path: Path,
+) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_feedback_job(
+        "job-feedback",
+        "12345678-0000-0000-0000-000000000000",
+        {},
+        {
+            "src/main/java/com/example/OrderService.java": "class OrderService {}",
+            "src/test/java/com/example/OrderServiceTest.java": "class OrderServiceTest {}",
+        },
+        "Rename the service method.",
+        "com.example",
+        False,
+    )
+    output = PrototypeOrchestrator(load_job(path)).run()
+    assert (
+        output / "application/src/main/java/com/example/OrderService.java"
+    ).is_file()
+    manifest = json.loads(
+        (output / "reports/run-manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "SUCCEEDED"
+    assert [task["task_id"] for task in manifest["implementation_tasks"]] == [
+        "apply-source-feedback"
+    ]
 
 
 def test_prepare_job_rejects_work_root_outside_repository(tmp_path: Path) -> None:
@@ -146,6 +212,34 @@ def test_implementation_api_enqueues_job(monkeypatch) -> None:
     )
     assert response.status_code == 202
     assert response.json()["status"] == "QUEUED"
+
+
+def test_implementation_feedback_api_enqueues_revision_job(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.implementation.api.artifact_repository.load_state",
+        lambda app_id: {"class_diagram_puml": "class X", "api_spec": {"paths": {}}},
+    )
+    monkeypatch.setattr(
+        "app.implementation.api.worker.create_feedback_job",
+        lambda app_id, design, feedback, base_package, allow_assumptions: {
+            "job_id": "feedback-1",
+            "job_type": "FEEDBACK_REVISION",
+            "app_id": app_id,
+            "status": "QUEUED",
+            "feedback": feedback,
+        },
+    )
+    application = FastAPI()
+    application.include_router(router)
+    response = TestClient(application).post(
+        "/api/implementation/apps/app-1/feedback-jobs",
+        json={
+            "feedback": "Reject shipped order cancellation.",
+            "base_package": "com.example.orders",
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["job_type"] == "FEEDBACK_REVISION"
 
 
 def test_implementation_api_returns_conflict_for_stale_approval(monkeypatch) -> None:

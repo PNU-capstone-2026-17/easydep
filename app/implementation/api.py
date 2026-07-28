@@ -4,7 +4,11 @@ from fastapi import APIRouter, HTTPException
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE, TYPE_TEST_CODE
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
-from .schemas import ApprovalRequest, CreateImplementationJobRequest
+from .schemas import (
+    ApprovalRequest,
+    CreateImplementationFeedbackJobRequest,
+    CreateImplementationJobRequest,
+)
 from .worker import InvalidJobState, JobNotFound, worker
 
 
@@ -16,6 +20,24 @@ FILE_ARTIFACT_TYPES = {TYPE_SOURCE_CODE, TYPE_TEST_CODE, TYPE_DEPLOYMENT_FILE, T
 def create_job(app_id: str, request: CreateImplementationJobRequest) -> dict:
     try:
         return worker.create_job(app_id, artifact_repository.load_state(app_id), request.base_package, request.allow_assumptions)
+    except AppNotFound as error:
+        raise HTTPException(status_code=404, detail="Unknown app id.") from error
+    except InvalidJobState as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post("/apps/{app_id}/feedback-jobs", status_code=202)
+def create_feedback_job(
+    app_id: str, request: CreateImplementationFeedbackJobRequest
+) -> dict:
+    try:
+        return worker.create_feedback_job(
+            app_id,
+            artifact_repository.load_state(app_id),
+            request.feedback,
+            request.base_package,
+            request.allow_assumptions,
+        )
     except AppNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown app id.") from error
     except InvalidJobState as error:

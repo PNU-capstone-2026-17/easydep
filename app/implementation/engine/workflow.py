@@ -23,6 +23,7 @@ from .orchestrator import (
     plan_wiring_tasks,
 )
 from .repair_planner import apply_repair_directives, schedule_cross_phase_repair
+from .deployment_renderer import render_deployment
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -46,6 +47,9 @@ PHASES = (
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     """Idempotently plan implemented phases and persist a resumable checkpoint."""
     run_root = run_root.resolve()
+    if spec.job_type == "FEEDBACK_REVISION":
+        apply_repair_directives(run_root)
+        return reconcile_workflow_state(run_root)
     ir = build_implementation_ir(spec, run_root)
     needs_persistence = bool(ir.persistent_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
@@ -210,6 +214,7 @@ def run_workflow(
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
             state["status"] = "COMPLETE"
+            _render_deployment_if_configured(run_root, spec)
         elif state.get("status") != "NEEDS_INPUT":
             state["status"] = "NEEDS_PLANNER"
         state["verification"] = verification.get("status")
@@ -305,6 +310,7 @@ def run_workflow(
     audit = auditor(run_root)
     if audit.get("status") == "COMPLETE":
         final_state["status"] = "COMPLETE"
+        _render_deployment_if_configured(run_root, spec)
     elif final_state.get("status") != "NEEDS_INPUT":
         final_state["status"] = (
             "READY" if final_state.get("nextRunnableTasks") else "NEEDS_PLANNER"
@@ -327,6 +333,19 @@ def workflow_status(run_root: Path) -> dict[str, object]:
     if not path.is_file():
         raise ValueError("Workflow has not been planned for this run")
     return _read_json(path)
+
+
+def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
+    intent = spec.inputs.get("deploymentIntent")
+    cloud = spec.inputs.get("cloud")
+    deployment = spec.inputs.get("deployment")
+    if (intent and intent.is_file()) or (cloud and cloud.is_file()):
+        render_deployment(run_root, spec)
+    elif deployment and deployment.is_file():
+        raise ValueError(
+            "Deployment rendering requires deploymentIntent or a cloud resource "
+            "specification"
+        )
 
 
 def write_transmission_request(

@@ -54,6 +54,11 @@ from app.implementation.engine.design_context import (
 )
 from app.implementation.engine.completion_audit import audit_run_completion
 from app.implementation.engine.quality_gates import e2e_contract_violations
+from app.implementation.engine.deployment_renderer import (
+    infer_intent,
+    render_deployment,
+    validate_intent,
+)
 from app.implementation.engine.implementation_ir import (
     ApiOperationIR,
     ApiPortIR,
@@ -1285,6 +1290,317 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("Machine-derived semantic contract", prompt)
             self.assertIn("package com.example.demo.persistence.repository", prompt)
             self.assertIn("package com.example.demo.adapter.out.trading", prompt)
+
+    def test_deterministic_deployment_renderer_supports_multiple_workloads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(
+                json.dumps(
+                    {
+                        "resources": [
+                            {"type": "Microsoft.ContainerRegistry/registries", "name": "demoacr"},
+                            {"type": "Microsoft.KeyVault/vaults", "name": "demo-vault"},
+                            {
+                                "type": "Microsoft.ContainerService/managedClusters",
+                                "networking": {
+                                    "containerPort": 8000,
+                                    "serviceExposure": "ClusterIP",
+                                    "ingressProtocol": "HTTPS",
+                                },
+                                "workloads": [
+                                    {
+                                        "name": "orders-api",
+                                        "replicas": {"min": 2, "max": 5},
+                                        "probes": {
+                                            "readiness": "/readyz",
+                                            "liveness": "/livez",
+                                        },
+                                        "monitoring": {
+                                            "metricsPath": "/actuator/prometheus"
+                                        },
+                                    },
+                                    {
+                                        "name": "orders-worker",
+                                        "replicas": {"min": 1, "max": 1},
+                                    },
+                                ],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
+            report = render_deployment(root / "run", spec)
+
+            files = set(report["renderedFiles"])
+            self.assertIn("application/Dockerfile", files)
+            self.assertIn("application/k8s/orders-api/deployment.yaml", files)
+            self.assertIn("application/k8s/orders-api/service.yaml", files)
+            self.assertIn("application/k8s/orders-api/ingress.yaml", files)
+            self.assertIn("application/k8s/orders-api/hpa.yaml", files)
+            self.assertIn("application/k8s/orders-api/pdb.yaml", files)
+            self.assertIn("application/k8s/orders-api/network-policy.yaml", files)
+            self.assertIn("application/k8s/orders-api/service-account.yaml", files)
+            self.assertNotIn("application/k8s/orders-api/external-secret.yaml", files)
+            self.assertIn("application/k8s/orders-api/service-monitor.yaml", files)
+            self.assertIn("application/k8s/orders-worker/deployment.yaml", files)
+            self.assertNotIn("application/k8s/orders-worker/service.yaml", files)
+            self.assertEqual("deterministic", report["renderer"])
+            self.assertEqual(
+                "SUCCEEDED_WITH_WARNINGS", report["validation"]["status"]
+            )
+            self.assertTrue(report["sourceEvidence"]["cloudResourceSpecification"])
+            self.assertEqual("implementation-agent-inference", report["intentSource"])
+            self.assertEqual("SUCCEEDED", report["sourceConformance"]["status"])
+            persisted_intent = json.loads(
+                (root / "run/reports/deployment-intent.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(report["intent"], persisted_intent)
+            service_source = (
+                root / "run/application/k8s/orders-api/service.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("type: ClusterIP", service_source)
+            deployment_source = (
+                root / "run/application/k8s/orders-api/deployment.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("path: /readyz", deployment_source)
+            self.assertIn("path: /livez", deployment_source)
+
+    def test_deployment_intent_rejects_incompatible_job_capabilities(self) -> None:
+        intent = {
+            "schemaVersion": "easydep-deployment-intent/v1alpha1",
+            "namespace": "demo",
+            "workloads": [
+                {
+                    "name": "cleanup",
+                    "kind": "Job",
+                    "image": "example/cleanup:1",
+                    "capabilities": {"service": True},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "Job/CronJob cannot enable"):
+            validate_intent(intent)
+
+    def test_deterministic_renderer_supports_stateful_job_and_cronjob(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intent = root / "intent.json"
+            intent.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                        "namespace": "platform",
+                        "workloads": [
+                            {
+                                "name": "ledger",
+                                "kind": "StatefulSet",
+                                "image": "example/ledger:1",
+                                "replicas": {"min": 2, "max": 4},
+                                "storage": {
+                                    "size": "20Gi",
+                                    "accessModes": ["ReadWriteMany"],
+                                },
+                                "capabilities": {
+                                    "service": True,
+                                    "hpa": True,
+                                    "pdb": True,
+                                    "pvc": True,
+                                    "serviceAccount": True,
+                                },
+                            },
+                            {
+                                "name": "migration",
+                                "kind": "Job",
+                                "image": "example/migration:1",
+                                "capabilities": {
+                                    "serviceAccount": True,
+                                    "configMap": True,
+                                    "externalSecret": True,
+                                },
+                                "externalSecret": {
+                                    "storeName": "platform-secrets",
+                                    "remoteKey": "migration/runtime",
+                                },
+                            },
+                            {
+                                "name": "cleanup",
+                                "kind": "CronJob",
+                                "image": "example/cleanup:1",
+                                "schedule": "0 3 * * *",
+                                "capabilities": {},
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            spec = SimpleNamespace(
+                name="platform",
+                inputs={"deploymentIntent": intent},
+            )
+            report = render_deployment(root / "run", spec)
+            files = set(report["renderedFiles"])
+            self.assertIn("application/k8s/ledger/statefulset.yaml", files)
+            self.assertIn("application/k8s/ledger/pvc.yaml", files)
+            self.assertIn("application/k8s/migration/job.yaml", files)
+            self.assertIn("application/k8s/cleanup/cronjob.yaml", files)
+            job_source = (
+                root / "run/application/k8s/migration/job.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("configMapRef", job_source)
+            self.assertIn("secretRef", job_source)
+            service_source = (
+                root / "run/application/k8s/ledger/service.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("clusterIP: None", service_source)
+
+    def test_renderer_removes_files_from_previous_managed_render(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intent_path = root / "intent.json"
+            intent = {
+                "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                "namespace": "demo",
+                "workloads": [
+                    {
+                        "name": "demo-api",
+                        "kind": "Deployment",
+                        "image": "example/demo:1",
+                        "replicas": {"min": 1, "max": 2},
+                        "capabilities": {"service": True, "hpa": True},
+                    }
+                ],
+            }
+            intent_path.write_text(json.dumps(intent), encoding="utf-8")
+            spec = SimpleNamespace(
+                name="demo", inputs={"deploymentIntent": intent_path}
+            )
+            render_deployment(root / "run", spec)
+            hpa = root / "run/application/k8s/demo-api/hpa.yaml"
+            self.assertTrue(hpa.is_file())
+
+            intent["workloads"][0]["replicas"] = {"min": 1, "max": 1}
+            intent["workloads"][0]["capabilities"]["hpa"] = False
+            intent_path.write_text(json.dumps(intent), encoding="utf-8")
+            report = render_deployment(root / "run", spec)
+            self.assertFalse(hpa.exists())
+            self.assertIn(
+                "application/k8s/demo-api/hpa.yaml", report["removedFiles"]
+            )
+
+    def test_external_secret_requires_explicit_store_and_remote_key(self) -> None:
+        intent = {
+            "schemaVersion": "easydep-deployment-intent/v1alpha1",
+            "namespace": "demo",
+            "workloads": [
+                {
+                    "name": "demo-api",
+                    "kind": "Deployment",
+                    "image": "example/demo:1",
+                    "capabilities": {"externalSecret": True},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "externalSecret"):
+            validate_intent(intent)
+
+    def test_intent_rejects_invalid_namespace_and_cron(self) -> None:
+        intent = {
+            "schemaVersion": "easydep-deployment-intent/v1alpha1",
+            "namespace": "Invalid Namespace",
+            "workloads": [
+                {
+                    "name": "cleanup",
+                    "kind": "CronJob",
+                    "image": "example/cleanup:1",
+                    "schedule": "nightly",
+                    "capabilities": {},
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "namespace"):
+            validate_intent(intent)
+
+    def test_inference_uses_explicit_diagram_alias_for_exposure(self) -> None:
+        cloud = {
+            "resources": [
+                {
+                    "type": "Microsoft.ContainerService/managedClusters",
+                    "networking": {"ingressProtocol": "HTTPS"},
+                    "workloads": [
+                        {
+                            "name": "frontend",
+                            "diagramAlias": "web",
+                            "replicas": {"min": 1, "max": 1},
+                        }
+                    ],
+                }
+            ]
+        }
+        diagram = "@startuml\nactor User\nnode LB as lb\ncomponent Web as web\nlb --> web\n@enduml"
+        intent = infer_intent("demo", cloud, diagram)
+        capabilities = intent["workloads"][0]["capabilities"]
+        self.assertTrue(capabilities["service"])
+        self.assertTrue(capabilities["ingress"])
+
+    def test_source_conformance_rejects_intent_that_conflicts_with_cloud_spec(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(
+                json.dumps(
+                    {
+                        "resources": [
+                            {
+                                "type": "Microsoft.ContainerService/managedClusters",
+                                "networking": {"containerPort": 8000},
+                                "workloads": [
+                                    {
+                                        "name": "orders-api",
+                                        "replicas": {"min": 2, "max": 2},
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            intent = root / "intent.json"
+            intent.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                        "namespace": "orders",
+                        "workloads": [
+                            {
+                                "name": "orders-api",
+                                "kind": "Deployment",
+                                "image": "example/orders-api:1",
+                                "replicas": {"min": 1, "max": 1},
+                                "capabilities": {},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            spec = SimpleNamespace(
+                name="orders", inputs={"cloud": cloud, "deploymentIntent": intent}
+            )
+            with self.assertRaisesRegex(ValueError, "replicas.min"):
+                render_deployment(root / "run", spec)
+            report = json.loads(
+                (root / "run/reports/deployment-render.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("FAILED", report["sourceConformance"]["status"])
 
     def test_completion_audit_accepts_wiring_only_with_all_four_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
