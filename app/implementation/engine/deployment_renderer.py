@@ -92,10 +92,12 @@ set -eu
 terraform_dir=${1:?usage: render-images.sh <terraform-dir> <output-dir>}
 output_dir=${2:?usage: render-images.sh <terraform-dir> <output-dir>}
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-registry_outputs=$(terraform -chdir="$terraform_dir" output -json registry_image_bases)
+terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
+image_tag=${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to an already pushed immutable image tag}
+registry_outputs=$("$terraform_bin" -chdir="$terraform_dir" output -json registry_image_bases)
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
-REGISTRY_OUTPUTS="$registry_outputs" SOURCE_DIR="$source_dir" OUTPUT_DIR="$output_dir" python3 - <<'PY'
+REGISTRY_OUTPUTS="$registry_outputs" SOURCE_DIR="$source_dir" OUTPUT_DIR="$output_dir" IMAGE_TAG="$image_tag" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -103,14 +105,16 @@ from pathlib import Path
 registries = json.loads(os.environ["REGISTRY_OUTPUTS"])
 source_dir = Path(os.environ["SOURCE_DIR"])
 output_dir = Path(os.environ["OUTPUT_DIR"])
+image_tag = os.environ["IMAGE_TAG"]
 for source in source_dir.rglob("*.y*ml"):
     target = output_dir / source.relative_to(source_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     content = source.read_text(encoding="utf-8")
     for registry_ref, image_base in registries.items():
         content = content.replace(f"__EASYDEP_REGISTRY_{registry_ref}__", image_base)
-    if "__EASYDEP_REGISTRY_" in content:
-        raise SystemExit(f"unresolved registry marker in {source}")
+    content = content.replace("<tag>", image_tag)
+    if "__EASYDEP_REGISTRY_" in content or "<tag>" in content:
+        raise SystemExit(f"unresolved image placeholder in {source}")
     target.write_text(content, encoding="utf-8")
 PY
 ''',
@@ -125,8 +129,10 @@ terraform_dir=${1:?usage: deploy.sh <terraform-dir> [terraform apply options...]
 shift
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 output_dir=${EASYDEP_MANIFEST_DIR:-"$script_dir/resolved"}
-terraform -chdir="$terraform_dir" init -input=false
-terraform -chdir="$terraform_dir" apply "$@"
+terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
+: "${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to an already pushed immutable image tag}"
+"$terraform_bin" -chdir="$terraform_dir" init -input=false
+"$terraform_bin" -chdir="$terraform_dir" apply "$@"
 sh "$script_dir/render-images.sh" "$terraform_dir" "$output_dir"
 find "$output_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | sort | while IFS= read -r manifest; do
   kubectl apply -f "$manifest"
@@ -308,6 +314,7 @@ def infer_intent(
             "name": workload_name, "kind": "Deployment",
             "image": registry_image(provider, registry, workload_name),
             **({"registryRef": resource_reference(registry)} if registry else {}),
+            **({"clusterRef": resource_reference(cluster)} if cluster else {}),
             "port": int(networking.get("containerPort", 8000)),
             "replicas": replicas, "resources": source.get("resources", {}),
             "health": {

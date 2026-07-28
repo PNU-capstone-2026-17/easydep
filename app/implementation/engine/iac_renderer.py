@@ -111,10 +111,23 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
     unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY_" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
     if unresolved_images:
         registries = {_resource_id(item) for item in resources if _role(provider, item) == "registry"}
+        clusters = {_resource_id(item) for item in resources if _role(provider, item) == "cluster"}
+        default_cluster = next(iter(clusters)) if len(clusters) == 1 else None
         for workload in unresolved_images:
             reference = workload.get("registryRef")
             if not isinstance(reference, str) or reference not in registries:
                 errors.append(f"deployment workload {workload.get('name')} must declare a valid registryRef")
+                continue
+            cluster_reference = workload.get("clusterRef", default_cluster)
+            if not isinstance(cluster_reference, str) or cluster_reference not in clusters:
+                errors.append(f"deployment workload {workload.get('name')} must declare a valid clusterRef")
+                continue
+            cluster_item = next(item for item in resources if _resource_id(item) == cluster_reference)
+            registry_item = next(item for item in resources if _resource_id(item) == reference)
+            binding = _pull_binding_name(provider, cluster_item, registry_item)
+            binding_type = access[provider]
+            if f'{binding_type} "{binding}"' not in source:
+                errors.append(f"deployment workload {workload.get('name')} registryRef {reference} has no image-pull binding for clusterRef {cluster_reference}")
         if not (application / "k8s" / "render-images.sh").is_file():
             errors.append("registry image rendering script is missing")
         if not (application / "k8s" / "deploy.sh").is_file():
@@ -370,6 +383,11 @@ def _outputs(provider: str, resources: list[dict[str, Any]]) -> str:
         kind, logical = _type(provider, item), _logical(item)
         if _role(provider, item) == "cluster": values.append(f'output "{logical}_cluster_name" {{ value = {kind}.{logical}.name }}')
     return "\n\n".join(values)
+
+
+def _pull_binding_name(provider: str, cluster: dict[str, Any], registry: dict[str, Any]) -> str:
+    suffix = "acr_pull" if provider == "azure" else "ecr_pull" if provider == "aws" else "gke_artifact_pull"
+    return f"{_logical(cluster)}_{_logical(registry)}_{suffix}"
 
 
 def _type(provider: str, item: dict[str, Any]) -> str | None:

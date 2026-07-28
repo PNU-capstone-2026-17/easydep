@@ -1669,6 +1669,23 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             infer_intent("orders", cloud)
 
     @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_rejects_registry_pull_binding_for_wrong_registry(self, _validation: object) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "azure", "resources": [
+                {"id": "registry-a", "type": "Microsoft.ContainerRegistry/registries", "name": "public"},
+                {"id": "registry-b", "type": "Microsoft.ContainerRegistry/registries", "name": "private"},
+                {"id": "cluster-a", "type": "Microsoft.ContainerService/managedClusters", "name": "orders", "dependsOn": ["registry-a"], "workloads": [{"name": "orders-api", "registryRef": "registry-b"}]},
+            ]}), encoding="utf-8")
+            run = root / "run"
+            spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
+            render_deployment(run, spec)
+
+            with self.assertRaisesRegex(ValueError, "has no image-pull binding"):
+                render_iac(run, spec)
+
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_aws_cloud_spec_renders_deployment_then_iac(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1689,6 +1706,9 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertEqual("SUCCEEDED", iac["sourceConformance"]["status"])
             self.assertTrue((run / "application/k8s/render-images.sh").is_file())
             self.assertTrue((run / "application/k8s/deploy.sh").is_file())
+            deploy = (run / "application/k8s/deploy.sh").read_text(encoding="utf-8")
+            self.assertIn("EASYDEP_IMAGE_TAG", deploy)
+            self.assertIn("EASYDEP_TERRAFORM_PATH", deploy)
             self.assertIn('output "registry_image_bases"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)

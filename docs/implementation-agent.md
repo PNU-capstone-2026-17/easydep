@@ -110,15 +110,21 @@ Terraform CLI가 설치된 환경에서는 `python -m app.implementation.engine.
 
 배포 manifest는 workload별 `__EASYDEP_REGISTRY_<registryRef>__` marker를 보존하고, Terraform은 모든
 registry의 주소를 `registry_image_bases` map output으로 생성한다. 여러 registry를 사용하는 경우에는
-각 workload의 `registryRef`를 cloud resource spec의 registry `id`로 명시한다. registry가 하나뿐일 때는
-자동 추론할 수 있지만, 여러 후보가 있으면 renderer가 실패로 처리한다.
+각 workload의 `registryRef`를 cloud resource spec의 registry `id`로 명시하고, 여러 cluster가 있으면
+`clusterRef`도 cluster `id`로 명시한다. IaC 검증은 workload의 두 참조에 해당하는 정확한 image-pull
+권한 리소스가 Terraform에 있는지 확인한다. registry가 하나뿐일 때는 registry와 cluster를 자동 추론할 수
+있지만, 여러 후보가 있으면 renderer가 실패로 처리한다.
 
 `application/k8s/render-images.sh <terraform-dir> <output-dir>`은 Terraform apply 이후 output map으로
 marker를 치환한 별도 manifest tree를 생성한다. `application/k8s/deploy.sh <terraform-dir> [terraform apply options...]`는
 Terraform apply → 이미지 주소 치환 → kubectl apply를 순서대로 실행하는 최종 배포 entry point이다. 실행 권한에
 의존하지 않도록 `sh application/k8s/deploy.sh <terraform-dir> [terraform apply options...]` 형태로 호출한다.
 원본 manifest를 수정하지 않으므로, 생성 단계에서는 결정적 산출물을 유지하면서도 실제 배포에서는 registry의
-실제 endpoint를 사용한다. 이 스크립트 실행에는 Terraform, Python 3, kubectl 및 각 provider 인증이 필요하다.
+실제 endpoint를 사용한다. `EASYDEP_IMAGE_TAG`에는 이미 registry에 push된 불변 이미지 tag를 반드시
+지정해야 하며, 지정하지 않으면 치환·배포를 중단한다. 이 스크립트는 이미지를 build/push하지 않으므로 해당
+단계는 사용자의 release workflow가 먼저 수행해야 한다. 스크립트는 `EASYDEP_TERRAFORM_PATH`가 있으면
+그 절대 경로를, 없으면 PATH의 `terraform`을 사용한다. 실행에는 Terraform, Python 3, kubectl 및 각 provider
+인증이 필요하다.
 
 ## 자동 실행 단계
 

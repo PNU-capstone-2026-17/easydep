@@ -21,6 +21,7 @@
           "kind": {"enum": ["Deployment", "StatefulSet", "Job", "CronJob"]},
           "image": {"type": "string", "minLength": 1},
           "registryRef": {"type": "string", "minLength": 1},
+          "clusterRef": {"type": "string", "minLength": 1},
           "port": {"type": "integer", "minimum": 1, "maximum": 65535},
           "schedule": {"type": "string", "minLength": 1},
           "replicas": {
