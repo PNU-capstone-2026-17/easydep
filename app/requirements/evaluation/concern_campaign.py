@@ -35,9 +35,8 @@ from pathlib import Path
 
 from app.requirements import prompts
 from app.requirements.agent.steps import step_cloud
-from app.requirements.common.console import use_utf8_stdout
 from app.requirements.config import settings
-from app.requirements.evaluation import jsonl
+from app.requirements.evaluation import campaign, jsonl
 from app.requirements.knowledge import concerns
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -46,15 +45,6 @@ INPUTS_DIR = _ROOT / "inputs"
 #: 조건 순서 = **답이 먼저 남는 순서.** 0(한 번에)이 지금 기본값이라 기준선이고,
 #: 10은 나눠 묻기의 첫 갈래, 1은 가장 비싸다(관심사마다 한 번).
 CHUNK_SIZES = (0, 10, 1)
-
-
-def _log(path: Path, message: str) -> None:
-    stamp = time.strftime("%H:%M:%S")
-    line = f"[{stamp}] {message}"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-        fh.flush()
-    print(line, flush=True)
 
 
 def _done_cells(path: Path) -> set[str]:
@@ -104,9 +94,11 @@ def one_ballot(classified: list[dict], chunk: int) -> dict:
 
 
 def run(out_dir: Path, hours: float, repeats: int) -> int:
-    use_utf8_stdout()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    rows_path, log_path = out_dir / "ballots.jsonl", out_dir / "campaign.log"
+    # **로그·예산·utf-8은 `Campaign`이 이미 한다.** 여기에 다시 적었던 판에는
+    # `UnicodeEncodeError` 폴백이 빠져 있었다 — `campaign.py`가 3시간짜리 실행을 그 한 줄
+    # 때문에 잃고 나서 넣은 방어인데, 그 교훈이 사본에는 안 따라왔다.
+    c = campaign.Campaign(out_dir=out_dir, hours=hours)
+    rows_path = out_dir / "ballots.jsonl"
 
     # 1표씩 기록한다 — 다수결은 분석에서 계산한다(모듈 docstring).
     settings.concern_linker_llm = True
@@ -115,12 +107,11 @@ def run(out_dir: Path, hours: float, repeats: int) -> int:
     domains = load_domains()
     done = _done_cells(rows_path)
     fingerprint = prompts.fingerprint()
-    deadline = time.time() + hours * 3600
 
-    _log(log_path, f"관심사 {len(concerns.CONCERNS)}건 · 도메인 {len(domains)}종 "
-                   f"· 조건 {CHUNK_SIZES} · 반복 {repeats}")
-    _log(log_path, f"프롬프트 판 {fingerprint['concerns']} · 모델 {settings.model}")
-    _log(log_path, f"이미 끝난 칸 {len(done)}개 — 건너뛴다")
+    c.log(f"관심사 {len(concerns.CONCERNS)}건 · 도메인 {len(domains)}종 "
+          f"· 조건 {CHUNK_SIZES} · 반복 {repeats}")
+    c.log(f"프롬프트 판 {fingerprint['concerns']} · 모델 {settings.model}")
+    c.log(f"이미 끝난 칸 {len(done)}개 — 건너뛴다")
 
     planned = len(domains) * len(CHUNK_SIZES) * repeats
     ran = failed = 0
@@ -130,8 +121,8 @@ def run(out_dir: Path, hours: float, repeats: int) -> int:
                 cell = f"{name}|chunk{chunk}|r{repeat}"
                 if cell in done:
                     continue
-                if time.time() > deadline:
-                    _log(log_path, f"시간 종료 — {ran}칸 실행, 남은 계획 {planned - len(done) - ran}칸")
+                if c.left() <= 0:
+                    c.log(f"시간 종료 — {ran}칸 실행, 남은 계획 {planned - len(done) - ran}칸")
                     return 0
                 result = one_ballot(classified, chunk)
                 jsonl.append(rows_path, {
@@ -149,8 +140,6 @@ def run(out_dir: Path, hours: float, repeats: int) -> int:
                 if not result["answered"]:
                     failed += 1
                 if ran % 10 == 0:
-                    left = (deadline - time.time()) / 60
-                    _log(log_path, f"{ran}칸 (chunk={chunk}) · 실패 {failed} "
-                                   f"· 남은 시간 {left:.0f}분")
-    _log(log_path, f"격자 완주 — {ran}칸 실행, 실패 {failed}")
+                    c.log(f"{ran}칸 (chunk={chunk}) · 실패 {failed} · {c.spent()}")
+    c.log(f"격자 완주 — {ran}칸 실행, 실패 {failed}")
     return 0
