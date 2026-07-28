@@ -14,7 +14,7 @@ Phase 2(qualifies 링크: NFR→부모 FR)·Phase 3(realized 판정 컬럼)은 �
 """
 from __future__ import annotations
 
-from app.requirements.agent import traceability
+from app.core import traceability
 
 
 def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
@@ -34,15 +34,23 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
     classified = state.get("classified") or []
     use_cases = state.get("use_cases") or []
 
-    # 추적 집계는 `agent/traceability.py` 한 곳에서 한다 — 여기서 따로 굴리던 것을 옮겼다.
+    # 추적 집계는 `core/traceability.py` 한 곳에서 한다 — 여기서 따로 굴리던 것을 옮겼다.
     # `check_coverage`가 같은 사실을 다르게 세고 있었고, 갈린 것을 알아채는 데 오래 걸렸다.
     trace = traceability.index(state)
     by_id = trace.by_id
 
     # Phase 3: 요구 id → 그 요구를 (어느 UC에서든) 실현했는지 판정 리스트.
+    #
+    # **id 없는 판정은 버린다.** 예전에는 `None`을 키로 넣었는데, 그러면 어느 행과도 안
+    # 맞아 판정이 **조용히 사라진다**(행의 `realized`는 미판정으로 남는다). 버리는 것은
+    # 같지만, 이렇게 두면 왜 사라졌는지가 코드에 적혀 있다. 타입 검사가 `app/core`로
+    # 옮겨오면서 드러난 자리다.
     real_by_req: dict[str, list[bool]] = {}
     for v in (verdicts or []):
-        real_by_req.setdefault(v.get("requirement_id"), []).append(bool(v.get("realized")))
+        req_id = v.get("requirement_id")
+        if not isinstance(req_id, str):
+            continue
+        real_by_req.setdefault(req_id, []).append(bool(v.get("realized")))
 
     def uc_of_req(rid: str) -> tuple[str, ...]:
         return trace.ucs_of(rid)

@@ -20,8 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from app.core.rtm import build_rtm, render_rtm_md
 from app.requirements.agent import stages, supervisor
-from app.requirements.agent.rtm import build_rtm, render_rtm_md
 from app.requirements.agent.state import AgentState
 
 # ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `_run_stages`가
@@ -44,6 +44,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     render_diagram,
 )
 from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
+from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.config import settings
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.

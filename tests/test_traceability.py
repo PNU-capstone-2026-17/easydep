@@ -8,8 +8,8 @@
 """
 from __future__ import annotations
 
-from app.requirements.agent import traceability
-from app.requirements.agent.rtm import build_rtm
+from app.core import traceability
+from app.core.rtm import build_rtm
 from app.requirements.agent.steps.step2_usecases import check_coverage
 
 
