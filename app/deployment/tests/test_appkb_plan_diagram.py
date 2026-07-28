@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.deployment.appkb.diagram import parse_back, render
@@ -506,3 +508,74 @@ def test_either_scale_signal_closes_the_scale_verdict() -> None:
     lines = verify_against_requirements(_plan(), req, _HOURS)
     gap = next((ln for ln in lines if "Not judged for lack" in ln), "")
     assert "expectedConcurrentUsers" not in gap
+
+
+# --- UML 배포 다이어그램의 어휘 (2026-07-28: "이게 배포 다이어그램이냐") ---
+
+
+def test_managed_services_get_shapes_by_archetype_not_by_role() -> None:
+    """**SQS 큐가 원통으로 그려지고 있었다.**
+
+    `role == "managed"`면 무조건 `database`였다. 아키타입을 계획이 이미 들고 있는데
+    (`app::messageQueue`·`app::secretStore`) 그림이 안 쓴 것이라, 데이터를 더 모을
+    필요 없이 **이미 아는 것을 쓰기만** 하면 되는 자리였다.
+    """
+    plan = _plan()
+    plan.nodes.append(PlanNode("q", "큐", "managed", ORIGIN_KB,
+                               archetype="app::messageQueue"))
+    plan.nodes.append(PlanNode("sec", "시크릿", "managed", ORIGIN_KB,
+                               archetype="app::secretStore"))
+    plan.nodes.append(PlanNode("obj", "파일", "managed", ORIGIN_KB,
+                               archetype="app::objectStorage"))
+    uml = render(plan)
+    assert 'queue "큐' in uml, "큐가 큐 도형이 아니다"
+    assert 'folder "시크릿' in uml, "시크릿 저장소가 데이터 저장소로 그려졌다"
+    assert 'storage "파일' in uml
+    # 관계형 DB는 원통이 맞다 — 아키타입이 그렇게 말한다.
+    assert 'database "저장소' in uml
+
+
+def test_component_is_an_artifact_deployed_onto_a_node() -> None:
+    """**UML 배포 다이어그램의 뼈대는 `Node ← «deploy» ← Artifact`다.**
+
+    한동안 컴포넌트가 곧 노드였다. 그래서 "한 VM에 두 컴포넌트"도 k8s의 3층도
+    표현할 수 없었고, 그림이 배포도라기보다 **리소스 목록**에 가까웠다.
+    """
+    plan = _plan()
+    plan.nodes[:] = [replace(n, host="VM · t3a.medium") if n.role == "compute" else n
+                     for n in plan.nodes]
+    uml = render(plan)
+    assert 'node "VM · t3a.medium' in uml, "실행 환경 상자가 없다"
+    assert 'artifact "OrderService" as "order-api"' in uml, "컴포넌트가 아티팩트가 아니다"
+    # **대수는 실행 환경에 붙는다** — 몇 대인가는 컴포넌트가 아니라 노드의 성질이다.
+    assert "×?" in uml
+
+
+def test_host_wrapper_does_not_break_the_roundtrip() -> None:
+    """감싸는 상자가 **지어낸 노드로 잡히면 안 된다.**
+
+    왕복 검증은 "계획에 없는 상자"를 잡는 장치다(답변에서 없는 값을 만드는 것의
+    그림판). 껍데기 하나로 그 장치가 무뎌지면 안 되므로 되파싱이 접미를 벗긴다.
+    """
+    plan = _plan()
+    plan.nodes[:] = [replace(n, host="VM") if n.role == "compute" else n
+                     for n in plan.nodes]
+    uml = render(plan)
+    assert verify_diagram(plan, uml) == []
+    aliases, _ = parse_back(uml)
+    assert "order-api" in aliases
+    assert not any(a.endswith("@host") for a in aliases), "껍데기 별칭이 새어 나왔다"
+
+
+def test_keys_and_policies_are_artifacts_not_nodes() -> None:
+    """SSH 키를 `node`로 그리면 **"여기서 무언가 돈다"**는 뜻이 된다.
+
+    자격증명·정책은 실행 환경이 아니다. 다만 실제로 만들어지는 리소스라 그림에서
+    빼지는 않는다 — 아티팩트로 그린다.
+    """
+    plan = _plan()
+    plan.nodes.append(PlanNode("sshkey", "SSH 키", "shared", ORIGIN_KB))
+    plan.nodes.append(PlanNode("securitygroup", "보안 그룹", "shared", ORIGIN_KB))
+    uml = render(plan)
+    assert 'artifact "SSH 키' in uml
+    assert 'artifact "보안 그룹' in uml

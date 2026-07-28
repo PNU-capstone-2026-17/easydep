@@ -493,9 +493,17 @@ def _add_computes(
         else:
             # 서버리스는 우리가 배치를 모른다(프로바이더가 정한다).
             placement = "unknown"
+        # **실행 환경 이름.** 컴포넌트는 아티팩트이고 이것이 그것을 얹는 노드다
+        # (UML 배포 다이어그램의 `Node ← «deploy» ← Artifact`). 스펙 이름은 값이
+        # 붙을 때 `_attach_values`가 덧붙인다 — 여기서는 방식까지만 안다.
+        host = {
+            "vm": "VM",
+            "kubernetes": "Kubernetes node",
+            "serverless": "Serverless runtime",
+        }.get(kind, "")
         plan.nodes.append(PlanNode(
             id=cid, label=component["name"], role="compute", placement=placement,
-            origin=origin, notes=tuple(notes),
+            host=host, origin=origin, notes=tuple(notes),
         ))
         if kind == "vm":
             priced.add(cid)
@@ -1279,8 +1287,13 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
         if perf.text:
             notes.append(Note(perf.text, ORIGIN_KB, "perfkb"))
         # 단가는 노트 문장과 **별도로 기계 값**으로도 싣는다 — 예산 대조가 읽는다.
+        # 스펙이 정해졌으면 실행 환경 이름에 실어 준다 — `VM` → `VM · t3a.medium`.
+        # 그림에서 노드 상자가 무엇인지 말해 주는 유일한 자리다.
+        name = spec.get("specName") or spec.get("name") or ""
+        host = f"{node.host} · {name}" if node.host and name else node.host
         updated.append(replace(
-            node, notes=tuple(notes), hourly_usd=spec.get("hourlyUSD") or None,
+            node, notes=tuple(notes), host=host,
+            hourly_usd=spec.get("hourlyUSD") or None,
         ))
     plan.nodes[:] = updated
 

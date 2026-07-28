@@ -28,10 +28,40 @@ _STEREOTYPE = {
 
 #: 역할별 PlantUML 요소. `rectangle`로 통일하지 않는 이유 — 모양이 다르면
 #: 사람이 한눈에 컴퓨트와 관리형 서비스를 가른다.
+#: **설계 개념별 도형.** `role`보다 먼저 본다.
+#:
+#: 한동안 `role == "managed"`면 무조건 `database`였다 — **SQS 큐도 Secrets Manager도
+#: 원통으로 그려졌다**(2026-07-28 지적). 아키타입을 계획이 이미 들고 있는데
+#: (`app::messageQueue`·`app::secretStore`) 그림이 안 쓴 것이다. 데이터를 더 모을
+#: 필요 없이 **이미 아는 것을 쓰기만** 하면 되는 자리였다.
+#:
+#: 전부 PlantUML이 배포 다이어그램에서 받는 키워드다(`queue`·`storage`·`database`·
+#: `folder`·`component`·`node`). 없는 개념은 매핑하지 않는다 — 억지로 붙이면
+#: 도형이 뜻을 잃는다.
+_ARCHETYPE_SHAPE = {
+    "app::relationalDatabase": "database",
+    "app::nosqlDatabase": "database",
+    "app::keyValueCache": "database",
+    "app::searchIndex": "database",
+    "app::messageQueue": "queue",
+    "app::eventStream": "queue",
+    "app::objectStorage": "storage",
+    # 시크릿 저장소는 **데이터 저장소가 아니다** — 값을 조회하는 곳이지 앱의 데이터가
+    # 사는 곳이 아니다. 원통으로 그리면 DB와 같은 것으로 읽힌다.
+    "app::secretStore": "folder",
+    "app::serverlessFunction": "component",
+    "app::containerService": "node",
+    "app::apiGateway": "hexagon",
+    "app::cdn": "cloud",
+    "app::dnsZone": "cloud",
+}
+
+#: 아키타입이 없을 때의 역할별 도형.
 _SHAPE = {
-    "compute": "node",
+    # 컴퓨트는 **아티팩트**다 — 실행 환경(node)은 `host`가 따로 감싼다.
+    "compute": "artifact",
     "managed": "database",
-    # 공유 인프라(네트워크·키·이미지)는 실행 환경이지 저장소가 아니다.
+    # 네트워크 경계는 실행 환경이다.
     "shared": "rectangle",
     # 진입점(로드밸런서) — 트래픽이 갈라지는 지점이라 모양을 달리한다.
     "ingress": "hexagon",
@@ -39,31 +69,73 @@ _SHAPE = {
     "actor": "actor",
 }
 
+#: **노드가 아니라 배포되는 산출물**인 공유 리소스. 키·정책은 실행 환경이 아니다.
+#:
+#: SSH 키를 `node`로 그리면 "여기서 무언가 돈다"는 뜻이 된다 — 자격증명은 그런 것이
+#: 아니다. 보안 그룹도 정책이지 실행 환경이 아니다. 둘 다 **만들어지는 리소스**라
+#: 그림에서 빼지는 않고, 아티팩트로 그린다.
+_ARTIFACT_IDS = {"sshkey", "securitygroup"}
+
 
 def _quote(text: str) -> str:
     """PlantUML 라벨 안의 큰따옴표를 없앤다 — 넣으면 구문이 깨진다."""
     return text.replace('"', "'")
 
 
+#: 실행 환경 상자의 별칭 접미. 되파싱이 이걸 떼어 계획 id로 되돌린다.
+_HOST_SUFFIX = "@host"
+
+
+def _shape_of(node: PlanNode) -> str:
+    """이 노드를 무슨 도형으로 그리나 — **아키타입이 역할보다 먼저다.**"""
+    if node.id in _ARTIFACT_IDS:
+        return "artifact"
+    if node.archetype in _ARCHETYPE_SHAPE:
+        return _ARCHETYPE_SHAPE[node.archetype]
+    return _SHAPE.get(node.role, "rectangle")
+
+
 def _node_line(node: PlanNode) -> str:
-    shape = _SHAPE.get(node.role, "rectangle")
+    shape = _shape_of(node)
     label = _quote(node.label)
     if node.type_id:
         label += f"\\n{_quote(node.type_id)}"
     elif node.candidates:
         label += f"\\n{len(node.candidates)} candidates"
-    # **대수를 그림에 남긴다.** 계획은 "몇 대인지 우리가 정할 수 없다"고 노트로
-    # 말해 왔는데 그림에는 상자가 하나뿐이라 **1대처럼 읽혔다** — 노트는 그림과 같이
-    # 안 다닌다. 값이 붙는 역할(컴퓨트)에만 붙인다: 공유 인프라·외부 시스템에
-    # 대수를 물으면 잡음이다.
-    if node.role == "compute":
-        label += f"\\n×{node.replicas if node.replicas is not None else '?'}"
     stereotype = _STEREOTYPE.get(node.origin, "")
     tail = f" <<{stereotype}>>" if stereotype else ""
     # **별칭을 따옴표로 감싼다.** 계약이 컴포넌트 id에 하이픈을 허용하는데
     # PlantUML에서 `-`는 화살표 문자다 — 맨 별칭으로 쓰면 `order-api`가 조용히
     # 쪼개진다(되파싱 검증이 실제로 잡았다). 따옴표 별칭은 PlantUML 표준이다.
     return f'{shape} "{label}" as "{node.id}"{tail}'
+
+
+def _node_block(node: PlanNode, pad: str) -> list[str]:
+    """노드 하나를 그리는 줄들. **실행 환경이 있으면 감싼다.**
+
+    UML 배포 다이어그램의 뼈대가 `Node ← «deploy» ← Artifact`다. 컴포넌트는 노드가
+    아니라 노드 위에 배포되는 아티팩트이므로, 실행 환경(`host`)이 있으면 그것이
+    바깥 상자가 되고 컴포넌트가 안에 들어간다.
+
+        node "VM · t3a.medium ×?" as "order-api@host" {
+          artifact "OrderService" as "order-api" <<inferred>>
+        }
+
+    **별칭은 아티팩트가 계획 id를 갖는다.** 왕복 검증이 계획 노드와 그림 별칭을
+    1:1로 대조하므로(`verify_diagram`), 바깥 상자는 접미를 달고 되파싱에서 벗겨진다.
+    """
+    inner = _node_line(node)
+    if not node.host:
+        return [pad + inner]
+    # 대수는 **실행 환경**에 붙는다 — 몇 대인가는 컴포넌트가 아니라 그것이 도는
+    # 노드의 성질이다. 여기 없으면 그림이 1대처럼 읽힌다(노트는 그림과 안 다닌다).
+    count = node.replicas if node.replicas is not None else "?"
+    host_label = f"{_quote(node.host)}\\n×{count}"
+    return [
+        f'{pad}node "{host_label}" as "{node.id}{_HOST_SUFFIX}" {{',
+        f"{pad}  {inner}",
+        pad + "}",
+    ]
 
 
 #: 다른 노드를 **담는** 공유 인프라. 바깥부터 안쪽 순서다.
@@ -111,7 +183,7 @@ def render(plan: DeploymentPlan) -> str:
         pad = "  " * depth if node.id in inside else ""
         if node.id not in inside and depth:
             continue  # 컨테이너 밖의 노드는 닫은 뒤에 그린다
-        lines.append(pad + _node_line(node))
+        lines.extend(_node_block(node, pad))
     for _ in range(depth):
         depth -= 1
         lines.append("  " * depth + "}")
@@ -119,7 +191,7 @@ def render(plan: DeploymentPlan) -> str:
         for node in plan.nodes:
             if node.id in nesting or node.id in inside:
                 continue
-            lines.append(_node_line(node))
+            lines.extend(_node_block(node, ""))
     if plan.nodes and plan.edges:
         lines.append("")
     for edge in plan.edges:
@@ -176,7 +248,11 @@ def parse_back(uml: str) -> tuple[set[str], set[tuple[str, str]]]:
     import re
 
     # 중첩이 들어오면서 줄 앞에 들여쓰기가, 줄 끝에 `{`가 붙는다 — 둘 다 허용한다.
-    aliases = set(re.findall(r'^\s*\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.MULTILINE))
+    found = re.findall(r'^\s*\w+\s+"[^"]*"\s+as\s+"([^"]+)"', uml, re.MULTILINE)
+    # 실행 환경 상자는 아티팩트와 **같은 계획 노드**다 — 접미를 벗겨 하나로 센다.
+    # 안 벗기면 왕복 검증이 "계획에 없는 상자"라고 잡는다(그건 지어낸 노드를 잡는
+    # 장치라 껍데기 하나로 무뎌지면 안 된다).
+    aliases = {a[: -len(_HOST_SUFFIX)] if a.endswith(_HOST_SUFFIX) else a for a in found}
     # `-{1,2}>`다. `-->?`로 쓰면 `--`가 필수라 **동기 화살표 `->`가 통째로 빠진다**
     # (되파싱 검증이 잡았다 — 5개 선 중 4개가 조용히 사라졌다).
     edges = set(re.findall(r'^"([^"]+)"\s+-{1,2}>\s+"([^"]+)"', uml, re.MULTILINE))
