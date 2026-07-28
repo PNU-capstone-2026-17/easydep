@@ -78,6 +78,47 @@ def test_a_concern_without_a_consumer_is_scope_not_exclusion():
             assert concern.consumer.strip(), concern.id
 
 
+def test_scope_boundary_is_recorded_not_left_as_silence():
+    """**"안 한 것"과 "안 하기로 한 것"을 가른다.**
+
+    2026-07-28 감사 전에는 `consumer=None` 하나가 두 뜻을 겸했다 — *"이을 건데 아직"*과
+    *"배포 계획이 소비할 수 없다"*. 그 상태로 리포트를 내면 목록이 **영원히 줄지 않는
+    숙제**처럼 읽히고, 이 저장소가 다른 축에서 지켜 온 규율(구현 범위와 근거를 섞지
+    않는다)이 여기서만 깨진다.
+
+    갈린 뒤의 계약은 셋이다.
+    """
+    for concern in concerns.CONCERNS:
+        # ① 경계는 사유를 갖는다. 빈 문자열은 "경계가 아니다"이지 "이유를 안 적었다"가
+        #    아니어야 한다.
+        if concern.out_of_scope:
+            assert concern.out_of_scope.strip(), concern.id
+            # ② 소비자와 경계를 겸할 수 없다 — 받아 주는 칸이 있는데 소비 불가는 모순이다.
+            assert concern.consumer is None, (
+                f"{concern.id}: 소비자가 있는데 경계로 표시됐다"
+            )
+        # ③ 경계여도 **목록에서 빼지 않는다.** 요구사항 단계에서 물을 값은 그대로이고,
+        #    근거(좌표)도 그대로 있어야 한다.
+        assert concern.doc_id and concern.probe, concern.id
+
+
+def test_the_three_way_split_covers_every_concern():
+    """세 갈래가 **겹치지도 새지도 않는다.** 합이 전체와 같아야 한다.
+
+    수를 여기 적어 두는 이유: 갈래가 움직이면 그건 설계 결정이므로 **기록을 강제**한다.
+    A갈래(구조를 바꾸는 것)를 이으면 `handoff`가 늘고 `noted`가 준다 — 그때 이 단언을
+    고치는 것이 곧 "무엇을 이었는지" 남기는 일이 된다.
+    """
+    wired = [c for c in concerns.CONCERNS if c.consumer]
+    pending = [c for c in concerns.CONCERNS if not c.consumer and not c.out_of_scope]
+    boundary = [c for c in concerns.CONCERNS if c.out_of_scope]
+
+    assert len(wired) + len(pending) + len(boundary) == len(concerns.CONCERNS)
+    assert (len(wired), len(pending), len(boundary)) == (6, 15, 8), (
+        f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
+    )
+
+
 def test_declared_consumers_are_real_resource_spec_fields():
     """**소비자는 오늘 실재해야 한다** — 이 검사가 없으면 `handoff`가 조용히 부푼다.
 
