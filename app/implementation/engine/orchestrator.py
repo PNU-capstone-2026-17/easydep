@@ -195,14 +195,26 @@ class PrototypeOrchestrator:
             target.write_text(str(content), encoding="utf-8")
             allowed.append(relative)
 
+        # A feedback revision starts from an already generated application.
+        # Snapshot its BCE/OpenAPI contracts before OpenHands receives any
+        # writable paths, just as an initial implementation run does.
+        capture_generated_contracts(staging, self.spec.base_package)
+
         task_dir = staging / "reports" / "implementation-tasks"
         task_dir.mkdir(parents=True, exist_ok=True)
+        immutable = [
+            relative for relative in allowed
+            if "/src/main/java/" in f"/{relative}"
+            and any(token in f"/{relative}" for token in ("/bce/", "/api/"))
+        ]
+        editable = [relative for relative in allowed if relative not in immutable]
         context = {
             "schemaVersion": "implementation-feedback-context/v1alpha1",
             "taskId": "apply-source-feedback",
             "taskType": "control",
             "feedback": self.spec.feedback,
-            "editableFiles": allowed,
+            "editableFiles": editable,
+            "immutableFiles": immutable,
         }
         context_path = task_dir / "source-feedback.context.json"
         context_path.write_text(
@@ -216,11 +228,10 @@ class PrototypeOrchestrator:
             "- Modify only the explicitly allowed existing files.\n"
             "- Do not weaken, delete, or disable tests to obtain a passing build.\n"
             "- Add or strengthen assertions in an existing test file when behavior changes.\n"
-            "- Preserve generated API and BCE contracts unless the feedback explicitly asks "
-            "for a compatible implementation change.\n"
+            "- Generated API and BCE contracts are immutable. Do not edit them.\n"
             "- Finish only when compileJava and test pass.\n\n"
             "## Editable files\n"
-            + "\n".join(f"- `{path}`" for path in allowed)
+            + "\n".join(f"- `{path}`" for path in editable)
         )
         prompt_path = task_dir / "source-feedback.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -229,8 +240,8 @@ class PrototypeOrchestrator:
             control="Natural-language source feedback",
             prompt_file=str(prompt_path.relative_to(staging)).replace("\\", "/"),
             context_file=str(context_path.relative_to(staging)).replace("\\", "/"),
-            allowed_write_paths=allowed,
-            immutable_paths=[],
+            allowed_write_paths=editable,
+            immutable_paths=immutable,
             source_artifacts={"baseSnapshot": str(snapshot_path)},
             prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             llm={

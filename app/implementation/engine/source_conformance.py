@@ -36,6 +36,7 @@ def capture_generated_contracts(run_root: Path, base_package: str) -> dict[str, 
             files.append({
                 "path": path.relative_to(run_root).as_posix(),
                 "sha256": _sha256(content),
+                "content": content,
                 "structure": _java_structure(content),
             })
     payload: dict[str, object] = {
@@ -116,13 +117,17 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                 warnings.append({"code": "UNMAPPABLE_SEQUENCE_CALL",
                                  "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components."})
                 continue
+            matched = any(
+                item["method"] == method and resolved_target in item["dependencies"]
+                for item in invocations.get(resolved_source, [])
+            )
             check = {"from": resolved_source, "to": resolved_target, "method": method,
-                     "status": "PASSED" if method in invocations else "FAILED"}
+                     "status": "PASSED" if matched else "FAILED"}
             checks["sequenceCalls"].append(check)
-            if method not in invocations:
+            if not matched:
                 violations.append({"code": "SEQUENCE_CALL_NOT_IMPLEMENTED",
                                    "path": "application/src/main/java",
-                                   "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no implementation invocation."})
+                                   "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no matching source-to-target invocation."})
     else:
         warnings.append({"code": "MISSING_SEQUENCE_INPUT", "message": "Sequence call verification was skipped because no sequence/BCE input is available."})
 
@@ -140,6 +145,27 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
     if violations:
         raise SourceDesignConformanceError(report)
     return report
+
+
+def restore_generated_contracts(run_root: Path) -> list[str]:
+    """Restore changed generated contracts from their local pre-agent baseline."""
+    snapshot_path = run_root / SNAPSHOT_FILE
+    if not snapshot_path.is_file():
+        return []
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    restored: list[str] = []
+    for item in snapshot.get("files", []):
+        relative = str(item.get("path", ""))
+        content = item.get("content")
+        if not relative or not isinstance(content, str):
+            continue
+        path = run_root / relative
+        current = path.read_text(encoding="utf-8") if path.is_file() else None
+        if current != content:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            restored.append(relative)
+    return restored
 
 
 class SourceDesignConformanceError(RuntimeError):
@@ -246,17 +272,23 @@ def _sequence_calls(sequence: str) -> list[tuple[str, str, str]]:
     return calls
 
 
-def _implementation_invocations(run_root: Path, base_package: str) -> set[str]:
+def _implementation_invocations(run_root: Path, base_package: str) -> dict[str, list[dict[str, object]]]:
     root = run_root / "application" / "src" / "main" / "java" / Path(base_package.replace(".", "/"))
-    values: set[str] = set()
+    values: dict[str, list[dict[str, object]]] = {}
     for path in root.rglob("*.java") if root.is_dir() else []:
         relative = path.relative_to(root).as_posix()
         if relative.startswith("bce/") or relative.startswith("api/"):
             continue
         source = re.sub(r"/\*.*?\*/|//[^\n]*", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
-        # A call commonly follows a collaborator dot (gateway.charge()), so
-        # accept both qualified and local invocations.  Declarations are in
-        # implementation files too, but cannot hide a missing collaborator
-        # call unless the implementation invents the same method name.
-        values.update(re.findall(r"\b(\w+)\s*\(", source))
+        implemented = set(re.findall(r"\bimplements\s+([A-Za-z_$]\w*)", source))
+        dependencies = set(re.findall(r"\b([A-Za-z_$]\w*)\s+[A-Za-z_$]\w*\s*[;,=)]", source))
+        dependencies.update(re.findall(r"\bimport\s+[\w.]*\.([A-Za-z_$]\w*)\s*;", source))
+        # Only qualified calls count. A declaration with the same name must
+        # not satisfy a sequence edge unless the source actually delegates to
+        # a collaborator.
+        methods = set(re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", source))
+        for component in implemented:
+            values.setdefault(component, []).extend(
+                {"method": method, "dependencies": dependencies} for method in methods
+            )
     return values

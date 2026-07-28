@@ -62,6 +62,7 @@ from app.implementation.engine.deployment_renderer import (
 from app.implementation.engine.source_conformance import (
     SourceDesignConformanceError,
     capture_generated_contracts,
+    restore_generated_contracts,
     verify_source_design_conformance,
 )
 from app.implementation.engine.implementation_ir import (
@@ -102,7 +103,8 @@ class SourceDesignConformanceTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (java / "application/CheckoutService.java").write_text(
-                "package com.example.demo.application; class CheckoutService { void run() { gateway.charge(); } }\n",
+                "package com.example.demo.application; class CheckoutService implements CheckoutService { "
+                "CheckoutGateway gateway; void run() { gateway.charge(); } }\n",
                 encoding="utf-8",
             )
             bce = run / "class.puml"
@@ -168,6 +170,9 @@ class SourceDesignConformanceTest(unittest.TestCase):
             changes = report["checks"]["generatedContracts"][0]["changes"]
             self.assertIn("PAYMENT_KIND: String -> Integer", changes["fields"]["modified"])
             self.assertIn("charge(String purchaseId): String -> Integer", changes["methods"]["modified"])
+            restored = restore_generated_contracts(run)
+            self.assertEqual(["application/src/main/java/com/example/demo/bce/CheckoutGateway.java"], restored)
+            self.assertIn("String charge(String purchaseId);", contract.read_text(encoding="utf-8"))
 
 
 class LoadJobTest(unittest.TestCase):

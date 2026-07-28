@@ -190,7 +190,7 @@ class ImplementationWorker:
             self._set_status(record, "RUNNING")
             workflow = self.client.run_phase(Path(record["run_root"]), Path(record["job_path"]), Path(approval_path), retry_failed)
             self._apply_workflow(record, workflow)
-            if record["status"] not in {"FAILED", "NEEDS_INPUT"}:
+            if record["status"] == "COMPLETED":
                 self._persist_outputs(record)
         except Exception as error:
             self._fail(record, error)

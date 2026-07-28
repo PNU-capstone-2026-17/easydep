@@ -22,10 +22,15 @@ from .orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from .repair_planner import apply_repair_directives, schedule_cross_phase_repair
+from .repair_planner import (
+    apply_repair_directives,
+    schedule_cross_phase_repair,
+    schedule_source_conformance_repair,
+)
 from .deployment_renderer import render_deployment
 from .source_conformance import (
     SourceDesignConformanceError,
+    restore_generated_contracts,
     verify_source_design_conformance,
 )
 
@@ -219,15 +224,8 @@ def run_workflow(
         if audit.get("status") == "COMPLETE":
             try:
                 conformance = verify_source_design_conformance(run_root, spec)
-            except SourceDesignConformanceError:
-                state["status"] = "FAILED"
-                state["sourceDesignConformance"] = "FAILED"
-                state["blockingReason"] = (
-                    "Generated source contracts or sequence calls diverge from the design; "
-                    "see reports/source-design-conformance.json."
-                )
-                _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-                return state
+            except SourceDesignConformanceError as error:
+                return _handle_source_conformance_failure(run_root, spec, state, error)
             state["status"] = "COMPLETE"
             state["sourceDesignConformance"] = conformance["status"]
             _render_deployment_if_configured(run_root, spec)
@@ -327,16 +325,8 @@ def run_workflow(
     if audit.get("status") == "COMPLETE":
         try:
             conformance = verify_source_design_conformance(run_root, spec)
-        except SourceDesignConformanceError:
-            final_state["status"] = "FAILED"
-            final_state["sourceDesignConformance"] = "FAILED"
-            final_state["blockingReason"] = (
-                "Generated source contracts or sequence calls diverge from the design; "
-                "see reports/source-design-conformance.json."
-            )
-            final_state["audit"] = "reports/implementation-completion-audit.json"
-            _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-            return final_state
+        except SourceDesignConformanceError as error:
+            return _handle_source_conformance_failure(run_root, spec, final_state, error)
         final_state["status"] = "COMPLETE"
         final_state["sourceDesignConformance"] = conformance["status"]
         _render_deployment_if_configured(run_root, spec)
@@ -375,6 +365,34 @@ def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
             "Deployment rendering requires deploymentIntent or a cloud resource "
             "specification"
         )
+
+
+def _handle_source_conformance_failure(
+    run_root: Path,
+    spec: JobSpec,
+    state: dict[str, object],
+    error: SourceDesignConformanceError,
+) -> dict[str, object]:
+    restored = restore_generated_contracts(run_root)
+    repair = schedule_source_conformance_repair(run_root, error.report)
+    if repair is not None:
+        repaired = plan_workflow(run_root, spec)
+        repaired["status"] = "READY"
+        repaired["repairPlan"] = "reports/repair-plan.json"
+        repaired["sourceDesignConformance"] = "REPAIR_SCHEDULED"
+        repaired["restoredGeneratedContracts"] = restored
+        repaired["blockingReason"] = None
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", repaired)
+        return repaired
+    state["status"] = "FAILED"
+    state["sourceDesignConformance"] = "FAILED"
+    state["restoredGeneratedContracts"] = restored
+    state["blockingReason"] = (
+        "Generated source contracts or sequence calls diverge from the design; "
+        "see reports/source-design-conformance.json."
+    )
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
 
 
 def write_transmission_request(

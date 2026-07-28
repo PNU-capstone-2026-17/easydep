@@ -49,7 +49,6 @@ _UNSUITABLE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 def assess_feedback_eligibility(feedback: str, design: dict[str, Any] | None = None) -> dict[str, object]:
     """Decide eligibility without an LLM and without routing to another agent."""
-    del design  # Reserved for future deterministic artifact-aware checks.
     text = " ".join(feedback.strip().split())
     matches: list[dict[str, str]] = []
     for code, message, patterns in _UNSUITABLE_RULES:
@@ -57,6 +56,20 @@ def assess_feedback_eligibility(feedback: str, design: dict[str, Any] | None = N
             found = re.search(pattern, text, flags=re.IGNORECASE)
             if found:
                 matches.append({"code": code, "match": found.group(0), "message": message})
+                break
+    referenced = _referenced_design_names(design or {})
+    structural_action = re.search(
+        r"(?:추가|삭제|변경|수정|개명|rename|remove|add|change)\b", text,
+        flags=re.IGNORECASE,
+    )
+    if structural_action:
+        for name in referenced:
+            if re.search(rf"\b{re.escape(name)}\b", text):
+                matches.append({
+                    "code": "REFERENCED_DESIGN_STRUCTURE_CHANGE",
+                    "match": name,
+                    "message": "A named design element is being structurally changed outside implementation feedback.",
+                })
                 break
     eligible = not matches
     return {
@@ -70,3 +83,14 @@ def assess_feedback_eligibility(feedback: str, design: dict[str, Any] | None = N
             else "Do not create or execute an implementation feedback revision for this request."
         ),
     }
+
+
+def _referenced_design_names(design: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    class_diagram = str(design.get("class_diagram_puml", ""))
+    names.update(re.findall(r"(?im)^\s*(?:class|interface|entity)\s+(?:\"[^\"]+\"\s+as\s+)?([A-Za-z_]\w*)", class_diagram))
+    names.update(re.findall(r"(?im)^\s*entity\s+\"[^\"]+\"\s+as\s+([A-Za-z_]\w*)", str(design.get("erd_puml", ""))))
+    api_spec = design.get("api_spec", {})
+    if isinstance(api_spec, dict):
+        names.update(str(item) for item in api_spec.get("components", {}).get("schemas", {}) if str(item).isidentifier())
+    return {name for name in names if len(name) > 2}

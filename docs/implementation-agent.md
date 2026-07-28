@@ -43,6 +43,10 @@ artifact 버전으로 저장한다. 저장 metadata에는 피드백, 부모 job,
 새 구현 run도 만들지 않는다. 결과는 `feedback-eligibility.json`에 남는다. 기존 계약 안의
 동작·오류 처리·검증 보강 피드백만 OpenHands 수정 및 전체 검증 루프로 전달된다.
 
+피드백 revision도 복원 직후 BCE/OpenAPI 계약 기준선을 다시 저장하고, 해당 생성 파일은
+OpenHands의 writable allowlist에서 제외한다. 따라서 피드백 경로에서도 최초 구현과 같은
+무결성·구조 계약 검증을 받는다.
+
 ## 결정적 배포 파일 생성
 
 배포 의도는 시스템 구현 에이전트가 생성한다. 구현 완료 감사가 끝난 뒤 구현 에이전트는
@@ -101,6 +105,8 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
    `reports/source-design-conformance.json`에 남으며 실패하면 artifact 저장과 배포 렌더링을
    진행하지 않는다. 별칭이나 외부 참여자처럼 정적으로 매핑할 수 없는 시퀀스 호출은 warning
    으로 기록해 오탐으로 인한 차단을 피한다.
+   스켈레톤 변경은 로컬 기준선으로 즉시 복원한다. 시퀀스 호출 위반은 보고서를 포함한 제한된
+   repair task와 E2E 재검증 task로 최대 3회 재계획하며, 새 외부 전송에는 새 승인이 필요하다.
 9. 검증 오류가 다른 phase의 소스를 가리키면 해당 파일의 소유 task를 수리 대상으로
    되돌리고, 영향을 받는 Wiring과 E2E task를 자동으로 재계획한다. 파일 경로가 없는 E2E
    HTTP 실패는 관련 OpenAPI adapter를 우선 수리 대상으로 삼는다.

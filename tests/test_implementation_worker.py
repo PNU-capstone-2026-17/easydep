@@ -178,6 +178,7 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
         (output / "reports/run-manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["status"] == "SUCCEEDED"
+    assert (output / "reports/generated-source-contracts.json").is_file()
     assert [task["task_id"] for task in manifest["implementation_tasks"]] == [
         "apply-source-feedback"
     ]
