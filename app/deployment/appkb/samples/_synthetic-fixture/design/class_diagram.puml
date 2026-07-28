@@ -1,0 +1,22 @@
+@startuml
+allowmixing
+!theme plain
+skinparam classAttributeIconSize 0
+
+class OrderController <<Controller>> {
+  - orderService
+  + createOrder()
+}
+note top of OrderController : 주문 API 진입점
+
+class OrderService <<Service>> {
+  + placeOrder()
+}
+
+class OrderRepository <<Repository>> {
+  + save()
+}
+
+OrderController --> OrderService
+OrderService ..> OrderRepository
+@enduml

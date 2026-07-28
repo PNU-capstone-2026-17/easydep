@@ -1,0 +1,17 @@
+{
+  "name": "analyze:4e424032-3575-4a4e-aae5-6162df39f4dd",
+  "llm_calls": 49,
+  "llm_failures": 0,
+  "structured_fallbacks": 0,
+  "prompt_tokens": 78693,
+  "completion_tokens": 68023,
+  "llm_seconds": 464.418,
+  "degradations": [
+    {
+      "component": "cloud_concerns.unjudged",
+      "reason": "판정 수단이 없어 넘어간 관심사 1건: ['cn.disposability']",
+      "subject": null
+    }
+  ],
+  "model_fingerprints": []
+}

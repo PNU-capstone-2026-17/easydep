@@ -1,0 +1,33 @@
+@startuml
+left to right direction
+actor "Student" as Student
+actor "Instructor" as Instructor
+actor "Administrator" as Administrator
+rectangle System {
+  usecase "Register Student Account" as UC1
+  usecase "Login Student" as UC2
+  usecase "Search Lectures" as UC3
+  usecase "View Lecture Details" as UC4
+  usecase "Purchase and Enroll in Lecture" as UC5
+  usecase "Watch Lecture (Playback)" as UC6
+  usecase "Upload Lecture Video" as UC7
+  usecase "View Enrollment Statistics" as UC8
+  usecase "View Revenue Statistics" as UC9
+  usecase "Remove Inappropriate Lecture" as UC10
+  usecase "Retrieve Instructor Lectures" as D1
+}
+actor "Payment Provider" as Payment_Provider
+Student --- UC1
+Student --- UC2
+Student --- UC3
+Student --- UC4
+Student --- UC5
+Student --- UC6
+Instructor --- UC7
+Instructor --- UC8
+Instructor --- UC9
+Administrator --- UC10
+UC5 --- Payment_Provider
+UC8 ..> D1 : <<include>>
+UC9 ..> D1 : <<include>>
+@enduml

@@ -1,0 +1,11 @@
+@startuml
+entity Order {
+  * id : uuid
+  --
+  status : varchar
+}
+entity "Order Item" as order_item {
+  * id : uuid
+}
+Order ||--o{ order_item
+@enduml

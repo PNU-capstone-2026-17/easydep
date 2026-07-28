@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1",
+  "provider": "aws",
+  "region": "ap-northeast-2",
+  "monthlyBudgetUSD": 500.0,
+  "expectedConcurrentUsers": 300
+}

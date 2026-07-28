@@ -1,0 +1,28 @@
+{
+  "startedAt": "2026-07-28T18:03:30.550442+00:00",
+  "finishedAt": "2026-07-28T18:04:38.900325+00:00",
+  "model": "openai/gpt-oss-120b",
+  "sample": "lecture-platform",
+  "maxRevisionAttempts": 1,
+  "missingUpstream": [],
+  "stages": [
+    {
+      "stage": "api_spec",
+      "ok": true,
+      "file": "design/api_spec.json",
+      "bytes": 27963,
+      "syntaxValid": true,
+      "syntaxErrors": []
+    },
+    {
+      "stage": "erd",
+      "ok": true,
+      "file": "design/erd.puml",
+      "bytes": 2075,
+      "syntaxValid": false,
+      "syntaxErrors": [
+        "PlantUML syntax check failed."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+@startuml
+actor "구매자" as buyer
+participant OrderController
+participant OrderService
+database OrderDB
+participant "PG Gateway" as pg
+
+buyer -> OrderController : POST /orders
+OrderController -> OrderService : placeOrder()
+OrderService -> pg : 결제 승인 요청
+OrderService -> OrderDB : INSERT
+OrderService ->> OrderService : 주문 완료 이벤트
+@enduml
