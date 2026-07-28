@@ -1705,10 +1705,12 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertEqual("aws", iac["provider"])
             self.assertEqual("SUCCEEDED", iac["sourceConformance"]["status"])
             self.assertTrue((run / "application/k8s/render-images.sh").is_file())
+            self.assertTrue((run / "application/k8s/build-push.sh").is_file())
             self.assertTrue((run / "application/k8s/deploy.sh").is_file())
             deploy = (run / "application/k8s/deploy.sh").read_text(encoding="utf-8")
             self.assertIn("EASYDEP_IMAGE_TAG", deploy)
             self.assertIn("EASYDEP_TERRAFORM_PATH", deploy)
+            self.assertIn("build-push.sh", deploy)
             self.assertIn('output "registry_image_bases"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)

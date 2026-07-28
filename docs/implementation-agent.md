@@ -115,16 +115,17 @@ registry의 주소를 `registry_image_bases` map output으로 생성한다. 여�
 권한 리소스가 Terraform에 있는지 확인한다. registry가 하나뿐일 때는 registry와 cluster를 자동 추론할 수
 있지만, 여러 후보가 있으면 renderer가 실패로 처리한다.
 
-`application/k8s/render-images.sh <terraform-dir> <output-dir>`은 Terraform apply 이후 output map으로
+`application/k8s/build-push.sh <terraform-dir> <image-references.json>`은 Terraform output map을 바탕으로
+application Dockerfile을 build하고 모든 workload registry에 push한 뒤, push 결과의 digest를
+`image-references.json`으로 기록한다. `render-images.sh <image-references.json> <output-dir>`은 이 digest map으로
 marker를 치환한 별도 manifest tree를 생성한다. `application/k8s/deploy.sh <terraform-dir> [terraform apply options...]`는
-Terraform apply → 이미지 주소 치환 → kubectl apply를 순서대로 실행하는 최종 배포 entry point이다. 실행 권한에
+Terraform apply → build/push → digest 치환 → kubectl apply를 순서대로 실행하는 최종 배포 entry point이다. 실행 권한에
 의존하지 않도록 `sh application/k8s/deploy.sh <terraform-dir> [terraform apply options...]` 형태로 호출한다.
 원본 manifest를 수정하지 않으므로, 생성 단계에서는 결정적 산출물을 유지하면서도 실제 배포에서는 registry의
-실제 endpoint를 사용한다. `EASYDEP_IMAGE_TAG`에는 이미 registry에 push된 불변 이미지 tag를 반드시
-지정해야 하며, 지정하지 않으면 치환·배포를 중단한다. 이 스크립트는 이미지를 build/push하지 않으므로 해당
-단계는 사용자의 release workflow가 먼저 수행해야 한다. 스크립트는 `EASYDEP_TERRAFORM_PATH`가 있으면
-그 절대 경로를, 없으면 PATH의 `terraform`을 사용한다. 실행에는 Terraform, Python 3, kubectl 및 각 provider
-인증이 필요하다.
+최종 manifest는 tag가 아닌 Docker push 결과의 `@sha256:` digest를 사용한다. `EASYDEP_IMAGE_TAG`에는
+`latest`가 아닌 release tag를 지정해야 하며, 지정하지 않으면 build/push·치환·배포를 중단한다. 스크립트는
+`EASYDEP_TERRAFORM_PATH`가 있으면 그 절대 경로를, 없으면 PATH의 `terraform`을 사용한다. 실행에는 Terraform,
+Docker, Python 3, kubectl, registry push 권한 및 각 provider 인증이 필요하다.
 
 ## 자동 실행 단계
 

@@ -88,34 +88,113 @@ reports
             r'''#!/bin/sh
 set -eu
 
-# Render a deployable manifest tree without mutating the deterministic source manifests.
-terraform_dir=${1:?usage: render-images.sh <terraform-dir> <output-dir>}
-output_dir=${2:?usage: render-images.sh <terraform-dir> <output-dir>}
+# Render immutable, deployable manifests without mutating deterministic source manifests.
+references_file=${1:?usage: render-images.sh <image-references.json> <output-dir>}
+output_dir=${2:?usage: render-images.sh <image-references.json> <output-dir>}
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
-image_tag=${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to an already pushed immutable image tag}
-registry_outputs=$("$terraform_bin" -chdir="$terraform_dir" output -json registry_image_bases)
+intent_path="$source_dir/../../reports/deployment-intent.json"
+test -f "$references_file"
+test -f "$intent_path"
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
-REGISTRY_OUTPUTS="$registry_outputs" SOURCE_DIR="$source_dir" OUTPUT_DIR="$output_dir" IMAGE_TAG="$image_tag" python3 - <<'PY'
+REFERENCES_FILE="$references_file" INTENT_PATH="$intent_path" SOURCE_DIR="$source_dir" OUTPUT_DIR="$output_dir" python3 - <<'PY'
+import json
+import os
+import re
+from pathlib import Path
+
+references = json.loads(Path(os.environ["REFERENCES_FILE"]).read_text(encoding="utf-8"))
+intent = json.loads(Path(os.environ["INTENT_PATH"]).read_text(encoding="utf-8"))
+source_dir = Path(os.environ["SOURCE_DIR"])
+output_dir = Path(os.environ["OUTPUT_DIR"])
+images = {}
+for workload in intent.get("workloads", []):
+    name, image = workload.get("name"), workload.get("image")
+    if isinstance(image, str) and "__EASYDEP_REGISTRY_" not in image:
+        continue
+    reference = references.get(name)
+    if not isinstance(name, str) or not isinstance(image, str) or not isinstance(reference, str):
+        raise SystemExit(f"missing immutable image reference for workload {name}")
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", reference):
+        raise SystemExit(f"workload {name} image reference is not digest-pinned")
+    images[image] = reference
+for source in source_dir.rglob("*.y*ml"):
+    target = output_dir / source.relative_to(source_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = source.read_text(encoding="utf-8")
+    for image, reference in images.items():
+        content = content.replace(image, reference)
+    if "__EASYDEP_REGISTRY_" in content or "<tag>" in content:
+        raise SystemExit(f"unresolved image placeholder in {source}")
+    target.write_text(content, encoding="utf-8")
+PY
+''',
+        )
+        write(
+            "k8s/build-push.sh",
+            r'''#!/bin/sh
+set -eu
+
+# Build once, push every workload image, then write digest-pinned references for render-images.sh.
+terraform_dir=${1:?usage: build-push.sh <terraform-dir> <image-references.json>}
+references_file=${2:?usage: build-push.sh <terraform-dir> <image-references.json>}
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+run_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+intent_path="$run_root/reports/deployment-intent.json"
+app_root="$run_root/application"
+terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
+image_tag=${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to a release tag}
+case "$image_tag" in latest|*[^0-9A-Za-z_.-]*|'') echo "EASYDEP_IMAGE_TAG must be a non-latest release tag" >&2; exit 2 ;; esac
+registry_outputs=$("$terraform_bin" -chdir="$terraform_dir" output -json registry_image_bases)
+targets_file=$(mktemp)
+trap 'rm -f "$targets_file"' EXIT
+REGISTRY_OUTPUTS="$registry_outputs" INTENT_PATH="$intent_path" IMAGE_TAG="$image_tag" TARGETS_FILE="$targets_file" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
 
 registries = json.loads(os.environ["REGISTRY_OUTPUTS"])
-source_dir = Path(os.environ["SOURCE_DIR"])
-output_dir = Path(os.environ["OUTPUT_DIR"])
-image_tag = os.environ["IMAGE_TAG"]
-for source in source_dir.rglob("*.y*ml"):
-    target = output_dir / source.relative_to(source_dir)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    content = source.read_text(encoding="utf-8")
-    for registry_ref, image_base in registries.items():
-        content = content.replace(f"__EASYDEP_REGISTRY_{registry_ref}__", image_base)
-    content = content.replace("<tag>", image_tag)
-    if "__EASYDEP_REGISTRY_" in content or "<tag>" in content:
-        raise SystemExit(f"unresolved image placeholder in {source}")
-    target.write_text(content, encoding="utf-8")
+intent = json.loads(Path(os.environ["INTENT_PATH"]).read_text(encoding="utf-8"))
+tag = os.environ["IMAGE_TAG"]
+lines = []
+for workload in intent.get("workloads", []):
+    name, image, registry_ref = workload.get("name"), workload.get("image"), workload.get("registryRef")
+    if isinstance(image, str) and "__EASYDEP_REGISTRY_" not in image:
+        continue
+    if not all(isinstance(value, str) for value in (name, image, registry_ref)):
+        raise SystemExit(f"workload {name} has no registry-backed image")
+    base = registries.get(registry_ref)
+    if not isinstance(base, str):
+        raise SystemExit(f"Terraform has no output for registryRef {registry_ref}")
+    target = image.replace(f"__EASYDEP_REGISTRY_{registry_ref}__", base).replace("<tag>", tag)
+    if "__EASYDEP_REGISTRY_" in target or "<tag>" in target:
+        raise SystemExit(f"unresolved image target for workload {name}")
+    lines.append(f"{name}\t{target}")
+Path(os.environ["TARGETS_FILE"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+local_image="easydep-build:$image_tag"
+docker build -t "$local_image" -f "$app_root/Dockerfile" "$app_root"
+while IFS="$(printf '\t')" read -r workload target; do
+  docker tag "$local_image" "$target"
+  docker push "$target"
+done < "$targets_file"
+TARGETS_FILE="$targets_file" REFERENCES_FILE="$references_file" python3 - <<'PY'
+import json
+import os
+import subprocess
+from pathlib import Path
+
+references = {}
+for line in Path(os.environ["TARGETS_FILE"]).read_text(encoding="utf-8").splitlines():
+    workload, target = line.split("\t", 1)
+    digests = json.loads(subprocess.check_output(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", target], text=True))
+    digest = next((value for value in digests if value.startswith(target.rsplit(":", 1)[0] + "@sha256:")), None)
+    if digest is None:
+        raise SystemExit(f"Docker did not return a pushed digest for {target}")
+    references[workload] = digest
+path = Path(os.environ["REFERENCES_FILE"])
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(references, indent=2) + "\n", encoding="utf-8")
 PY
 ''',
         )
@@ -129,11 +208,13 @@ terraform_dir=${1:?usage: deploy.sh <terraform-dir> [terraform apply options...]
 shift
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 output_dir=${EASYDEP_MANIFEST_DIR:-"$script_dir/resolved"}
+references_file=${EASYDEP_IMAGE_REFERENCES_FILE:-"$script_dir/image-references.json"}
 terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
-: "${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to an already pushed immutable image tag}"
+: "${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to a release tag}"
 "$terraform_bin" -chdir="$terraform_dir" init -input=false
 "$terraform_bin" -chdir="$terraform_dir" apply "$@"
-sh "$script_dir/render-images.sh" "$terraform_dir" "$output_dir"
+sh "$script_dir/build-push.sh" "$terraform_dir" "$references_file"
+sh "$script_dir/render-images.sh" "$references_file" "$output_dir"
 find "$output_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | sort | while IFS= read -r manifest; do
   kubectl apply -f "$manifest"
 done
