@@ -468,3 +468,41 @@ def test_replica_marker_only_on_compute() -> None:
     for line in render(plan).splitlines():
         if '"vnet"' in line:
             assert "×" not in line
+
+
+# --- 되돌아가는 방향 (목표 ①) ---
+
+
+def test_absent_verdicts_are_named_not_silent() -> None:
+    """**판정이 없는 것과 판정이 통과한 것은 다르다.**
+
+    요구사항에 그 칸이 없으면 판정문 자체가 안 나오므로, 사용자는 둘을 구별할 수
+    없었다 — 이 저장소가 다른 축에서 계속 지켜 온 구분(없다 / 안 봤다)이 여기서만
+    빠져 있었다.
+
+    그리고 이것이 목표 ①의 **되돌아가는 방향**이다. 지금까지 사슬은 한 방향이었다:
+    요구사항 → 계획 → 판정. 판정이 *"이 칸을 정하면 답할 수 있다"*고 말하면
+    요구사항 단계로 돌아가는 길이 생긴다.
+    """
+    lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
+    gap = next(ln for ln in lines if "Not judged for lack of a requirement" in ln)
+    assert "monthlyBudgetUSD" in gap and "the budget verdict" in gap
+    assert "absent, not passed" in gap
+
+
+def test_no_gap_line_when_everything_is_settled() -> None:
+    """다 정해졌으면 그 줄이 없다 — 늘 붙는 줄은 읽히지 않는다."""
+    req = {
+        "provider": "aws", "monthlyBudgetUSD": 500, "expectedConcurrentUsers": 100,
+        "trafficPattern": "steady", "stateless": True, "multiZone": True,
+    }
+    lines = verify_against_requirements(_plan(), req, _HOURS)
+    assert not any("Not judged for lack" in ln for ln in lines)
+
+
+def test_either_scale_signal_closes_the_scale_verdict() -> None:
+    """규모는 **둘 중 하나**면 된다 — 계약이 택1로 요구한다."""
+    req = {"approxRequestsPerSecond": 50}
+    lines = verify_against_requirements(_plan(), req, _HOURS)
+    gap = next((ln for ln in lines if "Not judged for lack" in ln), "")
+    assert "expectedConcurrentUsers" not in gap

@@ -306,7 +306,49 @@ def verify_against_requirements(
             out.append(
                 f"Provider ({provider}): every vendor type in the plan matches"
             )
+
+    out.extend(_what_would_close_the_gaps(req))
     return out
+
+
+#: **판정을 닫으려면 요구사항에서 무엇이 정해져야 하는가.**
+#: `RESOURCE_SPEC`의 칸 이름 → 그 칸이 없어서 못 하는 판정.
+#:
+#: 이 표가 목표 ①의 **되돌아가는 방향**이다. 지금까지 사슬은 한 방향이었다 —
+#: 요구사항이 계획을 만들고, 계획이 판정을 냈지만, **판정이 요구사항으로 돌아가는
+#: 길이 없었다.** 그래서 "규모를 판정할 수 없다"를 읽은 사람이 *무엇을 더 적어야
+#: 판정이 서는지*를 스스로 알아내야 했다.
+#:
+#: 새 학습 장치가 아니다 — 필요한 것은 이미 다 있었다. 그 칸을 묻는 관심사도 이미
+#: 있고(`app/requirements/knowledge/concerns.py`), 끊긴 것은 **둘을 잇는 한 줄**뿐이었다.
+_CLOSES = {
+    "monthlyBudgetUSD": "the budget verdict",
+    "expectedConcurrentUsers": "the scale verdict",
+    "trafficPattern": "the burst-fit verdict",
+    "stateless": "the serverless-fit verdict",
+    "multiZone": "the availability-zone verdict",
+}
+
+
+def _what_would_close_the_gaps(req: dict) -> list[str]:
+    """안 준 칸 때문에 **안 낸 판정**을 한 줄로 되짚는다.
+
+    침묵을 "해당 없음"으로 읽게 두지 않는다 — 요구사항에 그 칸이 없으면 판정문 자체가
+    안 나오므로, 사용자는 **판정이 없는 것과 판정이 통과한 것을 구별할 수 없다.**
+    이 저장소가 다른 축에서 계속 지켜 온 구분(없다 / 안 봤다)이 여기서만 빠져 있었다.
+    """
+    missing = [name for name in _CLOSES if req.get(name) is None]
+    # 규모는 둘 중 하나면 된다(계약이 택1로 요구한다).
+    if req.get("approxRequestsPerSecond") is not None:
+        missing = [m for m in missing if m != "expectedConcurrentUsers"]
+    if not missing:
+        return []
+    pairs = ", ".join(f"{name} ({_CLOSES[name]})" for name in missing)
+    return [
+        f"**Not judged for lack of a requirement** ({len(missing)}): {pairs}. "
+        "These verdicts are absent, not passed — settle the fields upstream and "
+        "they become answerable"
+    ]
 
 
 def unhedged_claims(plan: DeploymentPlan) -> list[str]:
