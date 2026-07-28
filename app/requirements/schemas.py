@@ -164,6 +164,34 @@ class Critique(BaseModel):
     )
 
 
+class ConcernLink(BaseModel):
+    """관심사 하나에 대한 링크 판정 — **어느 요구가 이것을 다루는가.**
+
+    `RuleVerdict`와 모양은 닮았지만 묻는 것이 반대다(위반이 아니라 다뤄짐). 닮은 부분은
+    의도적이다 — 관심사 id를 반드시 대게 해서 **목록에 없는 관심사를 지어낸 응답**과
+    **판정을 빠뜨린 응답**을 둘 다 드러낸다.
+    """
+
+    concern_id: str = Field(
+        description="The concern id, copied exactly from the concern list.",
+    )
+    requirement_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Ids of the requirements that address this concern. Empty when none do."
+        ),
+    )
+
+
+class ConcernLinkage(BaseModel):
+    """관심사 링크 한 벌."""
+
+    links: list[ConcernLink] = Field(
+        default_factory=list,
+        description="One entry per concern in the concern list, in the same order.",
+    )
+
+
 class ActorResult(BaseModel):
     """identify_actors 노드의 구조화 출력."""
 

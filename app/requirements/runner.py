@@ -43,6 +43,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     identify_relationships,
     render_diagram,
 )
+from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
 from app.requirements.config import settings
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.

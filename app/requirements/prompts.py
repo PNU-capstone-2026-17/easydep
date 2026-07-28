@@ -432,7 +432,7 @@ def generation_system_for(stage: str) -> str:
     return _generation_system(stage, shape, learned)
 
 
-def _concern_linker_system() -> str:
+def _concern_linker_system(only: tuple[str, ...] | None = None) -> str:
     """클라우드 관심사 링크 프롬프트를 관심사 지식베이스에서 조립한다.
 
     **판정 방향이 검증 프롬프트와 반대다.** 검증자는 산출물을 보고 위반을 찾지만, 여기서는
@@ -441,7 +441,12 @@ def _concern_linker_system() -> str:
     링크는 붙이기가 쉽고, 하나라도 붙으면 그 관심사는 '다뤄졌다'가 되어 인계에서 사라진다.
 
     모양만 여기 있다. 무엇을 묻는지는 `knowledge/concerns.py`가 정한다.
+
+    `only`를 주면 **그 관심사들만** 담는다(`settings.concern_linker_chunk`). 나머지 문구는
+    한 글자도 달라지지 않아야 한다 — 달라지면 한 번에 묻기와 나눠 묻기의 차이가 프롬프트
+    분량이 아니라 문구 차이가 되어 조건 비교가 무너진다.
     """
+    block = _concerns.prompt_block(only)
     return f"""You map requirements onto cloud-native concerns.
 
 You are given a list of requirements (each with an id) and a list of concerns. For EACH
@@ -459,12 +464,23 @@ Rules of the mapping:
 - Being a cloud or web application does not by itself address any concern.
 
 Concerns:
-{_concerns.prompt_block()}
+{block}
 """
 
 
-#: 관심사 링크 프롬프트. `fingerprint()`가 해싱하므로 모듈 로드 시 한 번 조립한다.
+#: 관심사 링크 프롬프트(전부 한 번에). `fingerprint()`가 해싱하므로 모듈 로드 시 조립한다.
+#:
+#: **판(版)의 기준은 항상 이 전체 프롬프트다.** 청크로 나눠 물어도 이 해시를 찍는다 —
+#: 청크 크기는 조건이지 판이 아니고, 청크마다 다른 해시를 찍으면 같은 목록으로 잰 실행이
+#: 서로 다른 판으로 보인다.
 CONCERN_LINKER_SYSTEM = _concern_linker_system()
+
+
+def concern_linker_system_for(only: tuple[str, ...] | None = None) -> str:
+    """관심사 부분집합용 링크 프롬프트. `None`이면 캐시된 전체 판을 그대로 준다."""
+    if only is None:
+        return CONCERN_LINKER_SYSTEM
+    return _concern_linker_system(only)
 
 
 #: 측정 경로 이름 — 무엇을 실제로 쓰는 실행인가.
