@@ -24,6 +24,10 @@ from .orchestrator import (
 )
 from .repair_planner import apply_repair_directives, schedule_cross_phase_repair
 from .deployment_renderer import render_deployment
+from .source_conformance import (
+    SourceDesignConformanceError,
+    verify_source_design_conformance,
+)
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -213,7 +217,19 @@ def run_workflow(
         audit = auditor(run_root)
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
+            try:
+                conformance = verify_source_design_conformance(run_root, spec)
+            except SourceDesignConformanceError:
+                state["status"] = "FAILED"
+                state["sourceDesignConformance"] = "FAILED"
+                state["blockingReason"] = (
+                    "Generated source contracts or sequence calls diverge from the design; "
+                    "see reports/source-design-conformance.json."
+                )
+                _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+                return state
             state["status"] = "COMPLETE"
+            state["sourceDesignConformance"] = conformance["status"]
             _render_deployment_if_configured(run_root, spec)
         elif state.get("status") != "NEEDS_INPUT":
             state["status"] = "NEEDS_PLANNER"
@@ -309,7 +325,20 @@ def run_workflow(
     final_state = plan_workflow(run_root, spec)
     audit = auditor(run_root)
     if audit.get("status") == "COMPLETE":
+        try:
+            conformance = verify_source_design_conformance(run_root, spec)
+        except SourceDesignConformanceError:
+            final_state["status"] = "FAILED"
+            final_state["sourceDesignConformance"] = "FAILED"
+            final_state["blockingReason"] = (
+                "Generated source contracts or sequence calls diverge from the design; "
+                "see reports/source-design-conformance.json."
+            )
+            final_state["audit"] = "reports/implementation-completion-audit.json"
+            _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
+            return final_state
         final_state["status"] = "COMPLETE"
+        final_state["sourceDesignConformance"] = conformance["status"]
         _render_deployment_if_configured(run_root, spec)
     elif final_state.get("status") != "NEEDS_INPUT":
         final_state["status"] = (

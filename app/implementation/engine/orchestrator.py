@@ -13,6 +13,7 @@ from typing import Any
 
 from .models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from .agent_runtime import gradle_command, write_execution_plan
+from .source_conformance import capture_generated_contracts
 from .design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
@@ -136,6 +137,9 @@ class PrototypeOrchestrator:
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
             self._write_missing_type_placeholders(java_root)
+            # Capture before any OpenHands task runs.  These files are the
+            # immutable BCE/OpenAPI source contract for the implementation.
+            capture_generated_contracts(staging, self.spec.base_package)
 
             if self.spec.verify_compile:
                 self.manifest.status = "VERIFYING"

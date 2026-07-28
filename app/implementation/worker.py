@@ -11,6 +11,7 @@ from typing import Any
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE, TYPE_TEST_CODE
 from app.repositories import artifact_repository
 from .config import ImplementationSettings
+from .feedback_impact import assess_feedback_eligibility
 from .prototype_client import PrototypeClient
 
 
@@ -68,6 +69,32 @@ class ImplementationWorker:
                 "No generated source snapshot is available for feedback"
             )
 
+        eligibility = assess_feedback_eligibility(feedback, design)
+        job_id = uuid.uuid4().hex
+        if eligibility["status"] == "UNSUITABLE":
+            report_path = self.settings.work_root / job_id / "feedback-eligibility.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(
+                json.dumps(eligibility, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            record = {
+                "job_id": job_id,
+                "job_type": "FEEDBACK_REVISION",
+                "app_id": app_id,
+                "status": "REJECTED",
+                "base_package": base_package,
+                "feedback": feedback,
+                "workflow": None,
+                "transmission_request": None,
+                "feedback_eligibility": eligibility,
+                "eligibility_report": str(report_path.relative_to(self.settings.work_root)),
+                "error": "Feedback requires a design-contract change and is unsuitable for implementation feedback.",
+                "created_at": _now(),
+                "updated_at": _now(),
+            }
+            self._write(record)
+            return self.public_record(record)
+
         snapshots = {
             path: item["content"]
             for path, item in source_snapshot.get("files", {}).items()
@@ -90,7 +117,6 @@ class ImplementationWorker:
                 )
                 base_versions[artifact_type] = snapshot["version_no"]
 
-        job_id = uuid.uuid4().hex
         job_path = self.client.prepare_feedback_job(
             job_id,
             app_id,
@@ -110,6 +136,7 @@ class ImplementationWorker:
             "base_package": base_package,
             "base_versions": base_versions,
             "feedback": feedback,
+            "feedback_eligibility": eligibility,
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,

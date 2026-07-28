@@ -13,6 +13,7 @@ from app.implementation.api import router
 from app.implementation.config import ImplementationSettings
 from app.implementation.engine.agent_runtime import gradle_command
 from app.implementation.engine.orchestrator import PrototypeOrchestrator, load_job
+from app.implementation.feedback_impact import assess_feedback_eligibility
 from app.implementation.prototype_client import PrototypeClient, PrototypeExecutionError
 from app.implementation.schemas import (
     CreateImplementationFeedbackJobRequest,
@@ -28,6 +29,46 @@ def test_job_contract_preserves_automated_placeholder_policy() -> None:
 def test_feedback_request_trims_feedback() -> None:
     request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
     assert request.feedback == "rename the service"
+
+
+def test_feedback_eligibility_rejects_design_contract_changes() -> None:
+    result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 스키마를 변경해줘")
+
+    assert result["status"] == "UNSUITABLE"
+    assert result["matches"][0]["code"] == "OPENAPI_CONTRACT_CHANGE"
+
+
+def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> None:
+    result = assess_feedback_eligibility("배송이 시작된 주문은 취소 요청을 거절하고 테스트를 보강해줘")
+
+    assert result["status"] == "ELIGIBLE"
+
+
+def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_path: Path) -> None:
+    source_snapshot = {
+        "version_no": 3,
+        "files": {
+            "src/main/java/com/example/OrderService.java": {"content": "class OrderService {}"}
+        },
+    }
+    monkeypatch.setattr(
+        "app.implementation.worker.artifact_repository.load_file_snapshot",
+        lambda *_args, **_kwargs: source_snapshot,
+    )
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    implementation_worker.client.prepare_feedback_job = lambda *_args, **_kwargs: pytest.fail(
+        "Unsuitable feedback must not create a feedback run"
+    )
+    try:
+        record = implementation_worker.create_feedback_job(
+            "app-1", {}, "API 명세의 엔드포인트를 추가해줘", "com.example", False
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "REJECTED"
+    assert record["feedback_eligibility"]["status"] == "UNSUITABLE"
+    assert (tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json").is_file()
 
 
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
