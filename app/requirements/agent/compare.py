@@ -23,9 +23,9 @@ from app.requirements.agent.graph import build_graph
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.steps.step2_usecases import check_coverage
 from app.requirements.agent.steps.step3_specifications import _validate_spec
+from app.requirements.common import telemetry
 from app.requirements.config import settings
 from app.requirements.schemas import CoverageJudgment
-
 
 # --- D. 복합 FR 가드 ---------------------------------------------------------
 # FR 텍스트에 정량 품질(NFR성) 제약이 융합돼 있으면 원자성 위반으로 플래그한다(결정론 감시).
@@ -115,7 +115,11 @@ def _judge_uc_coverage(uc: dict, specs_by_id: dict, by_id: dict) -> list[tuple]:
             [SystemMessage(content=prompts.COVERAGE_JUDGE_SYSTEM), HumanMessage(content=human)],
         )
     except Exception as exc:  # noqa: BLE001 - 판정 실패는 치명적이지 않음(해당 UC 스킵)
-        print(f"[compare] coverage judge 실패(무시): {exc}")
+        # 이 UC가 판정에서 빠진다. 점수를 비교할 때 표본이 줄었다는 사실을 모르면
+        # 대조 결과를 잘못 읽게 된다.
+        telemetry.record_degradation(
+            "compare.coverage_judge", f"{type(exc).__name__}: {exc}", subject=uc.get("id")
+        )
         return []
     return [(uc.get("id"), v.requirement_id, v.realized, v.reason) for v in res.verdicts]
 

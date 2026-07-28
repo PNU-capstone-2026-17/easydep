@@ -1,0 +1,125 @@
+이 저장소는 아래 오픈소스 프로젝트의 산출물을 포함하거나 그로부터 유도한
+데이터를 포함합니다.
+
+## data/tumblebug-cost.json.gz, data/tumblebug-perf.json.gz
+
+cloud-barista / cb-tumblebug (v0.12.25) 의 `assets/assets.dump.gz`에서
+유도했습니다.
+
+    https://github.com/cloud-barista/cb-tumblebug
+    Copyright The Cloud-Barista Authors
+    Licensed under the Apache License, Version 2.0
+    http://www.apache.org/licenses/LICENSE-2.0
+
+가격·스펙 값은 스냅샷이며 실제 청구서가 아닙니다. 각 산출물의 `_source`
+블록에 받은 시점의 태그와 sha256이 들어 있습니다.
+
+## data/pattern-corpus.json.gz — 설계 패턴 산문 코퍼스
+
+patternkb(설계 지침 검색, advisory 전용)의 코퍼스로, 아래 문서의 **본문을
+발췌해 수록**합니다. 문서마다 `license`·`attribution` 칸이 데이터 안에 함께
+들어 있습니다.
+
+- **MicrosoftDocs/architecture-center** — Copyright Microsoft Corporation,
+  **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
+  `docs/patterns`, `docs/guide/architecture-styles`,
+  `docs/guide/design-principles`, `docs/best-practices` 하위 75편.
+  변경 사항: YAML frontmatter 제거, 본문 발췌. 핀(커밋 SHA)은
+  `kbcommon/sources.py`와 산출물 `_source` 블록에 있습니다.
+      https://github.com/MicrosoftDocs/architecture-center
+- **MicrosoftDocs/well-architected** — Copyright Microsoft Corporation,
+  **CC BY 4.0**. `well-architected/` 하위 지침 199편. 변경 사항 동일.
+      https://github.com/MicrosoftDocs/well-architected
+- **Google Cloud Architecture Framework** — Copyright Google LLC,
+  **CC BY 4.0**(페이지 푸터 명시: "Except as otherwise noted…").
+  cloud.google.com/architecture/framework 하위 지침 페이지의 본문을 HTML에서
+  추출해 수록. 변경 사항: HTML 태그·내비게이션 제거, 본문 텍스트만 발췌.
+  버전 없는 소스라 받은 시점의 sha256만 산출물 `_source`에 남습니다.
+      https://cloud.google.com/architecture/framework
+- **heroku/12factor** — Copyright (c) 2012 Adam Wiggins, **MIT**.
+  `content/en` 하위 15편(목차 제외).
+      https://github.com/heroku/12factor
+
+## 그 밖의 소스
+
+`data/`의 나머지 파일은 각 벤더의 공개 스키마에서 유도한 것입니다. 어느
+소스 어느 커밋에서 나왔는지는 파일 안 `_source` 블록에 있고, 고정 정보는
+`kbcommon/sources.py`에 있습니다.
+
+- AWS CloudFormation Registry 스키마 (Amazon Web Services)
+- cfn-lint (Amazon Web Services, MIT-0)
+- Azure bicep-types-az (Microsoft, MIT)
+- MicrosoftDocs/azure-docs (Microsoft, CC-BY-4.0)
+- MicrosoftDocs/architecture-center (Microsoft, CC-BY-4.0) —
+  `data/svcmap-graph.json.gz`의 서비스 대응 근거(AWS↔Azure·GCP↔Azure 비교표)
+- mingrammer/diagrams (MIT) — 위 대응의 교차 확인용 분류 체계
+- GCP Config Connector CRD (Google, Apache-2.0)
+- Cyclenerd/google-cloud-pricing-cost-calculator (Apache-2.0) —
+  `data/gcp-spot-commit.json.gz`(스팟·약정)와
+  `data/gcp-managed-pricing.json.gz`(Cloud Storage 과금 축)의 근거
+- terraform-provider-google / terraform-provider-aws (HashiCorp, MPL-2.0)
+- botocore (Amazon Web Services, Apache-2.0)
+
+## 재배포 허가 문구를 찾지 못한 소스
+
+아래 둘은 **무인증으로 공개된 API**이고, 재배포를 **허가하는 문구도 금지하는
+문구도** 찾지 못했습니다. 편의를 위해 유도 산출물을 저장소에 포함하지만
+**허가를 받았다는 뜻이 아닙니다.** 권리자가 요청하면 제거합니다.
+
+각 파일의 `_note`·`_source` 블록에 같은 내용이 들어 있어, 파일 하나만
+떼어 봐도 출처와 상태를 알 수 있습니다.
+
+### data/azure-discount-pricing.json.gz — `azure-retail-prices`
+
+Microsoft Azure Retail Prices API에서 받은 값에서 유도했습니다.
+
+    https://prices.azure.com/api/retail/prices
+    Copyright Microsoft Corporation
+
+VM의 스팟·예약·저축 플랜 가격만 담습니다. 온디맨드는 cb-tumblebug 미러를
+그대로 쓰고 이 파일은 보강만 합니다. 문서가 밝히는 용도는 *"your own tools
+for internal analysis and price comparison"*입니다. 버전이 없는 API라
+재현이 원리적으로 안 되며, 받은 응답의 sha256만 `_source`에 남습니다.
+
+### data/azure-managed-pricing.json.gz — `azure-retail-prices`
+
+위와 같은 API에서 받은 값에서 유도했습니다. 관리형 서비스(Redis·PostgreSQL·
+Cosmos DB·Service Bus·Key Vault·Functions)의 **과금 축 목록**만 담습니다 —
+인스턴스-시간·용량-비례·사용량 축의 단위와 단가이며, 합계나 예상 비용은
+만들지 않습니다. 재배포 상태는 위 항목과 같습니다.
+
+### data/ibm-perf.json.gz — `ibm-global-catalog`
+
+IBM Cloud Global Catalog에서 받은 값에서 유도했습니다.
+
+    https://globalcatalog.cloud.ibm.com/api/v1
+    Copyright IBM Corporation
+
+VPC 인스턴스 프로필의 성능 신호(대역폭·포트 속도·NIC 수·NUMA·CPU 제조사
+등)만 담습니다. 값이 하나뿐인 칸은 담지 않았습니다.
+
+**포함하지 않는 것**: AWS Price List Bulk API 응답은 **재배포가 명시적으로
+막혀 있어** 저장소에 넣지 않습니다 — 위 둘과 달리 "문구가 없는" 것이 아니라
+"안 된다고 적혀 있는" 경우입니다. 빌드 때 받아 쓰고, 산출물에는 거기서
+유도한 EBS 볼륨 한도 20건만 남습니다(가격 값은 남지 않습니다).
+AWS 관리형 서비스의 과금 축(`aws-managed-pricing.json`)은 같은 이유로
+**로컬 빌드 전용**입니다 — `python -m costkb build-aws-managed`로 각자
+받아 `output/`에만 두며, `data/`에 커밋되면 안 됩니다(테스트가 막습니다).
+
+## 교육 목적 공정이용으로 수록한 소스
+
+### data/aws-pattern-corpus.json.gz — `aws-well-architected`
+
+AWS Well-Architected Framework 공식 화이트페이퍼 PDF에서 유도한 설계 지침
+코퍼스입니다(자문 전용 — 답변마다 "설계 지침이지 사실 아님" 고지가 붙습니다).
+
+    https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf
+    Copyright © Amazon Web Services, Inc. and/or its affiliates. All rights reserved.
+
+이 PDF는 AWS가 내려받으라고 배포하는 공식 산출물이지만, 재배포를 허가하는
+라이선스 조항이 없습니다(2026-07-25 확인 — CC-BY가 명시된 Azure·GCP 지침과
+다른 점). 이 저장소는 **비영리 졸업과제(교육 목적)이며, 검색·발췌 인용
+용도의 수록을 공정이용으로 판단**하여 포함합니다(2026-07-25). 허가를
+받았다는 뜻이 아니며, **권리자가 요청하면 즉시 제거합니다.** 같은 고지가
+산출물 `_note`와 문서별 attribution에도 실려, 파일 하나만 떼어 봐도 이
+상태가 보입니다.

@@ -7,40 +7,41 @@
 """
 from __future__ import annotations
 
-import json
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
+from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
+from app.requirements.common import telemetry
+from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
-from app.requirements.schemas import RelationshipCritique, RelationshipModel
+from app.requirements.knowledge import rules
+from app.requirements.schemas import RelationshipModel
 
 
-def _rel_findings(rel: dict) -> list[str]:
-    """관계에 대한 LLM 의미 검증(정적 참조검증이 못 잡는 안티패턴: 인증=precondition,
-    자동결과=비-include, extend 오용 등). 비활성/실패 시 빈 리스트."""
-    if not settings.enable_semantic_validator:
-        return []
+def _rel_findings(rel: dict) -> tuple[list[str], str]:
+    """관계에 대한 의미 검증을 독립 검증자에게 맡긴다.
+
+    검증자에게 주는 것은 **제안된 관계뿐이다** — 어떤 힌트로 그걸 뽑았는지, 사용자가 무슨
+    피드백을 줬는지는 주지 않는다. 물어야 하는 것은 결과가 규칙을 지켰는지다.
+
+    `(결함 목록, 검증 상태)`를 돌려준다 — step3의 `_semantic_findings`와 같은 이유로,
+    "결함 없음"과 "확인하지 못함"이 같은 값이 되면 안 된다.
+    """
     payload = {k: rel.get(k, []) for k in ("includes", "extends", "generalizations", "derived_use_cases")}
-    try:
-        crit: RelationshipCritique = invoke_structured(
-            RelationshipCritique,
-            [SystemMessage(content=prompts.RELATIONSHIP_VALIDATOR_SYSTEM),
-             HumanMessage(content=f"[PROPOSED RELATIONSHIPS]\n{json.dumps(payload, ensure_ascii=False)}")],
-        )
-    except Exception as exc:  # noqa: BLE001 - 검증 실패는 치명적이지 않음
-        print(f"[agent] relationship validator 실패(무시): {exc}")
-        return []
-    return [] if crit.is_valid else [f"[rel] {f}" for f in crit.findings]
+    result = validator.review(
+        rules.DRAW_DIAGRAM, payload, prefix="rel", source="relationships.semantic_validator"
+    )
+    return result.findings, result.status
 
 
 # include 후보 힌트를 관계 에이전트에 몇 개까지 노출할지.
-# ⚠ 순수 엔지니어링 가드(프롬프트 크기 제한)일 뿐 Cockburn 규칙이 아니다. 출력(관계) 개수를
-# 제한하지 않는다 — 의미 필터(precondition-인증 제외·nameable sub-goal)는 프롬프트가 담당한다.
-# (docs/research/cockburn-grounding.md 오버피팅 플래그)
+# ⚠ 순수 엔지니어링 가드(프롬프트 크기 제한)일 뿐 규칙이 아니다. 출력(관계) 개수를 제한하지
+# 않는다 — 의미 필터는 프롬프트가 담당한다. 이 사실은 지식베이스에도 규칙이 **아닌 것**으로
+# 적혀 있다(`knowledge/rules.py`의 `rel.include-hint-cap`, severity=NON_RULE).
 _MAX_INCLUDE_HINTS = 6
 
 
@@ -66,12 +67,14 @@ def _mine_include_candidates(use_cases: list, specs_by_name: dict) -> dict[str, 
     return {k: sorted(v) for k, v in step_to_ucs.items() if len(v) >= 2}
 
 
+@contract("identify_relationships", requires=("use_cases", "actors"))
 def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     """액터/유스케이스/명세로부터 다이어그램 관계를 도출한다. feedback 시 재생성 지시.
 
     관계 에이전트에 주 시나리오와 결정론 후보 힌트(공유 스텝→include, parent_actor→일반화)를
     함께 주고, parent_actor 일반화는 결정론적으로 보강한다. 주액터 association도 보강한다.
     """
+    feedback = supervisor.feedback_for(state, "relationships", feedback)
     use_cases = state.get("use_cases") or []
     empty = {
         "associations": [], "includes": [], "extends": [], "generalizations": [],
@@ -146,23 +149,37 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
         }
 
     # 생성 → 의미검증(안티패턴) → 실패 시 지시로 재생성하는 반성 루프(더 나빠지면 직전본 유지).
+    # 채택 규칙과 멈춘 이유의 이름은 step3의 반성 루프와 같게 둔다 — 두 루프가 같은
+    # 규율을 따른다는 걸 리포트에서 바로 읽을 수 있어야 한다.
     rel = _generate(human)
-    findings = _rel_findings(rel)
+    findings, semantic_status = _rel_findings(rel)
+    attempts = 0
+    stopped = "budget"
     for _ in range(settings.max_repair_iters):
         if not findings:
+            stopped = "clean"
             break
         repair = human + "\n\n[YOUR PREVIOUS RELATIONSHIPS FAILED THESE CHECKS — fix every one, " \
                  "keeping the correct ones]\n" + "\n".join(f"- {d}" for d in findings)
+        attempts += 1
         try:
             candidate = _generate(repair)
         except Exception as exc:  # noqa: BLE001 - 재생성 실패 시 직전본 유지
-            print(f"[agent] relationship 재생성 실패(직전본 유지): {exc}")
+            # 수리를 못 했으므로 검증이 지적한 안티패턴이 그대로 남는다.
+            telemetry.record_degradation("relationships.repair", f"{type(exc).__name__}: {exc}")
+            stopped = "error"
             break
-        cand_findings = _rel_findings(candidate)
+        cand_findings, cand_status = _rel_findings(candidate)
         if len(cand_findings) >= len(findings):
+            stopped = "no_improvement"
             break
-        rel, findings = candidate, cand_findings
+        rel, findings, semantic_status = candidate, cand_findings, cand_status
+    else:
+        stopped = "clean" if not findings else "budget"
     rel["relationship_issues"] = findings
+    rel["semantic_status"] = semantic_status
+    rel["repair_iters"] = attempts       # 채택 수가 아니라 시도 수(비용)
+    rel["repair_stopped"] = stopped
 
     # 결정론 보강: parent_actor로부터 액터 일반화를 추가(LLM이 놓쳐도 부모-자식은 확정 사실).
     have_gen = {(g["parent"], g["child"]) for g in rel["generalizations"]}
@@ -219,6 +236,7 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     return {"relationships": rel, "phase": "relationships"}
 
 
+@contract("check_relationships", requires=("relationships",))
 def check_relationships(state: AgentState) -> dict:
     """관계 검증 결과를 집계한다(결정론 요약 노드).
 
@@ -234,6 +252,12 @@ def check_relationships(state: AgentState) -> dict:
         "orphan_actors": rel.get("orphan_actors", []),
         "dropped_refs": rel.get("dropped_refs", []),
         "relationship_issues": rel.get("relationship_issues", []),
+        # 의미 검증을 실제로 거쳤는지. "failed"면 relationship_issues가 비어 있어도
+        # 그건 "안티패턴이 없다"가 아니라 "확인하지 못했다"는 뜻이다.
+        "semantic_status": rel.get("semantic_status", "unknown"),
+        # 반성 루프의 비용과 멈춘 이유(step3의 spec_report와 같은 이름).
+        "repair_iters": rel.get("repair_iters", 0),
+        "repair_stopped": rel.get("repair_stopped", "unknown"),
     }
     return {"relationship_report": report, "phase": "check_relationships"}
 
@@ -244,6 +268,7 @@ def _san(name: str) -> str:
     return alias if alias[0].isalpha() else f"n_{alias}"
 
 
+@contract("render_diagram", requires=("relationships", "use_cases", "actors"))
 def render_diagram(state: AgentState) -> dict:
     """관계 모델을 PlantUML 유스케이스 다이어그램으로 렌더링한다(결정론적 순수 함수)."""
     actors = state.get("actors") or []

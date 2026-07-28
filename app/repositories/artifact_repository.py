@@ -30,6 +30,7 @@ from app.db.models import (
 )
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 
 
 class AppNotFound(Exception):
@@ -48,9 +49,12 @@ def stage_lock_lease_seconds() -> int:
 
 
 # Every stage the workflow can persist, and how it maps onto ArchitectureState.
-# Only final artifacts are stored. Intermediate data (the extracted BCE
-# elements) is not: it is fully recoverable from the generated PlantUML, and it
-# goes stale the moment a feedback revision edits the PlantUML directly.
+# state_key is what the web response and downstream stages read. A stage may also
+# declare a source_key: the structured model that is the real source of truth and
+# what actually gets stored, from which state_key is re-derived on load. The class
+# diagram works this way — its BCE model (extracted_bce_classes) is stored and the
+# PlantUML is a pure projection of it, so feedback edits the model and the diagram
+# is re-rendered deterministically instead of being rewritten (and never drifts).
 STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     "refined_requirements": {
         "artifact_type": TYPE_REFINE_REQ,
@@ -86,6 +90,9 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "class_diagram_puml",
         "valid_key": "class_diagram_syntax_valid",
         "errors_key": "class_diagram_syntax_errors",
+        # Stored as its BCE model; the PlantUML in state_key is derived from this.
+        "source_key": "extracted_bce_classes",
+        "source_format": FORMAT_JSON,
     },
     "sequence_diagram": {
         "artifact_type": TYPE_SEQUENCE,
@@ -190,10 +197,19 @@ def load_state(app_id: str) -> ArchitectureState:
             if version is None:
                 continue
 
-            state[config["state_key"]] = _decode_content(
-                version.content,
-                config["format"],
-            )
+            source_key = config.get("source_key")
+            if source_key:
+                source_value = _decode_content(version.content, config["source_format"])
+                state[source_key] = source_value
+                # PlantUML is a pure projection of the stored model.
+                state[config["state_key"]] = generate_plantuml_from_bce_json(
+                    source_value
+                )
+            else:
+                state[config["state_key"]] = _decode_content(
+                    version.content,
+                    config["format"],
+                )
             if config["valid_key"]:
                 state[config["valid_key"]] = version.syntax_valid
             if config["errors_key"]:
@@ -436,8 +452,12 @@ def _write_version(
     origin: str,
 ) -> int | None:
     config = STAGE_ARTIFACTS[stage]
-    value = state.get(config["state_key"])
-    content = _encode_content(value, config["format"])
+    source_key = config.get("source_key")
+    if source_key:
+        # Persist the structured source of truth; state_key is derived from it.
+        content = _encode_content(state.get(source_key), config["source_format"])
+    else:
+        content = _encode_content(state.get(config["state_key"]), config["format"])
     if not content.strip():
         return None
 

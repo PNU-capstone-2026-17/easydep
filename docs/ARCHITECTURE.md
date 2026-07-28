@@ -2,7 +2,8 @@
 
 > 자연어 요구사항으로부터 **FR/NFR 분류 → 액터·유스케이스 식별 → 유스케이스 명세(Cockburn) →
 > UML 관계·다이어그램**을 생성하는 LangGraph 기반 파이프라인. 전 과정을 Alistair Cockburn의
-> *Writing Effective Use Cases* 로 그라운딩하고, **환각 최소화·재현성·근거성**을 우선한다.
+> *Writing Effective Use Cases* 로 그라운딩하고, **환각 최소화·근거성·경로 고정**을 우선한다.
+> (출력 재현성은 목표가 아니다 — 이 모델에서는 얻을 수 없다. §4.1 참고.)
 >
 > 스택: LangGraph(그래프/interrupt) · Nvidia NIM(OpenAI 호환, gpt-oss-120b) · 파인튜닝 BERT
 > (FR/NFR) · FastAPI(서빙) · pydantic(구조화 출력).
@@ -15,7 +16,8 @@
 |---|---|
 | **정적=코드 / 의미=근거LLM** | 정적으로 판정 가능한 규칙(커버리지·참조무결성·분기어·계약)은 **코드**가, 의미 판단(내부컴포넌트 누출·안티패턴)은 **근거 프롬프트 LLM**이. |
 | **임의 사전 금지(오버피팅 방지)** | 근거 없는 키워드 목록·개수 상하한·ad-hoc 지침을 만들지 않는다. UI 용어 목록은 Cockburn 예시로만 한정, 개수 가드는 "엔지니어링일 뿐"으로 격하. |
-| **Cockburn 그라운딩** | 모든 프롬프트 지침은 도서 페이지 인용으로 교차검증(`cockburn-grounding.md`, 아래 §참고). |
+| **Cockburn 그라운딩** | 규칙은 `app/requirements/knowledge/`의 레코드가 단일 소스. 검증 프롬프트·검출기·지적 문구가 거기서 파생되고, 도서 인용은 로컬 사본으로 **기계 대조**한다(§4.2). |
+| **근거 없는 지적 금지** | 의미 검증자의 지적은 `rule_id`를 대야 하고, 지식베이스에 없는 규칙을 인용하면 버린다(`semantic_status="ungrounded"`) — 검증자의 환각도 환각이다. |
 | **생성 → 검증 → 반성(repair)** | 각 생성 뒤 정적+의미 검증을 병합하고, 실패 시 수술적 지시로 재생성(bounded). |
 | **전 구간 구조화 출력** | 모든 LLM 호출이 pydantic 스키마 강제(`with_structured_output`), 자유텍스트 파싱 제거. |
 | **추적성(provenance)** | 유스케이스는 `requirement_ids`로, 스텝은 `covered_req_ids`로 소스 FR을 태깅 → 커버리지를 코드로 검증. |
@@ -48,7 +50,10 @@ STEP 4 — 관계 · 다이어그램
         └ (gates on) → feedback_relationships[interrupt]  → END
 ```
 
-**매크로 흐름(4단계)은 고정**(재현성). 표본화·검증·반성·피드백은 각 단계 **내부**에서만 일어난다.
+**매크로 흐름(4단계)은 고정** — 고정되는 것은 **실행 경로**이고 출력이 아니다(§4.1).
+단, 흐름은 **되돌아갈 수 있다**: 각 그룹 뒤의 `supervise_*` 노드가 남은 결함을 **그것을 낸
+단계의 그룹으로** 돌려보낸다(조건부 엣지, `settings.max_redo_rounds`로 묶임 — §4.3).
+표본화·검증·반성은 각 단계 **내부**에서, 되돌아가기는 **그룹 사이**에서 일어난다.
 비대화형(gates off, 배치/자율)에서는 interrupt 없이 끝까지 진행한다.
 
 ---
@@ -82,8 +87,13 @@ STEP 4 — 관계 · 다이어그램
   p.62). subfunction FR은 상위 UC의 `requirement_ids`로 흡수. NFR은 유스케이스가 아니라 `nfr_ids` 제약으로 부착.
   - **커버리지 강제-수리 루프**: 고아 FR(어떤 UC에도 안 걸린 FR)을 코드로 계산 → 그것만 담아 재프롬프트로
     보충(최대 `max_coverage_iters`). 요구 누락 원천 차단.
+- **review_model(의미=독립 검증자)**: 액터·유스케이스를 `agent/validator.py`에 넘겨 규칙 위반을 판정
+  (`model_review` = issues·semantic_status·unexamined_rules). 예전에는 이 단계에 의미 검증이 **아예 없어서**
+  책이 명시한 `actors.sud-is-not-an-actor`(p.59)조차 아무도 보지 않았다. **여기서 고치지는 않는다** —
+  원인이 `identify_actors`에 있어 되돌리려면 오케스트레이션이 필요하다(표면화 후 사람이 피드백으로 되돌린다).
 - **check_coverage(결정론)**: 집합 연산으로 `orphan_fr_ids`(누락)·`unattached_nfr_ids`(전역 제약 후보)·
-  `unknown_requirement_refs`(환각)·`coverage_ratio` 산출.
+  `unknown_requirement_refs`(환각)·`coverage_ratio` 산출. 의미 판정과 나란히 두는 이유: 하나는
+  "빠진 게 없나", 다른 하나는 "규칙을 지켰나"이고 서로를 대신하지 못한다.
 
 ### STEP 3 — 유스케이스 명세 (병렬 + 반성)
 `app/requirements/agent/steps/step3_specifications.py`
@@ -93,8 +103,9 @@ STEP 4 — 관계 · 다이어그램
   **extensions** · success/minimal guarantee.
   - **확장 구조화**: `label`(3a) · `branch_step`(int, 분기 스텝) · `handling_steps`(sub_step 코드) ·
     `outcome`(resume|alternate_success|fail) · `resume_at_step`. → 어디서 갈라지고 어디로 복귀/실패하는지 파싱 없이 구조로.
-  - **스텝 수는 목표 아님**: "3-9"는 Cockburn 관찰(p.208)이지 하드룰이 아니라 게이트하지 않음. 각 스텝은 하나의
-    sub-goal(Guideline 6). 자동 결과(로깅/감사/암호화/확인)는 스텝이 아니라 guarantee(p.64).
+  - **스텝 수는 목표 아님**: "three to nine"은 Cockburn 관찰(p.208, Reminder 6)이지 하드룰이 아니라 게이트하지 않음.
+    각 스텝은 하나의 sub-goal(Guideline 6, p.93). 자동 결과(로깅/감사/암호화/확인)는 스텝이 아니라
+    guarantee(Ch. 6, "Minimal Guarantees" p.83 — **구체적 적용은 우리 판단**).
 - **반성(reflection) 루프** — LLM 출력을 그대로 믿지 않음:
   - `_clean`: 마크다운/특수문자 정리(결정론).
   - `_validate_spec`(정적): 확장 분기/복귀 참조 무결성, 무분기(if/else), 제어토큰(Success!/Fail!),
@@ -112,7 +123,7 @@ STEP 4 — 관계 · 다이어그램
   1. **입력**: 액터 + 유스케이스 + **주 시나리오**(공유행위 판단 근거) + 결정론 **후보 힌트**(공유 스텝→include,
      `parent_actor`→일반화). include 힌트는 top-N만(프롬프트 크기 가드; 출력 개수 제한 아님).
   2. **LLM 도출**: association/include/extend/generalization/파생 UC.
-     - **include는 기본 관계**(Cockburn "first rule of thumb", p.207) — 실제 공유 sub-goal에 적극.
+     - **include는 기본 관계**(Ch. 10 Linking Use Cases, p.114-117 — **우선순위 정리는 우리 판단**) — 실제 공유 sub-goal에 적극.
      - **공유 인증/로그인/인가는 include 아님 = precondition**(선행 Log On 유스케이스, p.81).
      - 실패/에러/취소를 extend·파생 UC로 **승격 금지**(인라인 확장 유지, p.109). extend는 진짜 optional 인터럽션만.
   3. **의미검증 + 반성**(`RELATIONSHIP_VALIDATOR_SYSTEM`): precondition-as-include, consequence-as-include,
@@ -133,22 +144,77 @@ STEP 4 — 관계 · 다이어그램
 ### 4.1 하이브리드 검증 (정적 + 의미 + 반성)
 - **정적(코드)**: `check_coverage`, `_validate_spec`, 관계 참조검증·orphan 탐지, `render_diagram`.
   결정론이라 재현 가능하고 값싸다. 정적 결과는 LLM이 "말로 무마" 못 하게 코드에서 확정.
-- **의미(근거 LLM)**: `SPEC_VALIDATOR_SYSTEM`(명세), `RELATIONSHIP_VALIDATOR_SYSTEM`(관계). 정적이 못 잡는
-  안티패턴만 판정. `enable_semantic_validator`로 on/off.
+  **결정론이 필요한 판정은 반드시 이 층에 둔다** — 아래 이유로 LLM 층에서는 얻을 수 없다.
+
+  > ⚠ **출력 재현성은 이 모델에서 얻을 수 없다.** `gpt-oss-120b`는 MoE이고 라우팅이 함께
+  > 배치된 요청에 좌우된다. 배치가 바뀌면 부동소수 리덕션 순서도 바뀌어 로짓이 갈리고,
+  > argmax가 뒤집히는 토큰 하나로 출력이 갈라진다. `temperature=0`+`seed`는 분산을 줄이는
+  > 장치일 뿐이다(`agent/llm.py` docstring). 실측: **같은 입력을 5회 판정하니 답이 갈렸다**
+  > (곁따라 걸린 규칙이 케이스마다 1/5·2/5·4/5). **그래서 LLM 출력에 대한 주장은 한 번 돌려서 하지 않는다** —
+  > 표본을 반복해 비율로 낸다(`app/requirements/evaluation/semantic.py`).
+- **의미(독립 검증자, `agent/validator.py`)**: 생성기와 계보를 나눈 별도 호출. 단계는 "어느 단계인지"만
+  말하고 무엇을 볼지는 지식베이스가 정한다(`enable_semantic_validator`로 on/off). 세 가지를 지킨다:
+  - **black-box** — 산출물만 넘긴다. 생성 프롬프트도 사용자 피드백도 주지 않는다(주면 "규칙을 지켰나"가
+    아니라 "지시를 따랐나"를 보게 된다). `tests/test_validator.py`가 피드백 누출을 막는다.
+  - **early victory 방어** — `is_valid` 대신 **규칙마다 한 줄씩** 판정을 받는다(`schemas.RuleVerdict`).
+    훑고 넘어간 규칙이 응답에서 드러나고 저하로 기록된다(`unexamined_rules`).
+  - **근거 대조** — 지식베이스에 없는 규칙을 인용한 판정은 버린다. 전부 버려지면 "결함 없음"이 아니라
+    `ungrounded`다(= 판정을 얻지 못했다).
 - **반성 루프**: 검증 실패 → 수술적 지시로 재생성 → 재검증(bounded, 회귀 방지, 마지막 정상본 유지).
+  step2는 이 루프가 없다(위 `review_model` 참고).
 
-### 4.2 Cockburn 그라운딩
-> 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖
-> `report/easydep-research/docs/research/` 로 옮겼다. 경로는 그 안에서의 상대 경로다.
+### 4.2 Cockburn 그라운딩 — 규칙 지식베이스
+**규칙의 집은 `app/requirements/knowledge/`다.** 규범 문장(우리 표현)·인용 좌표·근거 등급·
+유보 문구가 규칙 레코드 하나에 모여 있고, 검증 프롬프트·결정론 검출기·지적 문구가 전부
+거기서 파생된다. 예전에 이 자리를 지켰던 `docs/research/cockburn-grounding.md`는 저장소 밖
+(`report/easydep-research/`)이라 아무도 확인할 수 없었다 — 그래서 데이터로 들여왔다.
 
-Cockburn, *Writing Effective Use Cases* 로 프롬프트 지침을 항목별 교차검증
-(`docs/research/cockburn-grounding.md`, 페이지 인용). 도서는 저작물이라 저장소에 없다.
-핵심 교정:
-- 공유 인증 = **precondition**(include 아님, p.81) · 자동결과 = **guarantee**(스텝·include 아님, p.64)
-- include는 **권장 기본**, extend/generalize만 sparingly(p.207) · supporting 액터 오른쪽(p.243)
-- UI 금지 단어목록은 명문화되지 않음 → **예시 단어로만 한정**(p.209) · "3-9 steps"는 관찰이지 제한 아님(p.208)
+도서는 저작물이라 저장소에 없다(`d1a7ec5`, 히스토리 전체에서 삭제). 담는 것은 **좌표뿐이고
+본문은 없다.** 로컬 사본은 `materials/Usecase_Knowledge/`(gitignore)에 두고 대조에만 쓴다:
 
-### 4.3 대화형 피드백 (2경로)
+```
+python -m app.requirements.knowledge.verify_citations     # 도서 인용 18건 대조
+```
+
+인쇄 페이지↔물리 페이지 오프셋은 측정하고, 사본이 없으면 `tests/test_citations.py`가
+건너뛴다(CI는 책 없이 돈다).
+
+**근거 등급**(`knowledge/basis.py`) — 지적이 어느 무게인지 산출물에서 구별되게 한다.
+`stated`(책·표준이 그렇게 적었고 페이지를 댈 수 있다) / `inferred`(우리가 정했거나, 예시에서
+일반화했거나, 페이지는 확인했지만 결론이 우리 것). `inferred`인 규칙은 유보 문구가 필수이고,
+검증 프롬프트와 지적 문구에 그 사실이 함께 실린다.
+
+핵심 교정(전부 로컬 사본으로 대조, 2026-07-26):
+- 공유 인증 = **precondition**(include 아님, p.81) · 전제조건은 스텝에서 재확인하지 않음(p.81)
+- 자동결과 = **guarantee**(스텝·include 아님) — Ch. 6 `Minimal Guarantees` **p.83**.
+  ~~p.64~~는 오기였다(그 페이지는 Ch. 5 목표 고도). 구체적 적용은 우리 판단.
+- include는 **권장 기본**, extend/generalize만 sparingly — Ch. 10 `Linking Use Cases`
+  **p.114-117**. ~~p.207~~은 오기였다(그 페이지는 Reminder 5 "Who Has the Ball?").
+- supporting 액터 오른쪽(Guideline 18, p.243) · 실패는 인라인 확장 유지(p.109)
+- UI 금지 단어목록은 명문화되지 않음 → **예시 단어로만 한정**(p.209 Reminder 7 "Keep the GUI Out")
+- "three to nine steps"는 관찰이지 제한 아님(p.208 Reminder 6) — `NON_RULE`로 기록해 **어디에서도
+  강제하지 않는다**
+
+### 4.3 되돌아가기 (supervisor)
+`app/requirements/agent/supervisor.py`
+
+반성 루프는 **단계 안에 갇혀 있었다**. 원인이 위에 있으면 그 자리에서 다시 써도 안 고쳐지고,
+`repair_stopped="no_improvement"`가 바로 그 신호인데 올려보낼 통로가 없었다. `review_model`이
+찾은 결함도 아무도 고치지 못했다(원인이 `identify_actors`에 있다).
+
+- **라우팅 표는 지식베이스다.** 지적은 규칙 id를 들고 다니고(`Rule.tag`), 규칙은 자기를 낸
+  단계를 안다(`Rule.owner`). 되돌릴 곳은 **찾아보면 되는 사실**이라 LLM에 묻지 않는다 —
+  유도 가능한 판단에 비결정성을 더할 이유가 없다(§4.1). LLM 감독자로 바꿀 자리는 `decide()`다.
+- **에스컬레이션**: 그 단계가 이미 포기했으면 같은 단계로 되돌리지 않고 위로 올린다
+  (specs→use_cases→actors). 지시에 "아래가 스스로 못 고쳤다"는 사실을 함께 싣는다.
+- **가장 위쪽 하나만** 되돌린다(위를 고치면 아래는 cascade로 다시 돈다). `max_redo_rounds`로 묶는다.
+- 되돌린 기록은 `redo_history`(owner·이유·escalated·rule_ids)로 남는다.
+- **배치 러너도 같은 판단을 돌린다**(`runner.run_pipeline`) — 평가 세트가 재는 실행이 배치라서,
+  여기에 없으면 되돌아가기의 효과가 측정에 잡히지 않는다.
+
+⚠ 게이트 그래프(대화형)는 아직 사람이 라우팅한다 — 되돌아가기는 평문(비대화형) 그래프에만 있다.
+
+### 4.4 대화형 피드백 (2경로)
 1. **그래프 게이트**(`app/requirements/agent/steps/feedback_gates.py`, `enable_feedback_gates`): 각 스텝(1~4) 말미에서
    `interrupt`로 피드백 요청. 피드백 주면 그 스텝 재생성 + 게이트로 루프백, 빈 값이면 forward 진행(하위 스텝은
    자연스럽게 fresh 재실행 = cascade). step1 clarify도 같은 스위치로 통일.
@@ -228,27 +294,41 @@ relationships.json` · `diagram.puml` · `use_cases/uc_NN_<slug>/{use_case,spec}
 app/
   config.py          # 설정(단일 소스)
   schemas.py         # 모든 구조화 출력 pydantic 스키마
-  prompts.py         # 프롬프트 빌더(Cockburn 그라운딩) + 피드백/검증 프롬프트
+  prompts.py         # 생성·피드백 프롬프트 (검증 프롬프트는 knowledge/ 에서 조립)
   classifier.py      # 파인튜닝 BERT FR/NFR 로더·추론
+  model_assets.py    # 저장소에 쪼개 넣은 BERT 가중치 재조립(로드 직전 1회)
   runner.py          # 배치 러너(run_pipeline/persist_run/load_state)
   run_pipeline.py    # 러너 CLI
   feedback.py        # 완료본 피드백(의도분류+cascade)
   apply_feedback.py  # 피드백 CLI
   cli.py / main.py   # 터미널 / FastAPI 서빙
+  evaluation/        # 변경이 나아진 것인지 판정할 근거
+    scorecard.py     # 실행을 **규칙 단위로** 채점 + 두 채점표의 증감(무효 비교는 경고)
+    seeded.py        # 결함을 알고 심은 산출물 — 정적 5건(CI 게이트) + 의미 12건
+    semantic.py      # 의미 규칙 눈금을 N회 반복으로 (실제 LLM · 게이트 아님)
+  knowledge/         # 규칙 지식베이스 (파이프라인을 모른다 = 개편을 따라온다)
+    rules.py         # 규칙 레코드 27개 — 규범 문장·인용 좌표·근거 등급·유보 (단일 소스)
+    basis.py         # 근거 등급(stated/inferred)과 프롬프트 고지 문구
+    detectors.py     # 규칙에 묶인 결정론 검출기 5개
+    verify_citations.py  # 로컬 도서 사본과 인용 대조 (로컬 전용 명령)
   agent/
     graph.py         # StateGraph 조립 + 서빙 헬퍼
     state.py         # AgentState + TypedDict
     llm.py           # NIM 접속 + 구조화 출력(폴백)
+    validator.py     # 독립 의미 검증자 — 산출물만 보고 규칙 위반을 판정
+    grounding.py     # 검증자가 댄 rule_id 대조 — 없는 규칙 인용은 버린다
+    supervisor.py    # 되돌아가기 판단 — 결함을 낸 단계로, 포기했으면 그 위로
     steps/
       step1_requirements.py  # 구체화·분류
-      step2_usecases.py      # 액터·유스케이스·커버리지
+      step2_usecases.py      # 액터·유스케이스·모델 검증·커버리지
       step3_specifications.py# 명세(병렬+반성)
       step4_diagram.py       # 관계(마이닝+검증)·PlantUML
       feedback_gates.py      # 각 스텝 말미 interrupt 게이트
 inputs/              # 입력 데이터셋(*.json)
 artifacts/           # 실행별 산출물(.gitignore)
-scripts/             # 데이터셋 변환 등
-materials/           # BERT 모델 · Cockburn PDF · PURE
+scripts/             # 데이터셋 변환 · BERT 가중치 분할(shard_bert_model.py) 등
+materials/           # BERT 모델(커밋) · Usecase_Knowledge/ 도서 사본(**gitignore**, 인용 대조 전용)
+                     # 가중치는 GitHub 한도 때문에 bert_model/weights/ 에 45MiB 조각으로
                      # (조사·근거 문서 docs/research/ 는 저장소 밖 report/easydep-research/ 로 옮김)
 tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통합
 ```
@@ -260,10 +340,27 @@ tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통�
   헤르메틱(더미 키, BERT/의미검증 off).
 - **라이브(옵트인)**: `RUN_LIVE_TESTS=1` 시 실제 NIM으로 데이터셋별 parametrize end-to-end(`test_live_step2/3/4`).
 - 병렬성은 `threading.Barrier`로 동시성 증명, cascade·정합성은 스테이지 목킹으로 검증.
+- **규칙 불변식**(`tests/test_knowledge.py`): 짐작인 규칙은 유보 필수 · 라벨이 약속한 좌표 형식 준수 ·
+  규칙↔검출기 양방향 맞물림 · **규칙 아닌 것은 어디에서도 강제되지 않음** · 판정자 없는 결함 규칙 목록 고정.
+- **인용 대조**(`tests/test_citations.py`): 로컬 도서 사본이 있으면 인용 18건을 대조하고, 없으면 건너뛴다.
+- **검증자 규율**(`tests/test_validator.py`): black-box 경계(피드백 누출 금지) · 훑고 넘어간 규칙이
+  기록되는지 · 근거 없는 판정이 버려지고 그때 "통과"가 아닌지 · 죽은/꺼진 검증기가 통과가 아닌지.
+- **검사기 눈금 — 정적**(`tests/test_evaluation.py`): 규칙마다 심어 둔 결함을 잡는지(5/5) ·
+  대조군에서 오탐이 없는지 · 심어 두지 않은 검출기 규칙이 없는지 · 그 검사가 **자격증명 없이**
+  도는지. `python -m app.requirements.evaluation seeded`(눈금이 죽으면 exit 1).
+- **검사기 눈금 — 의미**(`tests/test_live_evaluation.py`, `RUN_LIVE_TESTS=1`): LLM 판정은 결정론이
+  아니라 CI 게이트가 될 수 없다. 대신 케이스마다 N회 돌려 **0/N인 규칙이 없는지**와 대조군
+  오탐률만 본다. `python -m app.requirements.evaluation semantic --repeats 3`.
 
 ---
 
 ## 10. 근거 문서
-- `docs/research/cockburn-grounding.md` — 프롬프트/체크의 도서 페이지 인용 교차검증(핵심 교정 포함)
+- `app/requirements/knowledge/rules.py` — **규칙과 인용의 단일 소스**(옛 `cockburn-grounding.md`의 자리).
+  대조는 `python -m app.requirements.knowledge.verify_citations`.
+- `docs/requirements-agent-improvements.md` — 개편 후보(C1~C7) + 상용 방법론 조사
+
+> 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖 `report/easydep-research/docs/research/` 로
+> 옮겼다(`e10c527`). 경로는 그 안에서의 상대 경로다.
+
 - `docs/research/requirements-concreteness-and-gore.md` — 구체성 rubric·GORE 조사
 - `docs/research/reference-project-analysis.md` — 참고 프로젝트 기법 선별(적용/미적용 근거)

@@ -14,16 +14,28 @@ import pytest
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.agent.steps import step4_diagram as s4
+from app.requirements.common import telemetry
 from app.requirements.schemas import (
     Association,
     DerivedUseCase,
     ExtendRelation,
     GeneralizationRelation,
     IncludeRelation,
-    RelationshipCritique,
+    Critique,
     RelationshipModel,
+    RuleVerdict,
 )
+from app.requirements.knowledge import rules
 from conftest import dataset_names, load_dataset
+
+
+def _rel_verdicts(violated: dict[str, str] | None = None) -> Critique:
+    """이 단계의 규칙 **전부**에 대한 판정. 빠뜨리면 검증자가 훑고 넘어간 것으로 기록된다."""
+    violated = violated or {}
+    return Critique(verdicts=[
+        RuleVerdict(rule_id=r.id, violated=r.id in violated, directive=violated.get(r.id, ""))
+        for r in rules.judged_by(rules.DRAW_DIAGRAM, rules.JUDGED_VALIDATOR)
+    ])
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +117,9 @@ def test_render_diagram_supporting_actor_direction_and_placement():
 
 
 def test_render_diagram_empty_use_cases():
-    assert s4.render_diagram({"use_cases": []})["diagram"] == "@startuml\n@enduml"
+    # 상류가 돌았는데 결과가 없는 상태(빈 목록)다 — 키 자체가 없는 것과는 다르다.
+    state = {"use_cases": [], "actors": [], "relationships": {}}
+    assert s4.render_diagram(state)["diagram"] == "@startuml\n@enduml"
 
 
 def test_check_relationships_aggregates_report():
@@ -294,22 +308,24 @@ def test_relationship_reflection_removes_antipattern(monkeypatch):
     calls = {"gen": 0}
 
     def fake(schema, messages):
-        if schema is RelationshipModel:
-            calls["gen"] += 1
-            if calls["gen"] == 1:  # 첫 생성: 인증 include
-                return RelationshipModel(
-                    associations=[], extends=[], generalizations=[],
-                    includes=[IncludeRelation(base_use_case="Place order", included_use_case="Authenticate")],
-                    derived_use_cases=[DerivedUseCase(name="Authenticate", origin="factored_include")],
-                )
-            return RelationshipModel(associations=[], includes=[], extends=[], generalizations=[], derived_use_cases=[])
-        # RelationshipCritique: gen 1이면 invalid(지시), 재생성(gen 2) 후 valid.
-        return RelationshipCritique(
-            is_valid=calls["gen"] >= 2,
-            findings=[] if calls["gen"] >= 2 else ["Remove the Authenticate include — it is a precondition (Log On)."],
-        )
+        calls["gen"] += 1
+        if calls["gen"] == 1:  # 첫 생성: 인증 include
+            return RelationshipModel(
+                associations=[], extends=[], generalizations=[],
+                includes=[IncludeRelation(base_use_case="Place order", included_use_case="Authenticate")],
+                derived_use_cases=[DerivedUseCase(name="Authenticate", origin="factored_include")],
+            )
+        return RelationshipModel(associations=[], includes=[], extends=[], generalizations=[], derived_use_cases=[])
+
+    # 검증자는 별도 모듈이라 별도로 목킹한다. gen 1은 위반, 재생성(gen 2)부터 깨끗.
+    def fake_critique(schema, messages):
+        violated = {"rel.shared-authentication-is-a-precondition":
+                    "Remove the Authenticate include — it is a precondition (Log On)."} \
+            if calls["gen"] < 2 else {}
+        return _rel_verdicts(violated)
 
     monkeypatch.setattr(s4, "invoke_structured", fake)
+    monkeypatch.setattr(s4.validator, "invoke_structured", fake_critique)
     state = {
         "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
         "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User"}],
@@ -318,6 +334,72 @@ def test_relationship_reflection_removes_antipattern(monkeypatch):
 
     assert rel["includes"] == []                # 안티패턴 include 제거됨
     assert rel["relationship_issues"] == []      # 재생성으로 해소
+    assert rel["semantic_status"] == "ok"        # 해소가 확인을 거친 결과다
+    assert rel["repair_iters"] == 1              # 재생성 1회를 썼다
+    assert rel["repair_stopped"] == "clean"
+
+
+def test_relationship_repair_gives_up_when_it_does_not_help(monkeypatch):
+    """step3와 같은 채택 규칙 — 결함이 줄지 않으면 예산을 더 쓰지 않는다."""
+    monkeypatch.setattr(s4.settings, "enable_semantic_validator", True)
+    monkeypatch.setattr(s4.settings, "max_repair_iters", 3)
+    calls = {"n": 0}
+
+    def fake(schema, messages):
+        calls["n"] += 1
+        return RelationshipModel(
+            associations=[], includes=[], extends=[],
+            generalizations=[], derived_use_cases=[],
+        )
+
+    monkeypatch.setattr(s4, "invoke_structured", fake)
+    monkeypatch.setattr(
+        s4.validator, "invoke_structured",
+        lambda schema, messages: _rel_verdicts(
+            {"rel.extend-is-only-optional-interruption": "still wrong"}
+        ),
+    )
+    state = {
+        "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User"}],
+    }
+    out = s4.identify_relationships(state)
+
+    assert out["relationships"]["repair_stopped"] == "no_improvement"
+    assert out["relationships"]["repair_iters"] == 1   # 예산 3인데 1회에서 멈춘다
+    assert calls["n"] == 2                             # 최초 + 재생성 1회
+    report = s4.check_relationships(out)["relationship_report"]
+    assert report["repair_stopped"] == "no_improvement"
+
+
+def test_dead_relationship_validator_is_not_reported_as_clean(monkeypatch):
+    """step3와 같은 규칙 — 검증기가 죽으면 "안티패턴 없음"이라고 하면 안 된다."""
+    monkeypatch.setattr(s4.settings, "enable_semantic_validator", True)
+
+    def fake(schema, messages):
+        if schema is RelationshipModel:
+            return RelationshipModel(
+                associations=[], includes=[], extends=[],
+                generalizations=[], derived_use_cases=[],
+            )
+        raise RuntimeError("NIM down")
+
+    monkeypatch.setattr(s4, "invoke_structured", fake)
+    state = {
+        "actors": [{"name": "User", "kind": "primary", "description": "d", "parent_actor": None}],
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "User"}],
+    }
+    with telemetry.run_scope("t") as stats:
+        out = s4.identify_relationships(state)
+
+    assert out["relationships"]["relationship_issues"] == []
+    assert out["relationships"]["semantic_status"] == "failed"
+
+    report = s4.check_relationships(out)["relationship_report"]
+    assert report["semantic_status"] == "failed"
+    assert [d["component"] for d in stats.as_dict()["degradations"]] == [
+        "relationships.semantic_validator"
+    ]
 
 
 def test_identify_relationships_empty_when_no_use_cases(monkeypatch):
@@ -325,7 +407,7 @@ def test_identify_relationships_empty_when_no_use_cases(monkeypatch):
         s4, "invoke_structured",
         lambda schema, messages: pytest.fail("UC 없으면 호출되면 안 됨"),
     )
-    out = s4.identify_relationships({"use_cases": []})
+    out = s4.identify_relationships({"use_cases": [], "actors": []})
     assert out["relationships"]["associations"] == []
     assert out["relationships"]["includes"] == []
 

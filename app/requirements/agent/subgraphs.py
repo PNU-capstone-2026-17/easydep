@@ -2,7 +2,7 @@
 
 각 단계를 독립 서브그래프로 컴파일한다. 상위 그래프의 노드명은 단계별 '동작'을 나타낸다:
   refine_requirements  — intake → clarify → classify        (구체화 + FR/NFR 분류)
-  model_use_cases      — identify_actors → identify_use_cases → check_coverage
+  model_use_cases      — identify_actors → identify_use_cases → review_model → check_coverage
   write_specifications — generate_specs → check_specs
   draw_diagram         — identify_relationships → check_relationships → render_diagram
 
@@ -19,13 +19,18 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.step1_requirements import intake, clarify, classify
+from app.requirements.agent.steps.step1_requirements import clarify, classify, intake
 from app.requirements.agent.steps.step2_usecases import (
-    identify_actors, identify_use_cases, check_coverage,
+    check_coverage,
+    identify_actors,
+    identify_use_cases,
+    review_model,
 )
-from app.requirements.agent.steps.step3_specifications import generate_specs, check_specs
+from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
 from app.requirements.agent.steps.step4_diagram import (
-    identify_relationships, check_relationships, render_diagram,
+    check_relationships,
+    identify_relationships,
+    render_diagram,
 )
 
 
@@ -43,14 +48,16 @@ def build_refine_requirements():
 
 
 def build_model_use_cases():
-    """STEP 2 — 액터/유스케이스 도출 + FR 커버리지 점검."""
+    """STEP 2 — 액터/유스케이스 도출 + 의미 검증 + FR 커버리지 점검."""
     b = StateGraph(AgentState)
     b.add_node("identify_actors", identify_actors)
     b.add_node("identify_use_cases", identify_use_cases)
+    b.add_node("review_model", review_model)
     b.add_node("check_coverage", check_coverage)
     b.add_edge(START, "identify_actors")
     b.add_edge("identify_actors", "identify_use_cases")
-    b.add_edge("identify_use_cases", "check_coverage")
+    b.add_edge("identify_use_cases", "review_model")
+    b.add_edge("review_model", "check_coverage")
     b.add_edge("check_coverage", END)
     return b.compile()
 

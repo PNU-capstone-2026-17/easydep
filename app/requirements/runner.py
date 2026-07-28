@@ -16,16 +16,18 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from app.requirements.agent import stages, supervisor
 from app.requirements.agent.rtm import build_rtm, render_rtm_md
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step2_usecases import (
     check_coverage,
     identify_actors,
     identify_use_cases,
+    review_model,
 )
 from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
 from app.requirements.agent.steps.step4_diagram import (
@@ -63,24 +65,74 @@ def load_state(run_dir: str | Path) -> dict:
         "actors": _j("actors.json", []),
         "use_cases": _j("use_cases.json", []),
         "coverage": _j("coverage.json", {}),
+        "model_review": _j("model_review.json", {}),
+        **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
         "diagram": diagram_path.read_text(encoding="utf-8") if diagram_path.exists() else "",
     }
 
 
+def _rerun_from(state: dict, owner: str) -> list[str]:
+    """`owner` 단계부터 끝까지 다시 돌린다. 실행한 노드 이름을 돌려준다.
+
+    순서는 `stages.PIPELINE`에서 파생한다 — 집계 노드(`check_*`)까지 포함해야 리포트가
+    새 산출물을 반영한다. 되돌릴 단계는 `stage_feedback`에서 지시를 읽는다.
+
+    **함수는 이름으로 이 모듈에서 찾는다**(`stages.Stage.fn`을 직접 쓰지 않는다). 정방향
+    패스가 `identify_actors(st)`처럼 모듈 속성을 부르기 때문에, 되돌리기가 import 시점에
+    묶인 참조를 쓰면 **한 단계를 가리키는 이름이 두 개**가 된다 — 테스트의 monkeypatch가
+    한쪽에만 걸리고, 그건 조용히 다른 코드를 재는 일이다(`feedback.py`가 같은 이유로
+    `globals()` 조회를 쓴다).
+    """
+    order = list(stages.PIPELINE)
+    start = next(i for i, s in enumerate(order) if s.key == owner)
+    ran: list[str] = []
+    for stage in order[start:]:
+        fn = globals().get(stage.node, stage.fn)
+        state.update(fn(cast(AgentState, state)))
+        ran.append(stage.node)
+    return ran
+
+
 def run_pipeline(classified: list[dict]) -> dict:
-    """step2~4를 순서대로 실행해 전체 상태(actors~diagram)를 반환한다."""
+    """step2~4를 순서대로 실행하고, 남은 결함은 **낸 단계로 되돌린다**.
+
+    그래프(`agent/graph.py`)는 되돌아가기를 조건부 엣지로 표현하는데, 이 러너는 그래프를
+    우회해 함수를 직접 부른다(그게 배치 경로의 규약이다). 그래서 같은 판단(`supervisor.decide`)을
+    여기서도 돌려야 한다 — **평가 세트가 재는 실행이 이 배치**이고, 여기에 되돌아가기가
+    없으면 C2의 효과가 측정에 잡히지 않는다.
+    """
     state: dict = {"classified": classified}
     st = cast(AgentState, state)  # 노드 함수는 AgentState를 받는다(런타임엔 동일 dict)
     state.update(identify_actors(st))
     state.update(identify_use_cases(st))
+    state.update(review_model(st))
     state.update(check_coverage(st))
     state.update(generate_specs(st))
     state.update(check_specs(st))
     state.update(identify_relationships(st))
     state.update(check_relationships(st))
     state.update(render_diagram(st))
+
+    # 되돌아가기. 상한은 그래프와 같은 설정을 쓴다(`settings.max_redo_rounds`).
+    while True:
+        decision = supervisor.decide(state)
+        if decision.action != supervisor.REDO or not decision.owner:
+            break
+        state["stage_feedback"] = {decision.owner: decision.instruction}
+        state["redo_rounds"] = int(state.get("redo_rounds", 0) or 0) + 1
+        history = list(state.get("redo_history") or [])
+        ran = _rerun_from(state, decision.owner)
+        history.append({
+            "owner": decision.owner,
+            "reason": decision.reason,
+            "escalated": decision.escalated,
+            "rule_ids": list(decision.rule_ids),
+            "rerun": ran,
+        })
+        state["redo_history"] = history
+        state["stage_feedback"] = {}   # 낡은 지시를 다음 라운드로 넘기지 않는다
     return state
 
 
@@ -95,7 +147,7 @@ def _slug(text: str, maxlen: int = 40) -> str:
 
 
 def _now_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _dump(path: Path, obj) -> None:
@@ -112,6 +164,11 @@ def _summarize(state: dict) -> dict:
         "coverage": state.get("coverage", {}),
         "n_specs": len(specs),
         "spec_issues": issues,  # 위반 있는 UC만
+        # 의미 검증이 실제로 돌았는지. 이게 없으면 결함 0건이 "깨끗하다"인지
+        # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
+        "model_review": state.get("model_review", {}),
+        # 되돌아가기가 있었는지. 있었으면 이 실행의 비용은 한 바퀴 이상이다.
+        "redo_rounds": state.get("redo_rounds", 0),
         "relationships": {
             k: len(rel.get(k, []))
             for k in ("associations", "includes", "extends", "generalizations", "derived_use_cases")
@@ -138,6 +195,15 @@ def persist_run(
     _dump(run_dir / "actors.json", state.get("actors", []))
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
+    # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
+    # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
+    _dump(run_dir / "model_review.json", state.get("model_review", {}))
+    # 되돌아가기 기록. 이게 없으면 산출물만 보고 **어느 단계가 왜 다시 돌았는지** 알 수 없다.
+    # (2026-07-26 C2 첫 측정 때 실제로 없어서, 호출 수로 추정해야 했다.)
+    _dump(run_dir / "redo.json", {
+        "redo_rounds": state.get("redo_rounds", 0),
+        "redo_history": state.get("redo_history", []),
+    })
     _dump(run_dir / "use_case_specs.json", state.get("use_case_specs", []))
     _dump(run_dir / "relationships.json", state.get("relationships", {}))
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")

@@ -1,7 +1,77 @@
 """요구사항 분석 에이전트의 시스템 프롬프트.
 
 전 단계 영어로 작성한다 (입력/출력 영어 중심 결정 + BERT는 영어 단문 학습).
+
+**검증 프롬프트는 여기서 쓰지 않는다** — `app/requirements/knowledge/rules.py`의 규칙
+레코드에서 조립한다(`_validator_system`). 규칙을 산문으로 여기 적으면 같은 규칙이
+프롬프트·검출기·문서에 세 벌로 갈라진다. 생성 프롬프트는 아직 산문 그대로다(그 이유는
+`knowledge/rules.py`의 "아직 없는 것" 절).
+
+⚠ 그래서 **생성 프롬프트의 인용은 기계가 대조하지 못한다.** 실제로 하나가 틀려 있었다:
+자동결과 문단이 "Cockburn: absorb system consequences into the driving goal"이라고
+귀속했는데, `absorb`도 `driving goal`도 책에 없는 말이다(로컬 사본으로 확인, 2026-07-26).
+지금은 규칙 id를 가리킨다 — 근거는 지식베이스가 들고, 대조는 `verify_citations`가 한다.
+남은 산문 인용(`Cockburn label like '3a'` 등)도 KB로 옮기면 같은 대조를 받는다.
 """
+from app.requirements.knowledge import rules as _rules
+
+
+def _validator_system(
+    stage: str, role: str, do_not_flag: str, only: str | None = None
+) -> str:
+    """의미 검증자 시스템 프롬프트를 규칙 지식베이스에서 조립한다.
+
+    네 가지를 모델에게 한꺼번에 준다:
+      1. 판정 근거가 될 규칙 목록 — **이 목록 밖으로 나가지 말라**는 지시와 함께.
+      2. 각 규칙의 출처와 그 성격(책이 적은 것인지 우리 판단인지).
+      3. 이미 결정론으로 검사한 규칙 목록 — 두 번 지적하지 않도록.
+      4. **규칙마다 한 줄씩** 판정하라는 요구 — 훑고 넘어가는 것을 막는다.
+
+    3번이 예전에는 산문에 손으로 적혀 있었다. 검출기를 하나 늘리면 그 문장도 고쳐야 했고,
+    안 고치면 검증자가 이미 잡힌 것을 다시 지적했다.
+
+    4번은 early victory 방어다. "깨끗하다" 한 줄로 끝낼 수 있으면 검증자는 그렇게 한다 —
+    규칙마다 판정을 받으면 무엇을 안 봤는지가 응답에서 드러난다(`agent/validator.py`).
+
+    `only`를 주면 **그 규칙 하나만** 담는다. 6개를 한 번에 판정하게 하면 판정이 흔들린다는
+    측정(흔들림 90%, `docs/requirements-agent-improvements.md` §7) 때문에 생긴 갈래다 —
+    과제를 쪼개면 확률이 0.5에서 멀어지는지 보려는 것이다.
+    """
+    judged = _rules.judged_by(stage, _rules.JUDGED_VALIDATOR)
+    if only is not None:
+        judged = tuple(r for r in judged if r.id == only)
+        if not judged:
+            raise KeyError(f"{stage}에 의미 검증 규칙 {only!r}이 없다")
+    n = len(judged)
+    count = f"{n} verdict" if n == 1 else f"{n} verdicts"
+    block = "\n".join(r.prompt_line() for r in judged)
+    already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
+    return f"""You are a zero-tolerance {role}.
+
+The rules below are the ONLY grounds you may judge on. Each line is: rule id, where the rule
+comes from, then what it requires. Some lines add a note about how well the rule is grounded —
+judge those rules just the same, but never present them as the source's own words.
+
+[RULES YOU JUDGE]
+{block}
+
+Deterministic checks have ALREADY run for these rules — do NOT report them again:
+{already}
+
+Return **exactly {count} — one per rule above, in the same order.** Copy each rule_id
+EXACTLY. Set violated=true only when the artifact really breaks that rule, and then give one
+short imperative repair directive; leave the directive empty otherwise.
+
+There are two ways to be wrong here, and both matter:
+- **Skipping a rule.** Every rule gets a verdict, including the ones whose answer is obviously
+  "not violated". A short list of verdicts is not a clean artifact, it is an unfinished review.
+- **Inventing a violation to fill a verdict.** A well-formed artifact violates few rules or
+  none. And a defect matching no rule above is not reported at all — there is no rule_id for
+  it, so nothing could act on it.
+
+Do NOT flag: {do_not_flag}
+
+Return the structured object only."""
 
 # 요구사항이 유스케이스 도출에 충분히 구체적인지 판단하고,
 # 부족하면 clarifying questions 를, 충분하면 refined_requirements 를 만든다.
@@ -186,7 +256,7 @@ Produce:
   Automated system consequences and cross-cutting quality concerns — logging, auditing,
   encrypting stored data, sending a receipt/confirmation — are INTERNAL success guarantees, NOT
   main-scenario steps. Put them in success_guarantee / minimal_guarantee, never as a step
-  (Cockburn: absorb system consequences into the driving goal).
+  (rule spec.consequence-is-a-guarantee).
 - extensions: exception and alternate flows. For EACH extension:
     * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
     * branch_step: the main_scenario step_number it branches from; use null for a global
@@ -205,31 +275,36 @@ Produce:
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
 
-# STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). generator와 같은 Cockburn 기준 공유.
-SPEC_VALIDATOR_SYSTEM = """You are a zero-tolerance Cockburn use-case critic. Deterministic
-static checks (branching words, control tokens, UI terms, broken step references, missing
-contract) have ALREADY run — do NOT repeat them. Judge ONLY the SEMANTIC defects static
-analysis cannot catch:
+#: 단계 → (역할, 안 잡을 것). 규칙 하나짜리 프롬프트를 만들 때 다시 쓴다.
+_VALIDATOR_ROLES = {
+    _rules.MODEL_USE_CASES: (
+        "use-case model critic reviewing the actors and use cases of one system",
+        "a grouping you would have done differently; a missing actor or use case (that is "
+        "coverage, checked deterministically elsewhere); naming or wording preferences",
+    ),
+    _rules.WRITE_SPECIFICATIONS: (
+        "use-case specification critic",
+        'a step with more than one clause; the absence of an explicit "System validates" step; '
+        "a use case having no extensions; slightly high/low goal level; wording preferences",
+    ),
+    _rules.DRAW_DIAGRAM: (
+        "use-case-relationship critic reviewing proposed includes, extends, generalizations and "
+        "derived use cases (name the offending relationship in each directive)",
+        "a small, clean relationship set; an ordinary association; a use case with no relationships",
+    ),
+}
 
-- Hidden branching: a step whose behavior depends on an unstated outcome (must be split into
-  a separate extension), even without the literal word "if".
-- Internal-component / design leakage disguised in business words (naming an internal service,
-  engine, store, cache, or "the database/server") — the steps must stay black-box.
-- Scope creep: a step, condition, or handling that invents a capability absent from the given
-  functional requirements.
-- Broken remerge semantics: a resume/handling flow that does not actually re-establish the
-  state its resume step assumes.
-- Precondition re-check: an MSS step that re-verifies a state a precondition already guarantees.
-- Consequence-as-step: an automated system consequence or cross-cutting quality concern
-  (logging, auditing, encrypting stored data, sending a receipt/confirmation) written as a
-  main-scenario STEP — it is an internal success guarantee and must move to a guarantee, not
-  be a step (Cockburn: absorb system consequences into the driving goal).
 
-Do NOT flag: a step with more than one clause; the absence of an explicit "System validates"
-step; a use case having no extensions; slightly high/low goal level; wording preferences.
+# STEP 2 — 액터·유스케이스 모델 의미 검증. 이 단계에는 예전에 의미 검증기가 아예 없었고,
+# 책이 명시한 결함(SuD는 액터가 아니다, p.59)조차 아무도 보지 않았다.
+MODEL_VALIDATOR_SYSTEM = _validator_system(
+    _rules.MODEL_USE_CASES, *_VALIDATOR_ROLES[_rules.MODEL_USE_CASES]
+)
 
-Set is_valid=false if any semantic defect exists, and give ONE short imperative directive per
-defect in findings (max two sentences each). Return the structured object only."""
+# STEP 3 — 명세 의미 검증(정적 체크가 못 잡는 부분만). 규칙은 knowledge/rules.py에서 온다.
+SPEC_VALIDATOR_SYSTEM = _validator_system(
+    _rules.WRITE_SPECIFICATIONS, *_VALIDATOR_ROLES[_rules.WRITE_SPECIFICATIONS]
+)
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
 def spec_repair_user(base_user: str, directives: list[str]) -> str:
@@ -240,25 +315,67 @@ def spec_repair_user(base_user: str, directives: list[str]) -> str:
     )
 
 
-# STEP 4 — 관계 의미 검증(Cockburn 근거). 정적 참조검증이 못 잡는 안티패턴을 판정.
-RELATIONSHIP_VALIDATOR_SYSTEM = """You are a Cockburn use-case-relationship critic. Review the
-proposed relationships (includes, extends, generalizations, derived use cases) and flag ONLY
-these grounded defects:
+# STEP 4 — 관계 의미 검증. 규칙은 knowledge/rules.py에서 온다.
+RELATIONSHIP_VALIDATOR_SYSTEM = _validator_system(
+    _rules.DRAW_DIAGRAM, *_VALIDATOR_ROLES[_rules.DRAW_DIAGRAM]
+)
 
-- Precondition-as-include: an <<include>> whose included sub-goal is actually a PRECONDITION
-  shared across use cases — especially login / authentication / authorization ("the user is
-  logged in / is authorized"). That is a precondition set up by a PRIOR use case (e.g. Log On),
-  NOT an include drawn from every use case. Flag it for removal. (Cockburn p.81)
-- Consequence-as-include: an <<include>> of a cross-cutting internal consequence (logging,
-  auditing, encrypting data, sending confirmations). These are success guarantees / NFRs, never
-  included sub-goals. Flag for removal. (Cockburn p.64)
-- Extend misuse: an <<extend>> used for a failure/edge case, or for ordinary sequential "after
-  A do B" ordering, instead of a genuinely optional, interrupting, electively-triggered behavior.
-- Generalization that inverts or confuses meaning.
+#: 단계 → 검증 프롬프트. `agent/validator.py`가 단계 이름만 알고 프롬프트를 찾도록 한다 —
+#: 검증자가 단계별 상수 이름을 직접 알면 단계를 하나 더 넣을 때 그쪽도 고쳐야 한다.
+_VALIDATOR_SYSTEMS = {
+    _rules.MODEL_USE_CASES: MODEL_VALIDATOR_SYSTEM,
+    _rules.WRITE_SPECIFICATIONS: SPEC_VALIDATOR_SYSTEM,
+    _rules.DRAW_DIAGRAM: RELATIONSHIP_VALIDATOR_SYSTEM,
+}
 
-Return is_valid=false if any defect exists, with ONE concise imperative directive per defect
-(name the offending relationship). Otherwise is_valid=true with empty findings. Do not invent
-new defects; a small, clean relationship set is good."""
+
+def probe_system_for(stage: str, rule_id: str) -> str:
+    """**어느 규칙이든** 하나만 담은 검증 프롬프트 — 측정 전용.
+
+    `validator_system_for`는 지금 판정 대상인 규칙(`judged_by=validator`)만 담는다. 그래서
+    강등된 규칙(`GUIDANCE`로 내린 것)은 그 경로로 물어볼 수 없는데, **강등이 옳았는지 다른
+    표본에서 다시 재려면 물어봐야 한다.** 승격 후보를 재는 데도 같은 자리다.
+
+    파이프라인은 이걸 쓰지 않는다 — 쓰면 강등이 강등이 아니게 된다.
+    """
+    rule = _rules.rule(rule_id)
+    if rule.stage != stage:
+        raise KeyError(f"{rule_id}는 {stage} 단계의 규칙이 아니다({rule.stage})")
+    role, do_not_flag = _VALIDATOR_ROLES[stage]
+    n = "1 verdict"
+    already = ", ".join(_rules.already_checked_names(stage)) or "(none)"
+    return f"""You are a zero-tolerance {role}.
+
+The rule below is the ONLY ground you may judge on.
+
+[RULE YOU JUDGE]
+{rule.prompt_line()}
+
+Deterministic checks have ALREADY run for these rules — do NOT report them again:
+{already}
+
+Return **exactly {n}** for that rule. Copy the rule_id EXACTLY. Set violated=true only when
+the artifact really breaks it, and then give one short imperative repair directive.
+
+Do NOT flag: {do_not_flag}
+
+Return the structured object only."""
+
+
+def validator_system_for(stage: str, only: str | None = None) -> str:
+    """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
+
+    `only`를 주면 **그 규칙 하나만** 담은 프롬프트를 만든다(`settings.validator_per_rule`).
+    """
+    if stage not in _VALIDATOR_SYSTEMS:  # pragma: no cover - 배선 오류
+        raise KeyError(
+            f"{stage}: 의미 검증 프롬프트가 없다. knowledge/rules.py에 규칙을 넣었다면 "
+            "여기에도 프롬프트를 등록해야 한다."
+        )
+    if only is None:
+        return _VALIDATOR_SYSTEMS[stage]
+    role, do_not_flag = _VALIDATOR_ROLES[stage]
+    return _validator_system(stage, role, do_not_flag, only=only)
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).

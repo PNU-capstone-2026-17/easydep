@@ -5,10 +5,10 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NotRequired
 
 from langgraph.graph.message import add_messages
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 
 class RequirementItem(TypedDict):
@@ -60,6 +60,22 @@ class UseCaseSpecItem(TypedDict):
     minimal_guarantee: list[str]
     issues: list[str]               # 검증 위반(정적+의미). reflection 루프 후 남은 것.
     repair_iters: int               # 반성 루프에서 재생성한 횟수
+    # 의미 검증(LLM)을 실제로 거쳤는지.
+    # "ok"|"disabled"|"failed"|"ungrounded"(지식베이스에 없는 규칙만 인용해 버렸다)|"pending".
+    # issues가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없어서 둔다.
+    # 예전 spec item과 섞일 수 있으므로 NotRequired.
+    semantic_status: NotRequired[str]
+    # 생성이 성공했는지. False면 이 항목은 자리만 지키는 빈 명세다(형제를 살리려고
+    # 남긴다 — 목록에서 빼면 산출물에서 조용히 사라진다). 없으면 성공한 것으로 본다.
+    generated: NotRequired[bool]
+    # 반성 루프가 멈춘 이유.
+    #   "clean"          결함이 없어져서
+    #   "no_improvement" 재생성이 결함을 줄이지 못해서(개수가 같은 것도 포함)
+    #   "budget"         max_repair_iters를 다 써서
+    #   "error"          재생성 호출이 실패해서
+    #   "not_generated"  최초 생성부터 실패해 루프에 들어가지도 못해서
+    # 부분(수술적) 수정으로 바꿀 값어치가 있는지는 이 분포를 봐야 안다.
+    repair_stopped: NotRequired[str]
 
 
 class AgentState(TypedDict):
@@ -77,6 +93,10 @@ class AgentState(TypedDict):
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]
     coverage: dict                   # check_coverage의 결정론적 커버리지 결과
+    # review_model(독립 의미 검증자)의 판정. {issues, semantic_status, unexamined_rules}.
+    # 커버리지와 나란히 두는 이유: 하나는 "빠진 게 없나"(결정론), 다른 하나는 "모델이
+    # 규칙을 지켰나"(의미)이고 둘은 서로를 대신하지 못한다.
+    model_review: NotRequired[dict]
     # 3단계 — 유스케이스별 명세(병렬 생성) + 검증 요약
     use_case_specs: list[UseCaseSpecItem]
     spec_report: dict                # check_specs의 명세 검증 집계
@@ -87,3 +107,15 @@ class AgentState(TypedDict):
     # 정적 라우팅 마커 — 피드백 게이트가 "advance"(다음 단계)/"loop"(재생성 후 재질문)를 써 두면
     # 서브그래프의 조건부 엣지(route_gate)가 이를 읽어 분기한다. Command(goto) 동적 라우팅 대체.
     gate_route: NotRequired[str]
+    # --- 되돌아가기(supervisor) ---
+    # 결함을 낸 단계로 몇 번 되돌렸는지. `settings.max_redo_rounds`로 묶인다.
+    redo_rounds: NotRequired[int]
+    # 되돌린 기록: {owner, reason, escalated, rule_ids}. 왜 그 단계가 다시 돌았는지가
+    # 남아 있지 않으면, 산출물만 보고는 되돌리기가 있었는지조차 알 수 없다.
+    redo_history: NotRequired[list[dict]]
+    # 되돌릴 단계에 들려 보내는 지시. 단계 함수가 `feedback` 인자 대신 여기서 읽는다 —
+    # 그래프 엣지로 되돌릴 때는 인자를 넘길 자리가 없다.
+    stage_feedback: NotRequired[dict[str, str]]
+    # 정적 라우팅 마커 — 감독 노드가 "advance" 또는 되돌릴 **그룹 이름**을 써 두면
+    # 조건부 엣지(route_redo)가 읽어 분기한다. gate_route와 같은 방식이다.
+    redo_route: NotRequired[str]

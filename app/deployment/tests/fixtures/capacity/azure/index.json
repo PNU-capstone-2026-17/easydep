@@ -1,0 +1,14 @@
+{
+  "resources": {
+    "Microsoft.ContainerService/managedClusters@2025-01-01": {
+      "$ref": "containerservice/microsoft.containerservice/2025-01-01/types.json#/20"
+    },
+    "Microsoft.ContainerService/managedClusters@2026-01-01-preview": {
+      "$ref": "containerservice/microsoft.containerservice/2026-01-01-preview/types.json#/20"
+    },
+    "Microsoft.ContainerService/managedclusters@2024-01-01": {
+      "$ref": "containerservice/microsoft.containerservice/2024-01-01/types.json#/20"
+    }
+  },
+  "resourceFunctions": {}
+}

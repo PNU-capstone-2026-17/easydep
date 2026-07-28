@@ -1,0 +1,158 @@
+"""결정론 검출기 — 규칙 하나에 검출기 하나.
+
+## 왜 규칙 옆으로 옮겼나
+
+이 정규식들은 `step3_specifications.py` 안에 있었고, 각자의 근거는 그 옆 주석에만 있었다.
+그래서 지적 문구가 `"step 2: UI 용어 ['screen'] — black-box 위반"`으로 나갔다. 어느 규칙을
+어긴 것인지, 그 규칙이 책의 것인지 우리 것인지는 산출물에서 사라졌다.
+
+검출기를 규칙에 묶으면 지적이 근거를 들고 나간다:
+
+    step 2: UI 용어 ['screen'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7); p.91-92 · 우리 판단]
+
+`우리 판단`이 붙는 이유는 그 단어 목록이 **책이 든 예시에서 우리가 일반화한 것**이라서다
+(`rules.py`의 `spec.black-box-no-ui-mechanics` caveat). 이 사실이 전에는 코드 주석에만 있었다.
+
+## 검출기의 사정거리
+
+여기 있는 것은 **결정론으로 참인 것만**이다. 문자열이 있는지, 참조가 가리키는 스텝이
+실제로 있는지. 의미 판정(숨은 분기·내부컴포넌트 누출·scope creep)은 검출기가 아니라
+LLM 검증자가 하고, 그 규칙들은 `detector=None`으로 남아 있다.
+"""
+from __future__ import annotations
+
+import re
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+
+from app.requirements.knowledge import rules
+
+
+@dataclass(frozen=True)
+class Finding:
+    """규칙 위반 하나. **어느 규칙인지를 들고 다닌다.**"""
+
+    rule_id: str
+    message: str
+    #: 명세 안의 위치(`trigger`, `step 3`, `3a1`, 확장 라벨). 전체에 대한 지적이면 None.
+    location: str | None = None
+
+    def as_issue(self) -> str:
+        """상태·리포트에 실리는 한 줄. 꼬리표로 근거가 함께 간다."""
+        head = f"{self.location}: {self.message}" if self.location else self.message
+        return f"{head} {rules.tag_of(self.rule_id)}"
+
+
+# Cockburn: MSS/확장은 무분기 → 명시적 if/else만 걸러낸다(미묘한 분기는 LLM 몫).
+_BRANCH = re.compile(r"\b(if|else)\b", re.IGNORECASE)
+_CONTROL_TOKEN = re.compile(r"(success!|fail!)", re.IGNORECASE)
+# ⚠ 이 목록은 **완전목록이 아니다.** 그가 예로 든 단어(p.209·p.91-92)로만 한정한다 —
+# page/menu/form 등은 그의 예시에 없어 제외한다(form은 p.177에서 오히려 긍정적으로 등장).
+# 나머지 내부컴포넌트 누출 판단은 임의 사전이 아니라 LLM 검증자에 위임한다.
+_UI_TERMS = ("screen", "field", "fields", "button", "click", "clicks", "clicked", "tab")
+_UI_PATTERNS = {w: re.compile(rf"\b{re.escape(w)}\b", re.IGNORECASE) for w in _UI_TERMS}
+
+
+def ui_words(text: str) -> list[str]:
+    """문장에 있는 Cockburn 예시 UI 용어(단어 경계 매칭). 공개 — 테스트·리포트가 쓴다."""
+    return sorted(w for w, pat in _UI_PATTERNS.items() if pat.search(text))
+
+
+def _locations(spec: dict) -> Iterator[tuple[str, str]]:
+    """검사 대상 문장과 그 위치. trigger + MSS 스텝 + 확장 handling."""
+    yield "trigger", spec.get("trigger", "")
+    for step in spec.get("main_scenario", []):
+        yield f"step {step['step_number']}", step["sentence"]
+    for ext in spec.get("extensions", []):
+        for handling in ext.get("handling_steps", []):
+            yield handling["sub_step"], handling["sentence"]
+
+
+def extension_refs(spec: dict) -> list[Finding]:
+    """확장의 분기·복귀 참조가 주 시나리오를 실제로 가리키는지."""
+    rule_id = "spec.extension-reference-integrity"
+    step_nums = {s["step_number"] for s in spec.get("main_scenario", [])}
+    found: list[Finding] = []
+    for ext in spec.get("extensions", []):
+        label = ext.get("label") or "?"
+        branch = ext.get("branch_step")
+        if branch is not None and branch not in step_nums:
+            found.append(Finding(rule_id, f"branch_step {branch}가 주 시나리오에 없음", label))
+        outcome = ext.get("outcome")
+        resume = ext.get("resume_at_step")
+        if outcome == "resume":
+            if resume is None:
+                found.append(Finding(rule_id, "outcome=resume인데 resume_at_step 없음", label))
+            elif resume not in step_nums:
+                found.append(
+                    Finding(rule_id, f"resume_at_step {resume}가 주 시나리오에 없음", label)
+                )
+        elif resume is not None:
+            found.append(
+                Finding(rule_id, f"outcome={outcome}인데 resume_at_step이 설정됨", label)
+            )
+    return found
+
+
+def branch_words(spec: dict) -> list[Finding]:
+    """문장에 명시적 분기어(if/else)가 있는지."""
+    return [
+        Finding("spec.no-branching-in-a-step", "분기어(if/else) — 무분기여야 함(별도 확장으로 분리)", loc)
+        for loc, sentence in _locations(spec)
+        if _BRANCH.search(sentence)
+    ]
+
+
+def control_tokens(spec: dict) -> list[Finding]:
+    """문장에 시나리오 종결 토큰(Success!/Fail!)이 산문으로 섞였는지."""
+    return [
+        Finding("spec.no-control-tokens-in-prose", "제어토큰(Success!/Fail!) — outcome 필드로 표현할 것", loc)
+        for loc, sentence in _locations(spec)
+        if _CONTROL_TOKEN.search(sentence)
+    ]
+
+
+def ui_terms(spec: dict) -> list[Finding]:
+    """문장에 UI 용어(예시 단어)가 있는지."""
+    found: list[Finding] = []
+    for loc, sentence in _locations(spec):
+        words = ui_words(sentence)
+        if words:
+            found.append(
+                Finding("spec.black-box-no-ui-mechanics", f"UI 용어 {words} — black-box 위반", loc)
+            )
+    return found
+
+
+def contract_fields(spec: dict) -> list[Finding]:
+    """계약(전제조건·성공보장)이 비어 있는지."""
+    rule_id = "spec.contract-completeness"
+    found: list[Finding] = []
+    if not spec.get("preconditions"):
+        found.append(Finding(rule_id, "preconditions 없음"))
+    if not spec.get("success_guarantee"):
+        found.append(Finding(rule_id, "success_guarantee 없음"))
+    return found
+
+
+#: 검출기 이름 → 구현. 이름은 `rules.Rule.detector`가 가리키는 그것이다.
+#: 양방향으로 맞물려 있어야 한다(선언만 있고 구현이 없거나, 구현만 있고 아무 규칙도
+#: 안 쓰는 검출기가 있으면 테스트가 실패한다).
+SPEC_DETECTORS: dict[str, Callable[[dict], list[Finding]]] = {
+    "extension_refs": extension_refs,
+    "branch_words": branch_words,
+    "control_tokens": control_tokens,
+    "ui_terms": ui_terms,
+    "contract_fields": contract_fields,
+}
+
+
+def spec_findings(spec: dict) -> list[Finding]:
+    """명세 하나에 대한 결정론 검증 전부.
+
+    검출기 등록 순서를 따른다 — 참조 무결성 → 문장 정적 체크 → 계약 완결성.
+    """
+    found: list[Finding] = []
+    for detect in SPEC_DETECTORS.values():
+        found.extend(detect(spec))
+    return found

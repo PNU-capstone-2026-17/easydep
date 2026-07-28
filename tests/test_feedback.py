@@ -3,12 +3,15 @@
   1. load_state 라운드트립 (persist → load).
   2. apply_feedback: 의도 분류·재생성·하위 cascade·정합성 리포트 (스테이지 목킹).
   3. specs local 재생성이 형제 spec을 보존.
+  4. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
 """
 import json
 
+import pytest
+
 from app.requirements import feedback as fb
 from app.requirements import runner
-from app.requirements.schemas import FeedbackIntent
+from app.requirements.schemas import FeedbackEdit, FeedbackIntent
 
 
 # ---------------------------------------------------------------------------
@@ -182,3 +185,62 @@ def test_generate_specs_local_target_preserves_siblings(monkeypatch):
 
     assert specs["UC1"]["trigger"] == "OLD"                # 형제 보존
     assert specs["UC2"]["trigger"] == "regen:시나리오 보강"   # 대상만 재생성
+
+
+# ---------------------------------------------------------------------------
+# 4. 구조화 편집 — 화면이 아는 것을 LLM으로 다시 추측하지 않는다
+# ---------------------------------------------------------------------------
+def test_structured_edit_skips_the_intent_classifier(monkeypatch):
+    """FeedbackEdit이 오면 분류 LLM을 부르지 않고 그대로 의도로 쓴다."""
+    monkeypatch.setattr(
+        fb, "classify_feedback",
+        lambda feedback, state: pytest.fail("구조화 편집에는 분류기가 돌면 안 된다"),
+    )
+    edit = FeedbackEdit(
+        stage="specs", scope="local", target_ids=["UC2"], instruction="결제 실패 확장을 추가"
+    )
+    intent = fb.resolve_intent(edit, {})
+
+    assert intent.stage == "specs"
+    assert intent.scope == "local"
+    assert intent.target_ids == ["UC2"]
+    assert intent.instruction == "결제 실패 확장을 추가"
+
+
+def test_broad_edit_drops_stray_targets():
+    """scope와 target_ids가 어긋나면 scope가 진실이다."""
+    edit = FeedbackEdit(
+        stage="use_cases", scope="broad", target_ids=["UC1"], instruction="다시 뽑아줘"
+    )
+    assert fb.resolve_intent(edit, {}).target_ids == []
+
+
+def test_natural_language_still_goes_through_the_classifier(monkeypatch):
+    """자연어 경로는 그대로다 — 다른 단계로 라우팅되는 기능을 잃으면 안 된다."""
+    seen = {}
+
+    def fake_classify(feedback, state):
+        seen["feedback"] = feedback
+        return FeedbackIntent(
+            stage="actors", scope="broad", target_ids=[], instruction="관리자 액터를 분리"
+        )
+
+    monkeypatch.setattr(fb, "classify_feedback", fake_classify)
+    intent = fb.resolve_intent("액터에서 관리자를 분리해줘", {})
+
+    assert seen["feedback"] == "액터에서 관리자를 분리해줘"
+    assert intent.stage == "actors"      # use_cases 게이트에서 말해도 actors로 간다
+
+
+def test_structured_edit_is_clamped_like_natural_language(monkeypatch):
+    """화면이 보냈다고 믿고 아직 없는 하위 산출물을 재생성하려 들면 안 된다."""
+    monkeypatch.setattr(fb, "_regenerate_stage", lambda state, intent: None)
+    monkeypatch.setattr(fb, "_cascade", lambda state, stage, up_to=None: [])
+
+    # 아직 use_cases 게이트인데(up_to=coverage) specs를 지목했다.
+    edit = FeedbackEdit(stage="specs", scope="local", target_ids=["UC1"], instruction="고쳐")
+    intent, _ = fb.apply_feedback_upto({}, edit, up_to="coverage")
+
+    assert intent.stage == "use_cases"   # 재생성 가능한 최상위로 클램프
+    assert intent.scope == "broad"
+    assert intent.target_ids == []

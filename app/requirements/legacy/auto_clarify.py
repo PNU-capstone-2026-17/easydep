@@ -1,4 +1,8 @@
-from app.requirements.legacy.example_sampler import DEFAULT_DATASET, format_examples, sample_examples
+from app.requirements.legacy.example_sampler import (
+    DEFAULT_DATASET,
+    format_examples,
+    sample_examples,
+)
 
 _DEFAULT_EXAMPLES = """[Reference Examples]
         - The system must provide user authentication through a valid verification process.

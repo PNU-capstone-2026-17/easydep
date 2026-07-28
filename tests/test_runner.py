@@ -15,28 +15,87 @@ from app.requirements import runner
 def test_run_pipeline_calls_stages_in_order(monkeypatch):
     calls = []
 
-    def stage(name, key):
+    def stage(name, key, value=None):
         def fn(state):
             calls.append(name)
-            return {key: f"<{name}>", "phase": name}
+            return {key: f"<{name}>" if value is None else value, "phase": name}
         return fn
+
+    # 감독자(되돌아가기)가 읽는 세 키는 **실제 모양**이어야 한다. 여기 문자열을 넣으면
+    # 그건 배선 오류이고, 감독자가 방어할 일이 아니다(결함 0건 = 되돌리지 않음).
+    empty_specs = []
+    empty_rel = {}
+    empty_review = {"issues": [], "semantic_status": "ok", "unexamined_rules": []}
 
     monkeypatch.setattr(runner, "identify_actors", stage("actors", "actors"))
     monkeypatch.setattr(runner, "identify_use_cases", stage("use_cases", "use_cases"))
+    monkeypatch.setattr(runner, "review_model",
+                        stage("review_model", "model_review", empty_review))
     monkeypatch.setattr(runner, "check_coverage", stage("coverage", "coverage"))
-    monkeypatch.setattr(runner, "generate_specs", stage("specs", "use_case_specs"))
+    monkeypatch.setattr(runner, "generate_specs",
+                        stage("specs", "use_case_specs", empty_specs))
     monkeypatch.setattr(runner, "check_specs", stage("check_specs", "spec_report"))
-    monkeypatch.setattr(runner, "identify_relationships", stage("rel", "relationships"))
+    monkeypatch.setattr(runner, "identify_relationships",
+                        stage("rel", "relationships", empty_rel))
     monkeypatch.setattr(runner, "check_relationships", stage("check_rel", "relationship_report"))
     monkeypatch.setattr(runner, "render_diagram", stage("diagram", "diagram"))
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
-    assert calls == ["actors", "use_cases", "coverage", "specs", "check_specs",
-                     "rel", "check_rel", "diagram"]
+    assert calls == ["actors", "use_cases", "review_model", "coverage", "specs",
+                     "check_specs", "rel", "check_rel", "diagram"]
     assert state["classified"][0]["id"] == "R1"      # 원본 입력 유지
     assert state["actors"] == "<actors>"
     assert state["diagram"] == "<diagram>"
+
+
+def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch):
+    """배치 경로에도 되돌아가기가 있어야 한다 — **평가 세트가 재는 실행이 이 배치**다.
+
+    그래프는 조건부 엣지로 되돌리고 러너는 함수를 직접 부르므로, 같은 판단을 러너에서도
+    돌린다. 여기에 없으면 C2의 효과가 측정에 잡히지 않는다.
+    """
+    from app.requirements.agent import supervisor
+    from app.requirements.knowledge import rules
+
+    monkeypatch.setattr(supervisor.settings, "max_redo_rounds", 1)
+    issue = f"[semantic] fix {rules.tag_of('spec.remerge-re-establishes-state')}"
+    passes = {"specs": 0}
+
+    def fake_specs(state):
+        passes["specs"] += 1
+        # 1회차엔 스스로 못 고친 결함이 남고, 되돌린 뒤(2회차)엔 깨끗하다.
+        first = passes["specs"] == 1
+        return {"use_case_specs": [{
+            "use_case_id": "UC1",
+            "issues": [issue] if first else [],
+            "repair_stopped": "no_improvement" if first else "clean",
+        }]}
+
+    def noop(key, value):
+        return lambda state: {key: value}
+
+    monkeypatch.setattr(runner, "identify_actors", noop("actors", []))
+    monkeypatch.setattr(runner, "identify_use_cases", noop("use_cases", []))
+    monkeypatch.setattr(runner, "review_model", noop("model_review", {"issues": []}))
+    monkeypatch.setattr(runner, "check_coverage", noop("coverage", {}))
+    monkeypatch.setattr(runner, "generate_specs", fake_specs)
+    monkeypatch.setattr(runner, "check_specs", noop("spec_report", {}))
+    monkeypatch.setattr(runner, "identify_relationships", noop("relationships", {}))
+    monkeypatch.setattr(runner, "check_relationships", noop("relationship_report", {}))
+    monkeypatch.setattr(runner, "render_diagram", noop("diagram", ""))
+
+    state = runner.run_pipeline([{"id": "FR1", "text": "x", "type": "FR"}])
+
+    assert passes["specs"] == 2                       # 되돌아가서 다시 만들었다
+    assert state["redo_rounds"] == 1
+    entry = state["redo_history"][0]
+    assert entry["owner"] == "use_cases"              # specs가 포기했으니 그 위로
+    assert entry["escalated"] is True
+    # 되돌린 지점부터 끝까지 다시 돌았다(집계 노드 포함).
+    assert entry["rerun"][0] == "identify_use_cases"
+    assert entry["rerun"][-1] == "render_diagram"
+    assert state["stage_feedback"] == {}              # 낡은 지시는 남지 않는다
 
 
 # ---------------------------------------------------------------------------
