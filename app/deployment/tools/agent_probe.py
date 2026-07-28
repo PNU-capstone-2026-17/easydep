@@ -151,9 +151,14 @@ PROBES: tuple[Probe, ...] = (
           "전부 '어느 클라우드(AWS/Azure/GCP)냐'고 되물었고, 그 **최선의 답이 "
           "0/5 실패로 찍혔다.** R1·R2·R4·H3에 이어 **같은 실수 다섯 번째**다 — "
           "모호한 질의의 옳은 행동은 R4가 지키므로, 여기서는 프로바이더를 밝혀 "
-          "본연의 검사(불변 속성을 기억이 아니라 도구로 답하는가)만 남긴다.",
+          "본연의 검사(불변 속성을 기억이 아니라 도구로 답하는가)만 남긴다.\n"
+          "**후보 추가(2026-07-28 실측)**: 3회 중 1회가 표·굵은 글씨로 답하며 "
+          "식별자를 `Availability Zone`으로 **띄어 썼다.** 맞는 답인데 실패로 "
+          "찍혔다 — 식별자를 그대로 복사할 것이라는 기대가 틀렸다. 영어 짝(EN3)도 "
+          "같은 자리에서 같은 이유로 걸려, **언어 효과가 아니라 기대 결함**임이 "
+          "짝 비교로 확인됐다.",
           want_tools=("cap_resource_constraints",),
-          want_any=("AvailabilityZone",)),
+          want_any=("AvailabilityZone", "vailability Zone")),
     Probe("3-1", "지금 내 계정에 떠 있는 VM 목록 보여줘",
           "**없는 축을 거절하는가.** 지식베이스로 메우면 없는 배포 상태를 지어내는 것.\n"
           "후보에 '제공되지 않'이 빠져 있어 **정확한 거절을 실패로 찍은 적이 있다** — "
@@ -163,7 +168,12 @@ PROBES: tuple[Probe, ...] = (
           want_any=("없습니다", "없어", "조회할 수 없", "확인해 드릴 수 없",
                     "제공되지 않", "지원하지 않", "불가능",
                     "annot", "an't", "nable to", "ot available", "ot supported",
-                    "o access", "on't have", "o not have", "ot connected")),
+                    "o access", "on't have", "o not have", "ot connected",
+                    # 2026-07-28 실측: **한국어로 물어도 답이 영어로 온다**(30칸 중
+                    # 28칸). 그래서 영어 거절 표현의 폭이 곧 이 검사의 폭이다.
+                    # "I'm not able to … aren't supported by the available tools"라는
+                    # 정확한 거절이 위 후보에 하나도 안 걸렸다.
+                    "ot able to", "n't supported", "ot retrieve", "ive-state")),
     Probe("3-3", "t3.medium 시간당 얼마야?",
           "**웹 검색으로 새지 않는가.** 검색 가격과 데이터셋 가격이 섞이면 합계 기준이 어긋난다",
           forbid_tools=("web_search",),
@@ -676,6 +686,13 @@ PROBES: tuple[Probe, ...] = (
 _LOOKALIKE = {
     **dict.fromkeys(map(ord, '‐‑‒–—―−'), "-"),
     **dict.fromkeys(map(ord, '\xa0\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000'), " "),
+    # \uacf1\uc2ac \ub530\uc634\ud45c \u2192 ASCII. **\uc601\uc5b4 \uc9c8\uc758\ub97c \ucc98\uc74c \ud0dc\uc6cc\uc11c\uc57c \ub4dc\ub7ec\ub09c \uacb0\ud568**(2026-07-28):
+    # \uc601\uc5b4 \ub2f5\ubcc0\uc5d0\ub294 \ucd95\uc57d\ud615\uc774 \uc3df\uc544\uc9c0\ub294\ub370(don't\u00b7can't\u00b7won't) \uadf8 \uc544\ud3ec\uc2a4\ud2b8\ub85c\ud53c\uac00
+    # U+2019\ub2e4. EN6\uc774 "I don't have access ... so I can't retrieve a live list"\ub77c\ub294
+    # **\uc815\ud655\ud55c \uac70\uc808**\uc744 \ub0c8\ub294\ub370 `an't`\u00b7`on't have` \ud6c4\ubcf4\uac00 \ud558\ub098\ub3c4 \uc548 \uac78\ub824 \uc2e4\ud328\ub85c
+    # \ucc0d\ud614\ub2e4. \ud55c\uad6d\uc5b4 \uc9c8\uc758\uc5d0\ub294 \ucd95\uc57d\ud615\uc774 \uc5c6\uc5b4 64\uac74\uc744 \ub3cc\ub9ac\ub294 \ub3d9\uc548 \uc548 \ub4dc\ub7ec\ub0ac\ub2e4.
+    **dict.fromkeys(map(ord, '\u2018\u2019\u201b\u2032'), "'"),
+    **dict.fromkeys(map(ord, '\u201c\u201d\u201f\u2033'), '"'),
 }
 
 

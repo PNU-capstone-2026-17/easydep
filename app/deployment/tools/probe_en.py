@@ -78,8 +78,12 @@ PROBES_EN: tuple[Probe, ...] = (
     Probe("EN3", "Which properties of an AWS subnet cannot be changed later?",
           "짝: 1-2a. 불변 속성을 기억이 아니라 도구로 답하는가. 한국어 짝처럼 "
           "**프로바이더를 질의에 밝혀** 모호성을 제거했다 — 안 밝히면 되묻는 것이 "
-          "옳은 답이라 이 검사의 본연이 흐려진다.",
-          want_tools=("cap_resource_constraints",), want_any=("AvailabilityZone",)),
+          "옳은 답이라 이 검사의 본연이 흐려진다.\n"
+          "**후보 추가(2026-07-28 실측)**: 3회 중 1회가 표로 답하면서 식별자를 "
+          "`Availability Zone`으로 **띄어 썼다.** 맞는 답인데 실패로 찍혔다 — "
+          "식별자를 그대로 복사할 것이라는 기대가 틀렸다.",
+          want_tools=("cap_resource_constraints",),
+          want_any=("AvailabilityZone", "vailability Zone")),
 
     Probe("EN4", "What is the Azure equivalent of an AWS VPC?",
           "짝: 3-6. **단순 조회에 계획 도구를 쓰지 않는가.** 사후 합리화가 되어 "
