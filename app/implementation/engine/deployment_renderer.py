@@ -146,8 +146,10 @@ terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
 image_tag=${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to a release tag}
 case "$image_tag" in latest|*[^0-9A-Za-z_.-]*|'') echo "EASYDEP_IMAGE_TAG must be a non-latest release tag" >&2; exit 2 ;; esac
 registry_outputs=$("$terraform_bin" -chdir="$terraform_dir" output -json registry_image_bases)
+provider=$("$terraform_bin" -chdir="$terraform_dir" output -raw provider)
 targets_file=$(mktemp)
-trap 'rm -f "$targets_file"' EXIT
+hosts_file=$(mktemp)
+trap 'rm -f "$targets_file" "$hosts_file"' EXIT
 REGISTRY_OUTPUTS="$registry_outputs" INTENT_PATH="$intent_path" IMAGE_TAG="$image_tag" TARGETS_FILE="$targets_file" python3 - <<'PY'
 import json
 import os
@@ -172,6 +174,23 @@ for workload in intent.get("workloads", []):
     lines.append(f"{name}\t{target}")
 Path(os.environ["TARGETS_FILE"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
+cut -f2 "$targets_file" | sed 's|/.*||' | sort -u > "$hosts_file"
+case "$provider" in
+  azure)
+    while IFS= read -r host; do az acr login --name "${host%%.*}"; done < "$hosts_file"
+    ;;
+  aws)
+    while IFS= read -r host; do
+      region=$(printf '%s' "$host" | awk -F. '{print $4}')
+      test -n "$region"
+      aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$host"
+    done < "$hosts_file"
+    ;;
+  gcp)
+    while IFS= read -r host; do gcloud auth configure-docker "$host" --quiet; done < "$hosts_file"
+    ;;
+  *) echo "unsupported Terraform provider output: $provider" >&2; exit 2 ;;
+esac
 local_image="easydep-build:$image_tag"
 docker build -t "$local_image" -f "$app_root/Dockerfile" "$app_root"
 while IFS="$(printf '\t')" read -r workload target; do
@@ -352,7 +371,13 @@ def infer_intent(
 ) -> dict[str, Any]:
     resources = cloud.get("resources", [])
     provider = cloud_provider(cloud)
-    cluster = next((item for item in resources if cloud_role(provider, item) == "cluster"), {})
+    clusters = [item for item in resources if cloud_role(provider, item) == "cluster"]
+    if len(clusters) != 1:
+        raise ValueError(
+            "Automatic deployment intent inference supports exactly one Kubernetes cluster; "
+            "provide one cluster or use a future multi-cluster deployment model"
+        )
+    cluster = clusters[0]
     registries = [item for item in resources if cloud_role(provider, item) == "registry"]
     networking = cluster.get("networking", {})
     exposed_aliases = deployment_exposed_aliases(deployment_diagram)

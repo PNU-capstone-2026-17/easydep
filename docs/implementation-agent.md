@@ -90,6 +90,8 @@ manifest를 실제로 스케줄할 수 있다. AWS의 EKS cluster/node IAM role 
 GCP의 project/region 및 cluster별 GKE node service-account, Azure의 resource group/location 및 MySQL
 관리자 비밀번호는 배포 환경에서 Terraform 변수로 제공해야 한다.
 resource spec의 `dependsOn`은 VPC/VNet·subnet·Kubernetes cluster의 참조 관계를 결정한다.
+현재 자동 deployment intent 추론과 IaC 생성은 cloud resource spec당 Kubernetes cluster 하나만 지원한다.
+두 개 이상을 선언하면 누락 배포를 방지하기 위해 생성이 실패한다.
 특히 EKS cluster는 동일 네트워크에 연결된 서로 다른 `availabilityZone`의 subnet 두 개 이상을
 명시해야 하며, 이 조건을 충족하지 못하면 IaC 생성이 중단된다. `iac-render.json`의
 `requiredVariables`는 배포 전에 주입해야 하는 provider별 입력값을 구조화해 제공한다.
@@ -126,6 +128,9 @@ Terraform apply → build/push → digest 치환 → kubectl apply를 순서대�
 `latest`가 아닌 release tag를 지정해야 하며, 지정하지 않으면 build/push·치환·배포를 중단한다. 스크립트는
 `EASYDEP_TERRAFORM_PATH`가 있으면 그 절대 경로를, 없으면 PATH의 `terraform`을 사용한다. 실행에는 Terraform,
 Docker, Python 3, kubectl, registry push 권한 및 각 provider 인증이 필요하다.
+build/push 단계는 Terraform output의 provider에 따라 Azure CLI의 `az acr login`, AWS CLI의
+`aws ecr get-login-password`, 또는 gcloud의 `auth configure-docker`를 실행하므로 해당 CLI와 로그인된
+자격증명도 필요하다.
 
 ## 자동 실행 단계
 

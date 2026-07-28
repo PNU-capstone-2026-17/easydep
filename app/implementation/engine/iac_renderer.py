@@ -132,6 +132,8 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
             errors.append("registry image rendering script is missing")
         if not (application / "k8s" / "deploy.sh").is_file():
             errors.append("IaC-to-Kubernetes deployment script is missing")
+        if not (application / "k8s" / "build-push.sh").is_file():
+            errors.append("container build-and-push script is missing")
         outputs = application / "terraform" / "outputs.tf"
         if not outputs.is_file() or 'output "registry_image_bases"' not in outputs.read_text(encoding="utf-8"):
             errors.append("Terraform registry_image_bases output is missing")
@@ -165,6 +167,9 @@ def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> No
         unknown_dependencies = sorted(_depends_on(item) - set(references))
         if unknown_dependencies:
             errors.append(f"resources[{index}].dependsOn references unknown resources: {', '.join(unknown_dependencies)}")
+    clusters = [item for item in resources if _role(provider, item) == "cluster"]
+    if len(clusters) > 1:
+        errors.append("IaC generation currently supports one Kubernetes cluster per cloud resource specification")
     if provider == "aws":
         for cluster in (item for item in resources if _type(provider, item) == "aws_eks_cluster"):
             subnets = _related_resources(cluster, resources, provider, "aws_subnet")

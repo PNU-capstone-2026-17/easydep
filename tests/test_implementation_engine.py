@@ -1668,6 +1668,14 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
         with self.assertRaisesRegex(ValueError, "requires registryRef"):
             infer_intent("orders", cloud)
 
+    def test_infer_intent_rejects_multiple_kubernetes_clusters(self) -> None:
+        cloud = {"provider": "azure", "resources": [
+            {"type": "Microsoft.ContainerService/managedClusters", "name": "first"},
+            {"type": "Microsoft.ContainerService/managedClusters", "name": "second"},
+        ]}
+        with self.assertRaisesRegex(ValueError, "exactly one Kubernetes cluster"):
+            infer_intent("orders", cloud)
+
     @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_iac_renderer_rejects_registry_pull_binding_for_wrong_registry(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1711,6 +1719,9 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("EASYDEP_IMAGE_TAG", deploy)
             self.assertIn("EASYDEP_TERRAFORM_PATH", deploy)
             self.assertIn("build-push.sh", deploy)
+            build_push = (run / "application/k8s/build-push.sh").read_text(encoding="utf-8")
+            for marker in ("az acr login", "aws ecr get-login-password", "gcloud auth configure-docker", "RepoDigests"):
+                self.assertIn(marker, build_push)
             self.assertIn('output "registry_image_bases"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
