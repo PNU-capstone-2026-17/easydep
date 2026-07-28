@@ -27,4 +27,7 @@
 | cloud-kb-guide.md · plain-language-overview.md | 구세대 해설서 (KB 3개 시절 — kb-book으로 대체) |
 | kb-verification-2026-07-28.md | kb-book 외부 검증 — 수치 전수 재현(일치) · 논문 기준 공백 5 · 측정된 편향 6 · 드리프트 11건 |
 | kb-sourcebook-2026-07-28.md | 문외한용 해설 — 축×클라우드 커버리지 격자 + **소스 47종 전수** 설명(URL 포함) |
+| cloud-native-deployment-2026-07-29.md | **연구 관점 요약**(kb-book 축약) — research.md 목표 2를 지식 요구로 번역 · 조사 절차 · 에이전트 반영 4층 · 미결 10건 · 외부 표준 양방향 매핑 |
+| perfkb-field-axis-plan-2026-07-29.md | perfkb 필드 축 재설계 **계획**(실행 전) — details 키 전수 분류 절차·포화·외부 매핑·타당성 위협 6. 실측: aws 24키중 7 · azure 59중 7 · gcp 17중 4 사용, azure maxNics 미러 100% vs 문서표 72.8%(불일치 832) |
+| kb-source-atlas-2026-07-29.md | 재료 47종 전수 — **원본 발췌 → 처리 규칙 → 산출 레코드**를 실제 캐시·산출물에서 뽑아 나란히 놓은 것 (sourcebook의 "무엇"에 대한 "어떻게") |
 | pipeline-big-picture-2026-07-28.md | 요구사항→설계→배포 사슬의 큰 그림 — 설계 산출물이 주는 신호 전수·부족분 3종·관심사 29건 중 23건 미연결·과제 목적 대조 |
