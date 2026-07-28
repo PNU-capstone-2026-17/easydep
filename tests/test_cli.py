@@ -21,7 +21,8 @@ def test_format_results_empty():
 def test_analyze_interactive_completes_directly(monkeypatch):
     monkeypatch.setattr(
         cli, "start_analysis",
-        lambda reqs, tid: {"status": "completed", "requirements": [{"id": "R1"}]},
+        lambda reqs, tid, constraints_text="": {
+            "status": "completed", "requirements": [{"id": "R1"}]},
     )
     outputs = []
     payload = cli.analyze_interactive(
@@ -33,7 +34,7 @@ def test_analyze_interactive_completes_directly(monkeypatch):
 def test_analyze_interactive_clarification_loop(monkeypatch):
     calls = {"n": 0}
 
-    def fake_start(reqs, tid):
+    def fake_start(reqs, tid, constraints_text=""):
         return {"status": "need_clarification", "questions": ["Who?"]}
 
     def fake_resume(answer, tid):
@@ -61,7 +62,7 @@ def test_analyze_interactive_feedback_loop(monkeypatch):
         {"status": "completed", "requirements": [{"id": "R1"}], "use_cases": [{"id": "UC1"}]},
     ])
     answers = iter(["merge A and B", ""])
-    monkeypatch.setattr(cli, "start_analysis", lambda reqs, tid: next(seq))
+    monkeypatch.setattr(cli, "start_analysis", lambda reqs, tid, constraints_text="": next(seq))
     monkeypatch.setattr(cli, "resume_analysis", lambda answer, tid: next(seq))
 
     outputs = []
@@ -77,3 +78,41 @@ def test_main_no_requirements_returns_1(monkeypatch):
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)  # 대화형처럼
     monkeypatch.setattr("builtins.input", lambda p="": "")  # 즉시 빈 줄 → 종료
     assert cli.main([]) == 1
+
+
+def test_cloud_constraints_reach_the_graph(monkeypatch):
+    """**요구사항과 따로 받은 클라우드 제약이 그래프까지 간다.**
+
+    2026-07-29에 발견한 배선 구멍이다. `start_analysis`는 처음부터 `constraints_text`를
+    받고 있었는데 **CLI만 안 넘기고 있었다.** 그래서 터미널로 돌리면 `RESOURCE_SPEC`이
+    영영 안 나왔고, 뒤 단계(배포 계획)는 provider·region 없이 조인이 전부 닫힌 채로
+    돌았다 — 배선 하나가 빠져 축이 통째로 안 열린 자리다.
+    """
+    seen = {}
+
+    def fake_start(reqs, tid, constraints_text=""):
+        seen["constraints"] = constraints_text
+        return {"status": "completed", "requirements": []}
+
+    monkeypatch.setattr(cli, "start_analysis", fake_start)
+    cli.analyze_interactive(
+        ["A student can log in."], "t1", lambda _: "", lambda _: None,
+        constraints_text="Deploy on AWS in the Seoul region.",
+    )
+    assert seen["constraints"] == "Deploy on AWS in the Seoul region."
+
+
+def test_missing_constraints_are_announced_not_swallowed(monkeypatch, capsys, tmp_path):
+    """**없으면 없다고 말한다.**
+
+    조용히 넘어가면 `RESOURCE_SPEC`이 안 나온 이유를 나중에 못 찾는다 — 배선이
+    빠져 있던 동안 정확히 그랬다.
+    """
+    monkeypatch.setattr(
+        cli, "start_analysis",
+        lambda reqs, tid, constraints_text="": {"status": "completed", "requirements": []},
+    )
+    reqs = tmp_path / "r.txt"
+    reqs.write_text("A student can log in.\n", encoding="utf-8")
+    cli.main(["--file", str(reqs), "--no-bert"])
+    assert "클라우드 제약 없음" in capsys.readouterr().out

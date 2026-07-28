@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sys
 import uuid
 from collections.abc import Callable
@@ -39,12 +40,19 @@ def analyze_interactive(
     thread_id: str,
     ask: Callable[[str], str],
     out: Callable[[str], None],
+    constraints_text: str = "",
 ) -> dict:
     """분석을 시작하고, 구체화가 필요하면 ask()로 답변을 받아 완료까지 진행한다.
 
     ask/out을 주입받으므로 테스트에서 입출력을 대체할 수 있다.
+
+    `constraints_text`는 사용자가 **요구사항과 따로** 쓴 클라우드 제약 원문이다.
+    그래프는 처음부터 이 인자를 받고 있었는데(`start_analysis`) **CLI만 안 넘기고
+    있었다**(2026-07-29에 발견). 그래서 터미널로 돌리면 `RESOURCE_SPEC`이 영영
+    안 나왔고, 뒤 단계(배포 계획)는 provider·region 없이 조인이 전부 닫힌 채로
+    돌아갔다 — 배선 하나가 빠져 축이 통째로 안 열린 자리다.
     """
-    payload = start_analysis(requirements, thread_id)
+    payload = start_analysis(requirements, thread_id, constraints_text=constraints_text)
     while payload["status"] in ("need_clarification", "need_feedback"):
         if payload["status"] == "need_clarification":
             out("\n[더 구체화가 필요합니다 — 아래 질문에 답해주세요]")
@@ -60,6 +68,18 @@ def analyze_interactive(
                 answer = ""  # 비대화형/입력종료 → 피드백 없이 진행
         payload = resume_analysis(answer, thread_id)
     return payload
+
+
+def _collect_constraints(args: argparse.Namespace) -> str:
+    """클라우드 제약 원문을 인자/파일에서 모은다. 없으면 빈 문자열.
+
+    요구사항과 **따로** 받는 이유는 `analyze_interactive`의 docstring에 있다.
+    """
+    if args.constraints:
+        return args.constraints.strip()
+    if args.constraints_file:
+        return pathlib.Path(args.constraints_file).read_text(encoding="utf-8").strip()
+    return ""
 
 
 def _collect_requirements(args: argparse.Namespace, out: Callable[[str], None]) -> list[str]:
@@ -95,6 +115,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("requirements", nargs="*", help="요구사항 문장 (여러 개 가능)")
     parser.add_argument("--file", "-f", help="요구사항을 한 줄에 하나씩 담은 파일")
+    # **요구사항과 따로 받는다.** 실측상 provider·region·예산은 요구사항 산문에
+    # 0건이고(`steps/step_resource.py`), 섞으면 분류기가 그것들을 FR/NFR로 판정해야
+    # 한다. 그래프는 처음부터 이 값을 받고 있었는데 CLI만 안 넘기고 있었다.
+    parser.add_argument(
+        "--constraints", "-c",
+        help="클라우드 제약 원문 (예: 'Deploy on AWS in the Seoul region. …')",
+    )
+    parser.add_argument(
+        "--constraints-file", help="클라우드 제약 원문을 담은 파일",
+    )
     parser.add_argument(
         "--no-bert", action="store_true", help="BERT 검증 비활성화(빠르게 실행)"
     )
@@ -118,6 +148,16 @@ def main(argv: list[str] | None = None) -> int:
         print("요구사항이 없습니다. 인자/파일/입력으로 하나 이상 제공하세요.", file=sys.stderr)
         return 1
 
+    constraints = _collect_constraints(args)
+    if constraints:
+        shown = constraints[:100] + ("…" if len(constraints) > 100 else "")
+        print(f"클라우드 제약(요구사항과 별도): {shown}")
+    else:
+        # **없으면 없다고 말한다.** 조용히 넘어가면 `RESOURCE_SPEC`이 안 나온 이유를
+        # 나중에 못 찾는다 — 배선이 빠져 있던 동안 정확히 그랬다.
+        print("클라우드 제약 없음 — RESOURCE_SPEC은 나오지 않습니다 "
+              "(--constraints / --constraints-file)")
+
     print(f"\n{len(requirements)}개 요구사항 분석 중... (모델: {settings.model})")
     thread_id = str(uuid.uuid4())
 
@@ -128,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
         return input(prompt)
 
     try:
-        payload = analyze_interactive(requirements, thread_id, ask, print)
+        payload = analyze_interactive(
+            requirements, thread_id, ask, print, constraints_text=constraints,
+        )
     except EOFError:
         print(
             "\n[구체화 질문이 필요하지만 비대화형 입력이라 답변할 수 없습니다]\n"

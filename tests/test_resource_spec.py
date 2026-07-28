@@ -1,134 +1,266 @@
-"""제약 구조화(A 트랙)의 규율 — `steps/step_resource.py`.
+"""제약 구조화 에이전트의 규율 — `steps/step_resource.py`.
 
 이 파일이 지키는 것은 하나로 모인다: **못 알아들은 것을 채우지 않는다.**
 
+에이전트가 도구를 어떤 순서로 부를지는 모델이 정하므로 여기서 고정하지 않는다. 대신
+**어떤 순서로 불러도 통과할 수 없는 문**을 검사한다:
+
   - 계약을 만족할 때만 `resource_spec`이 존재한다(반쯤 채운 사양은 없느니만 못하다).
-  - 단가를 예산으로, 아무 숫자나 규모로 세지 않는다(둘 다 실측 코퍼스에서 나온 함정이다).
-  - 모호하면 값이 아니라 **질문**이 된다.
+  - 인용 못 하는 값은 버려진다 — 인용은 사용자가 쓴 것 **또는 도구가 알아 온 것**이어야
+    한다. 그 둘을 가르는 표시가 근거에 남는다.
+  - 리전은 카탈로그가 아는 **코드**여야 하고, 프로바이더는 조인이 도는 축이어야 한다.
+  - 값이 갈리면 덮지 않는다. 못 채우고 묻지도 않은 채로 끝낼 수 없다.
   - 되묻기 문구는 지어내지 않고 계약의 `why()`를 그대로 쓴다.
+
+모델은 스크립트로 대신한다 — 도구 호출 순서를 우리가 정해 놓고 **환경이 어떻게 답하는지**
+를 보는 것이 목적이라, 진짜 모델을 부르면 재현이 안 되고 검사하려는 것도 흐려진다.
 """
 from __future__ import annotations
 
-from app.core import cloud_contract
+import pytest
+from langchain_core.messages import AIMessage
+
+from app.core import cloud_contract, regions
+from app.requirements.agent.steps import resource_tools
 from app.requirements.agent.steps import step_resource as sr
 
 
-def _state(*texts: str, constraints: str = "") -> dict:
-    state: dict = {
-        "classified": [
+# --- 가짜 모델 ---------------------------------------------------------------
+class _Script:
+    """정해진 도구 호출을 차례로 내는 모델. 마지막에는 도구 없이 답해 루프를 끝낸다."""
+
+    def __init__(self, *turns: list[tuple[str, dict]]) -> None:
+        self.turns = list(turns)
+        self.results: list[str] = []   # 환경이 뭐라고 답했는지(되먹임 검사용)
+        self.prompts: list[str] = []   # 브리핑에 무엇이 실렸는지
+
+    def bind_tools(self, tools):
+        return self
+
+    def invoke(self, messages):
+        for message in messages:
+            kind = getattr(message, "type", "")
+            if kind == "human":
+                self.prompts.append(str(message.content))
+            elif kind == "tool":
+                self.results.append(str(message.content))
+        if not self.turns:
+            return AIMessage(content="done")
+        calls = self.turns.pop(0)
+        return AIMessage(content="", tool_calls=[
+            {"name": name, "args": args, "id": f"call-{i}", "type": "tool_call"}
+            for i, (name, args) in enumerate(calls)
+        ])
+
+
+@pytest.fixture
+def run(monkeypatch):
+    """스크립트를 물려 단계를 돌리고 (결과, intake, 스크립트)를 돌려준다."""
+    def go(*turns, texts=(), constraints="", answers=None):
+        script = _Script(*turns)
+        monkeypatch.setattr("app.requirements.agent.llm.build_llm", lambda: script)
+        monkeypatch.setattr(sr.settings, "resource_agent_llm", True)
+        state: dict = {"classified": [
             {"id": f"NFR-{i:02d}", "text": text, "type": "NFR"}
             for i, text in enumerate(texts, start=1)
-        ]
-    }
-    if constraints:
-        state["resource_constraints_text"] = constraints
-    return state
+        ]}
+        if constraints:
+            state["resource_constraints_text"] = constraints
+        if answers:
+            state["resource_answers"] = answers
+        result = sr.build_resource_spec(state)
+        return result, result["resource_intake"], script
+    return go
 
 
-def _intake(*texts: str, constraints: str = "") -> tuple[dict, dict]:
-    result = sr.build_resource_spec(_state(*texts, constraints=constraints))
-    return result, result["resource_intake"]
+def _record(field, value, evidence):
+    return ("record_field", {"field": field, "value": value, "evidence": evidence})
+
+
+CONSTRAINTS = ("Deploy on aws in Seoul. The monthly budget is at most 500 USD. "
+               "We expect about 300 concurrent users.")
+
+#: 계약을 세우는 최소 스크립트. 리전은 **카탈로그를 거쳐** 코드로 들어간다.
+def _complete_turns():
+    return (
+        [_record("provider", "aws", "Deploy on aws"),
+         ("resolve_region", {"place": "Seoul", "provider": "aws"})],
+        [_record("region", "ap-northeast-2", "ap-northeast-2"),
+         _record("regionAsWritten", "Seoul", "in Seoul"),
+         _record("monthlyBudgetUSD", "500", "at most 500 USD"),
+         _record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
+        [("finish", {"understanding": "AWS Seoul, $500/month, ~300 concurrent users."})],
+    )
 
 
 # --- 산출물이 존재하는 조건 --------------------------------------------------
-def test_a_half_filled_spec_never_leaves_this_step():
-    """필수 칸이 비면 산출물을 내지 않는다 — 뒤 단계가 그걸 사양으로 알고 조인을 돌린다."""
-    result, intake = _intake("The system shall support 100 concurrent users.")
-
-    assert "resource_spec" not in result
-    assert intake["valid"] is False
-    # 그래도 **작업 기록은 남는다** — 왜 못 채웠는지가 사라지면 빈 칸의 뜻을 알 수 없다.
-    assert intake["draft"]["expectedConcurrentUsers"] == 100
-    assert intake["errors"]
-
-
-def test_a_complete_contract_produces_the_artifact():
-    result, intake = _intake(
-        "The service shall support 5 000 concurrent users.",
-        constraints="Deploy on aws in Seoul. Budget is $3,000 per month.",
-    )
+def test_a_complete_contract_produces_the_artifact(run):
+    result, intake, _ = run(*_complete_turns(), constraints=CONSTRAINTS)
 
     assert intake["valid"] and not intake["errors"]
-    assert result["resource_spec"]["schemaVersion"] == sr.SCHEMA_VERSION
+    spec = result["resource_spec"]
+    assert spec["schemaVersion"] == sr.SCHEMA_VERSION
+    assert spec["provider"] == "aws"
     # 지명은 **코드로** 담기고 원문은 따로 남는다 — 조인이 코드로만 돈다.
-    assert result["resource_spec"]["region"] == "ap-northeast-2"
-    assert result["resource_spec"]["regionAsWritten"] == "Seoul"
+    assert spec["region"] == "ap-northeast-2"
+    assert spec["regionAsWritten"] == "Seoul"
+    assert spec["monthlyBudgetUSD"] == 500.0
+    assert spec["expectedConcurrentUsers"] == 300
 
 
-# --- 함정 (둘 다 실측 코퍼스에서 나왔다) -------------------------------------
-def test_a_unit_price_is_not_a_monthly_budget():
-    """`$0.02 per GB-month`(iot_telemetry/NFR-08)는 예산이 아니라 단가다."""
-    _result, intake = _intake(
-        constraints="Storage cost shall not exceed $0.02 per GB-month.",
+def test_a_half_filled_spec_never_leaves_this_step(run):
+    """필수 칸이 비면 산출물을 내지 않는다 — 뒤 단계가 그걸 사양으로 알고 조인을 돌린다."""
+    result, intake, _ = run(
+        [_record("expectedConcurrentUsers", "100", "100 concurrent users")],
+        texts=("The system shall support 100 concurrent users.",),
+    )
+
+    assert "resource_spec" not in result
+    assert intake["valid"] is False and intake["errors"]
+    # 그래도 **작업 기록은 남는다** — 왜 못 채웠는지가 사라지면 빈 칸의 뜻을 알 수 없다.
+    assert intake["draft"]["expectedConcurrentUsers"] == 100
+
+
+def test_the_confirmation_the_agent_read_back_is_kept(run):
+    """확인은 질문과 다른 일이다 — 채운 칸을 잘못 읽지 않았는지 사용자가 볼 자리."""
+    _result, intake, _ = run(*_complete_turns(), constraints=CONSTRAINTS)
+    assert "500" in intake["understanding"]
+
+
+def test_a_closing_summary_written_as_prose_is_still_the_confirmation(run):
+    """진짜 모델은 `finish` 대신 산문으로 끝내기도 한다(2026-07-29 실측).
+
+    형식이 어긋났다고 버리면 **확인이 통째로 사라진다** — 되읽기는 이 단계가 사용자에게
+    돌려주는 유일한 확인 수단이다.
+    """
+    turns = _complete_turns()[:2]   # finish를 부르지 않고 멈춘다
+    _result, intake, _ = run(*turns, constraints=CONSTRAINTS)
+
+    assert intake["understanding"] == "done"
+
+
+def test_a_finish_call_leaked_into_the_prose_is_unwrapped(run):
+    """같은 실측에서 요약이 `{"understanding": …, "finish": {}}`로 나왔다.
+
+    도구 호출을 산문으로 흘린 것이라 껍데기만 벗긴다 — 자연어를 뜯어보는 것이 아니라
+    잘못 나온 호출을 되돌리는 것이다.
+    """
+    session = sr._Session([])
+    session.said('{"understanding": "AWS Seoul, $500/month.", "finish": {}}')
+    assert session.understanding == "AWS Seoul, $500/month."
+
+    # JSON이 아니면 손대지 않는다.
+    plain = sr._Session([])
+    plain.said("AWS Seoul, $500/month.")
+    assert plain.understanding == "AWS Seoul, $500/month."
+
+
+# --- 지어냄을 막는 문 --------------------------------------------------------
+def test_a_value_whose_quote_is_nowhere_is_dropped(run):
+    """**인용 대조가 이 층의 지어냄 방지 장치다.** 버리되 조용히 버리지 않는다."""
+    _result, intake, _ = run(
+        [_record("monthlyBudgetUSD", "9999", "the budget is 9999 dollars")],
+        constraints="Deploy on aws in Seoul.",
     )
 
     assert "monthlyBudgetUSD" not in intake["draft"]
-    assert any(r["field"] == "monthlyBudgetUSD" and "단가" in r["why"]
-               for r in intake["rejected"])
+    assert any("지어낸 것으로 본다" in r["why"] for r in intake["rejected"])
 
 
-def test_a_number_with_a_concurrency_word_is_not_a_user_count():
-    """`100 simultaneous icons`(PURE/tcs)는 동시 사용자가 아니다. 주체를 본다."""
-    _result, intake = _intake(
-        "The TCS shall provide the capability of displaying overlays each containing "
-        "100 simultaneous icons of known fire support coordination measures.",
-        "The control software shall allow simultaneous operation of up to six active "
-        "control nodes.",
+def test_a_quote_from_a_tool_result_counts_as_seen(run):
+    """리전 코드는 사용자가 쓴 적이 없다 — 카탈로그가 답한 것이다.
+
+    원문만 대조하면 도구가 알아 온 것을 전부 지어냄으로 몰게 된다. 그래서 건초더미에
+    도구 출력도 들어가고, **어디서 왔는지는 근거가 구별한다.**
+    """
+    _result, intake, _ = run(*_complete_turns(), constraints=CONSTRAINTS)
+
+    by_field = {c["field"]: c for c in intake["provenance"]}
+    assert by_field["region"]["how"] == "tool", "카탈로그가 답한 것이 사용자 말로 남았다"
+    assert by_field["provider"]["how"] == "user"
+    assert by_field["monthlyBudgetUSD"]["how"] == "user"
+
+
+def test_a_tool_derived_value_keeps_the_whole_tool_output_as_its_basis(run):
+    """인용 조각만으로는 근거가 반쪽이다.
+
+    실측(2026-07-29): `700,000 KRW`를 환산한 `483.0`이 근거에 값만 남아 **환율도 기준일도
+    출처도 사라졌다.** 핀을 못 박는 소스는 쓴 값과 시각을 남긴다는 것이 이 저장소의
+    규율인데, 그 규율이 근거에서 증발한 자리다.
+    """
+    _result, intake, _ = run(*_complete_turns(), constraints=CONSTRAINTS)
+
+    by_field = {c["field"]: c for c in intake["provenance"]}
+    assert "South Korea" in by_field["region"]["via"], "도구가 말한 맥락이 사라졌다"
+    # 사용자가 쓴 값에는 붙이지 않는다 — 원문이 이미 근거다.
+    assert by_field["provider"]["via"] == ""
+
+
+def test_a_place_name_cannot_be_written_into_the_region_field(run):
+    """지명을 코드 자리에 넣으면 뒤 단계 조인이 **오류 없이** 빈 답이 된다."""
+    _result, intake, _ = run(
+        [_record("provider", "aws", "Deploy on aws"),
+         _record("region", "Seoul", "in Seoul")],
+        constraints=CONSTRAINTS,
     )
-
-    assert "expectedConcurrentUsers" not in intake["draft"]
-
-
-def test_a_spelled_out_number_and_thin_spaces_still_count():
-    """`one million` · `10 000`(얇은 공백)이 실측 코퍼스의 실제 표기다."""
-    _result, intake = _intake(
-        "The service shall scale to one million concurrent video streams.",
-        "The platform shall support up to 10 000 concurrent shoppers.",
-    )
-
-    seen = {c["value"] for c in intake["provenance"]
-            if c["field"] == "expectedConcurrentUsers"}
-    assert seen == {1_000_000, 10_000}
-    # 서로 다른 두 값이 나왔으므로 **채우지 않고 묻는다.**
-    assert "expectedConcurrentUsers" not in intake["draft"]
-    assert any(q["kind"] == sr.AMBIGUOUS for q in intake["questions"])
-
-
-# --- 모호하면 묻는다 ---------------------------------------------------------
-def test_a_currency_we_cannot_convert_becomes_a_question():
-    """환율 소스가 없다 — 계약이 환산을 거부하므로 값이 아니라 질문이 된다."""
-    _result, intake = _intake(constraints="월 예산은 300만원이다.")
-
-    assert "monthlyBudgetUSD" not in intake["draft"]
-    assert any("USD" in r["why"] for r in intake["rejected"])
-    assert any(q["field"] == "monthlyBudgetUSD" and q["kind"] == sr.UNCONVERTIBLE
-               for q in intake["questions"])
-
-
-def test_a_place_name_that_matches_many_providers_is_not_narrowed():
-    """프로바이더를 모르면 '서울'은 여러 곳에 걸린다. 우리가 고르면 사용자 뜻인 양 보인다."""
-    _result, intake = _intake(constraints="Deploy in Seoul.")
 
     assert "region" not in intake["draft"]
-    assert any(r["field"] == "region" for r in intake["rejected"])
+    assert any(r["field"] == "region" and "코드" in r["why"] for r in intake["rejected"])
 
 
-def test_the_constraint_text_wins_but_the_conflict_is_recorded():
-    """조용히 덮으면 요구사항 쪽이 사라진다. 이기되 충돌을 남긴다."""
-    _result, intake = _intake(
-        "The system shall support 100 concurrent users.",
-        constraints="We expect 9 000 concurrent users.",
+def test_a_provider_we_do_not_know_is_rejected(run):
+    """조인이 실제로 도는 축만 받는다 — 그럴듯한 이름은 빈 칸보다 나쁘다."""
+    _result, intake, _ = run(
+        [_record("provider", "Amazon Web Services", "Deploy on aws")],
+        constraints=CONSTRAINTS,
     )
 
-    assert intake["draft"]["expectedConcurrentUsers"] == 9_000
-    assert any(q["kind"] == sr.CONFLICT and q["field"] == "expectedConcurrentUsers"
-               for q in intake["questions"])
+    assert "provider" not in intake["draft"]
+    assert any("프로바이더" in r["why"] for r in intake["rejected"])
 
 
-# --- 되묻기는 계약의 말로 한다 -----------------------------------------------
-def test_questions_quote_the_contract_reason_verbatim():
+def test_a_field_the_contract_lacks_is_dropped(run):
+    """계약에 없는 칸을 받아 두면 스키마 검증에서 스펙 전체가 무효가 된다."""
+    _result, intake, _ = run(
+        [_record("favouriteColour", "blue", "Deploy on aws")],
+        constraints=CONSTRAINTS,
+    )
+
+    assert "favouriteColour" not in intake["draft"]
+    assert any(r["field"] == "favouriteColour" for r in intake["rejected"])
+
+
+def test_a_second_different_value_does_not_overwrite_the_first(run):
+    """조용히 덮으면 밀려난 값이 사라진다. 값이 갈리는 것은 정보가 아니라 질문이다."""
+    _result, intake, script = run(
+        [_record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
+        [_record("expectedConcurrentUsers", "9000", "9 000 concurrent users")],
+        constraints=CONSTRAINTS + " Peak load reaches 9 000 concurrent users.",
+    )
+
+    assert intake["draft"]["expectedConcurrentUsers"] == 300
+    assert any("already" in r and "ask_user" in r for r in script.results)
+
+
+# --- 타입은 계약이 정한다 ----------------------------------------------------
+def test_values_are_marshalled_to_the_type_the_contract_declares():
+    """`"3,000"`이 문자열로 들어가면 스키마 검증이 스펙 전체를 무효로 만든다."""
+    assert sr._coerce("monthlyBudgetUSD", "3,000") == (3000.0, "")
+    assert sr._coerce("expectedConcurrentUsers", "300") == (300, "")
+    assert sr._coerce("trafficPattern", "Spiky") == ("spiky", "")
+    assert sr._coerce("multiZone", "true") == (True, "")
+
+    # 못 맞추면 사유를 돌려준다 — 그 사유가 에이전트에게 되먹여져 다음 행동이 된다.
+    assert sr._coerce("monthlyBudgetUSD", "about five hundred")[0] is None
+    assert sr._coerce("trafficPattern", "가끔 몰림")[0] is None
+    assert sr._coerce("expectedConcurrentUsers", "-3")[0] is None
+    assert sr._coerce("favouriteColour", "blue")[1] == "계약에 없는 칸이다"
+
+
+# --- 되묻기 -----------------------------------------------------------------
+def test_questions_quote_the_contract_reason_verbatim(run):
     """이유 없이 물으면 사용자가 아무 값이나 채운다 — `REQUIRED_WHY`의 존재 이유다."""
-    _result, intake = _intake("The system shall support 100 concurrent users.")
+    _result, intake, _ = run(texts=("The system shall support 100 concurrent users.",))
 
     asked = {q["field"]: q for q in intake["questions"]}
     for name in ("provider", "region", "monthlyBudgetUSD"):
@@ -137,145 +269,164 @@ def test_questions_quote_the_contract_reason_verbatim():
         assert asked[name]["why"] in asked[name]["question"]
 
 
-def test_every_asked_field_is_one_the_contract_actually_has():
-    """계약에 없는 칸을 물으면 사용자가 채워도 갈 곳이 없다."""
-    _result, intake = _intake(constraints="Deploy on aws with a $1,000 per month budget.")
+def test_a_required_field_is_asked_even_if_the_agent_forgets(run):
+    """되묻기가 사용자에게 가느냐를 모델의 재량에 맡기지 않는다."""
+    _result, intake, _ = run(
+        [_record("provider", "aws", "Deploy on aws")],
+        constraints=CONSTRAINTS,
+    )
+
+    assert {"region", "monthlyBudgetUSD"} <= {q["field"] for q in intake["questions"]}
+    assert all(q["kind"] == sr.MISSING for q in intake["questions"])
+
+
+def test_the_agent_can_ask_in_its_own_words(run):
+    """되묻기는 폴백이 아니라 **행동**이다 — 모호하면 고르지 않고 묻는다."""
+    _result, intake, _ = run(
+        [("resolve_region", {"place": "Seoul"})],
+        [("ask_user", {"field": "provider",
+                       "question": "Seoul exists at several providers — which one?"})],
+        constraints="Deploy in Seoul.",
+    )
+
+    asked = [q for q in intake["questions"] if q["kind"] == sr.ASKED]
+    assert asked and asked[0]["field"] == "provider"
+    # 에이전트가 물은 칸은 기계가 다시 묻지 않는다 — 같은 것을 두 번 묻게 된다.
+    assert [q["field"] for q in intake["questions"]].count("provider") == 1
+
+
+def test_asking_about_a_field_the_contract_lacks_is_refused(run):
+    """계약에 없는 칸을 물으면 사용자가 답해도 갈 곳이 없다(화면이 칸 이름을 키로 쓴다)."""
+    _result, intake, script = run(
+        [("ask_user", {"field": "favouriteColour", "question": "What colour?"})],
+        constraints=CONSTRAINTS,
+    )
+
+    assert not [q for q in intake["questions"] if q["field"] == "favouriteColour"]
+    assert any("not a field of the contract" in r for r in script.results)
+
+
+def test_every_asked_field_is_one_the_contract_actually_has(run):
+    _result, intake, _ = run(constraints=CONSTRAINTS)
 
     known = cloud_contract.schema_fields()
     assert {q["field"] for q in intake["questions"]} <= known
     assert set(intake["draft"]) <= known
 
 
-# --- 어디서 캐고 어디서 안 캐는가 --------------------------------------------
-def test_budget_and_region_are_not_mined_from_requirement_prose():
-    """실측: 요구사항 산문에 provider·region·예산은 0건이다. 없는 곳을 뒤지면 오탐만 남는다."""
-    _result, intake = _intake(
-        "RideNow shall scale elastically across multiple cloud regions to handle peak "
-        "demand spikes.",
-        "The subscription shall cost $9 per month for each user.",
+def test_finishing_with_an_unfilled_unasked_field_is_refused(run):
+    """못 채우고 묻지도 않은 채로 끝나면 빈 칸이 사용자에게 영영 안 보인다."""
+    _result, _intake, script = run(
+        [("finish", {"understanding": "All good."})],
+        constraints=CONSTRAINTS,
     )
 
-    assert "region" not in intake["draft"]
-    assert "monthlyBudgetUSD" not in intake["draft"]
-    # 규모·부하 모양은 요구사항에서 캔다 — 거기 실제로 있기 때문이다.
-    assert intake["draft"]["trafficPattern"] == "spiky"
-
-
-def test_evidence_points_at_the_matched_span_not_the_sentence():
-    """근거가 문장 앞부분이면 값이 왜 들어갔는지 안 보인다(멀쩡한 추출이 오탐처럼 읽혔다)."""
-    _result, intake = _intake(
-        "SensorGrid shall achieve ninety-nine point nine-five percent monthly "
-        "availability, with automatic failover across availability zones.",
-    )
-
-    evidence = [c for c in intake["provenance"] if c["field"] == "multiZone"]
-    assert evidence and "availability zones" in evidence[0]["as_written"].lower()
-
-
-def test_a_burst_that_is_not_load_is_not_a_traffic_shape():
-    """`TCS data burst messages`(PURE)는 메시지 형식이지 부하 모양이 아니다.
-
-    낱말 하나만 보던 판이 PURE 7,659문장에서 낸 유일한 후보가 이것이었다. 부하 맥락을
-    함께 요구하도록 좁힌 뒤 오탐이 사라졌고, 참 사례("peak demand spikes")는 남았다.
-    """
-    _result, intake = _intake(
-        "Where applicable, TCS data burst messages shall comply with Variable Message "
-        "Formats.",
-    )
-    assert "trafficPattern" not in intake["draft"]
-
-    _result, intake = _intake("RideNow shall handle peak demand spikes without degradation.")
-    assert intake["draft"]["trafficPattern"] == "spiky"
+    assert any(r.startswith("Not finished:") for r in script.results)
 
 
 # --- 되묻기의 왕복 -----------------------------------------------------------
-# 질문만 내고 답을 받을 자리가 없으면 이 단계는 반쪽이다. 답은 **값이 아니라 답**이라
-# 산문과 같은 규율로 정규화된다 — 그게 이 절이 지키는 것이다.
-def test_an_answer_completes_the_contract():
-    """답이 들어오면 그 자리에서 계약이 서고 산출물이 생긴다."""
-    state = _state("The system shall support 100 concurrent users.")
-    state["resource_answers"] = {
-        "provider": "aws", "region": "Seoul", "monthlyBudgetUSD": "3000",
-    }
-    result = sr.build_resource_spec(state)
+def test_an_earlier_answer_is_part_of_what_the_agent_perceives(run):
+    """답은 사용자가 **그 칸을 두고** 한 말이라 가장 세다. 안 보여 주면 또 묻게 된다."""
+    _result, _intake, script = run(
+        constraints="Deploy somewhere sensible.",
+        answers={"provider": "aws", "monthlyBudgetUSD": "500"},
+    )
 
-    assert result["resource_intake"]["valid"]
-    spec = result["resource_spec"]
-    assert spec["provider"] == "aws"
-    # 답도 해석기를 거친다 — "Seoul"은 여전히 코드로 풀려야 한다.
-    assert spec["region"] == "ap-northeast-2"
-    assert spec["monthlyBudgetUSD"] == 3000.0
-    assert spec["expectedConcurrentUsers"] == 100
+    briefing = script.prompts[0]
+    assert "Answers the user already gave" in briefing
+    assert "provider: aws" in briefing
 
 
-def test_an_answer_is_still_normalised_and_can_be_rejected():
-    """질문에 답했다는 사실이 모호함을 없애 주지는 않는다."""
-    state = _state("x")
-    state["resource_answers"] = {
-        "provider": "Amazon Web Services",   # 아는 id가 아니다
-        "monthlyBudgetUSD": "300만원",        # 환산 거부
-        "trafficPattern": "가끔 몰림",         # enum이 아니다
-    }
-    intake = sr.build_resource_spec(state)["resource_intake"]
+def test_an_answer_is_still_resolved_and_can_be_rejected(run):
+    """질문에 답했다는 사실이 모호함을 없애 주지는 않는다 — 답도 같은 문을 지난다."""
+    _result, intake, _ = run(
+        [_record("region", "서울", "서울")],
+        texts=("x",),
+        answers={"region": "서울"},
+    )
 
-    assert "provider" not in intake["draft"]
-    assert "monthlyBudgetUSD" not in intake["draft"]
-    assert "trafficPattern" not in intake["draft"]
-    whys = " ".join(r["why"] for r in intake["rejected"])
-    assert "프로바이더" in whys and "USD" in whys and "spiky" in whys
-    # 거절됐으므로 그 칸은 **다시 질문으로 나간다** — 조용히 사라지지 않는다.
-    assert {"provider", "monthlyBudgetUSD"} <= {q["field"] for q in intake["questions"]}
+    assert "region" not in intake["draft"]
+    assert any(r["field"] == "region" for r in intake["rejected"])
 
 
-def test_a_bare_number_answer_is_read_without_demanding_context():
-    """`monthlyBudgetUSD` 질문에 "3000"이라고 답한 것은 월 예산 3000 USD다.
+# --- 읽을 수단이 없으면 없다고 말한다 ----------------------------------------
+def test_with_the_agent_switched_off_nothing_is_read_and_it_says_so(monkeypatch):
+    """자연어를 읽는 수단이 없는데 읽은 척하지 않는다."""
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
+    intake = sr.build_resource_spec(
+        {"classified": [], "resource_constraints_text": CONSTRAINTS}
+    )["resource_intake"]
 
-    산문에서는 월 단위 표시가 없으면 버리지만, 답은 **무엇을 묻는지 이미 아는 자리**다.
-    통화·단가 판정만 그대로 남는다(그건 문맥이 아니라 계약이 거부하는 것이라서).
+    assert intake["degraded"]
+    assert set(intake["draft"]) == {"schemaVersion"}
+    assert {"provider", "region", "monthlyBudgetUSD"} <= {q["field"]
+                                                          for q in intake["questions"]}
+
+
+def test_a_dead_agent_still_leaves_the_questions(run, monkeypatch):
+    """호출이 죽어도 못 채운 칸은 되묻기로 나간다 — 실패가 침묵이 되면 안 된다."""
+    class _Dead:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            raise RuntimeError("endpoint down")
+
+    monkeypatch.setattr("app.requirements.agent.llm.build_llm", _Dead)
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", True)
+    intake = sr.build_resource_spec(
+        {"classified": [], "resource_constraints_text": CONSTRAINTS}
+    )["resource_intake"]
+
+    assert "endpoint down" in intake["degraded"]
+    assert intake["questions"]
+
+
+def test_the_turn_budget_stops_a_runaway_without_leaking_a_half_spec(run, monkeypatch):
+    """상한이 하는 일은 폭주를 막는 것뿐 — 못 채운 칸은 그대로 질문이 된다."""
+    monkeypatch.setattr(sr.settings, "resource_agent_max_turns", 2)
+    result, intake, _ = run(
+        [("check_contract", {})], [("check_contract", {})], [("check_contract", {})],
+        constraints=CONSTRAINTS,
+    )
+
+    assert "resource_spec" not in result
+    assert intake["questions"]
+
+
+# --- 도구 -------------------------------------------------------------------
+def test_the_region_tool_does_not_narrow_an_ambiguous_place():
+    """'서울'은 프로바이더 여러 곳에 걸린다. 우리가 고르면 사용자 뜻인 양 보인다."""
+    ambiguous = resource_tools.resolve_region.invoke({"place": "Seoul"})
+    assert "ambiguous" in ambiguous
+
+    narrowed = resource_tools.resolve_region.invoke({"place": "Seoul", "provider": "aws"})
+    assert "exactly one" in narrowed and "ap-northeast-2" in narrowed
+
+
+def test_the_region_tool_says_it_did_not_understand():
+    """빈 결과는 "그런 리전이 없다"가 아니라 "우리가 못 알아들었다"이다."""
+    out = resource_tools.resolve_region.invoke({"place": "Narnia"})
+    assert "did not understand" in out
+
+
+def test_the_provider_tool_answers_from_the_join_axis():
+    listed = resource_tools.list_cloud_providers.invoke({})
+    assert set(listed.split(", ")) == set(regions.providers())
+
+
+def test_currency_conversion_refuses_to_guess_a_rate(monkeypatch):
+    """환율을 못 가져오면 지어내지 않고 **USD로 달라고 하라**고 말한다.
+
+    이 도구가 있는 이유가 여기 있다 — 예전 판은 "계약이 환산을 거부한다"고 적어 두고
+    타 통화 금액을 통째로 버렸다. 그건 계약의 뜻이 아니라 우리에게 소스가 없다는 뜻이었다.
     """
-    kept = sr.answer_field("monthlyBudgetUSD", "3000")
-    assert [c.value for c in kept.found] == [3000.0]
+    def dead(*a, **kw):
+        raise OSError("no network")
 
-    unit_price = sr.answer_field("monthlyBudgetUSD", "$0.02 per GB")
-    assert not unit_price.found and unit_price.rejected
+    monkeypatch.setattr("httpx.get", dead)
+    out = resource_tools.convert_to_usd.invoke({"amount": 3_000_000, "currency": "KRW"})
+    assert "Do not guess" in out and "Ask the user" in out
 
-
-def test_an_answer_outranks_the_prose_but_the_conflict_is_recorded():
-    """가장 늦고 명시적인 말이 이긴다. 밀려난 쪽은 질문으로 남는다."""
-    state = _state("The system shall support 100 concurrent users.",
-                   constraints="We expect 9 000 concurrent users.")
-    state["resource_answers"] = {"expectedConcurrentUsers": "250"}
-    intake = sr.build_resource_spec(state)["resource_intake"]
-
-    assert intake["draft"]["expectedConcurrentUsers"] == 250
-    conflict = [q for q in intake["questions"] if q["kind"] == sr.CONFLICT]
-    assert conflict and "되묻기의 답" in conflict[0]["question"]
-
-
-def test_an_answer_to_a_field_the_contract_lacks_is_dropped():
-    """계약에 없는 칸을 받아 두면 스키마 검증에서 스펙 전체가 무효가 된다."""
-    state = _state("x")
-    state["resource_answers"] = {"favouriteColour": "blue"}
-    intake = sr.build_resource_spec(state)["resource_intake"]
-
-    assert "favouriteColour" not in intake["draft"]
-    assert any(r["field"] == "favouriteColour" for r in intake["rejected"])
-
-
-def test_a_korean_place_name_also_leaves_its_original_wording():
-    """별칭 해석("서울" → ap-northeast-2)은 코드만 보면 어디서 왔는지 알 수 없다."""
-    state = _state("x")
-    state["resource_answers"] = {"provider": "aws", "region": "서울"}
-    intake = sr.build_resource_spec(state)["resource_intake"]
-
-    assert intake["draft"]["region"] == "ap-northeast-2"
-    assert intake["draft"]["regionAsWritten"] == "서울"
-
-
-def test_a_provider_id_matches_as_a_word_not_a_substring():
-    """부분 문자열이면 `gcp`가 `gcpartner`에 걸린다 — 관심사 열쇠말 층이 물렸던 자리다."""
-    hit = sr.answer_field("provider", "gcp")
-    assert [c.value for c in hit.found] == ["gcp"]
-
-    _result, intake = _intake(constraints="We partner with gcpartner Inc.")
-    assert "provider" not in intake["draft"]
+    assert "not an ISO 4217" in resource_tools.convert_to_usd.invoke(
+        {"amount": 100, "currency": "원"})

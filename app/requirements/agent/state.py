@@ -96,8 +96,8 @@ class AgentState(TypedDict):
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
     # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).
     resource_constraints_text: NotRequired[str]
-    # 되묻기의 답: 계약 칸 이름 → 사용자가 쓴 문자열. **값이 아니라 답이다** —
-    # `step_resource.answer_field`가 산문과 같은 규율로 정규화한다("서울"은 여전히
+    # 되묻기의 답: 계약 칸 이름 → 사용자가 쓴 문자열. **값이 아니라 답이다** — 제약
+    # 구조화 에이전트가 산문과 같은 규율로 해석한다("서울"은 여전히 카탈로그를 거쳐
     # 코드로 풀려야 하고, 후보가 여럿이면 여전히 모호하다).
     resource_answers: NotRequired[dict[str, str]]
     # 제약 구조화의 작업 기록: 초안·질문·근거·버린 후보(`steps/step_resource.py`).

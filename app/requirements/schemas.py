@@ -424,9 +424,10 @@ class ResourceAnswer(BaseModel):
     "aws 서울 월 3000달러"를 요구사항 편집 지시로 알아듣고 분류를 다시 돌린다 —
     사용자는 질문에 답했을 뿐인데 요구사항이 흔들린다.
 
-    값은 **문자열 그대로** 받는다. 파싱·해석은 `step_resource.answer_field`가 산문과
-    같은 규율로 한다 — 화면이 "서울"을 코드로 바꿔 보내면 그 해석이 어디서 왔는지
-    아무도 모르게 된다.
+    값은 **문자열 그대로** 받는다. 해석은 제약 구조화 에이전트가 산문과 같은 규율로
+    한다(`steps/step_resource.py`) — 화면이 "서울"을 코드로 바꿔 보내면 그 해석이
+    어디서 왔는지 아무도 모르게 된다. 답했다는 사실이 모호함을 없애 주지도 않는다:
+    "서울"은 여전히 카탈로그를 거쳐야 하고, 후보가 여럿이면 여전히 되물어야 한다.
     """
 
     #: 계약 칸 이름 → 사용자가 쓴 답. 모르는 칸은 단계가 버린다.
@@ -519,3 +520,9 @@ class AnalyzeResponse(BaseModel):
     # degradations가 비어 있지 않으면 산출물 일부가 검증을 못 거쳤다는 뜻이므로,
     # 화면은 결과를 그대로 신뢰해서는 안 된다. (app/requirements/common/telemetry.py)
     telemetry: dict | None = None
+
+
+# `ResourceFieldRead`·`ResourceReading`은 없앴다(2026-07-29). 제약 구조화를 **한 번
+# 읽고 끝내는 구조화 출력**에서 도구를 쓰는 에이전트 루프로 바꾸면서, 읽기의 결과는
+# 스키마가 아니라 도구 호출(`record_field`)로 들어온다 — 인용 대조는 그 문에서 그대로
+# 한다(`steps/step_resource._ground`).
