@@ -1527,8 +1527,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
 
     def test_deterministic_iac_renderer_supports_aws_and_gcp(self) -> None:
         cases = (
-            ("aws", [{"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders"}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment" "eks_ecr_pull"')),
-            ("gcp", [{"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders"}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull"')),
+            ("aws", [{"type": "AWS::EC2::VPC", "name": "network"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["network"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["network"]}, {"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders", "dependsOn": ["network"]}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment" "eks_ecr_pull"')),
+            ("gcp", [{"type": "compute.googleapis.com/Network", "name": "network"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private", "dependsOn": ["network"]}, {"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders", "dependsOn": ["private"]}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull"')),
         )
         for provider, resources, expected in cases:
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
@@ -1543,6 +1543,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
                 self.assertEqual("SUCCEEDED", report["sourceConformance"]["status"])
                 self.assertEqual(provider, report["provider"])
+                self.assertTrue(report["requiredVariables"])
                 for marker in expected:
                     self.assertIn(marker, source)
 
@@ -1550,12 +1551,12 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
         cases = (
             (
                 "aws",
-                [{"type": "AWS::EC2::VPC", "name": "platform", "cidrBlock": "10.0.0.0/16"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "cidrBlock": "10.0.1.0/24"}, {"type": "AWS::EKS::Cluster", "name": "platform"}],
+                [{"type": "AWS::EC2::VPC", "name": "platform", "cidrBlock": "10.0.0.0/16"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "cidrBlock": "10.0.1.0/24", "availabilityZone": "ap-northeast-2a", "dependsOn": ["platform"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "cidrBlock": "10.0.2.0/24", "availabilityZone": "ap-northeast-2c", "dependsOn": ["platform"]}, {"type": "AWS::EKS::Cluster", "name": "cluster", "dependsOn": ["platform"]}],
                 ("aws_vpc.platform.id", 'resource "aws_eks_node_group"'),
             ),
             (
                 "gcp",
-                [{"type": "compute.googleapis.com/Network", "name": "platform"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private-a", "ipCidrRange": "10.0.1.0/24"}, {"type": "container.googleapis.com/Cluster", "name": "platform"}],
+                [{"type": "compute.googleapis.com/Network", "name": "platform"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private-a", "ipCidrRange": "10.0.1.0/24", "dependsOn": ["platform"]}, {"type": "container.googleapis.com/Cluster", "name": "cluster", "dependsOn": ["private-a"]}],
                 ("network = google_compute_network.platform.id", 'resource "google_container_node_pool"'),
             ),
         )
@@ -1576,15 +1577,16 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             root = Path(directory)
             cloud = root / "cloud.json"
             cloud.write_text(json.dumps({"provider": "aws", "resources": [
-                {"type": "AWS::EKS::Cluster", "name": "platform"},
-                {"type": "AWS::EC2::Subnet", "name": "private-a"},
+                {"type": "AWS::EKS::Cluster", "name": "cluster", "dependsOn": ["platform"]},
+                {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["platform"]},
+                {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["platform"]},
                 {"type": "AWS::EC2::VPC", "name": "platform"},
             ]}), encoding="utf-8")
             run = root / "run"
             render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
             source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
             self.assertIn("vpc_id = aws_vpc.platform.id", source)
-            self.assertIn("subnet_ids = [aws_subnet.private_a.id]", source)
+            self.assertIn("subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_c.id]", source)
 
     def test_iac_renderer_rejects_unknown_provider_resource_types(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1600,15 +1602,15 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             cloud = root / "cloud.json"
             cloud.write_text(json.dumps({"provider": "azure", "resources": [
                 {"type": "Microsoft.Network/virtualNetworks", "name": "platform", "subnets": [{"name": "aks", "addressPrefix": "10.0.1.0/24"}, {"name": "mysql", "addressPrefix": "10.0.2.0/24", "delegations": ["Microsoft.DBforMySQL/flexibleServers"]}]},
-                {"type": "Microsoft.Network/privateDnsZones", "name": "private.mysql.database.azure.com"},
-                {"type": "Microsoft.ContainerService/managedClusters", "name": "platform", "nodePools": [{"name": "system", "vmSize": "Standard_D2s_v5", "count": 2, "enableAutoScaling": True, "minCount": 1, "maxCount": 3}], "networking": {"privateCluster": True, "subnet": "platform/aks"}},
+                {"type": "Microsoft.Network/privateDnsZones", "name": "private.mysql.database.azure.com", "dependsOn": ["platform"]},
+                {"type": "Microsoft.ContainerService/managedClusters", "name": "platform", "nodePools": [{"name": "system", "vmSize": "Standard_D2s_v5", "count": 2, "enableAutoScaling": True, "minCount": 1, "maxCount": 3}, {"name": "user", "vmSize": "Standard_D4s_v5", "count": 1}], "networking": {"privateCluster": True, "subnet": "platform/aks"}},
                 {"type": "Microsoft.DBforMySQL/flexibleServers", "name": "platform-db", "networking": {"publicNetworkAccess": "Disabled", "delegatedSubnet": "platform/mysql", "privateDnsZone": "private.mysql.database.azure.com"}},
             ]}), encoding="utf-8")
             run = root / "run"
             report = render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
             source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
             self.assertIn(report["sourceConformance"]["status"], {"SUCCEEDED", "SUCCEEDED_WITH_WARNINGS"})
-            for marker in ("private_cluster_enabled = true", "vnet_subnet_id = azurerm_subnet.platform_aks.id", "delegated_subnet_id = azurerm_subnet.platform_mysql.id", "private_dns_zone_id = azurerm_private_dns_zone.private_mysql_database_azure_com.id"):
+            for marker in ("private_cluster_enabled = true", "vnet_subnet_id = azurerm_subnet.platform_aks.id", "delegated_subnet_id = azurerm_subnet.platform_mysql.id", "private_dns_zone_id = azurerm_private_dns_zone.private_mysql_database_azure_com.id", 'resource "azurerm_kubernetes_cluster_node_pool" "platform_user"'):
                 self.assertIn(marker, source)
 
     def test_infer_intent_uses_provider_specific_registry_images(self) -> None:
@@ -1627,9 +1629,10 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             cloud = root / "cloud.json"
             cloud.write_text(json.dumps({"provider": "aws", "resources": [
                 {"type": "AWS::EC2::VPC", "name": "platform"},
-                {"type": "AWS::EC2::Subnet", "name": "private-a"},
+                {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["platform"]},
+                {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["platform"]},
                 {"type": "AWS::ECR::Repository", "name": "orders"},
-                {"type": "AWS::EKS::Cluster", "name": "platform", "workloads": [{"name": "orders-api"}]},
+                {"type": "AWS::EKS::Cluster", "name": "orders-cluster", "dependsOn": ["platform"], "workloads": [{"name": "orders-api"}]},
             ]}), encoding="utf-8")
             spec = SimpleNamespace(name="orders", inputs={"cloud": cloud})
             run = root / "run"
@@ -1642,6 +1645,15 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
     def test_terraform_validation_reports_when_binary_is_unavailable(self, _which: object) -> None:
         self.assertEqual("SKIPPED", validate_terraform(Path("missing")).get("status"))
+
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "FAILED", "errors": ["provider schema rejected configuration"]})
+    def test_iac_renderer_blocks_artifact_promotion_when_terraform_validation_fails(self, _validation: object) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "azure", "resources": [{"type": "Microsoft.ContainerRegistry/registries", "name": "registry"}]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Terraform validation failed"):
+                render_iac(root / "run", SimpleNamespace(inputs={"cloud": cloud}))
 
     def test_deployment_intent_rejects_incompatible_job_capabilities(self) -> None:
         intent = {

@@ -56,7 +56,7 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
     intent = json.loads(intent_path.read_text(encoding="utf-8")) if intent_path.is_file() else {}
     conformance = validate_deployment_iac_conformance(cloud, intent, application)
     terraform_validation = validate_terraform(application)
-    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "sourceConformance": conformance, "terraformValidation": terraform_validation, "sourceEvidence": {"cloudResourceSpecification": True, "deploymentIntent": bool(intent)}}
+    report = {"schemaVersion": SCHEMA_VERSION, "renderer": f"deterministic-terraform-{provider}", "provider": provider, "renderedFiles": [f"application/terraform/{name}" for name in files], "requiredVariables": _required_variables(provider), "sourceConformance": conformance, "terraformValidation": terraform_validation, "sourceEvidence": {"cloudResourceSpecification": True, "deploymentIntent": bool(intent)}}
     reports = run_root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -82,11 +82,12 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
             warnings.append(f"cloud resource {item.get('type')} has no deterministic Terraform mapping")
         elif f'resource "{mapped}"' not in source:
             errors.append(f"cloud resource {item.get('type')} is missing from Terraform")
-        elif not re.search(rf'resource "{re.escape(mapped)}" "{re.escape(_logical(item))}"', source):
+        elif _terraform_resource_block(source, mapped, _logical(item)) is None:
             errors.append(f"cloud resource {item.get('name')} has no matching Terraform resource identity")
         else:
+            block = _terraform_resource_block(source, mapped, _logical(item)) or ""
             for expected in _expected_attributes(provider, item):
-                if expected not in source:
+                if expected not in block:
                     errors.append(f"cloud resource {item.get('name')} property is missing from Terraform: {expected}")
     cluster = next((r for r in resources if _role(provider, r) == "cluster"), None)
     registry = next((r for r in resources if _role(provider, r) == "registry"), None)
@@ -113,6 +114,7 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
 def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> None:
     errors: list[str] = []
     identities: set[tuple[str, str]] = set()
+    names = {_resource_name(item) for item in resources if isinstance(item.get("name"), str)}
     for index, item in enumerate(resources):
         mapped = _type(provider, item)
         name = item.get("name")
@@ -126,6 +128,35 @@ def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> No
         if identity in identities:
             errors.append(f"resources[{index}] duplicates Terraform identity {mapped}.{identity[1]}")
         identities.add(identity)
+        unknown_dependencies = sorted(_depends_on(item) - names)
+        if unknown_dependencies:
+            errors.append(f"resources[{index}].dependsOn references unknown resources: {', '.join(unknown_dependencies)}")
+    if provider == "aws":
+        for cluster in (item for item in resources if _type(provider, item) == "aws_eks_cluster"):
+            subnets = _related_resources(cluster, resources, provider, "aws_subnet")
+            zones = {str(item.get("availabilityZone", "")) for item in subnets}
+            if len(subnets) < 2 or "" in zones or len(zones) < 2:
+                errors.append(f"EKS cluster {_resource_name(cluster)} requires at least two related subnets in distinct availabilityZone values")
+    if provider == "gcp":
+        for cluster in (item for item in resources if _type(provider, item) == "google_container_cluster"):
+            if len(_related_resources(cluster, resources, provider, "google_compute_subnetwork")) != 1:
+                errors.append(f"GKE cluster {_resource_name(cluster)} requires exactly one related subnetwork")
+    if provider == "azure":
+        vnets = {_resource_name(item): item for item in resources if _type(provider, item) == "azurerm_virtual_network"}
+        zones = {_resource_name(item): item for item in resources if _type(provider, item) == "azurerm_private_dns_zone"}
+        for cluster in (item for item in resources if _type(provider, item) == "azurerm_kubernetes_cluster"):
+            reference = str(cluster.get("networking", {}).get("subnet", ""))
+            vnet_name, _, subnet_name = reference.partition("/")
+            if reference and (not vnet_name or not subnet_name or subnet_name not in {str(item.get("name")) for item in vnets.get(vnet_name, {}).get("subnets", [])}):
+                errors.append(f"AKS cluster {_resource_name(cluster)} networking.subnet must reference a declared VNet subnet")
+        for server in (item for item in resources if _type(provider, item) == "azurerm_mysql_flexible_server"):
+            networking = server.get("networking", {})
+            reference = str(networking.get("delegatedSubnet", ""))
+            vnet_name, _, subnet_name = reference.partition("/")
+            zone = zones.get(str(networking.get("privateDnsZone", "")))
+            valid_subnet = subnet_name in {str(item.get("name")) for item in vnets.get(vnet_name, {}).get("subnets", [])}
+            if not vnet_name or not valid_subnet or zone is None or _single_related_resource(zone, resources, provider, "azurerm_virtual_network") is None:
+                errors.append(f"MySQL server {_resource_name(server)} private networking requires a declared delegated subnet and DNS zone linked by dependsOn")
     if errors:
         raise ValueError("Invalid cloud resource specification:\n- " + "\n- ".join(errors))
 
@@ -143,6 +174,15 @@ def _variables(provider: str, resources: list[dict[str, Any]]) -> str:
     return "\n\n".join(provider_blocks)
 
 
+def _required_variables(provider: str) -> list[dict[str, str]]:
+    values = {
+        "azure": [("resource_group_name", "target Azure resource group"), ("location", "target Azure region"), ("mysql_administrator_password", "MySQL administrator password")],
+        "aws": [("region", "target AWS region"), ("eks_cluster_role_arn", "EKS control-plane IAM role ARN"), ("eks_node_role_arn", "EKS node IAM role ARN"), ("eks_node_role_name", "EKS node IAM role name"), ("db_password", "RDS administrator password")],
+        "gcp": [("project_id", "target GCP project ID"), ("region", "target GCP region"), ("gke_node_service_account", "GKE node service-account email")],
+    }[provider]
+    return [{"name": name, "description": description} for name, description in values]
+
+
 def _main(provider: str, resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     builders = {"azure": _azure, "aws": _aws, "gcp": _gcp}
     return builders[provider](resources, names)
@@ -151,7 +191,7 @@ def _main(provider: str, resources: list[dict[str, Any]], names: dict[str, str])
 def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     blocks: list[str] = []
     cluster = registry = None
-    vnet = next((_logical(item) for item in resources if _type("azure", item) == "azurerm_virtual_network"), None)
+    vnets = {_resource_name(item): item for item in resources if _type("azure", item) == "azurerm_virtual_network"}
     dns_zones = {str(item.get("name")): _logical(item) for item in resources if _type("azure", item) == "azurerm_private_dns_zone"}
     for item in resources:
         logical, kind, name = _logical(item), _type("azure", item), names[_logical(item)]
@@ -171,18 +211,26 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             cluster = logical
             pool = next(iter(item.get("nodePools", [])), {})
             networking = item.get("networking", {})
-            subnet_name = str(networking.get("subnet", "")).rsplit("/", 1)[-1]
-            subnet_id = f'\n    vnet_subnet_id = azurerm_subnet.{vnet}_{_tf_id(subnet_name)}.id' if vnet and subnet_name else ""
+            subnet_reference = str(networking.get("subnet", ""))
+            vnet_name, _, subnet_name = subnet_reference.partition("/")
+            target_vnet = vnets.get(vnet_name)
+            subnet_id = f'\n    vnet_subnet_id = azurerm_subnet.{_logical(target_vnet)}_{_tf_id(subnet_name)}.id' if target_vnet and subnet_name else ""
             scaling = bool(pool.get("enableAutoScaling", False))
             autoscaling = f'\n    min_count = {int(pool.get("minCount", 1))}\n    max_count = {int(pool.get("maxCount", 3))}' if scaling else ""
             blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  location = var.location\n  resource_group_name = var.resource_group_name\n  dns_prefix = replace({name}, "-", "")\n  private_cluster_enabled = {str(bool(networking.get("privateCluster", False))).lower()}\n  default_node_pool {{\n    name = {json.dumps(str(pool.get("name", "system")))}\n    vm_size = {json.dumps(str(pool.get("vmSize", "Standard_B2s")))}\n    node_count = {int(pool.get("count", 1))}\n    enable_auto_scaling = {str(scaling).lower()}{autoscaling}{subnet_id}\n  }}\n  identity {{ type = "SystemAssigned" }}\n}}')
+            for extra in list(item.get("nodePools", []))[1:]:
+                extra_scaling = bool(extra.get("enableAutoScaling", False))
+                extra_range = f'\n  min_count = {int(extra.get("minCount", 1))}\n  max_count = {int(extra.get("maxCount", 3))}' if extra_scaling else ""
+                blocks.append(f'resource "azurerm_kubernetes_cluster_node_pool" "{logical}_{_tf_id(str(extra.get("name", "user")))}" {{\n  name = {json.dumps(str(extra.get("name", "user")))}\n  kubernetes_cluster_id = azurerm_kubernetes_cluster.{logical}.id\n  vm_size = {json.dumps(str(extra.get("vmSize", "Standard_B2s")))}\n  node_count = {int(extra.get("count", 1))}\n  enable_auto_scaling = {str(extra_scaling).lower()}{extra_range}{subnet_id}\n}}')
         elif kind == "azurerm_mysql_flexible_server":
             networking = item.get("networking", {})
-            delegated = str(networking.get("delegatedSubnet", "")).rsplit("/", 1)[-1]
+            delegated_reference = str(networking.get("delegatedSubnet", ""))
+            delegated_vnet_name, _, delegated = delegated_reference.partition("/")
+            delegated_vnet = vnets.get(delegated_vnet_name)
             dns = dns_zones.get(str(networking.get("privateDnsZone", "")))
             private_lines = ""
-            if vnet and delegated:
-                private_lines += f'\n  delegated_subnet_id = azurerm_subnet.{vnet}_{_tf_id(delegated)}.id'
+            if delegated_vnet and delegated:
+                private_lines += f'\n  delegated_subnet_id = azurerm_subnet.{_logical(delegated_vnet)}_{_tf_id(delegated)}.id'
             if dns:
                 private_lines += f'\n  private_dns_zone_id = azurerm_private_dns_zone.{dns}.id\n  depends_on = [azurerm_private_dns_zone_virtual_network_link.{dns}_link]'
             public_access = str(networking.get("publicNetworkAccess", "Enabled")).lower() != "disabled"
@@ -194,62 +242,68 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             blocks.append(f'data "azurerm_client_config" "current" {{}}\n\nresource "{kind}" "{logical}" {{\n  name = {name}\n  location = var.location\n  resource_group_name = var.resource_group_name\n  tenant_id = data.azurerm_client_config.current.tenant_id\n  sku_name = "standard"\n}}')
         elif kind == "azurerm_log_analytics_workspace": blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  location = var.location\n  resource_group_name = var.resource_group_name\n  sku = "PerGB2018"\n}}')
         elif str(item.get("type")) == "Microsoft.Network/privateDnsZones": blocks.append(f'resource "azurerm_private_dns_zone" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n}}')
-    if vnet:
-        for _, dns in dns_zones.items():
-            blocks.append(f'resource "azurerm_private_dns_zone_virtual_network_link" "{dns}_link" {{\n  name = "{dns}-vnet-link"\n  resource_group_name = var.resource_group_name\n  private_dns_zone_name = azurerm_private_dns_zone.{dns}.name\n  virtual_network_id = azurerm_virtual_network.{vnet}.id\n}}')
+    for zone in (item for item in resources if _type("azure", item) == "azurerm_private_dns_zone"):
+        dns = _logical(zone)
+        vnet = _single_related_resource(zone, resources, "azure", "azurerm_virtual_network")
+        if vnet:
+            blocks.append(f'resource "azurerm_private_dns_zone_virtual_network_link" "{dns}_link" {{\n  name = "{dns}-vnet-link"\n  resource_group_name = var.resource_group_name\n  private_dns_zone_name = azurerm_private_dns_zone.{dns}.name\n  virtual_network_id = azurerm_virtual_network.{_logical(vnet)}.id\n}}')
     if cluster and registry: blocks.append(f'resource "azurerm_role_assignment" "aks_acr_pull" {{\n  scope = azurerm_container_registry.{registry}.id\n  role_definition_name = "AcrPull"\n  principal_id = azurerm_kubernetes_cluster.{cluster}.kubelet_identity[0].object_id\n}}')
     return "\n\n".join(blocks)
 
 
 def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     blocks: list[str] = []; cluster = registry = None
-    vpc = next((_logical(item) for item in resources if _type("aws", item) == "aws_vpc"), None)
-    subnets = [_logical(item) for item in resources if _type("aws", item) == "aws_subnet"]
     for item in resources:
         logical, kind, name = _logical(item), _type("aws", item), names[_logical(item)]
         if kind == "aws_vpc":
             blocks.append(f'resource "aws_vpc" "{logical}" {{\n  cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.0.0/16")))}\n  enable_dns_hostnames = true\n  enable_dns_support = true\n  tags = {{ Name = {name} }}\n}}')
         elif kind == "aws_subnet":
             zone = item.get("availabilityZone")
-            zone_expr = json.dumps(str(zone)) if zone else f'try(var.availability_zones[{subnets.index(logical)}], null)'
-            vpc_expr = f'aws_vpc.{vpc}.id' if vpc else 'var.existing_vpc_id'
+            zone_expr = json.dumps(str(zone)) if zone else "null"
+            vpc = _single_related_resource(item, resources, "aws", "aws_vpc")
+            vpc_expr = f'aws_vpc.{_logical(vpc)}.id' if vpc else 'var.existing_vpc_id'
             blocks.append(f'resource "aws_subnet" "{logical}" {{\n  vpc_id = {vpc_expr}\n  cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.1.0/24")))}\n  availability_zone = {zone_expr}\n  tags = {{ Name = {name} }}\n}}')
         elif kind == "aws_ecr_repository": registry = logical; blocks.append(f'resource "aws_ecr_repository" "{logical}" {{\n  name = {name}\n}}')
         elif kind == "aws_eks_cluster":
             cluster = logical
-            subnet_ids = "[" + ", ".join(f"aws_subnet.{item}.id" for item in subnets) + "]" if subnets else "var.subnet_ids"
+            subnets = [_logical(subnet) for subnet in _related_resources(item, resources, "aws", "aws_subnet")]
+            subnet_ids = "[" + ", ".join(f"aws_subnet.{item}.id" for item in subnets) + "]"
             blocks.append(f'resource "aws_eks_cluster" "{logical}" {{\n  name = {name}\n  role_arn = var.eks_cluster_role_arn\n  vpc_config {{ subnet_ids = {subnet_ids} }}\n}}')
+            for pool in item.get("nodePools", [{"name": "default"}]):
+                pool_name = str(pool.get("name", "default"))
+                minimum, desired, maximum = int(pool.get("minCount", 1)), int(pool.get("count", 1)), int(pool.get("maxCount", 3))
+                blocks.append(f'resource "aws_eks_node_group" "{logical}_{_tf_id(pool_name)}" {{\n  cluster_name = aws_eks_cluster.{logical}.name\n  node_group_name = {json.dumps(pool_name)}\n  node_role_arn = var.eks_node_role_arn\n  subnet_ids = {subnet_ids}\n  scaling_config {{ desired_size = {desired} min_size = {minimum} max_size = {maximum} }}\n}}')
         elif kind == "aws_db_instance": blocks.append(f'resource "aws_db_instance" "{logical}" {{\n  identifier = {name}\n  engine = {json.dumps(str(item.get("engine", "mysql")))}\n  instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}\n  allocated_storage = {int(item.get("allocatedStorage", 20))}\n  username = var.db_username\n  password = var.db_password\n  skip_final_snapshot = true\n}}')
         elif kind == "aws_secretsmanager_secret": blocks.append(f'resource "aws_secretsmanager_secret" "{logical}" {{\n  name = {name}\n}}')
         elif kind == "aws_cloudwatch_log_group": blocks.append(f'resource "aws_cloudwatch_log_group" "{logical}" {{\n  name = {name}\n  retention_in_days = 30\n}}')
-    if cluster:
-        subnet_ids = "[" + ", ".join(f"aws_subnet.{item}.id" for item in subnets) + "]" if subnets else "var.subnet_ids"
-        blocks.append(f'resource "aws_eks_node_group" "{cluster}_default" {{\n  cluster_name = aws_eks_cluster.{cluster}.name\n  node_group_name = "default"\n  node_role_arn = var.eks_node_role_arn\n  subnet_ids = {subnet_ids}\n  scaling_config {{ desired_size = 1 min_size = 1 max_size = 3 }}\n}}')
     if cluster and registry: blocks.append('resource "aws_iam_role_policy_attachment" "eks_ecr_pull" {\n  role = var.eks_node_role_name\n  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"\n}')
     return "\n\n".join(blocks)
 
 
 def _gcp(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     blocks: list[str] = []; cluster = registry = None
-    network = next((_logical(item) for item in resources if _type("gcp", item) == "google_compute_network"), None)
-    subnet = next((_logical(item) for item in resources if _type("gcp", item) == "google_compute_subnetwork"), None)
     for item in resources:
         logical, kind, name = _logical(item), _type("gcp", item), names[_logical(item)]
         if kind == "google_compute_network":
             blocks.append(f'resource "google_compute_network" "{logical}" {{\n  name = {name}\n  auto_create_subnetworks = false\n}}')
         elif kind == "google_compute_subnetwork":
-            network_expr = f'google_compute_network.{network}.id' if network else 'var.network_name'
+            network = _single_related_resource(item, resources, "gcp", "google_compute_network")
+            network_expr = f'google_compute_network.{_logical(network)}.id' if network else 'var.network_name'
             blocks.append(f'resource "google_compute_subnetwork" "{logical}" {{\n  name = {name}\n  ip_cidr_range = {json.dumps(str(item.get("ipCidrRange", "10.0.1.0/24")))}\n  region = var.region\n  network = {network_expr}\n}}')
         elif kind == "google_artifact_registry_repository": registry = logical; blocks.append(f'resource "google_artifact_registry_repository" "{logical}" {{\n  location = var.region\n  repository_id = {name}\n  format = "DOCKER"\n}}')
         elif kind == "google_container_cluster":
             cluster = logical
-            network_expr = f'google_compute_network.{network}.id' if network else 'null'
-            subnet_expr = f'google_compute_subnetwork.{subnet}.id' if subnet else 'null'
+            subnet = _single_related_resource(item, resources, "gcp", "google_compute_subnetwork")
+            network = _single_related_resource(subnet, resources, "gcp", "google_compute_network") if subnet else None
+            network_expr = f'google_compute_network.{_logical(network)}.id' if network else 'null'
+            subnet_expr = f'google_compute_subnetwork.{_logical(subnet)}.id' if subnet else 'null'
             blocks.append(f'resource "google_container_cluster" "{logical}" {{\n  name = {name}\n  location = var.region\n  network = {network_expr}\n  subnetwork = {subnet_expr}\n  remove_default_node_pool = true\n  initial_node_count = 1\n}}')
+            for pool in item.get("nodePools", [{"name": "default"}]):
+                pool_name = str(pool.get("name", "default"))
+                blocks.append(f'resource "google_container_node_pool" "{logical}_{_tf_id(pool_name)}" {{\n  name = {json.dumps(pool_name)}\n  location = google_container_cluster.{logical}.location\n  cluster = google_container_cluster.{logical}.name\n  node_count = {int(pool.get("count", 1))}\n  node_config {{ service_account = var.gke_node_service_account\n    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] }}\n}}')
         elif kind == "google_sql_database_instance": blocks.append(f'resource "google_sql_database_instance" "{logical}" {{\n  name = {name}\n  database_version = {json.dumps(str(item.get("databaseVersion", "MYSQL_8_0")))}\n  region = var.region\n  settings {{ tier = {json.dumps(str(item.get("tier", "db-f1-micro")))} }}\n}}')
         elif kind == "google_secret_manager_secret": blocks.append(f'resource "google_secret_manager_secret" "{logical}" {{\n  secret_id = {name}\n  replication {{ auto {{}} }}\n}}')
         elif kind == "google_logging_project_bucket_config": blocks.append(f'resource "google_logging_project_bucket_config" "{logical}" {{\n  location = "global"\n  bucket_id = {name}\n  retention_days = 30\n}}')
-    if cluster: blocks.append(f'resource "google_container_node_pool" "{cluster}_default" {{\n  name = "default"\n  location = google_container_cluster.{cluster}.location\n  cluster = google_container_cluster.{cluster}.name\n  node_count = 1\n  node_config {{ service_account = var.gke_node_service_account\n    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] }}\n}}')
     if cluster and registry: blocks.append(f'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull" {{\n  location = google_artifact_registry_repository.{registry}.location\n  repository = google_artifact_registry_repository.{registry}.name\n  role = "roles/artifactregistry.reader"\n  member = "serviceAccount:${{var.gke_node_service_account}}"\n}}')
     return "\n\n".join(blocks)
 
@@ -277,6 +331,51 @@ def _role(provider: str, item: dict[str, Any]) -> str | None:
     return None
 
 
+def _resource_name(item: dict[str, Any]) -> str:
+    return str(item.get("name", ""))
+
+
+def _depends_on(item: dict[str, Any]) -> set[str]:
+    values = item.get("dependsOn", [])
+    return {str(value) for value in values if isinstance(value, str)} if isinstance(values, list) else set()
+
+
+def _ancestor_names(item: dict[str, Any], by_name: dict[str, dict[str, Any]], seen: set[str] | None = None) -> set[str]:
+    seen = seen or set()
+    result: set[str] = set()
+    for name in _depends_on(item):
+        if name in seen:
+            continue
+        result.add(name)
+        target = by_name.get(name)
+        if target is not None:
+            result.update(_ancestor_names(target, by_name, seen | {name}))
+    return result
+
+
+def _related_resources(item: dict[str, Any], resources: list[dict[str, Any]], provider: str, terraform_type: str) -> list[dict[str, Any]]:
+    """Find resources connected by explicit dependencies, never by list position."""
+    candidates = [candidate for candidate in resources if _type(provider, candidate) == terraform_type]
+    by_name = {_resource_name(candidate): candidate for candidate in resources}
+    ancestors = _ancestor_names(item, by_name)
+    direct = [candidate for candidate in candidates if _resource_name(candidate) in _depends_on(item)]
+    if direct:
+        return direct
+    related = [candidate for candidate in candidates if _resource_name(candidate) in ancestors]
+    if related:
+        return related
+    roots = ancestors | {_resource_name(item)}
+    return [candidate for candidate in candidates if _ancestor_names(candidate, by_name) & roots]
+
+
+def _single_related_resource(item: dict[str, Any], resources: list[dict[str, Any]], provider: str, terraform_type: str) -> dict[str, Any] | None:
+    related = _related_resources(item, resources, provider, terraform_type)
+    if len(related) == 1:
+        return related[0]
+    candidates = [candidate for candidate in resources if _type(provider, candidate) == terraform_type]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _expected_attributes(provider: str, item: dict[str, Any]) -> list[str]:
     """Stable source-spec values that must survive deterministic rendering."""
     kind = _type(provider, item)
@@ -296,6 +395,22 @@ def _expected_attributes(provider: str, item: dict[str, Any]) -> list[str]:
     if kind == "google_compute_subnetwork": return [f'ip_cidr_range = {json.dumps(str(item.get("ipCidrRange", "10.0.1.0/24")))}']
     if kind == "google_sql_database_instance": return [f'database_version = {json.dumps(str(item.get("databaseVersion", "MYSQL_8_0")))}', f'tier = {json.dumps(str(item.get("tier", "db-f1-micro")))}']
     return []
+
+
+def _terraform_resource_block(source: str, terraform_type: str, logical: str) -> str | None:
+    match = re.search(rf'resource "{re.escape(terraform_type)}" "{re.escape(logical)}"\s*\{{', source)
+    if match is None:
+        return None
+    start = source.find("{", match.start())
+    depth = 0
+    for index in range(start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[match.start():index + 1]
+    return None
 
 
 def _names(resources: list[dict[str, Any]]) -> dict[str, str]:

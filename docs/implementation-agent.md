@@ -89,6 +89,10 @@ EKS에는 managed node group을, GKE에는 node pool을 함께 생성하므로 �
 manifest를 실제로 스케줄할 수 있다. AWS의 EKS cluster/node IAM role ARN·name과 region,
 GCP의 project/region 및 GKE node service account, Azure의 resource group/location 및 MySQL
 관리자 비밀번호는 배포 환경에서 Terraform 변수로 제공해야 한다.
+resource spec의 `dependsOn`은 VPC/VNet·subnet·Kubernetes cluster의 참조 관계를 결정한다.
+특히 EKS cluster는 동일 네트워크에 연결된 서로 다른 `availabilityZone`의 subnet 두 개 이상을
+명시해야 하며, 이 조건을 충족하지 못하면 IaC 생성이 중단된다. `iac-render.json`의
+`requiredVariables`는 배포 전에 주입해야 하는 provider별 입력값을 구조화해 제공한다.
 `reports/iac-render.json`은 resource spec 리소스의 Terraform 반영 여부와 deployment intent의
 workload가 Kubernetes manifest 및 이미지 pull 권한과 연결되는지, EKS/GKE node 구성과
 VPC·subnetwork 참조가 존재하는지를 검증한다. 오류가 있으면 IaC artifact를 저장하지 않는다. IaC는 `IAC_CODE`의
