@@ -87,7 +87,7 @@ Cloud Logging을 지원한다. 클러스터와 컨테이너 레지스트리가 �
 이미지 pull 권한 연결(AcrPull, ECR read policy, Artifact Registry reader)을 함께 생성한다.
 EKS에는 managed node group을, GKE에는 node pool을 함께 생성하므로 생성된 Kubernetes
 manifest를 실제로 스케줄할 수 있다. AWS의 EKS cluster/node IAM role ARN·name과 region,
-GCP의 project/region 및 GKE node service account, Azure의 resource group/location 및 MySQL
+GCP의 project/region 및 cluster별 GKE node service-account, Azure의 resource group/location 및 MySQL
 관리자 비밀번호는 배포 환경에서 Terraform 변수로 제공해야 한다.
 resource spec의 `dependsOn`은 VPC/VNet·subnet·Kubernetes cluster의 참조 관계를 결정한다.
 특히 EKS cluster는 동일 네트워크에 연결된 서로 다른 `availabilityZone`의 subnet 두 개 이상을
@@ -99,17 +99,26 @@ VPC·subnetwork 참조가 존재하는지를 검증한다. 오류가 있으면 I
 불변 artifact 버전으로 저장된다.
 
 Terraform CLI가 설치된 환경에서는 `python -m app.implementation.engine.cli validate-iac <run>`으로
-격리된 임시 복사본에서 `terraform fmt -check`, `init -backend=false`, `validate`를 실행할 수 있다.
-동일 검증은 IaC renderer가 workflow 완료 전에 자동 실행하며, Terraform이 설치된 환경에서 실패하면
-`IAC_CODE` artifact를 저장하지 않는다. Terraform CLI가 없는 개발 환경에서는 report에 `SKIPPED`로 기록된다.
+격리된 임시 복사본에서 `terraform fmt`, `init -backend=false`, `validate`를 실행할 수 있다.
+동일 검증은 IaC renderer가 workflow 완료 전에 자동 실행하며, Terraform이 설치되어 있지 않거나
+검증에 실패하면 IaC 생성 자체가 실패한다. 따라서 `IAC_CODE` artifact를 저장하기 전에 Terraform CLI를
+반드시 실행 환경에 설치해야 한다.
+기본적으로 `PATH`의 `terraform`을 사용하며, Windows 환경에서 PATH를 갱신하지 않은 경우에는
+`EASYDEP_TERRAFORM_PATH`에 `terraform.exe`의 절대 경로를 지정할 수 있다.
 
 ## Registry image resolution
 
-배포 manifest는 `__EASYDEP_REGISTRY__` marker를 보존하고, Terraform은 단일 연결 registry의
-`registry_image_base` output을 생성한다. `application/k8s/render-images.sh <terraform-dir> <output-dir>`은
-이 output으로 marker를 치환한 별도 manifest tree를 생성하므로, 원본 산출물을 변경하지 않고 실제
-registry endpoint로 배포할 수 있다. 여러 registry를 사용하는 경우에는 각 workload의 registry 참조를
-resource spec의 명시적 `id`와 `dependsOn`으로 추가해야 하며, 모호한 연결은 renderer가 실패로 처리한다.
+배포 manifest는 workload별 `__EASYDEP_REGISTRY_<registryRef>__` marker를 보존하고, Terraform은 모든
+registry의 주소를 `registry_image_bases` map output으로 생성한다. 여러 registry를 사용하는 경우에는
+각 workload의 `registryRef`를 cloud resource spec의 registry `id`로 명시한다. registry가 하나뿐일 때는
+자동 추론할 수 있지만, 여러 후보가 있으면 renderer가 실패로 처리한다.
+
+`application/k8s/render-images.sh <terraform-dir> <output-dir>`은 Terraform apply 이후 output map으로
+marker를 치환한 별도 manifest tree를 생성한다. `application/k8s/deploy.sh <terraform-dir> [terraform apply options...]`는
+Terraform apply → 이미지 주소 치환 → kubectl apply를 순서대로 실행하는 최종 배포 entry point이다. 실행 권한에
+의존하지 않도록 `sh application/k8s/deploy.sh <terraform-dir> [terraform apply options...]` 형태로 호출한다.
+원본 manifest를 수정하지 않으므로, 생성 단계에서는 결정적 산출물을 유지하면서도 실제 배포에서는 registry의
+실제 endpoint를 사용한다. 이 스크립트 실행에는 Terraform, Python 3, kubectl 및 각 provider 인증이 필요하다.
 
 ## 자동 실행 단계
 

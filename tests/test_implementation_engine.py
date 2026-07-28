@@ -1500,7 +1500,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("path: /readyz", deployment_source)
             self.assertIn("path: /livez", deployment_source)
 
-    def test_deterministic_iac_renderer_matches_deployment_intent(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_deterministic_iac_renderer_matches_deployment_intent(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cloud = root / "cloud.json"
@@ -1525,7 +1526,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn('resource "azurerm_container_registry"', source)
             self.assertIn('resource "azurerm_key_vault"', source)
 
-    def test_deterministic_iac_renderer_supports_aws_and_gcp(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_deterministic_iac_renderer_supports_aws_and_gcp(self, _validation: object) -> None:
         cases = (
             ("aws", [{"type": "AWS::EC2::VPC", "name": "network"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["network"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["network"]}, {"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders", "dependsOn": ["network"]}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment"')),
             ("gcp", [{"type": "compute.googleapis.com/Network", "name": "network"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private", "dependsOn": ["network"]}, {"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders", "dependsOn": ["private"]}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member"')),
@@ -1547,7 +1549,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 for marker in expected:
                     self.assertIn(marker, source)
 
-    def test_iac_renderer_connects_networks_and_creates_cluster_nodes(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_connects_networks_and_creates_cluster_nodes(self, _validation: object) -> None:
         cases = (
             (
                 "aws",
@@ -1572,7 +1575,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 for marker in expected:
                     self.assertIn(marker, source)
 
-    def test_iac_renderer_resolves_network_references_independent_of_resource_order(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_resolves_network_references_independent_of_resource_order(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cloud = root / "cloud.json"
@@ -1588,7 +1592,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("vpc_id = aws_vpc.platform.id", source)
             self.assertIn("subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_c.id]", source)
 
-    def test_iac_renderer_resolves_type_safe_dependency_ids_when_names_overlap(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_iac_renderer_resolves_type_safe_dependency_ids_when_names_overlap(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cloud = root / "cloud.json"
@@ -1612,7 +1617,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             with self.assertRaisesRegex(ValueError, "not supported"):
                 render_iac(root / "run", SimpleNamespace(inputs={"cloud": cloud}))
 
-    def test_azure_iac_renderer_preserves_private_cluster_and_mysql_networking(self) -> None:
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_azure_iac_renderer_preserves_private_cluster_and_mysql_networking(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cloud = root / "cloud.json"
@@ -1631,15 +1637,39 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
 
     def test_infer_intent_uses_provider_specific_registry_images(self) -> None:
         cases = (
-            ("aws", "AWS::EKS::Cluster", "AWS::ECR::Repository", "__EASYDEP_REGISTRY__"),
-            ("gcp", "container.googleapis.com/Cluster", "artifactregistry.googleapis.com/Repository", "__EASYDEP_REGISTRY__"),
+            ("aws", "AWS::EKS::Cluster", "AWS::ECR::Repository", "__EASYDEP_REGISTRY_"),
+            ("gcp", "container.googleapis.com/Cluster", "artifactregistry.googleapis.com/Repository", "__EASYDEP_REGISTRY_"),
         )
         for provider, cluster_type, registry_type, marker in cases:
             with self.subTest(provider=provider):
                 intent = infer_intent("orders", {"provider": provider, "resources": [{"type": cluster_type, "workloads": [{"name": "orders-api"}]}, {"type": registry_type, "name": "orders"}]})
                 self.assertIn(marker, intent["workloads"][0]["image"])
 
-    def test_aws_cloud_spec_renders_deployment_then_iac(self) -> None:
+    def test_infer_intent_requires_or_preserves_workload_registry_reference(self) -> None:
+        cloud = {
+            "provider": "aws",
+            "resources": [
+                {
+                    "id": "cluster-a",
+                    "type": "AWS::EKS::Cluster",
+                    "name": "orders",
+                    "workloads": [{"name": "orders-api", "registryRef": "private-registry"}],
+                },
+                {"id": "public-registry", "type": "AWS::ECR::Repository", "name": "public"},
+                {"id": "private-registry", "type": "AWS::ECR::Repository", "name": "private"},
+            ],
+        }
+        intent = infer_intent("orders", cloud)
+        workload = intent["workloads"][0]
+        self.assertEqual("private-registry", workload["registryRef"])
+        self.assertIn("__EASYDEP_REGISTRY_private-registry__", workload["image"])
+
+        cloud["resources"][0]["workloads"] = [{"name": "orders-api"}]
+        with self.assertRaisesRegex(ValueError, "requires registryRef"):
+            infer_intent("orders", cloud)
+
+    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    def test_aws_cloud_spec_renders_deployment_then_iac(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cloud = root / "cloud.json"
@@ -1658,11 +1688,12 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertEqual("aws", iac["provider"])
             self.assertEqual("SUCCEEDED", iac["sourceConformance"]["status"])
             self.assertTrue((run / "application/k8s/render-images.sh").is_file())
-            self.assertIn('output "registry_image_base"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
+            self.assertTrue((run / "application/k8s/deploy.sh").is_file())
+            self.assertIn('output "registry_image_bases"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
     def test_terraform_validation_reports_when_binary_is_unavailable(self, _which: object) -> None:
-        self.assertEqual("SKIPPED", validate_terraform(Path("missing")).get("status"))
+        self.assertEqual("FAILED", validate_terraform(Path("missing")).get("status"))
 
     @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "FAILED", "errors": ["provider schema rejected configuration"]})
     def test_iac_renderer_blocks_artifact_promotion_when_terraform_validation_fails(self, _validation: object) -> None:

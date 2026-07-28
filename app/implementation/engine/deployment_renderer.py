@@ -82,7 +82,7 @@ reports
 *.pem
 *.key""",
     )
-    if any("__EASYDEP_REGISTRY__" in str(workload.get("image", "")) for workload in intent["workloads"]):
+    if any("__EASYDEP_REGISTRY_" in str(workload.get("image", "")) for workload in intent["workloads"]):
         write(
             "k8s/render-images.sh",
             r'''#!/bin/sh
@@ -91,15 +91,45 @@ set -eu
 # Render a deployable manifest tree without mutating the deterministic source manifests.
 terraform_dir=${1:?usage: render-images.sh <terraform-dir> <output-dir>}
 output_dir=${2:?usage: render-images.sh <terraform-dir> <output-dir>}
-registry=$(terraform -chdir="$terraform_dir" output -raw registry_image_base)
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+registry_outputs=$(terraform -chdir="$terraform_dir" output -json registry_image_bases)
 rm -rf "$output_dir"
 mkdir -p "$output_dir"
-find "$source_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | while IFS= read -r source; do
-  relative=${source#"$source_dir"/}
-  target="$output_dir/$relative"
-  mkdir -p "$(dirname -- "$target")"
-  sed "s|__EASYDEP_REGISTRY__|$registry|g" "$source" > "$target"
+REGISTRY_OUTPUTS="$registry_outputs" SOURCE_DIR="$source_dir" OUTPUT_DIR="$output_dir" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+registries = json.loads(os.environ["REGISTRY_OUTPUTS"])
+source_dir = Path(os.environ["SOURCE_DIR"])
+output_dir = Path(os.environ["OUTPUT_DIR"])
+for source in source_dir.rglob("*.y*ml"):
+    target = output_dir / source.relative_to(source_dir)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = source.read_text(encoding="utf-8")
+    for registry_ref, image_base in registries.items():
+        content = content.replace(f"__EASYDEP_REGISTRY_{registry_ref}__", image_base)
+    if "__EASYDEP_REGISTRY_" in content:
+        raise SystemExit(f"unresolved registry marker in {source}")
+    target.write_text(content, encoding="utf-8")
+PY
+''',
+        )
+        write(
+            "k8s/deploy.sh",
+            r'''#!/bin/sh
+set -eu
+
+# Apply IaC, resolve registry addresses from Terraform outputs, then apply Kubernetes manifests.
+terraform_dir=${1:?usage: deploy.sh <terraform-dir> [terraform apply options...]}
+shift
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+output_dir=${EASYDEP_MANIFEST_DIR:-"$script_dir/resolved"}
+terraform -chdir="$terraform_dir" init -input=false
+terraform -chdir="$terraform_dir" apply "$@"
+sh "$script_dir/render-images.sh" "$terraform_dir" "$output_dir"
+find "$output_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | sort | while IFS= read -r manifest; do
+  kubectl apply -f "$manifest"
 done
 ''',
         )
@@ -236,7 +266,7 @@ def infer_intent(
     resources = cloud.get("resources", [])
     provider = cloud_provider(cloud)
     cluster = next((item for item in resources if cloud_role(provider, item) == "cluster"), {})
-    registry = next((item.get("name") for item in resources if cloud_role(provider, item) == "registry"), None)
+    registries = [item for item in resources if cloud_role(provider, item) == "registry"]
     networking = cluster.get("networking", {})
     exposed_aliases = deployment_exposed_aliases(deployment_diagram)
     workloads = []
@@ -273,9 +303,11 @@ def infer_intent(
         use_ingress = api_like and networking.get("ingressProtocol") == "HTTPS"
         metrics_path = source.get("monitoring", {}).get("metricsPath")
         external_secret = source.get("externalSecret")
+        registry = infer_workload_registry(source, cluster, registries)
         workloads.append({
             "name": workload_name, "kind": "Deployment",
             "image": registry_image(provider, registry, workload_name),
+            **({"registryRef": resource_reference(registry)} if registry else {}),
             "port": int(networking.get("containerPort", 8000)),
             "replicas": replicas, "resources": source.get("resources", {}),
             "health": {
@@ -756,12 +788,36 @@ def cloud_role(provider: str, item: dict[str, Any]) -> str | None:
     return None
 
 
-def registry_image(provider: str, registry: object, workload: str) -> str:
-    if provider == "azure":
-        return f"__EASYDEP_REGISTRY__/{workload}:<tag>"
+def resource_reference(resource: dict[str, Any]) -> str:
+    explicit = resource.get("id")
+    return str(explicit) if isinstance(explicit, str) and explicit.strip() else f"{resource.get('type')}:{resource.get('name')}"
+
+
+def infer_workload_registry(
+    workload: dict[str, Any], cluster: dict[str, Any], registries: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Choose a registry explicitly; ambiguous cloud input must not invent a target."""
+    requested = workload.get("registryRef")
+    if isinstance(requested, str) and requested:
+        matches = [item for item in registries if requested in {str(item.get("name")), resource_reference(item)}]
+        if len(matches) != 1:
+            raise ValueError(f"workload {workload.get('name')} registryRef does not identify one registry: {requested}")
+        return matches[0]
+    cluster_dependencies = set(cluster.get("dependsOn", [])) if isinstance(cluster.get("dependsOn"), list) else set()
+    connected = [item for item in registries if resource_reference(item) in cluster_dependencies or item.get("name") in cluster_dependencies]
+    candidates = connected or registries
+    if len(candidates) > 1:
+        raise ValueError(f"workload {workload.get('name')} requires registryRef because multiple registries are available")
+    return candidates[0] if candidates else None
+
+
+def registry_image(provider: str, registry: dict[str, Any] | None, workload: str) -> str:
+    if registry is None:
+        return f"{workload}:<tag>"
+    marker = f"__EASYDEP_REGISTRY_{resource_reference(registry)}__"
     if provider == "aws":
-        return "__EASYDEP_REGISTRY__:<tag>"
-    return f"__EASYDEP_REGISTRY__/{workload}:<tag>"
+        return f"{marker}:<tag>"
+    return f"{marker}/{workload}:<tag>"
 
 
 def resource(api: str, kind: str, name: str, namespace: str | None = None) -> str:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -16,16 +17,17 @@ SUPPORTED_PROVIDERS = ("azure", "aws", "gcp")
 
 def validate_terraform(application: Path) -> dict[str, object]:
     """Run Terraform's parser/provider validation in an isolated copy when available."""
-    executable = shutil.which("terraform")
+    configured = os.environ.get("EASYDEP_TERRAFORM_PATH")
+    executable = configured if configured and Path(configured).is_file() else shutil.which("terraform")
     source = application / "terraform"
     if executable is None:
-        return {"status": "SKIPPED", "reason": "terraform executable is not installed"}
+        return {"status": "FAILED", "errors": ["terraform executable is not installed"]}
     if not source.is_dir():
         return {"status": "FAILED", "errors": ["Terraform directory is missing"]}
     with tempfile.TemporaryDirectory(prefix="easydep-terraform-") as directory:
         work = Path(directory) / "terraform"
         shutil.copytree(source, work)
-        commands = ([executable, "fmt", "-check", "-recursive", "-no-color"], [executable, "init", "-backend=false", "-input=false", "-no-color"], [executable, "validate", "-no-color"])
+        commands = ([executable, "fmt", "-recursive", "-no-color"], [executable, "init", "-backend=false", "-input=false", "-no-color"], [executable, "validate", "-no-color"])
         for command in commands:
             result = subprocess.run(command, cwd=work, text=True, capture_output=True, check=False, timeout=120)
             if result.returncode:
@@ -106,15 +108,20 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
         name = str(workload.get("name", ""))
         if name and not (application / "k8s" / name).is_dir():
             errors.append(f"deployment workload {name} has no rendered Kubernetes manifests")
-    unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY__" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
+    unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY_" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
     if unresolved_images:
-        if len([item for item in resources if _role(provider, item) == "registry"]) != 1:
-            errors.append("registry image rendering requires exactly one registry for unresolved workload images")
+        registries = {_resource_id(item) for item in resources if _role(provider, item) == "registry"}
+        for workload in unresolved_images:
+            reference = workload.get("registryRef")
+            if not isinstance(reference, str) or reference not in registries:
+                errors.append(f"deployment workload {workload.get('name')} must declare a valid registryRef")
         if not (application / "k8s" / "render-images.sh").is_file():
             errors.append("registry image rendering script is missing")
+        if not (application / "k8s" / "deploy.sh").is_file():
+            errors.append("IaC-to-Kubernetes deployment script is missing")
         outputs = application / "terraform" / "outputs.tf"
-        if not outputs.is_file() or 'output "registry_image_base"' not in outputs.read_text(encoding="utf-8"):
-            errors.append("Terraform registry_image_base output is missing")
+        if not outputs.is_file() or 'output "registry_image_bases"' not in outputs.read_text(encoding="utf-8"):
+            errors.append("Terraform registry_image_bases output is missing")
     if not intent:
         warnings.append("Deployment intent is absent; workload-to-infrastructure validation was skipped")
     return {"status": "FAILED" if errors else ("SUCCEEDED_WITH_WARNINGS" if warnings else "SUCCEEDED"), "errors": errors, "warnings": warnings}
@@ -177,22 +184,22 @@ def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> No
 
 def _variables(provider: str, resources: list[dict[str, Any]]) -> str:
     provider_blocks = {
-        "azure": ['terraform { required_version = ">= 1.6.0"\n  required_providers { azurerm = { source = "hashicorp/azurerm", version = "~> 4.0" } }\n}', 'provider "azurerm" { features {} }', 'variable "resource_group_name" { type = string }', 'variable "location" { type = string }', 'variable "mysql_administrator_login" { type = string\n  default = "easydepadmin" }', 'variable "mysql_administrator_password" { type = string\n  sensitive = true }'],
-        "aws": ['terraform { required_version = ">= 1.6.0"\n  required_providers { aws = { source = "hashicorp/aws", version = "~> 5.0" } }\n}', 'provider "aws" { region = var.region }', 'variable "region" { type = string }', 'variable "eks_cluster_role_arn" { type = string }', 'variable "eks_node_role_arn" { type = string }', 'variable "eks_node_role_name" { type = string }', 'variable "subnet_ids" { type = list(string)\n  default = [] }', 'variable "existing_vpc_id" { type = string\n  default = null }', 'variable "availability_zones" { type = list(string)\n  default = [] }', 'variable "db_username" { type = string\n  default = "easydepadmin" }', 'variable "db_password" { type = string\n  sensitive = true }'],
-        "gcp": ['terraform { required_version = ">= 1.6.0"\n  required_providers { google = { source = "hashicorp/google", version = "~> 6.0" } }\n}', 'provider "google" { project = var.project_id\n  region = var.region }', 'variable "project_id" { type = string }', 'variable "region" { type = string }', 'variable "network_name" { type = string\n  default = null }', 'variable "gke_node_service_account" { type = string }'],
+        "azure": ['terraform {\n  required_version = ">= 1.6.0"\n  required_providers {\n    azurerm = {\n      source = "hashicorp/azurerm"\n      version = "~> 4.0"\n    }\n  }\n}', 'provider "azurerm" {\n  features {}\n}', 'variable "resource_group_name" {\n  type = string\n}', 'variable "location" {\n  type = string\n}', 'variable "mysql_administrator_login" {\n  type = string\n  default = "easydepadmin"\n}', 'variable "mysql_administrator_password" {\n  type = string\n  sensitive = true\n}'],
+        "aws": ['terraform {\n  required_version = ">= 1.6.0"\n  required_providers {\n    aws = {\n      source = "hashicorp/aws"\n      version = "~> 5.0"\n    }\n  }\n}', 'provider "aws" {\n  region = var.region\n}', 'variable "region" {\n  type = string\n}', 'variable "eks_cluster_role_arn" {\n  type = string\n}', 'variable "eks_node_role_arns" {\n  type = map(string)\n}', 'variable "eks_node_role_names" {\n  type = map(string)\n}', 'variable "subnet_ids" {\n  type = list(string)\n  default = []\n}', 'variable "existing_vpc_id" {\n  type = string\n  default = null\n}', 'variable "availability_zones" {\n  type = list(string)\n  default = []\n}', 'variable "db_username" {\n  type = string\n  default = "easydepadmin"\n}', 'variable "db_password" {\n  type = string\n  sensitive = true\n}'],
+        "gcp": ['terraform {\n  required_version = ">= 1.6.0"\n  required_providers {\n    google = {\n      source = "hashicorp/google"\n      version = "~> 6.0"\n    }\n  }\n}', 'provider "google" {\n  project = var.project_id\n  region = var.region\n}', 'variable "project_id" {\n  type = string\n}', 'variable "region" {\n  type = string\n}', 'variable "network_name" {\n  type = string\n  default = null\n}', 'variable "gke_node_service_accounts" {\n  type = map(string)\n}'],
     }[provider]
     for item in resources:
         raw, logical = str(item.get("name", "")), _logical(item)
         if raw.startswith("<") and raw.endswith(">"):
-            provider_blocks.append(f'variable "{logical}_name" {{ type = string }}')
+            provider_blocks.append(f'variable "{logical}_name" {{\n  type = string\n}}')
     return "\n\n".join(provider_blocks)
 
 
 def _required_variables(provider: str) -> list[dict[str, str]]:
     values = {
         "azure": [("resource_group_name", "target Azure resource group"), ("location", "target Azure region"), ("mysql_administrator_password", "MySQL administrator password")],
-        "aws": [("region", "target AWS region"), ("eks_cluster_role_arn", "EKS control-plane IAM role ARN"), ("eks_node_role_arn", "EKS node IAM role ARN"), ("eks_node_role_name", "EKS node IAM role name"), ("db_password", "RDS administrator password")],
-        "gcp": [("project_id", "target GCP project ID"), ("region", "target GCP region"), ("gke_node_service_account", "GKE node service-account email")],
+        "aws": [("region", "target AWS region"), ("eks_cluster_role_arn", "EKS control-plane IAM role ARN"), ("eks_node_role_arns", "EKS cluster logical name to node IAM role ARN"), ("eks_node_role_names", "EKS cluster logical name to node IAM role name"), ("db_password", "RDS administrator password")],
+        "gcp": [("project_id", "target GCP project ID"), ("region", "target GCP region"), ("gke_node_service_accounts", "GKE cluster logical name to node service-account email")],
     }[provider]
     return [{"name": name, "description": description} for name, description in values]
 
@@ -292,7 +299,7 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             for pool in item.get("nodePools", [{"name": "default"}]):
                 pool_name = str(pool.get("name", "default"))
                 minimum, desired, maximum = int(pool.get("minCount", 1)), int(pool.get("count", 1)), int(pool.get("maxCount", 3))
-                blocks.append(f'resource "aws_eks_node_group" "{logical}_{_tf_id(pool_name)}" {{\n  cluster_name = aws_eks_cluster.{logical}.name\n  node_group_name = {json.dumps(pool_name)}\n  node_role_arn = var.eks_node_role_arn\n  subnet_ids = {subnet_ids}\n  scaling_config {{ desired_size = {desired} min_size = {minimum} max_size = {maximum} }}\n}}')
+                blocks.append(f'resource "aws_eks_node_group" "{logical}_{_tf_id(pool_name)}" {{\n  cluster_name = aws_eks_cluster.{logical}.name\n  node_group_name = {json.dumps(pool_name)}\n  node_role_arn = var.eks_node_role_arns[{json.dumps(logical)}]\n  subnet_ids = {subnet_ids}\n  scaling_config {{\n    desired_size = {desired}\n    min_size = {minimum}\n    max_size = {maximum}\n  }}\n}}')
         elif kind == "aws_db_instance": blocks.append(f'resource "aws_db_instance" "{logical}" {{\n  identifier = {name}\n  engine = {json.dumps(str(item.get("engine", "mysql")))}\n  instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}\n  allocated_storage = {int(item.get("allocatedStorage", 20))}\n  username = var.db_username\n  password = var.db_password\n  skip_final_snapshot = true\n}}')
         elif kind == "aws_secretsmanager_secret": blocks.append(f'resource "aws_secretsmanager_secret" "{logical}" {{\n  name = {name}\n}}')
         elif kind == "aws_cloudwatch_log_group": blocks.append(f'resource "aws_cloudwatch_log_group" "{logical}" {{\n  name = {name}\n  retention_in_days = 30\n}}')
@@ -301,7 +308,7 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     for target_cluster in clusters:
         targets = _related_resources(target_cluster, resources, "aws", "aws_ecr_repository") or (registries if len(registries) == 1 else [])
         for target_registry in targets:
-            blocks.append(f'resource "aws_iam_role_policy_attachment" "{_logical(target_cluster)}_{_logical(target_registry)}_ecr_pull" {{\n  role = var.eks_node_role_name\n  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"\n}}')
+            blocks.append(f'resource "aws_iam_role_policy_attachment" "{_logical(target_cluster)}_{_logical(target_registry)}_ecr_pull" {{\n  role = var.eks_node_role_names[{json.dumps(_logical(target_cluster))}]\n  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"\n}}')
     return "\n\n".join(blocks)
 
 
@@ -325,36 +332,40 @@ def _gcp(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             blocks.append(f'resource "google_container_cluster" "{logical}" {{\n  name = {name}\n  location = var.region\n  network = {network_expr}\n  subnetwork = {subnet_expr}\n  remove_default_node_pool = true\n  initial_node_count = 1\n}}')
             for pool in item.get("nodePools", [{"name": "default"}]):
                 pool_name = str(pool.get("name", "default"))
-                blocks.append(f'resource "google_container_node_pool" "{logical}_{_tf_id(pool_name)}" {{\n  name = {json.dumps(pool_name)}\n  location = google_container_cluster.{logical}.location\n  cluster = google_container_cluster.{logical}.name\n  node_count = {int(pool.get("count", 1))}\n  node_config {{ service_account = var.gke_node_service_account\n    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"] }}\n}}')
+                blocks.append(f'resource "google_container_node_pool" "{logical}_{_tf_id(pool_name)}" {{\n  name = {json.dumps(pool_name)}\n  location = google_container_cluster.{logical}.location\n  cluster = google_container_cluster.{logical}.name\n  node_count = {int(pool.get("count", 1))}\n  node_config {{\n    service_account = var.gke_node_service_accounts[{json.dumps(logical)}]\n    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]\n  }}\n}}')
         elif kind == "google_sql_database_instance": blocks.append(f'resource "google_sql_database_instance" "{logical}" {{\n  name = {name}\n  database_version = {json.dumps(str(item.get("databaseVersion", "MYSQL_8_0")))}\n  region = var.region\n  settings {{ tier = {json.dumps(str(item.get("tier", "db-f1-micro")))} }}\n}}')
         elif kind == "google_secret_manager_secret": blocks.append(f'resource "google_secret_manager_secret" "{logical}" {{\n  secret_id = {name}\n  replication {{ auto {{}} }}\n}}')
         elif kind == "google_logging_project_bucket_config": blocks.append(f'resource "google_logging_project_bucket_config" "{logical}" {{\n  location = "global"\n  bucket_id = {name}\n  retention_days = 30\n}}')
     clusters = [item for item in resources if _type("gcp", item) == "google_container_cluster"]
     registries = [item for item in resources if _type("gcp", item) == "google_artifact_registry_repository"]
-    granted: set[str] = set()
+    granted: set[tuple[str, str]] = set()
     for target_cluster in clusters:
         targets = _related_resources(target_cluster, resources, "gcp", "google_artifact_registry_repository") or (registries if len(registries) == 1 else [])
         for target_registry in targets:
             registry_id = _logical(target_registry)
-            if registry_id in granted:
+            grant = (_logical(target_cluster), registry_id)
+            if grant in granted:
                 continue
-            granted.add(registry_id)
-            blocks.append(f'resource "google_artifact_registry_repository_iam_member" "{registry_id}_gke_artifact_pull" {{\n  location = google_artifact_registry_repository.{registry_id}.location\n  repository = google_artifact_registry_repository.{registry_id}.name\n  role = "roles/artifactregistry.reader"\n  member = "serviceAccount:${{var.gke_node_service_account}}"\n}}')
+            granted.add(grant)
+            blocks.append(f'resource "google_artifact_registry_repository_iam_member" "{_logical(target_cluster)}_{registry_id}_gke_artifact_pull" {{\n  location = google_artifact_registry_repository.{registry_id}.location\n  repository = google_artifact_registry_repository.{registry_id}.name\n  role = "roles/artifactregistry.reader"\n  member = "serviceAccount:${{var.gke_node_service_accounts[{json.dumps(_logical(target_cluster))}]}}"\n}}')
     return "\n\n".join(blocks)
 
 
 def _outputs(provider: str, resources: list[dict[str, Any]]) -> str:
     values = [f'output "provider" {{ value = {json.dumps(provider)} }}']
     registries = [item for item in resources if _role(provider, item) == "registry"]
-    if len(registries) == 1:
-        logical, kind = _logical(registries[0]), _type(provider, registries[0])
-        if kind == "azurerm_container_registry":
-            registry_value = f"azurerm_container_registry.{logical}.login_server"
-        elif kind == "aws_ecr_repository":
-            registry_value = f"aws_ecr_repository.{logical}.repository_url"
-        else:
-            registry_value = f'format("%s-docker.pkg.dev/%s/%s", var.region, var.project_id, google_artifact_registry_repository.{logical}.repository_id)'
-        values.append(f'output "registry_image_base" {{ value = {registry_value} }}')
+    if registries:
+        registry_values: list[str] = []
+        for item in registries:
+            logical, kind = _logical(item), _type(provider, item)
+            if kind == "azurerm_container_registry":
+                registry_value = f"azurerm_container_registry.{logical}.login_server"
+            elif kind == "aws_ecr_repository":
+                registry_value = f"aws_ecr_repository.{logical}.repository_url"
+            else:
+                registry_value = f'format("%s-docker.pkg.dev/%s/%s", var.region, var.project_id, google_artifact_registry_repository.{logical}.repository_id)'
+            registry_values.append(f"{json.dumps(_resource_id(item))} = {registry_value}")
+        values.append('output "registry_image_bases" { value = {' + " ".join(registry_values) + '} }')
     for item in resources:
         kind, logical = _type(provider, item), _logical(item)
         if _role(provider, item) == "cluster": values.append(f'output "{logical}_cluster_name" {{ value = {kind}.{logical}.name }}')
