@@ -6,9 +6,19 @@
   - `feedback.py`   — cascade 순서(게다가 논리 이름 체계가 달랐다)
 
 구조를 바꾸려면 세 곳을 다 고쳐야 하고, 하나를 빠뜨려도 아무 표시가 없다. 그래서
-"무슨 단계가 어떤 순서로 있는가"는 여기서만 말한다. 파생될 수 있는 것(cascade 순서,
-편집 가능한 단계, 각 단계의 입력 계약)은 전부 여기서 파생시키고, 아직 파생시키지 않은
-곳(`subgraphs.py`의 엣지)은 테스트가 이 목록과 맞는지 확인한다.
+"무슨 단계가 어떤 순서로 있는가"는 여기서만 말한다.
+
+**2026-07-27부터 사본이 없다.** 한동안 두 곳(`subgraphs.py`의 그래프 엣지,
+`runner.run_pipeline`의 배치 실행 순서)은 사람이 읽을 코드로 남기고 테스트가 이 목록과
+대조하는 방식으로 지켰는데, 대조는 사본을 없애 주지 않는다. 특히 배치 쪽은 테스트가
+`inspect.getsource`로 **소스 텍스트**를 검사하고 있어서, 호출을 리팩터링하면 거짓 실패를
+내고 순서를 바꿔도 텍스트만 맞으면 통과했다. 지금은 둘 다 여기서 파생된다:
+
+  - `nodes_in(group)`  → `subgraphs.build_stage`가 노드와 엣지를 만든다
+  - `batch_order()`    → `runner._run_stages`가 정방향 패스를 돈다
+  - `cascade_order()` · `node_by_key()` · `editable_keys()` → `feedback.py`
+
+파생된 배선이 **실제로 그 순서로 도는지**는 `tests/test_stage_registry.py`가 확인한다.
 
 **입력 계약은 여기 없다.** 그건 단계 함수의 `@contract(...)` 선언에 있고, 이 목록은
 `contract_of()`로 읽기만 한다 — 같은 사실을 두 번 적지 않기 위해서다.
@@ -35,6 +45,7 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,
 )
+from app.requirements.agent.steps.step_cloud import link_cloud_concerns
 from app.requirements.common.state_contract import StateContract, state_contract_of
 
 
@@ -65,6 +76,17 @@ PIPELINE: tuple[Stage, ...] = (
     Stage("intake", intake, group="refine_requirements"),
     Stage("clarify", clarify, group="refine_requirements"),
     Stage("classify", classify, group="refine_requirements"),
+    # 클라우드 관심사 커버리지는 **자기 그룹**이다. `refine_requirements`에 넣으면 안 된다 —
+    # 배치 러너가 그 그룹을 통째로 건너뛰므로(`PRECLASSIFIED_GROUP`) 평가 세트가 재는
+    # 실행에서 이 단계가 영원히 빠진다. C2에서 정확히 그 자리에 물렸다(효과를 측정에
+    # 못 잡았다). 입력은 `classified` 하나뿐이라 배치 입력이 이미 만족시킨다.
+    #
+    # `key`는 주지 않는다. cascade의 논리 이름은 **피드백이 겨눌 수 있는 단계**의 것이고,
+    # 이 단계는 `classified`에서 파생되는 집계라 상위가 다시 돌면 자연히 다시 돈다
+    # (`check_coverage`가 key를 갖는 것은 그것이 cascade **끝**이라서가 아니라 게이트가
+    # 그 이름으로 멈추기 때문이다). 게다가 cascade 순서의 맨 앞에 편집 불가 단계를 두면
+    # `_clamp_editable_stage`가 자기 위에서 편집 가능한 단계를 못 찾는다.
+    Stage("link_cloud_concerns", link_cloud_concerns, group="cover_cloud_concerns"),
     Stage("identify_actors", identify_actors, group="model_use_cases",
           key="actors", editable=True),
     Stage("identify_use_cases", identify_use_cases, group="model_use_cases",
@@ -85,10 +107,28 @@ PIPELINE: tuple[Stage, ...] = (
 #: 상위 그래프의 노드 순서(= 스테이지 서브그래프 순서).
 GROUPS: tuple[str, ...] = tuple(dict.fromkeys(s.group for s in PIPELINE))
 
+#: 배치 입력(`inputs/*.json`)이 **이미 만족시키는** 그룹.
+#:
+#: 배치는 분류가 끝난 요구사항을 받으므로 step1이 할 일이 없다. 그 사실이 지금까지
+#: `runner.run_pipeline`이 step2부터 손으로 호출한다는 형태로만 있었다 — 즉 코드 모양에서
+#: 읽어내야 했고, 테스트는 그 모양을 소스 텍스트로 검사했다.
+PRECLASSIFIED_GROUP = "refine_requirements"
+
 
 def nodes_in(group: str) -> tuple[str, ...]:
     """한 서브그래프 안의 노드 이름들(실행 순서)."""
     return tuple(s.node for s in PIPELINE if s.group == group)
+
+
+def batch_order() -> tuple[Stage, ...]:
+    """배치 러너가 도는 단계들 — 입력이 이미 분류돼 있어 step1을 건너뛴다.
+
+    `runner.run_pipeline`의 정방향 패스가 여기서 파생된다. 예전에는 그 아홉 줄이 손으로
+    적혀 있었고, **되돌리기(`_rerun_from`)만** 이 목록에서 파생됐다. 한쪽만 파생된 것이
+    문제였다: 단계를 하나 넣으면 되돌리기는 저절로 따라오는데 정방향은 안 따라오고,
+    그러면 **정방향에 없는 단계를 되돌리기가 실행하는** 상태가 조용히 만들어진다.
+    """
+    return tuple(s for s in PIPELINE if s.group != PRECLASSIFIED_GROUP)
 
 
 def cascade_order() -> tuple[str, ...]:

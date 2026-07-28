@@ -89,6 +89,11 @@ class AgentState(TypedDict):
     is_concrete: bool
     classified: list[RequirementItem]
     phase: str
+    # 클라우드 네이티브 관심사 커버리지(`steps/step_cloud.py`).
+    # 요구사항과 나란한 **별도 산출물**이다 — 유스케이스 명세에는 들어가지 않는다.
+    # 명세는 기술중립으로 남아야 하고(`spec.black-box-no-internal-components`), 클라우드
+    # 리소스를 시나리오 스텝에 넣으면 에이전트가 자기 규칙을 위반한다.
+    cloud_concerns: NotRequired[dict]
     # 2단계 — 액터/유스케이스 도출 + FR 커버리지 점검
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]

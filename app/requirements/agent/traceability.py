@@ -1,0 +1,108 @@
+"""추적성 색인 — **누가 무엇을 커버한다고 주장하는가**를 한 곳에서 센다.
+
+집계는 여기서만 한다. `check_coverage`(파이프라인 게이트)도 `rtm.build_rtm`(추적 매트릭스)도
+여기서 파생한다. 예전에는 각자 굴렸고 환각 참조의 정의가 갈려 같은 상태에서 서로 겹치지도
+않는 답을 냈다 — 경위와 실제 사례는 `docs/requirements-agent-improvements.md` §15.
+
+**링크 종류를 뭉개지 않는다.** `requirement_ids`(실현 주장)와 `nfr_ids`(제약 부착)는 뜻이
+달라 따로 센다. 환각 판정만 둘을 합쳐서 본다 — "이 id가 존재하는가"는 어느 칸에 적혔든
+같은 질문이라서다.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Traceability:
+    """한 실행 상태의 추적 링크를 되읽기 좋게 뒤집어 둔 것."""
+
+    #: 요구 id → 분류된 요구 레코드.
+    by_id: dict[str, dict] = field(default_factory=dict)
+    fr_ids: frozenset[str] = frozenset()
+    nfr_ids: frozenset[str] = frozenset()
+    #: 요구 id → 그것을 **실현한다고 주장하는** UC id들(`requirement_ids`).
+    ucs_claiming: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것을 **제약으로 붙인** UC id들(`nfr_ids`).
+    ucs_constrained_by: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것을 커버한다고 적힌 명세 스텝들(`"UC1.3"`). UC보다 정밀한 추적.
+    steps_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    # -- 되읽기 ------------------------------------------------------------
+    def ucs_of(self, req_id: str) -> tuple[str, ...]:
+        """어느 칸으로든 이 요구를 건 UC들. 매트릭스가 보는 시야다."""
+        merged = list(self.ucs_claiming.get(req_id, ()))
+        merged += [u for u in self.ucs_constrained_by.get(req_id, ()) if u not in merged]
+        return tuple(merged)
+
+    @property
+    def referenced_ids(self) -> frozenset[str]:
+        """UC가 어느 칸으로든 참조한 id 전부."""
+        return frozenset(self.ucs_claiming) | frozenset(self.ucs_constrained_by)
+
+    @property
+    def unknown_refs(self) -> tuple[str, ...]:
+        """분류 목록에 **없는** id를 참조한 것 — 환각.
+
+        `requirement_ids`·`nfr_ids`를 합쳐서 보고, 대조 대상은 FR 목록이 아니라 **알려진
+        요구 전체**다. 둘 중 하나라도 빠뜨리면 오탐이나 미탐이 생긴다(모듈 docstring).
+        """
+        return tuple(sorted(self.referenced_ids - frozenset(self.by_id)))
+
+    @property
+    def covered_fr_ids(self) -> tuple[str, ...]:
+        """어떤 UC가 실현을 주장한 FR."""
+        return tuple(sorted(self.fr_ids & frozenset(self.ucs_claiming)))
+
+    @property
+    def orphan_fr_ids(self) -> tuple[str, ...]:
+        """아무 UC도 주장하지 않은 FR — 누락 위험."""
+        return tuple(sorted(self.fr_ids - frozenset(self.ucs_claiming)))
+
+    @property
+    def attached_nfr_ids(self) -> tuple[str, ...]:
+        """어떤 UC에 제약으로 붙은 NFR."""
+        return tuple(sorted(self.nfr_ids & frozenset(self.ucs_constrained_by)))
+
+    @property
+    def unattached_nfr_ids(self) -> tuple[str, ...]:
+        """어디에도 안 붙은 NFR — 전역 제약 후보."""
+        return tuple(sorted(self.nfr_ids - frozenset(self.ucs_constrained_by)))
+
+    @property
+    def coverage_ratio(self) -> float:
+        """FR 중 커버된 비율. FR이 없으면 1.0(빈 입력을 실패로 읽지 않는다)."""
+        if not self.fr_ids:
+            return 1.0
+        return round(len(self.covered_fr_ids) / len(self.fr_ids), 4)
+
+
+def index(state: dict) -> Traceability:
+    """상태에서 추적 색인을 만든다(순수 함수, LLM 없음)."""
+    classified = state.get("classified") or []
+    by_id = {r["id"]: r for r in classified}
+
+    claiming: dict[str, list[str]] = {}
+    constrained: dict[str, list[str]] = {}
+    for uc in state.get("use_cases") or []:
+        uc_id = uc.get("id", "?")
+        for rid in uc.get("requirement_ids", []) or []:
+            claiming.setdefault(rid, []).append(uc_id)
+        for nid in uc.get("nfr_ids", []) or []:
+            constrained.setdefault(nid, []).append(uc_id)
+
+    steps: dict[str, list[str]] = {}
+    for spec in state.get("use_case_specs") or []:
+        uc_id = spec.get("use_case_id", "?")
+        for step in spec.get("main_scenario", []) or []:
+            for rid in step.get("covered_req_ids", []) or []:
+                steps.setdefault(rid, []).append(f"{uc_id}.{step['step_number']}")
+
+    return Traceability(
+        by_id=by_id,
+        fr_ids=frozenset(r["id"] for r in classified if r.get("type") == "FR"),
+        nfr_ids=frozenset(r["id"] for r in classified if r.get("type") == "NFR"),
+        ucs_claiming={k: tuple(v) for k, v in claiming.items()},
+        ucs_constrained_by={k: tuple(v) for k, v in constrained.items()},
+        steps_of={k: tuple(v) for k, v in steps.items()},
+    )
