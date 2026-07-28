@@ -38,10 +38,12 @@ artifact 버전으로 저장한다. 저장 metadata에는 피드백, 부모 job,
 
 ## 결정적 배포 파일 생성
 
-구현 job에 `DEPLOYMENT`와 `RESOURCE_SPEC` 산출물이 모두 있으면, 구현·E2E 단계 다음에
-외부 LLM 호출 없이 결정적 renderer가 실행된다. `deployment_intent`가 제공되면
-`easydep-deployment-intent/v1alpha1` 계약을 사용하고, 없으면 cloud resource spec의
-workload·networking·registry·secret-store 근거로 intent를 생성한다.
+배포 의도는 시스템 구현 에이전트가 생성한다. 구현 완료 감사가 끝난 뒤 구현 에이전트는
+배포 다이어그램의 외부 진입점과 cloud resource spec의 workload·networking·registry를
+읽어 `easydep-deployment-intent/v1alpha1` JSON을 추론하고 검증한다. 이 intent는 설계
+산출물이 아니며, 구현 run의 `reports/deployment-intent.json`과
+`reports/deployment-render.json`에 증거로 기록된다. 수동 CLI 실행에서는 검토를 마친
+intent JSON을 입력으로 제공해 추론을 대체할 수도 있다.
 
 각 workload는 `Deployment`, `StatefulSet`, `Job`, `CronJob` 중 하나이며 다음 capability를
 독립적으로 활성화할 수 있다.
@@ -52,12 +54,17 @@ workload·networking·registry·secret-store 근거로 intent를 생성한다.
 
 Ingress는 Service를, ServiceMonitor는 Service를, HPA는 Deployment 또는 StatefulSet과
 유효한 min/max replica 범위를 요구한다. Job/CronJob에 서비스·Ingress·HPA·PDB를 요청하면
-렌더링 전에 거부한다. 결과 YAML은 구조와 HPA/Ingress/selector 참조를 검증하고
+렌더링 전에 거부한다. ExternalSecret은 기존 External Secrets Operator와
+ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 경우에만 생성한다.
+결과 YAML은 DNS 이름, 구조, HPA/Ingress 및 Pod의 ServiceAccount·ConfigMap·Secret·PVC
+참조를 검증하고
 `reports/deployment-render.json`에 확정 intent, 파일 목록, 검증 결과를 기록한다.
 
-배포 다이어그램과 리소스 명세는 task context로 전달된다. 실제 비밀값은 생성하지 않으며,
-배포 파일은 `apiVersion`·`kind`·`metadata`, 프로브, HPA, Secret 예시를 정적 게이트로
-검증한 뒤 전체 Gradle 검증과 함께 새 `DEPLOYMENT_FILE` artifact 버전으로 저장된다.
+결정적 renderer는 구현 및 E2E 완료 감사에 성공한 뒤 실행된다. 이전 renderer 보고서에
+기록된 관리 파일만 먼저 제거하므로 capability나 workload를 삭제해도 오래된 manifest가
+남지 않는다. 실제 비밀값은 생성하지 않으며, 이미지 placeholder·Ingress class/TLS Secret·
+완전 개방 egress처럼 배포 전에 확정해야 할 사항은 render report의 warning으로 남긴다.
+검증된 결과는 새 `DEPLOYMENT_FILE` artifact 버전으로 저장된다.
 
 ## 자동 실행 단계
 
@@ -82,14 +89,16 @@ Ingress는 Service를, ServiceMonitor는 Service를, HPA는 Deployment 또는 St
    되돌리고, 영향을 받는 Wiring과 E2E task를 자동으로 재계획한다. 파일 경로가 없는 E2E
    HTTP 실패는 관련 OpenAPI adapter를 우선 수리 대상으로 삼는다.
 10. 새 소스와 수리 증거를 반영해 후속 prompt와 요청 ID를 다시 만들고 다음 승인을 기다린다.
-11. 성공 phase의 파일 트리를 `SOURCE_CODE`, `TEST_CODE`의 새 불변 버전으로 MySQL에
-    저장한다. 저장 계층은 이후 배포 단계 합류를 위해 `DEPLOYMENT_FILE`, `IAC_CODE`도
-    분류할 수 있지만 현재 workflow는 이를 생성하지 않는다.
+11. 완료 감사 후 결정적 renderer로 배포 파일을 생성하고 파일 트리를 `SOURCE_CODE`,
+    `TEST_CODE`, `DEPLOYMENT_FILE`의 새 불변 버전으로 MySQL에 저장한다. `IAC_CODE`는
+    후속 IaC 생성 단계에서 사용한다.
 
-현재 자동 생성 완료 범위는 Control, Persistence, API·Boundary·Gateway adapter, Spring
-wiring과 설계 기반 E2E 테스트까지다. 배포·IaC 생성은 이 workflow의 완료 조건에 포함하지
-않는다. 설계 계약 자체가 부족한 경우에는 `NEEDS_INPUT`에서 멈추며 시스템 설계 에이전트를
-자동 호출하거나 설계 산출물을 임의로 수정하지 않는다.
+소스 구현의 완료 조건은 Control, Persistence, API·Boundary·Gateway adapter, Spring
+wiring과 설계 기반 E2E 테스트다. 이 완료 감사가 성공한 뒤 배포 파일 renderer가 후속으로
+실행된다. IaC 생성은 아직 이 workflow의 범위에 포함하지 않는다. 상세한 입력·산출물·검증
+범위는 [배포 파일 생성](deployment-file-generation.md)을 참고한다. 설계 계약 자체가 부족한
+경우에는 `NEEDS_INPUT`에서 멈추며 시스템 설계 에이전트를 자동 호출하거나 설계 산출물을
+임의로 수정하지 않는다.
 
 ## API와 보안
 
