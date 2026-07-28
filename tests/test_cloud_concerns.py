@@ -318,3 +318,95 @@ def test_the_artifact_carries_the_notice_and_never_calls_them_defects():
     # 미충족은 인계 항목이다. 결함 목록(`issues`)을 내면 되돌아가기가 이걸 쫓게 된다.
     assert "issues" not in result
     assert set(result["handoff"]) <= set(concerns.all_ids())
+
+
+# --- 사람 라벨 계기의 규율 ---------------------------------------------------
+# `concern_linker_llm` 기본값은 두 층 중 무엇이 참인지에 달려 있고, 그건 판정자끼리
+# 대조해서는 안 나온다. 그래서 계기가 지켜야 하는 것은 하나다 — **눈가림이 새지 않는 것.**
+def _ballot(domain, links, judged=None):
+    return {
+        "cell": f"{domain}|chunk0|r0", "domain": domain, "chunk": 0, "repeat": 0,
+        "answered": True, "links": links, "judged": judged or list(links),
+    }
+
+
+def _labelling(monkeypatch, llm_links, signal_links, texts):
+    from app.requirements.evaluation import concern_labels, concern_report
+
+    monkeypatch.setattr(concern_report, "load", lambda _d: [_ballot("d1", llm_links)])
+    monkeypatch.setattr(
+        concern_report, "signal_baseline", lambda: {"d1": signal_links}
+    )
+    monkeypatch.setattr(concern_labels, "_texts", lambda: {"d1": texts})
+    return concern_labels
+
+
+def test_the_label_file_never_says_which_layer_proposed_a_link(monkeypatch, tmp_path):
+    """항목 파일에 층이 보이면 눈가림이 아니고, 그러면 라벨이 층 비교에 쓸 수 없다."""
+    labels = _labelling(
+        monkeypatch,
+        llm_links={"cn.scale-out": ["FR1"], "cn.traffic-shape": ["FR2"]},
+        signal_links={"cn.traffic-shape": ["FR2"], "cn.event-record": ["FR3"]},
+        texts={"FR1": "a", "FR2": "b", "FR3": "c"},
+    )
+    items, key = labels.build(tmp_path, controls=1)
+
+    blob = str(items)
+    for layer in (labels.LAYER_LLM, labels.LAYER_SIGNAL, labels.LAYER_BOTH):
+        assert layer not in blob
+    # 관심사 id도 층의 흔적이 될 수 있다(열쇠말 없는 관심사는 LLM 층만 낸다).
+    assert not any("concern_id" in item for item in items["items"])
+    assert {i["item_id"] for i in items["items"]} == set(key["key"])
+
+
+def test_the_same_ballots_give_the_same_file(monkeypatch, tmp_path):
+    """라벨은 여러 번에 나눠 붙인다. 파일이 흔들리면 앞서 붙인 라벨이 다른 항목에 붙는다."""
+    kwargs = dict(
+        llm_links={"cn.scale-out": ["FR1"]},
+        signal_links={"cn.event-record": ["FR3"]},
+        texts={"FR1": "a", "FR3": "c"},
+    )
+    labels = _labelling(monkeypatch, **kwargs)
+    first, first_key = labels.build(tmp_path)
+    labels = _labelling(monkeypatch, **kwargs)
+    second, second_key = labels.build(tmp_path)
+    assert first == second and first_key == second_key
+
+
+def test_controls_come_from_links_both_layers_agreed_on(monkeypatch, tmp_path):
+    """대조 항목이 분쟁 링크에서 나오면 대조가 아니다 — 라벨러 점검이 무너진다."""
+    labels = _labelling(
+        monkeypatch,
+        llm_links={"cn.scale-out": ["FR1"], "cn.event-record": ["FR3"]},
+        signal_links={"cn.event-record": ["FR3"]},
+        texts={"FR1": "a", "FR3": "c"},
+    )
+    _items, key = labels.build(tmp_path, controls=5)
+    controls = [c for c in key["key"].values() if c["layer"] == labels.LAYER_BOTH]
+    assert [(c["concern_id"], c["requirement_id"]) for c in controls] == [
+        ("cn.event-record", "FR3")
+    ]
+
+
+def test_unsure_is_not_counted_as_wrong(monkeypatch, tmp_path):
+    """모르겠다는 답을 오답으로 세면 그건 정밀도가 아니라 라벨러의 확신을 재는 것이 된다."""
+    labels = _labelling(
+        monkeypatch,
+        llm_links={"cn.scale-out": ["FR1", "FR2"]},
+        signal_links={"cn.event-record": ["FR3"]},
+        texts={"FR1": "a", "FR2": "b", "FR3": "c"},
+    )
+    items, key = labels.build(tmp_path, controls=0)
+    by_layer = {}
+    for item in items["items"]:
+        by_layer.setdefault(key["key"][item["item_id"]]["layer"], []).append(item)
+    by_layer[labels.LAYER_LLM][0]["verdict"] = "yes"
+    by_layer[labels.LAYER_LLM][1]["verdict"] = "unsure"
+
+    score = labels.score(items, key)
+    llm = score["per_layer"][labels.LAYER_LLM]
+    assert llm["judged"] == 1 and llm["precision"] == 1.0
+    # 안 붙인 라벨도 분모에 들어가지 않는다 — 진행 중인 라벨링이 좋아 보이면 안 된다.
+    assert score["per_layer"][labels.LAYER_SIGNAL]["precision"] is None
+    # `unsure`는 **답한 것**이라 남은 항목이 아니다. 남은 것은 손대지 않은 열쇠말 항목 하나뿐.
+    assert score["remaining"] == 1

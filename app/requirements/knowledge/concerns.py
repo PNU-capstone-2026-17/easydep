@@ -287,6 +287,11 @@ CONCERNS: tuple[Concern, ...] = (
         iso25010=("flexibility", "maintainability",),        citation=f"{_12F} III. Config",
         signals=("configuration", "secret", "credential", "환경 변수", "설정", "자격 증명"),
     ),
+    # 아래 둘(`scale-out`·`traffic-shape`)은 **병합 검토를 거쳐 갈라 둔 것이다**(§6.11).
+    # 입력 11종에서는 열쇠말·LLM 두 층 모두에서 `scale-out ⊃ traffic-shape`으로 나왔지만,
+    # 두 측정이 **같은 코퍼스**를 읽고 있었다. PURE 18편(7,659문장)에서 다시 재니 교집합이
+    # 0이고 부하 모양만 말하는 요구사항이 실재한다("under both standard and peak conditions").
+    # 미분화의 원인은 개념 겹침이 아니라 표본이었다. 다시 논쟁하려면 코퍼스부터 늘릴 것.
     Concern(
         id="cn.scale-out",
         question=(
