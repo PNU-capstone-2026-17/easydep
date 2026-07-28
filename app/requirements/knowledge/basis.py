@@ -13,9 +13,15 @@
 
 ## 왜 그 파일을 import하지 않고 어휘를 다시 쓰는가
 
-`app/requirements`는 `app/deployment` 없이 돌아야 한다(배포 KB는 데이터셋 수백 MB를
-끌고 온다). 어휘는 공유하고 코드는 공유하지 않는다. 셋을 합칠 자리는 `app/core/`이고,
-`common/telemetry.py`가 이미 그 자리를 기다린다.
+어휘는 공유하고 코드는 공유하지 않는다. 라벨 표는 각 축이 무엇을 근거로 삼는지에 대한
+그 축의 선언이라, 한쪽이 라벨을 늘릴 때 다른 쪽이 따라 늘어나면 안 된다.
+
+**의존 규약은 2026-07-28에 바뀌었다.** 예전에는 *"`app/requirements`는 `app/deployment`
+없이 돌아야 한다(데이터셋 수백 MB)"*였는데, 좁은 표면에서는 그 근거가 성립하지 않았다 —
+`appkb.contract` + `envkb.regions`는 446ms · 모듈 168개이고 import 시점에 데이터셋을
+읽지 않는다(실측). 지금 규약은 **문을 하나로 둔다**이다: 런타임 경로는 `app/core/`를
+거쳐서만 배포 KB에 닿는다(`tests/test_core_layer.py`). `common/telemetry.py`는 여전히
+`app/core/`로 옮길 자리를 기다린다.
 
 ## 등급을 둘로만 나눈다
 
@@ -75,6 +81,12 @@ BASIS_OF_EVIDENCE: dict[str, str] = {
     "project-convention": INFERRED,
     # 규칙이 아니라 공학적 가드(프롬프트 크기 상한 등). 판정에 쓰면 안 된다.
     "engineering-guard": INFERRED,
+    # --- 클라우드 네이티브 관심사(`knowledge/concerns.py`) ---
+    # 설계 산문(12-factor · Azure 패턴 · Well-Architected)에서 나온 것. **영원히
+    # `inferred`다** — 다른 라벨은 페이지를 확인하면 `stated`로 오를 길이 있지만 이건
+    # 없다. 산문 지침은 사람이 검수해도 클라우드 사실이 되지 않는다
+    # (`app/deployment/patternkb/model.py`가 자기 축에 세운 규율과 같다).
+    "pattern-advisory": INFERRED,
 }
 
 
@@ -124,6 +136,10 @@ _PROMPT_NOTES = {
     "cockburn-observation": "the source states this as an observation, not as a rule",
     "project-convention": "this project's rule, not the source's",
     "engineering-guard": "an engineering guard, not a rule",
+    "pattern-advisory": (
+        "design guidance from cloud-native literature, not a cloud fact — it says what "
+        "is worth deciding, never what the answer is"
+    ),
 }
 
 
