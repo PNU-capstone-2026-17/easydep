@@ -36,6 +36,17 @@ OpenHands는 기존 파일만 수정할 수 있으며 새 파일 추가는 허�
 `compileJava test`와 완료 감사를 다시 수행하고, 결과는 기존 내용을 덮어쓰지 않고 새 파일
 artifact 버전으로 저장한다. 저장 metadata에는 피드백, 부모 job, 기준 artifact 버전이 남는다.
 
+피드백을 실행하기 전에 규칙 기반 적합성 판별을 수행한다. BCE/클래스 다이어그램의
+클래스·필드·메서드 계약, OpenAPI endpoint/요청·응답/schema, 시퀀스 호출 순서, ERD의
+테이블·컬럼·관계 변경을 명시한 피드백은 구현 피드백에 부적합하므로 `REJECTED`로 종료한다.
+이 경우 다른 에이전트나 이전 설계 단계로 자동 전달하지 않으며, OpenHands 실행·승인 요청·
+새 구현 run도 만들지 않는다. 결과는 `feedback-eligibility.json`에 남는다. 기존 계약 안의
+동작·오류 처리·검증 보강 피드백만 OpenHands 수정 및 전체 검증 루프로 전달된다.
+
+피드백 revision도 복원 직후 BCE/OpenAPI 계약 기준선을 다시 저장하고, 해당 생성 파일은
+OpenHands의 writable allowlist에서 제외한다. 따라서 피드백 경로에서도 최초 구현과 같은
+무결성·구조 계약 검증을 받는다.
+
 ## 결정적 배포 파일 생성
 
 배포 의도는 시스템 구현 에이전트가 생성한다. 구현 완료 감사가 끝난 뒤 구현 에이전트는
@@ -83,13 +94,34 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
    - 실제 구매 흐름을 포함한 설계 기반 E2E 테스트
 6. 현재 실행 가능한 phase의 prompt·설계·관련 소스 hash로 외부 전송 요청 ID를 만들고
    `AWAITING_APPROVAL`에서 멈춘다.
-7. 정확히 일치하는 승인 후 OpenHands restricted editor로 해당 phase 전체를 실행한다.
-8. 매 task와 phase 뒤 컴파일·테스트·의미 품질 gate·완료 감사를 수행한다.
-9. 검증 오류가 다른 phase의 소스를 가리키면 해당 파일의 소유 task를 수리 대상으로
+7. 최초 승인에는 기본적으로 같은 run의 제한된 repair/revalidation 전송 위임도 포함한다.
+   위임은 run ID·설계 입력 hash·초기 implementation manifest의 전체 task ID·최대 3회 repair·
+   최대 50 task 시도에 묶인다. 따라서 최초 구현의 모든 정상 phase와 규칙 기반 repair plan에
+   기록된 task에 적용된다. 계약/설계 변경, 입력 hash 변경, manifest에 없던 task, 한도 초과는
+   위임 범위를 벗어나므로 새 승인이 필요하다. 사용자는 승인 요청의
+   `delegate_repair_approvals: false`로 이 동작을 끌 수 있다.
+8. 정확히 일치하는 승인 후 OpenHands restricted editor로 해당 phase 전체를 실행한다.
+9. 매 task와 phase 뒤 컴파일·테스트·의미 품질 gate·완료 감사를 수행한다. 모든 unit/E2E
+   테스트가 통과한 최종 run에서는 LLM 대신 규칙 기반 소스 설계 적합성 gate를 추가로 수행한다.
+   생성 직후 기록한 `reports/generated-source-contracts.json`의 BCE/OpenAPI Java hash와
+   현재 파일을 먼저 비교한다. 해시가 다르면 클래스 종류·이름, 필드 이름·타입, 메서드 이름·
+   반환 타입·파라미터·예외 선언을 다시 비교하여 추가·수정·삭제를 구체적으로 기록하고
+   거부한다. BCE로
+   매핑 가능한 시퀀스 다이어그램 호출이 구현 소스의 호출로 존재하는지도 확인한다. 결과는
+   `reports/source-design-conformance.json`에 남으며 실패하면 artifact 저장과 배포 렌더링을
+   진행하지 않는다. 별칭이나 외부 참여자처럼 정적으로 매핑할 수 없는 시퀀스 호출은 warning
+   으로 기록해 오탐으로 인한 차단을 피한다.
+   스켈레톤 변경은 로컬 기준선으로 즉시 복원한 뒤 Gradle·완료 감사·적합성 검증을 다시
+   실행한다. 시퀀스 검증은 구현 주체가 대상 port를 의존하고 호출하는지, 동일 주체의 호출
+   순서가 다이어그램과 같은지, `alt`/`else`의 식별 가능한 조건 토큰이 소스에 있는지를
+   확인한다. 위반은 보고서를 포함한 제한된 repair task와 E2E 재검증 task로 최대 3회
+   재계획하며, 새 외부 전송에는 새 승인이 필요하다.
+10. 검증 오류가 다른 phase의 소스를 가리키면 해당 파일의 소유 task를 수리 대상으로
    되돌리고, 영향을 받는 Wiring과 E2E task를 자동으로 재계획한다. 파일 경로가 없는 E2E
    HTTP 실패는 관련 OpenAPI adapter를 우선 수리 대상으로 삼는다.
-10. 새 소스와 수리 증거를 반영해 후속 prompt와 요청 ID를 다시 만들고 다음 승인을 기다린다.
-11. 완료 감사 후 결정적 renderer로 배포 파일을 생성하고 파일 트리를 `SOURCE_CODE`,
+11. 위임 범위 안의 소스 적합성 수리와 컴파일·단위/E2E 실패의 cross-phase repair 전송은
+    자동으로 다음 실행을 시작하고, 범위를 벗어난 전송만 다음 승인을 기다린다.
+12. 완료 감사와 소스 설계 적합성 gate가 모두 통과한 뒤 결정적 renderer로 배포 파일을 생성하고 파일 트리를 `SOURCE_CODE`,
     `TEST_CODE`, `DEPLOYMENT_FILE`의 새 불변 버전으로 MySQL에 저장한다. `IAC_CODE`는
     후속 IaC 생성 단계에서 사용한다.
 

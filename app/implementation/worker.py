@@ -11,6 +11,7 @@ from typing import Any
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE, TYPE_TEST_CODE
 from app.repositories import artifact_repository
 from .config import ImplementationSettings
+from .feedback_impact import assess_feedback_eligibility
 from .prototype_client import PrototypeClient
 
 
@@ -68,6 +69,32 @@ class ImplementationWorker:
                 "No generated source snapshot is available for feedback"
             )
 
+        eligibility = assess_feedback_eligibility(feedback, design)
+        job_id = uuid.uuid4().hex
+        if eligibility["status"] == "UNSUITABLE":
+            report_path = self.settings.work_root / job_id / "feedback-eligibility.json"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(
+                json.dumps(eligibility, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            record = {
+                "job_id": job_id,
+                "job_type": "FEEDBACK_REVISION",
+                "app_id": app_id,
+                "status": "REJECTED",
+                "base_package": base_package,
+                "feedback": feedback,
+                "workflow": None,
+                "transmission_request": None,
+                "feedback_eligibility": eligibility,
+                "eligibility_report": str(report_path.relative_to(self.settings.work_root)),
+                "error": "Feedback requires a design-contract change and is unsuitable for implementation feedback.",
+                "created_at": _now(),
+                "updated_at": _now(),
+            }
+            self._write(record)
+            return self.public_record(record)
+
         snapshots = {
             path: item["content"]
             for path, item in source_snapshot.get("files", {}).items()
@@ -90,7 +117,6 @@ class ImplementationWorker:
                 )
                 base_versions[artifact_type] = snapshot["version_no"]
 
-        job_id = uuid.uuid4().hex
         job_path = self.client.prepare_feedback_job(
             job_id,
             app_id,
@@ -110,6 +136,7 @@ class ImplementationWorker:
             "base_package": base_package,
             "base_versions": base_versions,
             "feedback": feedback,
+            "feedback_eligibility": eligibility,
             "job_path": str(job_path),
             "run_root": None,
             "workflow": None,
@@ -125,7 +152,7 @@ class ImplementationWorker:
     def get(self, job_id: str) -> dict[str, Any]:
         return self.public_record(self._read(job_id))
 
-    def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool) -> dict[str, Any]:
+    def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool, delegate_repair_approvals: bool = True) -> dict[str, Any]:
         record = self._read(job_id)
         request = record.get("transmission_request") or {}
         if record["status"] != "AWAITING_APPROVAL":
@@ -138,8 +165,20 @@ class ImplementationWorker:
             self._write(record)
             return self.public_record(record)
         approval_path = Path(record["job_path"]).parent / "approval.json"
+        manifest = json.loads((Path(record["run_root"]) / "reports" / "run-manifest.json").read_text(encoding="utf-8"))
         approval_path.write_text(json.dumps({
             "requestId": request_id, "approved": True, "approvedAt": _now(), "approvedBy": approved_by,
+            "delegatedRepairApprovals": delegate_repair_approvals,
+            "delegationScope": {
+                "runId": Path(record["run_root"]).name,
+                "inputHash": manifest.get("input_hash"),
+                "initialTaskIds": sorted(
+                    str(task["task_id"])
+                    for task in manifest.get("implementation_tasks", [])
+                ),
+                "maxRepairRounds": 3,
+                "maxTaskAttempts": 50,
+            },
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         record["status"] = "QUEUED"
         record["updated_at"] = _now()
@@ -163,7 +202,16 @@ class ImplementationWorker:
             self._set_status(record, "RUNNING")
             workflow = self.client.run_phase(Path(record["run_root"]), Path(record["job_path"]), Path(approval_path), retry_failed)
             self._apply_workflow(record, workflow)
-            if record["status"] not in {"FAILED", "NEEDS_INPUT"}:
+            if (
+                record["status"] == "AWAITING_APPROVAL"
+                and self._delegated_execution_is_active(record, approval_path)
+            ):
+                record["status"] = "QUEUED"
+                record["updated_at"] = _now()
+                self._write(record)
+                self.executor.submit(self._run, job_id, approval_path, retry_failed)
+                return
+            if record["status"] == "COMPLETED":
                 self._persist_outputs(record)
         except Exception as error:
             self._fail(record, error)
@@ -222,6 +270,47 @@ class ImplementationWorker:
         record["artifact_versions"] = versions
         record["updated_at"] = _now()
         self._write(record)
+
+    @staticmethod
+    def _delegated_execution_is_active(record: dict[str, Any], approval_path: str) -> bool:
+        try:
+            approval = json.loads(Path(approval_path).read_text(encoding="utf-8"))
+            if approval.get("delegatedRepairApprovals") is not True:
+                return False
+            scope = approval.get("delegationScope")
+            run_root = Path(str(record.get("run_root", "")))
+            request = record.get("transmission_request") or {}
+            if not isinstance(scope, dict) or scope.get("runId") != run_root.name:
+                return False
+            manifest = json.loads(
+                (run_root / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+            )
+            if scope.get("inputHash") != manifest.get("input_hash"):
+                return False
+            plan_path = run_root / "reports" / "repair-plan.json"
+            plan = json.loads(plan_path.read_text(encoding="utf-8")) if plan_path.is_file() else {}
+            entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
+            planned_ids = {
+                str(task_id)
+                for entry in entries
+                for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
+            }
+            request_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
+            initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
+            attempts = sum(
+                int(task.get("attempts", 0))
+                for task in (record.get("workflow") or {}).get("tasks", [])
+                if isinstance(task, dict)
+            )
+            rounds = max((int(entry.get("revision", 0)) for entry in entries), default=0)
+            return (
+                bool(request_ids)
+                and (request_ids.issubset(initial_ids) or request_ids.issubset(planned_ids))
+                and rounds <= int(scope.get("maxRepairRounds", 0))
+                and attempts < int(scope.get("maxTaskAttempts", 0))
+            )
+        except (OSError, json.JSONDecodeError):
+            return False
 
     def _set_status(self, record: dict[str, Any], status: str) -> None:
         record["status"] = status

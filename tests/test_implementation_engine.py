@@ -59,6 +59,12 @@ from app.implementation.engine.deployment_renderer import (
     render_deployment,
     validate_intent,
 )
+from app.implementation.engine.source_conformance import (
+    SourceDesignConformanceError,
+    capture_generated_contracts,
+    restore_generated_contracts,
+    verify_source_design_conformance,
+)
 from app.implementation.engine.implementation_ir import (
     ApiOperationIR,
     ApiPortIR,
@@ -72,6 +78,101 @@ from app.implementation.engine.workflow import (
     validate_workflow_approval,
     write_transmission_request,
 )
+
+
+class SourceDesignConformanceTest(unittest.TestCase):
+    def _spec(self, root: Path, bce: Path, sequence: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            base_package="com.example.demo",
+            inputs={"bceClass": bce, "sequence": sequence},
+        )
+
+    def test_preserves_generated_contracts_and_observable_sequence_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            java = run / "application/src/main/java/com/example/demo"
+            (java / "bce").mkdir(parents=True)
+            (java / "application").mkdir()
+            contract = java / "bce/CheckoutGateway.java"
+            contract.write_text(
+                "package com.example.demo.bce;\n\n"
+                "public interface CheckoutGateway {\n"
+                "    String PAYMENT_KIND = \"card\";\n"
+                "    String charge(String purchaseId);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (java / "application/CheckoutService.java").write_text(
+                "package com.example.demo.application; class CheckoutService implements CheckoutService { "
+                "CheckoutGateway gateway; void run() { gateway.charge(); } }\n",
+                encoding="utf-8",
+            )
+            bce = run / "class.puml"
+            bce.write_text(
+                "class CheckoutService <<Control>> {\n+  + run()\n}\n"
+                "class CheckoutGateway <<Gateway>> {\n+  + charge()\n}\n",
+                encoding="utf-8",
+            )
+            sequence = run / "sequence.puml"
+            sequence.write_text("CheckoutService -> CheckoutGateway: charge()\n", encoding="utf-8")
+            capture_generated_contracts(run, "com.example.demo")
+
+            report = verify_source_design_conformance(run, self._spec(run, bce, sequence))
+
+            self.assertEqual("PASSED", report["status"])
+            self.assertTrue((run / "reports/source-design-conformance.json").is_file())
+
+    def test_rejects_modified_contract_and_missing_sequence_call(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            java = run / "application/src/main/java/com/example/demo"
+            (java / "bce").mkdir(parents=True)
+            (java / "application").mkdir()
+            contract = java / "bce/CheckoutGateway.java"
+            contract.write_text(
+                "package com.example.demo.bce;\n\n"
+                "public interface CheckoutGateway {\n"
+                "    String PAYMENT_KIND = \"card\";\n"
+                "    String charge(String purchaseId);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            bce = run / "class.puml"
+            bce.write_text(
+                "class CheckoutService <<Control>> {}\nclass CheckoutGateway <<Gateway>> {}\n",
+                encoding="utf-8",
+            )
+            sequence = run / "sequence.puml"
+            sequence.write_text("CheckoutService -> CheckoutGateway: charge()\n", encoding="utf-8")
+            capture_generated_contracts(run, "com.example.demo")
+            contract.write_text(
+                "package com.example.demo.bce;\n\n"
+                "public interface CheckoutGateway {\n"
+                "    Integer PAYMENT_KIND = 1;\n"
+                "    Integer charge(String purchaseId);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(SourceDesignConformanceError):
+                verify_source_design_conformance(run, self._spec(run, bce, sequence))
+
+            report = json.loads((run / "reports/source-design-conformance.json").read_text(encoding="utf-8"))
+            self.assertEqual("FAILED", report["status"])
+            self.assertEqual(
+                {
+                    "GENERATED_CONTRACT_MODIFIED",
+                    "GENERATED_CONTRACT_STRUCTURE_CHANGED",
+                    "SEQUENCE_CALL_NOT_IMPLEMENTED",
+                },
+                {item["code"] for item in report["violations"]},
+            )
+            changes = report["checks"]["generatedContracts"][0]["changes"]
+            self.assertIn("PAYMENT_KIND: String -> Integer", changes["fields"]["modified"])
+            self.assertIn("charge(String purchaseId): String -> Integer", changes["methods"]["modified"])
+            restored = restore_generated_contracts(run)
+            self.assertEqual(["application/src/main/java/com/example/demo/bce/CheckoutGateway.java"], restored)
+            self.assertIn("String charge(String purchaseId);", contract.read_text(encoding="utf-8"))
 
 
 class LoadJobTest(unittest.TestCase):
@@ -699,6 +800,34 @@ void use(String... value) {}
 
             self.assertEqual("APPROVED_SCOPE_SUBSET", accepted["authorization"])
             self.assertEqual(full_request["requestId"], accepted["approvedRequestId"])
+
+    def test_workflow_approval_allows_delegated_repair_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_delegated"
+            reports = run / "reports"
+            reports.mkdir(parents=True)
+            task = {
+                "task_id": "repair-control", "task_type": "control", "prompt_sha256": "repair",
+                "source_artifacts": {}, "allowed_write_paths": ["application/Repair.java"],
+            }
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"input_hash": "input-hash", "implementation_tasks": [task]}), encoding="utf-8"
+            )
+            (reports / "repair-plan.json").write_text(
+                json.dumps({"entries": [{"revision": 1, "ownerTaskIds": ["repair-control"], "revalidationTaskIds": []}]}),
+                encoding="utf-8",
+            )
+            state = {"tasks": [{"taskId": "repair-control", "status": "PENDING", "attempts": 1}]}
+            request = write_transmission_request(run, state)
+            approval = reports / "approval.json"
+            approval.write_text(json.dumps({
+                "requestId": "initial-request", "approved": True, "delegatedRepairApprovals": True,
+                "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": [], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+            }), encoding="utf-8")
+
+            accepted = validate_workflow_approval(approval, request, state, run)
+
+            self.assertEqual("DELEGATED_RUN_SCOPE", accepted["authorization"])
 
     def test_transmission_request_is_limited_to_next_runnable_phase(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

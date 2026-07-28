@@ -13,6 +13,7 @@ from app.implementation.api import router
 from app.implementation.config import ImplementationSettings
 from app.implementation.engine.agent_runtime import gradle_command
 from app.implementation.engine.orchestrator import PrototypeOrchestrator, load_job
+from app.implementation.feedback_impact import assess_feedback_eligibility
 from app.implementation.prototype_client import PrototypeClient, PrototypeExecutionError
 from app.implementation.schemas import (
     CreateImplementationFeedbackJobRequest,
@@ -28,6 +29,70 @@ def test_job_contract_preserves_automated_placeholder_policy() -> None:
 def test_feedback_request_trims_feedback() -> None:
     request = CreateImplementationFeedbackJobRequest(feedback="  rename the service  ")
     assert request.feedback == "rename the service"
+
+
+def test_feedback_eligibility_rejects_design_contract_changes() -> None:
+    result = assess_feedback_eligibility("OpenAPI 엔드포인트와 응답 스키마를 변경해줘")
+
+    assert result["status"] == "UNSUITABLE"
+    assert result["matches"][0]["code"] == "OPENAPI_CONTRACT_CHANGE"
+
+
+def test_feedback_eligibility_accepts_existing_contract_behavior_change() -> None:
+    result = assess_feedback_eligibility("배송이 시작된 주문은 취소 요청을 거절하고 테스트를 보강해줘")
+
+    assert result["status"] == "ELIGIBLE"
+
+
+def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_path: Path) -> None:
+    source_snapshot = {
+        "version_no": 3,
+        "files": {
+            "src/main/java/com/example/OrderService.java": {"content": "class OrderService {}"}
+        },
+    }
+    monkeypatch.setattr(
+        "app.implementation.worker.artifact_repository.load_file_snapshot",
+        lambda *_args, **_kwargs: source_snapshot,
+    )
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    implementation_worker.client.prepare_feedback_job = lambda *_args, **_kwargs: pytest.fail(
+        "Unsuitable feedback must not create a feedback run"
+    )
+    try:
+        record = implementation_worker.create_feedback_job(
+            "app-1", {}, "API 명세의 엔드포인트를 추가해줘", "com.example", False
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "REJECTED"
+    assert record["feedback_eligibility"]["status"] == "UNSUITABLE"
+    assert (tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json").is_file()
+
+
+def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path) -> None:
+    run = tmp_path / "run_repair"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(json.dumps({"input_hash": "input-hash"}), encoding="utf-8")
+    (reports / "repair-plan.json").write_text(json.dumps({
+        "entries": [{"revision": 1, "ownerTaskIds": ["repair-api"], "revalidationTaskIds": ["repair-e2e"]}]
+    }), encoding="utf-8")
+    approval = tmp_path / "approval.json"
+    approval.write_text(json.dumps({
+        "delegatedRepairApprovals": True,
+        "delegationScope": {"runId": run.name, "inputHash": "input-hash", "initialTaskIds": ["initial-wiring"], "maxRepairRounds": 3, "maxTaskAttempts": 50},
+    }), encoding="utf-8")
+    record = {
+        "run_root": str(run),
+        "transmission_request": {"tasks": [{"taskId": "repair-api"}, {"taskId": "repair-e2e"}]},
+        "workflow": {"tasks": [{"attempts": 2}]},
+    }
+
+    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
+    record["transmission_request"] = {"tasks": [{"taskId": "initial-wiring"}]}
+    assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
 
 
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
@@ -137,6 +202,7 @@ def test_feedback_orchestrator_restores_snapshot_without_generation_tools(
         (output / "reports/run-manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["status"] == "SUCCEEDED"
+    assert (output / "reports/generated-source-contracts.json").is_file()
     assert [task["task_id"] for task in manifest["implementation_tasks"]] == [
         "apply-source-feedback"
     ]

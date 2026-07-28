@@ -55,7 +55,7 @@ def get_job(job_id: str) -> dict:
 @router.post("/jobs/{job_id}/approval", status_code=202)
 def approve_job(job_id: str, request: ApprovalRequest) -> dict:
     try:
-        return worker.approve(job_id, request.request_id, request.approved, request.approved_by, request.retry_failed)
+        return worker.approve(job_id, request.request_id, request.approved, request.approved_by, request.retry_failed, request.delegate_repair_approvals)
     except JobNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
     except InvalidJobState as error:
