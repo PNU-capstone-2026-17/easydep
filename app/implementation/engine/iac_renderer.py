@@ -91,7 +91,7 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
                     errors.append(f"cloud resource {item.get('name')} property is missing from Terraform: {expected}")
     cluster = next((r for r in resources if _role(provider, r) == "cluster"), None)
     registry = next((r for r in resources if _role(provider, r) == "registry"), None)
-    access = {"azure": 'resource "azurerm_role_assignment" "aks_acr_pull"', "aws": 'resource "aws_iam_role_policy_attachment" "eks_ecr_pull"', "gcp": 'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull"'}
+    access = {"azure": 'resource "azurerm_role_assignment"', "aws": 'resource "aws_iam_role_policy_attachment"', "gcp": 'resource "google_artifact_registry_repository_iam_member"'}
     if cluster and registry and access[provider] not in source:
         errors.append(f"{provider} Kubernetes cluster and registry require an image-pull access binding in Terraform")
     if cluster and provider == "aws" and 'resource "aws_eks_node_group"' not in source:
@@ -106,6 +106,15 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
         name = str(workload.get("name", ""))
         if name and not (application / "k8s" / name).is_dir():
             errors.append(f"deployment workload {name} has no rendered Kubernetes manifests")
+    unresolved_images = [workload for workload in intent.get("workloads", []) if "__EASYDEP_REGISTRY__" in str(workload.get("image", ""))] if isinstance(intent, dict) else []
+    if unresolved_images:
+        if len([item for item in resources if _role(provider, item) == "registry"]) != 1:
+            errors.append("registry image rendering requires exactly one registry for unresolved workload images")
+        if not (application / "k8s" / "render-images.sh").is_file():
+            errors.append("registry image rendering script is missing")
+        outputs = application / "terraform" / "outputs.tf"
+        if not outputs.is_file() or 'output "registry_image_base"' not in outputs.read_text(encoding="utf-8"):
+            errors.append("Terraform registry_image_base output is missing")
     if not intent:
         warnings.append("Deployment intent is absent; workload-to-infrastructure validation was skipped")
     return {"status": "FAILED" if errors else ("SUCCEEDED_WITH_WARNINGS" if warnings else "SUCCEEDED"), "errors": errors, "warnings": warnings}
@@ -114,7 +123,8 @@ def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str,
 def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> None:
     errors: list[str] = []
     identities: set[tuple[str, str]] = set()
-    names = {_resource_name(item) for item in resources if isinstance(item.get("name"), str)}
+    references = _reference_index(resources)
+    ids: set[str] = set()
     for index, item in enumerate(resources):
         mapped = _type(provider, item)
         name = item.get("name")
@@ -128,7 +138,11 @@ def validate_resource_spec(provider: str, resources: list[dict[str, Any]]) -> No
         if identity in identities:
             errors.append(f"resources[{index}] duplicates Terraform identity {mapped}.{identity[1]}")
         identities.add(identity)
-        unknown_dependencies = sorted(_depends_on(item) - names)
+        resource_id = _resource_id(item)
+        if resource_id in ids:
+            errors.append(f"resources[{index}] duplicates resource id {resource_id}")
+        ids.add(resource_id)
+        unknown_dependencies = sorted(_depends_on(item) - set(references))
         if unknown_dependencies:
             errors.append(f"resources[{index}].dependsOn references unknown resources: {', '.join(unknown_dependencies)}")
     if provider == "aws":
@@ -247,7 +261,13 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
         vnet = _single_related_resource(zone, resources, "azure", "azurerm_virtual_network")
         if vnet:
             blocks.append(f'resource "azurerm_private_dns_zone_virtual_network_link" "{dns}_link" {{\n  name = "{dns}-vnet-link"\n  resource_group_name = var.resource_group_name\n  private_dns_zone_name = azurerm_private_dns_zone.{dns}.name\n  virtual_network_id = azurerm_virtual_network.{_logical(vnet)}.id\n}}')
-    if cluster and registry: blocks.append(f'resource "azurerm_role_assignment" "aks_acr_pull" {{\n  scope = azurerm_container_registry.{registry}.id\n  role_definition_name = "AcrPull"\n  principal_id = azurerm_kubernetes_cluster.{cluster}.kubelet_identity[0].object_id\n}}')
+    clusters = [item for item in resources if _type("azure", item) == "azurerm_kubernetes_cluster"]
+    registries = [item for item in resources if _type("azure", item) == "azurerm_container_registry"]
+    for target_cluster in clusters:
+        targets = _related_resources(target_cluster, resources, "azure", "azurerm_container_registry") or (registries if len(registries) == 1 else [])
+        for target_registry in targets:
+            cluster_id, registry_id = _logical(target_cluster), _logical(target_registry)
+            blocks.append(f'resource "azurerm_role_assignment" "{cluster_id}_{registry_id}_acr_pull" {{\n  scope = azurerm_container_registry.{registry_id}.id\n  role_definition_name = "AcrPull"\n  principal_id = azurerm_kubernetes_cluster.{cluster_id}.kubelet_identity[0].object_id\n}}')
     return "\n\n".join(blocks)
 
 
@@ -276,7 +296,12 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
         elif kind == "aws_db_instance": blocks.append(f'resource "aws_db_instance" "{logical}" {{\n  identifier = {name}\n  engine = {json.dumps(str(item.get("engine", "mysql")))}\n  instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}\n  allocated_storage = {int(item.get("allocatedStorage", 20))}\n  username = var.db_username\n  password = var.db_password\n  skip_final_snapshot = true\n}}')
         elif kind == "aws_secretsmanager_secret": blocks.append(f'resource "aws_secretsmanager_secret" "{logical}" {{\n  name = {name}\n}}')
         elif kind == "aws_cloudwatch_log_group": blocks.append(f'resource "aws_cloudwatch_log_group" "{logical}" {{\n  name = {name}\n  retention_in_days = 30\n}}')
-    if cluster and registry: blocks.append('resource "aws_iam_role_policy_attachment" "eks_ecr_pull" {\n  role = var.eks_node_role_name\n  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"\n}')
+    clusters = [item for item in resources if _type("aws", item) == "aws_eks_cluster"]
+    registries = [item for item in resources if _type("aws", item) == "aws_ecr_repository"]
+    for target_cluster in clusters:
+        targets = _related_resources(target_cluster, resources, "aws", "aws_ecr_repository") or (registries if len(registries) == 1 else [])
+        for target_registry in targets:
+            blocks.append(f'resource "aws_iam_role_policy_attachment" "{_logical(target_cluster)}_{_logical(target_registry)}_ecr_pull" {{\n  role = var.eks_node_role_name\n  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"\n}}')
     return "\n\n".join(blocks)
 
 
@@ -304,12 +329,32 @@ def _gcp(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
         elif kind == "google_sql_database_instance": blocks.append(f'resource "google_sql_database_instance" "{logical}" {{\n  name = {name}\n  database_version = {json.dumps(str(item.get("databaseVersion", "MYSQL_8_0")))}\n  region = var.region\n  settings {{ tier = {json.dumps(str(item.get("tier", "db-f1-micro")))} }}\n}}')
         elif kind == "google_secret_manager_secret": blocks.append(f'resource "google_secret_manager_secret" "{logical}" {{\n  secret_id = {name}\n  replication {{ auto {{}} }}\n}}')
         elif kind == "google_logging_project_bucket_config": blocks.append(f'resource "google_logging_project_bucket_config" "{logical}" {{\n  location = "global"\n  bucket_id = {name}\n  retention_days = 30\n}}')
-    if cluster and registry: blocks.append(f'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull" {{\n  location = google_artifact_registry_repository.{registry}.location\n  repository = google_artifact_registry_repository.{registry}.name\n  role = "roles/artifactregistry.reader"\n  member = "serviceAccount:${{var.gke_node_service_account}}"\n}}')
+    clusters = [item for item in resources if _type("gcp", item) == "google_container_cluster"]
+    registries = [item for item in resources if _type("gcp", item) == "google_artifact_registry_repository"]
+    granted: set[str] = set()
+    for target_cluster in clusters:
+        targets = _related_resources(target_cluster, resources, "gcp", "google_artifact_registry_repository") or (registries if len(registries) == 1 else [])
+        for target_registry in targets:
+            registry_id = _logical(target_registry)
+            if registry_id in granted:
+                continue
+            granted.add(registry_id)
+            blocks.append(f'resource "google_artifact_registry_repository_iam_member" "{registry_id}_gke_artifact_pull" {{\n  location = google_artifact_registry_repository.{registry_id}.location\n  repository = google_artifact_registry_repository.{registry_id}.name\n  role = "roles/artifactregistry.reader"\n  member = "serviceAccount:${{var.gke_node_service_account}}"\n}}')
     return "\n\n".join(blocks)
 
 
 def _outputs(provider: str, resources: list[dict[str, Any]]) -> str:
     values = [f'output "provider" {{ value = {json.dumps(provider)} }}']
+    registries = [item for item in resources if _role(provider, item) == "registry"]
+    if len(registries) == 1:
+        logical, kind = _logical(registries[0]), _type(provider, registries[0])
+        if kind == "azurerm_container_registry":
+            registry_value = f"azurerm_container_registry.{logical}.login_server"
+        elif kind == "aws_ecr_repository":
+            registry_value = f"aws_ecr_repository.{logical}.repository_url"
+        else:
+            registry_value = f'format("%s-docker.pkg.dev/%s/%s", var.region, var.project_id, google_artifact_registry_repository.{logical}.repository_id)'
+        values.append(f'output "registry_image_base" {{ value = {registry_value} }}')
     for item in resources:
         kind, logical = _type(provider, item), _logical(item)
         if _role(provider, item) == "cluster": values.append(f'output "{logical}_cluster_name" {{ value = {kind}.{logical}.name }}')
@@ -335,37 +380,54 @@ def _resource_name(item: dict[str, Any]) -> str:
     return str(item.get("name", ""))
 
 
+def _resource_id(item: dict[str, Any]) -> str:
+    explicit = item.get("id")
+    return str(explicit) if isinstance(explicit, str) and explicit.strip() else f"{item.get('type')}:{_resource_name(item)}"
+
+
+def _reference_index(resources: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Accept explicit IDs; accept names only when they identify one resource."""
+    result = {_resource_id(item): item for item in resources}
+    names: dict[str, list[dict[str, Any]]] = {}
+    for item in resources:
+        names.setdefault(_resource_name(item), []).append(item)
+    for name, matches in names.items():
+        if len(matches) == 1:
+            result[name] = matches[0]
+    return result
+
+
 def _depends_on(item: dict[str, Any]) -> set[str]:
     values = item.get("dependsOn", [])
     return {str(value) for value in values if isinstance(value, str)} if isinstance(values, list) else set()
 
 
-def _ancestor_names(item: dict[str, Any], by_name: dict[str, dict[str, Any]], seen: set[str] | None = None) -> set[str]:
+def _ancestor_names(item: dict[str, Any], references: dict[str, dict[str, Any]], seen: set[str] | None = None) -> set[str]:
     seen = seen or set()
     result: set[str] = set()
     for name in _depends_on(item):
         if name in seen:
             continue
         result.add(name)
-        target = by_name.get(name)
+        target = references.get(name)
         if target is not None:
-            result.update(_ancestor_names(target, by_name, seen | {name}))
+            result.update(_ancestor_names(target, references, seen | {name}))
     return result
 
 
 def _related_resources(item: dict[str, Any], resources: list[dict[str, Any]], provider: str, terraform_type: str) -> list[dict[str, Any]]:
     """Find resources connected by explicit dependencies, never by list position."""
     candidates = [candidate for candidate in resources if _type(provider, candidate) == terraform_type]
-    by_name = {_resource_name(candidate): candidate for candidate in resources}
-    ancestors = _ancestor_names(item, by_name)
-    direct = [candidate for candidate in candidates if _resource_name(candidate) in _depends_on(item)]
+    references = _reference_index(resources)
+    ancestors = _ancestor_names(item, references)
+    direct = [candidate for candidate in candidates if _resource_name(candidate) in _depends_on(item) or _resource_id(candidate) in _depends_on(item)]
     if direct:
         return direct
     related = [candidate for candidate in candidates if _resource_name(candidate) in ancestors]
     if related:
         return related
-    roots = ancestors | {_resource_name(item)}
-    return [candidate for candidate in candidates if _ancestor_names(candidate, by_name) & roots]
+    roots = ancestors | {_resource_name(item), _resource_id(item)}
+    return [candidate for candidate in candidates if _ancestor_names(candidate, references) & roots]
 
 
 def _single_related_resource(item: dict[str, Any], resources: list[dict[str, Any]], provider: str, terraform_type: str) -> dict[str, Any] | None:

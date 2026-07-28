@@ -82,6 +82,27 @@ reports
 *.pem
 *.key""",
     )
+    if any("__EASYDEP_REGISTRY__" in str(workload.get("image", "")) for workload in intent["workloads"]):
+        write(
+            "k8s/render-images.sh",
+            r'''#!/bin/sh
+set -eu
+
+# Render a deployable manifest tree without mutating the deterministic source manifests.
+terraform_dir=${1:?usage: render-images.sh <terraform-dir> <output-dir>}
+output_dir=${2:?usage: render-images.sh <terraform-dir> <output-dir>}
+registry=$(terraform -chdir="$terraform_dir" output -raw registry_image_base)
+source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+rm -rf "$output_dir"
+mkdir -p "$output_dir"
+find "$source_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | while IFS= read -r source; do
+  relative=${source#"$source_dir"/}
+  target="$output_dir/$relative"
+  mkdir -p "$(dirname -- "$target")"
+  sed "s|__EASYDEP_REGISTRY__|$registry|g" "$source" > "$target"
+done
+''',
+        )
     if intent.get("createNamespace", True):
         write("k8s/namespace.yaml", resource("v1", "Namespace", namespace))
     for workload in intent["workloads"]:
@@ -736,12 +757,11 @@ def cloud_role(provider: str, item: dict[str, Any]) -> str | None:
 
 
 def registry_image(provider: str, registry: object, workload: str) -> str:
-    name = str(registry or {"azure": "<acr-name>", "aws": "<ecr-repository>", "gcp": "<artifact-repository>"}[provider])
     if provider == "azure":
-        return f"{name}.azurecr.io/{workload}:<tag>"
+        return f"__EASYDEP_REGISTRY__/{workload}:<tag>"
     if provider == "aws":
-        return f"<account-id>.dkr.ecr.<region>.amazonaws.com/{name}:{'<tag>'}"
-    return f"<region>-docker.pkg.dev/<project-id>/{name}/{workload}:<tag>"
+        return "__EASYDEP_REGISTRY__:<tag>"
+    return f"__EASYDEP_REGISTRY__/{workload}:<tag>"
 
 
 def resource(api: str, kind: str, name: str, namespace: str | None = None) -> str:

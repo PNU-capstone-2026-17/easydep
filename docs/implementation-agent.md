@@ -103,6 +103,14 @@ Terraform CLI가 설치된 환경에서는 `python -m app.implementation.engine.
 동일 검증은 IaC renderer가 workflow 완료 전에 자동 실행하며, Terraform이 설치된 환경에서 실패하면
 `IAC_CODE` artifact를 저장하지 않는다. Terraform CLI가 없는 개발 환경에서는 report에 `SKIPPED`로 기록된다.
 
+## Registry image resolution
+
+배포 manifest는 `__EASYDEP_REGISTRY__` marker를 보존하고, Terraform은 단일 연결 registry의
+`registry_image_base` output을 생성한다. `application/k8s/render-images.sh <terraform-dir> <output-dir>`은
+이 output으로 marker를 치환한 별도 manifest tree를 생성하므로, 원본 산출물을 변경하지 않고 실제
+registry endpoint로 배포할 수 있다. 여러 registry를 사용하는 경우에는 각 workload의 registry 참조를
+resource spec의 명시적 `id`와 `dependsOn`으로 추가해야 하며, 모호한 연결은 renderer가 실패로 처리한다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,

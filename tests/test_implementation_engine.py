@@ -1527,8 +1527,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
 
     def test_deterministic_iac_renderer_supports_aws_and_gcp(self) -> None:
         cases = (
-            ("aws", [{"type": "AWS::EC2::VPC", "name": "network"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["network"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["network"]}, {"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders", "dependsOn": ["network"]}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment" "eks_ecr_pull"')),
-            ("gcp", [{"type": "compute.googleapis.com/Network", "name": "network"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private", "dependsOn": ["network"]}, {"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders", "dependsOn": ["private"]}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member" "gke_artifact_pull"')),
+            ("aws", [{"type": "AWS::EC2::VPC", "name": "network"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["network"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["network"]}, {"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders", "dependsOn": ["network"]}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment"')),
+            ("gcp", [{"type": "compute.googleapis.com/Network", "name": "network"}, {"type": "compute.googleapis.com/Subnetwork", "name": "private", "dependsOn": ["network"]}, {"type": "artifactregistry.googleapis.com/Repository", "name": "orders"}, {"type": "container.googleapis.com/Cluster", "name": "orders", "dependsOn": ["private"]}], ('resource "google_artifact_registry_repository"', 'resource "google_container_cluster"', 'resource "google_artifact_registry_repository_iam_member"')),
         )
         for provider, resources, expected in cases:
             with self.subTest(provider=provider), tempfile.TemporaryDirectory() as directory:
@@ -1588,6 +1588,22 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("vpc_id = aws_vpc.platform.id", source)
             self.assertIn("subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_c.id]", source)
 
+    def test_iac_renderer_resolves_type_safe_dependency_ids_when_names_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cloud = root / "cloud.json"
+            cloud.write_text(json.dumps({"provider": "aws", "resources": [
+                {"id": "cluster-a", "type": "AWS::EKS::Cluster", "name": "platform", "dependsOn": ["vpc-a"]},
+                {"id": "subnet-a", "type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["vpc-a"]},
+                {"id": "subnet-c", "type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["vpc-a"]},
+                {"id": "vpc-a", "type": "AWS::EC2::VPC", "name": "platform"},
+            ]}), encoding="utf-8")
+            run = root / "run"
+            render_iac(run, SimpleNamespace(inputs={"cloud": cloud}))
+            source = (run / "application/terraform/main.tf").read_text(encoding="utf-8")
+            self.assertIn("vpc_id = aws_vpc.platform.id", source)
+            self.assertIn("subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_c.id]", source)
+
     def test_iac_renderer_rejects_unknown_provider_resource_types(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1601,8 +1617,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             root = Path(directory)
             cloud = root / "cloud.json"
             cloud.write_text(json.dumps({"provider": "azure", "resources": [
-                {"type": "Microsoft.Network/virtualNetworks", "name": "platform", "subnets": [{"name": "aks", "addressPrefix": "10.0.1.0/24"}, {"name": "mysql", "addressPrefix": "10.0.2.0/24", "delegations": ["Microsoft.DBforMySQL/flexibleServers"]}]},
-                {"type": "Microsoft.Network/privateDnsZones", "name": "private.mysql.database.azure.com", "dependsOn": ["platform"]},
+                {"id": "vnet-platform", "type": "Microsoft.Network/virtualNetworks", "name": "platform", "subnets": [{"name": "aks", "addressPrefix": "10.0.1.0/24"}, {"name": "mysql", "addressPrefix": "10.0.2.0/24", "delegations": ["Microsoft.DBforMySQL/flexibleServers"]}]},
+                {"type": "Microsoft.Network/privateDnsZones", "name": "private.mysql.database.azure.com", "dependsOn": ["vnet-platform"]},
                 {"type": "Microsoft.ContainerService/managedClusters", "name": "platform", "nodePools": [{"name": "system", "vmSize": "Standard_D2s_v5", "count": 2, "enableAutoScaling": True, "minCount": 1, "maxCount": 3}, {"name": "user", "vmSize": "Standard_D4s_v5", "count": 1}], "networking": {"privateCluster": True, "subnet": "platform/aks"}},
                 {"type": "Microsoft.DBforMySQL/flexibleServers", "name": "platform-db", "networking": {"publicNetworkAccess": "Disabled", "delegatedSubnet": "platform/mysql", "privateDnsZone": "private.mysql.database.azure.com"}},
             ]}), encoding="utf-8")
@@ -1615,8 +1631,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
 
     def test_infer_intent_uses_provider_specific_registry_images(self) -> None:
         cases = (
-            ("aws", "AWS::EKS::Cluster", "AWS::ECR::Repository", ".dkr.ecr."),
-            ("gcp", "container.googleapis.com/Cluster", "artifactregistry.googleapis.com/Repository", "-docker.pkg.dev/"),
+            ("aws", "AWS::EKS::Cluster", "AWS::ECR::Repository", "__EASYDEP_REGISTRY__"),
+            ("gcp", "container.googleapis.com/Cluster", "artifactregistry.googleapis.com/Repository", "__EASYDEP_REGISTRY__"),
         )
         for provider, cluster_type, registry_type, marker in cases:
             with self.subTest(provider=provider):
@@ -1641,6 +1657,8 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertEqual("implementation-agent-inference", deployment["intentSource"])
             self.assertEqual("aws", iac["provider"])
             self.assertEqual("SUCCEEDED", iac["sourceConformance"]["status"])
+            self.assertTrue((run / "application/k8s/render-images.sh").is_file())
+            self.assertIn('output "registry_image_base"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
     @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
     def test_terraform_validation_reports_when_binary_is_unavailable(self, _which: object) -> None:
