@@ -1,5 +1,11 @@
 # agent-sdk 병합 계획 (2026-07-25)
 
+> **이력이다. 참조하지 않는다.**
+>
+> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
+> 전제가 바뀐 자리가 있다. **여기 적힌 결정·계획을 근거로 새 작업을 시작하지 말 것.**
+> 이 안의 **실측치는 유효하다** — 다시 재지 말고 인용한다.
+
 agent-sdk(클라우드 지식베이스 + 배포 계획 생성)를 easydep으로 흡수한다. easydep은
 이미 "에이전트별로 따로 개발하던 저장소를 하나로 합친 통합 저장소"이고, 배포
 에이전트가 마지막 합류자다.
@@ -31,7 +37,7 @@ agent-sdk(클라우드 지식베이스 + 배포 계획 생성)를 easydep으로 
 ## 대상 배치
 
 ```
-app/deployment/                     ← agent-sdk 저장소 루트가 통째로 여기로
+app/core/cloudkb/                     ← agent-sdk 저장소 루트가 통째로 여기로
   appkb/ bundlekb/ capacitykb/ costkb/ envkb/
   graphkb/ kbcommon/ patternkb/ perfkb/ sizingkb/
   nim_agent/                ← 도구 계층 (배포 구성기 deployment_puml_from_easydep)
@@ -42,9 +48,9 @@ app/deployment/                     ← agent-sdk 저장소 루트가 통째로 
 tests/kb/                   ← agent-sdk tests/ 103개 파일
 ```
 
-`app/deployment/`를 고른 근거는 **경로 해석이 살아 있기 때문**이다.
+`app/core/cloudkb/`를 고른 근거는 **경로 해석이 살아 있기 때문**이다.
 `kbcommon/artifact.py`의 `REPO_ROOT = Path(__file__).resolve().parent.parent`가
-새 위치에서 `app/deployment/`를 가리키고, `data/`·`output/`이 함께 이동하면 그대로 맞는다.
+새 위치에서 `app/core/cloudkb/`를 가리키고, `data/`·`output/`이 함께 이동하면 그대로 맞는다.
 다른 `parent.parent` 참조(`bundlekb/parsers/*` → `schema.json`, `graphkb/parsers/
 review.py` → `reviewed/`)는 전부 패키지 내부라 영향이 없다.
 
@@ -64,15 +70,15 @@ review.py` → `reviewed/`)는 전부 패키지 내부라 영향이 없다.
 
 ### 1. 이력 이식 — 브랜치 `merge/agent-sdk`
 
-`git-filter-repo`로 agent-sdk 이력 전체의 경로를 미리 `app/deployment/`로 옮긴 뒤 병합한다.
+`git-filter-repo`로 agent-sdk 이력 전체의 경로를 미리 `app/core/cloudkb/`로 옮긴 뒤 병합한다.
 subtree merge(`read-tree --prefix`)보다 이쪽을 택하는 이유: 과거 커밋의 경로가 현재
-경로와 같아져 `git log app/deployment/costkb/...`가 `--follow` 없이 동작한다. 영구 통합이라
+경로와 같아져 `git log app/core/cloudkb/costkb/...`가 `--follow` 없이 동작한다. 영구 통합이라
 이 차이가 남는다.
 
 ```bash
 pip install git-filter-repo                       # 미설치 상태
 git clone C:/Users/projw/Desktop/dev/capstone/agent-sdk /tmp/agent-sdk-graft
-cd /tmp/agent-sdk-graft && git filter-repo --to-subdirectory-filter app/deployment
+cd /tmp/agent-sdk-graft && git filter-repo --to-subdirectory-filter app/core/cloudkb
 
 cd easydep && git checkout -b merge/agent-sdk
 git remote add agent-sdk-graft /tmp/agent-sdk-graft
@@ -80,34 +86,34 @@ git fetch agent-sdk-graft
 git merge --allow-unrelated-histories agent-sdk-graft/master
 ```
 
-**완료 기준**: `git log --oneline app/deployment/ | wc -l` 이 198에 가깝고, 워킹트리에
-`app/deployment/{appkb,costkb,...}`가 있다. 이 시점에는 **아직 아무것도 임포트되지 않는다**
+**완료 기준**: `git log --oneline app/core/cloudkb/ | wc -l` 이 198에 가깝고, 워킹트리에
+`app/core/cloudkb/{appkb,costkb,...}`가 있다. 이 시점에는 **아직 아무것도 임포트되지 않는다**
 (임포트 경로가 안 맞으므로) — 정상이다.
 
 ### 2. 배치 정리
 
 **계획을 하나 뒤집었다: 테스트를 옮기지 않는다.** `tests/kb/`로 빼려던 것을
-`app/deployment/tests/` 그대로 두었다. 그 테스트들의 `ROOT = parent.parent`가 새
-위치에서 정확히 `app/deployment/`를 가리켜, 구조 잠금 테스트 2종과 경로 상수
+`app/core/cloudkb/tests/` 그대로 두었다. 그 테스트들의 `ROOT = parent.parent`가 새
+위치에서 정확히 `app/core/cloudkb/`를 가리켜, 구조 잠금 테스트 2종과 경로 상수
 (`/"appkb"`·`/"data"`·`/"NOTICE"`)가 **무수정으로** 맞는다. 옮겼다면 전부 다시
 계산해야 했다. conftest 분리라는 목적은 디렉터리가 다른 것만으로 이미 달성된다.
 
-- `app/deployment/{pyproject.toml,uv.lock}` 삭제 — 의존성은 `requirements.txt`로 간다
-- `app/deployment/__init__.py` 신설 — `app/design/`과 같은 모양의 패키지로 만든다
+- `app/core/cloudkb/{pyproject.toml,uv.lock}` 삭제 — 의존성은 `requirements.txt`로 간다
+- `app/core/cloudkb/__init__.py` 신설 — `app/design/`과 같은 모양의 패키지로 만든다
 - `main.py`는 그대로 둔다. easydep `.gitignore`의 `/main.py`는 **루트 앵커**라
-  `app/deployment/main.py`는 걸리지 않는다(추적됨을 확인)
-- `NOTICE`도 `app/deployment/` 안에 둔다 — `test_redistribution_notice.py`가
+  `app/core/cloudkb/main.py`는 걸리지 않는다(추적됨을 확인)
+- `NOTICE`도 `app/core/cloudkb/` 안에 둔다 — `test_redistribution_notice.py`가
   `ROOT/NOTICE`로 찾고, 그 고지가 덮는 것이 이 하위 시스템의 데이터다
-- `.gitignore`: `/app/deployment/{output,.cache,.claude}/`·`token_budget.json`·
+- `.gitignore`: `/app/core/cloudkb/{output,.cache,.claude}/`·`token_budget.json`·
   `tool_count.json`. **빠뜨리면 KB 빌드 산출물이 커밋된다**
 - `.dockerignore`: `output/`·`.cache/`·`tests/` 제외. 이미지는 커밋된 `data/`만 쓴다
-- `pytest.ini`: `testpaths`에 `app/deployment/tests` 추가 + `--import-mode=importlib`
+- `pytest.ini`: `testpaths`에 `app/core/cloudkb/tests` 추가 + `--import-mode=importlib`
   (양쪽에 `test_cli.py`가 하나씩이라 기본 모드는 basename이 충돌한다)
 
 ### 3. 임포트 재작성
 
 `scripts/rewrite_kb_imports.py`가 AST로 `import`/`from` 노드만 고친다. 기본이
-미리보기이고 `--apply`로 쓴다. 접두는 `--prefix`로 바꾼다(기본 `app.deployment`).
+미리보기이고 `--apply`로 쓴다. 접두는 `--prefix`로 바꾼다(기본 `app.core.cloudkb`).
 
 2026-07-25 검증: 대표 5파일 사본에 적용해 임포트 46줄이 바뀌고 근거 라벨 15건이
 **한 건도 안 바뀌었으며**, 결과가 전부 파싱됐다. 함수 안 들여쓴 임포트와
@@ -121,7 +127,7 @@ notes.append(Note(text, ORIGIN_KB, "costkb"))    # 사용자에게 보이는 출
 parser = argparse.ArgumentParser(prog="costkb")  # CLI 이름
 ```
 
-이것들을 `app.deployment.costkb`로 바꾸면 답변의 출처 표시가 깨지고
+이것들을 `app.core.cloudkb.costkb`로 바꾸면 답변의 출처 표시가 깨지고
 `tests/kb/test_evidence_labels.py`·`test_claim_check*.py`가 무너진다. **바꾸는 것은
 임포트 경로뿐이고, 라벨·prog 이름·아티팩트 이름은 그대로 둔다.**
 
@@ -181,24 +187,24 @@ openai==2.44.0   →   openai>=2.45.0,<3
 경로다. 읽기 경로에는 필요 없다.
 
 Dockerfile: `python:3.12-slim-bookworm` → `python:3.13-slim-bookworm` (2곳),
-`COPY app ./app`가 `app/deployment/data`(9.1MB)를 함께 가져간다.
+`COPY app ./app`가 `app/core/cloudkb/data`(9.1MB)를 함께 가져간다.
 
 ### 5. 검증 — **완료**
 
 ```
-1365 passed, 21 skipped   (app/deployment/tests, 2026-07-25)
+1365 passed, 21 skipped   (app/core/cloudkb/tests, 2026-07-25)
 ```
 
 베이스라인과 **정확히 같다**. 도중에 1362/24가 나왔던 것이 위의 조용한 스킵이고,
 그 3의 차이가 유일한 신호였다. 이 게이트를 다시 돌리려면 로컬에
-`app/deployment/{output,.cache}/`가 있어야 한다(둘 다 gitignore — 각자 빌드한다).
+`app/core/cloudkb/{output,.cache}/`가 있어야 한다(둘 다 gitignore — 각자 빌드한다).
 
 ### 6. 배선 — **일부러 끊어 두었다 (2026-07-26)**
 
 배포 노드 교체를 한 번 넣었다가(ef8e067) 되돌렸다. **이 병합의 범위를 "합치기"로
 좁히기 위해서다** — 배선은 easydep 본체를 손보는 작업과 함께 간다.
 
-그래서 지금 상태는: `app/deployment/`이 저장소 안에 있고 테스트가 돌지만,
+그래서 지금 상태는: `app/core/cloudkb/`이 저장소 안에 있고 테스트가 돌지만,
 **easydep의 실행 경로는 병합 전과 한 글자도 다르지 않다.** 배포 다이어그램은
 여전히 `generate_deployment_diagram_with_llm`이 만든다.
 
@@ -255,8 +261,8 @@ Dockerfile은 3.12다. 확인 결과 `openhands-sdk`/`openhands-tools` 1.36.1은
 1:1 대조)와 `test_docs_structure.py`(문서 허용 목록)는 저장소 루트 기준으로 짜여
 있다. 이 둘은 agent-sdk가 스스로에게 건 규율이고 **병합으로 없앨 이유가 없다** —
 `ROOT`와 패키지 이름만 새 배치로 옮긴다. 다만 규약의 뜻은 바뀐다: "kbcommon은
-프로젝트 내부를 임포트하지 않는다"의 프로젝트가 이제 `app/deployment`다. easydep 코드가
-KB를 부르는 방향(`app/design` → `app/deployment/nim_agent`)은 이 검사의 대상이 아니므로,
+프로젝트 내부를 임포트하지 않는다"의 프로젝트가 이제 `app/core/cloudkb`다. easydep 코드가
+KB를 부르는 방향(`app/design` → `app/core/cloudkb/nim_agent`)은 이 검사의 대상이 아니므로,
 그 방향의 규약이 필요하면 새로 적는다.
 
 **5. easydep 로컬 환경 부재.** 이 머신에 easydep 의존성이 설치돼 있지 않아
@@ -266,19 +272,19 @@ KB를 부르는 방향(`app/design` → `app/deployment/nim_agent`)은 이 검�
 
 **6. `data/` 9.1MB.** 병합하면 이미지와 저장소가 그만큼 커진다. 대안(런타임 빌드)은
 클론 직후 동작을 잃고, AWS 관리형 가격처럼 **재배포가 금지된 소스는 어차피 각자
-빌드**해야 한다(`python -m app.deployment.costkb build-aws-managed`). 지금 크기는 받아들인다.
+빌드**해야 한다(`python -m app.core.cloudkb.costkb build-aws-managed`). 지금 크기는 받아들인다.
 
-## 디렉터리 이름 — `app/deployment/` (2026-07-25 확정)
+## 디렉터리 이름 — `app/core/cloudkb/` (2026-07-25 확정)
 
 `app/kb/`도 후보였다. 내용물의 9/12가 지식베이스라 그쪽이 사실에 가깝다. 그럼에도
-`app/deployment/`를 택한 이유는 **easydep의 기존 이름이 전부 에이전트 이름**이기
+`app/core/cloudkb/`를 택한 이유는 **easydep의 기존 이름이 전부 에이전트 이름**이기
 때문이다(`app/requirements`·`app/design`·`app/implementation`). 이 합류자도
 에이전트이고, 지식베이스는 그 에이전트가 답을 만드는 수단이다.
 
 ## 전체 테스트 — 완료
 
 ```
-1519 passed, 55 skipped   (tests + app/deployment/tests, 2026-07-26)
+1519 passed, 55 skipped   (tests + app/core/cloudkb/tests, 2026-07-26)
 ```
 
 따로 돌린 합(1365+154 · 21+34)과 정확히 같다 — 두 묶음이 서로 간섭하지 않는다.
@@ -300,7 +306,7 @@ KB를 부르는 방향(`app/design` → `app/deployment/nim_agent`)은 이 검�
 
 ## 병합 후 (합의 문서의 우리 몫)
 
-`app/deployment/document/archive/easydep-agenda-2026-07-24.md`의 안건 중 easydep이 코드를
+`app/core/cloudkb/document/archive/easydep-agenda-2026-07-24.md`의 안건 중 easydep이 코드를
 바꿔야 하는 것:
 
 - **안건 1** — 제약 구조화(`resource_constraints_text` → `RESOURCE_SPEC`)가

@@ -1,5 +1,10 @@
 # 클라우드 네이티브를 요구사항 단계에서 잇기 — 조사 (2026-07-27)
 
+> **조사 기록이다.**
+>
+> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서의 조사 결과는 유효하나
+> 결론·계획 부분은 그 뒤 판단이 바뀐 자리가 있다.
+
 ## 0. 이 문서가 답하려는 질문
 
 `docs/research.md`(과제 뼈대)의 목표 ②는 *"클라우드 환경 특성(인스턴스 성능·비용),
@@ -19,7 +24,7 @@
 
 ## 1. 이미 있는 것 — `RESOURCE_SPEC` 계약
 
-> 근거: 이 저장소의 코드. `app/deployment/appkb/request.json` · `contract.py`
+> 근거: 이 저장소의 코드. `app/core/cloudkb/appkb/request.json` · `contract.py`
 
 클라우드 리소스 제약의 스키마가 **이미 있다**. 그리고 스키마 설명이 의도된 배선을
 그대로 적어 두었다:
@@ -53,7 +58,7 @@
 ### 지명은 코드로 바꿔 담는다
 
 `region`은 리전 **코드**여야 한다. 지명('서울')이 그대로 들어오면 조인이 조용히 빈 답이
-된다(스키마가 실측이라고 적어 둠). 해석은 `app/deployment/envkb/regions.py:resolve_region`.
+된다(스키마가 실측이라고 적어 둠). 해석은 `app/core/cloudkb/envkb/regions.py:resolve_region`.
 
 ### 공백은 이미 진단돼 있다
 
@@ -155,7 +160,7 @@ B는 요구사항 분석이 **클라우드 네이티브라는 성질 때문에 �
 관심사 목록을 우리가 지어내면 그건 **임의 사전**이고, 요구사항 KB가 명시적으로 금지하는
 바로 그것이다(`knowledge/rules.py`의 `NON_RULE` 심각도가 존재하는 이유).
 
-근거는 이미 저장소 안에 있다 — **`app/deployment/patternkb`**:
+근거는 이미 저장소 안에 있다 — **`app/core/cloudkb/patternkb`**:
 
 - 담긴 것: Azure Architecture Center의 클라우드 설계 패턴·아키텍처 스타일·설계 원칙
   (CC-BY-4.0) + **12-factor 배포 원칙**(MIT).
@@ -241,7 +246,7 @@ B는 요구사항 분석이 **클라우드 네이티브라는 성질 때문에 �
 "규제 준수 의무"는 코퍼스 근거가 튼튼한데도 뺐다. `cn.data-residency`가 이미 읽히는 자리를
 갖고 있고, 그것 말고 규제 일반을 읽는 소비자를 저장소 안에서 댈 수 없었다.
 
-③ **결합 형태는 `app/core/` 승격**(A를 할 때). 지금은 런타임 경로가 `app/deployment`를
+③ **결합 형태는 `app/core/` 승격**(A를 할 때). 지금은 런타임 경로가 `app/core/cloudkb`를
 한 줄도 import하지 않고, 대조 도구 하나만 예외다. 그 선은 테스트가 못을 박는다.
 
 ### 판정을 어떻게 나눴나
@@ -648,7 +653,7 @@ KB들은 실재하지만 그것들이 먹는 것은 `RESOURCE_SPEC`이지 관심
 `cn.network-exposure → multiZone`은 아예 틀린 매핑이었다(`multiZone`은 가용영역 분산이라
 `cn.redundancy-target`이 맞다).
 
-**이것이 정확히 `app/deployment/appkb/request.json`이 경계한 결함이다** —
+**이것이 정확히 `app/core/cloudkb/appkb/request.json`이 경계한 결함이다** —
 *"`multiZone`을 받아 놓고 안 읽던"* 그것. 우리가 그 규율을 인용해 놓고 그대로 저질렀다.
 
 ### 고친 것
@@ -1151,9 +1156,9 @@ tag/commit/digest 고정을 걸 수 없고 걸 수 있는 척해서도 안 된�
 
 저장소 안:
 
-- `app/deployment/appkb/request.json` — `RESOURCE_SPEC v1` 계약과 각 칸의 소비자
-- `app/deployment/appkb/contract.py` — `REQUIRED_WHY`(되묻기 문구의 원본)
-- `app/deployment/patternkb/` — 12-factor · Azure 패턴 산문, `pattern-advisory` basis
-- `app/deployment/envkb/regions.py` — `resolve_region`
+- `app/core/cloudkb/appkb/request.json` — `RESOURCE_SPEC v1` 계약과 각 칸의 소비자
+- `app/core/cloudkb/appkb/contract.py` — `REQUIRED_WHY`(되묻기 문구의 원본)
+- `app/core/cloudkb/patternkb/` — 12-factor · Azure 패턴 산문, `pattern-advisory` basis
+- `app/core/cloudkb/envkb/regions.py` — `resolve_region`
 - `docs/agent-sdk-merge-plan.md` — "제약이 아직 안 흐른다"
 - `docs/requirements-agent-improvements.md` §7~§9 — LLM 판정 흔들림 측정

@@ -1,7 +1,13 @@
 # 요구사항 분석 에이전트 — 개선 후보
 
+> **이력이다. 참조하지 않는다.**
+>
+> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
+> 전제가 바뀐 자리가 있다. **여기 적힌 결정·계획을 근거로 새 작업을 시작하지 말 것.**
+> 이 안의 **실측치는 유효하다** — 다시 재지 말고 인용한다.
+
 `app/requirements/` 개편 후보를 모아 둔다. **아직 결정된 것은 없다** — 고르기 위한 재료다.
-판단 기준은 과제 원문(`app/deployment/document/research.md`)의 목표 3개다.
+판단 기준은 과제 원문(`app/core/cloudkb/document/research.md`)의 목표 3개다.
 
 - 목표 1) 요구사항 기반 산출물 **검증** 및 사용자 피드백을 위한 **AI 에이전트 갱신 과정** 설계
 - 목표 2) 클라우드 환경·리소스 특성을 고려한 **가이드라인 제공**
@@ -26,7 +32,7 @@
 | `repair_stopped="no_improvement"`는 원인이 상위 단계에 있다는 신호일 때가 많은데, 올려보낼 통로가 없다 | `step3_specifications.py:259-261` |
 | 상태가 평면 `AgentState` 하나. 모든 노드가 전체를 읽고 쓴다 | `agent/state.py:80` |
 | 파이프라인이 두 벌이다 | `agent/graph.py` vs `runner.run_pipeline` |
-| 같은 저장소의 배포 쪽은 이미 도구 기반 자율 에이전트다 | `app/deployment/nim_agent/`(agents SDK, `@function_tool` 9축, Runner agentic loop) |
+| 같은 저장소의 배포 쪽은 이미 도구 기반 자율 에이전트다 | `app/core/cloudkb/nim_agent/`(agents SDK, `@function_tool` 9축, Runner agentic loop) |
 
 **요약**: `app/requirements/`는 에이전트가 아니라 **고정 프롬프트 체인**이다. 배포 쪽과 세대가 다르다.
 
@@ -85,7 +91,7 @@
   Agent Skills의 progressive disclosure는 전량 주입(70,000토큰) → 색인만(500토큰)으로
   같은 지식을 훨씬 싸게 다룬다.
 - **깨지는 것**: `prompts.py` 대부분, `_UI_TERMS` 정규식 lint, `SPEC_VALIDATOR_SYSTEM`
-- **비용**: KB 구축. 단 `app/deployment/`가 이미 9축을 만들어 뒀고, 원래 4개 에이전트에
+- **비용**: KB 구축. 단 `app/core/cloudkb/`가 이미 9축을 만들어 뒀고, 원래 4개 에이전트에
   흡수시키려던 것이라 이게 그 첫 사례가 된다
 - **검증**: 검증 지적에 규칙 인용이 붙는 비율, 인용의 실제 존재 여부(허위 인용 검출)
 

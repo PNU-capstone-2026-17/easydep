@@ -1,5 +1,11 @@
 # 다섯 갈래 계획 — 사이징 근거 · 미사용 소스 · 계측 복구 · 다이어그램 계약 · 필수 재정의 (2026-07-29)
 
+> **이력이다. 참조하지 않는다.**
+>
+> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
+> 전제가 바뀐 자리가 있다. **여기 적힌 결정·계획을 근거로 새 작업을 시작하지 말 것.**
+> 이 안의 **실측치는 유효하다** — 다시 재지 말고 인용한다.
+
 **실행 전 계획입니다.** 이 문서 시점에 코드·산출물은 바뀌지 않았습니다.
 
 > **실행됨 (2026-07-29).** W1~W5 전부. 결과와 실측치는 아래에 있습니다 — 이 본문은
@@ -135,7 +141,7 @@ become answerable"*이라고 말합니다. 다른 넷(예산·버스트·서버�
 
 ## 2.1 지금 있는 것
 
-`app/deployment/document/archive/perfkb-field-axis-plan-2026-07-29.md`에 계획이 이미 있고
+`app/core/cloudkb/document/archive/perfkb-field-axis-plan-2026-07-29.md`에 계획이 이미 있고
 D1~D3이 승인돼 있으며 P0이 부분 완료입니다. **결정 D2로 범위만 넓힙니다.**
 
 실측(최상위 키만): **aws 24개 중 7개 사용 · azure 59개 중 7개 사용 · gcp 17개 중 4개 사용.**
@@ -175,7 +181,7 @@ D1~D3이 승인돼 있으며 P0이 부분 완료입니다. **결정 D2로 범위
 
 | 끊긴 자리 | 실측 |
 |---|---|
-| 실행 경로 | 문서 전부가 `python tools/agent_probe.py` / `uv run python main.py` — 지금은 `app/deployment/` 아래라 리포 루트에서 모듈로 돌려야 한다 |
+| 실행 경로 | 문서 전부가 `python tools/agent_probe.py` / `uv run python main.py` — 지금은 `app/core/cloudkb/` 아래라 리포 루트에서 모듈로 돌려야 한다 |
 | 질의집 | `document/archive/kb-test-queries.md`가 **"지식베이스 세 개 · 도구 16개"** 시절 기록. 현재 KB 9개 · `@function_tool` **48개** |
 | 살아있는 자리 없음 | 그 문서는 `archive/`(불변 기록)인데 `README.md:280`이 **살아있는 안내처럼** 가리킨다 — 고칠 수도 안 고칠 수도 없는 상태 |
 | 자동/수동 갈라짐 | `tests/test_agent_regression.py`의 파라미터가 **21건에서 멈춰 있다**(`1-1b`~`X7`). 2026-07-24 이후 추가된 R·P·GL·RS·CF·SM·BU·SZ 계열이 통째로 빠졌다 — **프로브를 새로 넣어도 회귀가 모른다** |
