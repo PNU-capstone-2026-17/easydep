@@ -379,7 +379,7 @@ kbcommon 밖을 부르면 빌드가 빨갛게 됩니다.
 output/  (새로 빌드한 것)  →  data/*.gz  (커밋된 것)
 ```
 
-포장은 `python -m kbcommon pack <파일>`이 합니다. 이 명령에는 **거부 목록**이
+포장은 `python -m app.deployment.kbcommon pack <파일>`이 합니다. 이 명령에는 **거부 목록**이
 있습니다 — AWS 관리형 가격 산출물은 재배포가 금지라(17장) pack이 이름을 보고
 거절합니다. "커밋하지 마세요"라는 주석 대신 **커밋이 안 되는 구조**를 만든 것입니다.
 
@@ -1059,7 +1059,7 @@ API가 아예 만들지 않습니다 — 근거를 없애는 게 아니라 사�
 
 ### (다) KB 사이 검증
 
-`python -m kbcommon verify`. 단방향 규약 때문에 어느 빌드에도 넣을 수 없어서,
+`python -m app.deployment.kbcommon verify`. 단방향 규약 때문에 어느 빌드에도 넣을 수 없어서,
 산출물 JSON을 **데이터로 읽어서** 축 사이 정합(제약이 가리키는 타입이 그래프에
 실재하나 등)을 봅니다.
 
@@ -1299,7 +1299,7 @@ kcc  기타(불변성) 3,540 중 위 셋으로 나뉨
 | **거부** (AWS Price List 약관) | 가격 데이터 재배포 금지 | **커밋 자체가 불가능한 구조** |
 
 거부 줄이 AWS 관리형 가격입니다. 데이터는 공개 API로 받을 수 있지만 약관이
-재배포를 금지하므로: 빌드는 **로컬 전용**(`python -m costkb build-aws-managed`,
+재배포를 금지하므로: 빌드는 **로컬 전용**(`python -m app.deployment.costkb build-aws-managed`,
 사용자 환경에서), `data/`에 그 파일이 존재하면 테스트가 실패하고, `kbcommon pack`은
 파일 이름을 보고 포장을 거부합니다.
 
@@ -1372,18 +1372,18 @@ uv sync                 # 의존성
 
 ```bash
 # 창립 4축
-python -m graphkb build --source tumblebug   # core 13종 (+cfn/azure/gcp/mapping/svcmap …)
-python -m capacitykb build --source cfn      # (+azure/gcp/aws-tf/aws-conditional …)
-python -m costkb build                       # 미러 사본 (+build-azure-managed 등)
-python -m perfkb build                       # 성능 신호 + 보강 소스 3종
+python -m app.deployment.graphkb build --source tumblebug   # core 13종 (+cfn/azure/gcp/mapping/svcmap …)
+python -m app.deployment.capacitykb build --source cfn      # (+azure/gcp/aws-tf/aws-conditional …)
+python -m app.deployment.costkb build                       # 미러 사본 (+build-azure-managed 등)
+python -m app.deployment.perfkb build                       # 성능 신호 + 보강 소스 3종
 
 # 자란 축
-python -m bundlekb build … ; python -m sizingkb build … ; python -m envkb build …
-python -m patternkb build … ; # 소스별 하위 명령은 각 패키지 --help가 진실
+python -m app.deployment.bundlekb build … ; python -m app.deployment.sizingkb build … ; python -m app.deployment.envkb build …
+python -m app.deployment.patternkb build … ; # 소스별 하위 명령은 각 패키지 --help가 진실
 
 # 축 사이 검증과 포장
-python -m kbcommon verify
-python -m kbcommon pack <산출물.json>        # data/*.gz 갱신 (금지 목록 내장)
+python -m app.deployment.kbcommon verify
+python -m app.deployment.kbcommon pack <산출물.json>        # data/*.gz 갱신 (금지 목록 내장)
 ```
 
 정확한 하위 명령 목록은 **각 패키지의 `--help`가 진실**입니다. 이 문서에 다

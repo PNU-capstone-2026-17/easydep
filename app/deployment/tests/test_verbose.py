@@ -82,7 +82,10 @@ def test_color_applied_when_requested() -> None:
         type="run_item_stream_event",
         item=SimpleNamespace(type="tool_call_output_item", output="ok"),
     )
-    assert describe_event(output, color=True).startswith("\x1b[2m")  # 흐리게
+    # **회색(dim `\x1b[2m`)은 쓰지 않는다** — 배색에 따라 배경에 묻혀 안 읽힌다
+    # (2026-07-29). 도구 결과는 파랑으로 바뀌었다.
+    assert describe_event(output, color=True).startswith("\x1b[34m")  # 파랑
+    assert "\x1b[2m" not in describe_event(output, color=True)
 
     usage = SimpleNamespace(input_tokens=1, output_tokens=2, total_tokens=3, requests=1)
     assert describe_usage(usage, color=True).startswith("\x1b[33m")  # 노랑

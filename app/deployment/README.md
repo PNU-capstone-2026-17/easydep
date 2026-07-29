@@ -31,12 +31,16 @@ MODEL=openai/gpt-oss-120b
 
 ## 실행
 
+**리포 루트에서 돌립니다.** 이 패키지가 `app/deployment/` 아래로 옮겨진 뒤로 모든
+진입점이 `python -m app.deployment.<이름>` 꼴입니다 — 옛 `python main.py`·
+`python -m graphkb`는 루트에서 `No module named` 로 죽습니다.
+
 ```bash
 uv sync                              # 의존성 설치
-uv run python main.py
-uv run python main.py --verbose      # 도구 호출·인자·결과·토큰 사용량 표시
-uv run python main.py --max-turns 40 # 도구를 많이 부르는 질의용 (기본 20)
-uv run python main.py --tumblebug    # cb-tumblebug MCP(라이브 축) 연결 — 기본 꺼짐
+uv run python -m app.deployment.main
+uv run python -m app.deployment.main --verbose      # 도구 호출·인자·결과·토큰 사용량 표시
+uv run python -m app.deployment.main --max-turns 40 # 도구를 많이 부르는 질의용 (기본 20)
+uv run python -m app.deployment.main --tumblebug    # cb-tumblebug MCP(라이브 축) 연결 — 기본 꺼짐
 ```
 
 대화 예시:
@@ -108,28 +112,28 @@ tencent/alibaba/ibm/ncp/kt/nhn/openstack …  bug 0.0%
 
 ```bash
 # 산출물 생성 (클라우드 자격증명 불필요, output/ 에 저장)
-uv run python -m graphkb build --source tumblebug   # 벤더 중립 의존성 그래프
-uv run python -m graphkb build --source cfn         # AWS
-uv run python -m graphkb build --source mapping     # 벤더 간 동치 매핑
-uv run python -m graphkb build --source azure       # Azure
-uv run python -m graphkb build --source gcp         # GCP
-uv run python -m capacitykb build --source cfn         # AWS 제약 (46,911건)
-uv run python -m capacitykb build --source azure       # Azure 전체 (42,831건, 576파일·100MB)
-uv run python -m capacitykb build --source azure-quota
-uv run python -m capacitykb build --source gcp         # GCP (6,923건, 프로바이더 보강 포함)
-uv run python -m capacitykb build --source aws-limits  # EBS 종류별 확정 한도 (교차 검증)
+uv run python -m app.deployment.graphkb build --source tumblebug   # 벤더 중립 의존성 그래프
+uv run python -m app.deployment.graphkb build --source cfn         # AWS
+uv run python -m app.deployment.graphkb build --source mapping     # 벤더 간 동치 매핑
+uv run python -m app.deployment.graphkb build --source azure       # Azure
+uv run python -m app.deployment.graphkb build --source gcp         # GCP
+uv run python -m app.deployment.capacitykb build --source cfn         # AWS 제약 (46,911건)
+uv run python -m app.deployment.capacitykb build --source azure       # Azure 전체 (42,831건, 576파일·100MB)
+uv run python -m app.deployment.capacitykb build --source azure-quota
+uv run python -m app.deployment.capacitykb build --source gcp         # GCP (6,923건, 프로바이더 보강 포함)
+uv run python -m app.deployment.capacitykb build --source aws-limits  # EBS 종류별 확정 한도 (교차 검증)
 
 # CLI로 직접 질의도 가능
-uv run python -m graphkb query --rank dependents --provider aws --limit 5
-uv run python -m capacitykb query --immutable "AWS::EC2::Subnet"
-uv run python -m costkb coverage                    # 데이터셋 경계 확인 (빌드 불필요)
-uv run python -m costkb query --vcpu-min 4 --provider aws --region us-east-1
+uv run python -m app.deployment.graphkb query --rank dependents --provider aws --limit 5
+uv run python -m app.deployment.capacitykb query --immutable "AWS::EC2::Subnet"
+uv run python -m app.deployment.costkb coverage                    # 데이터셋 경계 확인 (빌드 불필요)
+uv run python -m app.deployment.costkb query --vcpu-min 4 --provider aws --region us-east-1
 
 # costkb 미러 빌드는 extra가 필요합니다 (덤프 파서 pgdumplib)
 uv sync --extra costkb
-uv run python -m costkb build                       # → output/tumblebug-cost.json (73,083건)
-uv run python -m costkb build --tag v0.12.25 --refresh
-uv run python -m costkb build --rows-file rows.tsv  # pg_restore 우회 경로
+uv run python -m app.deployment.costkb build                       # → output/tumblebug-cost.json (73,083건)
+uv run python -m app.deployment.costkb build --tag v0.12.25 --refresh
+uv run python -m app.deployment.costkb build --rows-file rows.tsv  # pg_restore 우회 경로
 ```
 
 > graphkb/capacitykb는 산출물이 없으면 도구가 빌드 명령을 안내합니다. 자세한 설명은
@@ -139,14 +143,14 @@ uv run python -m costkb build --rows-file rows.tsv  # pg_restore 우회 경로
 빌드에도 넣을 수 없어, 완성된 산출물을 데이터로 읽습니다):
 
 ```bash
-uv run python -m kbcommon verify
+uv run python -m app.deployment.kbcommon verify
 ```
 
 의존성 그래프는 브라우저에서 눈으로 훑을 수 있습니다. 외부 스크립트·폰트를 안 써서
 **인터넷 없이도** 돕니다:
 
 ```bash
-uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 브라우저를 연다
+uv run python -m app.deployment.tools.build_graph_explorer    # 굽고 localhost로 띄우고 브라우저를 연다
 ```
 
 색은 프로바이더, **선 모양은 근거**(실선 = 원본이 명시 / 파선 = 우리 짐작)입니다.
@@ -171,9 +175,9 @@ uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 �
 - **번들 데이터셋(기본, 빌드 불필요)**: `costkb/specs.json`의 큐레이션된 AWS/GCP/Azure
   온디맨드 정가 36건. 서버/클라우드 계정 없이 즉시 데모 가능하지만 vCPU 8·4개 리전까지가
   경계입니다.
-- **미러 빌드(권장)**: `python -m costkb build`를 한 번 돌리면 `output/tumblebug-cost.json`
+- **미러 빌드(권장)**: `python -m app.deployment.costkb build`를 한 번 돌리면 `output/tumblebug-cost.json`
   (73,083건 · vCPU 최대 896 · 메모리 최대 32 TB)이 생기고 도구가 자동으로 이쪽을 씁니다.
-  여전히 서버·자격증명은 필요 없습니다. 커버리지: `uv run python -m costkb coverage`
+  여전히 서버·자격증명은 필요 없습니다. 커버리지: `uv run python -m app.deployment.costkb coverage`
 - **cb-tumblebug MCP(옵트인, 라이브 가격)**: `--tumblebug`으로 켭니다. 아래 참조.
 
 > `recommend_vm_spec`(MCP)과 `cost_recommend_specs`(costkb)는 **축이 다른 게 아니라 같은
@@ -191,7 +195,7 @@ uv run python tools/build_graph_explorer.py    # 굽고 localhost로 띄우고 �
 ## cb-tumblebug MCP (옵트인)
 
 ```bash
-uv run python main.py --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
+uv run python -m app.deployment.main --tumblebug        # 또는 NIM_AGENT_TUMBLEBUG=1
 ```
 
 [cb-tumblebug](https://github.com/cloud-barista/cb-tumblebug)을 Docker로 띄우면(`make up`,
@@ -276,6 +280,30 @@ uv run pytest        # 전부 오프라인 (fixture 기반) — 개수는 pytest
 미러 투영은 `spec_infos` 모양의 행 dict fixture로 `test_costkb_projection.py`가 따로 검증합니다
 (덤프 34 MB 다운로드 불필요).
 
-**pytest가 못 잡는 것** — "모델이 실제로 도구를 부르는가"는 자동 검사로 고정하기 어렵습니다.
-그건 [`document/archive/kb-test-queries.md`](document/archive/kb-test-queries.md)의 질의집으로
-손으로 확인합니다(작성 시점 스냅샷 — 도구 목록은 코드가 진실). **모델을 바꿨다면 여기부터.**
+**pytest가 못 잡는 것** — "모델이 실제로 도구를 부르는가"는 실제 호출 없이는 못 봅니다.
+그건 **프로브 하네스**가 담당하고, 질의집은 문서가 아니라 **하네스가 생성**합니다
+(리포 루트에서):
+
+```bash
+python -m app.deployment.tools.agent_probe --list       # 질의집 + 도구 커버리지 (키 불필요)
+python -m app.deployment.tools.agent_probe              # 영어 31건 (기본 — 대상 언어)
+python -m app.deployment.tools.agent_probe --lang ko    # 한국어 68건
+python -m app.deployment.tools.agent_probe --repeat 5   # 흔들림을 통과율로
+python -m app.deployment.tools.agent_probe --tool-output 0   # 도구 결과 숨기기
+python -m app.deployment.tools.agent_probe --answer 0        # 답변을 자르지 않기
+RUN_AGENT_TESTS=1 uv run pytest app/deployment/tests/test_agent_regression.py
+```
+
+명단의 집은 `PROBES` 한 곳입니다. 회귀 테스트도 질의집도 거기서 나오고, 도구 하나가
+어느 프로브에도 안 걸리면 `test_probe_inventory.py`가 실패합니다 — 빈칸이 통과로 읽히는
+것을 막는 장치입니다. **모델을 바꿨다면 여기부터.**
+
+프로브 블록에는 **질문 · 도구(와 그 결과) · 답변** 셋만 나옵니다 — 나머지 신호(주장
+대조·오판 의심·용어 누출)는 끝의 요약으로 모았습니다. 색은 유형별로 갈립니다: 초록 통과 ·
+빨강 실패 · 노랑 불안정 · 마젠타 신호 · 시안 도구 호출 · 파랑 도구 결과. **회색은 쓰지
+않습니다**(배색에 따라 묻힙니다). `NO_COLOR`/`FORCE_COLOR`를 존중하고 파일로 리디렉션하면
+자동으로 꺼집니다.
+
+> [`document/archive/kb-test-queries.md`](document/archive/kb-test-queries.md)는 그
+> 이전(도구 16개·지식베이스 3개) 시점의 **불변 기록**입니다. 지금 상태를 보려면 위
+> `--list`를 쓰세요.

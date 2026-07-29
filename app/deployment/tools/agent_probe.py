@@ -1,10 +1,52 @@
 """에이전트 회귀 하네스 — 질의를 실제로 태우고 **기계로 판정 가능한 것만** 검사한다.
 
-    python tools/agent_probe.py                  # 전부 돌리고 결과를 본다
-    python tools/agent_probe.py --only 3-9       # 하나만
-    python tools/agent_probe.py --strict         # 실패가 있으면 종료코드 1
-    python tools/agent_probe.py --out out.json   # 결과 저장
-    python tools/agent_probe.py --repeat 5       # 각 프로브를 5회 — 통과율로 본다
+**리포 루트에서 모듈로 돌린다**(`app/deployment/` 아래로 옮겨진 뒤의 경로다):
+
+    python -m app.deployment.tools.agent_probe                # 영어 31건 (기본)
+    python -m app.deployment.tools.agent_probe --lang ko      # 한국어 68건
+    python -m app.deployment.tools.agent_probe --list         # 질의집을 찍는다 (키 불필요)
+    python -m app.deployment.tools.agent_probe --only 3-9     # 하나만
+    python -m app.deployment.tools.agent_probe --strict       # 실패가 있으면 종료코드 1
+    python -m app.deployment.tools.agent_probe --out out.json # 결과 저장
+    python -m app.deployment.tools.agent_probe --repeat 5     # 5회 — 통과율로 본다
+    python -m app.deployment.tools.agent_probe --tool-output 0  # 도구 결과 숨김
+
+## 질의 언어 — 기본이 영어다
+
+시스템의 대상 언어가 영어다(도구 출력·판정문·고지가 전부 영어이고, 실측상 한국어로
+물어도 답은 영어로 온다 — 30칸 중 28칸). 그래서 기본 실행은 `probe_en.py`의 영어
+31건이고, 그 31건이 도구 **31/31**을 덮는다. `--lang ko`면 한국어 68건이다.
+
+## 화면 읽는 법 — 질문 · 도구 · 답변
+
+프로브 블록에는 셋만 남긴다. 예전에는 지키는 것·실패 사유·주장 대조·오판 의심·용어
+누출까지 한 블록에 찍어 프로브 하나가 열 줄을 넘었고, **정작 봐야 할 도구 결과가 그
+사이에 묻혔다.** 나머지는 버린 게 아니라 **요약으로 옮겼다**(`_print_signals`).
+
+도구는 호출과 **그 결과**를 함께 찍는다(`main.py --verbose`와 같은 결) — 이름만 보면
+"불렀다"까지만 알고, 도구가 빈손으로 돌아왔는지는 출력을 봐야 갈린다. 길이는
+`--tool-output N`(기본 220자, 0이면 숨김). 반복 모드에서는 **첫 회차만** 찍는다.
+
+답변은 `--answer N`(기본 1200자, **0이면 안 자른다**). 400자였다가 늘렸다 — 이 저장소가
+답변에서 지키는 것들(낡음 고지·유보·"이 데이터셋에는 없다")은 **끝이나 꼬리말에 오기**
+때문에 짧게 자르면 화면에서 사라진 것처럼 보인다. 판정은 원래부터 전문에 대고 한다.
+
+색은 장식이 아니라 분류다(팔레트는 `nim_agent/verbose.py` 한 곳):
+
+    초록 통과 · 빨강 실패(틀리면 진짜 결함) · 노랑 불안정 ·
+    마젠타 신호(주장 대조·오판 의심·용어 누출) · 시안 도구 호출 · 파랑 도구 결과
+
+**회색(dim)은 쓰지 않는다** — 배색에 따라 배경에 묻힌다. 물러나야 하는 답변 본문은
+색을 빼서 물러나게 한다. `NO_COLOR=1`로 끄고 `FORCE_COLOR=1`로 켜며, 파일로
+리디렉션하면 자동으로 꺼진다.
+
+## 이 하네스가 명단의 단일 소스다
+
+같은 목록이 세 곳에 있었다 — 여기(`PROBES`), 회귀 테스트의 파라미터, 그리고 문서
+질의집. 뒤의 둘이 각각 2026-07-24와 도구 16개 시절에서 멈췄고, **프로브를 새로 넣어도
+회귀도 문서도 몰랐다.** 지금은 회귀가 `regression_probes()`를 읽고 질의집은 `--list`가
+생성한다. 도구 커버리지(`tool_coverage()`)도 여기서 센다 — 아무 프로브도 지목하지 않는
+도구를 세지 않으면 그 빈칸이 통과처럼 읽힌다.
 
 **도구 호출 기록이 핵심이다.** 답이 그럴듯해 보여도 도구를 안 부르고 모델이 지어낸
 것일 수 있고, 그게 이 프로젝트가 반복적으로 겪은 실패 양상이다. 답만 읽으면 그 둘이
@@ -110,6 +152,17 @@ class Probe:
 
     이걸 못 표현해서 **최선의 답을 실패로 찍었다.** 근거 없는 단정을 막는 일은
     `want_any`와 주장 대조(`claim_check`)가 맡는다 — 도구 호출은 그 대리 지표일 뿐이다.
+    """
+
+    regression_skip: str = ""
+    """비어 있으면 **옵트인 회귀 테스트가 이 프로브를 태운다.** 빼려면 사유를 적는다.
+
+    기본이 '포함'인 것이 요점이다. 예전에는 회귀 테스트가 태울 id를 자기 파일에
+    손으로 적었고, 그래서 2026-07-24 이후 늘어난 프로브 40여 건을 **회귀가 통째로
+    몰랐다.** 명단을 두 곳에 두면 한 곳은 반드시 뒤처진다 — 이 저장소가 질의집·
+    분류표·도구 목록에서 이미 세 번 겪은 실패다.
+
+    사유를 문자열로 강제하는 이유는 T6과 같다: 사유를 못 쓰면 제외가 아니라 방치다.
     """
 
     def failures(self, tools: list[str], answer: str) -> list[str]:
@@ -467,7 +520,8 @@ PROBES: tuple[Probe, ...] = (
           want_tools=("web_search",),
           want_any=("검증", "지식베이스", "출처", "공식",
                     "nowledge base", "ot verified", "ot a value the",
-                    "ource:", "fficial")),
+                    "ource:", "fficial"),
+          regression_skip="웹 검색이 기대 도구다 — 네트워크가 없으면 판정이 무의미하다"),
     Probe("P5", "Azure Standard_D2s_v5 koreasouth 3년 예약 가격 알려줘",
           "**지식베이스가 답할 수 있으면 웹으로 새지 않는다.** 보충은 없다고 확인된 "
           "뒤의 일이다 — 답할 수 있는데 웹으로 가면 검색 결과와 데이터셋이 어긋나 "
@@ -661,6 +715,63 @@ PROBES: tuple[Probe, ...] = (
           "**클라우드가 정한 값이 아니라 이 도구의 규칙**이라는 구분이 답에 살아야 한다.",
           want_tools=("sizing_rules",), forbid_tools=("web_search",),
           want_any=("requiredSubnetCount", "2 subnets", "two subnets", "서브넷 2")),
+
+    # --- 아카이브 질의집에서 이관 (2026-07-29) --------------------------------
+    #
+    # `document/archive/kb-test-queries.md`에만 있고 프로브에는 없던 네 개다.
+    # **커버리지를 세어 보고 나서야 보였다** — 도구 넷(`kb_describe_type`·
+    # `kb_rank_types`·`perf_specs_by_ebs_baseline`·`cap_service_regions`)을 아무
+    # 프로브도 지목하지 않고 있었고, 질의집에는 그 넷을 부르는 질의가 있었다.
+    # 기대 숫자는 **문서에서 옮기지 않고 지금 산출물로 다시 쟀다**(아래 주석).
+    Probe("KD1", "GCP ComputeInstance는 정확히 뭘 참조해?",
+          "**타입 하나의 나가는 엣지를 도구로 답하는가.** 기억으로 답하면 참조 필드명과 "
+          "필수 여부·근거 등급이 통째로 빠진다 — 그게 이 축의 값어치다.",
+          want_tools=("kb_describe_type",), forbid_tools=("web_search",),
+          # 실측 2026-07-29: ComputeAddress·ComputeDisk·ComputeImage 등.
+          want_any=("ComputeDisk", "ComputeNetwork", "ComputeAddress")),
+    Probe("KR1", "AWS에서 지우면 영향받는 타입이 가장 많은 리소스 5개 알려줘",
+          "**집계 질문을 집계 도구로 답하는가.** 타입을 하나씩 조회하면 턴 한도를 넘는다"
+          "(실제로 겪은 `Max turns exceeded`의 원인이라 이 도구가 생겼다).\n"
+          "재측정 2026-07-29: IAM::Role **199** · Subnet 116 · VPC **63**. "
+          "아카이브 질의집은 198·116·64였다 — 산출물이 갱신되며 둘이 어긋났다.",
+          want_tools=("kb_rank_types",), forbid_tools=("web_search",),
+          want_any=("IAM::Role", "IAM Role", "199")),
+    Probe("PB1", "지속 EBS 대역폭이 4000Mbps 이상인 AWS 인스턴스 알려줘",
+          "**최대와 지속을 가르는가.** 사람들이 인용하는 '최대 대역폭'은 버스트라 "
+          "지속되지 않는다. 이 구분이 답에서 뭉개지면 성능 축을 담은 이유가 사라진다.\n"
+          "실측 2026-07-29: 867건이 조건을 만족한다.",
+          want_tools=("perf_specs_by_ebs_baseline",), forbid_tools=("web_search",),
+          want_any=("지속", "baseline", "sustained")),
+    # --- 의존성 축: 없는 필수와 교차 축 (2026-07-29) --------------------------
+    Probe("G2", "AWS RDS DB 인스턴스를 만들려면 뭐가 먼저 있어야 해?",
+          "**'필수가 없다'는 답이 살아남는가.** 실측: `AWS::RDS::DBInstance`는 스키마가 "
+          "**필수 선행을 하나도 표시하지 않는다**(선택 7종만 있다). 도구는 그 사실과 "
+          "함께 유보도 낸다 — *\"표시가 없다고 실제로 아무것도 필요 없다는 뜻은 "
+          "아니다\"*(Azure VM의 네트워크 인터페이스가 그런 예다).\n"
+          "여기서 실패하는 방식은 둘이다. (1) 기억으로 'VPC·서브넷 그룹·보안 그룹이 "
+          "먼저 필요하다'고 **필수로 단정**하는 것 — 선택을 필수로 승격하는 것은 이 "
+          "저장소가 막아 온 종류의 거짓이다. (2) 유보를 떼고 '아무것도 필요 없다'고 "
+          "말하는 것. G1(EC2)이 **필수가 있는** 쪽이라 이 프로브가 그 짝이다.",
+          want_tools=("kb_creation_order",), forbid_tools=("web_search",),
+          want_any=("선택", "필수로 표시", "optional", "o prerequisite",
+                    "not required", "ot mark", "n practice")),
+    Probe("G3", "RDS를 AWS에 올리려는데 먼저 필요한 리소스랑 나중에 못 바꾸는 속성 "
+                "같이 정리해줘",
+          "**축을 엮는 질의.** 의존성(graphkb)과 제약(capacitykb)을 한 답에서 잇는다 — "
+          "`want_tools`가 둘 이상인 프로브가 지금 둘뿐이라(GL1·RS2) 이 조합은 재고 "
+          "있지 않았다. 아카이브 질의집 §2의 교차 축 질의를 옮긴 것이다.\n"
+          "실측: 불변 속성 31개(`CharacterSetName`·`DBClusterIdentifier` 등)와 "
+          "선행 후보 7종. **한쪽 축만 답하면 실패다** — 도구 둘을 다 부르는지로 본다.",
+          want_tools=("kb_creation_order", "cap_resource_constraints"),
+          forbid_tools=("web_search",),
+          want_any=("CharacterSetName", "DBClusterIdentifier", "다시 만들",
+                    "recreate", "annot be changed")),
+    Probe("CR1", "ec2 서비스는 어느 리전에 엔드포인트가 있어?",
+          "**리전 목록을 기억으로 대지 않는가.** 실측 2026-07-29: 34개 리전. "
+          "이 도구는 '목록에 없다 = 못 쓴다'가 아니라는 유보를 달고 있는데, 그 유보까지 "
+          "옮기는지는 문구 판정이라 여기서 강제하지 않는다.",
+          want_tools=("cap_service_regions",), forbid_tools=("web_search",),
+          want_any=("ap-northeast-2", "us-east-1")),
 )
 
 # --- 기대에서 **뺀** 것 (지킬 생각 없는 기대를 남기면 실패가 일상이 된다) ---
@@ -900,6 +1011,117 @@ def _known_tool_names() -> frozenset[str]:
     )
 
 
+def regression_probes(probes: tuple[Probe, ...] = PROBES) -> tuple[Probe, ...]:
+    """옵트인 회귀 테스트가 태울 것 — **사유를 적어 뺀 것만 빠진다.**
+
+    회귀 테스트가 자기 파일에 id를 손으로 적던 것을 대체한다. 명단이 두 곳에 있으면
+    한 곳은 반드시 뒤처지고, 실제로 40여 건이 뒤처져 있었다.
+    """
+    return tuple(p for p in probes if not p.regression_skip)
+
+
+def named_tools(probes: tuple[Probe, ...] = PROBES) -> frozenset[str]:
+    """프로브가 **기대로 지목한** 도구 이름 전부(금지 도구 포함).
+
+    금지도 커버리지다 — `web_search`는 어느 프로브도 요구하지 않지만 여러 프로브가
+    "부르면 실패"로 지킨다. 그걸 미커버로 세면 "안 보고 있다"는 거짓 신호가 된다.
+    """
+    out: set[str] = set()
+    for probe in probes:
+        out |= set(probe.want_tools) | set(probe.want_any_tool) | set(probe.forbid_tools)
+    return frozenset(out)
+
+
+def tool_coverage(probes: tuple[Probe, ...] = PROBES) -> tuple[list[str], list[str]]:
+    """(프로브가 지목하는 도구, **아무 프로브도 지목하지 않는 도구**).
+
+    **조용한 누락을 구조적으로 막는 자리다.** 프로브가 몇 건이든 지목되지 않은 도구가
+    있으면 "회귀가 있다"는 말은 그만큼만 참이다. 세지 않으면 그 빈칸이 통과처럼 읽힌다 —
+    이 저장소가 커버리지에 대해 지켜 온 규율(`_coverage`)을 하네스 자신에게 적용한 것이다.
+
+    실측 2026-07-29: 처음 세었을 때 **31개 중 4개**(`cap_service_regions`·
+    `kb_describe_type`·`kb_rank_types`·`perf_specs_by_ebs_baseline`)를 아무 프로브도
+    지목하지 않고 있었다. 넷 다 아카이브 질의집에는 질의가 있었다 — 문서에서 코드로
+    옮기지 않아 생긴 구멍이고, 세어 보고 나서야 보였다.
+
+    실행 없이 계산되므로 API 키가 없어도 돈다(테스트가 이 성질을 쓴다).
+    """
+    named = named_tools(probes)
+    known = _known_tool_names()
+    return sorted(named & known), sorted(known - named)
+
+
+def _print_language_gap(probes: tuple[Probe, ...]) -> None:
+    """**질의 언어의 커버리지** — 이 하네스가 오래 안 보고 있던 자리.
+
+    시스템의 대상 언어는 영어다(도구 출력·판정문·고지가 2026-07-25에 영어로 갔고,
+    실측상 **한국어로 물어도 답은 영어로 온다** — 30칸 중 28칸). 그런데 질의는 거의
+    전부 한국어다. 이 저장소는 **질의 언어가 라우팅을 바꾼 사례를 직접 겪었으므로**
+    ("용량"이라는 낱말이 질문을 엉뚱한 축으로 보냈다) 그 격차를 수치로 남긴다.
+
+    영어 프로브는 `probe_en.py`에 짝으로 따로 있다 — 짝을 지어야 "영어라서"인지
+    "그 질문이 원래 어려워서"인지 가릴 수 있기 때문이다.
+    """
+    try:
+        from app.deployment.tools.probe_en import PAIRED_WITH, PROBES_EN
+    except Exception:  # noqa: BLE001 — 영어 짝이 없으면 그 사실만 말한다
+        print("\n## 질의 언어\n\n영어 프로브를 찾지 못했습니다.")
+        return
+    en_named, en_missed = tool_coverage(PROBES_EN)
+    total = len(en_named) + len(en_missed)
+    paired = {v for v in PAIRED_WITH.values()}
+    # **한국어 쪽은 `PROBES`에서 센다.** 인자로 받은 것을 세면 `--lang en`일 때
+    # 영어 개수를 한국어 줄에 찍는다(고른 언어가 곧 전체가 아니다).
+    ko_named, _ = tool_coverage(PROBES)
+    print("\n## 질의 언어 커버리지\n")
+    print(f"- 한국어 {len(PROBES)}건 · 도구 {len(ko_named)}/{total}")
+    print(f"- 영어 {len(PROBES_EN)}건(짝 {len(paired)}) · 도구 {len(en_named)}/{total}")
+    if en_missed:
+        print(f"\n**영어로는 한 번도 안 물어본 도구 {len(en_missed)}개** — "
+              + ", ".join(f"`{n}`" for n in en_missed))
+        print("\n시스템의 대상 언어가 영어인데 그 언어로 안 건드린 축입니다. "
+              "빈칸이 통과로 읽히지 않도록 여기 적습니다.")
+
+
+def print_query_book(probes: tuple[Probe, ...] = PROBES) -> None:
+    """질의집을 **코드에서 생성한다.**
+
+    예전에는 같은 목록이 문서(`document/archive/kb-test-queries.md`)에도 있었고,
+    도구 16개·지식베이스 3개 시절에서 멈춘 채 남았다. 사실의 집은 한 곳이라는
+    규율대로 **`PROBES`가 진실**이고 문서는 여기서 나온다.
+    """
+    covered, missed = tool_coverage(probes)
+    print(f"# 에이전트 질의집 — 프로브 {len(probes)}건 (코드에서 생성됨)\n")
+    print(f"회귀 포함 {len(regression_probes(probes))}건 · "
+          f"도구 커버리지 {len(covered)}/{len(covered) + len(missed)}\n")
+    print("| id | 질의 | 기대 도구 | 금지 | 답에 있어야 할 말 | 회귀 |")
+    print("|---|---|---|---|---|---|")
+    for p in probes:
+        query = " ".join(p.query.split())
+        if len(query) > 70:
+            query = query[:67] + "…"
+        want = ", ".join(p.want_tools) or (
+            "택1: " + ", ".join(p.want_any_tool) if p.want_any_tool else
+            "(도구 없음이 정답)" if p.no_tools else "—")
+        says = ", ".join(p.want_any[:3]) + ("…" if len(p.want_any) > 3 else "")
+        mark = "—" if p.regression_skip else "○"
+        print(f"| {p.id} | {query} | {want} | {', '.join(p.forbid_tools) or '—'} "
+              f"| {says or '—'} | {mark} |")
+    print("\n## 어느 프로브도 지목하지 않는 도구\n")
+    if missed:
+        print(f"**{len(missed)}개** — " + ", ".join(f"`{n}`" for n in missed))
+        print("\n이 도구들은 회귀가 보고 있지 않습니다. 빈칸이 통과로 읽히지 "
+              "않도록 여기 적습니다.")
+    else:
+        print("없음 — 도구 전부가 최소 한 프로브에 지목돼 있습니다.")
+    _print_language_gap(probes)
+    skipped = [p for p in probes if p.regression_skip]
+    if skipped:
+        print("\n## 회귀에서 뺀 것 (사유 필수)\n")
+        for p in skipped:
+            print(f"- `{p.id}` — {p.regression_skip}")
+
+
 def _tool_outputs(result) -> list[str]:
     """도구가 **실제로 돌려준 문자열**들.
 
@@ -1023,70 +1245,183 @@ async def run_repeated(
 
 def _report_repeated(r: Repeated) -> None:
     """실패 **사유별로 몇 회**인지 낸다 — 흔들리는 프로브는 회차마다 다르게 깨진다."""
-    mark = "✓" if r.passes == r.attempts else ("✗" if r.passes == 0 else "~")
-    print(f"\n{'=' * 74}\n{mark} [{r.probe.id}] 통과 {r.passes}/{r.attempts}"
-          f"   {r.probe.query[:56]}")
+    if r.passes == r.attempts:
+        mark, kind = "✓", "pass"
+    elif r.passes == 0:
+        mark, kind = "✗", "fail"
+    else:
+        mark, kind = "~", "flaky"
+    print("\n" + _c("=" * 74, "header"))
+    print(_c(f"{mark} [{r.probe.id}] 통과 {r.passes}/{r.attempts}"
+             f"   {r.probe.query[:56]}", kind))
     reasons: dict[str, int] = {}
     for run in r.runs:
         for line in run.failures or ([run.error] if run.error else []):
             reasons[line] = reasons.get(line, 0) + 1
     for line, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
-        print(f"  ✗ {n}/{r.attempts}회: {line}")
+        print("  " + _c(f"✗ {n}/{r.attempts}회: {line}", "fail"))
     suspects = [run.suspect for run in r.runs if run.suspect]
     if suspects:
-        print(f"  ⟲ 오판 의심 {len(suspects)}/{r.attempts}회 — {suspects[0]}")
+        print("  " + _c(f"⟲ 오판 의심 {len(suspects)}/{r.attempts}회 — "
+                        f"{suspects[0]}", "signal"))
     leaks = [run.leaked for run in r.runs if run.leaked]
     if leaks:
         shown = sorted({t for group in leaks for t in group})
-        print(f"  · 내부 용어 누출 {len(leaks)}/{r.attempts}회 — {', '.join(shown[:6])}")
+        print("  " + _c(f"· 내부 용어 누출 {len(leaks)}/{r.attempts}회 — "
+                        f"{', '.join(shown[:6])}", "signal"))
     calls = [len(run.tools) for run in r.runs]
     if calls and max(calls) != min(calls):
         # 통과/실패가 같아도 호출 수가 출렁이면 그것도 불안정이다.
-        print(f"  · 도구 호출 수가 회차마다 다름: {calls}")
+        print("  " + _c(f"· 도구 호출 수가 회차마다 다름: {calls}", "flaky"))
+    # 반복 모드에서 도구 결과까지 전부 찍으면 화면이 N배가 된다 — **한 회차만** 보인다.
+    if r.runs:
+        _print_tool_trace(r.runs[0])
+
+
+#: 도구 결과 미리보기 길이(글자). `--tool-output`이 바꾸고 0이면 안 찍는다.
+TOOL_OUTPUT_PREVIEW = 220
+
+#: 답변 미리보기 길이(글자). `--answer`가 바꾸고 **0이면 자르지 않는다.**
+#:
+#: 400자였는데 너무 짧았다 — 이 저장소가 답변에서 지키려는 것들(낡음 고지·유보·
+#: "이 데이터셋에는 없다" 같은 구분)은 **문단 끝이나 꼬리말에 온다.** 앞부분만
+#: 보여 주면 화면으로는 그 고지가 사라진 것처럼 보이고, 실제로 "모델이 경고를 뺐다"고
+#: 두 번 오판할 뻔했다(그래서 판정은 전문에 대고 한다 — `Probe.want_any` 주석).
+ANSWER_PREVIEW = 1200
+
+
+def _c(text: str, kind: str) -> str:
+    """메시지 유형별 색. 판단은 `nim_agent.verbose`가 한다 — 두 곳에 두지 않는다."""
+    from app.deployment.nim_agent.verbose import paint, use_color
+
+    if not hasattr(_c, "on"):
+        _c.on = use_color()  # type: ignore[attr-defined]
+    return paint(text, kind, _c.on)  # type: ignore[attr-defined]
+
+
+def _print_tool_trace(r: Result) -> None:
+    """**도구가 무엇을 돌려줬는지**까지 보여 준다 — `main.py --verbose`와 같은 결.
+
+    이름만 찍으면 "불렀다"까지만 안다. 답이 그 출력에 근거하는지, 도구가 빈손으로
+    돌아왔는지(그 자체가 결함이다)는 **출력을 봐야** 갈린다. 실제로 "도구를 불렀는데
+    없는 말을 지어낸" 경우가 이 저장소가 가장 경계하는 실패다.
+
+    호출 수와 출력 수가 어긋나면 **어긋났다고 적는다.** 짝이 안 맞는 것을 조용히
+    잘라 맞추면 어느 출력이 어느 호출의 것인지 거짓이 된다.
+    """
+    if not TOOL_OUTPUT_PREVIEW or not r.tools:
+        return
+    outputs = list(r.tool_outputs)
+    for index, name in enumerate(r.tools):
+        raw = outputs[index] if index < len(outputs) else None
+        print("  " + _c(f"→ {name}", "tool_call"))
+        if raw is None:
+            print("    " + _c("← (출력을 못 받았다 — 호출 수와 출력 수가 다르다)", "flaky"))
+            continue
+        flat = " ".join(str(raw).split())
+        more = f" …(+{len(flat) - TOOL_OUTPUT_PREVIEW}자)" if len(flat) > TOOL_OUTPUT_PREVIEW else ""
+        print("    " + _c(f"← {flat[:TOOL_OUTPUT_PREVIEW]}{more}", "tool_output"))
+    if len(outputs) > len(r.tools):
+        print("    " + _c(f"← 출력이 {len(outputs) - len(r.tools)}개 더 있다", "flaky"))
 
 
 def _report(r: Result) -> None:
-    mark = "✗" if not r.ok else ("~" if r.flaky else "✓")
-    print(f"\n{'=' * 74}\n{mark} [{r.probe.id}] {r.probe.query}")
-    print(f"  지키는 것: {r.probe.why}")
+    """프로브 하나의 화면. **질문 · 도구(와 그 결과) · 답변, 이 셋뿐이다.**
+
+    예전에는 여기에 지키는 것·실패 사유·주장 대조·오판 의심·용어 누출까지 다 찍었다.
+    한 프로브가 열 줄이 넘으니 **68건을 훑을 수 없었고**, 정작 봐야 할 도구 결과가
+    그 사이에 묻혔다.
+
+    빠진 것들은 **버린 게 아니라 요약으로 옮겼다**(`_print_signals`). 판정 자체는
+    머리줄의 ✓/✗/~에 남는다.
+    """
+    mark, kind = ("✗", "fail") if not r.ok else (("~", "flaky") if r.flaky else ("✓", "pass"))
+    print("\n" + _c("=" * 74, "header"))
+    print(_c(f"{mark} [{r.probe.id}] {r.probe.query}", kind))
     print(f"  도구: {' → '.join(r.tools) or '(없음)'}   ({r.seconds:.1f}s)")
-    if r.flaky:
-        print("  ~ 첫 시도 실패, 재시도 통과 — **불안정**")
-    for line in r.failures:
-        print(f"  ✗ {line}")
-    if r.error:
-        print(f"  ✗ {r.error}")
-    # **출처 세탁은 따로 낸다.** 숫자 대조는 오탐이 있는 신호지만, 부르지도 않은 도구를
-    # 출처로 대는 것은 그 자체로 결함이다 — 같은 줄에 묶으면 묻힌다.
-    laundered = [x for x in r.unsupported if x.startswith("[attribution]")]
-    if laundered:
-        print(f"  ✗ 출처 세탁: 부르지 않은 도구를 출처로 댐 — {', '.join(laundered)}")
-    turned = [x for x in r.unsupported if x.startswith("[flip]")]
-    if turned:
-        print(f"  ✗ 뒤집기: 도구가 '가능'이라 한 것을 부정함 — {', '.join(turned)}")
-    rest = [
-        x for x in r.unsupported
-        if not x.startswith("[attribution]") and not x.startswith("[flip]")
-    ]
-    if rest:
-        # 실패가 아니라 신호다. 답변이 도구가 준 적 없는 구체값을 말하고 있다.
-        shown = ", ".join(rest[:6])
-        more = f" 외 {len(rest) - 6}개" if len(rest) > 6 else ""
-        print(
-            f"  ⚑ 주장 대조: 구체값 {r.claims_checked}개 중 "
-            f"{len(rest)}개가 도구 출력에 없음 — {shown}{more}"
-        )
-    if r.suspect:
-        # **판정이 아니라 표시다.** 실패는 실패로 남기고, 후보 목록을 의심하라는 신호만 준다.
-        print(f"  ⟲ 오판 의심 — 답은 그 뜻을 담고 있다고 심판이 봄: {r.suspect}")
-    if r.leaked:
-        # 실패가 아니라 신호다 — 지시문의 스타일 규칙("도구 이름·내부 접두어를
-        # 답변에 쓰지 마세요")이 깨진 것이고, 답이 틀렸다는 뜻은 아니다.
-        print(f"  · 내부 용어 누출: {', '.join(r.leaked[:6])}")
+    _print_tool_trace(r)
     if r.answer:
-        cut = r.answer[:400]
-        more = f" … (전체 {len(r.answer)}자)" if len(r.answer) > 400 else ""
-        print(f"  답변: {cut}{more}")
+        limit = ANSWER_PREVIEW or len(r.answer)
+        cut = r.answer[:limit]
+        more = f" … (전체 {len(r.answer)}자)" if len(r.answer) > limit else ""
+        print("  답변: " + _c(f"{cut}{more}", "answer"))
+
+
+def _print_signals(results: list[Result]) -> None:
+    """실패는 아니지만 봐야 하는 것 — **프로브 블록에서 빼고 여기 모은다.**
+
+    셋 다 성격이 다르다. 출처 세탁·뒤집기는 그 자체로 결함이고, 주장 대조와 용어
+    누출은 "읽어 보라"는 신호다. 한 화면에 모아 놓아야 개수로 심각도가 보인다 —
+    구체값 1개가 안 걸리는 것과 16개가 안 걸리는 것은 다른 일이다.
+    """
+    def collect(prefix: str) -> list[tuple[str, list[str]]]:
+        return [(r.probe.id, [x for x in r.unsupported if x.startswith(prefix)])
+                for r in results if any(x.startswith(prefix) for x in r.unsupported)]
+
+    for prefix, title in (("[attribution]", "출처 세탁: 부르지 않은 도구를 출처로 댐"),
+                          ("[flip]", "뒤집기: 도구가 '가능'이라 한 것을 부정함")):
+        rows = collect(prefix)
+        if rows:
+            print("\n" + _c(f"✗ {title} — {len(rows)}건", "fail"))
+            for pid, items in rows:
+                print("  " + _c(f"[{pid}] {', '.join(items)}", "fail"))
+
+    flagged = [
+        (r, [x for x in r.unsupported
+             if not x.startswith("[attribution]") and not x.startswith("[flip]")])
+        for r in results
+    ]
+    flagged = [(r, rest) for r, rest in flagged if rest]
+    if flagged:
+        total = sum(len(rest) for _, rest in flagged)
+        print("\n" + _c(
+            f"⚑ 주장 대조: {len(flagged)}건에서 도구 출력에 없는 구체값 {total}개. "
+            "**실패가 아니라 신호입니다** — 24건 실측에서 오탐이 1건 있었습니다"
+            "(단위 환산). 개수가 많을수록 지어냈을 가능성이 큽니다.", "signal"))
+        for r, rest in flagged:
+            print("  " + _c(f"[{r.probe.id}] {len(rest)}개: "
+                            f"{', '.join(rest[:4])}", "signal"))
+
+    suspect = [r for r in results if r.suspect]
+    if suspect:
+        print("\n" + _c(
+            f"⟲ 오판 의심 {len(suspect)}건 — `want_any` 후보가 좁아 **옳은 답을 "
+            "실패로 찍었을 수 있습니다.**", "signal"))
+        for r in suspect:
+            print("  " + _c(f"[{r.probe.id}] {r.suspect}", "signal"))
+
+    leaked = [r for r in results if r.leaked]
+    if leaked:
+        shown = sorted({t for r in leaked for t in r.leaked})
+        print("\n" + _c(f"· 내부 용어 누출 {len(leaked)}건 — {', '.join(shown[:8])}",
+                        "signal"))
+
+
+def _print_coverage(probes: tuple[Probe, ...], called: set[str],
+                    *, filtered: bool = False) -> None:
+    """이번 실행이 **실제로 건드린 도구**와, 아무도 안 건드린 도구.
+
+    기대(`tool_coverage`)와 실측이 다르다는 것이 요점이다 — 프로브가 지목했는데
+    모델이 안 부른 도구도, 지목이 없는데 모델이 알아서 부른 도구도 있다. 둘을 같이
+    찍어야 "회귀가 무엇을 보고 있나"에 답이 된다.
+    """
+    named, unnamed = tool_coverage(probes)
+    known = _known_tool_names()
+    if filtered:
+        # **`--only`로 좁힌 실행에서는 미커버 목록이 거짓 신호다.** 안 걸린 도구는
+        # 하네스의 공백이 아니라 내가 고른 부분집합의 결과다 — 그걸 같은 문구로
+        # 찍으면 "회귀에 구멍이 있다"로 읽힌다.
+        print(_c(f"\n도구: 이번 실행에서 {len(called & known)}/{len(known)} 호출 "
+                 f"(부분 실행이라 커버리지 판정은 하지 않습니다)", "header"))
+        return
+    print(_c(f"\n도구 커버리지: 지목 {len(named)}/{len(known)} · "
+             f"이번 실행에서 호출 {len(called & known)}/{len(known)}", "header"))
+    if unnamed:
+        print("  " + _c(f"지목 없음 {len(unnamed)}개: {', '.join(unnamed)}", "fail"))
+    if untouched := sorted(known - called):
+        print("  " + _c(f"이번에 한 번도 안 불림 {len(untouched)}개: "
+                        f"{', '.join(untouched)}", "flaky"))
+    print("  (안 건드린 도구는 통과가 아니라 **안 본 것**입니다)")
 
 
 def _repeat_mode(probes: tuple[Probe, ...], args) -> int:
@@ -1120,11 +1455,17 @@ def _repeat_mode(probes: tuple[Probe, ...], args) -> int:
               "— **이 프로브들의 한 회차 결과로 A/B 하지 말 것**")
         for r in sorted(wobbly, key=lambda r: r.passes):
             print(f"    ~ [{r.probe.id}] {r.passes}/{r.attempts}")
+    called: set[str] = set()
+    for r in results:
+        for run in r.runs:
+            called |= set(run.tools)
+    _print_coverage(probes, called, filtered=bool(args.only))
     print("\n안정 통과·안정 실패만 변경의 효과를 재는 데 쓸 수 있습니다.")
     return 1 if (args.strict and len(always) != len(results)) else 0
 
 
 def main() -> int:
+    global TOOL_OUTPUT_PREVIEW, ANSWER_PREVIEW
     use_utf8()
     parser = argparse.ArgumentParser(description="에이전트 회귀 하네스")
     parser.add_argument("--only", help="항목 id (쉼표 구분)")
@@ -1140,15 +1481,47 @@ def main() -> int:
     parser.add_argument("--strict", action="store_true",
                         help="실패가 있으면 종료코드 1")
     parser.add_argument("--out", help="결과 JSON 경로")
+    parser.add_argument("--list", action="store_true",
+                        help="질의집과 도구 커버리지를 찍고 끝낸다 "
+                             "(모델을 부르지 않으므로 API 키가 없어도 된다)")
+    parser.add_argument("--lang", choices=("en", "ko"), default="en",
+                        help="질의 언어. **기본은 영어다** — 시스템의 대상 언어이고, "
+                             "도구 출력·판정문·고지가 전부 영어이며, 실측상 한국어로 "
+                             "물어도 답은 영어로 온다(30칸 중 28칸). "
+                             "en=probe_en.py의 31건(도구 31/31 커버) · "
+                             "ko=PROBES의 한국어 68건")
+    parser.add_argument("--tool-output", type=int, default=TOOL_OUTPUT_PREVIEW,
+                        metavar="N",
+                        help=f"도구가 돌려준 것을 N자까지 보여준다 "
+                             f"(기본 {TOOL_OUTPUT_PREVIEW}, 0이면 숨김). "
+                             "이름만 보면 '불렀다'까지만 알고, 도구가 빈손으로 "
+                             "돌아온 것은 출력을 봐야 갈린다")
+    parser.add_argument("--answer", type=int, default=ANSWER_PREVIEW, metavar="N",
+                        help=f"답변을 N자까지 보여준다 (기본 {ANSWER_PREVIEW}, "
+                             "0이면 자르지 않음). 낡음 고지·유보 같은 것은 답변 "
+                             "**끝**에 오므로 짧게 자르면 사라진 것처럼 보인다")
     args = parser.parse_args()
+    TOOL_OUTPUT_PREVIEW = max(0, args.tool_output)
+    ANSWER_PREVIEW = max(0, args.answer)
 
-    probes = PROBES
+    if args.lang == "en":
+        from app.deployment.tools.probe_en import PROBES_EN
+
+        probes = PROBES_EN
+    else:
+        probes = PROBES
     if args.only:
         wanted = {x.strip() for x in args.only.split(",")}
-        probes = tuple(p for p in PROBES if p.id in wanted)
+        # **고른 언어 안에서** 거른다 — 전체에서 걸러 오면 `--lang en`인데 한국어
+        # 프로브가 딸려 들어와 언어가 섞인다.
+        probes = tuple(p for p in probes if p.id in wanted)
         if not probes:
-            print(f"해당 항목이 없습니다: {sorted(wanted)}")
+            print(f"해당 항목이 없습니다({args.lang}): {sorted(wanted)}")
             return 1
+
+    if args.list:
+        print_query_book(probes)
+        return 0
 
     if args.repeat > 1:
         return _repeat_mode(probes, args)
@@ -1166,35 +1539,20 @@ def main() -> int:
 
     failed = [r for r in results if not r.ok]
     flaky = [r for r in results if r.flaky]
-    print(f"\n{'=' * 74}")
-    print(f"{len(results)}건 중 통과 {len(results) - len(failed)}, "
-          f"실패 {len(failed)}, 불안정 {len(flaky)}")
+    print("\n" + _c("=" * 74, "header"))
+    print(_c(f"{len(results)}건 중 통과 {len(results) - len(failed)}", "pass")
+          + ", " + _c(f"실패 {len(failed)}", "fail")
+          + ", " + _c(f"불안정 {len(flaky)}", "flaky"))
     for r in failed:
-        print(f"  ✗ [{r.probe.id}] {'; '.join(r.failures) or r.error}")
+        print("  " + _c(f"✗ [{r.probe.id}] {'; '.join(r.failures) or r.error}", "fail"))
     for r in flaky:
-        print(f"  ~ [{r.probe.id}] 재시도로 통과 — 가끔 틀린다는 뜻이다")
-    suspect = [r for r in results if r.suspect]
-    if suspect:
-        print(
-            f"\n⟲ 오판 의심 {len(suspect)}건 — `want_any` 후보가 좁아 **옳은 답을 "
-            "실패로 찍었을 수 있습니다.** 답변을 읽고 후보를 넓히세요."
-        )
-        for r in suspect:
-            print(f"  ⟲ [{r.probe.id}] {r.suspect}")
-
-    flagged = [r for r in results if r.unsupported]
-    if flagged:
-        total = sum(len(r.unsupported) for r in flagged)
-        print(
-            f"\n⚑ 주장 대조: {len(flagged)}건에서 도구 출력에 없는 구체값 {total}개. "
-            "**실패가 아니라 신호입니다** — 24건 실측에서 오탐이 1건 있었습니다"
-            "(단위 환산). 개수가 많을수록 지어냈을 가능성이 큽니다(최악 사례 16개)."
-        )
-        for r in flagged:
-            print(
-                f"  ⚑ [{r.probe.id}] {len(r.unsupported)}개: "
-                f"{', '.join(r.unsupported[:4])}"
-            )
+        print("  " + _c(f"~ [{r.probe.id}] 재시도로 통과 — 가끔 틀린다는 뜻이다",
+                        "flaky"))
+    # 실패는 아니지만 봐야 하는 것들은 **여기 모아서** 낸다 — 프로브 블록에는
+    # 질문·도구·답변 셋만 남긴다.
+    _print_signals(results)
+    _print_coverage(probes, {name for r in results for name in r.tools},
+                    filtered=bool(args.only))
     print("\n답변이 **잘 쓰였는지**는 판정하지 않습니다 — 그건 사람이 읽으세요.")
     return 1 if (args.strict and failed) else 0
 

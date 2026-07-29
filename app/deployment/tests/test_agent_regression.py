@@ -1,10 +1,15 @@
 """에이전트 회귀 — **옵트인**. 실제 모델을 호출한다.
 
-    RUN_AGENT_TESTS=1 uv run pytest tests/test_agent_regression.py -v
+    RUN_AGENT_TESTS=1 uv run pytest app/deployment/tests/test_agent_regression.py -v
+
+**무엇을 태우는지는 여기 없다** — `agent_probe.regression_probes()`가 정한다. 명단을
+두 곳에 두면 한 곳이 뒤처지고, 실제로 이 파일이 2026-07-24에서 멈춰 프로브 40여 건을
+몰랐다. 명단이 어긋나는 종류의 결함은 옵트인 테스트가 못 잡으므로
+`test_probe_inventory.py`(항상 도는 쪽)가 지킨다.
 
 기본 실행에서는 건너뛴다. 이유가 셋이다:
-- 실제 API를 호출한다(돈과 시간이 든다 — 9건에 1분 남짓).
-- 네트워크가 필요하다. 나머지 592개 테스트는 네트워크 없이 돈다.
+- 실제 API를 호출한다(돈과 시간이 든다 — 프로브 하나에 10~30초).
+- 네트워크가 필요하다. 나머지 테스트는 네트워크 없이 돈다.
 - **비결정성이 있다.** 같은 질의도 실행마다 도구 순서가 달라져서, 기본 스위트에
   넣으면 "실패가 일상"이 되고 그러면 진짜 실패가 안 보인다.
 
@@ -33,23 +38,36 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _probe_ids() -> list[str]:
+    """무엇을 태울지는 **하네스가 정한다.**
+
+    예전에는 이 파일이 id를 손으로 적었고, 2026-07-24 이후 늘어난 프로브 40여 건이
+    통째로 빠져 있었다 — 프로브를 새로 넣어도 회귀가 몰랐다. 명단을 두 곳에 두면
+    한 곳은 반드시 뒤처진다. 지금은 `Probe.regression_skip`에 **사유를 적어 뺀
+    것만** 빠진다.
+
+    수집(collection) 시점에 부르므로 모델을 태우지 않는다 — `PROBES`는 상수다.
+    """
+    from app.deployment.tools.agent_probe import regression_probes
+
+    return [p.id for p in regression_probes()]
+
+
 def _results():
-    from app.deployment.tools.agent_probe import PROBES, run_probes
+    from app.deployment.tools.agent_probe import regression_probes, run_probes
 
     if not hasattr(_results, "cache"):
-        # 질의 하나당 한 번만 태운다 — 테스트마다 다시 부르면 9배가 된다.
+        # 질의 하나당 한 번만 태운다 — 테스트마다 다시 부르면 N배가 된다.
         _results.cache = {
             r.probe.id: r
-            for r in asyncio.run(run_probes(PROBES, max_turns=25, retries=1))
+            for r in asyncio.run(
+                run_probes(regression_probes(), max_turns=25, retries=1)
+            )
         }
     return _results.cache
 
 
-@pytest.mark.parametrize("probe_id", [
-    "1-1b", "1-2a", "3-1", "3-3", "3-6", "3-9", "3-11", "D4", "D5", "N1", "N2", "H1", "H2", "H3",
-    # 2026-07-24 신축 검증 — patternkb·azure 크기 표·gcp 시리즈·구세대·로컬 SSD·WAF
-    "X1", "X2", "X3", "X4", "X5", "X6", "X7",
-])
+@pytest.mark.parametrize("probe_id", _probe_ids())
 def test_probe(probe_id: str) -> None:
     result = _results()[probe_id]
     assert not result.error, f"{result.probe.why} — {result.error}"

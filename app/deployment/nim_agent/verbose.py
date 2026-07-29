@@ -28,11 +28,29 @@ _ARGS_PREVIEW = 200
 _OUTPUT_PREVIEW = 400
 
 _RESET = "\x1b[0m"
+
+#: **메시지 유형 → 색.** 색은 장식이 아니라 분류다 — 실패와 "신호"(실패는 아닌데
+#: 봐야 하는 것)를 같은 색으로 칠하면 화면을 훑을 때 둘이 붙어 버린다.
+#:
+#: 프로브 하네스도 이 표를 쓴다(`tools/agent_probe.py`). 색 판단 로직을 두 곳에 두면
+#: 한쪽만 NO_COLOR를 존중하는 식으로 갈린다.
+#: **흐리게(`\x1b[2m`)는 쓰지 않는다.** 터미널·배색에 따라 회색이 배경에 묻혀 안
+#: 보인다(사용자 지적 2026-07-29). 배경으로 물러나야 하는 것은 색을 빼서(기본색)
+#: 물러나게 하고, 구별이 필요한 것은 **읽히는 색**으로 가른다.
 _STYLES = {
-    "agent": "\x1b[35m",  # 마젠타: 에이전트 시작
-    "tool_call": "\x1b[36m",  # 시안: 도구 호출
-    "tool_output": "\x1b[2m",  # 흐리게: 도구 결과
-    "usage": "\x1b[33m",  # 노랑: 토큰 사용량
+    "agent": "\x1b[35m",       # 마젠타: 에이전트 시작
+    "tool_call": "\x1b[36m",   # 시안: 도구 호출
+    "tool_output": "\x1b[34m",  # 파랑: 도구 결과 (호출과 갈리되 읽힌다)
+    "usage": "\x1b[33m",       # 노랑: 토큰 사용량
+    # --- 프로브 하네스가 쓰는 유형 ---
+    "pass": "\x1b[32m",        # 초록: 통과
+    "fail": "\x1b[31m",        # 빨강: 실패 — 틀리면 진짜 결함인 것만
+    "flaky": "\x1b[33m",       # 노랑: 불안정 — 통과했지만 회차마다 뒤집힌다
+    "signal": "\x1b[35m",      # 마젠타: 실패는 아니지만 봐야 하는 신호(주장 대조·누출)
+    "header": "\x1b[1m",       # 굵게: 구획
+    # 답변 본문은 **색을 빼서** 물러나게 한다 — 화면에서 가장 긴 덩어리라 색을 입히면
+    # 오히려 다른 신호를 덮는다.
+    "answer": "",
 }
 
 _vt_enabled = False
@@ -55,11 +73,20 @@ def use_color() -> bool:
     return sys.stdout.isatty()
 
 
-def _paint(text: str, kind: str, color: bool) -> str:
-    if not color:
+def paint(text: str, kind: str, color: bool = True) -> str:
+    """메시지 유형에 맞는 색을 입힌다. `color=False`면 원문 그대로.
+
+    모르는 유형은 **색 없이 통과시킨다** — 색을 못 칠하는 것보다 KeyError로 출력이
+    통째로 죽는 것이 나쁘다.
+    """
+    if not color or not _STYLES.get(kind):
         return text
     _enable_vt_on_windows()
     return f"{_STYLES[kind]}{text}{_RESET}"
+
+
+#: 내부 호출부 호환용 별칭.
+_paint = paint
 
 
 def _preview(text: str, limit: int) -> str:
