@@ -1,0 +1,32 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	refine_requirements(refine_requirements)
+	model_use_cases(model_use_cases)
+	write_specifications(write_specifications)
+	draw_diagram(draw_diagram)
+	gate_requirements(gate_requirements)
+	gate_use_cases(gate_use_cases)
+	gate_specs(gate_specs)
+	gate_relationships(gate_relationships)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> refine_requirements;
+	draw_diagram --> gate_relationships;
+	gate_relationships -. &nbsp;advance&nbsp; .-> __end__;
+	gate_requirements -. &nbsp;advance&nbsp; .-> model_use_cases;
+	gate_specs -. &nbsp;advance&nbsp; .-> draw_diagram;
+	gate_use_cases -. &nbsp;advance&nbsp; .-> write_specifications;
+	model_use_cases --> gate_use_cases;
+	refine_requirements --> gate_requirements;
+	write_specifications --> gate_specs;
+	gate_relationships -. &nbsp;loop&nbsp; .-> gate_relationships;
+	gate_requirements -. &nbsp;loop&nbsp; .-> gate_requirements;
+	gate_specs -. &nbsp;loop&nbsp; .-> gate_specs;
+	gate_use_cases -. &nbsp;loop&nbsp; .-> gate_use_cases;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

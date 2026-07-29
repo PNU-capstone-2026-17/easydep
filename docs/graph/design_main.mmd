@@ -1,0 +1,57 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	gen_class_diagram(gen_class_diagram)
+	fb_class_diagram(fb_class_diagram)
+	persist_class_diagram(persist_class_diagram)
+	gate_class_diagram(gate_class_diagram)
+	gen_sequence_diagram(gen_sequence_diagram)
+	fb_sequence_diagram(fb_sequence_diagram)
+	persist_sequence_diagram(persist_sequence_diagram)
+	gate_sequence_diagram(gate_sequence_diagram)
+	gen_api_spec(gen_api_spec)
+	fb_api_spec(fb_api_spec)
+	persist_api_spec(persist_api_spec)
+	gate_api_spec(gate_api_spec)
+	gen_erd(gen_erd)
+	fb_erd(fb_erd)
+	persist_erd(persist_erd)
+	gate_erd(gate_erd)
+	gen_deployment_diagram(gen_deployment_diagram)
+	fb_deployment_diagram(fb_deployment_diagram)
+	persist_deployment_diagram(persist_deployment_diagram)
+	gate_deployment_diagram(gate_deployment_diagram)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> gen_class_diagram;
+	fb_api_spec --> persist_api_spec;
+	fb_class_diagram --> persist_class_diagram;
+	fb_deployment_diagram --> persist_deployment_diagram;
+	fb_erd --> persist_erd;
+	fb_sequence_diagram --> persist_sequence_diagram;
+	gate_api_spec -. &nbsp;loop&nbsp; .-> fb_api_spec;
+	gate_api_spec -. &nbsp;advance&nbsp; .-> gen_erd;
+	gate_class_diagram -. &nbsp;loop&nbsp; .-> fb_class_diagram;
+	gate_class_diagram -. &nbsp;advance&nbsp; .-> gen_sequence_diagram;
+	gate_deployment_diagram -. &nbsp;advance&nbsp; .-> __end__;
+	gate_deployment_diagram -. &nbsp;loop&nbsp; .-> fb_deployment_diagram;
+	gate_erd -. &nbsp;loop&nbsp; .-> fb_erd;
+	gate_erd -. &nbsp;advance&nbsp; .-> gen_deployment_diagram;
+	gate_sequence_diagram -. &nbsp;loop&nbsp; .-> fb_sequence_diagram;
+	gate_sequence_diagram -. &nbsp;advance&nbsp; .-> gen_api_spec;
+	gen_api_spec --> persist_api_spec;
+	gen_class_diagram --> persist_class_diagram;
+	gen_deployment_diagram --> persist_deployment_diagram;
+	gen_erd --> persist_erd;
+	gen_sequence_diagram --> persist_sequence_diagram;
+	persist_api_spec --> gate_api_spec;
+	persist_class_diagram --> gate_class_diagram;
+	persist_deployment_diagram --> gate_deployment_diagram;
+	persist_erd --> gate_erd;
+	persist_sequence_diagram --> gate_sequence_diagram;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
