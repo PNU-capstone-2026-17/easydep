@@ -175,7 +175,13 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 *"서브넷 둘"*까지만 적고 **"서로 다른 AZ"**를 못 적는다. 지금 술어 슬롯은 셋만 연다 —
 다이어그램 필수 사실 8과 하류 19칸이 그 셋만 요구하기 때문이다.
 
-판정 절차와 증거층(D1~D9), 전수 결과는 **측정 기록**에 있다:
+> **2026-07-30 정정.** 그 조사에서 관측을 `D1~D9` 증거층으로 묶었는데, **그건 우리가
+> 얹은 분류이지 근거가 아니었다.** 층 이름이 인용을 가리는 구조였다(라벨이 주, 인용이
+> 종). 걷어내고 산출물을 **관측 중심**으로 다시 세웠다 — 관측마다 출처(저장소·태그) ·
+> 형태(요청 스키마 필드 / 삭제 코드 / 자산 데이터 / REST 경로 …) · 인용(`file:line`)이
+> 붙는다. **측정치는 그대로다**(자원 21 · 간선 39 · 관측 83).
+
+전수 결과와 판정 절차는 **측정 기록**에 있다(§3.2의 층 분류는 위 정정으로 폐기):
 `docs/tumblebug-resource-dependency-2026-07-29.md` ·
 산출물 `app/core/cloudkb/graphkb/parsers/tumblebug_resources.json` ·
 폐포 절차 `app/core/cloudkb/graphkb/tumblebug_closure.py`.
@@ -211,6 +217,7 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 | `docs/tumblebug-resource-dependency-2026-07-29.md` | **측정 기록** — 수치는 유효, 서사는 이 문서를 따른다 |
 | `docs/cloud-native-requirements.md` | **조사 기록**(2026-07-27) |
 | `docs/kb-and-contract-plan-*.md` · `kb-scope-tumblebug-*.md` · `agent-sdk-merge-plan.md` · `requirements-agent-improvements.md` | **이력.** 참조하지 않는다 |
+| `app/core/cloudkb/document/constraint-derivation.md` | **살아 있는 문서** — 자유 변수와 단계 배분의 도출. 근거 등급(측정/명시/추론)이 붙는다. 계속 갱신하고 아카이브하지 않는다 |
 | `app/core/cloudkb/document/kb-book.md` | KB **만드는 방법서** — 살아 있으나 이 문서의 아래 |
 | `app/core/cloudkb/document/archive/**` | **이력.** 참조하지 않는다 |
 | `docs/api.md` · `ARCHITECTURE.md` · `deployment-file-generation.md` · `implementation-agent.md` · `requirements-agent.md` | **다른 영역의 살아있는 명세.** 우리 관할 밖이고 손대지 않는다 |

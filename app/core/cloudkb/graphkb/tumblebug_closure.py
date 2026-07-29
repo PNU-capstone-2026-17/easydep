@@ -9,7 +9,7 @@
     2. `operation` 경로는 따라가지 않는다 — 연산의 인자는 생성 의존이 아니다.
     3. CSP 조건표가 벤더 중립 판정을 **덮는다**(있으면 그것이 진실이다).
     4. 카탈로그(`spec`·`image`)는 **만들 것이 아니라 고를 것**이라 따로 담는다.
-    5. `D6`(자동 생성)이 붙은 것은 cb-tumblebug이 알아서 채운다 — **사람이 정할 것이
+    5. 자동 생성 관측이 붙은 것은 cb-tumblebug이 알아서 채운다 — **사람이 정할 것이
        아니다.** 남는 것이 사용자·설계자가 결정해야 하는 목록이다.
 
 5번이 이 절차의 값이다. 딸려오는 것을 세는 것만으로는 *"그래서 내가 뭘 정해야 하는데"*에
@@ -30,9 +30,6 @@ from functools import lru_cache
 from pathlib import Path
 
 _ARTIFACT = Path(__file__).resolve().parent / "parsers" / "tumblebug_resources.json"
-
-#: 자동으로 채워진다는 것을 말해 주는 층. 사용자가 결정할 목록에서 빠지는 근거다.
-LAYER_AUTOCREATE = "D6"
 
 
 @lru_cache(maxsize=1)
@@ -123,7 +120,10 @@ def closure(anchor: str, provider: str) -> Closure:
                 target, {"count": 1, "because": set(), "automatic": False})
             entry["count"] = max(entry["count"], count)
             entry["because"].add(cur)
-            entry["automatic"] = entry["automatic"] or LAYER_AUTOCREATE in edge["layers"]
+            # **관측이 근거다.** 자동으로 채워진다는 것은 우리가 붙인 등급이 아니라
+            # `CreateSharedResourceWithOptions` 호출을 실제로 본 관측의 성질이다.
+            entry["automatic"] = entry["automatic"] or any(
+                o.get("autoCreated") for o in edge["observations"])
             if target not in seen:
                 seen.add(target)
                 queue.append(target)

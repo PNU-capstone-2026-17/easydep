@@ -35,40 +35,48 @@ def test_every_edge_endpoint_is_a_known_resource(data) -> None:
     assert not unknown, f"자원 목록에 없는 이름이 간선에 있다: {sorted(unknown)}"
 
 
-def test_every_edge_carries_a_citation(data) -> None:
-    """근거 없는 간선은 주장이지 관측이 아니다.
+def test_every_observation_names_its_source_form_and_citation(data) -> None:
+    """관측마다 **어느 저장소에서 · 어떤 형태로 · 어디서** 봤는지가 있어야 한다.
 
-    각 증거에 **어디서 봤는지**가 있어야 한다. 파일:줄이거나 라우트 문자열이다.
+    셋 중 하나라도 없으면 그건 관측이 아니라 주장이다. 특히 `form`(요청 스키마 필드인가,
+    삭제 코드인가, YAML 데이터인가)이 중요하다 — 같은 사실이라도 어떤 형태로 적혀
+    있느냐에 따라 믿을 수 있는 정도가 다르다.
     """
     for edge in data["edges"]:
-        assert edge["layers"], f"{edge['from']}→{edge['to']}: 증거층이 없다"
-        for layer, observations in edge["evidence"].items():
-            assert observations, f"{edge['from']}→{edge['to']} {layer}: 관측이 비었다"
-            for obs in observations:
-                assert obs.get("evidence"), (
-                    f"{edge['from']}→{edge['to']} {layer}: 인용이 없다"
-                )
+        obs = edge["observations"]
+        assert obs, f"{edge['from']}→{edge['to']}: 관측이 없다"
+        for o in obs:
+            for key in ("source", "form", "cite"):
+                assert o.get(key), f"{edge['from']}→{edge['to']}: {key}가 없다 — {o}"
 
 
-def test_layers_are_declared(data) -> None:
-    """쓰는 층은 전부 선언돼 있어야 한다 — 새 층을 몰래 도입하면 등급이 뜻을 잃는다."""
-    declared = set(data["evidenceLayers"])
-    used = {layer for edge in data["edges"] for layer in edge["layers"]}
-    assert used <= declared, f"선언되지 않은 층: {sorted(used - declared)}"
+def test_our_own_grading_scheme_is_not_back(data) -> None:
+    """**우리가 얹은 분류를 1급 필드로 되돌리지 않는다.**
+
+    이전 판은 관측을 `D1~D9` 증거층으로 묶고 `layers`를 간선의 주 필드로 뒀다. 그건
+    우리 분류이지 근거가 아니었고, 층 이름이 인용을 가리는 구조였다(라벨이 주, 인용이
+    종). 등급 체계는 편해서 다시 기어들어오기 쉬우므로 검사로 막는다.
+    """
+    banned = {"layers", "layerCount", "kind"}
+    for edge in data["edges"]:
+        present = banned & set(edge)
+        assert not present, f"{edge['from']}→{edge['to']}: 분류가 되돌아왔다 {present}"
+    assert "evidenceLayers" not in data, "층 사전이 되돌아왔다"
+    assert data.get("_retracted"), "무엇을 왜 걷어냈는지가 남아 있어야 한다"
 
 
-def test_ordering_evidence_never_stands_alone(data) -> None:
-    """**D8(운영 순서)은 단독으로 간선을 만들지 못한다.**
+def test_ordering_alone_never_makes_an_edge(data) -> None:
+    """**운영 순서만으로는 간선이 서지 않는다.**
 
-    기준의 핵심이라 검사로 박는다. 순서는 의존을 함의하지 않는다 — A 다음에 B가
-    온다고 B가 A를 요구하는 것은 아니다. 초안이 선형 순서에서 쌍을 만들어
-    `image→vNet` 같은 거짓 간선 10개를 냈고, 그래서 D8을 보강 전용으로 내렸다.
-    이 검사가 없으면 같은 실수가 다음 라운드에 다시 들어온다.
+    순서는 의존을 함의하지 않는다 — A 다음에 B가 온다고 B가 A를 요구하는 것은 아니다.
+    초안이 스크립트의 선형 순서에서 쌍을 만들어 `image→vNet` 같은 거짓 간선 10개를
+    냈다. 순서 관측은 다른 형태의 관측이 이미 제안한 간선을 **보강**할 뿐이다.
     """
     alone = [
-        (e["from"], e["to"]) for e in data["edges"] if e["layers"] == ["D8"]
+        (e["from"], e["to"]) for e in data["edges"]
+        if {o["form"] for o in e["observations"]} == {"운영 스크립트 순서"}
     ]
-    assert not alone, f"순서 증거만으로 선 간선: {alone}"
+    assert not alone, f"순서 관측만으로 선 간선: {alone}"
 
 
 def test_catalog_resources_have_no_outgoing_dependencies(data) -> None:
@@ -84,20 +92,24 @@ def test_catalog_resources_have_no_outgoing_dependencies(data) -> None:
     assert not outgoing, f"카탈로그가 무언가를 요구한다: {outgoing}"
 
 
-def test_the_strongest_edges_are_the_vm_ones(data) -> None:
-    """층이 다섯 겹인 간선은 정확히 node의 셋이다.
+def test_the_most_independently_observed_edges_are_the_vm_ones(data) -> None:
+    """서로 다른 **다섯 형태**로 관측되는 간선은 정확히 node의 셋이다.
 
-    이 셋(vNet·sshKey·securityGroup)이 스키마·런타임·삭제보호·자동생성·CSP 계약에서
-    **동시에** 관측되는 것이 이 시스템에서 가장 단단한 사실이고, 연계 리소스 군
-    (과제 문제 ②)의 답이 그 위에 선다. 줄어들면 근거가 약해진 것이고, 늘어나면
-    층 판정이 헐거워진 것이다 — 어느 쪽이든 사람이 봐야 한다.
+    이 셋(vNet·sshKey·securityGroup)은 요청 스키마 필드 · 생성 전 존재 확인 코드 ·
+    삭제 보호 코드 · 자동 생성 코드 · CSP 중립 인터페이스에서 **각각 독립적으로**
+    관측된다. 등급을 매겨서가 아니라 **서로 다른 자리에서 같은 말이 나와서** 단단한
+    것이고, 연계 리소스 군(과제 문제 ②)의 답이 그 위에 선다.
+
+    줄면 근거가 약해진 것이고 늘면 형태 구분이 헐거워진 것이다 — 어느 쪽이든 사람이
+    봐야 한다.
     """
-    five = {
-        (e["from"], e["to"]) for e in data["edges"] if len(e["layers"]) >= 5
+    many = {
+        (e["from"], e["to"]) for e in data["edges"]
+        if len({o["form"] for o in e["observations"]}) >= 5
     }
-    assert five == {
+    assert many == {
         ("node", "vNet"), ("node", "sshKey"), ("node", "securityGroup"),
-    }, f"다섯 겹 간선이 바뀌었다: {sorted(five)}"
+    }, f"다섯 형태로 관측되는 간선이 바뀌었다: {sorted(many)}"
 
 
 def test_k8s_subnet_count_is_provider_scoped(data) -> None:
