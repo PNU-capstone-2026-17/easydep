@@ -31,12 +31,20 @@ from dataclasses import dataclass
 
 #: IaC가 **만드는 자원** · 다이어그램의 노드·아티팩트로 등장한다.
 COMPOSE = "compose"
-#: 다른 자원의 **속성**으로 등장한다(`instance_type` · `ami`). 만드는 것이 아니라 고르는 것.
+#: 다른 자원의 **속성**으로 등장한다. 만드는 것이 아니라 고르는 것.
+#:
+#: 근거가 둘이다. (가) `core/infra/control.go:1302` — 노드 삭제가 다른 자원에는 참조
+#: 카운트를 되돌리는데 `spec`만 주석으로 꺼져 있다. (나) TOSCA에서 `num_cpus`·
+#: `mem_size` 같은 것은 관계가 아니라 노드의 `host` **capability 속성**이다.
 SELECT = "select"
-#: 만들지 않지만 판정에 쓰인다(리전·존·쿼터). 이 표에는 tumblebug 자원만 있어 아직 없다.
-BOUND = "bound"
 
-ROLES = (COMPOSE, SELECT, BOUND)
+#: 역할은 **분류하는 자원이 있을 때만** 존재한다.
+#:
+#: 이전 판에 `BOUND`("만들지 않지만 판정에 쓰인다 — 리전·존·쿼터")를 뒀는데 **해당하는
+#: 자원이 하나도 없었다.** 쓰이지 않는 칸은 분류가 아니라 우리가 만든 자리이고, 그런
+#: 것이 남아 있으면 나중에 사실처럼 인용된다. 실제로 그 일이 반복됐다. 필요해지면
+#: **그때 해당 자원과 함께** 추가한다 — `test_scope.py`가 빈 역할을 막는다.
+ROLES = (COMPOSE, SELECT)
 
 
 @dataclass(frozen=True)

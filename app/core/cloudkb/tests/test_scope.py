@@ -57,6 +57,18 @@ def test_exclusions_say_whether_they_can_be_revisited() -> None:
     assert scope.SCOPE["sqlDb"].reversible, "데이터 부재는 뒤집힐 수 있는 사유다"
 
 
+def test_no_role_classifies_nothing() -> None:
+    """**빈 역할을 두지 않는다.**
+
+    이전 판에 `BOUND`("리전·존·쿼터")를 선언해 놓고 해당하는 자원이 하나도 없었다.
+    쓰이지 않는 칸은 분류가 아니라 우리가 만든 자리이고, 그런 것이 남아 있으면 나중에
+    사실처럼 인용된다 — 실제로 그 일이 여러 번 있었다. 필요해지면 **그때 해당 자원과
+    함께** 추가한다.
+    """
+    empty = [r for r in scope.ROLES if not scope.by_role(r)]
+    assert not empty, f"분류하는 자원이 없는 역할: {empty}"
+
+
 def test_the_selectable_vocabulary_is_exactly_spec_and_image() -> None:
     """**선택 역할은 둘뿐이다.**
 
