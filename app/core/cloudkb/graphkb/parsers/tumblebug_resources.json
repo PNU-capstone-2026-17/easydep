@@ -1,0 +1,1569 @@
+{
+ "_note": "cb-tumblebug 자원 전수와 의존 간선. **손으로 적은 것이 아니라 소스에서 뽑은 것**이고, 간선마다 어느 증거층에서 어디를 보고 판정했는지(file:line)가 붙는다. 판정 기준은 docs/tumblebug-resource-dependency-2026-07-29.md.",
+ "_source": [
+  {
+   "source": "cb-tumblebug",
+   "pin_kind": "tag",
+   "pin": "v0.12.25",
+   "artifact": "tumblebug-src-v0.12.25.tar.gz",
+   "what": "core/model · core/resource · core/infra · interface/rest/server · assets · testclient"
+  },
+  {
+   "source": "cb-spider",
+   "pin_kind": "tag",
+   "pin": "v0.12.37",
+   "artifact": "cb-spider-v0.12.37.tar.gz",
+   "what": "cloud-control-manager/cloud-driver/interfaces/resources (CSP 중립 계약)"
+  }
+ ],
+ "_coverage": {
+  "structsScanned": 650,
+  "resourceRefFields": 174,
+  "requestSchemaRefs": 44,
+  "unjudgedIdFields": 99,
+  "restRoutes": 345,
+  "swaggerPathsAtPinnedV0118": 142,
+  "note": "`unjudgedIdFields`는 규칙이 자원으로 판정하지 못한 `*Id` 필드다. 전수를 주장하려면 이 수가 0이어야 하는 것이 아니라 **하나하나 자원이 아님이 확인되어야** 한다 — cspResourceId · 자격증명 · 리전 · 태스크 id 등이며 문서 §3.2에 분류를 남겼다."
+ },
+ "evidenceLayers": {
+  "D1": "요청 스키마 필수 — `validate:\"required\"`가 붙은 참조 필드",
+  "D2": "요청 스키마 선택 — 참조 필드이나 필수가 아님",
+  "D3": "REST 경로 중첩 — 부모 없이는 주소가 없다",
+  "D4": "런타임 존재 확인 — 생성 전 조회 후 실패 시 거부",
+  "D5": "삭제 보호 — 참조 카운트가 비어야 삭제된다",
+  "D6": "자동 생성 — 없으면 만들어서라도 채운다",
+  "D7": "CSP 계약 — cb-spider 중립 인터페이스가 요구",
+  "D8": "운영 순서 — 프로젝트 자신의 생성·삭제 순서(**보강 전용**)",
+  "D9": "자산 데이터 — `assets/*.yaml`이 프로바이더별로 적어 둔 제약(조건·개수)"
+ },
+ "resources": [
+  {
+   "id": "vNet",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/vNet",
+   "note": ""
+  },
+  {
+   "id": "subnet",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/vNet/{vNetId}/subnet",
+   "note": "vNet 요청 본문에 함께 넣을 수도 있다(SubnetInfoList) — 합성"
+  },
+  {
+   "id": "securityGroup",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/securityGroup",
+   "note": ""
+  },
+  {
+   "id": "sshKey",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/sshKey",
+   "note": ""
+  },
+  {
+   "id": "infra",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/infra",
+   "note": "v0.11.8의 `mci`가 v0.12.25에서 `infra`로 개명됐다"
+  },
+  {
+   "id": "node",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/infra/{infraId}/node",
+   "note": "v0.11.8의 `vm`. 노드그룹 단위로 요청한다"
+  },
+  {
+   "id": "nodeGroup",
+   "kind": "logical",
+   "createPath": "(node 요청의 단위)",
+   "note": "독립 생성 엔드포인트가 없다 — CreateNodeGroupReq의 단위"
+  },
+  {
+   "id": "dataDisk",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/dataDisk",
+   "note": ""
+  },
+  {
+   "id": "customImage",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/infra/{i}/node/{n}/snapshot",
+   "note": "등록 경로(POST /resources/customImage)도 있다 — 경로마다 요구가 다르다"
+  },
+  {
+   "id": "nlb",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/infra/{infraId}/nlb",
+   "note": ""
+  },
+  {
+   "id": "k8sCluster",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/k8sCluster",
+   "note": ""
+  },
+  {
+   "id": "k8sNodeGroup",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/k8sCluster/{id}/k8sNodeGroup",
+   "note": ""
+  },
+  {
+   "id": "sqlDb",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/sqlDb",
+   "note": "**swagger v0.11.8에 있는데 우리 파서가 안 뽑고 있었다**"
+  },
+  {
+   "id": "objectStorage",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/objectStorage",
+   "note": "같음. 의존 간선이 **하나도 없다**(연결 설정만 받는다)"
+  },
+  {
+   "id": "vpn",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/infra/{infraId}/vpn",
+   "note": "같음. azure는 전용 GatewaySubnet(min /27)을 요구한다 — assets/networkinfo.yaml"
+  },
+  {
+   "id": "publicIp",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/publicIp",
+   "note": "**v0.12.25 신설** — v0.11.8 swagger에 없다"
+  },
+  {
+   "id": "vNic",
+   "kind": "provisioned",
+   "createPath": "POST /ns/{ns}/resources/vNic",
+   "note": "같음"
+  },
+  {
+   "id": "globalDns",
+   "kind": "provisioned",
+   "createPath": "POST(globalDns 라우트)",
+   "note": "같음. Route53 기반이라 CSP 종속"
+  },
+  {
+   "id": "spec",
+   "kind": "catalog",
+   "createPath": "POST /ns/{ns}/resources/spec",
+   "note": "참조 카운트를 **일부러 안 건다**(core/infra/control.go:1302 주석)"
+  },
+  {
+   "id": "image",
+   "kind": "catalog",
+   "createPath": "POST /ns/{ns}/resources/image",
+   "note": ""
+  },
+  {
+   "id": "fileSystem",
+   "kind": "spider-only",
+   "createPath": "(cb-spider FileSystemHandler)",
+   "note": "cb-spider에는 있는데 cb-tumblebug이 노출하지 않는다"
+  }
+ ],
+ "cspConditional": {
+  "_note": "간선을 거짓 없이 적기 위한 **최소한**만. 프로바이더별 상세표는 의도적으로 담지 않았다(조사 기록은 docs/tumblebug-resource-dependency-2026-07-29.md §3.3).",
+  "k8sCluster->subnet.minCount": {
+   "_evidence": "assets/k8sclusterinfo.yaml k8scluster.<csp>.requiredSubnetCount",
+   "aws": 2,
+   "azure": 1,
+   "gcp": 1
+  },
+  "vpn->subnet.required": {
+   "_evidence": "assets/networkinfo.yaml network.<csp>.vpn.gateway-subnet",
+   "_what": "azure는 이름이 GatewaySubnet인 전용 서브넷을 요구한다 (min /27)",
+   "aws": false,
+   "azure": true,
+   "gcp": false
+  },
+  "sqlDb->vNet.required": {
+   "_evidence": "core/model/sqlDb.go:30 RequiredCSPResourceForSqlDB",
+   "_what": "aws는 vNet + 서로 다른 AZ의 subnet 2개. azure는 resourceGroup만 요구한다",
+   "aws": true,
+   "azure": false,
+   "gcp": null
+  },
+  "sqlDb->subnet.required": {
+   "_evidence": "core/model/sqlDb.go:36 RequiredAWSResourceForSqlDB.Subnet1ID/Subnet2ID",
+   "aws": true,
+   "azure": false,
+   "gcp": null
+  },
+  "sqlDb->subnet.minCount": {
+   "_evidence": "core/model/sqlDb.go:39 `subnet2ID` example=\"subnet-xxxx in different AZ\"",
+   "_what": "**개수만이 아니라 배치 조건이다** — 둘이 서로 다른 AZ여야 한다",
+   "aws": 2,
+   "azure": null,
+   "gcp": null
+  },
+  "securityGroup->vNet.required": {
+   "_evidence": "core/model/securitygroup.go:69 주석 — \"some CSPs (e.g., Azure, Tencent, NHN) don't bind SG to VPC\"",
+   "aws": true,
+   "azure": false,
+   "gcp": true
+  }
+ },
+ "edges": [
+  {
+   "from": "customImage",
+   "to": "node",
+   "layers": [
+    "D2",
+    "D3",
+    "D7"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [
+    "register"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/customimage.go:74 CustomImageReq.SourceNodeId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "register",
+      "csp": ""
+     }
+    ],
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/infra/{infraId}/node/{nodeId}/snapshot",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "MyImageHandler.go:27 MyImageInfo.SourceVM",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "dataDisk",
+   "to": "node",
+   "layers": [
+    "D3",
+    "D7"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/infra/{infraId}/node/{nodeId}/dataDisk",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "DiskHandler.go:36 DiskInfo.OwnerVM",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "fileSystem",
+   "to": "vNet",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "FileSystemHandler.go:58 FileSystemInfo.VpcIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "globalDns",
+   "to": "infra",
+   "layers": [
+    "D1"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/globalDns.go:71 GlobalDnsInfraSource.InfraId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sCluster",
+   "to": "image",
+   "layers": [
+    "D1"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:542 K8sClusterDynamicReq.ImageId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sCluster",
+   "to": "securityGroup",
+   "layers": [
+    "D1",
+    "D7"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:91 K8sClusterReq.SecurityGroupIds",
+      "required": true,
+      "list": true,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:63 NetworkInfo.SecurityGroupIIDs",
+      "required": true,
+      "list": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sCluster",
+   "to": "spec",
+   "layers": [
+    "D1"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:539 K8sClusterDynamicReq.SpecId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sCluster",
+   "to": "subnet",
+   "layers": [
+    "D1",
+    "D7",
+    "D9"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [
+    "aws",
+    "azure",
+    "gcp"
+   ],
+   "minCardinalityByCsp": {
+    "aws": 2,
+    "azure": 1,
+    "gcp": 1
+   },
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:90 K8sClusterReq.SubnetIds",
+      "required": true,
+      "list": true,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:62 NetworkInfo.SubnetIIDs",
+      "required": true,
+      "list": true
+     }
+    ],
+    "D9": [
+     {
+      "evidence": "assets/k8sclusterinfo.yaml k8scluster.aws.requiredSubnetCount=2",
+      "required": true,
+      "csp": "aws",
+      "method": "create",
+      "list": true,
+      "cardinality_min": 2
+     },
+     {
+      "evidence": "assets/k8sclusterinfo.yaml k8scluster.azure.requiredSubnetCount=1",
+      "required": true,
+      "csp": "azure",
+      "method": "create",
+      "list": false,
+      "cardinality_min": 1
+     },
+     {
+      "evidence": "assets/k8sclusterinfo.yaml k8scluster.gcp.requiredSubnetCount=1",
+      "required": true,
+      "csp": "gcp",
+      "method": "create",
+      "list": false,
+      "cardinality_min": 1
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sCluster",
+   "to": "vNet",
+   "layers": [
+    "D1",
+    "D7"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:89 K8sClusterReq.VNetId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:61 NetworkInfo.VpcIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sNodeGroup",
+   "to": "image",
+   "layers": [
+    "D1",
+    "D2",
+    "D7"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "create",
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:571 K8sNodeGroupDynamicReq.ImageId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ],
+    "D2": [
+     {
+      "evidence": "core/model/k8scluster.go:135 K8sNodeGroupReq.ImageId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:75 NodeGroupInfo.ImageIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sNodeGroup",
+   "to": "k8sCluster",
+   "layers": [
+    "D3"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/k8sCluster/{k8sClusterId}/k8sNodeGroup",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sNodeGroup",
+   "to": "node",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:89 NodeGroupInfo.Nodes",
+      "required": false,
+      "list": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sNodeGroup",
+   "to": "spec",
+   "layers": [
+    "D1",
+    "D2",
+    "D7"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "create",
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/k8scluster.go:568 K8sNodeGroupDynamicReq.SpecId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ],
+    "D2": [
+     {
+      "evidence": "core/model/k8scluster.go:136 K8sNodeGroupReq.SpecId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:76 NodeGroupInfo.VMSpecName",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "k8sNodeGroup",
+   "to": "sshKey",
+   "layers": [
+    "D2",
+    "D7"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/k8scluster.go:139 K8sNodeGroupReq.SshKeyId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "ClusterHandler.go:79 NodeGroupInfo.KeyPairIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "nlb",
+   "to": "infra",
+   "layers": [
+    "D3"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/infra/{infraId}/nlb",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "nlb",
+   "to": "nodeGroup",
+   "layers": [
+    "D2"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/nlb.go:183 NLBTargetGroupReq.NodeGroupId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ]
+   }
+  },
+  {
+   "from": "nlb",
+   "to": "vNet",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "NLBHandler.go:20 NLBInfo.VpcIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "customImage",
+   "layers": [
+    "D5"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:927 UpdateAssociatedObjectList(StrCustomImage)",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "dataDisk",
+   "layers": [
+    "D1",
+    "D2",
+    "D5"
+   ],
+   "layerCount": 3,
+   "required": false,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [
+    "create",
+    "operation"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/datadisk.go:33 AttachDetachDataDiskReq.DataDiskId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "operation",
+      "csp": ""
+     }
+    ],
+    "D2": [
+     {
+      "evidence": "core/model/infra.go:273 CreateNodeGroupReq.DataDiskIds",
+      "required": false,
+      "list": true,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:935 UpdateAssociatedObjectList(StrDataDisk)",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "image",
+   "layers": [
+    "D1",
+    "D5",
+    "D7"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "create",
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:258 CreateNodeGroupReq.ImageId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     },
+     {
+      "evidence": "core/model/infra.go:365 CreateNodeGroupDynamicReq.ImageId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:925 UpdateAssociatedObjectList(StrImage)",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:48 VMReqInfo.ImageIID",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "infra",
+   "layers": [
+    "D3"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/infra/{infraId}/node",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "securityGroup",
+   "layers": [
+    "D1",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+   ],
+   "layerCount": 5,
+   "required": true,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:267 CreateNodeGroupReq.SecurityGroupIds",
+      "required": true,
+      "list": true,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D4": [
+     {
+      "evidence": "core/infra/provisioning.go:3470 'SecurityGroup must exist when onDemand is disabled'",
+      "required": true
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:932 UpdateAssociatedObjectList(StrSecurityGroup)",
+      "required": true
+     }
+    ],
+    "D6": [
+     {
+      "evidence": "core/infra/provisioning.go:3488 CreateSharedResourceWithOptions(StrSecurityGroup)",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:51 VMReqInfo.SecurityGroupIIDs",
+      "required": false,
+      "list": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "spec",
+   "layers": [
+    "D1",
+    "D7"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1",
+   "kind": "catalog-ref",
+   "methods": [
+    "create",
+    "dynamic"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:256 CreateNodeGroupReq.SpecId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     },
+     {
+      "evidence": "core/model/infra.go:363 CreateNodeGroupDynamicReq.SpecId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "dynamic",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:53 VMReqInfo.VMSpecName",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "sshKey",
+   "layers": [
+    "D1",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+   ],
+   "layerCount": 5,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:268 CreateNodeGroupReq.SshKeyId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D4": [
+     {
+      "evidence": "core/infra/provisioning.go:3440 GetResource(StrSSHKey)",
+      "required": true
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:929 UpdateAssociatedObjectList(StrSSHKey)",
+      "required": true
+     }
+    ],
+    "D6": [
+     {
+      "evidence": "core/infra/provisioning.go:3448 CreateSharedResourceWithOptions(StrSSHKey)",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:54 VMReqInfo.KeyPairIID",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "subnet",
+   "layers": [
+    "D1",
+    "D6",
+    "D7"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:266 CreateNodeGroupReq.SubnetId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D6": [
+     {
+      "evidence": "core/infra/provisioning.go:3419 기본 경로에서 subnet은 vNet과 같은 이름으로 선택된다(vNet 생성에 포함)",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:50 VMReqInfo.SubnetIID",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "node",
+   "to": "vNet",
+   "layers": [
+    "D1",
+    "D4",
+    "D5",
+    "D6",
+    "D7"
+   ],
+   "layerCount": 5,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D1": [
+     {
+      "evidence": "core/model/infra.go:265 CreateNodeGroupReq.VNetId",
+      "required": true,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D4": [
+     {
+      "evidence": "core/infra/provisioning.go:3320 GetResource(StrVNet) 후 실패 시 거부(onDemand=false)",
+      "required": true
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/infra/control.go:930 UpdateAssociatedObjectList(StrVNet)",
+      "required": true
+     }
+    ],
+    "D6": [
+     {
+      "evidence": "core/infra/provisioning.go:3335 CreateSharedResourceWithOptions(StrVNet)",
+      "required": true
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "VMHandler.go:49 VMReqInfo.VpcIID",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "publicIp",
+   "to": "node",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "PublicIPHandler.go:32 PublicIPInfo.OwnedVM",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "publicIp",
+   "to": "vNic",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "PublicIPHandler.go:33 PublicIPInfo.OwnedNIC",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "securityGroup",
+   "to": "vNet",
+   "layers": [
+    "D2",
+    "D7",
+    "D8"
+   ],
+   "layerCount": 3,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/securitygroup.go:69 SecurityGroupReq.VNetId",
+      "required": false,
+      "list": false,
+      "comment": "Optional for registration: some CSPs (e.g., Azure, Tencent, NHN) don't bind SG to VPC",
+      "method": "create",
+      "csp": ""
+     }
+    ],
+    "D7": [
+     {
+      "evidence": "SecurityHandler.go:17 SecurityReqInfo.VpcIID",
+      "required": false,
+      "list": false
+     },
+     {
+      "evidence": "SecurityHandler.go:35 SecurityInfo.VpcIID",
+      "required": true,
+      "list": false
+     }
+    ],
+    "D8": [
+     {
+      "evidence": "testclient/scripts/sequentialFullTest/create-resource-ns-cloud.sh — vNet를 securityGroup보다 먼저 만든다",
+      "required": false
+     },
+     {
+      "evidence": "clean-resource-ns-cloud.sh — 역순 삭제 + `DependencyViolation` 재시도 루프",
+      "required": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "sqlDb",
+   "to": "subnet",
+   "layers": [
+    "D2"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [
+    "aws"
+   ],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/sqlDb.go:38 RequiredAWSResourceForSqlDB.Subnet1ID",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": "aws"
+     },
+     {
+      "evidence": "core/model/sqlDb.go:39 RequiredAWSResourceForSqlDB.Subnet2ID",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": "aws"
+     }
+    ]
+   }
+  },
+  {
+   "from": "sqlDb",
+   "to": "vNet",
+   "layers": [
+    "D2"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [
+    "aws"
+   ],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/sqlDb.go:37 RequiredAWSResourceForSqlDB.VNetID",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": "aws"
+     }
+    ]
+   }
+  },
+  {
+   "from": "subnet",
+   "to": "vNet",
+   "layers": [
+    "D3",
+    "D5"
+   ],
+   "layerCount": 2,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/resources/vNet/{vNetId}/subnet",
+      "required": true
+     }
+    ],
+    "D5": [
+     {
+      "evidence": "core/resource/vnet.go:934 vNet 삭제가 subnet을 먼저 지운다(포함 관계)",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "vNic",
+   "to": "node",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "NICHandler.go:42 NICInfo.OwnerVM",
+      "required": false,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "vNic",
+   "to": "securityGroup",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1..N",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "NICHandler.go:34 NICInfo.SecurityGroupIIDs",
+      "required": false,
+      "list": true
+     },
+     {
+      "evidence": "NICHandler.go:59 NICReqInfo.SecurityGroupIIDs",
+      "required": false,
+      "list": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "vNic",
+   "to": "subnet",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "NICHandler.go:32 NICInfo.SubnetIID",
+      "required": true,
+      "list": false
+     },
+     {
+      "evidence": "NICHandler.go:57 NICReqInfo.SubnetIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "vNic",
+   "to": "vNet",
+   "layers": [
+    "D7"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D7": [
+     {
+      "evidence": "NICHandler.go:31 NICInfo.VpcIID",
+      "required": true,
+      "list": false
+     },
+     {
+      "evidence": "NICHandler.go:56 NICReqInfo.VpcIID",
+      "required": true,
+      "list": false
+     }
+    ]
+   }
+  },
+  {
+   "from": "vpn",
+   "to": "infra",
+   "layers": [
+    "D3"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "containment",
+   "methods": [],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D3": [
+     {
+      "evidence": "server.go route /ns/{nsId}/infra/{infraId}/vpn",
+      "required": true
+     }
+    ]
+   }
+  },
+  {
+   "from": "vpn",
+   "to": "subnet",
+   "layers": [
+    "D9"
+   ],
+   "layerCount": 1,
+   "required": true,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [
+    "azure"
+   ],
+   "minCardinalityByCsp": {
+    "azure": 1
+   },
+   "evidence": {
+    "D9": [
+     {
+      "evidence": "assets/networkinfo.yaml network.azure.vpn.gateway-subnet.required=true (name=GatewaySubnet, min prefix /27)",
+      "required": true,
+      "csp": "azure",
+      "method": "create",
+      "cardinality_min": 1
+     }
+    ]
+   }
+  },
+  {
+   "from": "vpn",
+   "to": "vNet",
+   "layers": [
+    "D2"
+   ],
+   "layerCount": 1,
+   "required": false,
+   "cardinality": "1",
+   "kind": "reference",
+   "methods": [
+    "create"
+   ],
+   "cspScoped": [],
+   "minCardinalityByCsp": {},
+   "evidence": {
+    "D2": [
+     {
+      "evidence": "core/model/vpn.go:72 SiteProperty.VNetId",
+      "required": false,
+      "list": false,
+      "comment": "",
+      "method": "create",
+      "csp": ""
+     }
+    ]
+   }
+  }
+ ]
+}
