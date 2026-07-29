@@ -12,6 +12,7 @@ from app.deployment.capacitykb.parsers.tpaws import (
     resolve_type,
     tf_path_to_cfn,
 )
+from app.deployment.tests._helpers import write_tar
 
 HCL = '''
 service "amp" {
@@ -65,16 +66,10 @@ func resourceInstance() *schema.Resource {
 
 def _tar(tmp_path: Path) -> Path:
     path = tmp_path / "p.tar.gz"
-    with tarfile.open(path, "w:gz") as tar:
-        for name, body in (
-            ("p/names/data/names_data.hcl", HCL),
-            ("p/internal/service/amp/scraper.go", GO),
-        ):
-            data = body.encode("utf-8")
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return path
+    return write_tar(path, {
+        "p/names/data/names_data.hcl": HCL,
+        "p/internal/service/amp/scraper.go": GO,
+    })
 
 
 CFN = {"aws::AWS::APS::Scraper", "aws::AWS::EC2::Instance"}

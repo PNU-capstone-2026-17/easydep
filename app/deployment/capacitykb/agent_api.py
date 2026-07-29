@@ -6,10 +6,10 @@ graphkb의 agent_api와 같은 관례: 예외 대신 에이전트가 그대로 �
 
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 from pathlib import Path
 
+from app.deployment.capacitykb._text import _plural, _recreating
 from app.deployment.capacitykb.model import CapacitySet
 from app.deployment.capacitykb.query import (
     _cond_text,
@@ -55,35 +55,11 @@ _MISSING_MESSAGE = (
 )
 
 
-def _plural(n: int, one: str, many: str) -> str:
-    """`1 constraints` 같은 비문을 막는다.
-
-    한국어에는 수 일치가 없어서 `f"{n}건"` 하나로 끝났다. 영어로 옮기면서
-    그 자리가 전부 복수형 리터럴이 됐고, n=1일 때 문장이 깨진다. 모델이 읽는
-    문장이므로 문법이 흐트러지면 신뢰도 신호가 같이 흐트러진다.
-    """
-    return f"{n} {one if n == 1 else many}"
-
-
-def _recreating(n: int) -> str:
-    """불변 속성 개수 문구. 명사와 동사가 **함께** 수 일치해야 한다."""
-    if n == 1:
-        return "1 property that recreates the resource when changed"
-    return f"{n} properties that recreate the resource when changed"
-
-
 @lru_cache(maxsize=4)
 def _load_merged_cached(output_dir: str) -> CapacitySet | None:
-    base = Path(output_dir)
-    merged = CapacitySet()
-    found = False
-    for name in CAPACITY_FILES:
-        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz (kbcommon/artifact.py).
-        path = artifact.resolve(base, name)
-        if path is not None:
-            merged.merge(CapacitySet.from_dict(artifact.load_json(path)))
-            found = True
-    return merged if found else None
+    return artifact.load_merged(
+        output_dir, CAPACITY_FILES, CapacitySet, CapacitySet.from_dict
+    )
 
 
 def load_merged(output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> CapacitySet | None:
@@ -589,12 +565,25 @@ def type_summary(
         more = f" and {len(names) - 3} more" if len(names) > 3 else ""
         parts.append(f"{_recreating(len(names))} — {shown}{more}")
 
+    # **낡음 고지가 여기에도 붙어야 한다.** 실측(2026-07-28)에서 "GCP
+    # ContainerCluster의 불변 속성은?"에 모델이 용량 축이 아니라 그래프 축으로
+    # 갔는데, 이 요약이 개수("75 properties that recreate…")는 주면서 **그 값의
+    # 44%가 2023-09 스냅샷에서 왔다는 사실은 안 줬다.** 그래서 답변에서 낡음
+    # 경고가 통째로 사라졌다 — 같은 질문이 어느 축으로 가느냐에 따라 고지가
+    # 붙기도 하고 안 붙기도 했다.
+    #
+    # 고지는 **입구마다** 있어야 한다. 축을 늘리는 것과 축에 닿게 하는 것이 다른
+    # 일인 것처럼(이 함수가 존재하는 이유 그대로), 고지를 다는 것과 그 고지가 모든
+    # 문으로 나가는 것도 다른 일이다.
+    footer = _backend_footer(immutables + others)
+    caveat = f"\n  ※ {footer}" if footer else ""
+
     # **도구 이름을 적지 않는다.** 이 줄은 사용자에게 옮겨지는 텍스트라 내부 이름을
     # 쥐여 주면 지시문이 금지한 노출을 우리가 유발한다. 게다가 여기 적혀 있던
     # `cap_allowed_values`·`cap_property_limits`는 통합으로 **사라진 이름**이었다 —
     # KB가 도구 층의 이름을 알면 그 층이 바뀔 때마다 조용히 거짓이 된다.
     return (
-        f"capacity & constraints (capacitykb): {' · '.join(parts)}\n"
+        f"capacity & constraints (capacitykb): {' · '.join(parts)}{caveat}\n"
         "  → ask the limits & constraints axis **with the value** for a verdict on "
         "whether it works (put the conditions in context), or **without a value** "
         "to see the allowed values and every limit."
@@ -673,137 +662,6 @@ def value_lookup(
         "definite verdict."
     )
     return "\n".join(lines)
-
-
-# --------------------------------------------------------------------------
-# 리전 — botocore endpoints.json (`output/aws-endpoints.json`)
-#
-# 이 산출물은 CapacitySet(제약·쿼터)과 모양이 달라 `CAPACITY_FILES`에 넣지 않는다.
-# "속성에 걸린 제약"이 아니라 "무엇이 어디에 있는가"라서 억지로 끼워 넣으면
-# `type_id`·`property` 칸을 거짓으로 채우게 된다.
-# --------------------------------------------------------------------------
-
-ENDPOINTS_FILE = "aws-endpoints.json"
-
-_ENDPOINTS_MISSING = (
-    "no region artifact. build it with `python -m capacitykb build --source "
-    "aws-endpoints`."
-)
-
-#: 엔드포인트가 목록에 없다는 것은 **못 쓴다는 뜻이 아니다.** 이 문장을 답변에
-#: 반드시 함께 내보낸다 — 빼면 침묵이 "없음"으로 읽힌다.
-_ABSENCE_CAVEAT = (
-    "※ a region not listed here is not 'unusable' — **this data does not know**. "
-    "a global service has only one endpoint, and the marker that tells one apart is "
-    "on only 22 of the 307 services in the source."
-)
-
-
-#: **서비스 소재**(where_available)는 출처가 botocore라 AWS 전용이다. 리전 *이름*은
-#: 이제 cloudinfo로 프로바이더 10곳을 알지만(`region_lookup`), 이 축은 아니다.
-#: 밝히지 않으면 AWS만 본 답이 전체를 본 답처럼 보인다.
-_AWS_ONLY_CAVEAT = (
-    "※ which regions a service is in is included for **AWS only** (the source is the "
-    "AWS SDK). this tool does not answer service availability for other providers."
-)
-
-
-@lru_cache(maxsize=4)
-def _endpoints(output_dir: str) -> dict | None:
-    path = artifact.resolve(Path(output_dir), ENDPOINTS_FILE)
-    if path is None:
-        return None
-    try:
-        return artifact.load_json(path)
-    except Exception:
-        return None
-
-
-def _service_id(name: str, services: dict) -> tuple[str | None, str]:
-    """CFN 타입이나 서비스 이름을 botocore 서비스 id로. 못 붙이면 (None, 이유).
-
-    붙이는 방법은 둘뿐이다 — 그대로 일치, 하이픈 빼고 일치(`acmpca` → `acm-pca`).
-    실측으로 우리 네임스페이스 281개 중 182개(65%)가 이렇게 붙고 **충돌은 0건**이다.
-    남는 99개는 철자가 아니라 이름 자체가 다르다(`cloudwatch`는 원본에서
-    `monitoring`, `cognito`는 `cognito-idp`). 규칙으로 못 맞히는 것을 짐작으로
-    붙이면 **엉뚱한 서비스의 리전을 자신 있게 답하게 된다.**
-    """
-    text = name.strip()
-    match = re.match(r"^(?:aws::)?AWS::([^:]+)::", text)
-    key = (match.group(1) if match else text).lower()
-
-    if key in services:
-        return key, ""
-    flat = {s.replace("-", ""): s for s in services}
-    if key in flat:
-        return flat[key], ""
-    return None, key
-
-
-def where_available(name: str, *, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> str:
-    """이 서비스의 엔드포인트가 어느 리전에 있는가.
-
-    `AWS::EC2::Instance` 처럼 CFN 타입으로 물어도 되고 `ec2` 처럼 서비스 이름으로
-    물어도 된다. **없는 리전은 답하지 않는다** — 위 `_ABSENCE_CAVEAT` 참조.
-    """
-    data = _endpoints(str(output_dir))
-    if data is None:
-        return _ENDPOINTS_MISSING
-
-    services = data.get("services", {}).get("aws") or {}
-    service, unmatched = _service_id(name, services)
-    if service is None:
-        import difflib
-
-        # 비슷한 이름을 **제안**한다. 골라서 답하지는 않는다 — 제안은 사용자가
-        # 확인할 수 있지만, 골라 버리면 틀렸을 때 확인할 방법이 없다.
-        near = difflib.get_close_matches(unmatched, services, n=4, cutoff=0.6)
-        lines = [
-            f"our data cannot pin down which AWS SDK service '{name}' is "
-            f"(name looked up: '{unmatched}').",
-            "  some service names are not regular — CloudWatch is `monitoring`, "
-            "Cognito is `cognito-idp`, Certificate Manager is `acm`.",
-        ]
-        if near:
-            lines.append(f"  similar names: {', '.join(near)}")
-        lines.append(
-            "  → ask again with the SDK service name. matching it by guess would "
-            "confidently answer with the wrong service's regions, so we did not."
-        )
-        return "\n".join(lines)
-
-    body = services[service]
-    regions = body.get("regions") or []
-    partitions = data.get("partitions", {}).get("aws", {}).get("regions") or {}
-
-    if body.get("global"):
-        return (
-            f"{service}: a **global service** — the source states it is not tied to "
-            f"a region (partitionEndpoint={body.get('partition_endpoint')}).\n"
-            "  it is not something you pick a region to deploy into."
-        )
-
-    if not regions:
-        return (
-            f"{service}: no endpoint found in the standard partition.\n"
-            f"  {_ABSENCE_CAVEAT}"
-        )
-
-    lines = [
-        f"{service} — {_plural(len(regions), 'region', 'regions')} with an endpoint"
-    ]
-    for code in regions[:12]:
-        label = (partitions.get(code) or {}).get("description")
-        lines.append(f"  - {code}" + (f" ({label})" if label else ""))
-    if len(regions) > 12:
-        lines.append(f"  … and {len(regions) - 12} more")
-    lines.append(f"  {_ABSENCE_CAVEAT}")
-    lines.append(f"  {_AWS_ONLY_CAVEAT}")
-    return "\n".join(lines)
-
-
-# `region_lookup`(지명 → 리전 코드)은 envkb.regions로 이사했다(재편 계획 ⑤) —
-# 리전 카탈로그는 envkb의 산출물이고, capacitykb가 그걸 임포트하면 KB→KB가 된다.
 
 
 # --------------------------------------------------------------------------
@@ -891,3 +749,15 @@ def operation_time(
         if len(actions) > 8:
             lines.append(f"    … and {len(actions) - 8} more")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# 갈라 낸 표면을 다시 내보낸다 — 공개 이름은 여기 그대로 둔다.
+#
+# 아키텍처 검사가 공개 모듈을 `{agent_api, dataset, model, query}`로 못 박아 두었고,
+# 부르는 쪽(`nim_agent/capacity_tools.py`·테스트)도 이 이름으로 부른다.
+# --------------------------------------------------------------------------
+from app.deployment.capacitykb._aws_endpoints import (  # noqa: E402, F401
+    ENDPOINTS_FILE,
+    where_available,
+)

@@ -4,7 +4,11 @@ from fastapi import APIRouter, HTTPException
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE, TYPE_TEST_CODE
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
-from .schemas import ApprovalRequest, CreateImplementationJobRequest
+from .schemas import (
+    ApprovalRequest,
+    CreateImplementationFeedbackJobRequest,
+    CreateImplementationJobRequest,
+)
 from .worker import InvalidJobState, JobNotFound, worker
 
 
@@ -22,6 +26,24 @@ def create_job(app_id: str, request: CreateImplementationJobRequest) -> dict:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+@router.post("/apps/{app_id}/feedback-jobs", status_code=202)
+def create_feedback_job(
+    app_id: str, request: CreateImplementationFeedbackJobRequest
+) -> dict:
+    try:
+        return worker.create_feedback_job(
+            app_id,
+            artifact_repository.load_state(app_id),
+            request.feedback,
+            request.base_package,
+            request.allow_assumptions,
+        )
+    except AppNotFound as error:
+        raise HTTPException(status_code=404, detail="Unknown app id.") from error
+    except InvalidJobState as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.get("/jobs/{job_id}")
 def get_job(job_id: str) -> dict:
     try:
@@ -33,7 +55,7 @@ def get_job(job_id: str) -> dict:
 @router.post("/jobs/{job_id}/approval", status_code=202)
 def approve_job(job_id: str, request: ApprovalRequest) -> dict:
     try:
-        return worker.approve(job_id, request.request_id, request.approved, request.approved_by, request.retry_failed)
+        return worker.approve(job_id, request.request_id, request.approved, request.approved_by, request.retry_failed, request.delegate_repair_approvals)
     except JobNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
     except InvalidJobState as error:

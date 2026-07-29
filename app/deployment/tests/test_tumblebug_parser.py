@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.model import Graph
 from app.deployment.graphkb.parsers.tumblebug import parse_swagger
 from app.deployment.graphkb.query import dependency_chain
+from app.deployment.tests._helpers import find_edges
 
 FIXTURE = Path(__file__).parent / "fixtures" / "tumblebug-swagger-min.json"
 
@@ -21,10 +22,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "tumblebug-swagger-min.json"
 def graph() -> Graph:
     spec = json.loads(FIXTURE.read_text(encoding="utf-8"))
     return parse_swagger(spec)
-
-
-def find_edges(graph: Graph, from_id: str, to_id: str) -> list[Edge]:
-    return [e for e in graph.edges if e.from_id == from_id and e.to_id == to_id]
 
 
 def test_at_least_eight_core_nodes(graph: Graph) -> None:

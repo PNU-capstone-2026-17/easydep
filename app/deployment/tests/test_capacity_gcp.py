@@ -11,11 +11,7 @@ from pathlib import Path
 
 from app.deployment.capacitykb import agent_api
 from app.deployment.capacitykb.parsers.gcp import DISAGREEMENTS, parse_crds
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
+from app.deployment.tests._helpers import flat, write_tar
 
 
 def crd(kind: str, spec: dict) -> dict:
@@ -241,15 +237,10 @@ func ResourceComputeSubnetwork() *schema.Resource {
 
 
 def _fake_tar(tmp_path: Path) -> Path:
-    import io as _io
-    import tarfile
     path = tmp_path / "tpg.tar.gz"
-    with tarfile.open(path, "w:gz") as tar:
-        data = GO.encode("utf-8")
-        info = tarfile.TarInfo("x/google/services/compute/resource_compute_subnetwork.go")
-        info.size = len(data)
-        tar.addfile(info, _io.BytesIO(data))
-    return path
+    return write_tar(
+        path, {"x/google/services/compute/resource_compute_subnetwork.go": GO}
+    )
 
 
 def test_go_parser_survives_braces_in_strings(tmp_path: Path) -> None:

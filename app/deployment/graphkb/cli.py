@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from app.deployment.graphkb.model import Graph
+from app.deployment.kbcommon import cli as kb_cli
 
 DEFAULT_OUTPUTS = {
     "tumblebug": Path("output") / "core-graph.json",
@@ -154,19 +155,19 @@ def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
     heuristics_on = True if args.heuristics is None else args.heuristics
 
+    # **소스 이름이 곧 파서 모듈 이름이다**(`choices`와 `parsers/`가 1:1). 그래서 이름을
+    # 고르는 표는 필요 없고, 갈래가 정하는 것은 **인자뿐**이다 — 파서를 찾아 부르는
+    # 배관은 `kb_cli.build_source`가 한다(`kbcommon/cli.py`).
+    #
+    # 인자를 표로 접지 않는 이유: 소스마다 받는 것이 달라서(`heuristics`·`zip_url`·
+    # `providers`·없음) 표에 넣으려면 소스마다 조립 람다가 생긴다. 그건 갈래를 없애는 게
+    # 아니라 읽기 어려운 곳으로 옮기는 것이다.
+    kwargs: dict = {}
     if args.source == "tumblebug":
-        from app.deployment.graphkb.parsers import tumblebug
-
-        kwargs: dict = {
-            "heuristics": bool(args.heuristics),
-            "refresh": args.refresh,
-        }
+        kwargs = {"heuristics": bool(args.heuristics), "refresh": args.refresh}
         if args.swagger_url:
             kwargs["swagger_url"] = args.swagger_url
-        tumblebug.build(output, **kwargs)
     elif args.source == "cfn":
-        from app.deployment.graphkb.parsers import cfn
-
         kwargs = {
             "heuristics": heuristics_on,
             "cdk_oob": not args.no_cdk_oob,
@@ -176,10 +177,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["zip_url"] = args.zip_url
         if args.oob_url:
             kwargs["oob_url"] = args.oob_url
-        cfn.build(output, **kwargs)
     elif args.source == "azure":
-        from app.deployment.graphkb.parsers import azure
-
         kwargs = {"heuristics": heuristics_on, "refresh": args.refresh}
         if args.base_url:
             kwargs["base_url"] = args.base_url
@@ -187,18 +185,9 @@ def _cmd_build(args: argparse.Namespace) -> int:
             kwargs["providers"] = tuple(
                 p.strip() for p in args.providers.split(",") if p.strip()
             )
-        azure.build(output, **kwargs)
     elif args.source == "avm":
-        from app.deployment.graphkb.parsers import avm
-
-        avm.build(output, refresh=args.refresh)
-    elif args.source == "svcmap":
-        from app.deployment.graphkb.parsers import svcmap
-
-        svcmap.build(output)
+        kwargs = {"refresh": args.refresh}
     elif args.source == "gcp":
-        from app.deployment.graphkb.parsers import gcp
-
         kwargs = {"heuristics": heuristics_on, "refresh": args.refresh}
         if args.tag:
             kwargs["tag"] = args.tag
@@ -208,11 +197,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
             )
         if args.crd_dir:
             kwargs["crd_dir"] = args.crd_dir
-        gcp.build(output, **kwargs)
-    else:  # mapping
-        from app.deployment.graphkb.parsers import mapping
+    elif args.source == "mapping":
+        kwargs = {"mapping_file": args.mapping_file}
+    # svcmap은 인자를 받지 않는다 — 빈 kwargs 그대로 간다.
 
-        mapping.build(output, mapping_file=args.mapping_file)
+    kb_cli.build_source(__package__, args.source, output, **kwargs)
     return 0
 
 

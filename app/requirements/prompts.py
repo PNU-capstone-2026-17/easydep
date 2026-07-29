@@ -2,17 +2,25 @@
 
 전 단계 영어로 작성한다 (입력/출력 영어 중심 결정 + BERT는 영어 단문 학습).
 
-**검증 프롬프트는 여기서 쓰지 않는다** — `app/requirements/knowledge/rules.py`의 규칙
-레코드에서 조립한다(`_validator_system`). 규칙을 산문으로 여기 적으면 같은 규칙이
-프롬프트·검출기·문서에 세 벌로 갈라진다. 생성 프롬프트는 아직 산문 그대로다(그 이유는
-`knowledge/rules.py`의 "아직 없는 것" 절).
+**규칙은 여기서 쓰지 않는다** — 검증도(`_validator_system`) 생성도(`_generation_system`)
+`app/requirements/knowledge/rules.py`의 규칙 레코드에서 조립한다. 규칙을 산문으로 여기 적으면
+같은 규칙이 프롬프트·검출기·문서에 여러 벌로 갈라진다.
 
-⚠ 그래서 **생성 프롬프트의 인용은 기계가 대조하지 못한다.** 실제로 하나가 틀려 있었다:
+이 파일에 남는 것은 **모양**뿐이다: 어떤 필드를 내는가, 번호를 어떻게 매기는가, 마크다운을
+쓰지 않는다, 어느 필드에 어느 id를 채우는가. 스키마가 강제하는 것이지 판정으로 가리는 것이
+아니다.
+
+⚠ **손으로 적은 인용은 기계가 대조하지 못한다.** 이 파일이 그걸로 두 번 물렸다:
 자동결과 문단이 "Cockburn: absorb system consequences into the driving goal"이라고
-귀속했는데, `absorb`도 `driving goal`도 책에 없는 말이다(로컬 사본으로 확인, 2026-07-26).
-지금은 규칙 id를 가리킨다 — 근거는 지식베이스가 들고, 대조는 `verify_citations`가 한다.
-남은 산문 인용(`Cockburn label like '3a'` 등)도 KB로 옮기면 같은 대조를 받는다.
+귀속했는데 `absorb`도 `driving goal`도 책에 없는 말이었고(로컬 사본으로 확인, 2026-07-26),
+생성 산문에 남아 있던 `Cockburn p.81`·`Ch.8`·`Guideline 6`도 `verify_citations`의 사정거리
+밖이었다(2026-07-27에 규칙 레코드로 옮겼다). **여기에 인용을 새로 적지 말 것** —
+`tests/test_knowledge.py`가 막는다.
 """
+import hashlib
+from collections.abc import Sequence
+
+from app.requirements.knowledge import concerns as _concerns
 from app.requirements.knowledge import rules as _rules
 
 
@@ -72,46 +80,6 @@ There are two ways to be wrong here, and both matter:
 Do NOT flag: {do_not_flag}
 
 Return the structured object only."""
-
-# 요구사항이 유스케이스 도출에 충분히 구체적인지 판단하고,
-# 부족하면 clarifying questions 를, 충분하면 refined_requirements 를 만든다.
-ASSESS_SYSTEM = """You are a requirements analyst for cloud-native applications.
-
-You are given a set of user requirement statements. They may be abstract
-(e.g. "I want to build a shopping mall service") or concrete
-(e.g. "Users must be able to log in with email and password").
-
-Your job in this step:
-1. Decide whether the requirements are ALREADY concrete enough to identify
-   actors and use cases without guessing. A requirement is concrete when its
-   actor, action, and target object are clear and testable.
-2. If anything is too abstract or ambiguous, produce a SHORT list of
-   clarifying questions (max 4, most impactful first) that would let you
-   decompose the vague requirement into concrete functional requirements.
-   Ask about: target users/actors, the core features, data handled,
-   and key quality attributes (performance, security, scale).
-3. Once you have enough information (from the original input plus any answers
-   already provided in the conversation), set is_concrete=true and populate
-   refined_requirements with a clean list of CONCRETE, SINGLE-SENTENCE English
-   requirements. Decompose abstract goals into specific functional and
-   non-functional requirements. Keep each requirement atomic and testable.
-
-Rules:
-- Prefer concrete, verifiable statements ("The system shall ...", "Users can ...").
-- Do not invent domain facts the user did not imply; ask instead.
-- When the user has already answered clarifying questions, do NOT ask the same
-  thing again — move forward and finalize refined_requirements.
-- refined_requirements must be in English, one requirement per sentence."""
-
-# FR/NFR 분류는 LLM이 아니라 파인튜닝 BERT가 단독 수행한다(step1 classify). 관련 프롬프트 없음.
-
-# elaborate 단계에서 대화 이력을 요약해 최종 요구사항으로 확정할 때 쓰는 지시.
-ELABORATE_SYSTEM = """You are finalizing a requirements list for a cloud-native
-application. Using the original requirements and all answers the user gave to
-clarifying questions, produce the definitive set of concrete, atomic,
-single-sentence English requirements. Cover both functional behaviors and the
-quality attributes (non-functional) the user cares about. Do not ask any more
-questions."""
 
 # STEP 2 — 액터 도출. 기능 요구사항(FR)에서만 액터(역할)를 뽑는다.
 ACTORS_SYSTEM = """You identify the actors for a use-case model from a list of
@@ -227,7 +195,42 @@ def usecase_coverage_repair(base_user: str, orphan_listing: str, current_summary
 
 
 # STEP 3 — 단일 유스케이스의 Cockburn 명세(주 시나리오 + 확장 + 사전/사후조건).
-SPEC_SYSTEM = """You write a fully-dressed use-case specification (Cockburn style) for a
+def _generation_system(stage: str, shape: str, learned: str = "") -> str:
+    """생성 프롬프트를 조립한다: **모양은 `shape`, 규칙은 지식베이스, 배운 것은 맨 뒤.**
+
+    `shape`에 남는 것은 스키마가 강제하는 것뿐이다(어떤 필드를 내는가, 번호 매김, 마크다운
+    금지). 무엇이 결함인가는 `knowledge/rules.py`가 말한다.
+
+    경위는 `docs/requirements-agent-improvements.md` §11. 그 전에는 규칙이 두 벌이었고
+    실제로 갈라져 있었다.
+    """
+    parts = [
+        shape.rstrip(),
+        "",
+        "[RULES YOU FOLLOW]",
+        "Each line is: rule id, then what it requires. The validator judges the finished",
+        "artifact against these same rules, by these same ids.",
+        _rules.generation_prompt_block(stage),
+    ]
+    # `GUIDANCE`·`NON_RULE`은 검증 프롬프트에 안 들어간다 — 받아야 할 쪽이 판정자가 아니라
+    # 쓰는 쪽이다. 특히 과적합("스텝 3~9개"를 목표로 알아듣는 것)은 생성에서 일어난다.
+    non_rules = _rules.non_rules_block(stage)
+    if non_rules:
+        parts += [
+            "",
+            "[NOT RULES]",
+            "These are observations we wrote down precisely so they are not mistaken for",
+            "constraints. Never shape the artifact to satisfy them.",
+            non_rules,
+        ]
+    # 배운 것은 규칙 **사이에 끼우지 않는다.** 근거가 우리 로그뿐인 문장이 책 좌표를 단
+    # 문장과 같은 무게로 읽히면 `basis.py`가 그은 선이 프롬프트에서 무너진다.
+    if learned:
+        parts += ["", learned]
+    return "\n".join(parts)
+
+
+_SPEC_SHAPE = """You write a fully-dressed use-case specification (Cockburn style) for a
 SINGLE use case.
 
 You are given the use case (name, primary actor, goal), the functional requirements (FRs)
@@ -235,28 +238,15 @@ it covers, and the non-functional requirements (NFRs) that constrain it.
 
 WRITING STYLE (applies to every sentence):
 - Plain prose only. NO markdown, NO bold, NO asterisks, NO backticks, NO emphasis.
-- Each step is a single black-box action whose subject is the primary actor or 'System'.
-- No UI micro-actions (clicks, buttons, pages, screens), no protocols (HTTP/SQL).
-- Black-box: say WHAT the system does for the actor, never WHICH internal part does it. Do
-  NOT name internal services, engines, stores, caches, queues, or databases. For example
-  write "System records the order" (not "saves the order to the order store"), "System
-  retrieves the toy list" (not "queries the catalog service"), "System confirms the member's
-  credentials" (not "checks the credential store").
+- Each step is a single action whose subject is the primary actor or 'System'.
 
 Produce:
 - preconditions: verifiable state true before the use case starts; never re-checked inside
   steps. Include any NFR that is a precondition (e.g. the actor is authenticated).
 - trigger: the business event that starts the use case.
 - main_scenario: the main SUCCESS scenario (happy path) as ordered steps. Number them from 1.
-  Each step is ONE sub-goal (one transaction). Write exactly the sub-goals the goal needs —
-  the number of steps is NOT a target: never pad or trim steps to hit a count; judge each
-  step's level, not the total (Cockburn Guideline 6). Derive steps from the goal and covered
-  FRs — every covered FR must appear in some step's covered_req_ids. Put the realizing FR
-  id(s) in each step's covered_req_ids.
-  Automated system consequences and cross-cutting quality concerns — logging, auditing,
-  encrypting stored data, sending a receipt/confirmation — are INTERNAL success guarantees, NOT
-  main-scenario steps. Put them in success_guarantee / minimal_guarantee, never as a step
-  (rule spec.consequence-is-a-guarantee).
+  Derive steps from the goal and covered FRs — every covered FR must appear in some step's
+  covered_req_ids. Put the realizing FR id(s) in each step's covered_req_ids.
 - extensions: exception and alternate flows. For EACH extension:
     * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
     * branch_step: the main_scenario step_number it branches from; use null for a global
@@ -274,6 +264,11 @@ Produce:
   is persisted; relevant NFRs such as data-at-rest encryption still hold).
 
 Keep sentences concise and testable. Do not invent requirements beyond those provided."""
+
+#: 명세 생성 프롬프트 — **플레이북 없는 판.** 지식베이스만으로 조립된 것이고, 측정에서
+#: 대조군이 되는 것도 이것이다. 플레이북을 켜면 `generation_system_for`가 여기에 절을 하나
+#: 더 붙인다.
+SPEC_SYSTEM = _generation_system(_rules.WRITE_SPECIFICATIONS, _SPEC_SHAPE)
 
 #: 단계 → (역할, 안 잡을 것). 규칙 하나짜리 프롬프트를 만들 때 다시 쓴다.
 _VALIDATOR_ROLES = {
@@ -362,6 +357,162 @@ Do NOT flag: {do_not_flag}
 Return the structured object only."""
 
 
+def _generation_shapes() -> dict[str, str]:
+    """단계 → 그 단계의 "모양" 산문. 함수인 이유는 배치다(`_RELATIONSHIPS_SHAPE`가 아래에 있다)."""
+    return {
+        _rules.WRITE_SPECIFICATIONS: _SPEC_SHAPE,
+        _rules.DRAW_DIAGRAM: _RELATIONSHIPS_SHAPE,
+    }
+
+
+def generation_system_for(stage: str) -> str:
+    """이 실행이 쓸 생성 프롬프트. 플레이북이 꺼져 있으면 상수와 **같은 문자열**이다.
+
+    꺼짐이 곧 대조군이라 한 글자도 달라지면 안 된다(`tests/test_playbook.py`가 지킨다).
+    파일을 못 읽으면 끈 것과 같이 간다 — 배우는 층이 실행을 세울 이유는 아니다.
+    """
+    from app.requirements.config import settings
+
+    shape = _generation_shapes().get(stage)
+    if shape is None:  # pragma: no cover - 배선 오류
+        raise KeyError(f"{stage}: 생성 프롬프트가 없다")
+    if not settings.playbook_enabled:
+        return _generation_system(stage, shape)
+
+    from app.requirements.agent import playbook
+
+    try:
+        learned = playbook.render(
+            playbook.load(settings.playbook_path),
+            stage,
+            playbook.load_feedback(settings.playbook_path),
+        )
+    except (OSError, ValueError, KeyError):
+        learned = ""
+    return _generation_system(stage, shape, learned)
+
+
+def _concern_linker_system(only: tuple[str, ...] | None = None) -> str:
+    """클라우드 관심사 링크 프롬프트를 관심사 지식베이스에서 조립한다.
+
+    **판정 방향이 검증 프롬프트와 반대다.** 검증자는 산출물을 보고 위반을 찾지만, 여기서는
+    요구사항을 보고 **다뤄진 것**을 찾는다. 그래서 지시의 무게 중심도 반대다 — 검증자에게는
+    "없는 결함을 만들지 말라"고 하고, 여기서는 "느슨하게 갖다 붙이지 말라"고 해야 한다.
+    링크는 붙이기가 쉽고, 하나라도 붙으면 그 관심사는 '다뤄졌다'가 되어 인계에서 사라진다.
+
+    모양만 여기 있다. 무엇을 묻는지는 `knowledge/concerns.py`가 정한다.
+
+    `only`를 주면 **그 관심사들만** 담는다(`settings.concern_linker_chunk`). 나머지 문구는
+    한 글자도 달라지지 않아야 한다 — 달라지면 한 번에 묻기와 나눠 묻기의 차이가 프롬프트
+    분량이 아니라 문구 차이가 되어 조건 비교가 무너진다.
+    """
+    block = _concerns.prompt_block(only)
+    return f"""You map requirements onto cloud-native concerns.
+
+You are given a list of requirements (each with an id) and a list of concerns. For EACH
+concern, list the ids of the requirements that actually address it. If none do, return an
+empty list for that concern — that is a normal and useful answer, not a failure.
+
+Rules of the mapping:
+- Answer for EVERY concern in the list, once each, using the concern id exactly as given.
+- Use ONLY requirement ids that appear in the given list. Never invent an id.
+- A requirement addresses a concern only if it CONSTRAINS or DECIDES it. A requirement that
+  merely operates in the same area does not. "The system stores user profiles" does not
+  address where data must reside; "user data must remain in Korea" does.
+- Do not judge whether the requirement is well written, complete, or correct. You are only
+  saying what it is about.
+- Being a cloud or web application does not by itself address any concern.
+
+Concerns:
+{block}
+"""
+
+
+#: 관심사 링크 프롬프트(전부 한 번에). `fingerprint()`가 해싱하므로 모듈 로드 시 조립한다.
+#:
+#: **판(版)의 기준은 항상 이 전체 프롬프트다.** 청크로 나눠 물어도 이 해시를 찍는다 —
+#: 청크 크기는 조건이지 판이 아니고, 청크마다 다른 해시를 찍으면 같은 목록으로 잰 실행이
+#: 서로 다른 판으로 보인다.
+CONCERN_LINKER_SYSTEM = _concern_linker_system()
+
+
+def concern_linker_system_for(only: tuple[str, ...] | None = None) -> str:
+    """관심사 부분집합용 링크 프롬프트. `None`이면 캐시된 전체 판을 그대로 준다."""
+    if only is None:
+        return CONCERN_LINKER_SYSTEM
+    return _concern_linker_system(only)
+
+
+#: 측정 경로 이름 — 무엇을 실제로 쓰는 실행인가.
+GENERATION = "generation"
+VALIDATION = "validation"
+CONCERNS = "concerns"
+#: 규칙 하나짜리 프로브(`probe_system_for`). **검증과 다른 프롬프트다** —
+#: `_VALIDATOR_SYSTEMS`는 여러 규칙을 한 번에 담고, 프로브는 하나만 담는다.
+PROBE = "probe"
+
+PATHS = (GENERATION, VALIDATION, PROBE, CONCERNS)
+
+
+def _digest(*parts: str) -> str:
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
+def _probe_digest() -> str:
+    """프로브가 실제로 던지는 프롬프트 전부의 해시.
+
+    규칙마다 프롬프트가 다르므로 전부 이어 붙여 해싱한다. 규칙 문장·근거 고지
+    (`basis.prompt_note`)·이미 검사한 규칙 목록이 바뀌면 여기서 잡힌다.
+    """
+    parts = []
+    for stage in sorted(_VALIDATOR_SYSTEMS):
+        for rule in _rules.rules_for(stage):
+            if rule.severity == _rules.NON_RULE:
+                continue
+            parts.append(probe_system_for(stage, rule.id))
+    return _digest(*parts)
+
+
+def fingerprint(paths: Sequence[str] | None = None) -> dict[str, str]:
+    """이 측정이 **실제로 쓴** 프롬프트의 판. 측정 행마다 함께 찍는다(§13).
+
+    ## 왜 경로별인가 — 전역 판은 두 방향으로 거짓말을 했다
+
+    처음에는 프롬프트 전부를 한 번에 찍었다. 그래서 2026-07-28에 관심사 프롬프트
+    (`CONCERN_LINKER_SYSTEM`)가 생기자, **프로브가 한 글자도 쓰지 않는 프롬프트가 바뀌었다는
+    이유로** 프로브 측정이 "조건이 섞였다"로 무효 처리됐다. 반대쪽 구멍도 있었다 —
+    프로브가 실제로 쓰는 `probe_system_for`는 어느 키에도 안 잡혀서, **진짜 변경은 놓쳤다.**
+
+    과잉 발동하는 조건 추적기는 과소 발동하는 것만큼 나쁘다. 곧 무시당하기 때문이다.
+
+    ## 쓰는 법
+
+    부르는 쪽이 **자기가 무엇을 썼는지** 말한다. `paths=None`이면 전부 낸다(사람이 읽는
+    용도이지, 측정 행에 찍는 값이 아니다).
+
+        fingerprint([PROBE])        # 단독 프로브 측정
+        fingerprint([GENERATION])   # 파이프라인 실행
+
+    ⚠ `*_SYSTEM` 상수와 프로브만 해싱한다 — `spec_repair_user`·`_spec_human`은 여전히
+    판에 안 잡힌다(§15).
+    """
+    builders = {
+        GENERATION: lambda: _digest(
+            SPEC_SYSTEM, RELATIONSHIPS_SYSTEM, ACTORS_SYSTEM, USECASES_SYSTEM
+        ),
+        VALIDATION: lambda: _digest(*(_VALIDATOR_SYSTEMS[s] for s in sorted(_VALIDATOR_SYSTEMS))),
+        PROBE: _probe_digest,
+        # 클라우드 관심사 링크는 생성도 검증도 아니다 — 산출물을 만들지도, 규칙 위반을
+        # 판정하지도 않고 "이 요구가 저 관심사를 건드리는가"만 묻는다.
+        CONCERNS: lambda: _digest(CONCERN_LINKER_SYSTEM),
+    }
+    wanted = PATHS if paths is None else paths
+    unknown = [p for p in wanted if p not in builders]
+    if unknown:  # pragma: no cover - 배선 오류
+        raise KeyError(f"모르는 측정 경로 {unknown} — 아는 것은 {list(builders)}")
+    return {p: builders[p]() for p in wanted}
+
+
 def validator_system_for(stage: str, only: str | None = None) -> str:
     """단계의 검증 프롬프트. 없는 단계를 조용히 넘기지 않는다 — 검증 없는 실행이 된다.
 
@@ -379,7 +530,7 @@ def validator_system_for(stage: str, only: str | None = None) -> str:
 
 
 # STEP 4 — 액터/유스케이스 관계 식별(다이어그램용).
-RELATIONSHIPS_SYSTEM = """You identify the relationships of a UML use-case diagram from a
+_RELATIONSHIPS_SHAPE = """You identify the relationships of a UML use-case diagram from a
 set of actors and use cases (with their goals and, when available, their scenarios).
 
 Reference every actor and use case by its EXACT given name.
@@ -389,26 +540,14 @@ Identify:
   actor, add associations for supporting actors that a scenario hands off to.
 - includes: a genuine shared sub-goal that appears as an action STEP in two or more use cases
   (e.g. 'Send Notification', 'Process Payment'). Factor it into a NEW derived use case
-  (origin 'factored_include') and add an include from each base use case to it. Include is the
-  DEFAULT relation for real shared sub-goals — use it whenever one is genuinely present
-  (Cockburn's "first rule of thumb"). Factor only a meaningful, independently-nameable sub-goal,
-  not a generic step-fragment (validating input, displaying results) and NOT a cross-cutting
-  internal consequence or quality concern (logging, auditing, encrypting data) — those are
-  success guarantees / NFRs, never an included sub-goal drawn from every use case.
-  CRITICAL — a state that is merely required BEFORE a use case starts is a PRECONDITION, not an
-  include. In particular, shared login / authentication / authorization ("the user is logged
-  in") is a precondition established by a PRIOR use case (e.g. Log On) — NEVER draw an
-  <<include>> (or <<extend>>) for authentication from every use case. (Cockburn p.81: a
-  precondition implies another use case already ran.)
-- extends: genuinely OPTIONAL, electively-triggered behavior the goal does NOT require —
-  behavior an actor or account opts into (canonical example: an account configured for
-  multi-factor authentication -> "Perform Multi-Factor Authentication" extends "Authenticate").
-  Attach it to the base at an extension_point and add it to derived_use_cases
-  (origin 'promoted_extend'). Returning ZERO extends is common and correct.
-  DO NOT promote failures/exceptions to extend or to a use case: a condition that reports a
-  failure, error, timeout, cancel/abort, or empty/"no results" outcome is routine handling
-  that STAYS as the use case's Stage-3 extension — never emit a "Handle X Failure" use case,
-  a derived use case, or an extend for it (Cockburn Ch.8).
+  (origin 'factored_include') and add an include from each base use case to it. Factor only a
+  meaningful, independently-nameable sub-goal, not a generic step-fragment (validating input,
+  displaying results).
+- extends: behaviour the goal does NOT require, that an actor or account opts into (canonical
+  example: an account configured for multi-factor authentication -> "Perform Multi-Factor
+  Authentication" extends "Authenticate"). Attach it to the base at an extension_point and add
+  it to derived_use_cases (origin 'promoted_extend'). Returning ZERO extends is common and
+  correct.
 - generalizations: an actor that specializes another (e.g. Registered User -> Guest), or a
   use case that specializes another. Set kind to 'actor' or 'use_case'.
 - derived_use_cases: every NEW use case you introduced for an include or extend above.
@@ -423,6 +562,12 @@ a name. A relationship that references a name not present in the input will be d
 Only assert a relationship when the evidence is clear. Prefer few, well-justified relationships.
 Do not invent actors or use cases beyond those given plus the derived ones you explicitly
 declare."""
+
+#: 관계 생성 프롬프트. 산문에 있던 인용 둘(`Cockburn p.81`·`Cockburn Ch.8`)이 여기서
+#: 사라진 것은 규칙이 사라져서가 아니다 — 같은 규범이 `rel.shared-authentication-is-a-precondition`·
+#: `rel.failures-stay-inline-extensions`에 좌표까지 달려 있고, 이제 그쪽에서 실린다.
+#: **손으로 적은 인용은 대조를 못 받는다**는 것이 이 파일이 이미 한 번 물린 자리다.
+RELATIONSHIPS_SYSTEM = _generation_system(_rules.DRAW_DIAGRAM, _RELATIONSHIPS_SHAPE)
 
 
 # ----------------------------------------------------------------------------
@@ -476,3 +621,86 @@ Set realized=false when the FUNCTIONAL behavior is not supported by the scenario
 absent, only tangentially related, or belongs to a different use case). Do not give the benefit of
 the doubt on the functional core; an unsupported functional claim is a traceability defect. Return
 one verdict per claimed requirement id."""
+
+
+#: 제약 구조화 에이전트. 사용자가 쓴 클라우드 제약을 **구체화하고 확인해서**
+#: `RESOURCE_SPEC` 계약으로 가져오는 것이 이 단계의 본업이다.
+#:
+#: **여기 적힌 함정은 지어낸 것이 아니라 코퍼스 실측에서 나왔다**(2026-07-28, 내부 입력
+#: 11종 270문장 + PURE 18편 7,659문장). 예전에는 같은 지식이 정규식으로 박혀 있었는데,
+#: 규칙이 사용자의 표현 폭을 못 따라갔다(`"The monthly budget is at most 500 USD"`가
+#: 통째로 안 걸렸다). 문법은 버리고 **지식만 이리로 옮겼다.**
+#:
+#: 지어냄을 막는 장치는 문법이 아니라 대조에 있다: 값마다 **자기가 본 자리를 인용하게
+#: 하고, 그 조각이 실제 입력 또는 도구 출력에 실재하는지 기계로 확인한다**
+#: (`step_resource._ground`). 인용을 못 하면 그 값은 버려진다.
+RESOURCE_AGENT_SYSTEM = """You are pinning down a user's cloud deployment constraints
+so that a machine-readable RESOURCE_SPEC can be built from them.
+
+Your goal is not to extract text. It is to **end up with a spec the contract accepts,
+or with a precise question for the user** — and either outcome is a success. What is
+never acceptable is a filled-in field the user did not actually give you.
+
+# How you work
+
+You have tools. Use them in whatever order the situation calls for, as many times as
+you need. Nothing here is a fixed sequence.
+
+- `record_field` puts one value into the draft. It answers you: accepted, or rejected
+  and why. A rejection is information — read it and act on it.
+- `check_contract` tells you what the contract still needs. Call it whenever you want
+  to know where you stand.
+- `ask_user` asks the user one question about one field. **This is a normal action,
+  not a failure.** Asking beats guessing every time.
+- `resolve_region`, `list_cloud_providers`, `convert_to_usd`, `web_search` look things
+  up so that you do not have to remember or estimate them.
+- `finish` ends your turn. **Always end by calling it** — do not just write a closing
+  summary as ordinary text. Pass that summary as its `understanding` argument: one short
+  paragraph saying back what you understood, in the user's own vocabulary rather than
+  ours, so the user can catch a misreading. Do not call it while a required field is
+  still unresolved and unasked.
+
+# What counts as evidence
+
+Every `record_field` call carries `evidence`: the fragment you read the value from.
+It must appear **verbatim** either in the user's text or in a tool result you have
+already received. It is checked automatically, and a value whose evidence is not
+found is dropped. So quote; do not paraphrase.
+
+# Traps that are real
+
+These come from measuring an actual corpus, not from imagination.
+
+- **A unit price is not a budget.** "storage cost shall not exceed $0.02 per GB-month"
+  is a rate. `monthlyBudgetUSD` is what the whole deployment may cost in a month.
+- **A number next to a concurrency word is not a user count.** "100 simultaneous icons",
+  "six active control nodes" — look at *what* is concurrent. `expectedConcurrentUsers`
+  counts users, sessions, streams, clients. Not widgets, not nodes.
+- **Do not infer.** "It should be cheap" is not a budget. "Fast" is not a scale.
+  "Highly available" is not a zone count. If the user did not state it, ask.
+- **Two different answers is a question, not a value.** If the text says 100 users in
+  one place and 9,000 in another, ask which — do not pick, and do not average.
+- **Provider, region and budget are almost never in the requirement sentences.** They
+  live in the separate constraints text, or nowhere. If they are nowhere, ask.
+- **`trafficPattern` has no default.** Recording `steady` because nothing was said is
+  a claim you invented, not an absent value. Leave it out.
+
+# Region and provider
+
+Never write a region code from memory. Call `resolve_region` — the catalogue answers.
+If it comes back ambiguous, that ambiguity is the user's to settle: ask. Set `provider`
+first when you can, since it usually collapses the ambiguity by itself. Record the
+user's own wording in `regionAsWritten` as well, so the resolution stays traceable.
+
+# Money
+
+If the user gave a budget in another currency, do not refuse it and do not do the
+arithmetic in your head — call `convert_to_usd`, then record the USD figure and tell
+the user, in your closing summary, what rate and date it used.
+
+# Asking well
+
+A good question names the field, says **why** the value is needed, and offers the user
+something concrete to react to. `check_contract` gives you the contract's own reason
+for each required field — use that reason, do not invent your own. Ask about several
+fields if several are missing; the user answers them together."""

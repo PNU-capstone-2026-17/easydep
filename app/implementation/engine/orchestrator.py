@@ -13,7 +13,9 @@ from typing import Any
 
 from .models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from .agent_runtime import gradle_command, write_execution_plan
+from .source_conformance import capture_generated_contracts
 from .design_context import (
+    ImplementationTask,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
     generate_e2e_tasks,
@@ -50,6 +52,8 @@ def load_job(path: Path) -> JobSpec:
     tools = data.get("tools", {})
     agent = data.get("agent", {})
     return JobSpec(
+        job_type=str(data.get("jobType", "INITIAL_IMPLEMENTATION")),
+        feedback=str(data.get("feedback", "")),
         name=data.get("name", job_path.stem),
         workspace_root=root,
         inputs=inputs,
@@ -115,11 +119,27 @@ class PrototypeOrchestrator:
         java_root.mkdir(parents=True, exist_ok=True)
 
         try:
+            if self.spec.job_type == "FEEDBACK_REVISION":
+                self._prepare_feedback_revision(staging)
+                self.manifest.status = "SUCCEEDED"
+                self.manifest.generated_files = sorted(
+                    str(path.relative_to(staging)).replace("\\", "/")
+                    for path in staging.rglob("*")
+                    if path.is_file()
+                )
+                self._write_reports(staging)
+                self._promote(staging, final)
+                return final
             self.manifest.status = "GENERATING_CODE"
             self._generate_bce(java_root)
             self._generate_openapi(application)
             self._write_gradle_project(application)
+            self._write_application_entrypoint(java_root)
+            self._write_runtime_configuration(application)
             self._write_missing_type_placeholders(java_root)
+            # Capture before any OpenHands task runs.  These files are the
+            # immutable BCE/OpenAPI source contract for the implementation.
+            capture_generated_contracts(staging, self.spec.base_package)
 
             if self.spec.verify_compile:
                 self.manifest.status = "VERIFYING"
@@ -151,6 +171,95 @@ class PrototypeOrchestrator:
         self._promote(staging, final)
         return final
 
+    def _prepare_feedback_revision(self, staging: Path) -> None:
+        snapshot_path = self.spec.inputs.get("baseSnapshot")
+        if snapshot_path is None or not snapshot_path.is_file():
+            raise ValueError("Feedback revision requires baseSnapshot")
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        files = snapshot.get("files", {})
+        if not isinstance(files, dict) or not files:
+            raise ValueError("Feedback revision baseSnapshot is empty")
+
+        allowed: list[str] = []
+        for relative, content in sorted(files.items()):
+            relative = str(relative).replace("\\", "/").strip("/")
+            parts = Path(relative).parts
+            if (
+                not relative
+                or any(part in {"", ".", ".."} for part in parts)
+                or not relative.startswith("application/")
+            ):
+                raise ValueError(f"Invalid feedback snapshot path: {relative}")
+            target = staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(content), encoding="utf-8")
+            allowed.append(relative)
+
+        # A feedback revision starts from an already generated application.
+        # Snapshot its BCE/OpenAPI contracts before OpenHands receives any
+        # writable paths, just as an initial implementation run does.
+        capture_generated_contracts(staging, self.spec.base_package)
+
+        task_dir = staging / "reports" / "implementation-tasks"
+        task_dir.mkdir(parents=True, exist_ok=True)
+        immutable = [
+            relative for relative in allowed
+            if "/src/main/java/" in f"/{relative}"
+            and any(token in f"/{relative}" for token in ("/bce/", "/api/"))
+        ]
+        editable = [relative for relative in allowed if relative not in immutable]
+        context = {
+            "schemaVersion": "implementation-feedback-context/v1alpha1",
+            "taskId": "apply-source-feedback",
+            "taskType": "control",
+            "feedback": self.spec.feedback,
+            "editableFiles": editable,
+            "immutableFiles": immutable,
+        }
+        context_path = task_dir / "source-feedback.context.json"
+        context_path.write_text(
+            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        prompt = (
+            "Apply the user's natural-language feedback to the existing application.\n\n"
+            f"## User feedback\n{self.spec.feedback}\n\n"
+            "## Rules\n"
+            "- Make a minimal, incremental change; preserve unrelated behavior.\n"
+            "- Modify only the explicitly allowed existing files.\n"
+            "- Do not weaken, delete, or disable tests to obtain a passing build.\n"
+            "- Add or strengthen assertions in an existing test file when behavior changes.\n"
+            "- Generated API and BCE contracts are immutable. Do not edit them.\n"
+            "- Finish only when compileJava and test pass.\n\n"
+            "## Editable files\n"
+            + "\n".join(f"- `{path}`" for path in editable)
+        )
+        prompt_path = task_dir / "source-feedback.prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        task = ImplementationTask(
+            task_id="apply-source-feedback",
+            control="Natural-language source feedback",
+            prompt_file=str(prompt_path.relative_to(staging)).replace("\\", "/"),
+            context_file=str(context_path.relative_to(staging)).replace("\\", "/"),
+            allowed_write_paths=editable,
+            immutable_paths=immutable,
+            source_artifacts={"baseSnapshot": str(snapshot_path)},
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            llm={
+                "mode": self.spec.agent_mode,
+                "model": self.spec.agent_model,
+                "baseUrl": self.spec.agent_base_url,
+            },
+            task_type="control",
+        )
+        self.manifest.implementation_tasks = [task.to_dict()]
+        self.manifest.agent_execution = write_execution_plan(
+            staging,
+            self.manifest.implementation_tasks,
+            self.spec.agent_mode,
+            self.spec.agent_model,
+            self.spec.agent_base_url,
+        )
+
     def _validate_inputs(self) -> None:
         for name in self.spec.required_inputs:
             path = self.spec.inputs.get(name)
@@ -159,16 +268,17 @@ class PrototypeOrchestrator:
                     Diagnostic("MISSING_REQUIRED_INPUT", "ERROR", f"Missing required input: {name}")
                 )
 
-        for name in OPTIONAL_DESIGN_INPUTS:
-            path = self.spec.inputs.get(name)
-            if path is None or not path.is_file():
-                self.manifest.diagnostics.append(
-                    Diagnostic(
-                        "MISSING_PROTOTYPE_INPUT",
-                        "WARNING",
-                        f"Prototype continues without optional input: {name}",
+        if self.spec.job_type != "FEEDBACK_REVISION":
+            for name in OPTIONAL_DESIGN_INPUTS:
+                path = self.spec.inputs.get(name)
+                if path is None or not path.is_file():
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "MISSING_PROTOTYPE_INPUT",
+                            "WARNING",
+                            f"Prototype continues without optional input: {name}",
+                        )
                     )
-                )
 
         for name, path in self.spec.inputs.items():
             if not path.is_file():
@@ -180,7 +290,7 @@ class PrototypeOrchestrator:
                 "size": path.stat().st_size,
             }
 
-        required_tools = {
+        required_tools = {} if self.spec.job_type == "FEEDBACK_REVISION" else {
             "puml2code": self.spec.puml2code_root / "bin" / "puml2code",
             "openapiGenerator": self.spec.openapi_generator_jar,
         }
@@ -193,6 +303,8 @@ class PrototypeOrchestrator:
     def _combined_input_hash(self) -> str:
         digest = hashlib.sha256()
         digest.update(self.spec.name.encode())
+        digest.update(self.spec.job_type.encode())
+        digest.update(self.spec.feedback.encode())
         digest.update(self.spec.base_package.encode())
         digest.update(str(self.spec.allow_assumptions).encode())
         digest.update(str(self.spec.verify_compile).encode())
@@ -293,6 +405,8 @@ class PrototypeOrchestrator:
 
     def _write_gradle_project(self, application: Path) -> None:
         build = """plugins {
+    id 'org.springframework.boot' version '3.3.13'
+    id 'io.spring.dependency-management' version '1.1.6'
     id 'java'
 }
 
@@ -306,8 +420,8 @@ java {
 repositories { mavenCentral() }
 
 dependencies {
-    implementation platform('org.springframework.boot:spring-boot-dependencies:3.3.13')
     implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.flywaydb:flyway-core'
@@ -324,6 +438,45 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         (application / "build.gradle").write_text(build, encoding="utf-8")
         (application / "settings.gradle").write_text(
             f"rootProject.name = '{self.spec.name}'\n", encoding="utf-8"
+        )
+
+    def _write_application_entrypoint(self, java_root: Path) -> None:
+        """Create the executable Spring Boot entrypoint required by bootJar."""
+        package = self.spec.base_package
+        target = java_root / Path(package.replace(".", "/")) / "Application.java"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"package {package};\n\n"
+            "import org.springframework.boot.SpringApplication;\n"
+            "import org.springframework.boot.autoconfigure.SpringBootApplication;\n\n"
+            "@SpringBootApplication\n"
+            "public class Application {\n"
+            "    public static void main(String[] args) {\n"
+            "        SpringApplication.run(Application.class, args);\n"
+            "    }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+    def _write_runtime_configuration(self, application: Path) -> None:
+        resources = application / "src" / "main" / "resources"
+        resources.mkdir(parents=True, exist_ok=True)
+        (resources / "application.yml").write_text(
+            "server:\n"
+            "  port: 8000\n"
+            "management:\n"
+            "  endpoints:\n"
+            "    web:\n"
+            "      base-path: /\n"
+            "      exposure:\n"
+            "        include: health\n"
+            "      path-mapping:\n"
+            "        health: healthz\n"
+            "  endpoint:\n"
+            "    health:\n"
+            "      probes:\n"
+            "        enabled: true\n",
+            encoding="utf-8",
         )
 
     def _write_missing_type_placeholders(self, java_root: Path) -> None:
@@ -360,6 +513,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
                 "--gradle-user-home",
                 str(gradle_home),
                 "compileJava",
+                "bootJar",
                 "--no-daemon",
             ],
             application,

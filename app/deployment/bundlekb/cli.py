@@ -20,6 +20,7 @@ from app.deployment.bundlekb.dataset import (
     companions_of,
     is_built,
 )
+from app.deployment.kbcommon import cli as kb_cli
 
 DEFAULT_OUTPUTS = {
     "avm": Path("output") / "avm-bundles.json",
@@ -51,34 +52,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: 소스 이름 → 파서 모듈. 여섯 다 `build(output, refresh=...)` 표준 모양이다.
+#: **이름이 다른 것만 표가 값을 한다**(`aws-patterns` → `aws_patterns`).
+_PARSERS = {
+    "avm": "avm",
+    "tumblebug": "tumblebug",
+    "aqt": "aqt",
+    "aws-patterns": "aws_patterns",
+    "awscfn": "awscfn",
+    "kcc": "kcc",
+}
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     output = args.output or DEFAULT_OUTPUTS[args.source]
-    if args.source == "avm":
-        from app.deployment.bundlekb.parsers import avm
-
-        avm.build(output, refresh=args.refresh)
-    elif args.source == "tumblebug":
-        from app.deployment.bundlekb.parsers import tumblebug
-
-        tumblebug.build(output, refresh=args.refresh)
-    elif args.source == "aqt":
-        from app.deployment.bundlekb.parsers import aqt
-
-        aqt.build(output, refresh=args.refresh)
-    elif args.source == "aws-patterns":
-        from app.deployment.bundlekb.parsers import aws_patterns
-
-        aws_patterns.build(output, refresh=args.refresh)
-    elif args.source == "awscfn":
-        from app.deployment.bundlekb.parsers import awscfn
-
-        awscfn.build(output, refresh=args.refresh)
-    elif args.source == "kcc":
-        from app.deployment.bundlekb.parsers import kcc
-
-        kcc.build(output, refresh=args.refresh)
-    else:  # pragma: no cover - argparse가 막는다
+    module = _PARSERS.get(args.source)
+    if module is None:  # pragma: no cover - argparse가 막는다
         raise SystemExit(f"알 수 없는 소스: {args.source}")
+    kb_cli.build_source(__package__, module, output, refresh=args.refresh)
     return 0
 
 

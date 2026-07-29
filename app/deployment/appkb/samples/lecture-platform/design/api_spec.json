@@ -1,0 +1,1075 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Online Lecture Platform API",
+    "description": "REST API for managing students, instructors, lectures, payments, playback and administration tasks as described in the use case and sequence diagrams.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.online-lecture-platform.example.com/v1",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/students/register": {
+      "post": {
+        "summary": "Register a new student account",
+        "operationId": "registerStudent",
+        "requestBody": {
+          "description": "Student registration data",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentRegistrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Student account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input (e.g., malformed email, weak password, email already exists)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error or storage failure",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/students/login": {
+      "post": {
+        "summary": "Authenticate a student",
+        "operationId": "loginStudent",
+        "requestBody": {
+          "description": "Login credentials",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authentication successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentLoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication service unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/lectures/search": {
+      "get": {
+        "summary": "Search for lectures",
+        "operationId": "searchLectures",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search term or keywords describing the student's interests",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "Number of items per page",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of matching lectures",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureSearchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or empty search criteria",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Lecture listing service unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/lectures/{lectureId}": {
+      "get": {
+        "summary": "Get lecture details",
+        "operationId": "getLectureDetails",
+        "parameters": [
+          {
+            "name": "lectureId",
+            "in": "path",
+            "required": true,
+            "description": "Identifier of the lecture",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lecture metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LectureDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Lecture not found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error retrieving lecture details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/lectures/{lectureId}/purchase": {
+      "post": {
+        "summary": "Purchase a lecture and create an enrollment",
+        "operationId": "purchaseLecture",
+        "parameters": [
+          {
+            "name": "lectureId",
+            "in": "path",
+            "required": true,
+            "description": "Identifier of the lecture to purchase",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Payment information (card details are never stored)",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentInfo"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Purchase successful and enrollment created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment declined by external provider",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Payment provider unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Lecture capacity full – enrollment cannot be created",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request payload",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/playback/position": {
+      "post": {
+        "summary": "Store current playback position for a lecture",
+        "operationId": "storePlaybackPosition",
+        "requestBody": {
+          "description": "Playback position data",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybackPositionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Position stored successfully"
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error persisting playback position",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "get": {
+        "summary": "Retrieve stored playback position for a lecture",
+        "operationId": "getPlaybackPosition",
+        "parameters": [
+          {
+            "name": "lectureId",
+            "in": "query",
+            "required": true,
+            "description": "Identifier of the lecture",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Playback position found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybackPositionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No stored position for the given lecture",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error retrieving position",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/instructors/lectures/{lectureId}/upload": {
+      "post": {
+        "summary": "Upload a video file for a lecture",
+        "operationId": "uploadLectureVideo",
+        "parameters": [
+          {
+            "name": "lectureId",
+            "in": "path",
+            "required": true,
+            "description": "Lecture to which the video belongs",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Multipart form data containing the video file",
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "video": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "required": [
+                  "video"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Video uploaded and conversion succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoUploadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid file format or missing file",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Video conversion failed",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error during storage or conversion",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/instructors/statistics/enrollment": {
+      "get": {
+        "summary": "Retrieve enrollment statistics for the authenticated instructor",
+        "operationId": "getEnrollmentStatistics",
+        "responses": {
+          "200": {
+            "description": "Enrollment numbers per lecture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentStatistics"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Instructor has no lectures"
+          },
+          "500": {
+            "description": "Error retrieving enrollment data",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/instructors/statistics/revenue": {
+      "get": {
+        "summary": "Retrieve revenue statistics for the authenticated instructor",
+        "operationId": "getRevenueStatistics",
+        "responses": {
+          "200": {
+            "description": "Revenue summary per lecture",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevenueStatistics"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No revenue recorded for any lecture"
+          },
+          "500": {
+            "description": "Error retrieving revenue data",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/admin/lectures/{lectureId}": {
+      "delete": {
+        "summary": "Remove a lecture from public view",
+        "operationId": "removeLecture",
+        "parameters": [
+          {
+            "name": "lectureId",
+            "in": "path",
+            "required": true,
+            "description": "Identifier of the lecture to remove",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Lecture successfully removed"
+          },
+          "404": {
+            "description": "Lecture not found or already not public",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Internal error while removing lecture",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Administrator lacks required authority",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "StudentRegistrationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "StudentRegistrationResponse": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "message": {
+            "type": "string",
+            "example": "Registration successful"
+          }
+        },
+        "required": [
+          "studentId",
+          "message"
+        ]
+      },
+      "StudentLoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "additionalProperties": false
+      },
+      "StudentLoginResponse": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "JWT token to be used in Authorization header"
+          },
+          "tokenType": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ]
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Seconds until token expiration"
+          }
+        },
+        "required": [
+          "accessToken",
+          "tokenType",
+          "expiresIn"
+        ]
+      },
+      "LectureSearchResult": {
+        "type": "object",
+        "properties": {
+          "totalResults": {
+            "type": "integer"
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pageSize": {
+            "type": "integer"
+          },
+          "lectures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LectureSummary"
+            }
+          }
+        },
+        "required": [
+          "totalResults",
+          "page",
+          "pageSize",
+          "lectures"
+        ]
+      },
+      "LectureSummary": {
+        "type": "object",
+        "properties": {
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "format": "float"
+          },
+          "shortDescription": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lectureId",
+          "title",
+          "price"
+        ]
+      },
+      "LectureDetail": {
+        "type": "object",
+        "properties": {
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "format": "float"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "videoAvailable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lectureId",
+          "title",
+          "description",
+          "price",
+          "videoAvailable"
+        ]
+      },
+      "PaymentInfo": {
+        "type": "object",
+        "description": "Payment card information; never persisted by the platform",
+        "properties": {
+          "cardNumber": {
+            "type": "string",
+            "pattern": "^[0-9]{13,19}$"
+          },
+          "expiryMonth": {
+            "type": "string",
+            "pattern": "^(0[1-9]|1[0-2])$"
+          },
+          "expiryYear": {
+            "type": "string",
+            "pattern": "^[0-9]{2}$"
+          },
+          "cvc": {
+            "type": "string",
+            "pattern": "^[0-9]{3,4}$"
+          },
+          "cardholderName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cardNumber",
+          "expiryMonth",
+          "expiryYear",
+          "cvc",
+          "cardholderName"
+        ],
+        "additionalProperties": false
+      },
+      "EnrollmentResponse": {
+        "type": "object",
+        "properties": {
+          "enrollmentId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "enrolled"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "Enrollment successful"
+          }
+        },
+        "required": [
+          "enrollmentId",
+          "lectureId",
+          "status",
+          "message"
+        ]
+      },
+      "PlaybackPositionRequest": {
+        "type": "object",
+        "properties": {
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "positionSeconds": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "lectureId",
+          "positionSeconds"
+        ],
+        "additionalProperties": false
+      },
+      "PlaybackPositionResponse": {
+        "type": "object",
+        "properties": {
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "positionSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "lastUpdated": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "lectureId",
+          "positionSeconds",
+          "lastUpdated"
+        ]
+      },
+      "VideoUploadResponse": {
+        "type": "object",
+        "properties": {
+          "videoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lectureId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "Video uploaded and ready for playback"
+          }
+        },
+        "required": [
+          "videoId",
+          "lectureId",
+          "status",
+          "message"
+        ]
+      },
+      "EnrollmentStatistics": {
+        "type": "object",
+        "properties": {
+          "instructorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "statistics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lectureId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "enrolledStudents": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "lectureId",
+                "title",
+                "enrolledStudents"
+              ]
+            }
+          }
+        },
+        "required": [
+          "instructorId",
+          "statistics"
+        ]
+      },
+      "RevenueStatistics": {
+        "type": "object",
+        "properties": {
+          "instructorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "statistics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lectureId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "revenue": {
+                  "type": "number",
+                  "format": "float",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "lectureId",
+                "title",
+                "revenue"
+              ]
+            }
+          }
+        },
+        "required": [
+          "instructorId",
+          "statistics"
+        ]
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "default": "about:blank"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "title",
+          "status"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Student",
+      "description": "Endpoints used by students"
+    },
+    {
+      "name": "Instructor",
+      "description": "Endpoints used by instructors"
+    },
+    {
+      "name": "Administrator",
+      "description": "Endpoints used by administrators"
+    },
+    {
+      "name": "Payment",
+      "description": "Interaction with external payment provider (internal only)"
+    }
+  ]
+}

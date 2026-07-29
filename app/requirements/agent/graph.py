@@ -4,12 +4,14 @@
 진입점이다. 세부 작업은 각 단계 서브그래프 안에 캡슐화돼 있다.
 
 전체 워크플로우(상위 그래프, 노드명 = 단계별 동작):
-  START → refine_requirements → model_use_cases → write_specifications → draw_diagram → END
+  START → refine_requirements → cover_cloud_concerns → model_use_cases
+      → write_specifications → draw_diagram → END
   (각 노드 = 컴파일된 스테이지 서브그래프. 세부 노드는 app/agent/subgraphs.py 참조)
 
 대화형 게이트는 gated 그래프에서만 스테이지 사이에 부모-레벨 노드로 삽입한다:
-  refine_requirements → gate_requirements → model_use_cases → gate_use_cases
-      → write_specifications → gate_specs → draw_diagram → gate_relationships → END
+  refine_requirements → cover_cloud_concerns → gate_requirements → model_use_cases
+      → gate_use_cases → write_specifications → gate_specs → draw_diagram
+      → gate_relationships → END
 (게이트를 서브그래프 안이 아니라 부모 레벨에 두는 이유: LangGraph는 서브그래프가 interrupt로
 멈추면 그 내부 누적 상태를 부모로 올리지 않으므로, 스테이지 완료 후 부모 게이트에서 멈춰야
 멈춘 시점의 산출물이 응답에 실린다.)
@@ -41,14 +43,14 @@ from app.requirements.agent.subgraphs import build_stage_subgraphs
 from app.requirements.agent.supervisor import route_redo, supervise_for
 from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import FeedbackEdit
+from app.requirements.schemas import FeedbackEdit, ResourceAnswer
 from app.requirements.session_store import SqlCheckpointSaver
 
 
 def _build_plain_graph(saver):
     """게이트 없는 파이프라인 + **되돌아가기**.
 
-    START → refine_requirements → model_use_cases → supervise_model
+    START → refine_requirements → cover_cloud_concerns → model_use_cases → supervise_model
           → write_specifications → supervise_specs → draw_diagram → supervise_diagram → END
 
     각 `supervise_*`는 남은 결함을 보고 **그 결함을 낸 단계의 그룹으로 되돌린다**
@@ -65,6 +67,8 @@ def _build_plain_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
+    builder.add_node("cover_cloud_concerns", subs["cover_cloud_concerns"])
+    builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
     builder.add_node("draw_diagram", subs["draw_diagram"])
@@ -77,7 +81,12 @@ def _build_plain_graph(saver):
     )
 
     builder.add_edge(START, "refine_requirements")
-    builder.add_edge("refine_requirements", "model_use_cases")
+    # 관심사 커버리지는 되돌아가기의 대상도, 되돌아갈 자리도 아니다 — 결함을 내지 않고
+    # (인계 항목만 낸다) `classified`에서만 파생되므로 아래 단계가 다시 돌아도 답이 같다.
+    builder.add_edge("refine_requirements", "cover_cloud_concerns")
+    # 제약 구조화도 같은 성격이다 — 결함을 내지 않고 `classified`·제약 원문에서만 파생된다.
+    builder.add_edge("cover_cloud_concerns", "structure_constraints")
+    builder.add_edge("structure_constraints", "model_use_cases")
     builder.add_edge("model_use_cases", "supervise_model")
     builder.add_edge("write_specifications", "supervise_specs")
     builder.add_edge("draw_diagram", "supervise_diagram")
@@ -116,6 +125,8 @@ def _build_gated_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
+    builder.add_node("cover_cloud_concerns", subs["cover_cloud_concerns"])
+    builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
     builder.add_node("draw_diagram", subs["draw_diagram"])
@@ -125,10 +136,25 @@ def _build_gated_graph(saver):
     builder.add_node("gate_relationships", gate_relationships)
 
     builder.add_edge(START, "refine_requirements")
-    builder.add_edge("refine_requirements", "gate_requirements")
+    # 게이트 **앞**에 둔다 — 사용자가 요구사항을 확인하는 그 자리에서 "안 정해진 클라우드
+    # 관심사"를 함께 보게 하려는 것이다. 뒤에 두면 사용자가 이미 넘어간 뒤에 나온다.
+    builder.add_edge("refine_requirements", "cover_cloud_concerns")
+    # 제약 구조화도 게이트 **앞**이다. 못 채운 필수 칸의 되묻기가 사용자가 요구사항을
+    # 확인하는 바로 그 자리에서 함께 보여야 한다 — 뒤에 두면 이미 넘어간 뒤에 나온다.
+    builder.add_edge("cover_cloud_concerns", "structure_constraints")
+    builder.add_edge("structure_constraints", "gate_requirements")
+    # loop가 게이트 자신이 아니라 `cover_cloud_concerns`로 돌아간다. 이 게이트는 루프에서
+    # **`classify`를 다시 돌려 `classified`를 바꾼다** — 게이트로 바로 돌아오면 관심사
+    # 커버리지가 옛 분류 위에서 계산된 채로 남는다. 한 바퀴 더 도는 비용은 결정론 층에서
+    # 0이고, LLM 층을 켰을 때만 실제 비용이 된다.
     builder.add_conditional_edges(
         "gate_requirements", route_gate,
-        {"advance": "model_use_cases", "loop": "gate_requirements"},
+        {"advance": "model_use_cases",
+         "loop": "cover_cloud_concerns",
+         # 되묻기의 답만 온 경우. 이 분기는 `classify`를 안 돌려 `classified`가 그대로이고,
+         # 관심사 링크는 그 입력의 순수 함수다 — 같은 답을 다시 계산할 뿐이다. LLM 층을
+         # 켜면 그 재계산이 표 3벌(실측 중앙값 23.6초/표)이라 답 한 번에 1~2분을 버린다.
+         "answers": "structure_constraints"},
     )
     builder.add_edge("model_use_cases", "gate_use_cases")
     builder.add_conditional_edges(
@@ -222,6 +248,7 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
 #: **한 곳에만 적는다** — 예전에는 게이트 응답과 완료 응답이 같은 목록을 따로 들고 있어서,
 #: 새 산출물을 추가하면 한쪽에만 들어가 화면에서 조용히 사라질 수 있었다.
 _ARTIFACT_KEYS = (
+    "cloud_concerns", "resource_spec", "resource_intake",
     "actors", "use_cases", "model_review", "coverage", "use_case_specs", "spec_report",
     "relationships", "relationship_report", "diagram",
 )
@@ -252,6 +279,9 @@ def _result_payload(
                 # 화면이 구조화 편집을 만들 재료. 없으면(step1) 자연어만 받는다.
                 "edit_stage": value.get("edit_stage"),
                 "edit_targets": value.get("edit_targets"),
+                # 되묻기. 화면이 이걸 받아야 `resource_answers`를 만들 수 있다 —
+                # 안 실으면 질문이 상태에만 있고 사용자에게는 영영 안 보인다.
+                "resource_questions": value.get("resource_questions"),
                 "requirements": result.get("classified", []),
             }
             # 게이트에서 멈춘 시점까지 누적된 step2~4 산출물도 함께 실어 UI가 진행 상황을 보여준다.
@@ -288,6 +318,7 @@ def start_analysis(
     feedback_gates: bool | None = None,
     *,
     persist: bool = False,
+    constraints_text: str = "",
 ) -> dict:
     """새 요구사항 분석 세션을 시작한다.
 
@@ -296,24 +327,34 @@ def start_analysis(
 
     persist=True면 체크포인트와 세션 모드를 MySQL에 남긴다 — 서버가 재시작해도 이어진다.
     서빙 경로(api.py)가 켜고, CLI·배치는 끈 채로 둔다(프로세스와 수명이 같고 DB 없이도 돌아야 한다).
+
+    `constraints_text`는 사용자가 **요구사항과 따로** 쓴 클라우드 제약 원문이다
+    (`apps.resource_constraints_text`). 요구사항 문장에 섞어 넣지 않는 이유는
+    `steps/step_resource.py`에 있다 — 실측상 provider·region·예산은 요구사항 산문에
+    0건이고, 섞으면 분류기가 그것들을 FR/NFR로 판정해야 한다.
     """
     gates = settings.enable_feedback_gates if feedback_gates is None else feedback_gates
     _remember_mode(thread_id, gates, persist)
     # 초기 입력은 부분 상태(나머지 키는 노드가 채움)라 AgentState로 캐스팅.
+    initial: dict = {"raw_requirements": requirements}
+    if constraints_text.strip():
+        initial["resource_constraints_text"] = constraints_text
     with telemetry.run_scope(f"analyze:{thread_id}") as stats:
-        result = _invoke(
-            gates, thread_id, cast(AgentState, {"raw_requirements": requirements}), persist
-        )
+        result = _invoke(gates, thread_id, cast(AgentState, initial), persist)
         return _result_payload(result, thread_id, stats)
 
 
 def resume_analysis(
-    answer: str | FeedbackEdit, thread_id: str, *, persist: bool = False
+    answer: str | FeedbackEdit | ResourceAnswer, thread_id: str, *, persist: bool = False
 ) -> dict:
     """clarifying question 또는 피드백 게이트에 대한 사용자 입력으로 세션을 재개한다.
 
-    answer는 자연어 문자열이거나, 화면이 대상을 이미 아는 경우 `FeedbackEdit`이다.
-    후자는 의도 분류 LLM 호출을 건너뛴다(app/requirements/feedback.py: resolve_intent).
+    answer는 셋 중 하나다:
+      - 자연어 문자열 — 의도 분류가 어느 단계를 고칠지 정한다.
+      - `FeedbackEdit` — 화면이 대상을 이미 알 때. 의도 분류 LLM 호출을 건너뛴다
+        (app/requirements/feedback.py: resolve_intent).
+      - `ResourceAnswer` — **되묻기의 답**. 요구사항 피드백이 아니므로 재분류를 돌리지
+        않고 `resource_answers`에 쌓인 뒤 제약 구조화만 다시 돈다.
 
     persist는 start_analysis 때와 같아야 한다 — 체크포인트가 있는 곳에서 찾아야 한다.
     """

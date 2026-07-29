@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.deployment.appkb.diagram import parse_back, render
@@ -27,11 +29,7 @@ from app.deployment.appkb.verify import (
     verify_diagram,
     verify_plan,
 )
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
+from app.deployment.tests._helpers import flat
 
 
 def _plan() -> DeploymentPlan:
@@ -356,3 +354,228 @@ def test_matching_provider_is_stated_positively() -> None:
     lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
     assert any("every vendor type in the plan matches" in flat(ln) for ln in lines)
     assert not any("**mismatch**" in flat(ln) for ln in lines)
+
+
+def test_placement_has_three_states_not_two() -> None:
+    """**밖에 그린 것이 "밖에 있다"로 읽히면 안 된다.**
+
+    감사(2026-07-28)에서 나온 요구다. 예전 렌더러는 `role == "compute"`인 노드만
+    안에 넣고 나머지를 전부 밖에 그렸는데, 관리형 서비스가 어느 네트워크에 놓이는지는
+    이 저장소가 **모른다** — `contained_in` 축은 네트워크 배치가 아니라 ARM 이름
+    계층(azure)·프로젝트 소속(gcp)이고 aws는 0건이다.
+
+    그래서 셋을 가른다: 담긴다 / 안 담긴다(안다) / 모른다. 부재를 "밖"으로 승격하지
+    않는 것은 `basis.py`·`perfkb`가 상태를 늘린 것과 같은 이유다.
+    """
+    plan = _plan()
+    states = {n.placement for n in plan.nodes}
+    assert states <= {"none", "unknown"} | {n.id for n in plan.nodes}, states
+
+
+def test_unknown_placement_is_declared_in_the_legend() -> None:
+    """모른다는 사실이 **그림 안에** 남아야 한다 — 그림은 잘려 돌아다닌다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode("db", "저장소", "managed", ORIGIN_KB))  # placement 기본값
+    uml = render(plan)
+    assert "their placement is not known" in uml
+    assert "not a claim that they sit outside" in uml
+
+
+def test_core_containment_constant_matches_the_artifact() -> None:
+    """구성기가 상수로 든 담김 쌍이 **산출물과 어긋나면 죽는다.**
+
+    `_CORE_CONTAINMENT`는 매번 그래프를 읽지 않으려고 둔 상수다. 상수는 조용히
+    낡으므로 대조를 검사에 둔다 — 이 저장소가 Azure 구세대 손 표에 쓴 것과 같은 장치
+    (문서 라벨과 손 표가 어긋나면 빌드가 죽는다).
+    """
+    import gzip
+    import json
+    from pathlib import Path
+
+    from app.deployment.nim_agent.design_tools import _CORE_CONTAINMENT
+
+    blob = Path(__file__).resolve().parent.parent / "data" / "core-graph.json.gz"
+    if not blob.exists():
+        pytest.skip("core-graph 미빌드")
+    graph = json.loads(gzip.decompress(blob.read_bytes()).decode("utf-8"))
+    declared = {
+        e["from"]: e["to"].split("::")[-1].lower()
+        for e in graph["edges"] if e.get("type") == "contained_in"
+    }
+    for core_id, container in _CORE_CONTAINMENT.items():
+        assert declared.get(core_id) == container, (
+            f"{core_id}: 상수는 {container}라는데 공통 층은 {declared.get(core_id)}라고 한다"
+        )
+
+
+# --- 탄소 요구의 소비자 (2026-07-28: 관심사 A갈래 첫 연결) ---
+
+
+def test_carbon_preference_yields_material_not_a_verdict() -> None:
+    """**데이터를 모아 두고 물을 자리가 없어 안 쓰이던 축**을 이었다.
+
+    envkb의 탄소 161건은 질의응답에만 쓰이고 계획에 닿지 않았다 — 요구사항 쪽에
+    `lowCarbonPreferred`를 물을 칸이 없었기 때문이다(관심사 `cn.carbon-constraint`가
+    소비자 없이 떠 있었다).
+
+    판정은 **하지 않는다.** 더 낮은 리전이 있다는 것은 사실이지만 옮기라는 권고가
+    아니다 — 지연·레지던시와의 상충을 우리가 못 잰다. 프로바이더 간 비교도 안 한다
+    (GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정이라 방법론이 다르고, 실측에서
+    같은 도시의 순서가 뒤집혔다).
+    """
+    plan = _plan()
+    plan.notes.append(Note(
+        "Low-carbon preference — aws ap-northeast-2 is 477.4 gCO2eq/kWh. "
+        "**23 regions of this provider are lower** (eu-north-1) — moving is a "
+        "trade-off",
+        ORIGIN_KB, "envkb",
+    ))
+    lines = verify_against_requirements(plan, {"lowCarbonPreferred": True}, _HOURS)
+    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
+    assert "lower-carbon regions exist" in verdict
+    assert "does not weigh" in verdict, "판정하지 않는다는 말이 빠졌다"
+
+
+def test_carbon_preference_without_data_says_no_verdict() -> None:
+    """**침묵이 "괜찮다"로 읽히면 안 된다.** 자료가 없으면 없다고 말한다."""
+    lines = verify_against_requirements(_plan(), {"lowCarbonPreferred": True}, _HOURS)
+    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
+    assert "**no verdict**" in verdict
+
+
+def test_carbon_verdict_is_absent_when_not_required() -> None:
+    """요구가 없으면 판정도 없다 — 잡음을 늘리지 않는다."""
+    lines = verify_against_requirements(_plan(), {}, _HOURS)
+    assert not any("lowCarbonPreferred" in ln for ln in lines)
+
+
+def test_undecided_replica_count_is_visible_in_the_diagram() -> None:
+    """**노트는 그림과 같이 안 다닌다.**
+
+    계획은 "몇 대인지 이 지식베이스가 정할 수 없다"고 노트로 말해 왔는데, 그림에는
+    상자가 하나뿐이라 **1대처럼 읽혔다.** 그림은 잘려 돌아다니므로 미정을 그림에도
+    남긴다(범례에 유보를 넣은 것과 같은 이유).
+
+    수를 우리가 정하지는 않는다 — 근거 없는 사이징은 이 저장소가 막아 온 것이다.
+    """
+    uml = render(_plan())
+    assert "×?" in uml, "미정 대수가 그림에 없다"
+    assert "not decided" in uml, "범례가 미정을 밝히지 않는다"
+
+
+def test_replica_marker_only_on_compute() -> None:
+    """공유 인프라·외부 시스템에 대수를 묻는 것은 잡음이다."""
+    plan = _plan()
+    plan.nodes.append(PlanNode("vnet", "네트워크", "shared", ORIGIN_KB))
+    for line in render(plan).splitlines():
+        if '"vnet"' in line:
+            assert "×" not in line
+
+
+# --- 되돌아가는 방향 (목표 ①) ---
+
+
+def test_absent_verdicts_are_named_not_silent() -> None:
+    """**판정이 없는 것과 판정이 통과한 것은 다르다.**
+
+    요구사항에 그 칸이 없으면 판정문 자체가 안 나오므로, 사용자는 둘을 구별할 수
+    없었다 — 이 저장소가 다른 축에서 계속 지켜 온 구분(없다 / 안 봤다)이 여기서만
+    빠져 있었다.
+
+    그리고 이것이 목표 ①의 **되돌아가는 방향**이다. 지금까지 사슬은 한 방향이었다:
+    요구사항 → 계획 → 판정. 판정이 *"이 칸을 정하면 답할 수 있다"*고 말하면
+    요구사항 단계로 돌아가는 길이 생긴다.
+    """
+    lines = verify_against_requirements(_plan(), {"provider": "aws"}, _HOURS)
+    gap = next(ln for ln in lines if "Not judged for lack of a requirement" in ln)
+    assert "monthlyBudgetUSD" in gap and "the budget verdict" in gap
+    assert "absent, not passed" in gap
+
+
+def test_no_gap_line_when_everything_is_settled() -> None:
+    """다 정해졌으면 그 줄이 없다 — 늘 붙는 줄은 읽히지 않는다."""
+    req = {
+        "provider": "aws", "monthlyBudgetUSD": 500, "expectedConcurrentUsers": 100,
+        "trafficPattern": "steady", "stateless": True, "multiZone": True,
+    }
+    lines = verify_against_requirements(_plan(), req, _HOURS)
+    assert not any("Not judged for lack" in ln for ln in lines)
+
+
+def test_either_scale_signal_closes_the_scale_verdict() -> None:
+    """규모는 **둘 중 하나**면 된다 — 계약이 택1로 요구한다."""
+    req = {"approxRequestsPerSecond": 50}
+    lines = verify_against_requirements(_plan(), req, _HOURS)
+    gap = next((ln for ln in lines if "Not judged for lack" in ln), "")
+    assert "expectedConcurrentUsers" not in gap
+
+
+# --- UML 배포 다이어그램의 어휘 (2026-07-28: "이게 배포 다이어그램이냐") ---
+
+
+def test_managed_services_get_shapes_by_archetype_not_by_role() -> None:
+    """**SQS 큐가 원통으로 그려지고 있었다.**
+
+    `role == "managed"`면 무조건 `database`였다. 아키타입을 계획이 이미 들고 있는데
+    (`app::messageQueue`·`app::secretStore`) 그림이 안 쓴 것이라, 데이터를 더 모을
+    필요 없이 **이미 아는 것을 쓰기만** 하면 되는 자리였다.
+    """
+    plan = _plan()
+    plan.nodes.append(PlanNode("q", "큐", "managed", ORIGIN_KB,
+                               archetype="app::messageQueue"))
+    plan.nodes.append(PlanNode("sec", "시크릿", "managed", ORIGIN_KB,
+                               archetype="app::secretStore"))
+    plan.nodes.append(PlanNode("obj", "파일", "managed", ORIGIN_KB,
+                               archetype="app::objectStorage"))
+    uml = render(plan)
+    assert 'queue "큐' in uml, "큐가 큐 도형이 아니다"
+    assert 'folder "시크릿' in uml, "시크릿 저장소가 데이터 저장소로 그려졌다"
+    assert 'storage "파일' in uml
+    # 관계형 DB는 원통이 맞다 — 아키타입이 그렇게 말한다.
+    assert 'database "저장소' in uml
+
+
+def test_component_is_an_artifact_deployed_onto_a_node() -> None:
+    """**UML 배포 다이어그램의 뼈대는 `Node ← «deploy» ← Artifact`다.**
+
+    한동안 컴포넌트가 곧 노드였다. 그래서 "한 VM에 두 컴포넌트"도 k8s의 3층도
+    표현할 수 없었고, 그림이 배포도라기보다 **리소스 목록**에 가까웠다.
+    """
+    plan = _plan()
+    plan.nodes[:] = [replace(n, host="VM · t3a.medium") if n.role == "compute" else n
+                     for n in plan.nodes]
+    uml = render(plan)
+    assert 'node "VM · t3a.medium' in uml, "실행 환경 상자가 없다"
+    assert 'artifact "OrderService" as "order-api"' in uml, "컴포넌트가 아티팩트가 아니다"
+    # **대수는 실행 환경에 붙는다** — 몇 대인가는 컴포넌트가 아니라 노드의 성질이다.
+    assert "×?" in uml
+
+
+def test_host_wrapper_does_not_break_the_roundtrip() -> None:
+    """감싸는 상자가 **지어낸 노드로 잡히면 안 된다.**
+
+    왕복 검증은 "계획에 없는 상자"를 잡는 장치다(답변에서 없는 값을 만드는 것의
+    그림판). 껍데기 하나로 그 장치가 무뎌지면 안 되므로 되파싱이 접미를 벗긴다.
+    """
+    plan = _plan()
+    plan.nodes[:] = [replace(n, host="VM") if n.role == "compute" else n
+                     for n in plan.nodes]
+    uml = render(plan)
+    assert verify_diagram(plan, uml) == []
+    aliases, _ = parse_back(uml)
+    assert "order-api" in aliases
+    assert not any(a.endswith("@host") for a in aliases), "껍데기 별칭이 새어 나왔다"
+
+
+def test_keys_and_policies_are_artifacts_not_nodes() -> None:
+    """SSH 키를 `node`로 그리면 **"여기서 무언가 돈다"**는 뜻이 된다.
+
+    자격증명·정책은 실행 환경이 아니다. 다만 실제로 만들어지는 리소스라 그림에서
+    빼지는 않는다 — 아티팩트로 그린다.
+    """
+    plan = _plan()
+    plan.nodes.append(PlanNode("sshkey", "SSH 키", "shared", ORIGIN_KB))
+    plan.nodes.append(PlanNode("securitygroup", "보안 그룹", "shared", ORIGIN_KB))
+    uml = render(plan)
+    assert 'artifact "SSH 키' in uml
+    assert 'artifact "보안 그룹' in uml

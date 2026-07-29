@@ -225,6 +225,31 @@ def verify_against_requirements(
                 "performance join"
             )
 
+    if req.get("lowCarbonPreferred"):
+        # 계획에 실린 탄소 대조 자료를 읽는다 — `appkb`는 KB를 import하지 않으므로
+        # 구성기가 노트로 담아 준다(`trafficPattern`이 perfkb 노트를 읽는 것과 같은 결).
+        carbon_notes = [x.text for x in plan.notes if x.source == "envkb"
+                        and "carbon" in x.text.lower()]
+        lower = next((t for t in carbon_notes if "regions of this provider are lower" in t), None)
+        if lower:
+            # **판정하지 않는다.** 더 낮은 리전이 있다는 것은 사실이지만 옮기라는
+            # 권고가 아니다 — 지연·레지던시와의 상충을 우리가 잴 수 없다.
+            out.append(
+                "lowCarbonPreferred: **lower-carbon regions exist for this provider** "
+                "— see the plan note. Whether to move is a trade-off against latency "
+                "and residency, which this knowledge base does not weigh"
+            )
+        elif carbon_notes:
+            out.append(
+                "lowCarbonPreferred: reflected — no region of this provider in this "
+                "data is lower than the chosen one"
+            )
+        else:
+            out.append(
+                "lowCarbonPreferred: **no verdict** — this plan carries no carbon "
+                "figure (the provider or region is outside the carbon dataset)"
+            )
+
     stateless = req.get("stateless")
     serverless = sorted(
         n.id for n in plan.nodes if n.archetype == "app::serverlessFunction"
@@ -281,7 +306,49 @@ def verify_against_requirements(
             out.append(
                 f"Provider ({provider}): every vendor type in the plan matches"
             )
+
+    out.extend(_what_would_close_the_gaps(req))
     return out
+
+
+#: **판정을 닫으려면 요구사항에서 무엇이 정해져야 하는가.**
+#: `RESOURCE_SPEC`의 칸 이름 → 그 칸이 없어서 못 하는 판정.
+#:
+#: 이 표가 목표 ①의 **되돌아가는 방향**이다. 지금까지 사슬은 한 방향이었다 —
+#: 요구사항이 계획을 만들고, 계획이 판정을 냈지만, **판정이 요구사항으로 돌아가는
+#: 길이 없었다.** 그래서 "규모를 판정할 수 없다"를 읽은 사람이 *무엇을 더 적어야
+#: 판정이 서는지*를 스스로 알아내야 했다.
+#:
+#: 새 학습 장치가 아니다 — 필요한 것은 이미 다 있었다. 그 칸을 묻는 관심사도 이미
+#: 있고(`app/requirements/knowledge/concerns.py`), 끊긴 것은 **둘을 잇는 한 줄**뿐이었다.
+_CLOSES = {
+    "monthlyBudgetUSD": "the budget verdict",
+    "expectedConcurrentUsers": "the scale verdict",
+    "trafficPattern": "the burst-fit verdict",
+    "stateless": "the serverless-fit verdict",
+    "multiZone": "the availability-zone verdict",
+}
+
+
+def _what_would_close_the_gaps(req: dict) -> list[str]:
+    """안 준 칸 때문에 **안 낸 판정**을 한 줄로 되짚는다.
+
+    침묵을 "해당 없음"으로 읽게 두지 않는다 — 요구사항에 그 칸이 없으면 판정문 자체가
+    안 나오므로, 사용자는 **판정이 없는 것과 판정이 통과한 것을 구별할 수 없다.**
+    이 저장소가 다른 축에서 계속 지켜 온 구분(없다 / 안 봤다)이 여기서만 빠져 있었다.
+    """
+    missing = [name for name in _CLOSES if req.get(name) is None]
+    # 규모는 둘 중 하나면 된다(계약이 택1로 요구한다).
+    if req.get("approxRequestsPerSecond") is not None:
+        missing = [m for m in missing if m != "expectedConcurrentUsers"]
+    if not missing:
+        return []
+    pairs = ", ".join(f"{name} ({_CLOSES[name]})" for name in missing)
+    return [
+        f"**Not judged for lack of a requirement** ({len(missing)}): {pairs}. "
+        "These verdicts are absent, not passed — settle the fields upstream and "
+        "they become answerable"
+    ]
 
 
 def unhedged_claims(plan: DeploymentPlan) -> list[str]:

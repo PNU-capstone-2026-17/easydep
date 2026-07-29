@@ -9,11 +9,7 @@ import pytest
 from app.deployment.graphkb import agent_api
 from app.deployment.graphkb.model import Edge, Graph, Node
 from app.deployment.graphkb.query import equivalents
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
+from app.deployment.tests._helpers import flat
 
 
 def node(node_id: str, layer: str = "core", provider: str = "common") -> Node:

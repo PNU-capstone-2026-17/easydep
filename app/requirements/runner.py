@@ -20,21 +20,31 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from app.core.rtm import build_rtm, render_rtm_md
 from app.requirements.agent import stages, supervisor
-from app.requirements.agent.rtm import build_rtm, render_rtm_md
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.step2_usecases import (
+
+# ⚠ 아래 단계 함수들은 **이 모듈의 이름으로 존재해야 한다.** `_run_stages`가
+# `globals()[노드이름]`으로 찾기 때문이다(이유는 그 함수 docstring). 린터에게는 안 쓰는
+# import로 보이지만 지우면 배치 실행이 죽고, 테스트의 monkeypatch도 여기에 건다.
+# 자동 수정(`ruff --fix`)이 지우지 않도록 명시적으로 막는다.
+from app.requirements.agent.steps.step2_usecases import (  # noqa: F401
     check_coverage,
     identify_actors,
     identify_use_cases,
     review_model,
 )
-from app.requirements.agent.steps.step3_specifications import check_specs, generate_specs
-from app.requirements.agent.steps.step4_diagram import (
+from app.requirements.agent.steps.step3_specifications import (  # noqa: F401
+    check_specs,
+    generate_specs,
+)
+from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     check_relationships,
     identify_relationships,
     render_diagram,
 )
+from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
+from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.config import settings
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
@@ -73,26 +83,36 @@ def load_state(run_dir: str | Path) -> dict:
     }
 
 
-def _rerun_from(state: dict, owner: str) -> list[str]:
-    """`owner` 단계부터 끝까지 다시 돌린다. 실행한 노드 이름을 돌려준다.
+def _run_stages(state: dict, to_run: tuple[stages.Stage, ...]) -> list[str]:
+    """단계들을 순서대로 돌린다. 실행한 노드 이름을 돌려준다.
 
-    순서는 `stages.PIPELINE`에서 파생한다 — 집계 노드(`check_*`)까지 포함해야 리포트가
-    새 산출물을 반영한다. 되돌릴 단계는 `stage_feedback`에서 지시를 읽는다.
+    **정방향 패스와 되돌리기가 같은 함수를 쓴다.** 예전에는 정방향이 아홉 줄 손코딩이고
+    되돌리기만 `stages.PIPELINE`에서 파생했다 — 한쪽만 파생된 것이 문제였다. 단계를 하나
+    넣으면 되돌리기는 저절로 따라오는데 정방향은 안 따라오고, 그러면 정방향에 없는 단계를
+    되돌리기가 실행하는 상태가 조용히 만들어진다.
 
-    **함수는 이름으로 이 모듈에서 찾는다**(`stages.Stage.fn`을 직접 쓰지 않는다). 정방향
-    패스가 `identify_actors(st)`처럼 모듈 속성을 부르기 때문에, 되돌리기가 import 시점에
-    묶인 참조를 쓰면 **한 단계를 가리키는 이름이 두 개**가 된다 — 테스트의 monkeypatch가
-    한쪽에만 걸리고, 그건 조용히 다른 코드를 재는 일이다(`feedback.py`가 같은 이유로
-    `globals()` 조회를 쓴다).
+    **함수는 이름으로 이 모듈에서 찾는다**(`stages.Stage.fn`을 직접 쓰지 않는다).
+    import 시점에 묶인 참조를 쓰면 **한 단계를 가리키는 이름이 두 개**가 되어, 테스트의
+    monkeypatch가 한쪽에만 걸린다 — 조용히 다른 코드를 재는 일이다(`feedback.py`가 같은
+    이유로 `globals()` 조회를 쓴다). 이제 두 패스가 같은 조회를 쓰므로 갈릴 자리가 없다.
     """
-    order = list(stages.PIPELINE)
-    start = next(i for i, s in enumerate(order) if s.key == owner)
     ran: list[str] = []
-    for stage in order[start:]:
+    for stage in to_run:
         fn = globals().get(stage.node, stage.fn)
         state.update(fn(cast(AgentState, state)))
         ran.append(stage.node)
     return ran
+
+
+def _rerun_from(state: dict, owner: str) -> list[str]:
+    """`owner` 단계부터 끝까지 다시 돌린다.
+
+    집계 노드(`check_*`)까지 포함해야 리포트가 새 산출물을 반영한다. 되돌릴 단계는
+    `stage_feedback`에서 지시를 읽는다.
+    """
+    order = list(stages.PIPELINE)
+    start = next(i for i, s in enumerate(order) if s.key == owner)
+    return _run_stages(state, tuple(order[start:]))
 
 
 def run_pipeline(classified: list[dict]) -> dict:
@@ -104,16 +124,9 @@ def run_pipeline(classified: list[dict]) -> dict:
     없으면 C2의 효과가 측정에 잡히지 않는다.
     """
     state: dict = {"classified": classified}
-    st = cast(AgentState, state)  # 노드 함수는 AgentState를 받는다(런타임엔 동일 dict)
-    state.update(identify_actors(st))
-    state.update(identify_use_cases(st))
-    state.update(review_model(st))
-    state.update(check_coverage(st))
-    state.update(generate_specs(st))
-    state.update(check_specs(st))
-    state.update(identify_relationships(st))
-    state.update(check_relationships(st))
-    state.update(render_diagram(st))
+    # 정방향 패스는 `stages.batch_order()`에서 파생한다 — 파이프라인 모양을 말하는 곳은
+    # `agent/stages.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
+    _run_stages(state, stages.batch_order())
 
     # 되돌아가기. 상한은 그래프와 같은 설정을 쓴다(`settings.max_redo_rounds`).
     while True:

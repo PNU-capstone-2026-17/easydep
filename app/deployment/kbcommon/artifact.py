@@ -25,9 +25,13 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import lru_cache
 from pathlib import Path
+from typing import TypeVar
+
+#: 병합 가능한 KB 모델(`merge`를 가진 것). `kbcommon`은 위 층을 모르므로 타입만 받는다.
+_T = TypeVar("_T")
 
 import fastjsonschema
 import jsonschema
@@ -171,6 +175,54 @@ REBUILD_HINT = "rebuild it or delete the file"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUNDLED_DIR = REPO_ROOT / "data"
 DEFAULT_OUTPUT = REPO_ROOT / "output"
+
+
+def load_records(output_dir: Path | str, name: str) -> list[dict]:
+    """산출물 하나의 `records` 목록. 파일이 없거나 못 읽으면 **빈 목록**.
+
+    "없으면 빈 것"이 예외가 아니라 정상인 자리들이 있다 — 재배포 허가가 없어 커밋하지
+    않는 산출물(Azure Retail), 로컬 빌드 전용(AWS Price List), 보강이 아직 안 된 축.
+    그 자리마다 같은 다섯 줄(resolve → None이면 빈 것 → load_json → 실패면 빈 것)이
+    적혀 있었다. **키를 어떻게 만들지는 부르는 쪽이 정한다** — 소문자로 색인하는 축이
+    따로 있어서(대소문자로 조인이 세 번 깨졌다) 그건 공유할 수 있는 것이 아니다.
+
+    `.gz`(배포 번들)와 평문을 둘 다 읽는다 — `read_text`로 직접 읽으면 gz 바이트를
+    UTF-8로 디코드하려다 죽는다(빌드 안 한 사용자 경로).
+    """
+    found = resolve(output_dir, name)
+    if found is None:
+        return []
+    try:
+        data = load_json(found)
+    except (OSError, ValueError):
+        return []
+    return list(data.get("records") or [])
+
+
+def load_merged(
+    output_dir: Path | str, names: Sequence[str], empty: Callable[[], _T],
+    from_dict: Callable[[dict], _T],
+) -> _T | None:
+    """여러 산출물을 하나로 병합해 돌려준다. 하나도 못 찾으면 `None`.
+
+    **KB마다 같은 열 줄을 다시 적고 있었다** — `capacitykb`와 `graphkb`의 사본은 주석까지
+    같았고(`# output/ 이 먼저, …`), 클래스 이름과 파일 목록만 달랐다. 사본이 둘이면
+    한쪽만 고쳐진다: 실제로 `CapacitySet.load`는 `artifact.load_json`을 거쳐 커밋된
+    `data/*.gz`를 읽는데 `Graph.load`는 raw `read_text`라 못 읽는 격차가 있었고, 지금은
+    graphkb가 평문 `output/*.json`만 먹어서 드러나지 않고 있을 뿐이다.
+
+    `empty`/`from_dict`를 **인자로 받는다** — `kbcommon`은 위 층(KB)을 알지 않는다는 것이
+    이 패키지의 규약이라(`tests/test_architecture.py`), 모델을 import할 수 없다.
+    """
+    merged = empty()
+    found = False
+    for name in names:
+        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz.
+        path = resolve(output_dir, name)
+        if path is not None:
+            merged.merge(from_dict(load_json(path)))  # type: ignore[attr-defined]
+            found = True
+    return merged if found else None
 
 
 def resolve(output_dir: Path | str, name: str) -> Path | None:

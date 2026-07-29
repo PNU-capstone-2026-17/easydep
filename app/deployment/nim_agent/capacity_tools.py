@@ -23,7 +23,12 @@ from app.deployment.capacitykb import agent_api
 def cap_check_value(
     resource_type: str,
     property_name: str | None = None,
-    value: str | None = None,
+    # **숫자도 받는다.** `str`만 받던 시절에는 모델이 `30000`(정수)을 넘기면
+    # pydantic이 거절했고, 모델이 `"30000"`으로 고쳐 다시 불렀다 — **숫자를 묻는
+    # 질문마다 LLM 왕복이 하나씩 낭비**됐다(실측 2026-07-28: "gp2 30,000 GiB"에
+    # LLM 3회 중 1회가 이 재시도였다). 값을 숫자로 넘기는 것은 모델의 잘못이
+    # 아니라 자연스러운 일이고, 어차피 `_coerce`가 문자열을 숫자로 되돌린다.
+    value: str | float | None = None,
     context: str | None = None,
 ) -> str:
     """What a property may hold — and, if you name a value, whether it is allowed.
@@ -51,8 +56,9 @@ def cap_check_value(
             'Microsoft.ContainerService/managedClusters'.
         property_name: Property name. e.g. 'Size', 'Timeout',
             'EphemeralStorage/Size'. Omit to see the whole type.
-        value: The value to set. A number is read as a number. e.g. '100000',
-            'gp3'. Omit to see what is allowed instead of judging one value.
+        value: The value to set. **Pass a number as a number** (30000) or as a
+            string ('30000') — both work. e.g. 30000, 'gp3'. Omit to see what is
+            allowed instead of judging one value.
         context: Other properties decided alongside it. Join `name=value` pairs
             with commas, as in `'VolumeType=gp2'`, `'Region=af-south-1'`.
             **If the limit or the allowed values depend on something else, this
@@ -216,6 +222,10 @@ def cap_resolve_region(place: str, provider: str | None = None) -> str:
     So for a GCP question pass `provider='gcp'` and use that code. Passing
     another provider's code yields "not found" even when the data exists.
 
+    **This answers where a region is, never whether a rule is satisfied.** For a
+    data-residency or regulatory question, state the region fact and say the
+    compliance verdict is a legal determination this knowledge base does not make.
+
     Args:
         place: A place or region name, in **either Korean or English**, or a
             region code. e.g. '서울', 'Seoul', '도쿄', 'Tokyo', 'ap-northeast-2'.
@@ -372,8 +382,12 @@ def cap_csp_supports(csp: str | None = None, resource: str | None = None) -> str
     return cbspider.describe(csp, resource)
 
 
-def _coerce(raw: str) -> float | str:
-    """LLM이 문자열로 넘긴 값을 가능하면 숫자로 바꾼다."""
+def _coerce(raw: str | float) -> float | str:
+    """LLM이 넘긴 값을 가능하면 숫자로 바꾼다.
+
+    문자열도 숫자도 받는다 — 도구 인자가 `str | float`라 둘 다 온다. 숫자가 그대로
+    오면 그대로 쓰고, `"30000"`처럼 오면 되돌린다. 판정 쪽은 타입을 하나로 받는다.
+    """
     try:
         number = float(raw)
     except (TypeError, ValueError):

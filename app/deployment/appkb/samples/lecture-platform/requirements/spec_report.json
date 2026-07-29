@@ -1,0 +1,19 @@
+{
+  "n_specs": 10,
+  "total_issues": 2,
+  "issues_by_uc": {
+    "UC5": [
+      "[semantic] Remove the refund step or add a requirement that authorizes refunds. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "UC10": [
+      "[semantic] Remove or rephrase the logging steps that introduce audit capability not required by FR13. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ]
+  },
+  "total_repair_iters": 7,
+  "unvalidated_ucs": [],
+  "failed_ucs": [],
+  "repair_stopped": {
+    "clean": 8,
+    "no_improvement": 2
+  }
+}

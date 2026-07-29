@@ -130,6 +130,12 @@ _CONSUMERS = {
     "dataResidency": "design_tools.compose(리전 원본 표시 이름 대조 노트 — envkb) · "
                      "verify_against_requirements(**판정 불가 명시** — 국가 판정 "
                      "소스가 없어 대조 자료까지가 소비다. 2층 보강에서 열림)",
+    "lowCarbonPreferred": "design_tools._global_notices(선택 리전의 탄소집약도와 "
+                          "**같은 프로바이더 안에서 더 낮은 리전 수** — envkb) · "
+                          "verify_against_requirements(**판정이 아니라 자료** — "
+                          "옮길지는 지연·레지던시와의 상충이라 우리가 못 잰다). "
+                          "관심사 `cn.carbon-constraint`가 이 칸으로 흘러든다 — "
+                          "탄소 161건이 질의응답에만 쓰이던 것을 계획에 이었다",
     "meta": "자유 메타 — 계약이 뜻을 정하지 않는 유일한 칸",
 }
 

@@ -36,10 +36,22 @@ filter-branch로 히스토리 전체에서). 그래서 이 파일에 담는 것�
 
   - `refine_requirements` 단계의 규칙이 하나도 없다. 구체성 rubric 조사가 저장소 밖으로
     나갔고(`e10c527`), 근거 없는 규칙을 지어 넣지는 않는다.
-  - 생성 프롬프트(`SPEC_SYSTEM`·`RELATIONSHIPS_SYSTEM`)는 아직 산문 그대로다. 검증
-    프롬프트만 이 지식베이스에서 조립한다 — 인용이 산출물에 실려 값어치가 나는 곳이
-    검증 쪽이고, 생성 프롬프트를 같은 판에 갈아엎으려면 회귀를 잡을 평가 세트가 먼저
-    있어야 한다(그건 아직 없다).
+  - `refine_requirements` 단계 말고도, **`GUIDANCE` 규칙 6개는 여전히 아무도 판정하지
+    않는다.** 생성 프롬프트에 실리기는 하지만(2026-07-27), 지켜졌는지는 재고 있지 않다.
+
+## 생성 프롬프트도 여기서 조립한다 (2026-07-27)
+
+한동안 검증 프롬프트만 이 지식베이스에서 조립했고, 생성 프롬프트는 산문 그대로였다. 미룬
+이유는 "회귀를 잡을 평가 세트가 먼저 있어야 한다"였는데 §5에서 생겼으므로 옮겼다.
+
+옮기면서 드러난 것이 미룬 값을 넘었다 — **둘은 이미 갈라져 있었다.** 생성 산문은
+`no protocols (HTTP/SQL)`을 금지했는데 그런 규칙이 없었고(오히려
+`spec.black-box-no-internal-components`의 경계 (d)가 위반이 아니라고 적어 둔다),
+`GUIDANCE` 규칙은 어느 프롬프트에도 실리지 않고 있었다. `docs/requirements-agent-improvements.md`
+§11 참고.
+
+나눈 선: **모양은 산문(`prompts.py`), 규칙은 여기.** 어떤 필드를 내는가·번호를 어떻게
+매기는가는 스키마가 강제하는 것이라 규칙이 아니다.
 """
 from __future__ import annotations
 
@@ -114,6 +126,18 @@ class Rule:
     #: 그 페이지에 있어야 하는 짧은 단어들(소문자). 좌표가 맞는지 보는 열쇠일 뿐,
     #: 본문을 옮겨 담는 자리가 아니다 — 저작물을 저장소에 넣지 않기 위한 경계다.
     probe: tuple[str, ...] = ()
+    #: **생성 쪽에만** 주는 보조 문구 — 예시, 쓰는 법. 규범이 아니다.
+    #:
+    #: 규범은 `statement` 하나뿐이다. 여기에 새 제약을 적으면 아무도 판정하지 않는 규칙이
+    #: 조용히 생긴다(그 사실을 드러내려고 `JUDGED_NOWHERE`를 둔 것인데, 이 자리는 그
+    #: 표시를 우회한다). 그래서 여기 적을 수 있는 것은 `statement`가 이미 말한 것을
+    #: 다시 보여 주는 것뿐이다.
+    #:
+    #: **검증 프롬프트에는 넣지 않는다.** 두 가지 이유다: 예시를 판정자에게 주면 규범이
+    #: 아니라 예시에 맞는지를 보게 되고, 판정 프롬프트가 길어지면 그 규칙만이 아니라
+    #: 응답 전체가 흔들린다(§9 — 규칙 6개를 한 프롬프트에 넣으면 안정 판정이 0이 됐다).
+    #: 쓰는 쪽과 판정하는 쪽은 같은 **규범**을 받아야 하지만 같은 **재료**를 받을 필요는 없다.
+    generation_note: str | None = None
 
     @property
     def hedged(self) -> bool:
@@ -271,6 +295,36 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_VALIDATOR,
         pages=(41,),
         probe=("black box",),
+        generation_note=(
+            "Write \"System records the order\" (not \"saves the order to the order store\"), "
+            "\"System retrieves the toy list\" (not \"queries the catalog service\"), "
+            "\"System confirms the member's credentials\" (not \"checks the credential store\")."
+        ),
+    ),
+    Rule(
+        # 생성 프롬프트가 산문으로 "no protocols (HTTP/SQL)"라고 금지하고 있었는데, **그 금지에
+        # 대응하는 규칙이 없었다.** 게다가 바로 위 규칙의 경계 (d)는 프로토콜·기전을 부르는 것이
+        # black-box 위반이 *아니라고* 적어 둔다 — 생성과 검증이 이미 갈라져 있었던 자리다.
+        #
+        # 갈라짐을 어느 쪽으로든 조용히 정리할 수 있었다(산문을 지우거나, DEFECT로 올리거나).
+        # 둘 다 안 한다: 지우면 지금 동작이 근거 없이 바뀌고, 올리면 판정할 수 없는 결함이
+        # 하나 늘어난다. 그래서 **있는 그대로** 적는다 — 생성 쪽 선호이고, 아무도 판정하지 않고,
+        # 근거는 책이 아니라 우리다.
+        id="spec.no-protocol-mechanics",
+        stage=WRITE_SPECIFICATIONS,
+        severity=GUIDANCE,
+        statement=(
+            "Prefer business-level wording over transport and query mechanics (HTTP, REST "
+            "calls, SQL) when naming what happens in a step."
+        ),
+        citation="easydep 규약",
+        evidence="project-convention",
+        caveat=(
+            "책 근거가 없다. 위 `spec.black-box-no-internal-components`의 경계 (d)는 "
+            "프로토콜 언급을 black-box 위반으로 **보지 않는다** — 그래서 이것은 결함이 아니라 "
+            "생성 쪽 선호로만 둔다. 지적하지 않으므로 이 문장이 지켜지는지는 재고 있지 않다."
+        ),
+        judged_by=JUDGED_NOWHERE,
     ),
     Rule(
         id="spec.no-branching-in-a-step",
@@ -659,13 +713,45 @@ def judged_by(stage: str, judge: str) -> tuple[Rule, ...]:
     return tuple(r for r in rules_for(stage, DEFECT) if r.judged_by == judge)
 
 
-def validator_prompt_block(stage: str) -> str:
-    """의미 검증자가 판정할 규칙 목록.
+def generation_prompt_block(stage: str) -> str:
+    """**생성** 프롬프트가 지켜야 할 규칙 목록.
 
-    근거의 성격까지 함께 넣는다. 모델이 "책이 정한 것"과 "우리 규약"을 구별하지 못하면
-    유보가 필요한 지적을 단언으로 낸다.
+    검증 프롬프트(`validator_prompt_block`)와 나뉘는 자리다. 두 목록이 다른 것을 담는 것은
+    의도한 것이다:
+
+      - 검증은 `DEFECT`이면서 **의미 검증자가 보는** 것만 담는다. 검출기가 이미 잡은 것을
+        다시 지적하지 않기 위해서다.
+      - 생성은 **강제되는 것 전부**(`DEFECT` + `GUIDANCE`)를 담는다. 쓰는 쪽에서는
+        "누가 잡느냐"가 상관없다 — 검출기가 잡을 결함도 애초에 안 쓰는 편이 낫다.
+
+    `GUIDANCE`가 여기서 처음으로 일을 한다. 지금까지 그 심각도는 "지적하지 않는 지침"이라고
+    적혀 있었지만 **아무 데도 실리지 않아서 사실상 죽은 표시**였다. 생성 프롬프트가 산문으로
+    같은 말을 따로 적고 있었기 때문이다.
+
+    인용은 싣지 않는다. 좌표는 지적 문구가 달고 나가는 것이고(`Rule.tag`), 쓰는 쪽에
+    페이지 번호를 주는 것은 프롬프트를 늘릴 뿐 쓰기를 돕지 않는다.
     """
-    return "\n".join(r.prompt_line() for r in judged_by(stage, JUDGED_VALIDATOR))
+    lines = []
+    for r in rules_for(stage):
+        if r.severity not in (DEFECT, GUIDANCE):
+            continue
+        lines.append(f"- ({r.id}) {r.statement}")
+        if r.generation_note:
+            lines.append(f"  {r.generation_note}")
+    return "\n".join(lines)
+
+
+def non_rules_block(stage: str) -> str:
+    """**규칙이 아니라고** 적어 둔 것들 — 생성 쪽에 그 사실 그대로 준다.
+
+    `NON_RULE`이 실제로 쓰이는 자리다. 과적합은 판정할 때가 아니라 **쓸 때** 일어난다:
+    "스텝 3~9개"를 목표로 알아들은 모델은 아홉 번째 스텝을 지어내거나 열 번째를 지운다.
+    그러니 이 사실을 받아야 하는 쪽은 판정자가 아니라 생성자다.
+
+    비어 있으면 빈 문자열을 돌려준다 — 부르는 쪽이 절 자체를 빼도록.
+    """
+    lines = [f"- ({r.id}) {r.statement}" for r in rules_for(stage, NON_RULE)]
+    return "\n".join(lines)
 
 
 def already_checked_names(stage: str) -> tuple[str, ...]:

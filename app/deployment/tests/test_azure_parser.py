@@ -12,8 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from app.deployment.graphkb.model import Edge, Graph
+from app.deployment.graphkb.model import Graph
 from app.deployment.graphkb.parsers.azure import extract_references, parse_index
+from app.deployment.tests._helpers import find_edges
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "azure"
 
@@ -37,10 +38,6 @@ def graph() -> Graph:
     g, _latest = parse_index(load_index())
     extract_references(g, load_types(), heuristics=True)
     return g
-
-
-def find_edges(graph: Graph, from_id: str, to_id: str) -> list[Edge]:
-    return [e for e in graph.edges if e.from_id == from_id and e.to_id == to_id]
 
 
 def test_nodes_from_index(graph: Graph) -> None:

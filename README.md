@@ -143,6 +143,7 @@ python verify_db.py       # MySQL이 필요한 저장소 왕복 검사
 - [docs/requirements-agent.md](docs/requirements-agent.md) — 요구사항 분석 에이전트 상세, 배포(minikube/AKS), 운영 스크립트
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 요구사항 분석 그래프 구조
 - [docs/implementation-agent.md](docs/implementation-agent.md) — 구현 worker, 자동 phase DAG, HITL·재개·도구 설정
+- [docs/deployment-file-generation.md](docs/deployment-file-generation.md) — 시스템 구현 에이전트의 배포 의도 추론, Dockerfile·Kubernetes manifest 생성과 검증
 - [docs/api.md](docs/api.md) — 요구사항·설계·구현 HTTP API 명세
 
 실험·조사 기록(`docs/research/`), PURE 데이터셋, 실험 스크립트, BERT 학습 노트북은

@@ -22,7 +22,17 @@ from .orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from .repair_planner import apply_repair_directives, schedule_cross_phase_repair
+from .repair_planner import (
+    apply_repair_directives,
+    schedule_cross_phase_repair,
+    schedule_source_conformance_repair,
+)
+from .deployment_renderer import render_deployment
+from .source_conformance import (
+    SourceDesignConformanceError,
+    restore_generated_contracts,
+    verify_source_design_conformance,
+)
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -46,6 +56,9 @@ PHASES = (
 def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     """Idempotently plan implemented phases and persist a resumable checkpoint."""
     run_root = run_root.resolve()
+    if spec.job_type == "FEEDBACK_REVISION":
+        apply_repair_directives(run_root)
+        return reconcile_workflow_state(run_root)
     ir = build_implementation_ir(spec, run_root)
     needs_persistence = bool(ir.persistent_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
@@ -209,7 +222,13 @@ def run_workflow(
         audit = auditor(run_root)
         state = reconcile_workflow_state(run_root)
         if audit.get("status") == "COMPLETE":
+            try:
+                conformance = verify_source_design_conformance(run_root, spec)
+            except SourceDesignConformanceError as error:
+                return _handle_source_conformance_failure(run_root, spec, state, error)
             state["status"] = "COMPLETE"
+            state["sourceDesignConformance"] = conformance["status"]
+            _render_deployment_if_configured(run_root, spec)
         elif state.get("status") != "NEEDS_INPUT":
             state["status"] = "NEEDS_PLANNER"
         state["verification"] = verification.get("status")
@@ -304,7 +323,13 @@ def run_workflow(
     final_state = plan_workflow(run_root, spec)
     audit = auditor(run_root)
     if audit.get("status") == "COMPLETE":
+        try:
+            conformance = verify_source_design_conformance(run_root, spec)
+        except SourceDesignConformanceError as error:
+            return _handle_source_conformance_failure(run_root, spec, final_state, error)
         final_state["status"] = "COMPLETE"
+        final_state["sourceDesignConformance"] = conformance["status"]
+        _render_deployment_if_configured(run_root, spec)
     elif final_state.get("status") != "NEEDS_INPUT":
         final_state["status"] = (
             "READY" if final_state.get("nextRunnableTasks") else "NEEDS_PLANNER"
@@ -327,6 +352,66 @@ def workflow_status(run_root: Path) -> dict[str, object]:
     if not path.is_file():
         raise ValueError("Workflow has not been planned for this run")
     return _read_json(path)
+
+
+def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
+    intent = spec.inputs.get("deploymentIntent")
+    cloud = spec.inputs.get("cloud")
+    deployment = spec.inputs.get("deployment")
+    if (intent and intent.is_file()) or (cloud and cloud.is_file()):
+        render_deployment(run_root, spec)
+    elif deployment and deployment.is_file():
+        raise ValueError(
+            "Deployment rendering requires deploymentIntent or a cloud resource "
+            "specification"
+        )
+
+
+def _handle_source_conformance_failure(
+    run_root: Path,
+    spec: JobSpec,
+    state: dict[str, object],
+    error: SourceDesignConformanceError,
+) -> dict[str, object]:
+    restored = restore_generated_contracts(run_root)
+    # A generated-contract mutation needs no LLM repair: restore the exact
+    # local baseline, then prove the restored workspace still builds and now
+    # conforms before exposing it as a completed artifact.
+    if restored:
+        verify_run_workspace(run_root)
+        restored_audit = audit_run_completion(run_root)
+        try:
+            restored_conformance = verify_source_design_conformance(run_root, spec)
+        except SourceDesignConformanceError as restored_error:
+            error = restored_error
+        else:
+            if restored_audit.get("status") == "COMPLETE":
+                state["status"] = "COMPLETE"
+                state["sourceDesignConformance"] = restored_conformance["status"]
+                state["restoredGeneratedContracts"] = restored
+                state["blockingReason"] = None
+                _render_deployment_if_configured(run_root, spec)
+                _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+                return state
+    repair = schedule_source_conformance_repair(run_root, error.report)
+    if repair is not None:
+        repaired = plan_workflow(run_root, spec)
+        repaired["status"] = "READY"
+        repaired["repairPlan"] = "reports/repair-plan.json"
+        repaired["sourceDesignConformance"] = "REPAIR_SCHEDULED"
+        repaired["restoredGeneratedContracts"] = restored
+        repaired["blockingReason"] = None
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", repaired)
+        return repaired
+    state["status"] = "FAILED"
+    state["sourceDesignConformance"] = "FAILED"
+    state["restoredGeneratedContracts"] = restored
+    state["blockingReason"] = (
+        "Generated source contracts or sequence calls diverge from the design; "
+        "see reports/source-design-conformance.json."
+    )
+    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+    return state
 
 
 def write_transmission_request(
@@ -383,12 +468,16 @@ def validate_approval(path: Path | None, request_id: str) -> dict[str, object]:
     approval = _read_json(path)
     if approval.get("requestId") != request_id or approval.get("approved") is not True:
         raise PermissionError("Approval does not match the current transmission request")
-    return {
+    result = {
         "requestId": request_id,
         "approved": True,
         "approvedAt": approval.get("approvedAt"),
         "approvedBy": approval.get("approvedBy"),
     }
+    if approval.get("delegatedRepairApprovals") is True:
+        result["delegatedRepairApprovals"] = True
+        result["delegationScope"] = approval.get("delegationScope", {})
+    return result
 
 
 def validate_workflow_approval(
@@ -407,6 +496,16 @@ def validate_workflow_approval(
         approved_request_id = str(approval.get("requestId", ""))
         if approval.get("approved") is not True:
             raise exact_error
+        if _valid_delegated_execution_approval(approval, request, state, run_root):
+            return {
+                "requestId": str(request["requestId"]),
+                "approvedRequestId": str(approval.get("requestId")),
+                "approved": True,
+                "authorization": "DELEGATED_RUN_SCOPE",
+                "delegatedRepairApprovals": True,
+                "approvedAt": approval.get("approvedAt"),
+                "approvedBy": approval.get("approvedBy"),
+            }
         current_ids = {str(item["taskId"]) for item in request.get("tasks", [])}
         candidate_ids = set(current_ids)
         current_phases = {
@@ -448,6 +547,37 @@ def validate_workflow_approval(
                 "approvedBy": approval.get("approvedBy"),
             }
         raise exact_error
+
+
+def _valid_delegated_execution_approval(
+    approval: dict[str, object], request: dict[str, object], state: dict[str, object], run_root: Path
+) -> bool:
+    if approval.get("delegatedRepairApprovals") is not True:
+        return False
+    scope = approval.get("delegationScope")
+    if not isinstance(scope, dict) or scope.get("runId") != run_root.name:
+        return False
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    if scope.get("inputHash") != manifest.get("input_hash"):
+        return False
+    plan_path = run_root / "reports" / "repair-plan.json"
+    plan = _read_json(plan_path) if plan_path.is_file() else {}
+    planned_ids = {
+        str(task_id)
+        for entry in plan.get("entries", []) if isinstance(entry, dict)
+        for task_id in [*entry.get("ownerTaskIds", []), *entry.get("revalidationTaskIds", [])]
+    }
+    current_ids = {str(item.get("taskId")) for item in request.get("tasks", [])}
+    initial_ids = {str(task_id) for task_id in scope.get("initialTaskIds", [])}
+    if not current_ids or not (current_ids.issubset(initial_ids) or current_ids.issubset(planned_ids)):
+        return False
+    attempts = sum(int(task.get("attempts", 0)) for task in state.get("tasks", []))
+    return attempts < int(scope.get("maxTaskAttempts", 0)) and _repair_rounds(run_root) <= int(scope.get("maxRepairRounds", 0))
+
+
+def _repair_rounds(run_root: Path) -> int:
+    plan = _read_json(run_root / "reports" / "repair-plan.json") if (run_root / "reports" / "repair-plan.json").is_file() else {}
+    return max((int(item.get("revision", 0)) for item in plan.get("entries", []) if isinstance(item, dict)), default=0)
 
 
 def phase_for_task(task_type: str) -> str:

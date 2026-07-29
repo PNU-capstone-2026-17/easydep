@@ -12,12 +12,7 @@ from __future__ import annotations
 
 from app.deployment.nim_agent.agent import INSTRUCTIONS
 from app.deployment.nim_agent.tools import record_plan, web_search
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
-
+from app.deployment.tests._helpers import flat
 
 PROMPT = flat(INSTRUCTIONS)
 

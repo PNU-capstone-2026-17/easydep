@@ -259,7 +259,19 @@ def probe_rule(
     rule = rules.rule(rule_id)
     system = prompts.probe_system_for(rule.stage, rule_id)
 
-    def ask(artifact: dict) -> bool:
+    def ask(artifact: dict) -> bool | None:
+        """한 번 물어 위반 여부. **실패는 `None`이다 — `False`가 아니다.**
+
+        예전에는 실패를 `False`로 돌려줬다. 그러면 타임아웃 한 건이 "이 규칙 위반 없음"
+        한 표가 되어 `always`를 끌어내리고 `never`를 부풀린다 — **못 물어본 것이 깨끗한
+        것으로 둔갑한다.** 이 저장소가 `semantic_status`를 둔 이유와 같은 종류의 구멍이고
+        (`issues`가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없다),
+        하필 여기서만 그 구분이 없었다.
+
+        걸린 자리가 실제로 있었다: 요청 일부가 ~9.4분씩 멈추는데 클라이언트 상한이
+        600초였다(`agent/llm.py`). 상한을 내리면 그 요청들이 실패로 바뀌는데, 실패가
+        `False`로 세어지면 **상한을 내릴수록 규칙이 깨끗해 보인다.**
+        """
         try:
             critique = invoke_structured(
                 Critique,
@@ -273,7 +285,7 @@ def probe_rule(
             )
         except Exception as exc:  # noqa: BLE001 - 한 건 실패로 측정을 버리지 않는다
             telemetry.record_degradation(f"{_SOURCE}.probe", f"{type(exc).__name__}: {exc}")
-            return False
+            return None
         return any(v.violated and v.rule_id == rule_id for v in critique.verdicts)
 
     jobs = [payload for _uc, payload in payloads for _ in range(repeats)]
@@ -284,13 +296,25 @@ def probe_rule(
         futures = [pool.submit(telemetry.bind_context(ask), job) for job in jobs]
         hits = [f.result() for f in futures]
 
-    always = sometimes = 0
+    always = sometimes = never = errors = 0
+    incomplete = 0
     for index in range(len(payloads)):
-        fired = sum(hits[index * repeats:(index + 1) * repeats])
-        if fired == repeats:
+        votes = hits[index * repeats:(index + 1) * repeats]
+        answered = [v for v in votes if v is not None]
+        errors += len(votes) - len(answered)
+        if not answered:
+            # 한 번도 못 물어봤다. `never`에 넣으면 "신호가 없다"는 주장이 되는데
+            # 그건 측정이 아니라 침묵이다.
+            continue
+        if len(answered) < repeats:
+            incomplete += 1
+        fired = sum(answered)
+        if fired == len(answered):
             always += 1
         elif fired:
             sometimes += 1
+        else:
+            never += 1
     return {
         "rule_id": rule_id,
         "severity": rule.severity,
@@ -298,5 +322,11 @@ def probe_rule(
         "n_specs": len(payloads),
         "always": always,
         "sometimes": sometimes,
-        "never": len(payloads) - always - sometimes,
+        # **세어서 낸다.** 예전에는 `n_specs - always - sometimes`로 계산했는데, 그러면
+        # 못 물어본 명세가 조용히 `never`로 들어간다.
+        "never": never,
+        #: 응답을 못 받은 요청 수. 0이 아니면 이 행은 표본이 줄어든 것이다.
+        "errors": errors,
+        #: 반복을 다 못 채운 명세 수. `always`가 3/3이 아니라 2/2일 수 있다는 뜻이다.
+        "incomplete_specs": incomplete,
     }

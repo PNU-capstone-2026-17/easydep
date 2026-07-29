@@ -14,6 +14,8 @@ Phase 2(qualifies 링크: NFR→부모 FR)·Phase 3(realized 판정 컬럼)은 �
 """
 from __future__ import annotations
 
+from app.core import traceability
+
 
 def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
     """state에서 요구사항 추적 매트릭스를 집계한다(순수 함수, LLM 없음).
@@ -30,39 +32,37 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
     verdicts가 없으면(run_pipeline 등) FR realized는 None(판정 안 함).
     """
     classified = state.get("classified") or []
-    by_id = {r["id"]: r for r in classified}
     use_cases = state.get("use_cases") or []
-    specs = state.get("use_case_specs") or []
+
+    # 추적 집계는 `core/traceability.py` 한 곳에서 한다 — 여기서 따로 굴리던 것을 옮겼다.
+    # `check_coverage`가 같은 사실을 다르게 세고 있었고, 갈린 것을 알아채는 데 오래 걸렸다.
+    trace = traceability.index(state)
+    by_id = trace.by_id
 
     # Phase 3: 요구 id → 그 요구를 (어느 UC에서든) 실현했는지 판정 리스트.
+    #
+    # **id 없는 판정은 버린다.** 예전에는 `None`을 키로 넣었는데, 그러면 어느 행과도 안
+    # 맞아 판정이 **조용히 사라진다**(행의 `realized`는 미판정으로 남는다). 버리는 것은
+    # 같지만, 이렇게 두면 왜 사라졌는지가 코드에 적혀 있다. 타입 검사가 `app/core`로
+    # 옮겨오면서 드러난 자리다.
     real_by_req: dict[str, list[bool]] = {}
     for v in (verdicts or []):
-        real_by_req.setdefault(v.get("requirement_id"), []).append(bool(v.get("realized")))
+        req_id = v.get("requirement_id")
+        if not isinstance(req_id, str):
+            continue
+        real_by_req.setdefault(req_id, []).append(bool(v.get("realized")))
 
-    # 요구 id → 그것을 커버한다고 주장하는 UC들 (FR: requirement_ids, NFR: nfr_ids)
-    uc_of_req: dict[str, list[str]] = {}
-    for uc in use_cases:
-        for rid in uc.get("requirement_ids", []):
-            uc_of_req.setdefault(rid, []).append(uc["id"])
-        for nid in uc.get("nfr_ids", []):
-            uc_of_req.setdefault(nid, []).append(uc["id"])
-
-    # 요구 id → 그것을 커버하는 명세 스텝들 (uc_id.step) — UC 단위보다 정밀한 추적
-    steps_of_req: dict[str, list[str]] = {}
-    for s in specs:
-        uid = s.get("use_case_id", "?")
-        for st in s.get("main_scenario", []):
-            for rid in st.get("covered_req_ids", []):
-                steps_of_req.setdefault(rid, []).append(f"{uid}.{st['step_number']}")
+    def uc_of_req(rid: str) -> tuple[str, ...]:
+        return trace.ucs_of(rid)
 
     rows = []
     for r in classified:
         rid, typ = r["id"], r.get("type")
-        ucs = sorted(set(uc_of_req.get(rid, [])))
-        steps = steps_of_req.get(rid, [])
+        ucs = sorted(set(uc_of_req(rid)))
+        steps = list(trace.steps_of.get(rid, ()))
         # Phase 2: NFR이 한정하는 부모 FR과, 그 FR을 커버하는 UC들(제약이 간접 추적되는 곳).
         qualifies = list(r.get("qualifies", [])) if typ == "NFR" else []
-        q_ucs = sorted({u for fr in qualifies for u in uc_of_req.get(fr, [])})
+        q_ucs = sorted({u for fr in qualifies for u in uc_of_req(fr)})
         if typ == "FR":
             status = "covered" if ucs else "orphan"
             vs = real_by_req.get(rid)
@@ -94,7 +94,7 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
         })
 
     # 환각: UC가 참조했지만 분류 목록에 없는 id
-    unknown_refs = sorted(set(uc_of_req) - set(by_id))
+    unknown_refs = list(trace.unknown_refs)
 
     fr_rows = [r for r in rows if r["type"] == "FR"]
     nfr_rows = [r for r in rows if r["type"] == "NFR"]

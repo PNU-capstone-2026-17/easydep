@@ -9,9 +9,12 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import sys
 from pathlib import Path
+
+from app.requirements.common.console import use_utf8_stdout
 
 # ⚠ `scorecard`·`seeded`는 명령 안에서 import한다. `seeded`는 자격증명 없이 돌아야 하고
 # (CI 게이트), `score`만 설정·아티팩트 경로가 필요하다. 상단에서 다 끌어오면 그 구분이 사라진다.
@@ -85,6 +88,69 @@ def _cmd_stability(args) -> int:
     return 0
 
 
+def _balanced(rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """규칙을 **전부** 잰 도메인만 남긴다. 돌려주는 둘째 값은 버린 도메인.
+
+    캠페인은 예산이 떨어지면 도메인 중간에서 멈춘다. 그 도메인은 앞쪽 규칙만 측정돼 있어서,
+    합계에 넣으면 앞쪽 규칙이 표본을 한 도메인 더 갖는다 — 순위가 규칙의 성질이 아니라
+    **측정이 어디서 끊겼는지**를 반영하게 된다.
+
+    잘라낸 것을 부르는 쪽이 반드시 말하게 하려고 목록으로 돌려준다. 조용히 버리면 이 함수가
+    막으려는 것과 같은 종류의 사고가 된다.
+    """
+    all_rules = {r["rule_id"] for r in rows}
+    by_domain: dict[str, set[str]] = {}
+    for row in rows:
+        by_domain.setdefault(row["domain"], set()).add(row["rule_id"])
+    complete = {d for d, seen in by_domain.items() if seen == all_rules}
+    dropped = sorted(set(by_domain) - complete)
+    return [r for r in rows if r["domain"] in complete], dropped
+
+
+def _domains_per_rule(rows: list[dict]) -> dict[str, int]:
+    """규칙마다 **몇 개 도메인에서** 쟀는가."""
+    seen: dict[str, set[str]] = {}
+    for row in rows:
+        seen.setdefault(row["rule_id"], set()).add(row["domain"])
+    return {rule_id: len(domains) for rule_id, domains in seen.items()}
+
+
+def _ranking_warnings(rows: list[dict]) -> list[str]:
+    """이 표를 순위로 읽으면 안 되는 이유들. 비어 있으면 읽어도 된다.
+
+    이 저장소에서 결론이 뒤집힌 원인은 언제나 표본 쪽이었지 계산 쪽이 아니었다(§8은 도메인
+    하나에 과적합, §9는 조건이 섞임). 그래서 표보다 **이 목록을 먼저** 찍는다.
+    """
+    warnings = []
+    if len({(r["repeats"], r["n_specs"]) for r in rows}) > 1:
+        warnings.append("조건이 섞여 있다 — 같은 조건으로 다시 모아야 한다.")
+
+    # 캠페인은 몇 시간을 돈다. 그동안 프롬프트가 바뀌면 앞뒤 행이 다른 것을 잰 것이 되는데,
+    # 반복·명세수만 봐서는 안 보인다.
+    #
+    # **"판이 다르다"와 "판이 안 찍혔다"를 가른다.** 예전 행은 `prompts`에 생성·검증 해시만
+    # 적었다(경로별 지문이 생기기 전이다). 그걸 "판이 3가지 섞였다"로 뭉뚱그리면, 실제로는
+    # 같은 프롬프트로 잰 표가 영원히 못 쓰는 표로 보인다 — 실측에서 정확히 그랬다.
+    # 미기록은 밖에서 대조할 수 있는 사실이라 **할 일**을 함께 적는다.
+    stamped = {r["prompts"]["probe"] for r in rows if (r.get("prompts") or {}).get("probe")}
+    unstamped = sum(1 for r in rows if not (r.get("prompts") or {}).get("probe"))
+    if len(stamped) > 1:
+        warnings.append(f"프로브 프롬프트 판이 {len(stamped)}가지 섞여 있다 — 측정 도중 코드가 바뀌었다.")
+    if unstamped:
+        warnings.append(
+            f"프로브 판이 안 찍힌 행 {unstamped}개(옛 형식) — 그때 커밋의 `prompts.py`로 "
+            f"probe digest를 재계산해 지금 값과 같은지 확인해야 순위로 읽을 수 있다."
+        )
+
+    coverage = set(_domains_per_rule(rows).values())
+    if len(coverage) > 1:
+        warnings.append(f"규칙마다 잰 도메인 수가 다르다 {sorted(coverage)} — "
+                        "적게 잰 규칙은 빼고 읽어야 한다.")
+    elif len({r["domain"] for r in rows}) < 2:
+        warnings.append("도메인이 하나다 — 한 데이터셋에서 나온 수로 규칙을 바꾸지 않는다(§9).")
+    return warnings
+
+
 def _rank(rows: list[dict]) -> None:
     """(도메인, 규칙) 행들을 규칙별로 합쳐 순위를 찍는다."""
     totals: dict[str, list[int]] = {}
@@ -94,14 +160,19 @@ def _rank(rows: list[dict]) -> None:
         acc[1] += row["sometimes"]
         acc[2] += row["never"]
 
-    conditions = sorted({(r["repeats"], r["n_specs"]) for r in rows})
     domains = sorted({r["domain"] for r in rows})
     print(f"\n[합계 — 단독 프로브] 도메인 {len(domains)}종 {domains}")
-    print(f"조건(반복, 명세수): {conditions}")
-    if len(conditions) > 1:
-        # 조건이 섞이면 순위로 쓸 수 없다 — 이 세션에서 결론을 두 번 뒤집은 원인이 그것이다.
-        print("⚠ 조건이 섞여 있다. 이 표는 순위가 아니다 — 같은 조건으로 다시 모아야 한다.")
-    print(f"{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8}")
+    print(f"조건(반복, 명세수): {sorted({(r['repeats'], r['n_specs']) for r in rows})}")
+    if not any(r.get("prompts") for r in rows):
+        print("· 프롬프트 판 기록 없음(fingerprint 도입 전 데이터다)")
+
+    warnings = _ranking_warnings(rows)
+    for warning in warnings:
+        print(f"⚠ {warning}")
+    print("→ 이 표는 **아직 순위가 아니다**" if warnings else "→ 순위로 읽어도 되는 표")
+
+    coverage = _domains_per_rule(rows)
+    print(f"\n{'규칙':46} {'항상':>5} {'때때로':>7} {'없음':>5} {'흔들림':>8} {'도메인':>7}")
     ranked = sorted(
         totals.items(),
         key=lambda kv: (kv[1][1] / (kv[1][0] + kv[1][1])) if (kv[1][0] + kv[1][1]) else 1.0,
@@ -109,7 +180,8 @@ def _rank(rows: list[dict]) -> None:
     for rule_id, (always, sometimes, never) in ranked:
         fired = always + sometimes
         share = f"{sometimes / fired:.0%}" if fired else "안 걸림"
-        print(f"{rule_id:46} {always:>5} {sometimes:>7} {never:>5} {share:>8}")
+        print(f"{rule_id:46} {always:>5} {sometimes:>7} {never:>5} {share:>8} "
+              f"{coverage.get(rule_id, 0):>7}")
 
 
 def _cmd_probe(args) -> int:
@@ -123,8 +195,19 @@ def _cmd_probe(args) -> int:
     if args.summarize:
         lines = Path(args.summarize).read_text(encoding="utf-8").splitlines()
         rows = [json.loads(line) for line in lines if line.strip()]
-        # 같은 (도메인, 규칙)을 여러 번 재면 마지막 것을 쓴다.
-        _rank(list({(r["domain"], r["rule_id"]): r for r in rows}.values()))
+        # 같은 (도메인, 규칙, 명세)를 여러 번 재면 마지막 것을 쓴다. 명세 단위 행은
+        # `_rank`가 규칙별로 합치므로 그대로 넘긴다.
+        latest = {(r["domain"], r["rule_id"], r.get("spec_id")): r for r in rows}
+        rows = list(latest.values())
+        if args.balanced:
+            rows, dropped = _balanced(rows)
+            # 무엇을 버렸는지 **먼저** 말한다. 표를 보고 나서 알면 이미 읽은 뒤다.
+            print(f"[균형 표본] 규칙을 다 재지 못한 도메인 {len(dropped)}종을 뺐다: {dropped}"
+                  if dropped else "[균형 표본] 뺄 도메인이 없다 — 전부 규칙을 다 쟀다")
+            if not rows:
+                print("남는 행이 없다. 완주한 도메인이 아직 하나도 없다.")
+                return 1
+        _rank(rows)
         return 0
 
     from app.requirements.evaluation import dataset, semantic
@@ -148,6 +231,114 @@ def _cmd_probe(args) -> int:
                     fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     if rows:
         _rank(rows)
+    return 0
+
+
+def _cmd_concerns(args) -> int:
+    """관심사 링크 층 측정 — 격자를 돌며 표를 한 장씩 쌓는다. **실제 LLM 호출.**"""
+    from app.requirements.evaluation import concern_campaign
+
+    return concern_campaign.run(
+        out_dir=Path(args.out_dir), hours=args.hours, repeats=args.repeats
+    )
+
+
+def _cmd_concern_report(args) -> int:
+    """쌓인 표를 집계한다. 캠페인이 도는 중에도 부분 집계가 나온다."""
+    from app.requirements.evaluation import concern_report
+
+    _print(concern_report.report(Path(args.dir), k=args.k))
+    return 0
+
+
+def _cmd_concern_differentiation(args) -> int:
+    """넓힌 코퍼스(PURE)에서 분화를 다시 잰다 — 결정론 층만, LLM 없음."""
+    from app.requirements.evaluation import concern_corpus
+
+    items = concern_corpus.requirements()
+    if args.show:
+        _print(concern_corpus.pair(args.show[0], args.show[1], items))
+        return 0
+    _print(concern_corpus.measure(items))
+    return 0
+
+
+def _cmd_concern_labels(args) -> int:
+    """사람이 라벨 붙일 눈가림 파일 + 열쇠를 만든다(LLM 없음).
+
+    **두 파일로 나누는 것이 요점이다.** 층 표시가 항목 파일에 있으면 눈가림이 아니다.
+    """
+    from app.requirements.evaluation import concern_labels
+
+    items, key = concern_labels.build(
+        Path(args.dir), chunk=args.chunk, k=args.k, controls=args.controls
+    )
+    for path, payload in ((Path(args.out), items), (Path(args.key), key)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    layers = collections.Counter(case["layer"] for case in key["key"].values())
+    print(f"{args.out} — 항목 {len(items['items'])}개 (분쟁 "
+          f"{layers['llm'] + layers['signal']}건 · 대조 {layers['both']}건)")
+    print(f"{args.key} — 열쇠. **라벨을 붙이는 동안 열지 않는다.**")
+    return 0
+
+
+def _cmd_concern_label_score(args) -> int:
+    """라벨 대비 층별 정밀도(LLM 없음)."""
+    from app.requirements.evaluation import concern_labels
+
+    labels = json.loads(Path(args.labels).read_text(encoding="utf-8"))
+    key = json.loads(Path(args.key).read_text(encoding="utf-8"))
+    _print(concern_labels.score(labels, key))
+    return 0
+
+
+def _cmd_campaign(args) -> int:
+    """무인 캠페인 — 몇 시간 동안 혼자 돌면서 쌓는다. **실제 LLM 호출.**"""
+    from app.requirements.evaluation import campaign
+
+    return campaign.run(
+        out_dir=Path(args.out_dir),
+        hours=args.hours,
+        run_dirs=args.run_dirs or [],
+        labels_path=Path(args.labels) if args.labels else None,
+        pure_docs=args.pure_docs or [],
+        repeats=args.repeats,
+        limit=args.limit,
+        concurrency=args.concurrency,
+        phases=args.phases,
+        pure_limit=args.pure_limit,
+        input_names=args.input_names,
+    )
+
+
+def _cmd_playbook(args) -> int:
+    """실행에서 배운 것을 쌓고 보여 준다. **LLM 없음** — 아티팩트를 읽어 세는 것뿐이다.
+
+    쌓는 것과 쓰는 것을 갈라 둔다. 여기서 파일을 만들어도 파이프라인은 `PLAYBOOK_ENABLED=1`
+    이어야 읽는다 — 배운 것이 조용히 프롬프트에 들어가지 않도록.
+    """
+    from app.requirements.agent import playbook
+    from app.requirements.knowledge import rules
+
+    entries = playbook.load(args.path)
+    for run_dir in args.runs or []:
+        entries = playbook.curate(entries, playbook.harvest(run_dir))
+    if args.runs:
+        playbook.save(args.path, entries)
+        print(f"{len(args.runs)}개 실행을 반영했다 → {args.path}")
+
+    for entry in sorted(entries, key=lambda e: (-e.runs, e.rule_id)):
+        mark = "실린다" if entry.qualifies else "문턱 미달"
+        print(f"[{mark}] {entry.rule_id}  실행 {entry.runs}종"
+              f"  (검출기 {len(set(entry.detector_runs))} · 검증자 {len(set(entry.validator_runs))})")
+    if not entries:
+        print("아직 배운 것이 없다.")
+
+    for stage in (rules.WRITE_SPECIFICATIONS, rules.DRAW_DIAGRAM):
+        block = playbook.render(entries, stage)
+        if block:
+            print(f"\n--- {stage} 생성 프롬프트에 실릴 절 ---\n{block}")
     return 0
 
 
@@ -214,6 +405,10 @@ def _cmd_diff(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # **콘솔 인코딩이 명령을 죽이지 못하게 한다**(`common/console.py`에 경위가 있다).
+    # 여기가 이 패키지의 진입점이라 한 번만 부르면 모든 하위 명령이 덮인다.
+    use_utf8_stdout()
+
     parser = argparse.ArgumentParser(prog="python -m app.requirements.evaluation")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -246,9 +441,87 @@ def main(argv: list[str] | None = None) -> int:
     p_probe.add_argument("--run-dirs", nargs="+", dest="run_dirs")
     p_probe.add_argument("--out", help="행을 즉시 덧붙일 JSONL — 중단돼도 진행분이 남는다")
     p_probe.add_argument("--summarize", help="쌓인 JSONL만 읽어 순위를 낸다(LLM 없음)")
+    p_probe.add_argument("--balanced", action="store_true",
+                         help="규칙을 다 재지 못한 도메인을 빼고 합친다. 중단된 캠페인의 "
+                              "마지막 도메인은 앞쪽 규칙만 재고 끝나므로, 그대로 합치면 "
+                              "순위가 '측정이 어디서 끊겼는지'를 반영한다")
     p_probe.add_argument("--repeats", type=int, default=5)
     p_probe.add_argument("--limit", type=int, default=0)
     p_probe.set_defaults(fn=_cmd_probe)
+
+    p_camp = sub.add_parser(
+        "campaign", help="무인 측정 캠페인 — 중단돼도 이어서 쌓는다 (실제 LLM)"
+    )
+    p_camp.add_argument("--out-dir", required=True, dest="out_dir")
+    p_camp.add_argument("--hours", type=float, default=8.0)
+    p_camp.add_argument("--run-dirs", nargs="+", dest="run_dirs")
+    p_camp.add_argument("--labels")
+    p_camp.add_argument("--pure-docs", nargs="+", dest="pure_docs")
+    p_camp.add_argument("--repeats", type=int, default=5)
+    p_camp.add_argument("--limit", type=int, default=5,
+                        help="프로브가 잴 명세 수(실행 하나당)")
+    p_camp.add_argument("--pure-limit", type=int, default=30, dest="pure_limit",
+                        help="PURE 문서 하나에서 뽑을 요구사항 수. 크면 실행 하나가 길어져 "
+                             "중단됐을 때 잃는 것이 많다")
+    p_camp.add_argument("--input-names", nargs="+", dest="input_names",
+                        help="`inputs/<name>.json` 중 파이프라인에 태울 것(inputs 단계)")
+    p_camp.add_argument("--phases", nargs="+", default=["stability", "score", "pure"],
+                        choices=["stability", "score", "pure", "inputs"],
+                        help="단계 순서. 앞의 것이 예산을 먼저 쓴다")
+    p_camp.add_argument("--concurrency", type=int, default=2,
+                        help="동시 호출 수. 높이면 스로틀에 걸려 오히려 느려진다(실측)")
+    p_camp.set_defaults(fn=_cmd_campaign)
+
+    p_cc = sub.add_parser(
+        "concerns", help="클라우드 관심사 링크 층 측정 — 1표씩 쌓는다 (실제 LLM)"
+    )
+    p_cc.add_argument("--out-dir", required=True, dest="out_dir")
+    p_cc.add_argument("--hours", type=float, default=8.0)
+    p_cc.add_argument("--repeats", type=int, default=10,
+                      help="같은 (도메인, 조건)을 몇 번 물을지. 흔들림은 반복에서만 보인다")
+    p_cc.set_defaults(fn=_cmd_concerns)
+
+    p_cr = sub.add_parser(
+        "concern-report", help="쌓인 관심사 표를 집계한다 (LLM 없음)"
+    )
+    p_cr.add_argument("--dir", required=True)
+    p_cr.add_argument("-k", type=int, default=3, help="다수결 표 수(표는 이미 쌓여 있다)")
+    p_cr.set_defaults(fn=_cmd_concern_report)
+
+    p_cd = sub.add_parser(
+        "concern-differentiation",
+        help="넓힌 코퍼스(PURE)에서 관심사 분화를 다시 잰다 (LLM 없음)",
+    )
+    p_cd.add_argument("--show", nargs=2, metavar=("A", "B"),
+                      help="두 관심사의 한쪽만 거는 요구사항 문장을 낸다 — 등급은 사람이 매긴다")
+    p_cd.set_defaults(fn=_cmd_concern_differentiation)
+
+    p_cl = sub.add_parser(
+        "concern-labels", help="관심사 링크에 사람 라벨을 붙일 눈가림 파일 생성 (LLM 없음)"
+    )
+    p_cl.add_argument("--dir", required=True, help="쌓인 표가 있는 캠페인 디렉터리")
+    p_cl.add_argument("--out", required=True, help="라벨러가 채울 눈가림 파일")
+    p_cl.add_argument("--key", required=True, help="층 표시가 담긴 열쇠 — 라벨 중에는 열지 않는다")
+    p_cl.add_argument("--chunk", type=int, default=0)
+    p_cl.add_argument("-k", type=int, default=3, help="LLM 링크를 확정할 다수결 표 수")
+    p_cl.add_argument("--controls", type=int, default=16,
+                      help="두 층이 합의한 링크에서 뽑을 대조 항목 수")
+    p_cl.set_defaults(fn=_cmd_concern_labels)
+
+    p_cls = sub.add_parser(
+        "concern-label-score", help="라벨 대비 층별 정밀도 (LLM 없음)"
+    )
+    p_cls.add_argument("--labels", required=True)
+    p_cls.add_argument("--key", required=True)
+    p_cls.set_defaults(fn=_cmd_concern_label_score)
+
+    p_pb = sub.add_parser(
+        "playbook", help="실행에서 배운 것을 쌓고 보여 준다 (LLM 없음)"
+    )
+    p_pb.add_argument("--path", default="artifacts/playbook.json",
+                      help="플레이북 파일. 파이프라인이 읽는 것과 같은 경로여야 한다")
+    p_pb.add_argument("--runs", nargs="+", help="반영할 실행 디렉터리. 없으면 보여 주기만 한다")
+    p_pb.set_defaults(fn=_cmd_playbook)
 
     p_build = sub.add_parser(
         "dataset-build", help="사람이 라벨 붙일 눈가림 파일 생성 (LLM 없음)"

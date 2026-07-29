@@ -17,8 +17,21 @@ class CreateImplementationJobRequest(BaseModel):
         return value
 
 
+class CreateImplementationFeedbackJobRequest(CreateImplementationJobRequest):
+    feedback: str = Field(min_length=1, max_length=12000)
+
+    @field_validator("feedback")
+    @classmethod
+    def validate_feedback(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("feedback must not be blank")
+        return value
+
+
 class ApprovalRequest(BaseModel):
     request_id: str = Field(min_length=64, max_length=64)
     approved: bool
     approved_by: str = Field(default="EasyDep user", max_length=200)
     retry_failed: bool = False
+    delegate_repair_approvals: bool = True

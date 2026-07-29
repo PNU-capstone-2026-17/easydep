@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.deployment.capacitykb import agent_api
 from app.deployment.capacitykb.parsers.cfnlint import parse_wheel, property_of
+from app.deployment.tests._helpers import flat
 
 EXT = "cfnlint/data/schemas/extensions/"
 SCHEMAS = {
@@ -16,11 +17,6 @@ SCHEMAS = {
         "properties": {"InstanceType": {"type": "string"}},
     }
 }
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
 
 
 def _wheel(tmp_path: Path, payload: dict, name: str = "instancetype_enum.json") -> Path:

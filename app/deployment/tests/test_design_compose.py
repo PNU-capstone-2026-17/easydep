@@ -19,13 +19,9 @@ from app.deployment.nim_agent.design_tools import (
     compose,
     deployment_answer,
 )
+from app.deployment.tests._helpers import flat
 
 _EXAMPLE = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
 
 
 @pytest.fixture()
@@ -623,3 +619,47 @@ def test_plan_itself_stays_vm_when_recommendation_differs() -> None:
     plan = compose(_steady_stateless_design())
     api = next(n for n in plan.nodes if n.id == "api")
     assert any("t3a" in n.text or "$" in n.text for n in api.notes), "VM 값이 사라졌다"
+
+
+# --- 설계 입력 경로 (2026-07-28 감사) ---
+
+
+def test_design_can_come_from_a_file_path(tmp_path) -> None:
+    """**2KB짜리 문서를 모델이 다시 타이핑하게 두지 않는다.**
+
+    실측(2026-07-28)에서 설계 문서를 문자열로 넘기다가 첫 호출이 파싱 실패했다
+    (`Expecting property name enclosed in double quotes: line 1 column 733`).
+    문서가 길수록 확률이 나빠지는데 설계 산출물은 원래 길다.
+    """
+    from app.deployment.nim_agent.design_tools import deployment_from_input
+
+    src = Path(__file__).resolve().parent.parent / "appkb" / "examples" / "order-demo.json"
+    text = deployment_from_input(design_path=str(src), diagram=False)
+    assert "주문 서비스 데모" in text
+
+
+def test_broken_json_shows_the_offending_fragment() -> None:
+    """위치만 알려 주면 모델은 **문서를 통째로 다시 쓰는 쪽**을 고른다.
+
+    그러면 같은 실수를 다시 할 확률이 그대로다. 문제 조각을 보여야 그 자리만 고친다.
+    """
+    from app.deployment.nim_agent.design_tools import deployment_from_input
+
+    text = deployment_from_input(design_json='{"schemaVersion":"1", name:"x"}')
+    assert "Could not read the design JSON" in text
+    assert 'name:"x"' in text, "어디가 틀렸는지 안 보여 준다"
+    assert "design_path" in text, "다시 타이핑하지 않는 길을 안 알려 준다"
+
+
+def test_missing_input_asks_instead_of_crashing() -> None:
+    from app.deployment.nim_agent.design_tools import deployment_from_input
+
+    text = deployment_from_input()
+    assert "design_json" in text and "design_path" in text
+
+
+def test_unreadable_file_says_so_plainly(tmp_path) -> None:
+    from app.deployment.nim_agent.design_tools import deployment_from_input
+
+    text = deployment_from_input(design_path=str(tmp_path / "nope.json"))
+    assert "Could not read the design file" in text

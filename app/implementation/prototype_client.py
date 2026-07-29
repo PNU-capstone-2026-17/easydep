@@ -67,6 +67,47 @@ class PrototypeClient:
         path.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
+    def prepare_feedback_job(
+        self,
+        job_id: str,
+        app_id: str,
+        design: dict[str, Any],
+        files: dict[str, str],
+        feedback: str,
+        base_package: str,
+        allow_assumptions: bool,
+    ) -> Path:
+        path = self.prepare_job(
+            job_id, app_id, design, base_package, allow_assumptions
+        )
+        job = json.loads(path.read_text(encoding="utf-8"))
+        root = path.parent
+        snapshot_path = root / "base-application.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "implementation-source-snapshot/v1alpha1",
+                    "files": {
+                        f"application/{name.strip('/')}": content
+                        for name, content in sorted(files.items())
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        job["jobType"] = "FEEDBACK_REVISION"
+        job["feedback"] = feedback
+        job["inputs"]["baseSnapshot"] = snapshot_path.relative_to(
+            self.settings.repository_root
+        ).as_posix()
+        job["requiredInputs"] = ["baseSnapshot"]
+        path.write_text(
+            json.dumps(job, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return path
+
     def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
         generated = self._call([str(job_path)])
         run_root = Path(str(generated["output"])).resolve()

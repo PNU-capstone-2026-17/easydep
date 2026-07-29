@@ -94,6 +94,55 @@ class PlanNode:
     노트 문장("$0.0468/h")을 되파싱하게 두면 문구 하나에 판정이 흔들린다.
     None은 0이 아니라 "값이 없다"다 — 더하는 쪽이 그 구분을 지켜야 한다."""
 
+    host: str = ""
+    """이 노드가 **어디서 도는가** — 실행 환경의 이름(`VM · t3a.medium` 등).
+
+    UML 배포 다이어그램의 뼈대는 **Node ← «deploy» ← Artifact**다. 컴포넌트는
+    노드가 아니라 **노드 위에 배포되는 아티팩트**이므로, 컴포넌트 이름(`label`)과
+    실행 환경 이름(여기)이 갈려야 그림이 그 삼각형을 그릴 수 있다.
+
+    한동안 둘이 한 상자였다(2026-07-28 감사에서 지적). 그래서 "한 VM에 두 컴포넌트"도
+    "k8s의 노드풀/파드/컨테이너 3층"도 표현할 수 없었고, 그림이 배포도라기보다
+    **리소스 목록**에 가까웠다.
+
+    비어 있으면 렌더러가 컴포넌트를 감싸지 않고 그대로 그린다 — 실행 환경을 모르면서
+    아는 척하지 않는다.
+    """
+
+    replicas: int | None = None
+    """이 노드를 **몇 개** 놓는가. `None`은 1이 아니라 **정해지지 않았다**는 뜻이다.
+
+    계획은 "How many instances you need is not something this knowledge base can
+    decide"라고 노트로 말해 왔는데, **그림에는 상자가 하나뿐이라 1대처럼 읽혔다.**
+    노트는 그림과 같이 안 다닌다 — 그림은 잘려 돌아다닌다(범례에 유보를 넣은 것과
+    같은 이유). 그래서 미정을 그림에도 남긴다.
+
+    근거 없는 사이징은 이 저장소가 막아 온 것이므로(9장) **우리가 수를 정하지
+    않는다.** 설계자가 정하면 그 수가 들어오고, 아니면 `None`으로 남아 `×?`로
+    그려진다. 노드/아티팩트 분리(한 VM에 여러 컴포넌트)는 아직 없다 — 그건 별도
+    과제이고, 이 칸은 **미정을 미정이라고 그리는 것**까지만 한다.
+    """
+
+    placement: str = "unknown"
+    """이 노드가 **어디에 놓이는가** — 다이어그램 중첩의 근거.
+
+        "<노드 id>"  그 노드 **안에** 그린다
+        "none"       담기지 않는다는 것을 **안다** (최상위 · 외부 시스템 · 행위자)
+        "unknown"    **배치를 모른다** (기본값)
+
+    `"unknown"`이 기본값인 것이 요점이다. 그림에서 상자가 밖에 있으면 "밖에 있다"는
+    주장으로 읽히는데, 관리형 서비스는 사실 **우리가 모르는 것**이다 — 실측(2026-07-28)
+    결과 `contained_in` 축은 **네트워크 배치가 아니다**(Azure는 ARM 이름 계층, GCP는
+    프로젝트 소속, AWS는 0건). "RDS가 서브넷에 산다"를 아는 축이 이 저장소에 없다.
+
+    그래서 셋을 가른다. 부재를 "밖"으로 승격하지 않는 것이 이 저장소의 규율이고
+    (`basis.py`·`perfkb`가 같은 이유로 상태를 늘렸다), 그림에서만 예외일 이유가 없다.
+
+    **누가 채우나**: 축을 합치는 일은 도구 계층의 몫이라(kb-book 3장의 단방향 규약)
+    `appkb`가 `graphkb`를 부를 수 없다. 구성기(`nim_agent/design_tools.py`)가 그래프
+    축에 물어 여기 담고, 렌더러는 계획만 읽는다.
+    """
+
     def __post_init__(self) -> None:
         if self.origin not in ORIGINS:
             raise ValueError(f"unknown origin: {self.origin!r}")
@@ -147,6 +196,7 @@ class DeploymentPlan:
                     "origin": n.origin, "archetype": n.archetype,
                     "typeId": n.type_id, "candidates": list(n.candidates),
                     "hourlyUSD": n.hourly_usd,
+                    "placement": n.placement,
                     "notes": [
                         {"text": x.text, "origin": x.origin, "source": x.source}
                         for x in n.notes

@@ -104,6 +104,53 @@ def schedule_cross_phase_repair(
     return entry
 
 
+def schedule_source_conformance_repair(
+    run_root: Path, report: dict[str, object]
+) -> dict[str, object] | None:
+    """Re-plan bounded source repairs using deterministic conformance evidence."""
+    violations = report.get("violations", [])
+    if not any(
+        isinstance(item, dict) and item.get("code") == "SEQUENCE_CALL_NOT_IMPLEMENTED"
+        for item in violations
+    ):
+        return None
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = _read_json(manifest_path)
+    tasks = list(manifest.get("implementation_tasks", []))
+    owners = [
+        str(task["task_id"]) for task in tasks
+        if task.get("task_type") in {
+            "control", "api-adapter", "boundary-adapter", "gateway-adapter", "configuration"
+        }
+    ]
+    if not owners:
+        return None
+    evidence = json.dumps(violations, ensure_ascii=False, indent=2)
+    plan_path = run_root / REPAIR_PLAN
+    plan = _read_json(plan_path) if plan_path.is_file() else {"schemaVersion": REPAIR_SCHEMA, "entries": []}
+    evidence_sha = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
+    matching = next((item for item in plan.get("entries", []) if item.get("failedTaskId") == "source-design-conformance" and item.get("evidenceSha256") == evidence_sha), None)
+    revision = int(matching.get("revision", 0)) + 1 if matching else 1
+    if revision > int(os.environ.get("IMPLEMENTATION_MAX_CONFORMANCE_REPAIRS", "3")):
+        return None
+    entry = {
+        "failedTaskId": "source-design-conformance",
+        "ownerTaskIds": sorted(owners),
+        "revalidationTaskIds": [str(task["task_id"]) for task in tasks if task.get("task_type") == "integration-test"],
+        "evidenceSha256": evidence_sha,
+        "evidence": evidence,
+        "revision": revision,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+    }
+    if matching:
+        matching.clear(); matching.update(entry)
+    else:
+        plan.setdefault("entries", []).append(entry)
+    plan["updatedAt"] = entry["createdAt"]
+    _write_json(plan_path, plan)
+    return entry
+
+
 def apply_repair_directives(run_root: Path) -> None:
     """Make repair evidence part of task prompts and therefore HITL request hashes."""
     plan_path = run_root / REPAIR_PLAN

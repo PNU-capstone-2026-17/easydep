@@ -11,7 +11,7 @@ from typing import cast
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.requirements import prompts
-from app.requirements.agent import stages
+from app.requirements.agent import playbook, stages
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step2_usecases import (
@@ -25,6 +25,7 @@ from app.requirements.agent.steps.step4_diagram import (
     render_diagram,  # noqa: F401 — _STAGE_FN_NAME이 globals()로 찾는다
 )
 from app.requirements.common import telemetry
+from app.requirements.config import settings
 from app.requirements.schemas import FeedbackEdit, FeedbackIntent
 
 _log = telemetry.get_logger("feedback")
@@ -161,14 +162,28 @@ def _consistency(state: dict) -> dict:
     }
 
 
-def apply_feedback(state: dict, feedback: str | FeedbackEdit) -> tuple[dict, dict]:
+def apply_feedback(
+    state: dict, feedback: str | FeedbackEdit, run_id: str = "", dataset: str = ""
+) -> tuple[dict, dict]:
     """피드백을 적용해 대상 stage를 재생성하고 하위를 cascade 재실행한다.
+
+    **적용과 동시에 배운다.** 과제 목표 1의 후반부가 "사용자 피드백을 위한 에이전트 갱신"인데,
+    지금까지 피드백은 **산출물만 고치고 사라졌다** — 같은 지적을 세 번 받아도 네 번째 실행이
+    같은 것을 냈다. 여기서 플레이북에 남겨야 다음 실행이 읽는다(`agent/playbook.py`).
+
+    쌓는 것과 쓰는 것은 갈라져 있다: 여기서는 항상 쌓고, 생성 프롬프트에 실릴지는
+    `settings.playbook_enabled`가 정한다.
+
+    `run_id`는 "서로 다른 실행에서 두 번"을 세는 열쇠다. 안 주면 세지 못하므로 배우지도
+    않는다 — 없는 실행 구분을 지어내느니 안 배우는 편이 낫다.
 
     반환: (갱신된 state, 리포트). state는 in-place로도 갱신된다.
     """
     intent = resolve_intent(feedback, state)
     _regenerate_stage(state, intent)
     cascaded = _cascade(state, intent.stage)
+    if run_id:
+        playbook.record_feedback(settings.playbook_path, intent, run_id, dataset)
     report = {
         "intent": intent.model_dump(),
         "regenerated": intent.stage,

@@ -63,6 +63,30 @@ class Source:
     않으려는 것**이 이 칸의 목적이다.
     """
 
+    license: str = ""
+    """원본의 라이선스. **확인한 것만 적는다** — `redistribution`과 같은 규율이다.
+
+    빈 문자열은 "자유롭다"가 아니라 **"아직 확인하지 않았다"**는 뜻이다. 이 구분이
+    필요한 이유는 감사(2026-07-28)에서 드러났다: `document/kb-book.md` 17장이
+    라이선스 5등급 표를 실어 47종 전부가 분류된 것처럼 읽혔는데, 실제로 판단이
+    붙어 있던 것은 **4종**뿐이었다. **문서가 코드보다 자신 있게 말한 유일한
+    곳**이었고, 이 저장소의 모든 규율에 정확히 반대되는 방향이었다.
+
+        "MIT" · "Apache-2.0" · "MPL-2.0" · "MIT-0" · "CC-BY-4.0"
+                          원본이 그 라이선스를 명시한다 (SPDX 식별자)
+        "all-rights-reserved"
+                          라이선스 부여 조항이 없고 그렇게 적혀 있다 → 수록 근거는
+                          라이선스가 아니라 별도 판단이다(`redistribution` 참조)
+        "not-stated"      공개돼 있으나 라이선스 문구를 찾지 못했다 (금지 문구도 없다)
+        "bundled-own"     우리가 만든 파일이라 외부 라이선스가 없다
+        ""                **확인하지 않았다** — `unlicensed()`가 모으고,
+                          `tests/test_source_pinning.py`가 목록을 못 박는다
+
+    같은 저장소·같은 ref의 다른 파일에서 이미 확인한 경우는 확인한 것으로 친다
+    (예: `botocore-endpoints`는 `botocore`와 같은 태그의 같은 저장소다). 그 근거는
+    `note`에 적는다.
+    """
+
     note: str = ""
 
 
@@ -92,6 +116,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/Azure/bicep-types-az/ef7421bbfef762f59292e253701a9859af32fc2c/generated",
         pin_kind="commit",
         pin="ef7421bbfef762f59292e253701a9859af32fc2c",
+        license="MIT",
         note="태그가 v0.1/v0.0-test뿐이라 쓸 수 없다. 커밋 SHA로 고정. 2026-07-19.",
     ),
     "azure-limits-doc": Source(
@@ -99,6 +124,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/MicrosoftDocs/azure-docs/355bbdc30800cb3b4ab856521a1b50c17188bf49/includes",
         pin_kind="commit",
         pin="355bbdc30800cb3b4ab856521a1b50c17188bf49",
+        license="CC-BY-4.0",
         note="문서 저장소라 태그가 없다. 커밋 SHA로 고정. 2026-07-15.",
     ),
     "kcc-crd": Source(
@@ -106,6 +132,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/GoogleCloudPlatform/k8s-config-connector/v1.153.0",
         pin_kind="tag",
         pin="v1.153.0",
+        license="Apache-2.0",
         note="파서가 뒤에 /config/<경로>를 붙인다. --tag로 바꿀 수 있다.",
     ),
     "aws-price-list": Source(
@@ -131,6 +158,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="1.43.52",
+        license="Apache-2.0",
         note=(
             "**정정(2026-07-21)**: 예전 주석은 'shape에 min/max가 없다'였는데 틀렸다. "
             "EC2만 봐도 shape 4,069개 중 min 183·max 175·enum 457개가 있다. "
@@ -148,6 +176,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="1.43.52",
+        license="Apache-2.0",
         note=(
             "**새 소스가 아니라 이미 고정해 둔 태그 안의 안 쓰던 파일이다.** "
             "`botocore`와 같은 1.43.52를 가리키므로 따로 고정할 것이 없다. "
@@ -168,6 +197,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="1.53.1",
+        license="MIT-0",
         note=(
             "MIT-0. CloudFormation 레지스트리가 표현 못 하는 것을 cfn-lint가 별도 "
             "파일로 관리한다 — 리전별 인스턴스 타입 (리전,값) 79,809쌍. "
@@ -182,6 +212,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v6.55.0",
+        license="MPL-2.0",
         note=(
             "CloudFormation이 표현 못 하는 교차 필드 조건·조건부 불변이 여기 있다. "
             "google 프로바이더와 달리 **사람이 쓴 코드**라(생성 코드 19%) 빈 목록 증발이 "
@@ -196,6 +227,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v7.40.0",
+        license="MPL-2.0",
         note=(
             "Magic Modules의 **버전이 매겨진 산출물**. MM 저장소 자체는 태그가 0개라 "
             "핀을 못 박고 하루 3.6건씩 바뀌므로, 같은 파이프라인의 주간 릴리스를 쓴다. "
@@ -210,6 +242,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="11c3681605cfeb209ddbac372a53d8931696d0cd",
+        license="CC-BY-4.0",
         note=(
             "AWS↔Azure·GCP↔Azure **서비스 비교표**(CC-BY-4.0 — azure-docs와 같은 "
             "라이선스, 재배포 시 저작자 표시). svcmap의 1차 근거다. 태그가 없어 커밋 "
@@ -228,6 +261,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/mingrammer/diagrams/v0.24.4",
         pin_kind="tag",
         pin="v0.24.4",
+        license="MIT",
         note=(
             "MIT. 프로바이더별 서비스 분류(모듈 구조가 곧 분류 체계). svcmap의 "
             "**독립 교차 소스**다 — MS 비교표와 이것이 같은 대응을 말하면 교차 확인. "
@@ -240,6 +274,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/MicrosoftDocs/azure-compute-docs/9c18d88d498d09e897edde7e2fe8483067f2556a",
         pin_kind="commit",
         pin="9c18d88d498d09e897edde7e2fe8483067f2556a",
+        license="CC-BY-4.0",
         note=(
             "Azure VM **크기 문서의 표**(CC-BY-4.0 — azure-docs와 같은 라이선스). "
             "`articles/virtual-machines/sizes/` 계열별 `*-series.md`에 NIC 수·"
@@ -256,6 +291,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="add204f16413d608d35141715aef4a122b59cb96",
+        license="Apache-2.0",
         note=(
             "GCP 머신 **시리즈 특성**(Apache-2.0). instances/series/*.sql의 UPDATE "
             "문에 cpuPlatform·계열·크기별 네트워크 대역폭 Gbps가 들어 있다"
@@ -270,6 +306,7 @@ SOURCES: dict[str, Source] = {
         url="https://cloud.google.com/architecture/framework",
         pin_kind="digest",
         pin="(고정 불가)",
+        license="CC-BY-4.0",
         note=(
             "GCP Architecture Framework **지침 산문**. 페이지 푸터가 CC-BY-4.0을 "
             "명시하고('Except as otherwise noted…'), robots.txt 차단 없음, 색인에서 "
@@ -285,6 +322,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/MicrosoftDocs/well-architected/1353bbb66e53121b702a46baed0d64e1f6284bb5",
         pin_kind="commit",
         pin="1353bbb66e53121b702a46baed0d64e1f6284bb5",
+        license="CC-BY-4.0",
         note=(
             "Azure Well-Architected **지침 산문**(CC-BY-4.0 — architecture-center와 "
             "같은 라이선스). well-architected/ 하위 md 199편(실측 2026-07-24). "
@@ -298,6 +336,7 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/heroku/12factor/1385d2c80bac38c25647651f6f5ec769561828dc",
         pin_kind="commit",
         pin="1385d2c80bac38c25647651f6f5ec769561828dc",
+        license="MIT",
         note=(
             "12factor **배포 원칙 산문**(patternkb 코퍼스). MIT — LICENSE에 "
             "'Copyright (c) 2012 Adam Wiggins' 명시(실측 2026-07-24). 태그가 없어 "
@@ -311,6 +350,7 @@ SOURCES: dict[str, Source] = {
         url="https://globalcatalog.cloud.ibm.com/api/v1?q=is.instance",
         pin_kind="digest",
         pin="(고정 불가)",
+        license="not-stated",
         redistribution="not-stated",
         note=(
             "IBM VPC 인스턴스 프로필의 **성능 신호**. perfkb는 aws·azure·gcp 셋뿐이었고 "
@@ -331,6 +371,7 @@ SOURCES: dict[str, Source] = {
         url="https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview",
         pin_kind="digest",
         pin="(고정 불가)",
+        license="not-stated",
         redistribution="not-stated",
         note=(
             "Azure **스팟·예약·저축 플랜** 가격. 문서가 *\"unauthenticated experience\"*라고 "
@@ -355,6 +396,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="574d8fbb68fa",
+        license="Apache-2.0",
         note=(
             "GCP **스팟·약정** 가격. 우리 미러(tumblebug)엔 온디맨드 정가 하나뿐이라 "
             "'예약하면 얼마'에 답할 수 없었다. 라이선스는 파일 안에 Apache-2.0으로 "
@@ -373,6 +415,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v2.4.0",
+        license="MPL-2.0",
         note=(
             "IBM Cloud 리소스 타입·제약. MPL-2.0. **주의**: 이 저장소의 "
             "`provider_metadata.json`은 저장소 태그와 내용이 어긋난 전례가 있다"
@@ -388,6 +431,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v4.0.6",
+        license="MPL-2.0",
         note="NAVER Cloud 리소스 타입·제약. MPL-2.0. tarball 0.4MB.",
     ),
     "tp-nhn": Source(
@@ -398,6 +442,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v1.0.9",
+        license="MPL-2.0",
         note=(
             "NHN Cloud 리소스 타입·제약. MPL-2.0. **'공개 프로바이더가 없다'고 "
             "적어 뒀던 것이 틀렸다** — 받아 보니 ResourcesMap에 110종이 있다"
@@ -416,6 +461,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v3.4.0",
+        license="MPL-2.0",
         note=(
             "OpenStack 리소스 타입·제약. MPL-2.0. 타입 이름에 API 버전이 붙는다"
             "(`openstack_networking_network_v2`) — 벤더 규약이라 그대로 쓴다. 0.5MB."
@@ -429,6 +475,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v8.23.0",
+        license="MPL-2.0",
         note=(
             "Oracle Cloud 리소스 타입·제약. MPL-2.0. **등록 형태가 다르다** — "
             "다른 provider는 맵 리터럴인데 이쪽은 `RegisterResource(\"oci_x\", …)` "
@@ -444,6 +491,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v1.285.0",
+        license="MPL-2.0",
         note=(
             "Alibaba Cloud 리소스 타입·제약. **이 CSP에는 우리가 쓸 공개 리소스 "
             "스키마가 없어서** Terraform provider가 유일한 경로다. 등록 리소스 "
@@ -460,6 +508,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v1.83.13",
+        license="MPL-2.0",
         note=(
             "Tencent Cloud 리소스 타입·제약. alicloud와 같은 이유·같은 방식이다. "
             "MPL-2.0."
@@ -473,6 +522,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="b7c2b1a25b334fe260c5347f70468e47c7dfeef4",
+        license="MIT",
         note=(
             "Azure Verified Modules의 **실무 배포 순서**. 컴파일된 ARM 템플릿"
             "(`main.json`) 522개의 `dependsOn`에서 타입 쌍을 뽑는다. "
@@ -491,6 +541,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="2ffcafdaa788",
+        license="MIT",
         note=(
             "관리형 서비스의 **버전별 지원 종료일**. 'EKS 1.28 언제까지 쓸 수 있나'에 "
             "답한다. 클라우드 제품 23종이 있다(amazon-eks·amazon-rds-*·azure-*·gke 등). "
@@ -507,6 +558,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="49f3f26bfd68",
+        license="Apache-2.0",
         note=(
             "GCP 리전별 **무탄소 에너지 비율(CFE)**과 그리드 탄소집약도. Google이 "
             "직접 발표한 값이라 basis=stated다. Apache-2.0. 우리 gcp 리전 43개 중 "
@@ -522,6 +574,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="f584c549ee35",
+        license="Apache-2.0",
         note=(
             "AWS·Azure 리전별 배출계수(t CO2eq/kWh). Apache-2.0. **파일 셋을 함께 "
             "읽어야 한다** — 리전 enum, 계수 표, 미국 NERC 지역 상수. 계수 표가 "
@@ -540,6 +593,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="33201f7e944a60abf9af5c652ae1cdb30a267a5e",
+        license="Apache-2.0",
         note=(
             "컨테이너 **규모 프리셋**(nano~2xlarge → cpu/memory). 파일 헤더가 "
             "APACHE-2.0(저장소 메타는 NOASSERTION이라 파일 쪽을 근거로 삼는다). "
@@ -556,6 +610,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v2.103.0",
+        license="Apache-2.0",
         note=(
             "AWS가 공식으로 묶어 둔 패턴 83개. Apache-2.0. **이름 자체가 조합**이라"
             "(`aws-apigateway-lambda`) 코드를 파싱하지 않고도 신호가 나온다 — CDK나 "
@@ -571,6 +626,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="digest",
         pin="(고정 불가)",
+        license="all-rights-reserved",
         redistribution="fair-use",
         note=(
             "AWS Well-Architected Framework **공식 화이트페이퍼 PDF**(patternkb, "
@@ -594,6 +650,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="a0f43bc6d20813052892546f445037cf84c75b54",
+        license="Apache-2.0",
         note=(
             "AWS 공식 CloudFormation 샘플. Apache-2.0. 태그가 없어 커밋 SHA로 고정"
             "(2026-06-01). **Azure에서 통한 동시 출현 방법이 AWS에서도 되는지**를 재려고 "
@@ -610,6 +667,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="1a9f04f934179975a3a56c2496d2ed2b27598bd8",
+        license="Apache-2.0",
         note=(
             "두 번째 AWS CFN 코퍼스. Apache-2.0. 태그가 의미 없어 커밋 SHA로 고정. "
             "AWS 공식 샘플 299개만으로는 앵커가 22종뿐이라 얇았다 — 이걸 더하면 "
@@ -627,6 +685,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="331d6f394416122008f71342d20c8a2ba8d9b24a",
+        license="MIT",
         note=(
             "실제 ARM 템플릿 코퍼스. 태그가 없어 커밋 SHA로 고정(2026-07-17). MIT. "
             "**동시 출현 빈도**를 세는 데만 쓴다 — 이 저장소가 못 하던 '가능한 것'과 "
@@ -644,6 +703,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v0.12.25",
+        license="Apache-2.0",
         note=(
             "리전 간 왕복 지연 행렬. **cb-tumblebug의 benchmark.go가 실제로 VM을 "
             "띄워 잰 값**이고 벤더 SLA가 아니다 — 어느 시점의 관측이다. "
@@ -660,6 +720,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v0.12.25",
+        license="Apache-2.0",
         note=(
             "cb-tumblebug **소스 트리**. 미러(assets.dump.gz)와 **같은 태그**를 써야 "
             "번들과 카탈로그가 어긋나지 않는다. `init/templates/*.json`(이름 붙은 "
@@ -675,6 +736,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v0.11.8",
+        license="Apache-2.0",
         note=(
             "**이미 핀 박은 저장소의 안 쓰던 파일이다.** 우리는 이 저장소에서 "
             "assets.dump.gz(spec_infos)만 쓰고 있었는데, 같은 태그에 리전 정의가 있다. "
@@ -692,6 +754,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v0.11.8",
+        license="Apache-2.0",
     ),
     "cb-spider": Source(
         key="cb-spider",
@@ -701,6 +764,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="tag",
         pin="v0.12.37",
+        license="Apache-2.0",
         note=(
             "**우리 런타임 경로의 하부다.** cb-tumblebug이 CSP를 다룰 때 cb-spider "
             "드라이버를 통하므로, 여기 없는 것은 우리 에이전트가 실제로 만들 수 없다. "
@@ -715,6 +779,7 @@ SOURCES: dict[str, Source] = {
         url="graphkb/parsers/core_vendor_map.json",
         pin_kind="bundled",
         pin="(git으로 버전 관리됨)",
+        license="bundled-own",
         note="사람이 손으로 고치는 파일이라 오히려 해시 추적이 필요하다.",
     ),
     "azure-rest-api-specs": Source(
@@ -740,6 +805,7 @@ SOURCES: dict[str, Source] = {
         ),
         pin_kind="commit",
         pin="4ef36cd2c9867c1076206dcb691412ae2de7e8dd",
+        license="MIT",
         note=(
             "MIT. 태그·릴리스가 없어 커밋 SHA로 고정한다 — 이게 배제 근거가 될 수 "
             "없다는 건 bicep-types-az에서 이미 정리했다. **저장소가 서빙하는 "
@@ -753,7 +819,11 @@ SOURCES: dict[str, Source] = {
         url="https://raw.githubusercontent.com/cloud-barista/cb-tumblebug/v0.12.25/assets/assets.dump.gz",
         pin_kind="tag",
         pin="v0.12.25",
-        note="파서가 --tag로 바꿀 수 있다.",
+        license="Apache-2.0",
+        note=(
+            "파서가 --tag로 바꿀 수 있다. 라이선스는 같은 저장소·같은 태그의 "
+            "`tumblebug-src`에서 확인한 Apache-2.0을 승계한다."
+        ),
     ),
 }
 
@@ -761,3 +831,14 @@ SOURCES: dict[str, Source] = {
 def unpinnable() -> list[Source]:
     """원리적으로 재현 불가능한 소스 — 빌드 요약에서 눈에 띄게 하려고."""
     return [s for s in SOURCES.values() if s.pin_kind == "digest"]
+
+
+def unlicensed() -> list[Source]:
+    """라이선스를 **아직 확인하지 않은** 소스 — 빈 칸을 허가로 읽지 않게 하려고.
+
+    `unpinnable()`과 같은 목적이다: 모르는 것을 **세어서 드러내면** 다음 사람이
+    착각하지 않는다. 이 목록이 줄어드는 것은 좋은 일이고, **자동으로 늘어나면 안
+    된다** — 늘리려면 `tests/test_source_pinning.py`의 단언을 고쳐야 하고, 그
+    강제가 이 함수의 목적이다.
+    """
+    return [s for s in SOURCES.values() if not s.license]

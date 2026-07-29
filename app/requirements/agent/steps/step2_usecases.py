@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.core import traceability
 from app.requirements import prompts
 from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
@@ -46,7 +47,7 @@ def _usecase_examples() -> str:
     return ""
 
 
-@contract("identify_actors", requires=("classified",))
+@contract("identify_actors", requires=("classified",), produces=("actors",))
 def identify_actors(state: AgentState, feedback: str = "") -> dict:
     """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시.
 
@@ -118,7 +119,8 @@ def _local_edit_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
-@contract("identify_use_cases", requires=("classified", "actors"))
+@contract("identify_use_cases", requires=("classified", "actors"),
+          produces=("use_cases",))
 def identify_use_cases(
     state: AgentState, feedback: str = "", target_ids: list[str] | None = None
 ) -> dict:
@@ -196,7 +198,7 @@ def identify_use_cases(
     return {"use_cases": use_cases, "phase": "use_cases"}
 
 
-@contract("review_model", requires=("actors", "use_cases"))
+@contract("review_model", requires=("actors", "use_cases"), produces=("model_review",))
 def review_model(state: AgentState) -> dict:
     """액터·유스케이스 모델을 독립 검증자에게 물어 의미 결함을 표면화한다.
 
@@ -235,7 +237,7 @@ def review_model(state: AgentState) -> dict:
     }
 
 
-@contract("check_coverage", requires=("classified", "use_cases"))
+@contract("check_coverage", requires=("classified", "use_cases"), produces=("coverage",))
 def check_coverage(state: AgentState) -> dict:
     """FR 커버리지를 결정론적으로 점검한다.
 
@@ -244,23 +246,16 @@ def check_coverage(state: AgentState) -> dict:
     - unattached NFR: 어떤 유스케이스에도 안 붙은 NFR (전역 제약 후보)
     - unknown refs: 제공되지 않은 id를 참조한 경우 (LLM 환각 표면화)
     """
-    classified = state.get("classified") or []
-    use_cases = state.get("use_cases") or []
-    fr, nfr = _split_fr_nfr(classified)
-    fr_ids = {r["id"] for r in fr}
-    nfr_ids = {r["id"] for r in nfr}
-
-    covered = {rid for uc in use_cases for rid in uc.get("requirement_ids", [])}
-    attached_nfr = {nid for uc in use_cases for nid in uc.get("nfr_ids", [])}
-
+    # 집계는 `core/traceability.py` 한 곳에서 한다. 예전에는 여기서 따로 굴렸고,
+    # `rtm.build_rtm`이 같은 사실을 **다르게** 세고 있었다 — 환각 참조의 정의가 갈려
+    # 같은 상태에서 서로 겹치지도 않는 답이 나왔다(그 모듈 docstring에 경위).
+    trace = traceability.index(state)
     coverage = {
-        "fr_total": len(fr_ids),
-        "covered_fr_ids": sorted(fr_ids & covered),
-        "orphan_fr_ids": sorted(fr_ids - covered),
-        "unattached_nfr_ids": sorted(nfr_ids - attached_nfr),
-        "unknown_requirement_refs": sorted(covered - fr_ids),
-        "coverage_ratio": (
-            round(len(fr_ids & covered) / len(fr_ids), 4) if fr_ids else 1.0
-        ),
+        "fr_total": len(trace.fr_ids),
+        "covered_fr_ids": list(trace.covered_fr_ids),
+        "orphan_fr_ids": list(trace.orphan_fr_ids),
+        "unattached_nfr_ids": list(trace.unattached_nfr_ids),
+        "unknown_requirement_refs": list(trace.unknown_refs),
+        "coverage_ratio": trace.coverage_ratio,
     }
     return {"coverage": coverage, "phase": "coverage"}

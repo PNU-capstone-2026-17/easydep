@@ -15,14 +15,9 @@ import json
 
 import pytest
 
-from app.deployment.capacitykb import agent_api
+from app.deployment.capacitykb import _aws_endpoints, agent_api
 from app.deployment.capacitykb.parsers import aws_endpoints
-
-
-def flat(text: str) -> str:
-    """줄바꿈·들여쓰기를 공백 하나로 눌러 문구 대조를 줄나눔에서 독립시킨다."""
-    return " ".join(text.split())
-
+from app.deployment.tests._helpers import flat
 
 RAW = {
     "partitions": [
@@ -69,9 +64,9 @@ def built(tmp_path, monkeypatch):
     )
     aws_endpoints.build(out)
 
-    agent_api._endpoints.cache_clear()
+    _aws_endpoints._endpoints.cache_clear()
     yield tmp_path
-    agent_api._endpoints.cache_clear()
+    _aws_endpoints._endpoints.cache_clear()
 
 
 # --- 파서 -----------------------------------------------------------------
