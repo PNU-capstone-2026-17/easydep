@@ -22,7 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent
 #: 아카이브는 "그때 무엇을 봤나"의 스냅샷이라 갱신을 금지하는데, 이 문서는 새 소스가
 #: 나오면 표를 고쳐야 하는 종류다. 실제로 이번에 가속기 축을 빠뜨린 것을 뒤늦게 찾아
 #: 고쳤고, 아카이브였다면 정정을 못 싣고 새 문서를 또 만들었을 것이다.
-LIVING_DOCS = {"kb-book.md", "research.md", "constraint-derivation.md"}
+#: `dependency-model.md` (2026-07-30 추가) — **개념 모델은 반증으로 자란다.**
+#: 실제로 첫 판의 "필연의 출처 여섯" 가설이 관측 39건 중 9건에 반증돼 두 층 구조로
+#: 바뀌었다. 아카이브는 갱신을 금지하므로 반증을 실을 자리가 없고, 새 문서를 또
+#: 만들면 어느 것이 현재 모델인지 다시 알 수 없어진다.
+LIVING_DOCS = {
+    "kb-book.md", "research.md", "constraint-derivation.md", "dependency-model.md",
+}
 
 
 def test_document_top_level_is_fixed() -> None:

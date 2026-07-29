@@ -156,8 +156,13 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 
 ## 7. 의존성 판정
 
-의존은 *"A가 존재하고 작동하려면 참이어야 하는 것"*이고, 필연의 출처가 여섯이다 —
-식별·주소 / 자원 할당 / 제어 권한 / 데이터 도달 / 생명주기 / 정책.
+의존은 *"A가 존재하고 작동하려면 참이어야 하는 것"*이다. **개념 모델은 별도 문서에
+있고 계속 갱신된다** — `app/core/cloudkb/document/dependency-model.md`.
+
+> 그 문서의 첫 판은 필연의 출처를 여섯(식별·할당·권한·도달·생명주기·정책)으로 놓았는데,
+> **관측 39건 중 9건에 반증됐다** — `spec`·`image` 참조는 격리 경계와 무관하고,
+> `customImage→node`는 파생이며, 서브넷 개수 조건은 가용성 설계다. 그래서 **관계의
+> 종류(요구/참조/파생/포함)를 먼저 가르고 요구에만 출처를 붙이는 두 층 구조**로 바뀌었다.
 
 질문 셋을 갈라야 한다.
 
@@ -202,7 +207,7 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 | 측정 | 값 | 어디에 |
 |---|---|---|
 | 프로바이더 카탈로그 대 우리 도달 | 제약 135,745 중 **3.1%** · 타입 9,796 중 155 | `kb-scope-tumblebug` §1 |
-| cb-tumblebug 자원·의존 | 자원 **21종** · 간선 **39** · 증거 **9층** | `tumblebug_resources.json` |
+| cb-tumblebug 자원·의존 | 자원 **21종** · 간선 **39** · 관측 **83** | `tumblebug_resources.json` |
 | 하류 intent 전수 대조 | 19칸 — have 5 · partial 5 · missing 6 · undecided 3 | `report/w4-downstream-2026-07-29.md` |
 | 프로브 기준선 | 한국어 68건 중 66 → 변경 후 68/68, **통과→실패 0건** | `report/probe-baseline-2026-07-29/` |
 | `RESOURCE_SPEC` 필수 재정의 | 필수 4 · 권고 6 · 되묻기 3종 | `report/w5-required-fields-2026-07-29.md` |
@@ -218,6 +223,7 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 | `docs/cloud-native-requirements.md` | **조사 기록**(2026-07-27) |
 | `docs/kb-and-contract-plan-*.md` · `kb-scope-tumblebug-*.md` · `agent-sdk-merge-plan.md` · `requirements-agent-improvements.md` | **이력.** 참조하지 않는다 |
 | `app/core/cloudkb/document/constraint-derivation.md` | **살아 있는 문서** — 자유 변수와 단계 배분의 도출. 근거 등급(측정/명시/추론)이 붙는다. 계속 갱신하고 아카이브하지 않는다 |
+| `app/core/cloudkb/document/dependency-model.md` | **살아 있는 문서** — 의존의 개념 모델(관계 4종 · 필연의 출처 · 방향쌍 · 술어)과 반증 기록 |
 | `app/core/cloudkb/document/kb-book.md` | KB **만드는 방법서** — 살아 있으나 이 문서의 아래 |
 | `app/core/cloudkb/document/archive/**` | **이력.** 참조하지 않는다 |
 | `docs/api.md` · `ARCHITECTURE.md` · `deployment-file-generation.md` · `implementation-agent.md` · `requirements-agent.md` | **다른 영역의 살아있는 명세.** 우리 관할 밖이고 손대지 않는다 |
