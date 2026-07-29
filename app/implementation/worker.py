@@ -244,7 +244,9 @@ class ImplementationWorker:
             except UnicodeDecodeError:
                 continue
             lowered = relative.lower()
-            if "/test/" in f"/{lowered}":
+            if relative.startswith("deployment-bundle/"):
+                kind = TYPE_DEPLOYMENT_FILE
+            elif "/test/" in f"/{lowered}":
                 kind = TYPE_TEST_CODE
             elif relative == ".dockerignore" or any(
                 token in lowered for token in ("k8s/", "dockerfile", "helm/")

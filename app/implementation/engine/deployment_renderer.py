@@ -92,7 +92,7 @@ set -eu
 references_file=${1:?usage: render-images.sh <image-references.json> <output-dir>}
 output_dir=${2:?usage: render-images.sh <image-references.json> <output-dir>}
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-intent_path="$source_dir/../../reports/deployment-intent.json"
+intent_path="$source_dir/deployment-intent.json"
 test -f "$references_file"
 test -f "$intent_path"
 rm -rf "$output_dir"
@@ -139,9 +139,8 @@ set -eu
 terraform_dir=${1:?usage: build-push.sh <terraform-dir> <image-references.json>}
 references_file=${2:?usage: build-push.sh <terraform-dir> <image-references.json>}
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-run_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
-intent_path="$run_root/reports/deployment-intent.json"
-app_root="$run_root/application"
+intent_path="$script_dir/deployment-intent.json"
+app_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
 image_tag=${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to a release tag}
 case "$image_tag" in latest|*[^0-9A-Za-z_.-]*|'') echo "EASYDEP_IMAGE_TAG must be a non-latest release tag" >&2; exit 2 ;; esac
@@ -239,6 +238,10 @@ find "$output_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | sort |
 done
 ''',
         )
+    write(
+        "k8s/deployment-intent.json",
+        json.dumps(intent, ensure_ascii=False, indent=2),
+    )
     if intent.get("createNamespace", True):
         write("k8s/namespace.yaml", resource("v1", "Namespace", namespace))
     for workload in intent["workloads"]:

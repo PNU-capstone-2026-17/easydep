@@ -66,7 +66,33 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
         raise ValueError("Deployment/IaC conformance failed:\n- " + "\n- ".join(conformance["errors"]))
     if terraform_validation["status"] == "FAILED":
         raise ValueError("Terraform validation failed:\n- " + "\n- ".join(terraform_validation.get("errors", [])))
+    bundle = sync_deployment_bundle(application)
+    report["deploymentBundle"] = bundle.relative_to(application.parent).as_posix()
+    (reports / "iac-render.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
+
+
+def sync_deployment_bundle(application: Path) -> Path:
+    """Create a self-contained, managed deployment bundle after IaC validation succeeds."""
+    bundle = application / "deployment-bundle"
+    marker = bundle / ".easydep-managed"
+    if bundle.exists():
+        if not marker.is_file():
+            raise ValueError(f"Refusing to replace unmanaged deployment bundle: {bundle}")
+        shutil.rmtree(bundle)
+    shutil.copytree(
+        application,
+        bundle / "application",
+        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle", "__pycache__"),
+    )
+    marker.write_text("easydep deployment bundle\n", encoding="utf-8")
+    (bundle / "README.md").write_text(
+        "# EasyDep deployment bundle\n\n"
+        "Run `sh application/k8s/deploy.sh application/terraform -auto-approve` "
+        "from this directory after configuring provider credentials.\n",
+        encoding="utf-8",
+    )
+    return bundle
 
 
 def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str, Any], application: Path) -> dict[str, object]:

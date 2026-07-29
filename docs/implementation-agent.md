@@ -132,6 +132,11 @@ build/push 단계는 Terraform output의 provider에 따라 Azure CLI의 `az acr
 `aws ecr get-login-password`, 또는 gcloud의 `auth configure-docker`를 실행하므로 해당 CLI와 로그인된
 자격증명도 필요하다.
 
+IaC 검증이 성공하면 `application/deployment-bundle/`이 생성된다. bundle은 `application/` 아래에 소스,
+Dockerfile, Kubernetes manifest와 deployment intent, Terraform 파일을 함께 담으므로 artifact API에서
+`DEPLOYMENT_FILE` 하나를 내려받아도 실행에 필요한 run reports에 의존하지 않는다. bundle 디렉터리에서
+`sh application/k8s/deploy.sh application/terraform -auto-approve`를 실행한다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,
