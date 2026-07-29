@@ -1,433 +1,258 @@
-# 클라우드 리소스 의존 — 조사와 관측
+# 클라우드 리소스 의존 — 현재 아는 것
 
-> **살아 있는 문서다. 계속 갱신한다.** 아카이브에 넣지 않는다.
+> **살아 있는 문서다.** 새 근거가 나오면 본문을 고친다. 아카이브에 넣지 않는다.
 >
-> **이 문서에는 아직 "모델"이 없다.** 조사 결과·근거 있는 관측·**선행 연구 대조**가 있다.
-> 모델은 §5.4의 정박을 실제로 수행한 뒤에 선다.
->
-> 규율: **우리가 만든 것을 근거로 쓰지 않는다.** 근거는 `파일:줄`·원문·인용 가능한
-> 외부 문헌이다.
->
-> **표시 규율.** 이 문서에서 **관측**(인용 있음)과 **우리 구성**(분류·이름·배치)을
-> 가려 적는다. 관측을 조직하려면 이름이 필요하지만, 그 이름은 근거가 아니다.
+> 상위: `docs/research.md`(과제 원문) · `docs/cloud-native-extension.md`(현재 진실).
+> 표시 규율: **관측**(인용 있음)과 **우리 구성**(분류·이름·배치)을 가려 적는다.
+> 관측을 조직하려면 이름이 필요하지만 **그 이름은 근거가 아니다.**
 
 ---
 
-## 0. 폐기 기록 (2026-07-30)
+## 1. 무엇을 아는가
 
-이 문서의 첫 판에 **근거 없는 모델**을 적었다가 전부 지웠다. 무엇을 왜 지웠는지 남긴다.
+`cb-tumblebug v0.12.25` · `cb-spider v0.12.37` 소스에서 전수로 뽑았다. 산출물은
+`graphkb/parsers/tumblebug_resources.json`, 절차는 `graphkb/tumblebug_closure.py`.
 
-| 지운 것 | 왜 |
+```
+자원 21종 · 의존 간선 39 · 관측 83
+관측마다 출처(저장소·태그) · 형태(어떤 코드/데이터) · 인용(file:line)
+```
+
+**관측의 형태별 분포** — 같은 사실이라도 어디에 어떤 꼴로 있느냐로 믿을 정도가 다르다.
+
+| 형태 | 수 |
+|---|---:|
+| 요청 스키마 필드 · CSP 중립 인터페이스 | 28 · 28 |
+| REST 경로 중첩 · 삭제 보호 코드 | 7 · 7 |
+| 프로바이더별 자산 데이터 · 자동 생성 코드 | 4 · 4 |
+| 생성 전 존재 확인 코드 · 운영 스크립트 순서 | 3 · 2 |
+
+### 1.1 근거 있는 사실
+
+| 사실 | 근거 |
 |---|---|
-| **필연의 출처 여섯** (식별·주소 / 자원 할당 / 제어 권한 / 데이터 도달 / 생명주기 / 정책) | **어떤 소스에도 없다.** 내가 나열한 것이다 |
-| **관계의 종류 넷** (요구 / 참조 / 파생 / 포함) | 같음. `포함`만 TOSCA `HostedOn`에 대응이 있고 나머지는 근거 없음 |
-| **형식** `(주체·대상·관계 종류·필연의 출처·양상·방향쌍·술어)` | 위 둘을 조합한 것이라 근거가 없다 |
-| **"격리 경계" 발생론** | 그럴듯하지만 인용할 문헌이 없다 |
-| **"반증됐다"는 서술** | **내가 만든 가설을 내가 만든 절차로 반증했다.** 그건 검증이 아니라 자기 대화다 |
+| 의존은 **(자원쌍 × 생성경로 × CSP)**의 함수다 | `K8sNodeGroupReq`는 image·spec이 선택인데 `K8sNodeGroupDynamicReq`는 필수(`core/model/k8scluster.go`) · `RequiredCSPResourceForSqlDB`(`sqlDb.go:30`)가 CSP별로 다른 요구를 적는다 |
+| **참조 방향 ≠ 삭제 제약 방향** | 삭제 거부는 `core/resource/common.go:417` *"cannot delete … still referenced by N object(s)"*, 반면 vNet 삭제는 subnet을 **먼저 지운다**(`vnet.go:934`) |
+| **개수만이 아니라 배치 조건이 있다** | `sqlDb.go:39` `subnet2ID example:"subnet-xxxx in different AZ"` · `assets/k8sclusterinfo.yaml:22` `requiredSubnetCount: 2`(aws) |
+| **동시성 요구가 있다** | `k8sclusterinfo.yaml`의 `nodeGroupsOnCreation` — 클러스터와 **함께** 만들어야 하는가 |
+| `spec`·`image`는 간선이 아니라 **속성**이다 | (가) `core/infra/control.go:1302` — 노드 삭제가 다른 자원에는 참조 카운트를 되돌리는데 `spec`만 주석으로 꺼져 있다 (나) TOSCA에서 `num_cpus`·`mem_size`는 관계가 아니라 `host` **capability 속성** |
+| `customImage`는 노드**로부터** 만들어진다 | 생성 경로가 `POST /ns/{ns}/infra/{i}/node/{n}/snapshot` |
 
-**남은 것은 관측뿐이다**(§4). 관측은 유효하다 — 인용이 있다.
+### 1.2 폐포 — 자원 하나를 고르면 무엇이 딸려오나
 
----
+절차는 코드에 있다. **딸려오는 것을 세는 것으로 끝나지 않고, 자동으로 채워지는 것과
+사람이 정해야 하는 것을 가른다.**
 
-## 1. 전수조사 (2026-07-30)
+| 앵커 | CSP | 딸려오는 것 | 사람이 정할 것 |
+|---|---|---|---|
+| `node`(VM) | aws · azure | infra · vNet · subnet · securityGroup · sshKey (+ spec·image 선택) | **infra 하나** |
+| `k8sCluster` | aws | vNet · **subnet ×2** · securityGroup | 셋 다 |
+| `k8sCluster` | azure | vNet · subnet ×1 · securityGroup | 셋 다 |
+| `sqlDb` | aws | vNet · **subnet ×2**(다른 AZ) | 둘 다 |
+| `sqlDb` | azure | **없음** | 없음 |
+| `vpn` | azure | infra · vNet · **subnet**(GatewaySubnet) | 셋 다 |
+| `objectStorage` | 전부 | **없음** | 없음 |
 
-### 1.1 앞선 선정은 전수가 아니었다
+### 1.3 의존이 아닌 것 — 기각 목록
 
-첫 판은 후보를 **cb-tumblebug이 몇 번 언급하느냐**로 잘랐다. 그건 전수가 아니라
-**한 프로젝트의 시야**다. 그 방식으로 `cm-beetle`을 기각했는데, 실제 설명은
-*"A computing infrastructure migration framework that **recommends target configurations**"*
-— 우리가 하려는 일과 가장 가까운 프로젝트였다.
+실제로 틀린 답을 냈던 것이라 `test_tumblebug_resources.py`가 지킨다.
 
-### 1.2 실제 목록
-
-`api.github.com/orgs/cloud-barista` → `public_repos: 59`.
-`?per_page=20&sort=full_name`으로 쪽을 나눠 받았다.
-
-> **출처의 한계.** 페이지마다 요약기가 2건씩 흘려 54건만 직접 받았고, 나머지 다섯
-> (`cb-mapui`·`cb-milkyway`·`cm-grasshopper`·`cm-honeybee`·`poc-specialized_services`)은
-> 다른 응답에서 관측된 이름으로 메웠다. **59건을 한 번에 받은 것이 아니다.**
-
-### 1.3 판정
-
-판정 기준: *"이 저장소가 **자원 사이의 관계**에 대해 무언가를 말하는가."*
-
-| 무리 | 저장소 | 판정 |
-|---|---|---|
-| **자원을 만든다** | `cb-spider` · `cb-tumblebug` · `mc-terrarium` | **채택** — 관계가 구현에 드러난다 |
-| **자원을 추천·이관한다** | `cm-beetle` · `cm-model` · `cm-honeybee` · `cm-damselfly` · `cm-ant` | **채택 후보** — cm-beetle·cm-model 확인함(§2), 나머지 미확인 |
-| 주변 도구 | `cb-store`(메타) · `cb-log` · `cb-mapui`·`cm-butterfly`·`ai-ui`(UI) · `cb-dragonfly`·`ai-o11y`(모니터링) · `mc-data-manager`·`cm-data-mold`(데이터 이관) | 기각 — 자원 관계를 만들지도 강제하지도 않는다 |
-| CSP SDK | `ktcloud-sdk-go` · `ktcloudvpc-sdk-go` · `nhncloud-sdk-go` | 기각 — 단일 CSP 접속 계층 |
-| 보관·POC | `poc-*` 8종 · `cb-client` · `cb-ladybug` · `cb-operator` · `cb-webtool` · `cloud-barista.github.com` | 기각 — **archived** |
-| 문서·사이트 | `docs` · `cloud-barista.github.io` · `*-api-web` · `.github` · `api` · `archive` · `cb-coffeehouse` · `cb-fw-template` | 기각 — 자원을 다루지 않는다 |
-| AI 플랫폼 | `ai-mcmp` · `ai-adm` · `ai-app` · `ai-ha` · `ai-ops` | 기각 — 별개 제품군 |
-| 미확인 | `cb-larva`(인큐베이터 연구) · `cm-cicada` · `cm-mayfly` · `cm-centipede` · `cloud-migrator` · `mc-meta-365` | **보류** — 설명이 없어 판정 불가 |
-
-**보류 6건을 0으로 적지 않는다.** 설명이 없다는 것은 관계가 없다는 뜻이 아니다.
-
----
-
-## 2. 조사가 답한 것 — 어디에도 개념 모델이 없다
-
-READMEs를 직접 읽어 확인했다.
-
-| 저장소 | 자원 관계·의존·순서를 말하나 |
-|---|---|
-| **cb-spider** | **없다.** 자원 목록(`VPC, VM, Disk, NLB, Kubernetes, Object Storage`)은 적지만 의존·순서·묶음을 다루지 않는다. Quick Start가 `VPC → Security Group → KeyPair → VM`을 **예제로** 보일 뿐이다 |
-| **mc-terrarium** | **없다.** *"multi-cloud networking features, such as site-to-site VPN setup"*까지만 |
-| **cm-beetle** | **없다.** *"recommendation of optimal configuration of target cloud infrastructure"*라고만 하고 **방법론·입력·고려 요소를 적지 않는다** |
-| **cloud-barista**(우산) | **없다.** *"integrated archive for repository of major frameworks"* — 구성 요소 나열과 폐기 공지뿐이고 아키텍처 모델이 없다 |
-| **cm-model** | **가장 가깝다.** *"managing source and target models for cloud migration… standardized Go structs"*. 그리고 **"Use the dependency analyzer script to understand struct relationships"** — cloud-barista에서 **의존을 명시적으로 다루는 유일한 자리**로 지금까지 확인된 것 |
-
-> **결론.** cloud-barista에는 자원 의존의 **개념 모델이 없다.** 넷을 직접 확인했고
-> 양상이 일관된다. 그러니 우리가 관측한 의존은 전부 **다른 것을 하려다 남은 흔적**이다 —
-> 필수 필드, 삭제 거부 메시지, 스크립트 순서, 프로바이더별 자산표.
->
-> **이것이 이 작업의 값이자 한계다.** 명시화할 것이 있다는 뜻이고, 동시에 **모델의
-> 근거를 이 생태계 안에서는 못 얻는다**는 뜻이다.
-
-**다음 확인점: `cm-model`의 dependency analyzer가 무엇을 관계로 세는가.** 이름만으로는
-Go struct 참조 분석일 수 있는데, 그렇다면 자원 의존이 아니라 코드 의존이다. 확인 전까지
-근거로 쓰지 않는다.
-
----
-
-## 3. 하위 기제가 둘이고 그것이 의존의 가시성을 바꾼다
-
-`cb-tumblebug v0.12.25`의 `src/core/resource/*.go`에서 `terrarium`/`spider` 언급을 센 것.
-
-| 자원 | terrarium | spider |
-|---|---:|---:|
-| `vpn` | **73** | 1 |
-| `sqlDb` | **53** | 0 |
-| `objectStorage` | 0 | **169** |
-| `vNet` · `securityGroup` · `k8sCluster` | 0 | 110 · 52 · 104 |
-
-두 기제가 의존을 다르게 다룬다. 드라이버 갈래는 상위가 호출 순서와 참조를 정해야 해서
-**요청 스키마에 의존이 드러나고**, OpenTofu 갈래는 도구가 참조로 스스로 순서를 풀어
-**템플릿 안에 숨는다.**
-
-`core/model/sqlDb.go:30`의 `RequiredCSPResourceForSqlDB`가 그 자리다 — 템플릿이 입력으로
-받아야 하니 상위가 CSP별로 명시해 모은다(aws는 `vNetID`+`subnet1ID`+`subnet2ID`,
-azure는 `resourceGroup`만).
-
-**함의**: `vpn`·`sqlDb`의 의존이 얇게 잡히는 것은 **실제로 얇아서가 아니다.** 관측
-가능성이 기제에 좌우된다.
-
----
-
-## 4. 근거 있는 관측 — 모델이 아니라 사실
-
-인용 없이는 적지 않는다. 이것들이 언젠가 모델의 재료가 된다.
-
-| 관측 | 근거 |
-|---|---|
-| `spec`·`image`는 참조 카운트를 **일부러 걸지 않는다** | `core/infra/control.go:1302` — 다른 자원에는 `UpdateAssociatedObjectList`를 부르는데 spec 줄만 주석 |
-| **참조 방향과 삭제 제약 방향이 다르다** | 삭제 거부는 `core/resource/common.go:417` *"cannot delete … still referenced by N object(s)"*, 반면 vNet 삭제는 subnet을 **먼저 지운다**(`core/resource/vnet.go:934`) |
-| **개수만이 아니라 배치 조건이 있다** | `core/model/sqlDb.go:39` `subnet2ID example:"subnet-xxxx in different AZ"` |
-| **같은 자원쌍이 생성 경로마다 요구가 다르다** | `K8sNodeGroupReq`는 image·spec이 선택, `K8sNodeGroupDynamicReq`는 **필수** (`core/model/k8scluster.go`) |
-| **CSP마다 요구가 다르다** | `SecurityGroupReq.VNetId`에 `required`가 없고 주석이 *"some CSPs (e.g., Azure, Tencent, NHN) don't bind SG to VPC"*(`core/model/securitygroup.go:69`). 반면 cb-spider `SecurityInfo.VpcIID`는 `required` |
-| **동시성 요구가 있다** | `assets/k8sclusterinfo.yaml`의 `nodeGroupsOnCreation` — 클러스터와 **함께** 만들어야 하는가 |
-| `customImage`는 노드**로부터** 만들어진다 | 생성 경로가 `POST /ns/{ns}/infra/{i}/node/{n}/snapshot` (`server.go`) |
-
-전수 결과(자원 21 · 간선 39 · 관측 83)는 `graphkb/parsers/tumblebug_resources.json`에
-있고 여기서 다시 재지 않는다.
-
-### 4.1 관측으로 기각한 판정 기준
-
-실제로 틀린 답을 냈던 것들이라 테스트로 굳혀 뒀다.
-
-- **순서는 의존을 함의하지 않는다** — 스크립트의 선형 순서에서 쌍을 만들었더니
+- **순서는 의존을 함의하지 않는다.** 스크립트의 선형 순서에서 쌍을 만들었더니
   `image→vNet` 같은 거짓 간선 10개가 나왔다.
-- **연산의 인자는 생성 의존이 아니다** — 디스크를 붙이는 요청이 디스크 id를 요구하는
+- **연산의 인자는 생성 의존이 아니다.** 디스크를 붙이는 요청이 디스크 id를 요구하는
   것은 연산의 인자다.
 
 ---
 
-## 5. 선행 연구와 외부 정박 (2026-07-30)
+## 2. 무엇으로 아는가 — 재료와 그 한계
 
-**모델의 근거를 이 생태계 안에서는 못 얻는다**(§2)는 결론에서 밖으로 나갔다. 결과는
-**우리가 하려던 것의 상당 부분이 이미 있다**는 것이다. 이걸 모르고 쓰면 논문이 아니다.
+### 2.1 cloud-barista 전수 (저장소 59개)
 
-### 5.1 외부 정박 — TOSCA가 우리 어휘를 이미 갖고 있다
+`api.github.com/orgs/cloud-barista` → `public_repos: 59`. 판정 기준: *"이 저장소가
+자원 사이의 관계에 대해 무언가를 말하는가."*
 
-`OASIS TOSCA Simple Profile in YAML v1.1`. 위상은 **typed directed graph**이고, 노드의
-`requirements`가 다른 노드의 `capabilities`로 충족된다.
+| 판정 | 저장소 |
+|---|---|
+| **채택** | `cb-spider` · `cb-tumblebug` · `mc-terrarium` |
+| **채택 후보** | `cm-beetle` · `cm-model` · `cm-honeybee` · `cm-damselfly` · `cm-ant` |
+| 기각 | 주변 도구(메타·로그·UI·모니터링·데이터 이관) · CSP SDK 3 · archived 다수 · 문서/사이트 · AI 플랫폼 5 |
+| **보류** | `cb-larva` · `cm-cicada` · `cm-mayfly` · `cm-centipede` · `cloud-migrator` · `mc-meta-365` — 설명이 없어 판정 불가 |
 
-**규범 관계 타입**이 우리 관측과 이렇게 대응한다.
+> **한계.** 목록을 받을 때 요약기가 쪽마다 2건씩 흘려 **54건만 직접 받았고** 다섯은 다른
+> 응답에서 관측된 이름으로 메웠다. 그리고 **보류 6건을 0으로 세지 않는다** — 설명이
+> 없다는 것이 관계가 없다는 뜻은 아니다.
 
-| TOSCA | 정의 | 우리 관측 |
-|---|---|---|
-| `HostedOn` | 소프트웨어가 컴퓨트 자원 위에 설치되는 호스팅 관계 | `node ⊂ infra` · `subnet ⊂ vNet` |
-| `AttachesTo` | 저장소 등의 부착 | `dataDisk ↔ node` |
-| `ConnectsTo` | 데이터·서비스 연결 | `nlb → node` · SG의 허용 흐름 |
-| `RoutesTo` | 네트워크 구성 요소 간 라우팅 | (우리 층에 아직 없음) |
-| `DependsOn` | *"generic dependencies between nodes **to influence orchestration order**"* | — |
+### 2.2 발견 — cloud-barista에 자원 의존의 개념 모델이 없다
 
-`DependsOn`이 중요하다. **TOSCA는 순서를 1급 의존 타입으로 둔다.** 우리가 *"순서는 의존을
-함의하지 않는다"*(§4.1)고 기각한 것과 모순처럼 보이지만 아니다 — 우리가 기각한 것은
-**관측된 순서에서 의존을 추론하는 것**이고, TOSCA는 **선언된 의존이 순서를 강제하는
-것**이다. 방향이 반대다. 다만 이 구분은 우리가 문서에 적어야 하는 것이지 자명하지 않다.
+READMEs를 직접 읽어 넷을 확인했고 양상이 일관된다.
 
-**`node_filter`가 결정적이다.** *"A node template can describe a requirement for another
-node without including it in the topology. Instead, the node provides a node_filter to
-describe the target node type along with its capabilities and property constraints"* —
-`greater_or_equal`·`in_range`·`equal` 연산자로 **late binding**한다.
+| 저장소 | 의존·순서·묶음을 말하나 |
+|---|---|
+| cb-spider | **없다.** Quick Start가 `VPC → SG → KeyPair → VM`을 **예제로** 보일 뿐 |
+| mc-terrarium | **없다.** *"multi-cloud networking features, such as site-to-site VPN setup"*까지 |
+| cm-beetle | **없다.** *"recommendation of optimal configuration"*이라고만 하고 방법론을 안 적는다 |
+| cloud-barista(우산) | **없다.** *"integrated archive"* — 구성 요소 나열뿐 |
+| cm-model | **가장 가깝다.** *"dependency analyzer script to understand struct relationships"* — 다만 **자원 의존인지 코드 의존인지 확인 전이라 근거로 쓰지 않는다** |
 
-> 우리가 `constraint-derivation.md`에서 "필터 층"이라 부른 것(vCPU≥·memory≥·cost≤)은
-> **TOSCA `node_filter`의 형식과 같다.** 우리가 발명할 것이 아니라 정박할 자리다.
+**그러니 우리가 관측한 의존은 전부 다른 것을 하려다 남은 흔적이다** — 필수 필드, 삭제
+거부 메시지, 스크립트 순서, 자산표. 우리 일은 새 사실을 만드는 것이 아니라
+**암묵적으로 흩어진 의존을 명시화하는 것**이다.
 
-Terraform/OpenTofu는 **암시 의존**(속성 참조)과 **명시 의존**(`depends_on`)을 갈라
-DAG를 만들고 그것으로 생성·파기 순서와 병렬성을 정한다. Kubernetes는
-`ownerReferences`/`finalizers`로 생명주기를 건다. **우리가 관측한 "참조 방향 ≠ 삭제
-제약 방향"(§4)이 이 둘에 각각 대응한다.**
+### 2.3 하위 기제가 둘이고 그것이 의존의 가시성을 바꾼다
 
-### 5.2 선행 연구 — 우리 폐포는 새 것이 아니다
+`src/core/resource/*.go`의 언급 수.
 
-`Bellendorf & Mann, "Specification of cloud topologies and orchestration using TOSCA:
-A survey", Computing (2019)` — 124편을 6범주 19하위범주로 분류한 체계적 문헌 조사.
-**그 분류에 `Topology completion`이 하위범주로 따로 있다.**
+| 자원 | terrarium | spider |
+|---|---:|---:|
+| `vpn` · `sqlDb` | **73** · **53** | 1 · 0 |
+| `objectStorage` · `vNet` · `securityGroup` · `k8sCluster` | 0 | 169 · 110 · 52 · 104 |
 
-| 선행 연구 | 무엇을 했나 | 우리와의 관계 |
-|---|---|---|
-| **Hirmer, Breitenbücher, Binz, Leymann**, *Automatic topology completion of TOSCA-based cloud applications*, Informatik 2014, 247–258 | **불완전 토폴로지를 자동 완성**한다. 사용자는 업무 관련 구성 요소만 모델링하고 나머지는 채워진다 | **우리 폐포 절차와 같은 문제다.** Eclipse Winery에 구현돼 있고 `requirements`가 완성 범위를 제한한다 |
-| **Brogi & Soldani**, *Matching cloud services with TOSCA*, ESOCC 2013 W/S, 218–232 · *Finding available services in TOSCA-compliant clouds*, SCP 115-116 (2016) | 요구에 맞는 클라우드 서비스를 **매칭**한다 | 우리 "후보 선별"과 같은 자리 |
-| **Brogi, Cifariello, Soldani**, *DrACO: Discovering available cloud offerings*, CSRD 32(3-4) (2017) | 가용한 클라우드 제공물을 **발견**한다 | 우리 미러·카탈로그 축 |
-| **Brogi, Di Tommaso, Soldani**, *Validating TOSCA application topologies* (2017) · *Sommelier* (2017) | 토폴로지의 **타당성 검증** | 우리 `verify`·`verify_diagram` |
-| **Saatkamp et al.**, *Topology splitting and matching for multi-cloud deployments*, CLOSER 2017 | 멀티클라우드로 토폴로지를 **분할·매칭** | 우리 멀티 CSP 축 |
-| **Weerasiri, Barukh, Benatallah, Sheng, Ranjan**, *A taxonomy and survey of cloud resource orchestration techniques*, ACM CSUR 50(2) (2017) | 자원 오케스트레이션 기법의 **분류 체계** | 우리가 만들려던 분류의 선행 |
-| **Bergmayr et al.**, *A systematic review of cloud modeling languages*, ACM CSUR 51(1) (2018) | 클라우드 모델링 언어 전수 | 어휘 선택의 근거 |
+드라이버 갈래(명령형)는 상위가 순서·참조를 정해야 해서 **요청 스키마에 의존이 드러나고**,
+OpenTofu 갈래(선언형)는 도구가 참조로 스스로 풀어 **템플릿 안에 숨는다.**
+`RequiredCSPResourceForSqlDB`가 그 자리다 — 템플릿 입력이라 상위가 명시해 모은다.
 
-**정직하게 적자면**: 폐포(topology completion) · 매칭 · 검증 · 멀티클라우드 분할이
-**전부 선행 연구가 있다.** 우리가 "새로 만들었다"고 주장할 수 있는 것이 아니다.
+> **`vpn`·`sqlDb`의 의존이 얇게 잡히는 것은 실제로 얇아서가 아니다.**
 
-### 5.3 선행 연구가 비워 둔 자리
+---
 
-그렇다고 남는 것이 없지는 않다. **문헌이 스스로 지목한 공백**과 우리 관측이 겹치는
-자리가 셋 있다.
+## 3. 표준·선행 연구와의 대응
 
-1. **후보가 여럿일 때의 선택 기준.** Winery 문서가 완성 알고리즘을 설명하면서
-   *"selection criteria remain unspecified"* — **여러 후보가 매칭될 때 어떻게 고르는지,
-   완성이 불가능하면 어떻게 하는지를 적지 않는다.** 우리 규율(*근거 없으면 고르지
-   않고 미정으로 낸다*)이 정확히 그 자리다.
-2. **검증·타당성이 미탐구 영역이다.** 서베이의 결론이 명시한다 — *"discovered areas that
-   are hardly explored so far … Examples include security and privacy aspects, as well as
-   **verification and validation** in connection with TOSCA models."*
-3. **LLM 시대의 지식 주입** — 우리와 가장 가까운 선행 연구다.
+### 3.1 TOSCA 정박 — 39간선을 실제로 걸었다
 
-### 5.3.1 Nekrasov et al. (TOSEM 2026) — 읽고 정리한 것
+**대응되는 것**: `dataDisk↔node` = `AttachesTo` · `nlb→node` = `ConnectsTo`/`RoutesTo`
+후보 · 모든 간선의 상위 = `DependsOn`(*"generic dependencies … to influence
+orchestration order"*).
 
-`Nekrasov, Fossati, Kumara, Tamburri, van den Heuvel, "IaC Generation with LLMs:
-An Error Taxonomy and A Study on Configuration Knowledge Injection", ACM TOSEM,
-doi:10.1145/3817608 (arXiv:2512.14792)`. Terraform 생성 **458건**을 분석해 **오류
-15종의 2차원 분류**를 만들고, 설정 지식 주입을 Naive RAG → Graph RAG로 비교했다.
+**대응되지 않는 것 넷**
 
-**서론이 우리 논지를 한 문장으로 적어 뒀다.**
+| 안 맞는 것 | 간선 | 왜 |
+|---|---:|---|
+| 카탈로그 참조 `→spec`·`→image` | 6 | TOSCA에서 이건 관계가 아니라 **capability 속성**이다 |
+| 그룹 소속 `→infra` 계열 | 5 | `groups`는 **관계 타입이 아니라 별도 구성**이다 |
+| 파생 `customImage↔node` | 2 | **타입 상속**은 있으나 인스턴스 파생 관계는 찾지 못했다 |
+| 조건부·개수 | 4 | 규범 관계 타입에 조건을 붙일 자리가 없다 → §3.2 |
+
+> **정박이 실제로 바꾼 것**: `spec`·`image`를 간선에서 **속성**으로 옮겨야 한다.
+> `scope.py`가 이미 그 둘을 "선택 역할"로 갈라 뒀고, **관측과 표준이 같은 답에 닿았다.**
+
+**미확인**: 네트워크 관계 타입(`LinksTo`·`BindsTo` 등)을 원문에서 확인하지 못해
+`vNic`·`publicIp` 간선 4개는 정박 미결이다. **TOSCA 2.0**(CS01, 2024-12)이 나와 있어
+v1.1 기준 대조는 다시 봐야 한다.
+
+### 3.2 우리가 하려던 것은 대부분 선행 연구가 있다
+
+`Bellendorf & Mann(Computing 2019)` 서베이 — 124편·6범주 19하위범주, **`Topology
+completion`이 독립 하위범주**이고 결론이 **verification and validation**을 미탐구
+영역으로 지목한다.
+
+| 우리 것 | 선행 |
+|---|---|
+| 의존 폐포 | **Hirmer, Breitenbücher, Binz, Leymann**(Informatik 2014) — 불완전 토폴로지 자동 완성, Eclipse Winery 구현 |
+| 후보 매칭·탐색 | **Brogi & Soldani**(ESOCC 2013 · SCP 2016) · `DrACO`(2017) |
+| 토폴로지 검증 | **Brogi, Di Tommaso, Soldani**(2017) · `Sommelier` |
+| 멀티클라우드 분할 | **Saatkamp 외**(CLOSER 2017) |
+| 필터 층(vCPU≥·cost≤) | TOSCA **`node_filter`** — *"capabilities and property constraints"* + `greater_or_equal`·`in_range`, **late binding** |
+| CSP 조건부 | **변이성 관리** — VaMoS 2025 · UCC 2023. *"assigning variability conditions to elements to specify their presence"* |
+| 거절 | **abstention/selective prediction** — 서베이 `arXiv:2407.18418` |
+| 출처 추적 | **추적성·프로비넌스** — SoSyM 2010 서베이 |
+
+거절만 기제가 갈린다. 문헌은 **모델 불확실성**(NLL·엔트로피)으로 거절하고 우리는
+**지식 부재**로 거절한다 — 결정적이고 감사 가능하다. **착상의 차이는 아니다.**
+
+### 3.3 가장 가까운 선행 연구가 남긴 자리
+
+`Nekrasov, Fossati, Kumara, Tamburri, van den Heuvel, TOSEM (doi:10.1145/3817608)`.
+Terraform 생성 458건에서 오류 15종을 분류하고 Graph RAG로 설정 지식을 주입했다.
 
 > *"IaC correctness depends on adherence to **provider schemas**, proper handling of
 > **resource dependencies**, and alignment with **operational requirements that are
 > often implicit**."*
 
-**측정 결과**(우리가 재지 않아도 되는 수치다):
-
-| | 기술 검증 | 의도 검증 |
-|---|---|---|
-| 지배적 오류 | Schema 오류 **94.5%** — 그중 사실오류 65.0% · 불완전 26.5% | **문맥추론 실패 45.7%** · 불완전 30.4% · 사실오류 23.9% |
-| 의도 오류의 내역 | | 의도에 안 맞는 자원 사용 **37.0%** · 필요한 자원 누락 **30.4%** · 폐기된 자원 23.9% · 오설정 8.7% |
-| 성공률 | 기저 27.1% → 지식 주입 후 **75.3%** | **정체** — 전체 성공률은 62.7%에서 멈춘다 |
-
-**환각이 낡은 지식보다 압도적이다.** 미지원 인자의 **94.8%**, 블록의 **98.1%**, 자원의
-**100%**가 *"어떤 Terraform 명세에도 존재한 적 없는"* 것이었다. 즉 문제는 지식이 낡은
-것이 아니라 **없는 것을 지어내는 것**이다.
-
-**의존이 실패 유형으로 명시된다.** *"Cross-resource references, including `vpc_id`,
-`subnet_ids`, and `target_vault_name`, indicate failures in modeling resource
-inter-dependencies. The model struggles to dynamically link argument values to
-attributes of other resources, revealing **limitations in its dependency tracking**."*
-
-**그들의 지식 표현**: Terraform AWS provider 문서(v5.90.0) + `tfschema`로 바이너리에서
-추출한 스키마를 합쳐, *"a knowledge graph that encodes **resources, arguments, and
-relationships**"*를 만들고 Graph RAG로 주입한다.
-
-### 5.3.2 그래서 우리 자리는 어디인가
-
-**겹치는 것 — 새롭다고 주장하면 안 되는 것**
-
-- 자원·인자·관계의 지식 그래프를 만들어 LLM에 주입하는 것 자체
-- 의존을 모델링해 생성 품질을 올리는 접근
-- 스키마 근거로 환각을 막는 착상
-
-**그들이 하지 않은 것 — 기여 후보(확인 필요)**
-
-| 후보 | 근거 |
+| | 값 |
 |---|---|
-| **다중 CSP의 조건부 의존** | 그들의 그래프는 **AWS 단일 프로바이더**다(IaC-Eval이 AWS 전용). 우리 관측의 핵심인 *"`sqlDb→vNet`이 aws에서 참이고 azure에서 거짓"*은 그 형식에 담을 자리가 없다 |
-| **생성 경로별 차이** | 명시 생성과 동적 생성에서 요구가 달라지는 것. Terraform 단일 경로에는 이 축이 없다 |
-| **근거의 출처 추적** | 그들은 문서+바이너리 스키마를 합쳐 그래프를 만들지만, **각 사실이 어디서 왔는지를 산출물이 들고 다니지는 않는다.** 우리는 `파일:줄`을 간선에 붙인다 |
-| **거절하는 능력** | 그들의 파이프라인은 **항상 생성한다.** 우리 규율은 근거가 없으면 **미정으로 내고 막는다** |
+| 기술 검증 | Schema 오류 94.5% · 사실오류 65.0% · 불완전 26.5% |
+| **의도 검증** | **의도 불일치 자원 37.0% · 필요 자원 누락 30.4% · 폐기 자원 23.9% · 오설정 8.7%** |
+| 환각 비중 | 미지원 인자 94.8% · 블록 98.1% · **자원 100%**가 "존재한 적 없는" 것 |
+| 성공률 | 27.1% → 기술 75.3% · 전체 62.7%에서 **의도 정렬 정체** |
 
-마지막이 가장 날카롭다. 의도 오류의 **30.4%가 "필요한 자원 누락"**이고 **37.0%가 "의도에
-안 맞는 자원"**인데, 둘 다 **모델이 확신 없이 뭔가를 내놓아서** 생기는 것이다. *"근거가
-없으면 안 낸다"*는 커버리지를 깎는 대신 그 두 유형을 구조적으로 줄인다 — 다만 **그것이
-실제로 낫다는 것은 우리가 아직 재지 않았다.**
+**결론이 우리 자리를 지목한다** — *"intent alignment plateaued, revealing a
+**'Correctness-Congruence Gap'** where LLMs can become proficient 'coders' but remain
+limited 'architects'."* **과제 문제 ③이 정확히 그 갭이다.**
 
-> **가장 중요한 정박점**: 그 논문의 결론이 *"intent alignment plateaued, revealing a
-> **'Correctness-Congruence Gap'** where LLMs can become proficient 'coders' but remain
-> limited 'architects' in fulfilling nuanced user intent"*다. **우리 과제의 문제 ③
-> (요구사항 부합 측정)이 정확히 그 갭이고, 그쪽은 아직 안 풀렸다.**
->
-> 그러면 우리 기여의 자리가 옮겨진다 — **의존 폐포는 기여가 아니다**(선행 연구가 있다).
-> **그것을 요구사항에 되묶어 부합을 판정하는 쪽**이 기여 후보다.
+---
 
-### 5.4 그래서 모델을 어디에 정박할 것인가
+## 4. 우리가 구성한 것 (근거가 아니다)
 
-- **관계 어휘**: TOSCA 규범 관계 타입(`HostedOn`·`AttachesTo`·`ConnectsTo`·`DependsOn`)에
-  정박한다. 우리가 만든 "요구/참조/파생/포함"은 폐기했고, 이쪽이 인용 가능하다.
-- **제약 형식**: `node_filter` + 연산자에 정박한다.
-- **생명주기**: Terraform 파기 순서 · Kubernetes `finalizers`에 대조한다.
-- **정박되지 않는 것**을 명시한다 — 우리 관측 중 **파생**(`customImage ← node`)과
-  **생성 경로별 차이**(명시/동적)와 **CSP 조건부**는 위 어디에도 자리가 없다.
-  **그것이 기여 후보이고, 없다는 것을 먼저 확인해야 주장할 수 있다.**
+| 구성 | 성격 |
+|---|---|
+| 관측의 **형태** 이름(요청 스키마 필드·삭제 보호 코드 …) | 출처를 서술한 것. 등급이 아니다 |
+| 자원의 **역할** `compose`/`select` | `select`는 관측+표준 근거가 있다(§1.1). 분류 자체는 우리 구성 |
+| 폐포의 **자동/결정** 갈림 | 자동 생성 관측(`provisioning.go`)에 기댄다 |
+| 단계 배분 | `constraint-derivation.md` §4 — 거기서 근거/결정을 갈라 적는다 |
 
-### 5.5 정박을 실제로 수행했다 — 39간선을 TOSCA에 걸어 본 결과
+---
 
-계획이 아니라 실제 대조다. **형식이 바뀌었으므로 장식이 아니었다.**
+## 5. 실행 계획에서 이 문서가 대는 것
 
-**대응되는 것**
+전체 계획은 `docs/cloud-native-extension.md` §10.
 
-| 우리 간선 | TOSCA | 근거 |
-|---|---|---|
-| `node ↔ dataDisk` | `AttachesTo` | *"used for attaching storage or other resources"* |
-| `nlb → nodeGroup`·`node` | `ConnectsTo` / `RoutesTo` 후보 | 연결·라우팅 의미가 맞다. **다만 어느 쪽인지 확정 못 했다** |
-| (모든 간선의 상위) | `DependsOn` | TOSCA에서 관계 타입의 뿌리이고 *"influence orchestration order"* |
+| 단계 | 이 문서가 대는 근거 |
+|---|---|
+| 2 · 설계 단계 산출물 정의 | §1.2 폐포가 **다이어그램에 무엇이 나와야 하는지** 정한다 |
+| 3 · 부합 판정 축 도입 | §3.3의 **의도 오류 4종**을 판정문 축으로 쓴다 — 발명이 아니라 인용이고 **남의 수치와 비교 가능해진다** |
+| 4 · 측정 | 거절을 켜고 끌 때 그 4종이 어떻게 달라지나 |
 
-**대응되지 않는 것 넷 — 그리고 그중 하나는 우리 형식을 바꿨다**
-
-| 안 맞는 것 | 간선 수 | 왜 |
-|---|---:|---|
-| **카탈로그 참조** `→spec`·`→image` | 6 | **TOSCA에서 이건 관계가 아니다.** `num_cpus`·`mem_size` 같은 것은 노드의 `host` **capability 속성**으로 들어간다(확인함). 즉 우리가 "간선"으로 적던 것이 저쪽에서는 **속성**이다 |
-| **그룹 소속** `→infra`·`k8sNodeGroup→k8sCluster`·`k8sNodeGroup→node` | 5 | TOSCA의 `groups`는 **관계 타입이 아니라 별도 구성**이다(확인함) — *"groups serve to manage these components as a named group for applying policies"* |
-| **파생** `customImage ↔ node` | 2 | TOSCA에는 **타입 상속**(type derivation)은 있으나 **인스턴스 파생** 관계는 찾지 못했다 |
-| **조건부·개수** `sqlDb→vNet`(aws) · `vpn→subnet`(azure) · `k8sCluster→subnet ×2` | 4 | 규범 관계 타입에 조건을 붙일 자리가 없다 → §5.6에서 별도 연구 계열로 확인됨 |
-
-> **정박이 실제로 바꾼 것.** `spec`·`image`를 간선으로 적던 것을 **속성**으로 옮겨야
-> 한다. 우리 `scope.py`가 이미 그 둘을 "선택 역할 — 다른 자원의 속성으로 등장"으로
-> 갈라 뒀는데, **그때는 관측(참조 카운트를 안 건다)이 근거였고 이제 표준의 근거가
-> 생겼다.** 두 갈래가 같은 답에 닿았다.
-
-**네트워크 관계 타입은 확인 실패다.** `LinksTo`·`BindsTo` 같은 것이 네트워킹 절에 있을
-법하나 원문에서 확인하지 못했다. **확인 못 한 것을 있다고 적지 않는다.** `vNic`·`publicIp`
-간선 4개의 정박은 미결이다.
-
-**TOSCA 2.0(CS01, 2024-12)이 나와 있다.** 우리가 본 것은 Simple Profile YAML v1.1이라
-정박을 굳히려면 2.0 기준으로 다시 봐야 한다.
-
-### 5.6 "없다"를 확인한 결과 — 넷 다 선행 연구가 있다
-
-§5.3.2에서 기여 후보로 적은 넷을 각각 찾아봤다. **결과가 우리에게 불리하다.**
-
-| 우리가 주장하려던 것 | 실제 | 근거 |
-|---|---|---|
-| **CSP 조건부 의존** | **기여 아님.** 전용 연구 계열이 있다 | *Cross-Vendor Variability Management for Cloud Systems Using the TOSCA DSL*, **VaMoS 2025** · *Enhancing Deployment Variability Management by Pruning Elements in Deployment Models*, **UCC 2023**. 핵심 개념이 그대로다 — *"variable deployment models … **assigning variability conditions to elements to specify their presence**"* |
-| **생성 경로별 차이** | **기여 아님(같은 계열).** 배포 기술·변형별 차이가 변이성 관리의 대상이다 | *Managing the Variability of Component Implementations and Their Deployment Configurations Across Heterogeneous Deployment Technologies* (2023) |
-| **거절하는 능력** | **기여 아님.** 서베이까지 있다 | *The Art of Refusal: A Survey of Abstention in LLMs* (arXiv:2407.18418) · *Task Abstention for LLMs in Code Generation* (arXiv:2605.17029) · *Using Semantic Distance to Estimate Uncertainty in LLM-Based Code Generation* |
-| **근거의 출처 추적** | **기여 아님.** 추적성·프로비넌스는 오래된 분야다 | *A survey of traceability in requirements engineering and model-driven development*, SoSyM (2010) |
-| **파생 관계** | **판정 보류** | TOSCA 규범 타입에서 못 찾았고 문헌에서도 못 찾았다. **없음을 확인한 것이 아니라 못 찾은 것**이다 |
-
-거절에 대해 한 가지는 갈린다. 문헌의 abstention은 **모델의 불확실성**(NLL · 엔트로피 ·
-의미 거리)을 추정해 거절한다. 우리는 **지식베이스에 근거가 없으면** 거절한다 — 확률이
-아니라 **결정적이고 감사 가능한** 기준이다. 이건 기제의 차이이지 착상의 차이가 아니고,
-RAG에서 검색 실패 시 거절하는 것과 얼마나 다른지는 **아직 확인하지 않았다.**
-
-### 5.7 그래서 남는 것 — 정직한 결론
-
-**개념적 기여가 없다.** 폐포·매칭·검증·변이성·거절·추적성이 전부 선행 연구다. 우리가
-"새 개념"으로 주장할 수 있는 것은 지금 시점에 없다.
-
-남는 것은 둘이고, 둘 다 개념이 아니다.
-
-1. **조합** — 실측 가능한 다중 CSP 기질에서 뽑은 **출처 추적되는 조건부 의존**을,
-   단계별 에이전트 사슬에 물리고, **근거 부재를 거절로 연결**한 것. 각 조각은 선행이
-   있으나 이 조합의 보고는 못 찾았다(이것도 "못 찾은 것"이다).
-2. **실측** — 그 조합이 **의도 부합**(Correctness-Congruence Gap)에 도움이 되는지.
-   Nekrasov et al.이 *"intent alignment plateaued"*라고 남긴 자리이고, **아직 아무도
-   메우지 않았으며 우리도 아직 재지 않았다.**
-
-> **논문의 틀이 바뀌어야 한다.** *"우리가 의존 모델을 만들었다"*가 아니라
-> *"기존 개념들을 이렇게 조합했더니 의도 부합이 이만큼 변했다"*여야 방어된다.
-> 그리고 그 문장은 **측정 없이는 쓸 수 없다.**
+> **벤치마크는 가져올 수 없다.** IaC-Eval은 Terraform/AWS 전용이고 우리 사슬은
+> k8s 매니페스트 + 클라우드 자원이다. **가져오는 것은 분류와 방법이지 데이터가 아니다.**
 
 ---
 
 ## 6. 미결
 
-1. **측정이 없다.** §5.7의 결론이 실험을 요구한다 — 거절이 켜졌을 때와 꺼졌을 때
-   의도 부합이 어떻게 달라지는가. 우리에게 프로브 기준선이 있으니 설계는 가능하다.
-2. **네트워크 관계 타입 정박**(§5.5) — `vNic`·`publicIp` 간선 4개.
-3. **TOSCA 2.0으로 다시 대조**(§5.5).
-4. **파생 관계의 부재를 확인**(§5.6) — 없음을 보이려면 더 찾아야 한다.
-5. 보류 6건(§1.3)과 `cm-model`의 dependency analyzer(§2).
-6. 서베이 본문(결과 절)의 범주별 분포·연도별 추세 — 무엇이 포화됐는지가 거기 있다.
+1. **측정이 없다** — 계획 4단계.
+2. 네트워크 관계 타입 정박(§3.1) — `vNic`·`publicIp` 4간선.
+3. **TOSCA 2.0으로 다시 대조**(§3.1).
+4. 파생 관계의 부재 확인(§3.1) — **못 찾은 것이지 없음을 확인한 것이 아니다.**
+5. 보류 6건(§2.1)과 `cm-model` dependency analyzer(§2.2).
 
 ---
 
-## 7. 참고문헌
+## 부록 — 폐기 기록
 
-**표준**
+첫 판에 **근거 없는 모델**을 적었다가 지웠다. 규율은 `CLAUDE.md` 문서 정책 5번에 있다.
 
-- OASIS. *Topology and Orchestration Specification for Cloud Applications (TOSCA)
-  Version 1.0.* OASIS Standard, 2013.
-- OASIS. *TOSCA Simple Profile in YAML Version 1.1.* — 규범 관계 타입(`HostedOn` ·
-  `AttachesTo` · `ConnectsTo` · `DependsOn` · `RoutesTo`) · `node_filter` · 제약 연산자
-- HashiCorp. *Terraform — implicit/explicit dependencies, resource graph.*
-- Kubernetes. *Owner references and finalizers.*
-- Eclipse Winery. *TOSCA Topology Completion* (문서) — 완성 알고리즘의 구현 설명
+| 지운 것 | 왜 |
+|---|---|
+| 필연의 출처 여섯 · 관계의 종류 넷 · 7항 형식 · "격리 경계" 발생론 | 어떤 소스에도 없다 |
+| "반증됐다"는 서술 | **내가 만든 가설을 내가 만든 절차로 반증했다** — 검증의 외양을 입힌 자기 대화 |
+| `D1~D9` 증거층 | 우리 분류가 1급 필드가 되어 **라벨이 인용을 가렸다** |
+| 빈 역할 `BOUND` | 분류하는 자원이 하나도 없었다 |
 
-**서베이**
+---
 
-- Bellendorf, J., Mann, Z. Á. *Specification of cloud topologies and orchestration
-  using TOSCA: A survey.* Computing, 2019. — 124편 · 6범주 19하위범주 ·
-  `Topology completion`이 독립 하위범주 · 결론이 **verification and validation**을
-  미탐구 영역으로 지목
-- Weerasiri, D., Barukh, M. C., Benatallah, B., Sheng, Q. Z., Ranjan, R.
-  *A taxonomy and survey of cloud resource orchestration techniques.*
-  ACM Computing Surveys 50(2), 2017.
-- Bergmayr, A. 외. *A systematic review of cloud modeling languages.*
-  ACM Computing Surveys 51(1), 2018.
+## 참고문헌
 
-**의존·완성·매칭**
+**표준** — OASIS TOSCA v1.0 / Simple Profile YAML v1.1 / **v2.0 CS01(2024-12)** ·
+Terraform 암시·명시 의존 · Kubernetes `ownerReferences`/`finalizers` ·
+Eclipse Winery *TOSCA Topology Completion*
 
-- Hirmer, P., Breitenbücher, U., Binz, T., Leymann, F. *Automatic topology completion
-  of TOSCA-based cloud applications.* Informatik 2014, 247–258. — **우리 폐포와 같은 문제**
-- Brogi, A., Soldani, J. *Matching cloud services with TOSCA.* ESOCC 2013 Workshops,
-  218–232. · *Finding available services in TOSCA-compliant clouds.* SCP 115–116, 2016.
-- Brogi, A., Cifariello, P., Soldani, J. *DrACO: Discovering available cloud offerings.*
-  CSRD 32(3–4), 2017.
-- Brogi, A., Di Tommaso, A., Soldani, J. *Validating TOSCA application topologies.*
-  MODELSWARD 2017. · *Sommelier: a tool for validating TOSCA application topologies.* 2017.
-- Saatkamp, K. 외. *Topology splitting and matching for multi-cloud deployments.*
-  CLOSER 2017, 247–258.
+**서베이** — Bellendorf & Mann, *Specification of cloud topologies and orchestration
+using TOSCA: A survey*, Computing 2019 · Weerasiri 외, *A taxonomy and survey of cloud
+resource orchestration techniques*, ACM CSUR 50(2) 2017 · Bergmayr 외, *A systematic
+review of cloud modeling languages*, ACM CSUR 51(1) 2018
 
-**변이성 관리 — CSP 조건부의 선행**
+**의존·완성·매칭** — Hirmer 외, Informatik 2014, 247–258 · Brogi & Soldani, ESOCC 2013 W/S
+218–232 · SCP 115–116, 2016 · Brogi, Cifariello, Soldani, CSRD 32(3–4) 2017 ·
+Brogi, Di Tommaso, Soldani, 2017 · Saatkamp 외, CLOSER 2017
 
-- *Cross-Vendor Variability Management for Cloud Systems Using the TOSCA DSL.*
-  VaMoS 2025, doi:10.1145/3715340.3715433.
-- *Enhancing Deployment Variability Management by Pruning Elements in Deployment Models.*
-  UCC 2023, doi:10.1145/3603166.3632143.
-- *Managing the Variability of Component Implementations and Their Deployment
-  Configurations Across Heterogeneous Deployment Technologies.* Springer, 2023.
+**변이성 관리** — *Cross-Vendor Variability Management for Cloud Systems Using the TOSCA
+DSL*, VaMoS 2025, doi:10.1145/3715340.3715433 · *Enhancing Deployment Variability
+Management by Pruning Elements in Deployment Models*, UCC 2023,
+doi:10.1145/3603166.3632143
 
-**거절·추적성 — 나머지 기여 후보의 선행**
+**거절·추적성** — *The Art of Refusal: A Survey of Abstention in LLMs*, arXiv:2407.18418 ·
+*Task Abstention for LLMs in Code Generation*, arXiv:2605.17029 · *A survey of
+traceability in requirements engineering and model-driven development*, SoSyM 2010
 
-- *The Art of Refusal: A Survey of Abstention in Large Language Models.* arXiv:2407.18418.
-- *Task Abstention for Large Language Models in Code Generation.* arXiv:2605.17029.
-- *A survey of traceability in requirements engineering and model-driven development.*
-  Software and Systems Modeling, 2010.
-
-**LLM · IaC**
-
-- Nekrasov, R., Fossati, S., Kumara, I., Tamburri, D. A., van den Heuvel, W.-J.
-  *IaC Generation with LLMs: An Error Taxonomy and A Study on Configuration Knowledge
-  Injection.* ACM TOSEM, doi:10.1145/3817608 (arXiv:2512.14792). — **가장 가까운 선행 연구**
-- (그 논문이 인용한 것 중 확인해야 할 것) Meflah 외 — NL 의도 ↔ TOSCA 청사진 상호 생성 ·
-  Shao 외 — 도메인 지식 사전 + IaC 문법 비의존 중간 모델 · Zhang 외 — ChatGPT 생성
-  Kubernetes 매니페스트의 **35% 이상이 설정 냄새**를 포함
+**LLM · IaC** — Nekrasov 외, *IaC Generation with LLMs: An Error Taxonomy and A Study on
+Configuration Knowledge Injection*, ACM TOSEM, doi:10.1145/3817608 (arXiv:2512.14792)
