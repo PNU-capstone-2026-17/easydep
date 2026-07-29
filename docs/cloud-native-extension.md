@@ -159,10 +159,11 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 의존은 *"A가 존재하고 작동하려면 참이어야 하는 것"*이다. **개념 모델은 별도 문서에
 있고 계속 갱신된다** — `app/core/cloudkb/document/dependency-model.md`.
 
-> 그 문서의 첫 판은 필연의 출처를 여섯(식별·할당·권한·도달·생명주기·정책)으로 놓았는데,
-> **관측 39건 중 9건에 반증됐다** — `spec`·`image` 참조는 격리 경계와 무관하고,
-> `customImage→node`는 파생이며, 서브넷 개수 조건은 가용성 설계다. 그래서 **관계의
-> 종류(요구/참조/파생/포함)를 먼저 가르고 요구에만 출처를 붙이는 두 층 구조**로 바뀌었다.
+> **그 문서의 첫 판에 적었던 모델은 폐기했다 (2026-07-30).** 필연의 출처 여섯 ·
+> 관계의 종류 넷 · 7항 형식 — **어떤 소스에도 없는 우리 발명**이었고, 그것을 우리가
+> 만든 절차로 "반증"까지 했다. 지금 남은 것은 **인용 있는 관측**뿐이고, 모델의
+> 근거를 어디서 얻을지가 그 문서 §5의 미결이다 — **cloud-barista에는 자원 의존의
+> 개념 모델이 없다**(저장소 59개 전수 판정, 넷 직접 확인).
 
 질문 셋을 갈라야 한다.
 
@@ -223,7 +224,7 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 | `docs/cloud-native-requirements.md` | **조사 기록**(2026-07-27) |
 | `docs/kb-and-contract-plan-*.md` · `kb-scope-tumblebug-*.md` · `agent-sdk-merge-plan.md` · `requirements-agent-improvements.md` | **이력.** 참조하지 않는다 |
 | `app/core/cloudkb/document/constraint-derivation.md` | **살아 있는 문서** — 자유 변수와 단계 배분의 도출. 근거 등급(측정/명시/추론)이 붙는다. 계속 갱신하고 아카이브하지 않는다 |
-| `app/core/cloudkb/document/dependency-model.md` | **살아 있는 문서** — 의존의 개념 모델(관계 4종 · 필연의 출처 · 방향쌍 · 술어)과 반증 기록 |
+| `app/core/cloudkb/document/dependency-model.md` | **살아 있는 문서** — cloud-barista 전수조사(59)와 **인용 있는 관측**. 모델은 아직 없다(근거 부재) |
 | `app/core/cloudkb/document/kb-book.md` | KB **만드는 방법서** — 살아 있으나 이 문서의 아래 |
 | `app/core/cloudkb/document/archive/**` | **이력.** 참조하지 않는다 |
 | `docs/api.md` · `ARCHITECTURE.md` · `deployment-file-generation.md` · `implementation-agent.md` · `requirements-agent.md` | **다른 영역의 살아있는 명세.** 우리 관할 밖이고 손대지 않는다 |
