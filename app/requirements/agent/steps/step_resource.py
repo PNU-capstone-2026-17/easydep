@@ -70,6 +70,13 @@ SCHEMA_VERSION = "1"
 #: 질문의 종류. 빈 칸의 **이유**가 다르면 사용자가 할 일도 다르다.
 MISSING = "missing"        # 계약이 요구하는데 아직 값이 없다
 ASKED = "asked"            # 에이전트가 직접 물었다(모호·불명확·확인)
+SUGGESTED = "suggested"    # 필수는 아닌데 **채우면 뒤 단계 판정이 하나 열린다**
+
+#: `SUGGESTED`가 왜 별도인가 — 되묻기가 두 종류이기 때문이다. 못 채우면 나아갈 수
+#: 없는 것과, 채우면 판정이 하나 열리는 것을 같은 얼굴로 물으면 사용자가 전부 필수로
+#: 읽는다. 반대로 안 물으면 계획을 다 만든 뒤에야 "그걸 줬으면 판정이 섰다"를 알게
+#: 되는데, 그 뒷북이 `verify._what_would_close_the_gaps`가 하던 일이다. 이 종류는
+#: **받을 때** 같은 말을 한다.
 
 #: `UNCONVERTIBLE`은 없앴다 — 환율 도구가 생겨서 "환산을 거부한다"는 종류의 질문이
 #: 더 이상 존재하지 않는다. 환산이 실패하면 그건 도구 실패이고 `MISSING`으로 묻는다.
@@ -375,8 +382,9 @@ def _control_tools(session: _Session) -> list:
 
         Args:
             field: the contract field name (provider, region, regionAsWritten,
-                monthlyBudgetUSD, expectedConcurrentUsers, approxRequestsPerSecond,
-                trafficPattern, multiZone, …). Call check_contract if unsure.
+                monthlyBudgetUSD, minVCpu, minMemoryGiB, expectedConcurrentUsers,
+                approxRequestsPerSecond, trafficPattern, multiZone, …).
+                Call check_contract if unsure.
             value: the value, as a plain string. Numbers without separators.
             evidence: the fragment you read it from — verbatim from the user's text
                 or from a tool result you already received. Paraphrases are rejected.
@@ -513,6 +521,18 @@ def build_resource_spec(state: AgentState) -> dict:
             "why": cloud_contract.why(name),
             "question": f"{name} 값이 필요하다 — {cloud_contract.why(name)}",
             "seen": [r for r in session.rejected if r["field"] == name],
+        })
+    # 권고 칸은 **막지 않는다.** 계약을 만족시키는 데는 필요 없고, 답하면 뒤 단계
+    # 판정이 하나씩 열린다. 이것들이 없어도 `resource_spec`은 나간다.
+    for name in cloud_contract.suggested_fields(session.draft):
+        if name in asked:
+            continue
+        session.questions.append({
+            "field": name, "kind": SUGGESTED,
+            "why": cloud_contract.why(name),
+            "question": f"{name}을 알려 주면 판정이 하나 열린다 — "
+                        f"{cloud_contract.why(name)}",
+            "seen": [],
         })
 
     errors = cloud_contract.validate(session.draft)

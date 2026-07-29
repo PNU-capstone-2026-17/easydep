@@ -725,13 +725,16 @@ def _method_comparison_notes(
     from app.deployment.sizingkb.dataset import rules_of
     from app.deployment.sizingkb.model import MINIMUM, REQUIRED_COUNT
 
+    from . import sizing_floor
     from .cost_tools import _perf_note
 
-    users = requirements.get("expectedConcurrentUsers")
-    vcpu, mem = (2, 4) if not users or users <= 500 else (4, 8)
+    # **세 방식을 같은 하한 위에서 비교한다.** 방식마다 다른 하한을 쓰면 비교가 아니라
+    # 조건이 다른 두 값을 나란히 놓는 것이 된다. 여기 하한은 워크로드 하한(층 2)만이다 —
+    # `k8s-node`의 하드 하한은 k8s 줄에서 따로 말한다(그게 그 방식의 비용이므로).
+    floor = sizing_floor.resolve(requirements)
     specs = cost_dataset.filter_specs(
-        vcpu_min=vcpu, mem_min_gib=mem, provider=provider, region=region,
-        sort_by="cost", limit=1,
+        vcpu_min=int(floor.vcpu), mem_min_gib=floor.mem_gib,
+        provider=provider, region=region, sort_by="cost", limit=1,
     )
     spec = specs[0] if specs else None
     steady = requirements.get("trafficPattern") == "steady"
@@ -748,6 +751,14 @@ def _method_comparison_notes(
             f"cheapest {spec['specName']} ${spec['hourlyUSD']:.4f}/h (one instance)"
             if spec.get("hourlyUSD")
             else f"cheapest {spec['specName']} (unit price unknown)"
+        )
+        # **어느 하한 위의 '가장 싼 것'인지 밝힌다.** 하한이 없으면 카탈로그 전체의
+        # 최저가이고, 그건 "이 앱에 충분하다"는 뜻이 전혀 아니다.
+        vm_parts.append(
+            f"on the stated floor ({floor.vcpu:g} vCPU / {floor.mem_gib:g} GiB)"
+            if floor.decided else
+            "no floor was given, so this is the catalogue's cheapest — a lower "
+            "bound for cost, not a spec recommendation"
         )
         # perfkb 노트 원문은 데이터셋에서 온다. 영어로 다시 빌드했으므로 한 표기만 본다.
         perf_text = _perf_note(spec).text or ""
@@ -1249,25 +1260,16 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
     """
     from app.deployment.costkb import dataset as cost_dataset
 
+    from . import sizing_floor
     from .cost_tools import _perf_note
 
-    users = requirements.get("expectedConcurrentUsers")
-    # 규모→스펙은 지식베이스 근거가 없는 추정이다. 최소치만 올리고 그 사실을 적는다.
-    vcpu, mem = (2, 4) if not users or users <= 500 else (4, 8)
-    specs = cost_dataset.filter_specs(
-        vcpu_min=vcpu, mem_min_gib=mem, provider=provider, region=region,
-        sort_by="cost", limit=1,
-    )
-    if not specs:
-        plan.unresolved.append(
-            f"found no spec with at least {vcpu} vCPU and {mem} GiB memory on "
-            f"{provider}{f'/{region}' if region else ''}, so no compute value was "
-            "attached"
+    def spec_on(floor: sizing_floor.Floor) -> dict | None:
+        found = cost_dataset.filter_specs(
+            vcpu_min=int(floor.vcpu), mem_min_gib=floor.mem_gib,
+            provider=provider, region=region, sort_by="cost", limit=1,
         )
-        return
-    spec = specs[0]
-    note_text = _compute_note(spec)
-    perf = _perf_note(spec)
+        return found[0] if found else None
+
     updated = []
     for node in plan.nodes:
         # **서버리스는 role이 managed라 여기 안 걸린다** — 시간당 단가를 붙이면
@@ -1276,24 +1278,82 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
         if node.id not in priced and node.id != "k8snodegroup":
             updated.append(node)
             continue
+
+        # **하한은 노드마다 다르다.** 쿠버네티스 노드에는 출처 있는 하드 하한이 있고
+        # (`k8s-node`: vCPU 2 · 4 GiB), 일반 VM에는 **해당하는 공식 하한이 없다.**
+        # 예전 코드는 둘을 같은 상수로 덮었는데, 그래서 출처 있는 값과 없는 값이
+        # 한 얼굴이 됐다.
+        scope = "k8s-node" if node.id == "k8snodegroup" else ""
+        floor = sizing_floor.resolve(requirements, scope=scope)
         notes = list(node.notes)
-        notes.append(Note(note_text, ORIGIN_KB, "costkb"))
-        if users:
+
+        if floor.decided:
+            spec = spec_on(floor)
+            if spec is None:
+                plan.unresolved.append(
+                    f"found no spec with at least {floor.vcpu:g} vCPU and "
+                    f"{floor.mem_gib:g} GiB on "
+                    f"{provider}{f'/{region}' if region else ''}, so {node.id} got "
+                    "no compute value"
+                )
+                updated.append(node)
+                continue
+            notes.append(Note(_compute_note(spec), ORIGIN_KB, "costkb"))
             notes.append(Note(
-                f"Sized at {vcpu}+ vCPU and {mem}+ GiB memory for {users} concurrent "
-                "users (an estimate with no knowledge-base backing)",
-                ORIGIN_INFERRED, "requirements",
+                f"Floor: {floor.why}",
+                ORIGIN_KB if floor.layer == sizing_floor.LAYER_KB else ORIGIN_DESIGNER,
+                "sizingkb" if floor.layer == sizing_floor.LAYER_KB else "requirements",
             ))
-        if perf.text:
-            notes.append(Note(perf.text, ORIGIN_KB, "perfkb"))
-        # 단가는 노트 문장과 **별도로 기계 값**으로도 싣는다 — 예산 대조가 읽는다.
-        # 스펙이 정해졌으면 실행 환경 이름에 실어 준다 — `VM` → `VM · t3a.medium`.
-        # 그림에서 노드 상자가 무엇인지 말해 주는 유일한 자리다.
-        name = spec.get("specName") or spec.get("name") or ""
-        host = f"{node.host} · {name}" if node.host and name else node.host
+            perf = _perf_note(spec)
+            if perf.text:
+                notes.append(Note(perf.text, ORIGIN_KB, "perfkb"))
+            # 스펙이 정해졌으면 실행 환경 이름에 실어 준다 — `VM` → `VM · t3a.medium`.
+            # 그림에서 노드 상자가 무엇인지 말해 주는 유일한 자리다.
+            name = spec.get("specName") or spec.get("name") or ""
+            host = f"{node.host} · {name}" if node.host and name else node.host
+            updated.append(replace(
+                node, notes=tuple(notes), host=host,
+                hourly_usd=spec.get("hourlyUSD") or None,
+            ))
+            continue
+
+        # --- 층 3: 하한이 없다. **하나를 고르지 않는다.** -----------------------
+        #
+        # 최저가를 골라 이름을 붙이면 "이걸로 충분하다"가 되고, 그 주장에는 출처가
+        # 없다. 대신 카탈로그 대역을 말하고, 단가만 **하한으로** 남긴다 — 예산 판정이
+        # 읽는 것이 정확히 "값이 붙는 부분의 하한"이라 이 쓰임은 정직하다.
+        cheapest, biggest = sizing_floor.band(provider, region)
+        notes.append(Note(
+            sizing_floor.undecided_note(requirements, cheapest, biggest),
+            ORIGIN_KB, "costkb·sizingkb",
+        ))
+        low = cheapest[0] if cheapest else None
+        if low is None:
+            plan.unresolved.append(
+                f"no priced spec is available on "
+                f"{provider}{f'/{region}' if region else ''}, so {node.id} got no "
+                "compute value"
+            )
+            updated.append(replace(node, notes=tuple(notes)))
+            continue
+        plan.unresolved.append(
+            f"{node.id}: no spec floor was stated, so no spec was chosen "
+            f"(minVCpu / minMemoryGiB decide this)"
+        )
+        # **대역의 아래쪽이 어떤 물건인지도 말한다.** 비용 하한을 그 스펙에서 얻고
+        # 있으므로 그 스펙의 성능 유보는 대역 설명의 일부다 — 상시 부하인데 최저가가
+        # 버스트라면, 실제 하한은 이 값보다 위라는 뜻이다.
+        floor_perf = _perf_note(low)
+        if floor_perf.text:
+            notes.append(Note(
+                f"The spec this cost floor rests on ({low.get('specName')}): "
+                f"{floor_perf.text}",
+                ORIGIN_KB, "perfkb",
+            ))
         updated.append(replace(
-            node, notes=tuple(notes), host=host,
-            hourly_usd=spec.get("hourlyUSD") or None,
+            node, notes=tuple(notes),
+            # **이름은 붙이지 않는다** — 상자에 스펙 이름이 붙으면 정해진 것으로 읽힌다.
+            hourly_usd=low.get("hourlyUSD") or None,
         ))
     plan.nodes[:] = updated
 

@@ -160,10 +160,16 @@ def verify_against_requirements(
         scale = (
             f"{users} concurrent users" if users is not None else f"about {rps} RPS"
         )
+        floored = req.get("minVCpu") or req.get("minMemoryGiB")
         out.append(
             f"Scale ({scale}): this knowledge base cannot judge whether the spec is "
-            "sufficient — the plan's sizing is marked as an estimate with no backing, "
-            "and must be confirmed with a load test or a sizing reference point"
+            "sufficient at that scale — no source states a conversion from a scale "
+            "figure to a spec, so we do not carry one. "
+            + ("The floor the plan used came from minVCpu / minMemoryGiB, which is "
+               "the user's claim; confirm it with a load test."
+               if floored else
+               "And no floor was stated either (minVCpu / minMemoryGiB), so the plan "
+               "did not choose a spec at all — that is the gap to close first.")
         )
 
     if req.get("multiZone"):
@@ -205,7 +211,7 @@ def verify_against_requirements(
         if pattern == "steady" and burst:
             out.append(
                 f"trafficPattern(steady): **conflict** — the load is sustained but "
-                f"burst instances ({', '.join(burst)}) are in the plan. When CPU "
+                f"the plan rests on burst instances ({', '.join(burst)}). When CPU "
                 "credits run out, performance drops to baseline — review this with a "
                 "fixed-performance spec"
             )
@@ -321,9 +327,15 @@ def verify_against_requirements(
 #:
 #: 새 학습 장치가 아니다 — 필요한 것은 이미 다 있었다. 그 칸을 묻는 관심사도 이미
 #: 있고(`app/requirements/knowledge/concerns.py`), 끊긴 것은 **둘을 잇는 한 줄**뿐이었다.
+#:
+#: **규모 항목은 2026-07-29에 정정됐다.** `expectedConcurrentUsers`가 "the scale
+#: verdict"를 닫는다고 적혀 있었는데, 값이 와도 서는 것은 *"판정할 수 없다"*는
+#: 문장이다. 다른 넷은 값이 오면 실제로 판정이 서므로 이 표의 약속("settle the
+#: fields upstream and they become answerable")이 참인데, 규모만 거짓이었다.
+#: 실제로 스펙 선택을 여는 칸은 `minVCpu`·`minMemoryGiB`라 그것을 여기 올린다.
 _CLOSES = {
     "monthlyBudgetUSD": "the budget verdict",
-    "expectedConcurrentUsers": "the scale verdict",
+    "minVCpu": "the spec choice (without a floor no spec is chosen at all)",
     "trafficPattern": "the burst-fit verdict",
     "stateless": "the serverless-fit verdict",
     "multiZone": "the availability-zone verdict",
@@ -338,9 +350,10 @@ def _what_would_close_the_gaps(req: dict) -> list[str]:
     이 저장소가 다른 축에서 계속 지켜 온 구분(없다 / 안 봤다)이 여기서만 빠져 있었다.
     """
     missing = [name for name in _CLOSES if req.get(name) is None]
-    # 규모는 둘 중 하나면 된다(계약이 택1로 요구한다).
-    if req.get("approxRequestsPerSecond") is not None:
-        missing = [m for m in missing if m != "expectedConcurrentUsers"]
+    # 하한은 두 칸이 한 쌍이다 — 메모리만 줘도 스펙 선택은 열린다(둘 중 큰 축이
+    # 필터를 잡는다). 규모 신호와 달리 **여기서는 실제로 판정이 열리므로** 이 표에 있다.
+    if req.get("minMemoryGiB") is not None:
+        missing = [m for m in missing if m != "minVCpu"]
     if not missing:
         return []
     pairs = ", ".join(f"{name} ({_CLOSES[name]})" for name in missing)

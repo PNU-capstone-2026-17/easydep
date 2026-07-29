@@ -131,17 +131,27 @@
         "expectedConcurrentUsers": {
           "type": "integer",
           "minimum": 1,
-          "description": "예상 동시 사용자. approxRequestsPerSecond와 둘 중 하나는 있어야 한다(사이징 판정의 기준) — 없으면 스펙 추천이 전부 임의가 된다."
+          "description": "예상 동시 사용자. **필수가 아니다**(2026-07-29 재판정 — 이것으로 서는 판정이 없다). **이 값은 스펙 하한을 정하지 않는다** — 동시 사용자를 vCPU·메모리로 바꾸는 변환은 1차 소스가 없어 KB에서 명시적으로 배제했다(조사 2026-07-22, 재확인 2026-07-29). 소비자 둘: (1) 하한이 없을 때 되묻기의 근거 — '동시 사용자 3,000인데 하한이 없다'가 '하한을 달라'보다 강한 요청이다. (2) 배포 계획이 추정임을 밝히며 인용하는 규모 진술. 하한 자체는 minVCpu·minMemoryGiB가 준다."
         },
         "approxRequestsPerSecond": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호."
+          "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호이고, 소비자도 같다(하한이 아니라 되묻기의 근거)."
+        },
+        "minVCpu": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 소비자: 스펙 선택의 하한(층 2). 층 1은 sizingkb가 출처와 함께 들고 있는 하드 하한인데 실측상 k8s 노드에만 있어서, 일반 VM에는 이 칸이 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
+        },
+        "minMemoryGiB": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "이 워크로드가 요구하는 최소 메모리(GiB). minVCpu와 같은 층·같은 성격이고 같은 소비자가 읽는다."
         },
         "monthlyBudgetUSD": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "월 예산, USD. 비용 부합 판정의 기준값. 환율 환산은 하지 않는다(환율 소스가 없다) — 다른 통화는 진입에서 USD로 받아야 한다. 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+          "description": "월 예산, USD. 비용 부합 판정의 기준값. 다른 통화는 **진입에서 USD로 환산해 담는다** — 요구사항 에이전트에 환율 도구(convert_to_usd, ECB 기준환율)가 있고, 쓴 환율과 기준일을 근거에 남긴다. (2026-07-29 정정: 예전 문구는 '환율 환산은 하지 않는다(환율 소스가 없다)'였는데, 그건 계약의 뜻이 아니라 그때 우리에게 소스가 없었다는 뜻이었다. 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다.) 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
         },
         "multiZone": {
           "type": "boolean",

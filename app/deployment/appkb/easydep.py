@@ -68,6 +68,9 @@ _REQ_FIELDS = (
     "provider", "region", "expectedConcurrentUsers",
     "approxRequestsPerSecond", "monthlyBudgetUSD", "multiZone",
     "trafficPattern", "stateless", "dataResidency",
+    # 워크로드 하한(층 2). 이게 안 내려가면 설계 계약 쪽에서는 하한이 영영 없고,
+    # 그러면 스펙이 안 골라진다 — 투영 누락이 곧 기능 부재가 되는 자리다.
+    "minVCpu", "minMemoryGiB",
 )
 
 

@@ -684,6 +684,11 @@ These come from measuring an actual corpus, not from imagination.
   live in the separate constraints text, or nowhere. If they are nowhere, ask.
 - **`trafficPattern` has no default.** Recording `steady` because nothing was said is
   a claim you invented, not an absent value. Leave it out.
+- **A scale figure is not a spec floor.** `expectedConcurrentUsers` does not tell anyone
+  how many vCPUs are needed — no source states that conversion, and the knowledge base
+  deliberately does not carry one. The floor lives in `minVCpu` / `minMemoryGiB`, and it
+  only exists if the user or the designer stated it ("at least 4 vCPU and 16 GB").
+  Never derive one from the other; if the floor is absent, that is an absent value.
 
 # Region and provider
 

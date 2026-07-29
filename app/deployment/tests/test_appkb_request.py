@@ -16,7 +16,6 @@ import pytest
 
 from app.deployment.appkb.contract import (
     REQUIRED_WHY,
-    SCALE_FIELDS,
     request_schema,
     schema,
     validate_request,
@@ -50,21 +49,36 @@ def test_missing_required_says_why(field: str) -> None:
     assert REQUIRED_WHY[field] in matching[0]
 
 
-def test_scale_signal_either_field_satisfies() -> None:
-    """규모 신호는 동시 사용자 **또는** RPS — 하나면 된다."""
+def test_either_scale_signal_is_accepted() -> None:
+    """규모 신호는 동시 사용자 **또는** RPS로 온다 — 둘 다 받는다.
+
+    (필수 여부는 `test_scale_signal_is_no_longer_required`가 따로 본다. 여기서
+    지키는 것은 **두 표현을 다 받는가**이고, 그건 재판정 뒤에도 그대로다.)
+    """
     assert validate_request(_spec()) == []
     rps_only = _spec(expectedConcurrentUsers=None, approxRequestsPerSecond=30.0)
     assert validate_request(rps_only) == []
 
 
-def test_no_scale_signal_is_a_named_violation() -> None:
-    problems = validate_request(_spec(expectedConcurrentUsers=None))
-    scale = [p for p in problems if "no scale signal" in p]
-    assert len(scale) == 1
-    for field in SCALE_FIELDS:
-        assert field in scale[0]
-    # jsonschema의 뭉개진 anyOf 문구가 새어 나오면 안 된다.
-    assert not any("is not valid under any" in p for p in problems)
+def test_scale_signal_is_no_longer_required() -> None:
+    """**2026-07-29 재판정.** 규모 신호는 필수가 아니다.
+
+    계약의 판정식은 "그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만
+    필수"인데, 규모를 거기 걸어 보면 **이것으로 서는 판정이 하나도 없다** — `verify`의
+    규모 줄은 "스펙이 충분한지 판정할 수 없다"이고, 동시 사용자를 스펙으로 바꾸는
+    변환은 소스가 없어 KB에서 배제돼 있다.
+
+    대신 `SUGGESTED_WHY`에 권고로 남는다. 필수를 **줄이는** 방향이라 기존 명세는
+    전부 그대로 유효하고, 그래서 schemaVersion을 올리지 않았다.
+    """
+    from app.deployment.appkb.contract import SUGGESTED_WHY
+
+    assert validate_request(_spec(expectedConcurrentUsers=None)) == []
+    assert not any(f in SUGGESTED_WHY for f in ("provider", "region"))
+    assert "expectedConcurrentUsers" in SUGGESTED_WHY
+    # jsonschema의 뭉개진 anyOf 문구가 새어 나오면 안 된다(anyOf 자체가 사라졌다).
+    assert not any("is not valid under any"
+                   in p for p in validate_request(_spec(expectedConcurrentUsers=None)))
 
 
 def test_unknown_field_is_rejected() -> None:
@@ -87,7 +101,8 @@ def test_empty_spec_lists_every_required_at_once() -> None:
     problems = validate_request({})
     for field in ("schemaVersion", *REQUIRED_WHY):
         assert any(field in p for p in problems), field
-    assert any("no scale signal" in p for p in problems)
+    # 규모 신호는 2026-07-29에 필수에서 내려왔다 — 여기 없는 것이 맞다.
+    assert not any("no scale signal" in p for p in problems)
 
 
 # --- 설계 계약과의 드리프트 방지 ------------------------------------------------
@@ -121,9 +136,18 @@ _CONSUMERS = {
     "regionAsWritten": "되짚기용 원문 — 해석이 틀렸을 때 사람이 확인 "
                        "(REFINE_REQ가 원문을 남기는 것과 같은 이유)",
     "monthlyBudgetUSD": "appkb.verify.verify_against_requirements — 예산 비대칭 판정",
-    "expectedConcurrentUsers": "design_tools._attach_values(사이징 최소치) · "
-                               "verify_against_requirements(규모 판정 불가 명시)",
-    "approxRequestsPerSecond": "verify_against_requirements — 규모 판정 불가 명시",
+    # **2026-07-29 정정**: 규모 신호는 더 이상 하한을 정하지 않는다. 예전 소비자
+    # ("사이징 최소치")는 `users <= 500 → (2,4)`라는 출처 없는 계수였고, 그건 KB가
+    # 명시적으로 배제한 변환이었다. 지금 소비자는 되묻기의 근거다.
+    "expectedConcurrentUsers": "sizing_floor.undecided_note(하한이 없을 때 되묻기의 "
+                               "근거) · verify_against_requirements(규모 판정 불가 "
+                               "명시)",
+    "approxRequestsPerSecond": "sizing_floor.undecided_note · "
+                               "verify_against_requirements — 규모 판정 불가 명시",
+    "minVCpu": "nim_agent.sizing_floor.resolve(층 2 — 스펙 선택의 하한) · "
+               "design_tools._attach_values(하한이 있어야 스펙을 고른다) · "
+               "verify._CLOSES(없으면 스펙 선택 자체가 안 열린다)",
+    "minMemoryGiB": "nim_agent.sizing_floor.resolve — minVCpu와 같은 층·같은 소비자",
     "multiZone": "design_tools._subnet_notes · verify_against_requirements",
     "trafficPattern": "verify_against_requirements — 버스트 적합 판정(⑥-A에서 열림)",
     "stateless": "verify_against_requirements — 서버리스 적합 판정(⑥-A에서 열림)",

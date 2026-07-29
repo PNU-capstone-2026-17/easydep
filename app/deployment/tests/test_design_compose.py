@@ -466,7 +466,10 @@ def test_elasticsearch_hint_routes_to_search_index(design) -> None:
     node = plan.node("order-api-db")
     assert node.archetype == "app::searchIndex"
     assert node.type_id == "aws::AWS::OpenSearchService::Domain"
-    assert not plan.unresolved
+    # 여기서 지키는 것은 **매핑이 미해결을 남기지 않는다**는 것뿐이다. 스펙 하한
+    # 미정(2026-07-29에 생긴 층 3)은 이 검사의 대상이 아니다 — 그건 매핑이 아니라
+    # 요구사항이 안 준 것이고, `test_no_floor_...`가 따로 지킨다.
+    assert not [u for u in plan.unresolved if "no spec floor" not in u]
 
 
 def test_kafka_hint_stays_deliberately_unmapped(design) -> None:

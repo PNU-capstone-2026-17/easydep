@@ -251,7 +251,9 @@ def test_easydep_entrypoint_reports_invalid_resource_spec() -> None:
         resource_spec={"provider": "aws"}, diagram=False,
     )
     assert "[Constraint (RESOURCE_SPEC) check]" in text
-    assert "monthlyBudgetUSD" in text and "no scale signal" in text
+    # 규모 신호는 필수가 아니게 됐으므로(2026-07-29) 여기 안 나온다. 대신 진짜 필수인
+    # 둘이 나온다 — 이 검사가 지키는 것은 "필수 누락이 답변까지 살아남는가"다.
+    assert "monthlyBudgetUSD" in text and "region" in text
 
 
 def test_puml_document_carries_evidence_as_comments() -> None:

@@ -276,8 +276,13 @@ def test_a_required_field_is_asked_even_if_the_agent_forgets(run):
         constraints=CONSTRAINTS,
     )
 
-    assert {"region", "monthlyBudgetUSD"} <= {q["field"] for q in intake["questions"]}
-    assert all(q["kind"] == sr.MISSING for q in intake["questions"])
+    required = [q for q in intake["questions"] if q["kind"] == sr.MISSING]
+    assert {"region", "monthlyBudgetUSD"} <= {q["field"] for q in required}
+    # 2026-07-29부터 **권고 질문**이 함께 나간다(필수는 아니지만 채우면 판정이 하나
+    # 열리는 칸). 둘을 같은 얼굴로 물으면 사용자가 전부 필수로 읽으므로 kind로 가른다.
+    suggested = [q for q in intake["questions"] if q["kind"] == sr.SUGGESTED]
+    assert suggested and "minVCpu" in {q["field"] for q in suggested}
+    assert {q["kind"] for q in intake["questions"]} <= {sr.MISSING, sr.SUGGESTED}
 
 
 def test_the_agent_can_ask_in_its_own_words(run):

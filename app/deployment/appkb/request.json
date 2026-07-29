@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "RESOURCE_SPEC v1 — 클라우드 리소스 제약 계약",
-  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
+  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. **2026-07-29 재판정**: 이 판정식을 전 칸에 다시 걸어 규모 신호(expectedConcurrentUsers·approxRequestsPerSecond)를 필수에서 내렸다 — 그것으로 서는 판정이 하나도 없었기 때문이다(스펙 하한은 minVCpu·minMemoryGiB가 준다). 필수가 줄어드는 방향이라 기존 명세는 전부 유효해서 schemaVersion은 그대로 1이다. 필수는 아니지만 없으면 판정이 하나 닫히는 칸은 contract.SUGGESTED_WHY에 있고, 요구사항 에이전트가 그것을 '권고 질문'으로 함께 낸다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,18 +9,6 @@
     "provider",
     "region",
     "monthlyBudgetUSD"
-  ],
-  "anyOf": [
-    {
-      "required": [
-        "expectedConcurrentUsers"
-      ]
-    },
-    {
-      "required": [
-        "approxRequestsPerSecond"
-      ]
-    }
   ],
   "properties": {
     "schemaVersion": {
@@ -41,17 +29,27 @@
     "monthlyBudgetUSD": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "월 예산, USD. 비용 부합 판정의 기준값. 환율 환산은 하지 않는다(환율 소스가 없다) — 다른 통화는 진입에서 USD로 받아야 한다. 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+      "description": "월 예산, USD. 비용 부합 판정의 기준값. 다른 통화는 **진입에서 USD로 환산해 담는다** — 요구사항 에이전트에 환율 도구(convert_to_usd, ECB 기준환율)가 있고, 쓴 환율과 기준일을 근거에 남긴다. (2026-07-29 정정: 예전 문구는 '환율 환산은 하지 않는다(환율 소스가 없다)'였는데, 그건 계약의 뜻이 아니라 그때 우리에게 소스가 없었다는 뜻이었다. 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다.) 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
     },
     "expectedConcurrentUsers": {
       "type": "integer",
       "minimum": 1,
-      "description": "예상 동시 사용자. approxRequestsPerSecond와 둘 중 하나는 있어야 한다(사이징 판정의 기준) — 없으면 스펙 추천이 전부 임의가 된다."
+      "description": "예상 동시 사용자. **필수가 아니다**(2026-07-29 재판정 — 이것으로 서는 판정이 없다). **이 값은 스펙 하한을 정하지 않는다** — 동시 사용자를 vCPU·메모리로 바꾸는 변환은 1차 소스가 없어 KB에서 명시적으로 배제했다(조사 2026-07-22, 재확인 2026-07-29). 소비자 둘: (1) 하한이 없을 때 되묻기의 근거 — '동시 사용자 3,000인데 하한이 없다'가 '하한을 달라'보다 강한 요청이다. (2) 배포 계획이 추정임을 밝히며 인용하는 규모 진술. 하한 자체는 minVCpu·minMemoryGiB가 준다."
     },
     "approxRequestsPerSecond": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호."
+      "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호이고, 소비자도 같다(하한이 아니라 되묻기의 근거)."
+    },
+    "minVCpu": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 소비자: 스펙 선택의 하한(층 2). 층 1은 sizingkb가 출처와 함께 들고 있는 하드 하한인데 실측상 k8s 노드에만 있어서, 일반 VM에는 이 칸이 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
+    },
+    "minMemoryGiB": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "이 워크로드가 요구하는 최소 메모리(GiB). minVCpu와 같은 층·같은 성격이고 같은 소비자가 읽는다."
     },
     "multiZone": {
       "type": "boolean",

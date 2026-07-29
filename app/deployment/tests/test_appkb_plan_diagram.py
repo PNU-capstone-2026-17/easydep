@@ -496,6 +496,8 @@ def test_no_gap_line_when_everything_is_settled() -> None:
     """다 정해졌으면 그 줄이 없다 — 늘 붙는 줄은 읽히지 않는다."""
     req = {
         "provider": "aws", "monthlyBudgetUSD": 500, "expectedConcurrentUsers": 100,
+        # 2026-07-29: 스펙 선택을 여는 칸은 규모가 아니라 **하한**이다.
+        "minVCpu": 2, "minMemoryGiB": 4,
         "trafficPattern": "steady", "stateless": True, "multiZone": True,
     }
     lines = verify_against_requirements(_plan(), req, _HOURS)

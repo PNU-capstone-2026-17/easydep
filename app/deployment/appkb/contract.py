@@ -34,12 +34,39 @@ REQUIRED_WHY = {
     "monthlyBudgetUSD": "it is the yardstick for judging whether cost fits the"
     " requirement (USD)",
 }
-#: 규모 신호 — 둘 중 하나면 된다. 사이징 판정의 기준이라 필수다.
+#: 규모 신호 — 둘 중 하나면 된다. **2026-07-29에 필수에서 내려왔다.**
+#:
+#: 계약이 스스로 적어 둔 판정식은 *"그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴
+#: 수 없는 것만 필수"*다. 규모를 그 기준에 걸어 보면 **어떤 판정도 이것으로 서지 않는다** —
+#: `verify`의 규모 줄은 "스펙이 충분한지 판정할 수 없다"이고, 동시 사용자를 스펙으로
+#: 바꾸는 변환은 소스가 없어 KB에서 배제돼 있다(재확인 2026-07-29).
+#:
+#: 그래서 필수가 아니라 **권고**다. 값이 있으면 계획의 규모 진술이 그것에 매이고,
+#: 하한이 없을 때 되묻기가 그것을 근거로 삼는다.
 SCALE_FIELDS = ("expectedConcurrentUsers", "approxRequestsPerSecond")
 SCALE_WHY = (
-    "it is the basis for the sizing verdict; without it every spec recommendation"
-    " is arbitrary"
+    "it is what the plan's sizing statement is anchored to and what a load test is"
+    " later measured against; it does not by itself decide a spec (no source states"
+    " that conversion) — minVCpu / minMemoryGiB do that"
 )
+
+#: 필수는 아니지만 **없으면 판정이 하나 닫히는** 칸 → 왜.
+#:
+#: 침묵을 "해당 없음"으로 읽게 두지 않는 장치가 `verify._what_would_close_the_gaps`인데,
+#: 그건 계획을 낸 **뒤**에 말한다. 이 표는 같은 사실을 **받을 때** 말한다 — 사용자가
+#: 계획을 다 만든 뒤에야 "이걸 줬으면 판정이 섰다"를 알게 되는 것이 낭비라서다.
+#:
+#: 필수와 권고를 가르는 선은 하나다: **없으면 못 재는가(필수), 판정 하나가 닫히는가(권고).**
+SUGGESTED_WHY = {
+    "minVCpu": "without a floor no spec is chosen at all — the cheapest machine is"
+               " not a neutral default, it is a claim no source supports",
+    "minMemoryGiB": "the other half of the workload floor; either axis opens the"
+                    " spec choice",
+    "trafficPattern": "it turns a burst warning into a verdict about this app",
+    "stateless": "it turns a serverless mapping into a fit verdict",
+    "multiZone": "it decides whether the subnet spread is checked at all",
+    "expectedConcurrentUsers": SCALE_WHY,
+}
 
 
 @lru_cache(maxsize=1)
@@ -78,10 +105,9 @@ def validate_request(spec: dict) -> list[str]:
     for field_name, why in REQUIRED_WHY.items():
         if field_name not in spec:
             problems.append(f"[required] {field_name} missing — {why}")
-    if not any(f in spec for f in SCALE_FIELDS):
-        problems.append(
-            f"[required] no scale signal ({' or '.join(SCALE_FIELDS)}) — {SCALE_WHY}"
-        )
+    # 규모 신호는 **더 이상 필수가 아니다**(2026-07-29). 판정식에 걸어 보니 이것으로
+    # 서는 판정이 하나도 없었다 — `SCALE_FIELDS` 주석 참고. 권고는 `SUGGESTED_WHY`로
+    # 옮겼고, 필수를 줄이는 방향이라 기존 명세는 전부 그대로 유효하다(버전 유지).
     return problems
 
 
