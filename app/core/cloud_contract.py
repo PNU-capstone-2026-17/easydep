@@ -1,6 +1,6 @@
 """`RESOURCE_SPEC` 계약의 접근점 — 무엇을 받아야 하고 **왜** 받아야 하는가.
 
-정의는 `app/deployment/appkb`에 있다(`request.json` 스키마와 `contract.py`의 검증).
+정의는 `app/core/cloudkb/appkb`에 있다(`request.json` 스키마와 `contract.py`의 검증).
 여기서는 그것을 요구사항 에이전트가 쓸 수 있게 열어 주고, **생산자 쪽에 필요한 두
 가지**를 덧붙인다.
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from app.deployment.appkb import contract as _contract
+from app.core.cloudkb.appkb import contract as _contract
 
 #: 필수 칸 → **왜 필수인가.** 되묻기 질문의 원본이다.
 REQUIRED_WHY: dict[str, str] = dict(_contract.REQUIRED_WHY)

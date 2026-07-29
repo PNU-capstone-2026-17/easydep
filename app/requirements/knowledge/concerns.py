@@ -70,7 +70,7 @@ Nickerson의 방법에서 모든 특성은 메타 특성의 논리적 귀결이�
 아직"*과 *"안 이을 것"* 두 뜻을 겸했고, 그래서 **"안 한 것"과 "안 하기로 한 것"이
 구별되지 않았다** — 이 저장소가 다른 축에서 계속 지켜 온 규율(구현 범위와 근거를
 섞지 않는다)이 여기서만 깨져 있었다. 판정 기준과 8건의 분류 근거는
-`app/deployment/document/archive/pipeline-big-picture-2026-07-28.md` §5에 있다.
+`app/core/cloudkb/document/archive/pipeline-big-picture-2026-07-28.md` §5에 있다.
 
 ## 왜 이 목록이 임의 사전이 아닌가
 
@@ -78,12 +78,12 @@ Nickerson의 방법에서 모든 특성은 메타 특성의 논리적 귀결이�
 관심사는 얼마든지 지어낼 수 있고, 지어내면 그건 우리 취향이지 지식이 아니다.
 
 그래서 규칙과 같은 선을 긋는다 — **문장은 우리 것, 좌표는 코퍼스**. 모든 관심사가
-`app/deployment/patternkb`의 문서 id와 그 본문에 실재하는 열쇠 구절(`probe`)을 달고,
+`app/core/cloudkb/patternkb`의 문서 id와 그 본문에 실재하는 열쇠 구절(`probe`)을 달고,
 `verify_concerns`가 대조한다.
 
 **그리고 이 축은 규칙 축이 못 하는 것을 한다: 대조가 CI에서 돈다.** 도서 인용
 (`verify_citations`)은 로컬 사본이 있어야 돌아서 자동 검사가 될 수 없었는데, 패턴
-코퍼스는 저장소 안에 커밋돼 있다(`app/deployment/data/pattern-corpus.json.gz`, 346편).
+코퍼스는 저장소 안에 커밋돼 있다(`app/core/cloudkb/data/pattern-corpus.json.gz`, 346편).
 
 ## 심각도 축을 두지 않는다
 
@@ -137,7 +137,7 @@ ISO25010: tuple[str, ...] = (
 #: **어떤 출력 경로에서도 고지를 떼면 안 된다.**
 #:
 #: 둘 다 `patternkb`가 정의하고 여기서는 `app/core`를 거쳐 받는다. 한동안은 사본이었다 —
-#: `app/requirements`가 `app/deployment` 없이 돌아야 한다는 규약 때문이었고, 그래서
+#: `app/requirements`가 `app/core/cloudkb` 없이 돌아야 한다는 규약 때문이었고, 그래서
 #: 사본이 갈라졌는지 대조하는 검사까지 따로 있었다. 그 규약은 2026-07-28에 `app/core`가
 #: 문을 하나로 좁히면서 바뀌었고, **사본을 둘 이유도 그때 사라졌다.**
 #: basis는 영원히 `inferred`다 — 설계 산문은 사람이 검수해도 클라우드 사실이 되지 않는다.
@@ -158,7 +158,7 @@ class Concern:
     #: **E2의 답.** 왜 이것이 클라우드 네이티브 때문에 요구사항 단계로 당겨지는가.
     #: 전통 개발에서도 똑같이 성립하면 여기 적을 말이 없고, 그러면 관심사가 아니다.
     cloud_specific: str
-    #: 근거 문서의 코퍼스 id(`app/deployment/patternkb`). **관심사마다 달라야 한다**
+    #: 근거 문서의 코퍼스 id(`app/core/cloudkb/patternkb`). **관심사마다 달라야 한다**
     #: — 입도 규칙의 기계 대리 기준(모듈 docstring).
     doc_id: str
     #: 그 문서 본문에 있어야 하는 짧은 구절(소문자). 좌표가 맞는지 보는 열쇠일 뿐이고,
@@ -179,7 +179,7 @@ class Concern:
     #: **오늘 실재하는 기계 소비자.** 이 답이 실제로 흘러 들어가는 칸의 이름을 적는다.
     #:
     #: 좁게 정의한다 — 이 저장소에서 **지금 그 값을 읽는 코드가 있어야** 한다.
-    #: 오늘 그것은 `RESOURCE_SPEC`의 칸뿐이다(`app/deployment/appkb/request.json`,
+    #: 오늘 그것은 `RESOURCE_SPEC`의 칸뿐이다(`app/core/cloudkb/appkb/request.json`,
     #: `app/design/api.py`의 `EXTERNAL_STAGES`가 `resource_spec`으로 받는다).
     #:
     #: `None`은 배제가 아니라 **범위 표시**다 — 근거는 있고 사람은 읽지만 받아 줄 기계가
@@ -204,7 +204,7 @@ class Concern:
     #:
     #: 목록에서 빼지 않는다 — 요구사항 단계에서 물을 값은 그대로 있고, 다만 **뒤
     #: 단계가 자동으로 받지 않는다는 사실**을 여기 적는다. 근거·분류는
-    #: `app/deployment/document/archive/pipeline-big-picture-2026-07-28.md` §5.
+    #: `app/core/cloudkb/document/archive/pipeline-big-picture-2026-07-28.md` §5.
     out_of_scope: str = ""
     #: 결정론 층이 쓰는 열쇠말(소문자). **한국어도 담는다** — 서빙 입력은 한국어이고
     #: 평가 코퍼스(PURE)는 영어라, 한쪽만 담으면 한쪽에서 결정론 층이 통째로 죽는다.

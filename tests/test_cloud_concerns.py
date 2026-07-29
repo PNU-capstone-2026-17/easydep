@@ -3,7 +3,7 @@
 이 파일이 지키는 것:
   - 관심사는 **코퍼스 좌표에 매달려 있다.** 이 검사가 CI에서 돌기 때문에 "임의 사전"이
     되지 않는다(`docs/cloud-native-requirements.md` §4가 금지한 것).
-  - **소비자 없는 관심사는 없다** — `app/deployment/appkb`가 제약 칸에 세운 규율.
+  - **소비자 없는 관심사는 없다** — `app/core/cloudkb/appkb`가 제약 칸에 세운 규율.
   - `unaddressed`(판정했는데 안 걸림)와 `unjudged`(판정할 수단이 없었음)가 섞이지 않는다.
   - 고지(`ADVISORY_NOTICE`)가 산출물에서 떨어지지 않는다.
 """
@@ -186,7 +186,7 @@ def test_the_advisory_notice_is_the_patternkb_constant_itself():
     지금은 `app/core/advisory.py`를 거쳐 원본을 그대로 받으므로 갈라질 수가 없다 —
     대조 대신 **같은 것인지**를 검사한다. 누가 여기에 문자열을 다시 적으면 이 검사가 문다.
     """
-    from app.deployment.patternkb import model as patternkb
+    from app.core.cloudkb.patternkb import model as patternkb
 
     assert concerns.ADVISORY_NOTICE is patternkb.ADVISORY_NOTICE
     assert concerns.EVIDENCE is patternkb.EVIDENCE_ADVISORY

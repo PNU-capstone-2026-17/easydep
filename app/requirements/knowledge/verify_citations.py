@@ -30,7 +30,7 @@ PDF의 첫 페이지가 인쇄된 1페이지가 아니다(앞머리). 오프셋�
 박으면 판(印刷)이 다른 사본에서 조용히 어긋난다.
 
 `pypdf`는 런타임 의존성이 아니다(`requirements.txt`가 일부러 뺀 목록에 있다). 없으면
-안내하고 실패한다 — `app/deployment/patternkb/parsers/aws_waf.py`와 같은 규약이다.
+안내하고 실패한다 — `app/core/cloudkb/patternkb/parsers/aws_waf.py`와 같은 규약이다.
 """
 from __future__ import annotations
 

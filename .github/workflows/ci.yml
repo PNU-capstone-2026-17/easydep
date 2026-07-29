@@ -2,7 +2,7 @@
 #
 # **검사 범위는 저장소 전체가 아니다.** easydep은 에이전트별 저장소를 합친 팀
 # 저장소이고, 이 워크플로우는 `app/requirements/`(요구사항 분석)와
-# `app/deployment/`(지식베이스)만 본다. 나머지 경로는 다른 사람이 관리한다.
+# `app/core/cloudkb/`(지식베이스)만 본다. 나머지 경로는 다른 사람이 관리한다.
 # 린트·타입 검사의 범위는 pyproject.toml이 정하고, 테스트는 아래에서 직접 고른다.
 #
 # lint는 의존성 없이 몇 초 만에 끝나므로 따로 두고, 무거운 설치(torch CPU 휠 등)가
@@ -71,7 +71,7 @@ jobs:
       # 실행 시에만 필요하고 테스트는 경로 문자열과 로그 파싱만 본다.
       - name: Test
         run: |
-          pytest app/deployment/tests tests \
+          pytest app/core/cloudkb/tests tests \
             --ignore=tests/test_implementation_engine.py \
             --ignore=tests/test_implementation_worker.py \
             --ignore=tests/test_class_diagram_convert.py

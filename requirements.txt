@@ -41,7 +41,7 @@ openhands-tools==1.36.1
 litellm<1.92
 
 # --- 배포 에이전트(클라우드 지식베이스) ---
-# 산출물은 app/deployment/data 에 커밋돼 있어 읽기 경로에는 빌드가 필요 없다.
+# 산출물은 app/core/cloudkb/data 에 커밋돼 있어 읽기 경로에는 빌드가 필요 없다.
 openai-agents>=0.18.2
 httpx>=0.28
 pyyaml>=6

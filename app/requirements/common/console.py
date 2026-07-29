@@ -14,9 +14,9 @@ utf-8로 쓰고 있었으니 잃은 것은 순전히 화면 출력 때문이었�
 
 ## `kbcommon/console.py`와 왜 합치지 않았나
 
-`app/deployment/kbcommon/console.py`에 같은 것이 있다(`use_utf8`). **합치지 않는 것이
+`app/core/cloudkb/kbcommon/console.py`에 같은 것이 있다(`use_utf8`). **합치지 않는 것이
 맞다** — `kbcommon`은 "프로젝트 내부를 import하지 않는다"가 규약인 맨 아래 층이고
-(`app/deployment/tests/test_architecture.py`), `app/core`는 오히려 배포 KB **위에서**
+(`app/core/cloudkb/tests/test_architecture.py`), `app/core`는 오히려 배포 KB **위에서**
 접근점을 여는 층이다. 공용화하려면 층이 뒤집히거나, stdout 한 줄 고치자고 요구사항
 CLI가 KB 패키지를 통째로 끌어오게 된다.
 
