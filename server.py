@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.db.session import init_db
 from app.design.api import router as design_router
 from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
+from app.artifacts_api import router as artifacts_router
 from app.requirements.api import router as requirements_router
 from app.requirements.classifier import warmup
 from app.implementation.api import router as implementation_router
@@ -20,6 +21,8 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 
 
 app = FastAPI(title="EasyDep Agents")
+# 앱 컨테이너·산출물 저장소는 세 에이전트가 함께 쓴다 — 어느 에이전트의 것도 아니다.
+app.include_router(artifacts_router)
 app.include_router(requirements_router)
 app.include_router(design_router)
 app.include_router(implementation_router)

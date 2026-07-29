@@ -1,4 +1,4 @@
-"""메인 그래프 + 4개 스테이지 서브그래프를 mermaid PNG로 docs/graph/에 렌더한다.
+"""두 에이전트의 메인 그래프 + 스테이지 서브그래프를 mermaid PNG로 docs/graph/에 렌더한다.
 
     python -m scripts.render_graphs
 
@@ -9,6 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from langgraph.checkpoint.memory import MemorySaver
+
+from app.design.graphs.design_graph import build_design_graph
+from app.design.graphs.subgraphs import DESIGN_SUBGRAPHS
 from app.requirements.agent.graph import build_graph
 from app.requirements.agent import subgraphs as sg
 
@@ -30,13 +34,20 @@ def render(compiled, name: str) -> None:
 
 def main() -> int:
     targets = [
-        (build_graph(feedback_gates=True), "main_gated"),
-        (build_graph(feedback_gates=False), "main_plain"),
-        (sg.build_refine_requirements(), "step1_refine_requirements"),
-        (sg.build_model_use_cases(), "step2_model_use_cases"),
-        (sg.build_write_specifications(), "step3_write_specifications"),
-        (sg.build_draw_diagram(), "step4_draw_diagram"),
+        # 요구사항 분석 에이전트
+        (build_graph(feedback_gates=True), "requirements_main_gated"),
+        (build_graph(feedback_gates=False), "requirements_main_plain"),
+        (sg.build_refine_requirements(), "requirements_step1_refine_requirements"),
+        (sg.build_model_use_cases(), "requirements_step2_model_use_cases"),
+        (sg.build_write_specifications(), "requirements_step3_write_specifications"),
+        (sg.build_draw_diagram(), "requirements_step4_draw_diagram"),
+        # 시스템 설계 에이전트. MemorySaver를 넘겨 DB 없이 렌더한다 — 그림을 그리는 데
+        # 체크포인터의 종류는 상관없고, 기본값(MySQL)이면 DB 설정이 있어야 한다.
+        (build_design_graph(MemorySaver()), "design_main"),
     ]
+    for stage, subs in DESIGN_SUBGRAPHS.items():
+        targets.append((subs["generate"], f"design_{stage}"))
+        targets.append((subs["feedback"], f"design_{stage}_feedback"))
     print(f"[render_graphs] {len(targets)}개 → {OUT}/")
     for compiled, name in targets:
         render(compiled, name)

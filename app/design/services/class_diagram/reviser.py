@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 from app.design.services.class_diagram.extractor import run_bce_parse
+from app.design.services.common.structured import focus_note
 
 
 BCE_REVISION_SYSTEM_PROMPT = """
@@ -26,6 +27,10 @@ the same schema. Rules:
 - Preserve the BCE communication rules (Actor<->Boundary, Boundary<->Control,
   Control<->Entity; Entity never initiates toward Control/Boundary).
 - Every relationship's source and target must exist among the returned classes.
+- Keep the traceability fields (use_case_ids) accurate. Carry them over unchanged for
+  elements you did not touch; update them for elements you changed; fill them
+  in for elements you added. Never invent a reference — an empty list is
+  honest, a made-up one is a lie the trace matrix will believe.
 Return the revised model strictly according to the provided schema. Do not
 include markdown, code fences, or any prose outside the schema fields.
 """
@@ -35,6 +40,7 @@ def revise_bce_classes(
     current_bce: dict[str, Any],
     feedback: str,
     scenario_text: str = "",
+    targets: set[str] | None = None,
 ) -> dict[str, Any]:
     """현재 BCE + 피드백 → 수정된 BCE(구조화). 피드백이 없으면 원본을 그대로 둔다."""
     if not current_bce or not feedback:
@@ -46,7 +52,7 @@ def revise_bce_classes(
         "[Current BCE Class Model]\n"
         f"{json.dumps(current_bce, ensure_ascii=False, indent=2)}\n\n"
         "[User Feedback]\n"
-        f"{feedback}"
+        f"{feedback}" + focus_note(targets)
     )
     messages = [
         {"role": "system", "content": BCE_REVISION_SYSTEM_PROMPT},

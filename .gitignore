@@ -58,3 +58,7 @@ materials/PURE/
 /test.py
 /main.py
 /report/
+
+# 코드를 읽으며 정리한 개인 학습 노트. 코드가 바뀌면 같이 낡으므로 저장소의 진실로
+# 삼지 않는다 — 공유할 설명은 각 모듈의 docstring에 둔다.
+/note/

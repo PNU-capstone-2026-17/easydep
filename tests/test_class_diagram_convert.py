@@ -6,15 +6,9 @@ BCE→PlantUML 변환이 콘텐츠에 든 PlantUML 구조 문자를 중화해 "�
 """
 from __future__ import annotations
 
-import app.design.nodes.class_diagram as cd_nodes
-from app.design.graphs.class_diagram_graph import (
-    class_diagram_feedback_graph,
-    class_diagram_graph,
-)
-from app.design.nodes.class_diagram import (
-    convert_to_class_diagram_code,
-    revise_class_elements,
-)
+import app.design.graphs.subgraphs as sg
+from app.design.graphs.subgraphs import CLASS_DIAGRAM_SPEC, DESIGN_SUBGRAPHS
+from app.design.nodes.artifact import convert_node, revise_node
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 
 
@@ -48,7 +42,7 @@ def test_empty_model_yields_empty_diagram():
 
 
 def test_feedback_edits_bce_then_reconverts(monkeypatch):
-    def fake_revise(current_bce, feedback, scenario_text=""):
+    def fake_revise(current_bce, feedback, scenario_text="", targets=None):
         return {
             "Classes": [
                 {"className": "Renamed", "stereotype": "Entity", "fields": [], "methods": []}
@@ -56,30 +50,30 @@ def test_feedback_edits_bce_then_reconverts(monkeypatch):
             "Relationships": [],
         }
 
-    monkeypatch.setattr(cd_nodes, "revise_bce_classes", fake_revise)
+    monkeypatch.setattr(sg, "revise_bce_classes", fake_revise)
 
     state = {
         "extracted_bce_classes": {"Classes": [{"className": "Old"}], "Relationships": []},
         "class_diagram_feedback": "rename Old to Renamed",
         "usecase_spec": {},
     }
-    revised = revise_class_elements(state)
+    revised = revise_node(CLASS_DIAGRAM_SPEC)(state)
     assert revised["extracted_bce_classes"]["Classes"][0]["className"] == "Renamed"
 
     merged = {**state, **revised}
-    out = convert_to_class_diagram_code(merged)
+    out = convert_node(CLASS_DIAGRAM_SPEC)(merged)
     assert "class Renamed" in out["class_diagram_puml"]
     assert "class Old" not in out["class_diagram_puml"]
 
 
 def test_generation_graph_has_no_repair_node():
-    nodes = set(class_diagram_graph.get_graph().nodes)
-    assert "extract_class_elements" in nodes
-    assert "convert_to_class_diagram_code" in nodes
-    assert "repair_class_diagram_syntax" not in nodes
+    nodes = set(DESIGN_SUBGRAPHS["class_diagram"]["generate"].get_graph().nodes)
+    assert "extract_class_diagram" in nodes
+    assert "convert_class_diagram" in nodes
+    assert not any("repair" in node for node in nodes)
 
 
 def test_feedback_graph_edits_model_not_text():
-    nodes = set(class_diagram_feedback_graph.get_graph().nodes)
-    assert "revise_class_elements" in nodes
-    assert "convert_to_class_diagram_code" in nodes
+    nodes = set(DESIGN_SUBGRAPHS["class_diagram"]["feedback"].get_graph().nodes)
+    assert "revise_class_diagram" in nodes
+    assert "convert_class_diagram" in nodes

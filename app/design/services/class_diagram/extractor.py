@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
+
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
-from openai import OpenAI
+
+from app.design.services.common.structured import parse_structured
 
 
 class BCEClass(BaseModel):
@@ -14,6 +13,9 @@ class BCEClass(BaseModel):
     description: str = Field(default="")
     fields: list[str] = Field(default_factory=list)
     methods: list[str] = Field(default_factory=list)
+    #: 이 클래스를 낳은 유스케이스 id. 추적표(app/design/rtm.py)가 이걸 모아서
+    #: "이 유스케이스가 바뀌면 무엇이 영향받는가"를 답한다.
+    use_case_ids: list[str] = Field(default_factory=list)
 
 
 class BCERelationship(BaseModel):
@@ -81,11 +83,16 @@ missing intermediary Control/Boundary instead of keeping the illegal link.
 6. Method derivation: derive methods from actions each class performs or \
    delegates, named as verbNoun().
 7. Relationship derivation: apply the Communication Rules above.
-8. Self-check before finalizing: (a) class names are unique and PascalCase, \
+8. Traceability: set `use_case_ids` on every class to the id(s) of the use \
+   case(s) it was derived from. Copy the ids exactly as they appear in the \
+   input (e.g. "UC1"). **Never invent an id.** If the input carries no ids, \
+   leave the list empty rather than making one up — an empty list is honest, \
+   a made-up id is a lie the trace matrix will believe.
+9. Self-check before finalizing: (a) class names are unique and PascalCase, \
    (b) every relationship's source/target exists among the derived classes, \
    (c) no Entity is a relationship source targeting a Boundary, (d) every \
    MainSuccessScenario step is represented by at least one class or \
-   relationship.
+   relationship, (e) every use_case_ids entry appears in the input.
 
 ## Worked Example
 Input (excerpt):
@@ -118,34 +125,13 @@ schema fields.
 """
 
 
-def load_scenario_from_json(file_path: str) -> str:
-    with open(file_path, "r", encoding="utf-8") as file:
-        scenario_data = json.load(file)
-    return json.dumps(scenario_data, indent=2, ensure_ascii=False)
-
-
 def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
-    """BCE 구조화 완성. 추출과 피드백 수정이 공유한다.
+    """BCE 구조화 완성. 클래스 다이어그램과 ERD의 추출·수정이 공유한다.
 
     LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
+    호출 배관 자체는 다섯 산출물이 공유한다(common.structured.parse_structured).
     """
-    load_dotenv()
-
-    client = OpenAI(
-        base_url=os.getenv("BASE_URL"),
-        api_key=os.getenv("API_KEY"),
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
-    )
-
-    response = client.chat.completions.parse(
-        model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
-        messages=messages,
-        temperature=0,
-        seed=42,
-        response_format=BCEExtractionResult,
-    )
-    return response.choices[0].message.parsed.model_dump()
+    return parse_structured(messages, BCEExtractionResult)
 
 
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:

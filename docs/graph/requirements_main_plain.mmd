@@ -1,0 +1,32 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	refine_requirements(refine_requirements)
+	model_use_cases(model_use_cases)
+	write_specifications(write_specifications)
+	draw_diagram(draw_diagram)
+	supervise_model(supervise_model)
+	supervise_specs(supervise_specs)
+	supervise_diagram(supervise_diagram)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> refine_requirements;
+	draw_diagram --> supervise_diagram;
+	model_use_cases --> supervise_model;
+	refine_requirements --> model_use_cases;
+	supervise_diagram -. &nbsp;advance&nbsp; .-> __end__;
+	supervise_diagram -.-> draw_diagram;
+	supervise_diagram -.-> model_use_cases;
+	supervise_diagram -.-> write_specifications;
+	supervise_model -.-> model_use_cases;
+	supervise_model -. &nbsp;advance&nbsp; .-> write_specifications;
+	supervise_specs -. &nbsp;advance&nbsp; .-> draw_diagram;
+	supervise_specs -.-> model_use_cases;
+	supervise_specs -.-> write_specifications;
+	write_specifications --> supervise_specs;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
