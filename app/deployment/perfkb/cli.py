@@ -158,6 +158,17 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 describe_source_set(size_paths + gen_paths, "azure-compute-docs")
             )
 
+    # **두 소스 대조는 azure 크기 표를 건너뛰어도 돌아야 한다.** 건너뛰면 문서 값이
+    # 없으므로 미러 값도 담기지 않고(단일 소스), 무엇보다 `_mirrorMaxNics`가 산출물에
+    # 남으면 스키마 검증이 실패한다 — 대조를 잊은 빌드가 조용히 통과하지 않게 하는
+    # 장치라서, 이 호출은 조건 밖에 있다(결정 D3).
+    from app.deployment.perfkb.parsers import azure_sizes as _az
+
+    nic_tally = _az.reconcile_max_nics(dataset["specs"])
+    if any(nic_tally.values()):
+        print(f"\n{_az.format_reconcile(nic_tally)}")
+        dataset["_coverage"].append({"azureMaxNicsReconciliation": nic_tally})
+
     if not args.no_gcp_series:
         from app.deployment.kbcommon.fetch import describe_source_set
         from app.deployment.perfkb.parsers import gcp_series

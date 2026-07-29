@@ -45,6 +45,11 @@ from .details import (
 # (graphkb·capacitykb도 그렇다). 한 줄 중복이 패키지 간 결합보다 싸다.
 SYSTEM_NAMESPACE = "system"
 
+#: azure NIC 수의 **미러 값**을 잠시 담는 칸. 스키마에 없는 이름이라 산출물에 남으면
+#: 검증이 실패한다 — 그것이 의도다. 대조(`azure_sizes.reconcile_max_nics`)를 건너뛴
+#: 빌드가 조용히 통과하면 결정 D3이 코드에서 증발한다.
+MIRROR_MAX_NICS = "_mirrorMaxNics"
+
 _AZURE_BURST_FAMILY = re.compile(r"^standardB", re.IGNORECASE)
 
 _NOTE_AWS_BURST = (
@@ -116,6 +121,16 @@ def _aws_fields(det: dict[str, str]) -> dict:
     ebs = det.get("EbsInfo")
     net = det.get("NetworkInfo")
     perf = go_field(net, "NetworkPerformance")
+    # **2026-07-29에 새로 담기 시작한 둘** — 새 소스를 받아온 것이 아니라 이미 갖고 있던
+    # 미러에서 뽑는다. 둘 다 스키마에 칸이 **선언돼 있는데 aws는 0건**이었다
+    # (`archive/perfkb-field-axis-plan-2026-07-29.md` §1-(2)). 세어 보고 나서야 보였다.
+    #
+    # **셋이 될 뻔했다**: `GpuInfo.TotalGpuMemoryInMiB`도 담으려다 뺐다. 스키마의
+    # `gpuMemoryGB`는 **GPU 하나당** 메모리인데 원본은 **총합**이고, 나눌 개수는 중첩
+    # 2단(`Gpus:[{Count:...}]`)이라 못 읽는다. 뜻이 다른 값을 같은 칸에 담으면 8장짜리
+    # 인스턴스에서 8배 틀린다 — 이 저장소가 단위로 3,600배 틀린 적이 있어 여기서 멈춘다.
+    nics = go_number(net, "MaximumNetworkInterfaces")
+    local_ssd = go_number(det.get("InstanceStorageInfo"), "TotalSizeInGB")
     return {
         "currentGeneration": go_bool(det.get("CurrentGeneration")),
         "clockGHz": go_number(det.get("ProcessorInfo"), "SustainedClockSpeedInGhz"),
@@ -127,6 +142,9 @@ def _aws_fields(det: dict[str, str]) -> dict:
         "ebsBaselineIops": go_number(ebs, "BaselineIops"),
         "ebsMaxIops": go_number(ebs, "MaximumIops"),
         "bareMetal": go_bool(det.get("BareMetal")),
+        "maxNics": int(nics) if nics else None,
+        # 로컬 스토리지가 **없는** 타입은 이 블록 자체가 없다 — 0이 아니라 부재다.
+        "localSsdGB": local_ssd or None,
     }
 
 
@@ -148,6 +166,10 @@ def _azure_fields(det: dict[str, str]) -> dict:
         "acceleratedNetworking": go_bool(det.get("AcceleratedNetworkingEnabled")),
         "premiumIO": go_bool(det.get("PremiumIO")),
         "family": det.get("Family") or None,
+        # **미러의 NIC 수는 `maxNics`에 바로 넣지 않는다.** 문서표와 두 소스가 있고,
+        # 결정 D3이 "일치하는 것만 담는다"이기 때문이다(`aws-limits` 선례). 대조는
+        # 빌드가 `azure_sizes.reconcile_max_nics`에서 하고, 그때 이 칸은 지워진다.
+        MIRROR_MAX_NICS: num("MaxNetworkInterfaces"),
     }
 
 

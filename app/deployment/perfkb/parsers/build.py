@@ -28,6 +28,41 @@ KNOWN_PROVIDERS = frozenset({"aws", "azure", "gcp"})
 _SIGNALS = ("sustainedCpu", "currentGeneration", "clockGHz", "acu", "ebsBaselineMbps")
 
 
+class UnclassifiedKey(ValueError):
+    """`details`에 분류표가 모르는 키가 나타났다 — **빌드를 죽인다**(위협 T1).
+
+    `details`는 Go `%v` 문자열이라 계약이 없다. 상위가 키를 하나 추가하면 우리는
+    조용히 모르게 되고, 그 조용함이 이 저장소가 계속 막아 온 것이다. 지금까지
+    `DetailsMismatch`는 **값**만 지켰다 — 키 집합은 아무도 안 지켰다.
+    """
+
+
+def _check_keys(provider: str, keys, seen: dict[str, set[str]]) -> None:
+    """이 행의 키가 전부 분류표에 있는가. 새 키가 나올 때만 실제로 본다.
+
+    **최상위 키만 본다.** 중첩 1단은 `parse_details`가 문자열로 돌려줘서 여기서는
+    안 보이고, `tools/tumblebug_inventory.py`를 다시 돌릴 때 잡힌다(그때 핀 파일이
+    갱신되고 `test_field_map`이 어긋남을 실패로 만든다). 못 보는 자리를 적어 두는
+    것이 이 저장소의 규율이라 그대로 적는다 — 여기서 중첩까지 열면 빌드마다 73,083행에
+    깊이 파싱이 붙는다.
+    """
+    from app.deployment.perfkb.parsers.field_map import FIELD_MAP, unknown_keys
+
+    if provider not in FIELD_MAP:
+        return
+    fresh = set(keys) - seen.setdefault(provider, set())
+    if not fresh:
+        return
+    seen[provider] |= fresh
+    unknown = unknown_keys(provider, fresh)
+    if unknown:
+        raise UnclassifiedKey(
+            f"{provider}: details에 분류표가 모르는 키가 있습니다 — {unknown}\n"
+            "perfkb/parsers/field_map.py에 판정을 하나 적으세요(사유 필수). "
+            "담지 않기로 하는 것도 판정입니다 — 판단하지 않은 칸이 있는 것이 안 됩니다."
+        )
+
+
 def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[list[dict], dict]:
     """행들을 성능 레코드로 투영하고 감사 통계를 함께 반환한다."""
     records: list[dict] = []
@@ -38,10 +73,20 @@ def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[lis
         "coverage": collections.defaultdict(collections.Counter),
         "findings": collections.defaultdict(collections.Counter),
     }
+    seen_keys: dict[str, set[str]] = {}
 
     for row in rows:
         stats["total_rows"] += 1
         provider = (row.get("provider_name") or "").strip().lower()
+        if provider:
+            from .details import parse_details
+
+            try:
+                _check_keys(provider, parse_details(row.get("details")), seen_keys)
+            except UnclassifiedKey:
+                raise
+            except Exception:  # noqa: BLE001 — 못 읽는 details는 투영이 따로 다룬다
+                pass
         record = project_row(row, namespace=namespace)
         if record is None:
             stats["skipped_no_signal"] += 1
@@ -69,10 +114,36 @@ def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[lis
     return records, stats
 
 
+def field_coverage() -> list[dict]:
+    """**무엇을 왜 안 담았나** — 산출물에 남는 판정 기록.
+
+    `ibm-perf`의 `droppedConstantFields`를 일반화한 것이다. 그쪽만 버린 칸 이름을
+    적었고 미러 `details`에는 그런 기록이 없어서, 무엇을 왜 안 담았는지 아무도 몰랐다.
+    이제 셋 다 같은 규율을 쓴다.
+    """
+    from app.deployment.perfkb.parsers.field_map import (
+        FIELD_MAP,
+        UNTRACKED_PROVIDERS,
+        not_adopted,
+        summarize,
+    )
+
+    out = [
+        {"provider": provider, "fields": summarize(provider),
+         "notAdopted": not_adopted(provider)}
+        for provider in sorted(FIELD_MAP)
+    ]
+    out.append({"untrackedProviders": UNTRACKED_PROVIDERS})
+    return out
+
+
 def build_dataset(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[dict, dict]:
     """`perfkb/schema.json` 모양의 데이터셋과 감사 통계를 만든다."""
     records, stats = project_rows(rows, namespace=namespace)
-    return {"_note": SOURCE_NOTE, "specs": records}, stats
+    return (
+        {"_note": SOURCE_NOTE, "specs": records, "_coverage": field_coverage()},
+        stats,
+    )
 
 
 def format_audit(stats: dict) -> str:

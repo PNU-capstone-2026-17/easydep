@@ -268,6 +268,61 @@ def enrich(specs: list[dict], table: dict[str, dict],
     return report
 
 
+def reconcile_max_nics(specs: list[dict]) -> dict[str, int]:
+    """**두 소스가 같을 때만 `maxNics`를 담는다**(결정 D3 · `aws-limits` 선례).
+
+    미러 `details.MaxNetworkInterfaces`는 azure 34,846행을 **100%** 채운다. 우리는
+    그걸 모르고 문서표(72.8%)만 쓰고 있었다 — 계획서 §1-(3)이 뿌리라고 짚은 결함이다.
+    이제 둘을 갖게 됐으니 고를 수 있는데, **다르게 말하는 값을 하나 골라 담으면 그건
+    우리 짐작**이다. 그래서 고르지 않는다.
+
+      일치      담는다
+      불일치    **둘 다 버린다** 그리고 센다 (해소하지 않는다 — 위협 T3: 어느 쪽이
+                최신인지 알 방법이 없다)
+      미러만    담지 않는다. 단일 소스이므로 `_coverage`에 사실로 남는다
+
+    커버리지가 **줄어드는 방향의 결정**이라는 것을 계획서가 미리 적어 뒀다. 그 대가로
+    규율이 하나가 된다.
+
+    Returns:
+        건수 집계. 그대로 `_coverage`에 실린다.
+    """
+    from app.deployment.perfkb.parsers.project import MIRROR_MAX_NICS
+
+    tally = {"agree": 0, "mismatch": 0, "mirrorOnly": 0, "docOnly": 0}
+    for spec in specs:
+        if spec.get("provider") != "azure":
+            continue
+        mirror = spec.pop(MIRROR_MAX_NICS, None)
+        doc = spec.get("maxNics")
+        if mirror is None and doc is None:
+            continue
+        if mirror is None:
+            tally["docOnly"] += 1
+            continue
+        if doc is None:
+            tally["mirrorOnly"] += 1
+            continue
+        if float(mirror) == float(doc):
+            tally["agree"] += 1
+        else:
+            tally["mismatch"] += 1
+            # **칸을 지운다.** `None`을 넣으면 스키마가 정수를 요구해 산출물이 죽는데,
+            # 그보다 뜻이 중요하다 — 이 스펙에 대해 우리는 값을 **모른다**. 없는 칸이
+            # 곧 모름이라는 것이 이 데이터셋의 규약이다.
+            spec.pop("maxNics", None)
+    return tally
+
+
+def format_reconcile(tally: dict[str, int]) -> str:
+    return (
+        f"azure maxNics 두 소스 대조: 일치 {tally['agree']:,} · "
+        f"불일치 {tally['mismatch']:,}(**둘 다 버림**) · "
+        f"미러에만 {tally['mirrorOnly']:,}(단일 소스라 담지 않음) · "
+        f"문서에만 {tally['docOnly']:,}"
+    )
+
+
 def format_report(report: Report) -> str:
     lines = [
         f"azure 크기 표: 문서의 크기 {report.files:,}종 중 미러와 매칭 "

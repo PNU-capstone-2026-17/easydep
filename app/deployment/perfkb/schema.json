@@ -17,6 +17,13 @@
         "$ref": "#/$defs/spec"
       }
     },
+    "_coverage": {
+      "type": "array",
+      "description": "무엇을 왜 안 담았나. 프로바이더마다 판정별 개수(fields)와 담지 않은 키의 사유(notAdopted)가 들어간다 — 분류표는 perfkb/parsers/field_map.py이고, 인벤토리에 있는 키가 거기 없으면 빌드가 죽는다. ibm-perf의 droppedConstantFields를 일반화한 것이다: 버린 칸을 한 소스만 기록하면 나머지는 '무엇을 왜 안 담았는지' 아무도 모른다. 마지막 항목은 분류표를 두지 않은 프로바이더와 그 사유(untrackedProviders).",
+      "items": {
+        "type": "object"
+      }
+    },
     "_source": {
       "type": "array",
       "description": "이 산출물이 어느 원본에서 나왔는지. 소스마다 한 항목. 고정 불가 소스(AWS CFN zip)는 sha256이 유일한 식별자다 — kbcommon/sources.py 참조.",
