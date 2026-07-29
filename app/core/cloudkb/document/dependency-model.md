@@ -285,16 +285,85 @@ relationships**"*를 만들고 Graph RAG로 주입한다.
   **생성 경로별 차이**(명시/동적)와 **CSP 조건부**는 위 어디에도 자리가 없다.
   **그것이 기여 후보이고, 없다는 것을 먼저 확인해야 주장할 수 있다.**
 
+### 5.5 정박을 실제로 수행했다 — 39간선을 TOSCA에 걸어 본 결과
+
+계획이 아니라 실제 대조다. **형식이 바뀌었으므로 장식이 아니었다.**
+
+**대응되는 것**
+
+| 우리 간선 | TOSCA | 근거 |
+|---|---|---|
+| `node ↔ dataDisk` | `AttachesTo` | *"used for attaching storage or other resources"* |
+| `nlb → nodeGroup`·`node` | `ConnectsTo` / `RoutesTo` 후보 | 연결·라우팅 의미가 맞다. **다만 어느 쪽인지 확정 못 했다** |
+| (모든 간선의 상위) | `DependsOn` | TOSCA에서 관계 타입의 뿌리이고 *"influence orchestration order"* |
+
+**대응되지 않는 것 넷 — 그리고 그중 하나는 우리 형식을 바꿨다**
+
+| 안 맞는 것 | 간선 수 | 왜 |
+|---|---:|---|
+| **카탈로그 참조** `→spec`·`→image` | 6 | **TOSCA에서 이건 관계가 아니다.** `num_cpus`·`mem_size` 같은 것은 노드의 `host` **capability 속성**으로 들어간다(확인함). 즉 우리가 "간선"으로 적던 것이 저쪽에서는 **속성**이다 |
+| **그룹 소속** `→infra`·`k8sNodeGroup→k8sCluster`·`k8sNodeGroup→node` | 5 | TOSCA의 `groups`는 **관계 타입이 아니라 별도 구성**이다(확인함) — *"groups serve to manage these components as a named group for applying policies"* |
+| **파생** `customImage ↔ node` | 2 | TOSCA에는 **타입 상속**(type derivation)은 있으나 **인스턴스 파생** 관계는 찾지 못했다 |
+| **조건부·개수** `sqlDb→vNet`(aws) · `vpn→subnet`(azure) · `k8sCluster→subnet ×2` | 4 | 규범 관계 타입에 조건을 붙일 자리가 없다 → §5.6에서 별도 연구 계열로 확인됨 |
+
+> **정박이 실제로 바꾼 것.** `spec`·`image`를 간선으로 적던 것을 **속성**으로 옮겨야
+> 한다. 우리 `scope.py`가 이미 그 둘을 "선택 역할 — 다른 자원의 속성으로 등장"으로
+> 갈라 뒀는데, **그때는 관측(참조 카운트를 안 건다)이 근거였고 이제 표준의 근거가
+> 생겼다.** 두 갈래가 같은 답에 닿았다.
+
+**네트워크 관계 타입은 확인 실패다.** `LinksTo`·`BindsTo` 같은 것이 네트워킹 절에 있을
+법하나 원문에서 확인하지 못했다. **확인 못 한 것을 있다고 적지 않는다.** `vNic`·`publicIp`
+간선 4개의 정박은 미결이다.
+
+**TOSCA 2.0(CS01, 2024-12)이 나와 있다.** 우리가 본 것은 Simple Profile YAML v1.1이라
+정박을 굳히려면 2.0 기준으로 다시 봐야 한다.
+
+### 5.6 "없다"를 확인한 결과 — 넷 다 선행 연구가 있다
+
+§5.3.2에서 기여 후보로 적은 넷을 각각 찾아봤다. **결과가 우리에게 불리하다.**
+
+| 우리가 주장하려던 것 | 실제 | 근거 |
+|---|---|---|
+| **CSP 조건부 의존** | **기여 아님.** 전용 연구 계열이 있다 | *Cross-Vendor Variability Management for Cloud Systems Using the TOSCA DSL*, **VaMoS 2025** · *Enhancing Deployment Variability Management by Pruning Elements in Deployment Models*, **UCC 2023**. 핵심 개념이 그대로다 — *"variable deployment models … **assigning variability conditions to elements to specify their presence**"* |
+| **생성 경로별 차이** | **기여 아님(같은 계열).** 배포 기술·변형별 차이가 변이성 관리의 대상이다 | *Managing the Variability of Component Implementations and Their Deployment Configurations Across Heterogeneous Deployment Technologies* (2023) |
+| **거절하는 능력** | **기여 아님.** 서베이까지 있다 | *The Art of Refusal: A Survey of Abstention in LLMs* (arXiv:2407.18418) · *Task Abstention for LLMs in Code Generation* (arXiv:2605.17029) · *Using Semantic Distance to Estimate Uncertainty in LLM-Based Code Generation* |
+| **근거의 출처 추적** | **기여 아님.** 추적성·프로비넌스는 오래된 분야다 | *A survey of traceability in requirements engineering and model-driven development*, SoSyM (2010) |
+| **파생 관계** | **판정 보류** | TOSCA 규범 타입에서 못 찾았고 문헌에서도 못 찾았다. **없음을 확인한 것이 아니라 못 찾은 것**이다 |
+
+거절에 대해 한 가지는 갈린다. 문헌의 abstention은 **모델의 불확실성**(NLL · 엔트로피 ·
+의미 거리)을 추정해 거절한다. 우리는 **지식베이스에 근거가 없으면** 거절한다 — 확률이
+아니라 **결정적이고 감사 가능한** 기준이다. 이건 기제의 차이이지 착상의 차이가 아니고,
+RAG에서 검색 실패 시 거절하는 것과 얼마나 다른지는 **아직 확인하지 않았다.**
+
+### 5.7 그래서 남는 것 — 정직한 결론
+
+**개념적 기여가 없다.** 폐포·매칭·검증·변이성·거절·추적성이 전부 선행 연구다. 우리가
+"새 개념"으로 주장할 수 있는 것은 지금 시점에 없다.
+
+남는 것은 둘이고, 둘 다 개념이 아니다.
+
+1. **조합** — 실측 가능한 다중 CSP 기질에서 뽑은 **출처 추적되는 조건부 의존**을,
+   단계별 에이전트 사슬에 물리고, **근거 부재를 거절로 연결**한 것. 각 조각은 선행이
+   있으나 이 조합의 보고는 못 찾았다(이것도 "못 찾은 것"이다).
+2. **실측** — 그 조합이 **의도 부합**(Correctness-Congruence Gap)에 도움이 되는지.
+   Nekrasov et al.이 *"intent alignment plateaued"*라고 남긴 자리이고, **아직 아무도
+   메우지 않았으며 우리도 아직 재지 않았다.**
+
+> **논문의 틀이 바뀌어야 한다.** *"우리가 의존 모델을 만들었다"*가 아니라
+> *"기존 개념들을 이렇게 조합했더니 의도 부합이 이만큼 변했다"*여야 방어된다.
+> 그리고 그 문장은 **측정 없이는 쓸 수 없다.**
+
+---
+
 ## 6. 미결
 
-1. **정박 작업을 실제로 하지 않았다.** §5.4는 계획이고, 우리 39간선을 TOSCA 관계 타입에
-   실제로 걸어 보면 안 맞는 것이 나올 것이다. 그때 형식이 바뀌어야 대조다.
-2. **"없다"를 확인하지 않았다.** 파생·생성경로·CSP 조건부가 정말 선행 연구에 없는지는
-   **찾아서 없음을 확인한 것이 아니라 아직 못 찾은 것**이다. 기여로 주장하려면 그 셋을
-   키워드로 다시 조사해야 한다.
-3. 보류 6건(§1.3)과 `cm-model`의 dependency analyzer(§2) 확인.
-4. 서베이 본문(§5 결과 절)을 아직 안 읽었다 — 범주별 논문 분포와 연도별 추세가 거기
-   있고, 그것이 "무엇이 포화됐고 무엇이 안 됐나"를 말해 준다.
+1. **측정이 없다.** §5.7의 결론이 실험을 요구한다 — 거절이 켜졌을 때와 꺼졌을 때
+   의도 부합이 어떻게 달라지는가. 우리에게 프로브 기준선이 있으니 설계는 가능하다.
+2. **네트워크 관계 타입 정박**(§5.5) — `vNic`·`publicIp` 간선 4개.
+3. **TOSCA 2.0으로 다시 대조**(§5.5).
+4. **파생 관계의 부재를 확인**(§5.6) — 없음을 보이려면 더 찾아야 한다.
+5. 보류 6건(§1.3)과 `cm-model`의 dependency analyzer(§2).
+6. 서베이 본문(결과 절)의 범주별 분포·연도별 추세 — 무엇이 포화됐는지가 거기 있다.
 
 ---
 
@@ -334,6 +403,22 @@ relationships**"*를 만들고 Graph RAG로 주입한다.
   MODELSWARD 2017. · *Sommelier: a tool for validating TOSCA application topologies.* 2017.
 - Saatkamp, K. 외. *Topology splitting and matching for multi-cloud deployments.*
   CLOSER 2017, 247–258.
+
+**변이성 관리 — CSP 조건부의 선행**
+
+- *Cross-Vendor Variability Management for Cloud Systems Using the TOSCA DSL.*
+  VaMoS 2025, doi:10.1145/3715340.3715433.
+- *Enhancing Deployment Variability Management by Pruning Elements in Deployment Models.*
+  UCC 2023, doi:10.1145/3603166.3632143.
+- *Managing the Variability of Component Implementations and Their Deployment
+  Configurations Across Heterogeneous Deployment Technologies.* Springer, 2023.
+
+**거절·추적성 — 나머지 기여 후보의 선행**
+
+- *The Art of Refusal: A Survey of Abstention in Large Language Models.* arXiv:2407.18418.
+- *Task Abstention for Large Language Models in Code Generation.* arXiv:2605.17029.
+- *A survey of traceability in requirements engineering and model-driven development.*
+  Software and Systems Modeling, 2010.
 
 **LLM · IaC**
 
