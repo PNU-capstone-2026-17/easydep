@@ -25,6 +25,7 @@
   "swaggerPathsAtPinnedV0118": 142,
   "note": "`unjudgedIdFields`는 규칙이 자원으로 판정하지 못한 `*Id` 필드다. 전수를 주장하려면 이 수가 0이어야 하는 것이 아니라 **하나하나 자원이 아님이 확인되어야** 한다 — cspResourceId · 자격증명 · 리전 · 태스크 id 등이며 문서 §3.2에 분류를 남겼다."
  },
+ "_semantics": "각 간선의 `questions`(existence|lifecycle)·`authorities`(tumblebug|spider)는 observations에서 **기계적으로 재계산 가능한 사영**이다 — 대응표와 근거는 graphkb/edge_semantics.py(우리 구성으로 표시), 정합은 test_tumblebug_resources.py가 강제한다. `cloud` 권위는 여기서 나오지 않는다 — 벤더 원문 대조(계획 P2) 전까지 모든 간선은 도구 층에 머문다. 기능(functional) 의존은 어떤 관측 형태도 말하지 않으므로 명시적 공백이다(진실 문서 §7).",
  "resources": [
   {
    "id": "vNet",
@@ -224,6 +225,13 @@
      "cite": "core/model/customimage.go:74 CustomImageReq.SourceNodeId",
      "method": "register"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -246,6 +254,13 @@
      "cite": "server.go route /ns/{nsId}/infra/{infraId}/node/{nodeId}/dataDisk",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -263,6 +278,12 @@
      "cite": "FileSystemHandler.go:58 FileSystemInfo.VpcIID",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -283,6 +304,12 @@
      "required": true,
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -303,6 +330,12 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -331,6 +364,13 @@
      "list": true,
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -351,6 +391,12 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -415,6 +461,13 @@
      "csp": "gcp",
      "cardinality_min": 1
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -441,6 +494,13 @@
      "required": true,
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -474,6 +534,13 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -491,6 +558,12 @@
      "cite": "server.go route /ns/{nsId}/k8sCluster/{k8sClusterId}/k8sNodeGroup",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -508,6 +581,12 @@
      "cite": "ClusterHandler.go:89 NodeGroupInfo.Nodes",
      "list": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -541,6 +620,13 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -566,6 +652,13 @@
      "cite": "core/model/k8scluster.go:139 K8sNodeGroupReq.SshKeyId",
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -583,6 +676,12 @@
      "cite": "server.go route /ns/{nsId}/infra/{infraId}/nlb",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -602,6 +701,12 @@
      "cite": "core/model/nlb.go:183 NLBTargetGroupReq.NodeGroupId",
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -619,6 +724,12 @@
      "cite": "NLBHandler.go:20 NLBInfo.VpcIID",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -636,6 +747,12 @@
      "cite": "core/infra/control.go:927 UpdateAssociatedObjectList(StrCustomImage)",
      "required": true
     }
+   ],
+   "questions": [
+    "lifecycle"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -670,6 +787,13 @@
      "list": true,
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -709,6 +833,14 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -726,6 +858,12 @@
      "cite": "server.go route /ns/{nsId}/infra/{infraId}/node",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -772,6 +910,14 @@
      "required": true,
      "autoCreated": true
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -805,6 +951,13 @@
      "required": true,
      "method": "dynamic"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -849,6 +1002,14 @@
      "required": true,
      "autoCreated": true
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -881,6 +1042,13 @@
      "required": true,
      "autoCreated": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -925,6 +1093,14 @@
      "required": true,
      "autoCreated": true
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -941,6 +1117,12 @@
      "form": "CSP 중립 인터페이스",
      "cite": "PublicIPHandler.go:32 PublicIPInfo.OwnedVM"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -957,6 +1139,12 @@
      "form": "CSP 중립 인터페이스",
      "cite": "PublicIPHandler.go:33 PublicIPInfo.OwnedNIC"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -998,6 +1186,13 @@
      "form": "운영 스크립트 순서",
      "cite": "testclient/scripts/sequentialFullTest/create-resource-ns-cloud.sh — vNet를 securityGroup보다 먼저 만든다"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider",
+    "tumblebug"
    ]
   },
   {
@@ -1027,6 +1222,12 @@
      "method": "create",
      "csp": "aws"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -1049,6 +1250,12 @@
      "method": "create",
      "csp": "aws"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -1072,6 +1279,13 @@
      "cite": "core/resource/vnet.go:934 vNet 삭제가 subnet을 먼저 지운다(포함 관계)",
      "required": true
     }
+   ],
+   "questions": [
+    "existence",
+    "lifecycle"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -1088,6 +1302,12 @@
      "form": "CSP 중립 인터페이스",
      "cite": "NICHandler.go:42 NICInfo.OwnerVM"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -1111,6 +1331,12 @@
      "cite": "NICHandler.go:59 NICReqInfo.SecurityGroupIIDs",
      "list": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -1134,6 +1360,12 @@
      "cite": "NICHandler.go:57 NICReqInfo.SubnetIID",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -1157,6 +1389,12 @@
      "cite": "NICHandler.go:56 NICReqInfo.VpcIID",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "spider"
    ]
   },
   {
@@ -1174,6 +1412,12 @@
      "cite": "server.go route /ns/{nsId}/infra/{infraId}/vpn",
      "required": true
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -1200,6 +1444,12 @@
      "csp": "azure",
      "cardinality_min": 1
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   },
   {
@@ -1219,6 +1469,12 @@
      "cite": "core/model/vpn.go:72 SiteProperty.VNetId",
      "method": "create"
     }
+   ],
+   "questions": [
+    "existence"
+   ],
+   "authorities": [
+    "tumblebug"
    ]
   }
  ],

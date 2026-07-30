@@ -212,3 +212,60 @@ def test_sources_are_pinned(data) -> None:
     """핀 없는 소스는 재현이 안 된다."""
     for src in data["_source"]:
         assert src.get("pin"), f"{src.get('source')}: 핀이 없다"
+
+
+def test_questions_and_authorities_are_projections_of_observations(data) -> None:
+    """`questions`·`authorities`는 관측에서 재계산 가능해야 한다.
+
+    `D1~D9` 층을 걷어낸 이유는 라벨이 인용을 가리는 구조여서다
+    (`test_our_own_grading_scheme_is_not_back`). 이 두 필드가 같은 길을 가지 않는
+    조건이 이 검사다 — 저장된 값이 관측의 사영과 어긋나면, 필드가 근거에서 떨어져
+    나와 등급이 된 것이다. 대응표는 `graphkb/edge_semantics.py`(우리 구성으로 표시).
+
+    질문 없는 간선도 금지다 — 어떤 질문에도 답하지 못하는 관측 묶음은 간선이 아니라
+    주장이다(순서 관측만으로 서는 간선 금지와 같은 규율의 일반화).
+    """
+    from app.core.cloudkb.graphkb import edge_semantics
+
+    assert data.get("_semantics"), "도출 규칙의 소재를 산출물이 밝혀야 한다"
+    for edge in data["edges"]:
+        name = f"{edge['from']}→{edge['to']}"
+        assert edge["questions"] == edge_semantics.questions_of(edge), (
+            f"{name}: questions가 관측과 어긋난다 — 필드를 고치지 말고 관측을 보라"
+        )
+        assert edge["authorities"] == edge_semantics.authorities_of(edge), (
+            f"{name}: authorities가 관측과 어긋난다"
+        )
+        assert edge["questions"], f"{name}: 어떤 질문에도 답하지 못하는 간선이다"
+
+
+def test_cloud_authority_needs_vendor_evidence_not_cb_evidence(data) -> None:
+    """`cloud` 권위는 CB 소스 관측만으로는 서지 않는다.
+
+    "cb-tumblebug이 요구한다 ≠ 클라우드가 요구한다"(진실 문서 §6) — sshKey가 그
+    반례였다(29개 외부 소스에서 키 자원 0건, 커밋 a490071). 지금 관측은 전부
+    CB 두 저장소에서 왔으므로 권위는 도구 층까지만 선다. `cloud`를 열려면 벤더
+    스키마 원문·드라이버 코드 관측(계획 P2)을 **관측으로** 달아야 하고, 그때 이
+    검사를 같은 커밋에서 바꾼다.
+    """
+    for edge in data["edges"]:
+        outside = set(edge["authorities"]) - {"tumblebug", "spider"}
+        assert not outside, (
+            f"{edge['from']}→{edge['to']}: 관측 없이 선 권위 {sorted(outside)}"
+        )
+
+
+def test_the_only_lifecycle_only_edge_is_node_to_customimage(data) -> None:
+    """존재 증거 없이 생명주기만 관측된 간선은 정확히 하나 — `node→customImage`.
+
+    노드는 customImage 없이도 만들어지므로(required: false — 이미지는 선택 원천)
+    존재 의존 증거가 없는 것이 맞고, 남는 것은 참조 카운트(삭제 보호,
+    `core/infra/control.go:927`)뿐이다. 이 집합이 늘면 존재 증거 없는 간선이 새로
+    생긴 것이고, 줄면 근거가 사라진 것이다 — 어느 쪽이든 사람이 봐야 한다.
+    """
+    lifecycle_only = {
+        (e["from"], e["to"]) for e in data["edges"] if e["questions"] == ["lifecycle"]
+    }
+    assert lifecycle_only == {("node", "customImage")}, (
+        f"생명주기 단독 간선이 바뀌었다: {sorted(lifecycle_only)}"
+    )
