@@ -1,13 +1,13 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.optional": 8,
+  "aws.optional": 9,
+  "aws.holds": 5,
   "aws.required": 4,
-  "aws.holds": 3,
   "azure.required": 6,
   "azure.optional": 8,
   "azure.holds": 5,
-  "gcp.optional": 7,
+  "gcp.optional": 8,
   "gcp.holds": 3,
   "gcp.required": 3
  },
@@ -44,11 +44,53 @@
   },
   {
    "subject": "k8sCluster",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: 클러스터 보안 그룹을 서비스가 만든다",
+   "note": "SG를 준 적이 없는데 clusterSecurityGroupId가 실재한다(sg-04b748adcf2b00dad) — azure의 vnet 합성·gcp의 default-pool과 같은 패턴이 aws k8s에도 있다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "K3.cluster-shape",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "network",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "L2.delete-vpc-in-use",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "F3.delete-vpc",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
    "object": "subnet",
    "csp": "aws",
    "question": "existence",
    "verdict": "required",
-   "predicate": "배치 조건: 서로 다른 AZ의 서브넷 ≥2",
+   "predicate": "배치 조건: 서로 다른 AZ의 서브넷 ≥2 (양성 대조로 대우 확인)",
    "note": "실역할·실서브넷으로 앞 검사를 통과시켜 격리했다 — 서버가 조건을 문장으로 말한다: 'Subnets specified must be in at least two different AZs'. 같은 AZ 둘도 거부(C2)라 수가 아니라 분산이 조건. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열",
    "oracle": "apply",
    "evidence": [
@@ -75,6 +117,42 @@
      "experiment": "aws-eks2-2026-07-31",
      "step": "C2.two-subnets-same-az",
      "code": "InvalidParameterException"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "K1.create-cluster",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "K2.cluster-active",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "subnet",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "클러스터가 쓰는 서브넷은 못 지운다 — IaaS 층과 같은 코드(DependencyViolation). 클러스터 삭제 후에는 성공(양성 대조)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "L1.delete-subnet-in-use",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks3-2026-07-31",
+     "step": "F2.delete-subnet1",
+     "code": "ok"
     }
    ]
   },
@@ -1100,6 +1178,30 @@
      "layer": "apply",
      "experiment": "gcp-gke2-2026-07-31",
      "step": "G2.status-final",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G3.server-filled-network",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "subnet",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 default 서브넷",
+   "note": "같은 관측(G3)이 network·subnetwork·nodePools 셋을 한꺼번에 말한다 — subnetwork도 default로 채워졌다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G1.create-omit-network",
      "code": "ok"
     },
     {

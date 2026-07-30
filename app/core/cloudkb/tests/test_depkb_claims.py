@@ -74,6 +74,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("loadBalancer", "subnet", "existence"): "required",
         ("loadBalancer", "firewall", "existence"): "optional",
         ("k8sCluster", "subnet", "existence"): "required",
+        ("k8sCluster", "subnet", "lifecycle"): "holds",
+        ("k8sCluster", "network", "lifecycle"): "holds",
+        ("k8sCluster", "firewall", "existence"): "optional",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -141,6 +144,7 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("loadBalancer", "network", "existence"): "optional",
         ("loadBalancer", "subnet", "existence"): "optional",
         ("k8sCluster", "network", "existence"): "optional",
+        ("k8sCluster", "subnet", "existence"): "optional",
         ("k8sCluster", "k8sNodeGroup", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]

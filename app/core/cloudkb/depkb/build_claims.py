@@ -141,7 +141,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "극단 사례"),
     dict(csp="aws", subject="k8sCluster", object="subnet", question="existence",
          verdict="required",
-         predicate="배치 조건: 서로 다른 AZ의 서브넷 ≥2",
+         predicate="배치 조건: 서로 다른 AZ의 서브넷 ≥2 (양성 대조로 대우 확인)",
          evidence=[
              ("aws-eks-2026-07-31", "E1.omit-vpc-config",
               "--resources-vpc-config", "preflight"),
@@ -151,11 +151,38 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "InvalidParameterException", "apply"),
              ("aws-eks2-2026-07-31", "C2.two-subnets-same-az",
               "InvalidParameterException", "apply"),
+             ("aws-eks3-2026-07-31", "K1.create-cluster", "ok", "apply"),
+             ("aws-eks3-2026-07-31", "K2.cluster-active", "ok", "apply"),
          ],
          note="실역할·실서브넷으로 앞 검사를 통과시켜 격리했다 — 서버가 조건을 "
               "문장으로 말한다: 'Subnets specified must be in at least two "
               "different AZs'. 같은 AZ 둘도 거부(C2)라 수가 아니라 분산이 조건. "
               "roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열"),
+    dict(csp="aws", subject="k8sCluster", object="firewall",
+         question="existence", verdict="optional",
+         predicate="server-implicit: 클러스터 보안 그룹을 서비스가 만든다",
+         evidence=[
+             ("aws-eks3-2026-07-31", "K3.cluster-shape", "ok", "apply"),
+         ],
+         note="SG를 준 적이 없는데 clusterSecurityGroupId가 실재한다"
+              "(sg-04b748adcf2b00dad) — azure의 vnet 합성·gcp의 default-pool과 "
+              "같은 패턴이 aws k8s에도 있다"),
+    dict(csp="aws", subject="k8sCluster", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-eks3-2026-07-31", "L1.delete-subnet-in-use",
+              "DependencyViolation", "apply"),
+             ("aws-eks3-2026-07-31", "F2.delete-subnet1", "ok", "apply"),
+         ],
+         note="클러스터가 쓰는 서브넷은 못 지운다 — IaaS 층과 같은 코드"
+              "(DependencyViolation). 클러스터 삭제 후에는 성공(양성 대조)"),
+    dict(csp="aws", subject="k8sCluster", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-eks3-2026-07-31", "L2.delete-vpc-in-use",
+              "DependencyViolation", "apply"),
+             ("aws-eks3-2026-07-31", "F3.delete-vpc", "ok", "apply"),
+         ]),
     dict(csp="azure", subject="k8sCluster", object="subnet", question="existence",
          verdict="optional",
          predicate="server-implicit: 서비스가 노드 리소스 그룹에 vnet을 합성",
@@ -180,6 +207,15 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ],
          note="network 생략 클러스터가 RUNNING까지 갔고 서버가 network=default를 "
               "채웠다 — firewall→network·lb→network와 같은 대체 패턴이 k8s에도"),
+    dict(csp="gcp", subject="k8sCluster", object="subnet", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 default 서브넷",
+         evidence=[
+             ("gcp-gke2-2026-07-31", "G1.create-omit-network", "ok", "apply"),
+             ("gcp-gke2-2026-07-31", "G3.server-filled-network", "ok", "apply"),
+         ],
+         note="같은 관측(G3)이 network·subnetwork·nodePools 셋을 한꺼번에 말한다 "
+              "— subnetwork도 default로 채워졌다"),
     dict(csp="gcp", subject="k8sCluster", object="k8sNodeGroup",
          question="existence", verdict="optional",
          predicate="server-implicit: 미지정 시 default-pool 합성 · 이후 add/delete 가능",

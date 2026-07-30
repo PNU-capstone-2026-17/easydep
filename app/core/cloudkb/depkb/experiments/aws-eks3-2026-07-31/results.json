@@ -1,0 +1,131 @@
+{
+ "_note": "EKS 실생성 라운드 — 양성 대조와 생명주기. 노드그룹은 만들지 않는다(비용 회피).",
+ "startedAt": "2026-07-30T17:30:46+00:00",
+ "ids": {
+  "roleArn": "arn:aws:iam::838062934141:role/depkb-eks3-role",
+  "vpc": "vpc-05741ce66518d01c7",
+  "subnet1": "subnet-0c53c0eaa896328da",
+  "subnet2": "subnet-0b3867365df541885"
+ },
+ "steps": {
+  "R.create-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-eks3-role\",\n        \"RoleId\": \"AROA4GIDRRB6YFSE2CGJN\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-eks3-role\",\n        \"CreateDate\": \"2026-07-30T17:30:50+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"eks.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n        }\n    "
+  },
+  "R.attach-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-001ba9cccfa03a814\",\n                \"CidrBlock\": \"10.93.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-05741ce66518d01c7\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.93.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b7f"
+  },
+  "R.create-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az1\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0c53c0eaa896328da\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R.create-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0b3867365df541885\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "K1.create-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-eks3\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-eks3\",\n        \"createdAt\": \"2026-07-31T02:31:27.651000+09:00\",\n        \"version\": \"1.36\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-eks3-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-0c53c0eaa896328da\",\n                \"subnet-0b3867365df541885\"\n            ],\n            \"securityGroupIds\": [],\n            \"vpcId\": \"vpc-05741ce66518d01c7\",\n            \"endpointPublicAccess\": true,\n            \"endpointPrivateAccess\":"
+  },
+  "K2.cluster-active": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "ACTIVE"
+  },
+  "K3.cluster-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"vpc\": \"vpc-05741ce66518d01c7\",\n    \"sg\": \"sg-04b748adcf2b00dad\",\n    \"subnets\": 2\n}"
+  },
+  "L1.delete-subnet-in-use": {
+   "ok": false,
+   "errorCodes": [
+    "DependencyViolation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DependencyViolation) when calling the DeleteSubnet operation: The subnet 'subnet-0c53c0eaa896328da' has dependencies and cannot be deleted."
+  },
+  "L2.delete-vpc-in-use": {
+   "ok": false,
+   "errorCodes": [
+    "DependencyViolation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DependencyViolation) when calling the DeleteVpc operation: The vpc 'vpc-05741ce66518d01c7' has dependencies and cannot be deleted."
+  },
+  "L3.delete-role-in-use": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "L4.delete-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-eks3\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-eks3\",\n        \"createdAt\": \"2026-07-31T02:31:27.651000+09:00\",\n        \"version\": \"1.36\",\n        \"endpoint\": \"https://6D162860B56D45A7D4AC9B021E1C54C0.gr7.ap-northeast-2.eks.amazonaws.com\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-eks3-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-0c53c0eaa896328da\",\n                \"subnet-0b3867365df541885\"\n            ],\n            \"securityGroupIds\": [],\n            \"clusterSec"
+  },
+  "F1.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "gone"
+  },
+  "F2.delete-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F2.delete-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F3.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F4.delete-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F5.residual-vpcs": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "F6.residual-clusters": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": []\n}"
+  }
+ },
+ "finishedAt": "2026-07-30T17:39:13+00:00"
+}
