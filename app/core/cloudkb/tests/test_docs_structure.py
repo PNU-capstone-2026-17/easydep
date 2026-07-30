@@ -26,8 +26,11 @@ ROOT = Path(__file__).resolve().parent.parent
 #: 실제로 첫 판의 "필연의 출처 여섯" 가설이 관측 39건 중 9건에 반증돼 두 층 구조로
 #: 바뀌었다. 아카이브는 갱신을 금지하므로 반증을 실을 자리가 없고, 새 문서를 또
 #: 만들면 어느 것이 현재 모델인지 다시 알 수 없어진다.
+#: `resource-catalog.md` (2026-07-30 추가) — **필드 표는 태그가 오르면 낡는다.**
+#: 아카이브는 갱신을 금지하므로 소스 태그를 올릴 때 정정을 실을 자리가 없다.
 LIVING_DOCS = {
     "kb-book.md", "research.md", "constraint-derivation.md", "dependency-model.md",
+    "resource-catalog.md",
 }
 
 

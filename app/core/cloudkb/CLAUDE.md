@@ -9,6 +9,7 @@
   이 영역을 건드리기 전에 여기부터. 다른 문서와 어긋나면 그쪽이 이긴다.
 - 제약 도출(갱신됨): `document/constraint-derivation.md`
 - 의존의 개념 모델(갱신됨): `document/dependency-model.md`
+- **다루는 자원 목록·필드 전수**: `document/resource-catalog.md`
 - 전체 구조·만드는 법: `document/kb-book.md` (**만드는 방법서**이지 무엇을 만들지
   정하는 문서가 아니다)
 - 과제 원문: `document/research.md` · 라이선스: `NOTICE`
@@ -22,7 +23,7 @@
 2. **날짜 박힌 문서는 불변 기록** (`document/archive/`) — 완료 주석·추기 금지.
    완료는 커밋 메시지가 기록한다.
 3. **살아있는 문서**: README · kb-book · NOTICE(법적 필요) · 이 파일 ·
-   `document/{constraint-derivation,dependency-model}.md`. 목록은 `tests/test_docs_structure.py`가
+   `document/{constraint-derivation,dependency-model,resource-catalog}.md`. 목록은 `tests/test_docs_structure.py`가
    고정하고, 늘리려면 **"왜 archive가 아닌가"**에 답하는 커밋이 필요하다.
 4. **변경 시 문서 갱신 기본값 0회.** 조사가 필요한 작업만 새 문서를 만들되,
    완료 커밋에서 archive로 직행. 커밋 본문은 12줄 이내.

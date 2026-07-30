@@ -225,6 +225,7 @@ abstractions"*, 심지어 *"Multi-K8s Cluster may be renamed to Infra"*), 스펙
 | `docs/kb-and-contract-plan-*.md` · `kb-scope-tumblebug-*.md` · `agent-sdk-merge-plan.md` · `requirements-agent-improvements.md` | **이력.** 참조하지 않는다 |
 | `app/core/cloudkb/document/constraint-derivation.md` | **살아 있는 문서** — 자유 변수와 단계 배분의 도출. 근거 등급(측정/명시/추론)이 붙는다. 계속 갱신하고 아카이브하지 않는다 |
 | `app/core/cloudkb/document/dependency-model.md` | **살아 있는 문서** — cloud-barista 전수조사(59)와 **인용 있는 관측**. 모델은 아직 없다(근거 부재) |
+| `app/core/cloudkb/document/resource-catalog.md` | **살아 있는 문서** — 우리가 다루는 자원 14종의 필드 전수와 범위 밖 7종의 사유 |
 | `app/core/cloudkb/document/kb-book.md` | KB **만드는 방법서** — 살아 있으나 이 문서의 아래 |
 | `app/core/cloudkb/document/archive/**` | **이력.** 참조하지 않는다 |
 | `docs/api.md` · `ARCHITECTURE.md` · `deployment-file-generation.md` · `implementation-agent.md` · `requirements-agent.md` | **다른 영역의 살아있는 명세.** 우리 관할 밖이고 손대지 않는다 |
