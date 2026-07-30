@@ -73,7 +73,11 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("vm", "nic", "existence"): "required",
         ("vm", "disk", "existence"): "required",
         ("vm", "disk", "lifecycle"): "holds",
+        ("nic", "network", "existence"): "optional",
+        ("nic", "subnet", "existence"): "optional",
         ("nic", "subnet", "lifecycle"): "holds",
+        ("loadBalancer", "network", "existence"): "optional",
+        ("loadBalancer", "subnet", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}

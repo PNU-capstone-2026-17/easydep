@@ -5,8 +5,7 @@
   "azure.optional": 7,
   "azure.required": 4,
   "azure.holds": 5,
-  "gcp.optional": 1,
-  "gcp.unknown": 4,
+  "gcp.optional": 5,
   "gcp.holds": 3,
   "gcp.required": 3
  },
@@ -748,16 +747,22 @@
    "object": "network",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+   "note": null,
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/ForwardingRule/properties/network",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply2-2026-07-31",
+     "step": "B.create-ext-forwardingrule",
+     "code": "ok"
     }
    ]
   },
@@ -766,16 +771,22 @@
    "object": "subnet",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+   "note": null,
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/ForwardingRule/properties/subnetwork",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply2-2026-07-31",
+     "step": "B.create-ext-forwardingrule",
+     "code": "ok"
     }
    ]
   },
@@ -784,16 +795,22 @@
    "object": "network",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": "1라운드 인스턴스가 subnetwork만 지정하고 network 없이 성공 — 서버가 서브넷에서 네트워크를 역산한다",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/NetworkInterface/properties/network",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "F0.create-instance",
+     "code": "ok"
     }
    ]
   },
@@ -802,16 +819,34 @@
    "object": "subnet",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "network 모드 조건부: custom에선 필수 · auto에선 서버가 리전 서브넷 대체",
+   "note": "같은 생략이 custom 모드에선 거부되고 auto 모드에선 서버가 채운다 — 서버가 채운 subnetwork 실물을 기록했다. 필연이 (간선×CSP)를 넘어 **대상 자원의 모드**에까지 걸리는 첫 사례",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/NetworkInterface/properties/subnetwork",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply2-2026-07-31",
+     "step": "A1.nic-network-only-custom",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply2-2026-07-31",
+     "step": "A2.nic-network-only-auto",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply2-2026-07-31",
+     "step": "A2.server-filled-subnetwork",
+     "code": "ok"
     }
    ]
   },

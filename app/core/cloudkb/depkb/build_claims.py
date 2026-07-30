@@ -182,6 +182,36 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ],
          note="**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, "
               "gcp는 부트 디스크 명세가 필수다. CSP 색인이 필요한 이유의 실측"),
+    dict(csp="gcp", subject="nic", object="network", question="existence",
+         verdict="optional",
+         evidence=[
+             ("gcp-apply-2026-07-31", "F0.create-instance", "ok", "apply"),
+         ],
+         note="1라운드 인스턴스가 subnetwork만 지정하고 network 없이 성공 — "
+              "서버가 서브넷에서 네트워크를 역산한다"),
+    dict(csp="gcp", subject="nic", object="subnet", question="existence",
+         verdict="optional",
+         predicate="network 모드 조건부: custom에선 필수 · auto에선 서버가 리전 서브넷 대체",
+         evidence=[
+             ("gcp-apply2-2026-07-31", "A1.nic-network-only-custom", "invalid", "apply"),
+             ("gcp-apply2-2026-07-31", "A2.nic-network-only-auto", "ok", "apply"),
+             ("gcp-apply2-2026-07-31", "A2.server-filled-subnetwork", "ok", "apply"),
+         ],
+         note="같은 생략이 custom 모드에선 거부되고 auto 모드에선 서버가 채운다 — "
+              "서버가 채운 subnetwork 실물을 기록했다. 필연이 (간선×CSP)를 넘어 "
+              "**대상 자원의 모드**에까지 걸리는 첫 사례"),
+    dict(csp="gcp", subject="loadBalancer", object="network", question="existence",
+         verdict="optional",
+         predicate="EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+         evidence=[
+             ("gcp-apply2-2026-07-31", "B.create-ext-forwardingrule", "ok", "apply"),
+         ]),
+    dict(csp="gcp", subject="loadBalancer", object="subnet", question="existence",
+         verdict="optional",
+         predicate="EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+         evidence=[
+             ("gcp-apply2-2026-07-31", "B.create-ext-forwardingrule", "ok", "apply"),
+         ]),
     dict(csp="gcp", subject="nic", object="subnet", question="lifecycle",
          verdict="holds",
          evidence=[
