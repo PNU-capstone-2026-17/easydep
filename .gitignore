@@ -48,6 +48,8 @@ materials/PURE/
 /app/deployment/output/
 /app/deployment/.cache/
 /app/deployment/.claude/
+# graphkb build 산출물. 저장소 루트에도 떨어진다(`graphkb build --source cfn|azure|gcp`).
+/output/
 /app/deployment/token_budget.json
 /app/deployment/tool_count.json
 

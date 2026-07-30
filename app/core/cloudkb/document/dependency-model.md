@@ -119,9 +119,14 @@ OpenTofu 갈래(선언형)는 도구가 참조로 스스로 풀어 **템플릿 �
 
 ### 3.1 TOSCA 정박 — 39간선을 실제로 걸었다
 
-**대응되는 것**: `dataDisk↔node` = `AttachesTo` · `nlb→node` = `ConnectsTo`/`RoutesTo`
-후보 · 모든 간선의 상위 = `DependsOn`(*"generic dependencies … to influence
-orchestration order"*).
+**대응되는 것** (§3.1.1의 사전 정의와 짝지은 것)
+
+| 우리 간선 | TOSCA 사전 정의 |
+|---|---|
+| `node ↔ dataDisk` | `Compute.local_storage` → `AttachesTo` → `BlockStorage` |
+| `nlb → node` | `LoadBalancer.application` → **`RoutesTo`** → `Endpoint` |
+| `vNic → subnet` · `vNic → node` | `network.Port.link` → `LinksTo` · `.binding` → `BindsTo` |
+| (모든 간선의 상위) | `Root.dependency` → `DependsOn`, `[0, UNBOUNDED]` |
 
 **대응되지 않는 것 넷**
 
@@ -129,15 +134,77 @@ orchestration order"*).
 |---|---:|---|
 | 카탈로그 참조 `→spec`·`→image` | 6 | TOSCA에서 이건 관계가 아니라 **capability 속성**이다 |
 | 그룹 소속 `→infra` 계열 | 5 | `groups`는 **관계 타입이 아니라 별도 구성**이다 |
-| 파생 `customImage↔node` | 2 | **타입 상속**은 있으나 인스턴스 파생 관계는 찾지 못했다 |
+| 파생 `customImage↔node` | 2 | **타입 상속**(`derived_from`)은 있으나 인스턴스 파생 관계는 규범 타입에 없다 |
 | 조건부·개수 | 4 | 규범 관계 타입에 조건을 붙일 자리가 없다 → §3.2 |
 
 > **정박이 실제로 바꾼 것**: `spec`·`image`를 간선에서 **속성**으로 옮겨야 한다.
 > `scope.py`가 이미 그 둘을 "선택 역할"로 갈라 뒀고, **관측과 표준이 같은 답에 닿았다.**
 
-**미확인**: 네트워크 관계 타입(`LinksTo`·`BindsTo` 등)을 원문에서 확인하지 못해
-`vNic`·`publicIp` 간선 4개는 정박 미결이다. **TOSCA 2.0**(CS01, 2024-12)이 나와 있어
-v1.1 기준 대조는 다시 봐야 한다.
+**네트워크 관계 타입 확인됨(2026-07-30).** `tosca.nodes.network.Port`가
+`link`(→`tosca.relationships.network.LinksTo`)와 `binding`(→`BindsTo`) 요구를 갖는다.
+앞서 "확인 실패"로 남겼던 것이 닫혔다.
+
+### 3.1.1 TOSCA가 사전 정의한 의존 — **Simple Profile 1.3 기준**
+
+TOSCA는 **의존을 타입에 미리 박아 둔다.** 노드 타입이 자기 `requirements`를 선언하고,
+그것이 다른 노드의 `capabilities`로 충족된다. 아래는 **Simple Profile 1.3**의 원문이다
+(판을 못 박는 이유는 §3.1.2 — 2.0에서 이 타입들이 표준 밖으로 나갔다).
+
+| 노드 타입 | 요구 이름 | 대상 capability | 관계 타입 | occurrences |
+|---|---|---|---|---|
+| `tosca.nodes.Root` | `dependency` | `Node` | **`DependsOn`** | `[0, UNBOUNDED]` |
+| `tosca.nodes.Compute` | `local_storage` | `Attachment` | **`AttachesTo`** (→`BlockStorage`) | `[0, UNBOUNDED]` |
+| `tosca.nodes.SoftwareComponent` | `host` | `Compute`* | **`HostedOn`** (→`Compute`) | (기본 `[1,1]`) |
+| `tosca.nodes.WebApplication` | `host` | `Compute`* | `HostedOn` (→`WebServer`) | (기본) |
+| `tosca.nodes.Database` | `host` | `Compute`* | `HostedOn` (→`DBMS`) | (기본) |
+| `tosca.nodes.Container.Application` | `host` | `Compute`* | `HostedOn` | (기본) |
+| `tosca.nodes.LoadBalancer` | `application` | `Endpoint` | **`RoutesTo`** | `[0, UNBOUNDED]` |
+| `tosca.nodes.network.Port` | `link` · `binding` | `network.Linkable` · `network.Bindable` | **`LinksTo`** · **`BindsTo`** | (기본) |
+
+`requirements`가 **없는** 규범 타입: `WebServer` · `DBMS` · `ObjectStorage` ·
+`BlockStorage` · `Container.Runtime` · `network.Network`.
+
+두 가지가 중요하다.
+
+- **`Root`가 `dependency`를 갖는다.** 모든 타입이 일반 의존 슬롯을 상속하므로, 의미가
+  안 맞는 관계도 `DependsOn`으로는 적을 수 있다. **다만 그건 폴백이고 의미 대응이 아니다.**
+- **`LoadBalancer`는 `RoutesTo`다.** 앞서 `nlb→node`를 "`ConnectsTo`/`RoutesTo` 후보"로
+  적어 뒀는데, 규범 정의가 `RoutesTo`로 확정한다.
+
+`Compute`* 표시: `SoftwareComponent.host` 등의 대상 capability는 **1.0·1.1에서
+`tosca.capabilities.Container`였고 1.2에서 `Compute`로 개칭됐다**(`{1.0,1.1}/node.yaml:130`
+vs `{1.2,1.3}/node.yaml:140`). 판을 안 적으면 어긋난다.
+
+### 3.1.2 TOSCA 2.0에서 이 표는 표준 밖으로 나갔다 (2026-07-30 확인)
+
+**v2.0은 2025-07-22에 OASIS Standard가 됐다.** 그리고 §1.1이 이렇게 적는다 —
+*"TOSCA v2.0 removes the Simple Profile type definitions from the standard. These type
+definitions are now managed as an open source project in the TOSCA Discussion github
+repository."* 즉 §3.1.1의 규범 타입은 **표준이 아니라 커뮤니티 프로파일**
+(`oasis-open/tosca-community-contributions`)에 있다.
+
+문법도 바뀌었고, 그것이 우리 대조를 뒤집는다.
+
+| | 1.x | 2.0 (표준 원문) |
+|---|---|---|
+| 요구의 개수 | `occurrences`, 기본 **`[1,1]`**(필수) | **`count_range`**, 기본 **`[0, UNBOUNDED]`**(선택) |
+| `occurrences` | 정상 키명 | *"is deprecated in TOSCA 2.0"* |
+| 필연 표현 | 요구 정의의 기본값 | 요구 **배정**의 `optional`(기본 false = 채워야 한다) |
+| 용량 필터 | 없음 | 요구 배정의 `allocation` 블록 |
+| 지연 결속 | `node_filter` + `in_range` | `node_filter`가 **불리언 함수**. `$in_range`는 §10.2.2.2 비교 함수 목록에 **없다**(표준 자기 예제는 쓴다 — 결함) |
+
+> **뒤집힌 것.** 2.0에서는 **요구 정의가 필연을 표현하지 않는다.** 그래서 커뮤니티의
+> AWS·Azure·GCP 프로파일이 `count_range`를 생략한 채 쓴 요구들은, 표준대로 읽으면
+> 하나도 필수가 아니다. **그 프로파일들은 우리 간선의 모양은 대조해 주지만
+> `required` 판정은 대조해 주지 않는다.**
+
+벤더 중립 어휘로는 `com.ubicity:2.5` 프로파일이 더 가깝다 — `Network`·`Subnet`·
+`SecurityGroup`·`KeyPair`·`VmImage`·`Port`·`VirtualCompute`를 갖고 AWS·Azure·GCP·
+OpenStack 프로파일이 여기서 파생한다. Azure 프로파일은 NSG를 VNet 대신 Region 밑에 두어
+**우리 `securityGroup->vNet.required`의 azure 예외와 일치한다.**
+
+조사 전문은 `archive/resource-dependency-2026-07-30.md`(방법과 결과) ·
+`archive/reference-implementation-iac-2026-07-30.md`(원자료).
 
 ### 3.2 우리가 하려던 것은 대부분 선행 연구가 있다
 
@@ -210,10 +277,17 @@ limited 'architects'."* **과제 문제 ③이 정확히 그 갭이다.**
 ## 6. 미결
 
 1. **측정이 없다** — 계획 4단계.
-2. 네트워크 관계 타입 정박(§3.1) — `vNic`·`publicIp` 4간선.
-3. **TOSCA 2.0으로 다시 대조**(§3.1).
-4. 파생 관계의 부재 확인(§3.1) — **못 찾은 것이지 없음을 확인한 것이 아니다.**
-5. 보류 6건(§2.1)과 `cm-model` dependency analyzer(§2.2).
+2. ~~TOSCA 2.0으로 다시 대조~~ → **닫았다(§3.1.2).** 규범 타입이 표준 밖으로 나갔고
+   `count_range` 기본값이 뒤집혔다. 남은 것은 **`com.ubicity:2.5` 어휘로 39간선을 다시
+   짝짓는 일**이다.
+3. 파생 관계의 부재 확인(§3.1) — **못 찾은 것이지 없음을 확인한 것이 아니다.**
+4. 보류 6건(§2.1)과 `cm-model` dependency analyzer(§2.2).
+5. **공식 스키마가 말하는데 우리에게 없는 간선 6개**(2026-07-30). 벤더 스키마 전수
+   (aws 2,391 · azure 2,514 · gcp 1,052 간선)를 `core_vendor_map.json`으로 투영해
+   나왔다 — `k8sNodeGroup→subnet`(**aws에서 필수**) · `nlb→subnet` · `nlb→securityGroup`
+   · `k8sNodeGroup→vNet` · `subnet→securityGroup` · `customImage→dataDisk`.
+   셋 다 있는 뼈대는 `subnet→vNet` · `k8sNodeGroup→k8sCluster`(둘 다 필수) ·
+   `vm→subnet` · `vm→dataDisk`(둘 다 선택) 넷이다.
 
 ---
 
@@ -232,7 +306,7 @@ limited 'architects'."* **과제 문제 ③이 정확히 그 갭이다.**
 
 ## 참고문헌
 
-**표준** — OASIS TOSCA v1.0 / Simple Profile YAML v1.1 / **v2.0 CS01(2024-12)** ·
+**표준** — OASIS TOSCA v1.0 / Simple Profile YAML v1.1 · v1.2 · v1.3 / **v2.0 OASIS Standard(2025-07-22)** · 커뮤니티 프로파일 `oasis-open/tosca-community-contributions`(`org/oasis-open/simple/2.0` · `com.ubicity:2.5`) ·
 Terraform 암시·명시 의존 · Kubernetes `ownerReferences`/`finalizers` ·
 Eclipse Winery *TOSCA Topology Completion*
 
