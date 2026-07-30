@@ -1,0 +1,76 @@
+{
+ "_note": "EKS 카디널리티 격리 — 실역할·실서브넷으로 앞 검사를 통과시켜 서브넷 수·AZ 조건만 남겼다. 클러스터 무생성.",
+ "ranAt": "2026-07-30T16:37:42+00:00",
+ "steps": {
+  "R.create-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-eks-role\",\n        \"RoleId\": \"AROA4GIDRRB6QBBPMQKHR\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-eks-role\",\n        \"CreateDate\": \"2026-07-30T16:37:22+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"eks.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n        }\n    }\n"
+  },
+  "R.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-0d626c35dd0fec4bb\",\n                \"CidrBlock\": \"10.92.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-0955e40f265fd15fa\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.92.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b7f"
+  },
+  "R.create-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az3\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0b8bad92da02836b9\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R.create-subnet2-same-az": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az3\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0f819844efae1918b\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "C1.one-real-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterException) when calling the CreateCluster operation: Subnets specified must be in at least two different AZs\n\nAdditional error details:\nclusterName: depkb-eks"
+  },
+  "C2.two-subnets-same-az": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterException) when calling the CreateCluster operation: Subnets specified must be in at least two different AZs\n\nAdditional error details:\nclusterName: depkb-eks"
+  },
+  "C3.confirm-no-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": []\n}"
+  },
+  "D.delete-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "D.delete-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "D.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "D.delete-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  }
+ }
+}

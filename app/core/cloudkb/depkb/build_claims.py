@@ -137,16 +137,57 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "극단 사례"),
     dict(csp="aws", subject="k8sCluster", object="subnet", question="existence",
          verdict="required",
+         predicate="배치 조건: 서로 다른 AZ의 서브넷 ≥2",
          evidence=[
              ("aws-eks-2026-07-31", "E1.omit-vpc-config",
               "--resources-vpc-config", "preflight"),
              ("aws-eks-2026-07-31", "E3.one-subnet",
               "InvalidParameterException", "apply"),
+             ("aws-eks2-2026-07-31", "C1.one-real-subnet",
+              "InvalidParameterException", "apply"),
+             ("aws-eks2-2026-07-31", "C2.two-subnets-same-az",
+              "InvalidParameterException", "apply"),
          ],
-         note="생략은 클라이언트 층이 막고(SDK 모델), 서버는 참조 실재를 "
-              "강제한다(허상 서브넷 거부). '둘 이상·다른 AZ' 카디널리티는 허상 "
-              "검사가 먼저라 가려졌다 — 실서브넷·실역할로 격리하는 생성 라운드 "
-              "몫. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열"),
+         note="실역할·실서브넷으로 앞 검사를 통과시켜 격리했다 — 서버가 조건을 "
+              "문장으로 말한다: 'Subnets specified must be in at least two "
+              "different AZs'. 같은 AZ 둘도 거부(C2)라 수가 아니라 분산이 조건. "
+              "roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열"),
+    dict(csp="azure", subject="k8sCluster", object="subnet", question="existence",
+         verdict="optional",
+         predicate="server-implicit: 서비스가 노드 리소스 그룹에 vnet을 합성",
+         evidence=[
+             ("azure-aks2-2026-07-31", "A1.create-no-subnet-nowait", "ok", "apply"),
+             ("azure-aks2-2026-07-31", "A2.provisioning-final", "ok", "apply"),
+             ("azure-aks2-2026-07-31", "A4.synthesized-vnets-in-node-rg",
+              "ok", "apply"),
+         ],
+         note="서브넷 없이 만든 AKS가 Succeeded까지 갔고, 노드 RG"
+              "(MC_depkb-preflight_depkb-aks_koreacentral)에 서비스가 만든 "
+              "vnet(aks-vnet-67015217)이 실재한다 — **CB 드라이버 합성과 같은 "
+              "일을 관리형 서비스가 한다**는 실측. aws는 정반대로 사용자에게 "
+              "다른 AZ 서브넷 2개를 요구한다(양상 반전)"),
+    dict(csp="gcp", subject="k8sCluster", object="network", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 default 네트워크",
+         evidence=[
+             ("gcp-gke2-2026-07-31", "G1.create-omit-network", "ok", "apply"),
+             ("gcp-gke2-2026-07-31", "G2.status-final", "ok", "apply"),
+             ("gcp-gke2-2026-07-31", "G3.server-filled-network", "ok", "apply"),
+         ],
+         note="network 생략 클러스터가 RUNNING까지 갔고 서버가 network=default를 "
+              "채웠다 — firewall→network·lb→network와 같은 대체 패턴이 k8s에도"),
+    dict(csp="gcp", subject="k8sCluster", object="k8sNodeGroup",
+         question="existence", verdict="optional",
+         predicate="server-implicit: 미지정 시 default-pool 합성 · 이후 add/delete 가능",
+         evidence=[
+             ("gcp-gke2-2026-07-31", "G3.server-filled-network", "ok", "apply"),
+             ("gcp-gke2-2026-07-31", "P1.nodepool-add", "ok", "apply"),
+             ("gcp-gke2-2026-07-31", "P3.nodepool-delete-retry", "ok", "apply"),
+         ],
+         note="**azure와 양상 반전** — azure는 agentPoolProfiles가 생성 시 필수인데 "
+              "gcp는 nodePools 없이 만들면 서버가 default-pool을 만든다(G3의 "
+              "nodePools 실물). 그리고 gcp 노드풀은 독립 CRUD가 있다(add/delete "
+              "성공). azure 노드풀 CRUD는 하네스 결함으로 미측정(아래 note)"),
     # ── lifecycle (azure) ──
     dict(csp="azure", subject="vm", object="disk", question="lifecycle",
          verdict="holds",

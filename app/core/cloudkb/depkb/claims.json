@@ -5,9 +5,9 @@
   "aws.required": 4,
   "aws.holds": 3,
   "azure.required": 6,
-  "azure.optional": 7,
+  "azure.optional": 8,
   "azure.holds": 5,
-  "gcp.optional": 5,
+  "gcp.optional": 7,
   "gcp.holds": 3,
   "gcp.required": 3
  },
@@ -48,8 +48,8 @@
    "csp": "aws",
    "question": "existence",
    "verdict": "required",
-   "predicate": null,
-   "note": "생략은 클라이언트 층이 막고(SDK 모델), 서버는 참조 실재를 강제한다(허상 서브넷 거부). '둘 이상·다른 AZ' 카디널리티는 허상 검사가 먼저라 가려졌다 — 실서브넷·실역할로 격리하는 생성 라운드 몫. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열",
+   "predicate": "배치 조건: 서로 다른 AZ의 서브넷 ≥2",
+   "note": "실역할·실서브넷으로 앞 검사를 통과시켜 격리했다 — 서버가 조건을 문장으로 말한다: 'Subnets specified must be in at least two different AZs'. 같은 AZ 둘도 거부(C2)라 수가 아니라 분산이 조건. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열",
    "oracle": "apply",
    "evidence": [
     {
@@ -62,6 +62,18 @@
      "layer": "apply",
      "experiment": "aws-eks-2026-07-31",
      "step": "E3.one-subnet",
+     "code": "InvalidParameterException"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks2-2026-07-31",
+     "step": "C1.one-real-subnet",
+     "code": "InvalidParameterException"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-eks2-2026-07-31",
+     "step": "C2.two-subnets-same-az",
      "code": "InvalidParameterException"
     }
    ]
@@ -465,6 +477,36 @@
      "experiment": "azure-k8s-vpn-2026-07-31",
      "step": "K1.aks-omit-agentpools",
      "code": "InvalidParameter"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: 서비스가 노드 리소스 그룹에 vnet을 합성",
+   "note": "서브넷 없이 만든 AKS가 Succeeded까지 갔고, 노드 RG(MC_depkb-preflight_depkb-aks_koreacentral)에 서비스가 만든 vnet(aks-vnet-67015217)이 실재한다 — **CB 드라이버 합성과 같은 일을 관리형 서비스가 한다**는 실측. aws는 정반대로 사용자에게 다른 AZ 서브넷 2개를 요구한다(양상 반전)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-aks2-2026-07-31",
+     "step": "A1.create-no-subnet-nowait",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-aks2-2026-07-31",
+     "step": "A2.provisioning-final",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-aks2-2026-07-31",
+     "step": "A4.synthesized-vnets-in-node-rg",
+     "code": "ok"
     }
    ]
   },
@@ -993,6 +1035,66 @@
      "experiment": "gcp-apply-2026-07-31",
      "step": "A.firewall-dangling-network",
      "code": "notFound"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "k8sNodeGroup",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: 미지정 시 default-pool 합성 · 이후 add/delete 가능",
+   "note": "**azure와 양상 반전** — azure는 agentPoolProfiles가 생성 시 필수인데 gcp는 nodePools 없이 만들면 서버가 default-pool을 만든다(G3의 nodePools 실물). 그리고 gcp 노드풀은 독립 CRUD가 있다(add/delete 성공). azure 노드풀 CRUD는 하네스 결함으로 미측정(아래 note)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G3.server-filled-network",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "P1.nodepool-add",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "P3.nodepool-delete-retry",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 default 네트워크",
+   "note": "network 생략 클러스터가 RUNNING까지 갔고 서버가 network=default를 채웠다 — firewall→network·lb→network와 같은 대체 패턴이 k8s에도",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G1.create-omit-network",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G2.status-final",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke2-2026-07-31",
+     "step": "G3.server-filled-network",
+     "code": "ok"
     }
    ]
   },

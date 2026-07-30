@@ -42,6 +42,9 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     ("쌍 호환:", "detail"),
     # 이름 조건: 대상이 특정 이름이어야 한다(azure GatewaySubnet 실측).
     ("이름 조건:", "detail"),
+    # 배치 조건: 대상들이 서로 어떻게 흩어져 있어야 하는가(aws EKS의 다른 AZ ≥2).
+    # 개수가 아니라 분산이 조건이라 카디널리티와 따로 적는다.
+    ("배치 조건:", "detail"),
 )
 
 

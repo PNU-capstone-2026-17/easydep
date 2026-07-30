@@ -88,6 +88,26 @@ def test_no_unknown_remains_in_the_vocabulary(artifact) -> None:
     assert not unknown, f"판정 없는 주장이 생겼다: {unknown}"
 
 
+def test_k8s_nodegroup_modality_flips(artifact) -> None:
+    """k8sCluster→k8sNodeGroup: azure 필수 ↔ gcp 선택(서버가 default-pool 합성).
+    세 번째 양상 반전이자, CNA 층에서도 중립 플래그가 못 서는 증거다."""
+    by_csp = {c["csp"]: c["verdict"] for c in artifact["claims"]
+              if (c["subject"], c["object"], c["question"])
+              == ("k8sCluster", "k8sNodeGroup", "existence")}
+    assert by_csp == {"azure": "required", "gcp": "optional"}
+
+
+def test_k8s_subnet_flips_between_managed_synthesis_and_user_placement(artifact) -> None:
+    """k8sCluster→subnet: azure는 서비스가 vnet을 합성해 선택 ↔ aws는 서로 다른
+    AZ의 서브넷 2개를 사용자에게 요구. 같은 CNA 자원의 정반대 계약이다."""
+    rows = {c["csp"]: c for c in artifact["claims"]
+            if (c["subject"], c["object"], c["question"])
+            == ("k8sCluster", "subnet", "existence")}
+    assert rows["azure"]["verdict"] == "optional"
+    assert rows["aws"]["verdict"] == "required"
+    assert "다른 AZ" in (rows["aws"]["predicate"] or "")
+
+
 def test_vm_nic_modality_flips_across_csps(artifact) -> None:
     """vm→nic: azure 필수 · gcp 필수 · aws 선택(서버 ENI 암묵) — 두 번째 양상
     반전. vm→disk(gcp만 필수)와 함께, '벤더 중립 필수 플래그 하나'로는 이
@@ -120,6 +140,8 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("nic", "subnet", "lifecycle"): "holds",
         ("loadBalancer", "network", "existence"): "optional",
         ("loadBalancer", "subnet", "existence"): "optional",
+        ("k8sCluster", "network", "existence"): "optional",
+        ("k8sCluster", "k8sNodeGroup", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -150,6 +172,7 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("loadBalancer", "publicIp", "existence"): "optional",
         ("loadBalancer", "subnet|publicIp|publicIPPrefix", "existence"): "required",
         ("k8sCluster", "k8sNodeGroup", "existence"): "required",
+        ("k8sCluster", "subnet", "existence"): "optional",
         ("vpn", "subnet", "existence"): "required",
     }
 
