@@ -43,6 +43,62 @@ TYPES: dict[str, AzureBinding] = {
     "sshKey": AzureBinding("compute-ComputeRP", "SshPublicKeyResource"),
 }
 
+#: aws 결속 — CloudFormation 리소스 타입 이름. 원문은 CFN 스펙(핀은
+#: fetch_vendors.SOURCES). CFN은 azure와 달리 **Required 플래그를 실제로 쓴다.**
+AWS_TYPES: dict[str, str] = {
+    "network": "AWS::EC2::VPC",
+    "subnet": "AWS::EC2::Subnet",
+    "firewall": "AWS::EC2::SecurityGroup",
+    "nic": "AWS::EC2::NetworkInterface",
+    "publicIp": "AWS::EC2::EIP",
+    "loadBalancer": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+    "vm": "AWS::EC2::Instance",
+    "disk": "AWS::EC2::Volume",
+    "sshKey": "AWS::EC2::KeyPair",
+}
+
+#: gcp 결속 — compute 디스커버리 문서의 schema 이름. 특기 둘을 결속에 박는다:
+#: **sshKey는 대응 자원이 없고**(None — 키는 메타데이터 값, 중립화 지도와 정합)
+#: **NIC는 독립 자원이 아니라 Instance 내장 스키마다**(gcp에 NIC CRUD가 없다).
+GCP_TYPES: dict[str, str | None] = {
+    "network": "Network",
+    "subnet": "Subnetwork",
+    "firewall": "Firewall",
+    "nic": "NetworkInterface",  # 내장 — 독립 CRUD 없음
+    "publicIp": "Address",
+    "loadBalancer": "ForwardingRule",  # gcp LB는 성좌 — 진입점만 결속
+    "vm": "Instance",
+    "disk": "Disk",
+    "sshKey": None,
+}
+
+#: aws 이름 기반 참조 휴리스틱 — CFN은 참조가 문자열이라 **속성 이름**으로
+#: 겨눈다. **우리 구성**이고 과대·과소근사 둘 다 가능하다(계획 T1과 같은 지위) —
+#: 후보마다 원문 인용이 붙어 틀리면 인용에서 드러난다.
+AWS_NAME_REFS: dict[str, str] = {
+    "SubnetId": "subnet", "SubnetIds": "subnet", "Subnets": "subnet",
+    "SubnetMappings": "subnet",
+    "VpcId": "network",
+    "SecurityGroupIds": "firewall", "SecurityGroups": "firewall",
+    "GroupSet": "firewall", "Groups": "firewall",
+    "NetworkInterfaceId": "nic",
+    "AllocationId": "publicIp",
+    "VolumeId": "disk",
+    "KeyName": "sshKey",
+}
+
+#: gcp (스키마, 속성) 쌍 한정 참조 — 이름만으로는 'source' 같은 일반어가
+#: 오탐하므로 쌍으로 좁힌다. **우리 구성**, 인용 동반.
+GCP_PAIR_REFS: dict[tuple[str, str], str] = {
+    ("NetworkInterface", "network"): "network",
+    ("NetworkInterface", "subnetwork"): "subnet",
+    ("AttachedDisk", "source"): "disk",
+    ("Firewall", "network"): "network",
+    ("Subnetwork", "network"): "network",
+    ("ForwardingRule", "network"): "network",
+    ("ForwardingRule", "subnetwork"): "subnet",
+}
+
 #: ARM id 참조 래퍼 — 다른 RP의 자원을 id로 가리키는 정의. **우리 구성**이되,
 #: 후보마다 원문 인용이 붙으므로 대응이 틀리면 인용에서 드러난다.
 REFERENCE_WRAPPERS: dict[str, str] = {
