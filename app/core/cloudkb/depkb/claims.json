@@ -2,10 +2,10 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.unknown": 11,
-  "azure.unknown": 6,
+  "azure.optional": 6,
   "azure.required": 4,
-  "azure.optional": 1,
-  "azure.holds": 3,
+  "azure.holds": 4,
+  "azure.unknown": 1,
   "gcp.unknown": 8
  },
  "claims": [
@@ -236,16 +236,22 @@
    "object": "publicIp",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply2-2026-07-30",
+     "step": "E0.build-chain2",
+     "code": "ok"
     }
    ]
   },
@@ -254,16 +260,22 @@
    "object": "subnet",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "공용 LB(lbp)가 PIP만으로 성공 — 단독으론 선택, 선언 술어의 구성원",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply2-2026-07-30",
+     "step": "E0.build-chain2",
+     "code": "ok"
     }
    ]
   },
@@ -302,16 +314,22 @@
    "object": "subnet",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "서브넷 없는 VNet이 실제로 만들어졌다 — 1라운드 preflight 통과는 증거가 아니었고 이것이 증거다",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "network-virtualNetwork.json#/definitions/Common.VirtualNetworkPropertiesFormat/properties/subnets/items",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply2-2026-07-30",
+     "step": "E1.apply-vnet-without-subnet",
+     "code": "ok"
     }
    ]
   },
@@ -374,10 +392,10 @@
    "object": "publicIp",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "1라운드 nic1이 PIP 없이 생성 성공",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
@@ -390,6 +408,48 @@
      "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "B.build-chain",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "선택 참조인데 붙어 있으면 삭제 금지 — nic→firewall과 같은 꼴",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply2-2026-07-30",
+     "step": "C.delete-pip-attached",
+     "code": "PublicIPAddressCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply2-2026-07-30",
+     "step": "D.delete-pip1",
+     "code": "ok"
     }
    ]
   },
@@ -482,16 +542,22 @@
    "object": "firewall",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "1라운드 s1이 NSG 없이 생성 성공",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "network-virtualNetwork.json#/definitions/Common.SubnetPropertiesFormat/properties/networkSecurityGroup",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "B.build-chain",
+     "code": "ok"
     }
    ]
   },

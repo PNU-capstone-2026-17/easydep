@@ -64,12 +64,12 @@ def test_every_judgment_cites_the_call_index(artifact) -> None:
 
 
 def test_the_map_covers_all_cells_without_silent_gaps(artifact) -> None:
-    """7타입 × 3CSP 생성 경로 21셀 전수 — 빠진 셀은 '아직 안 본 것'인데,
-    표가 조용히 비면 '없음'으로 읽힌다. 삭제 경로는 _note가 미결로 밝힌다."""
+    """7타입 × 3CSP × 생성·삭제 42셀 전수 — 빠진 셀은 '아직 안 본 것'인데,
+    표가 조용히 비면 '없음'으로 읽힌다. 남은 미결은 _note가 밝힌다."""
     cells = artifact["judgments"]["cells"]
     missing = [
-        f"{t}.create.{p}" for t in TYPES for p in CSPS
-        if f"{t}.create.{p}" not in cells
+        f"{t}.{op}.{p}" for t in TYPES for op in ("create", "delete")
+        for p in CSPS if f"{t}.{op}.{p}" not in cells
     ]
     assert not missing, f"판정이 빠진 셀: {missing}"
     assert "미결" in artifact["judgments"]["_note"]

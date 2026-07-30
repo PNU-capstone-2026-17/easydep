@@ -71,7 +71,48 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
              ("azure-apply-2026-07-30", "A.apply.dangling-lb-pip",
               "InvalidResourceReference", "apply"),
          ]),
+    # ── existence 2라운드 (azure) ──
+    dict(csp="azure", subject="network", object="subnet", question="existence",
+         verdict="optional",
+         evidence=[
+             ("azure-apply2-2026-07-30", "E1.apply-vnet-without-subnet",
+              "ok", "apply"),
+         ],
+         note="서브넷 없는 VNet이 실제로 만들어졌다 — 1라운드 preflight 통과는 "
+              "증거가 아니었고 이것이 증거다"),
+    dict(csp="azure", subject="nic", object="publicIp", question="existence",
+         verdict="optional",
+         evidence=[
+             ("azure-apply-2026-07-30", "B.build-chain", "ok", "apply"),
+         ],
+         note="1라운드 nic1이 PIP 없이 생성 성공"),
+    dict(csp="azure", subject="subnet", object="firewall", question="existence",
+         verdict="optional",
+         evidence=[
+             ("azure-apply-2026-07-30", "B.build-chain", "ok", "apply"),
+         ],
+         note="1라운드 s1이 NSG 없이 생성 성공"),
+    dict(csp="azure", subject="loadBalancer", object="subnet",
+         question="existence", verdict="optional",
+         evidence=[
+             ("azure-apply2-2026-07-30", "E0.build-chain2", "ok", "apply"),
+         ],
+         note="공용 LB(lbp)가 PIP만으로 성공 — 단독으론 선택, 선언 술어의 구성원"),
+    dict(csp="azure", subject="loadBalancer", object="publicIp",
+         question="existence", verdict="optional",
+         evidence=[
+             ("azure-apply2-2026-07-30", "E0.build-chain2", "ok", "apply"),
+         ],
+         note="내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원"),
     # ── lifecycle (azure) ──
+    dict(csp="azure", subject="nic", object="publicIp", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-apply2-2026-07-30", "C.delete-pip-attached",
+              "PublicIPAddressCannotBeDeleted", "apply"),
+             ("azure-apply2-2026-07-30", "D.delete-pip1", "ok", "apply"),
+         ],
+         note="선택 참조인데 붙어 있으면 삭제 금지 — nic→firewall과 같은 꼴"),
     dict(csp="azure", subject="nic", object="subnet", question="lifecycle",
          verdict="holds",
          evidence=[

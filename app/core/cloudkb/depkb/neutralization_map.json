@@ -1006,7 +1006,7 @@
   }
  ],
  "judgments": {
-  "_note": "기제 분류는 **우리 구성**이다(native·synthesis·truncation·substitution·value-inlining·cloud-implicit + 후보 cross-injection). 모든 셀은 위 calls 색인의 실물을 인용하고, 인용 없는 셀은 absenceIsEvidence로만 허용된다. 삭제 경로 판정은 아직 없다 — 미결이지 완료가 아니다.",
+  "_note": "기제 분류는 **우리 구성**이다(native·synthesis·truncation·substitution·value-inlining·cloud-implicit + 후보 cross-injection). 모든 셀은 위 calls 색인의 실물을 인용하고, 인용 없는 셀은 absenceIsEvidence로만 허용된다. 생성·삭제 경로 각 21셀(7타입×3CSP). 미결: cross-injection의 분류 확정과 aws firewall 삭제 루프의 사유.",
   "cells": {
    "network.create.aws": {
     "mechanisms": [
@@ -1337,6 +1337,306 @@
      }
     ],
     "note": "Addresses·ForwardingRules·BackendServices·TargetPools·HealthChecks — 중립 NLB 하나가 최다 네이티브 성좌가 된다"
+   },
+   "network.delete.aws": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 633
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 650
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 664
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 689
+     }
+    ],
+    "note": "드라이버 캐스케이드 — 서브넷·라우트·IGW를 지운 뒤에야 VPC를 지운다. 생성의 합성(IGW·Route)이 삭제에 그대로 반사된다"
+   },
+   "network.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 200
+     }
+    ],
+    "note": "단일 BeginDelete"
+   },
+   "network.delete.gcp": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 563
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 608
+     }
+    ],
+    "note": "Subnetworks를 명시적으로 먼저 지운다 — 드라이버 캐스케이드"
+   },
+   "subnet.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 597
+     }
+    ],
+    "note": "DeleteSubnet 직결"
+   },
+   "subnet.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 268
+     }
+    ],
+    "note": "SubnetClient 직결"
+   },
+   "subnet.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 739
+     }
+    ],
+    "note": "Subnetworks.Delete 직결"
+   },
+   "firewall.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 616
+     }
+    ],
+    "note": "함수 이름이 loopDeleteSecurityGroup — 반복 삭제 시도. 우리가 azure에서 실측한 InUse류 거부(DependencyViolation)를 재시도로 넘는 구조로 읽히나, 루프의 사유는 코드 정독 전이라 판정하지 않는다"
+   },
+   "firewall.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 220
+     }
+    ],
+    "note": "BeginDelete 직결"
+   },
+   "firewall.delete.gcp": {
+    "mechanisms": [
+     "substitution"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 1922
+     }
+    ],
+    "note": "SG 하나의 삭제가 Firewalls.Delete N건이다 — 생성의 치환이 삭제에도 반사"
+   },
+   "sshKey.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 381
+     }
+    ],
+    "note": "DeleteKeyPair 직결"
+   },
+   "sshKey.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 209
+     }
+    ],
+    "note": "등록 자원 삭제"
+   },
+   "sshKey.delete.gcp": {
+    "mechanisms": [
+     "value-inlining"
+    ],
+    "cites": [],
+    "note": "삭제할 클라우드 자원이 없다 — 생성과 같은 부재 관측",
+    "absenceIsEvidence": true
+   },
+   "vm.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 826
+     }
+    ],
+    "note": "TerminateInstances 직결"
+   },
+   "vm.delete.azure": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 1016
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1509
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1537
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1565
+     }
+    ],
+    "note": "VM 삭제 뒤 드라이버가 자기가 합성한 NIC·PIP·Disk를 직접 지운다 (cleanVMRelatedResource) — **합성은 생성이 아니라 생명주기 전체의 성질**이다. 순서를 지켜야 하는 이유는 우리가 azure에서 실측한 InUse 거부다"
+   },
+   "vm.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 853
+     }
+    ],
+    "note": "Instances.Delete 직결"
+   },
+   "disk.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 274
+     }
+    ],
+    "note": "DeleteVolume 직결"
+   },
+   "disk.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 271
+     }
+    ],
+    "note": "BeginDelete 직결"
+   },
+   "disk.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 238
+     }
+    ],
+    "note": "Disks.Delete 직결"
+   },
+   "loadBalancer.delete.aws": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 1150
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1167
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1194
+     }
+    ],
+    "note": "Listener→TargetGroup→LB 역순 해체 — 생성 성좌의 거울"
+   },
+   "loadBalancer.delete.azure": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 1177
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1204
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1213
+     }
+    ],
+    "note": "NLBCleaner가 합성했던 PIP까지 지운다"
+   },
+   "loadBalancer.delete.gcp": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 2298
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2311
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2582
+     }
+    ],
+    "note": "HealthCheck·TargetPool 등 성좌 해체"
    }
   }
  }
