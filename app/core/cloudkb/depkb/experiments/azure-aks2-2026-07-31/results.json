@@ -1,5 +1,5 @@
 {
- "_note": "AKS 생성 라운드 — 국면형. 서브넷 생략 생성·관리형 네트워크 합성·노드풀 CRUD·삭제 캐스케이드.",
+ "_note": "AKS 라운드 — 1차(생성·합성 관측)와 2차(노드풀 CRUD 재측정)의 병합. 1차 전문은 results-round1.json. B*는 2차의 것이다 — 1차 B*는 하네스 결함(노드풀 add의 SKU 미수정)으로 무효였다.",
  "startedAt": "2026-07-30T16:37:42+00:00",
  "steps": {
   "A1.create-no-subnet-nowait": {
@@ -22,23 +22,6 @@
    "errorCodes": [],
    "excerpt": "[\n  \"aks-vnet-67015217\"\n]"
   },
-  "B1.nodepool-add": {
-   "ok": false,
-   "errorCodes": [
-    "BadRequest"
-   ],
-   "excerpt": "ERROR: (BadRequest) The VM size of Standard_B2s is not allowed in your subscription in location 'koreacentral'. The available VM sizes are 'standard_b16als_v2,standard_b16as_v2,standard_b16ls_v2,standard_b16s_v2,standard_b2als_v2,standard_b2as_v2,standard_b2ls_v2,standard_b2s_v2,standard_b32als_v2,standard_b32as_v2,standard_b32ls_v2,standard_b32s_v2,standard_b4als_v2,standard_b4as_v2,standard_b4ls_v2,standard_b4s_v2,standard_b8als_v2,standard_b8as_v2,standard_b8ls_v2,standard_b8s_v2,standard_d128ds_v6,standard_d128lds_v6,standard_d128ls_v6,standard_d128s_v6,standard_d16_v3,standard_d16_v4,stan"
-  },
-  "B2.nodepool-delete": {
-   "ok": false,
-   "errorCodes": [],
-   "excerpt": "ERROR: Node pool np2 doesnt exist, use 'aks nodepool list' to get current node pool list"
-  },
-  "B3.cluster-delete-nowait": {
-   "ok": true,
-   "errorCodes": [],
-   "excerpt": ""
-  },
   "C1.cluster-gone": {
    "ok": true,
    "errorCodes": [],
@@ -48,7 +31,24 @@
    "ok": true,
    "errorCodes": [],
    "excerpt": "[]"
+  },
+  "B1.nodepool-add": {
+   "ok": true,
+   "errorCodes": [
+    "Running"
+   ],
+   "excerpt": "{\n  \"artifactStreamingProfile\": null,\n  \"availabilityZones\": null,\n  \"capacityReservationGroupId\": null,\n  \"count\": 1,\n  \"creationData\": null,\n  \"currentOrchestratorVersion\": \"1.35.6\",\n  \"eTag\": \"932270ff-2bb7-4aa9-a23c-9532ea9c2335\",\n  \"enableAutoScaling\": false,\n  \"enableEncryptionAtHost\": false,\n  \"enableFips\": false,\n  \"enableNodePublicIp\": false,\n  \"enableUltraSsd\": false,\n  \"gatewayProfile\": null,\n  \"gpuInstanceProfile\": null,\n  \"gpuProfile\": null,\n  \"hostGroupId\": null,\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourcegroups/depkb-preflight/providers/Microsoft.Contai"
+  },
+  "B2.nodepool-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "B3.cluster-delete-nowait": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
   }
  },
- "finishedAt": "2026-07-30T16:58:08+00:00"
+ "finishedAt": "2026-07-30T17:22:19+00:00"
 }

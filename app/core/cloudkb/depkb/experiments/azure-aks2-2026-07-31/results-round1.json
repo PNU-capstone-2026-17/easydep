@@ -1,0 +1,54 @@
+{
+ "_note": "AKS 생성 라운드 — 국면형. 서브넷 생략 생성·관리형 네트워크 합성·노드풀 CRUD·삭제 캐스케이드.",
+ "startedAt": "2026-07-30T16:37:42+00:00",
+ "steps": {
+  "A1.create-no-subnet-nowait": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "A2.provisioning-final": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Succeeded"
+  },
+  "A3.cluster-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"node\": \"MC_depkb-preflight_depkb-aks_koreacentral\",\n  \"plugin\": \"azure\",\n  \"pools\": 1\n}"
+  },
+  "A4.synthesized-vnets-in-node-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  \"aks-vnet-67015217\"\n]"
+  },
+  "B1.nodepool-add": {
+   "ok": false,
+   "errorCodes": [
+    "BadRequest"
+   ],
+   "excerpt": "ERROR: (BadRequest) The VM size of Standard_B2s is not allowed in your subscription in location 'koreacentral'. The available VM sizes are 'standard_b16als_v2,standard_b16as_v2,standard_b16ls_v2,standard_b16s_v2,standard_b2als_v2,standard_b2as_v2,standard_b2ls_v2,standard_b2s_v2,standard_b32als_v2,standard_b32as_v2,standard_b32ls_v2,standard_b32s_v2,standard_b4als_v2,standard_b4as_v2,standard_b4ls_v2,standard_b4s_v2,standard_b8als_v2,standard_b8as_v2,standard_b8ls_v2,standard_b8s_v2,standard_d128ds_v6,standard_d128lds_v6,standard_d128ls_v6,standard_d128s_v6,standard_d16_v3,standard_d16_v4,stan"
+  },
+  "B2.nodepool-delete": {
+   "ok": false,
+   "errorCodes": [],
+   "excerpt": "ERROR: Node pool np2 doesnt exist, use 'aks nodepool list' to get current node pool list"
+  },
+  "B3.cluster-delete-nowait": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "C1.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "NotFound"
+  },
+  "C2.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-30T16:58:08+00:00"
+}

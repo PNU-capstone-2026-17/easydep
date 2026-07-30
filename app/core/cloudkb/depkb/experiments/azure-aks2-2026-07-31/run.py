@@ -27,6 +27,12 @@ from run import az  # noqa: E402
 HERE = Path(__file__).resolve().parent
 AZ = shutil.which("az")
 
+#: **한 곳에서만 정한다.** 1차 실행에서 kickoff의 SKU만 고치고 노드풀 add의
+#: 것을 그대로 둬서 노드풀 CRUD 측정을 통째로 놓쳤다 — 같은 상수를 두 곳에
+#: 적은 것이 원인이었다. 이 구독·리전에서 허용되는 크기는 `az vm list-skus`로
+#: 확인한다(Standard_B2s는 불가).
+VM_SIZE = "Standard_B2s_v2"
+
 
 def load() -> dict:
     p = HERE / "results.json"
@@ -57,7 +63,7 @@ def main() -> None:
     if phase == "kickoff":
         step("A1.create-no-subnet-nowait", az(
             ["aks", "create", "-g", rg, "-n", "depkb-aks",
-             "--node-count", "1", "--node-vm-size", "Standard_B2s_v2",
+             "--node-count", "1", "--node-vm-size", VM_SIZE,
              "--no-ssh-key", "--no-wait"], timeout=300))
         return
 
@@ -90,7 +96,7 @@ def main() -> None:
         step("B1.nodepool-add", az(
             ["aks", "nodepool", "add", "-g", rg, "--cluster-name", "depkb-aks",
              "-n", "np2", "--node-count", "1",
-             "--node-vm-size", "Standard_B2s"], timeout=540))
+             "--node-vm-size", VM_SIZE], timeout=540))
         step("B2.nodepool-delete", az(
             ["aks", "nodepool", "delete", "-g", rg,
              "--cluster-name", "depkb-aks", "-n", "np2"], timeout=540))

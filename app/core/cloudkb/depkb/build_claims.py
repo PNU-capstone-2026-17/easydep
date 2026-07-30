@@ -116,14 +116,18 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # ── k8s·vpn (2026-07-31 거부 라운드 — 완전 판정된 것만, 나머지는 생성 라운드) ──
     dict(csp="azure", subject="k8sCluster", object="k8sNodeGroup",
          question="existence", verdict="required",
+         predicate="수명 조건: 생성 시 필수 · 이후 독립 CRUD(add/delete)",
          evidence=[
              ("azure-k8s-vpn-2026-07-31", "K1.aks-omit-agentpools",
               "InvalidParameter", "apply"),
+             ("azure-aks2-2026-07-31", "B1.nodepool-add", "ok", "apply"),
+             ("azure-aks2-2026-07-31", "B2.nodepool-delete", "ok", "apply"),
          ],
          note="서버가 필수를 이름으로: 'Required parameter agentPoolProfiles is "
               "missing' — 노드풀은 생성 시 내장(TB의 nodeGroupsOnCreation 관측과 "
-              "정합). 허상 서브넷 거부(K2)도 확인했으나 subnet 필수성 자체는 "
-              "생성 라운드 몫(관리형 vnet 합성이 가설)"),
+              "정합). **생성 시 필수와 이후 CRUD 가능은 별개**임을 재측정으로 "
+              "확인했다(add·delete 모두 성공) — gcp와 같은 CRUD 성질을 갖되 "
+              "생성 계약만 반전이다"),
     dict(csp="azure", subject="vpn", object="subnet", question="existence",
          verdict="required",
          predicate="이름 조건: 정확히 GatewaySubnet이라는 서브넷이어야 한다",
