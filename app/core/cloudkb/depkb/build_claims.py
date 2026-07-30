@@ -153,6 +153,58 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
              ("azure-apply-2026-07-30", "D.delete-nsg", "ok", "apply"),
          ],
          note="선택 참조여도 붙어 있는 동안 삭제는 막힌다 — existence와 lifecycle이 독립"),
+    # ── gcp (REST 직접 — gcloud CLI 기본값 주입 배제) ──
+    dict(csp="gcp", subject="subnet", object="network", question="existence",
+         verdict="required",
+         evidence=[
+             ("gcp-apply-2026-07-31", "A.subnet-omit-network", "invalid", "apply"),
+             ("gcp-apply-2026-07-31", "A.subnet-dangling-network", "notFound", "apply"),
+         ]),
+    dict(csp="gcp", subject="firewall", object="network", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 default 네트워크로 대체",
+         evidence=[
+             ("gcp-apply-2026-07-31", "A.firewall-omit-network", "ok", "apply"),
+             ("gcp-apply-2026-07-31", "A.firewall-dangling-network", "notFound", "apply"),
+         ],
+         note="명시는 선택이나 관계가 없는 것이 아니다 — 서버가 default로 채운다"
+              "(스키마 서술의 실측 확인). 명시하면 실재해야 한다(dangling 거부)"),
+    dict(csp="gcp", subject="vm", object="nic", question="existence",
+         verdict="required",
+         evidence=[
+             ("gcp-apply-2026-07-31", "A.instance-omit-nic", "invalid", "apply"),
+         ],
+         note="NIC는 독립 자원이 아니라 내장 구조인데도 최소 하나는 필수다"),
+    dict(csp="gcp", subject="vm", object="disk", question="existence",
+         verdict="required",
+         evidence=[
+             ("gcp-apply-2026-07-31", "A.instance-omit-disks", "invalid", "apply"),
+         ],
+         note="**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, "
+              "gcp는 부트 디스크 명세가 필수다. CSP 색인이 필요한 이유의 실측"),
+    dict(csp="gcp", subject="nic", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-apply-2026-07-31", "C.delete-subnet-in-use",
+              "resourceInUseByAnotherResource", "apply"),
+             ("gcp-apply-2026-07-31", "D.delete-subnet", "ok", "apply"),
+         ]),
+    dict(csp="gcp", subject="subnet", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-apply-2026-07-31", "C.delete-network-in-use",
+              "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE", "apply"),
+             ("gcp-apply-2026-07-31", "D.delete-network", "ok", "apply"),
+         ]),
+    dict(csp="gcp", subject="vm", object="disk", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-apply-2026-07-31", "C.delete-bootdisk-attached",
+              "resourceInUseByAnotherResource", "apply"),
+             ("gcp-apply-2026-07-31", "D.delete-disk.depkbg-vm", "ok", "apply"),
+         ],
+         note="부트 디스크가 인스턴스 삭제 후 살아남았다(D.disks-after-delete — "
+              "API 기본 autoDelete=false의 실측). azure OS 디스크 잔존과 쌍이다"),
 ]
 
 

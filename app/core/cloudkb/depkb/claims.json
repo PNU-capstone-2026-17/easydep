@@ -5,7 +5,10 @@
   "azure.optional": 7,
   "azure.required": 4,
   "azure.holds": 5,
-  "gcp.unknown": 8
+  "gcp.optional": 1,
+  "gcp.unknown": 4,
+  "gcp.holds": 3,
+  "gcp.required": 3
  },
  "claims": [
   {
@@ -715,16 +718,28 @@
    "object": "network",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 default 네트워크로 대체",
+   "note": "명시는 선택이나 관계가 없는 것이 아니다 — 서버가 default로 채운다(스키마 서술의 실측 확인). 명시하면 실재해야 한다(dangling 거부)",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/Firewall/properties/network",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.firewall-omit-network",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.firewall-dangling-network",
+     "code": "notFound"
     }
    ]
   },
@@ -801,20 +816,92 @@
    ]
   },
   {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/NetworkInterface/properties/subnetwork",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "C.delete-subnet-in-use",
+     "code": "resourceInUseByAnotherResource"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "D.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
    "subject": "subnet",
    "object": "network",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "required",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": null,
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/Subnetwork/properties/network",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.subnet-omit-network",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.subnet-dangling-network",
+     "code": "notFound"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/Subnetwork/properties/network",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "C.delete-network-in-use",
+     "code": "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "D.delete-network",
+     "code": "ok"
     }
    ]
   },
@@ -823,16 +910,52 @@
    "object": "disk",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "required",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": "**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, gcp는 부트 디스크 명세가 필수다. CSP 색인이 필요한 이유의 실측",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/AttachedDisk/properties/source",
      "form": "pair-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.instance-omit-disks",
+     "code": "invalid"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "부트 디스크가 인스턴스 삭제 후 살아남았다(D.disks-after-delete — API 기본 autoDelete=false의 실측). azure OS 디스크 잔존과 쌍이다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/AttachedDisk/properties/source",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "C.delete-bootdisk-attached",
+     "code": "resourceInUseByAnotherResource"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "D.delete-disk.depkbg-vm",
+     "code": "ok"
     }
    ]
   },
@@ -841,16 +964,22 @@
    "object": "nic",
    "csp": "gcp",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "required",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": "NIC는 독립 자원이 아니라 내장 구조인데도 최소 하나는 필수다",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "gcp-compute#/schemas/Instance/properties/networkInterfaces",
      "form": "schema-ref",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply-2026-07-31",
+     "step": "A.instance-omit-nic",
+     "code": "invalid"
     }
    ]
   }

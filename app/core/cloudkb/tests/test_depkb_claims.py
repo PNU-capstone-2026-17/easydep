@@ -41,15 +41,44 @@ def test_verdicts_require_dynamic_evidence(artifact) -> None:
 
 
 def test_unknown_is_recorded_not_hidden(artifact) -> None:
-    """aws·gcp는 계정이 없어 전부 unknown이어야 한다 — 하나라도 판정이 서 있으면
-    측정 없이 승격된 것이다(T9). unknown에는 사유가 붙는다."""
+    """aws는 자격증명이 없어 전부 unknown이어야 한다 — 하나라도 판정이 서 있으면
+    측정 없이 승격된 것이다(T9). unknown에는 사유가 붙는다.
+
+    (gcp는 2026-07-31 결제 연결 후 실험이 돌아 판정이 섰다 — gcp 판정의 동적
+    증거 요구는 test_verdicts_require_dynamic_evidence가 지킨다.)
+    """
     for c in artifact["claims"]:
-        if c["csp"] in ("aws", "gcp"):
+        if c["csp"] == "aws":
             assert c["verdict"] == "unknown", (
-                f"{c['csp']} {c['subject']}→{c['object']}: 동적 실험 없이 판정"
+                f"aws {c['subject']}→{c['object']}: 동적 실험 없이 판정"
             )
         if c["verdict"] == "unknown":
             assert c["note"], "unknown에 사유가 없다"
+
+
+def test_gcp_core_and_the_modality_flip(artifact) -> None:
+    """gcp 검증핵 — 그리고 첫 CSP 양상 반전: vm→disk.
+
+    azure는 OS 디스크를 서버가 합성해 **선택**, gcp는 부트 디스크 명세가
+    **필수**다. 같은 간선의 필연이 CSP에 따라 뒤집힌다는 것이 CSP 색인 주장
+    형식이 필요한 이유고, 이 반전이 그 첫 실측이다.
+    """
+    got = {(c["subject"], c["object"], c["question"]): c["verdict"]
+           for c in artifact["claims"] if c["csp"] == "gcp"
+           and c["verdict"] != "unknown"}
+    assert got == {
+        ("subnet", "network", "existence"): "required",
+        ("subnet", "network", "lifecycle"): "holds",
+        ("firewall", "network", "existence"): "optional",
+        ("vm", "nic", "existence"): "required",
+        ("vm", "disk", "existence"): "required",
+        ("vm", "disk", "lifecycle"): "holds",
+        ("nic", "subnet", "lifecycle"): "holds",
+    }
+    azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
+             for c in artifact["claims"] if c["csp"] == "azure"}
+    assert azure[("vm", "disk", "existence")] == "optional"
+    assert got[("vm", "disk", "existence")] == "required"
 
 
 def test_the_verified_azure_core_holds(artifact) -> None:
