@@ -433,7 +433,7 @@
    "question": "existence",
    "verdict": "optional",
    "predicate": null,
-   "note": "내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원",
+   "note": "내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원. 쌍 호환(SKU) 축은 신규 구독에서 도달 불가 — Basic PIP 생성 한도 0(IPv4BasicSkuPublicIpCountLimitReached, azure-apply4 실측)",
    "oracle": "apply",
    "evidence": [
     {
@@ -1164,8 +1164,8 @@
    "csp": "gcp",
    "question": "existence",
    "verdict": "required",
-   "predicate": null,
-   "note": "**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, gcp는 부트 디스크 명세가 필수다. CSP 색인이 필요한 이유의 실측",
+   "predicate": "쌍 호환: 디스크와 인스턴스의 존이 일치해야 한다",
+   "note": "**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, gcp는 부트 디스크 명세가 필수다. 쌍 호환(존)은 대조군으로 축을 격리해 확정 — 조건이 (주체 속성 × 대상 속성) 쌍에 걸리는 부류의 첫 어휘 내 실측",
    "oracle": "apply",
    "evidence": [
     {
@@ -1179,6 +1179,18 @@
      "experiment": "gcp-apply-2026-07-31",
      "step": "A.instance-omit-disks",
      "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-paircompat-2026-07-31",
+     "step": "P1.zone-mismatch-vm-zoneB",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-paircompat-2026-07-31",
+     "step": "P2.same-zone-control",
+     "code": "ok"
     }
    ]
   },

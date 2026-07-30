@@ -37,6 +37,9 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     ("스킴 조건부:", "conditional"),
     ("ALB는", "detail"),
     ("EXTERNAL 스킴 실측", "detail"),
+    # 쌍 호환: 조건이 간선의 한쪽이 아니라 (주체 속성 × 대상 속성) 쌍에 걸린다.
+    # 판정(필수/선택)을 바꾸지 않고, 소비층에선 결정이 아니라 제약 검사가 된다.
+    ("쌍 호환:", "detail"),
 )
 
 

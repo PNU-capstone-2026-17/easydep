@@ -103,7 +103,9 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          evidence=[
              ("azure-apply2-2026-07-30", "E0.build-chain2", "ok", "apply"),
          ],
-         note="내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원"),
+         note="내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원. "
+              "쌍 호환(SKU) 축은 신규 구독에서 도달 불가 — Basic PIP 생성 한도 0"
+              "(IPv4BasicSkuPublicIpCountLimitReached, azure-apply4 실측)"),
     dict(csp="azure", subject="vm", object="disk", question="existence",
          verdict="optional",
          evidence=[
@@ -306,11 +308,17 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="NIC는 독립 자원이 아니라 내장 구조인데도 최소 하나는 필수다"),
     dict(csp="gcp", subject="vm", object="disk", question="existence",
          verdict="required",
+         predicate="쌍 호환: 디스크와 인스턴스의 존이 일치해야 한다",
          evidence=[
              ("gcp-apply-2026-07-31", "A.instance-omit-disks", "invalid", "apply"),
+             ("gcp-paircompat-2026-07-31", "P1.zone-mismatch-vm-zoneB",
+              "invalid", "apply"),
+             ("gcp-paircompat-2026-07-31", "P2.same-zone-control", "ok", "apply"),
          ],
          note="**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, "
-              "gcp는 부트 디스크 명세가 필수다. CSP 색인이 필요한 이유의 실측"),
+              "gcp는 부트 디스크 명세가 필수다. 쌍 호환(존)은 대조군으로 축을 "
+              "격리해 확정 — 조건이 (주체 속성 × 대상 속성) 쌍에 걸리는 부류의 "
+              "첫 어휘 내 실측"),
     dict(csp="gcp", subject="nic", object="network", question="existence",
          verdict="optional",
          evidence=[
