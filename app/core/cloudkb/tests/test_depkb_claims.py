@@ -145,6 +145,8 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("loadBalancer", "subnet", "existence"): "optional",
         ("k8sCluster", "network", "existence"): "optional",
         ("k8sCluster", "subnet", "existence"): "optional",
+        ("k8sCluster", "subnet", "lifecycle"): "holds",
+        ("k8sCluster", "network", "lifecycle"): "holds",
         ("k8sCluster", "k8sNodeGroup", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
@@ -177,7 +179,12 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("loadBalancer", "subnet|publicIp|publicIPPrefix", "existence"): "required",
         ("k8sCluster", "k8sNodeGroup", "existence"): "required",
         ("k8sCluster", "subnet", "existence"): "optional",
+        ("k8sCluster", "subnet", "lifecycle"): "holds",
+        ("k8sCluster", "network", "lifecycle"): "holds",
         ("vpn", "subnet", "existence"): "required",
+        ("vpn", "subnet", "lifecycle"): "holds",
+        ("vpn", "publicIp", "existence"): "required",
+        ("vpn", "publicIp", "lifecycle"): "holds",
     }
 
 

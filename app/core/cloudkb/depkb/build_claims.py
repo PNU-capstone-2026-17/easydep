@@ -138,7 +138,36 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="다른 이름의 서브넷만 있는 VNet에서 게이트웨이 생성 → 서비스가 "
               "subnets/GatewaySubnet을 스스로 참조하다 실패. graphkb 소스 관측"
               "(networkinfo.yaml)의 컨트롤 플레인 확인 — 조건이 이름에 걸리는 "
-              "극단 사례"),
+              "극단 사례. **대우도 확인했다**(azure-vpn2): 그 이름으로 만들면 "
+              "게이트웨이가 실제로 선다(Succeeded)"),
+    dict(csp="azure", subject="vpn", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-vpn2-2026-07-31", "L1.delete-gatewaysubnet-in-use",
+              "InUseSubnetCannotBeDeleted", "apply"),
+             ("azure-vpn2-2026-07-31", "F3.delete-vnet", "ok", "apply"),
+         ],
+         note="게이트웨이가 쓰는 GatewaySubnet은 못 지운다 — 게이트웨이 삭제 후 "
+              "성공(양성 대조). vnet 삭제도 같은 코드로 막힌다"),
+    dict(csp="azure", subject="vpn", object="publicIp", question="existence",
+         verdict="required",
+         predicate="쌍 호환: AZ SKU 게이트웨이는 zone이 구성된 PIP를 요구한다",
+         evidence=[
+             ("azure-vpn2-2026-07-31", "K0b.pip-zone-pair-constraint",
+              "VmssVpnGatewayPublicIpsMustHaveZonesConfigured", "apply"),
+             ("azure-vpn2-2026-07-31", "K1.create-vng-nowait", "ok", "apply"),
+         ],
+         note="zone 없는 Standard PIP로는 거부되고 zone-redundant PIP로는 선다. "
+              "**Basic PIP 축이 소멸한 자리에 zone 축이 있었다** — 쌍 호환은 "
+              "사라지는 게 아니라 옮겨간다. 리전 능력도 SKU를 제한한다"
+              "(K0: koreacentral은 비-AZ SKU 거부)"),
+    dict(csp="azure", subject="vpn", object="publicIp", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-vpn2-2026-07-31", "L2.delete-pip-in-use",
+              "PublicIPAddressCannotBeDeleted", "apply"),
+             ("azure-vpn2-2026-07-31", "F2.delete-pip", "ok", "apply"),
+         ]),
     dict(csp="aws", subject="k8sCluster", object="subnet", question="existence",
          verdict="required",
          predicate="배치 조건: 서로 다른 AZ의 서브넷 ≥2 (양성 대조로 대우 확인)",
@@ -473,6 +502,38 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ],
          note="조건부 필연의 두 번째 실물(첫째는 nic→subnet의 네트워크 모드) — "
               "이번엔 조건이 자기 자신의 속성(스킴)이다"),
+    dict(csp="azure", subject="k8sCluster", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-aks3-2026-07-31", "L1.delete-subnet-in-use",
+              "InUseSubnetCannotBeDeleted", "apply"),
+             ("azure-aks3-2026-07-31", "F2.delete-subnet", "ok", "apply"),
+         ],
+         note="사용자 서브넷에 붙인 클러스터로 쟀다 — 앞 라운드의 합성 vnet은 "
+              "노드 RG 안이라 대상이 아니었다. 코드가 IaaS의 nic→subnet과 같다"),
+    dict(csp="azure", subject="k8sCluster", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-aks3-2026-07-31", "L2.delete-vnet-in-use",
+              "InUseSubnetCannotBeDeleted", "apply"),
+             ("azure-aks3-2026-07-31", "F3.delete-vnet", "ok", "apply"),
+         ]),
+    dict(csp="gcp", subject="k8sCluster", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-gke3-2026-07-31", "L1.delete-subnet-in-use",
+              "resourceInUseByAnotherResource", "apply"),
+             ("gcp-gke3-2026-07-31", "F2.delete-subnet", "ok", "apply"),
+         ],
+         note="전용 네트워크 위 클러스터로 쟀다 — 앞 라운드는 default를 써서 "
+              "삭제 시도 자체가 불가능했다. aws와 같은 꼴, 코드만 다르다"),
+    dict(csp="gcp", subject="k8sCluster", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-gke3-2026-07-31", "L2.delete-network-in-use",
+              "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE", "apply"),
+             ("gcp-gke3-2026-07-31", "F3.delete-network", "ok", "apply"),
+         ]),
     dict(csp="gcp", subject="nic", object="subnet", question="lifecycle",
          verdict="holds",
          evidence=[

@@ -4,11 +4,11 @@
   "aws.optional": 9,
   "aws.holds": 5,
   "aws.required": 4,
-  "azure.required": 6,
+  "azure.required": 7,
+  "azure.holds": 9,
   "azure.optional": 8,
-  "azure.holds": 5,
   "gcp.optional": 8,
-  "gcp.holds": 3,
+  "gcp.holds": 5,
   "gcp.required": 3
  },
  "claims": [
@@ -572,6 +572,30 @@
   },
   {
    "subject": "k8sCluster",
+   "object": "network",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-aks3-2026-07-31",
+     "step": "L2.delete-vnet-in-use",
+     "code": "InUseSubnetCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-aks3-2026-07-31",
+     "step": "F3.delete-vnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
    "object": "subnet",
    "csp": "azure",
    "question": "existence",
@@ -596,6 +620,30 @@
      "layer": "apply",
      "experiment": "azure-aks2-2026-07-31",
      "step": "A4.synthesized-vnets-in-node-rg",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "사용자 서브넷에 붙인 클러스터로 쟀다 — 앞 라운드의 합성 vnet은 노드 RG 안이라 대상이 아니었다. 코드가 IaaS의 nic→subnet과 같다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-aks3-2026-07-31",
+     "step": "L1.delete-subnet-in-use",
+     "code": "InUseSubnetCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-aks3-2026-07-31",
+     "step": "F2.delete-subnet",
      "code": "ok"
     }
    ]
@@ -1082,12 +1130,60 @@
   },
   {
    "subject": "vpn",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": "쌍 호환: AZ SKU 게이트웨이는 zone이 구성된 PIP를 요구한다",
+   "note": "zone 없는 Standard PIP로는 거부되고 zone-redundant PIP로는 선다. **Basic PIP 축이 소멸한 자리에 zone 축이 있었다** — 쌍 호환은 사라지는 게 아니라 옮겨간다. 리전 능력도 SKU를 제한한다(K0: koreacentral은 비-AZ SKU 거부)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "K0b.pip-zone-pair-constraint",
+     "code": "VmssVpnGatewayPublicIpsMustHaveZonesConfigured"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "K1.create-vng-nowait",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "L2.delete-pip-in-use",
+     "code": "PublicIPAddressCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "F2.delete-pip",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
    "object": "subnet",
    "csp": "azure",
    "question": "existence",
    "verdict": "required",
    "predicate": "이름 조건: 정확히 GatewaySubnet이라는 서브넷이어야 한다",
-   "note": "다른 이름의 서브넷만 있는 VNet에서 게이트웨이 생성 → 서비스가 subnets/GatewaySubnet을 스스로 참조하다 실패. graphkb 소스 관측(networkinfo.yaml)의 컨트롤 플레인 확인 — 조건이 이름에 걸리는 극단 사례",
+   "note": "다른 이름의 서브넷만 있는 VNet에서 게이트웨이 생성 → 서비스가 subnets/GatewaySubnet을 스스로 참조하다 실패. graphkb 소스 관측(networkinfo.yaml)의 컨트롤 플레인 확인 — 조건이 이름에 걸리는 극단 사례. **대우도 확인했다**(azure-vpn2): 그 이름으로 만들면 게이트웨이가 실제로 선다(Succeeded)",
    "oracle": "apply",
    "evidence": [
     {
@@ -1095,6 +1191,30 @@
      "experiment": "azure-k8s-vpn-2026-07-31",
      "step": "V1.vng-wrong-subnet-name",
      "code": "InvalidResourceReference"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "게이트웨이가 쓰는 GatewaySubnet은 못 지운다 — 게이트웨이 삭제 후 성공(양성 대조). vnet 삭제도 같은 코드로 막힌다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "L1.delete-gatewaysubnet-in-use",
+     "code": "InUseSubnetCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-vpn2-2026-07-31",
+     "step": "F3.delete-vnet",
+     "code": "ok"
     }
    ]
   },
@@ -1190,6 +1310,30 @@
   },
   {
    "subject": "k8sCluster",
+   "object": "network",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke3-2026-07-31",
+     "step": "L2.delete-network-in-use",
+     "code": "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke3-2026-07-31",
+     "step": "F3.delete-network",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
    "object": "subnet",
    "csp": "gcp",
    "question": "existence",
@@ -1208,6 +1352,30 @@
      "layer": "apply",
      "experiment": "gcp-gke2-2026-07-31",
      "step": "G3.server-filled-network",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "subnet",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "전용 네트워크 위 클러스터로 쟀다 — 앞 라운드는 default를 써서 삭제 시도 자체가 불가능했다. aws와 같은 꼴, 코드만 다르다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke3-2026-07-31",
+     "step": "L1.delete-subnet-in-use",
+     "code": "resourceInUseByAnotherResource"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-gke3-2026-07-31",
+     "step": "F2.delete-subnet",
      "code": "ok"
     }
    ]
