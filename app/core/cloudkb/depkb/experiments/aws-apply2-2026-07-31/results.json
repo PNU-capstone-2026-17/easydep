@@ -136,7 +136,16 @@
    "errorCodes": [],
    "rejectedAt": null,
    "excerpt": ""
+  },
+  "F2.internal-nlb-omit-subnets": {
+   "ok": false,
+   "errorCodes": [
+    "ValidationError"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (ValidationError) when calling the CreateLoadBalancer operation: At least one subnet must be specified"
   }
  },
- "ranAtFix": "2026-07-30T14:55:16+00:00"
+ "ranAtFix": "2026-07-30T14:55:16+00:00",
+ "ranAtFix2": "2026-07-30T15:34:42+00:00"
 }

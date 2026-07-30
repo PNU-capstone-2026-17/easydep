@@ -244,10 +244,13 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "ValidationError", "apply"),
              ("aws-apply2-2026-07-31", "B4.alb-one-subnet",
               "ValidationError", "apply"),
+             ("aws-apply2-2026-07-31", "F2.internal-nlb-omit-subnets",
+              "ValidationError", "apply"),
          ],
          note="서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets "
               "in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 "
-              "카디널리티+배치 술어"),
+              "카디널리티+배치 술어. 생략 거부는 internet-facing·internal 두 스킴 "
+              "모두에서 확인(F2)"),
     dict(csp="aws", subject="loadBalancer", object="firewall", question="existence",
          verdict="optional",
          evidence=[
@@ -328,10 +331,14 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "**대상 자원의 모드**에까지 걸리는 첫 사례"),
     dict(csp="gcp", subject="loadBalancer", object="network", question="existence",
          verdict="optional",
-         predicate="EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+         predicate="server-default: EXTERNAL은 불참 · INTERNAL은 서브넷에서 역산",
          evidence=[
              ("gcp-apply2-2026-07-31", "B.create-ext-forwardingrule", "ok", "apply"),
-         ]),
+             ("gcp-apply4-2026-07-31", "I3.internal-fr-omit-network", "ok", "apply"),
+             ("gcp-apply4-2026-07-31", "I3.server-filled-network", "ok", "apply"),
+         ],
+         note="4라운드에서 INTERNAL 반쪽을 닫았다 — 서버가 채운 network 실물 "
+              "기록(nic→network와 같은 역산 패턴). 스킴 양쪽 모두 생략 가능"),
     dict(csp="gcp", subject="loadBalancer", object="subnet", question="existence",
          verdict="optional",
          predicate="스킴 조건부: EXTERNAL 불참 · INTERNAL 필수",

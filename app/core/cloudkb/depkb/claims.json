@@ -73,7 +73,7 @@
    "question": "existence",
    "verdict": "required",
    "predicate": "ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
-   "note": "서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 카디널리티+배치 술어",
+   "note": "서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 카디널리티+배치 술어. 생략 거부는 internet-facing·internal 두 스킴 모두에서 확인(F2)",
    "oracle": "apply",
    "evidence": [
     {
@@ -98,6 +98,12 @@
      "layer": "apply",
      "experiment": "aws-apply2-2026-07-31",
      "step": "B4.alb-one-subnet",
+     "code": "ValidationError"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "F2.internal-nlb-omit-subnets",
      "code": "ValidationError"
     }
    ]
@@ -936,8 +942,8 @@
    "csp": "gcp",
    "question": "existence",
    "verdict": "optional",
-   "predicate": "EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
-   "note": null,
+   "predicate": "server-default: EXTERNAL은 불참 · INTERNAL은 서브넷에서 역산",
+   "note": "4라운드에서 INTERNAL 반쪽을 닫았다 — 서버가 채운 network 실물 기록(nic→network와 같은 역산 패턴). 스킴 양쪽 모두 생략 가능",
    "oracle": "apply",
    "evidence": [
     {
@@ -950,6 +956,18 @@
      "layer": "apply",
      "experiment": "gcp-apply2-2026-07-31",
      "step": "B.create-ext-forwardingrule",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply4-2026-07-31",
+     "step": "I3.internal-fr-omit-network",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply4-2026-07-31",
+     "step": "I3.server-filled-network",
      "code": "ok"
     }
    ]
