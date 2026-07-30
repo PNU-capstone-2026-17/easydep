@@ -113,6 +113,40 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ],
          note="데이터 디스크 없이 VM 생성 성공. 덤 관측: 선언 안 한 OS 디스크가 "
               "서버 이름으로 생성됐다(F0.disks-after-create) — 서버측 합성"),
+    # ── k8s·vpn (2026-07-31 거부 라운드 — 완전 판정된 것만, 나머지는 생성 라운드) ──
+    dict(csp="azure", subject="k8sCluster", object="k8sNodeGroup",
+         question="existence", verdict="required",
+         evidence=[
+             ("azure-k8s-vpn-2026-07-31", "K1.aks-omit-agentpools",
+              "InvalidParameter", "apply"),
+         ],
+         note="서버가 필수를 이름으로: 'Required parameter agentPoolProfiles is "
+              "missing' — 노드풀은 생성 시 내장(TB의 nodeGroupsOnCreation 관측과 "
+              "정합). 허상 서브넷 거부(K2)도 확인했으나 subnet 필수성 자체는 "
+              "생성 라운드 몫(관리형 vnet 합성이 가설)"),
+    dict(csp="azure", subject="vpn", object="subnet", question="existence",
+         verdict="required",
+         predicate="이름 조건: 정확히 GatewaySubnet이라는 서브넷이어야 한다",
+         evidence=[
+             ("azure-k8s-vpn-2026-07-31", "V1.vng-wrong-subnet-name",
+              "InvalidResourceReference", "apply"),
+         ],
+         note="다른 이름의 서브넷만 있는 VNet에서 게이트웨이 생성 → 서비스가 "
+              "subnets/GatewaySubnet을 스스로 참조하다 실패. graphkb 소스 관측"
+              "(networkinfo.yaml)의 컨트롤 플레인 확인 — 조건이 이름에 걸리는 "
+              "극단 사례"),
+    dict(csp="aws", subject="k8sCluster", object="subnet", question="existence",
+         verdict="required",
+         evidence=[
+             ("aws-eks-2026-07-31", "E1.omit-vpc-config",
+              "--resources-vpc-config", "preflight"),
+             ("aws-eks-2026-07-31", "E3.one-subnet",
+              "InvalidParameterException", "apply"),
+         ],
+         note="생략은 클라이언트 층이 막고(SDK 모델), 서버는 참조 실재를 "
+              "강제한다(허상 서브넷 거부). '둘 이상·다른 AZ' 카디널리티는 허상 "
+              "검사가 먼저라 가려졌다 — 실서브넷·실역할로 격리하는 생성 라운드 "
+              "몫. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열"),
     # ── lifecycle (azure) ──
     dict(csp="azure", subject="vm", object="disk", question="lifecycle",
          verdict="holds",

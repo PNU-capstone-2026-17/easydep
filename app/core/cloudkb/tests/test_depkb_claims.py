@@ -73,6 +73,7 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("vm", "disk", "existence"): "optional",
         ("loadBalancer", "subnet", "existence"): "required",
         ("loadBalancer", "firewall", "existence"): "optional",
+        ("k8sCluster", "subnet", "existence"): "required",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -148,6 +149,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("loadBalancer", "subnet", "existence"): "optional",
         ("loadBalancer", "publicIp", "existence"): "optional",
         ("loadBalancer", "subnet|publicIp|publicIPPrefix", "existence"): "required",
+        ("k8sCluster", "k8sNodeGroup", "existence"): "required",
+        ("vpn", "subnet", "existence"): "required",
     }
 
 

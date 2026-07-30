@@ -27,11 +27,12 @@ _OUT = _HERE / "dependency-graph.html"
 
 #: 고정 배치 — 세 패널 공통. 값은 노드 중심 좌표(우리 구성 — 가독 목적뿐).
 POS: dict[str, tuple[int, int]] = {
-    "vm": (90, 65), "loadBalancer": (280, 65),
-    "disk": (30, 160), "nic": (120, 170), "publicIp": (230, 170),
-    "sshKey": (330, 160),
-    "subnet": (140, 275), "firewall": (290, 275),
-    "network": (190, 370),
+    "k8sCluster": (80, 25), "k8sNodeGroup": (215, 25), "vpn": (330, 25),
+    "vm": (90, 95), "loadBalancer": (280, 95),
+    "disk": (30, 185), "nic": (120, 190), "publicIp": (230, 185),
+    "sshKey": (330, 180),
+    "subnet": (140, 285), "firewall": (290, 285),
+    "network": (190, 375),
 }
 NODE_W, NODE_H = 78, 30
 CSPS = ("aws", "azure", "gcp")

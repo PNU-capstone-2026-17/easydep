@@ -1,0 +1,29 @@
+{
+ "_note": "GKE 거부 라운드 — container API 직접, 자원 무생성 목표. network 생략(default 대체 예상)은 생성 기반 라운드의 몫.",
+ "ranAt": "2026-07-30T16:28:25+00:00",
+ "project": "cloud-resource-testing",
+ "zone": "asia-northeast3-a",
+ "steps": {
+  "G1.dangling-network": {
+   "ok": false,
+   "httpStatus": 400,
+   "errorCodes": [
+    "INVALID_ARGUMENT"
+   ],
+   "excerpt": "{\"error\": {\"code\": 400, \"message\": \"Project \\\"cloud-resource-testing\\\" has no network named \\\"depkbg-absent-net\\\".\", \"status\": \"INVALID_ARGUMENT\", \"details\": [{\"@type\": \"type.googleapis.com/google.rpc.RequestInfo\", \"requestId\": \"0x7d6516a2b240a0e2\"}]}}"
+  },
+  "G2.dangling-subnetwork": {
+   "ok": false,
+   "httpStatus": 404,
+   "errorCodes": [
+    "NOT_FOUND"
+   ],
+   "excerpt": "{\"error\": {\"code\": 404, \"message\": \"Not found: project \\\"cloud-resource-testing\\\" does not have a subnetwork named \\\"depkbg-absent-sub\\\" in region \\\"asia-northeast3\\\".\", \"status\": \"NOT_FOUND\", \"details\": [{\"@type\": \"type.googleapis.com/google.rpc.RequestInfo\", \"requestId\": \"0xb01d6ce7b53ef0d8\"}]}}"
+  },
+  "residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ }
+}
