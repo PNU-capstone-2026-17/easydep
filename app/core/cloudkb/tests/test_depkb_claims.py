@@ -67,6 +67,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("nic", "firewall", "lifecycle"): "holds",
         ("nic", "publicIp", "existence"): "optional",
         ("nic", "publicIp", "lifecycle"): "holds",
+        ("vm", "disk", "existence"): "optional",
+        ("vm", "disk", "lifecycle"): "holds",
         ("network", "subnet", "existence"): "optional",
         ("subnet", "firewall", "existence"): "optional",
         ("loadBalancer", "subnet", "existence"): "optional",

@@ -104,7 +104,24 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
              ("azure-apply2-2026-07-30", "E0.build-chain2", "ok", "apply"),
          ],
          note="내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원"),
+    dict(csp="azure", subject="vm", object="disk", question="existence",
+         verdict="optional",
+         evidence=[
+             ("azure-apply3-2026-07-30", "F0.build-vm-no-datadisk", "ok", "apply"),
+         ],
+         note="데이터 디스크 없이 VM 생성 성공. 덤 관측: 선언 안 한 OS 디스크가 "
+              "서버 이름으로 생성됐다(F0.disks-after-create) — 서버측 합성"),
     # ── lifecycle (azure) ──
+    dict(csp="azure", subject="vm", object="disk", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("azure-apply3-2026-07-30", "C1.delete-disk-attached",
+              "OperationNotAllowed", "apply"),
+             ("azure-apply3-2026-07-30", "D.delete-data-disk", "ok", "apply"),
+         ],
+         note="붙은 디스크 삭제 거부 + 분리 후 성공. 역방향 관측: VM 삭제가 OS "
+              "디스크를 남긴다(D.disks-after-vm-delete) — CB 드라이버가 디스크를 "
+              "직접 지우는 이유"),
     dict(csp="azure", subject="nic", object="publicIp", question="lifecycle",
          verdict="holds",
          evidence=[

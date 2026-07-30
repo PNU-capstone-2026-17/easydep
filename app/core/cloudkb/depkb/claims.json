@@ -2,10 +2,9 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.unknown": 11,
-  "azure.optional": 6,
+  "azure.optional": 7,
   "azure.required": 4,
-  "azure.holds": 4,
-  "azure.unknown": 1,
+  "azure.holds": 5,
   "gcp.unknown": 8
  },
  "claims": [
@@ -620,10 +619,10 @@
    "object": "disk",
    "csp": "azure",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행",
-   "oracle": "schema",
+   "note": "데이터 디스크 없이 VM 생성 성공. 덤 관측: 선언 안 한 OS 디스크가 서버 이름으로 생성됐다(F0.disks-after-create) — 서버측 합성",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
@@ -636,6 +635,48 @@
      "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
      "form": "input-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply3-2026-07-30",
+     "step": "F0.build-vm-no-datadisk",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "붙은 디스크 삭제 거부 + 분리 후 성공. 역방향 관측: VM 삭제가 OS 디스크를 남긴다(D.disks-after-vm-delete) — CB 드라이버가 디스크를 직접 지우는 이유",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply3-2026-07-30",
+     "step": "C1.delete-disk-attached",
+     "code": "OperationNotAllowed"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply3-2026-07-30",
+     "step": "D.delete-data-disk",
+     "code": "ok"
     }
    ]
   },
