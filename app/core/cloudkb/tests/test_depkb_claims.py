@@ -61,14 +61,40 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
     assert got == {
         ("nic", "subnet", "existence"): "required",
         ("nic", "subnet", "lifecycle"): "holds",
+        ("nic", "firewall", "existence"): "optional",
         ("nic", "firewall", "lifecycle"): "holds",
+        ("subnet", "network", "existence"): "required",
         ("subnet", "network", "lifecycle"): "holds",
+        ("firewall", "network", "existence"): "optional",
         ("vm", "subnet", "existence"): "optional",
         ("vm", "sshKey", "existence"): "optional",
+        ("vm", "nic", "existence"): "optional",
+        ("vm", "firewall", "existence"): "optional",
+        ("vm", "disk", "existence"): "optional",
+        ("loadBalancer", "subnet", "existence"): "required",
+        ("loadBalancer", "firewall", "existence"): "optional",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
     assert key_claim["verdict"] == "optional"
+
+
+def test_no_unknown_remains_in_the_vocabulary(artifact) -> None:
+    """3사 × 어휘 전체가 판정됐다(2026-07-31) — unknown이 다시 생기면
+    스키마 층에 새 후보가 들어온 것이니 실험을 따라 붙여야 한다."""
+    unknown = [(c["csp"], c["subject"], c["object"])
+               for c in artifact["claims"] if c["verdict"] == "unknown"]
+    assert not unknown, f"판정 없는 주장이 생겼다: {unknown}"
+
+
+def test_vm_nic_modality_flips_across_csps(artifact) -> None:
+    """vm→nic: azure 필수 · gcp 필수 · aws 선택(서버 ENI 암묵) — 두 번째 양상
+    반전. vm→disk(gcp만 필수)와 함께, '벤더 중립 필수 플래그 하나'로는 이
+    지식을 표현할 수 없다는 논거의 기둥이다."""
+    by_csp = {c["csp"]: c["verdict"] for c in artifact["claims"]
+              if (c["subject"], c["object"], c["question"])
+              == ("vm", "nic", "existence")}
+    assert by_csp == {"azure": "required", "gcp": "required", "aws": "optional"}
 
 
 def test_gcp_core_and_the_modality_flip(artifact) -> None:

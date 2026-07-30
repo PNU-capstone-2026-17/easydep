@@ -185,6 +185,77 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="같은 DryRun이 KeyName도 생략했다 — 성공. CB의 'sshKey 필수'가 "
               "aws에서도 도구의 요구였음이 동적으로 확정됐다(azure 무참조·gcp "
               "자원 부재에 이어 세 번째 형태)"),
+    dict(csp="aws", subject="subnet", object="network", question="existence",
+         verdict="required",
+         evidence=[
+             ("aws-apply2-2026-07-31", "B1.dangling-subnet-vpc",
+              "InvalidVpcID.NotFound", "apply"),
+         ],
+         note="허상 VPC 거부(서버). 생략은 클라이언트 층이 막아 서버 실험 불가 — "
+              "CFN Required:true와 합치"),
+    dict(csp="aws", subject="firewall", object="network", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 기본 VPC로 대체",
+         evidence=[
+             ("aws-apply2-2026-07-31", "B2.sg-omit-vpc", "ok", "apply"),
+             ("aws-apply2-2026-07-31", "B2.server-filled-vpc", "ok", "apply"),
+         ],
+         note="서버가 채운 VpcId 실물을 기록했다 — gcp firewall→network의 default "
+              "네트워크 대체와 같은 꼴(2사 수렴)"),
+    dict(csp="aws", subject="nic", object="firewall", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 VPC의 default SG 부착",
+         evidence=[
+             ("aws-apply2-2026-07-31", "B3.eni-omit-groups", "ok", "apply"),
+             ("aws-apply2-2026-07-31", "B3.server-filled-groups", "ok", "apply"),
+         ],
+         note="서버가 붙인 ['default'] 그룹 실물을 기록했다"),
+    dict(csp="aws", subject="vm", object="nic", question="existence",
+         verdict="optional",
+         predicate="server-implicit: ENI를 서버가 암묵 생성",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.dryrun-vm-default-vpc",
+              "DryRunOperation", "preflight"),
+         ],
+         note="RunInstances DryRun은 허상을 잡는 깊이가 증명돼 있어(1라운드) 그 "
+              "성공이 유효한 증거다. azure(필수)와 양상 반전 — vm→nic도 CSP "
+              "색인이 필요하다"),
+    dict(csp="aws", subject="vm", object="firewall", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 default SG",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.dryrun-vm-default-vpc",
+              "DryRunOperation", "preflight"),
+         ]),
+    dict(csp="aws", subject="vm", object="disk", question="existence",
+         verdict="optional",
+         predicate="server-implicit: AMI의 루트 볼륨을 서버가 만든다",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.dryrun-vm-default-vpc",
+              "DryRunOperation", "preflight"),
+         ],
+         note="vm→disk 3사 완성: aws 선택 · azure 선택 · **gcp만 필수** — 양상 "
+              "반전의 전모"),
+    dict(csp="aws", subject="loadBalancer", object="subnet", question="existence",
+         verdict="required",
+         predicate="ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
+         evidence=[
+             ("aws-apply2-2026-07-31", "B4.lb-omit-subnets",
+              "ValidationError", "apply"),
+             ("aws-apply2-2026-07-31", "B4.alb-one-subnet",
+              "ValidationError", "apply"),
+         ],
+         note="서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets "
+              "in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 "
+              "카디널리티+배치 술어"),
+    dict(csp="aws", subject="loadBalancer", object="firewall", question="existence",
+         verdict="optional",
+         evidence=[
+             ("aws-apply2-2026-07-31", "F.internal-nlb-one-subnet-no-sg",
+              "ok", "apply"),
+         ],
+         note="internal NLB가 SG 없이 섰다. 1차 internet-facing 시도는 IGW 부재로 "
+              "교란됐다(InvalidSubnet — 환경 전제가 의존 검사보다 먼저)"),
     dict(csp="aws", subject="nic", object="subnet", question="lifecycle",
          verdict="holds",
          evidence=[
@@ -263,10 +334,15 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ]),
     dict(csp="gcp", subject="loadBalancer", object="subnet", question="existence",
          verdict="optional",
-         predicate="EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
+         predicate="스킴 조건부: EXTERNAL 불참 · INTERNAL 필수",
          evidence=[
              ("gcp-apply2-2026-07-31", "B.create-ext-forwardingrule", "ok", "apply"),
-         ]),
+             ("gcp-apply3-2026-07-31", "I1.internal-fr-omit-subnet",
+              "invalid", "apply"),
+             ("gcp-apply3-2026-07-31", "I2.internal-fr-full", "ok", "apply"),
+         ],
+         note="조건부 필연의 두 번째 실물(첫째는 nic→subnet의 네트워크 모드) — "
+              "이번엔 조건이 자기 자신의 속성(스킴)이다"),
     dict(csp="gcp", subject="nic", object="subnet", question="lifecycle",
          verdict="holds",
          evidence=[

@@ -1,10 +1,9 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.unknown": 8,
+  "aws.optional": 8,
+  "aws.required": 3,
   "aws.holds": 3,
-  "aws.required": 1,
-  "aws.optional": 2,
   "azure.optional": 7,
   "azure.required": 4,
   "azure.holds": 5,
@@ -18,16 +17,28 @@
    "object": "network",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 기본 VPC로 대체",
+   "note": "서버가 채운 VpcId 실물을 기록했다 — gcp firewall→network의 default 네트워크 대체와 같은 꼴(2사 수렴)",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::SecurityGroup/Properties/VpcId",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B2.sg-omit-vpc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B2.server-filled-vpc",
+     "code": "ok"
     }
    ]
   },
@@ -36,16 +47,22 @@
    "object": "firewall",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "note": "internal NLB가 SG 없이 섰다. 1차 internet-facing 시도는 IGW 부재로 교란됐다(InvalidSubnet — 환경 전제가 의존 검사보다 먼저)",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::LoadBalancer/Properties/SecurityGroups",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "F.internal-nlb-one-subnet-no-sg",
+     "code": "ok"
     }
    ]
   },
@@ -54,10 +71,10 @@
    "object": "subnet",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "required",
+   "predicate": "ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
+   "note": "서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 카디널리티+배치 술어",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
@@ -70,6 +87,18 @@
      "cite": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::LoadBalancer/Properties/Subnets",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B4.lb-omit-subnets",
+     "code": "ValidationError"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B4.alb-one-subnet",
+     "code": "ValidationError"
     }
    ]
   },
@@ -78,16 +107,28 @@
    "object": "firewall",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 VPC의 default SG 부착",
+   "note": "서버가 붙인 ['default'] 그룹 실물을 기록했다",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/GroupSet",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B3.eni-omit-groups",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B3.server-filled-groups",
+     "code": "ok"
     }
    ]
   },
@@ -180,16 +221,22 @@
    "object": "network",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "required",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "note": "허상 VPC 거부(서버). 생략은 클라이언트 층이 막아 서버 실험 불가 — CFN Required:true와 합치",
+   "oracle": "apply",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Subnet/Properties/VpcId",
      "form": "name-reference",
      "requiredInSchema": true
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply2-2026-07-31",
+     "step": "B1.dangling-subnet-vpc",
+     "code": "InvalidVpcID.NotFound"
     }
    ]
   },
@@ -228,16 +275,22 @@
    "object": "disk",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-implicit: AMI의 루트 볼륨을 서버가 만든다",
+   "note": "vm→disk 3사 완성: aws 선택 · azure 선택 · **gcp만 필수** — 양상 반전의 전모",
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.Volume/Properties/VolumeId",
      "form": "name-reference",
      "requiredInSchema": true
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
     }
    ]
   },
@@ -246,10 +299,10 @@
    "object": "firewall",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 default SG",
+   "note": null,
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
@@ -268,6 +321,12 @@
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SecurityGroups",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
     }
    ]
   },
@@ -276,16 +335,22 @@
    "object": "nic",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-implicit: ENI를 서버가 암묵 생성",
+   "note": "RunInstances DryRun은 허상을 잡는 깊이가 증명돼 있어(1라운드) 그 성공이 유효한 증거다. azure(필수)와 양상 반전 — vm→nic도 CSP 색인이 필요하다",
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.NetworkInterface/Properties/NetworkInterfaceId",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
     }
    ]
   },
@@ -895,8 +960,8 @@
    "csp": "gcp",
    "question": "existence",
    "verdict": "optional",
-   "predicate": "EXTERNAL 스킴 실측 — INTERNAL 전용 필드는 미측정",
-   "note": null,
+   "predicate": "스킴 조건부: EXTERNAL 불참 · INTERNAL 필수",
+   "note": "조건부 필연의 두 번째 실물(첫째는 nic→subnet의 네트워크 모드) — 이번엔 조건이 자기 자신의 속성(스킴)이다",
    "oracle": "apply",
    "evidence": [
     {
@@ -909,6 +974,18 @@
      "layer": "apply",
      "experiment": "gcp-apply2-2026-07-31",
      "step": "B.create-ext-forwardingrule",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply3-2026-07-31",
+     "step": "I1.internal-fr-omit-subnet",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-apply3-2026-07-31",
+     "step": "I2.internal-fr-full",
      "code": "ok"
     }
    ]
