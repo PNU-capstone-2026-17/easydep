@@ -1,0 +1,21 @@
+{
+ "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+ "contentVersion": "1.0.0.0",
+ "resources": [
+  {
+   "type": "Microsoft.Compute/disks",
+   "apiVersion": "2026-03-02",
+   "name": "depkb-disk1",
+   "location": "[resourceGroup().location]",
+   "sku": {
+    "name": "Standard_LRS"
+   },
+   "properties": {
+    "creationData": {
+     "createOption": "Empty"
+    },
+    "diskSizeGB": 4
+   }
+  }
+ ]
+}
