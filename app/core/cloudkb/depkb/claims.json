@@ -1,0 +1,751 @@
+{
+ "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
+ "verdictCounts": {
+  "aws.unknown": 11,
+  "azure.unknown": 6,
+  "azure.required": 4,
+  "azure.optional": 1,
+  "azure.holds": 3,
+  "gcp.unknown": 8
+ },
+ "claims": [
+  {
+   "subject": "firewall",
+   "object": "network",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::SecurityGroup/Properties/VpcId",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::LoadBalancer/Properties/SecurityGroups",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "subnet",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::LoadBalancer/Properties/SubnetMappings",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::LoadBalancer/Properties/Subnets",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/GroupSet",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/SubnetId",
+     "form": "name-reference",
+     "requiredInSchema": true
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Subnet/Properties/VpcId",
+     "form": "name-reference",
+     "requiredInSchema": true
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.Volume/Properties/VolumeId",
+     "form": "name-reference",
+     "requiredInSchema": true
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.NetworkInterface/Properties/GroupSet",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SecurityGroupIds",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SecurityGroups",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "nic",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.NetworkInterface/Properties/NetworkInterfaceId",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "sshKey",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/KeyName",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "subnet",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.NetworkInterface/Properties/SubnetId",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SubnetId",
+     "form": "name-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "subnet|publicIp|publicIPPrefix",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": "disjunctive: 셋 중 하나",
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "azure-preflight-2026-07-30",
+     "step": "omit-lb-frontend-ref.validate",
+     "code": "FrontendIPConfigurationHasNoSubnetOrPublicIPAddressOrPublicIPPrefix"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "A.apply.dangling-lb-pip",
+     "code": "InvalidResourceReference"
+    }
+   ]
+  },
+  {
+   "subject": "network",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.VirtualNetworkPropertiesFormat/properties/subnets/items",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "firewall",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": "사슬의 nic1이 NSG 없이 생성 성공 — 부재 하 성공이 optional의 증거",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfacePropertiesFormat/properties/networkSecurityGroup",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "B.build-chain",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "firewall",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "선택 참조여도 붙어 있는 동안 삭제는 막힌다 — existence와 lifecycle이 독립",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfacePropertiesFormat/properties/networkSecurityGroup",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "C.delete-nsg-attached",
+     "code": "InUseNetworkSecurityGroupCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "D.delete-nsg",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.PrivateLinkServiceIpConfigurationProperties/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "azure-preflight-2026-07-30",
+     "step": "omit-nic-subnet.validate",
+     "code": "SubnetIsRequired"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "A.apply.dangling-nic-subnet",
+     "code": "InvalidResourceReference"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "사용 중 삭제 거부 + NIC 제거 후 삭제 성공(양성 대조)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.PrivateLinkServiceIpConfigurationProperties/properties/subnet",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "C.delete-subnet-in-use",
+     "code": "InUseSubnetCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "D.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "firewall",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.SubnetPropertiesFormat/properties/networkSecurityGroup",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "경로 중첩(소속) — 부모 없이 만들 방법 자체가 없다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}",
+     "form": "path-nesting",
+     "requiredInSchema": true
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "A.apply.dangling-subnet-parent",
+     "code": "ResourceNotFound"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}",
+     "form": "path-nesting",
+     "requiredInSchema": true
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "C.delete-vnet-in-use",
+     "code": "InUseSubnetCannotBeDeleted"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "D.delete-vnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "nic",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "preflight는 침묵했다(Compute RP 깊이 — P5a findings §3)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/NetworkProfile/properties/networkInterfaces/items",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "A.apply.omit-vm-nic",
+     "code": "InvalidParameter"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-apply-2026-07-30",
+     "step": "A.apply.dangling-vm-nic",
+     "code": "NotFound"
+    }
+   ]
+  },
+  {
+   "subject": "firewall",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/Firewall/properties/network",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/ForwardingRule/properties/network",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "subnet",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/ForwardingRule/properties/subnetwork",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/NetworkInterface/properties/network",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/NetworkInterface/properties/subnetwork",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/Subnetwork/properties/network",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/AttachedDisk/properties/source",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "nic",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "unknown",
+   "predicate": null,
+   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "oracle": "schema",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/Instance/properties/networkInterfaces",
+     "form": "schema-ref",
+     "requiredInSchema": false
+    }
+   ]
+  }
+ ]
+}
