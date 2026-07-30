@@ -37,14 +37,23 @@ def aws(args: list[str], timeout: int = 120) -> dict:
     text = (r.stderr or "") + (r.stdout or "")
     codes = [next(g for g in m.groups() if g) for m in _CODE.finditer(text)]
     layer = "client" if "arguments are required" in text else "server"
+    parsed = None
+    if r.returncode == 0 and r.stdout.lstrip().startswith(("{", "[")):
+        try:
+            parsed = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            parsed = None
+    # 응답 전문은 파싱용으로만 들고, 기록에는 발췌만 남긴다 — 1차 실행이
+    # 발췌(600자 절단)를 파싱하다 죽었다. 발췌는 기록이지 데이터가 아니다.
     return {"ok": r.returncode == 0,
             "errorCodes": list(dict.fromkeys(codes)),
             "rejectedAt": None if r.returncode == 0 else layer,
-            "excerpt": text.strip().replace("\r", "")[:600]}
+            "excerpt": text.strip().replace("\r", "")[:600],
+            "_data": parsed}
 
 
 def jval(res: dict, *path):
-    v = json.loads(res["excerpt"])
+    v = res["_data"]
     for p in path:
         v = v[p]
     return v
@@ -121,6 +130,8 @@ def main() -> None:
             ["ec2", "describe-network-interfaces", "--filters",
              f"Name=vpc-id,Values={vpc_id}", "--output", "json"]))
 
+    for s in steps.values():
+        s.pop("_data", None)
     (HERE / "results.json").write_text(json.dumps({
         "_note": ("aws 측정 기록(P5a=DryRun·P5b=실자원 사슬). DryRunOperation "
                   "코드는 '만들었다면 성공했을 것'이라는 뜻의 성공 신호다. "

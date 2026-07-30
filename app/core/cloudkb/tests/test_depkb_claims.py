@@ -41,19 +41,34 @@ def test_verdicts_require_dynamic_evidence(artifact) -> None:
 
 
 def test_unknown_is_recorded_not_hidden(artifact) -> None:
-    """aws는 자격증명이 없어 전부 unknown이어야 한다 — 하나라도 판정이 서 있으면
-    측정 없이 승격된 것이다(T9). unknown에는 사유가 붙는다.
-
-    (gcp는 2026-07-31 결제 연결 후 실험이 돌아 판정이 섰다 — gcp 판정의 동적
-    증거 요구는 test_verdicts_require_dynamic_evidence가 지킨다.)
-    """
+    """unknown에는 사유가 붙는다 — 빈칸이 아니라 '미실행'의 기록이다."""
     for c in artifact["claims"]:
-        if c["csp"] == "aws":
-            assert c["verdict"] == "unknown", (
-                f"aws {c['subject']}→{c['object']}: 동적 실험 없이 판정"
-            )
         if c["verdict"] == "unknown":
             assert c["note"], "unknown에 사유가 없다"
+
+
+def test_aws_core_and_the_key_story_closure(artifact) -> None:
+    """aws 검증핵 — 그리고 sshKey 이야기의 완결.
+
+    같은 DryRun 성공 하나가 서브넷·키 둘 다의 생략 가능을 증명한다(기본 VPC
+    대체 실측). CB의 'sshKey 필수'는 이제 3사 전부에서 도구의 요구로 확정됐다 —
+    aws 선택(동적) · azure 무참조(스키마) · gcp 자원 부재(스키마).
+    aws nic→subnet의 required는 클라이언트 층 거부라는 한계가 note에 있다.
+    """
+    got = {(c["subject"], c["object"], c["question"]): c["verdict"]
+           for c in artifact["claims"] if c["csp"] == "aws"
+           and c["verdict"] != "unknown"}
+    assert got == {
+        ("nic", "subnet", "existence"): "required",
+        ("nic", "subnet", "lifecycle"): "holds",
+        ("nic", "firewall", "lifecycle"): "holds",
+        ("subnet", "network", "lifecycle"): "holds",
+        ("vm", "subnet", "existence"): "optional",
+        ("vm", "sshKey", "existence"): "optional",
+    }
+    key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
+                     and (c["subject"], c["object"]) == ("vm", "sshKey"))
+    assert key_claim["verdict"] == "optional"
 
 
 def test_gcp_core_and_the_modality_flip(artifact) -> None:

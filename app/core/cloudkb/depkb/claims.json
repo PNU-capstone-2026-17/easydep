@@ -1,7 +1,10 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.unknown": 11,
+  "aws.unknown": 8,
+  "aws.holds": 3,
+  "aws.required": 1,
+  "aws.optional": 2,
   "azure.optional": 7,
   "azure.required": 4,
   "azure.holds": 5,
@@ -17,7 +20,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -35,7 +38,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -53,7 +56,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -77,7 +80,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -90,19 +93,85 @@
   },
   {
    "subject": "nic",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "3사 모두 같은 꼴 — 붙어 있는 SG/NSG는 못 지운다. 코드만 다르다(DependencyViolation / InUse... / RESOURCE_IN_USE)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/GroupSet",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "C.delete-sg-attached",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "D.delete-sg",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
    "object": "subnet",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "required",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": "거부가 **클라이언트(CLI/SDK 모델) 층**에서 났다 — 서버 미도달. CFN Required:true(스키마 층)와 합치하나 서버측 생략 실험은 CLI로 불가능했다. 한편 CreateNetworkInterface의 DryRun은 허상 서브넷을 통과시켰다(A.dangling-nic-subnet) — DryRun 깊이가 API마다 다르다",
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/SubnetId",
      "form": "name-reference",
      "requiredInSchema": true
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.omit-nic-subnet",
+     "code": "--subnet-id"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "subnet",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/SubnetId",
+     "form": "name-reference",
+     "requiredInSchema": true
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "C.delete-subnet-in-use",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "D.delete-subnet",
+     "code": "ok"
     }
    ]
   },
@@ -113,7 +182,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -125,13 +194,43 @@
    ]
   },
   {
+   "subject": "subnet",
+   "object": "network",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Subnet/Properties/VpcId",
+     "form": "name-reference",
+     "requiredInSchema": true
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "C.delete-vpc-in-use",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "D.delete-vpc",
+     "code": "ok"
+    }
+   ]
+  },
+  {
    "subject": "vm",
    "object": "disk",
    "csp": "aws",
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -149,7 +248,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -179,7 +278,7 @@
    "question": "existence",
    "verdict": "unknown",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
+   "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
    "oracle": "schema",
    "evidence": [
     {
@@ -195,16 +294,28 @@
    "object": "sshKey",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
+   "verdict": "optional",
    "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "note": "같은 DryRun이 KeyName도 생략했다 — 성공. CB의 'sshKey 필수'가 aws에서도 도구의 요구였음이 동적으로 확정됐다(azure 무참조·gcp 자원 부재에 이어 세 번째 형태)",
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/KeyName",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dangling-vm-keyname",
+     "code": "InvalidKeyPair.NotFound"
     }
    ]
   },
@@ -213,10 +324,10 @@
    "object": "subnet",
    "csp": "aws",
    "question": "existence",
-   "verdict": "unknown",
-   "predicate": null,
-   "note": "스키마 후보만 있다 — 동적 층 미실행 (계정 없음, 정적 상한 T9)",
-   "oracle": "schema",
+   "verdict": "optional",
+   "predicate": "server-default: 미지정 시 기본 VPC 서브넷 대체",
+   "note": "DryRunOperation은 '만들었다면 성공했을 것' — CFN 문서 주석의 기본 VPC 대체가 실측됐다. 명시하면 실재해야 한다",
+   "oracle": "preflight",
    "evidence": [
     {
      "layer": "schema",
@@ -229,6 +340,18 @@
      "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SubnetId",
      "form": "name-reference",
      "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-apply-2026-07-30",
+     "step": "A.dangling-vm-subnet",
+     "code": "InvalidSubnetID.NotFound"
     }
    ]
   },

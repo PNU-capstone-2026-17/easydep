@@ -153,6 +153,61 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
              ("azure-apply-2026-07-30", "D.delete-nsg", "ok", "apply"),
          ],
          note="선택 참조여도 붙어 있는 동안 삭제는 막힌다 — existence와 lifecycle이 독립"),
+    # ── aws (preflight=DryRun — 깊이가 API마다 다름을 관측) ──
+    dict(csp="aws", subject="nic", object="subnet", question="existence",
+         verdict="required",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.omit-nic-subnet", "--subnet-id", "preflight"),
+         ],
+         note="거부가 **클라이언트(CLI/SDK 모델) 층**에서 났다 — 서버 미도달. "
+              "CFN Required:true(스키마 층)와 합치하나 서버측 생략 실험은 CLI로 "
+              "불가능했다. 한편 CreateNetworkInterface의 DryRun은 허상 서브넷을 "
+              "통과시켰다(A.dangling-nic-subnet) — DryRun 깊이가 API마다 다르다"),
+    dict(csp="aws", subject="vm", object="subnet", question="existence",
+         verdict="optional",
+         predicate="server-default: 미지정 시 기본 VPC 서브넷 대체",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.dryrun-vm-default-vpc",
+              "DryRunOperation", "preflight"),
+             ("aws-apply-2026-07-30", "A.dangling-vm-subnet",
+              "InvalidSubnetID.NotFound", "preflight"),
+         ],
+         note="DryRunOperation은 '만들었다면 성공했을 것' — CFN 문서 주석의 "
+              "기본 VPC 대체가 실측됐다. 명시하면 실재해야 한다"),
+    dict(csp="aws", subject="vm", object="sshKey", question="existence",
+         verdict="optional",
+         evidence=[
+             ("aws-apply-2026-07-30", "A.dryrun-vm-default-vpc",
+              "DryRunOperation", "preflight"),
+             ("aws-apply-2026-07-30", "A.dangling-vm-keyname",
+              "InvalidKeyPair.NotFound", "preflight"),
+         ],
+         note="같은 DryRun이 KeyName도 생략했다 — 성공. CB의 'sshKey 필수'가 "
+              "aws에서도 도구의 요구였음이 동적으로 확정됐다(azure 무참조·gcp "
+              "자원 부재에 이어 세 번째 형태)"),
+    dict(csp="aws", subject="nic", object="subnet", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-apply-2026-07-30", "C.delete-subnet-in-use",
+              "DependencyViolation", "apply"),
+             ("aws-apply-2026-07-30", "D.delete-subnet", "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="subnet", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-apply-2026-07-30", "C.delete-vpc-in-use",
+              "DependencyViolation", "apply"),
+             ("aws-apply-2026-07-30", "D.delete-vpc", "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="nic", object="firewall", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-apply-2026-07-30", "C.delete-sg-attached",
+              "DependencyViolation", "apply"),
+             ("aws-apply-2026-07-30", "D.delete-sg", "ok", "apply"),
+         ],
+         note="3사 모두 같은 꼴 — 붙어 있는 SG/NSG는 못 지운다. 코드만 다르다"
+              "(DependencyViolation / InUse... / RESOURCE_IN_USE)"),
     # ── gcp (REST 직접 — gcloud CLI 기본값 주입 배제) ──
     dict(csp="gcp", subject="subnet", object="network", question="existence",
          verdict="required",
@@ -301,8 +356,7 @@ def build() -> dict:
         claims.append({
             "subject": s, "object": o, "csp": csp, "question": "existence",
             "verdict": "unknown", "predicate": None,
-            "note": "스키마 후보만 있다 — 동적 층 미실행"
-                    + (" (계정 없음, 정적 상한 T9)" if csp != "azure" else ""),
+            "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
             "oracle": "schema", "evidence": evid,
         })
 
