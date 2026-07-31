@@ -2,11 +2,11 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.required": 11,
-  "aws.holds": 13,
+  "aws.holds": 15,
   "aws.optional": 14,
   "azure.required": 10,
+  "azure.holds": 16,
   "azure.optional": 16,
-  "azure.holds": 14,
   "gcp.required": 7,
   "gcp.optional": 14,
   "gcp.holds": 13
@@ -684,6 +684,48 @@
    "csp": "aws",
    "question": "function",
    "verdict": "holds",
+   "predicate": "무방비: 0.0.0.0/0→IGW 라우트 삭제를 막지 않는다 — 기능 신호는 게스트에서 **밖으로** 나가는 HTTPS(아웃바운드)",
+   "note": "기능 2라운드는 같은 간선을 **인바운드**(우리→VM 도달성)로 쟀다. 여기서는 **아웃바운드**(VM→외부) — 방향이 다른 신호로 같은 결속이 재확인됐다. 1차 측정은 결과 파일 경합(Z0) 여파로 다른 VPC의 라우트를 지워 무효였고(Z0b), ids 정정 후 재측정분이 판정이다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "G1.egress-works",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "M3.delete-default-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "G2.egress-lost",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "M4.recreate-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "G3.egress-again",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
+   "object": "internetGateway",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
    "predicate": "무방비: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 컨트롤 플레인이 막지 않는다",
    "note": "어휘 밖 대기열이던 internetGateway의 첫 판정 — 존재 전제는 교란으로 기실측(IGW 없으면 EIP 도달 불가), 이번에 기능 축으로 닫았다. 셀 기준선은 직전 회복(F3) — 원인 섞임 방지",
    "oracle": "apply",
@@ -932,6 +974,48 @@
      "layer": "apply",
      "experiment": "aws-func2-2026-07-31",
      "step": "R10.run-instance",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "iamRole",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 실행 중 인스턴스에서 인스턴스 프로필 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 IMDSv2 자격증명 획득",
+   "note": "**존재는 optional인데 기능은 결속이다** — 프로필 없이도 VM은 서지만(vm→iamRole existence), 붙여 놓고 떼면 게스트가 역할을 잃는다(rc=22 → 재부착 후 역할명 depkb-sig4-role 복귀). **EKS CSI가 'no EC2 IMDS role found'로 죽은 그 기제**를 VM 층에서 격리해 잰 것이다(완결 라운드 I0과 짝)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "F1.imds-credentials-work",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "M1.disassociate-profile",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "F2.imds-credentials-lost",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "M2.reassociate-profile",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-sig4-2026-07-31",
+     "step": "F3.imds-credentials-again",
      "code": "ok"
     }
    ]
@@ -1232,6 +1316,48 @@
      "layer": "apply",
      "experiment": "azure-dns-fs-2026-07-31",
      "step": "D3.create-record",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "globalDns",
+   "object": "network",
+   "csp": "azure",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 사설 영역-vnet link 삭제를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 이름 해석(getent hosts)",
+   "note": "**캐시가 판정을 뒤집을 뻔했다** — 1차 측정에서는 link를 지워도 이름이 계속 풀렸다(레코드 TTL 3600 + 게스트 systemd-resolved 캐시). TTL 30초 + `resolvectl flush-caches`로 우회하니 상실이 보였다(D4에 기록). 존재 판정(globalDns→globalDnsRecord)과 다른 간선이다 — 여기서는 **영역-네트워크 연결이 기능을 나른다**",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F1b.resolve-works-nocache",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "M1b.delete-link-again",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F2b.resolve-lost-nocache",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "M2b.relink-again",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F3b.resolve-again-nocache",
      "code": "ok"
     }
    ]
@@ -2102,6 +2228,54 @@
      "layer": "apply",
      "experiment": "azure-apply3-2026-07-30",
      "step": "F0.build-vm-no-datadisk",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "disk",
+   "csp": "azure",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 실행 중 VM에서 데이터 디스크 detach를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기",
+   "note": "**같은 쌍에서 세 질문이 다 갈린 둘째 사례**(vm→disk: 존재 optional · 생명주기 holds · 기능 holds). 함정 둘을 넘어야 보였다: 페이지 캐시(`oflag=direct` 필요, K4) · 파이프가 종료 코드를 삼킴(`| tail -1` 제거, K6 — dd가 'Input/output error'를 냈는데 rc=0이었다). 회복은 재마운트를 포함한다(운영 절차이지 판정 대상 아님)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F1d.write-bare-works",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "M1d.detach-third",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F2d.write-bare-lost",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-sig4-2026-07-31",
+     "step": "F3d.write-bare-again",
      "code": "ok"
     }
    ]

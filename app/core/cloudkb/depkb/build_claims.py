@@ -728,6 +728,76 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 기능 신호 4종 라운드 (2026-07-31 — 위협 ④(신호가 TCP 하나뿐)를
+    # 없앤다. **앱을 쓰지 않고** 게스트 안에서 OS 기본 도구로만 관측했다.
+    # 하네스는 experiments/_guest.py) ──
+    dict(csp="azure", subject="globalDns", object="network",
+         question="function", verdict="holds",
+         predicate="무방비: 사설 영역-vnet link 삭제를 컨트롤 플레인이 막지 "
+                   "않는다 — 기능 신호는 게스트의 이름 해석(getent hosts)",
+         evidence=[
+             ("azure-sig4-2026-07-31", "F1b.resolve-works-nocache",
+              "ok", "apply"),
+             ("azure-sig4-2026-07-31", "M1b.delete-link-again", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "F2b.resolve-lost-nocache", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "M2b.relink-again", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "F3b.resolve-again-nocache",
+              "ok", "apply"),
+         ],
+         note="**캐시가 판정을 뒤집을 뻔했다** — 1차 측정에서는 link를 지워도 "
+              "이름이 계속 풀렸다(레코드 TTL 3600 + 게스트 systemd-resolved "
+              "캐시). TTL 30초 + `resolvectl flush-caches`로 우회하니 상실이 "
+              "보였다(D4에 기록). 존재 판정(globalDns→globalDnsRecord)과 다른 "
+              "간선이다 — 여기서는 **영역-네트워크 연결이 기능을 나른다**"),
+    dict(csp="azure", subject="vm", object="disk", question="function",
+         verdict="holds",
+         predicate="무방비: 실행 중 VM에서 데이터 디스크 detach를 컨트롤 "
+                   "플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기",
+         evidence=[
+             ("azure-sig4-2026-07-31", "F1d.write-bare-works", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "M1d.detach-third", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "F2d.write-bare-lost", "ok", "apply"),
+             ("azure-sig4-2026-07-31", "F3d.write-bare-again", "ok", "apply"),
+         ],
+         note="**같은 쌍에서 세 질문이 다 갈린 둘째 사례**(vm→disk: 존재 "
+              "optional · 생명주기 holds · 기능 holds). 함정 둘을 넘어야 "
+              "보였다: 페이지 캐시(`oflag=direct` 필요, K4) · 파이프가 종료 "
+              "코드를 삼킴(`| tail -1` 제거, K6 — dd가 'Input/output error'를 "
+              "냈는데 rc=0이었다). 회복은 재마운트를 포함한다(운영 절차이지 "
+              "판정 대상 아님)"),
+    dict(csp="aws", subject="vm", object="iamRole", question="function",
+         verdict="holds",
+         predicate="무방비: 실행 중 인스턴스에서 인스턴스 프로필 분리를 "
+                   "컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 IMDSv2 "
+                   "자격증명 획득",
+         evidence=[
+             ("aws-sig4-2026-07-31", "F1.imds-credentials-work", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "M1.disassociate-profile", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "F2.imds-credentials-lost", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "M2.reassociate-profile", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "F3.imds-credentials-again", "ok", "apply"),
+         ],
+         note="**존재는 optional인데 기능은 결속이다** — 프로필 없이도 VM은 "
+              "서지만(vm→iamRole existence), 붙여 놓고 떼면 게스트가 역할을 "
+              "잃는다(rc=22 → 재부착 후 역할명 depkb-sig4-role 복귀). "
+              "**EKS CSI가 'no EC2 IMDS role found'로 죽은 그 기제**를 VM 층에서 "
+              "격리해 잰 것이다(완결 라운드 I0과 짝)"),
+    dict(csp="aws", subject="subnet", object="internetGateway",
+         question="function", verdict="holds",
+         predicate="무방비: 0.0.0.0/0→IGW 라우트 삭제를 막지 않는다 — 기능 "
+                   "신호는 게스트에서 **밖으로** 나가는 HTTPS(아웃바운드)",
+         evidence=[
+             ("aws-sig4-2026-07-31", "G1.egress-works", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "M3.delete-default-route", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "G2.egress-lost", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "M4.recreate-route", "ok", "apply"),
+             ("aws-sig4-2026-07-31", "G3.egress-again", "ok", "apply"),
+         ],
+         note="기능 2라운드는 같은 간선을 **인바운드**(우리→VM 도달성)로 쟀다. "
+              "여기서는 **아웃바운드**(VM→외부) — 방향이 다른 신호로 같은 "
+              "결속이 재확인됐다. 1차 측정은 결과 파일 경합(Z0) 여파로 다른 "
+              "VPC의 라우트를 지워 무효였고(Z0b), ids 정정 후 재측정분이 "
+              "판정이다"),
     # ── 남은 라운드 (2026-07-31 — VPN 3사 완결 · Filestore 양성 대조.
     # EKS IAM 기능 축은 **신호가 갈리지 않아 미판정 유지**한다) ──
     dict(csp="aws", subject="vpn", object="network", question="existence",

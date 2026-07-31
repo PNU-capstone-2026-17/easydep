@@ -96,6 +96,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # VPN 라운드: 게이트웨이는 VPC 없이 서고 **attach**가 VPC를 요구한다.
         ("vpn", "network", "existence"): "required",
         ("vpn", "network", "lifecycle"): "holds",
+        # 신호 4종 라운드: 메타데이터(IMDS 자격증명)·아웃바운드.
+        # vm→iamRole은 **존재 optional인데 기능은 결속**이다.
+        ("vm", "iamRole", "function"): "holds",
         # iamRole 라운드: EKS 거부 관측의 승격 + 인스턴스 프로필 생략 성공.
         ("k8sCluster", "iamRole", "existence"): "required",
         ("vm", "iamRole", "existence"): "optional",
@@ -262,6 +265,9 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         # 기능 2라운드: 서브넷-NSG 분리 무방비(secure-by-default와 합성 효과).
         # 라우팅 셀은 azure에 대응 자원이 없다 — 간선 부재가 기록이다.
         ("subnet", "firewall", "function"): "holds",
+        # 신호 4종 라운드: DNS 해석·볼륨 I/O(게스트 안에서 관측).
+        ("globalDns", "network", "function"): "holds",
+        ("vm", "disk", "function"): "holds",
         # iamRole 라운드: managed identity 미지정 생성 성공.
         ("vm", "iamRole", "existence"): "optional",
         # customImage 라운드: 원본은 디스크, 결속은 없다(graphkb 관측과 갈림).

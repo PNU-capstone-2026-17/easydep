@@ -68,5 +68,8 @@ materials/PURE/
 # 데모 산출물 — 실행하면 다시 생긴다
 app/core/cloudkb/depkb/diagrams/
 
-# k8s 실험 kubeconfig — 자격증명이다. 절대 커밋하지 않는다.
+# 실험 자격증명 — 절대 커밋하지 않는다(kubeconfig·SSH 키·인증서).
 app/core/cloudkb/depkb/experiments/**/kubeconfig
+app/core/cloudkb/depkb/experiments/**/*.pem
+app/core/cloudkb/depkb/experiments/**/id_depkb*
+app/core/cloudkb/depkb/experiments/**/ca.crt
