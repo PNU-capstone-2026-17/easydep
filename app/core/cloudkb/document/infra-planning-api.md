@@ -37,6 +37,19 @@ plan = plan_from_deployment_intent(
 배포 다이어그램을 그리는 데 필요한 것만 담는다. **순서는 없다**(그림에 시간축이
 없다).
 
+**PlantUML로 바로 받으려면**:
+
+```python
+from app.core.cloudkb.depkb.plantuml import deployment_puml, deployment_puml_set
+
+puml = deployment_puml(plan.intent, title="주문 API — aws")
+# CSP별을 한 파일에 나란히:
+puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 API")
+```
+
+역할은 스테레오타입으로 나른다(`<<선택한 것>>`·`<<필수>>`·`<<선택>>`·`<<자동>>`) —
+색만으로 구분하지 않는다. 근거는 `note`, 물어볼 것과 규칙은 `legend`에 실린다.
+
 | 키 | 뜻 |
 |---|---|
 | `nodes[]` | `id`·`group`(네트워크/컴퓨트/컨테이너/연결)·`role`(anchor/required/attachable)·`label`(사람이 읽는 말)·`because`(왜 이게 여기 있나)·`autoFilledNotice` |

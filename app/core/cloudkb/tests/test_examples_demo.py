@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.cloudkb.depkb.examples import EXAMPLES, by_id
-from app.core.cloudkb.depkb.render_deployment import render
+from app.core.cloudkb.depkb.plantuml import deployment_puml, deployment_puml_set
 from app.core.infra_planning import plan_for_anchors, plan_from_deployment_intent
 
 CSPS = ("aws", "azure", "gcp")
@@ -81,11 +81,36 @@ def test_examples_do_not_claim_about_uncompared_systems() -> None:
             assert "MetaGPT" not in line and "GPT" not in line, ex.id
 
 
-def test_deployment_diagram_renders() -> None:
-    """배포 다이어그램이 자립형 HTML로 나온다(3예제 × 3열)."""
-    html = render()
-    assert html.startswith("<!doctype html>")
-    assert html.count("<article") == len(EXAMPLES)
-    assert "계획 없음" in html, "재지 않은 CSP를 빈 패널로 보여야 한다"
-    assert "http://" not in html and "https://" not in html.replace(
-        "http-equiv", ""), "외부 자원을 참조하면 자립형이 아니다"
+def test_deployment_diagram_is_valid_plantuml() -> None:
+    """배포 다이어그램이 PlantUML로 나온다 — 설계 에이전트의 산출 형식."""
+    plan = plan_for_anchors(["k8sCluster"], "aws", "-")
+    puml = deployment_puml(plan.intent, title="t", slug="t")
+    assert puml.startswith("@startuml") and puml.rstrip().endswith("@enduml")
+    assert puml.count("@startuml") == puml.count("@enduml") == 1
+    assert "화살표 A --> B" in puml, "방향의 뜻을 그림에 적어야 한다"
+
+
+def test_plantuml_encodes_role_by_stereotype_not_color_alone() -> None:
+    """색만으로 구분하지 않는다 — 스테레오타입 문자열이 같은 정보를 나른다."""
+    plan = plan_for_anchors(["k8sCluster"], "gcp", "-")
+    puml = deployment_puml(plan.intent)
+    assert "<<선택한 것>>" in puml
+    assert "<<자동>>" in puml, "gcp는 서버가 채우는 자원이 여럿이다"
+
+
+def test_plantuml_carries_reasons_and_rules() -> None:
+    """그림이 '왜'와 '지켜야 할 것'을 함께 나른다 — 그림만 보고도 판단 가능."""
+    plan = plan_for_anchors(["k8sCluster"], "aws", "-")
+    puml = deployment_puml(plan.intent)
+    assert "note right of" in puml and "왜:" in puml
+    assert "legend bottom" in puml and "지켜야 할 규칙" in puml
+
+
+def test_puml_set_puts_csps_side_by_side() -> None:
+    """한 파일에 CSP별 다이어그램이 나란히 들어간다 — 차이가 요점이다."""
+    intents = {csp: plan_for_anchors(["k8sCluster"], csp, "-").intent
+               for csp in CSPS}
+    puml = deployment_puml_set(intents, title="비교")
+    assert puml.count("@startuml") == len(CSPS)
+    for csp in CSPS:
+        assert f"— {csp}" in puml
