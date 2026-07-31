@@ -27,12 +27,15 @@ _OUT = _HERE / "dependency-graph.html"
 
 #: 고정 배치 — 세 패널 공통. 값은 노드 중심 좌표(우리 구성 — 가독 목적뿐).
 POS: dict[str, tuple[int, int]] = {
-    "k8sCluster": (80, 25), "k8sNodeGroup": (215, 25), "vpn": (330, 25),
-    "vm": (90, 95), "loadBalancer": (280, 95),
-    "disk": (30, 185), "nic": (120, 190), "publicIp": (230, 185),
-    "sshKey": (330, 180),
-    "subnet": (140, 285), "firewall": (290, 285),
-    "network": (190, 375),
+    # 맨 윗줄은 k8s API 오브젝트 층 — 클라우드 자원이 아니라 합성의 주체다
+    # (2026-07-31 합성 라운드). 세로로 합성 대상 위에 놓는다.
+    "k8sPvc": (30, 25), "k8sService": (280, 25),
+    "k8sCluster": (80, 95), "k8sNodeGroup": (215, 95), "vpn": (330, 95),
+    "vm": (90, 165), "loadBalancer": (280, 165),
+    "disk": (30, 255), "nic": (120, 260), "publicIp": (230, 255),
+    "sshKey": (330, 250),
+    "subnet": (140, 355), "firewall": (290, 355),
+    "network": (190, 445),
 }
 NODE_W, NODE_H = 78, 30
 CSPS = ("aws", "azure", "gcp")
@@ -67,7 +70,8 @@ def _panel(csp: str, claims: list[dict]) -> str:
     rows = [c for c in claims if c["csp"] == csp]
     exist = [c for c in rows if c["question"] == "existence"
              and "|" not in c["object"]]
-    holds = {(c["subject"], c["object"]) for c in rows
+    holds = {(c["subject"], c["object"]): (c.get("predicate") or "")
+             for c in rows
              if c["question"] == "lifecycle" and c["verdict"] == "holds"}
     pairs = {(c["subject"], c["object"]) for c in exist}
     touched = {n for p in pairs for n in p} | {n for p in holds for n in p}
@@ -110,9 +114,16 @@ def _panel(csp: str, claims: list[dict]) -> str:
             svg.append(f'<circle class="autodot" cx="{x1:.0f}" cy="{y1:.0f}" r="4"/>')
         if (s, o) in holds:
             mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-            svg.append(
-                f'<text class="lock" x="{mx:.0f}" y="{my + 4:.0f}">🔒'
-                f'<title>{s}가 쓰는 동안 {o} 삭제 거부 — 실측</title></text>')
+            if holds[(s, o)].startswith("동반 정리:"):
+                # 삭제 보호의 반대 방향 — 주체 삭제가 합성물을 함께 지운다
+                svg.append(
+                    f'<text class="lock" x="{mx:.0f}" y="{my + 4:.0f}">♻'
+                    f'<title>{s} 삭제가 {o}를 함께 지운다(동반 정리) — 실측'
+                    f'</title></text>')
+            else:
+                svg.append(
+                    f'<text class="lock" x="{mx:.0f}" y="{my + 4:.0f}">🔒'
+                    f'<title>{s}가 쓰는 동안 {o} 삭제 거부 — 실측</title></text>')
 
     for name, (x, y) in POS.items():
         ghost = ' ghost' if name not in touched else ""
@@ -133,7 +144,7 @@ def _panel(csp: str, claims: list[dict]) -> str:
     head = (f'<h2>{csp}</h2><p class="sub">필수 {n_req} · '
             f'선택 {len(exist) - n_req} · 삭제 제약 {len(holds)}</p>')
     return (f'<section class="panel">{head}'
-            f'<svg viewBox="0 0 380 400" role="img" '
+            f'<svg viewBox="0 0 380 470" role="img" '
             f'aria-label="{csp} 의존성 그래프">{"".join(svg)}</svg></section>')
 
 

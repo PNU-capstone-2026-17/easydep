@@ -77,6 +77,10 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("k8sCluster", "subnet", "lifecycle"): "holds",
         ("k8sCluster", "network", "lifecycle"): "holds",
         ("k8sCluster", "firewall", "existence"): "optional",
+        # k8s 층 합성(2026-07-31): CLB·SG 합성이 노드 0에서도 — 삭제는 동반 정리.
+        # aws k8sPvc→disk는 미측정(전제 부재)이라 간선 자체가 없다 — 범위 표시.
+        ("k8sService", "loadBalancer", "existence"): "optional",
+        ("k8sService", "loadBalancer", "lifecycle"): "holds",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -148,6 +152,11 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("k8sCluster", "subnet", "lifecycle"): "holds",
         ("k8sCluster", "network", "lifecycle"): "holds",
         ("k8sCluster", "k8sNodeGroup", "existence"): "optional",
+        # k8s 층 합성(2026-07-31): LB는 성좌(FR+targetPool+방화벽)로 합성된다.
+        ("k8sService", "loadBalancer", "existence"): "optional",
+        ("k8sService", "loadBalancer", "lifecycle"): "holds",
+        ("k8sPvc", "disk", "existence"): "optional",
+        ("k8sPvc", "disk", "lifecycle"): "holds",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -185,6 +194,12 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("vpn", "subnet", "lifecycle"): "holds",
         ("vpn", "publicIp", "existence"): "required",
         ("vpn", "publicIp", "lifecycle"): "holds",
+        # k8s 층 합성(2026-07-31): 상시 LB에 규칙 합성(gcp 성좌 신설과 꼴이
+        # 다르다) · CSI 디스크는 첫 소비자 시점(WaitForFirstConsumer 실측).
+        ("k8sService", "loadBalancer", "existence"): "optional",
+        ("k8sService", "loadBalancer", "lifecycle"): "holds",
+        ("k8sPvc", "disk", "existence"): "optional",
+        ("k8sPvc", "disk", "lifecycle"): "holds",
     }
 
 

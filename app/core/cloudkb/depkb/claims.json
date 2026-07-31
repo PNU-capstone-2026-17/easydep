@@ -1,14 +1,14 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.optional": 9,
-  "aws.holds": 5,
+  "aws.optional": 10,
+  "aws.holds": 6,
   "aws.required": 4,
   "azure.required": 7,
-  "azure.holds": 9,
-  "azure.optional": 8,
-  "gcp.optional": 8,
-  "gcp.holds": 5,
+  "azure.holds": 11,
+  "azure.optional": 10,
+  "gcp.optional": 10,
+  "gcp.holds": 7,
   "gcp.required": 3
  },
  "claims": [
@@ -152,6 +152,54 @@
      "layer": "apply",
      "experiment": "aws-eks3-2026-07-31",
      "step": "F2.delete-subnet1",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: type=LoadBalancer 서비스가 CLB와 전용 SG(k8s-elb-…)를 합성한다 — 노드 0에서도",
+   "note": "노드그룹 없는 클러스터에서 CLB(a4cbeb15…)가 태그된 두 서브넷에 생성 — 이벤트 실물(S4): 'There are no available nodes' 직후 'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. 서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 아님",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth-2026-07-31",
+     "step": "S2.svc-ingress-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth-2026-07-31",
+     "step": "S3.elb-after-svc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth-2026-07-31",
+     "step": "S5.sgs-after-svc",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: Service 삭제가 CLB를 지운다",
+   "note": "aws k8sPvc→disk는 이번 라운드 미측정(노드 0·EBS CSI 애드온 없음 — 전제 부재에서 '합성 없음' 판정은 오판. 실험 기록 P3.unmeasured-note). 그래서 aws에는 k8sPvc 간선이 없다 — 빈칸이 아니라 범위 표시다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth-2026-07-31",
+     "step": "L2.elb-after-delete",
      "code": "ok"
     }
    ]
@@ -644,6 +692,120 @@
      "layer": "apply",
      "experiment": "azure-aks3-2026-07-31",
      "step": "F2.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: CSI가 관리 디스크를 합성한다 — 단 첫 소비자(Pod) 시점(기본 SC WaitForFirstConsumer 실측)",
+   "note": "PVC 단독 60초엔 디스크 0(Pending) → Pod 트리거 후 Bound·노드 RG에 pvc-… 디스크 실재, PV volumeHandle이 그 ARM ID와 일치(층 간 동일성)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "P2.pvc-status-alone",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "P3b.pvc-disks-alone",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "P5.pvc-bound",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "P6b.pvc-disks-after-pod",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "P7.pv-volumehandle-hint",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim Delete 실측)",
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "L6.pvc-disks-after-delete",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: type=LoadBalancer 서비스가 노드 RG에 클라우드 LB 규칙·공인 IP를 합성한다",
+   "note": "LB 'kubernetes'에 규칙 1이 실리고 합성 PIP(kubernetes-a9dde…)의 주소가 Service ingress IP와 일치 — 클러스터 상시 LB에 규칙을 합성하는 꼴(전용 LB 신설이 아니다)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "S3.svc-ingress-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "S5.pips-after-svc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "S4b.lb-after-svc-requery",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: Service 삭제가 LB 규칙과 합성 PIP를 함께 지운다",
+   "note": "삭제 후 LB 규칙 0·합성 PIP 소멸(클러스터 아웃바운드 PIP만 잔존). 계획층이 LB 삭제 단계를 내면 안 된다 — 이미 없다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "L2.lb-rules-after-delete",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth-2026-07-31",
+     "step": "L3.pips-after-delete",
      "code": "ok"
     }
    ]
@@ -1376,6 +1538,114 @@
      "layer": "apply",
      "experiment": "gcp-gke3-2026-07-31",
      "step": "F2.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: CSI가 존 디스크를 합성한다 — 단 첫 소비자(Pod) 시점(기본 SC standard-rwo WaitForFirstConsumer 실측)",
+   "note": "PVC 단독 60초엔 pvc- 디스크 0 → Pod 후 Bound·존에 pvc-… 디스크 실재, volumeHandle 경로 일치. azure와 동형(2사 수렴)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "P2.pvc-status-alone",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "P3.disks-after-pvc-alone",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "P5.pvc-bound",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "P6.disks-after-pod",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "P7.pv-volumehandle-hint",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim Delete 실측)",
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "L6.pvc-disks-after-delete",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: type=LoadBalancer 서비스가 LB 성좌(forwardingRule+targetPool+방화벽)를 합성한다",
+   "note": "합성 성좌 실물: forwardingRule·targetPool 쌍(a040876a…) + 방화벽 3종(k8s-fw-…, hc, deny) — 'gcp LB는 성좌' 결속 지식이 k8s 합성 경로에서 재현. azure(상시 LB에 규칙)와 꼴이 다르다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "S2.svc-ingress-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "S3.lb-after-svc",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sService",
+   "object": "loadBalancer",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: Service 삭제가 성좌 전체(FR·targetPool·방화벽)를 함께 지운다",
+   "note": "라운드 끝의 전용 네트워크 삭제 성공(F4)이 방화벽 잔여 0의 독립 증명이기도 하다 — 규칙이 남았으면 네트워크 삭제가 거부됐다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "L2.lb-after-delete",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth-2026-07-31",
+     "step": "L3.fw-after-delete",
      "code": "ok"
     }
    ]

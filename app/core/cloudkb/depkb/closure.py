@@ -49,6 +49,10 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     # 생성 시 필수인데 이후엔 독립 CRUD). 존재 판정은 생성 시점 기준으로 두고,
     # 운영 시점의 여지는 술어가 나른다.
     ("수명 조건:", "detail"),
+    # 동반 정리: 주체 삭제가 대상(합성물)을 함께 지운다 — 삭제 보호의 반대
+    # 방향이라 lifecycle 소비가 deleteBefore가 아니라 cleanupCascades로 갈린다
+    # (k8s 합성 라운드 실측). 존재 간선에 실리면 detail로 읽는다.
+    ("동반 정리:", "detail"),
 )
 
 
@@ -103,6 +107,11 @@ class Closure:
     decisions: tuple[Decision, ...]
     #: 삭제 제약 — (먼저 지울 것, 그 다음). **실측된 생명주기 주장만** 싣는다.
     deleteBefore: tuple[tuple[str, str], ...]
+    #: 동반 정리 — (주체, 합성물). 주체 삭제가 합성물을 함께 지우므로 계획층은
+    #: 합성물의 삭제 단계를 내면 안 된다(이미 없어 실패한다). deleteBefore와
+    #: 기제가 반대라 섞지 않는다 — `required: true` 하나가 세 판정을 겸하다
+    #: 어긋났던 진단과 같은 이유.
+    cleanupCascades: tuple[tuple[str, str], ...]
 
 
 @lru_cache(maxsize=1)
@@ -180,10 +189,15 @@ def closure(anchor: str, csp: str) -> Closure:
         remaining.remove(ready[0])
 
     scope = seen | set(attachable)
+    life = [c for c in rows
+            if c["question"] == "lifecycle" and c["verdict"] == "holds"
+            and c["subject"] in scope and c["object"] in scope]
     delete_before = tuple(sorted(
-        (c["subject"], c["object"]) for c in rows
-        if c["question"] == "lifecycle" and c["verdict"] == "holds"
-        and c["subject"] in scope and c["object"] in scope))
+        (c["subject"], c["object"]) for c in life
+        if not (c.get("predicate") or "").startswith("동반 정리:")))
+    cascades = tuple(sorted(
+        (c["subject"], c["object"]) for c in life
+        if (c.get("predicate") or "").startswith("동반 정리:")))
 
     return Closure(
         anchor=anchor, csp=csp,
@@ -194,6 +208,7 @@ def closure(anchor: str, csp: str) -> Closure:
         attachable=tuple(attachable[k] for k in sorted(attachable)),
         decisions=tuple(decisions),
         deleteBefore=delete_before,
+        cleanupCascades=cascades,
     )
 
 

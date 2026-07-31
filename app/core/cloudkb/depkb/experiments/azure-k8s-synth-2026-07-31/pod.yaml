@@ -1,0 +1,19 @@
+# PVC 바인딩 트리거용 최소 Pod — MCR 이미지(dockerhub 속도 제한 회피).
+# pause는 아무것도 안 하지만 볼륨 마운트로 WaitForFirstConsumer를 깨운다.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: depkb-synth-pod
+  labels:
+    app: depkb-synth
+spec:
+  containers:
+    - name: pause
+      image: mcr.microsoft.com/oss/kubernetes/pause:3.6
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: depkb-synth-pvc

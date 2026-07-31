@@ -78,6 +78,24 @@ def test_delete_constraints_are_measured_pairs_only() -> None:
     assert ("vm", "disk") in c.deleteBefore
 
 
+def test_synthesis_cleanup_is_not_a_delete_constraint() -> None:
+    """k8s 합성 라운드(2026-07-31)의 소비 규율 — 동반 정리는 deleteBefore가
+    아니라 cleanupCascades다. 섞으면 계획층이 '이미 없는 합성물의 삭제 단계'를
+    낸다. `required: true` 하나가 세 판정을 겸하다 어긋났던 진단과 같은 이유로
+    기제를 필드에서 가른다."""
+    for csp in ("azure", "gcp", "aws"):
+        c = closure("k8sService", csp)
+        assert ("k8sService", "loadBalancer") in c.cleanupCascades, csp
+        assert ("k8sService", "loadBalancer") not in c.deleteBefore, csp
+        lb = next(a for a in c.attachable if a.id == "loadBalancer")
+        assert lb.autoFilled, f"{csp}: 합성 실측이 autoFilled로 읽혀야 한다"
+    for csp in ("azure", "gcp"):  # aws는 미측정 — 간선 자체가 없어야 한다
+        c = closure("k8sPvc", csp)
+        assert ("k8sPvc", "disk") in c.cleanupCascades, csp
+    with pytest.raises(KeyError):
+        closure("k8sPvc", "aws")  # 빈칸이 아니라 범위 표시 — 모르는 자원
+
+
 def test_unknown_csp_and_anchor_fail_loudly() -> None:
     with pytest.raises(KeyError):
         closure("vm", "ncp")

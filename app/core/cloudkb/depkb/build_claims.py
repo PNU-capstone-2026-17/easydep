@@ -557,6 +557,127 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          ],
          note="부트 디스크가 인스턴스 삭제 후 살아남았다(D.disks-after-delete — "
               "API 기본 autoDelete=false의 실측). azure OS 디스크 잔존과 쌍이다"),
+    # ── k8s 층 합성 (2026-07-31 합성 라운드 — Service→LB·PVC→디스크) ──
+    # 주체가 클라우드 자원이 아니라 k8s 오브젝트인 첫 간선들. 존재 질문의 뜻:
+    # 대상이 미리 있어야 하는가 → 아니다, k8s 층이 스스로 합성한다(optional +
+    # server-implicit → 소비층에서 autoFilled — 이중 생성 경계 I2의 근거).
+    # 생명주기는 삭제 보호가 아니라 **동반 정리**라 술어로 가른다(closure가
+    # deleteBefore가 아닌 cleanupCascades로 소비).
+    dict(csp="azure", subject="k8sService", object="loadBalancer",
+         question="existence", verdict="optional",
+         predicate="server-implicit: type=LoadBalancer 서비스가 노드 RG에 "
+                   "클라우드 LB 규칙·공인 IP를 합성한다",
+         evidence=[
+             ("azure-k8s-synth-2026-07-31", "S3.svc-ingress-hint", "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "S5.pips-after-svc", "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "S4b.lb-after-svc-requery",
+              "ok", "apply"),
+         ],
+         note="LB 'kubernetes'에 규칙 1이 실리고 합성 PIP"
+              "(kubernetes-a9dde…)의 주소가 Service ingress IP와 일치 — "
+              "클러스터 상시 LB에 규칙을 합성하는 꼴(전용 LB 신설이 아니다)"),
+    dict(csp="azure", subject="k8sService", object="loadBalancer",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: Service 삭제가 LB 규칙과 합성 PIP를 함께 지운다",
+         evidence=[
+             ("azure-k8s-synth-2026-07-31", "L2.lb-rules-after-delete",
+              "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "L3.pips-after-delete", "ok", "apply"),
+         ],
+         note="삭제 후 LB 규칙 0·합성 PIP 소멸(클러스터 아웃바운드 PIP만 잔존). "
+              "계획층이 LB 삭제 단계를 내면 안 된다 — 이미 없다"),
+    dict(csp="azure", subject="k8sPvc", object="disk",
+         question="existence", verdict="optional",
+         predicate="server-implicit: CSI가 관리 디스크를 합성한다 — 단 첫 "
+                   "소비자(Pod) 시점(기본 SC WaitForFirstConsumer 실측)",
+         evidence=[
+             ("azure-k8s-synth-2026-07-31", "P2.pvc-status-alone", "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "P3b.pvc-disks-alone", "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "P5.pvc-bound", "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "P6b.pvc-disks-after-pod",
+              "ok", "apply"),
+             ("azure-k8s-synth-2026-07-31", "P7.pv-volumehandle-hint",
+              "ok", "apply"),
+         ],
+         note="PVC 단독 60초엔 디스크 0(Pending) → Pod 트리거 후 Bound·노드 RG에 "
+              "pvc-… 디스크 실재, PV volumeHandle이 그 ARM ID와 일치(층 간 동일성)"),
+    dict(csp="azure", subject="k8sPvc", object="disk",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim "
+                   "Delete 실측)",
+         evidence=[
+             ("azure-k8s-synth-2026-07-31", "L6.pvc-disks-after-delete",
+              "ok", "apply"),
+         ]),
+    dict(csp="gcp", subject="k8sService", object="loadBalancer",
+         question="existence", verdict="optional",
+         predicate="server-implicit: type=LoadBalancer 서비스가 LB 성좌"
+                   "(forwardingRule+targetPool+방화벽)를 합성한다",
+         evidence=[
+             ("gcp-k8s-synth-2026-07-31", "S2.svc-ingress-hint", "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "S3.lb-after-svc", "ok", "apply"),
+         ],
+         note="합성 성좌 실물: forwardingRule·targetPool 쌍(a040876a…) + 방화벽 "
+              "3종(k8s-fw-…, hc, deny) — 'gcp LB는 성좌' 결속 지식이 k8s 합성 "
+              "경로에서 재현. azure(상시 LB에 규칙)와 꼴이 다르다"),
+    dict(csp="gcp", subject="k8sService", object="loadBalancer",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: Service 삭제가 성좌 전체(FR·targetPool·방화벽)를 "
+                   "함께 지운다",
+         evidence=[
+             ("gcp-k8s-synth-2026-07-31", "L2.lb-after-delete", "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "L3.fw-after-delete", "ok", "apply"),
+         ],
+         note="라운드 끝의 전용 네트워크 삭제 성공(F4)이 방화벽 잔여 0의 독립 "
+              "증명이기도 하다 — 규칙이 남았으면 네트워크 삭제가 거부됐다"),
+    dict(csp="gcp", subject="k8sPvc", object="disk",
+         question="existence", verdict="optional",
+         predicate="server-implicit: CSI가 존 디스크를 합성한다 — 단 첫 "
+                   "소비자(Pod) 시점(기본 SC standard-rwo WaitForFirstConsumer "
+                   "실측)",
+         evidence=[
+             ("gcp-k8s-synth-2026-07-31", "P2.pvc-status-alone", "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "P3.disks-after-pvc-alone",
+              "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "P5.pvc-bound", "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "P6.disks-after-pod", "ok", "apply"),
+             ("gcp-k8s-synth-2026-07-31", "P7.pv-volumehandle-hint",
+              "ok", "apply"),
+         ],
+         note="PVC 단독 60초엔 pvc- 디스크 0 → Pod 후 Bound·존에 pvc-… 디스크 "
+              "실재, volumeHandle 경로 일치. azure와 동형(2사 수렴)"),
+    dict(csp="gcp", subject="k8sPvc", object="disk",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim "
+                   "Delete 실측)",
+         evidence=[
+             ("gcp-k8s-synth-2026-07-31", "L6.pvc-disks-after-delete",
+              "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="k8sService", object="loadBalancer",
+         question="existence", verdict="optional",
+         predicate="server-implicit: type=LoadBalancer 서비스가 CLB와 전용 "
+                   "SG(k8s-elb-…)를 합성한다 — 노드 0에서도",
+         evidence=[
+             ("aws-k8s-synth-2026-07-31", "S2.svc-ingress-hint", "ok", "apply"),
+             ("aws-k8s-synth-2026-07-31", "S3.elb-after-svc", "ok", "apply"),
+             ("aws-k8s-synth-2026-07-31", "S5.sgs-after-svc", "ok", "apply"),
+         ],
+         note="노드그룹 없는 클러스터에서 CLB(a4cbeb15…)가 태그된 두 서브넷에 "
+              "생성 — 이벤트 실물(S4): 'There are no available nodes' 직후 "
+              "'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. "
+              "서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 "
+              "아님"),
+    dict(csp="aws", subject="k8sService", object="loadBalancer",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: Service 삭제가 CLB를 지운다",
+         evidence=[
+             ("aws-k8s-synth-2026-07-31", "L2.elb-after-delete", "ok", "apply"),
+         ],
+         note="aws k8sPvc→disk는 이번 라운드 미측정(노드 0·EBS CSI 애드온 "
+              "없음 — 전제 부재에서 '합성 없음' 판정은 오판. "
+              "실험 기록 P3.unmeasured-note). 그래서 aws에는 k8sPvc 간선이 "
+              "없다 — 빈칸이 아니라 범위 표시다"),
 ]
 
 
