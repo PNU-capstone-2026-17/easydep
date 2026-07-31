@@ -36,6 +36,80 @@ CSPS = ("aws", "azure", "gcp")
 KO = {"required": "필수", "optional": "선택", "holds": "생명주기 결속",
       "unknown": "미판정"}
 
+#: 문외한용 자원 설명 — **우리 작성**(판정 아님). 실측에서 온 문장은 그렇다고
+#: 적는다. 뷰어 노드 상세의 "이게 뭔가요" 칸에 실린다.
+DESC: dict[str, str] = {
+    "network": "클라우드 안에 만드는 나만의 사설 네트워크 공간입니다. 회사 "
+               "건물의 전체 전산망에 해당하고, 쓸 IP 주소 대역을 정해 그 안에 "
+               "서버들을 놓습니다. 거의 모든 자원이 결국 이 위에 섭니다.",
+    "subnet": "네트워크를 잘게 나눈 구역입니다 — 건물로 치면 층이나 부서망. "
+              "서버(NIC)는 반드시 어느 서브넷 안에 놓입니다(3사 공통으로 "
+              "실측된 몇 안 되는 규칙입니다).",
+    "firewall": "어떤 통신을 허용하고 차단할지 정하는 규칙 목록입니다 — 건물 "
+                "출입 규칙표. 자원에 붙이는 건 선택이지만, 붙어서 쓰이는 동안엔 "
+                "지울 수 없습니다(실측).",
+    "nic": "가상 랜카드입니다 — 서버를 네트워크에 꽂는 플러그. azure에선 "
+           "독립된 자원이고, gcp에선 VM 안에 내장돼 따로 만들 수 없습니다"
+           "(실측된 3사 차이).",
+    "publicIp": "인터넷 어디서나 접근할 수 있는 공인 주소입니다 — 건물의 대표 "
+                "전화번호. 없으면 내부 통신만 됩니다.",
+    "loadBalancer": "들어오는 요청을 여러 서버에 나눠 주는 장치입니다 — 은행의 "
+                    "창구 안내원. gcp에선 부품 하나가 아니라 여러 자원의 "
+                    "묶음(성좌)으로 만들어집니다(실측).",
+    "vm": "가상 서버, 즉 클라우드에서 빌리는 컴퓨터 한 대입니다. 프로그램이 "
+          "실제로 도는 곳이고, 이 그래프 대부분의 화살표가 여기서 나갑니다.",
+    "disk": "서버에 붙이는 저장 장치입니다 — 외장하드. 서버를 지워도 디스크가 "
+            "살아남는 경우가 있습니다(azure OS 디스크·gcp 부트 디스크, 실측).",
+    "image": "서버를 부팅할 원판입니다 — OS가 미리 설치된 템플릿, 컴퓨터 설치 "
+             "USB에 해당. aws에선 서버를 만들 때 사람이 정해야 하는 유일한 "
+             "필수 입력이고, azure·gcp는 기존 디스크로 대신할 수 있습니다"
+             "(실측된 3사 차이).",
+    "sshKey": "서버에 원격 접속할 때 비밀번호 대신 쓰는 열쇠 파일입니다. "
+              "다루는 방식이 3사 3색입니다(aws 선택 등록·azure 무관·gcp에는 "
+              "자원 자체가 없음 — 실측).",
+    "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
+           "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
+           "규칙이 실측됐습니다.",
+    "k8sCluster": "쿠버네티스 클러스터 — 컨테이너(앱을 규격 상자처럼 포장한 "
+                  "것)들을 자동으로 배치·복구·확장해 주는 관리 시스템 전체"
+                  "입니다. 클라우드가 관리 서버 부분을 대신 운영해 줍니다.",
+    "k8sNodeGroup": "클러스터에서 실제로 일하는 서버들의 묶음입니다 — 관리자"
+                    "(클러스터)가 지휘하고 노드들이 컨테이너를 돌립니다.",
+    "k8sService": "클러스터 안의 앱을 외부에 노출하겠다는 **선언문**입니다 — "
+                  "클라우드 자원이 아니라 쿠버네티스에 내는 요청서. "
+                  "type=LoadBalancer로 선언하면 클라우드 LB가 저절로 생기고 "
+                  "선언을 지우면 함께 사라집니다(3사 실측). 그래서 LB를 따로 "
+                  "만들면 이중 생성입니다.",
+    "k8sPvc": "앱이 쓸 저장 공간의 **요청서**입니다(PersistentVolumeClaim). "
+              "요청서를 내면 클라우드 디스크가 저절로 만들어지고(단, 실제로 "
+              "쓰는 앱이 뜰 때 — 실측), 요청서를 지우면 디스크도 함께 "
+              "지워집니다(azure·gcp 실측). 디스크를 따로 만들면 이중 생성입니다.",
+    "k8sIngress": "웹 주소·경로 기준으로 트래픽을 나누겠다는 **선언문**입니다. "
+                  "같은 선언이 gcp에선 LB 묶음을 저절로 만들고, azure·aws 기본 "
+                  "상태에선 아무 일도 일어나지 않습니다(실측) — 처리기"
+                  "(컨트롤러)를 깔지는 사람이 정합니다.",
+}
+
+#: CSP별 실제 명칭 — 어휘 결속(vocabulary.py)과 실측 관찰에서 온 대응.
+CSP_NAMES: dict[str, str] = {
+    "network": "aws VPC · azure Virtual Network · gcp VPC Network",
+    "subnet": "aws Subnet · azure Subnet · gcp Subnetwork",
+    "firewall": "aws Security Group · azure NSG · gcp Firewall rules",
+    "nic": "aws ENI · azure Network Interface · gcp (Instance 내장)",
+    "publicIp": "aws Elastic IP · azure Public IP · gcp Address",
+    "loadBalancer": "aws ELB/ALB/NLB · azure Load Balancer · gcp Forwarding Rule 성좌",
+    "vm": "aws EC2 Instance · azure Virtual Machine · gcp Compute Instance",
+    "disk": "aws EBS Volume · azure Managed Disk · gcp Persistent Disk",
+    "image": "aws AMI · azure Image/Marketplace · gcp Image",
+    "sshKey": "aws Key Pair · azure SSH Public Key · gcp (자원 없음 — 메타데이터)",
+    "vpn": "aws VPN Gateway · azure Virtual Network Gateway · gcp VPN Gateway",
+    "k8sCluster": "aws EKS · azure AKS · gcp GKE",
+    "k8sNodeGroup": "aws Node Group · azure Node Pool · gcp Node Pool",
+    "k8sService": "쿠버네티스 공통 오브젝트 (Service)",
+    "k8sPvc": "쿠버네티스 공통 오브젝트 (PersistentVolumeClaim)",
+    "k8sIngress": "쿠버네티스 공통 오브젝트 (Ingress)",
+}
+
 
 def _positions() -> dict[str, tuple[int, int]]:
     pos: dict[str, tuple[int, int]] = {}
@@ -96,6 +170,7 @@ def _build_data() -> dict:
             })
             touched.update((c["subject"], c["object"]))
         nodes = [{"id": n, "ghost": n not in touched,
+                  "desc": DESC.get(n, ""), "names": CSP_NAMES.get(n, ""),
                   "disjunctions": [
                       {"object": d["object"], "verdict": d["verdict"],
                        "predicate": d.get("predicate"), "note": d.get("note")}
@@ -187,7 +262,8 @@ if (typeof cytoscape === 'undefined') {
   function elements(csp) {
     const d = DATA.csps[csp], els = [];
     for (const n of d.nodes) els.push({group:'nodes',
-      data:{id:n.id, ghost:n.ghost?1:0, disj:n.disjunctions},
+      data:{id:n.id, ghost:n.ghost?1:0, disj:n.disjunctions,
+            desc:n.desc, names:n.names},
       position:{...DATA.positions[n.id]}});
     d.edges.forEach((e,i) => els.push({group:'edges',
       data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls,
@@ -306,6 +382,8 @@ if (typeof cytoscape === 'undefined') {
     p.innerHTML = `<h2>${esc(d.id)}</h2>
       ${d.ghost?'<span class="chip">이 CSP엔 간선 없음</span>':''}
       <span class="chip">${current}</span>
+      ${kv('이게 뭔가요 (설명 — 우리 작성, 판정 아님)', esc(d.desc))}
+      ${kv('CSP별 이름', esc(d.names))}
       ${kv('이 자원이 요구·합성하는 것', outs)}
       ${kv('이 자원을 요구·합성하는 것', ins)}
       ${disj || ''}
