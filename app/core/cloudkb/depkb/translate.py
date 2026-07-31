@@ -44,8 +44,12 @@ _WORKLOAD_KINDS: dict[str, str] = {
 #: 신호 → (앵커 또는 None, 근거). **우리 구성**이되 하류 신호의 해석이다.
 RULES: dict[str, tuple[str | None, str]] = {
     "workload": ("k8sCluster", "k8s 오브젝트는 클러스터 없이 존재할 수 없다"),
-    "ingress": ("loadBalancer",
-                "외부 노출의 유일한 신호 — 트래픽이 클러스터 밖에서 들어온다"),
+    # 2라운드(2026-07-31)로 갱신: loadBalancer 직접 앵커였다가 k8sIngress로.
+    # gcp는 내장 컨트롤러가 성좌를 합성(직접 앵커면 이중 생성)하고, azure·aws
+    # 기본 구성은 합성이 없다(노출 방법은 사용자 결정 — 대신 정하지 않는다).
+    "ingress": ("k8sIngress",
+                "외부 노출 신호 — 클라우드 함의는 CSP 실측이 정한다"
+                "(gcp 성좌 합성 ↔ azure·aws 기본 구성 무합성)"),
     "service": ("k8sService",
                 "type=LoadBalancer 서비스는 클라우드 LB를 합성한다(3사 실측) — "
                 "클라우드 층이 LB를 만들면 이중 생성이다"),

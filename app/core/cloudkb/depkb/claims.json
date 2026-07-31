@@ -1,14 +1,14 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.optional": 10,
+  "aws.optional": 11,
   "aws.holds": 6,
   "aws.required": 5,
   "azure.required": 7,
   "azure.holds": 11,
-  "azure.optional": 11,
-  "gcp.optional": 11,
-  "gcp.holds": 7,
+  "azure.optional": 12,
+  "gcp.optional": 12,
+  "gcp.holds": 8,
   "gcp.required": 3
  },
  "claims": [
@@ -152,6 +152,36 @@
      "layer": "apply",
      "experiment": "aws-eks3-2026-07-31",
      "step": "F2.delete-subnet1",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sIngress",
+   "object": "loadBalancer",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": "**기본 구성에서 합성 없음** — IngressClass 0·Ingress 방치·CLB/ALB 목록 불변. Service→CLB(합성)와 대조: 같은 클러스터 기본 구성에서 Service 컨트롤러는 내장, Ingress 컨트롤러는 부재",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth2-2026-07-31",
+     "step": "K4.ingressclasses",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth2-2026-07-31",
+     "step": "I3.ingress-address-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-k8s-synth2-2026-07-31",
+     "step": "I4.elb-after-ingress",
      "code": "ok"
     }
    ]
@@ -728,6 +758,36 @@
      "layer": "apply",
      "experiment": "azure-aks3-2026-07-31",
      "step": "F2.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sIngress",
+   "object": "loadBalancer",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": "**기본 구성에서 합성 없음** — IngressClass 0(K5)·Ingress 방치(주소 없음, I3)·상시 LB 규칙 0 유지(I4b 재관측)·AppGW 0(I5). gcp와 양상 반전: 같은 신호가 gcp에선 성좌를 합성하고 azure에선 아무것도 만들지 않는다. 노출을 이루는 방법(컨트롤러 애드온 등)은 사용자 결정이고 우리가 대신 정하지 않는다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth2-2026-07-31",
+     "step": "K5.ingressclasses",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth2-2026-07-31",
+     "step": "I3.ingress-address-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-k8s-synth2-2026-07-31",
+     "step": "I5.appgw-after-ingress",
      "code": "ok"
     }
    ]
@@ -1616,6 +1676,54 @@
      "layer": "apply",
      "experiment": "gcp-gke3-2026-07-31",
      "step": "F2.delete-subnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sIngress",
+   "object": "loadBalancer",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: 내장 컨트롤러가 전역 HTTP LB 성좌(urlMap·targetHttpProxy·전역 forwardingRule·backendService·healthCheck)를 합성한다",
+   "note": "IP 34.98.66.175 할당·성좌 5종 실물(k8s2-um/tp/fr-…). 이벤트가 생성 순서를 문장으로(UrlMap→TargetProxy→ForwardingRule). Service의 지역 성좌와 달리 **전역** 성좌다. 특기: IngressClass 목록은 비어 있었다(K3) — 부재 관측만으론 컨트롤러 부재를 판정할 수 없다는 실측",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth2-2026-07-31",
+     "step": "I3.ingress-address-hint",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth2-2026-07-31",
+     "step": "I4.http-lb-after-ingress",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth2-2026-07-31",
+     "step": "I5.ingress-events-hint",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sIngress",
+   "object": "loadBalancer",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: Ingress 삭제가 전역 성좌 전체를 함께 지운다",
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-k8s-synth2-2026-07-31",
+     "step": "I7.http-lb-after-delete",
      "code": "ok"
     }
    ]

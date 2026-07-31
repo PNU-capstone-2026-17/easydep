@@ -96,9 +96,16 @@ puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 A
   스키마는 우리 소관이 아니라 여기서 고칠 수 없다(P5 데모가 드러낸 것).
   신호가 생기기 전까지 이 API는 사설 연결 계획을 내지 않는다. 신호가 생겨도
   vpn 간선은 azure만 실측이라 aws·gcp는 unmeasured로 강등된다.
-- **Ingress → 클라우드 LB**: `ingress` 신호는 지금 `loadBalancer` 앵커로
-  간다(우리 구성). Ingress 오브젝트가 LB를 **합성**하는지는 컨트롤러 전제가
-  CSP마다 달라 별도 실측 대상이다 — 실측되면 Service와 같은 꼴로 바뀔 수 있다.
+- ~~Ingress → 클라우드 LB~~ **실측으로 닫힘(2026-07-31 합성 2라운드)**:
+  `ingress` 신호는 `k8sIngress` 앵커다. gcp는 내장 컨트롤러가 **전역** HTTP LB
+  성좌를 합성(동반 정리까지 실측 — 직접 만들면 이중 생성), azure·aws **기본
+  구성**은 합성 없음(IngressClass 0·Ingress 방치 실측) — 노출 방법(컨트롤러
+  애드온 등)은 사용자 결정이고 이 API가 대신 정하지 않는다.
+- **RWX PVC(파일 스토리지)**: 3사 전부 기본 구성에서 완주 불가 실측 —
+  azure는 CSI가 스토리지 계정 합성을 **시도**하나 구독 정책 교란으로 실패
+  (합성 기제는 확인), gcp는 드라이버가 명시 거부("multi writer with mount
+  access type"), aws는 전제 부재(EFS CSI·노드 0). RWX 신호의 계획은 내지
+  않는다 — fileSystem 어휘 편입과 애드온 변형 실측이 선행이다.
 
 ## 같은 배포 의도, 세 가지 답
 

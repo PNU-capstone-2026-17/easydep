@@ -84,6 +84,8 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # aws k8sPvc→disk는 미측정(전제 부재)이라 간선 자체가 없다 — 범위 표시.
         ("k8sService", "loadBalancer", "existence"): "optional",
         ("k8sService", "loadBalancer", "lifecycle"): "holds",
+        # 합성 2라운드: 기본 구성에서 Ingress 컨트롤러 부재 — 합성 없음.
+        ("k8sIngress", "loadBalancer", "existence"): "optional",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -163,6 +165,9 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("k8sService", "loadBalancer", "lifecycle"): "holds",
         ("k8sPvc", "disk", "existence"): "optional",
         ("k8sPvc", "disk", "lifecycle"): "holds",
+        # 합성 2라운드: 내장 컨트롤러의 **전역** HTTP LB 성좌 — 유일한 합성 CSP.
+        ("k8sIngress", "loadBalancer", "existence"): "optional",
+        ("k8sIngress", "loadBalancer", "lifecycle"): "holds",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -209,6 +214,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("k8sService", "loadBalancer", "lifecycle"): "holds",
         ("k8sPvc", "disk", "existence"): "optional",
         ("k8sPvc", "disk", "lifecycle"): "holds",
+        # 합성 2라운드: 기본 구성에서 Ingress 컨트롤러 부재 — 합성 없음.
+        ("k8sIngress", "loadBalancer", "existence"): "optional",
     }
 
 

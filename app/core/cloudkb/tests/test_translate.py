@@ -21,10 +21,13 @@ def test_workload_kind_gives_the_cluster_anchor() -> None:
     assert not t.open_questions
 
 
-def test_ingress_adds_the_load_balancer_anchor() -> None:
+def test_ingress_adds_the_k8singress_anchor_not_a_direct_lb() -> None:
+    """2라운드(2026-07-31)로 갱신: gcp는 내장 컨트롤러가 성좌를 합성한다 —
+    loadBalancer 직접 앵커면 이중 생성이다. azure·aws 기본 구성은 합성이
+    없고, 그 사실은 폐포에서 attachable(비자동)로 내려간다."""
     t = translate(_intent({"name": "api", "kind": "Deployment",
                            "capabilities": {"ingress": True}}))
-    assert set(t.anchors) == {"k8sCluster", "loadBalancer"}
+    assert set(t.anchors) == {"k8sCluster", "k8sIngress"}
 
 
 def test_pvc_adds_the_k8spvc_anchor_not_a_direct_disk() -> None:
@@ -95,4 +98,5 @@ def test_translation_feeds_the_intent_builder() -> None:
                            "capabilities": {"ingress": True}}))
     intent = build(list(t.anchors), "aws", "ap-northeast-2")
     ids = {r.id for r in intent.resources}
-    assert {"k8sCluster", "loadBalancer", "subnet", "network"} <= ids
+    # loadBalancer는 k8sIngress의 attachable로 내려온다(기본 구성 무합성 실측)
+    assert {"k8sCluster", "k8sIngress", "loadBalancer", "subnet", "network"} <= ids

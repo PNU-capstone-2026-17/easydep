@@ -44,10 +44,15 @@ def test_provision_view_declares_the_layer_boundary() -> None:
 
 def test_questions_merge_translation_and_intent() -> None:
     """물어야 할 것은 한 곳에 모인다 — 하류 신호에서 못 읽은 것과 우리가
-    대신 정하지 않는 것 둘 다."""
-    # ingress가 있어야 loadBalancer 앵커가 서고, 그 선언 술어가 질문이 된다.
-    p = plan_from_deployment_intent(_di(ingress=True), "azure", "r")
+    대신 정하지 않는 것 둘 다.
+
+    2라운드 갱신: ingress 신호는 이제 k8sIngress 앵커라 azure의 LB 프론트엔드
+    질문은 LB를 **직접** 앵커로 고른 경우에만 선다(기본 구성에서 Ingress는
+    LB를 만들지 않으므로 프론트엔드 질문이 이르다 — 실측이 질문 시점을 정한다)."""
+    p = plan_for_anchors(["loadBalancer"], "azure", "r")
     assert any("고르세요" in q for q in p.questions), p.questions
+    p2 = plan_from_deployment_intent(_di(ingress=True), "azure", "r")
+    assert not any("고르세요" in q for q in p2.questions), p2.questions
 
 
 def test_unmeasured_anchor_is_demoted_not_planned() -> None:

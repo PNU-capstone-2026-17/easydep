@@ -668,6 +668,61 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. "
               "서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 "
               "아님"),
+    # ── k8s 합성 2라운드 (2026-07-31 — Ingress→LB. **기본 구성 판정**:
+    # 관리형 기본에 애드온 0. 컨트롤러를 깔면 답이 바뀔 수 있고 그건 별도
+    # 변형이다. RWX PVC 셀은 3사 전부 완주 불가(azure 정책 교란·gcp 드라이버
+    # 거부·aws 전제 부재)라 판정 없이 실험 기록으로만 남았다) ──
+    dict(csp="gcp", subject="k8sIngress", object="loadBalancer",
+         question="existence", verdict="optional",
+         predicate="server-implicit: 내장 컨트롤러가 전역 HTTP LB 성좌"
+                   "(urlMap·targetHttpProxy·전역 forwardingRule·backendService·"
+                   "healthCheck)를 합성한다",
+         evidence=[
+             ("gcp-k8s-synth2-2026-07-31", "I3.ingress-address-hint",
+              "ok", "apply"),
+             ("gcp-k8s-synth2-2026-07-31", "I4.http-lb-after-ingress",
+              "ok", "apply"),
+             ("gcp-k8s-synth2-2026-07-31", "I5.ingress-events-hint",
+              "ok", "apply"),
+         ],
+         note="IP 34.98.66.175 할당·성좌 5종 실물(k8s2-um/tp/fr-…). 이벤트가 "
+              "생성 순서를 문장으로(UrlMap→TargetProxy→ForwardingRule). "
+              "Service의 지역 성좌와 달리 **전역** 성좌다. 특기: IngressClass "
+              "목록은 비어 있었다(K3) — 부재 관측만으론 컨트롤러 부재를 판정할 "
+              "수 없다는 실측"),
+    dict(csp="gcp", subject="k8sIngress", object="loadBalancer",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: Ingress 삭제가 전역 성좌 전체를 함께 지운다",
+         evidence=[
+             ("gcp-k8s-synth2-2026-07-31", "I7.http-lb-after-delete",
+              "ok", "apply"),
+         ]),
+    dict(csp="azure", subject="k8sIngress", object="loadBalancer",
+         question="existence", verdict="optional",
+         evidence=[
+             ("azure-k8s-synth2-2026-07-31", "K5.ingressclasses", "ok", "apply"),
+             ("azure-k8s-synth2-2026-07-31", "I3.ingress-address-hint",
+              "ok", "apply"),
+             ("azure-k8s-synth2-2026-07-31", "I5.appgw-after-ingress",
+              "ok", "apply"),
+         ],
+         note="**기본 구성에서 합성 없음** — IngressClass 0(K5)·Ingress 방치"
+              "(주소 없음, I3)·상시 LB 규칙 0 유지(I4b 재관측)·AppGW 0(I5). "
+              "gcp와 양상 반전: 같은 신호가 gcp에선 성좌를 합성하고 azure에선 "
+              "아무것도 만들지 않는다. 노출을 이루는 방법(컨트롤러 애드온 등)은 "
+              "사용자 결정이고 우리가 대신 정하지 않는다"),
+    dict(csp="aws", subject="k8sIngress", object="loadBalancer",
+         question="existence", verdict="optional",
+         evidence=[
+             ("aws-k8s-synth2-2026-07-31", "K4.ingressclasses", "ok", "apply"),
+             ("aws-k8s-synth2-2026-07-31", "I3.ingress-address-hint",
+              "ok", "apply"),
+             ("aws-k8s-synth2-2026-07-31", "I4.elb-after-ingress",
+              "ok", "apply"),
+         ],
+         note="**기본 구성에서 합성 없음** — IngressClass 0·Ingress 방치·"
+              "CLB/ALB 목록 불변. Service→CLB(합성)와 대조: 같은 클러스터 "
+              "기본 구성에서 Service 컨트롤러는 내장, Ingress 컨트롤러는 부재"),
     # ── image 라운드 (2026-07-31 — vm→image, 3사. 외부 대조 오류 셋 중
     # spec/image를 닫는다) ──
     dict(csp="azure", subject="vm", object="image", question="existence",

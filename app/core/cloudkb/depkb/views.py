@@ -34,7 +34,7 @@ _GROUP: dict[str, str] = {
     "publicIp": "네트워크", "nic": "네트워크", "loadBalancer": "네트워크",
     "vm": "컴퓨트", "disk": "컴퓨트", "sshKey": "컴퓨트", "image": "컴퓨트",
     "k8sCluster": "컨테이너", "k8sNodeGroup": "컨테이너",
-    "k8sService": "컨테이너", "k8sPvc": "컨테이너",
+    "k8sService": "컨테이너", "k8sPvc": "컨테이너", "k8sIngress": "컨테이너",
     "vpn": "연결",
 }
 
