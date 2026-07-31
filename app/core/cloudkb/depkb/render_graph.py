@@ -24,8 +24,8 @@ _OUT = _HERE / "dependency-graph.html"
 #: 층 배치 — 위가 k8s API 오브젝트, 아래로 갈수록 기반 자원. **우리 구성.**
 LAYERS: list[list[str]] = [
     ["k8sPvc", "k8sService", "k8sIngress"],
-    ["k8sCluster", "k8sNodeGroup", "vpn"],
-    ["vm", "loadBalancer"],
+    ["k8sCluster", "k8sNodeGroup", "vpn", "globalDnsRecord"],
+    ["vm", "loadBalancer", "globalDns", "fileSystem", "storageAccount"],
     ["image", "customImage", "disk", "nic", "publicIp", "sshKey", "iamRole"],
     ["subnet", "firewall", "internetGateway"],
     ["network"],
@@ -70,6 +70,23 @@ DESC: dict[str, str] = {
     "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
            "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
            "규칙이 실측됐습니다.",
+    "globalDns": "이름(도메인)을 관리하는 영역입니다 — 전화번호부 한 권. "
+                 "레코드를 담는 그릇이고, aws에선 사설 영역을 만들 때 "
+                 "네트워크를 반드시 붙여야 합니다(실측).",
+    "globalDnsRecord": "'이 이름은 이 주소'라는 항목 하나입니다 — 전화번호부의 "
+                       "한 줄. 영역 없이는 못 만듭니다(3사 실측). 지울 때가 "
+                       "갈립니다: gcp·aws는 레코드가 남아 있으면 영역 삭제를 "
+                       "거부하는데, azure는 그냥 지워집니다(양상 반전 실측).",
+    "fileSystem": "여러 서버가 **동시에** 함께 쓰는 저장소입니다 — 공용 "
+                  "문서함(디스크가 1인용 외장하드라면 이건 공유 폴더). "
+                  "네트워크와 엮이는 방식이 3사 3색입니다: aws는 저장소 "
+                  "자체는 네트워크가 필요 없고 접속점만 서브넷을 요구하며, "
+                  "gcp는 저장소가 네트워크를 요구하고, azure는 네트워크가 "
+                  "아니라 스토리지 계정 밑에 놓입니다(실측).",
+    "storageAccount": "azure에서 저장 자원들을 담는 상위 그릇입니다 — 계좌 "
+                      "하나에 여러 통장. 파일 공유는 이 계정 밑에서만 "
+                      "만들어집니다(실측). 다른 두 CSP엔 대응 개념이 "
+                      "이 자리에 없습니다.",
     "customImage": "우리가 직접 만든 부팅 원판입니다 — 프로그램까지 설치해 "
                    "둔 '골든 이미지'. 만들 때는 원본이 반드시 있어야 하지만"
                    "(실측), 한 번 만들고 나면 **원본을 지워도 이미지는 "
@@ -125,6 +142,13 @@ CSP_NAMES: dict[str, str] = {
     "iamRole": "aws IAM Role/Instance Profile · azure Managed Identity · "
                "gcp Service Account",
     "customImage": "aws AMI(+스냅샷) · azure Managed Image · gcp Custom Image",
+    "globalDns": "aws Route53 Hosted Zone · azure Private DNS Zone · "
+                 "gcp Cloud DNS Managed Zone",
+    "globalDnsRecord": "aws ResourceRecordSet · azure DNS record-set · "
+                       "gcp ResourceRecordSet",
+    "fileSystem": "aws EFS(+Mount Target) · azure File Share · gcp Filestore",
+    "storageAccount": "azure Storage Account (aws·gcp엔 이 자리의 대응 "
+                      "개념이 없다)",
     "k8sCluster": "aws EKS · azure AKS · gcp GKE",
     "k8sNodeGroup": "aws Node Group · azure Node Pool · gcp Node Pool",
     "k8sService": "쿠버네티스 공통 오브젝트 (Service)",

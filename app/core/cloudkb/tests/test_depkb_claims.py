@@ -97,6 +97,13 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # customImage 라운드: AMI의 원본은 **인스턴스**다(3사 중 유일).
         ("customImage", "vm", "existence"): "required",
         ("vm", "customImage", "existence"): "optional",
+        # dns·fs 라운드: 사설 영역은 VPC 필수(aws 고유) · EFS는 접속점만
+        # 서브넷을 요구한다(저장소 자체는 네트워크 무관).
+        ("globalDns", "globalDnsRecord", "existence"): "required",
+        ("globalDns", "globalDnsRecord", "lifecycle"): "holds",
+        ("globalDns", "network", "existence"): "required",
+        ("fileSystem", "subnet", "existence"): "required",
+        ("fileSystem", "subnet", "lifecycle"): "holds",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -189,6 +196,11 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         # customImage 라운드: 원본은 디스크(aws와 반전), 결속은 없다.
         ("customImage", "disk", "existence"): "required",
         ("vm", "customImage", "existence"): "optional",
+        # dns·fs 라운드: Filestore는 파일시스템 자체가 네트워크를 요구한다
+        # (aws와 층이 다르다). 거부 층까지만 측정.
+        ("globalDns", "globalDnsRecord", "existence"): "required",
+        ("globalDns", "globalDnsRecord", "lifecycle"): "holds",
+        ("fileSystem", "network", "existence"): "required",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -247,6 +259,10 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         # customImage 라운드: 원본은 디스크, 결속은 없다(graphkb 관측과 갈림).
         ("customImage", "disk", "existence"): "required",
         ("vm", "customImage", "existence"): "optional",
+        # dns·fs 라운드: 파일 공유는 네트워크가 아니라 스토리지 계정 밑이다.
+        # DNS 생명주기는 **없다** — 레코드가 있어도 영역이 지워진다(반전).
+        ("globalDns", "globalDnsRecord", "existence"): "required",
+        ("fileSystem", "storageAccount", "existence"): "required",
     }
 
 
@@ -263,6 +279,22 @@ def test_vm_image_flips_between_disjunctive_and_required(artifact) -> None:
     assert rows["gcp"]["verdict"] == "optional"
     for csp in ("azure", "gcp"):
         assert rows[csp]["predicate"].startswith("disjunctive:"), csp
+
+
+def test_dns_zone_deletion_flips_and_filesystem_anchors_differ(artifact) -> None:
+    """dns·fs 라운드(2026-07-31) 둘:
+    ① 레코드가 남은 영역의 삭제가 gcp·aws는 거부인데 **azure는 성공**한다 —
+    azure에는 이 생명주기 행이 아예 없다(없는 결속을 적지 않는다).
+    ② fileSystem이 무엇에 매달리는지가 3사 3색 — aws는 서브넷(접속점 경유),
+    gcp는 네트워크(저장소 자체), azure는 스토리지 계정(경로 중첩)."""
+    life = {c["csp"] for c in artifact["claims"]
+            if (c["subject"], c["object"], c["question"])
+            == ("globalDns", "globalDnsRecord", "lifecycle")}
+    assert life == {"gcp", "aws"}, f"azure는 결속이 없어야 한다: {life}"
+    anchors = {c["csp"]: c["object"] for c in artifact["claims"]
+               if c["subject"] == "fileSystem" and c["question"] == "existence"}
+    assert anchors == {"aws": "subnet", "gcp": "network",
+                       "azure": "storageAccount"}
 
 
 def test_custom_image_holds_no_source_and_flips_its_source_kind(artifact) -> None:

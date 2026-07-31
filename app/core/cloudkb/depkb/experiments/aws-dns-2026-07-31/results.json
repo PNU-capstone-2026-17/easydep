@@ -1,0 +1,77 @@
+{
+ "_note": "globalDns(aws) — Route53 사설 영역. 사설 한정 측정.",
+ "startedAt": "2026-07-31T10:58:14+00:00",
+ "ids": {
+  "vpc": "vpc-0f210c45174ace979",
+  "zoneId": "Z04508673FY1XEZH8QU88"
+ },
+ "steps": {
+  "A0.private-zone-without-vpc": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidInput"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidInput) when calling the CreateHostedZone operation: When you're creating a private hosted zone (when you specify true for PrivateZone), you must also specify values for VPCId and VPCRegion."
+  },
+  "A1.record-without-zone": {
+   "ok": false,
+   "errorCodes": [
+    "NoSuchHostedZone"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (NoSuchHostedZone) when calling the ChangeResourceRecordSets operation: No hosted zone found with ID: Z00000000000000000000"
+  },
+  "R1.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-0e3074041320fadbf\",\n                \"CidrBlock\": \"10.104.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-0f210c45174ace979\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.104.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "A2.create-private-zone": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Location\": \"https://route53.amazonaws.com/2013-04-01/hostedzone/Z04508673FY1XEZH8QU88\",\n    \"HostedZone\": {\n        \"Id\": \"/hostedzone/Z04508673FY1XEZH8QU88\",\n        \"Name\": \"depkb.internal.\",\n        \"CallerReference\": \"depkb-a2\",\n        \"Config\": {\n            \"PrivateZone\": true\n        },\n        \"ResourceRecordSetCount\": 2,\n        \"Features\": {}\n    },\n    \"ChangeInfo\": {\n        \"Id\": \"/change/C02361633FN6ADU1HZ26E\",\n        \"Status\": \"PENDING\",\n        \"SubmittedAt\": \"2026-07-31T10:58:22.316000+00:00\"\n    },\n    \"VPC\": {\n        \"VPCRegion\": \"ap-northeast-2\",\n        \"VPCId\": "
+  },
+  "A3.create-record": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ChangeInfo\": {\n        \"Id\": \"/change/C01011902N7P0N6WYJL3T\",\n        \"Status\": \"PENDING\",\n        \"SubmittedAt\": \"2026-07-31T10:58:24.089000+00:00\"\n    }\n}"
+  },
+  "L1.delete-zone-with-record": {
+   "ok": false,
+   "errorCodes": [
+    "HostedZoneNotEmpty"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (HostedZoneNotEmpty) when calling the DeleteHostedZone operation: The specified hosted zone contains non-required resource record sets and so cannot be deleted."
+  },
+  "L2.delete-record": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ChangeInfo\": {\n        \"Id\": \"/change/C0748756LWNYJR0ORPXP\",\n        \"Status\": \"PENDING\",\n        \"SubmittedAt\": \"2026-07-31T10:58:27.677000+00:00\"\n    }\n}"
+  },
+  "L3.delete-zone-after": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ChangeInfo\": {\n        \"Id\": \"/change/C07470012UXGKV5817ZVE\",\n        \"Status\": \"PENDING\",\n        \"SubmittedAt\": \"2026-07-31T10:58:29.483000+00:00\"\n    }\n}"
+  },
+  "T1.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T2.residual-zones": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T10:58:33+00:00"
+}

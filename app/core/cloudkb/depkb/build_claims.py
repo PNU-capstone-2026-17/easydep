@@ -728,6 +728,116 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── globalDns·fileSystem 라운드 (2026-07-31 — 어휘 밖 대기열 소진.
+    # DNS는 사설 영역 한정 측정(공인 이름 미소유), Filestore는 거부 층까지만
+    # (최소 티어 1TiB 비용 규율) — 깊이 비대칭을 판정에 적는다) ──
+    dict(csp="gcp", subject="globalDns", object="globalDnsRecord",
+         question="existence", verdict="required",
+         evidence=[
+             ("gcp-dns-2026-07-31", "A1.record-without-zone",
+              "notFound", "apply"),
+             ("gcp-dns-2026-07-31", "A3.create-record", "ok", "apply"),
+         ],
+         note="영역 없이 레코드는 notFound. **사설 영역 한정 측정** — 공인 "
+              "영역은 소유하지 않은 이름을 등록할 수 없어 안 쟀다"),
+    dict(csp="gcp", subject="globalDns", object="globalDnsRecord",
+         question="lifecycle", verdict="holds",
+         evidence=[
+             ("gcp-dns-2026-07-31", "L1.delete-zone-with-record",
+              "containerNotEmpty", "apply"),
+             ("gcp-dns-2026-07-31", "L3.delete-zone-after", "ok", "apply"),
+         ],
+         note="레코드가 있으면 영역을 못 지운다(containerNotEmpty) — 레코드 "
+              "삭제 후 성공(양성 대조). **azure와 양상 반전**"),
+    dict(csp="aws", subject="globalDns", object="globalDnsRecord",
+         question="existence", verdict="required",
+         evidence=[
+             ("aws-dns-2026-07-31", "A1.record-without-zone",
+              "NoSuchHostedZone", "apply"),
+             ("aws-dns-2026-07-31", "A3.create-record", "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="globalDns", object="globalDnsRecord",
+         question="lifecycle", verdict="holds",
+         evidence=[
+             ("aws-dns-2026-07-31", "L1.delete-zone-with-record",
+              "HostedZoneNotEmpty", "apply"),
+             ("aws-dns-2026-07-31", "L3.delete-zone-after", "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="globalDns", object="network",
+         question="existence", verdict="required",
+         predicate="스킴 조건부: 사설 영역에서만 필수(공인 영역 미측정)",
+         evidence=[
+             ("aws-dns-2026-07-31", "A0.private-zone-without-vpc",
+              "InvalidInput", "apply"),
+             ("aws-dns-2026-07-31", "A2.create-private-zone", "ok", "apply"),
+         ],
+         note="사설 hosted zone은 VPC 없이 못 만든다 — gcp·azure에는 이 거부 "
+              "셀이 없어(사설 영역이 네트워크를 필수로 요구하지 않거나 우리가 "
+              "함께 준 경로였다) aws 고유 관측으로 남는다"),
+    dict(csp="azure", subject="globalDns", object="globalDnsRecord",
+         question="existence", verdict="required",
+         evidence=[
+             ("azure-dns-fs-2026-07-31", "D1.record-without-zone",
+              "ParentResourceNotFound", "apply"),
+             ("azure-dns-fs-2026-07-31", "D3.create-record", "ok", "apply"),
+         ],
+         note="서버가 부모 부재를 이름으로: ParentResourceNotFound"),
+    dict(csp="aws", subject="fileSystem", object="subnet",
+         question="existence", verdict="required",
+         predicate="마운트 타깃 경유: 파일시스템 자체는 네트워크 없이 서고, "
+                   "접속점(mount target)이 서브넷을 요구한다",
+         evidence=[
+             ("aws-fs-2026-07-31", "A1.create-filesystem-no-network",
+              "ok", "apply"),
+             ("aws-fs-2026-07-31", "A3.mount-target-omit-subnet",
+              "--subnet-id", "preflight"),
+             ("aws-fs-2026-07-31", "A4.mount-target-dangling-subnet",
+              "SubnetNotFound", "apply"),
+             ("aws-fs-2026-07-31", "A6.mount-target-available", "ok", "apply"),
+         ],
+         note="**층이 갈린다** — 저장소(파일시스템)는 네트워크 무관, 접속점은 "
+              "서브넷 필수. mount target을 별도 어휘로 올리지 않고 술어로 "
+              "나른다(image 참조 훅과 같은 규율 — 미판정을 늘리지 않는다). "
+              "생략 거부는 클라이언트층, 허상 거부는 서버층(SubnetNotFound)"),
+    dict(csp="aws", subject="fileSystem", object="subnet",
+         question="lifecycle", verdict="holds",
+         evidence=[
+             ("aws-fs-2026-07-31", "L1.delete-subnet-in-use",
+              "DependencyViolation", "apply"),
+             ("aws-fs-2026-07-31", "T4.delete-subnet", "ok", "apply"),
+         ],
+         note="마운트 타깃이 쓰는 서브넷은 못 지운다 — IaaS·k8s 층과 같은 "
+              "코드(DependencyViolation). 역방향도 실측: 마운트 타깃이 있으면 "
+              "파일시스템 삭제가 FileSystemInUse로 막힌다(L2)"),
+    dict(csp="gcp", subject="fileSystem", object="network",
+         question="existence", verdict="required",
+         evidence=[
+             ("gcp-fs-2026-07-31", "A1.omit-network", "INVALID_ARGUMENT",
+              "apply"),
+             ("gcp-fs-2026-07-31", "A2.dangling-network", "INVALID_ARGUMENT",
+              "apply"),
+         ],
+         note="서버가 조건을 문장으로: 'must have exactly one network "
+              "config.' · 허상은 'network … does not exist'. **거부 층까지만 "
+              "쟀다** — Filestore 최소 티어가 1TiB급이라 실생성을 안 했다"
+              "(비용 규율). 양성 대조 없음이 이 판정의 한계다. aws와 대비: "
+              "aws는 파일시스템이 네트워크 없이 서고 접속점만 서브넷을 "
+              "요구하는데, gcp는 파일시스템 자체가 네트워크를 요구한다"),
+    dict(csp="azure", subject="fileSystem", object="storageAccount",
+         question="existence", verdict="required",
+         evidence=[
+             ("azure-dns-fs-2026-07-31", "F2.create-file-share", "ok", "apply"),
+             ("azure-dns-fs-2026-07-31", "F1.create-storage-account",
+              "ok", "apply"),
+         ],
+         note="파일 공유는 스토리지 계정 하위 자원이다(경로 중첩) — 3사 중 "
+              "유일하게 **네트워크가 아니라 계정**이 상위다. 환경 전제 함정: "
+              "Microsoft.Storage RP 미등록이면 **SubscriptionNotFound**가 "
+              "난다(구독이 없다는 뜻이 아니다 — results-round1.json). "
+              "미해결: 합성 2라운드에서 CSI가 계정 합성에 실패한 것이 CSI "
+              "경로 탓인지 그때 RP가 미등록이던 탓인지 **가르지 못했다** — "
+              "오류 문구(TLS)는 RP와 안 맞지만 RP 등록 후 CSI를 재측정하지 "
+              "않았다"),
     # ── customImage 라운드 (2026-07-31 — 어휘 편입. graphkb의
     # node→customImage **생명주기 관측과 컨트롤 플레인이 갈린 자리**:
     # 3사 모두 이미지가 원본을 붙잡지 않는다. 결속이 없으므로 lifecycle
