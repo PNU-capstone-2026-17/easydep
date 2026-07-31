@@ -728,6 +728,46 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── iamRole 라운드 (2026-07-31 — 어휘: aws IAM Role/Instance Profile ·
+    # azure Managed Identity · gcp Service Account를 iamRole 하나로 묶는다.
+    # 대부분 기존 실측의 승격이고 새 실험은 gcp 마이크로 하나) ──
+    dict(csp="aws", subject="k8sCluster", object="iamRole",
+         question="existence", verdict="required",
+         evidence=[
+             ("aws-eks-2026-07-31", "E2.omit-role", "--role-arn", "preflight"),
+             ("aws-eks3-2026-07-31", "R.create-role", "ok", "apply"),
+             ("aws-eks3-2026-07-31", "K1.create-cluster", "ok", "apply"),
+         ],
+         note="거부 라운드에서 관측만 되고 어휘 밖이라 못 들어갔던 판정의 "
+              "승격. 생략 거부는 **클라이언트층**(--role-arn — nic→subnet과 "
+              "같은 한계 명시), 실역할 생성·클러스터 성공이 양성 대조. "
+              "EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)은 기능 신호 "
+              "정의가 별도 설계라 미판정 유지(eks3 라운드에 무방비 관측만)"),
+    dict(csp="aws", subject="vm", object="iamRole", question="existence",
+         verdict="optional",
+         evidence=[
+             ("aws-func2-2026-07-31", "R10.run-instance", "ok", "apply"),
+         ],
+         note="인스턴스 프로필 없이 run-instances 성공(기존 라운드 전부가 "
+              "그랬다 — 대표 인용 하나)"),
+    dict(csp="azure", subject="vm", object="iamRole", question="existence",
+         verdict="optional",
+         evidence=[
+             ("azure-func-2026-07-31", "R4.create-vm", "ok", "apply"),
+         ],
+         note="managed identity 미지정으로 VM 생성 성공. identity 실물 부재는 "
+              "미기록 — 생략 성공이 판정 근거다"),
+    dict(csp="gcp", subject="vm", object="iamRole", question="existence",
+         verdict="optional",
+         evidence=[
+             ("gcp-iam-2026-07-31", "A1.create-vm-omit-sa", "ok", "apply"),
+             ("gcp-iam-2026-07-31", "A2.running", "ok", "apply"),
+             ("gcp-iam-2026-07-31", "A3.serviceaccounts-shape", "ok", "apply"),
+         ],
+         note="SA 생략 인스턴스가 RUNNING이고 **serviceAccounts: null 실물** "
+              "— 서버가 기본 SA를 붙이지 않는다(server-default 아님). gcloud "
+              "CLI·콘솔은 기본 SA를 주입하므로 REST 직접(CLI 기본값 배제) "
+              "결정이 없었다면 server-default로 오판했을 자리"),
     # ── 기능 의존 2라운드 (2026-07-31 — firewall·라우팅 도달성. azure의
     # 라우팅 셀은 **대응 자원 부재**(인터넷 경로가 시스템 라우트)라 간선이
     # 없다 — 빈칸이 아니라 자원 부재의 기록. internetGateway 어휘 첫 등장) ──

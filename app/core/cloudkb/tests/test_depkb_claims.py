@@ -91,6 +91,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # 기능 2라운드: SG 교체(관계 변이)·IGW 라우트 삭제 — 둘 다 무방비.
         ("vm", "firewall", "function"): "holds",
         ("subnet", "internetGateway", "function"): "holds",
+        # iamRole 라운드: EKS 거부 관측의 승격 + 인스턴스 프로필 생략 성공.
+        ("k8sCluster", "iamRole", "existence"): "required",
+        ("vm", "iamRole", "existence"): "optional",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -178,6 +181,8 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         # 기능 2라운드: 규칙 삭제(관계 변이 부재)·기본 라우트 삭제 — 무방비.
         ("vm", "firewall", "function"): "holds",
         ("network", "internetGateway", "function"): "holds",
+        # iamRole 라운드: serviceAccounts null 실물 — 서버가 안 붙인다.
+        ("vm", "iamRole", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -231,6 +236,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         # 기능 2라운드: 서브넷-NSG 분리 무방비(secure-by-default와 합성 효과).
         # 라우팅 셀은 azure에 대응 자원이 없다 — 간선 부재가 기록이다.
         ("subnet", "firewall", "function"): "holds",
+        # iamRole 라운드: managed identity 미지정 생성 성공.
+        ("vm", "iamRole", "existence"): "optional",
     }
 
 

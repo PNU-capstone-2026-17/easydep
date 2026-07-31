@@ -45,6 +45,7 @@ def test_aws_eks_two_azs_passes() -> None:
     report = check(intent, _plan(
         network=[{"name": "vpc"}],
         subnet=[{"name": "s1", "zone": "a"}, {"name": "s2", "zone": "b"}],
+        iamRole=[{"name": "cluster-role"}],  # iamRole 라운드로 필수 편입
         k8sCluster=[{"name": "c"}]))
     assert report.ok, report.violations
 
@@ -110,7 +111,8 @@ def test_missing_required_resource_is_reported() -> None:
     """필수인데 계획에 없으면 잡는다 — 단 서버가 채우는 것은 부재가 정상이다."""
     intent = build(["k8sCluster"], "aws", "r")
     report = check(intent, _plan(k8sCluster=[{"name": "c"}]))
-    assert set(report.missing_required) == {"network", "subnet"}
+    # iamRole 라운드(2026-07-31)로 EKS의 역할 필수가 어휘에 편입됐다
+    assert set(report.missing_required) == {"network", "subnet", "iamRole"}
     assert "firewall" not in report.missing_required, (
         "서버가 만드는 것을 누락으로 세면 계획이 불필요한 자원을 만든다"
     )

@@ -26,7 +26,7 @@ LAYERS: list[list[str]] = [
     ["k8sPvc", "k8sService", "k8sIngress"],
     ["k8sCluster", "k8sNodeGroup", "vpn"],
     ["vm", "loadBalancer"],
-    ["image", "disk", "nic", "publicIp", "sshKey"],
+    ["image", "disk", "nic", "publicIp", "sshKey", "iamRole"],
     ["subnet", "firewall", "internetGateway"],
     ["network"],
 ]
@@ -70,6 +70,11 @@ DESC: dict[str, str] = {
     "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
            "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
            "규칙이 실측됐습니다.",
+    "iamRole": "서버나 서비스가 다른 클라우드 자원에 접근할 때 쓰는 "
+               "신분증(권한 묶음)입니다 — 사원증. VM엔 3사 모두 없어도 "
+               "되지만(실측), aws EKS 클러스터는 없으면 만들 수조차 "
+               "없습니다(실측). gcp는 API로 만들면 서버가 기본 신분증을 "
+               "붙여 주지 않는다는 것도 실측됐습니다.",
     "internetGateway": "사설 네트워크를 인터넷에 잇는 관문입니다 — 건물의 "
                        "정문. 이게 없거나 경로(라우트)가 빠지면 공인 IP가 "
                        "있어도 밖에서 못 들어옵니다(실측). aws에선 실제 "
@@ -111,6 +116,8 @@ CSP_NAMES: dict[str, str] = {
     "vpn": "aws VPN Gateway · azure Virtual Network Gateway · gcp VPN Gateway",
     "internetGateway": "aws Internet Gateway · azure (자원 없음 — 시스템 "
                        "라우트) · gcp (라우트의 next-hop 개념)",
+    "iamRole": "aws IAM Role/Instance Profile · azure Managed Identity · "
+               "gcp Service Account",
     "k8sCluster": "aws EKS · azure AKS · gcp GKE",
     "k8sNodeGroup": "aws Node Group · azure Node Pool · gcp Node Pool",
     "k8sService": "쿠버네티스 공통 오브젝트 (Service)",
