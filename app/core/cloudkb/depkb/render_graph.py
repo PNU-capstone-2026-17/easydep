@@ -78,18 +78,20 @@ def _build_data() -> dict:
                 touched.add(c["subject"])
                 continue
             lc = life.get((c["subject"], c["object"]))
+            # 증거는 **전부** 싣는다 — 스키마 인용(cite·form·requiredInSchema)
+            # 포함. 상세 패널이 요약이 아니라 claims의 전체 기록이어야 한다.
             edges.append({
                 "s": c["subject"], "o": c["object"],
                 "cls": _edge_class(c), "verdict": c["verdict"],
                 "predicate": c.get("predicate"), "note": c.get("note"),
                 "oracle": c["oracle"],
-                "evidence": [e for e in c["evidence"] if e["layer"] != "schema"],
+                "evidence": c["evidence"],
                 "lifecycle": None if lc is None else {
                     "verdict": lc["verdict"],
                     "cascade": (lc.get("predicate") or "").startswith("동반 정리:"),
                     "predicate": lc.get("predicate"), "note": lc.get("note"),
-                    "evidence": [e for e in lc["evidence"]
-                                 if e["layer"] != "schema"],
+                    "oracle": lc["oracle"],
+                    "evidence": lc["evidence"],
                 },
             })
             touched.update((c["subject"], c["object"]))
@@ -252,35 +254,63 @@ if (typeof cytoscape === 'undefined') {
     return body ? `<div class="kv"><b>${esc(title)}</b>${body}</div>` : '';
   }
   function evList(evidence) {
-    return (evidence||[]).map(e =>
-      `<div class="ev">${esc(e.experiment)} / ${esc(e.step)} → ${esc(e.code)}</div>`
-    ).join('');
+    // 층별로 나눠 전부 보여준다 — 스키마 인용까지가 그 판정의 전체 기록이다.
+    const schema = (evidence||[]).filter(e => e.layer === 'schema');
+    const dyn = (evidence||[]).filter(e => e.layer !== 'schema');
+    let out = '';
+    if (schema.length) out += '<div class="ev"><u>스키마 층</u></div>' +
+      schema.map(e => `<div class="ev">${esc(e.cite)}<br>&nbsp;&nbsp;형태 ${esc(e.form)}` +
+        ` · 스키마 required=${e.requiredInSchema}</div>`).join('');
+    if (dyn.length) out += '<div class="ev"><u>동적 층</u></div>' +
+      dyn.map(e => `<div class="ev">[${esc(e.layer)}] ${esc(e.experiment)} / ` +
+        `${esc(e.step)} → ${esc(e.code)}</div>`).join('');
+    return out;
+  }
+  const VK = {required:'필수', optional:'선택', holds:'생명주기 결속',
+              unknown:'미판정'};
+
+  function edgeDetail(d) {
+    const lc = d.lifecycle;
+    return `<h2>${esc(d.s)} → ${esc(d.o)}</h2>
+      <span class="chip ${d.cls}">${{req:'필수',opt:'선택',auto:'서버가 채움',cond:'조건부'}[d.cls]}</span>
+      <span class="chip">존재 판정: ${VK[d.verdict]||esc(d.verdict)}</span>
+      <span class="chip">도달 오라클: ${esc(d.oracle)} 층</span>
+      ${kv('술어 (분류는 우리 구성)', esc(d.predicate))}
+      ${kv('노트', esc(d.note))}
+      ${kv('증거 — 존재 질문', evList(d.evidence))}
+      ${lc ? kv('생명주기 질문 ' + (lc.cascade?'♻ 동반 정리':'🔒 삭제 보호')
+                + ` — 판정 ${VK[lc.verdict]||esc(lc.verdict)}`
+                + ` (${esc(lc.oracle)} 층)`,
+                (lc.predicate?`${esc(lc.predicate)}<br>`:'')
+                + (lc.note?`${esc(lc.note)}<br>`:'')
+                + evList(lc.evidence))
+          : kv('생명주기 질문', '이 간선에는 생명주기 주장이 없다 — '
+               + '빈칸이 아니라 그 질문을 판정할 실측이 없다는 기록이다')}`;
   }
 
   function showDetail(t) {
     const p = document.getElementById('panel');
-    if (t.isEdge()) {
-      const d = t.data(), lc = d.lifecycle;
-      p.innerHTML = `<h2>${esc(d.s)} → ${esc(d.o)}</h2>
-        <span class="chip ${d.cls}">${{req:'필수',opt:'선택',auto:'서버가 채움',cond:'조건부'}[d.cls]}</span>
-        <span class="chip">${esc(d.oracle)} 층</span>
-        ${kv('술어', esc(d.predicate))}
-        ${kv('노트', esc(d.note))}
-        ${kv('동적 증거', evList(d.evidence))}
-        ${lc ? kv('생명주기 ' + (lc.cascade?'♻ 동반 정리':'🔒 삭제 보호'),
-                  esc(lc.predicate||'') + (lc.note?`<br>${esc(lc.note)}`:'')
-                  + evList(lc.evidence)) : ''}`;
-    } else {
-      const d = t.data();
-      const disj = (d.disj||[]).map(x =>
-        kv(`선언 술어 → ${esc(x.object)} [${esc(x.verdict)}]`,
-           esc(x.predicate||'') + (x.note?`<br>${esc(x.note)}`:''))).join('');
-      const deg = t.connectedEdges(':visible').length;
-      p.innerHTML = `<h2>${esc(d.id)}</h2>
-        ${d.ghost?'<span class="chip">이 CSP엔 간선 없음</span>':''}
-        <span class="chip">${current}</span><span class="chip">간선 ${deg}</span>
-        ${disj || ''}`;
-    }
+    if (t.isEdge()) { p.innerHTML = edgeDetail(t.data()); return; }
+    const d = t.data();
+    const disj = (d.disj||[]).map(x =>
+      kv(`선언 술어 → ${esc(x.object)} [${VK[x.verdict]||esc(x.verdict)}]`,
+         esc(x.predicate||'') + (x.note?`<br>${esc(x.note)}`:''))).join('');
+    // 이 노드에 걸린 주장 전부 — 나가는(요구/합성) 것과 들어오는 것.
+    const rows = DATA.csps[current].edges;
+    const line = e => `<div class="ev">${esc(e.s)} → ${esc(e.o)} · `
+      + `${VK[e.verdict]||esc(e.verdict)}`
+      + (e.lifecycle ? ` · ${e.lifecycle.cascade?'♻':'🔒'}` : '')
+      + (e.predicate ? `<br>&nbsp;&nbsp;${esc(e.predicate)}` : '') + '</div>';
+    const outs = rows.filter(e => e.s === d.id).map(line).join('');
+    const ins = rows.filter(e => e.o === d.id).map(line).join('');
+    p.innerHTML = `<h2>${esc(d.id)}</h2>
+      ${d.ghost?'<span class="chip">이 CSP엔 간선 없음</span>':''}
+      <span class="chip">${current}</span>
+      ${kv('이 자원이 요구·합성하는 것', outs)}
+      ${kv('이 자원을 요구·합성하는 것', ins)}
+      ${disj || ''}
+      <div class="empty" style="font-size:12px">간선을 클릭하면 그 주장의
+      전체 기록(스키마 인용·동적 증거·생명주기)이 나옵니다.</div>`;
   }
   function clearDetail() {
     document.getElementById('panel').innerHTML =
