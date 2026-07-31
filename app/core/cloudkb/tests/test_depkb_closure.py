@@ -18,7 +18,7 @@ def test_azure_vm_needs_the_nic_chain() -> None:
     assert {i.id for i in c.required} == {"nic", "subnet", "network"}
     assert c.createOrder == ("network", "subnet", "nic", "vm")
     assert {a.id for a in c.attachable} == {"disk", "firewall", "publicIp",
-                                            "iamRole"}
+                                            "iamRole", "customImage"}
     assert not any(a.autoFilled for a in c.attachable), (
         "azure 선택 자원엔 서버 대체 실측이 없다 — autoFilled는 측정된 대체에만"
     )
@@ -34,9 +34,9 @@ def test_aws_vm_requires_exactly_the_image() -> None:
     assert c.createOrder == ("image", "vm")
     auto = {a.id for a in c.attachable if a.autoFilled}
     assert auto == {"subnet", "firewall", "nic", "disk"}
-    assert {a.id for a in c.attachable if not a.autoFilled} == {"sshKey",
-                                                                "iamRole"}, (
-        "sshKey·iamRole은 서버가 채워 주지 않는다 — 붙이려면 사람이 정한다"
+    assert {a.id for a in c.attachable if not a.autoFilled} == {
+        "sshKey", "iamRole", "customImage"}, (
+        "sshKey·iamRole·customImage는 서버가 채워 주지 않는다 — 사람이 정한다"
     )
 
 

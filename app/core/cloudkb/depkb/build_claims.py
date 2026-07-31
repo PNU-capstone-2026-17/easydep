@@ -728,6 +728,73 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── customImage 라운드 (2026-07-31 — 어휘 편입. graphkb의
+    # node→customImage **생명주기 관측과 컨트롤 플레인이 갈린 자리**:
+    # 3사 모두 이미지가 원본을 붙잡지 않는다. 결속이 없으므로 lifecycle
+    # 행을 만들지 않는다 — 없는 결속을 적지 않는다) ──
+    dict(csp="azure", subject="customImage", object="disk",
+         question="existence", verdict="required",
+         evidence=[
+             ("azure-cimg-2026-07-31", "A1.dangling-source-disk",
+              "NotFound", "apply"),
+             ("azure-cimg-2026-07-31", "A2.create-image-from-disk",
+              "ok", "apply"),
+         ],
+         note="허상 원본은 NotFound, 실제 관리 디스크로는 성공. 전제 함정: "
+              "--hyper-v-generation 기본 V1이 소스 디스크 V2와 불일치해 "
+              "InvalidParameter(results-round1.json) — 세대는 원본을 따라야 "
+              "한다(전제이지 판정 아님). **원본 삭제는 막히지 않았다**"
+              "(L1/L1b — 디스크 실제 소멸) → 생명주기 결속 없음, "
+              "graphkb의 node→customImage 관측과 컨트롤 플레인이 갈린다"),
+    dict(csp="azure", subject="vm", object="customImage",
+         question="existence", verdict="optional",
+         evidence=[
+             ("azure-cimg-2026-07-31", "C1.create-vm-from-custom-image",
+              "ok", "apply"),
+         ],
+         note="사슬 완결(디스크→이미지→VM). 선택인 이유는 vm→image의 선언 "
+              "술어와 같다 — 부팅 원천은 플랫폼 이미지·기존 디스크로도 된다"),
+    dict(csp="gcp", subject="customImage", object="disk",
+         question="existence", verdict="required",
+         evidence=[
+             ("gcp-cimg-2026-07-31", "A1.dangling-source-disk",
+              "notFound", "apply"),
+             ("gcp-cimg-2026-07-31", "A3.image-ready", "ok", "apply"),
+         ],
+         note="원본 삭제 후에도 이미지 READY이고 archiveSizeBytes 709MB가 "
+              "찍힌다(복사본 실증) — 그런데 **sourceDisk 참조는 허상으로 "
+              "남는다**(L1b). 참조가 있다고 결속인 것이 아니라는 실물 사례"),
+    dict(csp="gcp", subject="vm", object="customImage",
+         question="existence", verdict="optional",
+         evidence=[
+             ("gcp-cimg-2026-07-31", "C1.create-vm-from-custom-image",
+              "ok", "apply"),
+             ("gcp-cimg-2026-07-31", "C2.vm-running", "ok", "apply"),
+         ]),
+    dict(csp="aws", subject="customImage", object="vm", question="existence",
+         verdict="required",
+         predicate="원본 종류 반전: AMI는 디스크가 아니라 **인스턴스**에서 "
+                   "나온다(create-image)",
+         evidence=[
+             ("aws-cimg-2026-07-31", "A1.dangling-source-instance",
+              "InvalidParameterValue", "apply"),
+             ("aws-cimg-2026-07-31", "A3.ami-available", "ok", "apply"),
+             ("aws-cimg-2026-07-31", "A4.ami-snapshots", "ok", "apply"),
+         ],
+         note="**간선의 대상 자체가 3사에서 갈린다** — azure·gcp는 "
+              "customImage→disk인데 aws는 customImage→vm이다. 실체는 "
+              "스냅샷(snap-0124…)이고, 원본 인스턴스 종료 후에도 AMI는 "
+              "available(L1c) — 결속 없음. 정리에 스냅샷 삭제가 따로 필요"
+              "하다는 것도 실측(등록 해제만 하면 조용히 남는다)"),
+    dict(csp="aws", subject="vm", object="customImage", question="existence",
+         verdict="optional",
+         evidence=[
+             ("aws-cimg-2026-07-31", "C1.run-instance-from-custom-ami",
+              "ok", "apply"),
+             ("aws-cimg-2026-07-31", "C2.vm-running", "ok", "apply"),
+         ],
+         note="사슬 완결. vm→image가 aws에서 required인 것과 함께 읽어야 "
+              "한다 — 부팅 원천은 필수지만 그것이 **커스텀일 필요는 없다**"),
     # ── iamRole 라운드 (2026-07-31 — 어휘: aws IAM Role/Instance Profile ·
     # azure Managed Identity · gcp Service Account를 iamRole 하나로 묶는다.
     # 대부분 기존 실측의 승격이고 새 실험은 gcp 마이크로 하나) ──

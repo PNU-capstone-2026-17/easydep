@@ -94,6 +94,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # iamRole 라운드: EKS 거부 관측의 승격 + 인스턴스 프로필 생략 성공.
         ("k8sCluster", "iamRole", "existence"): "required",
         ("vm", "iamRole", "existence"): "optional",
+        # customImage 라운드: AMI의 원본은 **인스턴스**다(3사 중 유일).
+        ("customImage", "vm", "existence"): "required",
+        ("vm", "customImage", "existence"): "optional",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -183,6 +186,9 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("network", "internetGateway", "function"): "holds",
         # iamRole 라운드: serviceAccounts null 실물 — 서버가 안 붙인다.
         ("vm", "iamRole", "existence"): "optional",
+        # customImage 라운드: 원본은 디스크(aws와 반전), 결속은 없다.
+        ("customImage", "disk", "existence"): "required",
+        ("vm", "customImage", "existence"): "optional",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -238,6 +244,9 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("subnet", "firewall", "function"): "holds",
         # iamRole 라운드: managed identity 미지정 생성 성공.
         ("vm", "iamRole", "existence"): "optional",
+        # customImage 라운드: 원본은 디스크, 결속은 없다(graphkb 관측과 갈림).
+        ("customImage", "disk", "existence"): "required",
+        ("vm", "customImage", "existence"): "optional",
     }
 
 
@@ -254,6 +263,19 @@ def test_vm_image_flips_between_disjunctive_and_required(artifact) -> None:
     assert rows["gcp"]["verdict"] == "optional"
     for csp in ("azure", "gcp"):
         assert rows[csp]["predicate"].startswith("disjunctive:"), csp
+
+
+def test_custom_image_holds_no_source_and_flips_its_source_kind(artifact) -> None:
+    """customImage(2026-07-31) 둘: ① 3사 모두 이미지가 원본을 붙잡지 않는다
+    — 생명주기 행 자체가 없다(없는 결속을 적지 않는다). graphkb의
+    node→customImage 생명주기 관측과 컨트롤 플레인이 갈린 자리다.
+    ② 원본의 **종류**가 갈린다 — azure·gcp는 디스크, aws는 인스턴스."""
+    life = [c for c in artifact["claims"] if c["question"] == "lifecycle"
+            and "customImage" in (c["subject"], c["object"])]
+    assert not life, f"결속 없음이 실측인데 생명주기 행이 생겼다: {life}"
+    sources = {c["csp"]: c["object"] for c in artifact["claims"]
+               if c["subject"] == "customImage" and c["question"] == "existence"}
+    assert sources == {"azure": "disk", "gcp": "disk", "aws": "vm"}
 
 
 def test_function_is_a_third_question_axis(artifact) -> None:

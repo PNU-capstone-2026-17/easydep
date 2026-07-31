@@ -26,7 +26,7 @@ LAYERS: list[list[str]] = [
     ["k8sPvc", "k8sService", "k8sIngress"],
     ["k8sCluster", "k8sNodeGroup", "vpn"],
     ["vm", "loadBalancer"],
-    ["image", "disk", "nic", "publicIp", "sshKey", "iamRole"],
+    ["image", "customImage", "disk", "nic", "publicIp", "sshKey", "iamRole"],
     ["subnet", "firewall", "internetGateway"],
     ["network"],
 ]
@@ -70,6 +70,12 @@ DESC: dict[str, str] = {
     "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
            "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
            "규칙이 실측됐습니다.",
+    "customImage": "우리가 직접 만든 부팅 원판입니다 — 프로그램까지 설치해 "
+                   "둔 '골든 이미지'. 만들 때는 원본이 반드시 있어야 하지만"
+                   "(실측), 한 번 만들고 나면 **원본을 지워도 이미지는 "
+                   "살아남습니다**(3사 공통 실측 — 복사본이기 때문). 원본이 "
+                   "무엇이냐는 갈립니다: azure·gcp는 디스크, aws는 서버 "
+                   "자체입니다.",
     "iamRole": "서버나 서비스가 다른 클라우드 자원에 접근할 때 쓰는 "
                "신분증(권한 묶음)입니다 — 사원증. VM엔 3사 모두 없어도 "
                "되지만(실측), aws EKS 클러스터는 없으면 만들 수조차 "
@@ -118,6 +124,7 @@ CSP_NAMES: dict[str, str] = {
                        "라우트) · gcp (라우트의 next-hop 개념)",
     "iamRole": "aws IAM Role/Instance Profile · azure Managed Identity · "
                "gcp Service Account",
+    "customImage": "aws AMI(+스냅샷) · azure Managed Image · gcp Custom Image",
     "k8sCluster": "aws EKS · azure AKS · gcp GKE",
     "k8sNodeGroup": "aws Node Group · azure Node Pool · gcp Node Pool",
     "k8sService": "쿠버네티스 공통 오브젝트 (Service)",

@@ -1,17 +1,47 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.optional": 12,
-  "aws.required": 6,
+  "aws.required": 7,
+  "aws.optional": 13,
   "aws.holds": 9,
-  "azure.required": 7,
+  "azure.required": 8,
   "azure.holds": 13,
-  "azure.optional": 13,
-  "gcp.optional": 13,
-  "gcp.holds": 11,
-  "gcp.required": 3
+  "azure.optional": 14,
+  "gcp.required": 4,
+  "gcp.optional": 14,
+  "gcp.holds": 11
  },
  "claims": [
+  {
+   "subject": "customImage",
+   "object": "vm",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": "원본 종류 반전: AMI는 디스크가 아니라 **인스턴스**에서 나온다(create-image)",
+   "note": "**간선의 대상 자체가 3사에서 갈린다** — azure·gcp는 customImage→disk인데 aws는 customImage→vm이다. 실체는 스냅샷(snap-0124…)이고, 원본 인스턴스 종료 후에도 AMI는 available(L1c) — 결속 없음. 정리에 스냅샷 삭제가 따로 필요하다는 것도 실측(등록 해제만 하면 조용히 남는다)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-cimg-2026-07-31",
+     "step": "A1.dangling-source-instance",
+     "code": "InvalidParameterValue"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-cimg-2026-07-31",
+     "step": "A3.ami-available",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-cimg-2026-07-31",
+     "step": "A4.ami-snapshots",
+     "code": "ok"
+    }
+   ]
+  },
   {
    "subject": "firewall",
    "object": "network",
@@ -542,6 +572,30 @@
   },
   {
    "subject": "vm",
+   "object": "customImage",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": "사슬 완결. vm→image가 aws에서 required인 것과 함께 읽어야 한다 — 부팅 원천은 필수지만 그것이 **커스텀일 필요는 없다**",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-cimg-2026-07-31",
+     "step": "C1.run-instance-from-custom-ami",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-cimg-2026-07-31",
+     "step": "C2.vm-running",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
    "object": "disk",
    "csp": "aws",
    "question": "existence",
@@ -849,6 +903,30 @@
      "experiment": "aws-apply-2026-07-30",
      "step": "A.dangling-vm-subnet",
      "code": "InvalidSubnetID.NotFound"
+    }
+   ]
+  },
+  {
+   "subject": "customImage",
+   "object": "disk",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "허상 원본은 NotFound, 실제 관리 디스크로는 성공. 전제 함정: --hyper-v-generation 기본 V1이 소스 디스크 V2와 불일치해 InvalidParameter(results-round1.json) — 세대는 원본을 따라야 한다(전제이지 판정 아님). **원본 삭제는 막히지 않았다**(L1/L1b — 디스크 실제 소멸) → 생명주기 결속 없음, graphkb의 node→customImage 관측과 컨트롤 플레인이 갈린다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-cimg-2026-07-31",
+     "step": "A1.dangling-source-disk",
+     "code": "NotFound"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-cimg-2026-07-31",
+     "step": "A2.create-image-from-disk",
+     "code": "ok"
     }
    ]
   },
@@ -1598,6 +1676,24 @@
   },
   {
    "subject": "vm",
+   "object": "customImage",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": "사슬 완결(디스크→이미지→VM). 선택인 이유는 vm→image의 선언 술어와 같다 — 부팅 원천은 플랫폼 이미지·기존 디스크로도 된다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-cimg-2026-07-31",
+     "step": "C1.create-vm-from-custom-image",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
    "object": "disk",
    "csp": "azure",
    "question": "existence",
@@ -1838,6 +1934,30 @@
      "layer": "apply",
      "experiment": "azure-vpn2-2026-07-31",
      "step": "F3.delete-vnet",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "customImage",
+   "object": "disk",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "원본 삭제 후에도 이미지 READY이고 archiveSizeBytes 709MB가 찍힌다(복사본 실증) — 그런데 **sourceDisk 참조는 허상으로 남는다**(L1b). 참조가 있다고 결속인 것이 아니라는 실물 사례",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-cimg-2026-07-31",
+     "step": "A1.dangling-source-disk",
+     "code": "notFound"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-cimg-2026-07-31",
+     "step": "A3.image-ready",
      "code": "ok"
     }
    ]
@@ -2420,6 +2540,30 @@
      "layer": "apply",
      "experiment": "gcp-apply-2026-07-31",
      "step": "D.delete-network",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "customImage",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": null,
+   "note": null,
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-cimg-2026-07-31",
+     "step": "C1.create-vm-from-custom-image",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-cimg-2026-07-31",
+     "step": "C2.vm-running",
      "code": "ok"
     }
    ]

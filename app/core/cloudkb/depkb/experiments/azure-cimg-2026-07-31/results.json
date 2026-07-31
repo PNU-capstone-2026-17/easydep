@@ -1,0 +1,97 @@
+{
+ "_note": "customImage(azure) — 디스크 원본 경로. 이미지 존재 중 원본 삭제가 막히는지가 생명주기 셀.",
+ "startedAt": "2026-07-31T10:26:33+00:00",
+ "ids": {
+  "osDisk": "depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077",
+  "diskId": "/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/disks/depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077"
+ },
+ "steps": {
+  "R1.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.103.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"0127a8bf-948b-4c0a-b153-2a261d27a3f8\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-ci-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-ci-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"resourceGuid\": \"a2f3044c-977d-4ec0-9d49-32fd8985b433\",\n  "
+  },
+  "R2.create-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/virtualMachines/depkb-ci-vm\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"7C-ED-8D-F6-F8-2C\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.103.0.4\",\n  \"publicIpAddress\": \"\",\n  \"resourceGroup\": \"depkb-preflight\"\n}"
+  },
+  "R3.os-disk-name": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077"
+  },
+  "R4.delete-vm-keep-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "R5.disk-id": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/disks/depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077"
+  },
+  "A1.dangling-source-disk": {
+   "ok": false,
+   "errorCodes": [
+    "NotFound"
+   ],
+   "excerpt": "ERROR: (NotFound) The entity was not found in this Azure location.\nCode: NotFound\nMessage: The entity was not found in this Azure location.\nTarget: /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/disks/depkb-no-such-disk"
+  },
+  "A2.create-image-from-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"hyperVGeneration\": \"V2\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/images/depkb-ci-img\",\n  \"location\": \"koreacentral\",\n  \"name\": \"depkb-ci-img\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"storageProfile\": {\n    \"dataDisks\": [],\n    \"osDisk\": {\n      \"caching\": \"None\",\n      \"diskSizeGB\": 30,\n      \"managedDisk\": {\n        \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/disks/depkb-ci-vm_OsDisk_1_2d9c85dc076d4d"
+  },
+  "L1.delete-source-while-image-exists": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "L1b.disk-exists-after": {
+   "ok": false,
+   "errorCodes": [
+    "ResourceNotFound"
+   ],
+   "excerpt": "ERROR: (ResourceNotFound) The Resource 'Microsoft.Compute/disks/depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix\nCode: ResourceNotFound\nMessage: The Resource 'Microsoft.Compute/disks/depkb-ci-vm_OsDisk_1_2d9c85dc076d4da4b25ad083dd483077' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix"
+  },
+  "C1.create-vm-from-custom-image": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/virtualMachines/depkb-ci-vm2\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"00-22-48-CC-30-1D\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.103.0.5\",\n  \"publicIpAddress\": \"\",\n  \"resourceGroup\": \"depkb-preflight\"\n}"
+  },
+  "T1.delete-vm2": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-image": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T3.delete-disk-depkb-ci-vm2_disk1_5a5f8": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T4.delete-nic-vnet": {
+   "ok": false,
+   "errorCodes": [
+    "InUseSubnetCannotBeDeleted"
+   ],
+   "excerpt": "ERROR: (InUseSubnetCannotBeDeleted) Subnet s is in use by /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/DEPKB-PREFLIGHT/providers/Microsoft.Network/networkInterfaces/DEPKB-CI-VM2VMNIC/ipConfigurations/IPCONFIGDEPKB-CI-VM2 and cannot be deleted. In order to delete the subnet, delete all the resources within the subnet. See aka.ms/deletesubnet.\nCode: InUseSubnetCannotBeDeleted\nMessage: Subnet s is in use by /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/DEPKB-PREFLIGHT/providers/Microsoft.Network/networkInterfaces/DEPKB-CI-VM2VMNIC/ipConfigurations/IPCONF"
+  },
+  "T5.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  {\n    \"changedTime\": \"2026-07-31T10:26:43.155131+00:00\",\n    \"createdTime\": \"2026-07-31T10:26:37.740376+00:00\",\n    \"extendedLocation\": null,\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-ci-vnet\",\n    \"identity\": null,\n    \"kind\": null,\n    \"location\": \"koreacentral\",\n    \"managedBy\": null,\n    \"name\": \"depkb-ci-vnet\",\n    \"plan\": null,\n    \"properties\": null,\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"sku\": null,\n    \"tags\": null,\n    \"type\": \"Microsof"
+  },
+  "T6.residual-manual-sweep": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "실험기 정리가 VM 부산물을 놓쳤다 — az vm delete는 NIC·NSG를 남긴다(기실측 패턴, 합성물 정리와 대조). 수동 정리: NIC 2·NSG 2·vnet 1 삭제 후 잔여 0 확인. 실험기의 T4는 vnet만 지워 InUseSubnet으로 실패했었다"
+  }
+ },
+ "finishedAt": "2026-07-31T10:32:52+00:00"
+}
