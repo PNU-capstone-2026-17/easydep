@@ -28,9 +28,13 @@ ROOT = Path(__file__).resolve().parent.parent
 #: 만들면 어느 것이 현재 모델인지 다시 알 수 없어진다.
 #: `resource-catalog.md` (2026-07-30 추가) — **필드 표는 태그가 오르면 낡는다.**
 #: 아카이브는 갱신을 금지하므로 소스 태그를 올릴 때 정정을 실을 자리가 없다.
+#: `infra-planning-api.md` (2026-07-31 추가) — **다른 영역이 읽는 계약이다.**
+#: 아카이브는 "그때 이렇게 불렀다"의 스냅샷이라 갱신을 금지하는데, 이 문서는
+#: 설계·구현 에이전트가 호출법을 찾아오는 자리라 계약이 바뀌면 **그 자리에서**
+#: 고쳐야 한다. 날짜 박힌 사본을 새로 만들면 어느 것이 현재 계약인지 모른다.
 LIVING_DOCS = {
     "kb-book.md", "research.md", "constraint-derivation.md", "dependency-model.md",
-    "resource-catalog.md",
+    "resource-catalog.md", "infra-planning-api.md",
 }
 
 
