@@ -25,7 +25,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .closure import Closure, _claims, _classify, closure
+from .closure import PREDICATE_CLASSES, Closure, _claims, _classify, closure
 
 SCHEMA_VERSION = "easydep-infra-intent/v1alpha1"
 
@@ -108,9 +108,16 @@ def _constraints_for(csp: str, ids: set[str]) -> tuple[Constraint, ...]:
             continue
         if c["subject"] not in ids or c["object"].split("|")[0] not in ids:
             continue
+        # 술어에 부류 접두가 없는 것도 있다("ALB는 …") — 그때 앞부분을 부류로
+        # 쓰면 규칙 문장이 통째로 부류명이 된다. 접두표에서 찾고, 없으면
+        # 일반 부류로 둔다.
+        prefix = next((p.rstrip(":") for p, _ in PREDICATE_CLASSES
+                       if c["predicate"].startswith(p)), "")
         head, _, rest = c["predicate"].partition(":")
-        out.append(Constraint(kind=head.strip(), subject=c["subject"],
-                              object=c["object"], rule=rest.strip() or head.strip()))
+        kind = prefix if prefix.endswith(("조건", "호환")) else "카디널리티"
+        rule = rest.strip() if rest.strip() else c["predicate"].strip()
+        out.append(Constraint(kind=kind, subject=c["subject"],
+                              object=c["object"], rule=rule))
     return tuple(sorted(set(out), key=lambda x: (x.subject, x.object, x.kind)))
 
 
