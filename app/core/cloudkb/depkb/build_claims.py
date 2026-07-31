@@ -728,6 +728,33 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 기능 신호 5 재시도 (2026-08-01 — 1차 미판정을 닫는다. **기능 축이
+    # 새 간선을 여는 첫 사례**: loadBalancer→vm은 존재 판정에 없다. LB는
+    # 백엔드 없이도 만들어지므로 존재로는 안 보이고 기능으로만 보인다) ──
+    dict(csp="azure", subject="loadBalancer", object="vm",
+         question="function", verdict="holds",
+         predicate="무방비: 백엔드 풀에서 NIC 제거를 컨트롤 플레인이 막지 "
+                   "않는다 — 기능 신호는 LB 프론트엔드로의 HTTP 200",
+         evidence=[
+             ("azure-lb-serve2-2026-08-01", "F1.lb-serves", "ok", "apply"),
+             ("azure-lb-serve2-2026-08-01", "F1b.probe-hits-in-log",
+              "ok", "apply"),
+             ("azure-lb-serve2-2026-08-01", "M1.remove-nic-from-pool",
+              "ok", "apply"),
+             ("azure-lb-serve2-2026-08-01", "F2.serving-lost", "ok", "apply"),
+             ("azure-lb-serve2-2026-08-01", "M2.re-add-nic", "ok", "apply"),
+             ("azure-lb-serve2-2026-08-01", "F3.serving-again", "ok", "apply"),
+         ],
+         note="**존재 판정에 없는 간선을 기능이 열었다** — LB는 백엔드 없이 "
+              "만들어지므로(기존 실측) 존재 축에서는 이 결속이 보이지 않는다. "
+              "백엔드 응답기는 python3 http.server(OS 기본, 앱 아님)이고 요청 "
+              "도달을 게스트 접근 로그로 교차 확인했다(F1b). "
+              "1차(azure-lb-serve-2026-07-31)는 기준선을 못 세워 미판정이었고 "
+              "원인은 **az vm create가 NIC에 자동 생성해 붙이는 NSG**였다 — "
+              "규칙이 default-allow-ssh(22) 하나뿐이라 서브넷 NSG에서 80을 "
+              "열어도 NIC에서 막힌다(azure는 서브넷·NIC 양쪽을 다 통과해야 "
+              "한다). 재시도에서 관리 접근을 LB 인바운드 NAT로 빼 게스트 "
+              "진단 경로를 확보한 것이 원인 규명의 열쇠였다(Z1)"),
     # ── 기능 신호 6 (2026-07-31 — 서비스 디스커버리. **이 라운드에서
     # 유일하게 관측자 이미지가 필요했다**. 신호 5(LB 서빙)는 기준선을 못
     # 세워 미판정 — azure-lb-serve-2026-07-31/Z2에 조건 명시) ──

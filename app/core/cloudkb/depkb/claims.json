@@ -5,7 +5,7 @@
   "aws.holds": 15,
   "aws.optional": 14,
   "azure.required": 10,
-  "azure.holds": 16,
+  "azure.holds": 17,
   "azure.optional": 16,
   "gcp.required": 7,
   "gcp.optional": 14,
@@ -1767,6 +1767,54 @@
      "experiment": "azure-apply-2026-07-30",
      "step": "A.apply.dangling-lb-pip",
      "code": "InvalidResourceReference"
+    }
+   ]
+  },
+  {
+   "subject": "loadBalancer",
+   "object": "vm",
+   "csp": "azure",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 백엔드 풀에서 NIC 제거를 컨트롤 플레인이 막지 않는다 — 기능 신호는 LB 프론트엔드로의 HTTP 200",
+   "note": "**존재 판정에 없는 간선을 기능이 열었다** — LB는 백엔드 없이 만들어지므로(기존 실측) 존재 축에서는 이 결속이 보이지 않는다. 백엔드 응답기는 python3 http.server(OS 기본, 앱 아님)이고 요청 도달을 게스트 접근 로그로 교차 확인했다(F1b). 1차(azure-lb-serve-2026-07-31)는 기준선을 못 세워 미판정이었고 원인은 **az vm create가 NIC에 자동 생성해 붙이는 NSG**였다 — 규칙이 default-allow-ssh(22) 하나뿐이라 서브넷 NSG에서 80을 열어도 NIC에서 막힌다(azure는 서브넷·NIC 양쪽을 다 통과해야 한다). 재시도에서 관리 접근을 LB 인바운드 NAT로 빼 게스트 진단 경로를 확보한 것이 원인 규명의 열쇠였다(Z1)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "F1.lb-serves",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "F1b.probe-hits-in-log",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "M1.remove-nic-from-pool",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "F2.serving-lost",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "M2.re-add-nic",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-lb-serve2-2026-08-01",
+     "step": "F3.serving-again",
+     "code": "ok"
     }
    ]
   },

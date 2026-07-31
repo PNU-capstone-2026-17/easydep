@@ -270,6 +270,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         # 신호 4종 라운드: DNS 해석·볼륨 I/O(게스트 안에서 관측).
         ("globalDns", "network", "function"): "holds",
         ("vm", "disk", "function"): "holds",
+        # 신호 5(2026-08-01): **존재 판정에 없는 간선을 기능이 열었다.**
+        ("loadBalancer", "vm", "function"): "holds",
         # iamRole 라운드: managed identity 미지정 생성 성공.
         ("vm", "iamRole", "existence"): "optional",
         # customImage 라운드: 원본은 디스크, 결속은 없다(graphkb 관측과 갈림).
