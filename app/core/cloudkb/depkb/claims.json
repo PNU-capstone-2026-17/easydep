@@ -1,15 +1,15 @@
 {
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
-  "aws.required": 10,
-  "aws.holds": 12,
+  "aws.required": 11,
+  "aws.holds": 13,
   "aws.optional": 14,
   "azure.required": 10,
   "azure.optional": 16,
   "azure.holds": 14,
-  "gcp.required": 6,
+  "gcp.required": 7,
   "gcp.optional": 14,
-  "gcp.holds": 12
+  "gcp.holds": 13
  },
  "claims": [
   {
@@ -1107,6 +1107,60 @@
      "experiment": "aws-apply-2026-07-30",
      "step": "A.dangling-vm-subnet",
      "code": "InvalidSubnetID.NotFound"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "network",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "게이트웨이 자체는 VPC 없이 만들어지고(A1) **attach가 VPC를 요구한다** — azure가 GatewaySubnet 이름을 요구한 것과 층이 다르다(azure는 서브넷·이름, aws는 VPC·attach 연산). 터널·고객 게이트웨이는 범위 밖(상대편 장비 필요)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-vpn-2026-07-31",
+     "step": "A2.attach-to-dangling-vpc",
+     "code": "InvalidVpcID.NotFound"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-vpn-2026-07-31",
+     "step": "A3.attach-to-vpc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-vpn-2026-07-31",
+     "step": "A4.attached",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "network",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "attach 상태의 VPC는 못 지운다 — detach 후 성공(양성 대조)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-vpn-2026-07-31",
+     "step": "L1.delete-vpc-with-vgw",
+     "code": "DependencyViolation"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-vpn-2026-07-31",
+     "step": "L2.delete-vpc-after-detach",
+     "code": "ok"
     }
    ]
   },
@@ -2299,7 +2353,7 @@
    "question": "existence",
    "verdict": "required",
    "predicate": null,
-   "note": "서버가 조건을 문장으로: 'must have exactly one network config.' · 허상은 'network … does not exist'. **거부 층까지만 쟀다** — Filestore 최소 티어가 1TiB급이라 실생성을 안 했다(비용 규율). 양성 대조 없음이 이 판정의 한계다. aws와 대비: aws는 파일시스템이 네트워크 없이 서고 접속점만 서브넷을 요구하는데, gcp는 파일시스템 자체가 네트워크를 요구한다",
+   "note": "서버가 조건을 문장으로: 'must have exactly one network config.' · 허상은 'network … does not exist'. **양성 대조까지 닫았다**(2026-07-31 남은 라운드 — BASIC_HDD 1TiB 실생성 후 즉시 삭제). 교란: asia-northeast3-a는 존 자원 부족으로 실패해 -b로 옮겨야 했다(SKU·IGW와 같은 부류). aws와 대비: aws는 파일시스템이 네트워크 없이 서고 접속점만 서브넷을 요구하는데, gcp는 파일시스템 자체가 네트워크를 요구한다. **생명주기 결속은 없다** — Filestore가 READY인 채로 network 삭제가 성공했다(F12). 같은 네트워크를 VPN 게이트웨이는 붙잡는데(L1 거부) Filestore는 안 붙잡는다",
    "oracle": "apply",
    "evidence": [
     {
@@ -2313,6 +2367,18 @@
      "experiment": "gcp-fs-2026-07-31",
      "step": "A2.dangling-network",
      "code": "INVALID_ARGUMENT"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "F9.create-b",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "F10.ready-b",
+     "code": "ok"
     }
    ]
   },
@@ -3218,6 +3284,54 @@
      "layer": "apply",
      "experiment": "gcp-func-2026-07-31",
      "step": "F3.reachable-again",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "network",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "서버가 문장으로: 'A network must be specified for VPN gateway creation.' **vpn 어휘가 3사 완결됐다** — azure는 subnet(이름 조건 GatewaySubnet)+publicIp(zone 쌍 호환), aws는 VPC attach, gcp는 network 필드. 같은 개념의 결속점이 셋 다 다르다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "V1.gateway-without-network",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "V2.create-gateway",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vpn",
+   "object": "network",
+   "csp": "gcp",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": null,
+   "note": "게이트웨이가 쓰는 네트워크는 못 지운다 — 게이트웨이 삭제 후 성공(양성 대조)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "L1.delete-network-with-gateway",
+     "code": "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-vpn-fs-2026-07-31",
+     "step": "T2.delete-network",
      "code": "ok"
     }
    ]

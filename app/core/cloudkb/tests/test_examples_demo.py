@@ -63,15 +63,17 @@ def test_example3_catches_the_name_condition() -> None:
     assert any("GatewaySubnet" in v.detail for v in checked.report.violations)
 
 
-def test_example3_refuses_to_plan_where_we_did_not_measure() -> None:
-    """③에서 aws·gcp는 계획이 **없어야** 한다 — vpn을 그 두 곳에서 재지
-    않았다. 추측으로 채우면 이 프로젝트의 전제가 무너진다."""
+def test_example3_now_plans_on_all_three_after_vpn_rounds() -> None:
+    """③은 오래 azure에서만 계획이 나왔다 — vpn을 다른 둘에서 안 쟀기
+    때문이다. 2026-07-31 VPN 라운드로 3사가 닫혔고, 이제 셋 다 계획이
+    나온다. **추측으로 채운 것이 아니라 재서 채웠다**는 것이 요점이다."""
     ex = by_id("private-link")
-    for csp in ("aws", "gcp"):
-        with pytest.raises(KeyError):
-            plan_for_anchors(["k8sCluster", *ex.given_anchors], csp, "-")
-    azure = plan_for_anchors(["k8sCluster", *ex.given_anchors], "azure", "-")
-    assert "vpn" in azure.intent.createOrder
+    for csp in ("aws", "azure", "gcp"):
+        plan = plan_for_anchors(["k8sCluster", *ex.given_anchors], csp, "-")
+        assert "vpn" in plan.intent.createOrder, csp
+    # 안 잰 CSP에서는 여전히 죽는다 — 규율 자체는 그대로다.
+    with pytest.raises(KeyError):
+        plan_for_anchors(["k8sCluster", *ex.given_anchors], "ncp", "-")
 
 
 def test_examples_do_not_claim_about_uncompared_systems() -> None:

@@ -728,6 +728,48 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 남은 라운드 (2026-07-31 — VPN 3사 완결 · Filestore 양성 대조.
+    # EKS IAM 기능 축은 **신호가 갈리지 않아 미판정 유지**한다) ──
+    dict(csp="aws", subject="vpn", object="network", question="existence",
+         verdict="required",
+         evidence=[
+             ("aws-vpn-2026-07-31", "A2.attach-to-dangling-vpc",
+              "InvalidVpcID.NotFound", "apply"),
+             ("aws-vpn-2026-07-31", "A3.attach-to-vpc", "ok", "apply"),
+             ("aws-vpn-2026-07-31", "A4.attached", "ok", "apply"),
+         ],
+         note="게이트웨이 자체는 VPC 없이 만들어지고(A1) **attach가 VPC를 "
+              "요구한다** — azure가 GatewaySubnet 이름을 요구한 것과 층이 "
+              "다르다(azure는 서브넷·이름, aws는 VPC·attach 연산). 터널·고객 "
+              "게이트웨이는 범위 밖(상대편 장비 필요)"),
+    dict(csp="aws", subject="vpn", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("aws-vpn-2026-07-31", "L1.delete-vpc-with-vgw",
+              "DependencyViolation", "apply"),
+             ("aws-vpn-2026-07-31", "L2.delete-vpc-after-detach", "ok", "apply"),
+         ],
+         note="attach 상태의 VPC는 못 지운다 — detach 후 성공(양성 대조)"),
+    dict(csp="gcp", subject="vpn", object="network", question="existence",
+         verdict="required",
+         evidence=[
+             ("gcp-vpn-fs-2026-07-31", "V1.gateway-without-network",
+              "invalid", "apply"),
+             ("gcp-vpn-fs-2026-07-31", "V2.create-gateway", "ok", "apply"),
+         ],
+         note="서버가 문장으로: 'A network must be specified for VPN gateway "
+              "creation.' **vpn 어휘가 3사 완결됐다** — azure는 subnet(이름 "
+              "조건 GatewaySubnet)+publicIp(zone 쌍 호환), aws는 VPC attach, "
+              "gcp는 network 필드. 같은 개념의 결속점이 셋 다 다르다"),
+    dict(csp="gcp", subject="vpn", object="network", question="lifecycle",
+         verdict="holds",
+         evidence=[
+             ("gcp-vpn-fs-2026-07-31", "L1.delete-network-with-gateway",
+              "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE", "apply"),
+             ("gcp-vpn-fs-2026-07-31", "T2.delete-network", "ok", "apply"),
+         ],
+         note="게이트웨이가 쓰는 네트워크는 못 지운다 — 게이트웨이 삭제 후 "
+              "성공(양성 대조)"),
     # ── 완결 라운드 (2026-07-31 — 미해결로 남겼던 것들을 닫는다) ──
     dict(csp="azure", subject="k8sPvc", object="fileSystem",
          question="existence", verdict="optional",
@@ -893,13 +935,19 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "apply"),
              ("gcp-fs-2026-07-31", "A2.dangling-network", "INVALID_ARGUMENT",
               "apply"),
+             ("gcp-vpn-fs-2026-07-31", "F9.create-b", "ok", "apply"),
+             ("gcp-vpn-fs-2026-07-31", "F10.ready-b", "ok", "apply"),
          ],
          note="서버가 조건을 문장으로: 'must have exactly one network "
-              "config.' · 허상은 'network … does not exist'. **거부 층까지만 "
-              "쟀다** — Filestore 최소 티어가 1TiB급이라 실생성을 안 했다"
-              "(비용 규율). 양성 대조 없음이 이 판정의 한계다. aws와 대비: "
-              "aws는 파일시스템이 네트워크 없이 서고 접속점만 서브넷을 "
-              "요구하는데, gcp는 파일시스템 자체가 네트워크를 요구한다"),
+              "config.' · 허상은 'network … does not exist'. **양성 대조까지 "
+              "닫았다**(2026-07-31 남은 라운드 — BASIC_HDD 1TiB 실생성 후 "
+              "즉시 삭제). 교란: asia-northeast3-a는 존 자원 부족으로 실패해 "
+              "-b로 옮겨야 했다(SKU·IGW와 같은 부류). aws와 대비: aws는 "
+              "파일시스템이 네트워크 없이 서고 접속점만 서브넷을 요구하는데, "
+              "gcp는 파일시스템 자체가 네트워크를 요구한다. **생명주기 결속은 "
+              "없다** — Filestore가 READY인 채로 network 삭제가 성공했다"
+              "(F12). 같은 네트워크를 VPN 게이트웨이는 붙잡는데(L1 거부) "
+              "Filestore는 안 붙잡는다"),
     dict(csp="azure", subject="fileSystem", object="storageAccount",
          question="existence", verdict="required",
          evidence=[

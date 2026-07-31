@@ -93,6 +93,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         # 기능 2라운드: SG 교체(관계 변이)·IGW 라우트 삭제 — 둘 다 무방비.
         ("vm", "firewall", "function"): "holds",
         ("subnet", "internetGateway", "function"): "holds",
+        # VPN 라운드: 게이트웨이는 VPC 없이 서고 **attach**가 VPC를 요구한다.
+        ("vpn", "network", "existence"): "required",
+        ("vpn", "network", "lifecycle"): "holds",
         # iamRole 라운드: EKS 거부 관측의 승격 + 인스턴스 프로필 생략 성공.
         ("k8sCluster", "iamRole", "existence"): "required",
         ("vm", "iamRole", "existence"): "optional",
@@ -193,6 +196,9 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         # 기능 2라운드: 규칙 삭제(관계 변이 부재)·기본 라우트 삭제 — 무방비.
         ("vm", "firewall", "function"): "holds",
         ("network", "internetGateway", "function"): "holds",
+        # VPN 라운드: network 필드 필수 — vpn 어휘가 3사 완결됐다.
+        ("vpn", "network", "existence"): "required",
+        ("vpn", "network", "lifecycle"): "holds",
         # iamRole 라운드: serviceAccounts null 실물 — 서버가 안 붙인다.
         ("vm", "iamRole", "existence"): "optional",
         # customImage 라운드: 원본은 디스크(aws와 반전), 결속은 없다.
