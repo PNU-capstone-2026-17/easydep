@@ -1167,8 +1167,16 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="거부 라운드에서 관측만 되고 어휘 밖이라 못 들어갔던 판정의 "
               "승격. 생략 거부는 **클라이언트층**(--role-arn — nic→subnet과 "
               "같은 한계 명시), 실역할 생성·클러스터 성공이 양성 대조. "
-              "EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)은 기능 신호 "
-              "정의가 별도 설계라 미판정 유지(eks3 라운드에 무방비 관측만)"),
+              "**역할은 필요하지만 정책은 기동 조건이 아니다**(2026-08-01 "
+              "aws-qual2 실측): 정책이 하나도 안 붙은 역할로도 클러스터가 "
+              "ACTIVE까지 갔고 health 이슈도 없었다. 우리 실험들이 "
+              "AmazonEKSClusterPolicy를 붙여 온 것은 **관행이었지 필요가 "
+              "아니었다** — worked example이 '뷰에 정책 부착이 없다'를 공백으로 "
+              "지목했으나 실측이 기각했다(뷰가 맞았다). 경계: **존재 축의 "
+              "판정이다.** 정책 없는 클러스터가 노드를 받거나 ENI를 만들 수 "
+              "있는지는 기능 축이고 미측정이다. "
+              "EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)도 신호 정의가 "
+              "별도 설계라 미판정 유지(eks3·aws-iamfunc에 무방비 관측만)"),
     dict(csp="aws", subject="vm", object="iamRole", question="existence",
          verdict="optional",
          evidence=[

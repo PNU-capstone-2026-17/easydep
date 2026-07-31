@@ -24,7 +24,9 @@ k8s 층에 대해서는 아무 말도 하지 않는다는 것을 `notForLayer`�
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict
+from pathlib import Path
 
 from .infra_intent import InfraIntent
 
@@ -84,6 +86,28 @@ def design_view(intent: InfraIntent) -> dict:
     }
 
 
+def _wait_for(intent: InfraIntent) -> list[dict]:
+    """이 계획의 자원 중 완료를 기다려야 하는 것 — `operations.json`의 사영.
+
+    **미표시는 '동기'가 아니다**(그 산출물의 규율): 우리가 안 기다렸을 뿐이고,
+    안 기다려도 된다는 증명은 아니다. 그래서 여기 없는 자원에 대해 계획층이
+    "즉시 완료"라고 읽으면 안 된다 — `note`가 그걸 말한다.
+    """
+    path = Path(__file__).with_name("operations.json")
+    if not path.exists():
+        return []
+    ops = json.loads(path.read_text(encoding="utf-8"))["operations"]
+    ids = {r.id for r in intent.resources}
+    return [
+        {"id": o["resource"], "op": o["op"], "doneSignal": o["doneSignal"],
+         "confidence": o["status"],
+         "note": ("중간 상태가 실측됐다"
+                  if o["status"] == "async-confirmed"
+                  else "우리는 기다렸다 — 기다려야 한다는 증명은 아니다")}
+        for o in ops if o["csp"] == intent.csp and o["resource"] in ids
+    ]
+
+
 def provision_view(intent: InfraIntent) -> dict:
     """IaC 생성기가 그대로 쓰는 형태 — 순서·참조·검사 규칙.
 
@@ -109,6 +133,10 @@ def provision_view(intent: InfraIntent) -> dict:
         "csp": intent.csp,
         "region": intent.region,
         "createOrder": create,
+        # 연산 성질(실측) — 이 자원들은 만들고 나서 **기다려야** 다음 단계가
+        # 성립한다. worked example이 찾은 공백 B: createOrder만 보고 실행하면
+        # 클러스터가 CREATING인 채 다음을 시도한다.
+        "waitFor": _wait_for(intent),
         "deleteBefore": [list(p) for p in intent.deleteBefore],
         "doNotCreate": [{"id": k, "why": v} for k, v in sorted(auto.items())],
         # 동반 정리(실측) — 합성물은 주체 삭제가 함께 지운다. IaC가 이 자원의

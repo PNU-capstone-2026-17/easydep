@@ -1,0 +1,113 @@
+{
+ "_note": "자격 요건(aws) — 정책 없는 역할로 EKS 생성 시도. 클러스터는 실제로 만들지 않는다(과금 회피).",
+ "startedAt": "2026-07-31T18:21:41+00:00",
+ "ids": {
+  "roleArn": "arn:aws:iam::838062934141:role/depkb-qual-role",
+  "vpc": "vpc-0acbf9353f4cc5688",
+  "subnet1": "subnet-08053b4b3847551ec",
+  "subnet2": "subnet-0083cbcf1a198abb8"
+ },
+ "steps": {
+  "R1.create-role-no-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-qual-role\",\n        \"RoleId\": \"AROA4GIDRRB66URWB25MR\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-qual-role\",\n        \"CreateDate\": \"2026-07-31T18:21:44+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"eks.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n        }\n    "
+  },
+  "R2.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-07dcced0a29876198\",\n                \"CidrBlock\": \"10.120.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-0acbf9353f4cc5688\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.120.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "R3.create-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az1\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-08053b4b3847551ec\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R3.create-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0083cbcf1a198abb8\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "A1.create-cluster-role-without-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-qual\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-qual\",\n        \"createdAt\": \"2026-08-01T03:22:05.654000+09:00\",\n        \"version\": \"1.36\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-qual-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-08053b4b3847551ec\",\n                \"subnet-0083cbcf1a198abb8\"\n            ],\n            \"securityGroupIds\": [],\n            \"vpcId\": \"vpc-0acbf9353f4cc5688\",\n            \"endpointPublicAccess\": true,\n            \"endpointPrivateAccess\":"
+  },
+  "A2.attach-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "A3.create-cluster-with-policy": {
+   "ok": false,
+   "errorCodes": [
+    "ResourceInUseException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (ResourceInUseException) when calling the CreateCluster operation: Cluster already exists with name: depkb-qual\n\nAdditional error details:\nclusterName: depkb-qual"
+  },
+  "T1.delete-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T1.delete-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T2.delete-vpc": {
+   "ok": false,
+   "errorCodes": [
+    "DependencyViolation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DependencyViolation) when calling the DeleteVpc operation: The vpc 'vpc-0acbf9353f4cc5688' has dependencies and cannot be deleted."
+  },
+  "T3.detach-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T4.delete-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T5.residual-clusters": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": [\n        \"depkb-qual\"\n    ]\n}"
+  },
+  "T6.residual-roles": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "Z1.design-defect-round1": {
+   "ok": false,
+   "errorCodes": [
+    "DESIGN_DEFECT"
+   ],
+   "excerpt": "**가설이 틀렸고 설계에도 결함이 있었다.** 가설: 정책 없는 역할이면 EKS 생성이 거부된다 → 실제로는 **수락됐다**(A1 OK, CREATING). 설계 결함: A1이 성공할 줄 모르고 곧바로 정책을 붙여(A2) \"정책 없이 ACTIVE까지 가는가\"를 못 쟀다 — EKS IAM 기능 축(aws-iamfunc/Z1)에서 겪은 **비동기 변이 복원** 실수의 반복이다. 2라운드: 정책 없이 생성하고 **최종 상태까지 폴링**한다"
+  },
+  "Z2.residual-manual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "1라운드 정리에서 VPC 삭제가 DependencyViolation으로 실패했다(클러스터가 아직 살아 있었다 — 비동기 삭제를 안 기다린 탓, 공백 B가 우리 실험기에도 있었다는 증거). 2라운드 종료 후 수동 정리로 잔여 0 확인"
+  }
+ },
+ "finishedAt": "2026-07-31T18:22:36+00:00"
+}
