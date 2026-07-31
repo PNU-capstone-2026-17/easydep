@@ -23,12 +23,14 @@ def test_azure_vm_needs_the_nic_chain() -> None:
     )
 
 
-def test_aws_vm_needs_nothing_and_that_is_a_measurement() -> None:
-    """aws VM 폐포의 필수는 **공집합**이다 — 전부 서버 대체(기본 VPC·default
-    SG·ENI 암묵·AMI 루트 볼륨). 버그처럼 보이는 것이 측정 결과다."""
+def test_aws_vm_requires_exactly_the_image() -> None:
+    """aws VM 폐포의 필수는 **image 하나**다(2026-07-31 image 라운드로 갱신 —
+    그 전 어휘에선 공집합이었다). 인프라는 전부 서버 대체(기본 VPC·default
+    SG·ENI 암묵·AMI 루트 볼륨)이고, 사람이 정해야 하는 유일한 생성 인자가
+    무엇으로 부팅할 것인가다."""
     c = closure("vm", "aws")
-    assert c.required == ()
-    assert c.createOrder == ("vm",)
+    assert {i.id for i in c.required} == {"image"}
+    assert c.createOrder == ("image", "vm")
     auto = {a.id for a in c.attachable if a.autoFilled}
     assert auto == {"subnet", "firewall", "nic", "disk"}
     assert {a.id for a in c.attachable if not a.autoFilled} == {"sshKey"}, (

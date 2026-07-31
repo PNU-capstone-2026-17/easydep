@@ -85,6 +85,10 @@ AWS_NAME_REFS: dict[str, str] = {
     "AllocationId": "publicIp",
     "VolumeId": "disk",
     "KeyName": "sshKey",
+    # image 라운드(2026-07-31). CFN엔 EC2 이미지 자원 타입이 없어 image는
+    # aws에서 대상으로만 나타난다. Required:False는 위치 플래그다(LaunchTemplate
+    # 경로) — 서버 요구는 동적 층이 판정.
+    "ImageId": "image",
 }
 
 #: gcp (스키마, 속성) 쌍 한정 참조 — 이름만으로는 'source' 같은 일반어가
@@ -97,6 +101,9 @@ GCP_PAIR_REFS: dict[tuple[str, str], str] = {
     ("Subnetwork", "network"): "network",
     ("ForwardingRule", "network"): "network",
     ("ForwardingRule", "subnetwork"): "subnet",
+    # image 라운드(2026-07-31): 부트 디스크의 이미지 참조. 대안 슬롯
+    # (sourceSnapshot·AttachedDisk.source)의 존재가 선언 술어 가설의 근거다.
+    ("AttachedDiskInitializeParams", "sourceImage"): "image",
 }
 
 #: ARM id 참조 래퍼 — 다른 RP의 자원을 id로 가리키는 정의. **우리 구성**이되,
@@ -104,6 +111,9 @@ GCP_PAIR_REFS: dict[tuple[str, str], str] = {
 REFERENCE_WRAPPERS: dict[str, str] = {
     "NetworkInterfaceReference": "nic",
     "ManagedDiskParameters": "disk",
+    # image 라운드(2026-07-31): 참조 훅만 연다 — image를 TYPES 주체로 올리면
+    # image→vm·image→disk 후보가 생겨 미판정이 쌓인다(customImage 대기열의 것).
+    "ImageReference": "image",
 }
 
 #: ARM 경로 세그먼트 → 어휘 타입. 경로 중첩(부모/{}/자식/{}) 추출에 쓴다.

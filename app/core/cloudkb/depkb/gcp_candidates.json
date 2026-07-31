@@ -64,6 +64,14 @@
   },
   {
    "subject": "vm",
+   "object": "image",
+   "form": "pair-reference",
+   "trail": "disks.initializeParams.sourceImage",
+   "cite": "gcp-compute#/schemas/AttachedDiskInitializeParams/properties/sourceImage",
+   "requiredInSchema": false
+  },
+  {
+   "subject": "vm",
    "object": "nic",
    "form": "schema-ref",
    "trail": "networkInterfaces",

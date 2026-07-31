@@ -71,6 +71,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("vm", "nic", "existence"): "optional",
         ("vm", "firewall", "existence"): "optional",
         ("vm", "disk", "existence"): "optional",
+        # image 라운드(2026-07-31): 3사 중 유일한 required — 기존 볼륨 부팅
+        # 경로가 없다. 생략 거부가 서버층(MissingParameter)이다.
+        ("vm", "image", "existence"): "required",
         ("loadBalancer", "subnet", "existence"): "required",
         ("loadBalancer", "firewall", "existence"): "optional",
         ("k8sCluster", "subnet", "existence"): "required",
@@ -142,6 +145,9 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("vm", "nic", "existence"): "required",
         ("vm", "disk", "existence"): "required",
         ("vm", "disk", "lifecycle"): "holds",
+        # image 라운드(2026-07-31): 'Boot disk must have a source specified' —
+        # sourceImage ∨ 기존 디스크의 선언 술어.
+        ("vm", "image", "existence"): "optional",
         ("nic", "network", "existence"): "optional",
         ("nic", "subnet", "existence"): "optional",
         ("nic", "subnet", "lifecycle"): "holds",
@@ -181,6 +187,9 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("nic", "publicIp", "lifecycle"): "holds",
         ("vm", "disk", "existence"): "optional",
         ("vm", "disk", "lifecycle"): "holds",
+        # image 라운드(2026-07-31): imageReference ∨ 기존 OS 디스크 attach —
+        # 잔존 OS 디스크로 이미지 없이 VM이 선다(B1 실측).
+        ("vm", "image", "existence"): "optional",
         ("network", "subnet", "existence"): "optional",
         ("subnet", "firewall", "existence"): "optional",
         ("loadBalancer", "subnet", "existence"): "optional",
@@ -201,6 +210,21 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("k8sPvc", "disk", "existence"): "optional",
         ("k8sPvc", "disk", "lifecycle"): "holds",
     }
+
+
+def test_vm_image_flips_between_disjunctive_and_required(artifact) -> None:
+    """vm→image(2026-07-31): azure·gcp는 선언 술어(이미지 ∨ 기존 디스크)로
+    선택, aws는 기존 볼륨 부팅 경로가 없어 필수 — 네 번째 양상 반전이고,
+    외부 대조 오류 셋(sshKey·spec/image·azure 방향) 중 spec/image가 닫혔다.
+    aws의 CFN Required:False는 위치 플래그(LaunchTemplate)임이 note에 있다."""
+    rows = {c["csp"]: c for c in artifact["claims"]
+            if (c["subject"], c["object"], c["question"])
+            == ("vm", "image", "existence")}
+    assert rows["aws"]["verdict"] == "required"
+    assert rows["azure"]["verdict"] == "optional"
+    assert rows["gcp"]["verdict"] == "optional"
+    for csp in ("azure", "gcp"):
+        assert rows[csp]["predicate"].startswith("disjunctive:"), csp
 
 
 def test_optional_and_lifecycle_are_independent(artifact) -> None:

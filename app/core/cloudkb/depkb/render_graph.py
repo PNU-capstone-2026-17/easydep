@@ -32,6 +32,7 @@ POS: dict[str, tuple[int, int]] = {
     "k8sPvc": (30, 25), "k8sService": (280, 25),
     "k8sCluster": (80, 95), "k8sNodeGroup": (215, 95), "vpn": (330, 95),
     "vm": (90, 165), "loadBalancer": (280, 165),
+    "image": (30, 210),  # image 라운드(2026-07-31) — vm의 부팅 원천
     "disk": (30, 255), "nic": (120, 260), "publicIp": (230, 255),
     "sshKey": (330, 250),
     "subnet": (140, 355), "firewall": (290, 355),

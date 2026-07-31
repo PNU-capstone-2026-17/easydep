@@ -668,6 +668,59 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. "
               "서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 "
               "아님"),
+    # ── image 라운드 (2026-07-31 — vm→image, 3사. 외부 대조 오류 셋 중
+    # spec/image를 닫는다) ──
+    dict(csp="azure", subject="vm", object="image", question="existence",
+         verdict="optional",
+         predicate="disjunctive: 부팅 원천 — imageReference ∨ 기존 OS 디스크 "
+                   "attach 중 하나는 있어야 한다",
+         evidence=[
+             ("azure-image-2026-07-31", "A3.omit-storageprofile",
+              "InvalidParameter", "apply"),
+             ("azure-image-2026-07-31", "A2.dangling-image", "NotFound", "apply"),
+             ("azure-image-2026-07-31", "B0.create-vm-from-image", "ok", "apply"),
+             ("azure-image-2026-07-31", "B1.create-vm-attach-disk-no-image",
+              "ok", "apply"),
+         ],
+         note="서버가 필수를 이름으로: \"Required parameter 'storageProfile' is "
+              "missing\"(A3b 전문). 잔존 OS 디스크 attach로 이미지 없이 VM이 "
+              "선다 — imageReference 슬롯 빈 값 실측(B1). 허상 이미지 id는 "
+              "NotFound. FromImage인데 이미지가 없는 모순형(A1)은 별도 문장으로 "
+              "거부된다. LB frontend와 같은 선언 술어 꼴"),
+    dict(csp="gcp", subject="vm", object="image", question="existence",
+         verdict="optional",
+         predicate="disjunctive: 부트 디스크 원천 — initializeParams."
+                   "sourceImage ∨ 기존 디스크(source) 중 하나는 있어야 한다",
+         evidence=[
+             ("gcp-image-2026-07-31", "G1.omit-image-and-source",
+              "invalid", "apply"),
+             ("gcp-image-2026-07-31", "G2.dangling-image", "invalid", "apply"),
+             ("gcp-image-2026-07-31", "G3b.boot-from-existing-disk-no-image",
+              "ok", "apply"),
+             ("gcp-image-2026-07-31", "G3c.instance-shape", "ok", "apply"),
+         ],
+         note="서버가 술어를 문장으로: 'Boot disk must have a source "
+              "specified'(G1). 이미지에서 만든 디스크를 source로 주면 "
+              "sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced "
+              "image resource cannot be found'. azure와 동형(2사 수렴)"),
+    dict(csp="aws", subject="vm", object="image", question="existence",
+         verdict="required",
+         evidence=[
+             ("aws-image-2026-07-31", "D1.omit-image-and-lt",
+              "MissingParameter", "preflight"),
+             ("aws-image-2026-07-31", "D2b.dangling-wellformed-ami",
+              "InvalidAMIID.Malformed", "preflight"),
+             ("aws-image-2026-07-31", "D3b.valid-ami-dryrun",
+              "DryRunOperation", "preflight"),
+         ],
+         note="생략 거부가 **서버층**이다(MissingParameter, rejectedAt=server — "
+              "nic→subnet의 client-층 한계와 다르다). RunInstances엔 기존 "
+              "볼륨으로 부팅을 대신할 경로가 없어 3사 중 유일한 required — "
+              "**세 번째 유형의 양상 반전**(선언 술어 ∨ 필수). CFN "
+              "Required:False는 위치 플래그(LaunchTemplate가 AMI를 나르는 다른 "
+              "자리)라는 기존 결론의 재확인. 허상 검사는 Malformed 층에서 "
+              "걸렸다(정형 id도 — NotFound 층 미도달, 관측 그대로 기록). "
+              "실물 생성 0(DryRun 사다리)"),
     dict(csp="aws", subject="k8sService", object="loadBalancer",
          question="lifecycle", verdict="holds",
          predicate="동반 정리: Service 삭제가 CLB를 지운다",

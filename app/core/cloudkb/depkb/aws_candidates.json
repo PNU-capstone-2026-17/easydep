@@ -96,6 +96,14 @@
   },
   {
    "subject": "vm",
+   "object": "image",
+   "form": "name-reference",
+   "trail": "ImageId",
+   "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/ImageId",
+   "requiredInSchema": false
+  },
+  {
+   "subject": "vm",
    "object": "nic",
    "form": "name-reference",
    "trail": "NetworkInterfaces.NetworkInterfaceId",

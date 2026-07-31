@@ -3,11 +3,11 @@
  "verdictCounts": {
   "aws.optional": 10,
   "aws.holds": 6,
-  "aws.required": 4,
+  "aws.required": 5,
   "azure.required": 7,
   "azure.holds": 11,
-  "azure.optional": 10,
-  "gcp.optional": 10,
+  "azure.optional": 11,
+  "gcp.optional": 11,
   "gcp.holds": 7,
   "gcp.required": 3
  },
@@ -494,6 +494,42 @@
      "layer": "preflight",
      "experiment": "aws-apply-2026-07-30",
      "step": "A.dryrun-vm-default-vpc",
+     "code": "DryRunOperation"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "image",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "required",
+   "predicate": null,
+   "note": "생략 거부가 **서버층**이다(MissingParameter, rejectedAt=server — nic→subnet의 client-층 한계와 다르다). RunInstances엔 기존 볼륨으로 부팅을 대신할 경로가 없어 3사 중 유일한 required — **세 번째 유형의 양상 반전**(선언 술어 ∨ 필수). CFN Required:False는 위치 플래그(LaunchTemplate가 AMI를 나르는 다른 자리)라는 기존 결론의 재확인. 허상 검사는 Malformed 층에서 걸렸다(정형 id도 — NotFound 층 미도달, 관측 그대로 기록). 실물 생성 0(DryRun 사다리)",
+   "oracle": "preflight",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/ImageId",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-image-2026-07-31",
+     "step": "D1.omit-image-and-lt",
+     "code": "MissingParameter"
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-image-2026-07-31",
+     "step": "D2b.dangling-wellformed-ami",
+     "code": "InvalidAMIID.Malformed"
+    },
+    {
+     "layer": "preflight",
+     "experiment": "aws-image-2026-07-31",
+     "step": "D3b.valid-ami-dryrun",
      "code": "DryRunOperation"
     }
    ]
@@ -1262,6 +1298,48 @@
   },
   {
    "subject": "vm",
+   "object": "image",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "disjunctive: 부팅 원천 — imageReference ∨ 기존 OS 디스크 attach 중 하나는 있어야 한다",
+   "note": "서버가 필수를 이름으로: \"Required parameter 'storageProfile' is missing\"(A3b 전문). 잔존 OS 디스크 attach로 이미지 없이 VM이 선다 — imageReference 슬롯 빈 값 실측(B1). 허상 이미지 id는 NotFound. FromImage인데 이미지가 없는 모순형(A1)은 별도 문장으로 거부된다. LB frontend와 같은 선언 술어 꼴",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "compute-ComputeRP.json#/definitions/StorageProfile/properties/imageReference",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-image-2026-07-31",
+     "step": "A3.omit-storageprofile",
+     "code": "InvalidParameter"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-image-2026-07-31",
+     "step": "A2.dangling-image",
+     "code": "NotFound"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-image-2026-07-31",
+     "step": "B0.create-vm-from-image",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-image-2026-07-31",
+     "step": "B1.create-vm-attach-disk-no-image",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
    "object": "nic",
    "csp": "azure",
    "question": "existence",
@@ -1934,6 +2012,48 @@
      "layer": "apply",
      "experiment": "gcp-apply-2026-07-31",
      "step": "D.delete-disk.depkbg-vm",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "image",
+   "csp": "gcp",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "disjunctive: 부트 디스크 원천 — initializeParams.sourceImage ∨ 기존 디스크(source) 중 하나는 있어야 한다",
+   "note": "서버가 술어를 문장으로: 'Boot disk must have a source specified'(G1). 이미지에서 만든 디스크를 source로 주면 sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced image resource cannot be found'. azure와 동형(2사 수렴)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "gcp-compute#/schemas/AttachedDiskInitializeParams/properties/sourceImage",
+     "form": "pair-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-image-2026-07-31",
+     "step": "G1.omit-image-and-source",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-image-2026-07-31",
+     "step": "G2.dangling-image",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-image-2026-07-31",
+     "step": "G3b.boot-from-existing-disk-no-image",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-image-2026-07-31",
+     "step": "G3c.instance-shape",
      "code": "ok"
     }
    ]
