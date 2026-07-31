@@ -3,11 +3,13 @@
 **소비 전용 뷰다** — 판정·증거는 claims.json이 진실이고, 여기서는 그것을
 읽기 좋게 그릴 뿐이다. 배치(층)는 우리 구성(가독 목적)이고 판정에 영향이 없다.
 
-- 시각화는 cytoscape.js + dagre(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
+- 시각화는 cytoscape.js(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
   오프라인이면 안내 문구가 뜬다(데이터 자체는 HTML에 내장돼 유실은 없다).
-- 배치는 dagre 계층 레이아웃이 **그 CSP의 실제 간선**으로 계산한다(교차
-  최소화). 아래 LAYERS 좌표는 dagre CDN 실패 시의 예비 배치일 뿐이다.
-  간선 없는 자원(유령)은 기본 숨김 — 배치 계산에서도 빠져 겹침이 준다.
+- **배치는 생성 시점에 여기서 한 번 계산하고 세 탭이 공유한다** — CSP마다
+  배치가 다르면 비교가 안 된다(사용자 지적). 층은 LAYERS(우리 구성), 층 안
+  순서는 3사 **합집합** 간선의 무게중심(barycenter) 반복으로 교차를 줄인다.
+- **층을 건너뛰는 간선은 바깥으로 호를 그린다**(랭크 폭에 비례한 곡률을
+  간선마다 미리 계산) — 직선이면 중간 층 노드를 관통한다(사용자 지적).
 - CSP 탭 · 판정별 간선 필터 · 생명주기 배지(🔒 삭제 보호 / ♻ 동반 정리) ·
   노드 드래그 · 클릭 상세(술어·note·증거의 실험/스텝 좌표).
 - 선언 술어(`a|b|c` 합집합 간선)는 선으로 그리면 겹침만 늘어 **주체 노드
@@ -33,21 +35,44 @@ LAYERS: list[list[str]] = [
     ["subnet", "firewall"],
     ["network"],
 ]
-X_GAP, Y_GAP = 190, 150
+X_GAP, Y_GAP = 210, 170
 
 CSPS = ("aws", "azure", "gcp")
-KO = {"required": "필수", "optional": "선택", "holds": "생명주기 결속",
-      "unknown": "미판정"}
+
+RANK: dict[str, int] = {n: i for i, row in enumerate(LAYERS) for n in row}
 
 
-def _positions() -> dict[str, tuple[int, int]]:
-    pos: dict[str, tuple[int, int]] = {}
-    width = max(len(row) for row in LAYERS) * X_GAP
-    for yi, row in enumerate(LAYERS):
-        offset = (width - (len(row) - 1) * X_GAP) / 2
-        for xi, name in enumerate(row):
-            pos[name] = (int(offset + xi * X_GAP), yi * Y_GAP)
-    return pos
+def _positions(union_pairs: set[tuple[str, str]]) -> dict[str, tuple[int, int]]:
+    """합집합 간선으로 층 안 순서를 정한다(barycenter 반복) — 세 탭 공통 배치.
+
+    이웃의 평균 x로 정렬을 몇 번 반복하면 이 크기(노드 16)에서는 교차가
+    수렴한다. 결정적이도록 동률은 이름순.
+    """
+    order: dict[int, list[str]] = {i: list(row) for i, row in enumerate(LAYERS)}
+    neigh: dict[str, list[str]] = {}
+    for s, o in union_pairs:
+        neigh.setdefault(s, []).append(o)
+        neigh.setdefault(o, []).append(s)
+
+    def xs() -> dict[str, float]:
+        out: dict[str, float] = {}
+        for _, row in order.items():
+            for idx, n in enumerate(row):
+                out[n] = (idx - (len(row) - 1) / 2) * X_GAP
+        return out
+
+    for _ in range(8):
+        cur = xs()
+        for li, row in order.items():
+            def key(n: str) -> tuple[float, str]:
+                ns = neigh.get(n, [])
+                mean = (sum(cur[m] for m in ns) / len(ns)) if ns else cur[n]
+                return (mean, n)
+            order[li] = sorted(row, key=key)
+
+    final = xs()
+    width = max(len(r) for r in LAYERS) * X_GAP
+    return {n: (int(final[n] + width / 2), RANK[n] * Y_GAP) for n in final}
 
 
 def _edge_class(claim: dict) -> str:
@@ -64,7 +89,26 @@ def _edge_class(claim: dict) -> str:
 
 def _build_data() -> dict:
     doc = json.loads((_HERE / "claims.json").read_text(encoding="utf-8"))
-    pos = _positions()
+    union = {(c["subject"], c["object"]) for c in doc["claims"]
+             if c["question"] == "existence" and "|" not in c["object"]}
+    pos = _positions(union)
+    center_x = sum(x for x, _ in pos.values()) / len(pos)
+
+    def curvature(s: str, o: str) -> int:
+        """직선이 노드를 관통할 간선에 호를 준다.
+
+        층을 건너뛰면(폭≥2) 중간 층을, 같은 층이면 사이 노드를 지나므로
+        둘 다 호로 비킨다. 곡률은 폭에 비례, 방향은 바깥쪽.
+        """
+        span = abs(RANK[o] - RANK[s])
+        if span == 0:
+            return 70  # 같은 층 — 행 위로 비키는 호
+        if span < 2:
+            return 0
+        mid = (pos[s][0] + pos[o][0]) / 2
+        direction = 1 if mid >= center_x else -1
+        return direction * (60 + 50 * (span - 1))
+
     out: dict[str, dict] = {"positions": {k: {"x": x, "y": y}
                                           for k, (x, y) in pos.items()},
                             "csps": {}}
@@ -83,6 +127,7 @@ def _build_data() -> dict:
             lc = life.get((c["subject"], c["object"]))
             edges.append({
                 "s": c["subject"], "o": c["object"],
+                "cpd": curvature(c["subject"], c["object"]),
                 "cls": _edge_class(c), "verdict": c["verdict"],
                 "predicate": c.get("predicate"), "note": c.get("note"),
                 "oracle": c["oracle"],
@@ -110,8 +155,6 @@ _PAGE = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <title>depkb 의존성 그래프 — 3사 실측</title>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
-<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 <style>
   :root { --ink:#1c1e21; --sub:#5b6572; --line:#d7dce3; --bg:#f6f7f9;
           --req:#0a7d52; --opt:#8a94a2; --auto:#2563c4; --cond:#c26a12; }
@@ -165,7 +208,7 @@ _PAGE = r"""<!doctype html>
   <label class="f"><input type="checkbox" data-cls="cond" checked><span class="sw cond"></span>조건부</label>
   <label class="f"><input type="checkbox" id="lifeToggle" checked>생명주기 배지 🔒/♻</label>
   <label class="f"><input type="checkbox" id="ghostToggle">간선 없는 자원 표시</label>
-  <button id="reset">배치 다시 계산</button>
+  <button id="reset">배치 초기화</button>
 </header>
 <main>
   <div id="cy"></div>
@@ -186,31 +229,19 @@ if (typeof cytoscape === 'undefined') {
   document.getElementById('offline').style.display='block';
 } else {
   const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12'};
-  const HAS_DAGRE = typeof window.dagre !== 'undefined'
-                    && typeof window.cytoscapeDagre !== 'undefined';
-  if (HAS_DAGRE) cytoscape.use(window.cytoscapeDagre);
   let cy = null, current = 'azure';
 
   function elements(csp) {
     const d = DATA.csps[csp], els = [];
+    // 좌표는 3사 공통(합집합 배치) — 탭을 바꿔도 노드가 제자리에 있어야
+    // 비교가 된다.
     for (const n of d.nodes) els.push({group:'nodes',
       data:{id:n.id, ghost:n.ghost?1:0, disj:n.disjunctions},
       position:{...DATA.positions[n.id]}});
     d.edges.forEach((e,i) => els.push({group:'edges',
-      data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls,
+      data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls, cpd:e.cpd||0,
             badge: e.lifecycle ? (e.lifecycle.cascade?'♻':'🔒') : '', ...e}}));
     return els;
-  }
-
-  function relayout() {
-    // 유령 노드를 빼고 계산해야 겹침이 준다 — 배치는 보이는 간선의 것이다.
-    const scope = cy.elements(':visible');
-    if (HAS_DAGRE) {
-      scope.layout({name:'dagre', rankDir:'TB', nodeSep:70, rankSep:120,
-                    edgeSep:35, fit:true, padding:40}).run();
-    } else {
-      scope.layout({name:'preset', fit:true, padding:40}).run();
-    }
   }
 
   function style() { return [
@@ -232,6 +263,11 @@ if (typeof cytoscape === 'undefined') {
              width:k==='req'?3:2,
              'line-style':k==='opt'?'dashed':k==='auto'?'dotted':
                           k==='cond'?'dashed':'solid'}})),
+    // 층을 건너뛰는 간선 — 미리 계산된 곡률로 바깥쪽 호(중간 노드 관통 방지)
+    {selector:'edge[cpd != 0]', style:{
+      'curve-style':'unbundled-bezier',
+      'control-point-distances':'data(cpd)',
+      'control-point-weights':0.5}},
     {selector:'edge:selected', style:{width:4}},
     {selector:'.dim', style:{opacity:0.12}},
     {selector:'.hideCls', style:{display:'none'}},
@@ -247,7 +283,7 @@ if (typeof cytoscape === 'undefined') {
     cy = cytoscape({container:document.getElementById('cy'),
       elements:elements(csp), style:style(), wheelSensitivity:0.25});
     applyFilters();
-    relayout();
+    cy.fit(cy.elements(':visible'), 40);
     cy.on('tap', 'node,edge', ev => showDetail(ev.target));
     cy.on('tap', ev => { if (ev.target===cy) clearDetail(); });
     // 이웃 강조
@@ -316,11 +352,9 @@ if (typeof cytoscape === 'undefined') {
     b.textContent = csp; b.onclick = () => render(csp);
     tabs.appendChild(b);
   }
-  document.querySelectorAll('input[data-cls], #lifeToggle')
+  document.querySelectorAll('input[data-cls], #lifeToggle, #ghostToggle')
     .forEach(cb => cb.addEventListener('change', applyFilters));
-  document.getElementById('ghostToggle').addEventListener('change',
-    () => { applyFilters(); relayout(); });
-  document.getElementById('reset').onclick = relayout;
+  document.getElementById('reset').onclick = () => render(current);
   render('azure');
 }
 </script></body></html>
