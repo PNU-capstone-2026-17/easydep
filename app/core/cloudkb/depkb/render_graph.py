@@ -3,8 +3,11 @@
 **소비 전용 뷰다** — 판정·증거는 claims.json이 진실이고, 여기서는 그것을
 읽기 좋게 그릴 뿐이다. 배치(층)는 우리 구성(가독 목적)이고 판정에 영향이 없다.
 
-- 시각화는 cytoscape.js(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
+- 시각화는 cytoscape.js + dagre(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
   오프라인이면 안내 문구가 뜬다(데이터 자체는 HTML에 내장돼 유실은 없다).
+- 배치는 dagre 계층 레이아웃이 **그 CSP의 실제 간선**으로 계산한다(교차
+  최소화). 아래 LAYERS 좌표는 dagre CDN 실패 시의 예비 배치일 뿐이다.
+  간선 없는 자원(유령)은 기본 숨김 — 배치 계산에서도 빠져 겹침이 준다.
 - CSP 탭 · 판정별 간선 필터 · 생명주기 배지(🔒 삭제 보호 / ♻ 동반 정리) ·
   노드 드래그 · 클릭 상세(술어·note·증거의 실험/스텝 좌표).
 - 선언 술어(`a|b|c` 합집합 간선)는 선으로 그리면 겹침만 늘어 **주체 노드
@@ -107,6 +110,8 @@ _PAGE = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
 <title>depkb 의존성 그래프 — 3사 실측</title>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
 <style>
   :root { --ink:#1c1e21; --sub:#5b6572; --line:#d7dce3; --bg:#f6f7f9;
           --req:#0a7d52; --opt:#8a94a2; --auto:#2563c4; --cond:#c26a12; }
@@ -159,7 +164,8 @@ _PAGE = r"""<!doctype html>
   <label class="f"><input type="checkbox" data-cls="auto" checked><span class="sw auto"></span>서버가 채움</label>
   <label class="f"><input type="checkbox" data-cls="cond" checked><span class="sw cond"></span>조건부</label>
   <label class="f"><input type="checkbox" id="lifeToggle" checked>생명주기 배지 🔒/♻</label>
-  <button id="reset">배치 초기화</button>
+  <label class="f"><input type="checkbox" id="ghostToggle">간선 없는 자원 표시</label>
+  <button id="reset">배치 다시 계산</button>
 </header>
 <main>
   <div id="cy"></div>
@@ -180,6 +186,9 @@ if (typeof cytoscape === 'undefined') {
   document.getElementById('offline').style.display='block';
 } else {
   const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12'};
+  const HAS_DAGRE = typeof window.dagre !== 'undefined'
+                    && typeof window.cytoscapeDagre !== 'undefined';
+  if (HAS_DAGRE) cytoscape.use(window.cytoscapeDagre);
   let cy = null, current = 'azure';
 
   function elements(csp) {
@@ -191,6 +200,17 @@ if (typeof cytoscape === 'undefined') {
       data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls,
             badge: e.lifecycle ? (e.lifecycle.cascade?'♻':'🔒') : '', ...e}}));
     return els;
+  }
+
+  function relayout() {
+    // 유령 노드를 빼고 계산해야 겹침이 준다 — 배치는 보이는 간선의 것이다.
+    const scope = cy.elements(':visible');
+    if (HAS_DAGRE) {
+      scope.layout({name:'dagre', rankDir:'TB', nodeSep:70, rankSep:120,
+                    edgeSep:35, fit:true, padding:40}).run();
+    } else {
+      scope.layout({name:'preset', fit:true, padding:40}).run();
+    }
   }
 
   function style() { return [
@@ -215,6 +235,7 @@ if (typeof cytoscape === 'undefined') {
     {selector:'edge:selected', style:{width:4}},
     {selector:'.dim', style:{opacity:0.12}},
     {selector:'.hideCls', style:{display:'none'}},
+    {selector:'.hideGhost', style:{display:'none'}},
     {selector:'.noBadge', style:{label:''}},
   ]; }
 
@@ -225,8 +246,8 @@ if (typeof cytoscape === 'undefined') {
     if (cy) cy.destroy();
     cy = cytoscape({container:document.getElementById('cy'),
       elements:elements(csp), style:style(), wheelSensitivity:0.25});
-    cy.fit(undefined, 40);
     applyFilters();
+    relayout();
     cy.on('tap', 'node,edge', ev => showDetail(ev.target));
     cy.on('tap', ev => { if (ev.target===cy) clearDetail(); });
     // 이웃 강조
@@ -244,6 +265,8 @@ if (typeof cytoscape === 'undefined') {
     });
     cy.edges().toggleClass('noBadge',
       !document.getElementById('lifeToggle').checked);
+    cy.nodes('[ghost=1]').toggleClass('hideGhost',
+      !document.getElementById('ghostToggle').checked);
   }
 
   const esc = s => String(s??'').replace(/[&<>]/g,
@@ -295,7 +318,9 @@ if (typeof cytoscape === 'undefined') {
   }
   document.querySelectorAll('input[data-cls], #lifeToggle')
     .forEach(cb => cb.addEventListener('change', applyFilters));
-  document.getElementById('reset').onclick = () => render(current);
+  document.getElementById('ghostToggle').addEventListener('change',
+    () => { applyFilters(); relayout(); });
+  document.getElementById('reset').onclick = relayout;
   render('azure');
 }
 </script></body></html>
