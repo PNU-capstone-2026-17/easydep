@@ -728,6 +728,30 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 기능 신호 6 (2026-07-31 — 서비스 디스커버리. **이 라운드에서
+    # 유일하게 관측자 이미지가 필요했다**. 신호 5(LB 서빙)는 기준선을 못
+    # 세워 미판정 — azure-lb-serve-2026-07-31/Z2에 조건 명시) ──
+    dict(csp="gcp", subject="k8sService", object="k8sCluster",
+         question="function", verdict="holds",
+         predicate="무방비: Service 삭제를 컨트롤 플레인이 막지 않는다 — 기능 "
+                   "신호는 클러스터 안에서 서비스 이름으로의 HTTP 접속",
+         evidence=[
+             ("gcp-svcdisc-2026-07-31", "F1.discovery-works", "ok", "apply"),
+             ("gcp-svcdisc-2026-07-31", "M1.delete-service", "ok", "apply"),
+             ("gcp-svcdisc-2026-07-31", "M1b.pods-still-running", "ok", "apply"),
+             ("gcp-svcdisc-2026-07-31", "F2.discovery-lost", "ok", "apply"),
+             ("gcp-svcdisc-2026-07-31", "M2.recreate-service", "ok", "apply"),
+             ("gcp-svcdisc-2026-07-31", "F3.discovery-again", "ok", "apply"),
+         ],
+         note="**Pod는 Running인 채로 이름만 죽는다**(M1b) — 워크로드가 살아 "
+              "있어도 서로 못 찾는 것이 이 결속의 내용이다. 관측자는 agnhost"
+              "(k8s 공식 테스트 이미지)이고 **우리 워크로드가 아니라 도구다** "
+              "— 앱을 기준으로 삼지 않는다는 규율은 유지된다(응답하는 컨테이너 "
+              "없이는 '이름으로 찾아진다'를 잴 수 없어 여기서만 썼다). "
+              "k8sService→loadBalancer(클라우드 LB 합성)와 **다른 간선**이다: "
+              "저쪽은 클라우드 층, 이쪽은 클러스터 안. gcp에서만 쟀다 — k8s "
+              "자체의 기능이라 CSP 차이를 예상하지 않지만 그 예상은 판정이 "
+              "아니다",),
     # ── 기능 신호 4종 라운드 (2026-07-31 — 위협 ④(신호가 TCP 하나뿐)를
     # 없앤다. **앱을 쓰지 않고** 게스트 안에서 OS 기본 도구로만 관측했다.
     # 하네스는 experiments/_guest.py) ──
@@ -763,8 +787,11 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "optional · 생명주기 holds · 기능 holds). 함정 둘을 넘어야 "
               "보였다: 페이지 캐시(`oflag=direct` 필요, K4) · 파이프가 종료 "
               "코드를 삼킴(`| tail -1` 제거, K6 — dd가 'Input/output error'를 "
-              "냈는데 rc=0이었다). 회복은 재마운트를 포함한다(운영 절차이지 "
-              "판정 대상 아님)"),
+              "냈는데 rc=0이었다). **회복에 게스트 조치는 없었다** — "
+              "재마운트 명령은 awk 인용 결함으로 실패했는데(M2f EXIT_32) "
+              "쓰기가 회복됐다. 기존 마운트가 유지된 채 디스크가 돌아온 것으로 "
+              "보이나, 재마운트가 회복의 필요조건인지는 이 측정이 말하지 "
+              "않는다(그렇게 적었던 앞 판을 정정한다)"),
     dict(csp="aws", subject="vm", object="iamRole", question="function",
          verdict="holds",
          predicate="무방비: 실행 중 인스턴스에서 인스턴스 프로필 분리를 "

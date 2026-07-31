@@ -202,6 +202,8 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         # VPN 라운드: network 필드 필수 — vpn 어휘가 3사 완결됐다.
         ("vpn", "network", "existence"): "required",
         ("vpn", "network", "lifecycle"): "holds",
+        # 신호 6: 서비스 디스커버리 — Pod는 Running인데 이름만 죽는다.
+        ("k8sService", "k8sCluster", "function"): "holds",
         # iamRole 라운드: serviceAccounts null 실물 — 서버가 안 붙인다.
         ("vm", "iamRole", "existence"): "optional",
         # customImage 라운드: 원본은 디스크(aws와 반전), 결속은 없다.
