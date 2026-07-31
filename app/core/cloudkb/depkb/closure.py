@@ -53,6 +53,10 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     # 방향이라 lifecycle 소비가 deleteBefore가 아니라 cleanupCascades로 갈린다
     # (k8s 합성 라운드 실측). 존재 간선에 실리면 detail로 읽는다.
     ("동반 정리:", "detail"),
+    # 무방비: 기능을 깨는 변이를 컨트롤 플레인이 막지 않는다 — 기능 의존
+    # (question="function") 라운드의 술어. 기능 질문은 아직 closure가 소비하지
+    # 않는다(어휘·측정까지 — 소비 배선은 후속). 분류 불변식 유지용 등록.
+    ("무방비:", "detail"),
 )
 
 

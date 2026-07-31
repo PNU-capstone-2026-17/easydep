@@ -86,6 +86,8 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("k8sService", "loadBalancer", "lifecycle"): "holds",
         # 합성 2라운드: 기본 구성에서 Ingress 컨트롤러 부재 — 합성 없음.
         ("k8sIngress", "loadBalancer", "existence"): "optional",
+        # 기능 의존 첫 라운드: EIP 분리 무방비 + TCP 도달성 상실·회복 실측.
+        ("vm", "publicIp", "function"): "holds",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -168,6 +170,8 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         # 합성 2라운드: 내장 컨트롤러의 **전역** HTTP LB 성좌 — 유일한 합성 CSP.
         ("k8sIngress", "loadBalancer", "existence"): "optional",
         ("k8sIngress", "loadBalancer", "lifecycle"): "holds",
+        # 기능 의존 첫 라운드: accessConfig 삭제 무방비(재부여는 새 임시 IP).
+        ("vm", "publicIp", "function"): "holds",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -216,6 +220,8 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("k8sPvc", "disk", "lifecycle"): "holds",
         # 합성 2라운드: 기본 구성에서 Ingress 컨트롤러 부재 — 합성 없음.
         ("k8sIngress", "loadBalancer", "existence"): "optional",
+        # 기능 의존 첫 라운드: 한 쌍(nic→publicIp)에서 세 질문 전부 판정.
+        ("nic", "publicIp", "function"): "holds",
     }
 
 
@@ -232,6 +238,25 @@ def test_vm_image_flips_between_disjunctive_and_required(artifact) -> None:
     assert rows["gcp"]["verdict"] == "optional"
     for csp in ("azure", "gcp"):
         assert rows[csp]["predicate"].startswith("disjunctive:"), csp
+
+
+def test_function_is_a_third_question_axis(artifact) -> None:
+    """기능 의존(2026-07-31): 존재·생명주기가 거부 코드로 잰 것과 달리
+    컨트롤 플레인이 막지 않는(무방비) 지대를 기능 신호(TCP 도달성)로 쟀다.
+    azure nic→publicIp는 세 질문이 전부 판정된 첫 쌍 — 존재 optional(선택) ·
+    생명주기 holds(붙어 있으면 삭제 거부) · 기능 holds(떼면 도달성 상실,
+    막지 않음). 한 필드였다면 이 셋은 표현 자체가 불가능했다."""
+    az = {c["question"]: c["verdict"] for c in artifact["claims"]
+          if c["csp"] == "azure"
+          and (c["subject"], c["object"]) == ("nic", "publicIp")}
+    assert az == {"existence": "optional", "lifecycle": "holds",
+                  "function": "holds"}
+    for csp, subj in (("gcp", "vm"), ("aws", "vm")):
+        row = next(c for c in artifact["claims"] if c["csp"] == csp
+                   and (c["subject"], c["object"], c["question"])
+                   == (subj, "publicIp", "function"))
+        assert row["verdict"] == "holds"
+        assert row["predicate"].startswith("무방비:"), csp
 
 
 def test_optional_and_lifecycle_are_independent(artifact) -> None:

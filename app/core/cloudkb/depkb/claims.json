@@ -2,13 +2,13 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.optional": 11,
-  "aws.holds": 6,
+  "aws.holds": 7,
   "aws.required": 5,
   "azure.required": 7,
-  "azure.holds": 11,
+  "azure.holds": 12,
   "azure.optional": 12,
   "gcp.optional": 12,
-  "gcp.holds": 8,
+  "gcp.holds": 9,
   "gcp.required": 3
  },
  "claims": [
@@ -590,6 +590,54 @@
   },
   {
    "subject": "vm",
+   "object": "publicIp",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: running 인스턴스에서 EIP 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+   "note": "EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "M1.disassociate-while-running",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "M1b.instance-public-ip-now",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "F2.unreachable-after-detach",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "M2.reassociate-eip",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func-2026-07-31",
+     "step": "F3.reachable-again",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
    "object": "sshKey",
    "csp": "aws",
    "question": "existence",
@@ -1088,6 +1136,66 @@
      "layer": "apply",
      "experiment": "azure-apply-2026-07-30",
      "step": "B.build-chain",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "nic",
+   "object": "publicIp",
+   "csp": "azure",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 실행 중 VM의 NIC에서 PIP 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+   "note": "같은 PIP 재부착으로 회복까지 관측(인과 완결). 존재·생명주기와 한 쌍에서 세 질문이 다 판정된 첫 간선이다(존재 optional · 생명주기 holds(삭제 보호) · 기능 holds). 덤 관측: Standard SKU PIP는 NSG 없으면 인바운드가 기본 차단된다(R6 — F1이 NSG 부착 전 7회 실패, 부착 직후 성공. secure-by-default)",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "M1.detach-pip-while-running",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "M1b.vm-still-running",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "F2.unreachable-after-detach",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "M2.reattach-pip",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func-2026-07-31",
+     "step": "F3.reachable-again",
      "code": "ok"
     }
    ]
@@ -2187,6 +2295,54 @@
      "experiment": "gcp-apply-2026-07-31",
      "step": "A.instance-omit-nic",
      "code": "invalid"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "publicIp",
+   "csp": "gcp",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: RUNNING 인스턴스에서 accessConfig 삭제를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+   "note": "재부여 시 임시 IP는 **새 주소**가 온다(34.64.142.22→34.22.74.114) — 회복은 새 주소로 관측. gcp 공인 IP는 독립 자원이 아니라 인스턴스의 accessConfig라는 결속 차이가 변이 경로에도 그대로 나타난다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "M1.delete-accessconfig-while-running",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "M1b.vm-still-running",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "F2.unreachable-after-delete",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "M2.add-accessconfig",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func-2026-07-31",
+     "step": "F3.reachable-again",
+     "code": "ok"
     }
    ]
   }

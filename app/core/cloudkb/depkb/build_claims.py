@@ -668,6 +668,66 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. "
               "서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 "
               "아님"),
+    # ── 기능 의존 첫 라운드 (2026-07-31 — 셋째 질문 축 question="function".
+    # 존재·생명주기는 거부 코드가 오라클이지만 기능 의존은 컨트롤 플레인이
+    # 막지 않는(무방비) 지대라 **기능 신호**(외부 TCP 22 도달성)로 잰다.
+    # 인과 사다리: 기능 확인 → 변이 성공(무방비) → 상실 → 복원 → 회복.
+    # 회복까지 봐야 상실이 변이 탓임이 선다) ──
+    dict(csp="azure", subject="nic", object="publicIp", question="function",
+         verdict="holds",
+         predicate="무방비: 실행 중 VM의 NIC에서 PIP 분리를 컨트롤 플레인이 "
+                   "막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+         evidence=[
+             ("azure-func-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("azure-func-2026-07-31", "M1.detach-pip-while-running",
+              "ok", "apply"),
+             ("azure-func-2026-07-31", "M1b.vm-still-running", "ok", "apply"),
+             ("azure-func-2026-07-31", "F2.unreachable-after-detach",
+              "ok", "apply"),
+             ("azure-func-2026-07-31", "M2.reattach-pip", "ok", "apply"),
+             ("azure-func-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="같은 PIP 재부착으로 회복까지 관측(인과 완결). 존재·생명주기와 "
+              "한 쌍에서 세 질문이 다 판정된 첫 간선이다(존재 optional · "
+              "생명주기 holds(삭제 보호) · 기능 holds). 덤 관측: Standard SKU "
+              "PIP는 NSG 없으면 인바운드가 기본 차단된다(R6 — F1이 NSG 부착 "
+              "전 7회 실패, 부착 직후 성공. secure-by-default)"),
+    dict(csp="gcp", subject="vm", object="publicIp", question="function",
+         verdict="holds",
+         predicate="무방비: RUNNING 인스턴스에서 accessConfig 삭제를 컨트롤 "
+                   "플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+         evidence=[
+             ("gcp-func-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("gcp-func-2026-07-31", "M1.delete-accessconfig-while-running",
+              "ok", "apply"),
+             ("gcp-func-2026-07-31", "M1b.vm-still-running", "ok", "apply"),
+             ("gcp-func-2026-07-31", "F2.unreachable-after-delete",
+              "ok", "apply"),
+             ("gcp-func-2026-07-31", "M2.add-accessconfig", "ok", "apply"),
+             ("gcp-func-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="재부여 시 임시 IP는 **새 주소**가 온다(34.64.142.22→"
+              "34.22.74.114) — 회복은 새 주소로 관측. gcp 공인 IP는 독립 "
+              "자원이 아니라 인스턴스의 accessConfig라는 결속 차이가 변이 "
+              "경로에도 그대로 나타난다"),
+    dict(csp="aws", subject="vm", object="publicIp", question="function",
+         verdict="holds",
+         predicate="무방비: running 인스턴스에서 EIP 분리를 컨트롤 플레인이 "
+                   "막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
+         evidence=[
+             ("aws-func-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("aws-func-2026-07-31", "M1.disassociate-while-running",
+              "ok", "apply"),
+             ("aws-func-2026-07-31", "M1b.instance-public-ip-now",
+              "ok", "apply"),
+             ("aws-func-2026-07-31", "F2.unreachable-after-detach",
+              "ok", "apply"),
+             ("aws-func-2026-07-31", "M2.reassociate-eip", "ok", "apply"),
+             ("aws-func-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
+              "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
+              "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
     # ── k8s 합성 2라운드 (2026-07-31 — Ingress→LB. **기본 구성 판정**:
     # 관리형 기본에 애드온 0. 컨트롤러를 깔면 답이 바뀔 수 있고 그건 별도
     # 변형이다. RWX PVC 셀은 3사 전부 완주 불가(azure 정책 교란·gcp 드라이버

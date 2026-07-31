@@ -144,8 +144,17 @@ def _build_data() -> dict:
         exist = [c for c in rows if c["question"] == "existence"]
         life = {(c["subject"], c["object"]): c for c in rows
                 if c["question"] == "lifecycle"}
+        funcs = {(c["subject"], c["object"]): c for c in rows
+                 if c["question"] == "function"}
         edges, disjunctions = [], []
         touched: set[str] = set()
+
+        def func_block(fc: dict | None) -> dict | None:
+            if fc is None:
+                return None
+            return {"verdict": fc["verdict"], "predicate": fc.get("predicate"),
+                    "note": fc.get("note"), "oracle": fc["oracle"],
+                    "evidence": fc["evidence"]}
         for c in exist:
             if "|" in c["object"]:
                 disjunctions.append(c)  # 노드 상세로 — 선으로 그리면 겹친다
@@ -160,6 +169,8 @@ def _build_data() -> dict:
                 "predicate": c.get("predicate"), "note": c.get("note"),
                 "oracle": c["oracle"],
                 "evidence": c["evidence"],
+                "function": func_block(
+                    funcs.pop((c["subject"], c["object"]), None)),
                 "lifecycle": None if lc is None else {
                     "verdict": lc["verdict"],
                     "cascade": (lc.get("predicate") or "").startswith("동반 정리:"),
@@ -169,6 +180,14 @@ def _build_data() -> dict:
                 },
             })
             touched.update((c["subject"], c["object"]))
+        # 기능 질문만 실측된 쌍(gcp·aws vm→publicIp) — 존재 간선이 없어도
+        # 그린다. 없으면 실측이 뷰에서 사라진다.
+        for (s, o), fc in sorted(funcs.items()):
+            edges.append({"s": s, "o": o, "cls": "func", "verdict": None,
+                          "predicate": None, "note": None, "oracle": fc["oracle"],
+                          "evidence": [], "function": func_block(fc),
+                          "lifecycle": None})
+            touched.update((s, o))
         nodes = [{"id": n, "ghost": n not in touched,
                   "desc": DESC.get(n, ""), "names": CSP_NAMES.get(n, ""),
                   "disjunctions": [
@@ -186,7 +205,8 @@ _PAGE = r"""<!doctype html>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <style>
   :root { --ink:#1c1e21; --sub:#5b6572; --line:#d7dce3; --bg:#f6f7f9;
-          --req:#0a7d52; --opt:#8a94a2; --auto:#2563c4; --cond:#c26a12; }
+          --req:#0a7d52; --opt:#8a94a2; --auto:#2563c4; --cond:#c26a12;
+          --func:#8b3fc6; }
   * { box-sizing:border-box }
   body { margin:0; font:14px/1.5 "Segoe UI",system-ui,sans-serif;
          color:var(--ink); background:var(--bg); height:100vh;
@@ -206,6 +226,7 @@ _PAGE = r"""<!doctype html>
   .sw.opt { border-top-style:dashed; border-color:var(--opt) }
   .sw.auto { border-top-style:dotted; border-color:var(--auto) }
   .sw.cond { border-top-style:dashed; border-color:var(--cond) }
+  .sw.func { border-top-style:dashed; border-color:var(--func) }
   #reset { margin-left:auto; border:1px solid var(--line); background:#fff;
            padding:5px 12px; border-radius:6px; cursor:pointer; font:inherit }
   main { flex:1; display:flex; min-height:0 }
@@ -235,6 +256,7 @@ _PAGE = r"""<!doctype html>
   <label class="f"><input type="checkbox" data-cls="opt" checked><span class="sw opt"></span>선택</label>
   <label class="f"><input type="checkbox" data-cls="auto" checked><span class="sw auto"></span>서버가 채움</label>
   <label class="f"><input type="checkbox" data-cls="cond" checked><span class="sw cond"></span>조건부</label>
+  <label class="f"><input type="checkbox" data-cls="func" checked><span class="sw func"></span>기능 결속만</label>
   <label class="f"><input type="checkbox" id="lifeToggle" checked>생명주기 배지 🔒/♻</label>
   <button id="reset">배치 초기화</button>
 </header>
@@ -256,7 +278,8 @@ if (typeof cytoscape === 'undefined') {
   document.getElementById('cy').style.display='none';
   document.getElementById('offline').style.display='block';
 } else {
-  const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12'};
+  const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12',
+                  func:'#8b3fc6'};
   let cy = null, current = 'azure';
 
   function elements(csp) {
@@ -267,7 +290,8 @@ if (typeof cytoscape === 'undefined') {
       position:{...DATA.positions[n.id]}});
     d.edges.forEach((e,i) => els.push({group:'edges',
       data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls,
-            badge: e.lifecycle ? (e.lifecycle.cascade?'♻':'🔒') : '', ...e}}));
+            badge: (e.lifecycle ? (e.lifecycle.cascade?'♻':'🔒') : '')
+                   + (e.function ? 'ƒ' : ''), ...e}}));
     return els;
   }
 
@@ -346,22 +370,33 @@ if (typeof cytoscape === 'undefined') {
               unknown:'미판정'};
 
   function edgeDetail(d) {
-    const lc = d.lifecycle;
+    const lc = d.lifecycle, fc = d.function;
+    const head = d.cls === 'func'
+      ? `<span class="chip" style="color:#8b3fc6;border-color:#8b3fc6">기능 결속만 실측</span>`
+      : `<span class="chip ${d.cls}">${{req:'필수',opt:'선택',auto:'서버가 채움',cond:'조건부'}[d.cls]}</span>
+         <span class="chip">존재 판정: ${VK[d.verdict]||esc(d.verdict)}</span>`;
     return `<h2>${esc(d.s)} → ${esc(d.o)}</h2>
-      <span class="chip ${d.cls}">${{req:'필수',opt:'선택',auto:'서버가 채움',cond:'조건부'}[d.cls]}</span>
-      <span class="chip">존재 판정: ${VK[d.verdict]||esc(d.verdict)}</span>
+      ${head}
       <span class="chip">도달 오라클: ${esc(d.oracle)} 층</span>
+      ${d.cls==='func' ? kv('존재 질문',
+          '이 쌍에는 존재 주장이 없다 — 기능 질문만 실측됐다') : ''}
       ${kv('술어 (분류는 우리 구성)', esc(d.predicate))}
       ${kv('노트', esc(d.note))}
-      ${kv('증거 — 존재 질문', evList(d.evidence))}
+      ${d.evidence && d.evidence.length ? kv('증거 — 존재 질문', evList(d.evidence)) : ''}
       ${lc ? kv('생명주기 질문 ' + (lc.cascade?'♻ 동반 정리':'🔒 삭제 보호')
                 + ` — 판정 ${VK[lc.verdict]||esc(lc.verdict)}`
                 + ` (${esc(lc.oracle)} 층)`,
                 (lc.predicate?`${esc(lc.predicate)}<br>`:'')
                 + (lc.note?`${esc(lc.note)}<br>`:'')
                 + evList(lc.evidence))
-          : kv('생명주기 질문', '이 간선에는 생명주기 주장이 없다 — '
-               + '빈칸이 아니라 그 질문을 판정할 실측이 없다는 기록이다')}`;
+          : (d.cls==='func' ? '' : kv('생명주기 질문',
+               '이 간선에는 생명주기 주장이 없다 — '
+               + '빈칸이 아니라 그 질문을 판정할 실측이 없다는 기록이다'))}
+      ${fc ? kv('기능 질문 ƒ — 판정 ' + (VK[fc.verdict]||esc(fc.verdict))
+                + ` (${esc(fc.oracle)} 층)`,
+                (fc.predicate?`${esc(fc.predicate)}<br>`:'')
+                + (fc.note?`${esc(fc.note)}<br>`:'')
+                + evList(fc.evidence)) : ''}`;
   }
 
   function showDetail(t) {
