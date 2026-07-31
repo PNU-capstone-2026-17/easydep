@@ -117,6 +117,14 @@ def provision_view(intent: InfraIntent) -> dict:
             {"owner": s, "synthesized": o,
              "note": f"{s} 삭제가 {o}를 함께 지웁니다 — 삭제 단계를 내지 마세요"}
             for s, o in intent.cleanupCascades],
+        # 기능 결속(실측) — 컨트롤 플레인이 막지 않으므로 검사로는 안 잡힌다.
+        # apply는 성공하는데 서비스가 죽는 자리라 **운영 경고**로 낸다.
+        "operationalWarnings": [
+            {"subject": s, "object": o,
+             "warning": f"{o}를 떼어도 {s}는 남지만 기능이 깨집니다 "
+                        f"(컨트롤 플레인이 막지 않습니다 — 실측)",
+             "evidence": why}
+            for s, o, why in intent.functionalDeps],
         "checks": [asdict(c) for c in intent.constraints],
         "blockedBy": [d.about for d in intent.decisions],
         "provenance": intent.provenance,

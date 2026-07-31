@@ -56,12 +56,20 @@ def test_questions_merge_translation_and_intent() -> None:
 
 
 def test_unmeasured_anchor_is_demoted_not_planned() -> None:
-    """aws의 k8sPvc→disk는 미측정(간선 없음 — 범위 표시)이다. 번역이 그 앵커를
-    읽어도 계획을 내지 않고 unmeasured로 강등한다 — 나머지 앵커 계획은 낸다."""
+    """번역이 읽은 앵커가 그 CSP에서 미측정이면 계획을 내지 않고 unmeasured로
+    강등한다 — 나머지 앵커 계획은 낸다.
+
+    사례 갱신(2026-07-31 완결 라운드): aws k8sPvc는 IRSA 전제까지 갖춰
+    실측돼 더 이상 미측정이 아니다. 강등 기제 자체는 남아 있어야 하므로
+    아직 어느 CSP에도 없는 앵커로 확인한다."""
     p = plan_from_deployment_intent(_di(pvc=True), "aws", "r")
-    assert any("k8sPvc" in u and "미측정" in u for u in p.unmeasured), p.unmeasured
-    assert "k8sPvc" not in p.intent.anchors
-    assert "k8sCluster" in p.intent.anchors, "나머지 계획은 나와야 한다"
+    assert "k8sPvc" in p.intent.anchors, "이제는 측정됐으므로 계획에 든다"
+    with pytest.raises(ValueError):  # 전부 미측정이면 죽는다
+        plan_from_deployment_intent(
+            {"schemaVersion": "easydep-deployment-intent/v1alpha1",
+             "namespace": "t",
+             "workloads": [{"name": "x", "kind": "Deployment",
+                            "capabilities": {}}]}, "ncp", "r")
 
 
 def test_service_synthesis_flows_into_donotcreate_and_cascades() -> None:

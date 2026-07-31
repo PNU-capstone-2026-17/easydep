@@ -1,0 +1,97 @@
+{
+ "_note": "CSI RWX 재측정 + AKS identity — RP 등록 후 같은 PVC를 다시 던져 실패 원인을 가른다.",
+ "startedAt": "2026-07-31T11:22:08+00:00",
+ "ids": {
+  "nodeRg": "MC_depkb-preflight_depkb-csi2_koreacentral"
+ },
+ "steps": {
+  "K0.storage-rp-state": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Registered"
+  },
+  "K1.create-cluster-nowait": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "K2.provisioning-final": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Succeeded"
+  },
+  "K3.node-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "MC_depkb-preflight_depkb-csi2_koreacentral"
+  },
+  "K4.aks-identity-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"identity\": \"SystemAssigned\",\n  \"kubeletId\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourcegroups/MC_depkb-preflight_depkb-csi2_koreacentral/providers/Microsoft.ManagedIdentity/userAssignedIdentities/depkb-csi2-agentpool\"\n}"
+  },
+  "K5.get-credentials": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "P1.apply-rwx-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim/depkb-csi2-rwx created"
+  },
+  "P2.rwx-bound": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Bound"
+  },
+  "P3.rwx-events": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Provisioning: External provisioner is provisioning volume for claim \"default/depkb-csi2-rwx\"\\nExternalProvisioning: Waiting for a volume to be created either by the external provisioner 'file.csi.azure.com' or manually by the system administrator. If volume creation is delayed, please verify that the provisioner is running and correctly registered.\\nProvisioningSucceeded: Successfully provisioned volume pvc-eb98dfc1-3426-474b-8ef0-cca602f68c31\\n"
+  },
+  "P4.storage-accounts-after": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  \"f60d9345aef0b4ce7962d8f\"\n]"
+  },
+  "P5.pv-volumehandle-hint": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "MC_depkb-preflight_depkb-csi2_koreacentral#f60d9345aef0b4ce7962d8f#pvc-eb98dfc1-3426-474b-8ef0-cca602f68c31###default\\n"
+  },
+  "P6.delete-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim \"depkb-csi2-rwx\" deleted"
+  },
+  "P7.storage-accounts-after-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  \"f60d9345aef0b4ce7962d8f\"\n]"
+  },
+  "F1.delete-cluster-nowait": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F2.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gone"
+  },
+  "F3.residual-our-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  },
+  "F4.node-rg-gone": {
+   "ok": true,
+   "errorCodes": [
+    "ResourceGroupNotFound"
+   ],
+   "excerpt": "gone"
+  }
+ },
+ "finishedAt": "2026-07-31T11:35:02+00:00"
+}

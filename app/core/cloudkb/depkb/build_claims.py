@@ -728,6 +728,83 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 완결 라운드 (2026-07-31 — 미해결로 남겼던 것들을 닫는다) ──
+    dict(csp="azure", subject="k8sPvc", object="fileSystem",
+         question="existence", verdict="optional",
+         predicate="server-implicit: RWX PVC는 CSI가 스토리지 계정과 파일 "
+                   "공유를 합성한다(azurefile-csi, bind=Immediate)",
+         evidence=[
+             ("azure-csi2-2026-07-31", "K0.storage-rp-state", "ok", "apply"),
+             ("azure-csi2-2026-07-31", "P2.rwx-bound", "ok", "apply"),
+             ("azure-csi2-2026-07-31", "P4.storage-accounts-after",
+              "ok", "apply"),
+             ("azure-csi2-2026-07-31", "P5.pv-volumehandle-hint", "ok", "apply"),
+         ],
+         note="**합성 2라운드의 미해결을 닫았다** — RWX 실패의 원인은 CSI "
+              "경로가 아니라 **Microsoft.Storage RP 미등록**이었다(등록 후 "
+              "같은 PVC가 Bound). TLS 오류 문구는 오해를 부르는 표면이었고, "
+              "가름은 RP 상태를 바꿔 재측정해야만 됐다. 합성 실물: 계정 "
+              "f60d9345…, volumeHandle이 '노드RG#계정#pvc-…' 꼴로 층을 잇는다. "
+              "**RWO(k8sPvc→disk)와 대상이 다르다** — 블록은 디스크, 공유는 "
+              "파일시스템"),
+    dict(csp="azure", subject="k8sPvc", object="fileSystem",
+         question="lifecycle", verdict="holds",
+         predicate="동반 정리: PVC 삭제가 파일 공유를 지운다 — 단 **스토리지 "
+                   "계정은 남는다**(부분 정리)",
+         evidence=[
+             ("azure-csi2-2026-07-31", "P6.delete-pvc", "ok", "apply"),
+             ("azure-csi2-2026-07-31", "P7.storage-accounts-after-delete",
+              "ok", "apply"),
+         ],
+         note="RWO 디스크가 통째로 사라진 것과 **대조**: 계정은 PVC 삭제 후에도 "
+              "잔존한다(P7 — 같은 이름이 그대로). 공유 자체의 소멸은 따로 "
+              "확인하지 않았다(계정 목록만 봤다) — 그 한계를 적어 둔다. "
+              "계획층 함의: 계정은 클러스터 삭제까지 남는 잔여물이다"),
+    dict(csp="aws", subject="k8sPvc", object="disk", question="existence",
+         verdict="optional",
+         predicate="server-implicit: CSI가 EBS 볼륨을 합성한다 — 단 전제가 "
+                   "3사 중 가장 길다(노드그룹·CSI 드라이버·**IRSA**·CSI "
+                   "프로비저너 StorageClass)",
+         evidence=[
+             ("aws-ekspvc-2026-07-31", "N2.nodegroup-active", "ok", "apply"),
+             ("aws-ekspvc-2026-07-31", "I0.csi-controller-error",
+              "FailedPrecondition", "apply"),
+             ("aws-ekspvc-2026-07-31", "J1.annotate-sa-with-irsa", "ok", "apply"),
+             ("aws-ekspvc-2026-07-31", "J6.pvc-bound", "ok", "apply"),
+             ("aws-ekspvc-2026-07-31", "J7.volumes-after-pod", "ok", "apply"),
+             ("aws-ekspvc-2026-07-31", "J8.pv-volumehandle", "ok", "apply"),
+         ],
+         note="**1·2라운드의 미측정을 닫았다.** 합성 자체는 azure·gcp와 "
+              "같으나(vol-0739d…, volumeHandle 일치) **전제 사슬이 다르다** — "
+              "노드 역할에 EBS 정책을 붙여도 부족했고, 컨트롤러가 "
+              "'no EC2 IMDS role found'로 죽었다(I0). IRSA(OIDC 공급자 + "
+              "웹아이덴티티 역할)를 서비스 계정에 달고 재시작해야 Bound가 "
+              "됐다. 곁가지 실측 둘: **기본 SC가 default로 지정돼 있지 "
+              "않다**(S1 — 첫 PVC가 'no storage class is set'으로 방치) · "
+              "기본 gp2는 in-tree 프로비저너(kubernetes.io/aws-ebs)라 CSI "
+              "SC를 따로 만들어야 했다. azure·gcp는 기본 SC가 곧 CSI다"),
+    dict(csp="aws", subject="k8sPvc", object="disk", question="lifecycle",
+         verdict="holds",
+         predicate="동반 정리: PVC 삭제가 합성 EBS 볼륨을 지운다",
+         evidence=[
+             ("aws-ekspvc-2026-07-31", "J10.delete-pvc", "ok", "apply"),
+             ("aws-ekspvc-2026-07-31", "J11.volumes-after-delete",
+              "ok", "apply"),
+         ],
+         note="RWO 동반 정리는 3사 수렴 — azure·gcp와 같은 꼴(reclaim Delete). "
+              "azure RWX(파일 공유)만 계정이 잔존해 부분 정리였다"),
+    dict(csp="azure", subject="k8sCluster", object="iamRole",
+         question="existence", verdict="optional",
+         predicate="server-implicit: identity 미지정 시 SystemAssigned와 "
+                   "kubelet용 user-assigned identity를 서버가 합성한다",
+         evidence=[
+             ("azure-csi2-2026-07-31", "K4.aks-identity-shape", "ok", "apply"),
+         ],
+         note="iamRole 라운드의 미판정(‘재관측에 클러스터 필요’)을 닫았다. "
+              "우리가 준 적 없는데 identity.type=SystemAssigned이고 노드 RG에 "
+              "kubelet identity(depkb-csi2-agentpool)가 실재한다. **aws EKS는 "
+              "roleArn 필수인데 azure는 서버 합성** — 양상 반전이고, gcp의 "
+              "vm→iamRole(serviceAccounts:null, 서버가 안 붙임)과도 대비된다"),
     # ── globalDns·fileSystem 라운드 (2026-07-31 — 어휘 밖 대기열 소진.
     # DNS는 사설 영역 한정 측정(공인 이름 미소유), Filestore는 거부 층까지만
     # (최소 티어 1TiB 비용 규율) — 깊이 비대칭을 판정에 적는다) ──

@@ -124,6 +124,10 @@ class Closure:
     #: 기제가 반대라 섞지 않는다 — `required: true` 하나가 세 판정을 겸하다
     #: 어긋났던 진단과 같은 이유.
     cleanupCascades: tuple[tuple[str, str], ...]
+    #: 기능 결속 — (주체, 대상, 무엇이 깨지나). **컨트롤 플레인이 막지 않는**
+    #: 지대라서 생성·삭제 검사로는 안 잡힌다. 계획층에서는 운영 경고다:
+    #: 이 대상을 떼면 apply는 성공하는데 서비스가 죽는다.
+    functionalDeps: tuple[tuple[str, str, str], ...]
 
 
 @lru_cache(maxsize=1)
@@ -201,6 +205,8 @@ def closure(anchor: str, csp: str) -> Closure:
         remaining.remove(ready[0])
 
     scope = seen | set(attachable)
+    # 기능 결속은 폐포 밖 자원(예: aws subnet→internetGateway)도 가리킬 수
+    # 있다 — 경고를 잃지 않도록 대상은 scope 밖도 받는다(아래 functional).
     life = [c for c in rows
             if c["question"] == "lifecycle" and c["verdict"] == "holds"
             and c["subject"] in scope and c["object"] in scope]
@@ -210,6 +216,11 @@ def closure(anchor: str, csp: str) -> Closure:
     cascades = tuple(sorted(
         (c["subject"], c["object"]) for c in life
         if (c.get("predicate") or "").startswith("동반 정리:")))
+    functional = tuple(sorted(
+        (c["subject"], c["object"], c.get("note") or c.get("predicate") or "")
+        for c in rows
+        if c["question"] == "function" and c["verdict"] == "holds"
+        and c["subject"] in scope))
 
     return Closure(
         anchor=anchor, csp=csp,
@@ -221,6 +232,7 @@ def closure(anchor: str, csp: str) -> Closure:
         decisions=tuple(decisions),
         deleteBefore=delete_before,
         cleanupCascades=cascades,
+        functionalDeps=functional,
     )
 
 

@@ -85,6 +85,9 @@ class InfraIntent:
     #: 동반 정리 — (주체, 합성물). 주체 삭제가 합성물을 함께 지운다(실측).
     #: deleteBefore와 기제가 반대라 섞지 않는다(closure와 같은 이유).
     cleanupCascades: tuple[tuple[str, str], ...]
+    #: 기능 결속 — (주체, 대상, 무엇이 깨지나). 컨트롤 플레인이 막지 않으므로
+    #: 검사가 아니라 **운영 경고**로 나른다.
+    functionalDeps: tuple[tuple[str, str, str], ...]
     autoFilled: tuple[AutoFilled, ...]
     decisions: tuple[Decision, ...]
     constraints: tuple[Constraint, ...]
@@ -203,6 +206,8 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
         createOrder=order, deleteBefore=delete_pairs,
         cleanupCascades=tuple(sorted(
             {p for c in closures for p in c.cleanupCascades})),
+        functionalDeps=tuple(sorted(
+            {t for c in closures for t in c.functionalDeps})),
         autoFilled=tuple(autofilled[k] for k in sorted(autofilled)),
         decisions=tuple(decisions),
         constraints=_constraints_for(csp, ids),

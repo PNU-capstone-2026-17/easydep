@@ -67,6 +67,7 @@ puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 A
 | `deleteBefore[]` | `[먼저 지울 것, 그 다음]` — 실측된 삭제 제약만 |
 | `doNotCreate[]` | **서버가 알아서 만드는 것.** 우리가 또 만들면 계획이 실제와 어긋난다 |
 | `cleanupCascades[]` | **동반 정리(실측).** `owner` 삭제가 `synthesized`를 함께 지운다 — 그 자원의 생성·삭제 단계를 내지 말 것(생성은 이중, 삭제는 이미 없어 실패). `deleteBefore`와 기제가 반대라 섞지 않는다 |
+| `operationalWarnings[]` | **기능 결속(실측).** 이 대상을 떼면 apply는 성공하는데 **서비스가 죽는다** — 컨트롤 플레인이 막지 않는 지대라 생성·삭제 검사로는 안 잡힌다. 검사 실패가 아니라 운영 경고로 읽을 것 |
 | `checks[]` | 검사 규칙(`kind`·`subject`·`object`·`rule`) |
 | `blockedBy[]` | 사람이 정하기 전엔 프로비저닝하면 안 되는 것 |
 

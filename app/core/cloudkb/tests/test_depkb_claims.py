@@ -81,7 +81,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("k8sCluster", "network", "lifecycle"): "holds",
         ("k8sCluster", "firewall", "existence"): "optional",
         # k8s 층 합성(2026-07-31): CLB·SG 합성이 노드 0에서도 — 삭제는 동반 정리.
-        # aws k8sPvc→disk는 미측정(전제 부재)이라 간선 자체가 없다 — 범위 표시.
+        # k8sPvc→disk는 완결 라운드에서 닫혔다(IRSA 전제까지 갖춰 Bound).
+        ("k8sPvc", "disk", "existence"): "optional",
+        ("k8sPvc", "disk", "lifecycle"): "holds",
         ("k8sService", "loadBalancer", "existence"): "optional",
         ("k8sService", "loadBalancer", "lifecycle"): "holds",
         # 합성 2라운드: 기본 구성에서 Ingress 컨트롤러 부재 — 합성 없음.
@@ -263,6 +265,11 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         # DNS 생명주기는 **없다** — 레코드가 있어도 영역이 지워진다(반전).
         ("globalDns", "globalDnsRecord", "existence"): "required",
         ("fileSystem", "storageAccount", "existence"): "required",
+        # 완결 라운드: RWX는 CSI가 계정+공유를 합성(RP 미등록이 2R 실패
+        # 원인이었다) · AKS는 identity를 서버가 합성(EKS required와 반전).
+        ("k8sPvc", "fileSystem", "existence"): "optional",
+        ("k8sPvc", "fileSystem", "lifecycle"): "holds",
+        ("k8sCluster", "iamRole", "existence"): "optional",
     }
 
 

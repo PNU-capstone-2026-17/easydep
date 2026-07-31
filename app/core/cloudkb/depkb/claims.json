@@ -2,11 +2,11 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.required": 10,
-  "aws.holds": 11,
-  "aws.optional": 13,
+  "aws.holds": 12,
+  "aws.optional": 14,
   "azure.required": 10,
-  "azure.holds": 13,
-  "azure.optional": 14,
+  "azure.optional": 16,
+  "azure.holds": 14,
   "gcp.required": 6,
   "gcp.optional": 14,
   "gcp.holds": 12
@@ -374,6 +374,78 @@
      "layer": "apply",
      "experiment": "aws-k8s-synth2-2026-07-31",
      "step": "I4.elb-after-ingress",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "aws",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: CSI가 EBS 볼륨을 합성한다 — 단 전제가 3사 중 가장 길다(노드그룹·CSI 드라이버·**IRSA**·CSI 프로비저너 StorageClass)",
+   "note": "**1·2라운드의 미측정을 닫았다.** 합성 자체는 azure·gcp와 같으나(vol-0739d…, volumeHandle 일치) **전제 사슬이 다르다** — 노드 역할에 EBS 정책을 붙여도 부족했고, 컨트롤러가 'no EC2 IMDS role found'로 죽었다(I0). IRSA(OIDC 공급자 + 웹아이덴티티 역할)를 서비스 계정에 달고 재시작해야 Bound가 됐다. 곁가지 실측 둘: **기본 SC가 default로 지정돼 있지 않다**(S1 — 첫 PVC가 'no storage class is set'으로 방치) · 기본 gp2는 in-tree 프로비저너(kubernetes.io/aws-ebs)라 CSI SC를 따로 만들어야 했다. azure·gcp는 기본 SC가 곧 CSI다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "N2.nodegroup-active",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "I0.csi-controller-error",
+     "code": "FailedPrecondition"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J1.annotate-sa-with-irsa",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J6.pvc-bound",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J7.volumes-after-pod",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J8.pv-volumehandle",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "disk",
+   "csp": "aws",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: PVC 삭제가 합성 EBS 볼륨을 지운다",
+   "note": "RWO 동반 정리는 3사 수렴 — azure·gcp와 같은 꼴(reclaim Delete). azure RWX(파일 공유)만 계정이 잔존해 부분 정리였다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J10.delete-pvc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-ekspvc-2026-07-31",
+     "step": "J11.volumes-after-delete",
      "code": "ok"
     }
    ]
@@ -1112,6 +1184,24 @@
   },
   {
    "subject": "k8sCluster",
+   "object": "iamRole",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: identity 미지정 시 SystemAssigned와 kubelet용 user-assigned identity를 서버가 합성한다",
+   "note": "iamRole 라운드의 미판정(‘재관측에 클러스터 필요’)을 닫았다. 우리가 준 적 없는데 identity.type=SystemAssigned이고 노드 RG에 kubelet identity(depkb-csi2-agentpool)가 실재한다. **aws EKS는 roleArn 필수인데 azure는 서버 합성** — 양상 반전이고, gcp의 vm→iamRole(serviceAccounts:null, 서버가 안 붙임)과도 대비된다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "K4.aks-identity-shape",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
    "object": "k8sNodeGroup",
    "csp": "azure",
    "question": "existence",
@@ -1304,6 +1394,66 @@
      "layer": "apply",
      "experiment": "azure-k8s-synth-2026-07-31",
      "step": "L6.pvc-disks-after-delete",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "fileSystem",
+   "csp": "azure",
+   "question": "existence",
+   "verdict": "optional",
+   "predicate": "server-implicit: RWX PVC는 CSI가 스토리지 계정과 파일 공유를 합성한다(azurefile-csi, bind=Immediate)",
+   "note": "**합성 2라운드의 미해결을 닫았다** — RWX 실패의 원인은 CSI 경로가 아니라 **Microsoft.Storage RP 미등록**이었다(등록 후 같은 PVC가 Bound). TLS 오류 문구는 오해를 부르는 표면이었고, 가름은 RP 상태를 바꿔 재측정해야만 됐다. 합성 실물: 계정 f60d9345…, volumeHandle이 '노드RG#계정#pvc-…' 꼴로 층을 잇는다. **RWO(k8sPvc→disk)와 대상이 다르다** — 블록은 디스크, 공유는 파일시스템",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "K0.storage-rp-state",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "P2.rwx-bound",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "P4.storage-accounts-after",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "P5.pv-volumehandle-hint",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sPvc",
+   "object": "fileSystem",
+   "csp": "azure",
+   "question": "lifecycle",
+   "verdict": "holds",
+   "predicate": "동반 정리: PVC 삭제가 파일 공유를 지운다 — 단 **스토리지 계정은 남는다**(부분 정리)",
+   "note": "RWO 디스크가 통째로 사라진 것과 **대조**: 계정은 PVC 삭제 후에도 잔존한다(P7 — 같은 이름이 그대로). 공유 자체의 소멸은 따로 확인하지 않았다(계정 목록만 봤다) — 그 한계를 적어 둔다. 계획층 함의: 계정은 클러스터 삭제까지 남는 잔여물이다",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "P6.delete-pvc",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-csi2-2026-07-31",
+     "step": "P7.storage-accounts-after-delete",
      "code": "ok"
     }
    ]

@@ -93,11 +93,26 @@ def test_synthesis_cleanup_is_not_a_delete_constraint() -> None:
         assert ("k8sService", "loadBalancer") not in c.deleteBefore, csp
         lb = next(a for a in c.attachable if a.id == "loadBalancer")
         assert lb.autoFilled, f"{csp}: 합성 실측이 autoFilled로 읽혀야 한다"
-    for csp in ("azure", "gcp"):  # aws는 미측정 — 간선 자체가 없어야 한다
+    # aws는 1·2라운드에서 전제 부재로 미측정이었다가 완결 라운드(IRSA까지
+    # 갖춤)에서 닫혔다 — 이제 3사 전부 동반 정리다.
+    for csp in ("azure", "gcp", "aws"):
         c = closure("k8sPvc", csp)
         assert ("k8sPvc", "disk") in c.cleanupCascades, csp
-    with pytest.raises(KeyError):
-        closure("k8sPvc", "aws")  # 빈칸이 아니라 범위 표시 — 모르는 자원
+
+
+def test_functional_deps_surface_as_operational_warnings() -> None:
+    """기능 의존(2026-07-31)의 소비 규율 — 존재·생명주기 검사로는 안 잡히는
+    지대다. apply는 성공하는데 서비스가 죽으므로 **운영 경고**로 나른다.
+    azure VM 폐포에는 nic→publicIp·subnet→firewall이 걸려 있다."""
+    c = closure("vm", "azure")
+    pairs = {(s, o) for s, o, _ in c.functionalDeps}
+    assert ("nic", "publicIp") in pairs
+    assert ("subnet", "firewall") in pairs
+    assert all(why.strip() for _, _, why in c.functionalDeps), (
+        "경고에는 근거 문장이 있어야 한다"
+    )
+    # 기능 결속은 삭제 순서가 아니다 — deleteBefore와 섞이면 안 된다.
+    assert ("subnet", "firewall") not in c.deleteBefore
 
 
 def test_unknown_csp_and_anchor_fail_loudly() -> None:

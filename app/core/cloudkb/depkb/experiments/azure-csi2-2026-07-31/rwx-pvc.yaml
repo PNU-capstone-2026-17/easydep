@@ -1,0 +1,13 @@
+# RWX PVC 재측정 — Microsoft.Storage RP 등록 후.
+# 2라운드 실패(계정 합성 시 TLS 정책 오류)가 CSI 경로 탓인지 RP 미등록
+# 탓인지 가르는 것이 이 셀의 목적이다.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: depkb-csi2-rwx
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: azurefile-csi
+  resources:
+    requests:
+      storage: 5Gi
