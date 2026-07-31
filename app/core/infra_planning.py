@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.core.cloudkb.depkb.check import Report, check
+from app.core.cloudkb.depkb.closure import closure
 from app.core.cloudkb.depkb.infra_intent import InfraIntent, build
 from app.core.cloudkb.depkb.translate import Translation, translate
 from app.core.cloudkb.depkb.views import design_view, provision_view
@@ -83,6 +84,27 @@ def plan_for_anchors(anchors: list[str], csp: str, region: str,
 
 def _assemble(anchors: list[str], csp: str, region: str,
               concrete_plan: dict | None, t: Translation | None) -> InfraPlan:
+    # 번역 유래 앵커가 이 CSP에서 간선 자체가 없으면(범위 표시 — 예: aws의
+    # k8sPvc→disk 미측정) 그 앵커만 unmeasured로 강등하고 나머지 계획은 낸다.
+    # "미측정이면 계획을 내지 않는다"의 앵커 단위 적용이다. 직접 앵커 경로
+    # (t=None)는 그대로 죽는다 — 오타를 조용히 삼키면 안 된다.
+    extra_unmeasured: list[str] = []
+    if t is not None:
+        kept: list[str] = []
+        for a in anchors:
+            try:
+                closure(a, csp)
+            except KeyError:
+                extra_unmeasured.append(
+                    f"{csp}에서 `{a}` 간선은 미측정입니다 — 이 부분 계획을 "
+                    f"내지 않습니다(빈칸이 아니라 범위 표시)")
+                continue
+            kept.append(a)
+        if not kept:
+            raise ValueError(
+                f"{csp}에서 읽은 앵커 전부가 미측정이다: {anchors} — "
+                "계획을 낼 근거가 없다")
+        anchors = kept
     intent = build(anchors, csp, region)
     report = check(intent, concrete_plan) if concrete_plan is not None else None
     questions = tuple(d.question for d in intent.decisions)
@@ -91,6 +113,7 @@ def _assemble(anchors: list[str], csp: str, region: str,
     notes = []
     if t is not None and t.ignored:
         notes.extend(f"{signal}: {why}" for signal, why in t.ignored)
+    unmeasured = (tuple(t.unmeasured) if t else ()) + tuple(extra_unmeasured)
     return InfraPlan(
         intent=intent,
         design=design_view(intent),
@@ -98,6 +121,6 @@ def _assemble(anchors: list[str], csp: str, region: str,
         translation=t,
         report=report,
         questions=questions,
-        unmeasured=tuple(t.unmeasured) if t else (),
+        unmeasured=unmeasured,
         notes=tuple(notes),
     )

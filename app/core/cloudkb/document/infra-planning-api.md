@@ -1,7 +1,7 @@
 # 인프라 계획 API — 설계·구현 에이전트가 부르는 문
 
 > **살아 있는 문서.** 계약이 바뀌면 여기를 고친다.
-> 근거는 `depkb/claims.json`(3사 실측 58주장), 여정은
+> 근거는 `depkb/claims.json`(3사 실측 주장 — 개수는 파일이 진실이다), 여정은
 > `document/archive/dep-analysis-journey-2026-07-31.md`.
 
 ## 이게 무엇인가
@@ -66,6 +66,7 @@ puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 A
 | `createOrder[]` | 만드는 순서. `required`·`skipIfOmitted`·`comment` |
 | `deleteBefore[]` | `[먼저 지울 것, 그 다음]` — 실측된 삭제 제약만 |
 | `doNotCreate[]` | **서버가 알아서 만드는 것.** 우리가 또 만들면 계획이 실제와 어긋난다 |
+| `cleanupCascades[]` | **동반 정리(실측).** `owner` 삭제가 `synthesized`를 함께 지운다 — 그 자원의 생성·삭제 단계를 내지 말 것(생성은 이중, 삭제는 이미 없어 실패). `deleteBefore`와 기제가 반대라 섞지 않는다 |
 | `checks[]` | 검사 규칙(`kind`·`subject`·`object`·`rule`) |
 | `blockedBy[]` | 사람이 정하기 전엔 프로비저닝하면 안 되는 것 |
 
@@ -74,7 +75,7 @@ puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 A
 | 키 | 왜 있나 |
 |---|---|
 | `plan.questions` | 물어야 할 것 전부(하류에서 못 읽은 것 + 우리가 대신 정하지 않는 것) |
-| `plan.unmeasured` | **재지 않아 말할 수 없는 것.** 지금 하나: k8s Service가 클라우드 LB를 자동 생성하는지 — 우리가 LB를 또 만들면 이중 생성이다 |
+| `plan.unmeasured` | **재지 않아 말할 수 없는 것.** 예: aws에서 `k8sPvc→disk`는 간선이 없어(전제 부재로 미측정 — 범위 표시) 그 앵커 계획을 내지 않고 여기로 강등한다. Service→LB는 2026-07-31 실측으로 여기서 빠져 `cleanupCascades`가 됐다 |
 | `plan.notes` | 우리 축이 아니라 안 쓴 신호와 그 사유(`replicas`·`hpa`·`pdb`·`networkPolicy`) |
 | `plan.report` | `concrete_plan`을 준 경우의 위반·미검사·필수 누락 |
 
@@ -87,6 +88,17 @@ puml = deployment_puml_set({"aws": a.intent, "azure": b.intent}, title="주문 A
 - **침묵하지 않는다.** 서버가 채우는 것은 고지하고, 안 쓴 신호는 사유를 적고,
   못 잰 것은 `unmeasured`로 낸다.
 - **대수·스펙·비용은 다루지 않는다.** 이 분석의 축이 아니다.
+
+## 명시적 미해결
+
+- **사설 연결(private endpoint/link)**: 배포 의도(`easydep-deployment-intent/
+  v1alpha1`)에 사설 연결을 뜻하는 칸이 없다 — **하류 스키마의 공백**이고 그
+  스키마는 우리 소관이 아니라 여기서 고칠 수 없다(P5 데모가 드러낸 것).
+  신호가 생기기 전까지 이 API는 사설 연결 계획을 내지 않는다. 신호가 생겨도
+  vpn 간선은 azure만 실측이라 aws·gcp는 unmeasured로 강등된다.
+- **Ingress → 클라우드 LB**: `ingress` 신호는 지금 `loadBalancer` 앵커로
+  간다(우리 구성). Ingress 오브젝트가 LB를 **합성**하는지는 컨트롤러 전제가
+  CSP마다 달라 별도 실측 대상이다 — 실측되면 Service와 같은 꼴로 바뀔 수 있다.
 
 ## 같은 배포 의도, 세 가지 답
 

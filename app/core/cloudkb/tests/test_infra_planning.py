@@ -50,11 +50,26 @@ def test_questions_merge_translation_and_intent() -> None:
     assert any("고르세요" in q for q in p.questions), p.questions
 
 
-def test_unmeasured_is_surfaced_not_swallowed() -> None:
-    """Service의 클라우드 LB 자동 생성은 재지 않았다 — 진입점이 그것을
-    올려보낸다(우리 IaC가 LB를 또 만들면 이중 생성이다)."""
-    p = plan_from_deployment_intent(_di(service=True), "aws", "r")
-    assert p.unmeasured and "이중 생성" in p.unmeasured[0]
+def test_unmeasured_anchor_is_demoted_not_planned() -> None:
+    """aws의 k8sPvc→disk는 미측정(간선 없음 — 범위 표시)이다. 번역이 그 앵커를
+    읽어도 계획을 내지 않고 unmeasured로 강등한다 — 나머지 앵커 계획은 낸다."""
+    p = plan_from_deployment_intent(_di(pvc=True), "aws", "r")
+    assert any("k8sPvc" in u and "미측정" in u for u in p.unmeasured), p.unmeasured
+    assert "k8sPvc" not in p.intent.anchors
+    assert "k8sCluster" in p.intent.anchors, "나머지 계획은 나와야 한다"
+
+
+def test_service_synthesis_flows_into_donotcreate_and_cascades() -> None:
+    """합성 실측이 소비층까지 닿는다: k8sService 앵커면 provision 뷰가 LB를
+    doNotCreate로 내리고, 동반 정리(cleanupCascades)로 삭제 단계 금지를 알린다.
+    이것이 이중 생성 경계(I2)의 소비측 완결이다."""
+    p = plan_from_deployment_intent(_di(service=True), "azure", "r")
+    dnc = {d["id"] for d in p.provision["doNotCreate"]}
+    assert "loadBalancer" in dnc
+    cascades = {(c["owner"], c["synthesized"])
+                for c in p.provision["cleanupCascades"]}
+    assert ("k8sService", "loadBalancer") in cascades
+    assert not p.unmeasured
 
 
 def test_out_of_scope_signals_become_notes() -> None:

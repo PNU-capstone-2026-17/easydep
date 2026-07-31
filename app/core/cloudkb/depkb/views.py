@@ -32,8 +32,9 @@ from .infra_intent import InfraIntent
 _GROUP: dict[str, str] = {
     "network": "네트워크", "subnet": "네트워크", "firewall": "네트워크",
     "publicIp": "네트워크", "nic": "네트워크", "loadBalancer": "네트워크",
-    "vm": "컴퓨트", "disk": "컴퓨트", "sshKey": "컴퓨트",
+    "vm": "컴퓨트", "disk": "컴퓨트", "sshKey": "컴퓨트", "image": "컴퓨트",
     "k8sCluster": "컨테이너", "k8sNodeGroup": "컨테이너",
+    "k8sService": "컨테이너", "k8sPvc": "컨테이너",
     "vpn": "연결",
 }
 
@@ -110,6 +111,12 @@ def provision_view(intent: InfraIntent) -> dict:
         "createOrder": create,
         "deleteBefore": [list(p) for p in intent.deleteBefore],
         "doNotCreate": [{"id": k, "why": v} for k, v in sorted(auto.items())],
+        # 동반 정리(실측) — 합성물은 주체 삭제가 함께 지운다. IaC가 이 자원의
+        # 생성·삭제 단계를 내면 안 된다(생성은 이중, 삭제는 이미 없어 실패).
+        "cleanupCascades": [
+            {"owner": s, "synthesized": o,
+             "note": f"{s} 삭제가 {o}를 함께 지웁니다 — 삭제 단계를 내지 마세요"}
+            for s, o in intent.cleanupCascades],
         "checks": [asdict(c) for c in intent.constraints],
         "blockedBy": [d.about for d in intent.decisions],
         "provenance": intent.provenance,

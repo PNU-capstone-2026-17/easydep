@@ -82,6 +82,9 @@ class InfraIntent:
     resources: tuple[Resource, ...]
     createOrder: tuple[str, ...]
     deleteBefore: tuple[tuple[str, str], ...]
+    #: 동반 정리 — (주체, 합성물). 주체 삭제가 합성물을 함께 지운다(실측).
+    #: deleteBefore와 기제가 반대라 섞지 않는다(closure와 같은 이유).
+    cleanupCascades: tuple[tuple[str, str], ...]
     autoFilled: tuple[AutoFilled, ...]
     decisions: tuple[Decision, ...]
     constraints: tuple[Constraint, ...]
@@ -103,6 +106,11 @@ def _constraints_for(csp: str, ids: set[str]) -> tuple[Constraint, ...]:
     out: list[Constraint] = []
     for c in _claims():
         if c["csp"] != csp or not c.get("predicate"):
+            continue
+        # 존재 질문만 — 생명주기 술어(동반 정리 등)는 계획 시점 제약이 아니다.
+        # 이 필터가 없으면 '동반 정리' 문장이 카디널리티 검사로 오독된다
+        # (배선 중 실제로 났던 결함 — 생명주기 술어가 생기며 드러났다).
+        if c["question"] != "existence":
             continue
         if _classify(c["predicate"]) != "detail":
             continue
@@ -193,6 +201,8 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
         anchors=tuple(anchors),
         resources=tuple(resources[k] for k in sorted(resources)),
         createOrder=order, deleteBefore=delete_pairs,
+        cleanupCascades=tuple(sorted(
+            {p for c in closures for p in c.cleanupCascades})),
         autoFilled=tuple(autofilled[k] for k in sorted(autofilled)),
         decisions=tuple(decisions),
         constraints=_constraints_for(csp, ids),

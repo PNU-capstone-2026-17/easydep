@@ -122,6 +122,15 @@ def check(intent: InfraIntent, plan: dict) -> Report:
     """구체 계획이 인프라 의도의 규칙을 지키는지 본다."""
     violations: list[Violation] = []
     unchecked: list[str] = []
+    # 이중 생성 — 합성물(동반 정리의 대상)은 k8s 층이 만든다. 계획이 그 자원의
+    # 인스턴스를 직접 내면 같은 것이 둘 생긴다(합성 라운드 실측이 근거).
+    for owner, synth in intent.cleanupCascades:
+        if _instances(plan, synth):
+            violations.append(Violation(
+                "동반 정리", owner, synth,
+                f"{synth}은(는) {owner}가 합성·정리한다",
+                f"{synth}을(를) 계획이 직접 만들면 {owner}의 합성물과 "
+                f"이중 생성이 됩니다 — 계획에서 빼세요"))
     for c in intent.constraints:
         fn = CHECKERS.get(c.kind)
         if fn is None:

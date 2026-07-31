@@ -27,10 +27,13 @@ def test_ingress_adds_the_load_balancer_anchor() -> None:
     assert set(t.anchors) == {"k8sCluster", "loadBalancer"}
 
 
-def test_pvc_adds_the_disk_anchor() -> None:
+def test_pvc_adds_the_k8spvc_anchor_not_a_direct_disk() -> None:
+    """2026-07-31 합성 라운드로 갱신: PVC의 실체는 CSI가 합성하는 디스크다
+    (azure·gcp 실측). disk를 직접 앵커로 삼으면 IaC가 디스크를 또 만든다."""
     t = translate(_intent({"name": "db", "kind": "StatefulSet",
                            "capabilities": {"pvc": True}}))
-    assert "disk" in t.anchors
+    assert "k8sPvc" in t.anchors
+    assert "disk" not in t.anchors
 
 
 def test_unknown_kind_becomes_a_question_never_a_guess() -> None:
@@ -45,15 +48,17 @@ def test_empty_workloads_is_a_question_not_an_empty_plan() -> None:
     assert t.anchors == () and t.open_questions
 
 
-def test_service_without_ingress_is_flagged_as_unmeasured() -> None:
-    """k8s Service의 클라우드 LB 자동 생성은 한 번도 재지 않았다 — 우리가 LB를
-    또 만들면 이중 생성이 된다. 추측으로 메우지 않고 경고로 내보낸다."""
+def test_service_without_ingress_becomes_the_k8sservice_anchor() -> None:
+    """unmeasured였다가 2026-07-31 합성 라운드 실측으로 앵커가 됐다:
+    type=LoadBalancer 서비스가 클라우드 LB를 합성한다(3사 apply). LB는
+    직접 앵커가 아니다 — 폐포에서 autoFilled로 내려간다(이중 생성 방지)."""
     t = translate(_intent({"name": "api", "kind": "Deployment",
                            "capabilities": {"service": True}}))
-    assert t.unmeasured and "이중 생성" in t.unmeasured[0]
+    assert "k8sService" in t.anchors
     assert "loadBalancer" not in t.anchors, (
-        "측정 안 한 경로로 앵커를 만들면 안 된다"
+        "LB를 직접 앵커로 만들면 IaC가 LB를 또 만든다"
     )
+    assert not t.unmeasured
 
 
 def test_out_of_scope_signals_are_recorded_with_reasons() -> None:

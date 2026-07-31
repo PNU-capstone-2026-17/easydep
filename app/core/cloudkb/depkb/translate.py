@@ -15,8 +15,17 @@
 - `replicas` — 대수·스펙은 우리 축이 아니다(계획 §3에서 뺐다).
 - `capabilities.networkPolicy` — **k8s 층 오브젝트다.** 클라우드 firewall과
   이름이 비슷해 섞기 쉬운데, 섞으면 없는 의존을 만든다.
-- `capabilities.service` — k8s Service가 클라우드 LB를 자동 생성하는 경로는
-  **한 번도 재지 않았다**(이중 생성 위험). `unmeasured`로 표시해 내보낸다.
+
+## 2026-07-31 합성 라운드로 갱신된 규칙 둘
+
+- `capabilities.service` — 미측정 표시였다가 **실측으로 앵커가 됐다**:
+  type=LoadBalancer 서비스는 클라우드 LB를 합성한다(3사 apply 실측,
+  `k8sService→loadBalancer`). 앵커는 `k8sService`이고, LB는 폐포에서
+  autoFilled로 내려간다 — 클라우드 층이 LB를 만들면 이중 생성이다.
+- `persistentVolume`/`pvc` — `disk` 직접 앵커였다가 **`k8sPvc`로 바뀌었다**:
+  PVC의 실체는 CSI가 합성하는 디스크다(azure·gcp apply 실측). 우리가
+  디스크를 만들면 이중 생성이다. aws는 그 간선이 미측정이라(전제 부재 —
+  간선 자체가 없다) CSP 층(infra_planning)이 unmeasured로 강등한다.
 """
 
 from __future__ import annotations
@@ -37,8 +46,12 @@ RULES: dict[str, tuple[str | None, str]] = {
     "workload": ("k8sCluster", "k8s 오브젝트는 클러스터 없이 존재할 수 없다"),
     "ingress": ("loadBalancer",
                 "외부 노출의 유일한 신호 — 트래픽이 클러스터 밖에서 들어온다"),
-    "persistentVolume": ("disk",
-                         "PVC는 영속 볼륨을 요구하고 그 실체가 클라우드 디스크다"),
+    "service": ("k8sService",
+                "type=LoadBalancer 서비스는 클라우드 LB를 합성한다(3사 실측) — "
+                "클라우드 층이 LB를 만들면 이중 생성이다"),
+    "persistentVolume": ("k8sPvc",
+                         "PVC의 실체는 CSI가 합성하는 클라우드 디스크다"
+                         "(azure·gcp 실측) — 우리가 디스크를 만들면 이중 생성이다"),
 }
 
 #: 우리 축이 아닌 신호 — 왜 안 쓰는지 함께 기록한다(침묵하면 누락처럼 보인다).
@@ -96,10 +109,9 @@ def translate(deployment_intent: dict) -> Translation:
             anchors.setdefault(RULES["ingress"][0],
                                f"{RULES['ingress'][1]} (`{name}`의 ingress)")
         if caps.get("service") and not caps.get("ingress"):
-            # 측정 안 한 영역 — 메우지 않고 표시만 한다.
-            unmeasured.append(
-                f"`{name}`의 Service가 클라우드 로드밸런서를 자동 생성하는지 "
-                f"측정하지 않았습니다 — 우리가 LB를 또 만들면 이중 생성이 됩니다")
+            # 2026-07-31 실측으로 unmeasured에서 앵커로 승격.
+            anchors.setdefault(RULES["service"][0],
+                               f"{RULES['service'][1]} (`{name}`의 service)")
         for signal, why in OUT_OF_SCOPE.items():
             if signal in caps or signal in w:
                 ignored.setdefault(signal, why)

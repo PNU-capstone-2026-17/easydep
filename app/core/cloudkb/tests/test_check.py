@@ -94,6 +94,18 @@ def test_azure_gateway_subnet_right_name_passes() -> None:
     assert report.ok, report.violations
 
 
+def test_double_creation_of_synthesized_resource_is_caught() -> None:
+    """합성 라운드 실측의 계획 층 재현: k8sService가 LB를 합성하므로(3사 apply)
+    계획이 loadBalancer 인스턴스를 직접 내면 이중 생성이다 — 잡혀야 한다."""
+    intent = build(["k8sService"], "azure", "r")
+    bad = _plan(loadBalancer=[{"name": "my-lb"}])
+    report = check(intent, bad)
+    assert any(v.kind == "동반 정리" and v.object == "loadBalancer"
+               for v in report.violations), report
+    good = _plan()
+    assert not check(intent, good).violations
+
+
 def test_missing_required_resource_is_reported() -> None:
     """필수인데 계획에 없으면 잡는다 — 단 서버가 채우는 것은 부재가 정상이다."""
     intent = build(["k8sCluster"], "aws", "r")
