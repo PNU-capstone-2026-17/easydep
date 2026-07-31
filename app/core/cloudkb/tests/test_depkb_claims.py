@@ -88,6 +88,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("k8sIngress", "loadBalancer", "existence"): "optional",
         # 기능 의존 첫 라운드: EIP 분리 무방비 + TCP 도달성 상실·회복 실측.
         ("vm", "publicIp", "function"): "holds",
+        # 기능 2라운드: SG 교체(관계 변이)·IGW 라우트 삭제 — 둘 다 무방비.
+        ("vm", "firewall", "function"): "holds",
+        ("subnet", "internetGateway", "function"): "holds",
     }
     key_claim = next(c for c in artifact["claims"] if c["csp"] == "aws"
                      and (c["subject"], c["object"]) == ("vm", "sshKey"))
@@ -172,6 +175,9 @@ def test_gcp_core_and_the_modality_flip(artifact) -> None:
         ("k8sIngress", "loadBalancer", "lifecycle"): "holds",
         # 기능 의존 첫 라운드: accessConfig 삭제 무방비(재부여는 새 임시 IP).
         ("vm", "publicIp", "function"): "holds",
+        # 기능 2라운드: 규칙 삭제(관계 변이 부재)·기본 라우트 삭제 — 무방비.
+        ("vm", "firewall", "function"): "holds",
+        ("network", "internetGateway", "function"): "holds",
     }
     azure = {(c["subject"], c["object"], c["question"]): c["verdict"]
              for c in artifact["claims"] if c["csp"] == "azure"}
@@ -222,6 +228,9 @@ def test_the_verified_azure_core_holds(artifact) -> None:
         ("k8sIngress", "loadBalancer", "existence"): "optional",
         # 기능 의존 첫 라운드: 한 쌍(nic→publicIp)에서 세 질문 전부 판정.
         ("nic", "publicIp", "function"): "holds",
+        # 기능 2라운드: 서브넷-NSG 분리 무방비(secure-by-default와 합성 효과).
+        # 라우팅 셀은 azure에 대응 자원이 없다 — 간선 부재가 기록이다.
+        ("subnet", "firewall", "function"): "holds",
     }
 
 

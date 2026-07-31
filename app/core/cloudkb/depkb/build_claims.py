@@ -728,6 +728,87 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측"
               "(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 "
               "경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님"),
+    # ── 기능 의존 2라운드 (2026-07-31 — firewall·라우팅 도달성. azure의
+    # 라우팅 셀은 **대응 자원 부재**(인터넷 경로가 시스템 라우트)라 간선이
+    # 없다 — 빈칸이 아니라 자원 부재의 기록. internetGateway 어휘 첫 등장) ──
+    dict(csp="azure", subject="subnet", object="firewall", question="function",
+         verdict="holds",
+         predicate="무방비: 사용 중 서브넷에서 NSG 분리를 컨트롤 플레인이 "
+                   "막지 않는다 — 차단은 NSG 부재와 Standard PIP "
+                   "secure-by-default의 합성 효과",
+         evidence=[
+             ("azure-func2-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("azure-func2-2026-07-31", "M1.detach-nsg-from-subnet",
+              "ok", "apply"),
+             ("azure-func2-2026-07-31", "F2.unreachable-after-detach",
+              "ok", "apply"),
+             ("azure-func2-2026-07-31", "M2.reattach-nsg", "ok", "apply"),
+             ("azure-func2-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="1라운드 덤 관측(NSG 부착 전 7회 실패)의 정식 승격. 분리 경로 "
+              "함정: --network-security-group \"\"는 InvalidResourceReference"
+              "(results-round1.json) — generic --remove가 분리 경로다. "
+              "상실은 연속 2회 확인"),
+    dict(csp="aws", subject="vm", object="firewall", question="function",
+         verdict="holds",
+         predicate="무방비: 실행 중 인스턴스의 SG를 빈 인그레스 SG로 교체하는 "
+                   "것을 컨트롤 플레인이 막지 않는다(관계 변이)",
+         evidence=[
+             ("aws-func2-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("aws-func2-2026-07-31", "M1.swap-to-empty-sg", "ok", "apply"),
+             ("aws-func2-2026-07-31", "F2.unreachable-empty-sg", "ok", "apply"),
+             ("aws-func2-2026-07-31", "M2.restore-sg22", "ok", "apply"),
+             ("aws-func2-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="교체 즉시 상실(연속 2회)·원복 즉시 회복 — SG는 상태 비저장 "
+              "부착이라 전파가 빠르다는 관측 포함"),
+    dict(csp="gcp", subject="vm", object="firewall", question="function",
+         verdict="holds",
+         predicate="무방비: 네트워크 스코프 방화벽 규칙 삭제를 컨트롤 플레인이 "
+                   "막지 않는다 — gcp 방화벽은 자원 간 부착이 아니라 규칙이라 "
+                   "관계 변이가 없다(규칙 변이가 유일한 경로)",
+         evidence=[
+             ("gcp-func2-2026-07-31", "F1.reachable-baseline", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "M1.delete-fw-rule", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "F2.unreachable-no-rule", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "M2.recreate-fw-rule", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "F3.reachable-again", "ok", "apply"),
+         ],
+         note="3사 변이 경로가 3색: azure 서브넷-NSG 분리(관계) · aws SG "
+              "교체(관계) · gcp 규칙 삭제(규칙) — 방화벽의 결속 모델 자체가 "
+              "다르다는 실측"),
+    dict(csp="aws", subject="subnet", object="internetGateway",
+         question="function", verdict="holds",
+         predicate="무방비: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 "
+                   "컨트롤 플레인이 막지 않는다",
+         evidence=[
+             ("aws-func2-2026-07-31", "F3.reachable-again", "ok", "apply"),
+             ("aws-func2-2026-07-31", "M3.delete-default-route", "ok", "apply"),
+             ("aws-func2-2026-07-31", "F4.unreachable-no-route", "ok", "apply"),
+             ("aws-func2-2026-07-31", "M4.recreate-route", "ok", "apply"),
+             ("aws-func2-2026-07-31", "F5.reachable-final", "ok", "apply"),
+         ],
+         note="어휘 밖 대기열이던 internetGateway의 첫 판정 — 존재 전제는 "
+              "교란으로 기실측(IGW 없으면 EIP 도달 불가), 이번에 기능 축으로 "
+              "닫았다. 셀 기준선은 직전 회복(F3) — 원인 섞임 방지"),
+    dict(csp="gcp", subject="network", object="internetGateway",
+         question="function", verdict="holds",
+         predicate="무방비: 자동 생성 기본 라우트(0.0.0.0/0→"
+                   "default-internet-gateway) 삭제를 컨트롤 플레인이 막지 "
+                   "않는다",
+         evidence=[
+             ("gcp-func2-2026-07-31", "M3a2.find-default-route-clientside",
+              "ok", "apply"),
+             ("gcp-func2-2026-07-31", "M3b.delete-default-route", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "F4.unreachable-no-route", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "M4.recreate-route", "ok", "apply"),
+             ("gcp-func2-2026-07-31", "F5.reachable-final", "ok", "apply"),
+         ],
+         note="gcp의 IGW는 자원이 아니라 라우트의 개념적 next-hop이다"
+              "(default-internet-gateway) — 실물은 자동 생성 라우트"
+              "(default-route-31cd…). 재생성은 우리 이름으로 했고 기능이 "
+              "회복됐다(이름이 아니라 경로가 기준). azure는 대응 자원 자체가 "
+              "없다(시스템 라우트) — 3사 3색"),
     # ── k8s 합성 2라운드 (2026-07-31 — Ingress→LB. **기본 구성 판정**:
     # 관리형 기본에 애드온 0. 컨트롤러를 깔면 답이 바뀔 수 있고 그건 별도
     # 변형이다. RWX PVC 셀은 3사 전부 완주 불가(azure 정책 교란·gcp 드라이버

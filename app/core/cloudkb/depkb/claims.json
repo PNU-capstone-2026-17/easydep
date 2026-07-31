@@ -2,13 +2,13 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.optional": 11,
-  "aws.holds": 7,
+  "aws.holds": 9,
   "aws.required": 5,
   "azure.required": 7,
-  "azure.holds": 12,
+  "azure.holds": 13,
   "azure.optional": 12,
   "gcp.optional": 12,
-  "gcp.holds": 9,
+  "gcp.holds": 11,
   "gcp.required": 3
  },
  "claims": [
@@ -416,6 +416,48 @@
   },
   {
    "subject": "subnet",
+   "object": "internetGateway",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 컨트롤 플레인이 막지 않는다",
+   "note": "어휘 밖 대기열이던 internetGateway의 첫 판정 — 존재 전제는 교란으로 기실측(IGW 없으면 EIP 도달 불가), 이번에 기능 축으로 닫았다. 셀 기준선은 직전 회복(F3) — 원인 섞임 방지",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F3.reachable-again",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "M3.delete-default-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F4.unreachable-no-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "M4.recreate-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F5.reachable-final",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
    "object": "network",
    "csp": "aws",
    "question": "existence",
@@ -525,6 +567,66 @@
      "experiment": "aws-apply-2026-07-30",
      "step": "A.dryrun-vm-default-vpc",
      "code": "DryRunOperation"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "firewall",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 실행 중 인스턴스의 SG를 빈 인그레스 SG로 교체하는 것을 컨트롤 플레인이 막지 않는다(관계 변이)",
+   "note": "교체 즉시 상실(연속 2회)·원복 즉시 회복 — SG는 상태 비저장 부착이라 전파가 빠르다는 관측 포함",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/PropertyTypes/AWS::EC2::Instance.NetworkInterface/Properties/GroupSet",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SecurityGroupIds",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "schema",
+     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Instance/Properties/SecurityGroups",
+     "form": "name-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "M1.swap-to-empty-sg",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F2.unreachable-empty-sg",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "M2.restore-sg22",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-func2-2026-07-31",
+     "step": "F3.reachable-again",
+     "code": "ok"
     }
    ]
   },
@@ -1346,6 +1448,54 @@
   },
   {
    "subject": "subnet",
+   "object": "firewall",
+   "csp": "azure",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 사용 중 서브넷에서 NSG 분리를 컨트롤 플레인이 막지 않는다 — 차단은 NSG 부재와 Standard PIP secure-by-default의 합성 효과",
+   "note": "1라운드 덤 관측(NSG 부착 전 7회 실패)의 정식 승격. 분리 경로 함정: --network-security-group \"\"는 InvalidResourceReference(results-round1.json) — generic --remove가 분리 경로다. 상실은 연속 2회 확인",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "schema",
+     "cite": "network-virtualNetwork.json#/definitions/Common.SubnetPropertiesFormat/properties/networkSecurityGroup",
+     "form": "input-reference",
+     "requiredInSchema": false
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func2-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func2-2026-07-31",
+     "step": "M1.detach-nsg-from-subnet",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func2-2026-07-31",
+     "step": "F2.unreachable-after-detach",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func2-2026-07-31",
+     "step": "M2.reattach-nsg",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-func2-2026-07-31",
+     "step": "F3.reachable-again",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "subnet",
    "object": "network",
    "csp": "azure",
    "question": "existence",
@@ -2017,6 +2167,48 @@
    ]
   },
   {
+   "subject": "network",
+   "object": "internetGateway",
+   "csp": "gcp",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 자동 생성 기본 라우트(0.0.0.0/0→default-internet-gateway) 삭제를 컨트롤 플레인이 막지 않는다",
+   "note": "gcp의 IGW는 자원이 아니라 라우트의 개념적 next-hop이다(default-internet-gateway) — 실물은 자동 생성 라우트(default-route-31cd…). 재생성은 우리 이름으로 했고 기능이 회복됐다(이름이 아니라 경로가 기준). azure는 대응 자원 자체가 없다(시스템 라우트) — 3사 3색",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "M3a2.find-default-route-clientside",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "M3b.delete-default-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "F4.unreachable-no-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "M4.recreate-route",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "F5.reachable-final",
+     "code": "ok"
+    }
+   ]
+  },
+  {
    "subject": "nic",
    "object": "network",
    "csp": "gcp",
@@ -2228,6 +2420,48 @@
      "layer": "apply",
      "experiment": "gcp-apply-2026-07-31",
      "step": "D.delete-disk.depkbg-vm",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "vm",
+   "object": "firewall",
+   "csp": "gcp",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: 네트워크 스코프 방화벽 규칙 삭제를 컨트롤 플레인이 막지 않는다 — gcp 방화벽은 자원 간 부착이 아니라 규칙이라 관계 변이가 없다(규칙 변이가 유일한 경로)",
+   "note": "3사 변이 경로가 3색: azure 서브넷-NSG 분리(관계) · aws SG 교체(관계) · gcp 규칙 삭제(규칙) — 방화벽의 결속 모델 자체가 다르다는 실측",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "F1.reachable-baseline",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "M1.delete-fw-rule",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "F2.unreachable-no-rule",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "M2.recreate-fw-rule",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "gcp-func2-2026-07-31",
+     "step": "F3.reachable-again",
      "code": "ok"
     }
    ]

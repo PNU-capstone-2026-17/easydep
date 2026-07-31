@@ -27,7 +27,7 @@ LAYERS: list[list[str]] = [
     ["k8sCluster", "k8sNodeGroup", "vpn"],
     ["vm", "loadBalancer"],
     ["image", "disk", "nic", "publicIp", "sshKey"],
-    ["subnet", "firewall"],
+    ["subnet", "firewall", "internetGateway"],
     ["network"],
 ]
 X_GAP, Y_GAP = 190, 150
@@ -70,6 +70,12 @@ DESC: dict[str, str] = {
     "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
            "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
            "규칙이 실측됐습니다.",
+    "internetGateway": "사설 네트워크를 인터넷에 잇는 관문입니다 — 건물의 "
+                       "정문. 이게 없거나 경로(라우트)가 빠지면 공인 IP가 "
+                       "있어도 밖에서 못 들어옵니다(실측). aws에선 실제 "
+                       "자원이고, gcp에선 라우트가 가리키는 개념적 목적지, "
+                       "azure에선 자원 자체가 없습니다(시스템이 제공) — "
+                       "3사 3색.",
     "k8sCluster": "쿠버네티스 클러스터 — 컨테이너(앱을 규격 상자처럼 포장한 "
                   "것)들을 자동으로 배치·복구·확장해 주는 관리 시스템 전체"
                   "입니다. 클라우드가 관리 서버 부분을 대신 운영해 줍니다.",
@@ -103,6 +109,8 @@ CSP_NAMES: dict[str, str] = {
     "image": "aws AMI · azure Image/Marketplace · gcp Image",
     "sshKey": "aws Key Pair · azure SSH Public Key · gcp (자원 없음 — 메타데이터)",
     "vpn": "aws VPN Gateway · azure Virtual Network Gateway · gcp VPN Gateway",
+    "internetGateway": "aws Internet Gateway · azure (자원 없음 — 시스템 "
+                       "라우트) · gcp (라우트의 next-hop 개념)",
     "k8sCluster": "aws EKS · azure AKS · gcp GKE",
     "k8sNodeGroup": "aws Node Group · azure Node Pool · gcp Node Pool",
     "k8sService": "쿠버네티스 공통 오브젝트 (Service)",
