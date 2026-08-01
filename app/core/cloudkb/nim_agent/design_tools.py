@@ -375,14 +375,43 @@ def _collect_signals(design: dict) -> _Signals:
     )
 
 
+#: `RESOURCE_SPEC.workloads`(사용자가 고른 배포 종류) → 컴퓨트 방식.
+#:
+#: 계약의 위상축은 **자원 이름**으로 오고(`k8sCluster`·`vm`) 계획은 **방식**으로
+#: 판단한다. 그 사이를 여기서 잇는다. 목록에 없는 앵커(loadBalancer 등)는 방식을
+#: 안 정한다 — 그건 워크로드가 아니라 딸려 오는 것이다.
+_KIND_FROM_WORKLOAD: dict[str, str] = {
+    "k8sCluster": "kubernetes",
+    "k8sNodeGroup": "kubernetes",
+    "vm": "vm",
+}
+
+
+def _kind_from_requirements(requirements: dict) -> str:
+    """사용자가 고른 배포 방식. 못 정하면 빈 문자열.
+
+    **여러 종류를 골랐으면 안 정한다** — 어느 컴포넌트가 어디로 가는지는 계약이
+    말하지 않는다(위상축은 종류 목록이지 배정이 아니다). 짐작해서 나누면 그건
+    사용자가 말하지 않은 것을 우리가 정한 것이다.
+    """
+    kinds = {_KIND_FROM_WORKLOAD[w]
+             for w in (requirements.get("workloads") or [])
+             if w in _KIND_FROM_WORKLOAD}
+    return next(iter(kinds)) if len(kinds) == 1 else ""
+
+
 def _add_computes(
     plan: DeploymentPlan, components: dict, s: _Signals,
     provider: str | None, region: str | None,
+    requirements: dict | None = None,
 ) -> tuple[dict[str, str], set[str]]:
     """2단계 — 컴퓨트 노드. `(컴포넌트별 방식, 값이 붙는 컴퓨트)`를 돌려준다."""
     #: 컴포넌트별 방식 — 진입점(LB)을 세울지 말지가 여기 달렸다(VM만 NLB 대상).
     kind_of: dict[str, str] = {}
     priced: set[str] = set()
+    # 사용자가 계약에서 고른 방식. `deployHint`가 있으면 그쪽이 이긴다 —
+    # 컴포넌트 단위가 시스템 단위보다 구체적이라서다(특수가 일반을 이긴다).
+    chosen = _kind_from_requirements(requirements or {})
     for cid, component in components.items():
         hint = component.get("deployHint")
         notes: list[Note] = []
@@ -394,6 +423,17 @@ def _add_computes(
                 + (f" — {hint['reason']}" if hint.get("reason") else ""),
                 ORIGIN_DESIGNER, "deployHint",
             ))
+        elif chosen:
+            # **사용자가 고른 것.** 출처는 `deployHint`와 같은 등급으로 둔다 —
+            # 검증된 사실이 아니라 진술이고, 그래서 유보가 붙는다(기존 규율:
+            # 요구사항에서 온 값도 `ORIGIN_DESIGNER`+`requirements`로 적는다).
+            origin = ORIGIN_DESIGNER
+            kind = chosen
+            notes.append(Note(
+                f"The requirements say this system runs on {kind} "
+                f"(RESOURCE_SPEC.workloads = "
+                f"{', '.join(requirements.get('workloads') or [])})",
+                ORIGIN_DESIGNER, "requirements"))
         else:
             origin = ORIGIN_INFERRED
             kind = "vm"
@@ -1046,7 +1086,8 @@ def compose(design: dict) -> DeploymentPlan:
     # **못 읽은 자리를 계획에 올린다.** 이게 없으면 노드가 조용히 빠지고, 빠진 그림이
     # "이게 전부"로 읽힌다 — 이 저장소가 다른 축에서 계속 막아 온 실패다.
     plan.unresolved.extend(s.unread)
-    kind_of, priced = _add_computes(plan, components, s, provider, region)
+    kind_of, priced = _add_computes(plan, components, s, provider, region,
+                                    requirements)
 
     for external in design.get("externals") or []:
         plan.nodes.append(PlanNode(

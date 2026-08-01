@@ -30,10 +30,11 @@ from app.core.cloudkb.tests._helpers import flat
 _HOURS = 730
 
 _FULL = {
-    "schemaVersion": "2",
+    "schemaVersion": "3",
     "provider": "aws",
     "region": "ap-northeast-2",
     "workloads": ["vm"],
+    "containerRegistry": "depkb-registry",
     "monthlyBudgetUSD": 300.0,
 }
 
@@ -115,6 +116,32 @@ def test_workloads_is_required_because_no_plan_exists_without_it() -> None:
         plan_for_anchors([], "aws", "ap-northeast-2")
 
 
+def test_container_registry_is_required_because_the_manifest_needs_it() -> None:
+    """`containerRegistry`가 없으면 **배포할 수 없는 YAML**이 나온다(2026-08-01).
+
+    사슬을 끝까지 돌려 확인했다: 이 값이 없으면 매니페스트에
+    `image: <acr-name>.azurecr.io/app:<tag>`가 그대로 나가고, 값을 주면
+    `myteamacr.azurecr.io/...`가 된다. 앞의 칸들과 근거의 모양이 또 다르다 —
+    판정도 조인도 아니고 **산출물이 쓸모 있는가**다.
+    """
+    from pathlib import Path
+
+    from app.core.cloud_artifact import build as build_artifact
+    from app.core.cloudkb.nim_agent.design_tools import compose
+    from app.core.cloudkb.tools.intake_report import _design_from, _read
+
+    root = (Path(__file__).resolve().parents[1] / "appkb" / "samples"
+            / "lecture-platform")
+    spec, _ = _read(root, "requirements/resource_spec.json")
+    base = dict(spec) if isinstance(spec, dict) else {}
+    base.update({"provider": "azure", "workloads": ["k8sCluster"],
+                 "containerRegistry": "myteamacr"})
+    design, _ = _design_from(root, base)
+    art = build_artifact(compose(design), design)
+    types = {r["type"] for r in art["resources"]}
+    assert "Microsoft.ContainerRegistry/registries" in types, types
+
+
 def test_every_required_field_is_covered_by_this_file() -> None:
     """**필수 칸이 늘면 이 파일도 늘어야 한다.**
 
@@ -122,7 +149,7 @@ def test_every_required_field_is_covered_by_this_file() -> None:
     대상이 아니다. `region`·`workloads`는 위 테스트들이 따로 다룬다 — 근거의
     모양이 다르기 때문이다(조인 / 계획의 입력).
     """
-    covered = set(_VERDICT_MARK) | {"region", "workloads"}
+    covered = set(_VERDICT_MARK) | {"region", "workloads", "containerRegistry"}
     required = set(request_schema()["required"]) - set(input_registry.NOT_ASKED)
     assert required == covered, (
         "필수 칸이 바뀌었습니다. 새 칸에 '지우면 무너지는 판정'을 하나 붙이거나, "

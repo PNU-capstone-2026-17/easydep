@@ -187,6 +187,19 @@ ASKS: tuple[Ask, ...] = (
         basis=(Basis(CONCERN, "cn.cost-ceiling"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
     ),
+    Ask(
+        id="image.registry",
+        spec_field="containerRegistry",
+        tier=REQUIRED,
+        question="컨테이너 이미지를 어느 레지스트리에 올립니까? "
+                 "(이미 쓰는 것이 있으면 그 이름)",
+        opens="매니페스트의 이미지 주소 — 없으면 `<acr-name>` 자리표시자가 그대로 "
+              "나가서 **배포할 수 없는 YAML**이 된다(사슬을 끝까지 돌려 확인, "
+              "2026-08-01)",
+        basis=(Basis(CODE,
+                     "app/implementation/engine/deployment_renderer.py"
+                     "#Microsoft.ContainerRegistry/registries"),),
+    ),
     # ── 선택축 — 채우면 판정이 하나 열린다 ───────────────────────────────────
     Ask(
         id="spec.min_vcpu",
@@ -239,10 +252,16 @@ ASKS: tuple[Ask, ...] = (
                Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_subnet_notes"),
                Basis(CLAIM, "aws/k8sCluster→subnet/existence")),
     ),
+    # **권고에서 맥락으로 내렸다**(2026-08-01). 권고의 정의는 "채우면 이름 붙은
+    # 판정이 하나 선다"인데 이 값으로 서는 판정이 없다 — `verify`의 규모 줄은
+    # 문자 그대로 *"this knowledge base cannot judge"*다. 그렇다고 뺄 것은
+    # 아니다: `sizing_floor.undecided_note`가 이것을 **되묻기의 근거**로 쓴다
+    # ("동시 사용자 3,000인데 하한이 없다"가 "하한을 달라"보다 강한 요청이다).
+    # 소비자가 있으니 남기고, 계층만 사실에 맞춘다.
     Ask(
         id="scale.expected_users",
         spec_field="expectedConcurrentUsers",
-        tier=SUGGESTED,
+        tier=CONTEXT,
         question="예상 동시 사용자가 몇 명입니까?",
         opens="계획의 규모 진술과 되묻기의 근거 — **스펙을 정하지는 않는다**"
               "(동시 사용자→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",

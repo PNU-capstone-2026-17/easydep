@@ -78,6 +78,7 @@ def _record(field, value, evidence):
 
 
 CONSTRAINTS = ("Deploy on aws in Seoul, on a managed Kubernetes cluster. "
+               "Images go to our registry depkb-registry. "
                "The monthly budget is at most 500 USD. "
                "We expect about 300 concurrent users.")
 
@@ -92,6 +93,7 @@ def _complete_turns():
         [_record("region", "ap-northeast-2", "ap-northeast-2"),
          _record("regionAsWritten", "Seoul", "in Seoul"),
          _record("workloads", "k8sCluster", "- k8sCluster"),
+         _record("containerRegistry", "depkb-registry", "registry depkb-registry"),
          _record("monthlyBudgetUSD", "500", "at most 500 USD"),
          _record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
         [("finish", {"understanding":

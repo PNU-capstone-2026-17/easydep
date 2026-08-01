@@ -25,10 +25,11 @@ _REQUIRED = tuple(f for f in request_schema()["required"] if f != "schemaVersion
 
 def _spec(**overrides) -> dict:
     base = {
-        "schemaVersion": "2",
+        "schemaVersion": "3",
         "provider": "aws",
         "region": "ap-northeast-2",
         "workloads": ["vm"],
+        "containerRegistry": "depkb-registry",
         "monthlyBudgetUSD": 500,
         "expectedConcurrentUsers": 200,
     }
@@ -83,9 +84,14 @@ def test_scale_signal_is_no_longer_required() -> None:
     assert validate_request(_spec(expectedConcurrentUsers=None)) == []
     assert not any(f in cloud_contract.suggested_fields({})
                    for f in ("provider", "region"))
-    assert "expectedConcurrentUsers" in cloud_contract.suggested_fields({})
+    # **2026-08-01에 한 단계 더 내려갔다**: 권고 → 맥락. 권고의 정의는 "채우면
+    # 이름 붙은 판정이 하나 선다"인데 이 값으로 서는 판정이 없다(`verify`의 규모
+    # 줄은 문자 그대로 *"cannot judge"*다). 그렇다고 빼지는 않았다 —
+    # `sizing_floor.undecided_note`가 되묻기의 근거로 쓴다.
+    assert "expectedConcurrentUsers" not in cloud_contract.suggested_fields({})
+    assert "expectedConcurrentUsers" in cloud_contract.context_fields({})
     assert input_registry.tier_of("expectedConcurrentUsers") == \
-        input_registry.SUGGESTED
+        input_registry.CONTEXT
     # jsonschema의 뭉개진 anyOf 문구가 새어 나오면 안 된다(anyOf 자체가 사라졌다).
     assert not any("is not valid under any"
                    in p for p in validate_request(_spec(expectedConcurrentUsers=None)))

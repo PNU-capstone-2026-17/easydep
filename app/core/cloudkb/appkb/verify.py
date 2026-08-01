@@ -268,9 +268,18 @@ def verify_against_requirements(
             "storage is a redesign you will need"
         )
     elif stateless is False:
+        # **2026-08-01 정정.** 앞 문장은 "컴퓨트에 둔 상태는 재생성에 사라진다"고
+        # 단정했는데 **우리 실측이 그것을 반박한다**: azure OS 디스크와 gcp 부트
+        # 디스크는 VM을 지워도 남는다(vm→disk lifecycle, 3사 중 둘). 단정 대신
+        # 실제로 재는 것을 적는다 — 디스크가 남는 것과 상태가 보존되는 것은 다른
+        # 사실이고(스케일 아웃에서는 인스턴스마다 다른 디스크다), 그 구별이
+        # 사라지면 사용자가 "안전하다"로 읽는다.
         out.append(
-            "stateless(false): state kept on compute disappears on re-creation and "
-            "scaling — the plan's storage node is where state belongs (we inferred)"
+            "stateless(false): the plan's storage node is where state belongs. "
+            "Note that a disk surviving is not the same as state being preserved — "
+            "we measured that the OS/boot disk outlives the VM on azure and gcp, "
+            "but scaling out gives each instance its own disk (we inferred the "
+            "consequence; the disk lifetime is measured)"
         )
     elif stateless is None and serverless:
         # 서버리스가 계획에 있는데 상태성 주장을 못 받았다 — 침묵을 적합으로

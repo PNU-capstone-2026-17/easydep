@@ -49,6 +49,7 @@ from app.core.cloudkb.appkb.plan import DeploymentPlan
 #: `deployment_renderer.infer_intent`가 이 문자열로 자원을 찾는다.
 _ARM_TYPE: dict[str, str] = {
     "k8sCluster": "Microsoft.ContainerService/managedClusters",
+    "containerRegistry": "Microsoft.ContainerRegistry/registries",
 }
 
 #: 채우지 않는 칸과 그 이유. **우리 축이 아닌 것들이다.**
@@ -129,6 +130,12 @@ def build(plan: DeploymentPlan, design: dict, *, name: str = "") -> dict:
                     (artifact.get("openapi") or {}).get("servers", [])]
             if any(u.startswith("https://") for u in urls):
                 networking["ingressProtocol"] = "HTTPS"
+        # 레지스트리 — 사용자가 준 이름이 있을 때만. 없으면 하류가 자리표시자를
+        # 내고, 그 자리표시자가 "이 값을 못 받았다"는 사실을 그대로 말한다.
+        registry = (design.get("requirements") or {}).get("containerRegistry")
+        if registry:
+            resources.append({"type": _ARM_TYPE["containerRegistry"],
+                              "name": registry})
         resources.append({
             "type": _ARM_TYPE["k8sCluster"],
             "name": name or plan.name,
