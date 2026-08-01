@@ -111,9 +111,14 @@ INTENT_FIELDS: tuple[Mapping, ...] = (
             "이 칸도 우리가 정할 수 없다 — 빠진 것이 아니라 상류 결정이 없는 것이다",),
     Mapping("capabilities.pdb", UNDECIDED,
             "PDB도 최소 가용 대수를 전제한다. 같은 이유",),
-    Mapping("capabilities.serviceAccount", MISSING,
-            "권한 축은 우리 계획에 없다. graphkb의 IAM 타입 지식은 '무엇이 무엇을 "
-            "참조하는가'이지 이 앱이 무엇을 필요로 하는가가 아니다",),
+    Mapping("capabilities.serviceAccount", PARTIAL,
+            "**필요 여부는 실측이 답한다** — aws EKS는 역할 없이 안 서고(k8sCluster→"
+            "iamRole required), azure AKS는 서버가 identity를 합성하며(안 줘도 선다), "
+            "VM은 3사 모두 없이 서지만 aws는 붙였다 떼면 게스트가 자격증명을 잃는다"
+            "(vm→iamRole function holds). 다만 **이 앱이 어떤 권한을 원하는가**는 "
+            "여전히 우리 축이 아니라 정책 목록은 못 준다",
+            source="depkb claims: k8sCluster→iamRole(aws existence required · azure "
+                   "서버 합성) · vm→iamRole(aws function holds)"),
     Mapping("configMap", MISSING,
             "설정 항목 목록이 설계 산출물에도 계약에도 없다. 환경별 값은 우리가 아는 "
             "사실이 아니라 운영 결정이다",),
