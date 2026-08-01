@@ -119,7 +119,12 @@ def test_the_three_way_split_covers_every_concern():
     # 유일한 판정이 서버리스 적합인데 서버리스가 범위 밖이다. **관심사 자체는
     # 유효하다**(질문은 여전히 요구사항 단계의 것이다) — 다만 우리 계획이 그
     # 답을 소비할 자리가 없어서 경계로 옮겼다.
-    assert (len(wired), len(pending), len(boundary)) == (6, 14, 9), (
+    #
+    # **2026-08-02에 또 움직였다**: 연결 6→5 · 경계 9→10. `cn.carbon-constraint`가
+    # 계약 배선을 잃었다(계보 감사) — 근거가 벤더 문헌+우리 배선뿐이고 사용자
+    # 진술 실측이 0이다(내부 0건 · PURE 13건 전부 오탐). stateless와 달리 범위
+    # 선언이 아니라 **근거 부재**가 사유다.
+    assert (len(wired), len(pending), len(boundary)) == (5, 14, 10), (
         f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
     )
 

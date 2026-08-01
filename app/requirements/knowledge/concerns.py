@@ -730,7 +730,16 @@ CONCERNS: tuple[Concern, ...] = (
             "리전마다 전력 구성이 다르고 그 값이 리전 코드로 색인돼 있다. 제약이 있으면 "
             "리전 선택이 좁아지므로 요구사항 단계에서 알아야 한다."
         ),
-        consumer="RESOURCE_SPEC.lowCarbonPreferred",
+        # **소비자를 잃었다**(2026-08-02, 계보 감사). `RESOURCE_SPEC.lowCarbonPreferred`가
+        # 계약에서 빠졌다 — 이 관심사의 근거는 벤더 문헌(아래 citation)이고, 그것은
+        # "읽기 체크리스트에 둘 이유"이지 "사용자에게 물을 이유"가 아니었다. 사용자가
+        # 그 제약을 말한 실물이 코퍼스에 없다(내부 11종 0건 · PURE 7,659문장 중
+        # 열쇠말 13건 전부 오탐 — 거버넌스 지속성이지 에너지가 아니다).
+        consumer=None,
+        out_of_scope="계약이 이 답을 받지 않는다(2026-08-02 계보 감사) — 근거가 "
+                     "벤더 문헌+우리 배선뿐이고 사용자 진술 실측이 0이다. 관심사 "
+                     "자체는 체크리스트로 유효하다. 되살리려면 사용자 진술 실물"
+                     "(코퍼스 또는 실제 사용례)이 먼저다",
         doc_id="gcp-framework/sustainability/low-carbon-regions",
         probe=("carbon", "low-carbon"),
         iso25010=(),        citation=f"{_GCP} — Use regions that consume low-carbon energy",

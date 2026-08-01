@@ -266,17 +266,13 @@ ASKS: tuple[Ask, ...] = (
                Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#compose"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
     ),
-    Ask(
-        id="carbon.low",
-        spec_field="lowCarbonPreferred",
-        tier=CONTEXT,
-        question="에너지 사용이나 탄소 배출에 제약이 있습니까?",
-        opens="리전 탄소 대조 — 판정이 아니라 대조다(출처 등급이 프로바이더마다 "
-              "달라 서로 비교할 수 없다)",
-        basis=(Basis(CONCERN, "cn.carbon-constraint"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_global_notices")),
-    ),
 )
+
+# **lowCarbonPreferred는 2026-08-02에 계약에서 빠졌다.** 계보 감사의 결과다 —
+# 근거 사슬이 GCP 프레임워크 문헌 → 우리 관심사 축 → 우리 배선(2026-07-28)뿐이고,
+# 사용자가 그 제약을 말한 실물이 코퍼스에 없다(내부 0건 · PURE 13건 전부 오탐).
+# 탄소 데이터와 질의응답 축(envkb·cap_region_carbon)은 유지된다. 되살리려면
+# 사용자 진술 실물(코퍼스 또는 실제 사용례)이 먼저다.
 
 #: 사용자에게 묻지 **않는** 칸과 그 이유. 스키마에 있는데 여기 없는 칸이 생기면
 #: 테스트가 실패한다 — "빠뜨린 것"과 "안 묻기로 한 것"을 구별하기 위해서다.

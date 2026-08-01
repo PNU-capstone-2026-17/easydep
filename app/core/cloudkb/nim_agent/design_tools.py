@@ -957,43 +957,10 @@ def _global_notices(
                 ORIGIN_KB, "envkb",
             ))
 
-    # 탄소 — **요구가 있을 때만** 싣는다. 요구가 없는데 붙이면 계획마다 잡음이 늘고,
-    # 잡음이 되면 진짜 고지가 안 읽힌다(perfkb 주석에서 이미 겪은 실패).
-    #
-    # **판정이 아니라 대조 자료다.** 프로바이더마다 출처 등급이 다르고(GCP는 구글 직접
-    # 발표, AWS·Azure는 서드파티 추정) 방법론이 달라 **서로 비교할 수 없다** — 실측에서
-    # 같은 도시의 값이 다르고 순서까지 뒤집혔다. 그래서 같은 프로바이더 안에서만 견준다.
-    if requirements.get("lowCarbonPreferred") and provider and region:
-        from app.core.cloudkb.envkb import carbon
-
-        here = carbon.for_region(provider, region)
-        if here is None:
-            plan.notes.append(Note(
-                f"Low-carbon preference — no carbon figure for {provider} {region} "
-                "in this data, so there is nothing to compare against (that is not "
-                "a claim the region is clean or dirty)",
-                ORIGIN_KB, "envkb",
-            ))
-        else:
-            cleaner = [
-                r for r in carbon.cleanest(provider, limit=50)
-                if r["gramsPerKWh"] < here["gramsPerKWh"]
-            ]
-            text = (
-                f"Low-carbon preference — {provider} {region} is "
-                f"{here['gramsPerKWh']:,.1f} gCO2eq/kWh"
-            )
-            if cleaner:
-                names = ", ".join(r["region"] for r in cleaner[:3])
-                text += (
-                    f". **{len(cleaner)} regions of this provider are lower** "
-                    f"({names}{' and more' if len(cleaner) > 3 else ''}) — "
-                    "moving is a trade-off against latency and residency, so this "
-                    "is material for the decision, not a verdict"
-                )
-            else:
-                text += ". No region of this provider in this data is lower"
-            plan.notes.append(Note(text, ORIGIN_KB, "envkb"))
+    # **탄소 대조는 2026-08-02에 걷었다.** `lowCarbonPreferred`가 계약에서 빠졌다 —
+    # 계보 감사 결과 근거가 벤더 문헌과 우리 배선뿐이고 사용자 진술 실물이 코퍼스에
+    # 없다(내부 0건 · PURE 13건 전부 오탐). 탄소 데이터(envkb.carbon)와 질의응답
+    # 축(cap_region_carbon)은 남는다 — 계획에 싣는 배선만 없앴다.
 
     # 이그레스 — 노출(트래픽이 밖으로 나가는 신호)이 있을 때만 알린다. 전부
     # 사용량형이라 곱하지 않는다 — 대표로 기본(전 세계) 첫 구간 단가만 보이고

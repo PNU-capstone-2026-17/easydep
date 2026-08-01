@@ -405,20 +405,21 @@ def test_core_containment_constant_matches_the_artifact() -> None:
         )
 
 
-# --- 탄소 요구의 소비자 (2026-07-28: 관심사 A갈래 첫 연결) ---
+# --- 탄소는 계약에서 빠졌다 (2026-08-02 계보 감사) ---
 
 
-def test_carbon_preference_yields_material_not_a_verdict() -> None:
-    """**데이터를 모아 두고 물을 자리가 없어 안 쓰이던 축**을 이었다.
+def test_carbon_is_not_judged_even_if_the_key_arrives() -> None:
+    """**받지 않는 값으로 서는 판정을 남기지 않는다** — stateless와 같은 규율.
 
-    envkb의 탄소 161건은 질의응답에만 쓰이고 계획에 닿지 않았다 — 요구사항 쪽에
-    `lowCarbonPreferred`를 물을 칸이 없었기 때문이다(관심사 `cn.carbon-constraint`가
-    소비자 없이 떠 있었다).
+    `lowCarbonPreferred`는 2026-08-02 계보 감사에서 계약을 떠났다: 근거 사슬이
+    벤더 문헌(GCP 프레임워크) → 우리 관심사 축 → 우리 배선(2026-07-28)뿐이고,
+    사용자가 그 제약을 말한 실물이 코퍼스에 없다(내부 11종 0건 · PURE 7,659문장
+    중 열쇠말 13건 전부 오탐). 8-01 제로베이스 도출이 이 칸을 통과시킨 것은
+    출발 집합이 '현행 사슬의 소비 목록'이라 우리 배선이 자기 근거가 되는 순환
+    때문이었다.
 
-    판정은 **하지 않는다.** 더 낮은 리전이 있다는 것은 사실이지만 옮기라는 권고가
-    아니다 — 지연·레지던시와의 상충을 우리가 못 잰다. 프로바이더 간 비교도 안 한다
-    (GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정이라 방법론이 다르고, 실측에서
-    같은 도시의 순서가 뒤집혔다).
+    옛 명세가 이 키를 들고 와도 verify는 침묵해야 한다 — 분기를 남겨 두면
+    계약에 없는 값이 판정을 여는 뒷문이 된다.
     """
     plan = _plan()
     plan.notes.append(Note(
@@ -428,22 +429,18 @@ def test_carbon_preference_yields_material_not_a_verdict() -> None:
         ORIGIN_KB, "envkb",
     ))
     lines = verify_against_requirements(plan, {"lowCarbonPreferred": True}, _HOURS)
-    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
-    assert "lower-carbon regions exist" in verdict
-    assert "does not weigh" in verdict, "판정하지 않는다는 말이 빠졌다"
-
-
-def test_carbon_preference_without_data_says_no_verdict() -> None:
-    """**침묵이 "괜찮다"로 읽히면 안 된다.** 자료가 없으면 없다고 말한다."""
-    lines = verify_against_requirements(_plan(), {"lowCarbonPreferred": True}, _HOURS)
-    verdict = next(ln for ln in lines if "lowCarbonPreferred" in ln)
-    assert "**no verdict**" in verdict
-
-
-def test_carbon_verdict_is_absent_when_not_required() -> None:
-    """요구가 없으면 판정도 없다 — 잡음을 늘리지 않는다."""
-    lines = verify_against_requirements(_plan(), {}, _HOURS)
     assert not any("lowCarbonPreferred" in ln for ln in lines)
+
+
+def test_carbon_field_is_gone_from_the_contract() -> None:
+    """스키마에도 없어야 한다 — 걷어낸 칸이 스키마에 남으면 다시 차오른다."""
+    import json
+    from pathlib import Path
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "appkb" / "request.json")
+        .read_text(encoding="utf-8"))
+    assert "lowCarbonPreferred" not in schema["properties"]
 
 
 def test_undecided_replica_count_is_visible_in_the_diagram() -> None:
