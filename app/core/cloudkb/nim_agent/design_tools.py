@@ -1096,6 +1096,16 @@ def compose(design: dict) -> DeploymentPlan:
             plan.unresolved.append(
                 f"measured cloud knowledge could not be attached: "
                 f"{type(exc).__name__}: {exc}")
+        # **되먹임 고리**(2026-08-01). 붙인 실측에 계획을 대조해 어긋난 것을
+        # 계획의 미결로 올린다 — 검증 결과가 사람에게만 가고 계획을 만든 쪽은
+        # 모르던 것을 닫는다. 계획을 **고치지는 않는다**(그건 생성기의 일이다).
+        try:
+            from app.core.feedback_loop import apply_to_plan
+
+            apply_to_plan(plan, provider, region or "-")
+        except Exception as exc:  # noqa: BLE001 — 고리가 죽어도 계획은 나간다
+            plan.unresolved.append(
+                f"feedback loop failed: {type(exc).__name__}: {exc}")
     return plan
 
 
@@ -1121,6 +1131,60 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
     if not anchors:
         # 전부 서버리스면 VM 네트워크가 필요 없다 — 없는 것을 그리지 않는다.
         return
+
+    # **번들이 빠뜨린 것을 실측이 채운다**(2026-08-01, 되먹임 고리가 잡았다).
+    #
+    # `core::k8sCluster`의 기본 번들은 `k8scluster-across`(멀티클라우드 데모)라
+    # 멤버가 클러스터·노드그룹뿐이고 **네트워크·서브넷이 없다**(VM 번들은 다
+    # 갖는다). 그래서 k8s 계획에 네트워크 경계가 통째로 없었고, 우리 실측은
+    # `k8sCluster→subnet`을 **필수**로 안다.
+    #
+    # 번들은 "도구가 함께 만들어 준다"는 편의 정보이고 **실측이 권위**다. 어긋나면
+    # 실측을 따른다 — 그것이 이 저장소가 하는 일이다.
+    #: `core::` id → (우리 자원 이름, 몇 개가 필요한가).
+    required_by_measurement: dict[str, tuple[str, int]] = {}
+    if provider:
+        try:
+            from app.core.infra_planning import plan_for_anchors
+            from app.core.plan_crosscheck import core_ids
+
+            core_of = core_ids()
+            wanted = [a.split("::")[-1] for a in anchors]
+            provision = plan_for_anchors(
+                wanted, provider, requirements.get("region") or "-").provision
+            # **개수도 실측이 말한다** — aws EKS는 서로 다른 AZ의 서브넷 둘이다.
+            # 규칙의 기계 몫에서 읽는다(산문을 파싱하지 않는다).
+            floors: dict[str, int] = {}
+            for check in provision["checks"]:
+                machine = check.get("machine") or {}
+                if machine.get("minCount") and not machine.get("appliesWhen"):
+                    floors[check["object"]] = max(
+                        floors.get(check["object"], 0), int(machine["minCount"]))
+            for item in provision["createOrder"]:
+                if not item["required"] or item["id"] in wanted:
+                    continue
+                if item["id"] == "image":
+                    # **이미지는 자원이 아니라 값이다.** `_add_image_note`가 이미
+                    # 컴퓨트 노트로 다룬다(번들 루프도 같은 예외를 둔다) —
+                    # 여기서 또 다루면 "벤더 타입이 없다"는 거짓 미결이 뜬다.
+                    continue
+                core = core_of.get(item["id"])
+                if not core:
+                    # **못 이으면 상자를 안 그린다.** 이름을 찍어 세우면 하류가
+                    # 만들 수 없는 것을 만들라고 하는 셈이다.
+                    plan.unresolved.append(
+                        f"{item['id']} is required on {provider} (measured) but we "
+                        "have no vendor type for it — it is not drawn")
+                    continue
+                required_by_measurement[core] = (item["id"], floors.get(item["id"], 1))
+        except Exception as exc:  # noqa: BLE001 — 못 읽으면 번들만으로 간다
+            # **조용히 삼키지 않는다.** 처음 판은 `region`이 이 함수의 인자가
+            # 아니어서 NameError가 났는데, 그것이 빈 dict로 위장돼 "실측이 필수라
+            # 한 것이 없다"처럼 보였다. 미결로 올려 다음엔 바로 보이게 한다.
+            required_by_measurement = {}
+            plan.unresolved.append(
+                f"could not read the measured closure for {anchors}: "
+                f"{type(exc).__name__}: {exc}")
 
     seen: set[str] = set()
     for anchor in anchors:
@@ -1198,6 +1262,41 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
                 id=node_id, label=label, role="shared", placement=placement,
                 origin=ORIGIN_KB, type_id=type_id, notes=tuple(notes),
             ))
+            required_by_measurement.pop(core_id, None)
+
+    # 번들에 없는데 **실측이 필수**라고 한 것을 마저 세운다.
+    for core_id, (resource, count) in sorted(required_by_measurement.items()):
+        if core_id in seen or core_id == "core::image":
+            continue
+        seen.add(core_id)
+        base = core_id.split("::")[-1].lower()
+        type_id, _hedged = _vendor_of(core_id, provider)
+        if not type_id:
+            plan.unresolved.append(
+                f"{resource} is required on {provider} (measured) but we have no "
+                "vendor type for it — it is not drawn")
+            continue
+        placement, placement_note = _placement_of(core_id)
+        for index in range(max(1, count)):
+            notes = [Note(
+                f"The bundle for this anchor does not list {resource}, but applying "
+                f"against {provider} showed it is required — we follow the "
+                "measurement", ORIGIN_KB, "depkb")]
+            if count > 1:
+                # **개수가 실측이다.** 컴퓨트의 `×?`(개수 미정)와 다른 종류다 —
+                # 서로 다른 AZ의 서브넷은 복제가 아니라 별개 자원이다.
+                notes.append(Note(
+                    f"{count} of these are required, and they must not share an "
+                    "availability zone (measured)", ORIGIN_KB, "depkb"))
+            if placement_note is not None:
+                notes.append(placement_note)
+            if core_id == "core::subnet":
+                notes.extend(_subnet_notes(provider, requirements))
+            plan.nodes.append(PlanNode(
+                id=base if count == 1 else f"{base}{index + 1}",
+                label=_SHARED_LABEL.get(core_id, base), role="shared",
+                placement=placement, origin=ORIGIN_KB, type_id=type_id,
+                notes=tuple(notes)))
 
 
 #: 공통 층이 **담김이라고 말한** 쌍. `core-graph.json`의 `contained_in` 엣지에서

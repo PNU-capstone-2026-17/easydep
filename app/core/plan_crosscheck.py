@@ -161,6 +161,43 @@ _SCOPE_BY_ROLE: dict[str, str] = {
     "external": "external-system",
 }
 
+@lru_cache(maxsize=1)
+def core_ids() -> dict[str, str]:
+    """우리 자원 → graphkb의 `core::` 개념 id. **이름을 짐작하지 않는다.**
+
+    둘은 이름이 다르다 — 우리 `network`가 저쪽 `core::vNet`이고 `firewall`이
+    `core::securityGroup`이다. `core::<우리 이름>`으로 찍으면 조용히 안 맞고,
+    실제로 그렇게 물렸다(2026-08-01: 계획 생성기가 실측 필수를 세우려는데
+    `core::network`가 그래프에 없어 아무것도 안 세워졌다).
+
+    그래서 `_bridge`와 같은 지렛대를 쓴다 — aws 결속만 스키마 원문에 매여 있으니
+    거기서 그래프로 건너가 `core::` 이웃을 읽는다. 이름 일치로 이은 것
+    (`NAME_MATCHED`)은 그 이름 그대로다.
+    """
+    out: dict[str, str] = {}
+    try:
+        from app.core.cloudkb.graphkb.agent_api import load_merged
+        from app.core.cloudkb.graphkb.query import equivalents
+
+        graph = load_merged()
+    except Exception:  # noqa: BLE001
+        return out
+    if graph is None:
+        return out
+    for resource, aws_type in vocabulary.AWS_TYPES.items():
+        node = f"aws::{aws_type}"
+        if node not in graph.nodes:
+            continue
+        core = next((p.id for p in equivalents(graph, node)
+                     if p.id.startswith("core::")), "")
+        if core:
+            out[resource] = core
+    for resource in NAME_MATCHED:
+        if f"core::{resource}" in graph.nodes:
+            out[resource] = f"core::{resource}"
+    return out
+
+
 @lru_cache(maxsize=64)
 def declared_absent(csp: str, aws_type: str) -> str:
     """그 CSP에 이 개념의 **독립 자원 타입이 없다고 결속이 못 박았는가.**
