@@ -1383,16 +1383,25 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     dict(csp="gcp", subject="vm", object="image", question="existence",
          verdict="optional",
          predicate="disjunctive: 부트 디스크 원천 — initializeParams."
-                   "sourceImage ∨ 기존 디스크(source) 중 하나는 있어야 한다",
+                   "sourceImage ∨ 기존 디스크(source) 중 **정확히** 하나(배타적)",
+         # 배타성 실측(2026-08-01): 둘을 함께 보내면 API가 400으로 거부한다.
+         constraint={"exclusive": True, "idl": "OnlyOne"},
          evidence=[
              ("gcp-image-2026-07-31", "G1.omit-image-and-source",
+              "invalid", "apply"),
+             # 배타성 — **REST로 직접** 걸었다. gcloud는 `--disk boot=yes`를 보면
+             # initializeParams를 아예 안 보내서(4차 --log-http) CLI로는 API의
+             # 답을 못 받는다.
+             ("disj5-2026-08-01", "D1.rest-both-source-and-initializeparams",
               "invalid", "apply"),
              ("gcp-image-2026-07-31", "G2.dangling-image", "invalid", "apply"),
              ("gcp-image-2026-07-31", "G3b.boot-from-existing-disk-no-image",
               "ok", "apply"),
              ("gcp-image-2026-07-31", "G3c.instance-shape", "ok", "apply"),
          ],
-         note="서버가 술어를 문장으로: 'Boot disk must have a source "
+         note="**배타다**: 'Cannot specify both source and initializeParams' "
+              "(HTTP 400, disj5). 3·4차는 gcloud가 걸러 API에 닿지 못했다. "
+              "서버가 술어를 문장으로: 'Boot disk must have a source "
               "specified'(G1). 이미지에서 만든 디스크를 source로 주면 "
               "sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced "
               "image resource cannot be found'. azure와 동형(2사 수렴)"),

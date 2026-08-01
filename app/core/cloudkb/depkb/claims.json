@@ -3596,9 +3596,12 @@
    "csp": "gcp",
    "question": "existence",
    "verdict": "optional",
-   "predicate": "disjunctive: 부트 디스크 원천 — initializeParams.sourceImage ∨ 기존 디스크(source) 중 하나는 있어야 한다",
-   "note": "서버가 술어를 문장으로: 'Boot disk must have a source specified'(G1). 이미지에서 만든 디스크를 source로 주면 sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced image resource cannot be found'. azure와 동형(2사 수렴)",
-   "constraint": null,
+   "predicate": "disjunctive: 부트 디스크 원천 — initializeParams.sourceImage ∨ 기존 디스크(source) 중 **정확히** 하나(배타적)",
+   "note": "**배타다**: 'Cannot specify both source and initializeParams' (HTTP 400, disj5). 3·4차는 gcloud가 걸러 API에 닿지 못했다. 서버가 술어를 문장으로: 'Boot disk must have a source specified'(G1). 이미지에서 만든 디스크를 source로 주면 sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced image resource cannot be found'. azure와 동형(2사 수렴)",
+   "constraint": {
+    "exclusive": true,
+    "idl": "OnlyOne"
+   },
    "oracle": "apply",
    "evidence": [
     {
@@ -3611,6 +3614,12 @@
      "layer": "apply",
      "experiment": "gcp-image-2026-07-31",
      "step": "G1.omit-image-and-source",
+     "code": "invalid"
+    },
+    {
+     "layer": "apply",
+     "experiment": "disj5-2026-08-01",
+     "step": "D1.rest-both-source-and-initializeparams",
      "code": "invalid"
     },
     {

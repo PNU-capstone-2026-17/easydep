@@ -213,10 +213,13 @@ azure·gcp는 클러스터만 있으면 됐다. "aws는 안 된다"가 아니라
 
 **약점 8 (논문 위협 절 원고)**:
 ① aws `nic→subnet` required는 클라이언트 층 거부(서버 미도달).
-   **같은 함정에 2026-08-01에 또 걸렸다** — 선언 술어 배타성 1차
-   (`azure-disj-2026-08-01`)가 `az network lb create`의 `incorrect usage`를
-   받아 무효였다. ARM 템플릿으로 다시 걸어 컨트롤 플레인 코드를 받았다
-   (`azure-disj2`). **CLI를 오라클로 착각하는 것이 이 축의 상습 결함이다.**
+   **2026-08-01에 같은 함정에 세 번 더 걸렸다** — 선언 술어 배타성을 재면서다:
+   ① `az network lb create`가 `incorrect usage`로 먼저 막음(disj 1차) →
+   ARM 템플릿으로 우회. ② `aws run-instances`가 `NoRegion`을 냄(반복 1차) →
+   리전 명시. ③ **`gcloud`가 `--disk boot=yes`를 보면 `initializeParams`를
+   아예 안 보냄**(disj 3·4차) → `--log-http`로 확인하고 REST로 직접 호출.
+   **CLI를 오라클로 착각하는 것이 이 축의 상습 결함이고, 매번 다른 얼굴로 온다.**
+   지금은 "CLI가 거부하면 그 거부가 클라이언트인지 API인지부터 본다"가 규율이다.
 ② `holds`는 "그 상황에서 거부됐다"이지 "항상"이 아님(강제 삭제 미측정).
 ③ 단일 리전 · **거부 프로브는 3회 반복해 전부 안정**(2026-08-01, 15회 중 흔들림
    0). 다만 **성공 프로브와 기능 축은 여전히 단일 실행**이다 — 자원을 만들어
@@ -264,6 +267,19 @@ azure·gcp는 클러스터만 있으면 됐다. "aws는 안 된다"가 아니라
 - ~~기능 신호 다변화~~ **완료(2026-08-01)** — 7종(§4-2 표). 앱이 필요하다고
   본 둘 중 LB 서빙은 결국 **앱 없이** 됐고(python3 http.server가 OS 기본),
   서비스 디스커버리만 관측자 이미지를 썼다.
+
+- **선언 술어의 배타성** (2026-08-01, `azure-disj2` · `disj5`). 술어 분류를
+  IDL(RESTest)에 정박하다 미측정 칸이 드러났다 — IDL은 `Or`(적어도 하나)와
+  `OnlyOne`(정확히 하나)을 가르는데 우리는 안 쟀다. **형식주의 채택이 실험을
+  낳은 사례**다.
+
+  | 주장 | 판정 | 근거 |
+  |---|---|---|
+  | azure `loadBalancer→subnet\|publicIp\|publicIPPrefix` | **OnlyOne** | `FrontendIPConfigHasBothSubnetAndPublicIP` |
+  | gcp `vm→image` | **OnlyOne** | HTTP 400 *"Cannot specify both 'source' and 'initializeParams'"* |
+  | azure `vm→image` | **미판정** | preflight는 통과했으나 통과는 증거가 아니다 |
+
+  셋 중 둘이 배타로 확정됐다고 나머지를 그렇게 적지 않는다 — 테스트가 막는다.
 
   **`loadBalancer→vm`은 기능 축이 새 간선을 연 첫 사례다** — LB는 백엔드
   없이도 만들어지므로 존재 축에서는 이 결속이 보이지 않는다. 기능 질문이

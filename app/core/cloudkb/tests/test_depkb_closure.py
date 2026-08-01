@@ -197,8 +197,13 @@ def test_the_or_versus_onlyone_question_was_measured_not_assumed() -> None:
     컨트롤 플레인이 `FrontendIPConfigHasBothSubnetAndPublicIP`로 거부했다 →
     `OnlyOne`. 대조군(하나씩만)은 같은 경로로 섰다.
 
-    **부류 수준에서 정하지 않는다** — `vm→image` 2건의 배타성은 아직 미측정이라
-    더 약한 `Or`로 남는다. 그래서 `IDL_FORM`은 "주장이 가른다"고만 말한다.
+    **부류 수준에서 정하지 않는다** — 주장마다 갈리기 때문이다. 같은 날 gcp
+    `vm→image`도 닫았고(REST로 직접: *"Cannot specify both 'source' and
+    'initializeParams'"*, HTTP 400), **azure `vm→image`는 아직 미판정**이다
+    (preflight는 통과했는데 통과는 이 저장소에서 증거가 아니다).
+
+    3건 중 2건이 배타로 확정됐다고 나머지를 그렇게 적으면 안 된다 — 그것이
+    이 테스트가 막는 것이다.
     """
     import json
     from pathlib import Path
@@ -214,9 +219,14 @@ def test_the_or_versus_onlyone_question_was_measured_not_assumed() -> None:
     assert lb["constraint"] == {"exclusive": True, "idl": "OnlyOne"}
     codes = {e.get("code") for e in lb["evidence"]}
     assert "FrontendIPConfigHasBothSubnetAndPublicIP" in codes, codes
-    # 재지 않은 것은 재지 않았다고 남는다.
-    others = [c for c in doc["claims"]
-              if (c.get("predicate") or "").startswith("disjunctive:")
-              and c is not lb]
-    assert others and all(not c.get("constraint") for c in others), (
-        "vm→image의 배타성을 쟀다면 이 테스트를 고쳐라")
+    gcp = next(c for c in doc["claims"]
+               if c["csp"] == "gcp" and c["subject"] == "vm"
+               and c["object"] == "image")
+    assert gcp["constraint"] == {"exclusive": True, "idl": "OnlyOne"}
+    # **재지 않은 것은 재지 않았다고 남는다.** azure `vm→image`가 그 자리다.
+    azure_image = next(c for c in doc["claims"]
+                       if c["csp"] == "azure" and c["subject"] == "vm"
+                       and c["object"] == "image")
+    assert not azure_image.get("constraint"), (
+        "azure vm→image의 배타성을 쟀다면 이 테스트를 고쳐라 — preflight 통과는 "
+        "이 저장소에서 증거가 아니다")
