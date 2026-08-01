@@ -224,6 +224,18 @@ def main(argv: list[str] | None = None) -> int:
         if not art.get("resources"):
             print("  자원 0 — 하류 렌더러는 이 계획을 매니페스트로 못 바꾼다")
 
+        # ── 7. 배포 후 검증 ──────────────────────────────────────────────
+        # 기능 결속은 컨트롤 플레인이 막지 않아 apply 전 검사로는 안 잡힌다.
+        checks = (art.get("_deployChecks") or {}).get("checks") or []
+        print(f"\n[7] 배포 후 검증 — 점검 {len(checks)}건")
+        for check in checks:
+            because = check["because"]
+            print(f"  [{check['where']:7}] {check['signal']:18} "
+                  f"{because['subject']}→{because['object']}")
+        if not checks:
+            print("  (없음 — 이 구성의 자원에 걸리는 기능 결속 실측이 없다. "
+                  "**문제없다는 뜻이 아니다**)")
+
     print()
     return 1 if missing_required else 0
 

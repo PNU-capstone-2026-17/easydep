@@ -158,6 +158,19 @@ def build(plan: DeploymentPlan, design: dict, *, name: str = "") -> dict:
         "_provenance": ("app/core/cloud_artifact.build — 설계 신호에서 나온 배포 "
                         "계획의 투영이다. 형식은 하류(deployment_renderer)가 정했다"),
     }
+    # **배포 후 검증** — 기능 결속은 컨트롤 플레인이 막지 않아 apply 전 검사로는
+    # 영영 안 잡힌다(`deploy_checks` 모듈 문서). 계획이 놓는 자원에 걸리는
+    # 것만 낸다: 그린 것 + 실측이 "만들어야 한다"고 한 것.
+    if csp:
+        from app.core.deploy_checks import build as build_checks
+        from app.core.plan_crosscheck import read_plan
+
+        mapped, _unmapped, _weak, _roles = read_plan(plan, csp)
+        drawn = set(mapped.values())
+        if measured is not None:
+            drawn |= set(measured.create_order)
+        doc["_deployChecks"] = build_checks(csp, drawn)
+
     if measured is not None:
         # **실측을 함께 나른다.** 하류가 지금 읽지 않더라도 산출물에는 있어야
         # 한다 — 순서·대기·무방비 경고는 사람이 apply할 때 필요한 것이고,

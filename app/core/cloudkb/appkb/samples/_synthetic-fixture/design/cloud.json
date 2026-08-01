@@ -13,6 +13,111 @@
   "계획은 aws인데 하류 렌더러는 azure ARM 타입만 알아본다 — 3사 실측이 여기서 막힌다(하류 스키마의 변경이 필요하다)"
  ],
  "_provenance": "app/core/cloud_artifact.build — 설계 신호에서 나온 배포 계획의 투영이다. 형식은 하류(deployment_renderer)가 정했다",
+ "_deployChecks": {
+  "schemaVersion": "easydep-deploy-checks/v1alpha1",
+  "csp": "aws",
+  "checks": [
+   {
+    "signal": "egress-https",
+    "where": "guest",
+    "what": "이 서버가 밖으로 나갈 수 있는가 — internetGateway를 떼면 subnet가 깨진다",
+    "how": "게스트에서 외부 HTTPS 요청(예: `curl -sS https://…`)",
+    "passes": "응답이 온다. 인바운드와 **다른 방향**이라 따로 확인한다",
+    "because": {
+     "csp": "aws",
+     "subject": "subnet",
+     "object": "internetGateway"
+    },
+    "evidence": [
+     "aws-sig4-2026-07-31/G1.egress-works",
+     "aws-sig4-2026-07-31/M3.delete-default-route",
+     "aws-sig4-2026-07-31/G2.egress-lost",
+     "aws-sig4-2026-07-31/M4.recreate-route",
+     "aws-sig4-2026-07-31/G3.egress-again"
+    ]
+   },
+   {
+    "signal": "inbound-tcp",
+    "where": "outside",
+    "what": "밖에서 이 서버로 들어갈 수 있는가 — internetGateway를 떼면 subnet가 깨진다",
+    "how": "TCP 연결: <공인 주소>:22 (실험은 SSH 포트로 쟀다)",
+    "passes": "연결이 선다. **연속 확인**이 필요하다 — 실험에서 한 번의 성공/실패가 전파 지연과 구별되지 않았다",
+    "because": {
+     "csp": "aws",
+     "subject": "subnet",
+     "object": "internetGateway"
+    },
+    "evidence": [
+     "aws-func2-2026-07-31/F3.reachable-again",
+     "aws-func2-2026-07-31/M3.delete-default-route",
+     "aws-func2-2026-07-31/F4.unreachable-no-route",
+     "aws-func2-2026-07-31/M4.recreate-route",
+     "aws-func2-2026-07-31/F5.reachable-final"
+    ]
+   },
+   {
+    "signal": "inbound-tcp",
+    "where": "outside",
+    "what": "밖에서 이 서버로 들어갈 수 있는가 — firewall를 떼면 vm가 깨진다",
+    "how": "TCP 연결: <공인 주소>:22 (실험은 SSH 포트로 쟀다)",
+    "passes": "연결이 선다. **연속 확인**이 필요하다 — 실험에서 한 번의 성공/실패가 전파 지연과 구별되지 않았다",
+    "because": {
+     "csp": "aws",
+     "subject": "vm",
+     "object": "firewall"
+    },
+    "evidence": [
+     "aws-func2-2026-07-31/F1.reachable-baseline",
+     "aws-func2-2026-07-31/M1.swap-to-empty-sg",
+     "aws-func2-2026-07-31/F2.unreachable-empty-sg",
+     "aws-func2-2026-07-31/M2.restore-sg22",
+     "aws-func2-2026-07-31/F3.reachable-again"
+    ]
+   },
+   {
+    "signal": "imds-credentials",
+    "where": "guest",
+    "what": "이 서버가 클라우드 API 자격증명을 얻는가 — iamRole를 떼면 vm가 깨진다",
+    "how": "게스트에서 인스턴스 메타데이터 질의(aws는 IMDSv2 토큰 → 역할 조회)",
+    "passes": "역할 이름과 자격증명이 온다",
+    "because": {
+     "csp": "aws",
+     "subject": "vm",
+     "object": "iamRole"
+    },
+    "evidence": [
+     "aws-sig4-2026-07-31/F1.imds-credentials-work",
+     "aws-sig4-2026-07-31/M1.disassociate-profile",
+     "aws-sig4-2026-07-31/F2.imds-credentials-lost",
+     "aws-sig4-2026-07-31/M2.reassociate-profile",
+     "aws-sig4-2026-07-31/F3.imds-credentials-again"
+    ]
+   },
+   {
+    "signal": "inbound-tcp",
+    "where": "outside",
+    "what": "밖에서 이 서버로 들어갈 수 있는가 — publicIp를 떼면 vm가 깨진다",
+    "how": "TCP 연결: <공인 주소>:22 (실험은 SSH 포트로 쟀다)",
+    "passes": "연결이 선다. **연속 확인**이 필요하다 — 실험에서 한 번의 성공/실패가 전파 지연과 구별되지 않았다",
+    "because": {
+     "csp": "aws",
+     "subject": "vm",
+     "object": "publicIp"
+    },
+    "evidence": [
+     "aws-func-2026-07-31/F1.reachable-baseline",
+     "aws-func-2026-07-31/M1.disassociate-while-running",
+     "aws-func-2026-07-31/M1b.instance-public-ip-now",
+     "aws-func-2026-07-31/F2.unreachable-after-detach",
+     "aws-func-2026-07-31/M2.reassociate-eip",
+     "aws-func-2026-07-31/F3.reachable-again"
+    ]
+   }
+  ],
+  "_why": "기능 결속은 **컨트롤 플레인이 막지 않는다** — apply는 성공하는데 서비스가 죽는 지대다. 생성·삭제 검사로는 안 잡히므로 배포 후 확인 말고는 방법이 없다",
+  "_scope": "계획에 그려진 자원에 걸리는 결속만 낸다. **여기 없는 것이 '문제없다'는 뜻은 아니다** — 기능 축의 커버리지가 축마다 고르지 않다(신호 7종 × 3사 18칸 중 9칸이 빔)",
+  "_provenance": "app/core/deploy_checks.build — 신호는 claims.json이 나르고 점검 방법은 실험이 실제로 쓴 것이다"
+ },
  "_measured": {
   "csp": "aws",
   "anchors": [

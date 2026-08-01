@@ -697,6 +697,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # 인과 사다리: 기능 확인 → 변이 성공(무방비) → 상실 → 복원 → 회복.
     # 회복까지 봐야 상실이 변이 탓임이 선다) ──
     dict(csp="azure", subject="nic", object="publicIp", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: 실행 중 VM의 NIC에서 PIP 분리를 컨트롤 플레인이 "
                    "막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
@@ -716,6 +717,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "PIP는 NSG 없으면 인바운드가 기본 차단된다(R6 — F1이 NSG 부착 "
               "전 7회 실패, 부착 직후 성공. secure-by-default)"),
     dict(csp="gcp", subject="vm", object="publicIp", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: RUNNING 인스턴스에서 accessConfig 삭제를 컨트롤 "
                    "플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
@@ -734,6 +736,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "자원이 아니라 인스턴스의 accessConfig라는 결속 차이가 변이 "
               "경로에도 그대로 나타난다"),
     dict(csp="aws", subject="vm", object="publicIp", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: running 인스턴스에서 EIP 분리를 컨트롤 플레인이 "
                    "막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
@@ -755,7 +758,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # 새 간선을 여는 첫 사례**: loadBalancer→vm은 존재 판정에 없다. LB는
     # 백엔드 없이도 만들어지므로 존재로는 안 보이고 기능으로만 보인다) ──
     dict(csp="azure", subject="loadBalancer", object="vm",
-         question="function", verdict="holds",
+         question="function",
+         signal="lb-serving", verdict="holds",
          predicate="무방비: 백엔드 풀에서 NIC 제거를 컨트롤 플레인이 막지 "
                    "않는다 — 기능 신호는 LB 프론트엔드로의 HTTP 200",
          evidence=[
@@ -782,7 +786,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # 유일하게 관측자 이미지가 필요했다**. 신호 5(LB 서빙)는 기준선을 못
     # 세워 미판정 — azure-lb-serve-2026-07-31/Z2에 조건 명시) ──
     dict(csp="gcp", subject="k8sService", object="k8sCluster",
-         question="function", verdict="holds",
+         question="function",
+         signal="service-discovery", verdict="holds",
          predicate="무방비: Service 삭제를 컨트롤 플레인이 막지 않는다 — 기능 "
                    "신호는 클러스터 안에서 서비스 이름으로의 HTTP 접속",
          evidence=[
@@ -806,7 +811,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # 없앤다. **앱을 쓰지 않고** 게스트 안에서 OS 기본 도구로만 관측했다.
     # 하네스는 experiments/_guest.py) ──
     dict(csp="azure", subject="globalDns", object="network",
-         question="function", verdict="holds",
+         question="function",
+         signal="dns-resolution", verdict="holds",
          predicate="무방비: 사설 영역-vnet link 삭제를 컨트롤 플레인이 막지 "
                    "않는다 — 기능 신호는 게스트의 이름 해석(getent hosts)",
          evidence=[
@@ -824,6 +830,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "보였다(D4에 기록). 존재 판정(globalDns→globalDnsRecord)과 다른 "
               "간선이다 — 여기서는 **영역-네트워크 연결이 기능을 나른다**"),
     dict(csp="azure", subject="vm", object="disk", question="function",
+         signal="volume-write",
          verdict="holds",
          predicate="무방비: 실행 중 VM에서 데이터 디스크 detach를 컨트롤 "
                    "플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기",
@@ -843,6 +850,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "보이나, 재마운트가 회복의 필요조건인지는 이 측정이 말하지 "
               "않는다(그렇게 적었던 앞 판을 정정한다)"),
     dict(csp="aws", subject="vm", object="iamRole", question="function",
+         signal="imds-credentials",
          verdict="holds",
          predicate="무방비: 실행 중 인스턴스에서 인스턴스 프로필 분리를 "
                    "컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 IMDSv2 "
@@ -860,7 +868,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "**EKS CSI가 'no EC2 IMDS role found'로 죽은 그 기제**를 VM 층에서 "
               "격리해 잰 것이다(완결 라운드 I0과 짝)"),
     dict(csp="aws", subject="subnet", object="internetGateway",
-         question="function", verdict="holds",
+         question="function",
+         signal="egress-https", verdict="holds",
          predicate="무방비: 0.0.0.0/0→IGW 라우트 삭제를 막지 않는다 — 기능 "
                    "신호는 게스트에서 **밖으로** 나가는 HTTPS(아웃바운드)",
          evidence=[
@@ -1229,6 +1238,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     # 라우팅 셀은 **대응 자원 부재**(인터넷 경로가 시스템 라우트)라 간선이
     # 없다 — 빈칸이 아니라 자원 부재의 기록. internetGateway 어휘 첫 등장) ──
     dict(csp="azure", subject="subnet", object="firewall", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: 사용 중 서브넷에서 NSG 분리를 컨트롤 플레인이 "
                    "막지 않는다 — 차단은 NSG 부재와 Standard PIP "
@@ -1247,6 +1257,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "(results-round1.json) — generic --remove가 분리 경로다. "
               "상실은 연속 2회 확인"),
     dict(csp="aws", subject="vm", object="firewall", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: 실행 중 인스턴스의 SG를 빈 인그레스 SG로 교체하는 "
                    "것을 컨트롤 플레인이 막지 않는다(관계 변이)",
@@ -1260,6 +1271,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="교체 즉시 상실(연속 2회)·원복 즉시 회복 — SG는 상태 비저장 "
               "부착이라 전파가 빠르다는 관측 포함"),
     dict(csp="gcp", subject="vm", object="firewall", question="function",
+         signal="inbound-tcp",
          verdict="holds",
          predicate="무방비: 네트워크 스코프 방화벽 규칙 삭제를 컨트롤 플레인이 "
                    "막지 않는다 — gcp 방화벽은 자원 간 부착이 아니라 규칙이라 "
@@ -1275,7 +1287,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "교체(관계) · gcp 규칙 삭제(규칙) — 방화벽의 결속 모델 자체가 "
               "다르다는 실측"),
     dict(csp="aws", subject="subnet", object="internetGateway",
-         question="function", verdict="holds",
+         question="function",
+         signal="inbound-tcp", verdict="holds",
          predicate="무방비: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 "
                    "컨트롤 플레인이 막지 않는다",
          evidence=[
@@ -1289,7 +1302,8 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "교란으로 기실측(IGW 없으면 EIP 도달 불가), 이번에 기능 축으로 "
               "닫았다. 셀 기준선은 직전 회복(F3) — 원인 섞임 방지"),
     dict(csp="gcp", subject="network", object="internetGateway",
-         question="function", verdict="holds",
+         question="function",
+         signal="inbound-tcp", verdict="holds",
          predicate="무방비: 자동 생성 기본 라우트(0.0.0.0/0→"
                    "default-internet-gateway) 삭제를 컨트롤 플레인이 막지 "
                    "않는다",
@@ -1473,12 +1487,35 @@ def _schema_evidence() -> dict[tuple, list[dict]]:
     return out
 
 
+#: 배포 후 검증이 아는 신호. **새 신호를 늘리려면 여기와 `deploy_checks`를 함께
+#: 고쳐야 한다** — 한쪽만 늘면 주장은 있는데 검증이 안 나온다.
+SIGNALS: tuple[str, ...] = (
+    "inbound-tcp",       # 밖에서 들어오는 TCP 도달
+    "egress-https",      # 게스트에서 밖으로 나가는 HTTPS
+    "lb-serving",        # LB 프런트엔드로의 HTTP 200
+    "dns-resolution",    # 게스트의 이름 해석
+    "service-discovery", # 클러스터 안에서 서비스 이름으로의 접속
+    "volume-write",      # 게스트의 direct 쓰기
+    "imds-credentials",  # 인스턴스 메타데이터에서 자격증명 획득
+)
+
+
 def build() -> dict:
     schema = _schema_evidence()
     claims: list[dict] = []
     judged: set[tuple] = set()
 
     for j in EXPERIMENT_JUDGMENTS:
+        # **기능 주장에는 신호가 반드시 있다.** 없으면 그 결속을 무엇으로 쟀는지
+        # 산출물이 말하지 못하고, 배포 후 검증이 조용히 빈다.
+        if j["question"] == "function":
+            assert j.get("signal") in SIGNALS, (
+                f'{j["csp"]} {j["subject"]}→{j["object"]}: 기능 주장에 신호가 '
+                f'없거나 모르는 신호다({j.get("signal")!r}) — 실측이 무엇으로 '
+                "쟀는지 적어라")
+        else:
+            assert not j.get("signal"), (
+                f'{j["csp"]} {j["subject"]}→{j["object"]}: 신호는 기능 축의 것이다')
         evid = []
         for exp, key, expect, layer in j["evidence"]:
             step = _experiment_step(exp, key)
@@ -1501,6 +1538,10 @@ def build() -> dict:
             # 술어의 **기계가 볼 수 있는 몫**. 없으면 없는 대로 둔다 — 산문을
             # 소비층에서 파싱하는 것을 막으려고 여기서 구조를 준다(2026-08-01).
             "constraint": j.get("constraint"),
+            # 기능 축의 **신호** — 그 결속을 무엇으로 쟀는가. 배포 후 검증
+            # 스위트가 이것을 읽는다(`app/core/deploy_checks.py`). 산문에서
+            # 뽑지 않고 실측을 기록한 자리에서 선언한다(2026-08-01).
+            "signal": j.get("signal"),
             "oracle": max((e["layer"] for e in evid),
                           key=lambda x: _LAYER_RANK[x]),
             "evidence": evid,
@@ -1513,6 +1554,7 @@ def build() -> dict:
         claims.append({
             "subject": s, "object": o, "csp": csp, "question": "existence",
             "verdict": "unknown", "predicate": None, "constraint": None,
+            "signal": None,
             "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
             "oracle": "schema", "evidence": evid,
         })
