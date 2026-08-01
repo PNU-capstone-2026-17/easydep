@@ -95,7 +95,7 @@
   "requirements": {
     "provider": "aws",
     "region": "ap-northeast-2",
-    "expectedConcurrentUsers": 200,
+    "scale": { "value": 200, "unit": "concurrentUsers" },
     "multiZone": true
   }
 }

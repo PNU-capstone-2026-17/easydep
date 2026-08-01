@@ -502,7 +502,7 @@ CONCERNS: tuple[Concern, ...] = (
             "용량을 미리 사는 것이 아니라 규모에 따라 값을 치른다. 수치가 없으면 인스턴스 "
             "타입·개수·요금제 중 무엇도 고를 수 없고, 그 빈칸을 제공자의 기본값이 채운다."
         ),
-        consumer="RESOURCE_SPEC.expectedConcurrentUsers|approxRequestsPerSecond",
+        consumer="RESOURCE_SPEC.scale",
         doc_id="well-architected/performance-efficiency/capacity-planning",
         probe=("capacity planning", "demand", "forecast"),
         iso25010=("performance efficiency",),        citation=f"{_WAF} — Capacity planning",

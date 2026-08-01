@@ -4,7 +4,7 @@
 
 `design_tools`에 이런 줄이 있었다.
 
-    users = requirements.get("expectedConcurrentUsers")
+    users = (requirements.get("scale") or {}).get("value")
     vcpu, mem = (2, 4) if not users or users <= 500 else (4, 8)
 
 `500`·`(2,4)`·`(4,8)` 어느 것에도 출처가 없다. 그리고 이 저장소는 바로 그 형태를
@@ -32,7 +32,8 @@ vCPU M 형태의 어떤 것도. 소스가 없다"*라고 적고, 조사 결론�
 
 ## 규모 신호는 여기서 값을 한다
 
-`expectedConcurrentUsers`는 **하한을 정하지 않는다.** 층 3에서 *되묻는 근거*가 된다 —
+`scale`(2026-08-01까지 `expectedConcurrentUsers`·`approxRequestsPerSecond` 두 칸)은
+**하한을 정하지 않는다.** 층 3에서 *되묻는 근거*가 된다 —
 "동시 사용자 3,000인데 하한이 없다"가 "하한을 알려 달라"보다 강한 요청이다.
 """
 
@@ -174,10 +175,13 @@ def undecided_note(requirements: dict, cheapest: list[dict], biggest: list[dict]
     규모 신호가 있으면 되묻기의 근거로 쓴다 — 값을 정하는 데는 못 쓰지만, 하한이
     없다는 사실을 사용자에게 더 급하게 만들어 주는 데는 쓴다.
     """
-    users = (requirements or {}).get("expectedConcurrentUsers")
-    rps = (requirements or {}).get("approxRequestsPerSecond")
-    scale = (f"{users} concurrent users" if users is not None else
-             f"about {rps} requests per second" if rps is not None else "")
+    # **한 칸에서 읽는다**(2026-08-01). 전에는 두 칸이 같은 양의 두 단위를
+    # 나눠 갖고 있어 읽는 쪽마다 둘을 다 봐야 했다.
+    stated = (requirements or {}).get("scale") or {}
+    value, unit = stated.get("value"), stated.get("unit")
+    scale = ("" if value is None else
+             f"{value:g} concurrent users" if unit == "concurrentUsers" else
+             f"about {value:g} requests per second")
 
     span = ""
     if cheapest and biggest:

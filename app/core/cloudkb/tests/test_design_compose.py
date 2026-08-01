@@ -590,8 +590,10 @@ def test_class_only_design_answers_almost_nothing(design) -> None:
 
 
 def _steady_stateless_design() -> dict:
-    """deployHint 없는 컴포넌트 1개 + steady·stateless=true —
-    비교 판정에서 서버리스만 상충이 없어 권고가 나는 입력(실측)."""
+    """deployHint 없는 컴포넌트 1개 + steady — **가정으로만 VM이 서는 입력.**
+
+    이름의 `stateless`는 남은 흔적이다. 그 칸은 2026-08-01에 계약에서 빠졌다 —
+    서버리스를 범위 밖으로 선언하고 나니 그 값으로 갈리는 판정이 없었다."""
     return {
         "schemaVersion": "1", "name": "probe-app",
         "components": [{"id": "api", "name": "Api"}],
@@ -606,25 +608,33 @@ def _steady_stateless_design() -> dict:
     }
 
 
-def test_recommendation_is_flagged_where_the_assumption_is_made() -> None:
-    """**권고가 각주로만 있으면 읽히지 않는다.**
+def test_the_assumption_says_how_to_overturn_it() -> None:
+    """**가정은 그것을 뒤집는 법과 함께 적힌다.**
 
-    라이브 실측(X7, 5회 중 4회)에서 도구는 서버리스를 권고했는데 모델은 "VM으로
-    가정했습니다"만 답에 옮겼다. 계획 본문·유일한 구체 가격·다이어그램이 전부 VM
-    위에 있고 권고는 27줄 뒤 한 줄이었으니, 문서에서 압도적인 쪽이 읽힌 것이다.
-    가정을 적은 **바로 그 노트 다음**에 권고가 붙어야 둘이 같이 읽힌다.
+    이 테스트는 원래 "권고가 각주로만 있으면 읽히지 않는다"를 지켰다. 라이브
+    실측(X7, 5회 중 4회)에서 도구는 서버리스를 권고했는데 모델은 "VM으로
+    가정했습니다"만 답에 옮겼고 — 계획 본문·유일한 구체 가격·다이어그램이 전부 VM
+    위에 있고 권고는 27줄 뒤 한 줄이었다 — 그래서 권고를 가정 **바로 다음**으로
+    옮겼다.
+
+    **2026-08-01에 그 권고가 사라졌다.** 서버리스를 범위 밖으로 선언했으므로 권할
+    다른 방식이 없다. 남은 규율은 그대로다: 가정이라고 말하고, 뒤집는 손잡이를
+    같이 준다. 손잡이 없는 가정은 사용자가 결정으로 읽는다.
     """
     plan = compose(_steady_stateless_design())
-    texts = [n.text for node in plan.nodes for n in node.notes]
-    assumed = next(i for i, t in enumerate(texts) if t.startswith(_VM_ASSUMED))
-    assert "serverless" in flat(texts[assumed + 1]), "가정 바로 다음에 권고가 없다"
-    assert "do not fix them as they stand" in flat(texts[assumed + 1])
+    assumed = next(n.text for node in plan.nodes for n in node.notes
+                   if n.text.startswith(_VM_ASSUMED))
+    assert "did not specify" in flat(assumed), "가정임을 말하지 않는다"
+    assert "deployHint" in assumed, "뒤집는 법을 안 알려 준다"
+    # 범위 밖으로 선언한 것이 권고로 돌아오지 않는다.
+    assert not any("serverless" in flat(n.text)
+                   for node in plan.nodes for n in node.notes)
 
 
-def test_plan_itself_stays_vm_when_recommendation_differs() -> None:
-    """**권고는 권고이지 결정이 아니다.** 계획을 임의로 서버리스로 바꾸면
-    이 저장소가 막아 온 실패(짐작을 결정으로 승격)가 된다 — 값·다이어그램은
-    VM 기준으로 남고, 다르다는 사실만 밝힌다."""
+def test_plan_stands_on_the_method_it_assumed() -> None:
+    """**가정한 방식 위에서 값이 나온다.** 짐작으로 다른 방식을 세우고 그 값을
+    적으면 이 저장소가 막아 온 실패(짐작을 결정으로 승격)가 된다 — 값·다이어그램은
+    가정한 VM 기준으로 남는다."""
     plan = compose(_steady_stateless_design())
     api = next(n for n in plan.nodes if n.id == "api")
     assert any("t3a" in n.text or "$" in n.text for n in api.notes), "VM 값이 사라졌다"

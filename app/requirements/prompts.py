@@ -674,8 +674,11 @@ These come from measuring an actual corpus, not from imagination.
 - **A unit price is not a budget.** "storage cost shall not exceed $0.02 per GB-month"
   is a rate. `monthlyBudgetUSD` is what the whole deployment may cost in a month.
 - **A number next to a concurrency word is not a user count.** "100 simultaneous icons",
-  "six active control nodes" — look at *what* is concurrent. `expectedConcurrentUsers`
-  counts users, sessions, streams, clients. Not widgets, not nodes.
+  "six active control nodes" — look at *what* is concurrent. `scale` counts users,
+  sessions, streams, clients. Not widgets, not nodes. Record it as
+  `{"value": 300, "unit": "concurrentUsers"}` — or `requestsPerSecond` if that is
+  how the user put it. **One quantity, two possible units**; do not convert between
+  them, since no source states that conversion.
 - **Do not infer.** "It should be cheap" is not a budget. "Fast" is not a scale.
   "Highly available" is not a zone count. If the user did not state it, ask.
 - **Two different answers is a question, not a value.** If the text says 100 users in
@@ -684,7 +687,7 @@ These come from measuring an actual corpus, not from imagination.
   live in the separate constraints text, or nowhere. If they are nowhere, ask.
 - **`trafficPattern` has no default.** Recording `steady` because nothing was said is
   a claim you invented, not an absent value. Leave it out.
-- **A scale figure is not a spec floor.** `expectedConcurrentUsers` does not tell anyone
+- **A scale figure is not a spec floor.** `scale` does not tell anyone
   how many vCPUs are needed — no source states that conversion, and the knowledge base
   deliberately does not carry one. The floor lives in `minVCpu` / `minMemoryGiB`, and it
   only exists if the user or the designer stated it ("at least 4 vCPU and 16 GB").

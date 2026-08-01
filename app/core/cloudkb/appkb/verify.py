@@ -154,12 +154,13 @@ def verify_against_requirements(
                 "instances is not fixed either. We do not treat the unknown as zero"
             )
 
-    users = req.get("expectedConcurrentUsers")
-    rps = req.get("approxRequestsPerSecond")
-    if users is not None or rps is not None:
-        scale = (
-            f"{users} concurrent users" if users is not None else f"about {rps} RPS"
-        )
+    # **한 칸에서 읽는다**(2026-08-01 제로베이스 재구성). 두 칸이 같은 양의 두
+    # 단위를 나눠 갖고 있어 읽는 쪽마다 둘을 다 봐야 했다.
+    stated = req.get("scale") or {}
+    value, unit = stated.get("value"), stated.get("unit")
+    if value is not None:
+        scale = (f"{value:g} concurrent users" if unit == "concurrentUsers"
+                 else f"about {value:g} RPS")
         floored = req.get("minVCpu") or req.get("minMemoryGiB")
         out.append(
             f"Scale ({scale}): this knowledge base cannot judge whether the spec is "
@@ -308,7 +309,8 @@ def verify_against_requirements(
 #: 새 학습 장치가 아니다 — 필요한 것은 이미 다 있었다. 그 칸을 묻는 관심사도 이미
 #: 있고(`app/requirements/knowledge/concerns.py`), 끊긴 것은 **둘을 잇는 한 줄**뿐이었다.
 #:
-#: **규모 항목은 2026-07-29에 정정됐다.** `expectedConcurrentUsers`가 "the scale
+#: **규모 항목은 2026-07-29에 정정됐다.** 규모 칸(당시 `expectedConcurrentUsers`,
+#: 2026-08-01부터 `scale`)이 "the scale
 #: verdict"를 닫는다고 적혀 있었는데, 값이 와도 서는 것은 *"판정할 수 없다"*는
 #: 문장이다. 다른 넷은 값이 오면 실제로 판정이 서므로 이 표의 약속("settle the
 #: fields upstream and they become answerable")이 참인데, 규모만 거짓이었다.

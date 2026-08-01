@@ -30,7 +30,7 @@ def _spec(**overrides) -> dict:
         "region": "ap-northeast-2",
         "workloads": ["vm"],
         "monthlyBudgetUSD": 500,
-        "expectedConcurrentUsers": 200,
+        "scale": {"value": 200, "unit": "concurrentUsers"},
     }
     base.update(overrides)
     return {k: v for k, v in base.items() if v is not None}
@@ -57,15 +57,28 @@ def test_missing_required_says_why(field: str) -> None:
     assert cloud_contract.question(field), f"{field}에 사용자에게 할 말이 없다"
 
 
-def test_either_scale_signal_is_accepted() -> None:
-    """규모 신호는 동시 사용자 **또는** RPS로 온다 — 둘 다 받는다.
+def test_either_scale_unit_is_accepted() -> None:
+    """규모는 동시 사용자 **또는** RPS로 온다 — 둘 다 받는다.
 
-    (필수 여부는 `test_scale_signal_is_no_longer_required`가 따로 본다. 여기서
-    지키는 것은 **두 표현을 다 받는가**이고, 그건 재판정 뒤에도 그대로다.)
+    **2026-08-01에 두 칸에서 한 칸이 됐다**(제로베이스 재구성). 받는 표현은 그대로
+    둘이지만 그 둘은 이제 **같은 칸의 두 단위**다. 두 칸이던 탓에 스키마에 `anyOf`가,
+    소비층에 택1 처리가 있었고 모양을 고치니 둘 다 사라졌다. 여기서 지키는 것은
+    **두 단위가 다 통과하는가**이고, 그건 모양이 바뀌어도 그대로다.
     """
     assert validate_request(_spec()) == []
-    rps_only = _spec(expectedConcurrentUsers=None, approxRequestsPerSecond=30.0)
-    assert validate_request(rps_only) == []
+    rps = _spec(scale={"value": 30.0, "unit": "requestsPerSecond"})
+    assert validate_request(rps) == []
+
+
+def test_a_scale_value_without_its_unit_is_rejected() -> None:
+    """**수만 오면 무슨 양인지 모른다.**
+
+    두 칸이던 시절에는 칸 이름이 단위를 겸했다(`expectedConcurrentUsers`). 한 칸이
+    되면서 단위가 이름에서 **값으로** 내려왔고, 그래서 스키마가 둘을 함께 요구한다 —
+    이것이 접는 데 치른 값이다.
+    """
+    assert any("scale" in p for p in validate_request(_spec(scale={"value": 200})))
+    assert validate_request(_spec(scale={"value": 200, "unit": "users"}))
 
 
 def test_scale_signal_is_no_longer_required() -> None:
@@ -80,20 +93,19 @@ def test_scale_signal_is_no_longer_required() -> None:
     그대로 유효해서 schemaVersion을 올리지 않았다(판 2에서 `workloads`를 **더한**
     것과 방향이 반대다 — 그쪽은 판을 올렸다).
     """
-    assert validate_request(_spec(expectedConcurrentUsers=None)) == []
+    assert validate_request(_spec(scale=None)) == []
     assert not any(f in cloud_contract.suggested_fields({})
                    for f in ("provider", "region"))
     # **2026-08-01에 한 단계 더 내려갔다**: 권고 → 맥락. 권고의 정의는 "채우면
     # 이름 붙은 판정이 하나 선다"인데 이 값으로 서는 판정이 없다(`verify`의 규모
     # 줄은 문자 그대로 *"cannot judge"*다). 그렇다고 빼지는 않았다 —
     # `sizing_floor.undecided_note`가 되묻기의 근거로 쓴다.
-    assert "expectedConcurrentUsers" not in cloud_contract.suggested_fields({})
-    assert "expectedConcurrentUsers" in cloud_contract.context_fields({})
-    assert input_registry.tier_of("expectedConcurrentUsers") == \
-        input_registry.CONTEXT
+    assert "scale" not in cloud_contract.suggested_fields({})
+    assert "scale" in cloud_contract.context_fields({})
+    assert input_registry.tier_of("scale") == input_registry.CONTEXT
     # jsonschema의 뭉개진 anyOf 문구가 새어 나오면 안 된다(anyOf 자체가 사라졌다).
     assert not any("is not valid under any"
-                   in p for p in validate_request(_spec(expectedConcurrentUsers=None)))
+                   in p for p in validate_request(_spec(scale=None)))
 
 
 def test_unknown_field_is_rejected() -> None:
@@ -129,8 +141,8 @@ def test_design_requirements_mirror_request_contract() -> None:
     request_props = request_schema()["properties"]
     shared = set(design_props) & set(request_props)
     # 투영이 빈 껍데기가 아닌지 — 값 조인·판정에 쓰는 칸이 전부 내려와야 한다.
-    assert {"provider", "region", "expectedConcurrentUsers",
-            "approxRequestsPerSecond", "monthlyBudgetUSD", "multiZone"} <= shared
+    assert {"provider", "region", "scale",
+            "monthlyBudgetUSD", "multiZone"} <= shared
     for name in sorted(shared):
         assert design_props[name] == request_props[name], name
 

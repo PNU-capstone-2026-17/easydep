@@ -57,17 +57,20 @@ def test_scale_signal_does_not_move_the_floor() -> None:
     소스가 있어야 하고, 조사 결론은 **없다**였다
     (`archive/bundle-sizing-research-2026-07-22.md`).
     """
-    small = sizing_floor.resolve({"expectedConcurrentUsers": 5})
-    huge = sizing_floor.resolve({"expectedConcurrentUsers": 50_000})
+    unit = {"unit": "concurrentUsers"}
+    small = sizing_floor.resolve({"scale": {"value": 5, **unit}})
+    huge = sizing_floor.resolve({"scale": {"value": 50_000, **unit}})
     assert (small.vcpu, small.mem_gib) == (huge.vcpu, huge.mem_gib) == (0, 0)
 
-    rps = sizing_floor.resolve({"approxRequestsPerSecond": 9_000})
+    rps = sizing_floor.resolve({"scale": {"value": 9_000,
+                                          "unit": "requestsPerSecond"}})
     assert not rps.decided
 
 
 def test_scale_signal_is_used_as_a_reason_to_ask() -> None:
     """규모는 하한을 정하지 못하지만 **되묻기의 근거**로는 쓰인다(층 3)."""
-    note = sizing_floor.undecided_note({"expectedConcurrentUsers": 3000}, [], [])
+    note = sizing_floor.undecided_note(
+        {"scale": {"value": 3000, "unit": "concurrentUsers"}}, [], [])
     assert "3000 concurrent users" in note
     assert "cannot be converted into a spec" in note
     assert sizing_floor.VCPU_FIELD in note and sizing_floor.MEM_FIELD in note
@@ -90,7 +93,7 @@ def test_no_hidden_coefficient_in_the_compose_path() -> None:
 
     source = Path(__file__).resolve().parents[1] / "nim_agent" / "design_tools.py"
     text = source.read_text(encoding="utf-8")
-    hits = re.findall(r"expectedConcurrentUsers.{0,120}", text, re.DOTALL)
+    hits = re.findall(r"scale.{0,120}", text, re.DOTALL)
     for hit in hits:
         assert not re.search(r"<=?\s*\d|>=?\s*\d", hit), (
             "규모 신호를 숫자와 비교하고 있다 — 그 변환에는 출처가 없다:\n" + hit

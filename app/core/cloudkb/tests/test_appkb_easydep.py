@@ -87,7 +87,7 @@ _RESOURCE_SPEC = {
     "region": "ap-northeast-2",
     "regionAsWritten": "서울",
     "monthlyBudgetUSD": 300,
-    "expectedConcurrentUsers": 500,
+    "scale": {"value": 500, "unit": "concurrentUsers"},
     "multiZone": True,
 }
 

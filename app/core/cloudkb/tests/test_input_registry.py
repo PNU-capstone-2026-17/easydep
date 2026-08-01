@@ -160,11 +160,16 @@ def test_the_question_and_the_reason_are_different_strings() -> None:
         assert cloud_contract.why(ask.spec_field) == ask.opens
 
 
-def test_missing_treats_the_pairs_as_one_question() -> None:
-    """하한 둘·규모 신호 둘은 한쪽만 있으면 더 안 묻는다."""
+def test_missing_treats_the_floor_pair_as_one_question() -> None:
+    """스펙 하한 둘은 한쪽만 있으면 더 안 묻는다 — **쌍은 이제 이것 하나다.**
+
+    2026-08-01 제로베이스 재구성 전에는 쌍이 둘이었다(하한 둘 · 규모 신호 둘).
+    규모 쪽은 두 칸이 같은 양의 **두 단위**였을 뿐이라 `scale{value,unit}` 한 칸이
+    됐고, 그러면서 특수 처리가 절반으로 줄었다. 하한 둘은 남는다 — vCPU와 메모리는
+    `resolve`가 축마다 따로 `max`로 거르는 **진짜 두 축**이다.
+    """
     assert "minVCpu" not in cloud_contract.suggested_fields({"minMemoryGiB": 4})
-    assert "expectedConcurrentUsers" not in cloud_contract.suggested_fields(
-        {"approxRequestsPerSecond": 10})
+    assert len(input_registry.PAIRS) == 1
 
 
 def test_validate_says_why_a_required_field_is_needed() -> None:

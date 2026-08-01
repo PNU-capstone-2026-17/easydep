@@ -242,32 +242,18 @@ ASKS: tuple[Ask, ...] = (
                Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_subnet_notes"),
                Basis(CLAIM, "aws/k8sCluster→subnet/existence")),
     ),
-    # **권고에서 맥락으로 내렸다**(2026-08-01). 권고의 정의는 "채우면 이름 붙은
-    # 판정이 하나 선다"인데 이 값으로 서는 판정이 없다 — `verify`의 규모 줄은
-    # 문자 그대로 *"this knowledge base cannot judge"*다. 그렇다고 뺄 것은
-    # 아니다: `sizing_floor.undecided_note`가 이것을 **되묻기의 근거**로 쓴다
-    # ("동시 사용자 3,000인데 하한이 없다"가 "하한을 달라"보다 강한 요청이다).
-    # 소비자가 있으니 남기고, 계층만 사실에 맞춘다.
+    # ── 맥락축 — 판정을 열진 않지만 계획에 실린다 ────────────────────────────
     Ask(
-        id="scale.expected_users",
-        spec_field="expectedConcurrentUsers",
+        id="scale.expected",
+        spec_field="scale",
         tier=CONTEXT,
-        question="예상 동시 사용자가 몇 명입니까?",
+        question="예상 부하가 얼마입니까? 동시 사용자 수든 초당 요청 수든 "
+                 "편한 쪽으로 말해 주세요.",
         opens="계획의 규모 진술과 되묻기의 근거 — **스펙을 정하지는 않는다**"
-              "(동시 사용자→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",
+              "(규모→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",
         basis=(Basis(CONCERN, "cn.expected-scale"),
                Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#undecided_note"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
-    ),
-    # ── 맥락축 — 판정을 열진 않지만 계획에 실린다 ────────────────────────────
-    Ask(
-        id="scale.rps",
-        spec_field="approxRequestsPerSecond",
-        tier=CONTEXT,
-        question="초당 요청 수를 대략 아십니까? (동시 사용자 대신 이것도 됩니다)",
-        opens="규모 신호의 대안 — 소비자는 expectedConcurrentUsers와 같다",
-        basis=(Basis(CONCERN, "cn.expected-scale"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#undecided_note")),
     ),
     Ask(
         id="data.residency",
@@ -296,7 +282,6 @@ ASKS: tuple[Ask, ...] = (
 #: 테스트가 실패한다 — "빠뜨린 것"과 "안 묻기로 한 것"을 구별하기 위해서다.
 NOT_ASKED: dict[str, str] = {
     "schemaVersion": "계약 판 — 스키마가 const로 못 박았고 생산자가 옮겨 적는다",
-    "meta": "배관 — 부르는 쪽이 자기 맥락을 싣는 자리이지 우리가 묻는 값이 아니다",
     "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
                        "물을 것이 없다(join.region의 부산물)",
 }
@@ -421,17 +406,21 @@ def choices_for(ask: Ask, csp: str = "") -> tuple[str, ...]:
     return ()
 
 
-def missing(spec: dict, tier: str = REQUIRED) -> tuple[Ask, ...]:
-    """그 계층에서 아직 답이 없는 질문들.
+#: **한쪽만 있으면 더 안 묻는 칸들.** vCPU와 메모리는 *둘 다 필터를 잡는 진짜 두
+#: 축*이지만(`sizing_floor.resolve`가 각각 max로 거른다) 한쪽만 있어도 스펙 선택이
+#: 열리므로 같은 것을 두 번 묻지 않는다.
+#:
+#: **2026-08-01에 쌍이 둘에서 하나로 줄었다.** 규모 신호(동시 사용자·RPS)가 다른
+#: 한 쌍이었는데, 그 둘은 같은 양의 두 *단위*였을 뿐이라 `scale{value,unit}` 한
+#: 칸이 됐다 — 계약을 제로베이스에서 다시 짜면서 나온 값이 이것이다. 모양이 맞으면
+#: 특수 처리가 필요 없다.
+PAIRS: tuple[tuple[str, ...], ...] = (("minVCpu", "minMemoryGiB"),)
 
-    **규모·하한은 한 쌍이다** — 둘 중 하나만 있으면 같은 것을 두 번 묻지 않는다.
-    쌍의 근거는 계약이 아니라 소비자다: 스펙 선택은 둘 중 큰 축이 필터를 잡고,
-    규모 신호는 둘 다 같은 되묻기 근거로 쓰인다.
-    """
-    pairs = (("minVCpu", "minMemoryGiB"),
-             ("expectedConcurrentUsers", "approxRequestsPerSecond"))
+
+def missing(spec: dict, tier: str = REQUIRED) -> tuple[Ask, ...]:
+    """그 계층에서 아직 답이 없는 질문들. 쌍 처리는 `PAIRS`가 정한다."""
     satisfied: set[str] = set()
-    for pair in pairs:
+    for pair in PAIRS:
         if any(name in spec for name in pair):
             satisfied |= set(pair)
     return tuple(a for a in ASKS

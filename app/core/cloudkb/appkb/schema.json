@@ -128,16 +128,6 @@
           "type": "string",
           "description": "리전 코드(예: ap-northeast-2). 지명('서울')은 계약 진입 전에 리전 해석 도구(cap_resolve_region)로 코드로 바꿔 담는다 — 지명이 그대로 오면 조인이 조용히 빈 답이 된다(실측). 원문은 regionAsWritten에 남긴다."
         },
-        "expectedConcurrentUsers": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "예상 동시 사용자. **필수가 아니다**(2026-07-29 재판정 — 이것으로 서는 판정이 없다). **이 값은 스펙 하한을 정하지 않는다** — 동시 사용자를 vCPU·메모리로 바꾸는 변환은 1차 소스가 없어 KB에서 명시적으로 배제했다(조사 2026-07-22, 재확인 2026-07-29). 소비자 둘: (1) 하한이 없을 때 되묻기의 근거 — '동시 사용자 3,000인데 하한이 없다'가 '하한을 달라'보다 강한 요청이다. (2) 배포 계획이 추정임을 밝히며 인용하는 규모 진술. 하한 자체는 minVCpu·minMemoryGiB가 준다."
-        },
-        "approxRequestsPerSecond": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호이고, 소비자도 같다(하한이 아니라 되묻기의 근거)."
-        },
         "minVCpu": {
           "type": "integer",
           "minimum": 1,
@@ -172,9 +162,6 @@
           "type": "boolean",
           "description": "요구사항이 에너지 사용·탄소 배출에 제약을 두는가. 소비자: 리전 탄소 판정 — 참인데 선택 리전보다 탄소집약도가 낮은 리전이 같은 프로바이더에 있으면 그 사실을 낸다. **판정이 아니라 대조다** — 탄소 수치의 출처 등급이 프로바이더마다 다르고(GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정) 방법론이 달라 서로 비교할 수 없다. 이 칸이 없으면 탄소 데이터 161건은 질의응답에만 쓰이고 계획에 닿지 않는다."
         },
-        "meta": {
-          "type": "object"
-        },
         "workloads": {
           "type": "array",
           "minItems": 1,
@@ -191,6 +178,27 @@
             "type": "string"
           },
           "description": "사용자가 **이미 갖고 있어 새로 만들지 않을** 자원의 id 목록(예: [\"network\",\"subnet\"] — 기존 VPC/서브넷에 얹는 경우). **2026-08-01 제로베이스 재도출이 찾은 유일한 공백**: 사슬이 소비하는 값마다 '누가 아는가'를 물었더니 11개가 사용자만 아는 것이었고, 그중 열은 이미 계약에 있었는데 이것만 없었다. 실측 폐포는 '무엇이 필요한가'는 알아도 '사용자가 이미 갖고 있는가'는 **원리적으로 모른다** — 물어야만 알 수 있는 값이다. 소비자: 생성 순서에서 빠지고(있는 것을 또 만들지 않는다), 삭제 순서에서도 빠진다(우리가 안 만든 것을 지우면 남의 것을 지운다). 받는 값은 workloads와 같은 어휘(input_registry.anchors_for)."
+        },
+        "scale": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "unit"
+          ],
+          "properties": {
+            "value": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "unit": {
+              "enum": [
+                "concurrentUsers",
+                "requestsPerSecond"
+              ]
+            }
+          },
+          "description": "예상 부하의 크기와 그 단위. **2026-08-01 제로베이스 재구성**: 전에는 expectedConcurrentUsers·approxRequestsPerSecond 두 칸이었는데, 그 둘은 **같은 양의 두 단위**이지 두 축이 아니다(하한의 vCPU·메모리는 둘 다 필터를 잡는 진짜 두 축이라 두 칸으로 남는다). 두 칸이던 탓에 소비층에 '둘 중 하나만 있으면 더 안 묻는다'는 특수 처리가 있었고, 모양을 고치니 그 특수 처리가 사라진다. **이 값은 스펙 하한을 정하지 않는다** — 규모→스펙 변환은 1차 소스가 없어 KB에서 배제했다. 소비자: 하한이 없을 때 되묻기의 근거(sizing_floor.undecided_note)와 계획의 규모 진술."
         }
       }
     }

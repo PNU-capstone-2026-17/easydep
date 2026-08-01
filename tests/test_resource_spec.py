@@ -95,7 +95,8 @@ def _complete_turns():
          _record("workloads", "k8sCluster", "- k8sCluster"),
          _record("containerRegistry", "depkb-registry", "registry depkb-registry"),
          _record("monthlyBudgetUSD", "500", "at most 500 USD"),
-         _record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
+         _record("scale", '{"value": 300, "unit": "concurrentUsers"}',
+                 "about 300 concurrent users")],
         [("finish", {"understanding":
                      "AWS Seoul, managed Kubernetes, $500/month, ~300 users."})],
     )
@@ -113,20 +114,21 @@ def test_a_complete_contract_produces_the_artifact(run):
     assert spec["region"] == "ap-northeast-2"
     assert spec["regionAsWritten"] == "Seoul"
     assert spec["monthlyBudgetUSD"] == 500.0
-    assert spec["expectedConcurrentUsers"] == 300
+    assert spec["scale"] == {"value": 300, "unit": "concurrentUsers"}
 
 
 def test_a_half_filled_spec_never_leaves_this_step(run):
     """필수 칸이 비면 산출물을 내지 않는다 — 뒤 단계가 그걸 사양으로 알고 조인을 돌린다."""
     result, intake, _ = run(
-        [_record("expectedConcurrentUsers", "100", "100 concurrent users")],
+        [_record("scale", '{"value": 100, "unit": "concurrentUsers"}',
+                 "100 concurrent users")],
         texts=("The system shall support 100 concurrent users.",),
     )
 
     assert "resource_spec" not in result
     assert intake["valid"] is False and intake["errors"]
     # 그래도 **작업 기록은 남는다** — 왜 못 채웠는지가 사라지면 빈 칸의 뜻을 알 수 없다.
-    assert intake["draft"]["expectedConcurrentUsers"] == 100
+    assert intake["draft"]["scale"] == {"value": 100, "unit": "concurrentUsers"}
 
 
 def test_the_confirmation_the_agent_read_back_is_kept(run):
@@ -241,12 +243,14 @@ def test_a_field_the_contract_lacks_is_dropped(run):
 def test_a_second_different_value_does_not_overwrite_the_first(run):
     """조용히 덮으면 밀려난 값이 사라진다. 값이 갈리는 것은 정보가 아니라 질문이다."""
     _result, intake, script = run(
-        [_record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
-        [_record("expectedConcurrentUsers", "9000", "9 000 concurrent users")],
+        [_record("scale", '{"value": 300, "unit": "concurrentUsers"}',
+                 "about 300 concurrent users")],
+        [_record("scale", '{"value": 9000, "unit": "concurrentUsers"}',
+                 "9 000 concurrent users")],
         constraints=CONSTRAINTS + " Peak load reaches 9 000 concurrent users.",
     )
 
-    assert intake["draft"]["expectedConcurrentUsers"] == 300
+    assert intake["draft"]["scale"] == {"value": 300, "unit": "concurrentUsers"}
     assert any("already" in r and "ask_user" in r for r in script.results)
 
 
@@ -254,14 +258,19 @@ def test_a_second_different_value_does_not_overwrite_the_first(run):
 def test_values_are_marshalled_to_the_type_the_contract_declares():
     """`"3,000"`이 문자열로 들어가면 스키마 검증이 스펙 전체를 무효로 만든다."""
     assert sr._coerce("monthlyBudgetUSD", "3,000") == (3000.0, "")
-    assert sr._coerce("expectedConcurrentUsers", "300") == (300, "")
+    assert sr._coerce("scale", '{"value": 300, "unit": "concurrentUsers"}') == (
+        {"value": 300.0, "unit": "concurrentUsers"}, "")
     assert sr._coerce("trafficPattern", "Spiky") == ("spiky", "")
     assert sr._coerce("multiZone", "true") == (True, "")
 
     # 못 맞추면 사유를 돌려준다 — 그 사유가 에이전트에게 되먹여져 다음 행동이 된다.
     assert sr._coerce("monthlyBudgetUSD", "about five hundred")[0] is None
     assert sr._coerce("trafficPattern", "가끔 몰림")[0] is None
-    assert sr._coerce("expectedConcurrentUsers", "-3")[0] is None
+    assert sr._coerce("scale", '{"value": -3, "unit": "concurrentUsers"}')[0] is None
+    # 단위 없이 수만 오면 **무슨 양인지 모른다** — 두 칸을 한 칸으로 접으면서
+    # 단위가 이름에서 값으로 내려왔고, 그 대가가 이 검사다(2026-08-01).
+    assert sr._coerce("scale", '{"value": 300}')[1] == "하위 칸 unit이 없다"
+    assert sr._coerce("scale", "300")[0] is None
     assert sr._coerce("favouriteColour", "blue")[1] == "계약에 없는 칸이다"
 
 

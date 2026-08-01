@@ -231,12 +231,12 @@ def test_scale_gets_an_explicit_cannot_judge() -> None:
     """규모는 필수로 받지만 **스펙 충분성 판정은 KB 밖이다** — 그 사실을 말하는
     것까지가 측정이다. 말하지 않으면 계획이 규모를 보증한 것처럼 읽힌다."""
     lines = verify_against_requirements(
-        _plan(), {"expectedConcurrentUsers": 200}, _HOURS
+        _plan(), {"scale": {"value": 200, "unit": "concurrentUsers"}}, _HOURS
     )
     assert any("cannot judge whether the spec is sufficient" in flat(ln) and "200" in ln
                for ln in lines)
     rps = verify_against_requirements(
-        _plan(), {"approxRequestsPerSecond": 30}, _HOURS
+        _plan(), {"scale": {"value": 30, "unit": "requestsPerSecond"}}, _HOURS
     )
     assert any("30" in ln and "RPS" in ln for ln in rps)
 
@@ -492,7 +492,8 @@ def test_absent_verdicts_are_named_not_silent() -> None:
 def test_no_gap_line_when_everything_is_settled() -> None:
     """다 정해졌으면 그 줄이 없다 — 늘 붙는 줄은 읽히지 않는다."""
     req = {
-        "provider": "aws", "monthlyBudgetUSD": 500, "expectedConcurrentUsers": 100,
+        "provider": "aws", "monthlyBudgetUSD": 500,
+        "scale": {"value": 100, "unit": "concurrentUsers"},
         # 2026-07-29: 스펙 선택을 여는 칸은 규모가 아니라 **하한**이다.
         "minVCpu": 2, "minMemoryGiB": 4,
         "trafficPattern": "steady", "multiZone": True,
@@ -501,12 +502,17 @@ def test_no_gap_line_when_everything_is_settled() -> None:
     assert not any("Not judged for lack" in ln for ln in lines)
 
 
-def test_either_scale_signal_closes_the_scale_verdict() -> None:
-    """규모는 **둘 중 하나**면 된다 — 계약이 택1로 요구한다."""
-    req = {"approxRequestsPerSecond": 50}
+def test_either_scale_unit_closes_the_scale_verdict() -> None:
+    """규모는 **한 칸이고 단위가 둘**이다(2026-08-01 제로베이스 재구성).
+
+    예전에는 칸이 둘이라 "둘 중 하나면 된다"를 읽는 쪽마다 알아야 했다. 지금은
+    어느 단위로 왔든 같은 칸이 차므로 그 택1 처리가 아예 없다 — 이 테스트가
+    지키는 것은 **RPS로 와도 규모 판정이 닫히는가**다.
+    """
+    req = {"scale": {"value": 50, "unit": "requestsPerSecond"}}
     lines = verify_against_requirements(_plan(), req, _HOURS)
     gap = next((ln for ln in lines if "Not judged for lack" in ln), "")
-    assert "expectedConcurrentUsers" not in gap
+    assert "scale" not in gap
 
 
 # --- UML 배포 다이어그램의 어휘 (2026-07-28: "이게 배포 다이어그램이냐") ---

@@ -151,7 +151,7 @@
       "concern_id": "cn.expected-scale",
       "question": "Do the requirements state the expected load in numbers — concurrent users, requests per second, or data volume per period?",
       "citation": "Azure Well-Architected Framework — Capacity planning",
-      "consumer": "RESOURCE_SPEC.expectedConcurrentUsers|approxRequestsPerSecond",
+      "consumer": "RESOURCE_SPEC.scale",
       "out_of_scope": "",
       "evidence": "pattern-advisory",
       "status": "unaddressed",

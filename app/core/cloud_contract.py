@@ -23,10 +23,6 @@ from functools import lru_cache
 from app.core import input_registry
 from app.core.cloudkb.appkb import contract as _contract
 
-#: 규모 신호 — 둘 중 하나면 된다(레지스트리가 쌍으로 안다).
-SCALE_FIELDS: tuple[str, ...] = tuple(_contract.SCALE_FIELDS)
-
-
 @lru_cache(maxsize=1)
 def schema_fields() -> frozenset[str]:
     """`RESOURCE_SPEC`이 아는 칸 이름 전부(스키마에서 읽는다)."""
@@ -66,6 +62,24 @@ def field_type(field: str) -> str:
 def field_enum(field: str) -> tuple[str, ...]:
     """`enum` 칸이 허용하는 값들. 아니면 빈 튜플."""
     return tuple(_properties().get(field, {}).get("enum", ()))
+
+
+def field_object(field: str) -> tuple[tuple[str, str, tuple[str, ...], bool], ...]:
+    """`object` 칸의 하위 칸들 — `(이름, 타입, enum, 필수)`. object가 아니면 빈 튜플.
+
+    `field_type`·`field_enum`과 같은 이유로 연다: 생산자가 스키마 사실을 옮겨
+    적으면 조용히 갈린다. `scale{value,unit}`이 2026-08-01에 계약의 첫 object 칸이
+    됐고, 그 하위 모양을 아는 곳이 하나여야 한다.
+    """
+    spec = _properties().get(field) or {}
+    if spec.get("type") != "object":
+        return ()
+    required = set(spec.get("required", ()))
+    out = []
+    for name, sub in (spec.get("properties") or {}).items():
+        kind = "enum" if "enum" in sub else str(sub.get("type", ""))
+        out.append((name, kind, tuple(sub.get("enum", ())), name in required))
+    return tuple(out)
 
 
 def validate(spec: dict) -> list[str]:

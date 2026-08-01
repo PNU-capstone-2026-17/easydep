@@ -123,25 +123,20 @@ def _ground(fragment: str, seen: list[str]) -> bool:
     return any(squeeze in " ".join(text.split()).lower() for text in seen)
 
 
-def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
-    """계약이 선언한 타입으로 맞춘다. 못 맞추면 (None, 사유).
+def _coerce_scalar(kind: str, allowed: tuple[str, ...],
+                   raw: object) -> tuple[object | None, str]:
+    """타입 하나짜리 마샬링. `_coerce`와 그 object 하위 칸이 **같은 규칙을 쓴다.**
 
-    **이건 자연어 파싱이 아니라 타입 마샬링이다.** 스키마가 `integer`라고 적어 둔 칸에
-    문자열 `"3000"`이 오면 JSON Schema 검증이 스펙 전체를 무효로 만든다. 허용하는 정리는
-    앞뒤 공백과 자릿수 구분자(`,` `_`)뿐이고, 그 이상은 손대지 않는다 — 표현을 읽어 내는
-    일은 모델의 몫이고, 애매하면 모델이 되물어야 한다.
+    떼어 낸 이유: `scale{value,unit}`이 생기면서 같은 판정("수여야 한다", "양수여야
+    한다", enum 목록)이 두 곳에 필요해졌다. 두 벌로 두면 한쪽만 고쳐진다.
     """
-    kind = cloud_contract.field_type(field_name)
-    if not kind:
-        return None, "계약에 없는 칸이다"
     text = raw.strip() if isinstance(raw, str) else raw
-
     if kind == "enum":
-        allowed = cloud_contract.field_enum(field_name)
         value = str(text).strip().lower()
-        if value not in allowed:
+        lowered = {a.lower(): a for a in allowed}
+        if value not in lowered:
             return None, f"{' 또는 '.join(allowed)}여야 한다"
-        return value, ""
+        return lowered[value], ""
     if kind == "boolean":
         if isinstance(text, bool):
             return text, ""
@@ -159,6 +154,24 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
         if number <= 0:
             return None, "양수여야 한다"
         return (int(number) if kind == "integer" else number), ""
+    return str(text), ""
+
+
+def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
+    """계약이 선언한 타입으로 맞춘다. 못 맞추면 (None, 사유).
+
+    **이건 자연어 파싱이 아니라 타입 마샬링이다.** 스키마가 `integer`라고 적어 둔 칸에
+    문자열 `"3000"`이 오면 JSON Schema 검증이 스펙 전체를 무효로 만든다. 허용하는 정리는
+    앞뒤 공백과 자릿수 구분자(`,` `_`)뿐이고, 그 이상은 손대지 않는다 — 표현을 읽어 내는
+    일은 모델의 몫이고, 애매하면 모델이 되물어야 한다.
+    """
+    kind = cloud_contract.field_type(field_name)
+    if not kind:
+        return None, "계약에 없는 칸이다"
+    text = raw.strip() if isinstance(raw, str) else raw
+
+    if kind in ("enum", "boolean", "integer", "number"):
+        return _coerce_scalar(kind, cloud_contract.field_enum(field_name), text)
     if kind == "array":
         # 목록 칸(`workloads`)은 도구가 문자열로 받는다. JSON 배열도, 쉼표로 나눈
         # 것도 받되 **거기까지다** — 무엇이 유효한 종류인지는 아래 도메인 검사가
@@ -178,6 +191,35 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
             return None, "적어도 하나는 있어야 한다"
         # 순서는 뜻이 없고 중복은 스키마가 거부한다 — 여기서 정리해 준다.
         return list(dict.fromkeys(items)), ""
+    if kind == "object":
+        # **2026-08-01에 생겼다.** `scale{value,unit}`이 계약의 첫 object 칸이다.
+        # 하위 칸의 이름·타입·필수는 스키마에서 읽는다 — 여기 옮겨 적으면 갈린다.
+        if isinstance(text, dict):
+            body = text
+        else:
+            try:
+                body = json.loads(str(text))
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                sub = ", ".join(n for n, _k, _e, _r in
+                                cloud_contract.field_object(field_name))
+                return None, f'JSON 객체여야 한다 — 하위 칸: {sub}'
+        out: dict[str, object] = {}
+        for name, sub_kind, allowed, required in cloud_contract.field_object(field_name):
+            if name not in body:
+                if required:
+                    return None, f"하위 칸 {name}이 없다"
+                continue
+            # 하위 칸도 같은 마샬링을 받는다 — 규칙이 갈라지지 않게.
+            value, why = _coerce_scalar(sub_kind, allowed, body[name])
+            if why:
+                return None, f"{name}: {why}"
+            out[name] = value
+        extra = set(body) - {n for n, _k, _e, _r in cloud_contract.field_object(field_name)}
+        if extra:
+            return None, f"계약에 없는 하위 칸이다: {', '.join(sorted(extra))}"
+        return out, ""
     return str(text), ""
 
 
@@ -415,10 +457,13 @@ def _control_tools(session: _Session) -> list:
 
         Args:
             field: the contract field name (provider, region, regionAsWritten,
-                monthlyBudgetUSD, minVCpu, minMemoryGiB, expectedConcurrentUsers,
-                approxRequestsPerSecond, trafficPattern, multiZone, …).
-                Call check_contract if unsure.
+                monthlyBudgetUSD, minVCpu, minMemoryGiB, scale, trafficPattern,
+                multiZone, …). Call check_contract if unsure.
             value: the value, as a plain string. Numbers without separators.
+                An object field takes a JSON object — `scale` is
+                `{"value": 300, "unit": "concurrentUsers"}` (or
+                `"requestsPerSecond"`). **Do not convert between the two units**:
+                record whichever one the user actually stated.
             evidence: the fragment you read it from — verbatim from the user's text
                 or from a tool result you already received. Paraphrases are rejected.
         """

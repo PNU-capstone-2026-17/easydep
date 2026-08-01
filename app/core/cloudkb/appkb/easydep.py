@@ -65,8 +65,7 @@ _STORE_LIKE = re.compile(r"(db|database|repository|저장소)", re.IGNORECASE)
 
 #: RESOURCE_SPEC에서 설계 계약의 requirements로 내려가는 칸(투영).
 _REQ_FIELDS = (
-    "provider", "region", "expectedConcurrentUsers",
-    "approxRequestsPerSecond", "monthlyBudgetUSD", "multiZone",
+    "provider", "region", "scale", "monthlyBudgetUSD", "multiZone",
     "trafficPattern", "dataResidency",
     # 워크로드 하한(층 2). 이게 안 내려가면 설계 계약 쪽에서는 하한이 영영 없고,
     # 그러면 스펙이 안 골라진다 — 투영 누락이 곧 기능 부재가 되는 자리다.
