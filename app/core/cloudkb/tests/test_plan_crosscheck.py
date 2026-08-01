@@ -44,7 +44,37 @@ def test_vendor_types_are_read_through_the_measured_binding() -> None:
     from app.core.cloudkb.depkb import vocabulary
 
     for resource, vendor in vocabulary.AWS_TYPES.items():
-        assert pc._BY_CSP["aws"][vendor] == resource
+        assert pc._bridge()["aws"][vendor] == resource
+
+
+def test_the_other_csps_bridge_through_the_graph_not_a_hand_table() -> None:
+    """3사 다리는 **aws 결속을 지렛대로** 자동으로 나온다.
+
+    계획은 gcp에 `gcp::ComputeNetwork`를 쓰는데 `vocabulary.GCP_TYPES`는
+    디스커버리 스키마 이름 `Network`를 쓴다 — 이름 체계가 달라 직접 못 잇는다.
+    그 사이는 graphkb 동치 그래프가 알고, 앵커는 aws다(스키마 원문에 결속된
+    유일한 축).
+
+    이 우회가 없던 첫 판에서는 azure 노드가 **하나도 안 읽혀** 대조가 통째로
+    거짓이었다(2026-08-01 스윕에서 잡혔다).
+    """
+    bridge = pc._bridge()
+    for csp in ("gcp", "azure"):
+        assert bridge.get(csp), f"{csp} 다리가 없다"
+        assert "vm" in bridge[csp].values(), csp
+        assert "network" in bridge[csp].values(), csp
+    assert bridge["azure"]["Microsoft.Network/virtualNetworks"] == "network"
+    assert bridge["gcp"]["ComputeNetwork"] == "network"
+
+
+def test_the_bridge_never_invents_a_link() -> None:
+    """그래프에 없는 것은 다리도 없다 — 못 읽으면 `out-of-vocabulary`로 남는다."""
+    bridge = pc._bridge()
+    # 관리형 서비스는 depkb가 실측한 적이 없으므로 어느 CSP에도 없어야 한다.
+    for csp, table in bridge.items():
+        assert "AWS::RDS::DBInstance" not in table, csp
+        assert not any(v in ("relationalDatabase", "messageQueue")
+                       for v in table.values()), csp
 
 
 def test_only_workload_roles_become_anchors() -> None:

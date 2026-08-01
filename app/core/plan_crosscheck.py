@@ -42,18 +42,55 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from app.core import input_registry
 from app.core.cloudkb.appkb.plan import DeploymentPlan
 from app.core.cloudkb.depkb import vocabulary
 from app.core.infra_planning import plan_for_anchors
 
-#: CSP → (벤더 타입 → 우리 어휘). `vocabulary`의 결속을 뒤집은 것 — 표를 새로
-#: 만들지 않는다. gcp는 값이 `None`인 칸이 있어(sshKey) 거른다.
-_BY_CSP: dict[str, dict[str, str]] = {
-    "aws": {v: k for k, v in vocabulary.AWS_TYPES.items()},
-    "gcp": {v: k for k, v in vocabulary.GCP_TYPES.items() if v},
-}
+@lru_cache(maxsize=1)
+def _bridge() -> dict[str, dict[str, str]]:
+    """CSP → (계획의 벤더 타입 → 우리 어휘). **표를 손으로 만들지 않는다.**
+
+    다리를 놓는 데 두 축이 이미 있고, 둘은 따로 지어졌다:
+
+      `depkb.vocabulary.AWS_TYPES`  자원 → CFN 타입. **스키마 원문에 결속**돼
+                                    테스트가 지킨다(측정된 사실).
+      `graphkb` 동치 그래프          벤더 타입끼리의 대응. cb-spider 드라이버를
+                                    읽어 사람이 맞춘 것(짐작·검수됨).
+
+    앞의 것을 **지렛대**로 삼는다: `network → aws::AWS::EC2::VPC`를 그래프에
+    넣으면 `core::vNet`이 나오고, 거기서 gcp·azure 타입이 따라 나온다. 그래서
+    3사 다리가 **자동으로** 생기고, 우리가 적은 칸은 하나도 없다.
+
+    aws에서만 이름 체계가 겹치는 것이 이 우회의 이유다 — 계획은 gcp에
+    `gcp::ComputeNetwork`를 쓰는데 `vocabulary.GCP_TYPES`는 디스커버리 스키마
+    이름 `Network`를 쓴다. 둘은 같은 것을 다르게 부르고, 그 사이는 그래프가
+    안다.
+
+    그래프를 못 읽으면 aws만 남는다 — **없는 다리를 지어내지 않는다.**
+    """
+    out: dict[str, dict[str, str]] = {
+        "aws": {v: k for k, v in vocabulary.AWS_TYPES.items()}}
+    try:
+        from app.core.cloudkb.graphkb.agent_api import load_merged
+        from app.core.cloudkb.graphkb.query import equivalents
+
+        graph = load_merged()
+    except Exception:  # noqa: BLE001 — 그래프가 없으면 aws만 대조한다
+        return out
+    if graph is None:
+        return out
+    for resource, aws_type in vocabulary.AWS_TYPES.items():
+        node = f"aws::{aws_type}"
+        if node not in graph.nodes:
+            continue
+        for peer in equivalents(graph, node):
+            if peer.provider and peer.provider != "aws":
+                out.setdefault(peer.provider, {}).setdefault(
+                    peer.id.split("::", 1)[1], resource)
+    return out
 
 #: 컴퓨트 노드의 실행 방식 → 우리 어휘. **여기만 벤더 타입이 아니라 표시
 #: 문자열을 읽는다.**
@@ -122,7 +159,7 @@ def _read_plan(plan: DeploymentPlan, csp: str
     벤더 타입이 있으면 어휘 결속으로 읽고(강함), 컴퓨트 노드는 `host` 표시
     문자열로 읽는다(약함 — `_HOST_READING`).
     """
-    table = _BY_CSP.get(csp, {})
+    table = _bridge().get(csp, {})
     mapped: dict[str, str] = {}
     unmapped: dict[str, str] = {}
     weak: dict[str, str] = {}
