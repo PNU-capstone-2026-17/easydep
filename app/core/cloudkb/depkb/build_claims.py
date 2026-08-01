@@ -1206,9 +1206,9 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "아니었다** — worked example이 '뷰에 정책 부착이 없다'를 공백으로 "
               "지목했으나 실측이 기각했다(뷰가 맞았다). 경계: **존재 축의 "
               "판정이다.** 정책 없는 클러스터가 노드를 받거나 ENI를 만들 수 "
-              "있는지는 기능 축이고 미측정이다. "
-              "EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)도 신호 정의가 "
-              "별도 설계라 미판정 유지(eks3·aws-iamfunc에 무방비 관측만)"),
+              "있는지는 기능 축이고, 2026-08-02 aws-iamfunc2가 닫았다 — "
+              "정책 분리 시 새 노드그룹이 join에서 CREATE_FAILED"
+              "(k8sCluster→iamRole function holds, 신호 node-join)"),
     dict(csp="aws", subject="vm", object="iamRole", question="existence",
          verdict="optional",
          evidence=[
@@ -1458,6 +1458,40 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "없음 — 전제 부재에서 '합성 없음' 판정은 오판. "
               "실험 기록 P3.unmeasured-note). 그래서 aws에는 k8sPvc 간선이 "
               "없다 — 빈칸이 아니라 범위 표시다"),
+    # ── EKS IAM 기능 축 2차 (2026-08-02 — 1차(aws-iamfunc)의 SIGNAL_INVALID를
+    # 설계로 고쳤다: ①변이를 노드그룹 **터미널 상태까지 유지**(1차는 CREATING
+    # 중에 복원해 원인을 못 가름) ②IGW·기본 라우트·공인 IP로 **양성 대조가
+    # 성립할 환경**을 먼저 만듦(1차 VPC는 IGW가 없어 정책과 무관하게 join
+    # 불가였을 것). 신호 'node-join' 신설) ──
+    dict(csp="aws", subject="k8sCluster", object="iamRole",
+         question="function", signal="node-join",
+         verdict="holds",
+         predicate="무방비: ACTIVE 클러스터의 역할에서 정책 분리를 컨트롤 "
+                   "플레인이 막지 않는다 — 기능 신호는 새 노드그룹이 터미널 "
+                   "상태(join)까지 가는가",
+         evidence=[
+             ("aws-iamfunc2-2026-08-02", "F0b.control-nodegroup-terminal",
+              "ok", "apply"),
+             ("aws-iamfunc2-2026-08-02", "M1.detach-policy-while-active",
+              "ok", "apply"),
+             ("aws-iamfunc2-2026-08-02", "F1b.nodegroup-terminal-under-mutation",
+              "CREATE_FAILED", "apply"),
+             ("aws-iamfunc2-2026-08-02", "F1c.policy-still-detached",
+              "ok", "apply"),
+             ("aws-iamfunc2-2026-08-02", "M2.reattach-policy", "ok", "apply"),
+             ("aws-iamfunc2-2026-08-02", "F2b.nodegroup-terminal-after-restore",
+              "ok", "apply"),
+         ],
+         note="**상실 지점이 정확히 갈린다**: 인스턴스는 뜨는데(i-07b2… 실물) "
+              "join이 안 된다 — NodeCreationFailure 'Instances failed to join "
+              "the kubernetes cluster'. EC2 기동(노드 역할·서비스 연결 역할의 "
+              "몫)이 아니라 **컨트롤 플레인의 노드 수용**이 클러스터 역할 "
+              "정책에 걸린다. 존재 축(qual2: 정책은 기동 조건이 아니다)과 "
+              "합쳐 읽으면 — 정책은 클러스터 기동엔 불요, 노드 수용엔 필요. "
+              "덤 관측: 분리 상태에서도 기존 노드그룹(ng-control)은 ACTIVE· "
+              "이슈 0 — **상실은 신규 join에만 걸리고 기존 노드는 계속 돈다** "
+              "(O1). F0(부착)—F1(분리)—F2(재부착)가 정책 하나만 다른 대조라 "
+              "인과가 닫힌다. 분리 유지는 F1c(list-attached 빈 목록)로 실증"),
 ]
 
 
@@ -1497,6 +1531,7 @@ SIGNALS: tuple[str, ...] = (
     "service-discovery", # 클러스터 안에서 서비스 이름으로의 접속
     "volume-write",      # 게스트의 direct 쓰기
     "imds-credentials",  # 인스턴스 메타데이터에서 자격증명 획득
+    "node-join",         # 새 노드그룹이 터미널 상태(join)까지 가는가
 )
 
 

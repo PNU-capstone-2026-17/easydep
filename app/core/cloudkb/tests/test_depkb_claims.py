@@ -101,6 +101,9 @@ def test_aws_core_and_the_key_story_closure(artifact) -> None:
         ("vm", "iamRole", "function"): "holds",
         # iamRole 라운드: EKS 거부 관측의 승격 + 인스턴스 프로필 생략 성공.
         ("k8sCluster", "iamRole", "existence"): "required",
+        # EKS IAM 기능 축 2차(2026-08-02): 변이를 터미널 상태까지 유지해
+        # 1차의 SIGNAL_INVALID를 닫음 — 정책 분리 시 신규 join만 깨진다.
+        ("k8sCluster", "iamRole", "function"): "holds",
         ("vm", "iamRole", "existence"): "optional",
         # customImage 라운드: AMI의 원본은 **인스턴스**다(3사 중 유일).
         ("customImage", "vm", "existence"): "required",

@@ -2,7 +2,7 @@
  "_note": "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 빈칸이 아니라 '동적 층 미실행'의 기록이다.",
  "verdictCounts": {
   "aws.required": 11,
-  "aws.holds": 15,
+  "aws.holds": 16,
   "aws.optional": 14,
   "azure.required": 10,
   "azure.holds": 17,
@@ -245,7 +245,7 @@
    "question": "existence",
    "verdict": "required",
    "predicate": null,
-   "note": "거부 라운드에서 관측만 되고 어휘 밖이라 못 들어갔던 판정의 승격. 생략 거부는 **클라이언트층**(--role-arn — nic→subnet과 같은 한계 명시), 실역할 생성·클러스터 성공이 양성 대조. **역할은 필요하지만 정책은 기동 조건이 아니다**(2026-08-01 aws-qual2 실측): 정책이 하나도 안 붙은 역할로도 클러스터가 ACTIVE까지 갔고 health 이슈도 없었다. 우리 실험들이 AmazonEKSClusterPolicy를 붙여 온 것은 **관행이었지 필요가 아니었다** — worked example이 '뷰에 정책 부착이 없다'를 공백으로 지목했으나 실측이 기각했다(뷰가 맞았다). 경계: **존재 축의 판정이다.** 정책 없는 클러스터가 노드를 받거나 ENI를 만들 수 있는지는 기능 축이고 미측정이다. EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)도 신호 정의가 별도 설계라 미판정 유지(eks3·aws-iamfunc에 무방비 관측만)",
+   "note": "거부 라운드에서 관측만 되고 어휘 밖이라 못 들어갔던 판정의 승격. 생략 거부는 **클라이언트층**(--role-arn — nic→subnet과 같은 한계 명시), 실역할 생성·클러스터 성공이 양성 대조. **역할은 필요하지만 정책은 기동 조건이 아니다**(2026-08-01 aws-qual2 실측): 정책이 하나도 안 붙은 역할로도 클러스터가 ACTIVE까지 갔고 health 이슈도 없었다. 우리 실험들이 AmazonEKSClusterPolicy를 붙여 온 것은 **관행이었지 필요가 아니었다** — worked example이 '뷰에 정책 부착이 없다'를 공백으로 지목했으나 실측이 기각했다(뷰가 맞았다). 경계: **존재 축의 판정이다.** 정책 없는 클러스터가 노드를 받거나 ENI를 만들 수 있는지는 기능 축이고, 2026-08-02 aws-iamfunc2가 닫았다 — 정책 분리 시 새 노드그룹이 join에서 CREATE_FAILED(k8sCluster→iamRole function holds, 신호 node-join)",
    "constraint": null,
    "signal": null,
    "oracle": "apply",
@@ -266,6 +266,56 @@
      "layer": "apply",
      "experiment": "aws-eks3-2026-07-31",
      "step": "K1.create-cluster",
+     "code": "ok"
+    }
+   ]
+  },
+  {
+   "subject": "k8sCluster",
+   "object": "iamRole",
+   "csp": "aws",
+   "question": "function",
+   "verdict": "holds",
+   "predicate": "무방비: ACTIVE 클러스터의 역할에서 정책 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 새 노드그룹이 터미널 상태(join)까지 가는가",
+   "note": "**상실 지점이 정확히 갈린다**: 인스턴스는 뜨는데(i-07b2… 실물) join이 안 된다 — NodeCreationFailure 'Instances failed to join the kubernetes cluster'. EC2 기동(노드 역할·서비스 연결 역할의 몫)이 아니라 **컨트롤 플레인의 노드 수용**이 클러스터 역할 정책에 걸린다. 존재 축(qual2: 정책은 기동 조건이 아니다)과 합쳐 읽으면 — 정책은 클러스터 기동엔 불요, 노드 수용엔 필요. 덤 관측: 분리 상태에서도 기존 노드그룹(ng-control)은 ACTIVE· 이슈 0 — **상실은 신규 join에만 걸리고 기존 노드는 계속 돈다** (O1). F0(부착)—F1(분리)—F2(재부착)가 정책 하나만 다른 대조라 인과가 닫힌다. 분리 유지는 F1c(list-attached 빈 목록)로 실증",
+   "constraint": null,
+   "signal": "node-join",
+   "oracle": "apply",
+   "evidence": [
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "F0b.control-nodegroup-terminal",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "M1.detach-policy-while-active",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "F1b.nodegroup-terminal-under-mutation",
+     "code": "CREATE_FAILED"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "F1c.policy-still-detached",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "M2.reattach-policy",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "aws-iamfunc2-2026-08-02",
+     "step": "F2b.nodegroup-terminal-after-restore",
      "code": "ok"
     }
    ]

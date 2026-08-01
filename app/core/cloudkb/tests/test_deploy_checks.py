@@ -36,7 +36,7 @@ def test_every_function_claim_declares_a_signal() -> None:
     """
     doc = json.loads(_CLAIMS.read_text(encoding="utf-8"))
     functions = [c for c in doc["claims"] if c["question"] == "function"]
-    assert len(functions) == 14, len(functions)
+    assert len(functions) == 15, len(functions)
     missing = [f'{c["csp"]}/{c["subject"]}→{c["object"]}'
                for c in functions if not c.get("signal")]
     assert not missing, missing

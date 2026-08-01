@@ -117,6 +117,13 @@ _HOW: dict[str, tuple[str, str, str, str]] = {
         "이 서버가 클라우드 API 자격증명을 얻는가",
         "게스트에서 인스턴스 메타데이터 질의(aws는 IMDSv2 토큰 → 역할 조회)",
         "역할 이름과 자격증명이 온다"),
+    "node-join": (
+        "outside",
+        "새 노드가 클러스터에 합류하는가",
+        "노드그룹 생성 후 describe-nodegroup을 **터미널 상태까지** 폴링",
+        "ACTIVE가 된다. **API 수락(CREATING)은 증거가 아니다** — 실험 1차가 "
+        "수락을 보고 판정하려다 원인을 못 갈랐고, join 실패는 CREATE_FAILED의 "
+        "health(NodeCreationFailure)로만 드러난다"),
 }
 
 
