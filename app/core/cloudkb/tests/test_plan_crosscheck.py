@@ -122,15 +122,44 @@ def test_the_intent_carries_the_predicate_class() -> None:
     assert by_id["firewall"]["kind"] == "server-default"
 
 
-def test_unmapped_nodes_are_recorded_not_ignored() -> None:
-    """어휘 밖은 **대조 불가**로 남는다 — 침묵은 "문제없다"로 읽힌다."""
+def test_a_declared_boundary_is_not_counted_as_a_gap() -> None:
+    """**"아직 안 한 것"과 "안 하기로 한 것"을 가른다**(2026-08-01 결정).
+
+    관리형 상품 서비스는 범위 밖으로 확정했다(`vocabulary.OUT_OF_SCOPE`) — 상품이
+    CSP마다 수십 종이고 계속 늘어나 실측으로 따라갈 수 없어서다. 그전에는 이것들이
+    매번 `out-of-vocabulary`로 세어져 **무엇을 더 재야 하는지가 안 보였다.**
+
+    무엇이 관리형인지는 계획 자신이 안다(`PlanNode.role`) — 타입 이름으로 우리가
+    다시 판정하지 않는다.
+    """
     result = pc.crosscheck(_plan(
         _vm(),
         PlanNode("db", "db", "managed", "inferred",
                  type_id="aws::AWS::RDS::DBInstance"),
+        PlanNode("pg", "pg", "external", "design"),
     ), "aws")
-    assert "db" in result.unmapped
-    assert any(f.kind == pc.OUT_OF_VOCABULARY and f.subject == "db"
+    kinds = {f.subject: f.kind for f in result.findings}
+    assert kinds["db"] == pc.OUT_OF_SCOPE, kinds
+    assert kinds["pg"] == pc.OUT_OF_SCOPE, kinds
+    assert not [f for f in result.findings if f.kind == pc.OUT_OF_VOCABULARY]
+    # 경계에는 **사유가 실린다** — 침묵이 아니라 선언이다.
+    assert any("따라갈 수 없다" in f.measured
+               for f in result.findings if f.subject == "db")
+
+
+def test_a_real_gap_still_counts_as_one() -> None:
+    """경계를 선언했다고 진짜 공백까지 조용해지면 안 된다.
+
+    공유 자원인데 벤더 타입이 없는 노드가 그 예다 — gcp의 `sshkey`가 실제로
+    그렇다. **gcp가 SSH 키를 지원하지 않는다는 뜻이 아니다**(지원한다). 키가
+    독립 자원이 아니라 메타데이터(`ssh-keys`)·OS Login으로 다뤄져 어휘에 대응
+    타입이 없을 뿐이고, 그래서 **계획이 그것을 노드로 그리는 것이 어긋난 자리**다.
+
+    이건 어휘 결속 판단이지 실측이 아니다 — claims에 gcp sshKey 주장은 0건이다.
+    """
+    result = pc.crosscheck(_plan(
+        _vm(), PlanNode("sshkey", "key", "shared", "kb")), "aws")
+    assert any(f.kind == pc.OUT_OF_VOCABULARY and f.subject == "sshkey"
                for f in result.findings)
 
 
@@ -148,7 +177,8 @@ def test_a_plan_with_nothing_measurable_says_so_instead_of_passing() -> None:
         PlanNode("db", "db", "managed", "inferred",
                  type_id="aws::AWS::RDS::DBInstance")), "aws")
     assert result.anchors == ()
-    assert all(f.kind == pc.OUT_OF_VOCABULARY for f in result.findings)
+    assert all(f.kind in (pc.OUT_OF_VOCABULARY, pc.OUT_OF_SCOPE)
+               for f in result.findings)
 
 
 def test_the_wiring_closed_the_gaps_it_was_built_to_close() -> None:
@@ -183,4 +213,6 @@ def test_the_wiring_closed_the_gaps_it_was_built_to_close() -> None:
         assert not counts.get(kind), (
             f"{kind}가 되살아났다 — 배선이 끊겼는지 보라: {counts}")
     assert counts.get(pc.WEAK_READING) == 1, counts
-    assert counts.get(pc.OUT_OF_VOCABULARY) == 3, counts
+    # 관리형 셋(RDS·S3·SecretsManager)은 **선언된 경계**이지 공백이 아니다.
+    assert counts.get(pc.OUT_OF_SCOPE) == 3, counts
+    assert not counts.get(pc.OUT_OF_VOCABULARY), counts

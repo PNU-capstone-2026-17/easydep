@@ -109,6 +109,17 @@ _HOST_READING: dict[str, str] = {
     # "Serverless runtime"은 없다 — 서버리스는 실측 범위 밖이라 어휘가 없다.
 }
 
+#: 범위 밖 역할 → `vocabulary.OUT_OF_SCOPE`의 어느 항목인가.
+#:
+#: **"아직 안 한 것"과 "안 하기로 한 것"을 가른다.** 섞으면 목록이 길어질수록
+#: 무엇을 더 재야 하는지가 안 보인다 — 관심사의 `noted`/`out-of-scope`, 계약의
+#: `NOT_ASKED`와 같은 규율이다. 무엇이 관리형이고 무엇이 외부인지는 **계획 자신이
+#: 안다**(`PlanNode.role`) — 우리가 타입 이름으로 다시 판정하지 않는다.
+_SCOPE_BY_ROLE: dict[str, str] = {
+    "managed": "managed-service",
+    "external": "external-system",
+}
+
 #: 워크로드 역할 — 폐포의 앵커가 되는 노드. **계획 자신의 어휘다**(우리가 새
 #: 기준을 만들지 않는다). 배선(`plan_enrich`)도 같은 것을 쓴다 — 둘이 갈리면
 #: 배선한 것과 대조한 것이 달라진다.
@@ -123,7 +134,8 @@ UNCHECKED_RULE = "unchecked-rule"        # 실측 검사가 계획에 적용된 
 ABSENT_ORDER = "absent-order"            # 순서를 담을 자리가 계획에 없음
 ABSENT_WARNING = "absent-warning"        # 기능 결속 경고가 계획에 안 실림
 ABSENT_WAIT = "absent-wait"              # 완료 대기가 계획에 안 실림
-OUT_OF_VOCABULARY = "out-of-vocabulary"  # **대조 불가** — 결속이 없다
+OUT_OF_VOCABULARY = "out-of-vocabulary"  # **대조 불가** — 아직 실측이 없다
+OUT_OF_SCOPE = "out-of-scope"            # **안 하기로 한 것** — 경계이지 공백이 아니다
 WEAK_READING = "weak-reading"            # 표시 문자열로 읽었다 — 저쪽이 바뀌면 끊긴다
 
 
@@ -208,9 +220,15 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
     findings: list[Finding] = []
 
     for node_id, why in sorted(unmapped.items()):
-        findings.append(Finding(
-            OUT_OF_VOCABULARY, node_id, why,
-            "이 노드에 대해서는 아무 주장도 없다 — **문제없다는 뜻이 아니다**"))
+        scope = _SCOPE_BY_ROLE.get(roles.get(node_id, ""))
+        if scope:
+            findings.append(Finding(
+                OUT_OF_SCOPE, node_id, why,
+                f"[{scope}] {vocabulary.OUT_OF_SCOPE[scope]}"))
+        else:
+            findings.append(Finding(
+                OUT_OF_VOCABULARY, node_id, why,
+                "이 노드에 대해서는 아무 주장도 없다 — **문제없다는 뜻이 아니다**"))
     for node_id, host in sorted(weak.items()):
         findings.append(Finding(
             WEAK_READING, node_id,
@@ -335,7 +353,8 @@ def render(result: Crosscheck) -> str:
     counts = result.counts()
     for kind in (MISSING_REQUIRED, DOUBLE_CREATE, REDUNDANT_NODE,
                  UNCHECKED_RULE, ABSENT_ORDER,
-                 ABSENT_WARNING, ABSENT_WAIT, WEAK_READING, OUT_OF_VOCABULARY):
+                 ABSENT_WARNING, ABSENT_WAIT, WEAK_READING, OUT_OF_VOCABULARY,
+                 OUT_OF_SCOPE):
         if counts.get(kind):
             lines.append(f"  {kind:20} {counts[kind]}")
     lines += ["", f"  합계 {len(result.findings)}", "", "## 내용", ""]

@@ -37,7 +37,8 @@ CSPS: tuple[str, ...] = ("aws", "gcp", "azure")
 
 _KINDS = (pc.MISSING_REQUIRED, pc.DOUBLE_CREATE, pc.REDUNDANT_NODE,
           pc.UNCHECKED_RULE, pc.ABSENT_ORDER, pc.ABSENT_WARNING,
-          pc.ABSENT_WAIT, pc.WEAK_READING, pc.OUT_OF_VOCABULARY)
+          pc.ABSENT_WAIT, pc.WEAK_READING, pc.OUT_OF_VOCABULARY,
+          pc.OUT_OF_SCOPE)
 
 
 def _targets() -> list[tuple[str, dict, dict]]:
@@ -102,7 +103,7 @@ def render(rows: list[dict]) -> str:
         lines.append(f"  {csp:6} {same}: "
                      + " / ".join(", ".join(sorted(s)) for s in shapes))
     lines.append("")
-    lines.append("## 어휘 밖으로 빠진 것 (앱마다 다른 부분)")
+    lines.append("## 대조 밖으로 빠진 것 (앱마다 다른 부분 — 대부분 선언된 경계)")
     for row in rows:
         if row["csp"] == "aws":
             lines.append(f"  {row['sample']:22} {', '.join(row['unmapped'])}")

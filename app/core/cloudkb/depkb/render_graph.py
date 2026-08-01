@@ -90,8 +90,11 @@ DESC: dict[str, str] = {
              "필수 입력이고, azure·gcp는 기존 디스크로 대신할 수 있습니다"
              "(실측된 3사 차이).",
     "sshKey": "서버에 원격 접속할 때 비밀번호 대신 쓰는 열쇠 파일입니다. "
-              "다루는 방식이 3사 3색입니다(aws 선택 등록·azure 무관·gcp에는 "
-              "자원 자체가 없음 — 실측).",
+              "**3사 모두 SSH 접속을 지원합니다** — 다만 키를 다루는 자리가 "
+              "다릅니다. aws는 키를 미리 등록해 두는 별도 자원이 있고(등록은 "
+              "선택 — 실측), azure도 별도 자원이 있으며, gcp는 **자원이 아니라 "
+              "서버·프로젝트의 설정값(메타데이터)이나 OS Login으로** 다룹니다. "
+              "그래서 gcp 계획에는 이 상자가 아예 안 생기는 것이 맞습니다.",
     "vpn": "회사망과 클라우드망을 안전하게 잇는 전용 터널입니다. azure에선 "
            "정확히 GatewaySubnet이라는 이름의 서브넷을 요구하는 특이한 "
            "규칙이 실측됐습니다.",
@@ -160,7 +163,8 @@ CSP_NAMES: dict[str, str] = {
     "vm": "aws EC2 Instance · azure Virtual Machine · gcp Compute Instance",
     "disk": "aws EBS Volume · azure Managed Disk · gcp Persistent Disk",
     "image": "aws AMI · azure Image/Marketplace · gcp Image",
-    "sshKey": "aws Key Pair · azure SSH Public Key · gcp (자원 없음 — 메타데이터)",
+    "sshKey": "aws Key Pair · azure SSH Public Key · "
+              "gcp (독립 자원이 아님 — 메타데이터 `ssh-keys` 또는 OS Login)",
     "vpn": "aws VPN Gateway · azure Virtual Network Gateway · gcp VPN Gateway",
     "internetGateway": "aws Internet Gateway · azure (자원 없음 — 시스템 "
                        "라우트) · gcp (라우트의 next-hop 개념)",
