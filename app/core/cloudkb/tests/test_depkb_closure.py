@@ -189,13 +189,34 @@ def test_every_class_is_anchored_to_or_excluded_from_idl() -> None:
         assert mod.IDL_FORM[outside] is None, outside
 
 
-def test_the_or_versus_onlyone_question_is_recorded_as_open() -> None:
-    """형식화가 **새 실측 질문을 만들었다** — 그 사실을 지운 채로 두지 않는다.
+def test_the_or_versus_onlyone_question_was_measured_not_assumed() -> None:
+    """형식화가 낸 질문을 **재서 닫았다**(2026-08-01) — 부류가 아니라 주장 단위로.
 
-    IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 가르는데 우리 실측은
-    그 구별을 재지 않았다. 더 약한 `Or`로 적어 두었고, 재고 나면 이 테스트를
-    고치면서 주장도 함께 바뀐다.
+    IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 가르는데 우리는 그 구별을
+    재지 않고 있었다. `azure loadBalancer`에 subnet과 publicIp를 **함께** 주니
+    컨트롤 플레인이 `FrontendIPConfigHasBothSubnetAndPublicIP`로 거부했다 →
+    `OnlyOne`. 대조군(하나씩만)은 같은 경로로 섰다.
+
+    **부류 수준에서 정하지 않는다** — `vm→image` 2건의 배타성은 아직 미측정이라
+    더 약한 `Or`로 남는다. 그래서 `IDL_FORM`은 "주장이 가른다"고만 말한다.
     """
+    import json
+    from pathlib import Path
+
     from app.core.cloudkb.depkb import closure as mod
 
-    assert "미측정" in (mod.IDL_FORM["disjunctive:"] or "")
+    assert "주장" in (mod.IDL_FORM["disjunctive:"] or "")
+    doc = json.loads((Path(mod.__file__).with_name("claims.json"))
+                     .read_text(encoding="utf-8"))
+    lb = next(c for c in doc["claims"]
+              if c["csp"] == "azure" and c["subject"] == "loadBalancer"
+              and "|" in c["object"])
+    assert lb["constraint"] == {"exclusive": True, "idl": "OnlyOne"}
+    codes = {e.get("code") for e in lb["evidence"]}
+    assert "FrontendIPConfigHasBothSubnetAndPublicIP" in codes, codes
+    # 재지 않은 것은 재지 않았다고 남는다.
+    others = [c for c in doc["claims"]
+              if (c.get("predicate") or "").startswith("disjunctive:")
+              and c is not lb]
+    assert others and all(not c.get("constraint") for c in others), (
+        "vm→image의 배타성을 쟀다면 이 테스트를 고쳐라")

@@ -1814,9 +1814,12 @@
    "csp": "azure",
    "question": "existence",
    "verdict": "required",
-   "predicate": "disjunctive: 셋 중 하나",
-   "note": null,
-   "constraint": null,
+   "predicate": "disjunctive: 셋 중 **정확히** 하나(배타적)",
+   "note": "**하나만 고르면 되는 게 아니라 하나만 골라야 한다**(배타). 1차(`azure-disj-2026-08-01`)는 무효였다 — CLI가 `incorrect usage`로 먼저 막아 컨트롤 플레인에 닿지 못했고, 클라이언트 거부는 우리 오라클 서열에 없다. ARM 템플릿으로 직접 걸어 preflight 코드를 받았다. 나머지 disjunctive 2건(azure·gcp vm→image)의 배타성은 **아직 미측정**",
+   "constraint": {
+    "exclusive": true,
+    "idl": "OnlyOne"
+   },
    "oracle": "apply",
    "evidence": [
     {
@@ -1836,6 +1839,24 @@
      "experiment": "azure-apply-2026-07-30",
      "step": "A.apply.dangling-lb-pip",
      "code": "InvalidResourceReference"
+    },
+    {
+     "layer": "preflight",
+     "experiment": "azure-disj2-2026-08-01",
+     "step": "E1.arm-both-subnet-and-pip",
+     "code": "FrontendIPConfigHasBothSubnetAndPublicIP"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-disj2-2026-08-01",
+     "step": "E2.arm-subnet-only",
+     "code": "ok"
+    },
+    {
+     "layer": "apply",
+     "experiment": "azure-disj2-2026-08-01",
+     "step": "E3.arm-pip-only",
+     "code": "ok"
     }
    ]
   },

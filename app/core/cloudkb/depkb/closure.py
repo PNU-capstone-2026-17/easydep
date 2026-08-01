@@ -89,11 +89,15 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
 #: ## 이 매핑이 만든 실측 질문 (미해결)
 #:
 #: IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 **가른다.** 우리
-#: `disjunctive:` 3건은 그 구별을 재지 않았다 — `azure loadBalancer`에 subnet과
-#: publicIp를 **둘 다** 주면 되는지 안 걸어 봤다. 형식을 갖추자 질문이 생긴 것이고,
-#: 재기 전까지 `Or`로 적는다(더 약한 주장).
+#: `disjunctive:` 3건은 그 구별을 재지 않고 있었다 — 형식을 갖추자 질문이 생겼고,
+#: **하나는 재서 닫았다**: `azure loadBalancer`는 subnet과 publicIp를 함께 주면
+#: 거부된다(`FrontendIPConfigHasBothSubnetAndPublicIP`, azure-disj2) → `OnlyOne`.
+#: `vm→image` 2건(azure·gcp)은 **아직 미측정**이라 더 약한 `Or`로 남는다.
 IDL_FORM: dict[str, str | None] = {
-    "disjunctive:": "Or(...)  # OnlyOne인지 미측정 — 더 약한 쪽으로 적는다",
+    # 부류로는 못 정한다 — **주장마다 갈린다.** azure loadBalancer는 배타로
+    # 측정됐고(`FrontendIPConfigHasBothSubnetAndPublicIP`, 2026-08-01),
+    # vm→image 2건은 아직 안 쟀다. 주장의 `constraint.idl`이 가른다.
+    "disjunctive:": "Or(...) 또는 OnlyOne(...) — 주장의 constraint.idl이 가른다",
     "network 모드 조건부:": "Requires: IF mode=='custom' THEN subnet;",
     "스킴 조건부:": "Requires: IF scheme==<값> THEN <대상>;",
     "쌍 호환:": "Relational: <주체>.<속성> == <대상>.<속성>",

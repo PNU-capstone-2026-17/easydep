@@ -63,14 +63,28 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
          note="사슬의 nic1이 NSG 없이 생성 성공 — 부재 하 성공이 optional의 증거"),
     dict(csp="azure", subject="loadBalancer", object="subnet|publicIp|publicIPPrefix",
          question="existence", verdict="required",
-         predicate="disjunctive: 셋 중 하나",
+         predicate="disjunctive: 셋 중 **정확히** 하나(배타적)",
+         # IDL의 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 가른 실측.
+         # 형식주의를 채택하다 미측정 칸이 드러나 재게 됐다(2026-08-01).
+         constraint={"exclusive": True, "idl": "OnlyOne"},
          evidence=[
              ("azure-preflight-2026-07-30", "omit-lb-frontend-ref.validate",
               "FrontendIPConfigurationHasNoSubnetOrPublicIPAddressOrPublicIPPrefix",
               "preflight"),
              ("azure-apply-2026-07-30", "A.apply.dangling-lb-pip",
               "InvalidResourceReference", "apply"),
-         ]),
+             # 배타성: subnet과 publicIp를 **함께** 주면 거부된다.
+             ("azure-disj2-2026-08-01", "E1.arm-both-subnet-and-pip",
+              "FrontendIPConfigHasBothSubnetAndPublicIP", "preflight"),
+             # 대조군 — 같은 경로로 하나씩만 주면 선다(실패 원인이 "둘이라서"임을 격리)
+             ("azure-disj2-2026-08-01", "E2.arm-subnet-only", "ok", "apply"),
+             ("azure-disj2-2026-08-01", "E3.arm-pip-only", "ok", "apply"),
+         ],
+         note="**하나만 고르면 되는 게 아니라 하나만 골라야 한다**(배타). 1차"
+              "(`azure-disj-2026-08-01`)는 무효였다 — CLI가 `incorrect usage`로 "
+              "먼저 막아 컨트롤 플레인에 닿지 못했고, 클라이언트 거부는 우리 오라클 "
+              "서열에 없다. ARM 템플릿으로 직접 걸어 preflight 코드를 받았다. "
+              "나머지 disjunctive 2건(azure·gcp vm→image)의 배타성은 **아직 미측정**"),
     # ── existence 2라운드 (azure) ──
     dict(csp="azure", subject="network", object="subnet", question="existence",
          verdict="optional",
