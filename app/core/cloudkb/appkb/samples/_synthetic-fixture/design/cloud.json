@@ -12,6 +12,11 @@
   "이 계획은 관리형 쿠버네티스 위에 서지 않는다(VM) — 하류 렌더러는 Microsoft.ContainerService/managedClusters만 읽으므로 이 산출물로는 매니페스트가 나오지 않는다",
   "계획은 aws인데 하류 렌더러는 azure ARM 타입만 알아본다 — 3사 실측이 여기서 막힌다(하류 스키마의 변경이 필요하다)"
  ],
+ "_handoff": {
+  "containerRegistry": "컨테이너 이미지를 올릴 레지스트리. 이미지 태그와 같은 종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 남고, 그 자리표시자가 곧 인계 표시다",
+  "ingressController": "인그레스 컨트롤러와 클래스. 우리 실측은 '컨트롤러를 깔지는 사람이 정한다'까지만 말한다(k8sIngress 라운드)",
+  "tlsCertificate": "TLS 인증서·시크릿. 운영·보안 결정이다"
+ },
  "_provenance": "app/core/cloud_artifact.build — 설계 신호에서 나온 배포 계획의 투영이다. 형식은 하류(deployment_renderer)가 정했다",
  "_deployChecks": {
   "schemaVersion": "easydep-deploy-checks/v1alpha1",

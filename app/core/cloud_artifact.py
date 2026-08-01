@@ -44,12 +44,12 @@ import json
 from typing import Any
 
 from app.core.cloudkb.appkb.plan import DeploymentPlan
+from app.core.input_registry import HANDOFF as _HANDOFF
 
 #: 우리 어휘 → 하류가 읽는 ARM 타입. **하류가 정한 이름이라 여기 옮겨 적는다.**
 #: `deployment_renderer.infer_intent`가 이 문자열로 자원을 찾는다.
 _ARM_TYPE: dict[str, str] = {
     "k8sCluster": "Microsoft.ContainerService/managedClusters",
-    "containerRegistry": "Microsoft.ContainerRegistry/registries",
 }
 
 #: 채우지 않는 칸과 그 이유. **우리 축이 아닌 것들이다.**
@@ -130,12 +130,6 @@ def build(plan: DeploymentPlan, design: dict, *, name: str = "") -> dict:
                     (artifact.get("openapi") or {}).get("servers", [])]
             if any(u.startswith("https://") for u in urls):
                 networking["ingressProtocol"] = "HTTPS"
-        # 레지스트리 — 사용자가 준 이름이 있을 때만. 없으면 하류가 자리표시자를
-        # 내고, 그 자리표시자가 "이 값을 못 받았다"는 사실을 그대로 말한다.
-        registry = (design.get("requirements") or {}).get("containerRegistry")
-        if registry:
-            resources.append({"type": _ARM_TYPE["containerRegistry"],
-                              "name": registry})
         resources.append({
             "type": _ARM_TYPE["k8sCluster"],
             "name": name or plan.name,
@@ -162,6 +156,10 @@ def build(plan: DeploymentPlan, design: dict, *, name: str = "") -> dict:
         # **우리가 안 채운 칸과 그 이유.** 빈 칸이 "해당 없음"으로 읽히면 안 된다.
         "_omitted": _OMITTED,
         "_unsupported": unsupported,
+        # **인계 항목** — 요구사항 단계에서 받지 않기로 한 것들. 받으면 어색하고
+        # (렌더 시점에만 필요하다) 안 적으면 사라진다. 자리표시자가 남는 것이
+        # 곧 인계 표시이고, 여기 이유가 함께 나간다.
+        "_handoff": dict(_HANDOFF),
         "_provenance": ("app/core/cloud_artifact.build — 설계 신호에서 나온 배포 "
                         "계획의 투영이다. 형식은 하류(deployment_renderer)가 정했다"),
     }

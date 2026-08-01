@@ -251,7 +251,16 @@ CONCERNS: tuple[Concern, ...] = (
             "플랫폼이 인스턴스를 죽이고 옮긴다 — 프로세스에 남은 상태는 설계가 아니라 요구사항 단계에서 정해져야 서버리스·오토스케일 가능 공간이 "
             "닫히지 않는다."
         ),
-        consumer="RESOURCE_SPEC.stateless",
+        # **소비자를 잃었다**(2026-08-01). `RESOURCE_SPEC.stateless`가 계약에서
+        # 빠졌고, 그 값의 유일한 판정이 서버리스 적합이었는데 서버리스가 범위
+        # 밖이다(`depkb/vocabulary.OUT_OF_SCOPE`). 관심사 자체는 유효하다 —
+        # 질문은 여전히 요구사항 단계에서 답해야 하는 것이고, 다만 **배포 계획이
+        # 그 답을 소비할 자리가 없다.**
+        consumer=None,
+        out_of_scope="서버리스가 범위 밖이라(vocabulary.OUT_OF_SCOPE) 이 답으로 "
+                     "서는 판정이 없다. 질문이 무의미해서가 아니라 **우리 계획이 "
+                     "소비할 수 없어서**다 — 서버리스를 범위 안으로 되돌리면 "
+                     "이 관심사도 함께 돌아온다",
         doc_id="twelve-factor/processes",
         probe=("processes are stateless", "backing service"),
         iso25010=("flexibility",),        citation=f"{_12F} VI. Processes",

@@ -315,9 +315,18 @@ def test_no_burst_note_is_only_trusted_when_values_joined() -> None:
                for ln in unjoined if ln.startswith("trafficPattern"))
 
 
-def test_stateful_app_with_serverless_is_a_flagged_inference() -> None:
-    """상충 판정이지만 KB 사실이 아니라 **우리 추론**이다 — 그 표시가 판정문에
-    붙어 있어야 한다."""
+def test_the_serverless_fit_verdict_is_gone_with_its_input() -> None:
+    """**받지 않는 값으로 서는 판정을 남기지 않는다**(2026-08-01, 사용자 지적).
+
+    `stateless`가 계약에서 빠졌다 — 그 값의 유일한 소비자가 서버리스 적합
+    판정인데 서버리스를 범위 밖으로 선언해 놓고(`vocabulary.OUT_OF_SCOPE`)
+    그 경로를 살려 유지 근거로 삼은 것이 앞뒤가 안 맞았기 때문이다.
+
+    판정도 함께 걷어냈다. 남겨 두면 **아무도 답하지 않는 입력을 기다리며 그
+    자리가 영영 침묵한다** — 이 저장소가 다른 축에서 계속 막아 온 것이다.
+
+    되살리려면 서버리스를 범위 안으로 되돌리는 것이 먼저다.
+    """
     plan = _plan()
     plan.nodes.append(PlanNode(
         "worker", "Worker", "managed", ORIGIN_DESIGNER,
@@ -325,22 +334,10 @@ def test_stateful_app_with_serverless_is_a_flagged_inference() -> None:
         type_id="aws::AWS::Lambda::Function",
         notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
     ))
-    lines = verify_against_requirements(plan, {"stateless": False}, _HOURS)
-    conflict = flat(next(ln for ln in lines if "serverless" in ln))
-    assert "**possible conflict (we inferred)**" in conflict and "worker" in conflict
-
-
-def test_serverless_without_statefulness_claim_is_said() -> None:
-    """침묵을 적합으로 읽지 않는다 — stateless를 못 받았으면 미확인을 명시."""
-    plan = _plan()
-    plan.nodes.append(PlanNode(
-        "worker", "Worker", "managed", ORIGIN_DESIGNER,
-        archetype="app::serverlessFunction", type_id="aws::AWS::Lambda::Function",
-        notes=(Note("설계자가 지정", ORIGIN_DESIGNER, "deployHint"),),
-    ))
-    lines = verify_against_requirements(plan, {}, _HOURS)
-    assert any("Statefulness unconfirmed" in flat(ln) for ln in lines)
-
+    lines = [flat(ln) for ln in verify_against_requirements(plan, {}, _HOURS)]
+    assert not [ln for ln in lines if "stateless" in ln], lines
+    # 그래도 **계획에는 남는다** — 못 재는 것과 못 쓰게 하는 것은 다르다.
+    assert plan.node("worker") is not None
 
 def test_foreign_provider_type_in_plan_is_caught() -> None:
     plan = _plan()
@@ -498,7 +495,7 @@ def test_no_gap_line_when_everything_is_settled() -> None:
         "provider": "aws", "monthlyBudgetUSD": 500, "expectedConcurrentUsers": 100,
         # 2026-07-29: 스펙 선택을 여는 칸은 규모가 아니라 **하한**이다.
         "minVCpu": 2, "minMemoryGiB": 4,
-        "trafficPattern": "steady", "stateless": True, "multiZone": True,
+        "trafficPattern": "steady", "multiZone": True,
     }
     lines = verify_against_requirements(_plan(), req, _HOURS)
     assert not any("Not judged for lack" in ln for ln in lines)

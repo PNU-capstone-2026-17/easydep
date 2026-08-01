@@ -30,7 +30,7 @@ from app.core.cloudkb.tests._helpers import flat
 _HOURS = 730
 
 _FULL = {
-    "schemaVersion": "3",
+    "schemaVersion": "2",
     "provider": "aws",
     "region": "ap-northeast-2",
     "workloads": ["vm"],
@@ -116,30 +116,36 @@ def test_workloads_is_required_because_no_plan_exists_without_it() -> None:
         plan_for_anchors([], "aws", "ap-northeast-2")
 
 
-def test_container_registry_is_required_because_the_manifest_needs_it() -> None:
-    """`containerRegistry`가 없으면 **배포할 수 없는 YAML**이 나온다(2026-08-01).
+def test_the_registry_is_a_handoff_not_a_requirement() -> None:
+    """**요구사항 단계에서 안 받는다**(2026-08-01 정정, 사용자 지적).
 
-    사슬을 끝까지 돌려 확인했다: 이 값이 없으면 매니페스트에
-    `image: <acr-name>.azurecr.io/app:<tag>`가 그대로 나가고, 값을 주면
-    `myteamacr.azurecr.io/...`가 된다. 앞의 칸들과 근거의 모양이 또 다르다 —
-    판정도 조인도 아니고 **산출물이 쓸모 있는가**다.
+    한 번 필수로 넣었다가 뺐다. 레지스트리는 **렌더 시점에만** 필요한 값이고
+    이미지 태그와 같은 종류인데, 태그는 CI 것이라 안 받으면서 레지스트리만
+    받는 것은 선이 이상했다.
+
+    빼되 **사라지게 두지 않는다** — 인계 항목으로 이유와 함께 낸다. 매니페스트에
+    남는 자리표시자가 곧 인계 표시다.
     """
-    from pathlib import Path
+    from app.core import cloud_contract, input_registry
 
-    from app.core.cloud_artifact import build as build_artifact
-    from app.core.cloudkb.nim_agent.design_tools import compose
-    from app.core.cloudkb.tools.intake_report import _design_from, _read
+    assert "containerRegistry" not in cloud_contract.schema_fields()
+    assert "containerRegistry" in input_registry.HANDOFF
+    assert "태그" in input_registry.HANDOFF["containerRegistry"]
 
-    root = (Path(__file__).resolve().parents[1] / "appkb" / "samples"
-            / "lecture-platform")
-    spec, _ = _read(root, "requirements/resource_spec.json")
-    base = dict(spec) if isinstance(spec, dict) else {}
-    base.update({"provider": "azure", "workloads": ["k8sCluster"],
-                 "containerRegistry": "myteamacr"})
-    design, _ = _design_from(root, base)
-    art = build_artifact(compose(design), design)
-    types = {r["type"] for r in art["resources"]}
-    assert "Microsoft.ContainerRegistry/registries" in types, types
+
+def test_stateless_left_with_its_verdict(monkeypatch) -> None:
+    """**받지 않는 값으로 서는 판정을 남기지 않는다**(2026-08-01, 사용자 지적).
+
+    서버리스를 범위 밖으로 선언해 놓고 그 경로를 살려 `stateless` 유지 근거로
+    삼은 것이 앞뒤가 안 맞았다. 계약에서 빼면서 판정도 함께 걷어냈다 — 남겨
+    두면 그 자리가 영영 침묵한다.
+    """
+    from app.core import cloud_contract
+    from app.core.cloudkb.appkb import verify as verify_mod
+
+    assert "stateless" not in cloud_contract.schema_fields()
+    assert "stateless" not in verify_mod._CLOSES
+    assert "stateless" not in _lines(_FULL)
 
 
 def test_every_required_field_is_covered_by_this_file() -> None:
@@ -149,7 +155,7 @@ def test_every_required_field_is_covered_by_this_file() -> None:
     대상이 아니다. `region`·`workloads`는 위 테스트들이 따로 다룬다 — 근거의
     모양이 다르기 때문이다(조인 / 계획의 입력).
     """
-    covered = set(_VERDICT_MARK) | {"region", "workloads", "containerRegistry"}
+    covered = set(_VERDICT_MARK) | {"region", "workloads"}
     required = set(request_schema()["required"]) - set(input_registry.NOT_ASKED)
     assert required == covered, (
         "필수 칸이 바뀌었습니다. 새 칸에 '지우면 무너지는 판정'을 하나 붙이거나, "

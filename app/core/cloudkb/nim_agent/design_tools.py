@@ -794,10 +794,16 @@ def _method_comparison_notes(
     )
     spec = specs[0] if specs else None
     steady = requirements.get("trafficPattern") == "steady"
-    stateless = requirements.get("stateless")
 
-    conflicts: dict[str, list[str]] = {"vm": [], "kubernetes": [], "serverless": []}
-    holds: dict[str, list[str]] = {"vm": [], "kubernetes": [], "serverless": []}
+    # **서버리스는 비교에서 빠졌다**(2026-08-01, 사용자 지적). 범위 밖으로
+    # 선언해 놓고(`depkb/vocabulary.OUT_OF_SCOPE`) 비교에는 남겨 두는 것이
+    # 앞뒤가 안 맞았다 — 그리고 그 비교를 유지하려고 `stateless`를 계약에
+    # 붙들고 있었다. **범위를 정했으면 코드가 그것을 따라야 한다.**
+    #
+    # 되살리려면 `OUT_OF_SCOPE`에서 서버리스를 빼는 것이 먼저다.
+    _METHODS = ("vm", "kubernetes")
+    conflicts: dict[str, list[str]] = {m: [] for m in _METHODS}
+    holds: dict[str, list[str]] = {m: [] for m in _METHODS}
 
     # --- VM ---
     vm_parts: list[str] = []
@@ -843,21 +849,6 @@ def _method_comparison_notes(
             "nodes run on the same spec economy, so the burst conflict is identical"
         )
 
-    # --- 서버리스 ---
-    sls_parts: list[str] = ["no hourly rate (billed per invocation and usage)"]
-    sls_types = _svcmap_types("serverlessFunction", provider)
-    if not sls_types:
-        conflicts["serverless"].append(
-            f"no matching type is included for {provider}"
-        )
-    if stateless is False:
-        conflicts["serverless"].append(
-            "stateless=false — possible conflict with an app that keeps state on the "
-            "instance (we inferred)"
-        )
-    elif stateless is None:
-        holds["serverless"].append("stateless unconfirmed — fit verdict held")
-
     def _fmt(name: str, parts: list[str], key: str) -> str:
         line = f"  {name}: " + (" · ".join(parts) if parts else "no axis to judge on")
         for c in conflicts[key]:
@@ -871,15 +862,15 @@ def _method_comparison_notes(
         "(currently assumed VM):",
         _fmt("VM", vm_parts, "vm"),
         _fmt("k8s", k8s_parts, "kubernetes"),
-        _fmt("Serverless", sls_parts, "serverless"),
+        "  Serverless: out of scope — we do not measure its dependencies "
+        "(depkb/vocabulary.OUT_OF_SCOPE), so we do not compare it",
     ])
     notes = [Note(body, ORIGIN_KB, "costkb·perfkb·sizingkb·svcmap")]
 
-    clean = [m for m in ("vm", "kubernetes", "serverless")
-             if not conflicts[m] and not holds[m]]
-    conflicted = [m for m in ("vm", "kubernetes", "serverless") if conflicts[m]]
+    clean = [m for m in _METHODS if not conflicts[m] and not holds[m]]
+    conflicted = [m for m in _METHODS if conflicts[m]]
     label = _METHOD_LABEL
-    if len(clean) == 1 and len(conflicted) == 2:
+    if len(clean) == 1 and len(conflicted) == len(_METHODS) - 1:
         notes.append(Note(
             f"Recommendation: {label[clean[0]]} — on the axes we measured it is the "
             "only one with no conflict. **This is our recommendation, not a verified "
@@ -890,7 +881,7 @@ def _method_comparison_notes(
         ))
         return notes, clean[0]
     else:
-        survivors = ", ".join(label[m] for m in ("vm", "kubernetes", "serverless")
+        survivors = ", ".join(label[m] for m in _METHODS
                               if not conflicts[m]) or "none"
         notes.append(Note(
             f"No recommendation — methods with no conflict: {survivors}. The measured "

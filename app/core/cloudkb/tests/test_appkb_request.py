@@ -25,11 +25,10 @@ _REQUIRED = tuple(f for f in request_schema()["required"] if f != "schemaVersion
 
 def _spec(**overrides) -> dict:
     base = {
-        "schemaVersion": "3",
+        "schemaVersion": "2",
         "provider": "aws",
         "region": "ap-northeast-2",
         "workloads": ["vm"],
-        "containerRegistry": "depkb-registry",
         "monthlyBudgetUSD": 500,
         "expectedConcurrentUsers": 200,
     }

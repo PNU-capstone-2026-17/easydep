@@ -187,19 +187,6 @@ ASKS: tuple[Ask, ...] = (
         basis=(Basis(CONCERN, "cn.cost-ceiling"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
     ),
-    Ask(
-        id="image.registry",
-        spec_field="containerRegistry",
-        tier=REQUIRED,
-        question="컨테이너 이미지를 어느 레지스트리에 올립니까? "
-                 "(이미 쓰는 것이 있으면 그 이름)",
-        opens="매니페스트의 이미지 주소 — 없으면 `<acr-name>` 자리표시자가 그대로 "
-              "나가서 **배포할 수 없는 YAML**이 된다(사슬을 끝까지 돌려 확인, "
-              "2026-08-01)",
-        basis=(Basis(CODE,
-                     "app/implementation/engine/deployment_renderer.py"
-                     "#Microsoft.ContainerRegistry/registries"),),
-    ),
     # ── 선택축 — 채우면 판정이 하나 열린다 ───────────────────────────────────
     Ask(
         id="spec.min_vcpu",
@@ -229,15 +216,6 @@ ASKS: tuple[Ask, ...] = (
         opens="버스트 적합 판정 — 없으면 버스트 경고가 경고로만 남고 이 앱에 "
               "문제인지는 판정하지 않는다",
         basis=(Basis(CONCERN, "cn.traffic-shape"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
-    ),
-    Ask(
-        id="state.stateless",
-        spec_field="stateless",
-        tier=SUGGESTED,
-        question="앱이 서버 안에 상태를 둡니까, 두지 않습니까?",
-        opens="서버리스 적합 판정",
-        basis=(Basis(CONCERN, "cn.stateless-process"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
     ),
     Ask(
@@ -309,6 +287,22 @@ NOT_ASKED: dict[str, str] = {
     "meta": "배관 — 부르는 쪽이 자기 맥락을 싣는 자리이지 우리가 묻는 값이 아니다",
     "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
                        "물을 것이 없다(join.region의 부산물)",
+}
+
+#: **요구사항 단계에서 안 받고 인계로 넘기는 것**과 그 이유(2026-08-01).
+#:
+#: 계약이 받는 것은 "계획과 판정에 필요한 값"이다. 아래는 **렌더 시점에만**
+#: 필요하고, 요구사항을 쓰는 사람이 그 시점에 알 이유가 없다. 받으면 어색하고
+#: 안 받으면 사라지므로, **인계 항목으로 명시해서 낸다**(`cloud_artifact`의
+#: `_handoff`) — 침묵과 인계는 다르다.
+HANDOFF: dict[str, str] = {
+    "containerRegistry": "컨테이너 이미지를 올릴 레지스트리. 이미지 태그와 같은 "
+                         "종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 "
+                         "받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 "
+                         "남고, 그 자리표시자가 곧 인계 표시다",
+    "ingressController": "인그레스 컨트롤러와 클래스. 우리 실측은 '컨트롤러를 "
+                         "깔지는 사람이 정한다'까지만 말한다(k8sIngress 라운드)",
+    "tlsCertificate": "TLS 인증서·시크릿. 운영·보안 결정이다",
 }
 
 

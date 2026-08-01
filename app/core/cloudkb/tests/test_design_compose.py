@@ -276,34 +276,33 @@ def _comparison_notes(plan):
             or n.source == "method-comparison"]
 
 
-def test_recommendation_only_when_exactly_one_method_survives(design) -> None:
-    """steady(버스트 상충으로 VM·k8s 탈락) + stateless=true(서버리스 무상충)일
-    때만 권고가 난다 — 그리고 권고는 hedge된 우리 권고다."""
-    design["requirements"].update({"trafficPattern": "steady", "stateless": True})
-    notes = _comparison_notes(compose(design))
-    verdict = notes[-1]
-    assert "Recommendation: serverless" in flat(verdict.text)
-    assert verdict.origin == ORIGIN_INFERRED
-    assert "not a verified fact" in flat(verdict.text)
-    # 판정에 없는 결정 입력을 명시
-    assert "outside the measured axes" in flat(verdict.text)
+def test_serverless_is_not_compared_because_it_is_out_of_scope(design) -> None:
+    """**범위를 정했으면 코드가 따른다**(2026-08-01, 사용자 지적).
+
+    서버리스를 범위 밖으로 선언해 놓고(`depkb/vocabulary.OUT_OF_SCOPE`) 방식
+    비교에는 남겨 두는 것이 앞뒤가 안 맞았다 — 그리고 그 비교를 유지하려고
+    `stateless`를 계약에 붙들고 있었다.
+
+    빼되 **침묵하지 않는다**: 비교표가 "범위 밖이라 비교하지 않는다"고 적는다.
+    """
+    body = flat(_comparison_notes(compose(design))[0].text)
+    assert "Serverless: out of scope" in body
+    assert "OUT_OF_SCOPE" in body
+    assert "stateless" not in body
 
 
 def test_no_recommendation_when_all_methods_conflict(design) -> None:
     """전멸이면 임의로 하나를 고르지 않는다."""
-    design["requirements"].update({"trafficPattern": "steady", "stateless": False})
+    design["requirements"].update({"trafficPattern": "steady"})
     notes = _comparison_notes(compose(design))
     assert "No recommendation" in flat(notes[-1].text)
-    assert "methods with no conflict: none" in flat(notes[-1].text)
 
 
 def test_sparse_requirements_keep_all_options_open(design) -> None:
-    """판별 사실이 없으면 선택지를 유지하고, stateless 미확인은 보류로 표시된다."""
+    """판별 사실이 없으면 선택지를 유지한다."""
     notes = _comparison_notes(compose(design))
-    body = flat(notes[0].text)
-    assert "stateless unconfirmed" in body
     assert ("No recommendation" in flat(notes[-1].text)
-            and "VM, k8s, serverless" in flat(notes[-1].text))
+            and "VM, k8s" in flat(notes[-1].text))
 
 
 def test_all_hinted_components_get_no_comparison(design) -> None:
@@ -535,11 +534,18 @@ def test_steady_traffic_turns_the_burst_warning_into_a_verdict(design) -> None:
     assert "trafficPattern(steady): **conflict**" in text
 
 
-def test_stateful_serverless_hint_is_flagged_in_the_answer(design) -> None:
-    design["requirements"]["stateless"] = False
+def test_a_serverless_hint_still_works_but_gets_no_fit_verdict(design) -> None:
+    """설계자가 서버리스를 지정하면 **계획은 따른다** — 다만 적합 판정은 없다.
+
+    범위 밖(`depkb/vocabulary.OUT_OF_SCOPE`)이라 우리가 그 의존을 재지 않았고,
+    그래서 재지 않은 것으로 판정을 낼 수 없다. 지정을 막지는 않는다 — 못 재는
+    것과 못 쓰게 하는 것은 다르다.
+    """
     design["components"][0]["deployHint"] = {"compute": "serverlessFunction"}
     text = flat(deployment_answer(design, diagram=False))
-    assert "possible conflict" in text and "we inferred" in text
+    assert "The designer specified serverlessFunction" in text
+    # 적합 판정은 안 난다(그 판정의 입력이던 stateless를 더 이상 안 받는다).
+    assert "stateless" not in text
 
 
 # --- 답의 계약 -----------------------------------------------------------------
@@ -595,7 +601,7 @@ def _steady_stateless_design() -> dict:
         }],
         "requirements": {
             "provider": "aws", "region": "ap-northeast-2",
-            "trafficPattern": "steady", "stateless": True,
+            "trafficPattern": "steady",
         },
     }
 

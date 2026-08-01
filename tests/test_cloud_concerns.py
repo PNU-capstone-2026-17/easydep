@@ -114,7 +114,12 @@ def test_the_three_way_split_covers_every_concern():
     boundary = [c for c in concerns.CONCERNS if c.out_of_scope]
 
     assert len(wired) + len(pending) + len(boundary) == len(concerns.CONCERNS)
-    assert (len(wired), len(pending), len(boundary)) == (7, 14, 8), (
+    # **2026-08-01에 움직였다**: 연결 7→6 · 경계 8→9. `cn.stateless-process`가
+    # 소비자를 잃었다 — `RESOURCE_SPEC.stateless`가 계약에서 빠졌고, 그 값의
+    # 유일한 판정이 서버리스 적합인데 서버리스가 범위 밖이다. **관심사 자체는
+    # 유효하다**(질문은 여전히 요구사항 단계의 것이다) — 다만 우리 계획이 그
+    # 답을 소비할 자리가 없어서 경계로 옮겼다.
+    assert (len(wired), len(pending), len(boundary)) == (6, 14, 9), (
         f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
     )
 

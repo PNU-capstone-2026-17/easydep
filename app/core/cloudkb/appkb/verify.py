@@ -256,42 +256,13 @@ def verify_against_requirements(
                 "figure (the provider or region is outside the carbon dataset)"
             )
 
-    stateless = req.get("stateless")
-    serverless = sorted(
-        n.id for n in plan.nodes if n.archetype == "app::serverlessFunction"
-    )
-    if stateless is False and serverless:
-        out.append(
-            f"stateless(false) × serverless ({', '.join(serverless)}): **possible "
-            "conflict (we inferred)** — a serverless function is an execution model "
-            "that keeps no state on the instance, so moving the state to managed "
-            "storage is a redesign you will need"
-        )
-    elif stateless is False:
-        # **2026-08-01 정정.** 앞 문장은 "컴퓨트에 둔 상태는 재생성에 사라진다"고
-        # 단정했는데 **우리 실측이 그것을 반박한다**: azure OS 디스크와 gcp 부트
-        # 디스크는 VM을 지워도 남는다(vm→disk lifecycle, 3사 중 둘). 단정 대신
-        # 실제로 재는 것을 적는다 — 디스크가 남는 것과 상태가 보존되는 것은 다른
-        # 사실이고(스케일 아웃에서는 인스턴스마다 다른 디스크다), 그 구별이
-        # 사라지면 사용자가 "안전하다"로 읽는다.
-        out.append(
-            "stateless(false): the plan's storage node is where state belongs. "
-            "Note that a disk surviving is not the same as state being preserved — "
-            "we measured that the OS/boot disk outlives the VM on azure and gcp, "
-            "but scaling out gives each instance its own disk (we inferred the "
-            "consequence; the disk lifetime is measured)"
-        )
-    elif stateless is None and serverless:
-        # 서버리스가 계획에 있는데 상태성 주장을 못 받았다 — 침묵을 적합으로
-        # 읽지 않도록 미확인을 명시한다.
-        out.append(
-            f"Statefulness unconfirmed: serverless ({', '.join(serverless)}) is in the "
-            "plan but we were not told whether it is stateless"
-        )
-    elif stateless is True:
-        out.append(
-            "stateless(true): no known conflict with the plan — recorded as a claim"
-        )
+    # **stateless는 2026-08-01에 계약에서 빠졌다.** 그 값의 유일한 소비자가
+    # 서버리스 적합 판정인데, 서버리스를 범위 밖으로 선언해 놓고
+    # (`depkb/vocabulary.OUT_OF_SCOPE`) 그 경로를 살려 유지 근거로 삼은 것이
+    # 앞뒤가 안 맞았다(사용자 지적). 판정도 함께 걷어낸다 — 받지 않는 값으로
+    # 서는 판정을 남겨 두면 그 자리가 영영 침묵한다.
+    #
+    # 되살리려면 서버리스를 범위 안으로 되돌리는 것이 먼저다.
 
     residency = req.get("dataResidency")
     if residency:
@@ -346,7 +317,6 @@ _CLOSES = {
     "monthlyBudgetUSD": "the budget verdict",
     "minVCpu": "the spec choice (without a floor no spec is chosen at all)",
     "trafficPattern": "the burst-fit verdict",
-    "stateless": "the serverless-fit verdict",
     "multiZone": "the availability-zone verdict",
 }
 
