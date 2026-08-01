@@ -178,18 +178,12 @@ ASKS: tuple[Ask, ...] = (
               "닿지 못한다",
         basis=(Basis(CODE, "app/core/infra_planning.py#plan_for_anchors"),),
     ),
-    Ask(
-        id="topology.existing",
-        spec_field="existingResources",
-        tier=CONTEXT,
-        question="이미 갖고 있어서 새로 만들지 않을 것이 있습니까? "
-                 "(예: 기존 VPC·서브넷에 얹는 경우)",
-        opens="생성 순서에서 빠지고 삭제 순서에서도 빠진다 — 실측 폐포는 "
-              "**'무엇이 필요한가'는 알아도 '사용자가 이미 갖고 있는가'는 "
-              "원리적으로 모른다.** 안 물으면 있는 것을 또 만들라 하고, "
-              "정리할 때 남의 것을 지우라 한다",
-        basis=(Basis(CODE, "app/core/plan_enrich.py#enrich"),),
-    ),
+    # **existingResources는 2026-08-02에 계약에서 빠졌다 — 범위 결정(사용자).**
+    # 이 시스템의 대상은 **신규 앱 개발**이라 인계받을 기존 자원이 없다. 근거
+    # 부재(탄소)와 다른 사유다: "폐포는 이미 있는가를 원리적으로 모른다"는 논리는
+    # 유효하되, 그 질문이 서는 전제(브라운필드)가 범위 밖이다. 되살리려면 범위
+    # 확장이 먼저다 — 그때는 클린룸 계약 재도출의 두 논거(필수 승격으로 없음/모름
+    # 구분 · {종류, 식별자} 쌍)도 함께 볼 것(archive/cleanroom-battery-2026-08-02.md).
     Ask(
         id="budget.monthly",
         spec_field="monthlyBudgetUSD",

@@ -376,9 +376,7 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
 
     # ① 실측이 필수라는데 계획에 없는 자원. **가장 센 종류다** — 그 계획은
     #    apply가 거부한다(생성 거부 코드가 실측의 오라클이었다).
-    # 재사용 자원은 **없는 것이 아니라 이미 있는 것**이다 — 필수 누락으로 세면
-    # 사용자가 "있다"고 답한 것을 결함으로 되돌려준다.
-    stated = set(carried.create_order) | set(carried.reused) if carried else set()
+    stated = set(carried.create_order) if carried else set()
     for item in provision["createOrder"]:
         if item["required"] and item["id"] not in drawn and item["id"] not in stated:
             findings.append(Finding(

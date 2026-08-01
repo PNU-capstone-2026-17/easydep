@@ -168,52 +168,27 @@ def test_the_needs_table_reads_the_class_prefix_not_a_guess() -> None:
     assert not _judging_needs("AMI는 디스크가 아니라 인스턴스에서 나온다")
 
 
-# --- 이미 갖고 있는 것 (제로베이스 재도출, 2026-08-01) ---------------------------
+# --- 기존 자원 인계는 범위 밖이다 (범위 결정, 2026-08-02) -----------------------
 
-def test_an_existing_resource_is_neither_created_nor_deleted() -> None:
-    """**실측 폐포는 "이미 있는가"를 원리적으로 모른다** — 물어야만 아는 값이다.
+def test_existing_resource_handover_is_gone_from_the_whole_path() -> None:
+    """**신규 앱 개발 전제 — 인계받을 기존 자원이 없다**(사용자 결정).
 
-    계약을 제로베이스에서 다시 도출하다 나왔다: 사슬이 소비하는 값마다 "누가
-    아는가"를 물었더니 11개가 사용자만 아는 것이었고, 그중 열은 이미 계약에
-    있었는데 **이것만 없었다**.
-
-    안 물으면 있는 VPC를 또 만들라 하고, 정리할 때 **남의 자원을 지우라** 한다.
+    8-01 도출("폐포는 이미 있는가를 원리적으로 모른다")의 논리는 유효하되, 그
+    질문이 서는 전제(브라운필드)가 범위 밖이다. 범위를 정했으면 코드가 따라야
+    한다(stateless 전례) — 계약 칸·enrich 파라미터·Measured.reused까지 경로
+    전체가 없어야 한다. 어느 하나가 남으면 받지 않는 값의 뒷문이 된다.
     """
-    plan = enrich(_plan(
-        PlanNode("k8s", "k8s", "compute", "inferred", host="Kubernetes node"),
-        PlanNode("net", "net", "shared", "kb", type_id="aws::AWS::EC2::VPC"),
-        PlanNode("sub", "sub", "shared", "kb", type_id="aws::AWS::EC2::Subnet"),
-    ), "aws", "-", existing=("network", "subnet"))
-    measured = plan.measured
-    assert "network" not in measured.create_order, measured.create_order
-    assert "subnet" not in measured.create_order, measured.create_order
-    assert "k8sCluster" in measured.create_order
-    # 지우지도 않는다 — 우리가 안 만든 것이다.
-    assert not [p for p in measured.delete_before
-                if "network" in p or "subnet" in p], measured.delete_before
-    assert measured.reused == ("network", "subnet")
+    import inspect
+    import json
+    from pathlib import Path
 
+    from app.core.plan_enrich import enrich as enrich_fn
 
-def test_reused_is_said_not_silently_dropped() -> None:
-    """순서에서 빠진 이유가 **"필요 없다"가 아니라 "이미 있다"**임을 말한다."""
-    plan = enrich(_plan(
-        PlanNode("k8s", "k8s", "compute", "inferred", host="Kubernetes node"),
-        PlanNode("net", "net", "shared", "kb", type_id="aws::AWS::EC2::VPC"),
-    ), "aws", "-", existing=("network",))
-    text = render(plan.measured)
-    assert "you already have them" in text
-    assert "they are still required" in text
+    assert "existing" not in inspect.signature(enrich_fn).parameters
+    from app.core.cloudkb.appkb.plan import Measured
 
-
-def test_a_reused_resource_is_not_counted_as_missing() -> None:
-    """사용자가 "있다"고 답한 것을 결함으로 되돌려주지 않는다."""
-    from app.core import plan_crosscheck
-
-    plan = enrich(_plan(
-        PlanNode("k8s", "k8s", "compute", "inferred", host="Kubernetes node"),
-        PlanNode("sub1", "sub1", "shared", "kb", type_id="aws::AWS::EC2::Subnet"),
-        PlanNode("sub2", "sub2", "shared", "kb", type_id="aws::AWS::EC2::Subnet"),
-    ), "aws", "-", existing=("network", "iamRole"))
-    missing = [f for f in plan_crosscheck.crosscheck(plan, "aws").findings
-               if f.kind == plan_crosscheck.MISSING_REQUIRED]
-    assert not missing, missing
+    assert not hasattr(Measured(csp="aws"), "reused")
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "appkb" / "request.json")
+        .read_text(encoding="utf-8"))
+    assert "existingResources" not in schema["properties"]

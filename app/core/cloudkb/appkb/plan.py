@@ -203,9 +203,8 @@ class Measured:
     checks: tuple[tuple[str, str, str, dict | None], ...] = ()
     #: 계획에 있는데 우리가 아무 말도 못 하는 자원. **침묵을 '문제없다'로 읽지 말 것.**
     unmeasured: tuple[str, ...] = ()
-    #: 사용자가 이미 갖고 있어 **만들지도 지우지도 않는** 자원. 순서에서 빠진
-    #: 이유가 "필요 없다"가 아니라 "이미 있다"임을 말한다 — 둘은 다른 사실이다.
-    reused: tuple[str, ...] = ()
+    # `reused`(기존 자원 인계)는 2026-08-02 범위 결정으로 걷었다 — 신규 앱 개발
+    # 전제라 인계받을 자원이 없다(계약 existingResources 제거와 한 몸).
 
 
 @dataclass
@@ -278,6 +277,5 @@ class DeploymentPlan:
                     {"subject": s, "object": o, "rule": r, "machine": m}
                     for s, o, r, m in self.measured.checks],
                 "unmeasured": list(self.measured.unmeasured),
-                "reused": list(self.measured.reused),
             },
         }
