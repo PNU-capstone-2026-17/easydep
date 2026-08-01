@@ -116,6 +116,7 @@ def provision_view(intent: InfraIntent) -> dict:
     실제와 어긋난다.
     """
     auto = {a.id: a.notice for a in intent.autoFilled}
+    auto_kind = {a.id: a.kind for a in intent.autoFilled}
     create = [{"id": rid,
                "required": any(r.id == rid and r.role in ("required", "anchor")
                                for r in intent.resources),
@@ -138,7 +139,11 @@ def provision_view(intent: InfraIntent) -> dict:
         # 클러스터가 CREATING인 채 다음을 시도한다.
         "waitFor": _wait_for(intent),
         "deleteBefore": [list(p) for p in intent.deleteBefore],
-        "doNotCreate": [{"id": k, "why": v} for k, v in sorted(auto.items())],
+        # `kind`를 함께 낸다 — `server-implicit`(대신 만든다)와 `server-default`
+        # (안 정하면 기본값)는 **다른 사실**이고, 소비자가 갈라야 한다. 문장만
+        # 주면 문장을 파싱하게 된다.
+        "doNotCreate": [{"id": k, "why": v, "kind": auto_kind.get(k, "")}
+                        for k, v in sorted(auto.items())],
         # 동반 정리(실측) — 합성물은 주체 삭제가 함께 지운다. IaC가 이 자원의
         # 생성·삭제 단계를 내면 안 된다(생성은 이중, 삭제는 이미 없어 실패).
         "cleanupCascades": [

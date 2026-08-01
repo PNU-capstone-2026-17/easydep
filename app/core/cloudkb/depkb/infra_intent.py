@@ -54,6 +54,12 @@ class Resource:
 class AutoFilled:
     id: str
     notice: str
+    #: 술어 부류 — `server-default`(안 정하면 기본값) 또는 `server-implicit`
+    #: (아예 대신 만든다). **둘은 다른 사실이다**: 앞은 우리가 정해도 되고,
+    #: 뒤는 우리가 만들면 이중 생성이다. 고지 문장이 둘을 구별하긴 하지만 문장은
+    #: 사람이 읽는 말이라, 기계로 가르려면 부류가 있어야 한다
+    #: (`plan_crosscheck`가 이걸 필요로 해서 드러났다 — 2026-08-01).
+    kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,10 +187,11 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
             resources.setdefault(att.id, Resource(id=att.id, role="attachable",
                                                   detail=att.detail))
             if att.autoFilled:
-                kind = _classify(att.detail)
+                predicate_class = att.detail.split(":")[0]
                 autofilled.setdefault(att.id, AutoFilled(
-                    id=att.id, notice=_sentence(_NOTICE, att.detail.split(":")[0],
-                                                object=att.id, csp=csp)))
+                    id=att.id, kind=predicate_class,
+                    notice=_sentence(_NOTICE, predicate_class,
+                                     object=att.id, csp=csp)))
         for d in c.decisions:
             subject, _, obj = d.about.partition("→")
             decisions.append(Decision(
