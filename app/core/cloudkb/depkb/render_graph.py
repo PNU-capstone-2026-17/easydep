@@ -3,10 +3,29 @@
 **소비 전용 뷰다** — 판정·증거는 claims.json이 진실이고, 여기서는 그것을
 읽기 좋게 그릴 뿐이다. 배치(층)는 우리 구성(가독 목적)이고 판정에 영향이 없다.
 
+## 왜 한 그림이 아니라 세 그림인가
+
+의존은 한 관계가 아니라 **질문 셋**이다(존재·생명주기·기능). 한 화면에 겹쳐
+그리던 이전 판은 존재 간선 위에 🔒/♻/ƒ 배지를 얹었는데, 그러면 이 분석의
+요점 — *같은 쌍인데 질문마다 답이 다르다* — 가 배지 하나로 뭉개진다.
+
+그래서 **같은 배치의 판 셋을 나란히** 놓는다. 좌표가 같으므로 같은 자리를
+가로로 훑으면 축별 차이가 바로 보인다. 화면(pan/zoom)과 선택은 세 판이
+공유한다.
+
+세 축이 모두 실측된 쌍은 82쌍 중 둘뿐이다(`azure nic→publicIp`,
+`azure vm→disk`). 이 희소함 자체가 결과이므로, 간선을 고르면 상세 패널이
+**축별 대조표**를 내고 빈 칸을 "실측 없음"으로 명시한다 — 빈칸을 "의존
+없음"으로 읽지 않게 하려는 것이다.
+
+## 연산 성질
+
+`operations.json`의 사영으로 ⏳ 배지를 **노드**에 단다. 간선이 아닌 이유는
+비동기성이 (간선×CSP×질문)이 아니라 **자원 하나의 성질**이기 때문이다.
+미표시는 "동기"가 아니라 "안 재봤다"이고, 그 규율을 배지 클릭 시 밝힌다.
+
 - 시각화는 cytoscape.js(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
   오프라인이면 안내 문구가 뜬다(데이터 자체는 HTML에 내장돼 유실은 없다).
-- CSP 탭 · 판정별 간선 필터 · 생명주기 배지(🔒 삭제 보호 / ♻ 동반 정리) ·
-  노드 드래그 · 클릭 상세(술어·note·증거의 실험/스텝 좌표).
 - 선언 술어(`a|b|c` 합집합 간선)는 선으로 그리면 겹침만 늘어 **주체 노드
   상세에 싣는다.**
 
@@ -33,8 +52,14 @@ LAYERS: list[list[str]] = [
 X_GAP, Y_GAP = 190, 150
 
 CSPS = ("aws", "azure", "gcp")
-KO = {"required": "필수", "optional": "선택", "holds": "생명주기 결속",
-      "unknown": "미판정"}
+#: 질문 축 — 판 셋의 순서이자 상세 대조표의 행 순서.
+AXES = ("existence", "lifecycle", "function")
+AXIS_LABEL = {"existence": "존재", "lifecycle": "생명주기", "function": "기능"}
+AXIS_ASK = {
+    "existence": "A를 만들려면 B가 먼저 있어야 하는가",
+    "lifecycle": "B를 지우려 할 때 A가 무엇을 하는가",
+    "function": "B를 떼면 A가 계속 동작하는가",
+}
 
 #: 문외한용 자원 설명 — **우리 작성**(판정 아님). 실측에서 온 문장은 그렇다고
 #: 적는다. 뷰어 노드 상세의 "이게 뭔가요" 칸에 실린다.
@@ -167,7 +192,8 @@ def _positions() -> dict[str, tuple[int, int]]:
     return pos
 
 
-def _edge_class(claim: dict) -> str:
+def _existence_class(claim: dict) -> str:
+    """존재 판 간선의 색·선 — 판정과 술어 부류를 섞은 **우리 분류**."""
     pred = claim.get("predicate") or ""
     if pred.split(":")[0].endswith(("조건부", "조건")) and not pred.startswith(
             ("이름 조건", "배치 조건", "수명 조건")):
@@ -179,105 +205,129 @@ def _edge_class(claim: dict) -> str:
     return "opt"
 
 
+def _axis_class(claim: dict) -> str:
+    """축별 간선 부류. 생명주기는 두 기제가 **반대**라 반드시 갈라 그린다.
+
+    `deleteBefore`(쓰는 동안 대상 삭제 거부)와 `동반 정리:`(주체 삭제가 합성물을
+    함께 지움)는 방향이 반대인 사실이다 — 한 색으로 그리면 IaC가 뒤집어 읽는다.
+    """
+    if claim["question"] == "existence":
+        return _existence_class(claim)
+    if claim["question"] == "function":
+        return "func"
+    return "casc" if (claim.get("predicate") or "").startswith("동반 정리:") \
+        else "life"
+
+
+def _claim_block(c: dict) -> dict:
+    """상세 패널이 쓰는 주장 한 건의 **전체 기록** — 요약하지 않는다."""
+    return {"verdict": c["verdict"], "predicate": c.get("predicate"),
+            "note": c.get("note"), "oracle": c["oracle"],
+            "evidence": c["evidence"], "cls": _axis_class(c)}
+
+
+def _operations() -> dict[str, dict[str, list[dict]]]:
+    """`operations.json` → {csp: {resource: [연산…]}}. 없으면 빈 사영."""
+    path = _HERE / "operations.json"
+    if not path.exists():
+        return {c: {} for c in CSPS}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, dict[str, list[dict]]] = {c: {} for c in CSPS}
+    for o in doc["operations"]:
+        out.setdefault(o["csp"], {}).setdefault(o["resource"], []).append(
+            {"op": o["op"], "status": o["status"],
+             "doneSignal": o["doneSignal"],
+             "intermediate": o.get("intermediateObserved"),
+             "evidence": o["evidence"]})
+    return out
+
+
 def _build_data() -> dict:
     doc = json.loads((_HERE / "claims.json").read_text(encoding="utf-8"))
     pos = _positions()
-    out: dict[str, dict] = {"positions": {k: {"x": x, "y": y}
-                                          for k, (x, y) in pos.items()},
-                            "csps": {}}
+    ops = _operations()
+    out: dict = {"positions": {k: {"x": x, "y": y} for k, (x, y) in pos.items()},
+                 "axisLabel": AXIS_LABEL, "axisAsk": AXIS_ASK, "csps": {}}
+    #: 세 축이 모두 실측된 쌍 — 희소함 자체가 결과다(상세 패널이 표시한다).
+    triples: list[str] = []
     for csp in CSPS:
         rows = [c for c in doc["claims"] if c["csp"] == csp]
-        exist = [c for c in rows if c["question"] == "existence"]
-        life = {(c["subject"], c["object"]): c for c in rows
-                if c["question"] == "lifecycle"}
-        funcs = {(c["subject"], c["object"]): c for c in rows
-                 if c["question"] == "function"}
-        edges, disjunctions = [], []
-        touched: set[str] = set()
-
-        def func_block(fc: dict | None) -> dict | None:
-            if fc is None:
-                return None
-            return {"verdict": fc["verdict"], "predicate": fc.get("predicate"),
-                    "note": fc.get("note"), "oracle": fc["oracle"],
-                    "evidence": fc["evidence"]}
-        for c in exist:
+        axes: dict[str, list[dict]] = {a: [] for a in AXES}
+        #: 쌍 → 축 → 주장. 상세의 축별 대조표가 여기서 나온다.
+        pairs: dict[str, dict[str, dict]] = {}
+        disjunctions = [c for c in rows
+                        if c["question"] == "existence" and "|" in c["object"]]
+        for c in rows:
             if "|" in c["object"]:
-                disjunctions.append(c)  # 노드 상세로 — 선으로 그리면 겹친다
-                touched.add(c["subject"])
-                continue
-            lc = life.get((c["subject"], c["object"]))
-            # 증거는 **전부** 싣는다 — 스키마 인용(cite·form·requiredInSchema)
-            # 포함. 상세 패널이 요약이 아니라 claims의 전체 기록이어야 한다.
-            edges.append({
-                "s": c["subject"], "o": c["object"],
-                "cls": _edge_class(c), "verdict": c["verdict"],
-                "predicate": c.get("predicate"), "note": c.get("note"),
-                "oracle": c["oracle"],
-                "evidence": c["evidence"],
-                "function": func_block(
-                    funcs.pop((c["subject"], c["object"]), None)),
-                "lifecycle": None if lc is None else {
-                    "verdict": lc["verdict"],
-                    "cascade": (lc.get("predicate") or "").startswith("동반 정리:"),
-                    "predicate": lc.get("predicate"), "note": lc.get("note"),
-                    "oracle": lc["oracle"],
-                    "evidence": lc["evidence"],
-                },
-            })
-            touched.update((c["subject"], c["object"]))
-        # 기능 질문만 실측된 쌍(gcp·aws vm→publicIp) — 존재 간선이 없어도
-        # 그린다. 없으면 실측이 뷰에서 사라진다.
-        for (s, o), fc in sorted(funcs.items()):
-            edges.append({"s": s, "o": o, "cls": "func", "verdict": None,
-                          "predicate": None, "note": None, "oracle": fc["oracle"],
-                          "evidence": [], "function": func_block(fc),
-                          "lifecycle": None})
-            touched.update((s, o))
-        nodes = [{"id": n, "ghost": n not in touched,
-                  "desc": DESC.get(n, ""), "names": CSP_NAMES.get(n, ""),
+                continue  # 선언 술어는 선으로 그리지 않는다 — 노드 상세로
+            key = f'{c["subject"]}→{c["object"]}'
+            block = _claim_block(c)
+            pairs.setdefault(key, {})[c["question"]] = block
+            axes[c["question"]].append(
+                {"s": c["subject"], "o": c["object"], "key": key, **block})
+        for key, byq in pairs.items():
+            if len(byq) == 3:
+                triples.append(f"{csp} {key}")
+        touched = {a: {e["s"] for e in axes[a]} | {e["o"] for e in axes[a]}
+                   for a in AXES}
+        nodes = [{"id": n, "desc": DESC.get(n, ""), "names": CSP_NAMES.get(n, ""),
+                  "ops": ops.get(csp, {}).get(n, []),
+                  "inAxis": {a: n in touched[a] for a in AXES},
                   "disjunctions": [
                       {"object": d["object"], "verdict": d["verdict"],
                        "predicate": d.get("predicate"), "note": d.get("note")}
                       for d in disjunctions if d["subject"] == n]}
                  for n in pos]
-        out["csps"][csp] = {"nodes": nodes, "edges": edges}
+        out["csps"][csp] = {"nodes": nodes, "axes": axes, "pairs": pairs,
+                            "counts": {a: len(axes[a]) for a in AXES}}
+    out["triples"] = sorted(triples)
     return out
 
 
 _PAGE = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
-<title>depkb 의존성 그래프 — 3사 실측</title>
+<title>depkb 의존성 그래프 — 질문 축 3판</title>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <style>
   :root { --ink:#1c1e21; --sub:#5b6572; --line:#d7dce3; --bg:#f6f7f9;
           --req:#0a7d52; --opt:#8a94a2; --auto:#2563c4; --cond:#c26a12;
-          --func:#8b3fc6; }
+          --life:#b3261e; --casc:#0f7f8c; --func:#8b3fc6; }
   * { box-sizing:border-box }
   body { margin:0; font:14px/1.5 "Segoe UI",system-ui,sans-serif;
          color:var(--ink); background:var(--bg); height:100vh;
          display:flex; flex-direction:column }
-  header { padding:10px 16px; background:#fff; border-bottom:1px solid var(--line);
-           display:flex; align-items:center; gap:16px; flex-wrap:wrap }
-  h1 { font-size:15px; margin:0 12px 0 0 }
+  header { padding:8px 16px; background:#fff; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:14px; flex-wrap:wrap }
+  h1 { font-size:15px; margin:0 8px 0 0 }
   .tabs button { border:1px solid var(--line); background:#fff; padding:5px 14px;
                  cursor:pointer; font:inherit }
   .tabs button:first-child { border-radius:6px 0 0 6px }
   .tabs button:last-child { border-radius:0 6px 6px 0 }
   .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink) }
   label.f { display:inline-flex; align-items:center; gap:4px; color:var(--sub);
-            cursor:pointer; user-select:none }
-  .sw { display:inline-block; width:22px; height:0; border-top:3px solid }
+            cursor:pointer; user-select:none; font-size:12px }
+  .sw { display:inline-block; width:20px; height:0; border-top:3px solid }
   .sw.req { border-color:var(--req) }
   .sw.opt { border-top-style:dashed; border-color:var(--opt) }
   .sw.auto { border-top-style:dotted; border-color:var(--auto) }
   .sw.cond { border-top-style:dashed; border-color:var(--cond) }
+  .sw.life { border-color:var(--life) }
+  .sw.casc { border-top-style:dashed; border-color:var(--casc) }
   .sw.func { border-top-style:dashed; border-color:var(--func) }
   #reset { margin-left:auto; border:1px solid var(--line); background:#fff;
            padding:5px 12px; border-radius:6px; cursor:pointer; font:inherit }
   main { flex:1; display:flex; min-height:0 }
-  #cy { flex:1; background:#fff }
-  aside { width:340px; border-left:1px solid var(--line); background:#fff;
+  #panes { flex:1; display:flex; min-width:0 }
+  .pane { flex:1; min-width:0; display:flex; flex-direction:column;
+          border-right:1px solid var(--line); background:#fff }
+  .pane > .cyBox { flex:1; min-height:0 }
+  .ph { padding:6px 10px; border-bottom:1px solid var(--line);
+        display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+        background:#fbfcfd }
+  .ph b { font-size:13px }
+  .ph .ask { color:var(--sub); font-size:11px }
+  .ph .n { margin-left:auto; color:var(--sub); font-size:12px }
+  aside { width:370px; border-left:1px solid var(--line); background:#fff;
           padding:14px 16px; overflow-y:auto }
   aside h2 { font-size:14px; margin:0 0 6px }
   aside .empty { color:var(--sub) }
@@ -287,10 +337,18 @@ _PAGE = r"""<!doctype html>
   .chip.opt { color:var(--sub) }
   .chip.auto { color:var(--auto); border-color:var(--auto) }
   .chip.cond { color:var(--cond); border-color:var(--cond) }
+  .chip.life { color:var(--life); border-color:var(--life) }
+  .chip.casc { color:var(--casc); border-color:var(--casc) }
+  .chip.func { color:var(--func); border-color:var(--func) }
   .kv { margin:8px 0; padding:8px 10px; background:var(--bg); border-radius:8px;
         font-size:13px; overflow-wrap:anywhere }
   .kv b { display:block; font-size:12px; color:var(--sub); margin-bottom:2px }
   .ev { font-family:Consolas,monospace; font-size:12px; color:var(--sub) }
+  table.ax { width:100%; border-collapse:collapse; font-size:12px; margin:6px 0 }
+  table.ax th, table.ax td { border:1px solid var(--line); padding:4px 6px;
+                             text-align:left; vertical-align:top }
+  table.ax th { width:66px; background:var(--bg); font-weight:600 }
+  table.ax td.none { color:#9aa4b1 }
   footer { padding:6px 16px; color:var(--sub); font-size:12px; background:#fff;
            border-top:1px solid var(--line) }
   #offline { display:none; padding:40px; color:var(--sub) }
@@ -298,104 +356,167 @@ _PAGE = r"""<!doctype html>
 <header>
   <h1>depkb 의존성 그래프</h1>
   <span class="tabs" id="tabs"></span>
-  <label class="f"><input type="checkbox" data-cls="req" checked><span class="sw req"></span>필수</label>
-  <label class="f"><input type="checkbox" data-cls="opt" checked><span class="sw opt"></span>선택</label>
-  <label class="f"><input type="checkbox" data-cls="auto" checked><span class="sw auto"></span>서버가 채움</label>
-  <label class="f"><input type="checkbox" data-cls="cond" checked><span class="sw cond"></span>조건부</label>
-  <label class="f"><input type="checkbox" data-cls="func" checked><span class="sw func"></span>기능 결속만</label>
-  <label class="f"><input type="checkbox" id="lifeToggle" checked>생명주기 배지 🔒/♻</label>
+  <label class="f"><input type="checkbox" id="opToggle" checked>⏳ 연산 배지</label>
+  <label class="f"><input type="checkbox" id="ghostToggle" checked>간선 없는 노드</label>
+  <label class="f"><input type="checkbox" id="syncToggle" checked>세 판 화면 동기화</label>
   <button id="reset">배치 초기화</button>
 </header>
 <main>
-  <div id="cy"></div>
+  <div id="panes"></div>
   <div id="offline">cytoscape.js(CDN)를 불러오지 못했습니다 — 보려면 인터넷이
     필요합니다. 데이터는 이 파일에 내장돼 있습니다(&lt;script id="data"&gt;).</div>
-  <aside id="panel"><h2>상세</h2><div class="empty">노드나 간선을 클릭하세요.
-    화살표 A→B는 “A가 B를 요구/합성한다”입니다(포함 아님).<br><br>
-    🔒 = 삭제 보호(쓰는 동안 대상 삭제 거부) · ♻ = 동반 정리(주체 삭제가
-    합성물을 함께 지움 — 직접 만들지도 지우지도 말 것)</div></aside>
+  <aside id="panel"></aside>
 </main>
 <footer>판정·증거의 진실은 claims.json — 이 페이지는 사영이다. 배치는 가독
-목적의 우리 구성. 노드는 드래그로 옮길 수 있다.</footer>
+목적의 우리 구성이고 세 판이 좌표를 공유한다(가로로 훑으면 축별 차이가 보인다).</footer>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const DATA = JSON.parse(document.getElementById('data').textContent);
+const AXES = ['existence','lifecycle','function'];
 if (typeof cytoscape === 'undefined') {
-  document.getElementById('cy').style.display='none';
+  document.getElementById('panes').style.display='none';
   document.getElementById('offline').style.display='block';
 } else {
   const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12',
-                  func:'#8b3fc6'};
-  let cy = null, current = 'azure';
+                  life:'#b3261e', casc:'#0f7f8c', func:'#8b3fc6'};
+  const CLS_KO = {req:'필수', opt:'선택', auto:'서버가 채움', cond:'조건부',
+                  life:'🔒 삭제 보호', casc:'♻ 동반 정리', func:'ƒ 기능 결속'};
+  // 판마다 다른 범례 — 존재 판만 넷이고, 나머지는 기제가 갈리는 축이다.
+  const LEGEND = {existence:['req','opt','auto','cond'],
+                  lifecycle:['life','casc'], function:['func']};
+  const VK = {required:'필수', optional:'선택', holds:'결속', unknown:'미판정'};
 
-  function elements(csp) {
+  let cys = {}, current = 'azure', syncing = false;
+
+  const esc = s => String(s??'').replace(/[&<>]/g,
+      m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+  function opBadge(node) {
+    // ⏳는 자원의 성질이지 간선의 성질이 아니다 — 그래서 노드에 단다.
+    return (node.ops && node.ops.length) ? ' ⏳' : '';
+  }
+
+  function elements(csp, axis) {
     const d = DATA.csps[csp], els = [];
     for (const n of d.nodes) els.push({group:'nodes',
-      data:{id:n.id, ghost:n.ghost?1:0, disj:n.disjunctions,
-            desc:n.desc, names:n.names},
+      data:{id:n.id, ghost:n.inAxis[axis]?0:1, label:n.id,
+            labelOp:n.id + opBadge(n), hasOp:(n.ops||[]).length?1:0},
       position:{...DATA.positions[n.id]}});
-    d.edges.forEach((e,i) => els.push({group:'edges',
-      data:{id:'e'+i, source:e.s, target:e.o, cls:e.cls,
-            badge: (e.lifecycle ? (e.lifecycle.cascade?'♻':'🔒') : '')
-                   + (e.function ? 'ƒ' : ''), ...e}}));
+    d.axes[axis].forEach((e,i) => els.push({group:'edges',
+      data:{id:axis+'-e'+i, source:e.s, target:e.o, cls:e.cls, key:e.key,
+            axis:axis}}));
     return els;
   }
 
   function style() { return [
     {selector:'node', style:{
-      shape:'round-rectangle', width:96, height:34, 'background-color':'#fff',
-      'border-width':1.5, 'border-color':'#9aa4b1', label:'data(id)',
+      shape:'round-rectangle', width:100, height:34, 'background-color':'#fff',
+      'border-width':1.5, 'border-color':'#9aa4b1', label:'data(labelOp)',
       'font-size':13, 'text-valign':'center', 'text-halign':'center',
       color:'#1c1e21'}},
-    {selector:'node[ghost=1]', style:{opacity:0.35, 'border-style':'dashed'}},
-    {selector:'node:selected', style:{'border-color':'#111', 'border-width':3}},
+    {selector:'node[ghost=1]', style:{opacity:0.28, 'border-style':'dashed'}},
+    {selector:'node.pick', style:{'border-color':'#111', 'border-width':3,
+      'background-color':'#fff7d6'}},
     {selector:'edge', style:{
       'curve-style':'bezier', 'control-point-step-size':55,
-      'target-arrow-shape':'triangle', 'arrow-scale':1.1,
-      width:2, 'font-size':13, 'text-rotation':'none',
-      label:'data(badge)', 'text-background-color':'#fff',
-      'text-background-opacity':0.9, 'text-background-padding':2}},
+      'target-arrow-shape':'triangle', 'arrow-scale':1.1, width:2}},
     ...Object.entries(COLORS).map(([k,c]) => ({selector:`edge[cls="${k}"]`,
       style:{'line-color':c, 'target-arrow-color':c,
              width:k==='req'?3:2,
-             'line-style':k==='opt'?'dashed':k==='auto'?'dotted':
-                          k==='cond'?'dashed':'solid'}})),
-    {selector:'edge:selected', style:{width:4}},
-    {selector:'.dim', style:{opacity:0.12}},
+             'line-style':(k==='opt'||k==='cond'||k==='casc'||k==='func')
+                          ? 'dashed' : k==='auto' ? 'dotted' : 'solid'}})),
+    {selector:'edge.pick', style:{width:5, 'z-index':9}},
+    {selector:'.dim', style:{opacity:0.1}},
     {selector:'.hideCls', style:{display:'none'}},
-    {selector:'.noBadge', style:{label:''}},
+    {selector:'.hideGhost', style:{display:'none'}},
+    {selector:'node.noOp', style:{label:'data(label)'}},
   ]; }
 
-  function render(csp) {
-    current = csp;
-    document.querySelectorAll('#tabs button').forEach(b =>
-      b.classList.toggle('on', b.textContent===csp));
-    if (cy) cy.destroy();
-    cy = cytoscape({container:document.getElementById('cy'),
-      elements:elements(csp), style:style(), wheelSensitivity:0.25});
-    cy.fit(undefined, 40);
+  function buildPanes(csp) {
+    const host = document.getElementById('panes');
+    host.innerHTML = '';
+    cys = {};
+    for (const axis of AXES) {
+      const pane = document.createElement('div');
+      pane.className = 'pane';
+      const legend = LEGEND[axis].map(k =>
+        `<label class="f"><input type="checkbox" data-axis="${axis}" data-cls="${k}" checked>` +
+        `<span class="sw ${k}"></span>${CLS_KO[k]}</label>`).join('');
+      pane.innerHTML =
+        `<div class="ph"><b>${DATA.axisLabel[axis]}</b>` +
+        `<span class="ask">${esc(DATA.axisAsk[axis])}</span>` +
+        `<span class="n">${DATA.csps[csp].counts[axis]}건</span></div>` +
+        `<div class="ph">${legend}</div>` +
+        `<div class="cyBox" id="cy-${axis}"></div>`;
+      host.appendChild(pane);
+    }
+    for (const axis of AXES) {
+      const cy = cytoscape({container:document.getElementById('cy-'+axis),
+        elements:elements(csp, axis), style:style(), wheelSensitivity:0.25});
+      cys[axis] = cy;
+      cy.on('tap', 'node', ev => pickNode(ev.target.id()));
+      cy.on('tap', 'edge', ev => pickEdge(ev.target.data('key')));
+      cy.on('tap', ev => { if (ev.target === cy) clearPick(); });
+      cy.on('viewport', () => syncView(axis));
+    }
+    // 세 판이 같은 좌표계를 쓰므로 첫 판의 화면을 그대로 복사한다 —
+    // 판마다 fit하면 배율이 달라져 "가로로 훑기"가 깨진다.
+    cys.existence.fit(undefined, 30);
+    syncView('existence');
     applyFilters();
-    cy.on('tap', 'node,edge', ev => showDetail(ev.target));
-    cy.on('tap', ev => { if (ev.target===cy) clearDetail(); });
-    // 이웃 강조
-    cy.on('select', 'node', ev => {
-      const n = ev.target, keep = n.closedNeighborhood();
-      cy.elements().not(keep).addClass('dim');
-    });
-    cy.on('unselect', 'node', () => cy.elements().removeClass('dim'));
+  }
+
+  function syncView(from) {
+    if (syncing || !document.getElementById('syncToggle').checked) return;
+    syncing = true;
+    const src = cys[from];
+    for (const axis of AXES) if (axis !== from) {
+      cys[axis].viewport({zoom:src.zoom(), pan:{...src.pan()}});
+    }
+    syncing = false;
   }
 
   function applyFilters() {
+    const showOp = document.getElementById('opToggle').checked;
+    const showGhost = document.getElementById('ghostToggle').checked;
     document.querySelectorAll('input[data-cls]').forEach(cb => {
-      cy.edges(`[cls="${cb.dataset.cls}"]`)
-        .toggleClass('hideCls', !cb.checked);
+      const cy = cys[cb.dataset.axis];
+      if (cy) cy.edges(`[cls="${cb.dataset.cls}"]`)
+                .toggleClass('hideCls', !cb.checked);
     });
-    cy.edges().toggleClass('noBadge',
-      !document.getElementById('lifeToggle').checked);
+    for (const axis of AXES) {
+      cys[axis].nodes().toggleClass('noOp', !showOp);
+      cys[axis].nodes('[ghost=1]').toggleClass('hideGhost', !showGhost);
+    }
   }
 
-  const esc = s => String(s??'').replace(/[&<>]/g,
-      m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+  function clearMarks() {
+    for (const axis of AXES) cys[axis].elements().removeClass('pick dim');
+  }
+
+  function pickNode(id) {
+    clearMarks();
+    for (const axis of AXES) {
+      const cy = cys[axis], n = cy.$id(id);
+      n.addClass('pick');
+      cy.elements().not(n.closedNeighborhood()).addClass('dim');
+    }
+    showNode(id);
+  }
+
+  function pickEdge(key) {
+    clearMarks();
+    // 같은 쌍을 **세 판 모두**에서 짚는다 — 없는 판은 비어 있는 것이 답이다.
+    // 키에 '→'가 들어가므로 선택자 문자열이 아니라 filter로 고른다.
+    for (const axis of AXES) {
+      const cy = cys[axis], es = cy.edges().filter(e => e.data('key') === key);
+      es.addClass('pick');
+      es.connectedNodes().addClass('pick');
+      if (es.length) cy.elements().not(es.union(es.connectedNodes())).addClass('dim');
+    }
+    showPair(key);
+  }
+
   function kv(title, body) {
     return body ? `<div class="kv"><b>${esc(title)}</b>${body}</div>` : '';
   }
@@ -412,80 +533,104 @@ if (typeof cytoscape === 'undefined') {
         `${esc(e.step)} → ${esc(e.code)}</div>`).join('');
     return out;
   }
-  const VK = {required:'필수', optional:'선택', holds:'생명주기 결속',
-              unknown:'미판정'};
 
-  function edgeDetail(d) {
-    const lc = d.lifecycle, fc = d.function;
-    const head = d.cls === 'func'
-      ? `<span class="chip" style="color:#8b3fc6;border-color:#8b3fc6">기능 결속만 실측</span>`
-      : `<span class="chip ${d.cls}">${{req:'필수',opt:'선택',auto:'서버가 채움',cond:'조건부'}[d.cls]}</span>
-         <span class="chip">존재 판정: ${VK[d.verdict]||esc(d.verdict)}</span>`;
-    return `<h2>${esc(d.s)} → ${esc(d.o)}</h2>
-      ${head}
-      <span class="chip">도달 오라클: ${esc(d.oracle)} 층</span>
-      ${d.cls==='func' ? kv('존재 질문',
-          '이 쌍에는 존재 주장이 없다 — 기능 질문만 실측됐다') : ''}
-      ${kv('술어 (분류는 우리 구성)', esc(d.predicate))}
-      ${kv('노트', esc(d.note))}
-      ${d.evidence && d.evidence.length ? kv('증거 — 존재 질문', evList(d.evidence)) : ''}
-      ${lc ? kv('생명주기 질문 ' + (lc.cascade?'♻ 동반 정리':'🔒 삭제 보호')
-                + ` — 판정 ${VK[lc.verdict]||esc(lc.verdict)}`
-                + ` (${esc(lc.oracle)} 층)`,
-                (lc.predicate?`${esc(lc.predicate)}<br>`:'')
-                + (lc.note?`${esc(lc.note)}<br>`:'')
-                + evList(lc.evidence))
-          : (d.cls==='func' ? '' : kv('생명주기 질문',
-               '이 간선에는 생명주기 주장이 없다 — '
-               + '빈칸이 아니라 그 질문을 판정할 실측이 없다는 기록이다'))}
-      ${fc ? kv('기능 질문 ƒ — 판정 ' + (VK[fc.verdict]||esc(fc.verdict))
-                + ` (${esc(fc.oracle)} 층)`,
-                (fc.predicate?`${esc(fc.predicate)}<br>`:'')
-                + (fc.note?`${esc(fc.note)}<br>`:'')
-                + evList(fc.evidence)) : ''}`;
+  function axisRow(axis, b) {
+    if (!b) return `<tr><th>${DATA.axisLabel[axis]}</th>` +
+      `<td class="none" colspan="2">실측 없음 — <i>의존이 없다는 뜻이 아니다</i></td></tr>`;
+    return `<tr><th>${DATA.axisLabel[axis]}</th>` +
+      `<td><span class="chip ${b.cls}">${CLS_KO[b.cls]}</span><br>` +
+      `${VK[b.verdict]||esc(b.verdict)} · ${esc(b.oracle)} 층</td>` +
+      `<td>${esc(b.predicate||'')}${b.note?'<br>'+esc(b.note):''}</td></tr>`;
   }
 
-  function showDetail(t) {
+  function showPair(key) {
+    const byq = DATA.csps[current].pairs[key] || {};
+    const [s,o] = key.split('→');
+    const all3 = AXES.every(a => byq[a]);
     const p = document.getElementById('panel');
-    if (t.isEdge()) { p.innerHTML = edgeDetail(t.data()); return; }
-    const d = t.data();
-    const disj = (d.disj||[]).map(x =>
+    p.innerHTML = `<h2>${esc(s)} → ${esc(o)}</h2>
+      <span class="chip">${current}</span>
+      ${all3 ? '<span class="chip" style="color:#8b3fc6;border-color:#8b3fc6">'
+             + '세 축 모두 실측 — 전체 '+DATA.triples.length+'쌍 중 하나</span>' : ''}
+      <table class="ax"><tr><th>축</th><th>판정</th><th>술어·노트</th></tr>
+      ${AXES.map(a => axisRow(a, byq[a])).join('')}</table>
+      ${AXES.filter(a => byq[a]).map(a => kv(
+          DATA.axisLabel[a] + ' 질문의 증거', evList(byq[a].evidence))).join('')}
+      <div class="empty" style="font-size:12px">화살표 A→B는 “A가 B를
+      요구/합성한다”입니다(포함 아님). 빈 축은 <b>빈칸이 아니라 기록</b>입니다 —
+      그 질문을 판정할 실측이 아직 없다는 뜻입니다.</div>`;
+  }
+
+  function showNode(id) {
+    const d = DATA.csps[current].nodes.find(n => n.id === id);
+    const pairs = DATA.csps[current].pairs;
+    const line = (key) => {
+      const byq = pairs[key], marks = AXES.filter(a => byq[a])
+        .map(a => `<span class="chip ${byq[a].cls}">${CLS_KO[byq[a].cls]}</span>`).join('');
+      return `<div class="ev">${esc(key)} ${marks}</div>`;
+    };
+    const outs = Object.keys(pairs).filter(k => k.split('→')[0] === id).map(line).join('');
+    const ins = Object.keys(pairs).filter(k => k.split('→')[1] === id).map(line).join('');
+    const ops = (d.ops||[]).map(o =>
+      `<div class="ev">${esc(o.op)} → 완료 신호 <b>${esc(o.doneSignal)}</b><br>` +
+      `&nbsp;&nbsp;${o.status === 'async-confirmed'
+        ? '중간 상태 <b>'+esc(o.intermediate)+'</b>가 실측됐다 (비동기 확인)'
+        : '우리가 기다렸다 — <i>기다려야 한다는 증명은 아니다</i>'}<br>` +
+      `&nbsp;&nbsp;${esc(o.evidence.experiment)} / ${esc(o.evidence.step)}</div>`
+    ).join('');
+    const disj = (d.disjunctions||[]).map(x =>
       kv(`선언 술어 → ${esc(x.object)} [${VK[x.verdict]||esc(x.verdict)}]`,
          esc(x.predicate||'') + (x.note?`<br>${esc(x.note)}`:''))).join('');
-    // 이 노드에 걸린 주장 전부 — 나가는(요구/합성) 것과 들어오는 것.
-    const rows = DATA.csps[current].edges;
-    const line = e => `<div class="ev">${esc(e.s)} → ${esc(e.o)} · `
-      + `${VK[e.verdict]||esc(e.verdict)}`
-      + (e.lifecycle ? ` · ${e.lifecycle.cascade?'♻':'🔒'}` : '')
-      + (e.predicate ? `<br>&nbsp;&nbsp;${esc(e.predicate)}` : '') + '</div>';
-    const outs = rows.filter(e => e.s === d.id).map(line).join('');
-    const ins = rows.filter(e => e.o === d.id).map(line).join('');
-    p.innerHTML = `<h2>${esc(d.id)}</h2>
-      ${d.ghost?'<span class="chip">이 CSP엔 간선 없음</span>':''}
+    document.getElementById('panel').innerHTML = `<h2>${esc(id)}</h2>
       <span class="chip">${current}</span>
+      ${AXES.filter(a => !d.inAxis[a]).map(a =>
+        `<span class="chip">${DATA.axisLabel[a]} 판에 간선 없음</span>`).join('')}
       ${kv('이게 뭔가요 (설명 — 우리 작성, 판정 아님)', esc(d.desc))}
       ${kv('CSP별 이름', esc(d.names))}
-      ${kv('이 자원이 요구·합성하는 것', outs)}
-      ${kv('이 자원을 요구·합성하는 것', ins)}
-      ${disj || ''}
-      <div class="empty" style="font-size:12px">간선을 클릭하면 그 주장의
-      전체 기록(스키마 인용·동적 증거·생명주기)이 나옵니다.</div>`;
+      ${ops ? kv('⏳ 연산 성질 (실측) — 만들고 기다려야 하는가', ops)
+            : kv('⏳ 연산 성질', '<i>이 자원의 연산은 재지 않았다 — '
+                 + "'동기'라는 뜻이 아니다</i>")}
+      ${kv('이 자원이 요구·합성하는 것', outs || '<div class="ev">없음</div>')}
+      ${kv('이 자원을 요구·합성하는 것', ins || '<div class="ev">없음</div>')}
+      ${disj}
+      <div class="empty" style="font-size:12px">간선을 클릭하면 그 쌍의
+      <b>축별 대조표</b>와 증거 좌표가 나옵니다.</div>`;
   }
-  function clearDetail() {
+
+  function clearPick() {
+    clearMarks();
     document.getElementById('panel').innerHTML =
-      '<h2>상세</h2><div class="empty">노드나 간선을 클릭하세요.</div>';
+      `<h2>세 판을 가로로 읽으세요</h2>
+       <div class="empty">같은 자리·같은 좌표의 판 셋입니다. 왼쪽부터
+       <b>존재</b>(만들 때) · <b>생명주기</b>(지울 때) · <b>기능</b>(떼었을 때).
+       <br><br>노드나 간선을 클릭하면 그 쌍이 <b>세 판 모두에서</b> 짚어지고,
+       상세에 축별 대조표가 나옵니다 — 어느 판에서 사라지는지가 곧 결과입니다.
+       <br><br>세 축이 모두 실측된 쌍은 3사 통틀어
+       <b>${DATA.triples.length}쌍</b>뿐입니다:
+       <div class="ev">${DATA.triples.map(t => esc(t)).join('<br>')}</div>
+       <br>⏳는 <b>자원</b>의 성질입니다(간선이 아님) — 만들고 완료를
+       기다려야 하는 자원입니다.</div>`;
   }
 
   const tabs = document.getElementById('tabs');
   for (const csp of ['aws','azure','gcp']) {
     const b = document.createElement('button');
-    b.textContent = csp; b.onclick = () => render(csp);
+    b.textContent = csp;
+    b.onclick = () => {
+      current = csp;
+      document.querySelectorAll('#tabs button').forEach(x =>
+        x.classList.toggle('on', x.textContent === csp));
+      buildPanes(csp); clearPick();
+    };
     tabs.appendChild(b);
   }
-  document.querySelectorAll('input[data-cls], #lifeToggle')
-    .forEach(cb => cb.addEventListener('change', applyFilters));
-  document.getElementById('reset').onclick = () => render(current);
-  render('azure');
+  document.getElementById('panes').addEventListener('change', applyFilters);
+  ['opToggle','ghostToggle'].forEach(id =>
+    document.getElementById(id).addEventListener('change', applyFilters));
+  document.getElementById('reset').onclick = () => {
+    buildPanes(current); clearPick();
+  };
+  document.querySelector('#tabs button:nth-child(2)').click();
 }
 </script></body></html>
 """
@@ -495,7 +640,10 @@ def main() -> None:
     data = _build_data()
     html = _PAGE.replace("__DATA__", json.dumps(data, ensure_ascii=False))
     _OUT.write_text(html, encoding="utf-8")
+    counts = {c: data["csps"][c]["counts"] for c in CSPS}
     print(f"wrote {_OUT}")
+    print(f"  축별 주장 {counts}")
+    print(f"  세 축 모두 실측된 쌍 {len(data['triples'])}: {data['triples']}")
 
 
 if __name__ == "__main__":
