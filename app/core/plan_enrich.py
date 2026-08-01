@@ -40,7 +40,8 @@ from app.core.plan_crosscheck import WORKLOAD_ROLES, read_plan
 from app.core.infra_planning import plan_for_anchors
 
 
-def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
+def enrich(plan: DeploymentPlan, csp: str, region: str = "-",
+           existing: tuple[str, ...] = ()) -> DeploymentPlan:
     """계획에 실측 사영을 붙인다. **계획 자체는 안 바꾼다.**
 
     앵커를 하나도 못 읽으면 `measured`를 비운 채 두지 않고 **빈 묶음으로** 채운다
@@ -50,6 +51,8 @@ def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
         plan: `design_tools.compose`가 낸 계획. 제자리에서 바뀐다.
         csp: 주장이 CSP로 색인돼 있어 필수다.
         region: 계획에 실릴 리전(판정에는 안 쓰인다).
+        existing: 사용자가 **이미 갖고 있는** 자원. 만들지도 지우지도 않는다 —
+            실측 폐포는 "무엇이 필요한가"는 알아도 "이미 있는가"는 모른다.
     """
     mapped, unmapped, _weak, roles = read_plan(plan, csp)
     drawn = set(mapped.values())
@@ -74,10 +77,14 @@ def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
     # 맞다). 그래서 노드 집합만 보면 "필수가 빠졌다"로 읽히는데, 순서에 실으면
     # 그 요건이 실행하는 사람에게 그대로 간다.
     create_order = tuple(c["id"] for c in provision["createOrder"]
-                         if c["id"] in drawn or c["required"])
+                         if (c["id"] in drawn or c["required"])
+                         and c["id"] not in existing)
+    # **이미 있는 것은 지우지도 않는다.** 우리가 안 만든 것을 정리 순서에 넣으면
+    # 남의 자원을 지우라고 하는 셈이다.
     delete_before = tuple((a, b) for a, b in
                           (tuple(p) for p in provision["deleteBefore"])
-                          if a in drawn and b in drawn)
+                          if a in drawn and b in drawn
+                          and a not in existing and b not in existing)
     wait_for = tuple(
         (w["id"], w["op"], w["doneSignal"], w["confidence"])
         for w in provision["waitFor"] if w["id"] in drawn)
@@ -102,7 +109,8 @@ def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
         csp=csp, anchors=anchors,
         create_order=create_order, delete_before=delete_before,
         wait_for=wait_for, do_not_create=do_not_create,
-        operational_warnings=warnings, checks=checks, unmeasured=unmeasured)
+        operational_warnings=warnings, checks=checks, unmeasured=unmeasured,
+        reused=tuple(sorted(existing)))
     return plan
 
 
@@ -150,6 +158,10 @@ def render(measured: Measured | None) -> str:
     if measured.create_order:
         lines.append("  Create in this order: "
                      + " → ".join(measured.create_order))
+    if measured.reused:
+        lines.append("  Not created and not deleted (you already have them): "
+                     + ", ".join(measured.reused)
+                     + " — they are still required; we simply do not make them")
     if measured.delete_before:
         lines.append("  Delete in this order (otherwise the API refuses): "
                      + " · ".join(f"{a} before {b}"

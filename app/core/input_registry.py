@@ -179,6 +179,18 @@ ASKS: tuple[Ask, ...] = (
         basis=(Basis(CODE, "app/core/infra_planning.py#plan_for_anchors"),),
     ),
     Ask(
+        id="topology.existing",
+        spec_field="existingResources",
+        tier=CONTEXT,
+        question="이미 갖고 있어서 새로 만들지 않을 것이 있습니까? "
+                 "(예: 기존 VPC·서브넷에 얹는 경우)",
+        opens="생성 순서에서 빠지고 삭제 순서에서도 빠진다 — 실측 폐포는 "
+              "**'무엇이 필요한가'는 알아도 '사용자가 이미 갖고 있는가'는 "
+              "원리적으로 모른다.** 안 물으면 있는 것을 또 만들라 하고, "
+              "정리할 때 남의 것을 지우라 한다",
+        basis=(Basis(CODE, "app/core/plan_enrich.py#enrich"),),
+    ),
+    Ask(
         id="budget.monthly",
         spec_field="monthlyBudgetUSD",
         tier=REQUIRED,

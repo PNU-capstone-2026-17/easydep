@@ -1123,7 +1123,8 @@ def compose(design: dict) -> DeploymentPlan:
         from app.core.plan_enrich import enrich
 
         try:
-            enrich(plan, provider, region or "-")
+            enrich(plan, provider, region or "-",
+                   tuple(requirements.get("existingResources") or ()))
         except Exception as exc:  # noqa: BLE001 — 못 붙였으면 못 붙였다고 남긴다
             plan.unresolved.append(
                 f"measured cloud knowledge could not be attached: "
