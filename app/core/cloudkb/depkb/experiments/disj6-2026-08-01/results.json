@@ -1,0 +1,75 @@
+{
+ "_note": "배타성 6차 — azure vm→image를 **apply로** 닫는다. 4차는 preflight 통과였고 통과는 이 저장소에서 증거가 아니다.",
+ "startedAt": "2026-08-01T10:46:32+00:00",
+ "steps": {
+  "S1.create-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6\",\n  \"location\": \"koreacentral\",\n  \"managedBy\": null,\n  \"name\": \"depkb-disj6\",\n  \"properties\": {\n    \"provisioningState\": \"Succeeded\"\n  },\n  \"tags\": null,\n  \"type\": \"Microsoft.Resources/resourceGroups\"\n}"
+  },
+  "S2.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.92.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"e6eb76c2-17f4-440c-96b1-7c52e7411eb8\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Network/virtualNetworks/d6-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"d6-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-disj6\",\n    \"resourceGuid\": \"b72fa3df-35c7-4132-945b-6f7d4d01aa0c\",\n    \"subnets\": [\n      "
+  },
+  "S3.seed-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Compute/virtualMachines/depkb-disj6-seed\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"00-22-48-6C-E4-AC\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.92.1.4\",\n  \"publicIpAddress\": \"\",\n  \"resourceGroup\": \"depkb-disj6\"\n}"
+  },
+  "S4.seed-disk-id": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Compute/disks/depkb-disj6-seed_OsDisk_1_42ec93d991c4439f820ebc8bf102df8c"
+  },
+  "S5.delete-seed-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "B1.apply-both": {
+   "ok": false,
+   "errorCodes": [
+    "DeploymentFailed",
+    "InvalidParameter"
+   ],
+   "excerpt": "ERROR: {\"status\":\"Failed\",\"error\":{\"code\":\"DeploymentFailed\",\"target\":\"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Resources/deployments/d6-b1\",\"message\":\"At least one resource deployment operation failed. Please list deployment operations for details. Please see https://aka.ms/arm-deployment-operations for usage details.\",\"details\":[{\"code\":\"InvalidParameter\",\"target\":\"osDisk.managedDisk.id\",\"message\":\"Parameter 'osDisk.managedDisk.id' is not allowed.\"}]}}"
+  },
+  "B2.apply-image-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Resources/deployments/d6-b2\",\n  \"location\": null,\n  \"name\": \"d6-b2\",\n  \"properties\": {\n    \"correlationId\": \"7ecd9176-4b7a-4559-a31d-a0987ac378dc\",\n    \"debugSetting\": null,\n    \"dependencies\": [\n      {\n        \"dependsOn\": [\n          {\n            \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Network/networkInterfaces/d6-b2-nic\",\n            \"resourceGroup\": \"depkb-disj6\",\n            \"resourceName\": \"d6-b2-nic\",\n          "
+  },
+  "B2.apply-image-only.shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"create\": \"FromImage\",\n  \"img\": \"server\",\n  \"osdisk\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Compute/disks/d6-b2_OsDisk_1_046d111c60494a45b12aa087e9e1e5dc\"\n}"
+  },
+  "B2.apply-image-only.cleanup": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "B3.apply-disk-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Resources/deployments/d6-b3\",\n  \"location\": null,\n  \"name\": \"d6-b3\",\n  \"properties\": {\n    \"correlationId\": \"1648a68c-53ab-4a64-85b9-47ac6dede9cb\",\n    \"debugSetting\": null,\n    \"dependencies\": [\n      {\n        \"dependsOn\": [\n          {\n            \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Network/networkInterfaces/d6-b3-nic\",\n            \"resourceGroup\": \"depkb-disj6\",\n            \"resourceName\": \"d6-b3-nic\",\n          "
+  },
+  "B3.apply-disk-only.shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"create\": \"Attach\",\n  \"img\": null,\n  \"osdisk\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj6/providers/Microsoft.Compute/disks/depkb-disj6-seed_OsDisk_1_42ec93d991c4439f820ebc8bf102df8c\"\n}"
+  },
+  "B3.apply-disk-only.cleanup": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T1.delete-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  }
+ },
+ "finishedAt": "2026-08-01T10:52:53+00:00"
+}

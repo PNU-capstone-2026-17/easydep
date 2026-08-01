@@ -1366,16 +1366,27 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     dict(csp="azure", subject="vm", object="image", question="existence",
          verdict="optional",
          predicate="disjunctive: 부팅 원천 — imageReference ∨ 기존 OS 디스크 "
-                   "attach 중 하나는 있어야 한다",
+                   "attach 중 **정확히** 하나(배타적)",
+         # 배타성 실측(2026-08-01, apply). 4차 preflight는 통과했으나 통과는
+         # 증거가 아니라 6차에서 실제 배포로 닫았다.
+         constraint={"exclusive": True, "idl": "OnlyOne"},
          evidence=[
              ("azure-image-2026-07-31", "A3.omit-storageprofile",
               "InvalidParameter", "apply"),
+             # 배타성: FromImage로 만들면서 기존 OS 디스크를 가리키면 거부된다.
+             ("disj6-2026-08-01", "B1.apply-both", "InvalidParameter", "apply"),
+             # 대조군 — 같은 경로로 하나씩만 주면 선다.
+             ("disj6-2026-08-01", "B2.apply-image-only", "ok", "apply"),
+             ("disj6-2026-08-01", "B3.apply-disk-only", "ok", "apply"),
              ("azure-image-2026-07-31", "A2.dangling-image", "NotFound", "apply"),
              ("azure-image-2026-07-31", "B0.create-vm-from-image", "ok", "apply"),
              ("azure-image-2026-07-31", "B1.create-vm-attach-disk-no-image",
               "ok", "apply"),
          ],
-         note="서버가 필수를 이름으로: \"Required parameter 'storageProfile' is "
+         note="**배타다**: \"Parameter 'osDisk.managedDisk.id' is not allowed\" "
+              "(FromImage일 때, disj6/B1). 4차 preflight는 통과했지만 통과는 "
+              "증거가 아니라 apply로 다시 걸었다. "
+              "서버가 필수를 이름으로: \"Required parameter 'storageProfile' is "
               "missing\"(A3b 전문). 잔존 OS 디스크 attach로 이미지 없이 VM이 "
               "선다 — imageReference 슬롯 빈 값 실측(B1). 허상 이미지 id는 "
               "NotFound. FromImage인데 이미지가 없는 모순형(A1)은 별도 문장으로 "

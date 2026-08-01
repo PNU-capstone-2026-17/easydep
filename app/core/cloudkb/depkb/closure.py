@@ -89,15 +89,22 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
 #: ## 이 매핑이 만든 실측 질문 (미해결)
 #:
 #: IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 **가른다.** 우리
-#: `disjunctive:` 3건은 그 구별을 재지 않고 있었다 — 형식을 갖추자 질문이 생겼고,
-#: **하나는 재서 닫았다**: `azure loadBalancer`는 subnet과 publicIp를 함께 주면
-#: 거부된다(`FrontendIPConfigHasBothSubnetAndPublicIP`, azure-disj2) → `OnlyOne`.
-#: `vm→image` 2건(azure·gcp)은 **아직 미측정**이라 더 약한 `Or`로 남는다.
+#: `disjunctive:` 3건은 그 구별을 재지 않고 있었고, 형식을 갖추자 질문이 생겨
+#: **셋 다 재서 닫았다**(2026-08-01) — 전부 배타였다:
+#:
+#:   azure loadBalancer  `FrontendIPConfigHasBothSubnetAndPublicIP`   (disj2)
+#:   gcp   vm→image      HTTP 400 "Cannot specify both 'source' and
+#:                       'initializeParams'"                          (disj5)
+#:   azure vm→image      "Parameter 'osDisk.managedDisk.id' is not allowed"
+#:                                                                    (disj6)
+#:
+#: **형식주의 채택이 실험 셋을 낳았다** — IDL이 그 구별을 강제하지 않았다면
+#: 우리는 "셋 중 하나면 된다"로 두고 넘어갔을 것이다.
 IDL_FORM: dict[str, str | None] = {
-    # 부류로는 못 정한다 — **주장마다 갈린다.** azure loadBalancer는 배타로
-    # 측정됐고(`FrontendIPConfigHasBothSubnetAndPublicIP`, 2026-08-01),
-    # vm→image 2건은 아직 안 쟀다. 주장의 `constraint.idl`이 가른다.
-    "disjunctive:": "Or(...) 또는 OnlyOne(...) — 주장의 constraint.idl이 가른다",
+    # **3건 전부 배타로 측정됐다**(2026-08-01). 그래도 부류 기본값이 아니라
+    # **주장의 `constraint.idl`이 진실**이다 — 새 disjunctive가 들어오면 다시
+    # 재야 하고, 부류에 박아 두면 안 재고 물려받는다.
+    "disjunctive:": "OnlyOne(...) — 다만 주장의 constraint.idl이 진실이다",
     "network 모드 조건부:": "Requires: IF mode=='custom' THEN subnet;",
     "스킴 조건부:": "Requires: IF scheme==<값> THEN <대상>;",
     "쌍 호환:": "Relational: <주체>.<속성> == <대상>.<속성>",

@@ -273,13 +273,21 @@ azure·gcp는 클러스터만 있으면 됐다. "aws는 안 된다"가 아니라
   `OnlyOne`(정확히 하나)을 가르는데 우리는 안 쟀다. **형식주의 채택이 실험을
   낳은 사례**다.
 
-  | 주장 | 판정 | 근거 |
-  |---|---|---|
-  | azure `loadBalancer→subnet\|publicIp\|publicIPPrefix` | **OnlyOne** | `FrontendIPConfigHasBothSubnetAndPublicIP` |
-  | gcp `vm→image` | **OnlyOne** | HTTP 400 *"Cannot specify both 'source' and 'initializeParams'"* |
-  | azure `vm→image` | **미판정** | preflight는 통과했으나 통과는 증거가 아니다 |
+  | 주장 | 판정 | 근거 | 라운드 |
+  |---|---|---|---|
+  | azure `loadBalancer→subnet\|publicIp\|publicIPPrefix` | **OnlyOne** | `FrontendIPConfigHasBothSubnetAndPublicIP` | disj2 |
+  | gcp `vm→image` | **OnlyOne** | HTTP 400 *"Cannot specify both 'source' and 'initializeParams'"* | disj5 |
+  | azure `vm→image` | **OnlyOne** | *"Parameter 'osDisk.managedDisk.id' is not allowed"* (FromImage일 때) | disj6 |
 
-  셋 중 둘이 배타로 확정됐다고 나머지를 그렇게 적지 않는다 — 테스트가 막는다.
+  **셋 다 배타였다.** 그래도 부류에 박지 않고 주장마다 `constraint`로 들려
+  둔다 — 새 disjunctive가 들어오면 물려받지 말고 다시 재라는 뜻이고, 테스트가
+  그것을 지킨다.
+
+  라운드가 여섯 걸렸고 그중 셋이 무효였다(CLI가 오라클이 아니어서 둘, VM 크기
+  때문에 하나). **무효 라운드도 지우지 않는다** — 무엇이 왜 안 됐는지가 다음
+  사람에게 필요하다. azure `vm→image`는 4차 preflight를 **통과**했는데, 통과는
+  증거가 아니라는 규율 덕에 6차에서 apply로 다시 걸었고 **거기서 거부가 나왔다.**
+  규율이 실제로 오답을 막은 사례다.
 
   **`loadBalancer→vm`은 기능 축이 새 간선을 연 첫 사례다** — LB는 백엔드
   없이도 만들어지므로 존재 축에서는 이 결속이 보이지 않는다. 기능 질문이

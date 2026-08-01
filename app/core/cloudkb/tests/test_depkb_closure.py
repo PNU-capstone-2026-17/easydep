@@ -197,20 +197,22 @@ def test_the_or_versus_onlyone_question_was_measured_not_assumed() -> None:
     컨트롤 플레인이 `FrontendIPConfigHasBothSubnetAndPublicIP`로 거부했다 →
     `OnlyOne`. 대조군(하나씩만)은 같은 경로로 섰다.
 
-    **부류 수준에서 정하지 않는다** — 주장마다 갈리기 때문이다. 같은 날 gcp
-    `vm→image`도 닫았고(REST로 직접: *"Cannot specify both 'source' and
-    'initializeParams'"*, HTTP 400), **azure `vm→image`는 아직 미판정**이다
-    (preflight는 통과했는데 통과는 이 저장소에서 증거가 아니다).
+    **셋 다 쟀고 전부 배타였다**(2026-08-01):
 
-    3건 중 2건이 배타로 확정됐다고 나머지를 그렇게 적으면 안 된다 — 그것이
-    이 테스트가 막는 것이다.
+      azure loadBalancer  `FrontendIPConfigHasBothSubnetAndPublicIP`
+      gcp   vm→image      HTTP 400 "Cannot specify both 'source' and …"
+      azure vm→image      "Parameter 'osDisk.managedDisk.id' is not allowed"
+
+    그래도 **부류가 아니라 주장이 진실이다.** 새 disjunctive가 들어오면 다시
+    재야 하고, 부류 기본값으로 물려받으면 안 재고 넘어간다 — 이 테스트가 그
+    구별을 지킨다(주장마다 `constraint`가 있는지 본다).
     """
     import json
     from pathlib import Path
 
     from app.core.cloudkb.depkb import closure as mod
 
-    assert "주장" in (mod.IDL_FORM["disjunctive:"] or "")
+    assert "주장의 constraint.idl이 진실" in (mod.IDL_FORM["disjunctive:"] or "")
     doc = json.loads((Path(mod.__file__).with_name("claims.json"))
                      .read_text(encoding="utf-8"))
     lb = next(c for c in doc["claims"]
@@ -223,10 +225,13 @@ def test_the_or_versus_onlyone_question_was_measured_not_assumed() -> None:
                if c["csp"] == "gcp" and c["subject"] == "vm"
                and c["object"] == "image")
     assert gcp["constraint"] == {"exclusive": True, "idl": "OnlyOne"}
-    # **재지 않은 것은 재지 않았다고 남는다.** azure `vm→image`가 그 자리다.
-    azure_image = next(c for c in doc["claims"]
-                       if c["csp"] == "azure" and c["subject"] == "vm"
-                       and c["object"] == "image")
-    assert not azure_image.get("constraint"), (
-        "azure vm→image의 배타성을 쟀다면 이 테스트를 고쳐라 — preflight 통과는 "
-        "이 저장소에서 증거가 아니다")
+    # **모든 disjunctive 주장이 자기 배타성을 들고 있어야 한다.** 부류에서
+    # 물려받는 것이 아니라 재서 붙인 것이라야 한다.
+    disjunctive = [c for c in doc["claims"]
+                   if (c.get("predicate") or "").startswith("disjunctive:")]
+    assert len(disjunctive) == 3, len(disjunctive)
+    missing = [f'{c["csp"]}/{c["subject"]}→{c["object"]}'
+               for c in disjunctive if not c.get("constraint")]
+    assert not missing, (
+        f"배타성을 안 잰 disjunctive 주장: {missing} — 부류 기본값으로 "
+        "물려받지 말고 재라")
