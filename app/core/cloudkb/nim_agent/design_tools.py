@@ -1064,6 +1064,22 @@ def compose(design: dict) -> DeploymentPlan:
         # 계획은 VM 가정 위에 세워져 있다 — 권고가 다르면 가정한 자리에서 밝힌다.
         _flag_assumption_against(plan, recommended)
     _global_notices(plan, requirements, provider, region, s.exposed)
+    # **3사 실측을 붙인다**(2026-08-01). 여기까지가 설계 신호에서 나온 계획이고,
+    # 그 위에 "이 구성에 대해 컨트롤 플레인이 실제로 무엇을 요구했나"를 얹는다 —
+    # 노드·선으로는 담을 수 없는 것들(순서·완료 대기·무방비 결속)이라 그림에
+    # 자리가 없어 통째로 유실되고 있었다(`app/core/plan_crosscheck.py`의 실측).
+    #
+    # **계획을 고치지 않는다.** 모양은 설계 산출물이 정하고(그쪽이 앱을 안다),
+    # 여기서는 붙이기만 한다.
+    if provider:
+        from app.core.plan_enrich import enrich
+
+        try:
+            enrich(plan, provider, region or "-")
+        except Exception as exc:  # noqa: BLE001 — 못 붙였으면 못 붙였다고 남긴다
+            plan.unresolved.append(
+                f"measured cloud knowledge could not be attached: "
+                f"{type(exc).__name__}: {exc}")
     return plan
 
 
@@ -1393,6 +1409,11 @@ def _render_plan_text(plan: DeploymentPlan) -> str:
                 f"{f' : {edge.label}' if edge.label else ''}"
                 f"  [{ORIGIN_LABEL[edge.origin]}]"
             )
+    # 실측 절은 미결·노트보다 **앞**에 둔다 — 생성/삭제 순서는 이 계획을 실행하는
+    # 사람이 가장 먼저 읽어야 하는 것이라 뒤로 밀면 안 읽힌다.
+    from app.core.plan_enrich import render as _render_measured
+
+    lines.append("\n" + _render_measured(plan.measured))
     if plan.unresolved:
         lines.append(f"\n[Could not answer] {len(plan.unresolved)}")
         lines.extend(f"  - {item}" for item in plan.unresolved)

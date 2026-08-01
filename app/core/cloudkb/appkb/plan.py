@@ -167,6 +167,43 @@ class PlanEdge:
             raise ValueError(f"unknown origin: {self.origin!r}")
 
 
+@dataclass(frozen=True)
+class Measured:
+    """3사 실측이 이 계획에 대해 아는 것 — **시간축과 무방비 지대.**
+
+    노드·선만으로는 담을 수 없는 것들이다. 계획은 공간(무엇이 어디에)을 그리는데
+    실측이 아는 것 절반은 **시간**(무엇을 먼저)과 **컨트롤 플레인이 막지 않는
+    자리**(떼면 조용히 깨지는 것)라서, 그림에 자리가 없어 통째로 유실됐다.
+
+    2026-08-01 대조에서 표본 3종 × 3사 모두 같은 항목이 빠졌다 — 앱과 무관한
+    구조적 유실이었다(`app/core/plan_crosscheck.py`).
+
+    **근거는 전부 `apply` 층 실측이다.** 다른 칸들처럼 origin을 달지 않는 이유는
+    이 묶음 전체가 한 출처(depkb claims)이기 때문이고, 그 사실을 `csp`·`anchors`가
+    말한다 — 어느 CSP의 어느 앵커에서 나온 것인지가 곧 좌표다.
+    """
+
+    csp: str
+    #: 이 계획에서 앵커로 읽힌 자원(폐포의 입력).
+    anchors: tuple[str, ...] = ()
+    #: 만드는 순서. 앞의 것이 뒤의 것보다 먼저다.
+    create_order: tuple[str, ...] = ()
+    #: (먼저 지울 것, 그다음 지울 것). 어기면 삭제가 거부된다.
+    delete_before: tuple[tuple[str, str], ...] = ()
+    #: (자원, 연산, 완료 신호, 확신도). **미표시는 '동기'가 아니다** — 안 재본 것이다.
+    wait_for: tuple[tuple[str, str, str, str], ...] = ()
+    #: (자원, 사유, 술어 부류). `server-implicit`은 만들면 이중 생성이고
+    #: `server-default`는 안 정하면 서버가 채운다 — **다른 사실이다.**
+    do_not_create: tuple[tuple[str, str, str], ...] = ()
+    #: (주체, 대상, 무엇이 깨지나). 컨트롤 플레인이 **막지 않는** 지대라
+    #: 생성·삭제 검사로는 안 잡힌다.
+    operational_warnings: tuple[tuple[str, str, str], ...] = ()
+    #: (주체, 대상, 규칙). 계획이 지켜야 하는 실측 규칙 — 판정은 사람이 한다.
+    checks: tuple[tuple[str, str, str], ...] = ()
+    #: 계획에 있는데 우리가 아무 말도 못 하는 자원. **침묵을 '문제없다'로 읽지 말 것.**
+    unmeasured: tuple[str, ...] = ()
+
+
 @dataclass
 class DeploymentPlan:
     """구성기의 산출물. 다이어그램·검증·답변이 전부 이걸 읽는다."""
@@ -177,6 +214,8 @@ class DeploymentPlan:
     notes: list[Note] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     """**답하지 못한 것.** 비워 두면 부분 답이 완전한 답처럼 읽힌다."""
+    measured: Measured | None = None
+    """3사 실측 사영. `None`이면 **안 붙인 것**이지 문제없다는 뜻이 아니다."""
 
     def node(self, node_id: str) -> PlanNode | None:
         return next((n for n in self.nodes if n.id == node_id), None)
@@ -216,4 +255,24 @@ class DeploymentPlan:
                 for x in self.notes
             ],
             "unresolved": list(self.unresolved),
+            # `None`과 빈 묶음을 가른다 — 앞은 "안 붙였다", 뒤는 "붙였는데 없다".
+            "measured": None if self.measured is None else {
+                "csp": self.measured.csp,
+                "anchors": list(self.measured.anchors),
+                "createOrder": list(self.measured.create_order),
+                "deleteBefore": [list(p) for p in self.measured.delete_before],
+                "waitFor": [
+                    {"id": i, "op": o, "doneSignal": s, "confidence": c}
+                    for i, o, s, c in self.measured.wait_for],
+                "doNotCreate": [
+                    {"id": i, "why": w, "kind": k}
+                    for i, w, k in self.measured.do_not_create],
+                "operationalWarnings": [
+                    {"subject": s, "object": o, "breaks": b}
+                    for s, o, b in self.measured.operational_warnings],
+                "checks": [
+                    {"subject": s, "object": o, "rule": r}
+                    for s, o, r in self.measured.checks],
+                "unmeasured": list(self.measured.unmeasured),
+            },
         }

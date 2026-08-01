@@ -49,8 +49,15 @@ def _edge(src: str, dst: str, kind: str, evidence: str, basis: str,
 
 
 @pytest.fixture()
-def built(tmp_path):
-    """core 그래프 · 매핑 · 번들 · 스펙을 최소로 갖춘 환경."""
+def built(tmp_path, monkeypatch):
+    """core 그래프 · 매핑 · 번들 · 스펙을 최소로 갖춘 환경.
+
+    **`monkeypatch`로 갈아끼운다.** 예전에는 모듈 전역에 직접 대입하고 teardown에서
+    캐시만 지웠는데, 그러면 `DEFAULT_OUTPUT_DIR`이 **지워진 tmp 경로를 가리킨 채로
+    남는다.** 뒤에 도는 테스트들은 번들·그래프를 못 읽고, 그 결과가 "계획에 네트워크
+    노드가 없다" 같은 엉뚱한 실패로 나타난다(2026-08-01에 `test_plan_enrich`가
+    드러냈다 — 파일 단독으로는 통과하고 전수에서만 깨졌다).
+    """
     out = tmp_path / "output"
     out.mkdir()
 
@@ -124,9 +131,9 @@ def built(tmp_path):
     from app.core.cloudkb.costkb import dataset as cost_dataset
 
     cost_dataset.clear_caches()
-    cost_dataset.DEFAULT_OUTPUT_DIR = out
-    graph_api.DEFAULT_OUTPUT_DIR = out
-    bundle_dataset.DEFAULT_OUTPUT_DIR = out
+    monkeypatch.setattr(cost_dataset, "DEFAULT_OUTPUT_DIR", out)
+    monkeypatch.setattr(graph_api, "DEFAULT_OUTPUT_DIR", out)
+    monkeypatch.setattr(bundle_dataset, "DEFAULT_OUTPUT_DIR", out)
     yield out
     graph_api._load_merged_cached.cache_clear()
     graph_api.concepts_with_spec.cache_clear()

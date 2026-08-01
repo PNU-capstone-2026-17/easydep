@@ -109,6 +109,11 @@ _HOST_READING: dict[str, str] = {
     # "Serverless runtime"은 없다 — 서버리스는 실측 범위 밖이라 어휘가 없다.
 }
 
+#: 워크로드 역할 — 폐포의 앵커가 되는 노드. **계획 자신의 어휘다**(우리가 새
+#: 기준을 만들지 않는다). 배선(`plan_enrich`)도 같은 것을 쓴다 — 둘이 갈리면
+#: 배선한 것과 대조한 것이 달라진다.
+WORKLOAD_ROLES: tuple[str, ...] = ("compute", "ingress")
+
 #: 대조 결과의 종류. **"어긋났다"와 "못 봤다"를 가른다** — 섞으면 목록이
 #: 길어질수록 신뢰가 떨어진다.
 DOUBLE_CREATE = "double-create"          # 실측: 서버가 **대신 만든다** / 계획: 또 그림
@@ -151,7 +156,7 @@ class Crosscheck:
         return dict(Counter(f.kind for f in self.findings))
 
 
-def _read_plan(plan: DeploymentPlan, csp: str
+def read_plan(plan: DeploymentPlan, csp: str
                ) -> tuple[dict[str, str], dict[str, str], dict[str, str],
                           dict[str, str]]:
     """계획 노드를 우리 어휘로 읽는다. (읽힘, 못 읽음, 약하게 읽음, 노드별 역할).
@@ -198,7 +203,7 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
         csp: 계획이 겨눈 프로바이더.
         region: 계획에 실릴 리전(판정에는 안 쓰인다).
     """
-    mapped, unmapped, weak, roles = _read_plan(plan, csp)
+    mapped, unmapped, weak, roles = read_plan(plan, csp)
     result = Crosscheck(csp=csp, mapped=mapped, unmapped=unmapped, weak=weak)
     findings: list[Finding] = []
 
@@ -220,10 +225,9 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
     #
     # 무엇이 워크로드인지는 **계획 자신이 안다** — `PlanNode.role`이 컴퓨트·
     # 인그레스·공유를 이미 가른다. 우리가 새 기준을 만들지 않는다.
-    _WORKLOAD_ROLES = ("compute", "ingress")
     anchors = tuple(sorted({
         res for node, res in mapped.items()
-        if roles.get(node) in _WORKLOAD_ROLES
+        if roles.get(node) in WORKLOAD_ROLES
         and res in set(input_registry.anchors_for(csp))}))
     result.anchors = anchors
     if not anchors:
@@ -231,11 +235,13 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
         return result
 
     provision = plan_for_anchors(list(anchors), csp, region).provision
+    carried = plan.measured   # 배선의 산출물. `None`이면 안 붙인 것이다.
 
     # ① 실측이 필수라는데 계획에 없는 자원. **가장 센 종류다** — 그 계획은
     #    apply가 거부한다(생성 거부 코드가 실측의 오라클이었다).
+    stated = set(carried.create_order) if carried else set()
     for item in provision["createOrder"]:
-        if item["required"] and item["id"] not in drawn:
+        if item["required"] and item["id"] not in drawn and item["id"] not in stated:
             findings.append(Finding(
                 MISSING_REQUIRED, item["id"],
                 "이 자원이 계획에 없다",
@@ -245,8 +251,9 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
     #    `server-implicit`는 서버가 대신 만드므로 우리가 또 만들면 이중 생성이고,
     #    `server-default`는 "안 정하면 기본값"이라 우리가 정하는 것이 정상일 수
     #    있다. 뭉치면 정상 계획을 결함으로 부른다.
+    declared = {i for i, _, _ in (carried.do_not_create if carried else ())}
     for item in provision["doNotCreate"]:
-        if item["id"] not in drawn:
+        if item["id"] not in drawn or item["id"] in declared:
             continue
         node = next(k for k, v in mapped.items() if v == item["id"])
         implicit = item.get("kind") == "server-implicit"
@@ -259,9 +266,12 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
 
     # ③ 실측 검사. **판정하지 않는다** — 규칙과 계획의 관측 사실을 나란히 낸다.
     counted = Counter(mapped.values())
+    checked = {(s, o) for s, o, _ in (carried.checks if carried else ())}
     for check in provision["checks"]:
         if check["subject"] not in drawn and check["object"] not in drawn:
             continue
+        if (check["subject"], check["object"]) in checked:
+            continue  # 계획이 규칙을 싣고 있다 — 판정은 여전히 사람 몫이다
         seen = {r: counted[r] for r in (check["subject"], check["object"])
                 if counted.get(r)}
         findings.append(Finding(
@@ -270,17 +280,18 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
             "— 계획에 이 규칙을 적용한 흔적이 없다",
             f'[{check["kind"]}] {check["rule"]}'))
 
-    # ④ 순서. 계획은 노드·선이라 시간축이 없다 — **담을 자리가 없다**는 것이
-    #    관측이고, 그래서 하나로 묶어 낸다(자원마다 반복하면 목록만 길어진다).
+    # ④ 순서·경고·대기는 계획이 **실었는지**를 본다. `plan.measured`가 배선의
+    #    산출물이고(`plan_enrich`), 실려 있으면 더 이상 빠진 것이 아니다.
+    #    **`None`과 빈 묶음을 가른다** — 앞은 "안 붙였다", 뒤는 "붙였는데 없다".
     order = [c["id"] for c in provision["createOrder"] if c["id"] in drawn]
-    if len(order) > 1:
+    if len(order) > 1 and not (carried and carried.create_order):
         findings.append(Finding(
             ABSENT_ORDER, "생성 순서",
             "계획은 노드와 선만 담는다 — 순서를 담을 자리가 없다",
             " → ".join(order)))
     deletes = [p for p in provision["deleteBefore"]
                if p[0] in drawn and p[1] in drawn]
-    if deletes:
+    if deletes and not (carried and carried.delete_before):
         findings.append(Finding(
             ABSENT_ORDER, "삭제 순서",
             "계획에 삭제 순서가 없다 — 그대로 지우면 거부를 만난다",
@@ -288,16 +299,19 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
 
     # ⑤ 기능 결속 경고. 컨트롤 플레인이 막지 않는 지대라 **계획에 안 실리면
     #    아무 데서도 안 나온다** — 검사로는 영영 안 잡힌다.
+    borne = {(s, o) for s, o, _ in (carried.operational_warnings if carried else ())}
     for warning in provision["operationalWarnings"]:
-        if warning["subject"] in drawn or warning["object"] in drawn:
+        if ((warning["subject"], warning["object"]) not in borne
+                and (warning["subject"] in drawn or warning["object"] in drawn)):
             findings.append(Finding(
                 ABSENT_WARNING, f'{warning["subject"]}→{warning["object"]}',
                 "계획에 이 경고가 없다",
                 warning["warning"]))
 
     # ⑥ 완료 대기. 계획대로 순서 없이 실행하면 중간 상태에서 다음을 시도한다.
+    waited = {(i, o) for i, o, _, _ in (carried.wait_for if carried else ())}
     for wait in provision["waitFor"]:
-        if wait["id"] in drawn:
+        if wait["id"] in drawn and (wait["id"], wait["op"]) not in waited:
             findings.append(Finding(
                 ABSENT_WAIT, f'{wait["id"]}.{wait["op"]}',
                 "계획에 완료 대기가 없다",

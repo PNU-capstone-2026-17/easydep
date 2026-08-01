@@ -151,19 +151,36 @@ def test_a_plan_with_nothing_measurable_says_so_instead_of_passing() -> None:
     assert all(f.kind == pc.OUT_OF_VOCABULARY for f in result.findings)
 
 
-def test_the_real_sample_still_produces_the_measured_gaps() -> None:
-    """**실물 표본의 결과를 고정한다** — 배선이 진행되면 이 숫자가 줄어야 한다.
+def test_the_wiring_closed_the_gaps_it_was_built_to_close() -> None:
+    """**배선의 완료 판정.** 실물 표본이 17 → 4로 줄었다(2026-08-01).
 
-    2026-08-01 첫 측정: 합계 17(필수 누락 1 · 중복 1 · 미적용 검사 2 · 순서 2 ·
-    경고 5 · 대기 2 · 약한 읽기 1 · 대조 불가 3). 종류별 존재만 고정하고 합계는
-    고정하지 않는다 — 실측이 늘면 경고도 는다.
+    첫 측정에서 나온 것: 필수 누락 1 · 중복 1 · 미적용 검사 2 · 순서 2 · 경고 5 ·
+    대기 2 · 약한 읽기 1 · 대조 불가 3. 앞의 여섯은 계획에 자리가 없어서 빠진
+    것이었고 `plan_enrich`가 그 자리를 만들어 채웠다.
+
+    남은 둘은 **배선으로 닫을 수 없는 종류**라 여기서 그렇게 못 박는다:
+
+      `weak-reading`        계획이 컴퓨트 노드에 벤더 타입을 안 단다(표시
+                            문자열뿐) — `design_tools`를 고쳐야 닫힌다.
+      `out-of-vocabulary`   관리형 서비스(RDS·S3·SecretsManager)에 대한 의존
+                            실측이 0건 — 새 실측 라운드가 있어야 닫힌다.
+
+    이 둘이 0이 되면 그건 진짜 진척이므로 그때 이 테스트를 고친다.
     """
-    path = _SAMPLE / "crosscheck.json"
-    if not path.exists():
-        pytest.skip("표본 대조 기록이 없다 — `python -m app.core.plan_crosscheck` 먼저")
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    assert doc["anchors"] == ["loadBalancer", "vm"], doc["anchors"]
-    counts = doc["counts"]
-    for kind in (pc.MISSING_REQUIRED, pc.UNCHECKED_RULE, pc.ABSENT_ORDER,
-                 pc.ABSENT_WARNING, pc.ABSENT_WAIT, pc.OUT_OF_VOCABULARY):
-        assert counts.get(kind), f"{kind}가 사라졌다 — 배선했다면 이 기대를 고쳐라"
+    from app.core.cloudkb.nim_agent.design_tools import compose
+    from app.core.cloudkb.tools.intake_report import _design_from, _read
+
+    spec, _ = _read(_SAMPLE, "requirements/resource_spec.json")
+    design, problems = _design_from(_SAMPLE, spec if isinstance(spec, dict) else None)
+    assert design is not None, problems
+    result = pc.crosscheck(compose(design), "aws", "ap-northeast-2")
+    counts = result.counts()
+
+    assert result.anchors == ("loadBalancer", "vm"), result.anchors
+    for kind in (pc.MISSING_REQUIRED, pc.DOUBLE_CREATE, pc.REDUNDANT_NODE,
+                 pc.UNCHECKED_RULE, pc.ABSENT_ORDER, pc.ABSENT_WARNING,
+                 pc.ABSENT_WAIT):
+        assert not counts.get(kind), (
+            f"{kind}가 되살아났다 — 배선이 끊겼는지 보라: {counts}")
+    assert counts.get(pc.WEAK_READING) == 1, counts
+    assert counts.get(pc.OUT_OF_VOCABULARY) == 3, counts
