@@ -88,15 +88,20 @@ def test_the_three_way_split_covers_every_concern():
     (docs §6 · 커밋 이력). 대조표:
     `document/archive/concern-rederivation-2026-08-02.md`.
 
+    **같은 날 클린룸 배터리 개편**: 7건 → 8건(claims 43좌표 + perfkb) —
+    주소 안정성 신설(클린룸 2/2 재현) · platform-owned 해체(노출 경로·저장
+    프로비저닝 신설) · 무방비 관심사 제거(점검 축 소유) · data-fate 정제.
+    기록: `document/archive/cleanroom-battery-2026-08-02.md`.
+
     연결 1 = cn.load-shape(→ trafficPattern, 구 traffic-shape의 소비 계승) ·
-    예정 6 · 경계 0(경계였던 문헌 관심사들은 실측 관문을 통과하지 못해 목록 밖).
+    예정 7 · 경계 0(경계였던 문헌 관심사들은 실측 관문을 통과하지 못해 목록 밖).
     """
     wired = [c for c in concerns.CONCERNS if c.consumer]
     pending = [c for c in concerns.CONCERNS if not c.consumer and not c.out_of_scope]
     boundary = [c for c in concerns.CONCERNS if c.out_of_scope]
 
     assert len(wired) + len(pending) + len(boundary) == len(concerns.CONCERNS)
-    assert (len(wired), len(pending), len(boundary)) == (1, 6, 0), (
+    assert (len(wired), len(pending), len(boundary)) == (1, 7, 0), (
         f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
     )
 

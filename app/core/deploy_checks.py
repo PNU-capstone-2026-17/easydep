@@ -61,13 +61,16 @@ class Check:
     because: tuple[str, str, str]
     #: 그 주장의 실험 좌표. **왜 이걸 확인하나**에 답하는 자리다.
     evidence: tuple[str, ...] = ()
+    #: 이 측정을 그르칠 수 있는 것들 — **실험이 실제로 물린 함정**(`_PITFALLS`).
+    pitfalls: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {"signal": self.signal, "where": self.where, "what": self.what,
                 "how": self.how, "passes": self.passes,
                 "because": {"csp": self.because[0], "subject": self.because[1],
                             "object": self.because[2]},
-                "evidence": list(self.evidence)}
+                "evidence": list(self.evidence),
+                "pitfalls": list(self.pitfalls)}
 
 
 #: 신호 → (어디서, 무엇을, 어떻게, 통과 조건). **실험이 실제로 쓴 방법을 옮긴다.**
@@ -126,6 +129,91 @@ _HOW: dict[str, tuple[str, str, str, str]] = {
         "health(NodeCreationFailure)로만 드러난다"),
 }
 
+#: 신호별 함정 — **실험이 실제로 물린 것들의 사영**(클린룸 배터리가 note에서
+#: 재도출·검증, 2026-08-02). 일반 지식 추정은 여기 없다 — 실측 좌표가 note에
+#: 있는 것만 싣는다. 함정 없는 신호는 함정이 없다는 뜻이 아니라 **안 물렸다**는
+#: 뜻이다.
+_PITFALLS: dict[str, tuple[str, ...]] = {
+    "inbound-tcp": (
+        "대상의 공인 주소를 매번 API로 재조회할 것 — gcp 임시 IP는 재부여 시 "
+        "새 주소가 온다(34.64.142.22→34.22.74.114 실측). 옛 주소로 찍으면 회복을 "
+        "영영 못 본다",
+        "azure Standard PIP는 NSG가 없으면 인바운드가 기본 차단 — '안 닿는다'가 "
+        "결속 상실이 아니라 secure-by-default일 수 있다(NSG 부착 전 7회 실패 실측)",
+        "확인 대상 자원 식별자를 매번 검증할 것 — 실험에서 결과 파일 경합 여파로 "
+        "다른 VPC의 라우트를 지워 측정이 통째로 무효가 됐다(Z0b)",
+        "기준선은 직전 회복 확인 위에 세울 것 — 앞 셀의 여파가 원인에 섞인다",
+        "상실 판정 전에 대상이 여전히 실행 중인지 교차 확인할 것(VM이 죽어 안 "
+        "닿는 것과 결속 상실은 다르다 — 실험은 매번 vm-still-running을 뒀다)",
+        "합성 신호다 — IP·방화벽·라우트 중 무엇이 죽었는지는 단독으로 못 가른다. "
+        "실험은 배치로 격리했고(자동 공인 IP 없이 기동), 점검은 실패 시 계층별 "
+        "API 상태 조회를 곁들여야 한다",
+    ),
+    "egress-https": (
+        "인바운드 통과는 아웃바운드를 보증하지 않는다 — 같은 간선을 방향 다른 "
+        "신호로 따로 재확인한 것이 실측이다",
+    ),
+    "imds-credentials": (
+        "'VM이 잘 떠 있다'는 어떤 점검도 이 상실을 못 본다 — 존재는 optional인데 "
+        "기능은 결속이다(프로필 없이도 VM은 선다, rc=22 실측)",
+        "상실은 상위 계층 장애로 증폭되어 나타난다(EKS CSI 'no EC2 IMDS role "
+        "found') — 상위 증상만 보면 원인 계층을 놓친다. VM 층에서 격리해 잰다",
+    ),
+    "dns-resolution": (
+        "레코드 존재와 영역-네트워크 연결은 다른 간선이다 — 레코드가 있는데 안 "
+        "풀리면 link 쪽, 레코드가 없으면 다른 간선의 문제로 갈라 읽는다",
+    ),
+    "lb-serving": (
+        "azure는 서브넷 NSG와 NIC NSG를 **둘 다** 통과해야 한다 — VM 생성 도구가 "
+        "NIC에 몰래 붙인 NSG(ssh만 허용)가 서브넷에서 연 80을 막아 기준선 자체가 "
+        "안 선 것이 1차 미판정의 원인이었다",
+        "판정 경로와 관리(진단) 경로를 분리할 것 — LB 인바운드 NAT로 관리 접근을 "
+        "빼서 게스트 진단 경로를 확보한 것이 원인 규명의 열쇠였다(Z1)",
+        "존재 축 점검(자원이 다 있는가)으로는 이 결속이 아예 안 보인다 — LB는 "
+        "백엔드 없이도 만들어진다",
+    ),
+    "volume-write": (
+        "재부착 후 회복에 게스트 재마운트가 필요한지는 실측이 말하지 않는다 — "
+        "회복 실패와 게스트 조치 미수행을 가르지 말고 관측 그대로 적을 것",
+    ),
+    "service-discovery": (
+        "Pod 상태 점검은 이 상실을 못 본다 — Pod는 Running인 채로 이름만 죽는다",
+        "관측자는 도구여야 한다(agnhost 수준) — 앱을 판정 기준으로 삼지 않는다",
+        "gcp에서만 실측됐다 — 다른 CSP 관리형 k8s에서의 통용은 예상이지 판정이 "
+        "아니다",
+    ),
+    "node-join": (
+        "기존 노드그룹은 정책이 떨어져도 ACTIVE·이슈 0으로 계속 돈다(O1) — "
+        "**카나리아(새 노드그룹 생성) 없이는 이 상실이 잠복한다.** 수동 점검은 "
+        "전부 통과한다",
+        "인스턴스 기동 성공을 join 성공으로 오판하지 말 것 — 상실 지점은 EC2 "
+        "기동이 아니라 컨트롤 플레인의 노드 수용이다",
+        "판정 사이 정책이 되돌아갔을 수 있다 — 변이 지속을 list-attached로 "
+        "실증해야 인과가 닫힌다(F1c)",
+        "클러스터 역할과 노드 역할을 혼동하지 말 것 — 이 신호가 재는 것은 "
+        "클러스터 역할이다(EC2 기동은 노드 역할·서비스 연결 역할의 몫)",
+    ),
+}
+
+#: 점검 스위트가 **못 덮는 지점** — 침묵이 "다 덮었다"로 읽히지 않게 명시한다
+#: (클린룸 배터리의 gaps, 실측 근거 있는 것만).
+GAPS: tuple[str, ...] = (
+    "inbound-tcp는 합성 신호라 실패의 원인 계층(IP·방화벽·라우트, azure는 "
+    "서브넷/NIC 이중 NSG)을 단독으로 못 가른다 — 실패 시 계층별 API 상태 조회의 "
+    "2차 진단이 필요하다",
+    "node-join 상실은 카나리아 없이는 관측 불가능한 잠복 상실이다 — 스케일아웃· "
+    "노드 교체가 일어나는 순간까지 어떤 수동 점검도 통과한다(O1 실측)",
+    "egress 방향은 aws subnet→IGW에서만 실측됐다 — 인바운드 통과를 아웃바운드 "
+    "보증으로 확장할 수 없고, azure는 대응 자원이 시스템 라우트라 신호 설계가 "
+    "별도로 필요하다",
+    "dns-resolution·service-discovery의 통과는 캐시 잔존일 수 있다 — TTL을 "
+    "통제할 수 없는 환경에서는 통과의 신뢰가 TTL만큼 깎인다(TTL 3600이 상실을 "
+    "3시간 가린 실측)",
+    "게스트 안 신호들(egress·imds·volume-write·dns)은 게스트 진입 경로가 살아 "
+    "있어야 잴 수 있다 — 진입 경로가 판정 대상 결속과 겹치면 점검이 마비된다. "
+    "판정 경로와 진단 경로의 분리(Z1)가 스위트 전체의 전제다",
+)
+
 
 @lru_cache(maxsize=1)
 def _function_claims() -> tuple[dict, ...]:
@@ -181,7 +269,8 @@ def checks_for(csp: str, resources: set[str] | frozenset[str]) -> tuple[Check, .
             because=(claim["csp"], claim["subject"], claim["object"]),
             evidence=tuple(
                 f'{e.get("experiment", "")}/{e.get("step", "")}'
-                for e in claim["evidence"] if e.get("experiment"))))
+                for e in claim["evidence"] if e.get("experiment")),
+            pitfalls=_PITFALLS.get(signal, ())))
     return tuple(out)
 
 

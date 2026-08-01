@@ -52,6 +52,22 @@ def test_the_signal_list_and_the_recipe_list_agree() -> None:
         f"방법만 있고 쓰는 주장이 없다: {known - declared}")
     # 그리고 실제로 주장에 실린 신호가 그 목록 안이어야 한다.
     assert deploy_checks.signals() <= declared
+    # 함정 목록도 같은 규율 — 없는 신호의 함정은 죽은 지식이 된다.
+    assert set(deploy_checks._PITFALLS) <= known, (
+        f"방법 없는 신호의 함정: {set(deploy_checks._PITFALLS) - known}")
+
+
+def test_checks_carry_their_pitfalls() -> None:
+    """함정은 점검과 같이 다녀야 한다 — 목록에만 있으면 실행하는 사람이 못 본다.
+
+    함정 없는 신호는 함정이 없다는 뜻이 아니라 실험이 안 물렸다는 뜻이다
+    (`_PITFALLS` 주석) — 그래서 빈 튜플도 정상이다.
+    """
+    checks = deploy_checks.checks_for("aws", frozenset({"vm", "publicIp"}))
+    assert checks, "aws vm→publicIp 기능 결속의 점검이 나와야 한다"
+    for check in checks:
+        assert check.pitfalls == deploy_checks._PITFALLS.get(check.signal, ())
+        assert "pitfalls" in check.as_dict()
 
 
 def test_a_check_carries_the_claim_that_motivates_it() -> None:
