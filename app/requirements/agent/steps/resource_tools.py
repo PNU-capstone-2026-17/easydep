@@ -12,6 +12,10 @@
   - `resolve_region` — 지명 → 리전 코드. **카탈로그가 답한다.** 모델이 코드를
     지어내면 뒤 단계의 조인이 조용히 빈 답이 된다.
   - `list_cloud_providers` — 우리가 실제로 아는 프로바이더 id. 조인이 도는 축이다.
+  - `list_workload_kinds` — 이 프로바이더에서 **실측이 있는** 배포 종류. 계약의
+    위상축(`workloads`)이 받는 값이고, 계획 전체가 그 위에 선다. 목록이 프로바이더마다
+    다른 것이 핵심이라 스키마 enum으로 못 박을 수 없다 — 모델이 외워서 쓰면 실측 없는
+    종류가 들어오고, 그러면 그 부분 계획이 조용히 빈다.
   - `convert_to_usd` — 환율. 계약이 USD를 요구하므로 필요하고, 값이 매일 바뀌므로
     **핀을 박을 수 없다.** 그래서 환산값만이 아니라 **환율·기준일·출처를 함께**
     돌려준다 — 근거에 그대로 실린다(`digest` 소스에 쓰는 규율과 같다).
@@ -54,6 +58,32 @@ def list_cloud_providers() -> str:
     plausible-looking name is worse than an empty field.
     """
     return ", ".join(regions.providers())
+
+
+@tool
+def list_workload_kinds(provider: str) -> str:
+    """List the workload kinds this provider has **measurements** for.
+
+    `RESOURCE_SPEC.workloads` must hold ids from this list. The whole deployment plan
+    — creation order, deletion order, what the provider synthesises on its own, what
+    breaks when a part is detached — is computed from this field, so an id that is not
+    in the list carries no knowledge at all and the plan for it would be empty.
+
+    The list differs per provider on purpose: it is derived from what was actually
+    measured against each cloud, not from a fixed vocabulary.
+
+    Args:
+        provider: a provider id from `list_cloud_providers`.
+    """
+    from app.core import input_registry
+
+    kinds = input_registry.anchors_for((provider or "").strip().lower())
+    if not kinds:
+        return (f"No measured workload kinds for provider {provider!r}. "
+                "Check the provider id with list_cloud_providers.")
+    return (f"{provider} has measurements for {len(kinds)} workload kinds:\n"
+            + "\n".join(f"- {k}" for k in kinds)
+            + "\n\nRecord one or more of these ids in `workloads`, comma separated.")
 
 
 @tool
@@ -152,4 +182,5 @@ def web_search(query: str, max_results: int = 4) -> str:
 
 
 #: 조회 도구들. 상태를 바꾸지 않으므로 실행 간에 공유해도 된다.
-LOOKUP_TOOLS = [list_cloud_providers, resolve_region, convert_to_usd, web_search]
+LOOKUP_TOOLS = [list_cloud_providers, list_workload_kinds, resolve_region,
+                convert_to_usd, web_search]

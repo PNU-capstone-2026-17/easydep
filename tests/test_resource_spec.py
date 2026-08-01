@@ -77,19 +77,25 @@ def _record(field, value, evidence):
     return ("record_field", {"field": field, "value": value, "evidence": evidence})
 
 
-CONSTRAINTS = ("Deploy on aws in Seoul. The monthly budget is at most 500 USD. "
+CONSTRAINTS = ("Deploy on aws in Seoul, on a managed Kubernetes cluster. "
+               "The monthly budget is at most 500 USD. "
                "We expect about 300 concurrent users.")
 
-#: 계약을 세우는 최소 스크립트. 리전은 **카탈로그를 거쳐** 코드로 들어간다.
+#: 계약을 세우는 최소 스크립트. 리전은 **카탈로그를 거쳐** 코드로 들어가고,
+#: 위상축(`workloads`)도 **목록 도구를 거쳐야** 들어간다 — 둘 다 모델이 외워
+#: 쓰면 안 되는 값이라 같은 대조를 받는다(판 2, 2026-08-01).
 def _complete_turns():
     return (
         [_record("provider", "aws", "Deploy on aws"),
-         ("resolve_region", {"place": "Seoul", "provider": "aws"})],
+         ("resolve_region", {"place": "Seoul", "provider": "aws"}),
+         ("list_workload_kinds", {"provider": "aws"})],
         [_record("region", "ap-northeast-2", "ap-northeast-2"),
          _record("regionAsWritten", "Seoul", "in Seoul"),
+         _record("workloads", "k8sCluster", "- k8sCluster"),
          _record("monthlyBudgetUSD", "500", "at most 500 USD"),
          _record("expectedConcurrentUsers", "300", "about 300 concurrent users")],
-        [("finish", {"understanding": "AWS Seoul, $500/month, ~300 concurrent users."})],
+        [("finish", {"understanding":
+                     "AWS Seoul, managed Kubernetes, $500/month, ~300 users."})],
     )
 
 
@@ -258,15 +264,36 @@ def test_values_are_marshalled_to_the_type_the_contract_declares():
 
 
 # --- 되묻기 -----------------------------------------------------------------
-def test_questions_quote_the_contract_reason_verbatim(run):
-    """이유 없이 물으면 사용자가 아무 값이나 채운다 — `REQUIRED_WHY`의 존재 이유다."""
+def test_questions_carry_both_the_ask_and_the_reason(run):
+    """이유 없이 물으면 사용자가 아무 값이나 채운다 — 이 구조의 출발점이다.
+
+    **2026-08-01에 둘로 갈렸다.** 예전에는 이유 문장이 곧 질문이었고, 그래서 계약의
+    영어 근거 문장(`"it is the axis for every value join"`)이 그대로 화면에 나갔다.
+    지금은 레지스트리가 `question`(사용자에게 하는 말)과 `opens`(왜 필요한가)를
+    따로 들고, 되묻기가 **둘 다** 싣는다.
+    """
     _result, intake, _ = run(texts=("The system shall support 100 concurrent users.",))
 
     asked = {q["field"]: q for q in intake["questions"]}
-    for name in ("provider", "region", "monthlyBudgetUSD"):
+    for name in ("provider", "region", "workloads", "monthlyBudgetUSD"):
         assert name in asked, name
         assert asked[name]["why"] == cloud_contract.why(name)
-        assert asked[name]["why"] in asked[name]["question"]
+        assert asked[name]["question"] == cloud_contract.question(name)
+        assert asked[name]["question"] and asked[name]["why"]
+        assert asked[name]["question"] != asked[name]["why"]
+
+
+def test_a_question_offers_the_values_it_accepts(run):
+    """고를 것이 있는 칸은 **무엇을 고를 수 있는지**를 함께 낸다.
+
+    위상축이 특히 그렇다 — 사용자가 우리 어휘를 모르는데 목록 없이 물으면
+    실측 없는 이름이 돌아온다. 목록은 프로바이더가 정해진 뒤에야 나온다.
+    """
+    _result, intake, _ = run(
+        [_record("provider", "aws", "Deploy on aws")], constraints=CONSTRAINTS)
+    asked = {q["field"]: q for q in intake["questions"]}
+    assert "k8sCluster" in asked["workloads"]["choices"]
+    assert "steady" in asked["trafficPattern"]["choices"]
 
 
 def test_a_required_field_is_asked_even_if_the_agent_forgets(run):

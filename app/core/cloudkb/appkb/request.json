@@ -1,18 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "RESOURCE_SPEC v1 — 클라우드 리소스 제약 계약",
-  "description": "사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. **2026-07-29 재판정**: 이 판정식을 전 칸에 다시 걸어 규모 신호(expectedConcurrentUsers·approxRequestsPerSecond)를 필수에서 내렸다 — 그것으로 서는 판정이 하나도 없었기 때문이다(스펙 하한은 minVCpu·minMemoryGiB가 준다). 필수가 줄어드는 방향이라 기존 명세는 전부 유효해서 schemaVersion은 그대로 1이다. 필수는 아니지만 없으면 판정이 하나 닫히는 칸은 contract.SUGGESTED_WHY에 있고, 요구사항 에이전트가 그것을 '권고 질문'으로 함께 낸다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
+  "title": "RESOURCE_SPEC v2 — 클라우드 리소스 제약 계약",
+  "description": "**2026-08-01 판 2 — 위상축 신설.** 계약을 제로베이스에서 다시 물었더니 축이 하나뿐이었다: 15칸이 전부 '어떻게 고르나'(조인·규모·정책)이고 '무엇을 놓나'가 없었다. 그래서 3사 실측 의존 주장 118건이 사슬에 진입할 입구가 없었다(앵커 후보는 CSP당 13~14종인데 받을 칸이 없었다). workloads를 필수로 신설한다 — **필수가 느는 방향이라 기존 명세가 전부 무효가 되므로 판을 2로 올린다**(판 1에서 규모 신호를 내릴 때 판을 유지한 것과 반대 방향이다). 그리고 이 파일이 산문으로 적어 온 규율 — '모든 칸에는 소비자가 있어야 한다' — 은 app/core/input_registry.py에서 항목의 칸(`opens`)이 되어 기계가 지킨다. 질문 문구·근거 좌표·계층·선행조건도 거기 있다. || 사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. **2026-07-29 재판정**: 이 판정식을 전 칸에 다시 걸어 규모 신호(expectedConcurrentUsers·approxRequestsPerSecond)를 필수에서 내렸다 — 그것으로 서는 판정이 하나도 없었기 때문이다(스펙 하한은 minVCpu·minMemoryGiB가 준다). 필수가 줄어드는 방향이라 기존 명세는 전부 유효해서 schemaVersion은 그대로 1이다. 필수는 아니지만 없으면 판정이 하나 닫히는 칸은 contract.SUGGESTED_WHY에 있고, 요구사항 에이전트가 그것을 '권고 질문'으로 함께 낸다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
     "provider",
     "region",
+    "workloads",
     "monthlyBudgetUSD"
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1"
+      "const": "2"
+    },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      },
+      "description": "무엇을 배포하는가 — 앵커 자원 id의 목록(예: [\"k8sCluster\"], [\"vm\",\"loadBalancer\"]). **2026-08-01 신설**: 그전까지 계약에는 축이 하나뿐이었다(전부 '어떻게 고르나'이고 '무엇을 놓나'가 없었다). 소비자: app/core/infra_planning.plan_for_anchors — 폐포·생성 순서·삭제 순서·서버 합성·운영 경고가 전부 이 값에서 나온다. 없으면 3사 실측 주장이 계획에 닿지 못한다. 받는 값은 CSP마다 다르고 claims.json에서 나온다(input_registry.anchors_for) — 스키마가 enum으로 못 박지 않는 이유가 그것이다. **개수(같은 종류를 몇 개 놓는가)는 담지 않는다** — 우리 주장은 종류 수준이고 카디널리티는 실측한 적이 없다."
     },
     "provider": {
       "type": "string",

@@ -14,19 +14,21 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.appkb.contract import (
-    REQUIRED_WHY,
-    request_schema,
-    schema,
-    validate_request,
-)
+from app.core import cloud_contract, input_registry
+from app.core.cloudkb.appkb.contract import request_schema, schema, validate_request
+
+#: 필수 목록의 진실은 **스키마**다(2026-08-01). 예전에는 `contract.REQUIRED_WHY`가
+#: 사본을 들고 있었고, 그 사본이 "왜"까지 겸하는 바람에 질문 문구·근거·계층을 담을
+#: 자리가 없었다. 지금 "왜"는 `app/core/input_registry.py`에 있다.
+_REQUIRED = tuple(f for f in request_schema()["required"] if f != "schemaVersion")
 
 
 def _spec(**overrides) -> dict:
     base = {
-        "schemaVersion": "1",
+        "schemaVersion": "2",
         "provider": "aws",
         "region": "ap-northeast-2",
+        "workloads": ["vm"],
         "monthlyBudgetUSD": 500,
         "expectedConcurrentUsers": 200,
     }
@@ -40,13 +42,19 @@ def test_minimal_valid_spec_passes() -> None:
     assert validate_request(_spec()) == []
 
 
-@pytest.mark.parametrize("field", sorted(REQUIRED_WHY))
+@pytest.mark.parametrize("field", sorted(_REQUIRED))
 def test_missing_required_says_why(field: str) -> None:
-    """누락 메시지에 칸 이름과 **왜 필요한지**가 같이 있어야 한다."""
-    problems = validate_request(_spec(**{field: None}))
+    """누락 메시지에 칸 이름과 **왜 필요한지**가 같이 있어야 한다.
+
+    **층이 갈렸다**(2026-08-01): 모양 검증(`validate_request`)은 이유를 모르고
+    칸 이름만 말한다. 이유를 붙이는 것은 레지스트리를 아는 `cloud_contract`다 —
+    그래야 같은 문장이 되묻기·화면·검증에서 한 곳에서 나온다.
+    """
+    problems = cloud_contract.validate(_spec(**{field: None}))
     matching = [p for p in problems if p.startswith(f"[required] {field}")]
     assert len(matching) == 1
-    assert REQUIRED_WHY[field] in matching[0]
+    assert cloud_contract.why(field) in matching[0]
+    assert cloud_contract.question(field), f"{field}에 사용자에게 할 말이 없다"
 
 
 def test_either_scale_signal_is_accepted() -> None:
@@ -68,14 +76,16 @@ def test_scale_signal_is_no_longer_required() -> None:
     규모 줄은 "스펙이 충분한지 판정할 수 없다"이고, 동시 사용자를 스펙으로 바꾸는
     변환은 소스가 없어 KB에서 배제돼 있다.
 
-    대신 `SUGGESTED_WHY`에 권고로 남는다. 필수를 **줄이는** 방향이라 기존 명세는
-    전부 그대로 유효하고, 그래서 schemaVersion을 올리지 않았다.
+    대신 **권고 계층**에 남는다. 필수를 줄이는 방향이라 그때는 기존 명세가 전부
+    그대로 유효해서 schemaVersion을 올리지 않았다(판 2에서 `workloads`를 **더한**
+    것과 방향이 반대다 — 그쪽은 판을 올렸다).
     """
-    from app.core.cloudkb.appkb.contract import SUGGESTED_WHY
-
     assert validate_request(_spec(expectedConcurrentUsers=None)) == []
-    assert not any(f in SUGGESTED_WHY for f in ("provider", "region"))
-    assert "expectedConcurrentUsers" in SUGGESTED_WHY
+    assert not any(f in cloud_contract.suggested_fields({})
+                   for f in ("provider", "region"))
+    assert "expectedConcurrentUsers" in cloud_contract.suggested_fields({})
+    assert input_registry.tier_of("expectedConcurrentUsers") == \
+        input_registry.SUGGESTED
     # jsonschema의 뭉개진 anyOf 문구가 새어 나오면 안 된다(anyOf 자체가 사라졌다).
     assert not any("is not valid under any"
                    in p for p in validate_request(_spec(expectedConcurrentUsers=None)))
@@ -99,7 +109,7 @@ def test_non_dict_input_is_reported_not_crashed() -> None:
 def test_empty_spec_lists_every_required_at_once() -> None:
     """상류는 에이전트다 — 하나씩 흘리면 되묻기가 N번 왕복된다. 한 번에 다."""
     problems = validate_request({})
-    for field in ("schemaVersion", *REQUIRED_WHY):
+    for field in ("schemaVersion", *_REQUIRED):
         assert any(field in p for p in problems), field
     # 규모 신호는 2026-07-29에 필수에서 내려왔다 — 여기 없는 것이 맞다.
     assert not any("no scale signal" in p for p in problems)
@@ -126,44 +136,25 @@ def test_request_schema_rejects_extras_like_design_schema() -> None:
 
 # --- 소비자 대응표 --------------------------------------------------------------
 
-#: 칸 → 그 칸을 읽는 곳. **여기 없는 칸은 계약에 넣을 수 없다** — 표가 스키마와
-#: 어긋나면 아래 테스트가 실패한다. 소비자를 지우면 칸도 지워야 한다.
-_CONSUMERS = {
-    "schemaVersion": "appkb.contract.validate_request — 계약 버전 검사",
-    "provider": "nim_agent.design_tools.compose(값 조인 라우팅) · "
-                "appkb.verify.verify_against_requirements(프로바이더 대조)",
-    "region": "design_tools._attach_values — costkb 리전 조인",
-    "regionAsWritten": "되짚기용 원문 — 해석이 틀렸을 때 사람이 확인 "
-                       "(REFINE_REQ가 원문을 남기는 것과 같은 이유)",
-    "monthlyBudgetUSD": "appkb.verify.verify_against_requirements — 예산 비대칭 판정",
-    # **2026-07-29 정정**: 규모 신호는 더 이상 하한을 정하지 않는다. 예전 소비자
-    # ("사이징 최소치")는 `users <= 500 → (2,4)`라는 출처 없는 계수였고, 그건 KB가
-    # 명시적으로 배제한 변환이었다. 지금 소비자는 되묻기의 근거다.
-    "expectedConcurrentUsers": "sizing_floor.undecided_note(하한이 없을 때 되묻기의 "
-                               "근거) · verify_against_requirements(규모 판정 불가 "
-                               "명시)",
-    "approxRequestsPerSecond": "sizing_floor.undecided_note · "
-                               "verify_against_requirements — 규모 판정 불가 명시",
-    "minVCpu": "nim_agent.sizing_floor.resolve(층 2 — 스펙 선택의 하한) · "
-               "design_tools._attach_values(하한이 있어야 스펙을 고른다) · "
-               "verify._CLOSES(없으면 스펙 선택 자체가 안 열린다)",
-    "minMemoryGiB": "nim_agent.sizing_floor.resolve — minVCpu와 같은 층·같은 소비자",
-    "multiZone": "design_tools._subnet_notes · verify_against_requirements",
-    "trafficPattern": "verify_against_requirements — 버스트 적합 판정(⑥-A에서 열림)",
-    "stateless": "verify_against_requirements — 서버리스 적합 판정(⑥-A에서 열림)",
-    "dataResidency": "design_tools.compose(리전 원본 표시 이름 대조 노트 — envkb) · "
-                     "verify_against_requirements(**판정 불가 명시** — 국가 판정 "
-                     "소스가 없어 대조 자료까지가 소비다. 2층 보강에서 열림)",
-    "lowCarbonPreferred": "design_tools._global_notices(선택 리전의 탄소집약도와 "
-                          "**같은 프로바이더 안에서 더 낮은 리전 수** — envkb) · "
-                          "verify_against_requirements(**판정이 아니라 자료** — "
-                          "옮길지는 지연·레지던시와의 상충이라 우리가 못 잰다). "
-                          "관심사 `cn.carbon-constraint`가 이 칸으로 흘러든다 — "
-                          "탄소 161건이 질의응답에만 쓰이던 것을 계획에 이었다",
-    "meta": "자유 메타 — 계약이 뜻을 정하지 않는 유일한 칸",
-}
-
-
 def test_every_field_has_a_declared_consumer() -> None:
-    assert set(request_schema()["properties"]) == set(_CONSUMERS)
-    assert all(v.strip() for v in _CONSUMERS.values())
+    """**모든 칸에 소비자가 있는가** — multiZone을 받아 놓고 안 읽던 결함의 일반화.
+
+    2026-08-01까지 이 검사는 **여기 손으로 적은 표**와 스키마를 대조했다. 표가
+    사본이라 소비자를 바꾸면 두 곳을 고쳐야 했고, 게다가 그 표는 테스트 안에만
+    있어서 **되묻기가 그 문장을 쓸 수 없었다** — 사용자에게 "왜 필요한지"를
+    말해야 하는 자리에서 정작 그 문장에 손이 안 닿았다.
+
+    지금은 `app/core/input_registry.py`가 항목마다 `opens`(소비자)와
+    `basis`(그 소비자가 실재한다는 좌표)를 들고 있고, 소비자 없는 항목은 **만들
+    수조차 없다**. 여기서는 그 규율이 스키마를 다 덮는지만 본다.
+    """
+    schema_fields = set(request_schema()["properties"])
+    asked = {a.spec_field: a for a in input_registry.ASKS if a.spec_field}
+    declined = input_registry.NOT_ASKED
+    assert schema_fields == set(asked) | set(declined), (
+        f"소비자가 선언되지 않은 칸: {schema_fields - set(asked) - set(declined)}")
+    for field, ask in asked.items():
+        assert ask.opens.strip(), field
+        assert ask.basis, field
+    for field, why in declined.items():
+        assert why.strip(), f"{field}: 안 묻는 이유가 비어 있다"

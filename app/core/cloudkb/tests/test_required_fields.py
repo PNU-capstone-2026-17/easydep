@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.cloudkb.appkb.contract import REQUIRED_WHY
+from app.core import cloud_contract, input_registry
+from app.core.cloudkb.appkb.contract import request_schema
 from app.core.cloudkb.appkb.plan import (
     ORIGIN_INFERRED,
     ORIGIN_KB,
@@ -29,9 +30,10 @@ from app.core.cloudkb.tests._helpers import flat
 _HOURS = 730
 
 _FULL = {
-    "schemaVersion": "1",
+    "schemaVersion": "2",
     "provider": "aws",
     "region": "ap-northeast-2",
+    "workloads": ["vm"],
     "monthlyBudgetUSD": 300.0,
 }
 
@@ -95,17 +97,34 @@ def test_region_is_required_because_prices_are_indexed_by_it() -> None:
     # 같은 조건인데 리전을 안 주면 다른 후보·다른 단가가 나올 수 있다. 둘이 우연히
     # 같더라도 "리전을 안 줘도 된다"는 뜻이 아니므로 값이 아니라 **경로**를 검사한다.
     assert seoul[0].get("hourlyUSD") is not None
-    assert "region" in REQUIRED_WHY and "region code" in REQUIRED_WHY["region"]
+    assert "리전 코드" in cloud_contract.why("region")
+
+
+def test_workloads_is_required_because_no_plan_exists_without_it() -> None:
+    """`workloads`는 판정이 아니라 **계획 자체**로 필수다(2026-08-01 신설).
+
+    앞의 칸들은 계획을 만든 **뒤** 그 계획을 재는 데 쓰인다. 이 칸은 **계획을
+    만드는 입력**이라 근거의 모양이 또 다르다 — 지우면 판정 한 줄이 사라지는 게
+    아니라 잴 대상이 없어진다.
+    """
+    from app.core.infra_planning import plan_for_anchors
+
+    plan = plan_for_anchors(["k8sCluster"], "aws", "ap-northeast-2")
+    assert [c["id"] for c in plan.provision["createOrder"]], "앵커가 있으면 계획이 선다"
+    with pytest.raises((ValueError, KeyError, IndexError)):
+        plan_for_anchors([], "aws", "ap-northeast-2")
 
 
 def test_every_required_field_is_covered_by_this_file() -> None:
     """**필수 칸이 늘면 이 파일도 늘어야 한다.**
 
     `schemaVersion`은 사용자에게 묻지 않고 생산자가 채우므로(계약 버전 표식) 판정
-    대상이 아니다. `region`은 위 테스트가 따로 다룬다.
+    대상이 아니다. `region`·`workloads`는 위 테스트들이 따로 다룬다 — 근거의
+    모양이 다르기 때문이다(조인 / 계획의 입력).
     """
-    covered = set(_VERDICT_MARK) | {"region"}
-    assert set(REQUIRED_WHY) == covered, (
+    covered = set(_VERDICT_MARK) | {"region", "workloads"}
+    required = set(request_schema()["required"]) - set(input_registry.NOT_ASKED)
+    assert required == covered, (
         "필수 칸이 바뀌었습니다. 새 칸에 '지우면 무너지는 판정'을 하나 붙이거나, "
         "붙일 수 없다면 그 칸은 필수가 아닙니다 — 계약을 고치세요."
     )

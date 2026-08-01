@@ -652,8 +652,8 @@ you need. Nothing here is a fixed sequence.
   to know where you stand.
 - `ask_user` asks the user one question about one field. **This is a normal action,
   not a failure.** Asking beats guessing every time.
-- `resolve_region`, `list_cloud_providers`, `convert_to_usd`, `web_search` look things
-  up so that you do not have to remember or estimate them.
+- `resolve_region`, `list_cloud_providers`, `list_workload_kinds`, `convert_to_usd`,
+  `web_search` look things up so that you do not have to remember or estimate them.
 - `finish` ends your turn. **Always end by calling it** — do not just write a closing
   summary as ordinary text. Pass that summary as its `understanding` argument: one short
   paragraph saying back what you understood, in the user's own vocabulary rather than
@@ -689,6 +689,23 @@ These come from measuring an actual corpus, not from imagination.
   deliberately does not carry one. The floor lives in `minVCpu` / `minMemoryGiB`, and it
   only exists if the user or the designer stated it ("at least 4 vCPU and 16 GB").
   Never derive one from the other; if the floor is absent, that is an absent value.
+
+# What is being deployed
+
+`workloads` says **what kinds of cloud resource this system is put on** — a managed
+Kubernetes cluster, plain virtual machines, a load balancer, and so on. Everything the
+dependency knowledge can say about ordering, deletion, what the provider creates for
+you and what breaks when a part is removed is computed from this one field. Without it
+there is no plan at all, only sizing numbers with nothing to size.
+
+Call `list_workload_kinds` for the kinds this provider actually has measurements for,
+and record the ids from that list — the set differs per provider, and an id that is not
+in it has no measurements behind it. Set `provider` first; the list depends on it.
+
+The user rarely uses our words. "쿠버네티스로 운영합니다" is `k8sCluster`; "서버 두 대
+띄워서" is `vm`; "앞단에 로드밸런서" adds `loadBalancer`. If what they wrote does not
+map cleanly onto the list, that is a question, not a guess — the whole plan stands on
+this field.
 
 # Region and provider
 

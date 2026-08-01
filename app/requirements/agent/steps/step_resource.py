@@ -56,7 +56,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
-from app.core import cloud_contract, regions
+from app.core import cloud_contract, input_registry, regions
 from app.requirements import prompts
 from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS
@@ -64,8 +64,9 @@ from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
 
-#: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 여기서 정하는 것이 아니라 옮겨 적는다.
-SCHEMA_VERSION = "1"
+#: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 **옮겨 적지 않고 읽는다** —
+#: 손으로 적어 두면 판을 올릴 때 여기가 조용히 낡는다(판 2에서 실제로 그럴 뻔했다).
+SCHEMA_VERSION = cloud_contract.schema_version()
 
 #: 질문의 종류. 빈 칸의 **이유**가 다르면 사용자가 할 일도 다르다.
 MISSING = "missing"        # 계약이 요구하는데 아직 값이 없다
@@ -158,6 +159,25 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
         if number <= 0:
             return None, "양수여야 한다"
         return (int(number) if kind == "integer" else number), ""
+    if kind == "array":
+        # 목록 칸(`workloads`)은 도구가 문자열로 받는다. JSON 배열도, 쉼표로 나눈
+        # 것도 받되 **거기까지다** — 무엇이 유효한 종류인지는 아래 도메인 검사가
+        # 본다(레지스트리가 claims에서 뽑은 목록).
+        if isinstance(text, list):
+            items = [str(x).strip() for x in text]
+        else:
+            body = str(text).strip()
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                parsed = None
+            items = ([str(x).strip() for x in parsed] if isinstance(parsed, list)
+                     else [p.strip() for p in body.replace("\n", ",").split(",")])
+        items = [i for i in items if i]
+        if not items:
+            return None, "적어도 하나는 있어야 한다"
+        # 순서는 뜻이 없고 중복은 스키마가 거부한다 — 여기서 정리해 준다.
+        return list(dict.fromkeys(items)), ""
     return str(text), ""
 
 
@@ -177,6 +197,19 @@ def _domain_error(field_name: str, value: object, draft: dict) -> str:
         if not regions.is_region_code(str(value), provider=draft.get("provider")):
             return ("리전 **코드**가 아니다 — 지명을 그대로 넣으면 뒤 단계 조인이 조용히 "
                     "빈 답이 된다. resolve_region으로 코드를 받아라")
+    if field_name == "workloads":
+        # 계획 전체가 이 값 위에 선다. **실측이 없는 종류를 받으면 그 부분 계획이
+        # 통째로 비는데, 비었다는 사실이 값으로는 안 보인다** — 그래서 여기서 막는다.
+        provider = draft.get("provider")
+        if not provider:
+            return ("provider를 먼저 정해야 한다 — 배포 가능한 종류가 프로바이더마다 "
+                    "다르고, 그 목록이 실측에서 나온다(list_workload_kinds)")
+        known = input_registry.anchors_for(str(provider))
+        unknown = [v for v in (value or []) if v not in known]
+        if unknown:
+            return (f"{provider}에서 실측이 없는 종류다: {', '.join(unknown)} — "
+                    f"list_workload_kinds가 주는 목록에서 골라라 "
+                    f"({', '.join(known[:8])}…)")
     return ""
 
 
@@ -519,7 +552,12 @@ def build_resource_spec(state: AgentState) -> dict:
         session.questions.append({
             "field": name, "kind": MISSING,
             "why": cloud_contract.why(name),
-            "question": f"{name} 값이 필요하다 — {cloud_contract.why(name)}",
+            # 사용자에게 하는 **말**과 그것이 필요한 **이유**는 다른 것이다.
+            # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
+            "question": cloud_contract.question(name)
+                        or f"{name} 값이 필요하다 — {cloud_contract.why(name)}",
+            "choices": list(cloud_contract.choices(
+                name, str(session.draft.get("provider") or ""))),
             "seen": [r for r in session.rejected if r["field"] == name],
         })
     # 권고 칸은 **막지 않는다.** 계약을 만족시키는 데는 필요 없고, 답하면 뒤 단계
@@ -530,8 +568,9 @@ def build_resource_spec(state: AgentState) -> dict:
         session.questions.append({
             "field": name, "kind": SUGGESTED,
             "why": cloud_contract.why(name),
-            "question": f"{name}을 알려 주면 판정이 하나 열린다 — "
-                        f"{cloud_contract.why(name)}",
+            "question": cloud_contract.question(name),
+            "choices": list(cloud_contract.choices(
+                name, str(session.draft.get("provider") or ""))),
             "seen": [],
         })
 
