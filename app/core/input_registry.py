@@ -196,8 +196,9 @@ ASKS: tuple[Ask, ...] = (
         tier=REQUIRED,
         question="월 예산이 얼마입니까? 다른 통화로 말해도 환산해 드립니다.",
         opens="비용 부합 판정의 기준값 — 없으면 판정문 자체가 안 나온다",
-        basis=(Basis(CONCERN, "cn.cost-ceiling"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
+        # 2026-08-02 관심사 실측 재도출로 문헌 유래 관심사(cn.cost-ceiling)가
+        # 죽었다 — 이 칸의 근거는 과제 원문(비용 기준 추천)과 판정 코드다.
+        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),),
     ),
     # ── 선택축 — 채우면 판정이 하나 열린다 ───────────────────────────────────
     Ask(
@@ -227,7 +228,7 @@ ASKS: tuple[Ask, ...] = (
         question="부하가 상시로 깔립니까(steady), 간헐적으로 치솟습니까(spiky)?",
         opens="버스트 적합 판정 — 없으면 버스트 경고가 경고로만 남고 이 앱에 "
               "문제인지는 판정하지 않는다",
-        basis=(Basis(CONCERN, "cn.traffic-shape"),
+        basis=(Basis(CONCERN, "cn.load-shape"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
     ),
     Ask(
@@ -237,8 +238,9 @@ ASKS: tuple[Ask, ...] = (
         question="한 가용영역이 통째로 죽어도 서비스가 계속돼야 합니까?",
         opens="가용영역 판정 · 서브넷 배치 조건 — aws EKS는 **서로 다른 AZ의 서브넷 "
               "둘**을 요구한다(같은 AZ 둘은 거부됐다, 실측)",
-        basis=(Basis(CONCERN, "cn.redundancy-target"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),
+        # 다중화 요구의 수요 실물(PURE 24건)은 계보 감사 판정표에 있다 — 관심사
+        # 축은 실측 재도출로 거부(required) 계열을 안 담아 여기 대응 관심사가 없다.
+        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),
                Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_subnet_notes"),
                Basis(CLAIM, "aws/k8sCluster→subnet/existence")),
     ),
@@ -251,8 +253,7 @@ ASKS: tuple[Ask, ...] = (
                  "편한 쪽으로 말해 주세요.",
         opens="계획의 규모 진술과 되묻기의 근거 — **스펙을 정하지는 않는다**"
               "(규모→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",
-        basis=(Basis(CONCERN, "cn.expected-scale"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#undecided_note"),
+        basis=(Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#undecided_note"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
     ),
     Ask(
@@ -262,8 +263,7 @@ ASKS: tuple[Ask, ...] = (
         question="데이터가 특정 국가·지역에 머물러야 합니까?",
         opens="계획이 리전의 원본 표시 이름을 대조 자료로 싣는다 — **판정은 하지 "
               "않는다**(리전의 국가를 기계 판정할 소스가 없다, 실측)",
-        basis=(Basis(CONCERN, "cn.data-residency"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#compose"),
+        basis=(Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#compose"),
                Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
     ),
 )
