@@ -1,0 +1,94 @@
+{
+ "schemaVersion": "easydep-cloud-resource/v1alpha1",
+ "provider": "aws",
+ "resources": [],
+ "_omitted": {
+  "networking.containerPort": "앱이 어느 포트를 듣는지는 설계·구현이 정한다 — 렌더러 기본값(8000)이 선다",
+  "workloads[].probes": "헬스 엔드포인트 경로는 앱의 것이다. 우리가 쓰면 '이 앱에 /healthz가 있다'는 주장이 된다",
+  "workloads[].monitoring.metricsPath": "같은 이유 — 앱의 것이다",
+  "networking.ingressClassName": "인그레스 컨트롤러 선택은 운영 결정이고, 우리 실측은 '컨트롤러를 깔지는 사람이 정한다'까지만 말한다(k8sIngress 라운드)"
+ },
+ "_unsupported": [
+  "이 계획은 관리형 쿠버네티스 위에 서지 않는다(VM) — 하류 렌더러는 Microsoft.ContainerService/managedClusters만 읽으므로 이 산출물로는 매니페스트가 나오지 않는다",
+  "계획은 aws인데 하류 렌더러는 azure ARM 타입만 알아본다 — 3사 실측이 여기서 막힌다(하류 스키마의 변경이 필요하다)"
+ ],
+ "_provenance": "app/core/cloud_artifact.build — 설계 신호에서 나온 배포 계획의 투영이다. 형식은 하류(deployment_renderer)가 정했다",
+ "_measured": {
+  "csp": "aws",
+  "anchors": [
+   "loadBalancer",
+   "vm"
+  ],
+  "createOrder": [
+   "image",
+   "network",
+   "subnet",
+   "loadBalancer",
+   "vm"
+  ],
+  "deleteBefore": [
+   [
+    "subnet",
+    "network"
+   ]
+  ],
+  "waitFor": [
+   {
+    "id": "vm",
+    "op": "create",
+    "doneSignal": "State.Name == running",
+    "confidence": "async-confirmed"
+   },
+   {
+    "id": "vm",
+    "op": "delete",
+    "doneSignal": "State.Name == terminated",
+    "confidence": "async-confirmed"
+   }
+  ],
+  "doNotCreate": [
+   {
+    "id": "disk",
+    "why": "disk은(는) aws가 자동으로 만듭니다 — 계획에 넣지 않아도 됩니다",
+    "kind": "server-implicit"
+   },
+   {
+    "id": "firewall",
+    "why": "firewall을(를) 정하지 않으면 aws가 기본값으로 채웁니다",
+    "kind": "server-default"
+   },
+   {
+    "id": "nic",
+    "why": "nic은(는) aws가 자동으로 만듭니다 — 계획에 넣지 않아도 됩니다",
+    "kind": "server-implicit"
+   }
+  ],
+  "operationalWarnings": [
+   {
+    "subject": "subnet",
+    "object": "internetGateway",
+    "breaks": "internetGateway를 떼어도 subnet는 남지만 기능이 깨집니다 (컨트롤 플레인이 막지 않습니다 — 실측)"
+   },
+   {
+    "subject": "vm",
+    "object": "firewall",
+    "breaks": "firewall를 떼어도 vm는 남지만 기능이 깨집니다 (컨트롤 플레인이 막지 않습니다 — 실측)"
+   },
+   {
+    "subject": "vm",
+    "object": "iamRole",
+    "breaks": "iamRole를 떼어도 vm는 남지만 기능이 깨집니다 (컨트롤 플레인이 막지 않습니다 — 실측)"
+   },
+   {
+    "subject": "vm",
+    "object": "publicIp",
+    "breaks": "publicIp를 떼어도 vm는 남지만 기능이 깨집니다 (컨트롤 플레인이 막지 않습니다 — 실측)"
+   }
+  ],
+  "unmeasured": [
+   "app-db",
+   "message-queue",
+   "pg-gateway"
+  ]
+ }
+}

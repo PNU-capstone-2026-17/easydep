@@ -205,6 +205,25 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(diagram.render(plan))
 
+        # ── 6. 하류가 먹는 산출물 ────────────────────────────────────────
+        # **사슬의 마지막 이음매.** 구현 단계는 `cloud` 산출물을 기다리는데
+        # 아무도 내지 않고 있었다(2026-08-01). 여기서 내고 파일로 남긴다 —
+        # 표본을 태울 때마다 그 자리가 채워지는지 눈에 보이게.
+        from app.core.cloud_artifact import write as write_cloud
+
+        out = root / "design" / "cloud.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        art = write_cloud(plan, design, out, name=root.name)
+        print("\n[6] 하류 산출물 — design/cloud.json")
+        measured = art.get("_measured") or {}
+        print(f"  앵커: {', '.join(measured.get('anchors') or []) or '(없음)'}")
+        if measured.get("createOrder"):
+            print(f"  생성 순서: {' → '.join(measured['createOrder'])}")
+        for line in art.get("_unsupported") or []:
+            print(f"  ⚠ {line}")
+        if not art.get("resources"):
+            print("  자원 0 — 하류 렌더러는 이 계획을 매니페스트로 못 바꾼다")
+
     print()
     return 1 if missing_required else 0
 

@@ -60,6 +60,16 @@ from app.core.cloudkb.appkb.plan import DeploymentPlan
 from app.core.cloudkb.depkb import vocabulary
 from app.core.infra_planning import plan_for_anchors
 
+#: 스키마 결속이 없어 **이름 일치**로 잇는 자원들. 위쪽 경로(aws 결속 → 그래프)
+#: 와 등급이 다르다 — `core::k8sCluster`가 우리 `k8sCluster`와 같은 것이라는
+#: 근거는 **이름뿐**이고, 그것을 기계로 확인할 방법이 지금 없다.
+#:
+#: 목록을 상수로 고정하는 이유: 자동으로 이름 일치를 훑으면 우연히 같은 이름인
+#: 것까지 이어지고, 그러면 약한 결속이 조용히 는다. 늘리려면 여기 적어야 하고
+#: 테스트가 그 목록을 지킨다.
+NAME_MATCHED: tuple[str, ...] = ("k8sCluster", "k8sNodeGroup", "customImage")
+
+
 @lru_cache(maxsize=1)
 def _bridge() -> dict[str, dict[str, str]]:
     """CSP → (계획의 벤더 타입 → 우리 어휘). **표를 손으로 만들지 않는다.**
@@ -99,6 +109,26 @@ def _bridge() -> dict[str, dict[str, str]]:
             continue
         for peer in equivalents(graph, node):
             if peer.provider and peer.provider != "aws":
+                out.setdefault(peer.provider, {}).setdefault(
+                    peer.id.split("::", 1)[1], resource)
+
+    # ── 지렛대가 없는 자원 — **이름 일치**로 잇는다(약한 결속) ───────────────
+    #
+    # `AWS_TYPES`는 어휘 9종뿐인데 주장에 나오는 자원은 24종이다. k8s 세 종은
+    # 스키마 결속이 없어 위 경로로는 안 이어지고, 그러면 **쿠버네티스 계획이
+    # 통째로 대조 밖으로 빠진다**(2026-08-01에 `cloud` 산출물을 만들다 드러났다:
+    # 앵커 0, 실측 전부 빔).
+    #
+    # 그래서 `core::<우리 자원 이름>`이 그래프에 있으면 그것을 지렛대로 쓴다.
+    # **이건 이름이 같다는 데 기댄 것이지 검증된 대응이 아니다** — 위쪽(스키마
+    # 결속)과 등급이 다르므로 `NAME_MATCHED`에 적어 두고, 조용히 늘지 않게
+    # 테스트가 목록을 고정한다.
+    for resource in NAME_MATCHED:
+        core = f"core::{resource}"
+        if core not in graph.nodes:
+            continue
+        for peer in equivalents(graph, core):
+            if peer.provider:
                 out.setdefault(peer.provider, {}).setdefault(
                     peer.id.split("::", 1)[1], resource)
     return out
