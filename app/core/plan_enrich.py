@@ -18,8 +18,11 @@
 안다), 우리는 그 위에 *"이 구성에 대해 실측이 아는 것"*을 얹을 뿐이다. 계획을
 고치는 것은 사람의 판단이고, 그 판단에 필요한 재료를 대는 것이 여기까지다.
 
-**검사 규칙도 판정하지 않는다** — 규칙과 계획을 나란히 놓는 데까지다
-(`plan_crosscheck`의 규율과 같다: 규칙을 코드로 다시 적으면 사본이 둘이 된다).
+**검사 규칙도 판정하지 않는다** — 규칙과 계획을 나란히 놓는 데까지다. 이유가
+둘인데 섞어 적지 않는다(`plan_crosscheck` 모듈 문서 참고): 규율(규칙을 코드로
+다시 적으면 사본이 둘이 된다)과 **정보 부재**다. 여덟 중 일곱이 뒤쪽이고,
+계획에 가용영역·존·시점 칸이 없어서다. 그래서 규칙마다 **무엇이 있으면
+판정되는지**를 함께 낸다 — 그것이 계획 형식에 대한 요구 목록이 된다.
 
 ## 앵커는 계획 자신이 정한다
 
@@ -100,6 +103,29 @@ def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
     return plan
 
 
+#: 검사 규칙의 부류 표식 → **판정에 필요한데 계획에 없는 것.**
+#:
+#: 규칙 문자열에서 부류를 읽는 이유: `Measured.checks`는 (주체, 대상, 규칙)
+#: 셋만 나르고 부류를 안 나른다. 부류까지 실으면 계획 자료 모델이 depkb의
+#: 분류 어휘를 알아야 하는데, `plan.py`는 **KB를 import하지 않는다**는 규율이
+#: 있다. 그래서 여기서 읽는다 — 규칙 원문이 부류 접두사를 달고 오기 때문에
+#: 가능하다(`closure.PREDICATE_CLASSES`).
+_NEEDS: tuple[tuple[str, str], ...] = (
+    ("배치 조건", "availability zone of each resource"),
+    ("ALB는", "availability zone of each subnet"),
+    ("쌍 호환", "the zone/SKU attributes of both resources"),
+    ("수명 조건", "a time axis (create-time versus afterwards)"),
+)
+
+
+def _judging_needs(rule: str) -> str:
+    """그 규칙을 기계로 보려면 계획에 무엇이 더 있어야 하는가. 없으면 빈 문자열."""
+    for mark, needs in _NEEDS:
+        if mark in rule:
+            return needs
+    return ""
+
+
 def render(measured: Measured | None) -> str:
     """사람이 읽는 실측 절. 계획 본문 뒤에 붙는다.
 
@@ -135,8 +161,10 @@ def render(measured: Measured | None) -> str:
             else "you may still set it yourself"
         lines.append(f"  {why} — {mark}")
     for subject, obj, rule in measured.checks:
-        lines.append(f"  Rule on {subject}→{obj}: {rule} "
-                     "(we do not judge this — check it against the plan)")
+        missing = _judging_needs(rule)
+        why = (f"we cannot judge it here — the plan carries no {missing}"
+               if missing else "we do not judge it here — check it yourself")
+        lines.append(f"  Rule on {subject}→{obj}: {rule} ({why})")
     for subject, obj, breaks in measured.operational_warnings:
         lines.append(f"  {breaks}")
     if measured.unmeasured:

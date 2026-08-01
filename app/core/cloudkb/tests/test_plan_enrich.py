@@ -138,3 +138,31 @@ def test_compose_attaches_it_so_the_whole_chain_carries_the_measurement() -> Non
     assert plan.measured.create_order and plan.measured.delete_before
     assert plan.measured.operational_warnings
     assert plan.to_dict()["measured"]["csp"] == "aws"
+
+
+def test_a_rule_says_whether_we_would_not_or_could_not_judge_it() -> None:
+    """**"안 하기로 했다"와 "못 한다"를 섞어 적지 않는다**(2026-08-01 정정).
+
+    앞의 판은 검사 규칙마다 *"we do not judge this"*만 적었는데, 실측해 보니
+    규칙 여덟 중 **일곱이 계획에 없는 정보를 요구**한다(가용영역·존·시점).
+    원칙 뒤에 "칸을 열면 닫히는" 일곱 건이 숨어 있었던 것이고, 그 구별이
+    사라지면 계획 형식에 무엇을 더 요구해야 하는지가 안 보인다.
+    """
+    text = render(enrich(_sample_plan(), "aws", "-").measured)
+    rules = [ln for ln in text.splitlines() if "Rule on" in ln]
+    assert rules, text
+    # AZ를 요구하는 규칙은 **못 한다**고 말한다.
+    az = [ln for ln in rules if "loadBalancer" in ln]
+    assert az and "cannot judge" in az[0] and "availability zone" in az[0], az
+    # 정보는 있는데 규율로 안 하는 것은 **안 한다**고 말한다.
+    other = [ln for ln in rules if "customImage" in ln]
+    assert other and "do not judge" in other[0], other
+
+
+def test_the_needs_table_reads_the_class_prefix_not_a_guess() -> None:
+    """부류를 규칙 원문의 접두사에서 읽는다 — `plan.py`가 KB를 몰라야 해서다."""
+    from app.core.plan_enrich import _judging_needs
+
+    assert _judging_needs("배치 조건: 서로 다른 AZ의 서브넷 ≥2")
+    assert _judging_needs("쌍 호환: 디스크와 인스턴스의 존이 일치해야 한다")
+    assert not _judging_needs("AMI는 디스크가 아니라 인스턴스에서 나온다")

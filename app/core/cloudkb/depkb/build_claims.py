@@ -384,7 +384,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
               "반전의 전모"),
     dict(csp="aws", subject="loadBalancer", object="subnet", question="existence",
          verdict="required",
-         predicate="ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
+         predicate="배치 조건: ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
          evidence=[
              ("aws-apply2-2026-07-31", "B4.lb-omit-subnets",
               "ValidationError", "apply"),

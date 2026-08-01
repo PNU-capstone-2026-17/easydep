@@ -528,7 +528,7 @@
    "csp": "aws",
    "question": "existence",
    "verdict": "required",
-   "predicate": "ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
+   "predicate": "배치 조건: ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
    "note": "서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 카디널리티+배치 술어. 생략 거부는 internet-facing·internal 두 스킴 모두에서 확인(F2)",
    "oracle": "apply",
    "evidence": [

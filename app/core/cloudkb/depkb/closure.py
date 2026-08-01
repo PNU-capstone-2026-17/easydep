@@ -35,8 +35,6 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     ("disjunctive:", "choice"),
     ("network 모드 조건부:", "conditional"),
     ("스킴 조건부:", "conditional"),
-    ("ALB는", "detail"),
-    ("EXTERNAL 스킴 실측", "detail"),
     # 쌍 호환: 조건이 간선의 한쪽이 아니라 (주체 속성 × 대상 속성) 쌍에 걸린다.
     # 판정(필수/선택)을 바꾸지 않고, 소비층에선 결정이 아니라 제약 검사가 된다.
     ("쌍 호환:", "detail"),
@@ -66,6 +64,49 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     # 않고 술어가 나른다 — 판정은 그대로고 계획층엔 부가 조건이다.
     ("마운트 타깃 경유:", "detail"),
 )
+
+#: 부류 → **IDL 표현**(Martín-López, Segura, Ruiz-Cortés. *RESTest*, ICSOC 2020,
+#: doi:10.1007/978-3-030-65310-1_33 — `isa-group/IDL`). 값이 `None`이면 **IDL로
+#: 표현되지 않는다**는 뜻이고, 그 사실 자체가 결과다.
+#:
+#: ## 왜 매다나
+#:
+#: 위 부류는 **우리 구성**이라 "왜 이 분류인가"에 답할 것이 우리 판단뿐이었다.
+#: IDL은 실제 웹 API에서 관측된 **파라미터 간 의존 일곱 종**(Requires · Or ·
+#: OnlyOne · AllOrNone · ZeroOrOne · Arithmetic/Relational · Complex)을 위해
+#: 만들어진 언어이고, 우리 술어 중 값 제약에 해당하는 것들이 거기에 그대로
+#: 앉는다. **외부 좌표에 매다는 것이 우리 표를 다시 그리는 것보다 단단하다**
+#: (`cloudkb/CLAUDE.md` §5의 근거 규율 · 논문 수준 합리성의 "외부 매핑").
+#:
+#: ## 매달리지 않는 것이 우리 자리다
+#:
+#: 셋이 `None`이고, 그 셋이 정확히 이 축의 새 기여와 겹친다 —
+#: **집합 카디널리티·상이성**(다른 AZ ≥2)은 IDL이 파라미터 존재·값만 다루므로
+#: 표현 대상이 아니고, **시간 축**(생성 시점 대 이후, 삭제 순서, 동반 정리)은
+#: 아예 IDL 밖이다. `server-*`는 의존이 아니라 **서버의 기본값 행위**라 또 다른
+#: 종류다.
+#:
+#: ## 이 매핑이 만든 실측 질문 (미해결)
+#:
+#: IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 **가른다.** 우리
+#: `disjunctive:` 3건은 그 구별을 재지 않았다 — `azure loadBalancer`에 subnet과
+#: publicIp를 **둘 다** 주면 되는지 안 걸어 봤다. 형식을 갖추자 질문이 생긴 것이고,
+#: 재기 전까지 `Or`로 적는다(더 약한 주장).
+IDL_FORM: dict[str, str | None] = {
+    "disjunctive:": "Or(...)  # OnlyOne인지 미측정 — 더 약한 쪽으로 적는다",
+    "network 모드 조건부:": "Requires: IF mode=='custom' THEN subnet;",
+    "스킴 조건부:": "Requires: IF scheme==<값> THEN <대상>;",
+    "쌍 호환:": "Relational: <주체>.<속성> == <대상>.<속성>",
+    "이름 조건:": "Relational: <대상>.name == '<이름>'",
+    "배치 조건:": None,      # 집합 카디널리티·상이성 — IDL의 표현 대상이 아니다
+    "수명 조건:": None,      # 시간 축 — IDL 밖
+    "동반 정리:": None,      # 시간 축(삭제) — IDL 밖
+    "무방비:": None,         # 컨트롤 플레인이 막지 않는 지대 — 입력 제약이 아니다
+    "server-default:": None,   # 서버의 기본값 행위 — 의존이 아니다
+    "server-implicit:": None,  # 서버의 합성 행위 — 의존이 아니다
+    "원본 종류 반전:": None,   # 대상 종류의 CSP 차이 — 값 제약이 아니다
+    "마운트 타깃 경유:": None,  # 중간 자원 경유 — 위상이지 입력 제약이 아니다
+}
 
 
 def _classify(predicate: str | None) -> str | None:

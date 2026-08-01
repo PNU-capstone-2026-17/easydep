@@ -128,3 +128,74 @@ def test_describe_renders_for_every_known_cell() -> None:
         for anchor in ("vm", "nic", "subnet", "network", "loadBalancer"):
             text = describe(anchor, csp)
             assert anchor in text and csp in text
+
+
+# --- 술어 분류 어휘의 규율 (2026-08-01) -----------------------------------------
+
+def test_no_class_classifies_nothing() -> None:
+    """**빈 범주 금지.** 분류하는 것이 없는 칸은 분류가 아니라 자리다.
+
+    `EXTERNAL 스킴 실측`이 정확히 그랬다 — 0건을 분류하면서 어휘에 앉아 있었다.
+    `docs/ARCHITECTURE.md`가 경계하는 "임의 사전"이 분류 어휘에서 나타난 꼴이고,
+    이 저장소가 `test_scope.py`로 다른 축에서 이미 막고 있던 것이다.
+    """
+    import json
+    from pathlib import Path
+
+    from app.core.cloudkb.depkb import closure as mod
+
+    doc = json.loads((Path(mod.__file__).with_name("claims.json"))
+                     .read_text(encoding="utf-8"))
+    predicates = [c.get("predicate") or "" for c in doc["claims"]]
+    empty = [prefix for prefix, _ in mod.PREDICATE_CLASSES
+             if not any(p.startswith(prefix) for p in predicates)]
+    assert not empty, f"분류하는 것이 없는 부류: {empty}"
+
+
+def test_every_class_is_a_class_not_a_sentence() -> None:
+    """부류 이름은 `이름:` 꼴이다 — **한 사례의 원문 조각이 아니다.**
+
+    `("ALB는", "detail")`이 그랬다. 분류가 안 되는 술어를 만났을 때 부류를 만드는
+    대신 그 문장의 앞부분을 어휘에 넣은 자국이고, 그러면 분류 체계에 사례가 섞여
+    표로 낼 수 없게 된다(모듈 docstring의 "분류 불가능하면 죽는다"를 우회한 것).
+    """
+    from app.core.cloudkb.depkb import closure as mod
+
+    bad = [prefix for prefix, _ in mod.PREDICATE_CLASSES
+           if not prefix.endswith(":")]
+    assert not bad, f"부류가 아니라 문장 조각이다: {bad}"
+
+
+def test_every_class_is_anchored_to_or_excluded_from_idl() -> None:
+    """부류마다 **외부 형식주의와의 관계**를 밝힌다 — 표현되거나, 왜 안 되거나.
+
+    `PREDICATE_CLASSES`는 우리 구성이라 "왜 이 분류인가"에 답할 것이 우리 판단
+    뿐이었다. IDL(RESTest, ICSOC'20)은 실제 웹 API에서 관측된 파라미터 간 의존
+    일곱 종을 위해 만들어진 언어이고, 값 제약에 해당하는 우리 술어가 거기 앉는다.
+
+    `None`은 **표현 안 됨**이고 그 자체가 결과다 — 지금 여덟이 그렇고, 그중
+    카디널리티·시간 축이 이 축의 새 기여와 겹친다.
+    """
+    from app.core.cloudkb.depkb import closure as mod
+
+    classes = {prefix for prefix, _ in mod.PREDICATE_CLASSES}
+    assert classes == set(mod.IDL_FORM), (
+        f"매핑 누락 {classes - set(mod.IDL_FORM)} · "
+        f"잉여 {set(mod.IDL_FORM) - classes}")
+    expressible = {k for k, v in mod.IDL_FORM.items() if v}
+    assert "disjunctive:" in expressible and "쌍 호환:" in expressible
+    # 시간 축은 IDL 밖이다 — 되살리려면 IDL이 그것을 담는다는 근거가 먼저다.
+    for outside in ("수명 조건:", "동반 정리:", "배치 조건:"):
+        assert mod.IDL_FORM[outside] is None, outside
+
+
+def test_the_or_versus_onlyone_question_is_recorded_as_open() -> None:
+    """형식화가 **새 실측 질문을 만들었다** — 그 사실을 지운 채로 두지 않는다.
+
+    IDL은 `Or`(적어도 하나)와 `OnlyOne`(정확히 하나)을 가르는데 우리 실측은
+    그 구별을 재지 않았다. 더 약한 `Or`로 적어 두었고, 재고 나면 이 테스트를
+    고치면서 주장도 함께 바뀐다.
+    """
+    from app.core.cloudkb.depkb import closure as mod
+
+    assert "미측정" in (mod.IDL_FORM["disjunctive:"] or "")
