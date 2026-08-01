@@ -20,6 +20,7 @@
    "verdict": "required",
    "predicate": "원본 종류 반전: AMI는 디스크가 아니라 **인스턴스**에서 나온다(create-image)",
    "note": "**간선의 대상 자체가 3사에서 갈린다** — azure·gcp는 customImage→disk인데 aws는 customImage→vm이다. 실체는 스냅샷(snap-0124…)이고, 원본 인스턴스 종료 후에도 AMI는 available(L1c) — 결속 없음. 정리에 스냅샷 삭제가 따로 필요하다는 것도 실측(등록 해제만 하면 조용히 남는다)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -50,6 +51,7 @@
    "verdict": "required",
    "predicate": "마운트 타깃 경유: 파일시스템 자체는 네트워크 없이 서고, 접속점(mount target)이 서브넷을 요구한다",
    "note": "**층이 갈린다** — 저장소(파일시스템)는 네트워크 무관, 접속점은 서브넷 필수. mount target을 별도 어휘로 올리지 않고 술어로 나른다(image 참조 훅과 같은 규율 — 미판정을 늘리지 않는다). 생략 거부는 클라이언트층, 허상 거부는 서버층(SubnetNotFound)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -86,6 +88,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "마운트 타깃이 쓰는 서브넷은 못 지운다 — IaaS·k8s 층과 같은 코드(DependencyViolation). 역방향도 실측: 마운트 타깃이 있으면 파일시스템 삭제가 FileSystemInUse로 막힌다(L2)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -110,6 +113,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 기본 VPC로 대체",
    "note": "서버가 채운 VpcId 실물을 기록했다 — gcp firewall→network의 default 네트워크 대체와 같은 꼴(2사 수렴)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -140,6 +144,7 @@
    "verdict": "required",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -164,6 +169,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -188,6 +194,7 @@
    "verdict": "required",
    "predicate": "스킴 조건부: 사설 영역에서만 필수(공인 영역 미측정)",
    "note": "사설 hosted zone은 VPC 없이 못 만든다 — gcp·azure에는 이 거부 셀이 없어(사설 영역이 네트워크를 필수로 요구하지 않거나 우리가 함께 준 경로였다) aws 고유 관측으로 남는다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -212,6 +219,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: 클러스터 보안 그룹을 서비스가 만든다",
    "note": "SG를 준 적이 없는데 clusterSecurityGroupId가 실재한다(sg-04b748adcf2b00dad) — azure의 vnet 합성·gcp의 default-pool과 같은 패턴이 aws k8s에도 있다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -230,6 +238,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "거부 라운드에서 관측만 되고 어휘 밖이라 못 들어갔던 판정의 승격. 생략 거부는 **클라이언트층**(--role-arn — nic→subnet과 같은 한계 명시), 실역할 생성·클러스터 성공이 양성 대조. **역할은 필요하지만 정책은 기동 조건이 아니다**(2026-08-01 aws-qual2 실측): 정책이 하나도 안 붙은 역할로도 클러스터가 ACTIVE까지 갔고 health 이슈도 없었다. 우리 실험들이 AmazonEKSClusterPolicy를 붙여 온 것은 **관행이었지 필요가 아니었다** — worked example이 '뷰에 정책 부착이 없다'를 공백으로 지목했으나 실측이 기각했다(뷰가 맞았다). 경계: **존재 축의 판정이다.** 정책 없는 클러스터가 노드를 받거나 ENI를 만들 수 있는지는 기능 축이고 미측정이다. EKS IAM의 기능 축(정책 분리 시 무엇이 깨지나)도 신호 정의가 별도 설계라 미판정 유지(eks3·aws-iamfunc에 무방비 관측만)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -260,6 +269,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -284,6 +294,10 @@
    "verdict": "required",
    "predicate": "배치 조건: 서로 다른 AZ의 서브넷 ≥2 (양성 대조로 대우 확인)",
    "note": "실역할·실서브넷으로 앞 검사를 통과시켜 격리했다 — 서버가 조건을 문장으로 말한다: 'Subnets specified must be in at least two different AZs'. 같은 AZ 둘도 거부(C2)라 수가 아니라 분산이 조건. roleArn도 SDK 층 필수(E2) — IAM 자원은 어휘 밖 대기열",
+   "constraint": {
+    "minCount": 2,
+    "distinctOver": "availabilityZone"
+   },
    "oracle": "apply",
    "evidence": [
     {
@@ -332,6 +346,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "클러스터가 쓰는 서브넷은 못 지운다 — IaaS 층과 같은 코드(DependencyViolation). 클러스터 삭제 후에는 성공(양성 대조)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -356,6 +371,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "**기본 구성에서 합성 없음** — IngressClass 0·Ingress 방치·CLB/ALB 목록 불변. Service→CLB(합성)와 대조: 같은 클러스터 기본 구성에서 Service 컨트롤러는 내장, Ingress 컨트롤러는 부재",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -386,6 +402,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: CSI가 EBS 볼륨을 합성한다 — 단 전제가 3사 중 가장 길다(노드그룹·CSI 드라이버·**IRSA**·CSI 프로비저너 StorageClass)",
    "note": "**1·2라운드의 미측정을 닫았다.** 합성 자체는 azure·gcp와 같으나(vol-0739d…, volumeHandle 일치) **전제 사슬이 다르다** — 노드 역할에 EBS 정책을 붙여도 부족했고, 컨트롤러가 'no EC2 IMDS role found'로 죽었다(I0). IRSA(OIDC 공급자 + 웹아이덴티티 역할)를 서비스 계정에 달고 재시작해야 Bound가 됐다. 곁가지 실측 둘: **기본 SC가 default로 지정돼 있지 않다**(S1 — 첫 PVC가 'no storage class is set'으로 방치) · 기본 gp2는 in-tree 프로비저너(kubernetes.io/aws-ebs)라 CSI SC를 따로 만들어야 했다. azure·gcp는 기본 SC가 곧 CSI다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -434,6 +451,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: PVC 삭제가 합성 EBS 볼륨을 지운다",
    "note": "RWO 동반 정리는 3사 수렴 — azure·gcp와 같은 꼴(reclaim Delete). azure RWX(파일 공유)만 계정이 잔존해 부분 정리였다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -458,6 +476,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: type=LoadBalancer 서비스가 CLB와 전용 SG(k8s-elb-…)를 합성한다 — 노드 0에서도",
    "note": "노드그룹 없는 클러스터에서 CLB(a4cbeb15…)가 태그된 두 서브넷에 생성 — 이벤트 실물(S4): 'There are no available nodes' 직후 'Ensured load balancer'. 합성이 노드 존재와 무관함의 증거. 서브넷 태그(kubernetes.io/role/elb)는 실험 전제이지 판정 대상 아님",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -488,6 +507,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: Service 삭제가 CLB를 지운다",
    "note": "aws k8sPvc→disk는 이번 라운드 미측정(노드 0·EBS CSI 애드온 없음 — 전제 부재에서 '합성 없음' 판정은 오판. 실험 기록 P3.unmeasured-note). 그래서 aws에는 k8sPvc 간선이 없다 — 빈칸이 아니라 범위 표시다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -506,6 +526,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "internal NLB가 SG 없이 섰다. 1차 internet-facing 시도는 IGW 부재로 교란됐다(InvalidSubnet — 환경 전제가 의존 검사보다 먼저)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -530,6 +551,14 @@
    "verdict": "required",
    "predicate": "배치 조건: ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
    "note": "서버가 필수를 문장으로 말한다: 'At least one subnet' · 'two subnets in two different AZs' — azure sqlDb의 다른-AZ-서브넷-2와 같은 꼴의 카디널리티+배치 술어. 생략 거부는 internet-facing·internal 두 스킴 모두에서 확인(F2)",
+   "constraint": {
+    "minCount": 2,
+    "distinctOver": "availabilityZone",
+    "appliesWhen": "loadBalancer.type == 'application'",
+    "otherwise": {
+     "minCount": 1
+    }
+   },
    "oracle": "apply",
    "evidence": [
     {
@@ -572,6 +601,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 VPC의 default SG 부착",
    "note": "서버가 붙인 ['default'] 그룹 실물을 기록했다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -602,6 +632,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "3사 모두 같은 꼴 — 붙어 있는 SG/NSG는 못 지운다. 코드만 다르다(DependencyViolation / InUse... / RESOURCE_IN_USE)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -632,6 +663,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "거부가 **클라이언트(CLI/SDK 모델) 층**에서 났다 — 서버 미도달. CFN Required:true(스키마 층)와 합치하나 서버측 생략 실험은 CLI로 불가능했다. 한편 CreateNetworkInterface의 DryRun은 허상 서브넷을 통과시켰다(A.dangling-nic-subnet) — DryRun 깊이가 API마다 다르다",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -656,6 +688,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -686,6 +719,7 @@
    "verdict": "holds",
    "predicate": "무방비: 0.0.0.0/0→IGW 라우트 삭제를 막지 않는다 — 기능 신호는 게스트에서 **밖으로** 나가는 HTTPS(아웃바운드)",
    "note": "기능 2라운드는 같은 간선을 **인바운드**(우리→VM 도달성)로 쟀다. 여기서는 **아웃바운드**(VM→외부) — 방향이 다른 신호로 같은 결속이 재확인됐다. 1차 측정은 결과 파일 경합(Z0) 여파로 다른 VPC의 라우트를 지워 무효였고(Z0b), ids 정정 후 재측정분이 판정이다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -728,6 +762,7 @@
    "verdict": "holds",
    "predicate": "무방비: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 컨트롤 플레인이 막지 않는다",
    "note": "어휘 밖 대기열이던 internetGateway의 첫 판정 — 존재 전제는 교란으로 기실측(IGW 없으면 EIP 도달 불가), 이번에 기능 축으로 닫았다. 셀 기준선은 직전 회복(F3) — 원인 섞임 방지",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -770,6 +805,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "허상 VPC 거부(서버). 생략은 클라이언트 층이 막아 서버 실험 불가 — CFN Required:true와 합치",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -794,6 +830,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -824,6 +861,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "사슬 완결. vm→image가 aws에서 required인 것과 함께 읽어야 한다 — 부팅 원천은 필수지만 그것이 **커스텀일 필요는 없다**",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -848,6 +886,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: AMI의 루트 볼륨을 서버가 만든다",
    "note": "vm→disk 3사 완성: aws 선택 · azure 선택 · **gcp만 필수** — 양상 반전의 전모",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -872,6 +911,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 default SG",
    "note": null,
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -908,6 +948,7 @@
    "verdict": "holds",
    "predicate": "무방비: 실행 중 인스턴스의 SG를 빈 인그레스 SG로 교체하는 것을 컨트롤 플레인이 막지 않는다(관계 변이)",
    "note": "교체 즉시 상실(연속 2회)·원복 즉시 회복 — SG는 상태 비저장 부착이라 전파가 빠르다는 관측 포함",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -968,6 +1009,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "인스턴스 프로필 없이 run-instances 성공(기존 라운드 전부가 그랬다 — 대표 인용 하나)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -986,6 +1028,7 @@
    "verdict": "holds",
    "predicate": "무방비: 실행 중 인스턴스에서 인스턴스 프로필 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 IMDSv2 자격증명 획득",
    "note": "**존재는 optional인데 기능은 결속이다** — 프로필 없이도 VM은 서지만(vm→iamRole existence), 붙여 놓고 떼면 게스트가 역할을 잃는다(rc=22 → 재부착 후 역할명 depkb-sig4-role 복귀). **EKS CSI가 'no EC2 IMDS role found'로 죽은 그 기제**를 VM 층에서 격리해 잰 것이다(완결 라운드 I0과 짝)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1028,6 +1071,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "생략 거부가 **서버층**이다(MissingParameter, rejectedAt=server — nic→subnet의 client-층 한계와 다르다). RunInstances엔 기존 볼륨으로 부팅을 대신할 경로가 없어 3사 중 유일한 required — **세 번째 유형의 양상 반전**(선언 술어 ∨ 필수). CFN Required:False는 위치 플래그(LaunchTemplate가 AMI를 나르는 다른 자리)라는 기존 결론의 재확인. 허상 검사는 Malformed 층에서 걸렸다(정형 id도 — NotFound 층 미도달, 관측 그대로 기록). 실물 생성 0(DryRun 사다리)",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -1064,6 +1108,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: ENI를 서버가 암묵 생성",
    "note": "RunInstances DryRun은 허상을 잡는 깊이가 증명돼 있어(1라운드) 그 성공이 유효한 증거다. azure(필수)와 양상 반전 — vm→nic도 CSP 색인이 필요하다",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -1088,6 +1133,7 @@
    "verdict": "holds",
    "predicate": "무방비: running 인스턴스에서 EIP 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
    "note": "EIP는 분리해도 우리 소유로 남아 **같은 주소로 회복**을 관측(gcp 임시 IP와 대조). 자동 공인 IP 없이 기동해 EIP만이 도달성 경로임을 격리했다. 22 허용 SG는 전제이지 판정 대상 아님",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1136,6 +1182,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "같은 DryRun이 KeyName도 생략했다 — 성공. CB의 'sshKey 필수'가 aws에서도 도구의 요구였음이 동적으로 확정됐다(azure 무참조·gcp 자원 부재에 이어 세 번째 형태)",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -1166,6 +1213,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 기본 VPC 서브넷 대체",
    "note": "DryRunOperation은 '만들었다면 성공했을 것' — CFN 문서 주석의 기본 VPC 대체가 실측됐다. 명시하면 실재해야 한다",
+   "constraint": null,
    "oracle": "preflight",
    "evidence": [
     {
@@ -1202,6 +1250,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "게이트웨이 자체는 VPC 없이 만들어지고(A1) **attach가 VPC를 요구한다** — azure가 GatewaySubnet 이름을 요구한 것과 층이 다르다(azure는 서브넷·이름, aws는 VPC·attach 연산). 터널·고객 게이트웨이는 범위 밖(상대편 장비 필요)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1232,6 +1281,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "attach 상태의 VPC는 못 지운다 — detach 후 성공(양성 대조)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1256,6 +1306,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "허상 원본은 NotFound, 실제 관리 디스크로는 성공. 전제 함정: --hyper-v-generation 기본 V1이 소스 디스크 V2와 불일치해 InvalidParameter(results-round1.json) — 세대는 원본을 따라야 한다(전제이지 판정 아님). **원본 삭제는 막히지 않았다**(L1/L1b — 디스크 실제 소멸) → 생명주기 결속 없음, graphkb의 node→customImage 관측과 컨트롤 플레인이 갈린다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1280,6 +1331,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "파일 공유는 스토리지 계정 하위 자원이다(경로 중첩) — 3사 중 유일하게 **네트워크가 아니라 계정**이 상위다. 환경 전제 함정: Microsoft.Storage RP 미등록이면 **SubscriptionNotFound**가 난다(구독이 없다는 뜻이 아니다 — results-round1.json). 미해결: 합성 2라운드에서 CSI가 계정 합성에 실패한 것이 CSI 경로 탓인지 그때 RP가 미등록이던 탓인지 **가르지 못했다** — 오류 문구(TLS)는 RP와 안 맞지만 RP 등록 후 CSI를 재측정하지 않았다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1304,6 +1356,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "서버가 부모 부재를 이름으로: ParentResourceNotFound",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1328,6 +1381,7 @@
    "verdict": "holds",
    "predicate": "무방비: 사설 영역-vnet link 삭제를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 이름 해석(getent hosts)",
    "note": "**캐시가 판정을 뒤집을 뻔했다** — 1차 측정에서는 link를 지워도 이름이 계속 풀렸다(레코드 TTL 3600 + 게스트 systemd-resolved 캐시). TTL 30초 + `resolvectl flush-caches`로 우회하니 상실이 보였다(D4에 기록). 존재 판정(globalDns→globalDnsRecord)과 다른 간선이다 — 여기서는 **영역-네트워크 연결이 기능을 나른다**",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1370,6 +1424,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: identity 미지정 시 SystemAssigned와 kubelet용 user-assigned identity를 서버가 합성한다",
    "note": "iamRole 라운드의 미판정(‘재관측에 클러스터 필요’)을 닫았다. 우리가 준 적 없는데 identity.type=SystemAssigned이고 노드 RG에 kubelet identity(depkb-csi2-agentpool)가 실재한다. **aws EKS는 roleArn 필수인데 azure는 서버 합성** — 양상 반전이고, gcp의 vm→iamRole(serviceAccounts:null, 서버가 안 붙임)과도 대비된다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1388,6 +1443,7 @@
    "verdict": "required",
    "predicate": "수명 조건: 생성 시 필수 · 이후 독립 CRUD(add/delete)",
    "note": "서버가 필수를 이름으로: 'Required parameter agentPoolProfiles is missing' — 노드풀은 생성 시 내장(TB의 nodeGroupsOnCreation 관측과 정합). **생성 시 필수와 이후 CRUD 가능은 별개**임을 재측정으로 확인했다(add·delete 모두 성공) — gcp와 같은 CRUD 성질을 갖되 생성 계약만 반전이다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1418,6 +1474,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1442,6 +1499,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: 서비스가 노드 리소스 그룹에 vnet을 합성",
    "note": "서브넷 없이 만든 AKS가 Succeeded까지 갔고, 노드 RG(MC_depkb-preflight_depkb-aks_koreacentral)에 서비스가 만든 vnet(aks-vnet-67015217)이 실재한다 — **CB 드라이버 합성과 같은 일을 관리형 서비스가 한다**는 실측. aws는 정반대로 사용자에게 다른 AZ 서브넷 2개를 요구한다(양상 반전)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1472,6 +1530,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "사용자 서브넷에 붙인 클러스터로 쟀다 — 앞 라운드의 합성 vnet은 노드 RG 안이라 대상이 아니었다. 코드가 IaaS의 nic→subnet과 같다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1496,6 +1555,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "**기본 구성에서 합성 없음** — IngressClass 0(K5)·Ingress 방치(주소 없음, I3)·상시 LB 규칙 0 유지(I4b 재관측)·AppGW 0(I5). gcp와 양상 반전: 같은 신호가 gcp에선 성좌를 합성하고 azure에선 아무것도 만들지 않는다. 노출을 이루는 방법(컨트롤러 애드온 등)은 사용자 결정이고 우리가 대신 정하지 않는다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1526,6 +1586,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: CSI가 관리 디스크를 합성한다 — 단 첫 소비자(Pod) 시점(기본 SC WaitForFirstConsumer 실측)",
    "note": "PVC 단독 60초엔 디스크 0(Pending) → Pod 트리거 후 Bound·노드 RG에 pvc-… 디스크 실재, PV volumeHandle이 그 ARM ID와 일치(층 간 동일성)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1568,6 +1629,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim Delete 실측)",
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1586,6 +1648,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: RWX PVC는 CSI가 스토리지 계정과 파일 공유를 합성한다(azurefile-csi, bind=Immediate)",
    "note": "**합성 2라운드의 미해결을 닫았다** — RWX 실패의 원인은 CSI 경로가 아니라 **Microsoft.Storage RP 미등록**이었다(등록 후 같은 PVC가 Bound). TLS 오류 문구는 오해를 부르는 표면이었고, 가름은 RP 상태를 바꿔 재측정해야만 됐다. 합성 실물: 계정 f60d9345…, volumeHandle이 '노드RG#계정#pvc-…' 꼴로 층을 잇는다. **RWO(k8sPvc→disk)와 대상이 다르다** — 블록은 디스크, 공유는 파일시스템",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1622,6 +1685,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: PVC 삭제가 파일 공유를 지운다 — 단 **스토리지 계정은 남는다**(부분 정리)",
    "note": "RWO 디스크가 통째로 사라진 것과 **대조**: 계정은 PVC 삭제 후에도 잔존한다(P7 — 같은 이름이 그대로). 공유 자체의 소멸은 따로 확인하지 않았다(계정 목록만 봤다) — 그 한계를 적어 둔다. 계획층 함의: 계정은 클러스터 삭제까지 남는 잔여물이다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1646,6 +1710,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: type=LoadBalancer 서비스가 노드 RG에 클라우드 LB 규칙·공인 IP를 합성한다",
    "note": "LB 'kubernetes'에 규칙 1이 실리고 합성 PIP(kubernetes-a9dde…)의 주소가 Service ingress IP와 일치 — 클러스터 상시 LB에 규칙을 합성하는 꼴(전용 LB 신설이 아니다)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1676,6 +1741,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: Service 삭제가 LB 규칙과 합성 PIP를 함께 지운다",
    "note": "삭제 후 LB 규칙 0·합성 PIP 소멸(클러스터 아웃바운드 PIP만 잔존). 계획층이 LB 삭제 단계를 내면 안 된다 — 이미 없다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1700,6 +1766,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "내부 LB(lbi)가 subnet만으로 성공 — 단독으론 선택, 선언 술어의 구성원. 쌍 호환(SKU) 축은 신규 구독에서 도달 불가 — Basic PIP 생성 한도 0(IPv4BasicSkuPublicIpCountLimitReached, azure-apply4 실측)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1724,6 +1791,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "공용 LB(lbp)가 PIP만으로 성공 — 단독으론 선택, 선언 술어의 구성원",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1748,6 +1816,7 @@
    "verdict": "required",
    "predicate": "disjunctive: 셋 중 하나",
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1778,6 +1847,7 @@
    "verdict": "holds",
    "predicate": "무방비: 백엔드 풀에서 NIC 제거를 컨트롤 플레인이 막지 않는다 — 기능 신호는 LB 프론트엔드로의 HTTP 200",
    "note": "**존재 판정에 없는 간선을 기능이 열었다** — LB는 백엔드 없이 만들어지므로(기존 실측) 존재 축에서는 이 결속이 보이지 않는다. 백엔드 응답기는 python3 http.server(OS 기본, 앱 아님)이고 요청 도달을 게스트 접근 로그로 교차 확인했다(F1b). 1차(azure-lb-serve-2026-07-31)는 기준선을 못 세워 미판정이었고 원인은 **az vm create가 NIC에 자동 생성해 붙이는 NSG**였다 — 규칙이 default-allow-ssh(22) 하나뿐이라 서브넷 NSG에서 80을 열어도 NIC에서 막힌다(azure는 서브넷·NIC 양쪽을 다 통과해야 한다). 재시도에서 관리 접근을 LB 인바운드 NAT로 빼 게스트 진단 경로를 확보한 것이 원인 규명의 열쇠였다(Z1)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1826,6 +1896,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "서브넷 없는 VNet이 실제로 만들어졌다 — 1라운드 preflight 통과는 증거가 아니었고 이것이 증거다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1850,6 +1921,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "사슬의 nic1이 NSG 없이 생성 성공 — 부재 하 성공이 optional의 증거",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1874,6 +1946,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "선택 참조여도 붙어 있는 동안 삭제는 막힌다 — existence와 lifecycle이 독립",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1904,6 +1977,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "1라운드 nic1이 PIP 없이 생성 성공",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1934,6 +2008,7 @@
    "verdict": "holds",
    "predicate": "무방비: 실행 중 VM의 NIC에서 PIP 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
    "note": "같은 PIP 재부착으로 회복까지 관측(인과 완결). 존재·생명주기와 한 쌍에서 세 질문이 다 판정된 첫 간선이다(존재 optional · 생명주기 holds(삭제 보호) · 기능 holds). 덤 관측: Standard SKU PIP는 NSG 없으면 인바운드가 기본 차단된다(R6 — F1이 NSG 부착 전 7회 실패, 부착 직후 성공. secure-by-default)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -1994,6 +2069,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "선택 참조인데 붙어 있으면 삭제 금지 — nic→firewall과 같은 꼴",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2030,6 +2106,7 @@
    "verdict": "required",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2072,6 +2149,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "사용 중 삭제 거부 + NIC 제거 후 삭제 성공(양성 대조)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2114,6 +2192,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "1라운드 s1이 NSG 없이 생성 성공",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2138,6 +2217,7 @@
    "verdict": "holds",
    "predicate": "무방비: 사용 중 서브넷에서 NSG 분리를 컨트롤 플레인이 막지 않는다 — 차단은 NSG 부재와 Standard PIP secure-by-default의 합성 효과",
    "note": "1라운드 덤 관측(NSG 부착 전 7회 실패)의 정식 승격. 분리 경로 함정: --network-security-group \"\"는 InvalidResourceReference(results-round1.json) — generic --remove가 분리 경로다. 상실은 연속 2회 확인",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2186,6 +2266,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "경로 중첩(소속) — 부모 없이 만들 방법 자체가 없다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2210,6 +2291,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2240,6 +2322,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "사슬 완결(디스크→이미지→VM). 선택인 이유는 vm→image의 선언 술어와 같다 — 부팅 원천은 플랫폼 이미지·기존 디스크로도 된다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2258,6 +2341,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "데이터 디스크 없이 VM 생성 성공. 덤 관측: 선언 안 한 OS 디스크가 서버 이름으로 생성됐다(F0.disks-after-create) — 서버측 합성",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2288,6 +2372,7 @@
    "verdict": "holds",
    "predicate": "무방비: 실행 중 VM에서 데이터 디스크 detach를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기",
    "note": "**같은 쌍에서 세 질문이 다 갈린 둘째 사례**(vm→disk: 존재 optional · 생명주기 holds · 기능 holds). 함정 둘을 넘어야 보였다: 페이지 캐시(`oflag=direct` 필요, K4) · 파이프가 종료 코드를 삼킴(`| tail -1` 제거, K6 — dd가 'Input/output error'를 냈는데 rc=0이었다). **회복에 게스트 조치는 없었다** — 재마운트 명령은 awk 인용 결함으로 실패했는데(M2f EXIT_32) 쓰기가 회복됐다. 기존 마운트가 유지된 채 디스크가 돌아온 것으로 보이나, 재마운트가 회복의 필요조건인지는 이 측정이 말하지 않는다(그렇게 적었던 앞 판을 정정한다)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2336,6 +2421,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "붙은 디스크 삭제 거부 + 분리 후 성공. 역방향 관측: VM 삭제가 OS 디스크를 남긴다(D.disks-after-vm-delete) — CB 드라이버가 디스크를 직접 지우는 이유",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2372,6 +2458,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "managed identity 미지정으로 VM 생성 성공. identity 실물 부재는 미기록 — 생략 성공이 판정 근거다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2390,6 +2477,7 @@
    "verdict": "optional",
    "predicate": "disjunctive: 부팅 원천 — imageReference ∨ 기존 OS 디스크 attach 중 하나는 있어야 한다",
    "note": "서버가 필수를 이름으로: \"Required parameter 'storageProfile' is missing\"(A3b 전문). 잔존 OS 디스크 attach로 이미지 없이 VM이 선다 — imageReference 슬롯 빈 값 실측(B1). 허상 이미지 id는 NotFound. FromImage인데 이미지가 없는 모순형(A1)은 별도 문장으로 거부된다. LB frontend와 같은 선언 술어 꼴",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2432,6 +2520,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "preflight는 침묵했다(Compute RP 깊이 — P5a findings §3)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2462,6 +2551,7 @@
    "verdict": "required",
    "predicate": "쌍 호환: AZ SKU 게이트웨이는 zone이 구성된 PIP를 요구한다",
    "note": "zone 없는 Standard PIP로는 거부되고 zone-redundant PIP로는 선다. **Basic PIP 축이 소멸한 자리에 zone 축이 있었다** — 쌍 호환은 사라지는 게 아니라 옮겨간다. 리전 능력도 SKU를 제한한다(K0: koreacentral은 비-AZ SKU 거부)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2486,6 +2576,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2510,6 +2601,9 @@
    "verdict": "required",
    "predicate": "이름 조건: 정확히 GatewaySubnet이라는 서브넷이어야 한다",
    "note": "다른 이름의 서브넷만 있는 VNet에서 게이트웨이 생성 → 서비스가 subnets/GatewaySubnet을 스스로 참조하다 실패. graphkb 소스 관측(networkinfo.yaml)의 컨트롤 플레인 확인 — 조건이 이름에 걸리는 극단 사례. **대우도 확인했다**(azure-vpn2): 그 이름으로 만들면 게이트웨이가 실제로 선다(Succeeded)",
+   "constraint": {
+    "nameEquals": "GatewaySubnet"
+   },
    "oracle": "apply",
    "evidence": [
     {
@@ -2528,6 +2622,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "게이트웨이가 쓰는 GatewaySubnet은 못 지운다 — 게이트웨이 삭제 후 성공(양성 대조). vnet 삭제도 같은 코드로 막힌다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2552,6 +2647,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "원본 삭제 후에도 이미지 READY이고 archiveSizeBytes 709MB가 찍힌다(복사본 실증) — 그런데 **sourceDisk 참조는 허상으로 남는다**(L1b). 참조가 있다고 결속인 것이 아니라는 실물 사례",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2576,6 +2672,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "서버가 조건을 문장으로: 'must have exactly one network config.' · 허상은 'network … does not exist'. **양성 대조까지 닫았다**(2026-07-31 남은 라운드 — BASIC_HDD 1TiB 실생성 후 즉시 삭제). 교란: asia-northeast3-a는 존 자원 부족으로 실패해 -b로 옮겨야 했다(SKU·IGW와 같은 부류). aws와 대비: aws는 파일시스템이 네트워크 없이 서고 접속점만 서브넷을 요구하는데, gcp는 파일시스템 자체가 네트워크를 요구한다. **생명주기 결속은 없다** — Filestore가 READY인 채로 network 삭제가 성공했다(F12). 같은 네트워크를 VPN 게이트웨이는 붙잡는데(L1 거부) Filestore는 안 붙잡는다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2612,6 +2709,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 default 네트워크로 대체",
    "note": "명시는 선택이나 관계가 없는 것이 아니다 — 서버가 default로 채운다(스키마 서술의 실측 확인). 명시하면 실재해야 한다(dangling 거부)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2642,6 +2740,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "영역 없이 레코드는 notFound. **사설 영역 한정 측정** — 공인 영역은 소유하지 않은 이름을 등록할 수 없어 안 쟀다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2666,6 +2765,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "레코드가 있으면 영역을 못 지운다(containerNotEmpty) — 레코드 삭제 후 성공(양성 대조). **azure와 양상 반전**",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2690,6 +2790,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: 미지정 시 default-pool 합성 · 이후 add/delete 가능",
    "note": "**azure와 양상 반전** — azure는 agentPoolProfiles가 생성 시 필수인데 gcp는 nodePools 없이 만들면 서버가 default-pool을 만든다(G3의 nodePools 실물). 그리고 gcp 노드풀은 독립 CRUD가 있다(add/delete 성공). azure 노드풀 CRUD는 하네스 결함으로 미측정(아래 note)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2720,6 +2821,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 default 네트워크",
    "note": "network 생략 클러스터가 RUNNING까지 갔고 서버가 network=default를 채웠다 — firewall→network·lb→network와 같은 대체 패턴이 k8s에도",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2750,6 +2852,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2774,6 +2877,7 @@
    "verdict": "optional",
    "predicate": "server-default: 미지정 시 default 서브넷",
    "note": "같은 관측(G3)이 network·subnetwork·nodePools 셋을 한꺼번에 말한다 — subnetwork도 default로 채워졌다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2798,6 +2902,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "전용 네트워크 위 클러스터로 쟀다 — 앞 라운드는 default를 써서 삭제 시도 자체가 불가능했다. aws와 같은 꼴, 코드만 다르다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2822,6 +2927,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: 내장 컨트롤러가 전역 HTTP LB 성좌(urlMap·targetHttpProxy·전역 forwardingRule·backendService·healthCheck)를 합성한다",
    "note": "IP 34.98.66.175 할당·성좌 5종 실물(k8s2-um/tp/fr-…). 이벤트가 생성 순서를 문장으로(UrlMap→TargetProxy→ForwardingRule). Service의 지역 성좌와 달리 **전역** 성좌다. 특기: IngressClass 목록은 비어 있었다(K3) — 부재 관측만으론 컨트롤러 부재를 판정할 수 없다는 실측",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2852,6 +2958,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: Ingress 삭제가 전역 성좌 전체를 함께 지운다",
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2870,6 +2977,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: CSI가 존 디스크를 합성한다 — 단 첫 소비자(Pod) 시점(기본 SC standard-rwo WaitForFirstConsumer 실측)",
    "note": "PVC 단독 60초엔 pvc- 디스크 0 → Pod 후 Bound·존에 pvc-… 디스크 실재, volumeHandle 경로 일치. azure와 동형(2사 수렴)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2912,6 +3020,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: PVC 삭제가 합성 디스크를 지운다(기본 reclaim Delete 실측)",
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2930,6 +3039,7 @@
    "verdict": "holds",
    "predicate": "무방비: Service 삭제를 컨트롤 플레인이 막지 않는다 — 기능 신호는 클러스터 안에서 서비스 이름으로의 HTTP 접속",
    "note": "**Pod는 Running인 채로 이름만 죽는다**(M1b) — 워크로드가 살아 있어도 서로 못 찾는 것이 이 결속의 내용이다. 관측자는 agnhost(k8s 공식 테스트 이미지)이고 **우리 워크로드가 아니라 도구다** — 앱을 기준으로 삼지 않는다는 규율은 유지된다(응답하는 컨테이너 없이는 '이름으로 찾아진다'를 잴 수 없어 여기서만 썼다). k8sService→loadBalancer(클라우드 LB 합성)와 **다른 간선**이다: 저쪽은 클라우드 층, 이쪽은 클러스터 안. gcp에서만 쟀다 — k8s 자체의 기능이라 CSP 차이를 예상하지 않지만 그 예상은 판정이 아니다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -2978,6 +3088,7 @@
    "verdict": "optional",
    "predicate": "server-implicit: type=LoadBalancer 서비스가 LB 성좌(forwardingRule+targetPool+방화벽)를 합성한다",
    "note": "합성 성좌 실물: forwardingRule·targetPool 쌍(a040876a…) + 방화벽 3종(k8s-fw-…, hc, deny) — 'gcp LB는 성좌' 결속 지식이 k8s 합성 경로에서 재현. azure(상시 LB에 규칙)와 꼴이 다르다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3002,6 +3113,7 @@
    "verdict": "holds",
    "predicate": "동반 정리: Service 삭제가 성좌 전체(FR·targetPool·방화벽)를 함께 지운다",
    "note": "라운드 끝의 전용 네트워크 삭제 성공(F4)이 방화벽 잔여 0의 독립 증명이기도 하다 — 규칙이 남았으면 네트워크 삭제가 거부됐다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3026,6 +3138,7 @@
    "verdict": "optional",
    "predicate": "server-default: EXTERNAL은 불참 · INTERNAL은 서브넷에서 역산",
    "note": "4라운드에서 INTERNAL 반쪽을 닫았다 — 서버가 채운 network 실물 기록(nic→network와 같은 역산 패턴). 스킴 양쪽 모두 생략 가능",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3062,6 +3175,7 @@
    "verdict": "optional",
    "predicate": "스킴 조건부: EXTERNAL 불참 · INTERNAL 필수",
    "note": "조건부 필연의 두 번째 실물(첫째는 nic→subnet의 네트워크 모드) — 이번엔 조건이 자기 자신의 속성(스킴)이다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3098,6 +3212,7 @@
    "verdict": "holds",
    "predicate": "무방비: 자동 생성 기본 라우트(0.0.0.0/0→default-internet-gateway) 삭제를 컨트롤 플레인이 막지 않는다",
    "note": "gcp의 IGW는 자원이 아니라 라우트의 개념적 next-hop이다(default-internet-gateway) — 실물은 자동 생성 라우트(default-route-31cd…). 재생성은 우리 이름으로 했고 기능이 회복됐다(이름이 아니라 경로가 기준). azure는 대응 자원 자체가 없다(시스템 라우트) — 3사 3색",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3140,6 +3255,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "1라운드 인스턴스가 subnetwork만 지정하고 network 없이 성공 — 서버가 서브넷에서 네트워크를 역산한다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3164,6 +3280,7 @@
    "verdict": "optional",
    "predicate": "network 모드 조건부: custom에선 필수 · auto에선 서버가 리전 서브넷 대체",
    "note": "같은 생략이 custom 모드에선 거부되고 auto 모드에선 서버가 채운다 — 서버가 채운 subnetwork 실물을 기록했다. 필연이 (간선×CSP)를 넘어 **대상 자원의 모드**에까지 걸리는 첫 사례",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3200,6 +3317,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3230,6 +3348,7 @@
    "verdict": "required",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3260,6 +3379,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3290,6 +3410,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": null,
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3314,6 +3435,7 @@
    "verdict": "required",
    "predicate": "쌍 호환: 디스크와 인스턴스의 존이 일치해야 한다",
    "note": "**azure와 양상 반전** — azure는 OS 디스크를 서버가 합성해 선택, gcp는 부트 디스크 명세가 필수다. 쌍 호환(존)은 대조군으로 축을 격리해 확정 — 조건이 (주체 속성 × 대상 속성) 쌍에 걸리는 부류의 첫 어휘 내 실측",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3350,6 +3472,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "부트 디스크가 인스턴스 삭제 후 살아남았다(D.disks-after-delete — API 기본 autoDelete=false의 실측). azure OS 디스크 잔존과 쌍이다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3380,6 +3503,7 @@
    "verdict": "holds",
    "predicate": "무방비: 네트워크 스코프 방화벽 규칙 삭제를 컨트롤 플레인이 막지 않는다 — gcp 방화벽은 자원 간 부착이 아니라 규칙이라 관계 변이가 없다(규칙 변이가 유일한 경로)",
    "note": "3사 변이 경로가 3색: azure 서브넷-NSG 분리(관계) · aws SG 교체(관계) · gcp 규칙 삭제(규칙) — 방화벽의 결속 모델 자체가 다르다는 실측",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3422,6 +3546,7 @@
    "verdict": "optional",
    "predicate": null,
    "note": "SA 생략 인스턴스가 RUNNING이고 **serviceAccounts: null 실물** — 서버가 기본 SA를 붙이지 않는다(server-default 아님). gcloud CLI·콘솔은 기본 SA를 주입하므로 REST 직접(CLI 기본값 배제) 결정이 없었다면 server-default로 오판했을 자리",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3452,6 +3577,7 @@
    "verdict": "optional",
    "predicate": "disjunctive: 부트 디스크 원천 — initializeParams.sourceImage ∨ 기존 디스크(source) 중 하나는 있어야 한다",
    "note": "서버가 술어를 문장으로: 'Boot disk must have a source specified'(G1). 이미지에서 만든 디스크를 source로 주면 sourceImage 없이 RUNNING까지 간다(G3c). 허상은 'referenced image resource cannot be found'. azure와 동형(2사 수렴)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3494,6 +3620,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "NIC는 독립 자원이 아니라 내장 구조인데도 최소 하나는 필수다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3518,6 +3645,7 @@
    "verdict": "holds",
    "predicate": "무방비: RUNNING 인스턴스에서 accessConfig 삭제를 컨트롤 플레인이 막지 않는다 — 기능 신호는 외부 TCP 22 도달성",
    "note": "재부여 시 임시 IP는 **새 주소**가 온다(34.64.142.22→34.22.74.114) — 회복은 새 주소로 관측. gcp 공인 IP는 독립 자원이 아니라 인스턴스의 accessConfig라는 결속 차이가 변이 경로에도 그대로 나타난다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3566,6 +3694,7 @@
    "verdict": "required",
    "predicate": null,
    "note": "서버가 문장으로: 'A network must be specified for VPN gateway creation.' **vpn 어휘가 3사 완결됐다** — azure는 subnet(이름 조건 GatewaySubnet)+publicIp(zone 쌍 호환), aws는 VPC attach, gcp는 network 필드. 같은 개념의 결속점이 셋 다 다르다",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {
@@ -3590,6 +3719,7 @@
    "verdict": "holds",
    "predicate": null,
    "note": "게이트웨이가 쓰는 네트워크는 못 지운다 — 게이트웨이 삭제 후 성공(양성 대조)",
+   "constraint": null,
    "oracle": "apply",
    "evidence": [
     {

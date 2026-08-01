@@ -91,8 +91,11 @@ def enrich(plan: DeploymentPlan, csp: str, region: str = "-") -> DeploymentPlan:
         (w["subject"], w["object"], w["warning"])
         for w in provision["operationalWarnings"]
         if w["subject"] in drawn or w["object"] in drawn))
+    # 규칙은 (주체, 대상, 산문, **기계가 볼 수 있는 몫**)으로 나른다. 넷째가
+    # 없으면 사람에게 넘기고, 있으면 대조기가 실제로 판정한다.
     checks = tuple(
-        (c["subject"], c["object"], c["rule"]) for c in provision["checks"]
+        (c["subject"], c["object"], c["rule"], c.get("machine"))
+        for c in provision["checks"]
         if c["subject"] in drawn or c["object"] in drawn)
 
     plan.measured = Measured(
@@ -160,7 +163,7 @@ def render(measured: Measured | None) -> str:
         mark = "creating it as well is a duplicate" if kind == "server-implicit" \
             else "you may still set it yourself"
         lines.append(f"  {why} — {mark}")
-    for subject, obj, rule in measured.checks:
+    for subject, obj, rule, _machine in measured.checks:
         missing = _judging_needs(rule)
         why = (f"we cannot judge it here — the plan carries no {missing}"
                if missing else "we do not judge it here — check it yourself")

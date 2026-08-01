@@ -188,14 +188,15 @@ def test_the_wiring_closed_the_gaps_it_was_built_to_close() -> None:
     대기 2 · 약한 읽기 1 · 대조 불가 3. 앞의 여섯은 계획에 자리가 없어서 빠진
     것이었고 `plan_enrich`가 그 자리를 만들어 채웠다.
 
-    남은 둘은 **배선으로 닫을 수 없는 종류**라 여기서 그렇게 못 박는다:
+    **그 뒤 남은 둘도 닫았다**(같은 날) — 17 → 4 → **3**:
 
-      `weak-reading`        계획이 컴퓨트 노드에 벤더 타입을 안 단다(표시
-                            문자열뿐) — `design_tools`를 고쳐야 닫힌다.
-      `out-of-vocabulary`   관리형 서비스(RDS·S3·SecretsManager)에 대한 의존
-                            실측이 0건 — 새 실측 라운드가 있어야 닫힌다.
+      `weak-reading`        계획이 컴퓨트 노드에 벤더 타입을 달게 했다
+                            (`design_tools._add_computes`가 `_vendor_of`를 탄다).
+      `out-of-vocabulary`   gcp `sshkey`는 자원이 아니라 메타데이터라, 상자로
+                            그리는 대신 컴퓨트 노트로 옮겼다(`_add_concept_note`).
 
-    이 둘이 0이 되면 그건 진짜 진척이므로 그때 이 테스트를 고친다.
+    지금 남은 셋은 **선언된 경계**다 — 관리형 상품 서비스(RDS·S3·SecretsManager).
+    실측하기로 하면 그때 이 테스트를 고친다.
     """
     from app.core.cloudkb.nim_agent.design_tools import compose
     from app.core.cloudkb.tools.intake_report import _design_from, _read
@@ -207,12 +208,74 @@ def test_the_wiring_closed_the_gaps_it_was_built_to_close() -> None:
     counts = result.counts()
 
     assert result.anchors == ("loadBalancer", "vm"), result.anchors
-    for kind in (pc.MISSING_REQUIRED, pc.DOUBLE_CREATE, pc.REDUNDANT_NODE,
-                 pc.UNCHECKED_RULE, pc.ABSENT_ORDER, pc.ABSENT_WARNING,
-                 pc.ABSENT_WAIT):
+    for kind in (pc.MISSING_REQUIRED, pc.VIOLATED_RULE, pc.DOUBLE_CREATE,
+                 pc.REDUNDANT_NODE, pc.UNCHECKED_RULE, pc.ABSENT_ORDER,
+                 pc.ABSENT_WARNING, pc.ABSENT_WAIT, pc.WEAK_READING,
+                 pc.OUT_OF_VOCABULARY):
         assert not counts.get(kind), (
             f"{kind}가 되살아났다 — 배선이 끊겼는지 보라: {counts}")
-    assert counts.get(pc.WEAK_READING) == 1, counts
     # 관리형 셋(RDS·S3·SecretsManager)은 **선언된 경계**이지 공백이 아니다.
     assert counts.get(pc.OUT_OF_SCOPE) == 3, counts
-    assert not counts.get(pc.OUT_OF_VOCABULARY), counts
+    # 나머지는 전부 0 — 실질 공백이 없다.
+    assert set(counts) == {pc.OUT_OF_SCOPE}, counts
+
+
+# --- 실제 판정 (2026-08-01) -----------------------------------------------------
+
+def _k8s_plan(subnets: int) -> DeploymentPlan:
+    plan = _plan(PlanNode("k8s", "k8s", "compute", "inferred",
+                          host="Kubernetes node"),
+                 PlanNode("net", "net", "shared", "kb",
+                          type_id="aws::AWS::EC2::VPC"))
+    plan.nodes.extend(
+        PlanNode(f"sub{i}", f"sub{i}", "shared", "kb",
+                 type_id="aws::AWS::EC2::Subnet") for i in range(subnets))
+    return plan
+
+
+def test_a_countable_rule_is_actually_judged() -> None:
+    """**셀 수 있는 것은 센다** — 규칙이 구조를 들고 오면 대조가 판정한다.
+
+    산문을 파싱하는 것이 아니다. 실측을 기록한 자리(`claims.json`의 `constraint`)가
+    `minCount`를 선언하고 그것이 뷰를 거쳐 여기까지 온다 — 규칙 사본이 둘이 되지
+    않으면서 판정이 선다.
+
+    aws EKS는 조건이 없다(종류가 안 갈린다). 양성 대조로 대우까지 확인된 규칙이라
+    여기서 세는 것이 실측과 어긋나지 않는다.
+    """
+    from app.core.plan_enrich import enrich
+
+    violated = [f for f in pc.crosscheck(
+        enrich(_k8s_plan(1), "aws", "-"), "aws").findings
+        if f.kind == pc.VIOLATED_RULE]
+    assert len(violated) == 1, violated
+    assert "1개" in violated[0].observed and "2개 이상" in violated[0].measured
+
+
+def test_the_same_rule_passes_when_the_plan_satisfies_it() -> None:
+    """**음성 대조.** 늘 걸리는 검사는 검사가 아니다."""
+    from app.core.plan_enrich import enrich
+
+    assert not [f for f in pc.crosscheck(
+        enrich(_k8s_plan(2), "aws", "-"), "aws").findings
+        if f.kind == pc.VIOLATED_RULE]
+
+
+def test_a_conditional_rule_is_not_judged_because_the_plan_omits_the_condition() -> None:
+    """조건이 걸린 규칙은 판정하지 않는다 — **계획이 조건을 말하지 않는다.**
+
+    aws `loadBalancer→subnet`은 ALB면 ≥2, NLB면 1인데 계획은 어느 쪽인지 적지
+    않는다(`ElasticLoadBalancingV2::LoadBalancer` 하나로 둘 다 표현된다).
+    조건을 모르는 채 세면 NLB 계획을 위반으로 부른다.
+    """
+    from app.core.plan_enrich import enrich
+
+    plan = _plan(_vm(),
+                 PlanNode("lb", "lb", "ingress", "inferred",
+                          type_id="aws::AWS::ElasticLoadBalancingV2::LoadBalancer"),
+                 PlanNode("sub", "sub", "shared", "kb",
+                          type_id="aws::AWS::EC2::Subnet"))
+    result = pc.crosscheck(enrich(plan, "aws", "-"), "aws")
+    assert not [f for f in result.findings if f.kind == pc.VIOLATED_RULE]
+    machine = {c[0]: c[3] for c in plan.measured.checks}
+    assert machine["loadBalancer"]["appliesWhen"], machine

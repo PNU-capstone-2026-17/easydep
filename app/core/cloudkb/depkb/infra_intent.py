@@ -77,6 +77,13 @@ class Constraint:
     subject: str
     object: str
     rule: str
+    #: 규칙의 **기계가 볼 수 있는 몫**. 없으면 `None`이고, 그러면 소비층은 산문을
+    #: 사람에게 넘긴다 — **산문을 파싱하지 않는다**(파싱하면 규칙 사본이 둘이 된다).
+    #:
+    #: 구조는 주장 자체(`claims.json`의 `constraint`)가 나른다. 실측을 기록한
+    #: 자리에서 선언하므로 여기서 술어 문장을 되읽을 일이 없다(2026-08-01).
+    #: 키: `minCount` · `distinctOver` · `nameEquals` · `appliesWhen` · `otherwise`.
+    machine: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -125,17 +132,22 @@ def _constraints_for(csp: str, ids: set[str]) -> tuple[Constraint, ...]:
             continue
         if c["subject"] not in ids or c["object"].split("|")[0] not in ids:
             continue
-        # 술어에 부류 접두가 없는 것도 있다("ALB는 …") — 그때 앞부분을 부류로
-        # 쓰면 규칙 문장이 통째로 부류명이 된다. 접두표에서 찾고, 없으면
-        # 일반 부류로 둔다.
+        # 부류는 접두표에서 찾는다. 접두가 없는 술어는 2026-08-01에 없어졌지만
+        # (`ALB는 …`이 마지막이었다) 폴백은 남긴다 — 새 술어가 분류 없이 들어오면
+        # 규칙 문장이 통째로 부류명이 되는 것을 막는다.
         prefix = next((p.rstrip(":") for p, _ in PREDICATE_CLASSES
                        if c["predicate"].startswith(p)), "")
-        head, _, rest = c["predicate"].partition(":")
+        _head, _, rest = c["predicate"].partition(":")
         kind = prefix if prefix.endswith(("조건", "호환")) else "카디널리티"
         rule = rest.strip() if rest.strip() else c["predicate"].strip()
         out.append(Constraint(kind=kind, subject=c["subject"],
-                              object=c["object"], rule=rule))
-    return tuple(sorted(set(out), key=lambda x: (x.subject, x.object, x.kind)))
+                              object=c["object"], rule=rule,
+                              machine=c.get("constraint")))
+    # `machine`이 dict라 해시가 안 된다 — 좌표로 중복을 접는다(set을 쓰던 자리).
+    unique: dict[tuple[str, str, str], Constraint] = {}
+    for item in out:
+        unique.setdefault((item.subject, item.object, item.kind), item)
+    return tuple(unique[k] for k in sorted(unique))
 
 
 def _merge(closures: list[Closure], csp: str

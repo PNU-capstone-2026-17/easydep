@@ -131,6 +131,32 @@ _SCOPE_BY_ROLE: dict[str, str] = {
     "external": "external-system",
 }
 
+@lru_cache(maxsize=64)
+def declared_absent(csp: str, aws_type: str) -> str:
+    """그 CSP에 이 개념의 **독립 자원 타입이 없다고 결속이 못 박았는가.**
+
+    있으면 사유 문장을, 아니면 빈 문자열을 돌려준다. 판단 근거는
+    `depkb.vocabulary`의 CSP별 결속에서 값이 명시적으로 `None`인 칸이다 —
+    **"아직 안 이었다"가 아니라 "그 CSP엔 독립 CRUD가 없다"**를 뜻하도록
+    거기서 못 박아 둔 자리다(지금은 gcp `sshKey` 하나).
+
+    `aws_type`으로 묻는 이유: aws 결속만 스키마 원문에 매여 있어 다른 축을
+    거기서 뽑는다(`_bridge`와 같은 지렛대).
+
+    **"지원하지 않는다"가 아니다.** gcp도 SSH 키를 쓴다 — 자원이 아니라
+    메타데이터(`ssh-keys`)·OS Login으로 다룰 뿐이다.
+    """
+    resource = _bridge().get("aws", {}).get(aws_type, "")
+    if not resource:
+        return ""
+    table = {"gcp": vocabulary.GCP_TYPES, "azure": vocabulary.TYPES}.get(csp)
+    if table is None or resource not in table or table[resource] is not None:
+        return ""
+    return (f"{csp}에는 {resource}에 해당하는 **독립 자원 타입이 없다** — "
+            "그 CSP가 이 기능을 안 쓴다는 뜻이 아니라, 자원이 아니라 다른 것"
+            "(설정값·메타데이터 등)으로 다룬다는 뜻이다(어휘 결속)")
+
+
 #: 검사 부류 → **판정에 필요한데 계획에 없는 것.** 빈 값이면 정보는 있고
 #: 규율 때문에 판정하지 않는 것이다.
 #:
@@ -161,6 +187,7 @@ ABSENT_WARNING = "absent-warning"        # 기능 결속 경고가 계획에 안
 ABSENT_WAIT = "absent-wait"              # 완료 대기가 계획에 안 실림
 OUT_OF_VOCABULARY = "out-of-vocabulary"  # **대조 불가** — 아직 실측이 없다
 OUT_OF_SCOPE = "out-of-scope"            # **안 하기로 한 것** — 경계이지 공백이 아니다
+VIOLATED_RULE = "violated-rule"          # 실측 규칙을 계획이 **실제로 어긴다**
 WEAK_READING = "weak-reading"            # 표시 문자열로 읽었다 — 저쪽이 바뀌면 끊긴다
 
 
@@ -309,12 +336,25 @@ def crosscheck(plan: DeploymentPlan, csp: str, region: str = "-") -> Crosscheck:
 
     # ③ 실측 검사. **판정하지 않는다** — 규칙과 계획의 관측 사실을 나란히 낸다.
     counted = Counter(mapped.values())
-    checked = {(s, o) for s, o, _ in (carried.checks if carried else ())}
+    checked = {(s, o) for s, o, *_ in (carried.checks if carried else ())}
     for check in provision["checks"]:
         if check["subject"] not in drawn and check["object"] not in drawn:
             continue
+        # **셀 수 있는 것은 센다.** 규칙의 기계 몫(`machine`)은 실측을 기록한
+        # 자리에서 선언된 것이라 여기서 산문을 파싱하지 않는다. 조건이 걸린
+        # 규칙(`appliesWhen`)은 계획이 그 조건을 말하지 않으므로 판정하지 않는다.
+        machine = check.get("machine") or {}
+        floor = machine.get("minCount")
+        if floor and not machine.get("appliesWhen"):
+            have = counted.get(check["object"], 0)
+            if have < floor:
+                findings.append(Finding(
+                    VIOLATED_RULE, f'{check["subject"]}→{check["object"]}',
+                    f"계획에 {check['object']}이(가) {have}개다",
+                    f'실측이 {floor}개 이상을 요구한다 — {check["rule"]}'))
+                continue
         if (check["subject"], check["object"]) in checked:
-            continue  # 계획이 규칙을 싣고 있다 — 판정은 여전히 사람 몫이다
+            continue  # 계획이 규칙을 싣고 있다 — 나머지는 사람 몫이다
         seen = {r: counted[r] for r in (check["subject"], check["object"])
                 if counted.get(r)}
         # **왜 판정 못 하는가**를 함께 낸다. 규율(사본 금지)과 정보 부재는 다른
@@ -382,7 +422,7 @@ def render(result: Crosscheck) -> str:
         "## 개수",
     ]
     counts = result.counts()
-    for kind in (MISSING_REQUIRED, DOUBLE_CREATE, REDUNDANT_NODE,
+    for kind in (MISSING_REQUIRED, VIOLATED_RULE, DOUBLE_CREATE, REDUNDANT_NODE,
                  UNCHECKED_RULE, ABSENT_ORDER,
                  ABSENT_WARNING, ABSENT_WAIT, WEAK_READING, OUT_OF_VOCABULARY,
                  OUT_OF_SCOPE):

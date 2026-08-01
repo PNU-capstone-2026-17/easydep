@@ -501,9 +501,25 @@ def _add_computes(
             "kubernetes": "Kubernetes node",
             "serverless": "Serverless runtime",
         }.get(kind, "")
+        # **실행 환경의 벤더 타입.** 표시 이름(`host`)만 달던 것이 문제였다 —
+        # 컴퓨트 노드가 계획에서 유일하게 타입 없는 자원이라, 실측을 대조하려면
+        # 그 표시 문자열을 되읽어야 했고 저쪽 문구가 바뀌면 조용히 끊겼다
+        # (`plan_crosscheck`의 `weak-reading`, 2026-08-01 실측).
+        #
+        # 다른 자원과 같은 다리(`_vendor_of`)를 쓴다 — 여기서 표를 새로 만들지
+        # 않는다. 서버리스는 core 개념이 없어 빈 채로 둔다(그것도 사실이다).
+        core_of_kind = {"vm": "core::vm", "kubernetes": "core::k8sCluster"}
+        type_id, hedged = ("", False)
+        if kind in core_of_kind:
+            type_id, hedged = _vendor_of(core_of_kind[kind], provider)
+        if hedged:
+            notes.append(Note(
+                f"{host} maps to {type_id} on {provider} — the mapping was matched "
+                "by hand from cb-spider drivers, so it is checked but inferred",
+                ORIGIN_INFERRED, "graphkb"))
         plan.nodes.append(PlanNode(
             id=cid, label=component["name"], role="compute", placement=placement,
-            host=host, origin=origin, notes=tuple(notes),
+            host=host, type_id=type_id, origin=origin, notes=tuple(notes),
         ))
         if kind == "vm":
             priced.add(cid)
@@ -1151,6 +1167,19 @@ def _add_shared_infra(plan: DeploymentPlan, kinds: set[str], provider: str | Non
                     ORIGIN_KB, "mapping-graph",
                 ))
             elif provider:
+                # **자원이 없는 것과 매핑이 없는 것을 가른다.** 앞은 사실이고
+                # 뒤는 우리 무지다. 앞이면 노드를 그리지 않고 노트를 남긴다 —
+                # `core::image`가 쓰는 것과 같은 패턴이다("리소스가 아니라 값").
+                # gcp `sshKey`가 그 자리다: gcp도 SSH를 쓰지만 키가 자원이 아니라
+                # 메타데이터라, 상자로 그리면 만들 수 없는 것을 만들라고 하는 셈이다.
+                from app.core.plan_crosscheck import declared_absent
+
+                aws_type, _ = _vendor_of(core_id, "aws")
+                absent = declared_absent(
+                    provider, aws_type.split("::", 1)[-1] if aws_type else "")
+                if absent:
+                    _add_concept_note(plan, priced, f"{label}: {absent}")
+                    continue
                 plan.unresolved.append(
                     f"{node_id}: found no type for {core_id} on {provider}"
                 )
@@ -1218,6 +1247,20 @@ def _add_image_note(plan: DeploymentPlan, provider: str | None,
     plan.nodes[:] = [
         node if node.id not in priced
         else replace(node, notes=node.notes + (Note(text, origin, source),))
+        for node in plan.nodes
+    ]
+
+
+def _add_concept_note(plan: DeploymentPlan, priced: set[str], text: str) -> None:
+    """자원으로 그릴 수 없는 것을 **컴퓨트 노드의 노트**로 남긴다.
+
+    `_add_image_note`가 이미지를 그렇게 다루고(리소스가 아니라 값), 같은 자리가
+    하나 더 있다 — CSP에 독립 자원 타입이 없는 개념. 상자로 그리면 만들 수 없는
+    것을 만들라고 하는 셈이고, 그냥 빼면 그 사실이 사라진다.
+    """
+    plan.nodes[:] = [
+        node if node.id not in priced
+        else replace(node, notes=node.notes + (Note(text, ORIGIN_KB, "vocabulary"),))
         for node in plan.nodes
     ]
 

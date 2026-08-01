@@ -35,7 +35,8 @@ CONTRACTS: tuple[str, ...] = ("examples/order-demo.json",)
 
 CSPS: tuple[str, ...] = ("aws", "gcp", "azure")
 
-_KINDS = (pc.MISSING_REQUIRED, pc.DOUBLE_CREATE, pc.REDUNDANT_NODE,
+_KINDS = (pc.MISSING_REQUIRED, pc.VIOLATED_RULE, pc.DOUBLE_CREATE,
+          pc.REDUNDANT_NODE,
           pc.UNCHECKED_RULE, pc.ABSENT_ORDER, pc.ABSENT_WARNING,
           pc.ABSENT_WAIT, pc.WEAK_READING, pc.OUT_OF_VOCABULARY,
           pc.OUT_OF_SCOPE)

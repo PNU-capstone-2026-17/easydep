@@ -131,6 +131,7 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     dict(csp="azure", subject="vpn", object="subnet", question="existence",
          verdict="required",
          predicate="이름 조건: 정확히 GatewaySubnet이라는 서브넷이어야 한다",
+         constraint={"nameEquals": "GatewaySubnet"},
          evidence=[
              ("azure-k8s-vpn-2026-07-31", "V1.vng-wrong-subnet-name",
               "InvalidResourceReference", "apply"),
@@ -171,6 +172,9 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     dict(csp="aws", subject="k8sCluster", object="subnet", question="existence",
          verdict="required",
          predicate="배치 조건: 서로 다른 AZ의 서브넷 ≥2 (양성 대조로 대우 확인)",
+         # 조건이 없다 — EKS는 종류가 갈리지 않아 무조건 둘이다(양성 대조로 대우
+         # 확인: 같은 AZ 둘은 거부, 다른 AZ 둘은 통과).
+         constraint={"minCount": 2, "distinctOver": "availabilityZone"},
          evidence=[
              ("aws-eks-2026-07-31", "E1.omit-vpc-config",
               "--resources-vpc-config", "preflight"),
@@ -385,6 +389,11 @@ EXPERIMENT_JUDGMENTS: list[dict] = [
     dict(csp="aws", subject="loadBalancer", object="subnet", question="existence",
          verdict="required",
          predicate="배치 조건: ALB는 서로 다른 AZ의 서브넷 ≥2 (NLB는 1)",
+         # **개수는 LB 종류에 걸린다** — ALB 2, NLB 1. 계획이 어느 쪽인지 말하지
+         # 않으면 판정할 수 없고, 그 사실을 `appliesWhen`이 나른다.
+         constraint={"minCount": 2, "distinctOver": "availabilityZone",
+                     "appliesWhen": "loadBalancer.type == 'application'",
+                     "otherwise": {"minCount": 1}},
          evidence=[
              ("aws-apply2-2026-07-31", "B4.lb-omit-subnets",
               "ValidationError", "apply"),
@@ -1455,6 +1464,9 @@ def build() -> dict:
             "subject": j["subject"], "object": j["object"], "csp": j["csp"],
             "question": j["question"], "verdict": j["verdict"],
             "predicate": j.get("predicate"), "note": j.get("note"),
+            # 술어의 **기계가 볼 수 있는 몫**. 없으면 없는 대로 둔다 — 산문을
+            # 소비층에서 파싱하는 것을 막으려고 여기서 구조를 준다(2026-08-01).
+            "constraint": j.get("constraint"),
             "oracle": max((e["layer"] for e in evid),
                           key=lambda x: _LAYER_RANK[x]),
             "evidence": evid,
@@ -1466,7 +1478,7 @@ def build() -> dict:
             continue
         claims.append({
             "subject": s, "object": o, "csp": csp, "question": "existence",
-            "verdict": "unknown", "predicate": None,
+            "verdict": "unknown", "predicate": None, "constraint": None,
             "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
             "oracle": "schema", "evidence": evid,
         })

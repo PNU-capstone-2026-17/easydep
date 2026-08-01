@@ -198,8 +198,9 @@ class Measured:
     #: (주체, 대상, 무엇이 깨지나). 컨트롤 플레인이 **막지 않는** 지대라
     #: 생성·삭제 검사로는 안 잡힌다.
     operational_warnings: tuple[tuple[str, str, str], ...] = ()
-    #: (주체, 대상, 규칙). 계획이 지켜야 하는 실측 규칙 — 판정은 사람이 한다.
-    checks: tuple[tuple[str, str, str], ...] = ()
+    #: (주체, 대상, 규칙, 기계가 볼 수 있는 몫). 넷째가 `None`이면 산문뿐이라
+    #: 사람이 판정하고, 있으면 대조기가 실제로 본다 — **산문을 파싱하지 않는다.**
+    checks: tuple[tuple[str, str, str, dict | None], ...] = ()
     #: 계획에 있는데 우리가 아무 말도 못 하는 자원. **침묵을 '문제없다'로 읽지 말 것.**
     unmeasured: tuple[str, ...] = ()
 
@@ -271,8 +272,8 @@ class DeploymentPlan:
                     {"subject": s, "object": o, "breaks": b}
                     for s, o, b in self.measured.operational_warnings],
                 "checks": [
-                    {"subject": s, "object": o, "rule": r}
-                    for s, o, r in self.measured.checks],
+                    {"subject": s, "object": o, "rule": r, "machine": m}
+                    for s, o, r, m in self.measured.checks],
                 "unmeasured": list(self.measured.unmeasured),
             },
         }
