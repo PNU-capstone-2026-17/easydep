@@ -34,8 +34,8 @@
 |---|---|---|---|
 | A 본 시스템 · 요구사항 | 2026-08-02 | `build_sample`, NIM `gpt-oss-120b`, 커밋은 RUN.json | `requirements/` 14종 |
 | A 본 시스템 · 설계 | 2026-08-02 | `build_design`, NIM `gpt-oss-120b` | `design/` 4종 |
-| A 본 시스템 · 구현 | — | — | — |
-| A 본 시스템 · 배포 | — | — | — |
+| A 본 시스템 · 배포 | 2026-08-02 | `intake_report --plan` (LLM 없음, 결정론) | `design/cloud.json` + 계획·점검표 |
+| A 본 시스템 · 구현 | — | OpenHands·JDK·Gradle 필요 — 미실행 | — |
 | B 단순 LLM | — | — | — |
 | C 프레임워크 | — | — | — |
 
@@ -90,3 +90,37 @@ multiZone. 관측점 설계 그대로다.
 **비결정성 관측**: 시퀀스가 한 실행에서 1KB(로그인만)·다른 실행에서 11.7KB
 (여러 흐름)로 갈렸다 — gpt-oss-120b는 MoE라 temperature=0도 결정론이 아니다
 (PROVENANCE 재현 단서 그대로). 흔들림은 실험의 T-생성 흔들림 그 자체.
+
+### A-배포 결과 — 관측점 대조 (2026-08-02, 실물 · LLM 없는 결정론)
+
+`intake_report --plan`이 저장된 설계 산출물에서 계획·`cloud.json`·배포 후
+점검표를 냈다. **요구사항→설계→배포 사슬이 이어졌다**(코드 생성만 남음).
+
+**강함**:
+- 계약이 계획으로 내려감(provider·region·workloads·budget). EKS에 **서브넷
+  둘**(서로 다른 AZ — 실측 배치 조건)이 섰다.
+- **배포 후 점검표 4건이 붙었다**(node-join·egress-https·inbound-tcp·
+  imds-credentials) — depkb 실측 지식이 계획에 실린 자리. C1의 재료.
+- 생성 순서 `iamRole→network→subnet→k8sCluster`(폐포). doNotCreate·경고 포함.
+
+**정직한 약점 셋 — 전부 상류에서 전파됐다(C-COVER 감점)**:
+1. **영속 저장이 없다**(`persistentVolume: false`). 5년 보존이 핵심인 앱인데.
+   원인: `uploads` 신호 미검출 — 설계의 api_spec이 사진 업로드를 binary/
+   multipart로 안 적어서, 배포에 객체 스토리지도 PVC도 안 섰다. **NFR 9가
+   깨지는 계획**이다. 침묵시킨 storage-provisioning 관측점이 신호 층만으론
+   안 잡혔고(요구 단계 unjudged) 설계도 놓쳐 하류까지 빈 것 — C2 수용
+   스위트가 잡아야 할 바로 그 자리.
+2. **큐가 없다**(`any_async` 미검출). 시퀀스에 `->>` 0개가 그대로 전파.
+   FR 4·NFR 13의 비동기 분리가 계획에 없다.
+3. **RDS를 추론**(`<<inferred>>` DBInstance). 제약 산문의 "클러스터 안·관리형
+   데이터 서비스 불사용"이 **계약 칸이 없어** 계획에 안 닿았다 — 관리형
+   DB를 계획에 세웠다. 드롭된 cn.managed-vs-self가 가리키던 자리. **함의**:
+   in-cluster 공정성 제약은 우리 시스템도 강제하지 못한다 → 비교에서 "이
+   제약을 지키는가"가 오히려 C4 축이 된다(우리는 드롭, 베이스라인은?).
+
+**하류 스키마 벽**: cloud.json이 aws인데 하류 렌더러는 azure ARM 타입만
+알아본다(`_unsupported`) — 3사 실측이 매니페스트 렌더에서 막힌다. 우리 소관
+밖(하류 스키마)이라 `_handoff`·`_omitted`로 명시.
+
+**구현 단계 미실행**: OpenHands·JDK 21·Gradle 부트스트랩 필요 — 환경 확인이
+선행. 코드·테스트(C-BUILD·C-COVER 하류)는 그 뒤.
