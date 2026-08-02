@@ -1,20 +1,22 @@
 {
   "schemaVersion": "easydep-capacity/v1alpha1",
-  "vcpu": 0,
-  "mem_gib": 0.553,
-  "under": "unit and integration tests (gradle test process tree)",
-  "evidence": "peak memory of 108 samples of the JVM/build process tree during gradle test (test rc=0); a rough lower bound on the running app, which loads its context within this tree. Serving CPU is not measured here — the raw test-time CPU peak (4.78 vCPU) is build concurrency, not serving load; measure it with a load probe.",
+  "vcpu": 4.73,
+  "mem_gib": 0.314,
+  "under": "unit and integration tests (forked test-executor JVM)",
+  "evidence": "peak of the gradle test-executor JVM over 197 samples (test rc=0); the app loads its context and runs controllers in this JVM, so build CPU (gradle daemon, compiler) is excluded. This is serving CPU under TEST load, not production scale — a floor: refine with a load probe once the app boots standalone.",
   "production_load": false,
-  "measuredAt": "2026-08-02T09:49:56.931987+00:00",
+  "measuredAt": "2026-08-02T11:24:20.048946+00:00",
   "code": {
-    "commit": "feb8c2eb86c6c48f8c23fbccd6437dd1a2533814",
+    "commit": "35887d0b0b6b9860d2cb4cdb6f5d36e4cd08a503",
     "dirty": true
   },
   "raw": {
     "testExitCode": 0,
-    "peakRssMiB": 566.1,
-    "peakVCpu": 4.78,
-    "samples": 108,
-    "gradleTail": "> Task :classes UP-TO-DATE\n> Task :compileTestJava UP-TO-DATE\n> Task :processTestResources NO-SOURCE\n> Task :testClasses UP-TO-DATE\n> Task :test UP-TO-DATE\n\nBUILD SUCCESSFUL in 59s\n4 actionable tasks: 4 up-to-date"
+    "peakRssMiB": 872.7,
+    "peakVCpu": 5.11,
+    "appPeakRssMiB": 322.0,
+    "appPeakVCpu": 4.73,
+    "samples": 197,
+    "gradleTail": "Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 1m 42s\n5 actionable tasks: 2 executed, 3 up-to-date"
   }
 }
