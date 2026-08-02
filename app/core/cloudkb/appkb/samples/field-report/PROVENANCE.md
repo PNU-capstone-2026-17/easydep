@@ -35,7 +35,7 @@
 | A 본 시스템 · 요구사항 | 2026-08-02 | `build_sample`, NIM `gpt-oss-120b`, 커밋은 RUN.json | `requirements/` 14종 |
 | A 본 시스템 · 설계 | 2026-08-02 | `build_design`, NIM `gpt-oss-120b` | `design/` 4종 |
 | A 본 시스템 · 배포 | 2026-08-02 | `intake_report --plan` (LLM 없음, 결정론) | `design/cloud.json` + 계획·점검표 |
-| A 본 시스템 · 구현 | — | OpenHands·JDK·Gradle 필요 — 미실행 | — |
+| A 본 시스템 · 구현 | 2026-08-02 | `build_implementation` → 구현 엔진(OpenHands `gpt-oss-120b`) | `.easydep/impl-runs/`(gitignore) — Java 106·테스트 32 |
 | B 단순 LLM | — | — | — |
 | C 프레임워크 | — | — | — |
 
@@ -122,5 +122,32 @@ multiZone. 관측점 설계 그대로다.
 알아본다(`_unsupported`) — 3사 실측이 매니페스트 렌더에서 막힌다. 우리 소관
 밖(하류 스키마)이라 `_handoff`·`_omitted`로 명시.
 
-**구현 단계 미실행**: OpenHands·JDK 21·Gradle 부트스트랩 필요 — 환경 확인이
-선행. 코드·테스트(C-BUILD·C-COVER 하류)는 그 뒤.
+### A-구현 결과 — 사슬이 코드 생성까지 관통 (2026-08-02, 실물)
+
+`build_implementation`(내 다리, 팀원 엔진을 서브프로세스 호출만)이 설계
+산출물에서 Java/Spring 소스+테스트를 생성·컴파일·검증했다. 산출물은
+`.easydep/impl-runs/`(gitignore) — 저장소에 안 싣는다(로컬 빌드 트리).
+
+**설계→BCE 정규화 셋이 선행**(다리가 흡수, 커밋 실물 안 고침): 방향 연관선
+43줄 제거 · 타입 없는 필드 40개 String · 파라미터 이름-만 메서드 11개 무인자화.
+gpt-oss-120b의 BCE가 렌더는 되나 구현-등급이 아니라는 실측 — 헤드리스
+generation-only 설계 경로의 한계(서빙의 피드백 게이트가 있어야 정확한 타입).
+
+**실행 결과: 34/35 태스크 성공.** 페이즈 control·persistence·api-adapters·
+boundary-adapters·wiring 전부 SUCCEEDED(outbound-adapters는 게이트웨이 없어
+UNPLANNED). **자기 수리 기제가 실제로 작동**: OpenHands가 auth api-adapter에
+`UnsupportedOperationException("not implemented")` 스텁을 남겨 **함께 생성된
+테스트가 잡아** 태스크 실패 → `--retry-failed` 수리 라운드가 스텁을 완성 →
+통과. wiring↔api-adapters 크로스 페이즈 수리도 한 바퀴 돌아 정합을 맞췄다.
+생성물: **main Java 106 · 테스트 32**(BCE·Spring API·DTO·컨트롤러·impl 서비스·
+persistence·어댑터·wiring).
+
+**유일한 실패: end-to-end 통합 테스트.** 에이전트가 요구된
+`EasydepFieldReportFlowTest.java`를 **2회 재시도에도 일관되게 미생성**
+(gpt-oss-120b의 능력 천장 — 수리 대상 아닌 예외). COMPLETE 미달이라 소스-설계
+적합성 게이트·배포 렌더(Dockerfile·k8s)는 안 돎.
+
+**두 방향으로 다 실험 결과다**: (1) 사슬이 요구사항→설계→코드+테스트까지 실제로
+관통하고 **검증 게이트·자기 수리가 산다**(우리 시스템의 C-BUILD가 실물로 작동 —
+불완전 구현을 테스트가 잡고 수리가 메운다). (2) gpt-oss-120b는 어댑터 스텁·
+E2E 테스트에서 능력 한계를 드러낸다(강한 모델이면 더 갈 자리). 둘 다 정직한 값.

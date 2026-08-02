@@ -339,7 +339,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.retry_failed:
             run_args.append("--retry-failed")
         print(f"  → run-workflow #{i + 1} …", end=" ", flush=True)
-        final = _cli(run_args, env)
+        try:
+            final = _cli(run_args, env)
+        except RuntimeError as exc:
+            # 태스크가 출력을 안 만들어 엔진이 재던지면(수리 대상 아님) rc≠0로
+            # 온다. 크래시 대신 terminal FAILED로 기록한다 — RUN.json을 남긴다.
+            print("FAILED (엔진 예외)")
+            final = {"status": "FAILED",
+                     "engineError": str(exc)[-800:]}
+            log.append({"step": f"run-workflow#{i + 1}", "status": "FAILED",
+                        "engineError": str(exc)[-800:]})
+            break
         status, phase = final.get("status"), final.get("currentPhase")
         print(f"{status}  phase={phase}")
         log.append({"step": f"run-workflow#{i + 1}", "status": status,
