@@ -249,6 +249,31 @@ def main(argv: list[str] | None = None) -> int:
             print("  (없음 — 이 구성의 자원에 걸리는 기능 결속 실측이 없다. "
                   "**문제없다는 뜻이 아니다**)")
 
+        # ── 8. 구현 이후 테스팅 — 요구 도출 수용 스위트 ──────────────────
+        # 앱의 자기 테스트가 아니라 **요구가 잣대**다(블랙박스). 요구+OpenAPI만
+        # 있으면 도출되므로 구현 전에도 낸다 — 배포된 앱에 run_functional로 건다.
+        classified, _ = _read(root, "requirements/classified.json")
+        api_spec, _ = _read(root, "design/api_spec.json")
+        if isinstance(classified, list) and isinstance(api_spec, dict):
+            from ..appkb import acceptance
+
+            suite = acceptance.derive(classified, api_spec)
+            cov = acceptance.coverage(suite)
+            print(f"\n[8] 구현 이후 테스팅 — 수용 검사 {cov['total']}건 "
+                  f"(매핑 {cov['mapped']} · unmapped {cov['unmapped']} · "
+                  f"기능 {cov['functional']}·NFR {cov['nfr']})")
+            for c in suite:
+                if c.unmapped:
+                    print(f"  ✗ {c.requirement_id} unmapped — {c.unmapped[:50]}")
+            acc_path = root / "design" / "acceptance.json"
+            acc_path.write_text(
+                json.dumps({"schemaVersion": "easydep-acceptance/v1alpha1",
+                            "coverage": cov,
+                            "checks": [c.as_dict() for c in suite]},
+                           ensure_ascii=False, indent=2), encoding="utf-8")
+            print(f"  기록: design/acceptance.json — 배포 후 "
+                  "`acceptance.run_functional(base_url, ...)`로 실행")
+
     print()
     return 1 if missing_required else 0
 
