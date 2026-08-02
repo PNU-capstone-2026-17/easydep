@@ -117,27 +117,22 @@ def _build_state(root: Path) -> tuple[dict, list[str]]:
 
 
 def _run_stage(stage: str, state: dict) -> dict:
-    """설계 노드 하나를 부른다. 상태 변경분(delta)을 돌려준다."""
-    from app.design.api import (
-        auto_fix_api_spec,
-        auto_fix_puml_stage,
-        generate_class_diagram_once,
-        merge_state,
-    )
-    from app.design.nodes.artifact_generation import (
-        generate_api_spec,
-        generate_erd,
-        generate_sequence_diagram,
-    )
+    """설계 스테이지 하나의 **생성 서브그래프**를 부른다. 상태 변경분(delta)을 돌려준다.
 
-    if stage == "class_diagram":
-        return generate_class_diagram_once(state)
-    if stage == "sequence_diagram":
-        return auto_fix_puml_stage(
-            stage, merge_state(state, generate_sequence_diagram(state)), "")
-    if stage == "api_spec":
-        return auto_fix_api_spec(merge_state(state, generate_api_spec(state)), "")
-    return auto_fix_puml_stage(stage, merge_state(state, generate_erd(state)), "")
+    **2026-08-02 정정**: `app/design`이 LangGraph 세션 구조로 리팩터되며 옛 순수
+    함수(`auto_fix_api_spec`·`generate_api_spec`·`merge_state` 등)가 사라졌다.
+    이제 각 스테이지의 **생성 서브그래프**(`DESIGN_SUBGRAPHS[stage]["generate"]`)를
+    직접 호출한다. 그 서브그래프는 extract → convert → validate로 끝나는 **순수
+    스테이지**라(design_graph docstring · `build_generation_graph`) persist·gate·
+    체크포인터·DB를 안 거친다 — 표본 생성에 필요한 산출물만 나오고, 문법 수리
+    루프가 없어 무한 대기도 없다(변환이 유효성을 보장).
+
+    피드백 게이트(HITL)와 MySQL 체크포인터는 **상위 그래프**의 몫이라 여기서
+    안 탄다. `app/design`은 한 줄도 안 고치고 **호출만** 한다(팀원 코드).
+    """
+    from app.design.graphs.subgraphs import DESIGN_SUBGRAPHS
+
+    return dict(DESIGN_SUBGRAPHS[stage]["generate"].invoke(state))
 
 
 def main(argv: list[str] | None = None) -> int:
