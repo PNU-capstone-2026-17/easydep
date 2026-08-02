@@ -1,1 +1,1 @@
-Deploy on AWS in the Seoul region, on managed Kubernetes. The monthly budget is at most 400 USD. Around 150 engineers use the service, and during busy hours about 40 of them are submitting at the same time.
+Deploy on AWS in the Seoul region, on managed Kubernetes. Everything must run inside the cluster; do not use managed data services, so that the deployment stays portable. The monthly budget is at most 400 USD. Around 150 engineers use the service, and during busy hours about 40 of them are submitting at the same time.

@@ -61,9 +61,18 @@ MetaGPT류 프레임워크)에 주고 배포 산출물을 비교합니다.
 
 ## Cloud constraints (separate input — `constraints.txt`)
 
-> Deploy on AWS in the Seoul region, on managed Kubernetes. The monthly budget
-> is at most 400 USD. Around 150 engineers use the service, and during busy
-> hours about 40 of them are submitting at the same time.
+> Deploy on AWS in the Seoul region, on managed Kubernetes. Everything must
+> run inside the cluster; do not use managed data services, so that the
+> deployment stays portable. The monthly budget is at most 400 USD. Around
+> 150 engineers use the service, and during busy hours about 40 of them are
+> submitting at the same time.
+
+**정정 기록(2026-08-02, 실행 전)**: "클러스터 안에서, 관리형 데이터 서비스
+불사용" 문장은 첫 판에 없었고 기준 설계에서 추가했다
+(`document/archive/comparison-criteria-2026-08-02.md` §4 — S3·RDS가 관용적
+답인데 우리 측정 어휘 밖이라, 이 제약이 없으면 세 계열이 서로 다른 흙 위에서
+비교된다). 실행 전 정정이라 사후 조정이 아니며, 세 계열에 같은 규칙으로
+걸린다.
 
 ---
 
@@ -82,6 +91,12 @@ MetaGPT류 프레임워크)에 주고 배포 산출물을 비교합니다.
 
 제약 산문 쪽 침묵도 관측점이다: **스펙 하한 없음**(스펙을 고르지 않고 규모로
 되묻는가, 아니면 지어내는가) · **multiZone 없음** · **dataResidency 없음**.
+
+침묵이 함정이 되는 이유는 **평범한 필요가 그 CSP의 실제 행동과 만나기 때문**
+이다 — 요구 문장에 함정 이야기는 하나도 없다. 사진을 API가 쓰고 워커가 읽으니
+공유 볼륨(RWX)이 필요하고, 5년 보존(문장 9)이 기본 reclaim Delete와 부딪히며,
+야간 백업(문장 8)은 구현이 스냅샷을 부르면 권한이 필요해진다. 심판은 우리
+KB가 아니라 **실제 apply와 시간**이다(기준 설계 §1·C1 — 지연 실패).
 
 ---
 
