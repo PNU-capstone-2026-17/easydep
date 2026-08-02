@@ -1,0 +1,58 @@
+{
+  "startedAt": "2026-08-02T06:23:55.919577+00:00",
+  "finishedAt": "2026-08-02T06:27:37.448278+00:00",
+  "model": "openai/gpt-oss-120b",
+  "code": {
+    "commit": "663640e8eb6c3c78bf4fd5897650acad2546dba9",
+    "dirty": true
+  },
+  "sample": "field-report",
+  "maxRevisionAttempts": 3,
+  "ranStages": [
+    "api_spec",
+    "class_diagram",
+    "erd",
+    "sequence_diagram"
+  ],
+  "missingUpstream": [],
+  "stages": [
+    {
+      "stage": "class_diagram",
+      "ok": true,
+      "file": "design/class_diagram.puml",
+      "bytes": 9765,
+      "syntaxValid": false,
+      "syntaxErrors": [
+        "Error: Unable to access jarfile plantuml.jar"
+      ]
+    },
+    {
+      "stage": "sequence_diagram",
+      "ok": true,
+      "file": "design/sequence_diagram.puml",
+      "bytes": 11715,
+      "syntaxValid": false,
+      "syntaxErrors": [
+        "Error: Unable to access jarfile plantuml.jar"
+      ]
+    },
+    {
+      "stage": "api_spec",
+      "ok": true,
+      "file": "design/api_spec.json",
+      "bytes": 39039,
+      "syntaxValid": true,
+      "syntaxErrors": []
+    },
+    {
+      "stage": "erd",
+      "ok": true,
+      "file": "design/erd.puml",
+      "bytes": 1729,
+      "syntaxValid": false,
+      "syntaxErrors": [
+        "Error: Unable to access jarfile plantuml.jar"
+      ]
+    }
+  ]
+}

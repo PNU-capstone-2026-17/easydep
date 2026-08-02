@@ -1,0 +1,88 @@
+@startuml
+hide circle
+!theme plain
+
+skinparam linetype ortho
+
+entity "UserAccount" as UserAccount {
+  * useraccount_id : BIGINT
+  --
+  userId : VARCHAR(255)
+  username : VARCHAR(255)
+  passwordHash : VARCHAR(255)
+  role : VARCHAR(255)
+  status : VARCHAR(255)
+  assignedSiteIds : VARCHAR(255)
+}
+
+entity "Site" as Site {
+  * site_id : BIGINT
+  --
+  name : VARCHAR(255)
+  location : VARCHAR(255)
+  assignedEngineerIds : VARCHAR(255)
+}
+
+entity "InspectionReport" as InspectionReport {
+  * inspectionreport_id : BIGINT
+  --
+  reportId : VARCHAR(255)
+  engineerId : VARCHAR(255)
+  status : VARCHAR(255)
+  checklistData : VARCHAR(255)
+  photoIds : VARCHAR(255)
+  createdAt : VARCHAR(255)
+  submittedAt : VARCHAR(255)
+  thumbnailIds : VARCHAR(255)
+  followUpFlag : VARCHAR(255)
+  site_id : BIGINT <<FK>>
+  pdfsummary_id : BIGINT <<FK>>
+}
+
+entity "Thumbnail" as Thumbnail {
+  * thumbnail_id : BIGINT
+  --
+  imageData : VARCHAR(255)
+  photo_id : BIGINT <<FK>>
+}
+
+entity "PDFSummary" as PDFSummary {
+  * pdfsummary_id : BIGINT
+  --
+  pdfId : VARCHAR(255)
+  reportId : VARCHAR(255)
+  fileData : VARCHAR(255)
+}
+
+entity "Photo" as Photo {
+  * photo_id : BIGINT
+  --
+  reportId : VARCHAR(255)
+  imageData : VARCHAR(255)
+  metadata : VARCHAR(255)
+}
+
+entity "FollowUpRequest" as FollowUpRequest {
+  * followuprequest_id : BIGINT
+  --
+  requestId : VARCHAR(255)
+  reportId : VARCHAR(255)
+  engineerId : VARCHAR(255)
+  status : VARCHAR(255)
+  createdAt : VARCHAR(255)
+}
+
+entity "BackupBundle" as BackupBundle {
+  * backupbundle_id : BIGINT
+  --
+  bundleId : VARCHAR(255)
+  reportIds : VARCHAR(255)
+  photoIds : VARCHAR(255)
+  metadata : VARCHAR(255)
+}
+
+PDFSummary ||..o{ InspectionReport
+Photo ||..o{ Thumbnail
+Site ||..o{ InspectionReport
+
+@enduml

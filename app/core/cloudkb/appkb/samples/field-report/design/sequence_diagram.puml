@@ -1,0 +1,243 @@
+@startuml
+!theme plain
+skinparam sequenceMessageAlign center
+autonumber
+
+actor "Field Engineer" as Field_Engineer
+actor "Site Manager" as Site_Manager
+actor "Administrator" as Administrator
+actor "Backup Storage Service" as Backup_Storage_Service
+boundary "AuthBoundary" as AuthBoundary
+boundary "SiteListBoundary" as SiteListBoundary
+boundary "ReportDraftBoundary" as ReportDraftBoundary
+boundary "ReportSubmitBoundary" as ReportSubmitBoundary
+boundary "ReportBrowseBoundary" as ReportBrowseBoundary
+boundary "PhotoViewBoundary" as PhotoViewBoundary
+boundary "PDFDownloadBoundary" as PDFDownloadBoundary
+boundary "FlagBoundary" as FlagBoundary
+boundary "EngineerAccountBoundary" as EngineerAccountBoundary
+boundary "AssignmentBoundary" as AssignmentBoundary
+boundary "BackupBoundary" as BackupBoundary
+boundary "BackupServiceInterface" as BackupServiceInterface
+control "AuthController" as AuthController
+control "SiteListController" as SiteListController
+control "ReportDraftController" as ReportDraftController
+control "ReportSubmitController" as ReportSubmitController
+control "ReportBrowseController" as ReportBrowseController
+control "PhotoViewController" as PhotoViewController
+control "PDFDownloadController" as PDFDownloadController
+control "FlagController" as FlagController
+control "EngineerAccountController" as EngineerAccountController
+control "AssignmentController" as AssignmentController
+control "BackupController" as BackupController
+control "BackupServiceController" as BackupServiceController
+entity "UserAccount" as UserAccount
+entity "Site" as Site
+entity "InspectionReport" as InspectionReport
+entity "Thumbnail" as Thumbnail
+entity "PDFSummary" as PDFSummary
+entity "Photo" as Photo
+entity "FollowUpRequest" as FollowUpRequest
+entity "BackupBundle" as BackupBundle
+
+Field_Engineer -> AuthBoundary : submitCredentials()
+AuthBoundary -> AuthController : validateCredentials()
+AuthController -> UserAccount : validateCredentials()
+AuthController -> AuthBoundary : confirmAuthentication()
+AuthBoundary --> Field_Engineer : authenticationResult()
+alt credentials are invalid
+  AuthController -> AuthBoundary : confirmAuthentication()
+  AuthBoundary --> Field_Engineer : authenticationFailed()
+end
+alt authentication service is unavailable
+  AuthController -> AuthBoundary : confirmAuthentication()
+  AuthBoundary --> Field_Engineer : authenticationServiceUnavailable()
+end
+Field_Engineer -> SiteListBoundary : requestAssignedSites()
+SiteListBoundary -> SiteListController : retrieveAssignedSites()
+SiteListController -> Site : retrieveAssignedSites()
+SiteListController --> SiteListBoundary : siteList()
+SiteListBoundary --> Field_Engineer : presentSiteList()
+alt The retrieved assignment set is empty
+  SiteListController -> SiteListBoundary : siteListEmpty()
+  SiteListBoundary --> Field_Engineer : informNoSites()
+end
+alt The system cannot retrieve the assignment data due to an error
+  SiteListController -> SiteListBoundary : retrievalError()
+  SiteListBoundary --> Field_Engineer : informRetrievalError()
+end
+Field_Engineer -> ReportDraftBoundary : startReportDraft()
+ReportDraftBoundary -> ReportDraftController : createDraft()
+ReportDraftController -> InspectionReport : createDraft()
+Field_Engineer -> ReportDraftBoundary : addChecklistItem()
+ReportDraftBoundary -> ReportDraftController : addChecklistItem()
+ReportDraftController -> InspectionReport : addChecklistItem()
+Field_Engineer -> ReportDraftBoundary : attachPhoto()
+ReportDraftBoundary -> ReportDraftController : attachPhoto()
+ReportDraftController -> Photo : attachPhoto()
+Field_Engineer -> ReportDraftBoundary : saveDraft()
+ReportDraftBoundary -> ReportDraftController : saveDraft()
+ReportDraftController -> InspectionReport : saveDraft()
+alt device storage is insufficient to create a new report
+  ReportDraftController -> ReportDraftBoundary : storageInsufficient()
+  ReportDraftBoundary --> Field_Engineer : informStorageInsufficient()
+end
+opt required checklist items are incomplete
+  ReportDraftController -> ReportDraftBoundary : missingChecklistItems()
+  ReportDraftBoundary --> Field_Engineer : informMissingChecklist()
+end
+opt photo attachment fails
+  ReportDraftController -> ReportDraftBoundary : photoAttachmentFailed()
+  ReportDraftBoundary --> Field_Engineer : informPhotoAttachmentFailed()
+end
+alt device write error prevents saving the draft
+  ReportDraftController -> ReportDraftBoundary : saveFailure()
+  ReportDraftBoundary --> Field_Engineer : informSaveFailure()
+end
+opt Field Engineer cancels the report creation
+  ReportDraftBoundary --> Field_Engineer : creationCancelled()
+end
+Field_Engineer -> ReportSubmitBoundary : submitReport()
+ReportSubmitBoundary -> ReportSubmitController : recordSubmission()
+ReportSubmitController -> InspectionReport : recordSubmission()
+ReportSubmitController -> Thumbnail : generateThumbnails()
+ReportSubmitController -> PDFSummary : generatePDF()
+ReportSubmitController --> ReportSubmitBoundary : submissionResult()
+ReportSubmitBoundary --> Field_Engineer : submissionConfirmed()
+opt System cannot create thumbnails for one or more attached photos
+  ReportSubmitController -> ReportSubmitBoundary : thumbnailPartialFailure()
+  ReportSubmitBoundary --> Field_Engineer : informThumbnailPartialFailure()
+end
+alt System cannot record the report submission
+  ReportSubmitController -> ReportSubmitBoundary : submissionRecordFailure()
+  ReportSubmitBoundary --> Field_Engineer : informSubmissionFailure()
+end
+Site_Manager -> ReportBrowseBoundary : requestReportList()
+ReportBrowseBoundary -> ReportBrowseController : retrieveReports()
+ReportBrowseController -> InspectionReport : retrieveReports()
+ReportBrowseController --> ReportBrowseBoundary : reportList()
+ReportBrowseBoundary --> Site_Manager : presentReportList()
+alt Site Manager provides an invalid date filter
+  ReportBrowseController -> ReportBrowseBoundary : invalidDateFilter()
+  ReportBrowseBoundary --> Site_Manager : informInvalidDate()
+end
+alt System encounters a data retrieval error
+  ReportBrowseController -> ReportBrowseBoundary : retrievalError()
+  ReportBrowseBoundary --> Site_Manager : informRetrievalError()
+end
+opt System does not return the list within three seconds
+  ReportBrowseController -> ReportBrowseBoundary : delayedReportList()
+  ReportBrowseBoundary --> Site_Manager : presentDelayedList()
+end
+alt No inspection reports match the requested filters
+  ReportBrowseController -> ReportBrowseBoundary : emptyResult()
+  ReportBrowseBoundary --> Site_Manager : informNoReports()
+end
+Site_Manager -> PhotoViewBoundary : requestPhotos()
+PhotoViewBoundary -> PhotoViewController : retrievePhotos()
+PhotoViewController -> Photo : retrievePhotos()
+PhotoViewController --> PhotoViewBoundary : photos()
+PhotoViewBoundary --> Site_Manager : displayPhotos()
+alt System cannot retrieve photos due to a service error
+  PhotoViewController -> PhotoViewBoundary : photosRetrievalError()
+  PhotoViewBoundary --> Site_Manager : informPhotosError()
+end
+alt The selected inspection report has no photos attached
+  PhotoViewController -> PhotoViewBoundary : noPhotos()
+  PhotoViewBoundary --> Site_Manager : informNoPhotos()
+end
+Site_Manager -> PDFDownloadBoundary : requestPDF()
+PDFDownloadBoundary -> PDFDownloadController : retrievePDF()
+PDFDownloadController -> PDFSummary : retrievePDF()
+PDFDownloadController --> PDFDownloadBoundary : pdf()
+PDFDownloadBoundary --> Site_Manager : deliverPDF()
+alt PDF summary does not exist for the selected inspection report
+  PDFDownloadController -> PDFDownloadBoundary : pdfNotFound()
+  PDFDownloadBoundary --> Site_Manager : informPdfNotAvailable()
+end
+alt System encounters an error while retrieving the PDF summary
+  PDFDownloadController -> PDFDownloadBoundary : pdfRetrievalError()
+  PDFDownloadBoundary --> Site_Manager : informPdfError()
+end
+Site_Manager -> FlagBoundary : flagReport()
+FlagBoundary -> FlagController : recordFlag()
+FlagController -> InspectionReport : recordFlag()
+FlagController --> FlagBoundary : flagResult()
+FlagBoundary --> Site_Manager : confirmFlag()
+alt The selected inspection report cannot be found
+  FlagController -> FlagBoundary : reportNotFound()
+  FlagBoundary --> Site_Manager : informReportNotFound()
+end
+alt System encounters an error while recording the follow-up flag
+  FlagController -> FlagBoundary : flagRecordingError()
+  FlagBoundary --> Site_Manager : informFlagError()
+end
+Administrator -> EngineerAccountBoundary : manageEngineerAccount()
+EngineerAccountBoundary -> EngineerAccountController : validateAccountData()
+EngineerAccountController -> UserAccount : validateAccountData()
+EngineerAccountController --> EngineerAccountBoundary : validationResult()
+EngineerAccountBoundary --> Administrator : validationFeedback()
+EngineerAccountBoundary -> EngineerAccountController : executeAccountOperation()
+EngineerAccountController -> UserAccount : executeAccountOperation()
+EngineerAccountController --> EngineerAccountBoundary : operationResult()
+EngineerAccountBoundary --> Administrator : notifyOperationComplete()
+opt validation error is detected
+  EngineerAccountController -> EngineerAccountBoundary : validationError()
+  EngineerAccountBoundary --> Administrator : informValidationError()
+end
+alt system error prevents completing the operation
+  EngineerAccountController -> EngineerAccountBoundary : operationError()
+  EngineerAccountBoundary --> Administrator : informOperationError()
+end
+opt administrator cancels the request before completion
+  EngineerAccountBoundary --> Administrator : operationCancelled()
+end
+Administrator -> AssignmentBoundary : assignEngineerToSite()
+AssignmentBoundary -> AssignmentController : recordAssignment()
+AssignmentController -> Site : recordAssignment()
+AssignmentController -> UserAccount : recordAssignment()
+AssignmentController --> AssignmentBoundary : assignmentResult()
+AssignmentBoundary --> Administrator : confirmAssignment()
+alt Engineer identifier is not recognized
+  AssignmentController -> AssignmentBoundary : engineerNotFound()
+  AssignmentBoundary --> Administrator : informEngineerNotFound()
+end
+alt Site identifier is not recognized
+  AssignmentController -> AssignmentBoundary : siteNotFound()
+  AssignmentBoundary --> Administrator : informSiteNotFound()
+end
+alt System encounters an error while recording the assignment
+  AssignmentController -> AssignmentBoundary : recordingError()
+  AssignmentBoundary --> Administrator : informRecordingError()
+end
+alt Engineer is already assigned to the site
+  AssignmentController -> AssignmentBoundary : alreadyAssigned()
+  AssignmentBoundary --> Administrator : informAlreadyAssigned()
+end
+opt Administrator cancels the operation
+  AssignmentBoundary --> Administrator : operationCancelled()
+end
+BackupBoundary -> BackupController : selectData()
+BackupController -> InspectionReport : selectData()
+BackupController -> Photo : selectData()
+BackupController -> BackupBundle : packageBackup()
+BackupController -> BackupBundle : attachRetentionMetadata()
+BackupController -> BackupServiceInterface : transmitBackup()
+BackupServiceInterface -> BackupServiceController : storeBundle()
+BackupServiceController -> BackupBundle : storeBundle()
+BackupController --> BackupBoundary : backupCompleted()
+alt Inspection reports or photos are not available
+  BackupController -> BackupBoundary : abortBackupNoData()
+end
+alt Transmission to Backup Storage Service fails
+  BackupServiceInterface -> BackupBoundary : transmissionFailure()
+end
+alt Retention metadata cannot be attached
+  BackupController -> BackupBoundary : metadataAttachmentFailure()
+end
+alt No new inspection data exists for the day
+  BackupBoundary -> BackupController : skipBackupNoData()
+  BackupController --> BackupBoundary : backupSkipped()
+end
+
+@enduml

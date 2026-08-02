@@ -33,7 +33,7 @@
 | 계열 | 언제 | 무엇으로 | 산출물 |
 |---|---|---|---|
 | A 본 시스템 · 요구사항 | 2026-08-02 | `build_sample`, NIM `gpt-oss-120b`, 커밋은 RUN.json | `requirements/` 14종 |
-| A 본 시스템 · 설계 | — | — | — |
+| A 본 시스템 · 설계 | 2026-08-02 | `build_design`, NIM `gpt-oss-120b` | `design/` 4종 |
 | A 본 시스템 · 구현 | — | — | — |
 | A 본 시스템 · 배포 | — | — | — |
 | B 단순 LLM | — | — | — |
@@ -61,3 +61,32 @@ multiZone. 관측점 설계 그대로다.
 
 **미결 하나**: 관심사 LLM 층을 켠 완전 구성으로도 돌려 두 결과를 나란히 둘지.
 비용(3배 호출) 대 C4 능력 온전성의 판단 — 실행 전 기준 문서의 정신대로 명시.
+
+### A-설계 결과 — 관측점 대조 (2026-08-02, 실물)
+
+**도구 재건이 선행됐다**: `app/design`이 순수 함수 → LangGraph 세션 구조로
+리팩터돼 `build_design`의 `_run_stage`가 깨졌다. 팀원 코드는 **안 고치고**
+생성 서브그래프(`DESIGN_SUBGRAPHS[stage]["generate"]`, persist·gate·DB 없는
+순수 스테이지)를 **호출만** 하도록 도구를 고쳤다(커밋 별도). NIM 타임아웃이
+한 번 났고(일시적), 4단계는 **한 프로세스**에서 완주해야 한다 — ERD가
+클래스 단계의 인메모리 BCE 모델(`extracted_bce_classes`, 파일 미저장)에서
+시드되기 때문.
+
+산출물 4종:
+- **class_diagram(9.8KB) — C-COVER 상류 강함**: BCE 경계 12·컨트롤 12·엔티티
+  9가 **기능 요구 8개를 전부** 덮고, NFR까지 도메인 개념으로 뽑았다
+  (`RetentionMetadata`=5년 보존 NFR 9 · `BackupBundle`=FR 8). 요구사항 단계의
+  관심사 층(신호만)이 unjudged로 둔 data-fate·백업을 **설계가 엔티티로 surface**
+  — 단계 간 교차 관찰.
+- **sequence_diagram(11.7KB)**: 여러 유스케이스 흐름·alt 분기 담음. **비동기
+  갭 실측**: `->>` 0개 — FR 4(사진→썸네일·PDF)와 NFR 13(사진 처리 실패가
+  제출을 막으면 안 됨)이 큐 분리를 함의하는데 동기 메시지만 썼다. **우리 쪽
+  약점**이고 lecture-platform과 같은 패턴 — 하류에 큐가 안 선다. C-COVER에서
+  정직하게 감점.
+- **api_spec(39KB)**: OpenAPI, 문법 통과.
+- **erd(1.7KB)**: 엔티티 8(UserAccount·Site·InspectionReport·Thumbnail·
+  PDFSummary·Photo·FollowUpRequest·BackupBundle).
+
+**비결정성 관측**: 시퀀스가 한 실행에서 1KB(로그인만)·다른 실행에서 11.7KB
+(여러 흐름)로 갈렸다 — gpt-oss-120b는 MoE라 temperature=0도 결정론이 아니다
+(PROVENANCE 재현 단서 그대로). 흔들림은 실험의 T-생성 흔들림 그 자체.

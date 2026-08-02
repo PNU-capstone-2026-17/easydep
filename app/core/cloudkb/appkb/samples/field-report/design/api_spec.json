@@ -1,0 +1,1418 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Derived REST API Model",
+    "version": "1.0"
+  },
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Authentication successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Authentication service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Authenticate field engineer",
+        "operationId": "authenticateFieldEngineer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/engineers/{engineerId}/sites": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "List of assigned sites",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Site"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Engineer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Retrieval error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "View assigned sites",
+        "operationId": "viewAssignedSites",
+        "parameters": [
+          {
+            "name": "engineerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the field engineer"
+            },
+            "description": "Identifier of the field engineer"
+          }
+        ]
+      }
+    },
+    "/reports/drafts": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Draft created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Insufficient device storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create inspection report draft",
+        "operationId": "createReportDraft",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportDraftCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reports/drafts/{reportId}/checklist": {
+      "patch": {
+        "responses": {
+          "200": {
+            "description": "Checklist updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid checklist data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Draft report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Add or update checklist items in a draft",
+        "operationId": "addChecklistItem",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the draft report"
+            },
+            "description": "Identifier of the draft report"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChecklistUpdateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reports/drafts/{reportId}/photos": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Photo attached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Photo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid photo data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Draft report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Photo attachment failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Attach a photo to a draft report",
+        "operationId": "attachPhotoToDraft",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the draft report"
+            },
+            "description": "Identifier of the draft report"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotoAttachRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reports/drafts/{reportId}": {
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Draft saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid draft data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Draft report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Device write error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Save draft inspection report",
+        "operationId": "saveReportDraft",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the draft report"
+            },
+            "description": "Identifier of the draft report"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportDraftSaveRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/reports/{reportId}/submit": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Report submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Submission validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Submission processing error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Submit completed inspection report",
+        "operationId": "submitInspectionReport",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the completed report"
+            },
+            "description": "Identifier of the completed report"
+          }
+        ]
+      }
+    },
+    "/reports": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "List of matching reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InspectionReport"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Data retrieval error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Browse inspection reports",
+        "operationId": "browseInspectionReports",
+        "parameters": [
+          {
+            "name": "siteId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter by site identifier"
+            },
+            "description": "Filter by site identifier"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter start date (ISO 8601)"
+            },
+            "description": "Filter start date (ISO 8601)"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter end date (ISO 8601)"
+            },
+            "description": "Filter end date (ISO 8601)"
+          }
+        ]
+      }
+    },
+    "/reports/{reportId}/photos": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "List of photos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Photo"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Report not found or no photos attached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Photo retrieval error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "View inspection report photos",
+        "operationId": "viewReportPhotos",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the inspection report"
+            },
+            "description": "Identifier of the inspection report"
+          }
+        ]
+      }
+    },
+    "/reports/{reportId}/pdf": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "PDF summary delivered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PDFSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PDF not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "PDF retrieval error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Download inspection report PDF",
+        "operationId": "downloadReportPdf",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the inspection report"
+            },
+            "description": "Identifier of the inspection report"
+          }
+        ]
+      }
+    },
+    "/reports/{reportId}/flag": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Report flagged successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectionReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Report not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Flag recording error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Flag inspection report for follow‑up",
+        "operationId": "flagReportForFollowUp",
+        "parameters": [
+          {
+            "name": "reportId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the inspection report"
+            },
+            "description": "Identifier of the inspection report"
+          }
+        ]
+      }
+    },
+    "/engineers": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Engineer account created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Account creation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Create a new field engineer account",
+        "operationId": "createEngineerAccount",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EngineerAccountCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/engineers/{engineerId}": {
+      "put": {
+        "responses": {
+          "200": {
+            "description": "Engineer account updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAccount"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Engineer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Update error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Modify an existing field engineer account",
+        "operationId": "modifyEngineerAccount",
+        "parameters": [
+          {
+            "name": "engineerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the engineer account"
+            },
+            "description": "Identifier of the engineer account"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EngineerAccountUpdateRequest"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "200": {
+            "description": "Engineer account deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserAccount"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Engineer not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Deactivation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Deactivate a field engineer account",
+        "operationId": "deactivateEngineerAccount",
+        "parameters": [
+          {
+            "name": "engineerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Identifier of the engineer account"
+            },
+            "description": "Identifier of the engineer account"
+          }
+        ]
+      }
+    },
+    "/assignments": {
+      "post": {
+        "responses": {
+          "201": {
+            "description": "Assignment recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid assignment data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Engineer or site not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Engineer already assigned to site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Assignment recording error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Assign engineer to a site",
+        "operationId": "assignEngineerToSite",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/backup": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Backup completed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No data to backup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Backup processing error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Perform nightly backup of inspection data",
+        "operationId": "performNightlyBackup"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UserAccount": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "description": "Unique identifier"
+          },
+          "username": {
+            "type": "string",
+            "description": "Login name"
+          },
+          "passwordHash": {
+            "type": "string",
+            "description": "Hashed password"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role (engineer, admin)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Account status (active, deactivated)"
+          },
+          "assignedSiteIds": {
+            "type": "array",
+            "items": {},
+            "description": "List of site identifiers assigned to the engineer"
+          }
+        },
+        "required": [
+          "userId",
+          "username",
+          "passwordHash",
+          "role",
+          "status"
+        ],
+        "description": "Persistent account information for all system users"
+      },
+      "Site": {
+        "type": "object",
+        "properties": {
+          "siteId": {
+            "type": "string",
+            "description": "Unique site identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Site name"
+          },
+          "location": {
+            "type": "string",
+            "description": "Geographic location"
+          },
+          "assignedEngineerIds": {
+            "type": "array",
+            "items": {},
+            "description": "Engineers assigned to the site"
+          }
+        },
+        "required": [
+          "siteId",
+          "name",
+          "location"
+        ],
+        "description": "Physical location that can be assigned to engineers and linked to inspection reports"
+      },
+      "InspectionReport": {
+        "type": "object",
+        "properties": {
+          "reportId": {
+            "type": "string",
+            "description": "Report identifier"
+          },
+          "siteId": {
+            "type": "string",
+            "description": "Associated site"
+          },
+          "engineerId": {
+            "type": "string",
+            "description": "Engineer who created the report"
+          },
+          "status": {
+            "type": "string",
+            "description": "Draft, submitted, etc."
+          },
+          "checklistData": {
+            "type": "object",
+            "description": "Checklist contents"
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {},
+            "description": "Attached photo identifiers"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Creation timestamp"
+          },
+          "submittedAt": {
+            "type": "string",
+            "description": "Submission timestamp"
+          },
+          "pdfSummaryId": {
+            "type": "string",
+            "description": "Generated PDF identifier"
+          },
+          "thumbnailIds": {
+            "type": "array",
+            "items": {},
+            "description": "Generated thumbnail identifiers"
+          },
+          "followUpFlag": {
+            "type": "boolean",
+            "description": "Flag for follow‑up"
+          }
+        },
+        "required": [
+          "reportId",
+          "siteId",
+          "engineerId",
+          "status",
+          "createdAt"
+        ],
+        "description": "Persistent inspection report, may be draft or submitted"
+      },
+      "Thumbnail": {
+        "type": "object",
+        "properties": {
+          "thumbnailId": {
+            "type": "string",
+            "description": "Thumbnail identifier"
+          },
+          "photoId": {
+            "type": "string",
+            "description": "Source photo identifier"
+          },
+          "imageData": {
+            "type": "string",
+            "description": "Base64‑encoded thumbnail image"
+          }
+        },
+        "required": [
+          "thumbnailId",
+          "photoId",
+          "imageData"
+        ],
+        "description": "Small image derived from a photo attached to an inspection report"
+      },
+      "PDFSummary": {
+        "type": "object",
+        "properties": {
+          "pdfId": {
+            "type": "string",
+            "description": "PDF identifier"
+          },
+          "reportId": {
+            "type": "string",
+            "description": "Associated report"
+          },
+          "fileData": {
+            "type": "string",
+            "description": "Base64‑encoded PDF file"
+          }
+        },
+        "required": [
+          "pdfId",
+          "reportId",
+          "fileData"
+        ],
+        "description": "PDF document summarising a submitted inspection report"
+      },
+      "Photo": {
+        "type": "object",
+        "properties": {
+          "photoId": {
+            "type": "string",
+            "description": "Photo identifier"
+          },
+          "reportId": {
+            "type": "string",
+            "description": "Associated report"
+          },
+          "imageData": {
+            "type": "string",
+            "description": "Base64‑encoded image"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Additional photo metadata"
+          }
+        },
+        "required": [
+          "photoId",
+          "reportId",
+          "imageData"
+        ],
+        "description": "Image captured on site and attached to an inspection report"
+      },
+      "FollowUpRequest": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "description": "Request identifier"
+          },
+          "reportId": {
+            "type": "string",
+            "description": "Report that triggered the request"
+          },
+          "engineerId": {
+            "type": "string",
+            "description": "Engineer assigned to follow‑up"
+          },
+          "status": {
+            "type": "string",
+            "description": "Current status of the request"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "Creation timestamp"
+          }
+        },
+        "required": [
+          "requestId",
+          "reportId",
+          "engineerId",
+          "status",
+          "createdAt"
+        ],
+        "description": "Request assigned to a Field Engineer after a report is flagged"
+      },
+      "BackupBundle": {
+        "type": "object",
+        "properties": {
+          "bundleId": {
+            "type": "string",
+            "description": "Backup bundle identifier"
+          },
+          "reportIds": {
+            "type": "array",
+            "items": {},
+            "description": "Identifiers of reports included"
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {},
+            "description": "Identifiers of photos included"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Retention and other metadata"
+          }
+        },
+        "required": [
+          "bundleId"
+        ],
+        "description": "Aggregated data set containing the day’s reports, photos and metadata for backup"
+      },
+      "AuthRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "User name"
+          },
+          "password": {
+            "type": "string",
+            "description": "Plain‑text password"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "description": "Credentials submitted for authentication"
+      },
+      "AuthResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Session token"
+          },
+          "userId": {
+            "type": "string",
+            "description": "Authenticated user identifier"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role"
+          }
+        },
+        "required": [
+          "token",
+          "userId",
+          "role"
+        ],
+        "description": "Result of successful authentication"
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "errorCode": {
+            "type": "string",
+            "description": "Machine‑readable error code"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human‑readable description"
+          }
+        },
+        "required": [
+          "errorCode",
+          "message"
+        ],
+        "description": "Standard error payload"
+      },
+      "ReportDraftCreateRequest": {
+        "type": "object",
+        "properties": {
+          "siteId": {
+            "type": "string",
+            "description": "Site for which the report is created"
+          }
+        },
+        "required": [
+          "siteId"
+        ],
+        "description": "Data required to create a new draft report"
+      },
+      "ChecklistUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "checklistData": {
+            "type": "object",
+            "description": "Updated checklist content"
+          }
+        },
+        "required": [
+          "checklistData"
+        ],
+        "description": "Checklist items to add or modify in a draft"
+      },
+      "PhotoAttachRequest": {
+        "type": "object",
+        "properties": {
+          "photoData": {
+            "type": "string",
+            "description": "Base64‑encoded image"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional photo metadata"
+          }
+        },
+        "required": [
+          "photoData"
+        ],
+        "description": "Photo data to attach to a draft report"
+      },
+      "ReportDraftSaveRequest": {
+        "type": "object",
+        "properties": {
+          "checklistData": {
+            "type": "object",
+            "description": "Completed checklist"
+          },
+          "photoIds": {
+            "type": "array",
+            "items": {},
+            "description": "Identifiers of attached photos"
+          }
+        },
+        "required": [
+          "checklistData"
+        ],
+        "description": "Final data for persisting a draft report"
+      },
+      "EngineerAccountCreateRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Login name"
+          },
+          "password": {
+            "type": "string",
+            "description": "Plain‑text password"
+          },
+          "role": {
+            "type": "string",
+            "description": "User role (engineer)"
+          },
+          "status": {
+            "type": "string",
+            "description": "Initial status"
+          },
+          "assignedSiteIds": {
+            "type": "array",
+            "items": {},
+            "description": "Initial site assignments"
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "role",
+          "status"
+        ],
+        "description": "Data required to create a new engineer account"
+      },
+      "EngineerAccountUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "New login name"
+          },
+          "password": {
+            "type": "string",
+            "description": "New password"
+          },
+          "status": {
+            "type": "string",
+            "description": "Updated status"
+          },
+          "assignedSiteIds": {
+            "type": "array",
+            "items": {},
+            "description": "Updated site assignments"
+          }
+        },
+        "description": "Data for modifying an existing engineer account"
+      },
+      "AssignmentRequest": {
+        "type": "object",
+        "properties": {
+          "engineerId": {
+            "type": "string",
+            "description": "Engineer identifier"
+          },
+          "siteId": {
+            "type": "string",
+            "description": "Site identifier"
+          }
+        },
+        "required": [
+          "engineerId",
+          "siteId"
+        ],
+        "description": "Request to assign an engineer to a site"
+      },
+      "AssignmentResult": {
+        "type": "object",
+        "properties": {
+          "engineerId": {
+            "type": "string",
+            "description": "Engineer identifier"
+          },
+          "siteId": {
+            "type": "string",
+            "description": "Site identifier"
+          },
+          "assignedAt": {
+            "type": "string",
+            "description": "Timestamp of assignment"
+          }
+        },
+        "required": [
+          "engineerId",
+          "siteId",
+          "assignedAt"
+        ],
+        "description": "Result of a successful assignment operation"
+      },
+      "BackupResult": {
+        "type": "object",
+        "properties": {
+          "bundleId": {
+            "type": "string",
+            "description": "Identifier of the backup bundle"
+          },
+          "status": {
+            "type": "string",
+            "description": "Backup status (completed, skipped)"
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Time of backup execution"
+          }
+        },
+        "required": [
+          "bundleId",
+          "status",
+          "timestamp"
+        ],
+        "description": "Outcome of the nightly backup process"
+      }
+    }
+  }
+}
