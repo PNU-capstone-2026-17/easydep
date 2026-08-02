@@ -1,0 +1,126 @@
+{
+  "draft": {
+    "schemaVersion": "2",
+    "provider": "aws",
+    "regionAsWritten": "Seoul",
+    "region": "ap-northeast-2",
+    "workloads": [
+      "k8sCluster"
+    ],
+    "monthlyBudgetUSD": 400.0
+  },
+  "valid": true,
+  "errors": [],
+  "questions": [
+    {
+      "field": "minVCpu",
+      "kind": "suggested",
+      "why": "스펙 선택 — 하한이 없으면 **스펙을 고르지 않는다**. 최저가를 고르는 것은 중립이 아니라 근거 없는 주장이다",
+      "question": "이 워크로드가 필요로 하는 최소 vCPU가 몇 개입니까?",
+      "choices": [],
+      "seen": []
+    },
+    {
+      "field": "minMemoryGiB",
+      "kind": "suggested",
+      "why": "스펙 선택의 다른 축 — 둘 중 한 축만 있어도 선택이 열린다",
+      "question": "최소 메모리가 몇 GiB입니까? (vCPU 대신 이것만 줘도 됩니다)",
+      "choices": [],
+      "seen": []
+    },
+    {
+      "field": "trafficPattern",
+      "kind": "suggested",
+      "why": "버스트 적합 판정 — 없으면 버스트 경고가 경고로만 남고 이 앱에 문제인지는 판정하지 않는다",
+      "question": "부하가 상시로 깔립니까(steady), 간헐적으로 치솟습니까(spiky)?",
+      "choices": [
+        "steady",
+        "spiky"
+      ],
+      "seen": []
+    },
+    {
+      "field": "multiZone",
+      "kind": "suggested",
+      "why": "가용영역 판정 · 서브넷 배치 조건 — aws EKS는 **서로 다른 AZ의 서브넷 둘**을 요구한다(같은 AZ 둘은 거부됐다, 실측)",
+      "question": "한 가용영역이 통째로 죽어도 서비스가 계속돼야 합니까?",
+      "choices": [],
+      "seen": []
+    }
+  ],
+  "understanding": "You want to deploy a managed Kubernetes cluster on AWS in the Seoul region (ap-northeast-2). The deployment must stay within a monthly budget of up to 400 USD, and you only need the Kubernetes workload type.",
+  "provenance": [
+    {
+      "field": "provider",
+      "value": "aws",
+      "as_written": "Deploy on AWS",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "regionAsWritten",
+      "value": "Seoul",
+      "as_written": "Deploy on AWS in the Seoul region",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "region",
+      "value": "ap-northeast-2",
+      "as_written": "ap-northeast-2  (aws, South Korea (Seoul))",
+      "source": "agent",
+      "how": "tool",
+      "via": "'Seoul' resolves to exactly one region code.\nap-northeast-2  (aws, South Korea (Seoul))"
+    },
+    {
+      "field": "workloads",
+      "value": [
+        "k8sCluster"
+      ],
+      "as_written": "on managed Kubernetes",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    },
+    {
+      "field": "monthlyBudgetUSD",
+      "value": 400.0,
+      "as_written": "The monthly budget is at most 400 USD",
+      "source": "agent",
+      "how": "user",
+      "via": ""
+    }
+  ],
+  "rejected": [],
+  "trace": [
+    {
+      "action": "record_field",
+      "field": "provider",
+      "value": "aws"
+    },
+    {
+      "action": "record_field",
+      "field": "regionAsWritten",
+      "value": "Seoul"
+    },
+    {
+      "action": "record_field",
+      "field": "region",
+      "value": "ap-northeast-2"
+    },
+    {
+      "action": "record_field",
+      "field": "workloads",
+      "value": [
+        "k8sCluster"
+      ]
+    },
+    {
+      "action": "record_field",
+      "field": "monthlyBudgetUSD",
+      "value": 400.0
+    }
+  ]
+}

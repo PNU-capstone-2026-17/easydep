@@ -1,0 +1,1118 @@
+[
+  {
+    "use_case_id": "UC1",
+    "name": "Authenticate field engineer",
+    "preconditions": [
+      "The system is operational",
+      "The Field Engineer has an existing user account"
+    ],
+    "trigger": "Field Engineer initiates authentication",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Field Engineer submits credentials",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System validates the submitted credentials",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System confirms successful authentication to the Field Engineer",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "credentials are invalid",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the Field Engineer that authentication failed"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "authentication service is unavailable",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System notifies the Field Engineer of a temporary inability to authenticate"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The Field Engineer is recognized as an authenticated user"
+    ],
+    "minimal_guarantee": [
+      "No authentication state is retained for the failed attempt",
+      "The system remains secure and operational"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 3: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "2a1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "2b1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC2",
+    "name": "View assigned sites",
+    "preconditions": [
+      "Field Engineer is authenticated"
+    ],
+    "trigger": "Field Engineer initiates a request to view assigned sites",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "System retrieves the list of sites assigned to the Field Engineer",
+        "covered_req_ids": [
+          "FR2"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System presents the retrieved list to the Field Engineer",
+        "covered_req_ids": [
+          "FR2"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "The retrieved assignment set is empty",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the Field Engineer that no sites are assigned"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      },
+      {
+        "label": "1b",
+        "branch_step": 1,
+        "condition": "The system cannot retrieve the assignment data due to an error",
+        "handling_steps": [
+          {
+            "sub_step": "1b1",
+            "sentence": "System notifies the Field Engineer of the retrieval failure"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The Field Engineer has been shown the list of sites assigned to them, or has been informed that no sites are assigned"
+    ],
+    "minimal_guarantee": [
+      "No unauthorized site information is disclosed",
+      "The Field Engineer remains authenticated",
+      "System state is unchanged by a failed retrieval attempt"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "1a1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "1b1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC3",
+    "name": "Create inspection report draft",
+    "preconditions": [
+      "Field Engineer has the application installed on the device and is logged into the system"
+    ],
+    "trigger": "Field Engineer initiates creation of a new inspection report for an assigned site",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Field Engineer selects an assigned site for inspection",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System creates a new inspection report draft linked to the selected site",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "Field Engineer completes the inspection checklist in the draft report",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "Field Engineer attaches site photos to the draft report",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "Field Engineer saves the draft report on the device",
+        "covered_req_ids": [
+          "FR4"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "device storage is insufficient to create a new report",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System notifies the engineer of the storage limitation"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "required checklist items are incomplete",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the engineer of the missing items"
+          }
+        ],
+        "outcome": "resume",
+        "resume_at_step": 3
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "photo attachment fails",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System alerts the engineer that the photo could not be attached"
+          },
+          {
+            "sub_step": "4a2",
+            "sentence": "Field Engineer retries attaching the photo"
+          }
+        ],
+        "outcome": "resume",
+        "resume_at_step": 4
+      },
+      {
+        "label": "5a",
+        "branch_step": 5,
+        "condition": "device write error prevents saving the draft",
+        "handling_steps": [
+          {
+            "sub_step": "5a1",
+            "sentence": "System reports the save failure to the engineer"
+          },
+          {
+            "sub_step": "5a2",
+            "sentence": "Field Engineer may retry saving later"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "Field Engineer cancels the report creation",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System discards any partially entered data"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "A draft inspection report exists on the device",
+      "The draft is linked to the selected site",
+      "The draft contains the completed checklist and all attached photos as entered by the engineer"
+    ],
+    "minimal_guarantee": [
+      "No partial or inconsistent report data remains on the device after a failure",
+      "The device remains in a stable state and any temporary data is cleared",
+      "The system continues to enforce authentication and data protection guarantees"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 3: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 4: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 5: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "4a2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "5a2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Remove or modify extensions that add capabilities not covered by FR3/FR4, such as storage‑limit or checklist‑incomplete notifications. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC4",
+    "name": "Submit completed inspection report",
+    "preconditions": [
+      "Field Engineer is authenticated",
+      "A saved draft inspection report exists for the Field Engineer"
+    ],
+    "trigger": "Field Engineer initiates submission of the saved draft inspection report",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Field Engineer requests submission of the draft inspection report",
+        "covered_req_ids": [
+          "FR5"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System records the submission of the inspection report",
+        "covered_req_ids": [
+          "FR5"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System creates thumbnail images from the report's attached photos",
+        "covered_req_ids": [
+          "FR6"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System generates a PDF summary of the submitted inspection report",
+        "covered_req_ids": [
+          "FR7"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "System cannot create thumbnails for one or more attached photos",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System records the thumbnail creation failure for the affected photos and continues processing the rest of the report data"
+          },
+          {
+            "sub_step": "3a2",
+            "sentence": "System proceeds to generate the PDF summary of the submitted inspection report"
+          }
+        ],
+        "outcome": "resume",
+        "resume_at_step": 4
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "System cannot record the report submission",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System retries recording the submission of the inspection report"
+          },
+          {
+            "sub_step": "2a2",
+            "sentence": "System aborts the submission process after retry failure"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The inspection report is stored as submitted",
+      "Thumbnail images exist for all photos that could be processed",
+      "A PDF summary of the report is stored",
+      "The report is marked as ready for downstream processing"
+    ],
+    "minimal_guarantee": [
+      "The draft inspection report remains unchanged if submission fails",
+      "No partial submission state is persisted",
+      "System logs the submission attempt",
+      "Data-at-rest encryption remains in effect"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Remove the retry step that adds a new 'retry recording' capability. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC5",
+    "name": "Browse inspection reports",
+    "preconditions": [
+      "Site Manager has an active authenticated session with the system."
+    ],
+    "trigger": "Site Manager initiates a request to view inspection reports.",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Site Manager initiates a browse request, optionally specifying site and date filters.",
+        "covered_req_ids": [
+          "FR8"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System retrieves the inspection reports that match the provided filters.",
+        "covered_req_ids": [
+          "FR8"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System returns the filtered report list to the Site Manager within three seconds.",
+        "covered_req_ids": [
+          "FR19"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "Site Manager identifies a report of interest from the returned list.",
+        "covered_req_ids": []
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "Site Manager provides an invalid date filter",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the Site Manager that the date filter is invalid."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "System encounters a data retrieval error",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the Site Manager that the report list cannot be retrieved due to a temporary service issue."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "System does not return the list within three seconds",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System returns the report list after the delay."
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "No inspection reports match the requested filters",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System informs the Site Manager that no reports were found for the given criteria."
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Site Manager receives a list of inspection reports that satisfy the requested site and date filters."
+    ],
+    "minimal_guarantee": [
+      "The system does not disclose reports to unauthorized actors.",
+      "The Site Manager's session remains active.",
+      "No partial or inconsistent report data is presented to the Site Manager."
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC6",
+    "name": "View inspection report photos",
+    "preconditions": [
+      "Site Manager is authenticated and has access to inspection reports."
+    ],
+    "trigger": "Site Manager selects an inspection report to view.",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "System retrieves the selected inspection report and its associated photos.",
+        "covered_req_ids": [
+          "FR9"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System displays the photos to the Site Manager.",
+        "covered_req_ids": [
+          "FR9"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "System cannot retrieve photos due to a service error",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the Site Manager that the photos cannot be displayed."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "1b",
+        "branch_step": 1,
+        "condition": "The selected inspection report has no photos attached",
+        "handling_steps": [
+          {
+            "sub_step": "1b1",
+            "sentence": "System informs the Site Manager that no photos are available for this report."
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "System records that the report photos were viewed."
+    ],
+    "minimal_guarantee": [
+      "System does not modify any inspection report data.",
+      "System maintains the confidentiality of inspection report information."
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC7",
+    "name": "Download inspection report PDF",
+    "preconditions": [
+      "Site Manager is authenticated and authorized to access inspection reports"
+    ],
+    "trigger": "Site Manager initiates a request to download the PDF summary of a selected inspection report",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Site Manager selects an inspection report for which a PDF summary is desired",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System retrieves the PDF summary associated with the selected inspection report",
+        "covered_req_ids": [
+          "FR10"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System provides the PDF summary to the Site Manager for download",
+        "covered_req_ids": [
+          "FR10"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "PDF summary does not exist for the selected inspection report",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the Site Manager that the PDF summary is unavailable"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "System encounters an error while retrieving the PDF summary",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System notifies the Site Manager of a technical problem and suggests retrying later"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Site Manager receives a complete PDF summary of the selected inspection report",
+      "System records that the PDF was downloaded"
+    ],
+    "minimal_guarantee": [
+      "No incomplete or corrupted PDF is delivered",
+      "System maintains security and integrity of inspection data"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC8",
+    "name": "Flag inspection report for follow‑up",
+    "preconditions": [
+      "Site Manager is authenticated to the system"
+    ],
+    "trigger": "Site Manager initiates the flagging of an inspection report",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Site Manager selects the inspection report to flag",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System records the report as requiring follow-up",
+        "covered_req_ids": [
+          "FR11"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "The selected inspection report cannot be found",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the Site Manager that the report was not found"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "System encounters an error while recording the follow-up flag",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System informs the Site Manager of the error"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The inspection report is marked as requiring follow-up"
+    ],
+    "minimal_guarantee": [
+      "No follow-up flag is persisted if the operation fails",
+      "System remains available for other actions"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC9",
+    "name": "View follow‑up requests",
+    "preconditions": [
+      "Field Engineer possesses a valid user account in the system"
+    ],
+    "trigger": "Field Engineer initiates sign-in to the application",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Field Engineer initiates sign-in",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System authenticates the engineer",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 3,
+        "sentence": "System retrieves follow-up requests assigned to the engineer",
+        "covered_req_ids": [
+          "FR12"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System presents the retrieved follow-up requests to the engineer",
+        "covered_req_ids": [
+          "FR12"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "credentials are invalid",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the engineer that authentication has failed"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "system cannot retrieve follow-up requests due to an internal error",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the engineer that follow-up requests cannot be displayed at this time"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "no follow-up requests are assigned to the engineer",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System informs the engineer that there are no follow-up requests"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The engineer has been presented with the complete set of follow-up requests assigned to them at the time of sign-in"
+    ],
+    "minimal_guarantee": [
+      "The sign-in attempt is recorded and no follow-up request data is disclosed if retrieval fails",
+      "The system remains secure and available for subsequent attempts"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Add a functional requirement for authentication or remove the authentication step [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC10",
+    "name": "Manage engineer accounts",
+    "preconditions": [
+      "Administrator is authenticated to the system",
+      "Administrator holds the account-management role"
+    ],
+    "trigger": "Administrator initiates a request to create, modify, or deactivate a field-engineer account",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Administrator provides the operation type (create, modify, deactivate) and the required engineer account data",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System validates the supplied data against business rules",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System executes the requested operation on the engineer account",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System notifies the administrator that the operation completed successfully",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "validation error is detected",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the administrator of the validation error"
+          },
+          {
+            "sub_step": "2a2",
+            "sentence": "Administrator supplies corrected data"
+          }
+        ],
+        "outcome": "resume",
+        "resume_at_step": 2
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "system error prevents completing the operation",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the administrator of the error"
+          },
+          {
+            "sub_step": "3a2",
+            "sentence": "Administrator decides to abort the request"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "administrator cancels the request before completion",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System acknowledges the cancellation"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The engineer account is created, modified, or deactivated as requested",
+      "The administrator receives confirmation of the successful operation"
+    ],
+    "minimal_guarantee": [
+      "No partial changes are persisted",
+      "The system remains in a consistent state",
+      "Any attempted operation is either fully applied or not applied",
+      "An audit record of the attempt is retained"
+    ],
+    "issues": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC11",
+    "name": "Assign engineers to sites",
+    "preconditions": [
+      "Administrator is authenticated",
+      "Administrator has permission to assign engineers to sites"
+    ],
+    "trigger": "Administrator initiates the assignment of an engineer to a site",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Administrator identifies the engineer to assign",
+        "covered_req_ids": [
+          "FR14"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "Administrator identifies the site for assignment",
+        "covered_req_ids": [
+          "FR14"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System records the assignment of the engineer to the site",
+        "covered_req_ids": [
+          "FR14"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System confirms the assignment to the administrator",
+        "covered_req_ids": [
+          "FR14"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "Engineer identifier is not recognized",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the administrator that the engineer is unknown"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Site identifier is not recognized",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the administrator that the site is unknown"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "System encounters an error while recording the assignment",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the administrator of the recording error"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3b",
+        "branch_step": 3,
+        "condition": "Engineer is already assigned to the site",
+        "handling_steps": [
+          {
+            "sub_step": "3b1",
+            "sentence": "System informs the administrator that the engineer is already assigned"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "Administrator cancels the operation",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System stops processing the assignment"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Engineer is recorded as assigned to the site",
+      "Administrator receives confirmation of the assignment"
+    ],
+    "minimal_guarantee": [
+      "No assignment is persisted if the use case fails",
+      "System maintains data integrity and security for any processed information"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC12",
+    "name": "Perform nightly backup of inspection data",
+    "preconditions": [
+      "The system has generated the day's inspection reports and associated photos."
+    ],
+    "trigger": "The nightly schedule triggers the backup process.",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "System initiates the nightly backup because the schedule indicates it is time.",
+        "covered_req_ids": [
+          "FR16"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System selects the day's inspection reports and associated photos.",
+        "covered_req_ids": [
+          "FR15"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System packages the selected reports and photos into a backup bundle.",
+        "covered_req_ids": [
+          "FR15"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System transmits the backup bundle to Backup Storage Service.",
+        "covered_req_ids": [
+          "FR15"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System includes retention metadata indicating a five-year retention period.",
+        "covered_req_ids": [
+          "FR17"
+        ]
+      },
+      {
+        "step_number": 6,
+        "sentence": "System ensures the backup is stored in a manner that remains intact and accessible after any redeployment.",
+        "covered_req_ids": [
+          "FR18"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Inspection reports or photos are not available",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System records the missing data condition and aborts the backup."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "Transmission to Backup Storage Service fails",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System records the transmission failure and aborts the backup."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "5a",
+        "branch_step": 5,
+        "condition": "Retention metadata cannot be attached",
+        "handling_steps": [
+          {
+            "sub_step": "5a1",
+            "sentence": "System records the metadata attachment failure and aborts the backup."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "No new inspection data exists for the day",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System determines that there is no new data and skips backup transmission."
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Backup Storage Service has received and stored the backup bundle.",
+      "The backup is retained for five years.",
+      "The backup remains intact and accessible after any redeployment.",
+      "System records that the backup was completed for the day."
+    ],
+    "minimal_guarantee": [
+      "No partial or corrupted backup is left in the system.",
+      "Existing backups remain unchanged.",
+      "System continues to enforce any configured retention policies."
+    ],
+    "issues": [
+      "[semantic] Replace the specific service name with a generic destination description. [spec.black-box-no-internal-components · p.41 (Ch. 3, Scope — black box) · 우리 판단]",
+      "[semantic] Move the integrity assurance step to the success guarantee section. [spec.consequence-is-a-guarantee · Ch. 6 (Preconditions, Triggers, and Guarantees), p.83 · 우리 판단]"
+    ],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  }
+]

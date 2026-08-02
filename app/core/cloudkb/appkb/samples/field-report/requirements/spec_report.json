@@ -1,0 +1,54 @@
+{
+  "n_specs": 12,
+  "total_issues": 27,
+  "issues_by_uc": {
+    "UC1": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 3: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "2a1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "2b1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "UC2": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "1a1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "1b1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "UC3": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 3: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 4: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 5: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "4a2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "5a2: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Remove or modify extensions that add capabilities not covered by FR3/FR4, such as storage‑limit or checklist‑incomplete notifications. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "UC4": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Remove the retry step that adds a new 'retry recording' capability. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "UC9": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "step 1: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]",
+      "[semantic] Add a functional requirement for authentication or remove the authentication step [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "UC10": [
+      "trigger: UI 용어 ['field'] — black-box 위반 [spec.black-box-no-ui-mechanics · p.209 (Reminder 7: \"Keep the GUI Out\") · 우리 판단]"
+    ],
+    "UC12": [
+      "[semantic] Replace the specific service name with a generic destination description. [spec.black-box-no-internal-components · p.41 (Ch. 3, Scope — black box) · 우리 판단]",
+      "[semantic] Move the integrity assurance step to the success guarantee section. [spec.consequence-is-a-guarantee · Ch. 6 (Preconditions, Triggers, and Guarantees), p.83 · 우리 판단]"
+    ]
+  },
+  "total_repair_iters": 15,
+  "unvalidated_ucs": [],
+  "failed_ucs": [],
+  "repair_stopped": {
+    "no_improvement": 7,
+    "clean": 5
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "notice": "※ This is design guidance, not a cloud fact — confirm values, limits, and verdicts with the knowledge-base tools (kb_*/cap_*/cost_*).",
+  "layers": [
+    "signal"
+  ],
+  "items": [
+    {
+      "concern_id": "cn.network-isolation",
+      "question": "Do the requirements say whether the application needs a dedicated, isolated network, or whether the provider's default network is acceptable?",
+      "citation": "depkb 실측 8좌표 — server-default 대체 + AKS vnet 합성",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.reachability",
+      "question": "Do the requirements say what must be reachable from the public internet and what must not?",
+      "citation": "depkb 실측 5좌표 — 기본 SG 부착·클러스터 SG 합성·LB 스킴 조건부",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unaddressed",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.exposure-path",
+      "question": "Do the requirements decide which services are exposed through a cloud load balancer or ingress, and by which mechanism?",
+      "citation": "depkb 실측 10좌표 — Service→LB 합성·동반 소멸 3사 + Ingress 3사 반전",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.storage-provisioning",
+      "question": "Do the requirements specify the provisioning path and access mode for each persistent volume (storage class, block vs shared file)?",
+      "citation": "depkb 실측 4좌표 — 기본 SC 합성·미지정 방치·접근 모드가 자원 종류를 가름",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.data-fate-on-removal",
+      "question": "Do the requirements say what data must survive — or must not survive — when a workload is removed?",
+      "citation": "depkb 실측 6좌표 — 데이터가 걸린 동반 소멸 4 + 잔존 2",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.address-stability",
+      "question": "Do the requirements say whether externally published endpoints need a stable public address?",
+      "citation": "depkb 실측 3좌표 — 회복 주소 3사 3색(임시 vs 소유)",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.cloud-api-access",
+      "question": "Do the requirements say whether the application itself calls cloud APIs and therefore needs a cloud identity?",
+      "citation": "depkb 실측 7좌표 — iamRole 3사 3색 + 기능 결속",
+      "consumer": null,
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unjudged",
+      "covered_by": [],
+      "judged_by": []
+    },
+    {
+      "concern_id": "cn.load-shape",
+      "question": "Do the requirements describe the shape of the load over time — steady, bursty, or scheduled peaks — and not only its size?",
+      "citation": "perfkb 실측 — 최저가 100 중 37 함정(버스트·구세대·공유CPU)",
+      "consumer": "RESOURCE_SPEC.trafficPattern",
+      "out_of_scope": "",
+      "evidence": "pattern-advisory",
+      "status": "unaddressed",
+      "covered_by": [],
+      "judged_by": []
+    }
+  ],
+  "handoff": [
+    "cn.load-shape"
+  ],
+  "noted": [
+    "cn.reachability"
+  ],
+  "out_of_scope": [],
+  "unjudged": [
+    "cn.network-isolation",
+    "cn.exposure-path",
+    "cn.storage-provisioning",
+    "cn.data-fate-on-removal",
+    "cn.address-stability",
+    "cn.cloud-api-access"
+  ],
+  "coverage_ratio": 0.0
+}

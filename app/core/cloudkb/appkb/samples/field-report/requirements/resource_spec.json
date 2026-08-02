@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "2",
+  "provider": "aws",
+  "regionAsWritten": "Seoul",
+  "region": "ap-northeast-2",
+  "workloads": [
+    "k8sCluster"
+  ],
+  "monthlyBudgetUSD": 400.0
+}

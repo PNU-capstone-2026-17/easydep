@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Field Engineer",
+    "description": "A field‑based technician who logs into the application, views assigned sites, creates and edits inspection reports, and receives follow‑up requests.",
+    "kind": "primary",
+    "parent_actor": null
+  },
+  {
+    "name": "Site Manager",
+    "description": "A manager responsible for overseeing sites; browses inspection reports, views photos, downloads PDFs and flags reports for follow‑up.",
+    "kind": "primary",
+    "parent_actor": null
+  },
+  {
+    "name": "Administrator",
+    "description": "A system administrator who creates, modifies, deactivates engineer accounts and assigns engineers to sites.",
+    "kind": "primary",
+    "parent_actor": null
+  },
+  {
+    "name": "Backup Storage Service",
+    "description": "An external cloud‑based storage or backup provider that receives nightly backups of inspection reports and photos and retains them for the required retention period.",
+    "kind": "supporting",
+    "parent_actor": null
+  }
+]
