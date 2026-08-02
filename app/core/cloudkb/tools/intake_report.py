@@ -198,6 +198,19 @@ def main(argv: list[str] | None = None) -> int:
         from ..appkb import diagram
         from ..nim_agent.design_tools import compose
 
+        # **측정 하한**(있으면). 생성된 앱을 재서 나온 capacity.json을 계획의
+        # requirements에 `_capacity`로 실어 sizing_floor의 measured 층이 읽게
+        # 한다 — 공식이 아니라 측정이라 배제 규율 밖이다(measure_capacity).
+        cap_path = root / "design" / "capacity.json"
+        if cap_path.exists() and isinstance(design.get("requirements"), dict):
+            try:
+                cap = json.loads(cap_path.read_text(encoding="utf-8"))
+                design["requirements"]["_capacity"] = cap
+                print(f"  측정 하한 실림: {cap.get('mem_gib')} GiB "
+                      f"(under {cap.get('under')})")
+            except (json.JSONDecodeError, OSError):
+                pass
+
         plan = compose(design)
         print(f"\n[5] 계획 — 노드 {len(plan.nodes)} · 선 {len(plan.edges)}")
         for u in plan.unresolved:

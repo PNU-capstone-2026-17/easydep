@@ -1441,7 +1441,21 @@ def _attach_values(plan: DeploymentPlan, provider: str, region: str | None,
         # 예전 코드는 둘을 같은 상수로 덮었는데, 그래서 출처 있는 값과 없는 값이
         # 한 얼굴이 됐다.
         scope = "k8s-node" if node.id == "k8snodegroup" else ""
-        floor = sizing_floor.resolve(requirements, scope=scope)
+        # **측정 하한**(있으면 최상위 근거) — 생성된 앱을 실제로 재서 나온 것.
+        # 공식이 아니라 측정이라 이 저장소의 배제 규율에 안 걸린다(sizingkb:
+        # "부하 테스트로 검증하라"). 계약 밖 신호라 `_capacity`로 실어 보낸다.
+        cap = (requirements or {}).get("_capacity")
+        measurement = None
+        if isinstance(cap, dict) and (cap.get("vcpu") or cap.get("mem_gib")):
+            measurement = sizing_floor.Measurement(
+                vcpu=float(cap.get("vcpu") or 0),
+                mem_gib=float(cap.get("mem_gib") or 0),
+                under=str(cap.get("under", "measurement")),
+                evidence=str(cap.get("evidence", "")),
+                production_load=bool(cap.get("production_load", False)),
+            )
+        floor = sizing_floor.resolve(requirements, scope=scope,
+                                     measurement=measurement)
         notes = list(node.notes)
 
         if floor.decided:

@@ -42,6 +42,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 #: 층 이름. 노트·판정문에 그대로 실리므로 문자열을 한 곳에 둔다.
+LAYER_MEASURED = "measured"
 LAYER_KB = "kb"
 LAYER_STATED = "stated"
 LAYER_NONE = "none"
@@ -49,6 +50,26 @@ LAYER_NONE = "none"
 #: 계약에서 워크로드 하한을 담는 칸.
 VCPU_FIELD = "minVCpu"
 MEM_FIELD = "minMemoryGiB"
+
+
+@dataclass(frozen=True)
+class Measurement:
+    """생성된 앱을 **실제로 돌려 잰** 자원 피크 — 공식이 아니라 측정이다.
+
+    이 저장소는 'N명 → vCPU M' 공식을 두 번 조사 끝에 배제하고
+    (`sizingkb/__init__.py`), 정직한 답을 *"부하 테스트로 검증하라"*로 적어 뒀다.
+    이 레코드가 그 측정의 산물이다 — depkb가 의존을 컨트롤 플레인으로 잰 것과
+    같은 자리(가정 대신 실측). 무엇 위에서(`under`) 쟀는지가 함께 실려야
+    수치가 문맥 없이 권장값으로 둔갑하지 않는다.
+    """
+
+    vcpu: float          #: 피크 vCPU(코어)
+    mem_gib: float       #: 피크 메모리(GiB)
+    under: str           #: 어떤 부하에서 쟀나 — "unit tests" · "40 rps for 60s"
+    evidence: str        #: 어디서·어떻게(실행 좌표)
+    #: `scale` 부하로 쟀나(True) vs 테스트 실행의 부산물인가(False). 후자는
+    #: 프로덕션 하한이 아니라 **하한의 하한**(테스트가 이만큼은 썼다)이다.
+    production_load: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,17 +145,34 @@ def _stated(requirements: dict) -> tuple[float, float]:
     return number(VCPU_FIELD), number(MEM_FIELD)
 
 
-def resolve(requirements: dict, *, scope: str = "") -> Floor:
-    """이 워크로드의 하한 — 층 1과 층 2 중 **더 큰 쪽**이 각 축을 잡는다.
+def resolve(requirements: dict, *, scope: str = "",
+            measurement: Measurement | None = None) -> Floor:
+    """이 워크로드의 하한 — 여러 층 중 각 축을 **가장 크게** 잡는 값이 이긴다.
 
-    둘 다 있으면 둘 다 만족해야 하므로 축마다 최대를 취한다. 어느 층이 잡았는지는
-    `layers`에 남는다 — 사용자가 준 값이 KB 하한에 밀렸다면 그 사실이 보여야 한다.
+    층은 넷이다(우선순위 아님 — 축마다 최대, 다 만족해야 한다):
+      **measured** 앱을 실제로 돌려 잰 피크(있으면 가장 센 근거) ·
+      **kb** sizingkb 하드 하한 · **stated** 사용자 진술 · (없으면 층 3 미결).
+    어느 층이 잡았는지는 `layers`에 남는다 — 진술이 측정에 밀렸다면 그 사실이
+    보여야 한다.
     """
     kb_vcpu, kb_mem, kb_why = _kb_minimums(scope)
     st_vcpu, st_mem = _stated(requirements)
+    me_vcpu = measurement.vcpu if measurement else 0.0
+    me_mem = measurement.mem_gib if measurement else 0.0
 
     layers: list[str] = []
     parts: list[str] = []
+    if measurement and (me_vcpu or me_mem):
+        layers.append(LAYER_MEASURED)
+        tail = ("" if measurement.production_load else
+                " — measured while the app ran its tests, not under production "
+                "load, so this is a floor-of-the-floor: refine it with a load "
+                "test at your stated scale")
+        parts.append(
+            f"the app was measured to peak at {me_vcpu:g} vCPU and "
+            f"{me_mem:g} GiB under {measurement.under} ({measurement.evidence})"
+            + tail
+        )
     if kb_vcpu or kb_mem:
         layers.append(LAYER_KB)
         parts.append(kb_why)
@@ -146,8 +184,8 @@ def resolve(requirements: dict, *, scope: str = "") -> Floor:
             "(recorded as the user's or designer's claim, not a verified fact)"
         )
     return Floor(
-        vcpu=max(kb_vcpu, st_vcpu),
-        mem_gib=max(kb_mem, st_mem),
+        vcpu=max(kb_vcpu, st_vcpu, me_vcpu),
+        mem_gib=max(kb_mem, st_mem, me_mem),
         layers=tuple(layers),
         why="; ".join(p for p in parts if p),
     )

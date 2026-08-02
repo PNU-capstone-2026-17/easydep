@@ -50,6 +50,35 @@ def test_bad_values_are_not_floors() -> None:
         assert not sizing_floor.resolve(bad).decided
 
 
+def test_measured_floor_beats_a_claim_and_is_labelled() -> None:
+    """층 0 — **앱을 실제로 재면** 그 측정이 최상위 근거가 된다(공식 아님, 측정).
+
+    사용자 진술이 측정에 밀리면 그 사실이 `why`에 보여야 한다 — 진술은 주장이고
+    측정은 실물이다. 이 저장소가 배제한 것은 *공식*이지 *측정*이 아니다
+    (sizingkb: "부하 테스트로 검증하라").
+    """
+    m = sizing_floor.Measurement(
+        vcpu=1.5, mem_gib=2.0, under="unit tests",
+        evidence="gradle test, peak RSS", production_load=False)
+    floor = sizing_floor.resolve({"minVCpu": 1, "minMemoryGiB": 1}, measurement=m)
+    assert sizing_floor.LAYER_MEASURED in floor.layers
+    assert floor.vcpu == 1.5 and floor.mem_gib == 2.0   # 측정이 진술을 이긴다
+    assert "measured to peak" in floor.why
+    # 테스트 부산물은 프로덕션 하한이 아님을 반드시 밝힌다.
+    assert "not under production load" in floor.why
+    assert "load test" in floor.why
+
+
+def test_measured_under_scale_is_production_relevant() -> None:
+    """부하 테스트로 잰 것은 그 단서가 붙지 않는다 — 프로덕션 관련 수치다."""
+    m = sizing_floor.Measurement(
+        vcpu=2.0, mem_gib=4.0, under="40 rps for 60s",
+        evidence="load probe at stated scale", production_load=True)
+    floor = sizing_floor.resolve({}, measurement=m)
+    assert floor.layers == (sizing_floor.LAYER_MEASURED,)
+    assert "not under production load" not in floor.why
+
+
 def test_scale_signal_does_not_move_the_floor() -> None:
     """**이 저장소가 배제한 변환이 코드로 돌아오지 않는다.**
 
