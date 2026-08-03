@@ -1,35 +1,19 @@
-"""의존성 그래프 뷰어 — claims.json을 인터랙티브 HTML로 사영한다.
+"""의존성 그래프 뷰어 — claims.json을 사람이 먼저 읽는 화면으로 바꾼다.
 
-**소비 전용 뷰다** — 판정·증거는 claims.json이 진실이고, 여기서는 그것을
-읽기 좋게 그릴 뿐이다. 배치(층)는 우리 구성(가독 목적)이고 판정에 영향이 없다.
+이 그림은 "무엇이 무엇에 연결됐나"를 보여 주는 일반 그래프가 아니다. 같은
+자원쌍을 세 질문으로 따로 묻는다.
 
-## 왜 한 그림이 아니라 세 그림인가
+    1. 만들기: A를 만들 때 B가 필요한가?
+    2. 지우기: B를 지우려 할 때 A 때문에 막히거나 같이 지워지는가?
+    3. 실제 사용: B를 떼면 A는 만들어져 있어도 기능이 깨지는가?
 
-의존은 한 관계가 아니라 **질문 셋**이다(존재·생명주기·기능). 한 화면에 겹쳐
-그리던 이전 판은 존재 간선 위에 🔒/♻/ƒ 배지를 얹었는데, 그러면 이 분석의
-요점 — *같은 쌍인데 질문마다 답이 다르다* — 가 배지 하나로 뭉개진다.
+세 칸의 노드 위치가 같은 이유는 이 세 답을 가로로 비교하게 하기 위해서다.
+빈 칸은 "관계가 없다"가 아니라 "그 질문은 아직 측정하지 않았다"다. 간선을
+누르면 claims.json의 쉬운 요약(note), 실제 관측 결과, 결과 파일과 단계 이름을
+정의한 실험 코드 위치를 보여 준다.
 
-그래서 **같은 배치의 판 셋을 나란히** 놓는다. 좌표가 같으므로 같은 자리를
-가로로 훑으면 축별 차이가 바로 보인다. 화면(pan/zoom)과 선택은 세 판이
-공유한다.
-
-세 축이 모두 실측된 쌍은 82쌍 중 둘뿐이다(`azure nic→publicIp`,
-`azure vm→disk`). 이 희소함 자체가 결과이므로, 간선을 고르면 상세 패널이
-**축별 대조표**를 내고 빈 칸을 "실측 없음"으로 명시한다 — 빈칸을 "의존
-없음"으로 읽지 않게 하려는 것이다.
-
-## 연산 성질
-
-`operations.json`의 사영으로 ⏳ 배지를 **노드**에 단다. 간선이 아닌 이유는
-비동기성이 (간선×CSP×질문)이 아니라 **자원 하나의 성질**이기 때문이다.
-미표시는 "동기"가 아니라 "안 재봤다"이고, 그 규율을 배지 클릭 시 밝힌다.
-
-- 시각화는 cytoscape.js(CDN)로 그린다 — **보는 데 인터넷이 필요하다.**
-  오프라인이면 안내 문구가 뜬다(데이터 자체는 HTML에 내장돼 유실은 없다).
-- 선언 술어(`a|b|c` 합집합 간선)는 선으로 그리면 겹침만 늘어 **주체 노드
-  상세에 싣는다.**
-
-실행: `python -m app.core.cloudkb.depkb.render_graph` → `dependency-graph.html`
+판정·증거의 원본은 claims.json이고 이 HTML은 보기용 사영이다. 실행:
+`python -m app.core.cloudkb.depkb.render_graph`.
 """
 
 from __future__ import annotations
@@ -54,11 +38,15 @@ X_GAP, Y_GAP = 190, 150
 CSPS = ("aws", "azure", "gcp")
 #: 질문 축 — 판 셋의 순서이자 상세 대조표의 행 순서.
 AXES = ("existence", "lifecycle", "function")
-AXIS_LABEL = {"existence": "존재", "lifecycle": "생명주기", "function": "기능"}
+AXIS_LABEL = {
+    "existence": "1. 만들기",
+    "lifecycle": "2. 지우기",
+    "function": "3. 실제 사용",
+}
 AXIS_ASK = {
-    "existence": "A를 만들려면 B가 먼저 있어야 하는가",
-    "lifecycle": "B를 지우려 할 때 A가 무엇을 하는가",
-    "function": "B를 떼면 A가 계속 동작하는가",
+    "existence": "A를 만들 때 B가 필요하거나 서버가 대신 만드는가?",
+    "lifecycle": "B를 지우면 막히는가, 아니면 A와 함께 정리되는가?",
+    "function": "B를 떼어도 A가 실제로 계속 작동하는가?",
 }
 
 #: 문외한용 자원 설명 — **우리 작성**(판정 아님). 실측에서 온 문장은 그렇다고
@@ -199,12 +187,14 @@ def _positions() -> dict[str, tuple[int, int]]:
 def _existence_class(claim: dict) -> str:
     """존재 판 간선의 색·선 — 판정과 술어 부류를 섞은 **우리 분류**."""
     pred = claim.get("predicate") or ""
-    if pred.split(":")[0].endswith(("조건부", "조건")) and not pred.startswith(
-            ("이름 조건", "배치 조건", "수명 조건")):
+    if (pred.startswith("선택 규칙:") or
+            pred.split(":")[0].endswith(("조건부", "조건"))) and not pred.startswith(
+            ("이름 조건", "배치 조건", "수명 조건", "두 자원의 호환 조건")):
         return "cond"
     if claim["verdict"] == "required":
         return "req"
-    if pred.startswith(("server-default:", "server-implicit:")):
+    if pred.startswith(("server-default:", "server-implicit:",
+                        "서버 기본값:", "서버 자동 생성:")):
         return "auto"
     return "opt"
 
@@ -219,7 +209,8 @@ def _axis_class(claim: dict) -> str:
         return _existence_class(claim)
     if claim["question"] == "function":
         return "func"
-    return "casc" if (claim.get("predicate") or "").startswith("동반 정리:") \
+    return "casc" if (claim.get("predicate") or "").startswith(
+        ("동반 정리:", "자동 정리 조건:")) \
         else "life"
 
 
@@ -290,7 +281,7 @@ def _build_data() -> dict:
 
 _PAGE = r"""<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
-<title>depkb 의존성 그래프 — 질문 축 3판</title>
+<title>클라우드 자원 관계 지도 — 만들기·지우기·실제 사용</title>
 <script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
 <style>
   :root { --ink:#1c1e21; --sub:#5b6572; --line:#d7dce3; --bg:#f6f7f9;
@@ -358,7 +349,7 @@ _PAGE = r"""<!doctype html>
   #offline { display:none; padding:40px; color:var(--sub) }
 </style></head><body>
 <header>
-  <h1>depkb 의존성 그래프</h1>
+  <h1>클라우드 자원 관계 지도</h1>
   <span class="tabs" id="tabs"></span>
   <label class="f"><input type="checkbox" id="opToggle" checked>⏳ 연산 배지</label>
   <label class="f"><input type="checkbox" id="ghostToggle" checked>간선 없는 노드</label>
@@ -371,8 +362,9 @@ _PAGE = r"""<!doctype html>
     필요합니다. 데이터는 이 파일에 내장돼 있습니다(&lt;script id="data"&gt;).</div>
   <aside id="panel"></aside>
 </main>
-<footer>판정·증거의 진실은 claims.json — 이 페이지는 사영이다. 배치는 가독
-목적의 우리 구성이고 세 판이 좌표를 공유한다(가로로 훑으면 축별 차이가 보인다).</footer>
+<footer>읽는 법: 화살표 A→B는 “A를 만들거나 작동시키려면 B를 본다”는 뜻입니다.
+왼쪽부터 만들기·지우기·실제 사용의 질문이며, 같은 위치를 가로로 비교하세요.
+빈 칸은 관계가 없다는 뜻이 아니라 그 질문을 아직 측정하지 않았다는 뜻입니다.</footer>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const DATA = JSON.parse(document.getElementById('data').textContent);
@@ -383,8 +375,10 @@ if (typeof cytoscape === 'undefined') {
 } else {
   const COLORS = {req:'#0a7d52', opt:'#8a94a2', auto:'#2563c4', cond:'#c26a12',
                   life:'#b3261e', casc:'#0f7f8c', func:'#8b3fc6'};
-  const CLS_KO = {req:'필수', opt:'선택', auto:'서버가 채움', cond:'조건부',
-                  life:'🔒 삭제 보호', casc:'♻ 동반 정리', func:'ƒ 기능 결속'};
+  const CLS_KO = {req:'만들 때 꼭 필요', opt:'없어도 만들 수 있음',
+                  auto:'서버가 대신 채움', cond:'조건에 따라 다름',
+                  life:'🔒 먼저 지워야 함', casc:'♻ 함께 지워짐',
+                  func:'⚠ 없으면 기능 문제'};
   // 판마다 다른 범례 — 존재 판만 넷이고, 나머지는 기제가 갈리는 축이다.
   const LEGEND = {existence:['req','opt','auto','cond'],
                   lifecycle:['life','casc'], function:['func']};
@@ -529,12 +523,18 @@ if (typeof cytoscape === 'undefined') {
     const schema = (evidence||[]).filter(e => e.layer === 'schema');
     const dyn = (evidence||[]).filter(e => e.layer !== 'schema');
     let out = '';
-    if (schema.length) out += '<div class="ev"><u>스키마 층</u></div>' +
+    if (schema.length) out += '<div class="ev"><u>문서·스키마에서 찾은 후보</u></div>' +
       schema.map(e => `<div class="ev">${esc(e.cite)}<br>&nbsp;&nbsp;형태 ${esc(e.form)}` +
         ` · 스키마 required=${e.requiredInSchema}</div>`).join('');
-    if (dyn.length) out += '<div class="ev"><u>동적 층</u></div>' +
-      dyn.map(e => `<div class="ev">[${esc(e.layer)}] ${esc(e.experiment)} / ` +
-        `${esc(e.step)} → ${esc(e.code)}</div>`).join('');
+    if (dyn.length) out += '<div class="ev"><u>실제 시험 결과</u></div>' +
+      dyn.map(e => {
+        const d = e.definition || {};
+        const where = d.file ? `${d.file}:${d.line}` : (d.sourceKind || '정의 위치 없음');
+        return `<div class="ev"><b>${esc(e.observed || '')}</b><br>` +
+          `시험: ${esc(e.experiment)} / ${esc(e.step)}<br>` +
+          `단계 이름 정의: ${esc(where)}<br>` +
+          `CSP 원문 결과: ${esc(e.resultFile || '')}</div>`;
+      }).join('');
     return out;
   }
 
@@ -543,8 +543,9 @@ if (typeof cytoscape === 'undefined') {
       `<td class="none" colspan="2">실측 없음 — <i>의존이 없다는 뜻이 아니다</i></td></tr>`;
     return `<tr><th>${DATA.axisLabel[axis]}</th>` +
       `<td><span class="chip ${b.cls}">${CLS_KO[b.cls]}</span><br>` +
-      `${VK[b.verdict]||esc(b.verdict)} · ${esc(b.oracle)} 층</td>` +
-      `<td>${esc(b.predicate||'')}${b.note?'<br>'+esc(b.note):''}</td></tr>`;
+      `${VK[b.verdict]||esc(b.verdict)} · 근거 수준: ${esc(b.oracle)}</td>` +
+      `<td>${b.note?'<b>'+esc(b.note)+'</b><br>':''}` +
+      `${esc(b.predicate||'별도 조건 없음')}</td></tr>`;
   }
 
   function showPair(key) {
@@ -560,9 +561,9 @@ if (typeof cytoscape === 'undefined') {
       ${AXES.map(a => axisRow(a, byq[a])).join('')}</table>
       ${AXES.filter(a => byq[a]).map(a => kv(
           DATA.axisLabel[a] + ' 질문의 증거', evList(byq[a].evidence))).join('')}
-      <div class="empty" style="font-size:12px">화살표 A→B는 “A가 B를
-      요구/합성한다”입니다(포함 아님). 빈 축은 <b>빈칸이 아니라 기록</b>입니다 —
-      그 질문을 판정할 실측이 아직 없다는 뜻입니다.</div>`;
+      <div class="empty" style="font-size:12px">화살표 A→B는 “A를 만들거나
+      작동시키려면 B를 본다”는 뜻입니다(포함 관계가 아닙니다). 빈 축은 <b>아직
+      측정하지 않음</b>이며, 관계가 없다는 결론이 아닙니다.</div>`;
   }
 
   function showNode(id) {
@@ -589,7 +590,7 @@ if (typeof cytoscape === 'undefined') {
       <span class="chip">${current}</span>
       ${AXES.filter(a => !d.inAxis[a]).map(a =>
         `<span class="chip">${DATA.axisLabel[a]} 판에 간선 없음</span>`).join('')}
-      ${kv('이게 뭔가요 (설명 — 우리 작성, 판정 아님)', esc(d.desc))}
+      ${kv('이 자원은 무엇인가요? (이해를 돕는 설명)', esc(d.desc))}
       ${kv('CSP별 이름', esc(d.names))}
       ${ops ? kv('⏳ 연산 성질 (실측) — 만들고 기다려야 하는가', ops)
             : kv('⏳ 연산 성질', '<i>이 자원의 연산은 재지 않았다 — '
@@ -597,23 +598,26 @@ if (typeof cytoscape === 'undefined') {
       ${kv('이 자원이 요구·합성하는 것', outs || '<div class="ev">없음</div>')}
       ${kv('이 자원을 요구·합성하는 것', ins || '<div class="ev">없음</div>')}
       ${disj}
-      <div class="empty" style="font-size:12px">간선을 클릭하면 그 쌍의
-      <b>축별 대조표</b>와 증거 좌표가 나옵니다.</div>`;
+      <div class="empty" style="font-size:12px">화살표를 클릭하면 세 질문의
+      답을 나란히 보고, 실제 시험 결과와 그 시험을 정의한 코드 위치를 확인할 수
+      있습니다.</div>`;
   }
 
   function clearPick() {
     clearMarks();
     document.getElementById('panel').innerHTML =
-      `<h2>세 판을 가로로 읽으세요</h2>
-       <div class="empty">같은 자리·같은 좌표의 판 셋입니다. 왼쪽부터
-       <b>존재</b>(만들 때) · <b>생명주기</b>(지울 때) · <b>기능</b>(떼었을 때).
-       <br><br>노드나 간선을 클릭하면 그 쌍이 <b>세 판 모두에서</b> 짚어지고,
-       상세에 축별 대조표가 나옵니다 — 어느 판에서 사라지는지가 곧 결과입니다.
-       <br><br>세 축이 모두 실측된 쌍은 3사 통틀어
+      `<h2>처음에는 이렇게 읽으세요</h2>
+       <div class="empty"><b>1.</b> 먼저 CSP 탭(AWS·Azure·GCP) 하나를 고릅니다.
+       <br><b>2.</b> 같은 자원의 위치를 왼쪽부터 가로로 봅니다: <b>만들기</b> ·
+       <b>지우기</b> · <b>실제 사용</b>입니다.
+       <br><b>3.</b> 궁금한 화살표를 누르면 "무슨 뜻인가"와 "어떻게 확인했는가"가
+       오른쪽에 나옵니다. 실험 ID만 보지 말고 <b>실제 시험 결과</b>를 먼저 읽으세요.
+       <br><br>세 질문을 모두 실제로 측정한 자원쌍은 3사 통틀어
        <b>${DATA.triples.length}쌍</b>뿐입니다:
        <div class="ev">${DATA.triples.map(t => esc(t)).join('<br>')}</div>
-       <br>⏳는 <b>자원</b>의 성질입니다(간선이 아님) — 만들고 완료를
-       기다려야 하는 자원입니다.</div>`;
+       <br>⏳는 <b>자원</b>의 성질입니다(화살표의 성질이 아님). 만들고 난 뒤
+       완료 상태를 기다린 관측이 있다는 뜻이며, 표시가 없다고 즉시 끝난다는 뜻은
+       아닙니다.</div>`;
   }
 
   const tabs = document.getElementById('tabs');
