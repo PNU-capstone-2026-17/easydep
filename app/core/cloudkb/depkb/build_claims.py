@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -1505,6 +1506,139 @@ def _experiment_step(exp: str, key: str) -> dict:
     return pool[key]
 
 
+# ── 사람이 claims.json을 추적할 때 쓰는 설명 ──────────────────────────────
+#
+# `experiment`와 `step`은 CSP가 정한 코드가 아니다. 이 저장소의 실험 작성자가
+# `experiments/<experiment>/run.py`에서 붙인 식별자다. 예: A2.dangling-network의
+# A2는 그 실험 안의 묶음/순번일 뿐 전 실험에 통하는 표준 약어가 아니고,
+# dangling-network는 "없는 네트워크를 가리킨다"는 시험 이름이다. 이전 산출물은
+# 이 가장 중요한 사실과 정의 위치를 감췄다.
+_QUESTION_PLAIN = {
+    "existence": "생성 의존성(대상이 없거나 잘못됐을 때 주체를 만들 수 있는지)",
+    "lifecycle": "수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)",
+    "function": "기능 의존성(대상 변화로 실제 기능이 깨지는지)",
+}
+_VERDICT_PLAIN = {
+    "required": "필수", "optional": "선택", "holds": "관계 확인됨",
+    "unknown": "아직 확인하지 못함",
+}
+_SIGNAL_PLAIN = {
+    "inbound-tcp": "외부에서 TCP로 도달할 수 있는지",
+    "egress-https": "인스턴스에서 외부 HTTPS로 나갈 수 있는지",
+    "lb-serving": "로드밸런서 주소가 HTTP 200으로 응답하는지",
+    "dns-resolution": "인스턴스가 이름을 IP로 해석하는지",
+    "service-discovery": "클러스터 안에서 서비스 이름으로 접속되는지",
+    "volume-write": "볼륨에 실제로 쓸 수 있는지",
+    "imds-credentials": "인스턴스 메타데이터에서 자격 증명을 받는지",
+    "node-join": "새 Kubernetes 노드 그룹이 클러스터에 합류하는지",
+}
+
+
+def _plain_predicate(value: str | None) -> str:
+    """기계용 술어를 사람이 읽는 조건 문장으로 바꾼다.
+
+    원래 문장은 조사 중 메모가 섞여 있어 claims 산출물에서 바로 읽기 어려웠다.
+    판정에 쓰는 접두는 보존하되 Markdown 표식과 내부 메모 말투는 제거한다.
+    """
+    if not value:
+        return "별도 조건 없음"
+    clean = value.replace("**", "").replace("`", "")
+    prefixes = {
+        "server-default:": "서버 기본값: ",
+        "server-implicit:": "서버 자동 생성: ",
+        "disjunctive:": "선택 규칙: ",
+        "network 모드 조건부:": "네트워크 모드 조건: ",
+        "스킴 조건부:": "스킴 조건: ",
+        "쌍 호환:": "두 자원의 호환 조건: ",
+        "이름 조건:": "이름 조건: ",
+        "배치 조건:": "배치 조건: ",
+        "수명 조건:": "수명주기 조건: ",
+        "동반 정리:": "자동 정리 조건: ",
+        "무방비:": "기능상 주의: ",
+        "원본 종류 반전:": "CSP별 원본 차이: ",
+        "마운트 타깃 경유:": "중간 자원을 통한 조건: ",
+    }
+    for old, new in prefixes.items():
+        if clean.startswith(old):
+            return new + clean[len(old):].strip()
+    return clean
+
+
+def _definition_of_step(experiment: str, step: str) -> dict[str, str | int | None]:
+    """실험 단계 이름을 만든 소스 줄을 찾는다.
+
+    결과 JSON은 관측값이고, 단계 이름의 뜻은 실험 코드가 정한다. 한 줄짜리
+    `step("A2.dangling-network", ...)`와 `steps["..."] = ...` 두 형태를 모두
+    찾는다. 결과만 사후 보강한 경우에는 정의 파일이 없다고 정직하게 표시한다.
+    """
+    directory = _HERE / "experiments" / experiment
+    quoted = re.escape(step)
+    # 반복 자원은 `step(f"F2.delete-subnet{i}", ...)`처럼 번호를 f-string으로
+    # 만든다. results.json에는 F2.delete-subnet1처럼 실제 값이 남으므로 숫자
+    # 자리는 숫자와 `{i}` 같은 보간식 모두에 맞춘다.
+    dynamic = "".join(
+        r"(?:\d+|\{[^}]+\})" if part.isdigit() else re.escape(part)
+        for part in re.split(r"(\d+)", step)
+    )
+    patterns = (
+        re.compile(rf"\bstep\(f?[\"']{quoted}[\"']"),
+        re.compile(rf"\bsteps\[f?[\"']{quoted}[\"']\]"),
+        re.compile(rf"\bstep\(f?[\"']{dynamic}"),
+        re.compile(rf"\bsteps\[f?[\"']{dynamic}"),
+        # `for label, kw in (("B1.apply-both", ...), ...)`처럼 이름을 먼저
+        # 표에 두고 나중에 step(label, ...)으로 호출하는 형태도 있다.
+        re.compile(rf"[\"']{quoted}[\"']"),
+        re.compile(rf"[\"']{dynamic}"),
+    )
+    paths = sorted(directory.glob("*.py"), key=lambda p: (p.name != "run.py", p.name))
+    for path in paths:
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if any(p.search(line) for p in patterns):
+                return {
+                    "file": str(path.relative_to(_HERE)).replace("\\", "/"),
+                    "line": number,
+                    "sourceKind": "이 저장소의 실험 코드에서 정의한 이름",
+                }
+    # 코드에서 이름을 찾지 못한 것은 숨기지 않는다. 결과 JSON의 위치는 알려 주되,
+    # 이 경우 정확한 요청 인자는 이 저장소에 보존돼 있지 않다는 뜻이다.
+    result = directory / "results.json"
+    if result.is_file():
+        # preflight 결과는 {"omit-nic-subnet": {"validate": ...}} 꼴이라
+        # claims의 `omit-nic-subnet.validate`를 바깥 단계 이름으로 되돌린다.
+        result_key = (step.rsplit(".", 1)[0]
+                      if "." in step and step.rsplit(".", 1)[1] in ("validate", "what-if")
+                      else step)
+        marker = f'"{result_key}"'
+        for number, line in enumerate(result.read_text(encoding="utf-8").splitlines(), 1):
+            if marker in line:
+                return {
+                    "file": str(result.relative_to(_HERE)).replace("\\", "/"),
+                    "line": number,
+                    "sourceKind": (
+                        "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
+                    ),
+                }
+    return {
+        "file": None, "line": None,
+        "sourceKind": "결과 파일에만 남은 이름 — 정의 코드를 찾지 못함",
+    }
+
+
+def _plain_note(claim: dict) -> str:
+    """claim 한 줄의 결론을 메모가 아닌 설명문으로 만든다."""
+    subject, obj = claim["subject"], claim["object"]
+    question = _QUESTION_PLAIN[claim["question"]]
+    verdict = _VERDICT_PLAIN[claim["verdict"]]
+    condition = _plain_predicate(claim.get("predicate"))
+    sentence = (
+        f"{claim['csp']}에서 `{subject}`와 `{obj}`의 {question}을 확인한 결과는 "
+        f"`{verdict}`이다. 조건: {condition}."
+    )
+    if claim.get("signal"):
+        sentence += f" 기능 확인 신호는 {_SIGNAL_PLAIN[claim['signal']]}이다."
+    return sentence
+
+
 def _schema_evidence() -> dict[tuple, list[dict]]:
     out: dict[tuple, list[dict]] = {}
     for csp, fname in [("azure", "azure_candidates.json"),
@@ -1561,15 +1695,28 @@ def build() -> dict:
                     f"{exp}/{key}: 인용 코드 {expect}가 실측에 없다 "
                     f"{step['errorCodes']}"
                 )
-            evid.append({"layer": layer, "experiment": exp, "step": key,
-                         "code": expect})
+            evidence = {
+                "layer": layer,
+                "experiment": exp,
+                "step": key,
+                "code": expect,
+                # 사람이 따라갈 두 파일. `step`의 뜻은 results.json이 아니라
+                # run.py(또는 보강 스크립트)가 정한다.
+                "resultFile": f"experiments/{exp}/results.json",
+                "definition": _definition_of_step(exp, key),
+                "observed": (
+                    "이 단계가 성공했다" if expect == "ok"
+                    else f"이 단계에서 CSP가 `{expect}` 오류를 돌려줬다"
+                ),
+            }
+            evid.append(evidence)
         pair_key = (j["csp"], j["subject"], j["object"].split("|")[0])
         evid = schema.get(pair_key, []) + evid
         judged.add((j["csp"], j["subject"], j["object"], j["question"]))
-        claims.append({
+        claim = {
             "subject": j["subject"], "object": j["object"], "csp": j["csp"],
             "question": j["question"], "verdict": j["verdict"],
-            "predicate": j.get("predicate"), "note": j.get("note"),
+            "predicate": _plain_predicate(j.get("predicate")),
             # 술어의 **기계가 볼 수 있는 몫**. 없으면 없는 대로 둔다 — 산문을
             # 소비층에서 파싱하는 것을 막으려고 여기서 구조를 준다(2026-08-01).
             "constraint": j.get("constraint"),
@@ -1580,19 +1727,22 @@ def build() -> dict:
             "oracle": max((e["layer"] for e in evid),
                           key=lambda x: _LAYER_RANK[x]),
             "evidence": evid,
-        })
+        }
+        claim["note"] = _plain_note(claim)
+        claims.append(claim)
 
     # 판정 없는 스키마 후보 → unknown (aws·gcp 전부와 azure 잔여)
     for (csp, s, o), evid in sorted(schema.items()):
         if (csp, s, o, "existence") in judged:
             continue
-        claims.append({
+        claim = {
             "subject": s, "object": o, "csp": csp, "question": "existence",
-            "verdict": "unknown", "predicate": None, "constraint": None,
+            "verdict": "unknown", "predicate": "별도 조건 없음", "constraint": None,
             "signal": None,
-            "note": "스키마 후보만 있다 — 이 간선의 동적 실험 미실행",
             "oracle": "schema", "evidence": evid,
-        })
+        }
+        claim["note"] = _plain_note(claim)
+        claims.append(claim)
 
     claims.sort(key=lambda c: (c["csp"], c["subject"], c["object"], c["question"]))
     counts: dict[str, int] = {}
@@ -1601,10 +1751,11 @@ def build() -> dict:
             f"{c['csp']}.{c['verdict']}", 0) + 1
     return {
         "_note": (
-            "의존 주장의 통합 산출물 — (간선 × CSP × 질문)마다 판정·증거·도달 "
-            "오라클 층. 판정 배정은 우리 구성(build_claims.EXPERIMENT_JUDGMENTS)"
-            "이고, 인용 코드가 실험 실측과 어긋나면 빌드가 죽는다. unknown은 "
-            "빈칸이 아니라 '동적 층 미실행'의 기록이다."
+            "클라우드 리소스 의존성 주장 목록이다. 각 claim은 '어느 CSP에서, 어떤 "
+            "질문에, 어떤 결론이 났는가'를 적는다. experiment와 step은 외부 표준 "
+            "코드가 아니라 이 저장소의 실험 이름이며, evidence.definition이 그 이름을 "
+            "정의한 파일·줄을 가리킨다. note는 사람이 읽는 결론이고, unknown은 "
+            "통과가 아니라 동적 실험을 아직 하지 못했다는 뜻이다."
         ),
         "verdictCounts": counts,
         "claims": claims,
