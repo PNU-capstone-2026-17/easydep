@@ -110,10 +110,9 @@
           "enum": [
             "aws",
             "azure",
-            "gcp",
-            "ibm"
+            "gcp"
           ],
-          "description": "우리가 정규화하는 키라 enum으로 잠근다(architecture는 소스에서 그대로 오므로 안 잠근다). 프로바이더를 늘릴 때 여기를 함께 고치라는 강제가 목적이다."
+          "description": "지원 범위인 AWS, Azure, GCP만 허용한다."
         },
         "specName": {
           "type": "string"

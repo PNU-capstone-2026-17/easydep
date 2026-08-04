@@ -34,30 +34,10 @@ DEFAULT_OUTPUTS = {
     "aws-regions": Path("output") / "aws-regions.json",
     "aws-conditional": Path("output") / "aws-conditional.json",
     "aws-endpoints": Path("output") / "aws-endpoints.json",
-    "alicloud": Path("output") / "alibaba-capacity.json",
-    "tencent": Path("output") / "tencent-capacity.json",
-    "ibm": Path("output") / "ibm-capacity.json",
-    "ncp": Path("output") / "ncp-capacity.json",
-    "openstack": Path("output") / "openstack-capacity.json",
-    "nhn": Path("output") / "nhn-capacity.json",
-    "oracle": Path("output") / "oracle-capacity.json",
     "azure-mutability": Path("output") / "azure-mutability.json",
     "azure-secret": Path("output") / "azure-secret.json",
     "azure-operations": Path("output") / "azure-operations.json",
 }
-
-
-def _tpcsp_keys() -> frozenset[str]:
-    """tpcsp가 다루는 소스 키. **여기서 손으로 적지 않는다.**
-
-    예전엔 이 목록이 `tpcsp.PROVIDERS`와 따로 하드코딩돼 있었다. nhn을 PROVIDERS에
-    더했더니 이 분기에 안 걸려 **다음 elif(azure-quota)로 흘러갔고**, 오류 없이
-    `nhn-capacity.json`에 Azure 쿼터 542건이 쓰였다. 조용히 틀린 산출물이 나오는
-    쪽이 빌드가 죽는 것보다 나쁘다.
-    """
-    from app.core.cloudkb.capacitykb.parsers.tpcsp import PROVIDERS
-
-    return frozenset(PROVIDERS)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -150,10 +130,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
         from app.core.cloudkb.capacitykb.parsers import cfnlint
 
         cfnlint.build_conditions(output, refresh=args.refresh)
-    elif args.source in _tpcsp_keys():
-        kb_cli.build_source(
-            __package__, "tpcsp", output, key=args.source, refresh=args.refresh
-        )
     elif args.source == "gcp":
         kwargs = {"refresh": args.refresh, "provider": args.provider}
         if args.tag:
