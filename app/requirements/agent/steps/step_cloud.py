@@ -42,7 +42,13 @@ defaults such as protocol versions, consistency levels, backup policies, replica
 names, or certificate authorities. The `unresolved` list is only for a missing value clearly
 required to interpret an expressed constraint; it is not a generic deployment checklist.
 Use an empty metadata object when there are no grounded details. Merge equivalent needs and
-keep distinct roles separate."""
+keep distinct roles separate.
+
+A statement that high availability is not required is a relaxed availability constraint,
+not a mandate for one instance or no replication. Represent it generically (for example,
+`availability_requirement` with `high_availability: false`) and do not infer topology,
+instance count, failover, or replication from it. More generally, an allowed simplification
+is not a required implementation choice."""
 
 
 @contract("derive_deployment_needs", requires=("classified",), produces=("deployment_needs",))

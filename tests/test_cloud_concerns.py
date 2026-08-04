@@ -1,429 +1,91 @@
-"""클라우드 네이티브 관심사 축의 규율 — 지식베이스와 링크 단계.
-
-이 파일이 지키는 것:
-  - 관심사는 **실측 좌표에 매달려 있다**(2026-08-02 재도출 — claims.json의 주장 키).
-    이 검사가 CI에서 돌기 때문에 "임의 사전"이 되지 않는다.
-  - **근거 없는 관심사는 없다** — claims가 비면 kb_ref가 실재해야 한다.
-  - 한 주장 좌표는 한 관심사에만 속한다(미분화 트립와이어).
-  - `unaddressed`(판정했는데 안 걸림)와 `unjudged`(판정할 수단이 없었음)가 섞이지 않는다.
-  - 고지(`ADVISORY_NOTICE`)가 산출물에서 떨어지지 않는다.
-"""
+"""Current generic deployment-needs extraction contract."""
 from __future__ import annotations
 
-import pytest
+import re
 
-from app.requirements import prompts
 from app.requirements.agent.steps import step_cloud
-from app.requirements.knowledge import basis, concerns, verify_concerns
-
-# 배포 KB로 가는 문이 하나로 남아 있는지는 `tests/test_core_layer.py`가 지킨다.
-# 같은 사실을 두 곳에서 검사하면 한쪽만 고쳐질 때 둘이 다른 말을 하게 된다.
-
-
-# --- 지식베이스의 규율 -------------------------------------------------------
-def test_concern_ids_are_unique_and_prefixed():
-    ids = [c.id for c in concerns.CONCERNS]
-    assert len(ids) == len(set(ids))
-    assert all(i.startswith("cn.") for i in ids)
-
-
-def test_every_concern_can_be_verified():
-    for concern in concerns.CONCERNS:
-        # 좌표가 없으면 대조를 못 받는다 = 우리가 지어낸 문장과 구별할 수 없다.
-        assert concern.claims or concern.kb_ref, concern.id
-        assert concern.citation.strip(), concern.id
-        # 질문이지 규범이 아니다.
-        assert concern.question.rstrip().endswith("?"), concern.id
-
-
-def test_every_concern_states_the_silent_answer():
-    """**침묵의 답이 있어야 관심사다.** 요구사항이 안 정했을 때 환경이 무엇을 하는지
-    관측으로 말하지 못하면, 그건 실측 재도출의 입장 관문을 통과하지 못한 것이다.
-    """
-    for concern in concerns.CONCERNS:
-        assert len(concern.cloud_specific.strip()) > 40, (
-            f"{concern.id}: 침묵의 답(관측)이 없다"
-        )
-
-
-def test_claim_coordinates_exist_and_are_owned_once():
-    """**CI에서 도는 좌표 대조** — 실재 + 유일성(구 판 doc_id 유일성의 계승).
-
-    두 관심사가 같은 주장을 인용하면 미분화 신호다. 값싸고 일찍 울린다.
-    """
-    failed = [v.concern_id for v in verify_concerns.verify() if not v.ok]
-    assert not failed, f"실측 좌표가 맞지 않는 관심사: {failed}"
-
-
-def test_a_concern_without_a_consumer_is_scope_not_exclusion():
-    """소비자 유무는 **범위 표시**이지 선정 기준이 아니다.
-
-    선정에 쓰면 "근거가 없어서 뺐다"와 "우리 코드가 안 읽어서 뺐다"가 구별되지 않는다.
-    소비자가 없어도 근거(실측 좌표)는 반드시 있어야 한다 — 그게 둘을 가르는 지점이다.
-    """
-    for concern in concerns.CONCERNS:
-        if concern.consumer is None:
-            assert concern.claims or concern.kb_ref, concern.id
-        else:
-            assert concern.consumer.strip(), concern.id
-
-
-def test_scope_boundary_is_recorded_not_left_as_silence():
-    """**"안 한 것"과 "안 하기로 한 것"을 가른다** (감사 2026-07-28의 계약)."""
-    for concern in concerns.CONCERNS:
-        if concern.out_of_scope:
-            assert concern.out_of_scope.strip(), concern.id
-            assert concern.consumer is None, (
-                f"{concern.id}: 소비자가 있는데 경계로 표시됐다"
-            )
-        # 경계여도 목록에서 빼지 않고, 근거(좌표)도 그대로 있어야 한다.
-        assert concern.claims or concern.kb_ref, concern.id
-
-
-def test_the_three_way_split_covers_every_concern():
-    """세 갈래가 **겹치지도 새지도 않는다.** 수를 적어 두어 기록을 강제한다.
-
-    **2026-08-02 실측 재도출**: 29건(벤더 문헌 유래) → 7건(claims 53좌표 + perfkb).
-    사용자 결정 — 환경측 실측만 근거로 인정한다. 구 판의 이력·측정 기록은 유효하다
-    (docs §6 · 커밋 이력). 대조표:
-    `document/archive/concern-rederivation-2026-08-02.md`.
-
-    **같은 날 클린룸 배터리 개편**: 7건 → 8건(claims 43좌표 + perfkb) —
-    주소 안정성 신설(클린룸 2/2 재현) · platform-owned 해체(노출 경로·저장
-    프로비저닝 신설) · 무방비 관심사 제거(점검 축 소유) · data-fate 정제.
-    기록: `document/archive/cleanroom-battery-2026-08-02.md`.
-
-    연결 1 = cn.load-shape(→ trafficPattern, 구 traffic-shape의 소비 계승) ·
-    예정 7 · 경계 0(경계였던 문헌 관심사들은 실측 관문을 통과하지 못해 목록 밖).
-    """
-    wired = [c for c in concerns.CONCERNS if c.consumer]
-    pending = [c for c in concerns.CONCERNS if not c.consumer and not c.out_of_scope]
-    boundary = [c for c in concerns.CONCERNS if c.out_of_scope]
-
-    assert len(wired) + len(pending) + len(boundary) == len(concerns.CONCERNS)
-    assert (len(wired), len(pending), len(boundary)) == (1, 7, 0), (
-        f"갈래가 움직였다 — 연결 {len(wired)} · 예정 {len(pending)} · 경계 {len(boundary)}"
-    )
-
-
-def test_declared_consumers_are_real_resource_spec_fields():
-    """**소비자는 오늘 실재해야 한다** — 이 검사가 없으면 `handoff`가 조용히 부푼다.
-
-    칸 목록은 **스키마에서 읽는다**(`app/core`를 거쳐서) — 손으로 적어 두면 스키마가
-    바뀔 때 이 검사가 거짓이 된다.
-    """
-    from app.core import cloud_contract
-
-    fields = cloud_contract.schema_fields()
-
-    for concern in concerns.CONCERNS:
-        if concern.consumer is None:
-            continue
-        prefix, _, spec = concern.consumer.partition(".")
-        assert prefix == "RESOURCE_SPEC", f"{concern.id}: 알 수 없는 소비자 {concern.consumer}"
-        for name in spec.split("|"):
-            assert name in fields, f"{concern.id}: RESOURCE_SPEC에 {name} 칸이 없다"
-
-
-def test_signals_are_inherited_not_invented():
-    """**신호 승계 규율.** 열쇠말은 구 판에서 코퍼스로 채굴·측정한 것만 물려받는다
-    (질문이 같은 결정일 때 — load-shape←traffic-shape · reachability←network-exposure).
-
-    새 관심사에 열쇠말을 지어 붙이면 오탐이 결정론의 이름을 달고 나온다. 늘리려면
-    코퍼스 채굴이 먼저다 — 그때 이 목록을 고치는 것이 곧 기록이 된다.
-    """
-    with_signals = {c.id for c in concerns.CONCERNS if c.signals}
-    assert with_signals == {"cn.load-shape", "cn.reachability"}, with_signals
-
-
-def test_this_axis_can_never_claim_to_be_stated():
-    """관측은 실측이어도 승격·군집은 우리 구성 — `stated`로 오를 길이 없다."""
-    for concern in concerns.CONCERNS:
-        assert concern.evidence in basis.BASIS_OF_EVIDENCE, concern.id
-        assert basis.basis_of(concern.evidence) == basis.INFERRED, concern.id
-        assert concern.hedged, concern.id
-
-
-def test_iso_mapping_uses_the_2023_vocabulary():
-    """매핑이 조용히 옛 품질 모델을 가리키지 않게 한다(2011판은 이름이 다르다)."""
-    for concern in concerns.CONCERNS:
-        for characteristic in concern.iso25010:
-            assert characteristic in concerns.ISO25010, f"{concern.id}: {characteristic}"
-
-
-def test_the_standard_gap_is_computed_not_asserted():
-    """표준 쪽 공백은 문서 표가 아니라 목록에서 나와야 한다 — 표는 목록을 안 따라온다."""
-    gap = concerns.unmapped_characteristics()
-    assert set(gap) <= set(concerns.ISO25010)
-    # 실측 재도출 뒤 공백이 커졌다(우리가 아직 안 잰 특성도 빈다 — 함수 docstring).
-    # 수를 고정하지 않는 이유는 목록이 자라면 바뀌어야 해서다. 다만 **전부 비는**
-    # 것은 매핑이 안 걸렸다는 뜻이므로 그건 막는다.
-    assert len(gap) < len(concerns.ISO25010)
-
-
-def test_signals_are_lowercase():
-    """열쇠말 매칭은 소문자화한 문장에 건다 — 대문자 열쇠말은 영원히 안 걸린다."""
-    for concern in concerns.CONCERNS:
-        assert all(s == s.lower() for s in concern.signals), concern.id
-
-
-def test_the_advisory_notice_comes_from_the_active_core_boundary():
-    """요구사항 코드는 격리 후보 patternkb가 아니라 활성 core 경계를 사용한다."""
-    from app.core import advisory
-
-    assert concerns.ADVISORY_NOTICE is advisory.ADVISORY_NOTICE
-    assert concerns.EVIDENCE is advisory.EVIDENCE
-
-
-def test_prompt_carries_every_concern_and_the_notice():
-    block = prompts.CONCERN_LINKER_SYSTEM
-    for concern in concerns.CONCERNS:
-        assert concern.id in block, concern.id
-    assert concerns.ADVISORY_NOTICE in block
-
-
-# --- 링크 단계 ---------------------------------------------------------------
-def _state(*requirements: tuple[str, str]) -> dict:
-    return {
-        "classified": [
-            {"id": rid, "text": text, "type": "NFR"} for rid, text in requirements
-        ]
-    }
-
-
-def test_signal_layer_needs_no_llm(monkeypatch):
-    """결정론 층은 스위치와 무관하게 돌고 LLM을 부르지 않는다."""
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", False)
-    monkeypatch.setattr(
-        step_cloud, "_ask_llm", lambda *a, **k: pytest.fail("LLM을 부르면 안 된다")
-    )
-
-    result = step_cloud.link_cloud_concerns(
-        _state(("NFR1", "The system must absorb traffic bursts during peak hours."))
-    )["cloud_concerns"]
-
-    by_id = {i["concern_id"]: i for i in result["items"]}
-    assert by_id["cn.load-shape"]["status"] == step_cloud.COVERED
-    assert by_id["cn.load-shape"]["covered_by"] == ["NFR1"]
-    assert by_id["cn.load-shape"]["judged_by"] == [step_cloud.BY_SIGNAL]
-
-
-def test_signals_do_not_match_inside_other_words(monkeypatch):
-    """낱말 안쪽 매칭 오탐(입력 11종에서 21건, 2026-07-27)의 회귀.
-
-    방향이 나쁜 오탐이다 — 잘못 걸린 관심사는 `covered`가 되어 **인계 목록에서
-    사라진다.** 없는 것을 드러내려는 층이 없는 것을 덮는다.
-    """
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", False)
-
-    # `republic` 안의 `public` — 낱말 경계가 막아야 한다.
-    inside = step_cloud._signal_links(
-        [{"id": "FR1", "text": "holiday calendar of the republic of korea"}]
-    )
-    assert "cn.reachability" not in inside
-
-    # 낱말로 서 있으면 걸린다 — 막는 것은 낱말 **안쪽** 매칭뿐이다.
-    outside = step_cloud._signal_links(
-        [{"id": "FR1", "text": "the admin api must not be public"}]
-    )
-    assert outside["cn.reachability"] == ["FR1"]
-
-
-@pytest.mark.parametrize("text", [
-    "holiday calendar of the republic of korea",   # republic ⊅ public
-    "an outburst of log errors was recorded",       # outburst ⊅ burst
-    "the speaker volume peaked at noon",            # speaker ⊅ peak (peaked는 어간+ed라 걸린다 — 아래 참조)
-])
-def test_no_signal_fires_inside_a_longer_word(text):
-    links = step_cloud._signal_links([{"id": "FR1", "text": text}])
-    # `peaked`는 어간+굴절이라 걸리는 것이 맞다(아래 굴절 테스트) — 여기서는
-    # 낱말 안쪽(republic·outburst)만 본다.
-    assert "cn.reachability" not in links
-    if "outburst" in text:
-        assert "cn.load-shape" not in links
-
-
-@pytest.mark.parametrize("text,expected", [
-    ("traffic spikes on friday evenings", "cn.load-shape"),
-    ("the platform shall place firewalls at every boundary", "cn.reachability"),
-])
-def test_inflected_forms_still_fire(text, expected):
-    """단어 경계만 세우면 굴절형(`spikes`·`firewalls`)이 통째로 빠진다(실측)."""
-    assert expected in step_cloud._signal_links([{"id": "FR1", "text": text}])
-
-
-def test_a_concern_without_signals_is_unjudged_not_unaddressed(monkeypatch):
-    """**이 축의 핵심 규율.** 물어보지 않은 것을 "안 다뤄졌다"고 적으면 그건 단정이다."""
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", False)
-
-    result = step_cloud.link_cloud_concerns(_state(("NFR1", "irrelevant")))["cloud_concerns"]
-    by_id = {i["concern_id"]: i for i in result["items"]}
-
-    # `cn.data-fate-on-removal`에는 열쇠말이 없다(승계 규율 — 코퍼스 채굴이 먼저다).
-    assert by_id["cn.data-fate-on-removal"]["status"] == step_cloud.UNJUDGED
-    assert "cn.data-fate-on-removal" in result["unjudged"]
-    assert "cn.data-fate-on-removal" not in result["handoff"]
-    # 열쇠말이 있는데 안 걸린 것은 판정된 것이다 — 소비자가 없으니 `noted`로 간다.
-    assert by_id["cn.reachability"]["status"] == step_cloud.UNADDRESSED
-    assert "cn.reachability" in result["noted"]
-
-
-def test_llm_layer_needs_a_majority(monkeypatch):
-    """한 표만 받은 링크는 안 붙는다 — 링크는 붙이기 쉽고, 붙으면 인계에서 사라진다."""
-    from app.requirements.schemas import ConcernLink, ConcernLinkage
-
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", True)
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_votes", 3)
-
-    ballots = iter([
-        ConcernLinkage(links=[ConcernLink(concern_id="cn.data-fate-on-removal",
-                                          requirement_ids=["NFR1"])]),
-        ConcernLinkage(links=[ConcernLink(concern_id="cn.data-fate-on-removal",
-                                          requirement_ids=["NFR1"])]),
-        ConcernLinkage(links=[ConcernLink(concern_id="cn.data-fate-on-removal",
-                                          requirement_ids=["NFR2"])]),
-    ])
-    monkeypatch.setattr(step_cloud, "_ask_llm", lambda *a, **k: next(ballots))
-
-    result = step_cloud.link_cloud_concerns(
-        _state(("NFR1", "a"), ("NFR2", "b"))
-    )["cloud_concerns"]
-    by_id = {i["concern_id"]: i for i in result["items"]}
-
-    assert by_id["cn.data-fate-on-removal"]["covered_by"] == ["NFR1"]  # 2/3만 산다
-    assert by_id["cn.data-fate-on-removal"]["judged_by"] == [step_cloud.BY_LLM]
-
-
-def test_llm_answers_are_grounded(monkeypatch):
-    """없는 요구 id·없는 관심사를 댄 답은 버린다(검증자의 `grounding`과 같은 규율)."""
-    from app.requirements.schemas import ConcernLink, ConcernLinkage
-
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", True)
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_votes", 1)
-    monkeypatch.setattr(step_cloud, "_ask_llm", lambda *a, **k: ConcernLinkage(links=[
-        ConcernLink(concern_id="cn.data-fate-on-removal", requirement_ids=["FR-999"]),
-        ConcernLink(concern_id="cn.invented", requirement_ids=["NFR1"]),
-    ]))
-
-    result = step_cloud.link_cloud_concerns(_state(("NFR1", "a")))["cloud_concerns"]
-    by_id = {i["concern_id"]: i for i in result["items"]}
-
-    assert "cn.invented" not in by_id
-    assert by_id["cn.data-fate-on-removal"]["covered_by"] == []
-    # 판정은 받았으므로 `unjudged`가 아니다 — 답이 왔고, 그 답이 "없다"였다.
-    assert by_id["cn.data-fate-on-removal"]["status"] == step_cloud.UNADDRESSED
-
-
-def test_a_failed_llm_call_does_not_become_unaddressed(monkeypatch):
-    """호출이 다 실패하면 판정을 못 얻은 것이다. 그걸 "안 다뤄졌다"로 적지 않는다."""
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_llm", True)
-    monkeypatch.setattr(step_cloud.settings, "concern_linker_votes", 2)
-
-    def boom(*_a, **_k):
-        raise RuntimeError("endpoint down")
-
-    monkeypatch.setattr(step_cloud, "_ask_llm", boom)
-
-    result = step_cloud.link_cloud_concerns(_state(("NFR1", "a")))["cloud_concerns"]
-    by_id = {i["concern_id"]: i for i in result["items"]}
-    assert by_id["cn.data-fate-on-removal"]["status"] == step_cloud.UNJUDGED
-
-
-def test_the_artifact_carries_the_notice_and_never_calls_them_defects():
-    result = step_cloud.link_cloud_concerns(_state(("NFR1", "a")))["cloud_concerns"]
-    assert result["notice"] == concerns.ADVISORY_NOTICE
-    # 미충족은 인계 항목이다. 결함 목록(`issues`)을 내면 되돌아가기가 이걸 쫓게 된다.
-    assert "issues" not in result
-    assert set(result["handoff"]) <= set(concerns.all_ids())
-
-
-# --- 사람 라벨 계기의 규율 ---------------------------------------------------
-# `concern_linker_llm` 기본값은 두 층 중 무엇이 참인지에 달려 있고, 그건 판정자끼리
-# 대조해서는 안 나온다. 그래서 계기가 지켜야 하는 것은 하나다 — **눈가림이 새지 않는 것.**
-def _ballot(domain, links, judged=None):
-    return {
-        "cell": f"{domain}|chunk0|r0", "domain": domain, "chunk": 0, "repeat": 0,
-        "answered": True, "links": links, "judged": judged or list(links),
-    }
-
-
-def _labelling(monkeypatch, llm_links, signal_links, texts):
-    from app.requirements.evaluation import concern_labels, concern_report
-
-    monkeypatch.setattr(concern_report, "load", lambda _d: [_ballot("d1", llm_links)])
-    monkeypatch.setattr(
-        concern_report, "signal_baseline", lambda: {"d1": signal_links}
-    )
-    monkeypatch.setattr(concern_labels, "_texts", lambda: {"d1": texts})
-    return concern_labels
-
-
-def test_the_label_file_never_says_which_layer_proposed_a_link(monkeypatch, tmp_path):
-    """항목 파일에 층이 보이면 눈가림이 아니고, 그러면 라벨이 층 비교에 쓸 수 없다."""
-    labels = _labelling(
-        monkeypatch,
-        llm_links={"cn.network-isolation": ["FR1"], "cn.load-shape": ["FR2"]},
-        signal_links={"cn.load-shape": ["FR2"], "cn.reachability": ["FR3"]},
-        texts={"FR1": "a", "FR2": "b", "FR3": "c"},
-    )
-    items, key = labels.build(tmp_path, controls=1)
-
-    blob = str(items)
-    for layer in (labels.LAYER_LLM, labels.LAYER_SIGNAL, labels.LAYER_BOTH):
-        assert layer not in blob
-    # 관심사 id도 층의 흔적이 될 수 있다(열쇠말 없는 관심사는 LLM 층만 낸다).
-    assert not any("concern_id" in item for item in items["items"])
-    assert {i["item_id"] for i in items["items"]} == set(key["key"])
-
-
-def test_the_same_ballots_give_the_same_file(monkeypatch, tmp_path):
-    """라벨은 여러 번에 나눠 붙인다. 파일이 흔들리면 앞서 붙인 라벨이 다른 항목에 붙는다."""
-    kwargs = dict(
-        llm_links={"cn.network-isolation": ["FR1"]},
-        signal_links={"cn.reachability": ["FR3"]},
-        texts={"FR1": "a", "FR3": "c"},
-    )
-    labels = _labelling(monkeypatch, **kwargs)
-    first, first_key = labels.build(tmp_path)
-    labels = _labelling(monkeypatch, **kwargs)
-    second, second_key = labels.build(tmp_path)
-    assert first == second and first_key == second_key
-
-
-def test_controls_come_from_links_both_layers_agreed_on(monkeypatch, tmp_path):
-    """대조 항목이 분쟁 링크에서 나오면 대조가 아니다 — 라벨러 점검이 무너진다."""
-    labels = _labelling(
-        monkeypatch,
-        llm_links={"cn.network-isolation": ["FR1"], "cn.reachability": ["FR3"]},
-        signal_links={"cn.reachability": ["FR3"]},
-        texts={"FR1": "a", "FR3": "c"},
-    )
-    _items, key = labels.build(tmp_path, controls=5)
-    controls = [c for c in key["key"].values() if c["layer"] == labels.LAYER_BOTH]
-    assert [(c["concern_id"], c["requirement_id"]) for c in controls] == [
-        ("cn.reachability", "FR3")
+from app.requirements.schemas import DeploymentNeed, DeploymentNeedsResult
+
+CLASSIFIED = [
+    {"id": "NFR1", "text": "External clients use HTTPS.", "type": "NFR"},
+    {"id": "NFR2", "text": "High availability is not required.", "type": "NFR"},
+]
+
+
+def _result(needs: dict[str, DeploymentNeed]) -> DeploymentNeedsResult:
+    return DeploymentNeedsResult(deploymentNeeds=needs)
+
+
+def test_grounded_generic_needs_are_preserved(monkeypatch):
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "https_ingress": DeploymentNeed(
+            role="Provide external HTTPS access",
+            required=True,
+            requirementIds=["NFR1"],
+            metadata={"protocol": "HTTPS"},
+        ),
+        "availability_requirement": DeploymentNeed(
+            role="No high-availability guarantee is required",
+            required=True,
+            requirementIds=["NFR2"],
+            metadata={"high_availability": False},
+        ),
+    }))
+
+    needs = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})[
+        "deployment_needs"
     ]
 
+    assert set(needs) == {"https_ingress", "availability_requirement"}
+    assert needs["availability_requirement"]["requirementIds"] == ["NFR2"]
+    assert needs["availability_requirement"]["metadata"] == {
+        "high_availability": False
+    }
 
-def test_unsure_is_not_counted_as_wrong(monkeypatch, tmp_path):
-    """모르겠다는 답을 오답으로 세면 그건 정밀도가 아니라 라벨러의 확신을 재는 것이 된다."""
-    labels = _labelling(
-        monkeypatch,
-        llm_links={"cn.network-isolation": ["FR1", "FR2"]},
-        signal_links={"cn.reachability": ["FR3"]},
-        texts={"FR1": "a", "FR2": "b", "FR3": "c"},
-    )
-    items, key = labels.build(tmp_path, controls=0)
-    by_layer = {}
-    for item in items["items"]:
-        by_layer.setdefault(key["key"][item["item_id"]]["layer"], []).append(item)
-    by_layer[labels.LAYER_LLM][0]["verdict"] = "yes"
-    by_layer[labels.LAYER_LLM][1]["verdict"] = "unsure"
 
-    score = labels.score(items, key)
-    llm = score["per_layer"][labels.LAYER_LLM]
-    assert llm["judged"] == 1 and llm["precision"] == 1.0
-    # 안 붙인 라벨도 분모에 들어가지 않는다 — 진행 중인 라벨링이 좋아 보이면 안 된다.
-    assert score["per_layer"][labels.LAYER_SIGNAL]["precision"] is None
-    # `unsure`는 **답한 것**이라 남은 항목이 아니다. 남은 것은 손대지 않은 열쇠말 항목 하나뿐.
-    assert score["remaining"] == 1
+def test_invalid_keys_and_unknown_requirement_references_are_dropped(monkeypatch):
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "AWS EBS": DeploymentNeed(
+            role="Store data", required=True, requirementIds=["NFR1"]
+        ),
+        "unlinked_need": DeploymentNeed(
+            role="Unknown", required=True, requirementIds=["MISSING"]
+        ),
+    }))
+
+    result = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})
+
+    assert result["deployment_needs"] == {}
+
+
+def test_duplicate_and_partially_unknown_requirement_ids_are_normalized(monkeypatch):
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "https_ingress": DeploymentNeed(
+            role="Provide HTTPS",
+            required=True,
+            requirementIds=["NFR1", "NFR1", "MISSING"],
+        )
+    }))
+
+    needs = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})[
+        "deployment_needs"
+    ]
+
+    assert needs["https_ingress"]["requirementIds"] == ["NFR1"]
+
+
+def test_llm_failure_is_visible_and_does_not_fabricate_needs(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(step_cloud, "invoke_structured", fail)
+
+    result = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})
+
+    assert result["deployment_needs"] == {}
+
+
+def test_deployment_need_prompt_is_english_and_rejects_design_inference():
+    assert not re.search(r"[가-힣]", step_cloud._SYSTEM)
+    assert "not a mandate for one instance or no replication" in step_cloud._SYSTEM
+    assert "Do not select or name concrete cloud resources" in step_cloud._SYSTEM
