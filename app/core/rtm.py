@@ -33,6 +33,7 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
     """
     classified = state.get("classified") or []
     use_cases = state.get("use_cases") or []
+    deployment_needs = state.get("deployment_needs") or {}
 
     # 추적 집계는 `core/traceability.py` 한 곳에서 한다 — 여기서 따로 굴리던 것을 옮겼다.
     # `check_coverage`가 같은 사실을 다르게 세고 있었고, 갈린 것을 알아채는 데 오래 걸렸다.
@@ -54,6 +55,16 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
 
     def uc_of_req(rid: str) -> tuple[str, ...]:
         return trace.ucs_of(rid)
+
+    needs_by_req: dict[str, list[str]] = {}
+    deployment_unknown_refs: list[str] = []
+    known_requirement_ids = set(by_id)
+    for need_id, need in deployment_needs.items():
+        for requirement_id in need.get("requirementIds", []):
+            if requirement_id not in known_requirement_ids:
+                deployment_unknown_refs.append(requirement_id)
+                continue
+            needs_by_req.setdefault(requirement_id, []).append(need_id)
 
     rows = []
     for r in classified:
@@ -79,6 +90,7 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
         rows.append({
             "id": rid, "type": typ, "text": r.get("text", ""),
             "use_cases": ucs, "scenario_steps": steps,
+            "deployment_needs": sorted(needs_by_req.get(rid, [])),
             "qualifies": qualifies, "qualifies_use_cases": q_ucs,
             "status": status, "realized": realized,
         })
@@ -117,8 +129,11 @@ def build_rtm(state: dict, verdicts: list[dict] | None = None) -> dict:
         "nfr_gap": sum(1 for r in nfr_rows if r["realized"] is False),
         "orphan_use_cases": [u["id"] for u in use_case_view if u["orphan_uc"]],
         "unknown_refs": unknown_refs,
+        "deployment_needs": len(deployment_needs),
+        "deployment_unknown_refs": sorted(set(deployment_unknown_refs)),
     }
     return {"rows": rows, "use_case_view": use_case_view,
+            "deployment_needs": deployment_needs,
             "unknown_refs": unknown_refs, "summary": summary}
 
 
@@ -150,6 +165,7 @@ def render_rtm_md(rtm: dict, title: str = "") -> str:
         L.append(f"- FR 검증(judge): **verified {s.get('fr_verified', 0)}/{s['fr_total']}** · "
                  f"거짓주장 {s.get('fr_false_claim', 0)} · 미판정 {s.get('fr_unjudged', 0)}")
     L.append(f"- NFR 검증(ack): **{s.get('nfr_ack', 0)}/{s['nfr_total']}** · gap {s.get('nfr_gap', 0)}")
+    L.append(f"- 배포 필요사항: **{s.get('deployment_needs', 0)}개**")
     if s["orphan_use_cases"]:
         L.append(f"- **orphan UC**(요구 미추적): {', '.join(s['orphan_use_cases'])}")
     if s["unknown_refs"]:
@@ -157,8 +173,8 @@ def render_rtm_md(rtm: dict, title: str = "") -> str:
     L.append("")
     L.append("## 요구 → 설계 추적")
     L.append("")
-    L.append("| 요구 | 유형 | 내용 | →FR | UC | 명세 스텝 | 상태 | 검증 |")
-    L.append("|---|---|---|---|---|---|---|---|")
+    L.append("| 요구 | 유형 | 내용 | →FR | UC | 배포 필요사항 | 명세 스텝 | 상태 | 검증 |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
     for r in rtm["rows"]:
         qual = ", ".join(r.get("qualifies", [])) or "—"
         if r["use_cases"]:
@@ -168,8 +184,9 @@ def render_rtm_md(rtm: dict, title: str = "") -> str:
         else:
             ucs = "—"
         steps = ", ".join(r["scenario_steps"]) or "—"
+        needs = ", ".join(r.get("deployment_needs", [])) or "—"
         verdict = _verdict_cell(r)
-        L.append(f"| {r['id']} | {r['type']} | {_clip(r['text'])} | {qual} | {ucs} | {steps} "
+        L.append(f"| {r['id']} | {r['type']} | {_clip(r['text'])} | {qual} | {ucs} | {needs} | {steps} "
                  f"| {r['status']} | {verdict} |")
     L.append("")
     L.append("## UC → 요구 추적 (역방향)")

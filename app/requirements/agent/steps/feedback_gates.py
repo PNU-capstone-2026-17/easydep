@@ -119,12 +119,12 @@ def gate_requirements(state: AgentState) -> dict:
 
     # **되묻기의 답은 요구사항 피드백이 아니다.** 재분류를 돌리면 사용자는 질문에 답했을
     # 뿐인데 요구사항이 흔들린다. 답은 상태에 쌓고 루프백만 한다 — 루프가
-    # `cover_cloud_concerns → structure_constraints`를 다시 지나며 스펙이 새 답으로
+    # `derive_deployment_needs → structure_constraints`를 다시 지나며 스펙이 새 답으로
     # 다시 조립된다(그 배선이 이미 있어서 여기서 단계를 부르지 않는다).
     if isinstance(answer, ResourceAnswer):
         merged = {**(state.get("resource_answers") or {}), **answer.answers}
-        # **`answers` 경로로 돌아간다** — 일반 `loop`는 `cover_cloud_concerns`부터 다시
-        # 도는데, 이 분기는 `classify`를 안 돌려 `classified`가 그대로다. 관심사 링크는
+        # **`answers` 경로로 돌아간다** — 일반 `loop`는 `derive_deployment_needs`부터 다시
+        # 도는데, 이 분기는 `classify`를 안 돌려 `classified`가 그대로다. 배포 필요사항은
         # 그 입력의 순수 함수라 같은 답이 나오고, LLM 층을 켜면 그 재계산이 표당 24초짜리
         # 호출 3벌이 된다(실측 396표: 중앙값 23.6초). 답 한 번에 1~2분을 버리는 셈이다.
         return {"resource_answers": merged, "gate_route": "answers"}

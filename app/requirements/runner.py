@@ -43,7 +43,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
+from app.requirements.agent.steps.step_cloud import derive_deployment_needs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.config import settings
 
@@ -76,6 +76,7 @@ def load_state(run_dir: str | Path) -> dict:
         "use_cases": _j("use_cases.json", []),
         "coverage": _j("coverage.json", {}),
         "model_review": _j("model_review.json", {}),
+        "deployment_needs": _j("deployment_needs.json", {}),
         **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
@@ -180,6 +181,7 @@ def _summarize(state: dict) -> dict:
         # 의미 검증이 실제로 돌았는지. 이게 없으면 결함 0건이 "깨끗하다"인지
         # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
         "model_review": state.get("model_review", {}),
+        "n_deployment_needs": len(state.get("deployment_needs", {})),
         # 되돌아가기가 있었는지. 있었으면 이 실행의 비용은 한 바퀴 이상이다.
         "redo_rounds": state.get("redo_rounds", 0),
         "relationships": {
@@ -208,6 +210,7 @@ def persist_run(
     _dump(run_dir / "actors.json", state.get("actors", []))
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
+    _dump(run_dir / "deployment_needs.json", state.get("deployment_needs", {}))
     # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
     # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
     _dump(run_dir / "model_review.json", state.get("model_review", {}))
