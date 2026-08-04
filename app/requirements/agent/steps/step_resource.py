@@ -58,11 +58,13 @@ from dataclasses import asdict, dataclass
 
 from app.core import cloud_contract, input_registry, regions
 from app.requirements import prompts
+from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS
+from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS, convert_to_usd
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.schemas import CloudConstraintExtraction
 
 #: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 **옮겨 적지 않고 읽는다** —
 #: 손으로 적어 두면 판을 올릴 때 여기가 조용히 낡는다(판 2에서 실제로 그럴 뻔했다).
@@ -571,6 +573,93 @@ def _run(session: _Session, briefing: str) -> None:
             break
 
 
+_EXTRACTION_SYSTEM = """Extract only cloud constraints explicitly stated by the user.
+Return one structured object. Do not infer defaults or recommendations.
+Each *_evidence value must be an exact contiguous quote from the input.
+Use null and empty evidence when a value is absent. If statements conflict or are
+ambiguous, leave the value null and add its RESOURCE_SPEC field name to
+ambiguous_fields. The deployment workload is fixed by the system and is not extracted.
+Provider must be aws, azure, or gcp when explicit. Region stays in the user's words;
+code resolves it later. A monthly price or instance price is not a monthly budget.
+steady means sustained load; spiky means intermittent peaks. multi_zone is true only
+when service must survive an availability-zone failure, and false only when the user
+explicitly accepts a single zone. Do not derive vCPU or memory from users or traffic."""
+
+
+def _extract_once(briefing: str) -> CloudConstraintExtraction:
+    """Use one constrained LLM call to read natural-language constraints."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return invoke_structured(
+        CloudConstraintExtraction,
+        [SystemMessage(content=_EXTRACTION_SYSTEM), HumanMessage(content=briefing)],
+    )
+
+
+def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> None:
+    """Normalize and validate an LLM extraction using deterministic code."""
+    direct = (
+        ("provider", found.provider, found.provider_evidence),
+        ("minVCpu", found.min_vcpu, found.min_vcpu_evidence),
+        ("minMemoryGiB", found.min_memory_gib, found.min_memory_evidence),
+        ("trafficPattern", found.traffic_pattern, found.traffic_pattern_evidence),
+        ("multiZone", found.multi_zone, found.multi_zone_evidence),
+        ("dataResidency", found.data_residency, found.data_residency_evidence),
+    )
+    for field, value, evidence in direct:
+        if value is not None:
+            session.record(field, value, evidence)
+
+    if found.region_as_written is not None:
+        session.record(
+            "regionAsWritten", found.region_as_written, found.region_evidence
+        )
+        matches = regions.resolve(
+            found.region_as_written,
+            provider=str(session.draft.get("provider") or "") or None,
+        )
+        if len(matches) == 1:
+            match = matches[0]
+            tool_result = f"{match.code} ({match.provider}, {match.display_name})"
+            session.saw(tool_result)
+            session.record("region", match.code, match.code)
+        elif len(matches) != 1:
+            session.ask("region", cloud_contract.question("region"))
+
+    if found.monthly_budget_amount is not None:
+        currency = (found.monthly_budget_currency or "").upper()
+        if currency == "USD":
+            session.record(
+                "monthlyBudgetUSD",
+                found.monthly_budget_amount,
+                found.monthly_budget_evidence,
+            )
+        elif currency:
+            conversion = str(convert_to_usd.invoke({
+                "amount": found.monthly_budget_amount,
+                "currency": currency,
+            }))
+            session.saw(conversion)
+            try:
+                usd = json.loads(conversion)["usd"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                session.ask("monthlyBudgetUSD", cloud_contract.question("monthlyBudgetUSD"))
+            else:
+                session.record("monthlyBudgetUSD", usd, str(usd))
+
+    if found.scale_value is not None and found.scale_unit is not None:
+        session.record(
+            "scale",
+            {"value": found.scale_value, "unit": found.scale_unit},
+            found.scale_evidence,
+        )
+
+    for field in found.ambiguous_fields:
+        if field in cloud_contract.schema_fields() and field != "workloads":
+            session.ask(field, cloud_contract.question(field) or f"{field} 값을 확인해 주세요.")
+    session.understanding = found.understanding.strip()
+
+
 @contract("build_resource_spec", requires=("classified",),
           produces=("resource_intake",))
 def build_resource_spec(state: AgentState) -> dict:
@@ -583,7 +672,7 @@ def build_resource_spec(state: AgentState) -> dict:
         degraded = "resource_agent_llm이 꺼져 있다 — 아무것도 읽지 않았다"
     else:
         try:
-            _run(session, briefing)
+            _record_extraction(session, _extract_once(briefing))
         except Exception as exc:  # noqa: BLE001 — 못 읽었으면 못 읽었다고 남기고 되묻는다
             degraded = f"{type(exc).__name__}: {exc}"
     if degraded:

@@ -434,6 +434,37 @@ class ResourceAnswer(BaseModel):
     answers: dict[str, str] = Field(default_factory=dict)
 
 
+class CloudConstraintExtraction(BaseModel):
+    """One-pass LLM extraction of user-stated cloud constraints.
+
+    Every evidence field must be an exact substring of the input. Missing or ambiguous
+    values stay null; validation and normalization happen in code after extraction.
+    """
+
+    provider: str | None = None
+    provider_evidence: str = ""
+    region_as_written: str | None = None
+    region_evidence: str = ""
+    monthly_budget_amount: float | None = None
+    monthly_budget_currency: str | None = None
+    monthly_budget_evidence: str = ""
+    min_vcpu: int | None = None
+    min_vcpu_evidence: str = ""
+    min_memory_gib: float | None = None
+    min_memory_evidence: str = ""
+    traffic_pattern: Literal["steady", "spiky"] | None = None
+    traffic_pattern_evidence: str = ""
+    multi_zone: bool | None = None
+    multi_zone_evidence: str = ""
+    scale_value: float | None = None
+    scale_unit: Literal["concurrentUsers", "requestsPerSecond"] | None = None
+    scale_evidence: str = ""
+    data_residency: str | None = None
+    data_residency_evidence: str = ""
+    ambiguous_fields: list[str] = Field(default_factory=list)
+    understanding: str = ""
+
+
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
 # ----------------------------------------------------------------------------
