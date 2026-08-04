@@ -1,0 +1,21 @@
+{
+  "name": "holdout_telehealth",
+  "description": "Holdout: appointment, video, prescription, and payment workflow.",
+  "resource_constraints_text": "Deploy Docker containers on Azure Linux VMs in Korea Central. The monthly budget is 900 USD. Service interruption during one VM failure shall not prevent appointment booking.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"Patients browse clinician availability and book an open appointment slot."},
+    {"id":"FR2","type":"FR","text":"Clinicians publish working hours and block unavailable periods."},
+    {"id":"FR3","type":"FR","text":"Patients and clinicians join an appointment using a session created by the external Video Service."},
+    {"id":"FR4","type":"FR","text":"Clinicians record consultation notes in the patient's visit history."},
+    {"id":"FR5","type":"FR","text":"Clinicians issue a prescription that the system transmits to the Pharmacy selected by the patient."},
+    {"id":"FR6","type":"FR","text":"Patients pay a consultation invoice through the external Payment Gateway."},
+    {"id":"FR7","type":"FR","text":"Patients receive an appointment reminder 24 hours before the scheduled start."},
+    {"id":"FR8","type":"FR","text":"Compliance auditors review access records for patient information."},
+    {"id":"NFR1","type":"NFR","text":"Booking shall prevent two patients from reserving the same appointment slot."},
+    {"id":"NFR2","type":"NFR","text":"Clinical and appointment records shall survive container and VM restarts."},
+    {"id":"NFR3","type":"NFR","text":"Patient information shall be encrypted in transit and at rest."},
+    {"id":"NFR4","type":"NFR","text":"Patient-record access shall produce immutable audit records retained for seven years."},
+    {"id":"NFR5","type":"NFR","text":"The booking API shall respond within two seconds at the 95th percentile under 30 requests per second."},
+    {"id":"NFR6","type":"NFR","text":"The application shall run as Docker containers on Linux VMs and expose health metrics."}
+  ]
+}

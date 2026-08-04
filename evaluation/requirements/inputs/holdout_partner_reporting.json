@@ -1,0 +1,19 @@
+{
+  "name": "holdout_partner_reporting",
+  "description": "Holdout: scheduled processing, external data input, and outbound partner reports.",
+  "resource_constraints_text": "Deploy Docker containers on AWS Linux VMs in Seoul. Monthly infrastructure cost shall not exceed 350 USD. High availability is not required, but failed nightly jobs must be recoverable.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"Analysts define a portfolio and its reporting currency."},
+    {"id":"FR2","type":"FR","text":"At the end of each business day, the system requests closing exchange rates from the external Market Data Service."},
+    {"id":"FR3","type":"FR","text":"The system calculates each portfolio's daily valuation using the received rates."},
+    {"id":"FR4","type":"FR","text":"Analysts review valuation results and data-quality warnings."},
+    {"id":"FR5","type":"FR","text":"Analysts approve a completed daily valuation for publication."},
+    {"id":"FR6","type":"FR","text":"Partner Systems receive an approved valuation report through a signed webhook."},
+    {"id":"FR7","type":"FR","text":"Operations Staff rerun a failed daily valuation after correcting its input data."},
+    {"id":"NFR1","type":"NFR","text":"Valuation inputs, results, and approvals shall survive application and VM restarts."},
+    {"id":"NFR2","type":"NFR","text":"A daily valuation shall complete within 20 minutes for 100,000 portfolio positions."},
+    {"id":"NFR3","type":"NFR","text":"Published reports shall be immutable and retained for one year."},
+    {"id":"NFR4","type":"NFR","text":"Market-data and webhook credentials shall be supplied at runtime."},
+    {"id":"NFR5","type":"NFR","text":"The application shall run as Docker containers on Linux VMs and expose job health metrics."}
+  ]
+}
