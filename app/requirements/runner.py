@@ -210,6 +210,7 @@ def persist_run(
     dataset_name: str = "",
     artifact_root: Path | str = ARTIFACTS_DIR,
     traceability_verdicts: list[dict] | None = None,
+    run_metrics: dict | None = None,
 ) -> Path:
     """실행 결과를 artifacts/run_*/ 에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
     artifact_root = Path(artifact_root)
@@ -264,8 +265,14 @@ def persist_run(
             "base_url": settings.base_url,
             "temperature": settings.temperature,
             "spec_concurrency": settings.spec_concurrency,
+            "max_repair_iters": settings.max_repair_iters,
+            "max_coverage_iters": settings.max_coverage_iters,
+            "max_redo_rounds": settings.max_redo_rounds,
+            "validator_votes": settings.validator_votes,
+            "validator_per_rule": settings.validator_per_rule,
             "enable_bert_verify": settings.enable_bert_verify,
         },
+        "metrics": run_metrics or {},
         "summary": _summarize(state),
     }
     _dump(run_dir / "manifest.json", manifest)

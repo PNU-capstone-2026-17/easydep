@@ -134,7 +134,13 @@ def _sample_state():
 
 def test_persist_run_writes_expected_tree(tmp_path):
     input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
-    run_dir = runner.persist_run(input_obj, _sample_state(), dataset_name="demo", artifact_root=tmp_path)
+    run_dir = runner.persist_run(
+        input_obj,
+        _sample_state(),
+        dataset_name="demo",
+        artifact_root=tmp_path,
+        run_metrics={"llm_calls": 9, "prompt_tokens": 100},
+    )
 
     # 최상위 산출물
     for f in ("input.json", "manifest.json", "actors.json", "use_cases.json",
@@ -153,6 +159,8 @@ def test_persist_run_writes_expected_tree(tmp_path):
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["dataset"] == "demo"
+    assert manifest["metrics"]["llm_calls"] == 9
+    assert manifest["config"]["max_repair_iters"] >= 0
     assert len(manifest["input_sha256"]) == 64
     assert manifest["run_id"].endswith(manifest["input_sha256"][:10])
     # 요약: 개수 + 위반 있는 UC만 노출 + 관계 카운트

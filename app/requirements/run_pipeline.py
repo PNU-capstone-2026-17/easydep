@@ -72,7 +72,11 @@ def main(argv: list[str] | None = None) -> int:
                 resource_answers=obj.get("resource_answers") or {},
             )
         run_dir = persist_run(
-            obj, state, dataset_name=obj.get("name", name), artifact_root=Path(args.out)
+            obj,
+            state,
+            dataset_name=obj.get("name", name),
+            artifact_root=Path(args.out),
+            run_metrics=stats.as_dict(),
         )
         cov = state.get("coverage", {})
         print(f"  → {run_dir}")
