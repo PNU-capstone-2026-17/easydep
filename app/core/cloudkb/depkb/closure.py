@@ -32,12 +32,18 @@ _ARTIFACT = Path(__file__).resolve().parent / "claims.json"
 PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     ("server-default:", "auto"),
     ("server-implicit:", "auto"),
+    ("서버 기본값:", "auto"),
+    ("서버 자동 생성:", "auto"),
     ("disjunctive:", "choice"),
+    ("선택 규칙:", "choice"),
     ("network 모드 조건부:", "conditional"),
+    ("네트워크 모드 조건:", "conditional"),
     ("스킴 조건부:", "conditional"),
+    ("스킴 조건:", "conditional"),
     # 쌍 호환: 조건이 간선의 한쪽이 아니라 (주체 속성 × 대상 속성) 쌍에 걸린다.
     # 판정(필수/선택)을 바꾸지 않고, 소비층에선 결정이 아니라 제약 검사가 된다.
     ("쌍 호환:", "detail"),
+    ("두 자원의 호환 조건:", "detail"),
     # 이름 조건: 대상이 특정 이름이어야 한다(azure GatewaySubnet 실측).
     ("이름 조건:", "detail"),
     # 배치 조건: 대상들이 서로 어떻게 흩어져 있어야 하는가(aws EKS의 다른 AZ ≥2).
@@ -47,6 +53,7 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     # 생성 시 필수인데 이후엔 독립 CRUD). 존재 판정은 생성 시점 기준으로 두고,
     # 운영 시점의 여지는 술어가 나른다.
     ("수명 조건:", "detail"),
+    ("수명주기 조건:", "detail"),
     # 동반 정리: 주체 삭제가 대상(합성물)을 함께 지운다 — 삭제 보호의 반대
     # 방향이라 lifecycle 소비가 deleteBefore가 아니라 cleanupCascades로 갈린다
     # (k8s 합성 라운드 실측). 존재 간선에 실리면 detail로 읽는다.
@@ -59,10 +66,13 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     # 디스크가 아니라 인스턴스에서 나온다). 판정을 바꾸지 않고 계획층에는
     # "무엇을 원본으로 잡을지"의 부가 조건으로 읽힌다.
     ("원본 종류 반전:", "detail"),
+    ("CSP별 원본 차이:", "detail"),
     # 경유: 의존이 중간 자원을 통해 성립한다(aws EFS는 파일시스템 자체가
     # 아니라 mount target이 서브넷을 요구한다). 중간 자원을 어휘로 올리지
     # 않고 술어가 나른다 — 판정은 그대로고 계획층엔 부가 조건이다.
     ("마운트 타깃 경유:", "detail"),
+    ("중간 자원을 통한 조건:", "detail"),
+    ("별도 조건 없음", "detail"),
 )
 
 #: 부류 → **IDL 표현**(Martín-López, Segura, Ruiz-Cortés. *RESTest*, ICSOC 2020,
