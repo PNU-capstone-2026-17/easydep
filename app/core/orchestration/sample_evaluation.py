@@ -39,7 +39,8 @@ def inspect_result(response: dict[str, Any]) -> dict[str, Any]:
     logical_puml = str(cloud.get("logical_deployment_diagram_puml") or "")
     validation = design.get("validation") or {}
     checks = {
-        "workflow_completed": response.get("status") == "completed",
+        "design_completed": bool(cloud)
+        and response.get("stage") in {"implementation", "completed"},
         "requirements_completed": requirements.get("status") == "completed",
         "use_case_specs_present": bool(requirements.get("use_case_specs")),
         "class_diagram_present": bool(artifacts.get("class_diagram")),
@@ -138,21 +139,32 @@ def main() -> None:
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/orchestration/sample-evaluation")
     )
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     paths = (
         [args.input_dir / f"{name}.json" for name in args.samples]
         if args.samples
         else sorted(args.input_dir.glob("*.json"))
     )
-    summary = []
+    summary_path = args.output_dir / "summary.json"
+    summary = (
+        json.loads(summary_path.read_text(encoding="utf-8"))
+        if args.resume and summary_path.is_file()
+        else []
+    )
+    by_sample = {str(item.get("sample")): item for item in summary}
     for path in paths:
+        existing = by_sample.get(path.name) or {}
+        if args.resume and existing.get("inspection", {}).get("passed") is True:
+            continue
         try:
-            summary.append(run_sample(path, args.output_dir))
+            item = run_sample(path, args.output_dir)
         except Exception as exc:
-            failure = {"sample": path.name, "error": f"{type(exc).__name__}: {exc}"}
-            _write(args.output_dir / path.stem / "error.json", failure)
-            summary.append(failure)
-        _write(args.output_dir / "summary.json", summary)
+            item = {"sample": path.name, "error": f"{type(exc).__name__}: {exc}"}
+            _write(args.output_dir / path.stem / "error.json", item)
+        by_sample[path.name] = item
+        summary = [by_sample[name] for name in sorted(by_sample)]
+        _write(summary_path, summary)
 
 
 if __name__ == "__main__":

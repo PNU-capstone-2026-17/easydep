@@ -108,6 +108,8 @@ def run(
             env=environment,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     (run_dir / "stdout.log").write_text(completed.stdout, encoding="utf-8")

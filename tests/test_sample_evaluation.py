@@ -7,7 +7,8 @@ def test_inspection_reads_nested_design_artifacts():
         'node "Docker runtime"\nartifact "Application container"\n@enduml'
     )
     response = {
-        "status": "completed",
+        "status": "needs_input",
+        "stage": "implementation",
         "result": {
             "requirements_result": {
                 "status": "completed",

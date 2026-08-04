@@ -89,6 +89,15 @@ class ImplementationAdapter:
         if os.getenv("API_KEY") and not os.getenv("NVIDIA_API_KEY"):
             os.environ["NVIDIA_API_KEY"] = os.environ["API_KEY"]
 
+    def _configure_gradle_memory(self) -> None:
+        cache = self.settings.repository_root / ".easydep" / "gradle-cache"
+        cache.mkdir(parents=True, exist_ok=True)
+        heap_mb = max(128, int(os.getenv("IMPLEMENTATION_GRADLE_XMX_MB", "128")))
+        (cache / "gradle.properties").write_text(
+            f"org.gradle.jvmargs=-Xmx{heap_mb}m -XX:MaxMetaspaceSize=192m\n",
+            encoding="utf-8",
+        )
+
     @staticmethod
     def _model() -> str:
         value = os.getenv("MODEL", "openai/gpt-oss-120b")
@@ -105,6 +114,7 @@ class ImplementationAdapter:
         infrastructure_recommendation: dict[str, Any],
     ) -> dict[str, Any]:
         self._bridge_api_key()
+        self._configure_gradle_memory()
         design = self._design_payload(
             requirements_result,
             design_result,
@@ -135,6 +145,7 @@ class ImplementationAdapter:
         if not approved:
             return {**result, "status": "rejected"}
         self._bridge_api_key()
+        self._configure_gradle_memory()
         job_path = Path(str(result["job_path"]))
         run_root = Path(str(result["run_root"]))
         # Reconciliation can turn completed task results into checkpoints and

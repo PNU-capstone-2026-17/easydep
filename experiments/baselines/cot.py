@@ -103,6 +103,7 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
         model=model(),
         temperature=temperature(),
         seed=seed(),
+        response_format={"type": "json_object"},
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": case.prompt()}],
     )
