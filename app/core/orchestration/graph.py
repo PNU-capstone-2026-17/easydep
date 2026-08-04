@@ -10,18 +10,20 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from app.core.orchestration.adapters import DesignAdapter, RequirementsAdapter
+from app.core.orchestration.checkpoint import (
+    DEFAULT_CHECKPOINT_PATH,
+    SqliteMemorySaver,
+)
 from app.core.orchestration.contracts import (
     DESIGN_COMPLETE,
     REQUIREMENTS_COMPLETE,
     FlowResponse,
     OrchestrationState,
 )
-from app.repositories import artifact_repository
 
 
 def _requirements_prompt(result: dict[str, Any]) -> dict[str, Any]:
@@ -78,7 +80,10 @@ def build_orchestration_graph(
         return {"requirements_result": result, "status": result.get("status", "unknown")}
 
     def start_design(state: OrchestrationState) -> dict[str, Any]:
-        result = design_adapter.start(app_id=state["app_id"])
+        result = design_adapter.start(
+            session_id=f"orchestration:{state['run_id']}:design",
+            requirements_result=state["requirements_result"],
+        )
         return {
             "design_result": result,
             "current_stage": "design",
@@ -89,7 +94,10 @@ def build_orchestration_graph(
         feedback = interrupt(_design_prompt(state["design_result"]))
         if not isinstance(feedback, str):
             raise TypeError("Design feedback must be a string")
-        result = design_adapter.resume(app_id=state["app_id"], feedback=feedback)
+        result = design_adapter.resume(
+            session_id=f"orchestration:{state['run_id']}:design",
+            feedback=feedback,
+        )
         return {"design_result": result, "status": result.get("status", "unknown")}
 
     def finish(_state: OrchestrationState) -> dict[str, Any]:
@@ -116,14 +124,19 @@ def build_orchestration_graph(
     builder.add_conditional_edges("start_design", after_design)
     builder.add_conditional_edges("resume_design", after_design)
     builder.add_edge("finish", END)
-    return builder.compile(checkpointer=checkpointer or MemorySaver())
+    return builder.compile(
+        checkpointer=checkpointer
+        or SqliteMemorySaver(DEFAULT_CHECKPOINT_PATH, "orchestration")
+    )
 
 
 graph = build_orchestration_graph()
 
 
 def _response(result: dict[str, Any], run_id: str) -> FlowResponse:
-    interruptions = result.get("__interrupt__") or []
+    config = {"configurable": {"thread_id": run_id}}
+    active = bool(graph.get_state(config).next)
+    interruptions = (result.get("__interrupt__") or []) if active else []
     serializable_result = {
         key: value for key, value in result.items() if key != "__interrupt__"
     }
@@ -155,10 +168,7 @@ def start_workflow(
     run_id: str | None = None,
 ) -> FlowResponse:
     """Start a workflow and return at the first requirements/design gate."""
-    actual_app_id = app_id or artifact_repository.create_app(
-        requirements_text="\n".join(requirements),
-        resource_constraints_text=resource_constraints_text,
-    )
+    actual_app_id = app_id or uuid.uuid4().hex
     actual_run_id = run_id or uuid.uuid4().hex
     initial: OrchestrationState = {
         "run_id": actual_run_id,

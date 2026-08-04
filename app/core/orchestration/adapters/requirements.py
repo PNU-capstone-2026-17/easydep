@@ -1,16 +1,39 @@
-"""Requirements-agent boundary.
-
-No requirements internals are reproduced here. The adapter invokes its public
-session functions and persists the artifacts through the same function used by
-the requirements HTTP API.
-"""
+"""Persistent, database-independent requirements-agent boundary."""
 
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
+
+from app.core.orchestration.checkpoint import (
+    DEFAULT_CHECKPOINT_PATH,
+    SqliteMemorySaver,
+)
+from app.requirements.agent.state import AgentState
 
 
 class RequirementsAdapter:
+    def __init__(self, checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH) -> None:
+        from app.requirements.agent.graph import build_graph
+
+        saver = SqliteMemorySaver(checkpoint_path, "requirements")
+        self.graph = build_graph(feedback_gates=False, saver=saver)
+
+    @staticmethod
+    def _payload(result: dict[str, Any], thread_id: str) -> dict[str, Any]:
+        from app.requirements.agent.graph import _result_payload
+
+        return _result_payload(result, thread_id)
+
+    def _invoke(self, value: Any, config: RunnableConfig) -> dict[str, Any]:
+        result = dict(self.graph.invoke(value, config))
+        if not self.graph.get_state(config).next:
+            result.pop("__interrupt__", None)
+        return result
+
     def start(
         self,
         *,
@@ -19,31 +42,16 @@ class RequirementsAdapter:
         requirements: list[str],
         constraints_text: str,
     ) -> dict[str, Any]:
-        from app.requirements.agent import start_analysis
-        from app.requirements.api import persist_analysis
-        from app.requirements.config import settings
-
-        result = start_analysis(
-            requirements,
-            thread_id,
-            feedback_gates=settings.enable_feedback_gates,
-            persist=settings.enable_session_persistence,
-            constraints_text=constraints_text,
-        )
-        result["saved_stages"] = persist_analysis(app_id, result)
-        return result
+        initial: dict[str, Any] = {"raw_requirements": requirements}
+        if constraints_text.strip():
+            initial["resource_constraints_text"] = constraints_text
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        result = self._invoke(cast(AgentState, initial), config)
+        return self._payload(result, thread_id)
 
     def resume(
         self, *, app_id: str, thread_id: str, answer: Any
     ) -> dict[str, Any]:
-        from app.requirements.agent import resume_analysis
-        from app.requirements.api import persist_analysis
-        from app.requirements.config import settings
-
-        result = resume_analysis(
-            answer,
-            thread_id,
-            persist=settings.enable_session_persistence,
-        )
-        result["saved_stages"] = persist_analysis(app_id, result)
-        return result
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        result = self._invoke(Command(resume=answer), config)
+        return self._payload(result, thread_id)

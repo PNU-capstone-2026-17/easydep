@@ -25,8 +25,9 @@ class FakeDesign:
         self.starts = 0
         self.resumes = []
 
-    def start(self, **_kwargs):
+    def start(self, **kwargs):
         self.starts += 1
+        assert kwargs["requirements_result"]["use_case_specs"]
         return {"status": "need_feedback", "stage": "class_diagram"}
 
     def resume(self, **kwargs):

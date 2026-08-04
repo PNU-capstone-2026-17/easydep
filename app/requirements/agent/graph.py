@@ -170,7 +170,12 @@ def _build_gated_graph(saver):
     return builder.compile(checkpointer=saver)
 
 
-def build_graph(feedback_gates: bool | None = None, *, persistent: bool = False):
+def build_graph(
+    feedback_gates: bool | None = None,
+    *,
+    persistent: bool = False,
+    saver=None,
+):
     """settings(또는 인자)에 따라 두 플랫 빌더 중 하나를 골라 컴파일한 그래프를 반환한다.
 
     feedback_gates=None이면 빌드 타임에 settings.enable_feedback_gates 를 1회 읽는다(기존
@@ -181,8 +186,12 @@ def build_graph(feedback_gates: bool | None = None, *, persistent: bool = False)
     DB 없이 돌 수 있어야 하는 경로이기도 하다.
     """
     gated = settings.enable_feedback_gates if feedback_gates is None else feedback_gates
-    saver = SqlCheckpointSaver() if persistent else MemorySaver()
-    return _build_gated_graph(saver) if gated else _build_plain_graph(saver)
+    checkpoint_saver = saver or (SqlCheckpointSaver() if persistent else MemorySaver())
+    return (
+        _build_gated_graph(checkpoint_saver)
+        if gated
+        else _build_plain_graph(checkpoint_saver)
+    )
 
 
 # 앱 전역에서 재사용할 컴파일된 그래프 (모듈 로드 시 1회 생성)
