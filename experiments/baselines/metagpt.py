@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from experiments.baselines.common import (
+    ROOT,
     ExperimentCase,
     begin_run,
     require_api_key,
@@ -18,7 +19,20 @@ from experiments.baselines.common import (
     write_json,
 )
 
-IMAGE = "easydep-metagpt:0.8.2"
+DEFAULT_EXECUTABLE = ROOT / ".venv-metagpt" / (
+    "Scripts/metagpt.exe" if os.name == "nt" else "bin/metagpt"
+)
+
+
+def _executable() -> Path:
+    configured = os.getenv("METAGPT_EXECUTABLE")
+    executable = Path(configured) if configured else DEFAULT_EXECUTABLE
+    if not executable.is_file():
+        raise RuntimeError(
+            f"MetaGPT executable not found: {executable}. "
+            "Run experiments/baselines/setup_metagpt.ps1 first."
+        )
+    return executable
 
 
 def _task(case: ExperimentCase) -> str:
@@ -41,10 +55,9 @@ def run(
 ) -> Path:
     case = ExperimentCase.load(case_path)
     run_dir = begin_run("metagpt", case, output_root)
-    command = [
-        "docker", "run", "--rm", IMAGE, "metagpt", _task(case),
-        "--investment", str(investment), "--n_round", str(rounds),
-    ]
+    executable = Path(os.getenv("METAGPT_EXECUTABLE", str(DEFAULT_EXECUTABLE)))
+    command = [str(executable), _task(case), "--investment", str(investment),
+               "--n-round", str(rounds)]
     manifest = run_manifest("metagpt", case, command)
     manifest.update({"metagptVersion": "0.8.2", "investment": investment, "rounds": rounds})
     write_json(run_dir / "input.json", {
@@ -60,6 +73,7 @@ def run(
         return run_dir
 
     require_api_key()
+    executable = _executable()
     workspace = run_dir / "workspace"
     workspace.mkdir()
     config = {
@@ -72,16 +86,24 @@ def run(
     }
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="easydep-metagpt-") as temp:
-        config_path = Path(temp) / "config2.yaml"
+        profile = Path(temp)
+        config_path = profile / ".metagpt" / "config2.yaml"
+        config_path.parent.mkdir()
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        docker_command = [
-            "docker", "run", "--rm",
-            "-v", f"{workspace.resolve()}:/opt/metagpt/workspace",
-            "-v", f"{config_path.resolve()}:/root/.metagpt/config2.yaml:ro",
-            IMAGE, "metagpt", _task(case),
-            "--investment", str(investment), "--n_round", str(rounds),
+        metagpt_command = [
+            str(executable), _task(case), "--investment", str(investment),
+            "--n-round", str(rounds),
         ]
-        completed = subprocess.run(docker_command, capture_output=True, text=True, check=False)
+        environment = os.environ.copy()
+        environment.update({"HOME": str(profile), "USERPROFILE": str(profile)})
+        completed = subprocess.run(
+            metagpt_command,
+            cwd=workspace,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     (run_dir / "stdout.log").write_text(completed.stdout, encoding="utf-8")
     (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
     manifest.update({
@@ -96,7 +118,7 @@ def run(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run MetaGPT in its pinned Docker image")
+    parser = argparse.ArgumentParser(description="Run MetaGPT in its pinned Python 3.11 venv")
     parser.add_argument("case", type=Path)
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--investment", type=float, default=3.0)

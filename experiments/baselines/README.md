@@ -7,7 +7,7 @@ EasyDep 본체와 격리된 두 기준선이다. 두 방식은 같은 케이스 
 ## 기준선
 
 - `cot`: 단일 LLM 호출. 요구사항→설계→구현→테스트 순서로 점검하도록 지시한다.
-- `metagpt`: MetaGPT 0.8.2의 기본 Software Company SOP. Python 3.11 Docker 이미지로 격리한다.
+- `metagpt`: MetaGPT 0.8.2의 기본 Software Company SOP. Python 3.11 가상환경으로 격리한다.
 
 CoT의 비공개 추론문은 저장하거나 평가하지 않는다. 출력에는 재현 가능한 짧은 결정 근거만 남긴다.
 
@@ -20,13 +20,14 @@ $env:MODEL="openai/gpt-oss-120b"
 $env:BASELINE_TEMPERATURE="0"
 $env:BASELINE_SEED="42"
 
-docker build -f experiments/baselines/Dockerfile.metagpt -t easydep-metagpt:0.8.2 .
+py -3.11 --version
+experiments/baselines/setup_metagpt.ps1
 ```
 
-Windows에서는 위 빌드 전에 Docker Desktop의 Linux container engine이 실행 중이어야 한다.
-
 MetaGPT는 공식 지원 범위가 Python 3.9 이상 3.12 미만이므로 프로젝트의 Python 3.13 환경에
-설치하지 않는다. 컨테이너 안에는 MetaGPT 0.8.2를 고정한다.
+설치하지 않는다. `.venv-metagpt`에 `uv`로 MetaGPT 0.8.2와 Software Company 실행 의존성을
+고정하며 이 디렉터리는 Git에서 제외한다. 사용하지 않는 검색·벡터DB·타 CSP 모델 어댑터는
+설치하지 않지만 MetaGPT의 역할과 SOP 코드는 수정하지 않는다.
 
 ## 실행
 
