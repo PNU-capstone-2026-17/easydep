@@ -167,12 +167,12 @@ def test_signals_are_lowercase():
         assert all(s == s.lower() for s in concern.signals), concern.id
 
 
-def test_the_advisory_notice_is_the_patternkb_constant_itself():
-    """**사본이 아니라 같은 객체다.** 누가 문자열을 다시 적으면 이 검사가 문다."""
-    from app.core.cloudkb.patternkb import model as patternkb
+def test_the_advisory_notice_comes_from_the_active_core_boundary():
+    """요구사항 코드는 격리 후보 patternkb가 아니라 활성 core 경계를 사용한다."""
+    from app.core import advisory
 
-    assert concerns.ADVISORY_NOTICE is patternkb.ADVISORY_NOTICE
-    assert concerns.EVIDENCE is patternkb.EVIDENCE_ADVISORY
+    assert concerns.ADVISORY_NOTICE is advisory.ADVISORY_NOTICE
+    assert concerns.EVIDENCE is advisory.EVIDENCE
 
 
 def test_prompt_carries_every_concern_and_the_notice():

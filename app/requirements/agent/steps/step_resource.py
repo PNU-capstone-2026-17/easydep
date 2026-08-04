@@ -2,7 +2,7 @@
 
 ## 이 단계가 있는 이유
 
-`docs/cloud-native-requirements.md` §1이 진단한 공백이 이것이다: **`RESOURCE_SPEC`을
+`app/core/cloudkb/document/archive/cloud-native-requirements.md` §1이 진단한 공백이 이것이다: **`RESOURCE_SPEC`을
 아무도 만들지 않는다.** 스키마도, 필수 판정식도, 되묻기 문구(`REQUIRED_WHY`)도 이미
 있는데 생산자만 없었다. 이 단계가 그 생산자다.
 

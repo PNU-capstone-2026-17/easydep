@@ -10,7 +10,7 @@
 
 한 파일에 두면 심각도 어휘가 곧 갈린다. "위반했다"와 "안 적혔다"를 같은 목록에 두면
 검증 프롬프트가 후자를 지적으로 바꾼다 — 그러면 사용자가 안 쓴 것이 전부 결함이 되고
-오탐이 대부분이 된다(`docs/cloud-native-requirements.md` §6의 판단).
+오탐이 대부분이 된다(`app/core/cloudkb/document/archive/cloud-native-requirements.md` §6의 판단).
 
 형식은 checklist-based reading(CBR)이다 — 질문 목록을 들고 요구사항을 읽어 **누락**을
 찾는다. 그래서 항목이 규범문이 아니라 질문문이고, 미충족이 결함이 아니라 인계다.
@@ -18,7 +18,7 @@
 ## 2026-08-02 실측 재도출 — 문헌 축을 버렸다
 
 **앞 판(29건)은 벤더 회색문헌 코퍼스(346편)에서 도출했다.** 그 판의 기록·측정은
-`docs/cloud-native-requirements.md` §6과 커밋 이력에 유효하게 남아 있다. 버린 이유는
+`app/core/cloudkb/document/archive/cloud-native-requirements.md` §6과 커밋 이력에 유효하게 남아 있다. 버린 이유는
 계보 감사(`document/archive/contract-lineage-audit-2026-08-02.md`)가 보인 것과 같다 —
 벤더 문헌은 "벤더가 관심사라 부르는 것"의 표본이고, 우리 실측 커버리지와 괴리가
 있었다(29건 중 PURE 실물 0이 7건 · 탄소는 오탐뿐). 사용자 결정(2026-08-02):
@@ -85,7 +85,7 @@ provision 뷰 operationalWarnings — 배선은 그전부터 그쪽이었다). �
 
 `spec.black-box-no-internal-components`·`spec.no-protocol-mechanics`가 명세에 내부
 컴포넌트·프로토콜을 금지한다. 관심사는 NFR 층과 나란한 별도 산출물에 살고
-유스케이스 명세는 손대지 않는다(`docs/cloud-native-requirements.md` §5).
+유스케이스 명세는 손대지 않는다(`app/core/cloudkb/document/archive/cloud-native-requirements.md` §5).
 """
 from __future__ import annotations
 

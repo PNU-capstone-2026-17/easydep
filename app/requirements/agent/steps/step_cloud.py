@@ -4,7 +4,7 @@
 
 과제 목표 ②(클라우드 가이드라인)와 요구사항 분석이 만나는 자리가 지금까지 **배포
 다이어그램 하나뿐**이었다. 다이어그램은 늦고(요구사항·유스케이스·명세가 모두 굳은 뒤),
-"이 앱이 무상태인가"를 적을 칸도 없다. 조사(`docs/cloud-native-requirements.md` §3)가
+"이 앱이 무상태인가"를 적을 칸도 없다. 조사(`app/core/cloudkb/document/archive/cloud-native-requirements.md` §3)가
 이 공백을 세 갈래 중 **B**로 지목했다.
 
 ## `check_coverage`와 무엇이 같고 무엇이 다른가
