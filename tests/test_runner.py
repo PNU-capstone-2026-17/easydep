@@ -175,6 +175,25 @@ def test_persist_run_input_sha_is_deterministic(tmp_path):
     assert sha1 == sha2  # 같은 입력 → 같은 해시
 
 
+def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
+    input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
+    state = _sample_state() | {
+        "deployment_needs": {"https_ingress": {"requirementIds": ["R1"]}},
+        "resource_spec": {"schemaVersion": "2", "workloads": ["vm"]},
+        "resource_intake": {"valid": True, "questions": []},
+    }
+    run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
+
+    restored = runner.load_state(run_dir)
+
+    assert restored["deployment_needs"] == state["deployment_needs"]
+    assert restored["resource_spec"] == state["resource_spec"]
+    assert restored["resource_intake"] == state["resource_intake"]
+    assert restored["traceability"]["requirements"]["R1"]["deployment_needs"] == [
+        "https_ingress"
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 3. load_input
 # ---------------------------------------------------------------------------

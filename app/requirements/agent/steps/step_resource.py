@@ -1,55 +1,10 @@
-"""제약 구조화 — 사용자의 클라우드 제약을 **구체화하고 확인해서** `RESOURCE_SPEC`으로.
+"""Turn natural-language cloud constraints into a validated ``RESOURCE_SPEC``.
 
-## 이 단계가 있는 이유
-
-`app/core/cloudkb/document/archive/cloud-native-requirements.md` §1이 진단한 공백이 이것이다: **`RESOURCE_SPEC`을
-아무도 만들지 않는다.** 스키마도, 필수 판정식도, 되묻기 문구(`REQUIRED_WHY`)도 이미
-있는데 생산자만 없었다. 이 단계가 그 생산자다.
-
-## 왜 다시 썼나 — 여기가 이 파일의 성격이다
-
-첫 판은 정규식 다섯 벌로 산문에서 칸을 캤다. 그것이 무너진 자리는 표현의 폭이었다
-(`"The monthly budget is at most 500 USD"`가 통째로 안 걸렸다 — 패턴이 통화 기호를
-**앞에** 요구했다). 더 나쁜 것은 `"USD가 아니다 — 계약이 환율 환산을 거부한다"`였다.
-계약은 그런 말을 한 적이 없다. **우리에게 환율 소스가 없다는 사실을 원칙으로 적어 둔
-것**이고, 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다(`resource_tools.convert_to_usd`).
-
-두 번째 판은 "정규식 → 못 채운 칸 계산 → LLM 한 번 → 거부"였는데, 그것도 답이 아니다.
-**제어 흐름을 우리가 정했으므로 그건 파이프라인이지 에이전트가 아니다.** 가르는 선은
-Anthropic이 적어 둔 그대로다 — 워크플로는 LLM과 도구가 미리 짜인 코드 경로로 엮인 것,
-에이전트는 LLM이 자기 과정과 도구 사용을 스스로 지휘하는 것.
-
-지금 판은 목표만 준다: **계약을 만족시키거나, 사용자에게 정확한 질문을 남겨라.**
-어느 도구를 언제 몇 번 부를지는 모델이 정한다.
-
-  지각   제약 원문 · 요구사항 문장 · 앞선 되묻기의 답 · 도구가 돌려준 것
-  행동   리전 해석 · 프로바이더 목록 · 환율 환산 · 웹 검색 ·
-         값 기록(`record_field`) · 계약 조회(`check_contract`) ·
-         **사용자에게 되묻기**(`ask_user`) · 마치기(`finish`)
-  관찰   기록이 받아들여졌는가 · 계약이 아직 무엇을 요구하는가
-  정지   `finish` · 도구 호출 없는 답변 · 턴 상한
-
-**되묻기는 폴백이 아니라 행동이다.** 요구사항을 구체화하고 확인해서 가져오는 것이 이
-단계의 본업이고, 그러라고 되묻기 기제(`resource_questions` → `ResourceAnswer` →
-`resume_analysis`)가 이미 깔려 있다.
-
-## 문법은 버렸지만 지식과 장치는 남았다
-
-코퍼스 실측(2026-07-28, 내부 11종 270문장 + PURE 18편 7,659문장)에서 얻은 함정 —
-단가는 예산이 아니다 · 숫자+동시성만으로는 규모가 아니다 · provider·region·예산은
-요구사항 산문에 0건이다 · 값이 둘로 갈리면 질문이다 — 은 정규식에서
-`prompts.RESOURCE_AGENT_SYSTEM`으로 옮겼다. 지식이 사라진 것이 아니라 층을 바꾼 것이다.
-
-지어냄을 막는 장치는 문법이 아니라 **대조**다. 값마다 자기가 본 자리를 인용하게 하고,
-그 조각이 **실제 입력 또는 이미 받은 도구 출력**에 실재하는지 확인한다(`_ground`).
-인용 못 하는 값은 버린다 — 조용히가 아니라 사유를 남기고서. 그리고 계약이 아는 칸인지,
-리전 코드가 카탈로그에 있는지는 여전히 기계가 판정한다(`_Session.record_field`).
-
-## 산출물이 두 갈래인 것은 그대로다
-
-  - `resource_spec` — **계약을 만족할 때만 존재한다.** 반쯤 채운 사양을 내보내면
-    뒤 단계가 그걸 사양으로 알고 조인을 돌린다.
-  - `resource_intake` — 초안·질문·근거·버린 값·에이전트가 되읽은 이해. 늘 존재한다.
+One structured LLM call performs language interpretation. Deterministic code then checks
+quoted evidence, normalizes the provider and region, applies the Docker-on-VM workload
+scope, and validates the contract. ``resource_spec`` exists only when required fields are
+valid; ``resource_intake`` always records the draft, questions, provenance, and rejected
+values. Missing required values become explicit English questions.
 """
 from __future__ import annotations
 

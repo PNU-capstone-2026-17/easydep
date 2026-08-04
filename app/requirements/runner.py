@@ -5,7 +5,8 @@ inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를 
   run_<UTC>_<input_sha10>/
     input.json          # 입력 재현용(그대로)
     manifest.json       # run_id / config 스냅샷 / input_sha256 / 스테이지 요약
-    actors.json  use_cases.json  coverage.json  relationships.json
+    deployment_needs.json  resource_spec.json  resource_intake.json
+    traceability.json  actors.json  use_cases.json  coverage.json  relationships.json
     diagram.puml
     use_cases/uc_NN_<slug>/{use_case.json, spec.json}
 
@@ -77,6 +78,9 @@ def load_state(run_dir: str | Path) -> dict:
         "coverage": _j("coverage.json", {}),
         "model_review": _j("model_review.json", {}),
         "deployment_needs": _j("deployment_needs.json", {}),
+        "resource_spec": _j("resource_spec.json", {}),
+        "resource_intake": _j("resource_intake.json", {}),
+        "traceability": _j("traceability.json", {}),
         **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
@@ -236,7 +240,9 @@ def persist_run(
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")
 
     # 요구사항 ID 중심의 추적 스냅샷. 표나 Markdown 문서는 만들지 않는다.
-    requirement_trace = build_requirement_trace(state, verdicts=traceability_verdicts)
+    trace_state = dict(state)
+    trace_state.setdefault("classified", input_obj.get("classified", []))
+    requirement_trace = build_requirement_trace(trace_state, verdicts=traceability_verdicts)
     _dump(run_dir / "traceability.json", requirement_trace)
 
     specs_by_id = {s["use_case_id"]: s for s in state.get("use_case_specs", [])}
