@@ -174,7 +174,7 @@ class ConcernLinkage(BaseModel):
 
 
 class DeploymentNeed(BaseModel):
-    """One generic deployment capability grounded in existing RTM requirement IDs."""
+    """One generic deployment capability grounded in existing requirement IDs."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -559,7 +559,7 @@ class AnalyzeResponse(BaseModel):
     # 클라우드 층 산출물 둘. **요구사항과 나란한 별도 산출물이지 명세의 일부가 아니다.**
     # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
     # 만들어도 화면은 받을 수 없으므로 출력 필드로 명시한다.
-    deployment_needs: dict | None = None        # RTM 기반 제네릭 배포 필요사항
+    deployment_needs: dict | None = None        # 요구사항 ID 기반 제네릭 배포 필요사항
     resource_spec: dict | None = None           # RESOURCE_SPEC — 계약을 만족할 때만 있다
     resource_intake: dict | None = None         # 초안·질문·근거·버린 후보(A 트랙)
     actors: list[dict] | None = None            # ActorItem

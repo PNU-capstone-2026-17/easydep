@@ -1,7 +1,7 @@
 """Derive generic deployment needs from classified software requirements.
 
 Natural-language interpretation belongs to one structured LLM call. Code only checks
-the output envelope and RTM references. This stage describes what deployment must
+the output envelope and requirement references. This stage describes what deployment must
 provide; selecting VM, load balancer, disk, or any CSP product belongs to design.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ Return a generic deploymentNeeds dictionary. Each dictionary key is a concise,
 snake_case semantic identifier chosen for this application. Each value contains:
 - role: what capability the deployment must provide and why
 - required: true when the requirements mandate it; false for a supported preference
-- requirementIds: one or more exact IDs from the input RTM
+- requirementIds: one or more exact requirement IDs from the input
 - metadata: free-form structured details, including an `unresolved` string array when useful
 
 Do not select or name concrete cloud resources, CSP products, VM counts, instance types,
@@ -44,7 +44,7 @@ keep distinct roles separate."""
 
 @contract("derive_deployment_needs", requires=("classified",), produces=("deployment_needs",))
 def derive_deployment_needs(state: AgentState) -> dict:
-    """Return a generic need dictionary grounded through the existing RTM IDs."""
+    """Return a generic need dictionary grounded through existing requirement IDs."""
     classified = list(state.get("classified") or [])
     known = {str(item.get("id")) for item in classified if item.get("id")}
     listing = [

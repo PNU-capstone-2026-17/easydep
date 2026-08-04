@@ -247,7 +247,7 @@ def check_coverage(state: AgentState) -> dict:
     - unknown refs: 제공되지 않은 id를 참조한 경우 (LLM 환각 표면화)
     """
     # 집계는 `core/traceability.py` 한 곳에서 한다. 예전에는 여기서 따로 굴렸고,
-    # `rtm.build_rtm`이 같은 사실을 **다르게** 세고 있었다 — 환각 참조의 정의가 갈려
+    # 예전 저장용 추적 집계가 같은 사실을 **다르게** 세고 있었다 — 환각 참조의 정의가 갈려
     # 같은 상태에서 서로 겹치지도 않는 답이 나왔다(그 모듈 docstring에 경위).
     trace = traceability.index(state)
     coverage = {

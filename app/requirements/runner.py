@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from app.core.rtm import build_rtm, render_rtm_md
+from app.core.traceability import build_requirement_trace
 from app.requirements.agent import stages, supervisor
 from app.requirements.agent.state import AgentState
 
@@ -196,7 +196,7 @@ def persist_run(
     state: dict,
     dataset_name: str = "",
     artifact_root: Path | str = ARTIFACTS_DIR,
-    rtm_verdicts: list[dict] | None = None,
+    traceability_verdicts: list[dict] | None = None,
 ) -> Path:
     """실행 결과를 artifacts/run_*/ 에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
     artifact_root = Path(artifact_root)
@@ -224,11 +224,9 @@ def persist_run(
     _dump(run_dir / "relationships.json", state.get("relationships", {}))
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")
 
-    # RTM(요구사항 추적 매트릭스) 물질화 — state의 추적 정보를 매트릭스로 집계(순수, LLM 없음).
-    # rtm_verdicts(semantic judge 판정)가 있으면 FR realized(검증) 컬럼도 채운다(compare 경로).
-    rtm = build_rtm(state, verdicts=rtm_verdicts)
-    _dump(run_dir / "rtm.json", rtm)
-    (run_dir / "rtm.md").write_text(render_rtm_md(rtm, dataset_name), encoding="utf-8")
+    # 요구사항 ID 중심의 추적 스냅샷. 표나 Markdown 문서는 만들지 않는다.
+    requirement_trace = build_requirement_trace(state, verdicts=traceability_verdicts)
+    _dump(run_dir / "traceability.json", requirement_trace)
 
     specs_by_id = {s["use_case_id"]: s for s in state.get("use_case_specs", [])}
     for i, uc in enumerate(state.get("use_cases", []), start=1):
