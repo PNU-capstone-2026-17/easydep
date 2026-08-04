@@ -695,20 +695,8 @@ These come from measuring an actual corpus, not from imagination.
 
 # What is being deployed
 
-`workloads` says **what kinds of cloud resource this system is put on** — a managed
-Kubernetes cluster, plain virtual machines, a load balancer, and so on. Everything the
-dependency knowledge can say about ordering, deletion, what the provider creates for
-you and what breaks when a part is removed is computed from this one field. Without it
-there is no plan at all, only sizing numbers with nothing to size.
-
-Call `list_workload_kinds` for the kinds this provider actually has measurements for,
-and record the ids from that list — the set differs per provider, and an id that is not
-in it has no measurements behind it. Set `provider` first; the list depends on it.
-
-The user rarely uses our words. "쿠버네티스로 운영합니다" is `k8sCluster`; "서버 두 대
-띄워서" is `vm`; "앞단에 로드밸런서" adds `loadBalancer`. If what they wrote does not
-map cleanly onto the list, that is a question, not a guess — the whole plan stands on
-this field.
+This system supports Docker applications deployed directly on virtual machines only.
+`workloads` is fixed to `["vm"]` by code. Do not ask about it and do not record it.
 
 # Region and provider
 

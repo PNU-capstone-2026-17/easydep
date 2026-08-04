@@ -182,5 +182,4 @@ def web_search(query: str, max_results: int = 4) -> str:
 
 
 #: 조회 도구들. 상태를 바꾸지 않으므로 실행 간에 공유해도 된다.
-LOOKUP_TOOLS = [list_cloud_providers, list_workload_kinds, resolve_region,
-                convert_to_usd, web_search]
+LOOKUP_TOOLS = [list_cloud_providers, resolve_region, convert_to_usd, web_search]

@@ -162,18 +162,6 @@ ASKS: tuple[Ask, ...] = (
               "오면 조인이 오류 없이 빈 답이 된다(실측)",
         basis=(Basis(CODE, "app/core/regions.py#resolve"),),
     ),
-    # ── 위상축(신설) — 이 축이 통째로 비어 있었다 ────────────────────────────
-    Ask(
-        id="topology.workloads",
-        spec_field="workloads",
-        tier=REQUIRED,
-        question="무엇을 배포합니까? 관리형 쿠버네티스 위에 올립니까, 가상 서버에 "
-                 "직접 올립니까, 아니면 다른 형태입니까?",
-        opens="폐포 계산의 입력 — 생성 순서·삭제 순서·서버가 대신 만드는 것·운영 "
-              "경고가 전부 여기서 나온다. 이것이 없으면 실측 주장 118건이 계획에 "
-              "닿지 못한다",
-        basis=(Basis(CODE, "app/core/infra_planning.py#plan_for_anchors"),),
-    ),
     # **existingResources는 2026-08-02에 계약에서 빠졌다 — 범위 결정(사용자).**
     # 이 시스템의 대상은 **신규 앱 개발**이라 인계받을 기존 자원이 없다. 근거
     # 부재(탄소)와 다른 사유다: "폐포는 이미 있는가를 원리적으로 모른다"는 논리는
@@ -261,6 +249,7 @@ ASKS: tuple[Ask, ...] = (
 #: 테스트가 실패한다 — "빠뜨린 것"과 "안 묻기로 한 것"을 구별하기 위해서다.
 NOT_ASKED: dict[str, str] = {
     "schemaVersion": "계약 판 — 스키마가 const로 못 박았고 생산자가 옮겨 적는다",
+    "workloads": "시스템 범위를 Docker 기반 VM 배포로 고정했으므로 ['vm']을 넣는다",
     "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
                        "물을 것이 없다(join.region의 부산물)",
 }

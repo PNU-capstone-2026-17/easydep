@@ -264,7 +264,7 @@ class _Session:
     """
 
     def __init__(self, seen: list[str]) -> None:
-        self.draft: dict = {"schemaVersion": SCHEMA_VERSION}
+        self.draft: dict = {"schemaVersion": SCHEMA_VERSION, "workloads": ["vm"]}
         self.provenance: list[Candidate] = []
         self.rejected: list[dict] = []
         self.questions: list[dict] = []
@@ -276,7 +276,9 @@ class _Session:
         #: 붙인다). 목록 자체에 표시를 섞으면 인용 대조가 그 표시까지 건초더미로 센다.
         self.user_seen = len(self.seen)
         #: 실제로 무엇을 했는지. 사람이 되짚는 자리이고, 데모가 그대로 찍는다.
-        self.trace: list[dict] = []
+        self.trace: list[dict] = [
+            {"action": "system_scope", "field": "workloads", "value": ["vm"]}
+        ]
 
     # --- 관찰 ---------------------------------------------------------------
     def saw(self, text: str) -> None:

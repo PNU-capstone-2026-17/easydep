@@ -16,13 +16,8 @@
       "const": "2"
     },
     "workloads": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": {
-        "type": "string"
-      },
-      "description": "무엇을 배포하는가 — 앵커 자원 id의 목록(예: [\"k8sCluster\"], [\"vm\",\"loadBalancer\"]). **2026-08-01 신설**: 그전까지 계약에는 축이 하나뿐이었다(전부 '어떻게 고르나'이고 '무엇을 놓나'가 없었다). 소비자: app/core/infra_planning.plan_for_anchors — 폐포·생성 순서·삭제 순서·서버 합성·운영 경고가 전부 이 값에서 나온다. 없으면 3사 실측 주장이 계획에 닿지 못한다. 받는 값은 CSP마다 다르고 claims.json에서 나온다(input_registry.anchors_for) — 스키마가 enum으로 못 박지 않는 이유가 그것이다. **개수(같은 종류를 몇 개 놓는가)는 담지 않는다** — 우리 주장은 종류 수준이고 카디널리티는 실측한 적이 없다."
+      "const": ["vm"],
+      "description": "시스템 범위에서 고정한 Docker 기반 VM 배포. 사용자에게 묻지 않는다."
     },
     "provider": {
       "type": "string",
