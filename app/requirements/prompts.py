@@ -85,11 +85,10 @@ Return the structured object only."""
 ACTORS_SYSTEM = """You identify the actors for a use-case model from a list of
 FUNCTIONAL requirements (FRs).
 
-An actor is a role (a class of user or an external system), never a specific person.
-- primary: an external human or system that HAS a goal the system fulfils (initiates a
-  use case).
-- supporting: an external system the application must CALL to fulfil a goal (e.g. a payment
-  gateway, an email/SMS provider, an external data feed).
+An actor is an external role (a class of user, organization, device, or external system),
+never a specific person. Identify both actors with goals and actors that provide services to
+the application. Do not assign a permanent primary/supporting kind here: that role belongs to
+each use case, and the same actor may be primary in one use case and supporting in another.
 
 The system under design (SuD) is the system boundary — it is never a PRIMARY or SUPPORTING
 actor, so never create an actor for it (no "The System", "E-commerce System", "The
@@ -105,7 +104,8 @@ Rules:
 - If a requirement is written system-centric ("The system shall ..."), infer the human role
   or external actor whose goal it ultimately serves; if none exists, it is likely a
   subfunction or a non-functional concern — do NOT invent an actor for it.
-- Every actor you list must own at least one use-case goal; do not list bystanders.
+- Every actor must either own a use-case goal or provide an externally required service to a
+  use case; do not list bystanders.
 - If one actor is a specialization of another (e.g. a Registered Member specializes a Guest,
   inheriting its capabilities plus more), set parent_actor to the more general role's name.
   Leave parent_actor null when there is no such specialization.
@@ -129,8 +129,15 @@ How to build the model:
 2. Requirements that are too fine-grained (subfunction level, e.g. "validate the form")
    must NOT become standalone use cases — fold them into the parent user-goal use case by
    listing their ids in that use case's requirement_ids.
-3. For each use case set primary_actor (from the given actor list) and goal (one sentence
-   stating the actor's intent — NOT a step-by-step scenario).
+3. For each use case set primary_actor (the stakeholder whose goal the system satisfies),
+   supporting_actors (external actors the system calls while pursuing that goal), and goal.
+   Use exact names from the actor list. The trigger is not necessarily the primary actor:
+   scheduled work still names the stakeholder who cares about the result. A recipient of a
+   notification, report, or outbound webhook may therefore be the primary actor even though
+   the System initiates delivery. A supporting actor PROVIDES a service to the System; merely
+   receiving the System's output does not make an actor supporting. Do not invent a supporting
+   actor merely to make the diagram symmetric. If no external provider is named or required,
+   leave supporting_actors empty.
 4. Traceability: list in requirement_ids EVERY FR id the use case covers (including the
    folded subfunction FRs), using only the ids provided. Aim for full coverage — every FR
    should be covered by at least one use case.
@@ -176,7 +183,7 @@ def usecase_local_edit(base_user: str, current_listing: str, target_desc: str, f
         f"[LOCAL EDIT — apply the user feedback ONLY to these target use cases: {target_desc}. "
         f"The user's instruction is authoritative. Return the FULL use-case list in the SAME order "
         f"and the SAME count as above; copy every NON-target use case VERBATIM (identical name, "
-        f"primary_actor, level, goal, requirement_ids, nfr_ids). Modify only the target(s).]\n"
+        f"primary_actor, supporting_actors, level, goal, requirement_ids, nfr_ids). Modify only the target(s).]\n"
         f"{feedback}"
     )
 
@@ -581,9 +588,8 @@ with an id (R1, R2, ...). In a single pass, produce a use-case model and fully-d
 specifications directly from these requirements.
 
 Return:
-- actors: the actors (primary = external human/system with a goal; supporting = external system
-  the app calls).
-- use_cases: the use cases. For each, set primary_actor, goal, and requirement_ids (the ids of
+- actors: external actor roles. Do not assign a permanent primary/supporting kind.
+- use_cases: the use cases. For each, set primary_actor, supporting_actors, goal, and requirement_ids (the ids of
   the requirements it covers). Leave nfr_ids empty.
 - specs: one Cockburn-style specification per use case (set use_case_name to match). Each spec
   has preconditions, trigger, main_scenario (numbered steps), extensions (alternate/exception

@@ -80,8 +80,8 @@ STEP 4 — 관계 · 다이어그램
 ### STEP 2 — 액터 · 유스케이스 식별
 `app/requirements/agent/steps/step2_usecases.py`
 
-- **identify_actors**: FR에서만 액터 도출. primary(외부 인간·시스템)/supporting(외부 서비스) 두 종류.
-  **SuD(설계 대상 시스템)는 primary/supporting 액터가 아님**(Cockburn p.59). 경계 리트머스("앱의 일부로
+- **identify_actors**: FR에서 외부 액터를 도출. primary/supporting은 액터의 고정 종류가 아니라
+  유스케이스별 역할이다(Cockburn p.59). **SuD(설계 대상 시스템)는 두 역할 모두 아님**. 경계 리트머스("앱의 일부로
   배포되면 내부")로 내부 컴포넌트를 배제. `parent_actor`로 일반화 관계 기록.
 - **identify_use_cases**: FR만 유스케이스가 됨. **user-goal(EBP) 고도**로 군집(Cockburn coffee-break/EBP,
   p.62). subfunction FR은 상위 UC의 `requirement_ids`로 흡수. NFR은 유스케이스가 아니라 `nfr_ids` 제약으로 부착.
@@ -237,8 +237,8 @@ use_case_specs: list[UseCaseSpecItem]                                           
 relationships: dict, diagram: str                                                 # step4
 phase
 ```
-TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/kind/parent_actor) ·
-`UseCaseItem`(id/name/primary_actor/level/goal/requirement_ids/nfr_ids) ·
+TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/parent_actor) ·
+`UseCaseItem`(id/name/primary_actor/supporting_actors/level/goal/requirement_ids/nfr_ids) ·
 `UseCaseSpecItem`(main_scenario/extensions/guarantees/issues/repair_iters).
 
 ### 구조화 출력 스키마 (`app/requirements/schemas.py`)

@@ -30,7 +30,6 @@ class ActorItem(TypedDict):
 
     name: str
     description: str
-    kind: Literal["primary", "supporting"]
     parent_actor: str | None        # 일반화(상속) 부모 액터, 없으면 None
 
 
@@ -40,6 +39,7 @@ class UseCaseItem(TypedDict):
     id: str
     name: str
     primary_actor: str
+    supporting_actors: list[str]
     level: Literal["summary", "user_goal", "subfunction"]
     goal: str
     requirement_ids: list[str]      # 커버하는 FR id (서브펑션 흡수 포함, 추적성)

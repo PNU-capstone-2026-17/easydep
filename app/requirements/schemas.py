@@ -53,23 +53,18 @@ class ClarifyOnlyResult(BaseModel):
 # ----------------------------------------------------------------------------
 # STEP 2 — 액터/유스케이스 구조화 출력
 # ----------------------------------------------------------------------------
-ActorKind = Literal["primary", "supporting"]
 UseCaseLevel = Literal["summary", "user_goal", "subfunction"]
 
 
 class Actor(BaseModel):
     """유스케이스와 상호작용하는 액터(역할). FR에서만 도출한다.
 
-    설계 대상 시스템(SuD)은 경계이지 액터가 아니다 → primary/supporting 두 종류뿐.
+    설계 대상 시스템(SuD)은 경계이지 액터가 아니다. Primary/supporting은
+    액터의 고정 속성이 아니라 유스케이스별 역할이다.
     """
 
     name: str = Field(description="Actor role name, e.g. 'Registered User'.")
     description: str = Field(description="One sentence describing the actor's role.")
-    kind: ActorKind = Field(
-        description="primary = an external human/system that has a goal the system fulfills; "
-        "supporting = an external system the application calls to fulfil a goal. The system "
-        "under design itself is NEVER an actor."
-    )
     parent_actor: str | None = Field(
         default=None,
         description="If this actor specializes another (e.g. Member specializes Guest), the "
@@ -83,6 +78,13 @@ class UseCase(BaseModel):
     name: str = Field(description="Active-verb goal phrase, e.g. 'Place an order'.")
     primary_actor: str = Field(
         description="Name of the primary actor (must be one of the given actors)."
+    )
+    supporting_actors: list[str] = Field(
+        default_factory=list,
+        description="Names of external actors whose services the system calls while carrying "
+        "out this use case. A recipient of system output is not supporting merely because it "
+        "receives that output. Use only given actor names. An actor may be primary in one use "
+        "case and supporting in another.",
     )
     level: UseCaseLevel = Field(
         default="user_goal",

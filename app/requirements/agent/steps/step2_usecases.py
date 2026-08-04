@@ -49,7 +49,7 @@ def _usecase_examples() -> str:
 
 @contract("identify_actors", requires=("classified",), produces=("actors",))
 def identify_actors(state: AgentState, feedback: str = "") -> dict:
-    """FR에서 액터를 도출한다(중복 제거, primary/supporting 구분). feedback 시 재생성 지시.
+    """FR에서 외부 액터를 도출한다. 액터 역할은 유스케이스별로 정한다.
 
     피드백은 인자로도 오고, 감독자가 되돌릴 때는 상태(`stage_feedback`)로도 온다.
     """
@@ -67,8 +67,7 @@ def identify_actors(state: AgentState, feedback: str = "") -> dict:
     result: ActorResult = invoke_structured(ActorResult, messages)
 
     actors: list[ActorItem] = [
-        {"name": a.name, "description": a.description, "kind": a.kind,
-         "parent_actor": a.parent_actor}
+        {"name": a.name, "description": a.description, "parent_actor": a.parent_actor}
         for a in result.actors
     ]
     return {"actors": actors, "phase": "actors"}
@@ -80,6 +79,7 @@ def _uc_dict(uc, uid: str) -> UseCaseItem:
         "id": uid,
         "name": uc.name,
         "primary_actor": uc.primary_actor,
+        "supporting_actors": uc.supporting_actors,
         "level": uc.level,
         "goal": uc.goal,
         "requirement_ids": uc.requirement_ids,
@@ -138,7 +138,7 @@ def identify_use_cases(
         return {"use_cases": [], "phase": "use_cases"}
 
     actor_listing = "\n".join(
-        f"- {a['name']} ({a['kind']}): {a['description']}" for a in actors
+        f"- {a['name']}: {a['description']}" for a in actors
     ) or "- (none identified)"
     human = (
         f"Actors:\n{actor_listing}\n\n"
@@ -220,11 +220,11 @@ def review_model(state: AgentState) -> dict:
         ],
         "deployment_needs": state.get("deployment_needs") or {},
         "actors": [
-            {k: a.get(k) for k in ("name", "description", "kind", "parent_actor")}
+            {k: a.get(k) for k in ("name", "description", "parent_actor")}
             for a in (state.get("actors") or [])
         ],
         "use_cases": [
-            {k: uc.get(k) for k in ("name", "primary_actor", "level", "goal")}
+            {k: uc.get(k) for k in ("name", "primary_actor", "supporting_actors", "level", "goal")}
             for uc in (state.get("use_cases") or [])
         ],
     }
