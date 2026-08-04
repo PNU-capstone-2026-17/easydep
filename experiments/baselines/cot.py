@@ -17,9 +17,13 @@ from openai import OpenAI
 
 from experiments.baselines.common import (
     ExperimentCase,
+    base_url,
     begin_run,
+    model,
     require_api_key,
     run_manifest,
+    seed,
+    temperature,
     write_json,
 )
 
@@ -91,14 +95,14 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
     started = time.perf_counter()
     client = OpenAI(
         api_key=os.environ["API_KEY"],
-        base_url=os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        base_url=base_url(),
         timeout=300,
         max_retries=2,
     )
     response = client.chat.completions.create(
-        model=os.getenv("MODEL", "openai/gpt-oss-120b"),
-        temperature=float(os.getenv("BASELINE_TEMPERATURE", "0")),
-        seed=int(os.getenv("BASELINE_SEED", "42")),
+        model=model(),
+        temperature=temperature(),
+        seed=seed(),
         messages=[{"role": "system", "content": SYSTEM},
                   {"role": "user", "content": case.prompt()}],
     )

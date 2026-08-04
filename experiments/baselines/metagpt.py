@@ -13,9 +13,13 @@ import yaml
 from experiments.baselines.common import (
     ROOT,
     ExperimentCase,
+    base_url,
     begin_run,
+    model,
     require_api_key,
     run_manifest,
+    seed,
+    temperature,
     write_json,
 )
 
@@ -79,9 +83,11 @@ def run(
     config = {
         "llm": {
             "api_type": "openai",
-            "model": os.getenv("MODEL", "openai/gpt-oss-120b"),
-            "base_url": os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            "model": model(),
+            "base_url": base_url(),
             "api_key": os.environ["API_KEY"],
+            "temperature": temperature(),
+            "seed": seed(),
         }
     }
     started = time.perf_counter()

@@ -11,8 +11,32 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "baselines"
+
+# EasyDep Settings와 같은 루트 .env를 읽는다. 셸에서 명시한 값은 유지되며 모든
+# 비교군은 같은 프로세스 환경을 전달받는다.
+load_dotenv(ROOT / ".env", override=False)
+
+
+def model() -> str:
+    return os.getenv("MODEL", "openai/gpt-oss-120b")
+
+
+def base_url() -> str:
+    return os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1")
+
+
+def temperature() -> float:
+    return float(os.getenv("TEMPERATURE", "0"))
+
+
+def seed() -> int:
+    return int(os.getenv("SEED", "42"))
+
+
 @dataclass(frozen=True)
 class ExperimentCase:
     case_id: str
@@ -73,10 +97,11 @@ def run_manifest(method: str, case: ExperimentCase, command: list[str]) -> dict[
         "caseId": case.case_id,
         "startedAt": datetime.now(UTC).isoformat(),
         "gitRevision": git_revision(),
-        "model": os.getenv("MODEL", "openai/gpt-oss-120b"),
-        "baseUrl": os.getenv("BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        "temperature": float(os.getenv("BASELINE_TEMPERATURE", "0")),
-        "seed": int(os.getenv("BASELINE_SEED", "42")),
+        "model": model(),
+        "baseUrl": base_url(),
+        "temperature": temperature(),
+        "seed": seed(),
+        "configurationSource": ".env",
         "python": platform.python_version(),
         "command": command,
         "webSearch": False,

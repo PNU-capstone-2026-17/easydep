@@ -14,15 +14,12 @@ CoT의 비공개 추론문은 저장하거나 평가하지 않는다. 출력에�
 ## 준비
 
 ```powershell
-$env:API_KEY="<NVIDIA NIM API key>"
-$env:BASE_URL="https://integrate.api.nvidia.com/v1"
-$env:MODEL="openai/gpt-oss-120b"
-$env:BASELINE_TEMPERATURE="0"
-$env:BASELINE_SEED="42"
-
 py -3.11 --version
 experiments/baselines/setup_metagpt.ps1
 ```
+
+LLM 조건은 저장소 루트 `.env`만 사용한다. `API_KEY`, `BASE_URL`, `MODEL`,
+`TEMPERATURE`, `SEED`를 그 파일에 설정하면 EasyDep, CoT와 MetaGPT가 함께 읽는다.
 
 MetaGPT는 공식 지원 범위가 Python 3.9 이상 3.12 미만이므로 프로젝트의 Python 3.13 환경에
 설치하지 않는다. `.venv-metagpt`에 `uv`로 MetaGPT 0.8.2와 Software Company 실행 의존성을
