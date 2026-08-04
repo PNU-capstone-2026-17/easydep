@@ -84,6 +84,12 @@ class ImplementationAdapter:
         return payload
 
     @staticmethod
+    def _bridge_api_key() -> None:
+        """Expose the repository-wide API_KEY under the worker's legacy name."""
+        if os.getenv("API_KEY") and not os.getenv("NVIDIA_API_KEY"):
+            os.environ["NVIDIA_API_KEY"] = os.environ["API_KEY"]
+
+    @staticmethod
     def _model() -> str:
         value = os.getenv("MODEL", "openai/gpt-oss-120b")
         return value if value.startswith("nvidia_nim/") else f"nvidia_nim/{value}"
@@ -98,6 +104,7 @@ class ImplementationAdapter:
         cloud_design_result: dict[str, Any],
         infrastructure_recommendation: dict[str, Any],
     ) -> dict[str, Any]:
+        self._bridge_api_key()
         design = self._design_payload(
             requirements_result,
             design_result,
@@ -108,6 +115,11 @@ class ImplementationAdapter:
             f"orchestration-{run_id}", app_id, design, "com.easydep.generated", True
         )
         job = json.loads(job_path.read_text(encoding="utf-8"))
+        # The member workflow performs compileJava + bootJar + test after each
+        # implementation phase using the shared Gradle cache. Avoid its earlier
+        # duplicate cold-cache compile, whose fixed timeout is shorter than the
+        # first dependency resolution on the evaluation host.
+        job["verification"]["compile"] = False
         job["agent"].update(
             {
                 "model": self._model(),
@@ -122,8 +134,12 @@ class ImplementationAdapter:
     def resume(self, result: dict[str, Any], *, approved: bool) -> dict[str, Any]:
         if not approved:
             return {**result, "status": "rejected"}
+        self._bridge_api_key()
         job_path = Path(str(result["job_path"]))
         run_root = Path(str(result["run_root"]))
+        # Reconciliation can turn completed task results into checkpoints and
+        # therefore change the exact next task set/request ID.
+        self.client._call(["plan-workflow", str(run_root), str(job_path)])
         request = self.client.transmission_request(run_root)
         if request is None:
             return result
@@ -140,7 +156,7 @@ class ImplementationAdapter:
             ),
             encoding="utf-8",
         )
-        workflow = self.client.run_phase(run_root, job_path, approval_path, False)
+        workflow = self.client.run_phase(run_root, job_path, approval_path, True)
         return self._payload(job_path, run_root, workflow)
 
     def _payload(
