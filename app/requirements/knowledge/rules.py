@@ -159,7 +159,7 @@ class Rule:
         """지적 문구 꼬리표. 짐작인 규칙은 그 사실이 함께 붙는다."""
         parts = [self.id, self.short_citation]
         if self.hedged:
-            parts.append("우리 판단")
+            parts.append("project inference")
         return f"[{' · '.join(parts)}]"
 
     def prompt_line(self) -> str:
@@ -240,6 +240,35 @@ RULES: tuple[Rule, ...] = (
         caveat="추적성을 위해 우리가 정한 규칙이다. 판정은 `step2_usecases.check_coverage`가 한다.",
         owner="use_cases",
         judged_by=JUDGED_STAGE,
+    ),
+    Rule(
+        id="deployment-needs.grounded-without-design-inference",
+        stage=MODEL_USE_CASES,
+        severity=GUIDANCE,
+        statement=(
+            "Every deployment need, role, and metadata value must be directly supported "
+            "by its referenced requirement text. An allowed simplification is not a "
+            "required topology choice: for example, 'high availability is not required' "
+            "does not imply one instance, no replication, or no failover."
+        ),
+        citation="easydep convention (requirements-to-deployment boundary)",
+        evidence="project-convention",
+        caveat="우리 시스템의 요구사항-설계 경계 규약이다.",
+        judged_by=JUDGED_VALIDATOR,
+    ),
+    Rule(
+        id="deployment-needs.generic-capability-not-resource-selection",
+        stage=MODEL_USE_CASES,
+        severity=GUIDANCE,
+        statement=(
+            "Deployment-need identifiers and roles describe generic capabilities or "
+            "constraints. They must not select CSP products, instance types, VM counts, "
+            "disks, load balancers, or other concrete infrastructure designs."
+        ),
+        citation="easydep project scope (requirements/design separation)",
+        evidence="project-convention",
+        caveat="우리 시스템의 요구사항-설계 경계 규약이다.",
+        judged_by=JUDGED_VALIDATOR,
     ),
     # --- 3단계: 명세 ------------------------------------------------------
     Rule(

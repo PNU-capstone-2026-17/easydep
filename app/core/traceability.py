@@ -37,6 +37,8 @@ class Traceability:
     ucs_claiming: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 **제약으로 붙인** UC id들(`nfr_ids`).
     ucs_constrained_by: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것에서 파생된 배포 필요사항 id들.
+    deployment_needs_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 커버한다고 적힌 명세 스텝들(`"UC1.3"`). UC보다 정밀한 추적.
     steps_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -73,13 +75,14 @@ class Traceability:
 
     @property
     def attached_nfr_ids(self) -> tuple[str, ...]:
-        """어떤 UC에 제약으로 붙은 NFR."""
-        return tuple(sorted(self.nfr_ids & frozenset(self.ucs_constrained_by)))
+        """Use Case 또는 배포 필요사항에 연결된 NFR."""
+        attached = frozenset(self.ucs_constrained_by) | frozenset(self.deployment_needs_of)
+        return tuple(sorted(self.nfr_ids & attached))
 
     @property
     def unattached_nfr_ids(self) -> tuple[str, ...]:
-        """어디에도 안 붙은 NFR — 전역 제약 후보."""
-        return tuple(sorted(self.nfr_ids - frozenset(self.ucs_constrained_by)))
+        """Use Case와 배포 필요사항 어디에도 연결되지 않은 NFR."""
+        return tuple(sorted(self.nfr_ids - frozenset(self.attached_nfr_ids)))
 
     @property
     def coverage_ratio(self) -> float:
@@ -110,12 +113,18 @@ def index(state: dict) -> Traceability:
             for rid in step.get("covered_req_ids", []) or []:
                 steps.setdefault(rid, []).append(f"{uc_id}.{step['step_number']}")
 
+    deployment: dict[str, list[str]] = {}
+    for need_id, need in (state.get("deployment_needs") or {}).items():
+        for requirement_id in need.get("requirementIds", []) or []:
+            deployment.setdefault(requirement_id, []).append(need_id)
+
     return Traceability(
         by_id=by_id,
         fr_ids=frozenset(r["id"] for r in classified if r.get("type") == "FR"),
         nfr_ids=frozenset(r["id"] for r in classified if r.get("type") == "NFR"),
         ucs_claiming={k: tuple(v) for k, v in claiming.items()},
         ucs_constrained_by={k: tuple(v) for k, v in constrained.items()},
+        deployment_needs_of={k: tuple(v) for k, v in deployment.items()},
         steps_of={k: tuple(v) for k, v in steps.items()},
     )
 

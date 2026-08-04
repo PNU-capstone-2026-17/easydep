@@ -70,6 +70,9 @@ def test_missing_required_constraints_are_asked_in_english(monkeypatch):
     assert not re.search(r"[가-힣]", " ".join(
         f"{q['question']} {q['why']}" for q in questions
     ))
+    sizing = [q for q in questions if q["field"] in {"minVCpu", "minMemoryGiB"}]
+    assert len(sizing) == 1
+    assert "either the minimum vCPU or minimum memory" in sizing[0]["question"]
 
 
 def test_unsupported_or_ungrounded_values_do_not_enter_the_spec(monkeypatch):

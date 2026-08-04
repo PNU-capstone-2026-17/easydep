@@ -80,6 +80,21 @@ def test_coverage_ratio_of_an_empty_input_is_not_a_failure():
     assert traceability.index({"classified": [], "use_cases": []}).coverage_ratio == 1.0
 
 
+def test_deployment_linked_nfr_is_not_reported_as_unattached():
+    state = _state(
+        use_cases=[{"id": "UC1", "requirement_ids": ["FR1"], "nfr_ids": []}],
+        deployment_needs={
+            "https_ingress": {"requirementIds": ["NFR1"]},
+        },
+    )
+
+    trace = traceability.index(state)
+
+    assert trace.attached_nfr_ids == ("NFR1",)
+    assert trace.unattached_nfr_ids == ()
+    assert check_coverage(state)["coverage"]["unattached_nfr_ids"] == []
+
+
 def test_spec_steps_are_traced_per_step_not_just_per_use_case():
     """스텝 단위 추적이 UC 단위보다 정밀하다 — 매트릭스가 그걸 싣는다."""
     trace = traceability.index(_state(use_case_specs=[{

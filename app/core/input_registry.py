@@ -184,7 +184,8 @@ ASKS: tuple[Ask, ...] = (
         id="spec.min_vcpu",
         spec_field="minVCpu",
         tier=SUGGESTED,
-        question="What is the minimum vCPU requirement for this workload?",
+        question=("If known, provide either the minimum vCPU or minimum memory required "
+                  "by this workload."),
         opens="A sizing floor enables instance-spec selection. Without one, the system "
               "does not assume that the cheapest or smallest instance is sufficient.",
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
@@ -390,10 +391,19 @@ def missing(spec: dict, tier: str = REQUIRED) -> tuple[Ask, ...]:
     for pair in PAIRS:
         if any(name in spec for name in pair):
             satisfied |= set(pair)
-    return tuple(a for a in ASKS
-                 if a.tier == tier and a.spec_field
-                 and a.spec_field not in spec
-                 and a.spec_field not in satisfied)
+    missing_asks = [a for a in ASKS
+                    if a.tier == tier and a.spec_field
+                    and a.spec_field not in spec
+                    and a.spec_field not in satisfied]
+    # Alternative sizing fields open the same decision, so ask only once. The answer is
+    # natural language and may contain either value; extraction decides which field it fills.
+    for pair in PAIRS:
+        members = [a for a in missing_asks if a.spec_field in pair]
+        if len(members) > 1:
+            missing_asks = [a for a in missing_asks if a.spec_field not in pair]
+            missing_asks.append(members[0])
+    order = {ask.id: index for index, ask in enumerate(ASKS)}
+    return tuple(sorted(missing_asks, key=lambda ask: order[ask.id]))
 
 
 @dataclass(frozen=True)

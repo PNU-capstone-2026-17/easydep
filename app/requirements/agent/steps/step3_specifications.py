@@ -260,7 +260,7 @@ def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
         "extensions": [],
         "success_guarantee": [],
         "minimal_guarantee": [],
-        "issues": [f"[generation] 명세를 생성하지 못했다: {type(exc).__name__}: {exc}"],
+        "issues": [f"[generation] Could not generate the specification: {type(exc).__name__}: {exc}"],
         "repair_iters": 0,
         "semantic_status": validator.FAILED,
         "repair_stopped": "not_generated",

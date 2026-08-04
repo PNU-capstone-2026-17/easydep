@@ -214,6 +214,11 @@ def review_model(state: AgentState) -> dict:
     지금은 리포트와 응답에 실어 사람이 피드백으로 되돌릴 수 있게 한다.
     """
     payload = {
+        "requirements": [
+            {k: requirement.get(k) for k in ("id", "text", "type")}
+            for requirement in (state.get("classified") or [])
+        ],
+        "deployment_needs": state.get("deployment_needs") or {},
         "actors": [
             {k: a.get(k) for k in ("name", "description", "kind", "parent_actor")}
             for a in (state.get("actors") or [])
