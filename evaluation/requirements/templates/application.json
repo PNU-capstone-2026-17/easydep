@@ -1,0 +1,11 @@
+{
+  "name": "replace_with_unique_english_name",
+  "description": "Explain the domain and the failure mode this application evaluates.",
+  "resource_constraints_text": "Deploy Docker containers on one of AWS, Azure, or GCP Linux VMs. State region, monthly budget, availability tolerance, and any known minimum capacity.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"State one externally observable functional requirement in English."},
+    {"id":"FR2","type":"FR","text":"Add requirements that identify external actors and their interactions without prescribing an internal design."},
+    {"id":"NFR1","type":"NFR","text":"State a measurable quality or operational constraint."},
+    {"id":"NFR2","type":"NFR","text":"The application shall run in Docker containers on Linux VMs and expose a health endpoint."}
+  ]
+}
