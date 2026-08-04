@@ -30,7 +30,10 @@ def test_implementation_contract_maps_nested_design_artifacts():
         {"resource_spec": {"provider": "aws"}},
         {
             "artifacts": {
-                "class_diagram": "A --> B\nclass puml",
+                "class_diagram": (
+                    "A --> B\nclass User {\n  - email\n"
+                    "  + authenticate(email,password)\n}"
+                ),
                 "sequence_diagram": "sequence puml",
                 "api_spec": {"openapi": "3.0.0"},
                 "erd": "erd puml",
@@ -41,6 +44,9 @@ def test_implementation_contract_maps_nested_design_artifacts():
         {"status": "provisional"},
     )
 
-    assert payload["class_diagram_puml"] == "' implementation relation: A --> B\nclass puml"
+    assert payload["class_diagram_puml"] == (
+        "' implementation relation: A --> B\nclass User {\n  - email: String\n"
+        "  + authenticate(email: String, password: String)\n}"
+    )
     assert payload["deployment_diagram_puml"] == "cloud puml"
     assert payload["resource_spec"]["provisionalRecommendation"]["status"] == "provisional"

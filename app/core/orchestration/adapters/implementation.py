@@ -27,12 +27,28 @@ class ImplementationAdapter:
     def _normalize_bce_for_generator(source: str) -> str:
         """Hide relationships unsupported by the bundled class-to-code parser."""
         connector = re.compile(r"\s(?:-->|->|\.\.>|\*--|o--|--\|>)\s")
-        lines = [
-            f"' implementation relation: {line}"
-            if connector.search(line)
-            else line
-            for line in source.splitlines()
-        ]
+        untyped_field = re.compile(r"^(\s*[+#~-]\s+)([A-Za-z_]\w*)\s*$")
+        method = re.compile(
+            r"^(\s*[+#~-]\s+[A-Za-z_]\w*\()([^)]*)(\)(?:\s*:\s*\S+)?\s*)$"
+        )
+        lines = []
+        for line in source.splitlines():
+            if connector.search(line):
+                lines.append(f"' implementation relation: {line}")
+                continue
+            match = untyped_field.match(line)
+            if match:
+                lines.append(f"{match.group(1)}{match.group(2)}: String")
+                continue
+            call = method.match(line)
+            if call and call.group(2).strip():
+                parameters = ", ".join(
+                    part.strip() if ":" in part else f"{part.strip()}: String"
+                    for part in call.group(2).split(",")
+                )
+                lines.append(f"{call.group(1)}{parameters}{call.group(3)}")
+                continue
+            lines.append(line)
         return "\n".join(lines)
 
     @staticmethod
