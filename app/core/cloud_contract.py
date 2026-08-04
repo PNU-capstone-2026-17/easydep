@@ -21,7 +21,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.core import input_registry
-from app.core.cloudkb.appkb import contract as _contract
+from app.core import resource_contract as _contract
 
 @lru_cache(maxsize=1)
 def schema_fields() -> frozenset[str]:

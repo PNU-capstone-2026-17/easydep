@@ -58,7 +58,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-from app.core.cloudkb.appkb import contract as _contract
+from app.core import resource_contract as _contract
 from app.core.cloudkb.depkb.closure import closure
 
 #: 계층 — **없으면 못 재는가(필수) · 판정 하나가 닫히는가(권고) · 계획에 실릴
@@ -151,9 +151,7 @@ ASKS: tuple[Ask, ...] = (
         opens="값 조인의 축 전부(비용·성능·번들·벤더 타입)이자 의존 주장의 색인 — "
               "주장 118건이 CSP별로 갈려 있어 이것 없이는 어떤 계획도 못 낸다",
         basis=(Basis(CODE, "app/core/regions.py#providers"),
-               Basis(CODE, "app/core/cloudkb/depkb/closure.py#closure"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#compose"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
+               Basis(CODE, "app/core/cloudkb/depkb/closure.py#closure")),
     ),
     Ask(
         id="join.region",
@@ -162,9 +160,7 @@ ASKS: tuple[Ask, ...] = (
         question="어느 리전입니까? 지명으로 말해도 됩니다 — 코드로 바꿔 드립니다.",
         opens="단가·용량·탄소 데이터가 리전 코드로 색인돼 있다 — 지명이 그대로 "
               "오면 조인이 오류 없이 빈 답이 된다(실측)",
-        basis=(Basis(CODE, "app/core/regions.py#resolve"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_attach_values"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
+        basis=(Basis(CODE, "app/core/regions.py#resolve"),),
     ),
     # ── 위상축(신설) — 이 축이 통째로 비어 있었다 ────────────────────────────
     Ask(
@@ -192,7 +188,7 @@ ASKS: tuple[Ask, ...] = (
         opens="비용 부합 판정의 기준값 — 없으면 판정문 자체가 안 나온다",
         # 2026-08-02 관심사 실측 재도출로 문헌 유래 관심사(cn.cost-ceiling)가
         # 죽었다 — 이 칸의 근거는 과제 원문(비용 기준 추천)과 판정 코드다.
-        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),),
+        basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#estimate_monthly_cost"),),
     ),
     # ── 선택축 — 채우면 판정이 하나 열린다 ───────────────────────────────────
     Ask(
@@ -202,9 +198,7 @@ ASKS: tuple[Ask, ...] = (
         question="이 워크로드가 필요로 하는 최소 vCPU가 몇 개입니까?",
         opens="스펙 선택 — 하한이 없으면 **스펙을 고르지 않는다**. 최저가를 고르는 "
               "것은 중립이 아니라 근거 없는 주장이다",
-        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#resolve"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_attach_values")),
+        basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
         id="spec.min_memory",
@@ -212,8 +206,7 @@ ASKS: tuple[Ask, ...] = (
         tier=SUGGESTED,
         question="최소 메모리가 몇 GiB입니까? (vCPU 대신 이것만 줘도 됩니다)",
         opens="스펙 선택의 다른 축 — 둘 중 한 축만 있어도 선택이 열린다",
-        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#resolve")),
+        basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
         id="load.traffic_pattern",
@@ -223,7 +216,7 @@ ASKS: tuple[Ask, ...] = (
         opens="버스트 적합 판정 — 없으면 버스트 경고가 경고로만 남고 이 앱에 "
               "문제인지는 판정하지 않는다",
         basis=(Basis(CONCERN, "cn.load-shape"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES")),
+               Basis(CODE, "app/core/cloudkb/perfkb/agent_api.py#recommend_warning")),
     ),
     Ask(
         id="avail.multi_zone",
@@ -234,9 +227,7 @@ ASKS: tuple[Ask, ...] = (
               "둘**을 요구한다(같은 AZ 둘은 거부됐다, 실측)",
         # 다중화 요구의 수요 실물(PURE 24건)은 계보 감사 판정표에 있다 — 관심사
         # 축은 실측 재도출로 거부(required) 계열을 안 담아 여기 대응 관심사가 없다.
-        basis=(Basis(CODE, "app/core/cloudkb/appkb/verify.py#_CLOSES"),
-               Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#_subnet_notes"),
-               Basis(CLAIM, "aws/k8sCluster→subnet/existence")),
+        basis=(Basis(CLAIM, "aws/k8sCluster→subnet/existence"),),
     ),
     # ── 맥락축 — 판정을 열진 않지만 계획에 실린다 ────────────────────────────
     Ask(
@@ -247,8 +238,7 @@ ASKS: tuple[Ask, ...] = (
                  "편한 쪽으로 말해 주세요.",
         opens="계획의 규모 진술과 되묻기의 근거 — **스펙을 정하지는 않는다**"
               "(규모→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",
-        basis=(Basis(CODE, "app/core/cloudkb/nim_agent/sizing_floor.py#undecided_note"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
+        basis=(Basis(CODE, "app/core/resource_spec.schema.json#scale"),),
     ),
     Ask(
         id="data.residency",
@@ -257,8 +247,7 @@ ASKS: tuple[Ask, ...] = (
         question="데이터가 특정 국가·지역에 머물러야 합니까?",
         opens="계획이 리전의 원본 표시 이름을 대조 자료로 싣는다 — **판정은 하지 "
               "않는다**(리전의 국가를 기계 판정할 소스가 없다, 실측)",
-        basis=(Basis(CODE, "app/core/cloudkb/nim_agent/design_tools.py#compose"),
-               Basis(CODE, "app/core/cloudkb/appkb/verify.py#verify_against_requirements")),
+        basis=(Basis(CODE, "app/core/region_catalog.py#catalog"),),
     ),
 )
 
