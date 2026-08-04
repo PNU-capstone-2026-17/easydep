@@ -20,7 +20,10 @@ from app.requirements.schemas import DeploymentNeedsResult
 _KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _SYSTEM = """Derive deployment needs from the supplied software requirements.
 Return a generic deploymentNeeds dictionary. Each dictionary key is a concise,
-snake_case semantic identifier chosen for this application. Each value contains:
+snake_case capability identifier chosen for this application. Keep product, language,
+framework, protocol, version, and endpoint names out of the key; put grounded details in
+metadata instead (for example, use `container_runtime`, not `java21_container_runtime`).
+Each value contains:
 - role: what capability the deployment must provide and why
 - required: true when the requirements mandate it; false for a supported preference
 - requirementIds: one or more exact requirement IDs from the input

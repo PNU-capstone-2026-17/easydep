@@ -28,6 +28,10 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
     empty_review = {"issues": [], "semantic_status": "ok", "unexamined_rules": []}
 
     monkeypatch.setattr(runner, "identify_actors", stage("actors", "actors"))
+    monkeypatch.setattr(runner, "derive_deployment_needs",
+                        stage("deployment_needs", "deployment_needs", {}))
+    monkeypatch.setattr(runner, "build_resource_spec",
+                        stage("resource_spec", "resource_intake", {"valid": False}))
     monkeypatch.setattr(runner, "identify_use_cases", stage("use_cases", "use_cases"))
     monkeypatch.setattr(runner, "review_model",
                         stage("review_model", "model_review", empty_review))
@@ -42,7 +46,8 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
-    assert calls == ["actors", "use_cases", "review_model", "coverage", "specs",
+    assert calls == ["deployment_needs", "resource_spec", "actors", "use_cases",
+                     "review_model", "coverage", "specs",
                      "check_specs", "rel", "check_rel", "diagram"]
     assert state["classified"][0]["id"] == "R1"      # 원본 입력 유지
     assert state["actors"] == "<actors>"
@@ -76,6 +81,9 @@ def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch
         return lambda state: {key: value}
 
     monkeypatch.setattr(runner, "identify_actors", noop("actors", []))
+    monkeypatch.setattr(runner, "derive_deployment_needs", noop("deployment_needs", {}))
+    monkeypatch.setattr(runner, "build_resource_spec",
+                        noop("resource_intake", {"valid": False}))
     monkeypatch.setattr(runner, "identify_use_cases", noop("use_cases", []))
     monkeypatch.setattr(runner, "review_model", noop("model_review", {"issues": []}))
     monkeypatch.setattr(runner, "check_coverage", noop("coverage", {}))
@@ -130,7 +138,9 @@ def test_persist_run_writes_expected_tree(tmp_path):
 
     # 최상위 산출물
     for f in ("input.json", "manifest.json", "actors.json", "use_cases.json",
-              "coverage.json", "relationships.json", "diagram.puml"):
+              "coverage.json", "deployment_needs.json", "resource_spec.json",
+              "resource_intake.json", "traceability.json", "relationships.json",
+              "diagram.puml"):
         assert (run_dir / f).exists(), f"{f} 누락"
 
     # UC별 디렉토리 + spec

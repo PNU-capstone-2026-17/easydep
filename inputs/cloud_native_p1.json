@@ -1,0 +1,32 @@
+{
+  "name": "cloud_native_p1",
+  "description": "Docker-on-VM 비교실험 P1: Stateless 단위 변환 API",
+  "resource_constraints_text": "Deploy to a Linux VM in the AWS Seoul region with a monthly budget of at most 100 USD. A single availability zone is acceptable.",
+  "classified": [
+    {
+      "id": "FR1",
+      "text": "Users convert values between length, weight, and temperature units through a REST API.",
+      "type": "FR"
+    },
+    {
+      "id": "NFR1",
+      "text": "External clients must access the API over HTTPS.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR2",
+      "text": "The service does not store server-side application data.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR3",
+      "text": "High availability is not required.",
+      "type": "NFR"
+    },
+    {
+      "id": "NFR4",
+      "text": "The application uses Java 21, Spring Boot, Gradle, and Docker and provides a GET /health endpoint.",
+      "type": "NFR"
+    }
+  ]
+}

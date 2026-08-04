@@ -116,7 +116,11 @@ def _rerun_from(state: dict, owner: str) -> list[str]:
     return _run_stages(state, tuple(order[start:]))
 
 
-def run_pipeline(classified: list[dict]) -> dict:
+def run_pipeline(
+    classified: list[dict],
+    resource_constraints_text: str = "",
+    resource_answers: dict[str, str] | None = None,
+) -> dict:
     """step2~4를 순서대로 실행하고, 남은 결함은 **낸 단계로 되돌린다**.
 
     그래프(`agent/graph.py`)는 되돌아가기를 조건부 엣지로 표현하는데, 이 러너는 그래프를
@@ -124,7 +128,11 @@ def run_pipeline(classified: list[dict]) -> dict:
     여기서도 돌려야 한다 — **평가 세트가 재는 실행이 이 배치**이고, 여기에 되돌아가기가
     없으면 C2의 효과가 측정에 잡히지 않는다.
     """
-    state: dict = {"classified": classified}
+    state: dict = {
+        "classified": classified,
+        "resource_constraints_text": resource_constraints_text,
+        "resource_answers": resource_answers or {},
+    }
     # 정방향 패스는 `stages.batch_order()`에서 파생한다 — 파이프라인 모양을 말하는 곳은
     # `agent/stages.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
     _run_stages(state, stages.batch_order())
@@ -182,6 +190,7 @@ def _summarize(state: dict) -> dict:
         # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
         "model_review": state.get("model_review", {}),
         "n_deployment_needs": len(state.get("deployment_needs", {})),
+        "resource_spec_valid": bool(state.get("resource_spec")),
         # 되돌아가기가 있었는지. 있었으면 이 실행의 비용은 한 바퀴 이상이다.
         "redo_rounds": state.get("redo_rounds", 0),
         "relationships": {
@@ -211,6 +220,8 @@ def persist_run(
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
     _dump(run_dir / "deployment_needs.json", state.get("deployment_needs", {}))
+    _dump(run_dir / "resource_spec.json", state.get("resource_spec", {}))
+    _dump(run_dir / "resource_intake.json", state.get("resource_intake", {}))
     # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
     # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
     _dump(run_dir / "model_review.json", state.get("model_review", {}))
