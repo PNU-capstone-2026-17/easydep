@@ -1,5 +1,7 @@
 # 클라우드 제약의 도출 — 자유 변수와 단계 배분
 
+> **보류 문서:** 현재 최소 `cloudContext` 및 기존 FR/NFR 계약과 재대조 전에는 구현 기준으로 사용하지 않는다. 현재 범위는 [`README.md`](README.md)를 따른다.
+
 > **살아 있는 문서다. 계속 갱신한다.** 아카이브에 넣지 않는다.
 >
 > 상위 근거는 `docs/research.md`(과제 원문)와 `docs/cloud-native-extension.md`(현재 진실).

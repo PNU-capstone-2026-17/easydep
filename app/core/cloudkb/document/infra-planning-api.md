@@ -1,5 +1,7 @@
 # 인프라 계획 API — 설계·구현 에이전트가 부르는 문
 
+> **보류 문서:** 현재 `ResourcePlan` 계약과 대조되지 않았다. 새 플로우의 기준은 [`docs/cloud-native-extension.md`](../../../../docs/cloud-native-extension.md)다.
+
 > **살아 있는 문서.** 계약이 바뀌면 여기를 고친다.
 > 근거는 `depkb/claims.json`(3사 실측 주장 — 개수는 파일이 진실이다), 여정은
 > `document/archive/dep-analysis-journey-2026-07-31.md`.

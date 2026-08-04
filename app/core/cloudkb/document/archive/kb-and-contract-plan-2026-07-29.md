@@ -1,5 +1,7 @@
 # 다섯 갈래 계획 — 사이징 근거 · 미사용 소스 · 계측 복구 · 다이어그램 계약 · 필수 재정의 (2026-07-29)
 
+> **과거 계획:** 현재 계획은 [`cloud-native-extension.md`](cloud-native-extension.md)를 따른다.
+
 > **이력이다. 참조하지 않는다.**
 >
 > 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,

@@ -1,5 +1,7 @@
 # 클라우드 네이티브를 요구사항 단계에서 잇기 — 조사 (2026-07-27)
 
+> **과거 조사:** 현재 요구사항 기준은 [`cloud-native-extension.md`](cloud-native-extension.md)의 최소 `cloudContext`다.
+
 > **조사 기록이다.**
 >
 > 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서의 조사 결과는 유효하나

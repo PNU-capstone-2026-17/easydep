@@ -1,5 +1,7 @@
 # 지식베이스 범위 재정의 — 경계를 cb-tumblebug으로 (2026-07-29)
 
+> **과거 범위:** 현재 범위는 AWS·Azure·GCP의 Docker-on-VM이며 cb-tumblebug을 제품 경계로 사용하지 않는다.
+
 > **이력이다. 참조하지 않는다.**
 >
 > 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
@@ -208,7 +210,7 @@ S5("파서까지 지운다")를 문자 그대로 적용하면 **경계 안 데�
 
 ### 3.4 아직 모르는 한 칸
 
-> **채워졌다 (2026-07-29).** `docs/tumblebug-resource-dependency-2026-07-29.md` ·
+> **채워졌다 (2026-07-29).** `tumblebug-resource-dependency-2026-07-29.md` ·
 > 산출물 `app/core/cloudkb/graphkb/parsers/tumblebug_resources.json`.
 > 본문은 고치지 않는다(계획과 결과를 섞지 않는다). 다만 **이 계획의 전제 둘이
 > 조사로 뒤집혔으므로** 그것만 여기 적는다.

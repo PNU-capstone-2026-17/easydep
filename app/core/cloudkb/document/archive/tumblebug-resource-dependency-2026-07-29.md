@@ -1,5 +1,7 @@
 # cb-tumblebug 자원 전수 조사와 의존성 판정 기준 (2026-07-29)
 
+> **과거 조사:** 현재 VM 의존성 기준은 depkb 재검증 후 확정한다. 이 문서를 현재 제품 범위로 사용하지 않는다.
+
 > **측정 기록이다.**
 >
 > **수치는 유효하다.** 다만 서술의 전제는 [`docs/cloud-native-extension.md`](cloud-native-extension.md)를 따른다 —
@@ -14,7 +16,7 @@
 
 배포 기질로 삼기로 한 cb-tumblebug이 **무엇을 만들 수 있고, 그것들이 서로 무엇을
 요구하는가**를 전수로 조사한 기록입니다. 범위 결정은
-`docs/kb-scope-tumblebug-2026-07-29.md`에 있고, 이 문서는 그 §3.4가 *"아직 모르는 한
+`kb-scope-tumblebug-2026-07-29.md`에 있고, 이 문서는 그 §3.4가 *"아직 모르는 한
 칸"*으로 남긴 자리를 채웁니다.
 
 기계가 읽는 산출물은 **`app/core/cloudkb/graphkb/parsers/tumblebug_resources.json`**입니다.
