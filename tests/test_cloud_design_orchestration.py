@@ -35,8 +35,10 @@ def test_cloud_design_uses_only_dependency_kb(provider, region):
     assert result["anchors"] == ["vm"]
     assert result["kb_used"] == ["depkb"]
     assert result["deferred"] == ["capacity", "performance", "price", "vm_selection"]
-    assert "Docker application container" in result["deployment_diagram_puml"]
+    assert "Application container" in result["deployment_diagram_puml"]
     assert "vm" in result["deployment_diagram_puml"]
+    assert "?" not in result["deployment_diagram_puml"]
+    assert result["logical_deployment_diagram_puml"].startswith("@startuml")
 
 
 def test_cloud_design_adds_only_design_supported_optional_anchors():

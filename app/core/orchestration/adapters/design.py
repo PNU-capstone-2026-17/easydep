@@ -50,6 +50,18 @@ class DesignAdapter:
         from app.artifacts_api import to_web_response
 
         payload: dict[str, Any] = {"app_id": session_id, **to_web_response(result)}
+        # Keep structured sources for orchestration-owned post-processing. The web
+        # response intentionally exposes rendered artifacts only, but cloud design
+        # needs the deployment model to distinguish stateless and stateful layouts.
+        for key in (
+            "extracted_bce_classes",
+            "sequence_diagram_model",
+            "api_spec_model",
+            "erd_bce_classes",
+            "deployment_diagram_model",
+        ):
+            if result.get(key):
+                payload[key] = result[key]
         interruptions = result.get("__interrupt__") or []
         if interruptions:
             value = interruptions[0].value
