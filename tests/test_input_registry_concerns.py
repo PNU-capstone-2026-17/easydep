@@ -16,8 +16,17 @@
 
 from __future__ import annotations
 
+import re
+
 from app.core import input_registry
 from app.requirements.knowledge import concerns
+
+
+def test_user_facing_resource_questions_are_english_only() -> None:
+    hangul = re.compile(r"[가-힣]")
+    for ask in input_registry.ASKS:
+        assert not hangul.search(ask.question), ask.id
+        assert not hangul.search(ask.opens), ask.id
 
 
 def _concern_refs() -> set[str]:

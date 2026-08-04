@@ -147,9 +147,9 @@ ASKS: tuple[Ask, ...] = (
         id="join.provider",
         spec_field="provider",
         tier=REQUIRED,
-        question="어느 클라우드에 배포합니까? (aws · azure · gcp)",
-        opens="값 조인의 축 전부(비용·성능·번들·벤더 타입)이자 의존 주장의 색인 — "
-              "주장 118건이 CSP별로 갈려 있어 이것 없이는 어떤 계획도 못 낸다",
+        question="Which cloud provider will host the deployment? (aws, azure, or gcp)",
+        opens="This selects the provider-specific cost, performance, capacity, resource "
+              "type, and dependency data required to produce a deployment plan.",
         basis=(Basis(CODE, "app/core/regions.py#providers"),
                Basis(CODE, "app/core/cloudkb/depkb/closure.py#closure")),
     ),
@@ -157,9 +157,9 @@ ASKS: tuple[Ask, ...] = (
         id="join.region",
         spec_field="region",
         tier=REQUIRED,
-        question="어느 리전입니까? 지명으로 말해도 됩니다 — 코드로 바꿔 드립니다.",
-        opens="단가·용량·탄소 데이터가 리전 코드로 색인돼 있다 — 지명이 그대로 "
-              "오면 조인이 오류 없이 빈 답이 된다(실측)",
+        question="Which region should host the deployment? A place name is acceptable.",
+        opens="Pricing and capacity data are indexed by provider region code; the place "
+              "name is resolved before those datasets are queried.",
         basis=(Basis(CODE, "app/core/regions.py#resolve"),),
     ),
     # **existingResources는 2026-08-02에 계약에서 빠졌다 — 범위 결정(사용자).**
@@ -172,8 +172,9 @@ ASKS: tuple[Ask, ...] = (
         id="budget.monthly",
         spec_field="monthlyBudgetUSD",
         tier=REQUIRED,
-        question="월 예산이 얼마입니까? 다른 통화로 말해도 환산해 드립니다.",
-        opens="비용 부합 판정의 기준값 — 없으면 판정문 자체가 안 나온다",
+        question="What is the monthly budget? Other currencies can be converted to USD.",
+        opens="The monthly budget is required to evaluate whether a deployment plan fits "
+              "the cost constraint.",
         # 2026-08-02 관심사 실측 재도출로 문헌 유래 관심사(cn.cost-ceiling)가
         # 죽었다 — 이 칸의 근거는 과제 원문(비용 기준 추천)과 판정 코드다.
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#estimate_monthly_cost"),),
@@ -183,26 +184,27 @@ ASKS: tuple[Ask, ...] = (
         id="spec.min_vcpu",
         spec_field="minVCpu",
         tier=SUGGESTED,
-        question="이 워크로드가 필요로 하는 최소 vCPU가 몇 개입니까?",
-        opens="스펙 선택 — 하한이 없으면 **스펙을 고르지 않는다**. 최저가를 고르는 "
-              "것은 중립이 아니라 근거 없는 주장이다",
+        question="What is the minimum vCPU requirement for this workload?",
+        opens="A sizing floor enables instance-spec selection. Without one, the system "
+              "does not assume that the cheapest or smallest instance is sufficient.",
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
         id="spec.min_memory",
         spec_field="minMemoryGiB",
         tier=SUGGESTED,
-        question="최소 메모리가 몇 GiB입니까? (vCPU 대신 이것만 줘도 됩니다)",
-        opens="스펙 선택의 다른 축 — 둘 중 한 축만 있어도 선택이 열린다",
+        question="What is the minimum memory requirement in GiB? This may be supplied instead of vCPU.",
+        opens="Memory provides an alternative sizing floor; either memory or vCPU is "
+              "sufficient to enable instance-spec selection.",
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
         id="load.traffic_pattern",
         spec_field="trafficPattern",
         tier=SUGGESTED,
-        question="부하가 상시로 깔립니까(steady), 간헐적으로 치솟습니까(spiky)?",
-        opens="버스트 적합 판정 — 없으면 버스트 경고가 경고로만 남고 이 앱에 "
-              "문제인지는 판정하지 않는다",
+        question="Is the workload steady or does it have intermittent spikes?",
+        opens="The traffic pattern determines whether burst-performance warnings conflict "
+              "with this workload.",
         basis=(Basis(CONCERN, "cn.load-shape"),
                Basis(CODE, "app/core/cloudkb/perfkb/agent_api.py#recommend_warning")),
     ),
@@ -210,9 +212,8 @@ ASKS: tuple[Ask, ...] = (
         id="avail.multi_zone",
         spec_field="multiZone",
         tier=SUGGESTED,
-        question="한 가용영역이 통째로 죽어도 서비스가 계속돼야 합니까?",
-        opens="가용영역 판정 · 서브넷 배치 조건 — aws EKS는 **서로 다른 AZ의 서브넷 "
-              "둘**을 요구한다(같은 AZ 둘은 거부됐다, 실측)",
+        question="Must the service remain available if an entire availability zone fails?",
+        opens="This determines whether the deployment must span multiple availability zones.",
         # 다중화 요구의 수요 실물(PURE 24건)은 계보 감사 판정표에 있다 — 관심사
         # 축은 실측 재도출로 거부(required) 계열을 안 담아 여기 대응 관심사가 없다.
         basis=(Basis(CLAIM, "aws/k8sCluster→subnet/existence"),),
@@ -222,19 +223,17 @@ ASKS: tuple[Ask, ...] = (
         id="scale.expected",
         spec_field="scale",
         tier=CONTEXT,
-        question="예상 부하가 얼마입니까? 동시 사용자 수든 초당 요청 수든 "
-                 "편한 쪽으로 말해 주세요.",
-        opens="계획의 규모 진술과 되묻기의 근거 — **스펙을 정하지는 않는다**"
-              "(규모→vCPU 변환은 1차 소스가 없어 KB에서 배제됐다)",
+        question="What load is expected? Provide either concurrent users or requests per second.",
+        opens="This records the intended scale for the plan but does not infer a VM size.",
         basis=(Basis(CODE, "app/core/resource_spec.schema.json#scale"),),
     ),
     Ask(
         id="data.residency",
         spec_field="dataResidency",
         tier=CONTEXT,
-        question="데이터가 특정 국가·지역에 머물러야 합니까?",
-        opens="계획이 리전의 원본 표시 이름을 대조 자료로 싣는다 — **판정은 하지 "
-              "않는다**(리전의 국가를 기계 판정할 소스가 없다, 실측)",
+        question="Must data remain within a specific country or geographic area?",
+        opens="The deployment plan exposes the provider's region display name for a manual "
+              "residency check; the system does not infer legal compliance.",
         basis=(Basis(CODE, "app/core/region_catalog.py#catalog"),),
     ),
 )
@@ -329,9 +328,9 @@ def _decision_asks(csp: str, workloads: tuple[str, ...]) -> tuple[Ask, ...]:
                 tier=DECISION,
                 csp=csp,
                 needs_resource=subject,
-                question=f"{subject}의 {obj}를 어떻게 정합니까? — {decision.detail}",
-                opens=f"{subject} 생성 단계 — 컨트롤 플레인이 이 선택을 "
-                      f"요구한다({decision.kind})",
+                question=f"How should {obj} be selected for {subject}? {decision.detail}",
+                opens=f"The {subject} creation flow requires this control-plane decision "
+                      f"({decision.kind}).",
                 basis=(Basis(CLAIM, f"{csp}/{decision.about}/existence"),),
                 choices=tuple(obj.split("|")) if "|" in obj else (),
             )

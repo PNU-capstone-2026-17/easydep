@@ -656,7 +656,7 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
 
     for field in found.ambiguous_fields:
         if field in cloud_contract.schema_fields() and field != "workloads":
-            session.ask(field, cloud_contract.question(field) or f"{field} 값을 확인해 주세요.")
+            session.ask(field, cloud_contract.question(field) or f"Please confirm {field}.")
     session.understanding = found.understanding.strip()
 
 
@@ -669,7 +669,7 @@ def build_resource_spec(state: AgentState) -> dict:
 
     degraded = ""
     if not settings.resource_agent_llm:
-        degraded = "resource_agent_llm이 꺼져 있다 — 아무것도 읽지 않았다"
+        degraded = "The resource constraint LLM is disabled; no constraints were extracted."
     else:
         try:
             _record_extraction(session, _extract_once(briefing))
@@ -691,7 +691,7 @@ def build_resource_spec(state: AgentState) -> dict:
             # 사용자에게 하는 **말**과 그것이 필요한 **이유**는 다른 것이다.
             # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
             "question": cloud_contract.question(name)
-                        or f"{name} 값이 필요하다 — {cloud_contract.why(name)}",
+                        or f"A value for {name} is required: {cloud_contract.why(name)}",
             "choices": list(cloud_contract.choices(
                 name, str(session.draft.get("provider") or ""))),
             "seen": [r for r in session.rejected if r["field"] == name],
