@@ -13,7 +13,11 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
-from app.core.orchestration.adapters import DesignAdapter, RequirementsAdapter
+from app.core.orchestration.adapters import (
+    CloudDesignAdapter,
+    DesignAdapter,
+    RequirementsAdapter,
+)
 from app.core.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
@@ -50,11 +54,13 @@ def build_orchestration_graph(
     *,
     requirements: RequirementsAdapter | None = None,
     design: DesignAdapter | None = None,
+    cloud_design: CloudDesignAdapter | None = None,
     checkpointer: Any | None = None,
 ):
     """Compile the orchestration graph with replaceable agent adapters."""
     requirements_adapter = requirements or RequirementsAdapter()
     design_adapter = design or DesignAdapter()
+    cloud_design_adapter = cloud_design or CloudDesignAdapter()
     builder = StateGraph(OrchestrationState)
 
     def start_requirements(state: OrchestrationState) -> dict[str, Any]:
@@ -103,6 +109,20 @@ def build_orchestration_graph(
     def finish(_state: OrchestrationState) -> dict[str, Any]:
         return {"current_stage": "completed", "status": "completed"}
 
+    def finalize_cloud_design(state: OrchestrationState) -> dict[str, Any]:
+        result = cloud_design_adapter.finalize(
+            requirements_result=state["requirements_result"],
+            design_result=state["design_result"],
+        )
+        design_result = dict(state["design_result"])
+        design_result["logical_deployment_diagram_puml"] = result.get(
+            "logical_deployment_diagram_puml", ""
+        )
+        design_result["deployment_diagram_puml"] = result.get(
+            "deployment_diagram_puml", design_result.get("deployment_diagram_puml", "")
+        )
+        return {"cloud_design_result": result, "design_result": design_result}
+
     def after_requirements(state: OrchestrationState) -> str:
         if state["requirements_result"].get("status") == REQUIREMENTS_COMPLETE:
             return "start_design"
@@ -110,19 +130,29 @@ def build_orchestration_graph(
 
     def after_design(state: OrchestrationState) -> str:
         if state["design_result"].get("status") == DESIGN_COMPLETE:
-            return "finish"
+            return "finalize_cloud_design"
         return "resume_design"
+
+    def entry_route(state: OrchestrationState) -> str:
+        result = state.get("requirements_result") or {}
+        return (
+            "start_design"
+            if result.get("status") == REQUIREMENTS_COMPLETE
+            else "start_requirements"
+        )
 
     builder.add_node("start_requirements", start_requirements)
     builder.add_node("resume_requirements", resume_requirements)
     builder.add_node("start_design", start_design)
     builder.add_node("resume_design", resume_design)
+    builder.add_node("finalize_cloud_design", finalize_cloud_design)
     builder.add_node("finish", finish)
-    builder.add_edge(START, "start_requirements")
+    builder.add_conditional_edges(START, entry_route)
     builder.add_conditional_edges("start_requirements", after_requirements)
     builder.add_conditional_edges("resume_requirements", after_requirements)
     builder.add_conditional_edges("start_design", after_design)
     builder.add_conditional_edges("resume_design", after_design)
+    builder.add_edge("finalize_cloud_design", "finish")
     builder.add_edge("finish", END)
     return builder.compile(
         checkpointer=checkpointer
@@ -187,3 +217,47 @@ def resume_workflow(run_id: str, answer: Any) -> FlowResponse:
     """Resume whichever agent gate the workflow is currently waiting at."""
     config = {"configurable": {"thread_id": run_id}}
     return _response(dict(graph.invoke(Command(resume=answer), config)), run_id)
+
+
+def start_design_from_cached_requirements(
+    requirements_run_id: str,
+    *,
+    run_id: str | None = None,
+) -> FlowResponse:
+    """Start a new design run from a completed requirements checkpoint."""
+    source_config = {"configurable": {"thread_id": requirements_run_id}}
+    source = graph.get_state(source_config).values
+    requirements_result = source.get("requirements_result") or {}
+    if requirements_result.get("status") != REQUIREMENTS_COMPLETE:
+        raise ValueError("The source requirements run is not completed")
+
+    actual_run_id = run_id or uuid.uuid4().hex
+    initial: OrchestrationState = {
+        "run_id": actual_run_id,
+        "app_id": source.get("app_id") or uuid.uuid4().hex,
+        "requirements_thread_id": source.get("requirements_thread_id", ""),
+        "requirements": source.get("requirements") or [],
+        "resource_constraints_text": source.get("resource_constraints_text", ""),
+        "requirements_result": requirements_result,
+        "current_stage": "design",
+        "status": "running",
+    }
+    config = {"configurable": {"thread_id": actual_run_id}}
+    return _response(dict(graph.invoke(initial, config)), actual_run_id)
+
+
+def complete_design(run_id: str, *, max_gates: int = 10) -> FlowResponse:
+    """Approve remaining design gates and run cloud finalization."""
+    config = {"configurable": {"thread_id": run_id}}
+    result: FlowResponse | None = None
+    for _ in range(max_gates):
+        snapshot = graph.get_state(config)
+        if not snapshot.next:
+            values = dict(snapshot.values)
+            return _response(values, run_id)
+        if snapshot.values.get("current_stage") != "design":
+            raise ValueError("The workflow is waiting for requirements input")
+        result = resume_workflow(run_id, "")
+        if result.get("status") == "completed":
+            return result
+    raise RuntimeError(f"Design did not complete within {max_gates} gates")

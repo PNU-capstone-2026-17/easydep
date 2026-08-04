@@ -70,3 +70,31 @@ def test_requirements_and_design_sessions_are_resumed_without_restarting():
     assert final["status"] == "completed"
     assert final["current_stage"] == "completed"
     assert design.resumes == ["", ""]
+
+
+def test_completed_requirements_can_start_at_design():
+    requirements = FakeRequirements()
+    design = FakeDesign()
+    graph = build_orchestration_graph(
+        requirements=requirements,
+        design=design,
+        checkpointer=MemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "design-only"}}
+    result = graph.invoke(
+        {
+            "run_id": "design-only",
+            "app_id": "app-1",
+            "requirements_thread_id": "req-1",
+            "requirements_result": {
+                "status": "completed",
+                "use_case_specs": [{"id": "UC-1"}],
+            },
+            "current_stage": "design",
+        },
+        config,
+    )
+
+    assert result["__interrupt__"][0].value["stage"] == "class_diagram"
+    assert requirements.starts == 0
+    assert design.starts == 1

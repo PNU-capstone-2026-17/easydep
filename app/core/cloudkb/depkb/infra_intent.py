@@ -139,7 +139,7 @@ def _constraints_for(csp: str, ids: set[str]) -> tuple[Constraint, ...]:
                        if c["predicate"].startswith(p)), "")
         _head, _, rest = c["predicate"].partition(":")
         kind = prefix if prefix.endswith(("조건", "호환")) else "카디널리티"
-        rule = rest.strip() if rest.strip() else c["predicate"].strip()
+        rule = rest.strip() or c["predicate"].strip()
         out.append(Constraint(kind=kind, subject=c["subject"],
                               object=c["object"], rule=rule,
                               machine=c.get("constraint")))
@@ -200,9 +200,14 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
                                                   detail=att.detail))
             if att.autoFilled:
                 predicate_class = att.detail.split(":")[0]
+                notice_kind = (
+                    "server-default"
+                    if predicate_class in {"server-default", "서버 기본값"}
+                    else "server-implicit"
+                )
                 autofilled.setdefault(att.id, AutoFilled(
                     id=att.id, kind=predicate_class,
-                    notice=_sentence(_NOTICE, predicate_class,
+                    notice=_sentence(_NOTICE, notice_kind,
                                      object=att.id, csp=csp)))
         for d in c.decisions:
             subject, _, obj = d.about.partition("→")

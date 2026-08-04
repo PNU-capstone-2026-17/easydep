@@ -15,6 +15,7 @@ class OrchestrationState(TypedDict, total=False):
     resource_constraints_text: str
     requirements_result: dict[str, Any]
     design_result: dict[str, Any]
+    cloud_design_result: dict[str, Any]
     current_stage: StageName
     status: str
     error: str
