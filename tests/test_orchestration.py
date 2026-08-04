@@ -37,14 +37,40 @@ class FakeDesign:
         return {"status": "completed", "stage": None}
 
 
+class FakeCloudDesign:
+    def finalize(self, **_kwargs):
+        return {"status": "completed", "dependency_plan": {}, "kb_used": ["depkb"]}
+
+
+class FakeInfrastructure:
+    def recommend(self, **_kwargs):
+        return {"status": "provisional", "method": "llm_prompt_only"}
+
+
+class FakeImplementation:
+    def start(self, **_kwargs):
+        return {"status": "needs_approval", "transmission_request": {"requestId": "r1"}}
+
+    def resume(self, _result, *, approved):
+        assert approved is True
+        return {"status": "completed"}
+
+
+def build_test_graph(requirements, design):
+    return build_orchestration_graph(
+        requirements=requirements,
+        design=design,
+        cloud_design=FakeCloudDesign(),
+        infrastructure=FakeInfrastructure(),
+        implementation=FakeImplementation(),
+        checkpointer=MemorySaver(),
+    )
+
+
 def test_requirements_and_design_sessions_are_resumed_without_restarting():
     requirements = FakeRequirements()
     design = FakeDesign()
-    graph = build_orchestration_graph(
-        requirements=requirements,
-        design=design,
-        checkpointer=MemorySaver(),
-    )
+    graph = build_test_graph(requirements, design)
     config = {"configurable": {"thread_id": "run-1"}}
     initial = {
         "run_id": "run-1",
@@ -66,7 +92,13 @@ def test_requirements_and_design_sessions_are_resumed_without_restarting():
     assert third["__interrupt__"][0].value["stage"] == "deployment_diagram"
     assert design.starts == 1
 
-    final = graph.invoke(Command(resume=""), config)
+    implementation_gate = graph.invoke(Command(resume=""), config)
+    assert implementation_gate["__interrupt__"][0].value["stage"] == "implementation"
+
+    transmission_gate = graph.invoke(Command(resume=True), config)
+    assert transmission_gate["__interrupt__"][0].value["transmission_request"]
+
+    final = graph.invoke(Command(resume=True), config)
     assert final["status"] == "completed"
     assert final["current_stage"] == "completed"
     assert design.resumes == ["", ""]
@@ -75,11 +107,7 @@ def test_requirements_and_design_sessions_are_resumed_without_restarting():
 def test_completed_requirements_can_start_at_design():
     requirements = FakeRequirements()
     design = FakeDesign()
-    graph = build_orchestration_graph(
-        requirements=requirements,
-        design=design,
-        checkpointer=MemorySaver(),
-    )
+    graph = build_test_graph(requirements, design)
     config = {"configurable": {"thread_id": "design-only"}}
     result = graph.invoke(
         {

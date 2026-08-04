@@ -16,6 +16,8 @@ from langgraph.types import Command, interrupt
 from app.core.orchestration.adapters import (
     CloudDesignAdapter,
     DesignAdapter,
+    ImplementationAdapter,
+    InfrastructureRecommendationAdapter,
     RequirementsAdapter,
 )
 from app.core.orchestration.checkpoint import (
@@ -55,12 +57,16 @@ def build_orchestration_graph(
     requirements: RequirementsAdapter | None = None,
     design: DesignAdapter | None = None,
     cloud_design: CloudDesignAdapter | None = None,
+    infrastructure: InfrastructureRecommendationAdapter | None = None,
+    implementation: ImplementationAdapter | None = None,
     checkpointer: Any | None = None,
 ):
     """Compile the orchestration graph with replaceable agent adapters."""
     requirements_adapter = requirements or RequirementsAdapter()
     design_adapter = design or DesignAdapter()
     cloud_design_adapter = cloud_design or CloudDesignAdapter()
+    infrastructure_adapter = infrastructure or InfrastructureRecommendationAdapter()
+    implementation_adapter = implementation or ImplementationAdapter()
     builder = StateGraph(OrchestrationState)
 
     def start_requirements(state: OrchestrationState) -> dict[str, Any]:
@@ -109,6 +115,12 @@ def build_orchestration_graph(
     def finish(_state: OrchestrationState) -> dict[str, Any]:
         return {"current_stage": "completed", "status": "completed"}
 
+    def halt_implementation(state: OrchestrationState) -> dict[str, Any]:
+        return {
+            "current_stage": "implementation",
+            "status": state["implementation_result"].get("status", "failed"),
+        }
+
     def finalize_cloud_design(state: OrchestrationState) -> dict[str, Any]:
         result = cloud_design_adapter.finalize(
             requirements_result=state["requirements_result"],
@@ -123,6 +135,65 @@ def build_orchestration_graph(
         )
         return {"cloud_design_result": result, "design_result": design_result}
 
+    def recommend_infrastructure(state: OrchestrationState) -> dict[str, Any]:
+        result = infrastructure_adapter.recommend(
+            requirements_result=state["requirements_result"],
+            cloud_design_result=state["cloud_design_result"],
+        )
+        return {"infrastructure_recommendation": result}
+
+    def enter_implementation(_state: OrchestrationState) -> dict[str, Any]:
+        answer = interrupt(
+            {
+                "stage": "implementation",
+                "prompt": "Start provisional infrastructure planning and implementation?",
+                "action": "start_implementation",
+            }
+        )
+        approved = answer is True or (
+            isinstance(answer, str) and answer.strip().lower() in {"yes", "y", "approve"}
+        )
+        return {
+            "implementation_authorized": approved,
+            "implementation_result": (
+                {} if approved else {"status": "rejected", "reason": "not authorized"}
+            ),
+            "current_stage": "implementation",
+        }
+
+    def start_implementation(state: OrchestrationState) -> dict[str, Any]:
+        result = implementation_adapter.start(
+            run_id=state["run_id"],
+            app_id=state["app_id"],
+            requirements_result=state["requirements_result"],
+            design_result=state["design_result"],
+            cloud_design_result=state["cloud_design_result"],
+            infrastructure_recommendation=state["infrastructure_recommendation"],
+        )
+        return {
+            "implementation_result": result,
+            "current_stage": "implementation",
+            "status": result.get("status", "unknown"),
+        }
+
+    def resume_implementation(state: OrchestrationState) -> dict[str, Any]:
+        answer = interrupt(
+            {
+                "stage": "implementation",
+                "prompt": "Approve sending the listed implementation tasks to the LLM?",
+                "transmission_request": state["implementation_result"].get(
+                    "transmission_request"
+                ),
+            }
+        )
+        approved = answer is True or (
+            isinstance(answer, str) and answer.strip().lower() in {"yes", "y", "approve"}
+        )
+        result = implementation_adapter.resume(
+            state["implementation_result"], approved=approved
+        )
+        return {"implementation_result": result, "status": result.get("status", "unknown")}
+
     def after_requirements(state: OrchestrationState) -> str:
         if state["requirements_result"].get("status") == REQUIREMENTS_COMPLETE:
             return "start_design"
@@ -133,7 +204,24 @@ def build_orchestration_graph(
             return "finalize_cloud_design"
         return "resume_design"
 
+    def after_implementation(state: OrchestrationState) -> str:
+        status = state["implementation_result"].get("status")
+        if status == "completed":
+            return "finish"
+        if status == "needs_approval":
+            return "resume_implementation"
+        return "halt_implementation"
+
+    def after_implementation_boundary(state: OrchestrationState) -> str:
+        return (
+            "recommend_infrastructure"
+            if state.get("implementation_authorized")
+            else "halt_implementation"
+        )
+
     def entry_route(state: OrchestrationState) -> str:
+        if state.get("cloud_design_result"):
+            return "enter_implementation"
         result = state.get("requirements_result") or {}
         return (
             "start_design"
@@ -146,13 +234,23 @@ def build_orchestration_graph(
     builder.add_node("start_design", start_design)
     builder.add_node("resume_design", resume_design)
     builder.add_node("finalize_cloud_design", finalize_cloud_design)
+    builder.add_node("recommend_infrastructure", recommend_infrastructure)
+    builder.add_node("enter_implementation", enter_implementation)
+    builder.add_node("start_implementation", start_implementation)
+    builder.add_node("resume_implementation", resume_implementation)
+    builder.add_node("halt_implementation", halt_implementation)
     builder.add_node("finish", finish)
     builder.add_conditional_edges(START, entry_route)
     builder.add_conditional_edges("start_requirements", after_requirements)
     builder.add_conditional_edges("resume_requirements", after_requirements)
     builder.add_conditional_edges("start_design", after_design)
     builder.add_conditional_edges("resume_design", after_design)
-    builder.add_edge("finalize_cloud_design", "finish")
+    builder.add_edge("finalize_cloud_design", "enter_implementation")
+    builder.add_conditional_edges("enter_implementation", after_implementation_boundary)
+    builder.add_edge("recommend_infrastructure", "start_implementation")
+    builder.add_conditional_edges("start_implementation", after_implementation)
+    builder.add_conditional_edges("resume_implementation", after_implementation)
+    builder.add_edge("halt_implementation", END)
     builder.add_edge("finish", END)
     return builder.compile(
         checkpointer=checkpointer
@@ -172,7 +270,7 @@ def _response(result: dict[str, Any], run_id: str) -> FlowResponse:
     }
     if interruptions:
         prompt = interruptions[0].value
-        stage = "design" if "stage" in prompt else "requirements"
+        stage = prompt.get("stage", "requirements")
         return {
             "run_id": run_id,
             "app_id": result.get("app_id", ""),
@@ -246,8 +344,33 @@ def start_design_from_cached_requirements(
     return _response(dict(graph.invoke(initial, config)), actual_run_id)
 
 
+def start_implementation_from_completed_design(
+    design_run_id: str, *, run_id: str | None = None
+) -> FlowResponse:
+    """Start implementation from a cached, cloud-finalized design run."""
+    source_config = {"configurable": {"thread_id": design_run_id}}
+    source = graph.get_state(source_config).values
+    required = ("requirements_result", "design_result", "cloud_design_result")
+    missing = [name for name in required if not source.get(name)]
+    if missing:
+        raise ValueError("The source design run is incomplete: " + ", ".join(missing))
+    actual_run_id = run_id or uuid.uuid4().hex
+    initial: OrchestrationState = {
+        "run_id": actual_run_id,
+        "app_id": source.get("app_id") or uuid.uuid4().hex,
+        "requirements_thread_id": source.get("requirements_thread_id", ""),
+        "requirements_result": source["requirements_result"],
+        "design_result": source["design_result"],
+        "cloud_design_result": source["cloud_design_result"],
+        "current_stage": "implementation",
+        "status": "running",
+    }
+    config = {"configurable": {"thread_id": actual_run_id}}
+    return _response(dict(graph.invoke(initial, config)), actual_run_id)
+
+
 def complete_design(run_id: str, *, max_gates: int = 10) -> FlowResponse:
-    """Approve remaining design gates and run cloud finalization."""
+    """Approve design gates and stop at the implementation transmission gate."""
     config = {"configurable": {"thread_id": run_id}}
     result: FlowResponse | None = None
     for _ in range(max_gates):
@@ -258,6 +381,22 @@ def complete_design(run_id: str, *, max_gates: int = 10) -> FlowResponse:
         if snapshot.values.get("current_stage") != "design":
             raise ValueError("The workflow is waiting for requirements input")
         result = resume_workflow(run_id, "")
-        if result.get("status") == "completed":
+        if result.get("stage") == "implementation" or result.get("status") == "completed":
             return result
     raise RuntimeError(f"Design did not complete within {max_gates} gates")
+
+
+def complete_implementation(run_id: str, *, max_gates: int = 50) -> FlowResponse:
+    """Approve each implementation transmission and run until completion."""
+    result: FlowResponse | None = None
+    for _ in range(max_gates):
+        result = resume_workflow(run_id, True)
+        if result.get("status") == "completed":
+            return result
+        if result.get("stage") != "implementation":
+            raise RuntimeError(f"Unexpected workflow stage: {result.get('stage')}")
+        if result.get("status") != "needs_input":
+            raise RuntimeError(
+                "Implementation stopped with status " + str(result.get("status"))
+            )
+    raise RuntimeError(f"Implementation did not complete within {max_gates} gates")
