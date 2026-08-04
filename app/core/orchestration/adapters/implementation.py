@@ -94,7 +94,13 @@ class ImplementationAdapter:
         cache.mkdir(parents=True, exist_ok=True)
         heap_mb = max(128, int(os.getenv("IMPLEMENTATION_GRADLE_XMX_MB", "128")))
         (cache / "gradle.properties").write_text(
-            f"org.gradle.jvmargs=-Xmx{heap_mb}m -XX:MaxMetaspaceSize=192m\n",
+            (
+                "org.gradle.daemon=false\n"
+                "org.gradle.parallel=false\n"
+                "org.gradle.workers.max=1\n"
+                f"org.gradle.jvmargs=-Xmx{heap_mb}m -Xss256k "
+                "-XX:MaxMetaspaceSize=192m -XX:+UseSerialGC\n"
+            ),
             encoding="utf-8",
         )
 

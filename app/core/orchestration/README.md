@@ -59,3 +59,6 @@ The shopping-mall design was resumed into implementation. Sixteen of eighteen
 tasks completed across process/time-limit restarts. The remaining wiring task is
 blocked on this host by repeated JVM native-memory crashes; successful task
 checkpoints remain reusable. This is not recorded as a completed implementation.
+The failure persisted after constraining Gradle to one worker, serial GC, a
+128 MiB heap, and a 256 KiB thread stack. The workflow rejected the generated
+`hs_err_pid`/`replay_pid` crash files instead of bypassing compile/test checks.
