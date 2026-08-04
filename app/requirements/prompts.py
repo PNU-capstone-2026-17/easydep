@@ -309,11 +309,13 @@ SPEC_VALIDATOR_SYSTEM = _validator_system(
 )
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
-def spec_repair_user(base_user: str, directives: list[str]) -> str:
+def spec_repair_user(base_user: str, previous_spec: str, directives: list[str]) -> str:
     joined = "\n".join(f"- {d}" for d in directives)
     return (
-        f"{base_user}\n\n[YOUR PREVIOUS OUTPUT FAILED THESE CHECKS — fix every one while "
-        f"keeping the parts that were already correct; do not introduce new violations]\n{joined}"
+        f"{base_user}\n\n[PREVIOUS SPECIFICATION]\n{previous_spec}\n\n"
+        f"[THE PREVIOUS SPECIFICATION FAILED THESE CHECKS — return the complete corrected "
+        f"specification, preserving fields that do not need a change and introducing no new "
+        f"behavior]\n{joined}"
     )
 
 
