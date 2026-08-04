@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import Command
+
+from app.core.orchestration.graph import build_orchestration_graph
+
+
+class FakeRequirements:
+    def __init__(self):
+        self.starts = 0
+        self.resumes = []
+
+    def start(self, **_kwargs):
+        self.starts += 1
+        return {"status": "need_clarification", "phase": "clarify", "questions": ["Budget?"]}
+
+    def resume(self, **kwargs):
+        self.resumes.append(kwargs["answer"])
+        return {"status": "completed", "use_case_specs": [{"id": "UC-1"}]}
+
+
+class FakeDesign:
+    def __init__(self):
+        self.starts = 0
+        self.resumes = []
+
+    def start(self, **_kwargs):
+        self.starts += 1
+        return {"status": "need_feedback", "stage": "class_diagram"}
+
+    def resume(self, **kwargs):
+        self.resumes.append(kwargs["feedback"])
+        if len(self.resumes) == 1:
+            return {"status": "need_feedback", "stage": "deployment_diagram"}
+        return {"status": "completed", "stage": None}
+
+
+def test_requirements_and_design_sessions_are_resumed_without_restarting():
+    requirements = FakeRequirements()
+    design = FakeDesign()
+    graph = build_orchestration_graph(
+        requirements=requirements,
+        design=design,
+        checkpointer=MemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "run-1"}}
+    initial = {
+        "run_id": "run-1",
+        "app_id": "app-1",
+        "requirements_thread_id": "req-1",
+        "requirements": ["Users can place orders."],
+    }
+
+    first = graph.invoke(initial, config)
+    assert first["__interrupt__"][0].value["questions"] == ["Budget?"]
+
+    second = graph.invoke(Command(resume="100 USD/month"), config)
+    assert second["__interrupt__"][0].value["stage"] == "class_diagram"
+    assert requirements.starts == 1
+    assert requirements.resumes == ["100 USD/month"]
+    assert design.starts == 1
+
+    third = graph.invoke(Command(resume=""), config)
+    assert third["__interrupt__"][0].value["stage"] == "deployment_diagram"
+    assert design.starts == 1
+
+    final = graph.invoke(Command(resume=""), config)
+    assert final["status"] == "completed"
+    assert final["current_stage"] == "completed"
+    assert design.resumes == ["", ""]
