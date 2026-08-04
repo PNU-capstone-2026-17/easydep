@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y git nodejs npm \
+    && npm install --global pnpm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir metagpt==0.8.2
+
+WORKDIR /opt/metagpt

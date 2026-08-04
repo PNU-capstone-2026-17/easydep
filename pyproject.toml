@@ -18,6 +18,7 @@ include = [
     "app/core/cloudkb/**/*.py",
     # 두 에이전트가 공유하는 얇은 층. 둘 다 내 범위라 여기도 같이 검사한다.
     "app/core/**/*.py",
+    "experiments/baselines/**/*.py",
 ]
 extend-exclude = [
     "app/core/cloudkb/.cache",
