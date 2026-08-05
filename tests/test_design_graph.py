@@ -203,19 +203,78 @@ def test_each_stage_is_persisted_when_it_completes(monkeypatch, graph):
 
 
 def test_every_stage_has_the_same_skeleton():
-    """다섯 산출물이 하나의 골격을 공유한다 — 수리 루프가 붙은 예외가 없다.
+    """다섯 산출물이 하나의 골격을 공유한다 — **문법** 수리 루프가 붙은 예외가 없다.
 
     예전에는 시퀀스·API·배포만 validate→repair 루프를 달고 있었다. 그 루프는 LLM이
     산출물 텍스트를 직접 쓸 때만 필요한 것이고, 지금은 다섯 모두 구조화 모델에서
     결정론적으로 렌더되므로 있어서는 안 된다.
+
+    **2026-08-04에 이 테스트가 지키는 것을 좁혔다.** 예전에는 "repair"라는 이름의 노드가
+    없다는 것만 봤는데, 그건 "어떤 반복도 없다"로 읽히기 쉬웠다. 지키려던 것은 그것이
+    아니라 **문법 오류를 되먹여 텍스트를 다시 쓰게 하는 루프가 없다**는 것이다. 반복
+    엣지가 없다는 것은 `test_no_stage_subgraph_can_loop`이 따로 본다.
+
+    같은 날 `convert`와 `validate`도 `render` 하나로 합쳤다. 문법 검증이 변환의 출력만
+    보고 원리상 실패할 수 없어서 나눠 둘 값이 없었다. 옛 이름 둘이 되살아나지 않는지도
+    여기서 함께 고정한다.
+
+    의미 검사 노드(`check_{stage}`)는 이것들과 다른 것이다 — 문법이 아니라 모델의 내용을
+    보고, 반복은 노드가 아니라 함수 안에 있어 토폴로지가 정적으로 남는다
+    (`nodes/artifact.py`의 `check_node`).
     """
     for stage in DESIGN_STAGES:
         generate = set(DESIGN_SUBGRAPHS[stage]["generate"].get_graph().nodes)
         feedback = set(DESIGN_SUBGRAPHS[stage]["feedback"].get_graph().nodes)
 
-        assert {f"extract_{stage}", f"convert_{stage}", f"validate_{stage}"} <= generate
-        assert {f"revise_{stage}", f"convert_{stage}", f"validate_{stage}"} <= feedback
+        assert {f"extract_{stage}", f"render_{stage}"} <= generate
+        assert {f"revise_{stage}", f"render_{stage}"} <= feedback
+        # 합쳐진 뒤 남으면 안 되는 이름 — 예전 두 노드가 되살아나는 것을 막는다.
+        assert not {f"convert_{stage}", f"validate_{stage}"} & (generate | feedback)
         assert not any("repair" in node for node in generate | feedback)
+
+
+def test_no_stage_subgraph_can_loop():
+    """스테이지 서브그래프의 토폴로지에 반복 엣지가 없다.
+
+    문법 수리 루프를 없앤 이유 중 하나가 **종료 조건이 없다**는 것이었다. 의미 검사를
+    더하면서 그 성질을 되살리지 않았다는 것을 여기서 고정한다 — 반복은 `check_node`
+    함수 안에 있고 예산으로 유계이며, 그래프는 여전히 한 방향으로만 흐른다.
+
+    이게 곧 이 저장소의 원칙이기도 하다: 그래프 그림이 곧 실제 흐름이다.
+    """
+    for stage in DESIGN_STAGES:
+        for kind in ("generate", "feedback"):
+            graph = DESIGN_SUBGRAPHS[stage][kind].get_graph()
+            outgoing: dict[str, list[str]] = {}
+            for edge in graph.edges:
+                outgoing.setdefault(edge.source, []).append(edge.target)
+
+            seen: set[str] = set()
+            stack = ["__start__"]
+            while stack:
+                node = stack.pop()
+                assert node not in seen, f"{stage}/{kind}: {node}를 다시 지난다(반복 엣지)"
+                seen.add(node)
+                stack.extend(outgoing.get(node, []))
+
+
+def test_only_the_class_diagram_is_semantically_checked_today():
+    """의미 검사 노드는 규칙이 있는 스테이지에만 생긴다.
+
+    빈 검사 노드를 다섯 곳에 달면 그래프 그림이 "다 검사한다"고 거짓말을 한다. 지금
+    규칙 지식베이스가 있는 것은 클래스 다이어그램뿐이고, 그 사실이 토폴로지에 그대로
+    보여야 한다 — 나머지 넷에 규칙을 채우면 이 테스트를 함께 고친다.
+    """
+    checked = {
+        stage
+        for stage in DESIGN_STAGES
+        if f"check_{stage}" in DESIGN_SUBGRAPHS[stage]["generate"].get_graph().nodes
+    }
+    assert checked == {"class_diagram"}
+
+    # 생성과 피드백 **양쪽**에 있어야 한다. 피드백에 없으면 사용자 피드백으로 만든 판은
+    # 아무도 검사하지 않은 채 저장된다.
+    assert "check_class_diagram" in DESIGN_SUBGRAPHS["class_diagram"]["feedback"].get_graph().nodes
 
 
 def test_rendering_is_deterministic_and_valid_by_construction(graph):

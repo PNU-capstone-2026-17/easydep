@@ -32,6 +32,16 @@ class ArchitectureState(TypedDict, total=False):
     class_diagram_puml: str
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]
+    # Deterministic rule check on the BCE model, produced before the render.
+    # {findings: list[str], repair_iters: int, stopped: str, error?: str}
+    #
+    # This is a different question from *_syntax_valid. The syntax keys ask whether the
+    # rendered PlantUML parses — and it always does, because the renderer sanitises its
+    # input and is valid by construction. These keys ask whether the model the LLM
+    # produced obeys the rules in app/design/knowledge/rules.py, which is the question
+    # nothing used to ask. `stopped` says why the repair loop ended, so "no violations"
+    # and "the budget ran out" are never the same value.
+    class_diagram_check: dict[str, Any]
 
     sequence_diagram_model: dict[str, Any]
     sequence_diagram_feedback: str
