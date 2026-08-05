@@ -1,8 +1,8 @@
 r"""Run and score a requirements benchmark split.
 
 Run from the repository root:
-  .venv\Scripts\python.exe -m evaluation.requirements.run_suite --split development
-  .venv\Scripts\python.exe -m evaluation.requirements.run_suite --split holdout
+  .venv\Scripts\python.exe -m evaluation.easydep.requirements.run_suite --split development
+  .venv\Scripts\python.exe -m evaluation.easydep.requirements.run_suite --split holdout
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from app.requirements.common import telemetry
 from app.requirements.runner import ARTIFACTS_DIR, load_input, persist_run, run_pipeline
-from evaluation.requirements.evaluate import ROOT, score, verify_holdout_hashes
+from evaluation.easydep.requirements.evaluate import ROOT, score, verify_holdout_hashes
 
 
 def main() -> int:
@@ -55,6 +55,7 @@ def main() -> int:
             dataset_name=dataset,
             artifact_root=args.output,
             run_metrics=stats.as_dict(),
+            purpose="evaluation",
         )
         print(f"  artifact: {run_dir}")
         if dataset in oracle:

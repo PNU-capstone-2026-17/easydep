@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.core.run_identity import identity_manifest
+
 DEFAULT_ARTIFACT_ROOT = Path("artifacts/runs")
 
 
@@ -67,10 +69,26 @@ def persist_run_artifacts(
     if legacy_infrastructure.is_dir():
         shutil.rmtree(legacy_infrastructure)
 
-    _write(
-        run_dir / "manifest.json",
+    completed_stages = [
+        name
+        for name, available in (
+            ("requirements", bool(requirements)),
+            ("design", bool(design or cloud)),
+            ("implementation", bool(implementation)),
+            ("testing", bool(testing)),
+        )
+        if available
+    ]
+    manifest = identity_manifest(
+        run_id,
+        system="easydep",
+        variant=str(state.get("run_variant") or "full"),
+        case_id=str(state.get("case_id") or "adhoc"),
+        purpose=str(state.get("run_purpose") or "normal"),
+        completed_stages=completed_stages,
+    )
+    manifest.update(
         {
-            "runId": run_id,
             "appId": state.get("app_id", ""),
             "currentStage": state.get("current_stage", ""),
             "status": state.get("status", ""),
@@ -80,8 +98,9 @@ def persist_run_artifacts(
                 "implementation": bool(implementation),
                 "testing": bool(testing),
             },
-        },
+        }
     )
+    _write(run_dir / "manifest.json", manifest)
 
     if requirements:
         stage = run_dir / "01-requirements"

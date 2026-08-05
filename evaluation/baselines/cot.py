@@ -78,7 +78,7 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
     case = ExperimentCase.load(case_path)
     command = ["python", "-m", "evaluation.baselines.cot", str(case_path)]
     run_dir = begin_run("cot", case, output_root)
-    manifest = run_manifest("cot", case, command)
+    manifest = run_manifest("cot", case, command, run_dir.name)
     write_json(run_dir / "input.json", {
         "caseId": case.case_id,
         "requirements": case.requirements,
@@ -126,6 +126,7 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
     usage = response.usage
     manifest.update({
         "status": "completed",
+        "completedStages": ["requirements", "design", "implementation", "testing"],
         "elapsedSeconds": round(time.perf_counter() - started, 3),
         "promptTokens": getattr(usage, "prompt_tokens", None),
         "completionTokens": getattr(usage, "completion_tokens", None),

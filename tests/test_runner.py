@@ -155,14 +155,19 @@ def test_persist_run_writes_expected_tree(tmp_path):
     assert (run_dir / "use_cases" / "uc_02_place_order" / "spec.json").exists()
 
     # run_id / 디렉토리명 규칙
-    assert run_dir.name.startswith("run_") and run_dir.parent == tmp_path
+    assert run_dir.name.startswith("easydep-full-demo-") and run_dir.parent == tmp_path
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["dataset"] == "demo"
     assert manifest["metrics"]["llm_calls"] == 9
     assert manifest["config"]["max_repair_iters"] >= 0
     assert len(manifest["input_sha256"]) == 64
-    assert manifest["run_id"].endswith(manifest["input_sha256"][:10])
+    assert manifest["runId"] == run_dir.name == manifest["run_id"]
+    assert manifest["system"] == "easydep"
+    assert manifest["variant"] == "full"
+    assert manifest["caseId"] == "demo"
+    assert manifest["purpose"] == "normal"
+    assert manifest["completedStages"] == ["requirements"]
     # 요약: 개수 + 위반 있는 UC만 노출 + 관계 카운트
     summ = manifest["summary"]
     assert summ["n_actors"] == 1 and summ["n_use_cases"] == 2 and summ["n_specs"] == 2

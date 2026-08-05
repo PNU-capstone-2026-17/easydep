@@ -1,4 +1,4 @@
-"""inputs/*.json 을 파이프라인에 태우고 artifacts/evaluations/requirements/run_*/ 에 결과를 저장하는 러너 CLI.
+"""inputs/*.json을 처리하고 artifacts/runs/<run-id>/에 저장한다.
 
 사용 예:
   python -m app.requirements.run_pipeline shopping_mall           # 이름 하나

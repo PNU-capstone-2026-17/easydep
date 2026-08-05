@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import re
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -13,8 +12,10 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app.core.run_identity import identity_manifest, make_run_id
+
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "evaluations" / "baselines"
+DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "runs"
 
 # EasyDep Settings와 같은 루트 .env를 읽는다. 셸에서 명시한 값은 유지되며 모든
 # 비교군은 같은 프로세스 환경을 전달받는다.
@@ -69,13 +70,8 @@ class ExperimentCase:
         )
 
 
-def safe_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "run"
-
-
 def begin_run(method: str, case: ExperimentCase, output_root: Path | None = None) -> Path:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    run_name = f"{safe_name(method)}-{safe_name(case.case_id)}-{stamp}"
+    run_name = make_run_id(method, "standard", case.case_id)
     path = (output_root or DEFAULT_ARTIFACT_ROOT) / run_name
     path.mkdir(parents=True, exist_ok=False)
     return path
@@ -92,10 +88,18 @@ def git_revision() -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def run_manifest(method: str, case: ExperimentCase, command: list[str]) -> dict[str, Any]:
-    return {
+def run_manifest(
+    method: str, case: ExperimentCase, command: list[str], run_id: str
+) -> dict[str, Any]:
+    manifest = identity_manifest(
+        run_id,
+        system=method,
+        variant="standard",
+        case_id=case.case_id,
+        purpose="evaluation",
+    )
+    manifest.update({
         "method": method,
-        "caseId": case.case_id,
         "startedAt": datetime.now(UTC).isoformat(),
         "gitRevision": git_revision(),
         "model": model(),
@@ -106,7 +110,8 @@ def run_manifest(method: str, case: ExperimentCase, command: list[str]) -> dict[
         "python": platform.python_version(),
         "command": command,
         "webSearch": False,
-    }
+    })
+    return manifest
 
 
 def require_api_key() -> None:

@@ -31,6 +31,7 @@ from app.core.orchestration.contracts import (
     FlowResponse,
     OrchestrationState,
 )
+from app.core.run_identity import make_run_id
 
 
 def _requirements_prompt(result: dict[str, Any]) -> dict[str, Any]:
@@ -299,12 +300,18 @@ def start_workflow(
     resource_constraints_text: str = "",
     app_id: str | None = None,
     run_id: str | None = None,
+    variant: str = "full",
+    case_id: str = "adhoc",
+    purpose: str = "normal",
 ) -> FlowResponse:
     """Start a workflow and return at the first requirements/design gate."""
     actual_app_id = app_id or uuid.uuid4().hex
-    actual_run_id = run_id or uuid.uuid4().hex
+    actual_run_id = run_id or make_run_id("easydep", variant, case_id)
     initial: OrchestrationState = {
         "run_id": actual_run_id,
+        "run_variant": variant,
+        "case_id": case_id,
+        "run_purpose": purpose,
         "app_id": actual_app_id,
         "requirements_thread_id": f"orchestration:{actual_run_id}:requirements",
         "requirements": requirements,
@@ -334,9 +341,14 @@ def start_design_from_cached_requirements(
     if requirements_result.get("status") != REQUIREMENTS_COMPLETE:
         raise ValueError("The source requirements run is not completed")
 
-    actual_run_id = run_id or uuid.uuid4().hex
+    actual_run_id = run_id or make_run_id(
+        "easydep", source.get("run_variant", "full"), source.get("case_id", "adhoc")
+    )
     initial: OrchestrationState = {
         "run_id": actual_run_id,
+        "run_variant": source.get("run_variant", "full"),
+        "case_id": source.get("case_id", "adhoc"),
+        "run_purpose": source.get("run_purpose", "normal"),
         "app_id": source.get("app_id") or uuid.uuid4().hex,
         "requirements_thread_id": source.get("requirements_thread_id", ""),
         "requirements": source.get("requirements") or [],
@@ -359,9 +371,14 @@ def start_implementation_from_completed_design(
     missing = [name for name in required if not source.get(name)]
     if missing:
         raise ValueError("The source design run is incomplete: " + ", ".join(missing))
-    actual_run_id = run_id or uuid.uuid4().hex
+    actual_run_id = run_id or make_run_id(
+        "easydep", source.get("run_variant", "full"), source.get("case_id", "adhoc")
+    )
     initial: OrchestrationState = {
         "run_id": actual_run_id,
+        "run_variant": source.get("run_variant", "full"),
+        "case_id": source.get("case_id", "adhoc"),
+        "run_purpose": source.get("run_purpose", "normal"),
         "app_id": source.get("app_id") or uuid.uuid4().hex,
         "requirements_thread_id": source.get("requirements_thread_id", ""),
         "requirements_result": source["requirements_result"],

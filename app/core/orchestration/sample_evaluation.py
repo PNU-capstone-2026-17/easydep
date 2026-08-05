@@ -112,14 +112,16 @@ def run_sample(path: Path, output_root: Path) -> dict[str, Any]:
         requirements,
         resource_constraints_text=constraints,
         app_id=str(sample.get("name") or path.stem),
+        case_id=path.stem,
+        purpose="evaluation",
     )
     if started.get("stage") == "requirements" and started.get("status") != "completed":
         raise RuntimeError(
             f"Requirements input is still needed: {started.get('prompt')}"
         )
     completed = complete_design(str(started["run_id"]))
-    output_dir = output_root / path.stem
-    inspection = export_result(output_dir, completed)
+    output_dir = output_root / str(completed["run_id"])
+    inspection = inspect_result(completed)
     metadata = {
         "sample": path.name,
         "run_id": completed.get("run_id"),
@@ -128,7 +130,7 @@ def run_sample(path: Path, output_root: Path) -> dict[str, Any]:
         "completed_at": datetime.now(UTC).isoformat(),
         "inspection": inspection,
     }
-    _write(output_dir / "metadata.json", metadata)
+    _write(output_dir / "evaluation.json", metadata)
     return metadata
 
 
@@ -137,7 +139,7 @@ def main() -> None:
     parser.add_argument("samples", nargs="*")
     parser.add_argument("--input-dir", type=Path, default=Path("inputs"))
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("artifacts/evaluations/orchestration")
+        "--output-dir", type=Path, default=Path("artifacts/runs")
     )
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()

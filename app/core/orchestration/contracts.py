@@ -9,6 +9,9 @@ StageName = Literal["requirements", "design", "implementation", "testing", "comp
 
 class OrchestrationState(TypedDict, total=False):
     run_id: str
+    run_variant: str
+    case_id: str
+    run_purpose: str
     app_id: str
     requirements_thread_id: str
     requirements: list[str]

@@ -2,7 +2,13 @@ import importlib.util
 import json
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).parents[1] / "evaluation" / "requirements" / "evaluate.py"
+MODULE_PATH = (
+    Path(__file__).parents[1]
+    / "evaluation"
+    / "easydep"
+    / "requirements"
+    / "evaluate.py"
+)
 SPEC = importlib.util.spec_from_file_location("requirements_benchmark", MODULE_PATH)
 benchmark = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader

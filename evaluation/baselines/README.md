@@ -2,7 +2,7 @@
 
 EasyDep과 비교할 LLM CoT 및 MetaGPT 실행 코드를 둔다. 모든 비교군은 같은 케이스 JSON과
 저장소 루트 `.env`의 `MODEL`, `BASE_URL`, `API_KEY`, `TEMPERATURE`, `SEED`를 사용한다.
-실행 결과는 `artifacts/evaluations/baselines/`에 저장하며 Git에는 포함하지 않는다.
+실행 결과는 `artifacts/runs/<run-id>/`에 저장하며 Git에는 포함하지 않는다.
 
 ## 구성
 

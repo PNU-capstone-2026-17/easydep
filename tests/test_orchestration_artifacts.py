@@ -50,6 +50,17 @@ def test_persist_run_artifacts_exports_every_available_stage(tmp_path: Path):
     )
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["runId"] == "run-1"
+    assert manifest["system"] == "easydep"
+    assert manifest["variant"] == "full"
+    assert manifest["caseId"] == "adhoc"
+    assert manifest["purpose"] == "normal"
+    assert manifest["completedStages"] == [
+        "requirements",
+        "design",
+        "implementation",
+        "testing",
+    ]
     assert list(manifest["stages"]) == [
         "requirements",
         "design",

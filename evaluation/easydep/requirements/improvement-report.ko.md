@@ -76,16 +76,16 @@ Notification 앱은 잔여 이슈가 2개에서 3개로 증가했다. 그러나 
 
 ```powershell
 # 개발 세트: 개선 중 반복 실행 가능
-.\.venv\Scripts\python.exe -m evaluation.requirements.run_suite --split development
+.\.venv\Scripts\python.exe -m evaluation.easydep.requirements.run_suite --split development
 
 # 홀드아웃: 개선안 선택 후에만 실행; 실행 전 해시를 자동 검증
-.\.venv\Scripts\python.exe -m evaluation.requirements.run_suite --split holdout
+.\.venv\Scripts\python.exe -m evaluation.easydep.requirements.run_suite --split holdout
 
 # 직접 추가한 도메인 확장 세트
-.\.venv\Scripts\python.exe -m evaluation.requirements.run_suite --split domainExpansion
+.\.venv\Scripts\python.exe -m evaluation.easydep.requirements.run_suite --split domainExpansion
 ```
 
-각 실행은 `artifacts/evaluations/requirements/run_*`에 산출물을 저장하고 앱별 점수와 macro 합계를 콘솔에 출력한다.
+각 실행은 `artifacts/runs/<run-id>/`에 산출물을 저장하고 앱별 점수와 macro 합계를 콘솔에 출력한다.
 
 ## 7. 도메인 확장 방법
 

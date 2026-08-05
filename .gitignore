@@ -18,7 +18,8 @@ venv/
 plantuml.jar
 
 # 실행 아티팩트 (재생성 가능) — 보존할 run만 선별 커밋
-artifacts/
+artifacts/*
+!artifacts/README.md
 /.easydep/
 /.cleanup-backup/
 /.mypy_cache/

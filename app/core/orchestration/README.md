@@ -53,7 +53,7 @@ $env:PYTHONIOENCODING='utf-8'
 python -m app.core.orchestration.sample_evaluation --resume
 ```
 
-평가 결과는 `artifacts/evaluations/orchestration/<sample>/`에 저장된다.
+평가 실행도 `artifacts/runs/<run-id>/`에 저장되며 manifest로 일반 실행과 구분한다.
 각 디렉터리에는 원본 응답, 요구사항·설계 산출물, 배포 다이어그램 두 종류,
 제약조건 출처와 구조 검증 결과가 포함된다.
 

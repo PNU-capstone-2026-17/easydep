@@ -1,9 +1,9 @@
 """파이프라인 러너 + 아티팩트 저장.
 
 inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를
-artifacts/evaluations/requirements/run_*/에
+artifacts/runs/<run-id>/에
 재현 가능한 형태로 남긴다:
-  run_<UTC>_<input_sha10>/
+  <system>-<variant>-<case>-<UTC>-<short-id>/
     input.json          # 입력 재현용(그대로)
     manifest.json       # run_id / config 스냅샷 / input_sha256 / 스테이지 요약
     deployment_needs.json  resource_spec.json  resource_intake.json
@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from app.core.run_identity import identity_manifest, make_run_id
 from app.core.traceability import build_requirement_trace
 from app.requirements.agent import stages, supervisor
 from app.requirements.agent.state import AgentState
@@ -52,7 +53,7 @@ from app.requirements.config import settings
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
 _ROOT = Path(__file__).parent.parent.parent
 INPUTS_DIR = _ROOT / "inputs"
-ARTIFACTS_DIR = _ROOT / "artifacts" / "evaluations" / "requirements"
+ARTIFACTS_DIR = _ROOT / "artifacts" / "runs"
 
 
 def load_input(name_or_path: str) -> dict:
@@ -64,7 +65,7 @@ def load_input(name_or_path: str) -> dict:
 
 
 def load_state(run_dir: str | Path) -> dict:
-    """requirements/run_*/ 산출물을 파이프라인 state로 복원한다(피드백 재생성용)."""
+    """artifacts/runs/<run-id> 산출물을 파이프라인 state로 복원한다."""
     run_dir = Path(run_dir)
 
     def _j(name: str, default):
@@ -212,12 +213,15 @@ def persist_run(
     artifact_root: Path | str = ARTIFACTS_DIR,
     traceability_verdicts: list[dict] | None = None,
     run_metrics: dict | None = None,
+    variant: str = "full",
+    purpose: str = "normal",
 ) -> Path:
-    """실행 결과를 requirements/run_*/에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
+    """실행 결과를 artifacts/runs/<run-id>에 저장하고 그 디렉토리를 반환한다."""
     artifact_root = Path(artifact_root)
     sha = _sha256(input_obj)
     created = _now_utc()
-    run_id = f"run_{created}_{sha[:10]}"
+    case_id = dataset_name or str(input_obj.get("name") or "adhoc")
+    run_id = make_run_id("easydep", variant, case_id)
     run_dir = artifact_root / run_id
     (run_dir / "use_cases").mkdir(parents=True, exist_ok=True)
 
@@ -256,7 +260,15 @@ def persist_run(
         if spec is not None:
             _dump(uc_dir / "spec.json", spec)
 
-    manifest = {
+    manifest = identity_manifest(
+        run_id,
+        system="easydep",
+        variant=variant,
+        case_id=case_id,
+        purpose=purpose,
+        completed_stages=["requirements"],
+    )
+    manifest.update({
         "run_id": run_id,
         "created_utc": created,
         "dataset": dataset_name,
@@ -275,6 +287,6 @@ def persist_run(
         },
         "metrics": run_metrics or {},
         "summary": _summarize(state),
-    }
+    })
     _dump(run_dir / "manifest.json", manifest)
     return run_dir

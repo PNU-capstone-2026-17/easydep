@@ -62,7 +62,7 @@ def run(
     executable = Path(os.getenv("METAGPT_EXECUTABLE", str(DEFAULT_EXECUTABLE)))
     command = [str(executable), _task(case), "--investment", str(investment),
                "--n-round", str(rounds)]
-    manifest = run_manifest("metagpt", case, command)
+    manifest = run_manifest("metagpt", case, command, run_dir.name)
     manifest.update({"metagptVersion": "0.8.2", "investment": investment, "rounds": rounds})
     write_json(run_dir / "input.json", {
         "caseId": case.case_id,
@@ -116,6 +116,11 @@ def run(
     (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
     manifest.update({
         "status": "completed" if completed.returncode == 0 else "failed",
+        "completedStages": (
+            ["requirements", "design", "implementation", "testing"]
+            if completed.returncode == 0
+            else []
+        ),
         "exitCode": completed.returncode,
         "elapsedSeconds": round(time.perf_counter() - started, 3),
     })

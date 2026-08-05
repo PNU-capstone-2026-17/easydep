@@ -259,10 +259,10 @@ TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/parent_actor) ·
 | `app/requirements/agent/graph.py` | LangGraph StateGraph 조립·컴파일(MemorySaver 체크포인터). `start_analysis`/`resume_analysis` 서빙 헬퍼. `rebuild_graph()`로 런타임 플래그 변경 후 재컴파일. |
 | `app/requirements/api.py` (FastAPI 라우터) | `POST /api/requirements/analyze`(신규/재개), 정적 UI `/requirements`. 응답에 status(need_clarification/need_feedback/completed) + 산출물. `app_id`가 오면 완료 산출물을 MySQL 저장소에 기록. 앱 생성과 `/healthz`는 저장소 루트의 `server.py`. |
 | `app/requirements/cli.py` | 터미널 대화형. `--interactive/-i`로 게이트+파이프라인 켜고 재빌드, 종료 시 유스케이스·다이어그램 출력. |
-| `app/requirements/runner.py` + `app/requirements/run_pipeline.py` | **배치 러너**: `inputs/*.json`을 step2~4에 태우고(그래프 미사용, 함수 직접 호출) `artifacts/evaluations/requirements/run_*/`에 재현 가능하게 저장. |
+| `app/requirements/runner.py` + `app/requirements/run_pipeline.py` | **배치 러너**: `inputs/*.json`을 step2~4에 태우고(그래프 미사용, 함수 직접 호출) `artifacts/runs/<run-id>/`에 재현 가능하게 저장. |
 | `app/requirements/apply_feedback.py` | 완료 run에 자연어 피드백 적용 → 새 run 저장. |
 
-### 요구사항 평가 아티팩트 (`artifacts/evaluations/requirements/run_<UTC>_<inputsha10>/`)
+### 실행 아티팩트 (`artifacts/runs/<run-id>/`)
 `input.json` · `manifest.json`(config·sha·스테이지 요약) · `actors/use_cases/coverage/use_case_specs/
 relationships.json` · `diagram.puml` · `use_cases/uc_NN_<slug>/{use_case,spec}.json`. (`.gitignore`)
 
