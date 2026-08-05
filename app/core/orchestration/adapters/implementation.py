@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.implementation.config import ImplementationSettings
-from app.implementation.prototype_client import PrototypeClient
+from app.implementation.prototype_client import PrototypeClient, PrototypeExecutionError
 
 
 class ImplementationContractError(RuntimeError):
@@ -154,35 +154,52 @@ class ImplementationAdapter:
         self._configure_gradle_memory()
         job_path = Path(str(result["job_path"]))
         run_root = Path(str(result["run_root"]))
-        # Reconciliation can turn completed task results into checkpoints and
-        # therefore change the exact next task set/request ID.
-        self.client._call(["plan-workflow", str(run_root), str(job_path)])
-        request = self.client.transmission_request(run_root)
-        if request is None:
-            return result
-        approval_path = job_path.parent / f"approval-{uuid.uuid4().hex}.json"
-        approval_path.write_text(
-            json.dumps(
-                {
-                    "requestId": request["requestId"],
-                    "approved": True,
-                    "approvedAt": datetime.now(UTC).isoformat(),
-                    "approvedBy": "orchestration-user",
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        workflow = self.client.run_phase(run_root, job_path, approval_path, True)
-        return self._payload(job_path, run_root, workflow)
+        try:
+            # Reconciliation can turn completed task results into checkpoints and
+            # therefore change the exact next task set/request ID.
+            self.client._call(["plan-workflow", str(run_root), str(job_path)])
+            request = self.client.transmission_request(run_root)
+            if request is None:
+                return result
+            approval_path = job_path.parent / f"approval-{uuid.uuid4().hex}.json"
+            approval_path.write_text(
+                json.dumps(
+                    {
+                        "requestId": request["requestId"],
+                        "approved": True,
+                        "approvedAt": datetime.now(UTC).isoformat(),
+                        "approvedBy": "orchestration-user",
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            workflow = self.client.run_phase(run_root, job_path, approval_path, True)
+            return self._payload(job_path, run_root, workflow)
+        except PrototypeExecutionError as error:
+            state_path = run_root / "reports" / "workflow-state.json"
+            if not state_path.is_file():
+                raise
+            workflow = json.loads(state_path.read_text(encoding="utf-8"))
+            payload = self._payload(job_path, run_root, workflow)
+            payload["execution_error"] = str(error)
+            return payload
 
     def _payload(
         self, job_path: Path, run_root: Path, workflow: dict[str, Any]
     ) -> dict[str, Any]:
         request = self.client.transmission_request(run_root)
         status = str(workflow.get("status", "FAILED"))
+        if status == "COMPLETE":
+            public_status = "completed"
+        elif status == "FAILED":
+            public_status = "failed"
+        elif request:
+            public_status = "needs_approval"
+        else:
+            public_status = status.lower()
         return {
-            "status": "completed" if status == "COMPLETE" else "needs_approval" if request else status.lower(),
+            "status": public_status,
             "job_path": str(job_path),
             "run_root": str(run_root),
             "workflow": workflow,

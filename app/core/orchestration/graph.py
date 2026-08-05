@@ -209,7 +209,7 @@ def build_orchestration_graph(
         status = state["implementation_result"].get("status")
         if status == "completed":
             return "finish"
-        if status == "needs_approval":
+        if status in {"needs_approval", "failed"}:
             return "resume_implementation"
         return "halt_implementation"
 
@@ -400,6 +400,12 @@ def complete_implementation(run_id: str, *, max_gates: int = 50) -> FlowResponse
             return result
         if result.get("stage") != "implementation":
             raise RuntimeError(f"Unexpected workflow stage: {result.get('stage')}")
+        implementation = (result.get("result") or {}).get("implementation_result") or {}
+        if implementation.get("status") == "failed":
+            raise RuntimeError(
+                "Implementation failed and remains resumable: "
+                + str((implementation.get("workflow") or {}).get("blockingReason"))
+            )
         if result.get("status") != "needs_input":
             raise RuntimeError(
                 "Implementation stopped with status " + str(result.get("status"))
