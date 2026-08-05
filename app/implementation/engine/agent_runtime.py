@@ -415,6 +415,8 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     "Agent changed files outside its boundary: " + ", ".join(unauthorized)
                 )
             try:
+                if str(task.get("task_type", "")) == "configuration":
+                    remove_duplicate_component_adapter_beans(sandbox, task)
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
@@ -846,7 +848,7 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
     shutil.copytree(
         run_root / "application",
         sandbox / "application",
-        ignore=shutil.ignore_patterns("build", ".gradle"),
+        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle"),
     )
     for relative in task["allowed_write_paths"]:
         target = sandbox / relative
@@ -925,6 +927,181 @@ def production_placeholder_markers(
     return evidence
 
 
+def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:
+    """Remove manual beans for port adapters already discovered by component scanning.
+
+    The wiring task owns ApplicationConfiguration, whereas adapter tasks own their
+    classes.  Retaining both a scanned adapter and an LLM-created ``@Bean`` for its
+    port makes Spring injection non-deterministic.  This normalization deliberately
+    touches only the configuration output owned by the current task.
+    """
+    configuration = next(
+        (
+            sandbox / str(relative)
+            for relative in task.get("allowed_write_paths", [])
+            if str(relative).endswith("/config/ApplicationConfiguration.java")
+        ),
+        None,
+    )
+    if configuration is None or not configuration.is_file():
+        return
+    java_root = sandbox / "application" / "src" / "main" / "java"
+    component_ports: set[str] = set()
+    for source in java_root.rglob("*.java"):
+        if source == configuration:
+            continue
+        text = source.read_text(encoding="utf-8")
+        if not re.search(r"@(Component|Service|Repository|RestController)\b", text):
+            continue
+        match = re.search(r"\bimplements\s+([^\{]+)", text)
+        if not match:
+            continue
+        component_ports.update(
+            item.strip().split("<", 1)[0].rsplit(".", 1)[-1]
+            for item in match.group(1).split(",")
+            if item.strip()
+        )
+    text = configuration.read_text(encoding="utf-8")
+    bean = re.compile(
+        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
+        r"(?:public\s+)?([A-Za-z_]\w*)\s+\w+\s*\([^)]*\)\s*\{"
+    )
+    removals: list[tuple[int, int]] = []
+    for match in bean.finditer(text):
+        if match.group(1) not in component_ports:
+            continue
+        depth = 1
+        index = match.end()
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        if depth == 0:
+            removals.append((match.start(), index))
+    for start, end in reversed(removals):
+        text = text[:start] + "\n" + text[end:]
+    # Plain persistence mappers are generated without Spring stereotypes.  They
+    # have no external side effects and are required constructor dependencies of
+    # component-scanned persistence adapters, so register their no-arg instances
+    # deterministically when the LLM omitted them from the configuration.
+    mapper_root = java_root / "persistence" / "mapper"
+    mapper_types: list[str] = []
+    if mapper_root.is_dir():
+        for mapper in sorted(mapper_root.glob("*.java")):
+            mapper_text = mapper.read_text(encoding="utf-8")
+            class_match = re.search(r"\bpublic\s+class\s+(\w+)", mapper_text)
+            package_match = re.search(r"(?m)^package\s+([\w.]+);", mapper_text)
+            if not class_match or not package_match:
+                continue
+            if re.search(r"@(Component|Service|Repository)\b", mapper_text):
+                continue
+            mapper_types.append(f"{package_match.group(1)}.{class_match.group(1)}")
+    for mapper_type in mapper_types:
+        simple = mapper_type.rsplit(".", 1)[-1]
+        if re.search(rf"\b{re.escape(simple)}\s+\w+\s*\(", text):
+            continue
+        method = (
+            "\n    @Bean\n"
+            f"    public {mapper_type} {simple[0].lower() + simple[1:]}() {{\n"
+            f"        return new {mapper_type}();\n"
+            "    }\n"
+        )
+        text = text.rsplit("}", 1)[0] + method + "}\n"
+    # Factory method parameters form the Spring construction graph.  An LLM can
+    # accidentally make a Boundary callback part of that graph (Control ->
+    # Boundary -> Control).  Detect cycles from the actual @Bean declarations
+    # and break only the corresponding parameter edge with @Lazy.  This does
+    # not enable Spring's global circular-reference escape hatch.
+    text, lazy_added = break_configuration_cycles(text)
+    if removals or mapper_types or lazy_added:
+        configuration.write_text(text, encoding="utf-8")
+
+
+def break_configuration_cycles(text: str) -> tuple[str, bool]:
+    """Add ``@Lazy`` only to @Bean parameters that close a dependency cycle."""
+    bean = re.compile(
+        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
+        r"(?:public\s+)?(?P<return>[A-Za-z_]\w*(?:\s*<[^>{}]*>)?)\s+"
+        r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)\s*\{"
+    )
+    methods = list(bean.finditer(text))
+    if not methods:
+        return text, False
+
+    return_to_name = {
+        _simple_java_type(match.group("return")): match.group("name") for match in methods
+    }
+    edges: dict[str, set[str]] = {}
+    for match in methods:
+        edges[match.group("name")] = {
+            return_to_name[param_type]
+            for param_type in _bean_parameter_types(match.group("params"))
+            if param_type in return_to_name
+        }
+
+    cyclic_edges: set[tuple[str, str]] = set()
+    for source, targets in edges.items():
+        for target in targets:
+            if source == target or _has_path(edges, target, source, {target}):
+                cyclic_edges.add((source, target))
+    if not cyclic_edges:
+        return text, False
+
+    def rewrite(match: re.Match[str]) -> str:
+        source = match.group("name")
+        params = match.group("params")
+        additions = {
+            return_type
+            for return_type, target in return_to_name.items()
+            if (source, target) in cyclic_edges
+        }
+        if not additions:
+            return match.group(0)
+        rewritten = re.sub(
+            r"(?<!@Lazy\s)(?P<parameter>(?:@[A-Za-z_]\w*(?:\([^)]*\))?\s+)*(?:final\s+)?(?:[\w.]+(?:\s*<[^>{}]*>)?)\s+[A-Za-z_]\w*)",
+            lambda parameter: (
+                "@Lazy " + parameter.group("parameter")
+                if _simple_java_type(parameter.group("parameter")) in additions
+                and "@Lazy" not in parameter.group("parameter")
+                else parameter.group("parameter")
+            ),
+            params,
+        )
+        return match.group(0).replace(params, rewritten, 1)
+
+    rewritten = bean.sub(rewrite, text)
+    if rewritten == text:
+        return text, False
+    if not re.search(r"(?m)^import\s+org\.springframework\.context\.annotation\.Lazy;", rewritten):
+        anchor = "import org.springframework.context.annotation.Configuration;"
+        if anchor in rewritten:
+            rewritten = rewritten.replace(anchor, anchor + "\nimport org.springframework.context.annotation.Lazy;", 1)
+        else:
+            package = re.search(r"(?m)^package\s+[^;]+;", rewritten)
+            if package:
+                rewritten = rewritten[: package.end()] + "\n\nimport org.springframework.context.annotation.Lazy;" + rewritten[package.end() :]
+    return rewritten, True
+
+
+def _simple_java_type(value: str) -> str:
+    cleaned = re.sub(r"@[A-Za-z_]\w*(?:\([^)]*\))?\s*", "", value)
+    cleaned = re.sub(r"\bfinal\s+", "", cleaned).strip()
+    return cleaned.split()[0].split("<", 1)[0].rsplit(".", 1)[-1] if cleaned else ""
+
+
+def _bean_parameter_types(params: str) -> set[str]:
+    return {_simple_java_type(parameter) for parameter in params.split(",") if parameter.strip()}
+
+
+def _has_path(edges: dict[str, set[str]], current: str, target: str, seen: set[str]) -> bool:
+    for next_node in edges.get(current, set()):
+        if next_node == target or (next_node not in seen and _has_path(edges, next_node, target, seen | {next_node})):
+            return True
+    return False
+
+
 def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
     sections: list[str] = []
     for relative in relative_paths:
@@ -972,9 +1149,32 @@ def read_gradle_test_failures(sandbox: Path) -> str:
                 problem = case.find("error")
             if problem is None:
                 continue
-            message = problem.get("message") or (problem.text or "test failed")
+            message = problem.get("message") or "test failed"
+            detail = (problem.text or "").strip()
+            if detail:
+                message += "\n" + summarize_test_failure(detail)
             reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
     return "\n\n".join(reports)[-8000:]
+
+
+def summarize_test_failure(detail: str) -> str:
+    """Keep causal exception lines, rather than only the end of a long trace."""
+    lines = [line.rstrip() for line in detail.splitlines() if line.strip()]
+    causal = [
+        line
+        for line in lines
+        if re.search(
+            r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
+            r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
+            r"BeanCurrentlyInCreationException)",
+            line,
+        )
+    ]
+    selected = causal or lines[:30]
+    # Preserve a small tail for Gradle/JUnit-specific context without allowing a
+    # stack trace to evict the causal message from the repair prompt.
+    selected.extend(lines[-8:])
+    return "\n".join(dict.fromkeys(selected))[:8000]
 
 
 def snapshot_files(root: Path) -> dict[str, str]:
