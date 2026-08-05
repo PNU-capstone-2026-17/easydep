@@ -41,6 +41,21 @@ def _apply_repair_directives(run_root) -> None:
             continue
         prompt_path = run_root / task["prompt_file"]
         prompt = prompt_path.read_text("utf-8")
+        if task.get("task_type") == "persistence-entities":
+            prompt += """
+
+## BCE foreign-key compatibility contract
+
+- Every scalar BCE field ending in `Id` is an immutable cross-layer contract. Keep
+  the corresponding persistence getter and setter even when the ERD also requires
+  a JPA relationship object.
+- Map the scalar foreign-key value and relationship without mapping the same column
+  as writable twice. Relationship setters and helpers must keep the scalar ID value
+  consistent whenever the related entity has an ID.
+- Do not replace a required scalar `get...Id()`/`set...Id()` pair with only an
+  object-valued relationship accessor; the generated mapper must compile against
+  both the BCE scalar contract and the JPA relationship contract.
+"""
         for entry in relevant:
             prompt = prompt.replace("{entry['evidence']}", entry.get("evidence", ""), 1)
         prompt_path.write_text(prompt, encoding="utf-8")

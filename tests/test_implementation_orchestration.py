@@ -119,6 +119,7 @@ def test_repair_bridge_inserts_real_evidence_once(tmp_path: Path, monkeypatch):
     prompt.write_text("base prompt", encoding="utf-8")
     task = {
         "task_id": "entity",
+        "task_type": "persistence-entities",
         "prompt_file": "reports/implementation-tasks/entity.prompt.md",
         "prompt_sha256": "old",
     }
@@ -160,6 +161,7 @@ def test_repair_bridge_inserts_real_evidence_once(tmp_path: Path, monkeypatch):
     repaired = prompt.read_text(encoding="utf-8")
     assert repaired.count("real JPA evidence") == 1
     assert "{entry['evidence']}" not in repaired
+    assert repaired.count("BCE foreign-key compatibility contract") == 1
 
 
 def test_repair_owner_is_requested_before_failed_task(tmp_path: Path):
