@@ -30,6 +30,14 @@ from app.design.graphs.class_diagram_graph import (
     class_diagram_feedback_graph,
     class_diagram_graph,
 )
+from app.design.graphs.sequence_diagram_graph import (
+    sequence_diagram_feedback_graph,
+    sequence_diagram_graph,
+)
+from app.design.graphs.api_spec_graph import (
+    api_spec_feedback_graph,
+    api_spec_graph,
+)
 from app.design.nodes.artifact_generation import (
     generate_api_spec,
     generate_deployment_diagram,
@@ -38,6 +46,12 @@ from app.design.nodes.artifact_generation import (
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.sequence_diagram.plantuml import (
+    generate_plantuml_from_sequence_json,
+)
+from app.design.services.api_spec.openapi_builder import (
+    generate_openapi_spec_from_json,
+)
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.revision import revise_json_with_llm, revise_puml_with_llm
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
@@ -188,11 +202,9 @@ def generate_stage(app_id: str, stage: str, request: StageRequest) -> JSONRespon
         if stage == "class_diagram":
             updated = generate_class_diagram_once(state)
         elif stage == "sequence_diagram":
-            updated = merge_state(state, generate_sequence_diagram(state))
-            updated = auto_fix_puml_stage(stage, updated, "")
+            updated = generate_sequence_diagram_once(state)
         elif stage == "api_spec":
-            updated = merge_state(state, generate_api_spec(state))
-            updated = auto_fix_api_spec(updated, "")
+            updated = generate_api_spec_once(state)
         elif stage == "erd":
             updated = merge_state(state, generate_erd(state))
             updated = auto_fix_puml_stage(stage, updated, "")
@@ -225,10 +237,12 @@ def apply_stage_feedback(
     claim_stage(app_id, stage)
 
     try:
-        if stage == "api_spec":
-            updated = auto_fix_api_spec(state, request.feedback)
-        elif stage == "class_diagram":
+        if stage == "class_diagram":
             updated = revise_class_diagram_once(state, request.feedback)
+        elif stage == "sequence_diagram":
+            updated = revise_sequence_diagram_once(state, request.feedback)
+        elif stage == "api_spec":
+            updated = revise_api_spec_once(state, request.feedback)
         else:
             updated = auto_fix_puml_stage(stage, state, request.feedback)
 
@@ -268,11 +282,21 @@ def import_stage_content(
     config = STAGE_ARTIFACTS[stage]
     source_key = config.get("source_key")
     if source_key:
-        # class_diagram is stored as its BCE model; the diagram is derived from it,
-        # so an imported class diagram is supplied as BCE JSON, not PlantUML.
-        puml = generate_plantuml_from_bce_json(request.content)
-        state: ArchitectureState = {source_key: request.content, config["state_key"]: puml}
-        validation = validate_puml_artifact(puml)
+        if stage == "class_diagram":
+            spec_obj = generate_plantuml_from_bce_json(request.content)
+        elif stage == "sequence_diagram":
+            spec_obj = generate_plantuml_from_sequence_json(request.content)
+        elif stage == "api_spec":
+            spec_obj = generate_openapi_spec_from_json(request.content)
+        else:
+            spec_obj = {}
+        state: ArchitectureState = {source_key: request.content, config["state_key"]: spec_obj}
+        if stage in PUML_FIELDS:
+            validation = validate_puml_artifact(spec_obj)
+        elif stage == "api_spec":
+            validation = validate_api_spec(spec_obj)
+        else:
+            validation = {"syntax_valid": True, "syntax_errors": []}
         state[config["valid_key"]] = validation["syntax_valid"]
         state[config["errors_key"]] = validation["syntax_errors"]
     else:
@@ -400,6 +424,44 @@ def revise_class_diagram_once(
     graph_input["class_diagram_feedback"] = feedback
     result = dict(class_diagram_feedback_graph.invoke(graph_input))
     result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
+    return result
+
+
+def generate_sequence_diagram_once(state: ArchitectureState) -> ArchitectureState:
+    """Extract sequence elements, convert to PlantUML, and validate, run as a LangGraph."""
+    result = dict(sequence_diagram_graph.invoke(state))
+    result["artifact_status"] = mark_status(result, "sequence_diagram", "implemented")
+    return result
+
+
+def revise_sequence_diagram_once(
+    state: ArchitectureState,
+    feedback: str,
+) -> ArchitectureState:
+    """Apply feedback to sequence elements model, then re-render deterministically."""
+    graph_input: ArchitectureState = dict(state)
+    graph_input["sequence_diagram_feedback"] = feedback
+    result = dict(sequence_diagram_feedback_graph.invoke(graph_input))
+    result["artifact_status"] = mark_status(result, "sequence_diagram", "implemented")
+    return result
+
+
+def generate_api_spec_once(state: ArchitectureState) -> ArchitectureState:
+    """Extract API elements, convert to OpenAPI dict, and validate, run as a LangGraph."""
+    result = dict(api_spec_graph.invoke(state))
+    result["artifact_status"] = mark_status(result, "api_spec", "implemented")
+    return result
+
+
+def revise_api_spec_once(
+    state: ArchitectureState,
+    feedback: str,
+) -> ArchitectureState:
+    """Apply feedback to API elements model, then re-render deterministically."""
+    graph_input: ArchitectureState = dict(state)
+    graph_input["api_spec_feedback"] = feedback
+    result = dict(api_spec_feedback_graph.invoke(graph_input))
+    result["artifact_status"] = mark_status(result, "api_spec", "implemented")
     return result
 
 

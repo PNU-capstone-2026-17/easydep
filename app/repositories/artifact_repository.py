@@ -31,6 +31,12 @@ from app.db.models import (
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.sequence_diagram.plantuml import (
+    generate_plantuml_from_sequence_json,
+)
+from app.design.services.api_spec.openapi_builder import (
+    generate_openapi_spec_from_json,
+)
 
 
 class AppNotFound(Exception):
@@ -100,6 +106,9 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "sequence_diagram_puml",
         "valid_key": "sequence_diagram_syntax_valid",
         "errors_key": "sequence_diagram_syntax_errors",
+        # Stored as its sequence elements model; the PlantUML in state_key is derived from this.
+        "source_key": "extracted_sequence_elements",
+        "source_format": FORMAT_JSON,
     },
     "api_spec": {
         "artifact_type": TYPE_API_SPEC,
@@ -107,6 +116,9 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "api_spec",
         "valid_key": "api_spec_syntax_valid",
         "errors_key": "api_spec_syntax_errors",
+        # Stored as its API elements model; state_key is derived from this.
+        "source_key": "extracted_api_elements",
+        "source_format": FORMAT_JSON,
     },
     "erd": {
         "artifact_type": TYPE_ERD,
@@ -202,9 +214,18 @@ def load_state(app_id: str) -> ArchitectureState:
                 source_value = _decode_content(version.content, config["source_format"])
                 state[source_key] = source_value
                 # PlantUML is a pure projection of the stored model.
-                state[config["state_key"]] = generate_plantuml_from_bce_json(
-                    source_value
-                )
+                if stage == "class_diagram":
+                    state[config["state_key"]] = generate_plantuml_from_bce_json(
+                        source_value
+                    )
+                elif stage == "sequence_diagram":
+                    state[config["state_key"]] = generate_plantuml_from_sequence_json(
+                        source_value
+                    )
+                elif stage == "api_spec":
+                    state[config["state_key"]] = generate_openapi_spec_from_json(
+                        source_value
+                    )
             else:
                 state[config["state_key"]] = _decode_content(
                     version.content,

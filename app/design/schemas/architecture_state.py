@@ -28,10 +28,18 @@ class ArchitectureState(TypedDict, total=False):
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]
 
+    extracted_sequence_elements: dict[str, Any]
+    # Transient: carries user feedback into the sequence diagram feedback graph so it
+    # edits the sequence elements model (extracted_sequence_elements), not the derived PlantUML.
+    sequence_diagram_feedback: str
     sequence_diagram_puml: str
     sequence_diagram_syntax_valid: bool
     sequence_diagram_syntax_errors: list[str]
 
+    extracted_api_elements: dict[str, Any]
+    # Transient: carries user feedback into the API spec feedback graph so it
+    # edits the API elements model (extracted_api_elements), not the derived OpenAPI spec.
+    api_spec_feedback: str
     api_spec: dict[str, Any]
     api_spec_syntax_valid: bool
     api_spec_syntax_errors: list[str]
