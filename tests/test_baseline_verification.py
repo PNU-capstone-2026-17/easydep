@@ -1,4 +1,4 @@
-from experiments.baselines.verify import inspect_repository
+from evaluation.baselines.verify import inspect_repository
 
 
 def test_baseline_inspection_separates_repository_and_cloud_artifacts(tmp_path):

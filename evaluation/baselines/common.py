@@ -14,7 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "experiments"
+DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "evaluations" / "baselines"
 
 # EasyDep Settings와 같은 루트 .env를 읽는다. 셸에서 명시한 값은 유지되며 모든
 # 비교군은 같은 프로세스 환경을 전달받는다.

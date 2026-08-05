@@ -32,7 +32,7 @@ jobs:
 
       # depkb/experiments는 실측 기록이며 제품 코드 품질 검사 대상이 아니다.
       - name: Lint maintained code
-        run: ruff check app/requirements app/core/orchestration experiments/baselines tests
+        run: ruff check app/requirements app/core/orchestration evaluation/baselines tests
 
       # 레거시 cloudkb 테스트와 분리된 현재 통합 테스트만 실행한다.
       - name: Test

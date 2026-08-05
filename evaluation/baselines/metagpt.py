@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from experiments.baselines.common import (
+from evaluation.baselines.common import (
     ROOT,
     ExperimentCase,
     base_url,
@@ -34,7 +34,7 @@ def _executable() -> Path:
     if not executable.is_file():
         raise RuntimeError(
             f"MetaGPT executable not found: {executable}. "
-            "Run experiments/baselines/setup_metagpt.ps1 first."
+            "Run evaluation/baselines/setup_metagpt.ps1 first."
         )
     return executable
 

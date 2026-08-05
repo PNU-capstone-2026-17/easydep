@@ -15,7 +15,7 @@ from typing import Any
 
 from openai import OpenAI
 
-from experiments.baselines.common import (
+from evaluation.baselines.common import (
     ExperimentCase,
     base_url,
     begin_run,
@@ -76,7 +76,7 @@ def _safe_files(files: object) -> dict[str, str]:
 
 def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False) -> Path:
     case = ExperimentCase.load(case_path)
-    command = ["python", "-m", "experiments.baselines.cot", str(case_path)]
+    command = ["python", "-m", "evaluation.baselines.cot", str(case_path)]
     run_dir = begin_run("cot", case, output_root)
     manifest = run_manifest("cot", case, command)
     write_json(run_dir / "input.json", {
