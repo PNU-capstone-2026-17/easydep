@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 
 
 def _apply_repair_directives(run_root) -> None:
@@ -52,10 +53,38 @@ def _apply_repair_directives(run_root) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+def _prioritize_repair_owners(original, run_root, state):
+    """Request the repair owner before retrying the task that exposed its failure."""
+    plan_path = run_root / "reports" / "repair-plan.json"
+    runnable = set(state.get("nextRunnableTasks") or [])
+    failed = {
+        task["taskId"]
+        for task in state.get("tasks", [])
+        if task.get("status") == "FAILED"
+    }
+    if not plan_path.is_file() or not runnable or not failed:
+        return original(run_root, state)
+    plan = json.loads(plan_path.read_text("utf-8"))
+    owners: set[str] = set()
+    for entry in reversed(plan.get("entries", [])):
+        if entry.get("failedTaskId") in failed:
+            owners.update(entry.get("ownerTaskIds", []))
+    owners &= runnable
+    if not owners:
+        return original(run_root, state)
+    prioritized = deepcopy(state)
+    prioritized["nextRunnableTasks"] = sorted(owners)
+    return original(run_root, prioritized)
+
+
 def main() -> int:
     from app.implementation.engine import workflow
 
     workflow.apply_repair_directives = _apply_repair_directives
+    member_write_request = workflow.write_transmission_request
+    workflow.write_transmission_request = lambda run_root, state: (
+        _prioritize_repair_owners(member_write_request, run_root, state)
+    )
     from app.implementation.engine.cli import main as member_main
 
     return member_main()

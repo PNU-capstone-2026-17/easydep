@@ -8,7 +8,10 @@ from app.core.orchestration.adapters.implementation import ImplementationAdapter
 from app.core.orchestration.adapters.infrastructure import (
     InfrastructureRecommendationAdapter,
 )
-from app.core.orchestration.implementation_runner import _apply_repair_directives
+from app.core.orchestration.implementation_runner import (
+    _apply_repair_directives,
+    _prioritize_repair_owners,
+)
 from app.implementation.prototype_client import PrototypeExecutionError
 
 
@@ -157,3 +160,38 @@ def test_repair_bridge_inserts_real_evidence_once(tmp_path: Path, monkeypatch):
     repaired = prompt.read_text(encoding="utf-8")
     assert repaired.count("real JPA evidence") == 1
     assert "{entry['evidence']}" not in repaired
+
+
+def test_repair_owner_is_requested_before_failed_task(tmp_path: Path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "repair-plan.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "failedTaskId": "entities",
+                        "ownerTaskIds": ["mapping"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def writer(_run_root, state):
+        captured.update(state)
+        return {"tasks": state["nextRunnableTasks"]}
+
+    result = _prioritize_repair_owners(
+        writer,
+        tmp_path,
+        {
+            "nextRunnableTasks": ["entities", "mapping", "repositories"],
+            "tasks": [{"taskId": "entities", "status": "FAILED"}],
+        },
+    )
+
+    assert result["tasks"] == ["mapping"]
+    assert captured["nextRunnableTasks"] == ["mapping"]
