@@ -848,7 +848,7 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
     shutil.copytree(
         run_root / "application",
         sandbox / "application",
-        ignore=shutil.ignore_patterns("build", ".gradle"),
+        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle"),
     )
     for relative in task["allowed_write_paths"]:
         target = sandbox / relative
