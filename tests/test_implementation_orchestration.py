@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.core.orchestration.adapters.design import DesignAdapter
 from app.core.orchestration.adapters.implementation import ImplementationAdapter
 from app.core.orchestration.adapters.infrastructure import (
     InfrastructureRecommendationAdapter,
@@ -23,6 +24,15 @@ def test_provisional_recommendation_is_explicitly_unmeasured():
     assert result["status"] == "provisional"
     assert result["method"] == "llm_prompt_only"
     assert result["measured"] is False
+
+
+def test_orchestration_skips_and_restores_plantuml_jvm_check():
+    from app.design.services.common import validation
+
+    original = validation.check_plantuml_syntax
+    with DesignAdapter._without_plantuml_jvm():
+        assert validation.check_plantuml_syntax("invalid") == []
+    assert validation.check_plantuml_syntax is original
 
 
 def test_implementation_contract_maps_nested_design_artifacts():

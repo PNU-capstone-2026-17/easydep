@@ -1,50 +1,51 @@
-# Requirements benchmark results
+# 요구사항 벤치마크 결과
 
-Model: `openai/gpt-oss-120b`, temperature 0. Development results compare the same four
-inputs before and after repair-context and static-first validation changes.
+모델은 `openai/gpt-oss-120b`, temperature는 0이다. 개발 결과는 동일한 입력
+4개에 대해 수정 컨텍스트 및 정적 검사 우선 변경 전후를 비교한다.
 
-## Development macro totals
+## 개발 분할 매크로 결과
 
-| Metric | Before | After | Change |
+| 지표 | 변경 전 | 변경 후 | 차이 |
 |---|---:|---:|---:|
-| LLM calls | 100 | 92 | -8.0% |
-| Total tokens | 287,137 | 260,942 | -9.1% |
-| Wall time | 430.6 s | 338.0 s | -21.5% |
-| Remaining specification issues | 10 | 7 | -30.0% |
-| FR coverage | 1.0 | 1.0 | unchanged |
-| Actor recall | 1.0 | 1.0 | unchanged |
-| Explicit role-fact accuracy | 1.0 | 1.0 | unchanged |
+| LLM 호출 | 100 | 92 | -8.0% |
+| 전체 토큰 | 287,137 | 260,942 | -9.1% |
+| 실행 시간 | 430.6초 | 338.0초 | -21.5% |
+| 남은 명세 문제 | 10 | 7 | -30.0% |
+| FR 커버리지 | 1.0 | 1.0 | 동일 |
+| 액터 재현율 | 1.0 | 1.0 | 동일 |
+| 명시적 역할 사실 정확도 | 1.0 | 1.0 | 동일 |
 
-The selected generic changes were:
+선택한 일반화 변경은 다음과 같다.
 
-- provide the previous structured specification to the repair call;
-- defer semantic LLM validation until deterministic structural checks pass;
-- persist wall-clock time in run metrics.
+- 수정 호출에 직전 구조화 명세를 제공한다.
+- 결정론적 구조 검사를 통과한 뒤에만 LLM 의미 검증을 수행한다.
+- 실행 시간 지표를 산출물에 저장한다.
 
-`dev_notification_delivery` increased from two to three remaining specification issues. No
-application-specific prompt adjustment was made because macro quality and cost improved.
+`dev_notification_delivery`의 남은 명세 문제는 2개에서 3개로 증가했다. 하지만
+전체 품질과 비용이 개선됐으므로 특정 앱에 맞춘 프롬프트 조정은 하지 않았다.
 
-## Frozen holdout
+## 고정 홀드아웃
 
-| Application | FR coverage | Actor recall | Role accuracy | Spec issues | Calls | Tokens | Wall time |
+| 애플리케이션 | FR 커버리지 | 액터 재현율 | 역할 정확도 | 명세 문제 | 호출 | 토큰 | 실행 시간 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| telehealth | 1.0 | 1.0 | 0.67 | 4 | 32 | 100,582 | 99.6 s |
-| logistics | 1.0 | 1.0 | 1.0 | 3 | 21 | 59,275 | 79.7 s |
-| partner reporting | 1.0 | 1.0 | 1.0 | 0 | 30 | 92,222 | 111.4 s |
+| telehealth | 1.0 | 1.0 | 0.67 | 4 | 32 | 100,582 | 99.6초 |
+| logistics | 1.0 | 1.0 | 1.0 | 3 | 21 | 59,275 | 79.7초 |
+| partner reporting | 1.0 | 1.0 | 1.0 | 0 | 30 | 92,222 | 111.4초 |
 
-Telehealth exposed one unresolved modeling limitation: the Pharmacy receives system output but
-does not provide a service to the system, while the Clinician owns the enclosing prescription
-goal. The current `primary_actor` / `supporting_actors` pair cannot represent that participation
-cleanly. Do not tune against this holdout item directly. Add a different outbound-recipient case
-to the development split before evaluating a generic role-model extension in a later cycle.
+Telehealth에서는 현재 역할 모델의 한계가 하나 드러났다. Pharmacy는 시스템의
+출력을 받지만 시스템에 서비스를 제공하지 않으며, 상위 처방 목표는 Clinician이
+소유한다. 현재 `primary_actor`와 `supporting_actors`만으로는 이 참여 관계를
+명확히 표현하기 어렵다. 이 홀드아웃 항목에 직접 맞춰 조정하지 않는다. 추후
+일반적인 역할 모델 확장을 평가하려면 별도의 출력 수신자 사례를 개발 분할에
+먼저 추가한다.
 
-Artifacts are ignored by Git; the recorded run directories are:
+산출물은 Git에서 제외하며 기록된 실행 디렉터리는 다음과 같다.
 
-- Development before: `run_20260804T175221Z_c8a9c320f0`,
+- 개발 변경 전: `run_20260804T175221Z_c8a9c320f0`,
   `run_20260804T175501Z_c7c343bffd`, `run_20260804T175802Z_dd0eab1e53`,
   `run_20260804T180040Z_94db103625`
-- Development after: `run_20260804T180533Z_c8a9c320f0`,
+- 개발 변경 후: `run_20260804T180533Z_c8a9c320f0`,
   `run_20260804T180714Z_c7c343bffd`, `run_20260804T180919Z_dd0eab1e53`,
   `run_20260804T181145Z_94db103625`
-- Holdout: `run_20260804T181429Z_34dd7c034b`, `run_20260804T181636Z_128d3d409f`,
-  `run_20260804T181902Z_f6ab50e564`
+- 홀드아웃: `run_20260804T181429Z_34dd7c034b`,
+  `run_20260804T181636Z_128d3d409f`, `run_20260804T181902Z_f6ab50e564`

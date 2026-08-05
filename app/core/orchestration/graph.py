@@ -20,6 +20,7 @@ from app.core.orchestration.adapters import (
     InfrastructureRecommendationAdapter,
     RequirementsAdapter,
 )
+from app.core.orchestration.artifacts import persist_run_artifacts
 from app.core.orchestration.checkpoint import (
     DEFAULT_CHECKPOINT_PATH,
     SqliteMemorySaver,
@@ -271,7 +272,7 @@ def _response(result: dict[str, Any], run_id: str) -> FlowResponse:
     if interruptions:
         prompt = interruptions[0].value
         stage = prompt.get("stage", "requirements")
-        return {
+        response: FlowResponse = {
             "run_id": run_id,
             "app_id": result.get("app_id", ""),
             "status": "needs_input",
@@ -279,13 +280,17 @@ def _response(result: dict[str, Any], run_id: str) -> FlowResponse:
             "prompt": prompt,
             "result": serializable_result,
         }
-    return {
+        persist_run_artifacts(run_id, serializable_result)
+        return response
+    response = {
         "run_id": run_id,
         "app_id": result.get("app_id", ""),
         "status": result.get("status", "unknown"),
         "stage": result.get("current_stage", "completed"),
         "result": serializable_result,
     }
+    persist_run_artifacts(run_id, serializable_result)
+    return response
 
 
 def start_workflow(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -28,6 +29,19 @@ class DesignAdapter:
         )
 
     @staticmethod
+    @contextmanager
+    def _without_plantuml_jvm():
+        """Skip only the JVM-backed syntax check for orchestration runs."""
+        from app.design.services.common import validation
+
+        original = validation.check_plantuml_syntax
+        validation.check_plantuml_syntax = lambda _source: []
+        try:
+            yield
+        finally:
+            validation.check_plantuml_syntax = original
+
+    @staticmethod
     def _state(requirements_result: dict[str, Any]) -> dict[str, Any]:
         use_case_specs = requirements_result.get("use_case_specs") or []
         if not use_case_specs:
@@ -50,6 +64,14 @@ class DesignAdapter:
         from app.artifacts_api import to_web_response
 
         payload: dict[str, Any] = {"app_id": session_id, **to_web_response(result)}
+        validation = payload.get("validation") or {}
+        for name in ("class_diagram", "sequence_diagram", "erd", "deployment_diagram"):
+            validation[name] = {
+                "valid": None,
+                "errors": ["PlantUML JVM syntax validation was skipped."],
+            }
+        payload["validation"] = validation
+        payload["plantuml_validation"] = {"status": "skipped", "requires_jvm": True}
         # Keep structured sources for orchestration-owned post-processing. The web
         # response intentionally exposes rendered artifacts only, but cloud design
         # needs the deployment model to distinguish stateless and stateful layouts.
@@ -78,14 +100,16 @@ class DesignAdapter:
         self, *, session_id: str, requirements_result: dict[str, Any]
     ) -> dict[str, Any]:
         config: RunnableConfig = {"configurable": {"thread_id": session_id}}
-        result = dict(self.graph.invoke(self._state(requirements_result), config))
+        with self._without_plantuml_jvm():
+            result = dict(self.graph.invoke(self._state(requirements_result), config))
         if not self.graph.get_state(config).next:
             result.pop("__interrupt__", None)
         return self._payload(result, session_id)
 
     def resume(self, *, session_id: str, feedback: str) -> dict[str, Any]:
         config: RunnableConfig = {"configurable": {"thread_id": session_id}}
-        result = dict(self.graph.invoke(Command(resume=feedback), config))
+        with self._without_plantuml_jvm():
+            result = dict(self.graph.invoke(Command(resume=feedback), config))
         if not self.graph.get_state(config).next:
             result.pop("__interrupt__", None)
         return self._payload(result, session_id)
