@@ -16,6 +16,7 @@ from app.implementation.engine.orchestrator import (
 )
 from app.implementation.engine.agent_runtime import (
     EventJournal,
+    break_configuration_cycles,
     changed_files,
     missing_required_outputs,
     openhands_compatibility,
@@ -27,6 +28,7 @@ from app.implementation.engine.agent_runtime import (
     render_verification_feedback,
     select_repair_paths,
     snapshot_files,
+    summarize_test_failure,
     task_base_package,
     transient_provider_error,
     provider_retry_delay,
@@ -2175,6 +2177,42 @@ components: {}
             failures = read_gradle_test_failures(sandbox)
             self.assertIn("expected call", failures)
             self.assertNotIn("<testsuite>", failures)
+
+    def test_preserves_causal_spring_failure_from_long_trace(self) -> None:
+        trace = "\n".join(
+            [
+                "org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'controller'",
+                "Caused by: org.springframework.beans.factory.BeanCurrentlyInCreationException: Requested bean is currently in creation",
+            ]
+            + [f"\tat example.Stack.frame{number}(Stack.java:1)" for number in range(4000)]
+        )
+        summary = summarize_test_failure(trace)
+        self.assertIn("UnsatisfiedDependencyException", summary)
+        self.assertIn("BeanCurrentlyInCreationException", summary)
+        self.assertLess(len(summary), 8000)
+
+    def test_breaks_bean_factory_cycle_with_lazy_parameter(self) -> None:
+        configuration = """package example.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+class ApplicationConfiguration {
+    @Bean
+    public Controller controller(Timer timer) { return new Controller(timer); }
+
+    @Bean
+    public Timer timer(DelayScreen screen) { return new Timer(screen); }
+
+    @Bean
+    public DelayScreen delayScreen(Controller controller) { return new DelayScreen(controller); }
+}
+"""
+        normalized, changed = break_configuration_cycles(configuration)
+        self.assertTrue(changed)
+        self.assertIn("import org.springframework.context.annotation.Lazy;", normalized)
+        self.assertIn("delayScreen(@Lazy Controller controller)", normalized)
 
     def test_compiler_repair_is_limited_to_named_allowed_file(self) -> None:
         main = "application/src/main/java/example/Service.java"

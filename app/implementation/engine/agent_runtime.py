@@ -961,8 +961,6 @@ def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, obje
             for item in match.group(1).split(",")
             if item.strip()
         )
-    if not component_ports:
-        return
     text = configuration.read_text(encoding="utf-8")
     bean = re.compile(
         r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
@@ -1011,23 +1009,97 @@ def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, obje
             "    }\n"
         )
         text = text.rsplit("}", 1)[0] + method + "}\n"
-    # A Boundary adapter may call back into the Control being constructed.  Make
-    # those factory-method injection points lazy so Spring can materialize the
-    # Control graph without enabling global circular references.
-    text = re.sub(
-        r"(?<!@Lazy\s)(\bStockPurchaseController\s+\w+)",
-        r"@Lazy \1",
-        text,
-    )
-    text = re.sub(
-        r"(?<!@Lazy\s)(\b\w+Screen\s+\w+)",
-        r"@Lazy \1",
-        text,
-    )
-    if removals:
+    # Factory method parameters form the Spring construction graph.  An LLM can
+    # accidentally make a Boundary callback part of that graph (Control ->
+    # Boundary -> Control).  Detect cycles from the actual @Bean declarations
+    # and break only the corresponding parameter edge with @Lazy.  This does
+    # not enable Spring's global circular-reference escape hatch.
+    text, lazy_added = break_configuration_cycles(text)
+    if removals or mapper_types or lazy_added:
         configuration.write_text(text, encoding="utf-8")
-    elif mapper_types:
-        configuration.write_text(text, encoding="utf-8")
+
+
+def break_configuration_cycles(text: str) -> tuple[str, bool]:
+    """Add ``@Lazy`` only to @Bean parameters that close a dependency cycle."""
+    bean = re.compile(
+        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
+        r"(?:public\s+)?(?P<return>[A-Za-z_]\w*(?:\s*<[^>{}]*>)?)\s+"
+        r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^)]*)\)\s*\{"
+    )
+    methods = list(bean.finditer(text))
+    if not methods:
+        return text, False
+
+    return_to_name = {
+        _simple_java_type(match.group("return")): match.group("name") for match in methods
+    }
+    edges: dict[str, set[str]] = {}
+    for match in methods:
+        edges[match.group("name")] = {
+            return_to_name[param_type]
+            for param_type in _bean_parameter_types(match.group("params"))
+            if param_type in return_to_name
+        }
+
+    cyclic_edges: set[tuple[str, str]] = set()
+    for source, targets in edges.items():
+        for target in targets:
+            if source == target or _has_path(edges, target, source, {target}):
+                cyclic_edges.add((source, target))
+    if not cyclic_edges:
+        return text, False
+
+    def rewrite(match: re.Match[str]) -> str:
+        source = match.group("name")
+        params = match.group("params")
+        additions = {
+            return_type
+            for return_type, target in return_to_name.items()
+            if (source, target) in cyclic_edges
+        }
+        if not additions:
+            return match.group(0)
+        rewritten = re.sub(
+            r"(?<!@Lazy\s)(?P<parameter>(?:@[A-Za-z_]\w*(?:\([^)]*\))?\s+)*(?:final\s+)?(?:[\w.]+(?:\s*<[^>{}]*>)?)\s+[A-Za-z_]\w*)",
+            lambda parameter: (
+                "@Lazy " + parameter.group("parameter")
+                if _simple_java_type(parameter.group("parameter")) in additions
+                and "@Lazy" not in parameter.group("parameter")
+                else parameter.group("parameter")
+            ),
+            params,
+        )
+        return match.group(0).replace(params, rewritten, 1)
+
+    rewritten = bean.sub(rewrite, text)
+    if rewritten == text:
+        return text, False
+    if not re.search(r"(?m)^import\s+org\.springframework\.context\.annotation\.Lazy;", rewritten):
+        anchor = "import org.springframework.context.annotation.Configuration;"
+        if anchor in rewritten:
+            rewritten = rewritten.replace(anchor, anchor + "\nimport org.springframework.context.annotation.Lazy;", 1)
+        else:
+            package = re.search(r"(?m)^package\s+[^;]+;", rewritten)
+            if package:
+                rewritten = rewritten[: package.end()] + "\n\nimport org.springframework.context.annotation.Lazy;" + rewritten[package.end() :]
+    return rewritten, True
+
+
+def _simple_java_type(value: str) -> str:
+    cleaned = re.sub(r"@[A-Za-z_]\w*(?:\([^)]*\))?\s*", "", value)
+    cleaned = re.sub(r"\bfinal\s+", "", cleaned).strip()
+    return cleaned.split()[0].split("<", 1)[0].rsplit(".", 1)[-1] if cleaned else ""
+
+
+def _bean_parameter_types(params: str) -> set[str]:
+    return {_simple_java_type(parameter) for parameter in params.split(",") if parameter.strip()}
+
+
+def _has_path(edges: dict[str, set[str]], current: str, target: str, seen: set[str]) -> bool:
+    for next_node in edges.get(current, set()):
+        if next_node == target or (next_node not in seen and _has_path(edges, next_node, target, seen | {next_node})):
+            return True
+    return False
 
 
 def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
@@ -1080,9 +1152,29 @@ def read_gradle_test_failures(sandbox: Path) -> str:
             message = problem.get("message") or "test failed"
             detail = (problem.text or "").strip()
             if detail:
-                message += "\n" + detail[-12000:]
+                message += "\n" + summarize_test_failure(detail)
             reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
     return "\n\n".join(reports)[-8000:]
+
+
+def summarize_test_failure(detail: str) -> str:
+    """Keep causal exception lines, rather than only the end of a long trace."""
+    lines = [line.rstrip() for line in detail.splitlines() if line.strip()]
+    causal = [
+        line
+        for line in lines
+        if re.search(
+            r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
+            r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
+            r"BeanCurrentlyInCreationException)",
+            line,
+        )
+    ]
+    selected = causal or lines[:30]
+    # Preserve a small tail for Gradle/JUnit-specific context without allowing a
+    # stack trace to evict the causal message from the repair prompt.
+    selected.extend(lines[-8:])
+    return "\n".join(dict.fromkeys(selected))[:8000]
 
 
 def snapshot_files(root: Path) -> dict[str, str]:
