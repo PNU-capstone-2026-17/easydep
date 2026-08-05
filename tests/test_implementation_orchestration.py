@@ -8,6 +8,7 @@ from app.core.orchestration.adapters.implementation import ImplementationAdapter
 from app.core.orchestration.adapters.infrastructure import (
     InfrastructureRecommendationAdapter,
 )
+from app.core.orchestration.implementation_runner import _apply_repair_directives
 from app.implementation.prototype_client import PrototypeExecutionError
 
 
@@ -91,6 +92,12 @@ def test_failed_worker_state_is_returned_for_checkpoint_and_artifacts(
     adapter.client = FailedClient()
     monkeypatch.setattr(adapter, "_bridge_api_key", lambda: None)
     monkeypatch.setattr(adapter, "_configure_gradle_memory", lambda: None)
+    monkeypatch.setattr(adapter, "_run_member_command", lambda _args: {})
+    monkeypatch.setattr(
+        adapter,
+        "_run_member_workflow",
+        lambda *_args: (_ for _ in ()).throw(PrototypeExecutionError("worker failed")),
+    )
 
     result = adapter.resume(
         {"job_path": str(job_path), "run_root": str(run_root)}, approved=True
@@ -99,3 +106,54 @@ def test_failed_worker_state_is_returned_for_checkpoint_and_artifacts(
     assert result["status"] == "failed"
     assert result["workflow"]["blockingReason"] == "JVM crashed"
     assert "worker failed" in result["execution_error"]
+
+
+def test_repair_bridge_inserts_real_evidence_once(tmp_path: Path, monkeypatch):
+    reports = tmp_path / "reports"
+    task_dir = reports / "implementation-tasks"
+    task_dir.mkdir(parents=True)
+    prompt = task_dir / "entity.prompt.md"
+    prompt.write_text("base prompt", encoding="utf-8")
+    task = {
+        "task_id": "entity",
+        "prompt_file": "reports/implementation-tasks/entity.prompt.md",
+        "prompt_sha256": "old",
+    }
+    (task_dir / "entity.task.json").write_text(json.dumps(task), encoding="utf-8")
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    (reports / "repair-plan.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "ownerTaskIds": ["entity"],
+                        "revalidationTaskIds": [],
+                        "evidence": "real JPA evidence",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def broken_member(root):
+        path = root / "reports/implementation-tasks/entity.prompt.md"
+        path.write_text(
+            path.read_text(encoding="utf-8")
+            + "\n\n## Orchestrated repair and revalidation directives\n"
+            + "{entry['evidence']}",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "app.implementation.engine.repair_planner.apply_repair_directives",
+        broken_member,
+    )
+    _apply_repair_directives(tmp_path)
+    _apply_repair_directives(tmp_path)
+
+    repaired = prompt.read_text(encoding="utf-8")
+    assert repaired.count("real JPA evidence") == 1
+    assert "{entry['evidence']}" not in repaired

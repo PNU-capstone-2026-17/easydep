@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -157,7 +158,9 @@ class ImplementationAdapter:
         try:
             # Reconciliation can turn completed task results into checkpoints and
             # therefore change the exact next task set/request ID.
-            self.client._call(["plan-workflow", str(run_root), str(job_path)])
+            self._run_member_command(
+                ["plan-workflow", str(run_root), str(job_path)]
+            )
             request = self.client.transmission_request(run_root)
             if request is None:
                 return result
@@ -174,7 +177,7 @@ class ImplementationAdapter:
                 ),
                 encoding="utf-8",
             )
-            workflow = self.client.run_phase(run_root, job_path, approval_path, True)
+            workflow = self._run_member_workflow(run_root, job_path, approval_path)
             return self._payload(job_path, run_root, workflow)
         except PrototypeExecutionError as error:
             state_path = run_root / "reports" / "workflow-state.json"
@@ -184,6 +187,52 @@ class ImplementationAdapter:
             payload = self._payload(job_path, run_root, workflow)
             payload["execution_error"] = str(error)
             return payload
+
+    def _run_member_workflow(
+        self, run_root: Path, job_path: Path, approval_path: Path
+    ) -> dict[str, Any]:
+        return self._run_member_command(
+            [
+                "run-workflow",
+                str(run_root),
+                str(job_path),
+                "--approval",
+                str(approval_path),
+                "--retry-failed",
+            ]
+        )
+
+    def _run_member_command(self, arguments: list[str]) -> dict[str, Any]:
+        command = [
+            str(self.settings.python_executable),
+            "-B",
+            "-m",
+            "app.core.orchestration.implementation_runner",
+            *arguments,
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=self.settings.repository_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=self.settings.command_timeout_seconds,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise PrototypeExecutionError(
+                "Implementation workflow failed: "
+                + (completed.stderr or completed.stdout)[-4000:]
+            )
+        for line in reversed(completed.stdout.splitlines()):
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(result, dict):
+                return result
+        raise PrototypeExecutionError("Implementation workflow returned no JSON")
 
     def _payload(
         self, job_path: Path, run_root: Path, workflow: dict[str, Any]
