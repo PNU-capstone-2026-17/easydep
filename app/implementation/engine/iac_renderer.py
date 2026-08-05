@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -76,23 +77,39 @@ def sync_deployment_bundle(application: Path) -> Path:
     """Create a self-contained, managed deployment bundle after IaC validation succeeds."""
     bundle = application / "deployment-bundle"
     marker = bundle / ".easydep-managed"
-    if bundle.exists():
-        if not marker.is_file():
-            raise ValueError(f"Refusing to replace unmanaged deployment bundle: {bundle}")
-        shutil.rmtree(bundle)
-    shutil.copytree(
-        application,
-        bundle / "application",
-        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle", "__pycache__"),
-    )
-    marker.write_text("easydep deployment bundle\n", encoding="utf-8")
-    (bundle / "README.md").write_text(
-        "# EasyDep deployment bundle\n\n"
-        "Run `sh application/k8s/deploy.sh application/terraform -auto-approve` "
-        "from this directory after configuring provider credentials.\n",
-        encoding="utf-8",
-    )
-    return bundle
+    staging = Path(tempfile.mkdtemp(prefix="easydep-bundle-"))
+    try:
+        shutil.copytree(
+            application,
+            staging / "application",
+            ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle", "__pycache__", "test"),
+        )
+        (staging / ".easydep-managed").write_text("easydep deployment bundle\n", encoding="utf-8")
+        (staging / "README.md").write_text(
+            "# EasyDep deployment bundle\n\n"
+            "Run `sh application/k8s/deploy.sh application/terraform -auto-approve` "
+            "from this directory after configuring provider credentials.\n",
+            encoding="utf-8",
+        )
+        if bundle.exists():
+            legacy_managed = (bundle / "application" / "terraform" / "main.tf").is_file()
+            if not marker.is_file() and not legacy_managed:
+                raise ValueError(f"Refusing to replace unmanaged deployment bundle: {bundle}")
+            shutil.rmtree(bundle, onerror=_remove_readonly)
+        shutil.move(str(staging), str(bundle))
+        return bundle
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def _remove_readonly(function: Any, path: str, _error: Any) -> None:
+    """Retry managed bundle cleanup when Windows marks a copied file read-only."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except OSError:
+        pass
+    function(path)
 
 
 def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str, Any], application: Path) -> dict[str, object]:
@@ -282,11 +299,11 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             subnet_id = f'\n    vnet_subnet_id = azurerm_subnet.{_logical(target_vnet)}_{_tf_id(subnet_name)}.id' if target_vnet and subnet_name else ""
             scaling = bool(pool.get("enableAutoScaling", False))
             autoscaling = f'\n    min_count = {int(pool.get("minCount", 1))}\n    max_count = {int(pool.get("maxCount", 3))}' if scaling else ""
-            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  location = var.location\n  resource_group_name = var.resource_group_name\n  dns_prefix = replace({name}, "-", "")\n  private_cluster_enabled = {str(bool(networking.get("privateCluster", False))).lower()}\n  default_node_pool {{\n    name = {json.dumps(str(pool.get("name", "system")))}\n    vm_size = {json.dumps(str(pool.get("vmSize", "Standard_B2s")))}\n    node_count = {int(pool.get("count", 1))}\n    enable_auto_scaling = {str(scaling).lower()}{autoscaling}{subnet_id}\n  }}\n  identity {{ type = "SystemAssigned" }}\n}}')
+            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  location = var.location\n  resource_group_name = var.resource_group_name\n  dns_prefix = replace({name}, "-", "")\n  private_cluster_enabled = {str(bool(networking.get("privateCluster", False))).lower()}\n  default_node_pool {{\n    name = {json.dumps(str(pool.get("name", "system")))}\n    vm_size = {json.dumps(str(pool.get("vmSize", "Standard_B2s")))}\n    node_count = {int(pool.get("count", 1))}\n    auto_scaling_enabled = {str(scaling).lower()}{autoscaling}{subnet_id}\n  }}\n  identity {{ type = "SystemAssigned" }}\n}}')
             for extra in list(item.get("nodePools", []))[1:]:
                 extra_scaling = bool(extra.get("enableAutoScaling", False))
                 extra_range = f'\n  min_count = {int(extra.get("minCount", 1))}\n  max_count = {int(extra.get("maxCount", 3))}' if extra_scaling else ""
-                blocks.append(f'resource "azurerm_kubernetes_cluster_node_pool" "{logical}_{_tf_id(str(extra.get("name", "user")))}" {{\n  name = {json.dumps(str(extra.get("name", "user")))}\n  kubernetes_cluster_id = azurerm_kubernetes_cluster.{logical}.id\n  vm_size = {json.dumps(str(extra.get("vmSize", "Standard_B2s")))}\n  node_count = {int(extra.get("count", 1))}\n  enable_auto_scaling = {str(extra_scaling).lower()}{extra_range}{subnet_id}\n}}')
+                blocks.append(f'resource "azurerm_kubernetes_cluster_node_pool" "{logical}_{_tf_id(str(extra.get("name", "user")))}" {{\n  name = {json.dumps(str(extra.get("name", "user")))}\n  kubernetes_cluster_id = azurerm_kubernetes_cluster.{logical}.id\n  vm_size = {json.dumps(str(extra.get("vmSize", "Standard_B2s")))}\n  node_count = {int(extra.get("count", 1))}\n  auto_scaling_enabled = {str(extra_scaling).lower()}{extra_range}{subnet_id}\n}}')
         elif kind == "azurerm_mysql_flexible_server":
             networking = item.get("networking", {})
             delegated_reference = str(networking.get("delegatedSubnet", ""))
@@ -302,7 +319,10 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             mysql_version = str(item.get("version", "8.0"))
             if mysql_version == "8.0":
                 mysql_version = "8.0.21"
-            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}\n  version = {json.dumps(mysql_version)}\n  backup_retention_days = {int(item.get("backupRetentionDays", 7))}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
+            mysql_sku = str(item.get("sku", "Standard_B2s"))
+            if not re.match(r"^(?:B|GP|MO)_", mysql_sku):
+                mysql_sku = f"B_{mysql_sku}"
+            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(mysql_sku)}\n  version = {json.dumps(mysql_version)}\n  backup_retention_days = {int(item.get("backupRetentionDays", 7))}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
             for database in item.get("databases", []):
                 database_id = _tf_id(str(database))
                 blocks.append(f'resource "azurerm_mysql_flexible_database" "{logical}_{database_id}" {{\n  name = {json.dumps(str(database))}\n  server_name = azurerm_mysql_flexible_server.{logical}.name\n  resource_group_name = var.resource_group_name\n  charset = "utf8mb4"\n  collation = "utf8mb4_unicode_ci"\n}}')
@@ -516,7 +536,10 @@ def _expected_attributes(provider: str, item: dict[str, Any]) -> list[str]:
         version = str(item.get("version", "8.0"))
         if version == "8.0":
             version = "8.0.21"
-        return [f'sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}', f'version = {json.dumps(version)}', f'size_gb = {int(item.get("storageGb", 32))}']
+        sku = str(item.get("sku", "Standard_B2s"))
+        if not re.match(r"^(?:B|GP|MO)_", sku):
+            sku = f"B_{sku}"
+        return [f'sku_name = {json.dumps(sku)}', f'version = {json.dumps(version)}', f'size_gb = {int(item.get("storageGb", 32))}']
     if kind == "aws_vpc": return [f'cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.0.0/16")))}']
     if kind == "aws_subnet": return [f'cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.1.0/24")))}']
     if kind == "aws_db_instance": return [f'engine = {json.dumps(str(item.get("engine", "mysql")))}', f'instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}', f'allocated_storage = {int(item.get("allocatedStorage", 20))}']
