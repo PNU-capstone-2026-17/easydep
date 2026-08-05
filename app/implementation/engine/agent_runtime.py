@@ -415,6 +415,8 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     "Agent changed files outside its boundary: " + ", ".join(unauthorized)
                 )
             try:
+                if str(task.get("task_type", "")) == "configuration":
+                    remove_duplicate_component_adapter_beans(sandbox, task)
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
@@ -925,6 +927,109 @@ def production_placeholder_markers(
     return evidence
 
 
+def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:
+    """Remove manual beans for port adapters already discovered by component scanning.
+
+    The wiring task owns ApplicationConfiguration, whereas adapter tasks own their
+    classes.  Retaining both a scanned adapter and an LLM-created ``@Bean`` for its
+    port makes Spring injection non-deterministic.  This normalization deliberately
+    touches only the configuration output owned by the current task.
+    """
+    configuration = next(
+        (
+            sandbox / str(relative)
+            for relative in task.get("allowed_write_paths", [])
+            if str(relative).endswith("/config/ApplicationConfiguration.java")
+        ),
+        None,
+    )
+    if configuration is None or not configuration.is_file():
+        return
+    java_root = sandbox / "application" / "src" / "main" / "java"
+    component_ports: set[str] = set()
+    for source in java_root.rglob("*.java"):
+        if source == configuration:
+            continue
+        text = source.read_text(encoding="utf-8")
+        if not re.search(r"@(Component|Service|Repository|RestController)\b", text):
+            continue
+        match = re.search(r"\bimplements\s+([^\{]+)", text)
+        if not match:
+            continue
+        component_ports.update(
+            item.strip().split("<", 1)[0].rsplit(".", 1)[-1]
+            for item in match.group(1).split(",")
+            if item.strip()
+        )
+    if not component_ports:
+        return
+    text = configuration.read_text(encoding="utf-8")
+    bean = re.compile(
+        r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
+        r"(?:public\s+)?([A-Za-z_]\w*)\s+\w+\s*\([^)]*\)\s*\{"
+    )
+    removals: list[tuple[int, int]] = []
+    for match in bean.finditer(text):
+        if match.group(1) not in component_ports:
+            continue
+        depth = 1
+        index = match.end()
+        while index < len(text) and depth:
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+            index += 1
+        if depth == 0:
+            removals.append((match.start(), index))
+    for start, end in reversed(removals):
+        text = text[:start] + "\n" + text[end:]
+    # Plain persistence mappers are generated without Spring stereotypes.  They
+    # have no external side effects and are required constructor dependencies of
+    # component-scanned persistence adapters, so register their no-arg instances
+    # deterministically when the LLM omitted them from the configuration.
+    mapper_root = java_root / "persistence" / "mapper"
+    mapper_types: list[str] = []
+    if mapper_root.is_dir():
+        for mapper in sorted(mapper_root.glob("*.java")):
+            mapper_text = mapper.read_text(encoding="utf-8")
+            class_match = re.search(r"\bpublic\s+class\s+(\w+)", mapper_text)
+            package_match = re.search(r"(?m)^package\s+([\w.]+);", mapper_text)
+            if not class_match or not package_match:
+                continue
+            if re.search(r"@(Component|Service|Repository)\b", mapper_text):
+                continue
+            mapper_types.append(f"{package_match.group(1)}.{class_match.group(1)}")
+    for mapper_type in mapper_types:
+        simple = mapper_type.rsplit(".", 1)[-1]
+        if re.search(rf"\b{re.escape(simple)}\s+\w+\s*\(", text):
+            continue
+        method = (
+            "\n    @Bean\n"
+            f"    public {mapper_type} {simple[0].lower() + simple[1:]}() {{\n"
+            f"        return new {mapper_type}();\n"
+            "    }\n"
+        )
+        text = text.rsplit("}", 1)[0] + method + "}\n"
+    # A Boundary adapter may call back into the Control being constructed.  Make
+    # those factory-method injection points lazy so Spring can materialize the
+    # Control graph without enabling global circular references.
+    text = re.sub(
+        r"(?<!@Lazy\s)(\bStockPurchaseController\s+\w+)",
+        r"@Lazy \1",
+        text,
+    )
+    text = re.sub(
+        r"(?<!@Lazy\s)(\b\w+Screen\s+\w+)",
+        r"@Lazy \1",
+        text,
+    )
+    if removals:
+        configuration.write_text(text, encoding="utf-8")
+    elif mapper_types:
+        configuration.write_text(text, encoding="utf-8")
+
+
 def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
     sections: list[str] = []
     for relative in relative_paths:
@@ -972,7 +1077,10 @@ def read_gradle_test_failures(sandbox: Path) -> str:
                 problem = case.find("error")
             if problem is None:
                 continue
-            message = problem.get("message") or (problem.text or "test failed")
+            message = problem.get("message") or "test failed"
+            detail = (problem.text or "").strip()
+            if detail:
+                message += "\n" + detail[-12000:]
             reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
     return "\n\n".join(reports)[-8000:]
 

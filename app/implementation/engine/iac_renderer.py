@@ -268,7 +268,7 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
                 delegation = ""
                 if subnet.get("delegations"):
                     service = str(subnet["delegations"][0])
-                    delegation = f'\n  delegation {{ name = "delegation"\n    service_delegation {{ name = {json.dumps(service)}\n      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"] }}\n  }}'
+                    delegation = f'\n  delegation {{\n    name = "delegation"\n    service_delegation {{\n      name = {json.dumps(service)}\n      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]\n    }}\n  }}'
                 blocks.append(f'resource "azurerm_subnet" "{logical}_{subnet_id}" {{\n  name = {json.dumps(subnet_name)}\n  resource_group_name = var.resource_group_name\n  virtual_network_name = azurerm_virtual_network.{logical}.name\n  address_prefixes = [{json.dumps(str(subnet.get("addressPrefix", "10.0.1.0/24")))}]{delegation}\n}}')
         elif kind == "azurerm_container_registry":
             registry = logical; blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  sku = "Basic"\n  admin_enabled = false\n}}')
@@ -299,7 +299,10 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             if dns:
                 private_lines += f'\n  private_dns_zone_id = azurerm_private_dns_zone.{dns}.id\n  depends_on = [azurerm_private_dns_zone_virtual_network_link.{dns}_link]'
             public_access = str(networking.get("publicNetworkAccess", "Enabled")).lower() != "disabled"
-            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}\n  version = {json.dumps(str(item.get("version", "8.0")))}\n  backup_retention_days = {int(item.get("backupRetentionDays", 7))}\n  public_network_access_enabled = {str(public_access).lower()}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
+            mysql_version = str(item.get("version", "8.0"))
+            if mysql_version == "8.0":
+                mysql_version = "8.0.21"
+            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}\n  version = {json.dumps(mysql_version)}\n  backup_retention_days = {int(item.get("backupRetentionDays", 7))}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
             for database in item.get("databases", []):
                 database_id = _tf_id(str(database))
                 blocks.append(f'resource "azurerm_mysql_flexible_database" "{logical}_{database_id}" {{\n  name = {json.dumps(str(database))}\n  server_name = azurerm_mysql_flexible_server.{logical}.name\n  resource_group_name = var.resource_group_name\n  charset = "utf8mb4"\n  collation = "utf8mb4_unicode_ci"\n}}')
@@ -510,7 +513,10 @@ def _expected_attributes(provider: str, item: dict[str, Any]) -> list[str]:
         pool = next(iter(item.get("nodePools", [])), {})
         return [f'private_cluster_enabled = {str(bool(network.get("privateCluster", False))).lower()}', f'vm_size = {json.dumps(str(pool.get("vmSize", "Standard_B2s")))}']
     if kind == "azurerm_mysql_flexible_server":
-        return [f'sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}', f'version = {json.dumps(str(item.get("version", "8.0")))}', f'size_gb = {int(item.get("storageGb", 32))}']
+        version = str(item.get("version", "8.0"))
+        if version == "8.0":
+            version = "8.0.21"
+        return [f'sku_name = {json.dumps(str(item.get("sku", "Standard_B2s")))}', f'version = {json.dumps(version)}', f'size_gb = {int(item.get("storageGb", 32))}']
     if kind == "aws_vpc": return [f'cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.0.0/16")))}']
     if kind == "aws_subnet": return [f'cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.1.0/24")))}']
     if kind == "aws_db_instance": return [f'engine = {json.dumps(str(item.get("engine", "mysql")))}', f'instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}', f'allocated_storage = {int(item.get("allocatedStorage", 20))}']

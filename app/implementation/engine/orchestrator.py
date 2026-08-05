@@ -24,6 +24,7 @@ from .design_context import (
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
+from .implementation_ir import pascal_case
 
 
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
@@ -441,18 +442,23 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         )
 
     def _write_application_entrypoint(self, java_root: Path) -> None:
-        """Create the executable Spring Boot entrypoint required by bootJar."""
+        """Create the one Spring Boot entrypoint that the wiring task completes."""
         package = self.spec.base_package
-        target = java_root / Path(package.replace(".", "/")) / "Application.java"
+        application_class = f"{pascal_case(self.spec.name)}Application"
+        target = (
+            java_root
+            / Path(package.replace(".", "/"))
+            / f"{application_class}.java"
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             f"package {package};\n\n"
             "import org.springframework.boot.SpringApplication;\n"
             "import org.springframework.boot.autoconfigure.SpringBootApplication;\n\n"
             "@SpringBootApplication\n"
-            "public class Application {\n"
+            f"public class {application_class} {{\n"
             "    public static void main(String[] args) {\n"
-            "        SpringApplication.run(Application.class, args);\n"
+            f"        SpringApplication.run({application_class}.class, args);\n"
             "    }\n"
             "}\n",
             encoding="utf-8",
