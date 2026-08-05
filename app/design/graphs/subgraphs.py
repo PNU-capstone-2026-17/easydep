@@ -24,7 +24,11 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.design.knowledge.detectors import class_diagram_findings
+from app.design.knowledge.detectors import (
+    api_spec_findings,
+    class_diagram_findings,
+    sequence_diagram_findings,
+)
 from app.design.nodes.artifact import (
     DesignArtifactSpec,
     check_node,
@@ -149,6 +153,8 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
         # 메시지에는 id 가 없다 — 추적표가 쓰는 것과 같은 조합으로 가리킨다.
         "Messages": _message_key,
     },
+    check=sequence_diagram_findings,
+    check_key="sequence_diagram_check",
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(
@@ -173,6 +179,8 @@ API_SPEC_SPEC = DesignArtifactSpec(
         "Endpoints": _endpoint_key,
         "Schemas": lambda s: s.get("name", ""),
     },
+    check=api_spec_findings,
+    check_key="api_spec_check",
 )
 
 ERD_SPEC = DesignArtifactSpec(

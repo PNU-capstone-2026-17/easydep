@@ -68,6 +68,8 @@ JUDGES = (JUDGED_DETECTOR, JUDGED_VALIDATOR, JUDGED_NOWHERE)
 # 이름은 `graphs/subgraphs.py`의 `DESIGN_STAGES`와 같다. import하지 않는 이유는 순환이다
 # (subgraphs → services → knowledge). 두 목록이 맞는지는 테스트가 확인한다.
 CLASS_DIAGRAM = "class_diagram"
+SEQUENCE_DIAGRAM = "sequence_diagram"
+API_SPEC = "api_spec"
 
 
 @dataclass(frozen=True)
@@ -275,6 +277,80 @@ RULES: tuple[Rule, ...] = (
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="usecase_coverage",
+    ),
+    # --- 시퀀스 다이어그램: 모델 참조 무결성 -------------------------------
+    Rule(
+        id="sequence.message-participants-exist",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement="Every sequence message source and target must name a declared participant.",
+        citation="app/design/services/sequence_diagram/plantuml.py (undeclared messages are omitted)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_participants",
+    ),
+    Rule(
+        id="sequence.message-bce-flow",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement="Sequence calls must preserve the BCE communication boundaries represented by participant kinds.",
+        citation="app/design/services/sequence_diagram/extractor.py (BCE communication rules)",
+        evidence="project-convention",
+        caveat="이 프로젝트가 사용하는 BCE 흐름 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_bce_flow",
+    ),
+    Rule(
+        id="sequence.references-exist",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement="Sequence source classes and use-case ids must exist in their upstream artifacts.",
+        citation="app/design/rtm.py (traceability references)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_traceability",
+    ),
+    # --- API 명세: 모델 참조 무결성 -----------------------------------------
+    Rule(
+        id="api.path-parameters-match",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement="Every path variable must have one matching path parameter, and no extra path parameter is allowed.",
+        citation="OpenAPI path template projected by app/design/services/api_spec/openapi.py",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_path_parameters",
+    ),
+    Rule(
+        id="api.schema-references-exist",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement="Request and response schema references must name schemas declared by the API model.",
+        citation="app/design/services/api_spec/openapi.py (_body_schema fallback)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_schema_references",
+    ),
+    Rule(
+        id="api.operation-ids-unique",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement="Every API endpoint must have a unique operation_id.",
+        citation="app/design/services/api_spec/extractor.py (operation_id self-check)",
+        evidence="project-convention",
+        caveat="이 프로젝트의 OpenAPI 식별자 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_operation_ids",
+    ),
+    Rule(
+        id="api.references-exist",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement="API source classes and use-case ids must exist in their upstream artifacts.",
+        citation="app/design/rtm.py (traceability references)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_traceability",
     ),
     # --- 지침(지적하지 않는다) ----------------------------------------------
     Rule(

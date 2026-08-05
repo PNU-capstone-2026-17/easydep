@@ -172,7 +172,7 @@ def test_every_detector_rule_names_a_detector_that_exists():
 def test_every_detector_is_claimed_by_at_least_one_rule():
     """아무 규칙도 안 쓰는 검출기는 지적을 근거 없이 낸다."""
     claimed = {r.detector for r in rules.RULES if r.detector}
-    assert set(detectors.CLASS_DIAGRAM_DETECTORS) == claimed
+    assert set(detectors.SPEC_DETECTORS) == claimed
 
 
 def test_no_defect_rule_is_left_unjudged():

@@ -258,23 +258,20 @@ def test_no_stage_subgraph_can_loop():
                 stack.extend(outgoing.get(node, []))
 
 
-def test_only_the_class_diagram_is_semantically_checked_today():
-    """의미 검사 노드는 규칙이 있는 스테이지에만 생긴다.
-
-    빈 검사 노드를 다섯 곳에 달면 그래프 그림이 "다 검사한다"고 거짓말을 한다. 지금
-    규칙 지식베이스가 있는 것은 클래스 다이어그램뿐이고, 그 사실이 토폴로지에 그대로
-    보여야 한다 — 나머지 넷에 규칙을 채우면 이 테스트를 함께 고친다.
-    """
+def test_structural_design_artifacts_are_semantically_checked():
+    """클래스·시퀀스·API 모델은 렌더 전에 규칙 기반으로 검사한다."""
     checked = {
         stage
         for stage in DESIGN_STAGES
         if f"check_{stage}" in DESIGN_SUBGRAPHS[stage]["generate"].get_graph().nodes
     }
-    assert checked == {"class_diagram"}
+    assert checked == {"class_diagram", "sequence_diagram", "api_spec"}
 
     # 생성과 피드백 **양쪽**에 있어야 한다. 피드백에 없으면 사용자 피드백으로 만든 판은
     # 아무도 검사하지 않은 채 저장된다.
     assert "check_class_diagram" in DESIGN_SUBGRAPHS["class_diagram"]["feedback"].get_graph().nodes
+    assert "check_sequence_diagram" in DESIGN_SUBGRAPHS["sequence_diagram"]["feedback"].get_graph().nodes
+    assert "check_api_spec" in DESIGN_SUBGRAPHS["api_spec"]["feedback"].get_graph().nodes
 
 
 def test_rendering_is_deterministic_and_valid_by_construction(graph):

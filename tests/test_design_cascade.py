@@ -315,14 +315,14 @@ def test_the_cascade_never_runs_the_repair_loop(monkeypatch, naughty_llm):
     assert seen_targets == [{"Order"}]
 
 
-def test_stages_without_rules_get_no_check_verdict(naughty_llm):
-    """규칙이 없는 스테이지에는 판정을 쓰지 않는다.
+def test_only_stages_without_rules_get_no_check_verdict(naughty_llm):
+    """규칙이 없는 스테이지에만 판정을 쓰지 않는다.
 
     빈 결과를 써 두면 "검사했고 깨끗하다"로 읽힌다. 검사할 규칙이 아직 없다는 사실은
     **값이 없는 것**으로 드러나야 한다.
     """
     out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
 
-    assert "api_spec" in out["changed"]          # 하류가 실제로 고쳐졌는데도
-    assert "api_spec_check" not in out["state"]  # 판정은 없다
+    assert "api_spec" in out["changed"]
+    assert "api_spec_check" in out["state"]      # API는 규칙 기반 검사를 수행한다.
     assert "erd_check" not in out["state"]

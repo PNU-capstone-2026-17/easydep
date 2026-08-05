@@ -331,3 +331,136 @@ def class_diagram_findings(model: dict, state: dict) -> list[Finding]:
     for detect in CLASS_DIAGRAM_DETECTORS.values():
         found.extend(detect(model or {}, state or {}))
     return found
+
+
+# ---------------------------------------------------------------------------
+# Sequence diagram and API specification detectors
+# ---------------------------------------------------------------------------
+def _class_names_from_puml(state: dict) -> set[str]:
+    return set(re.findall(r"(?m)^\s*class\s+([A-Za-z_]\w*)\b", state.get("class_diagram_puml", "")))
+
+
+def _known_use_case_ids(state: dict) -> set[str]:
+    return rtm.upstream_names(state).get("use_case") or set()
+
+
+def sequence_participants(model: dict, state: dict) -> list[Finding]:
+    declared = {str(item.get("name", "")).strip() for item in model.get("Participants", []) if item.get("name")}
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        source, target = str(message.get("source", "")).strip(), str(message.get("target", "")).strip()
+        label = f"{source} -> {target}".strip()
+        if source not in declared:
+            found.append(Finding("sequence.message-participants-exist", f"source '{source}'가 Participants에 없음", label))
+        if target not in declared:
+            found.append(Finding("sequence.message-participants-exist", f"target '{target}'가 Participants에 없음", label))
+    return found
+
+
+def sequence_bce_flow(model: dict, state: dict) -> list[Finding]:
+    kinds = {str(item.get("name", "")).strip(): str(item.get("kind", "")).strip().lower() for item in model.get("Participants", [])}
+    forbidden = {("actor", "control"), ("boundary", "entity"), ("entity", "boundary"), ("entity", "control")}
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        if str(message.get("type", "sync")).lower() == "return":
+            continue
+        source, target = str(message.get("source", "")).strip(), str(message.get("target", "")).strip()
+        if (kinds.get(source), kinds.get(target)) in forbidden:
+            found.append(Finding("sequence.message-bce-flow", f"{kinds[source]} → {kinds[target]} 호출은 BCE 흐름을 위반함", f"{source} -> {target}"))
+    return found
+
+
+def sequence_traceability(model: dict, state: dict) -> list[Finding]:
+    classes, use_cases = _class_names_from_puml(state), _known_use_case_ids(state)
+    found: list[Finding] = []
+    for participant in model.get("Participants", []):
+        source_class, name = str(participant.get("source_class", "")).strip(), str(participant.get("name", "?")).strip()
+        if source_class and source_class not in classes:
+            found.append(Finding("sequence.references-exist", f"클래스 다이어그램에 없는 source_class '{source_class}'", name))
+    if use_cases:
+        for message in model.get("Messages", []):
+            for use_case in message.get("use_case_ids", []):
+                if use_case and use_case not in use_cases:
+                    found.append(Finding("sequence.references-exist", f"입력에 없는 유스케이스 id '{use_case}'", f"{message.get('source', '?')} -> {message.get('target', '?')}"))
+    return found
+
+
+def api_path_parameters(model: dict, state: dict) -> list[Finding]:
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []):
+        path = str(endpoint.get("path", ""))
+        expected = set(re.findall(r"\{([^{}]+)\}", path))
+        actual = {str(item.get("name", "")).strip() for item in endpoint.get("path_params", []) if item.get("name")}
+        if expected != actual:
+            found.append(Finding("api.path-parameters-match", f"경로 변수 {sorted(expected)}와 path_params {sorted(actual)}가 일치하지 않음", f"{endpoint.get('method', 'get').upper()} {path}"))
+    return found
+
+
+def api_schema_references(model: dict, state: dict) -> list[Finding]:
+    schemas = {str(item.get("name", "")).strip() for item in model.get("Schemas", []) if item.get("name")}
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []):
+        location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
+        references = [endpoint.get("request_schema", "")] + [item.get("schema_name", "") for item in endpoint.get("responses", [])]
+        for reference in references:
+            if reference and str(reference).strip() not in schemas:
+                found.append(Finding("api.schema-references-exist", f"Schemas에 없는 참조 '{reference}'", location))
+    return found
+
+
+def api_operation_ids(model: dict, state: dict) -> list[Finding]:
+    seen: set[str] = set()
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []):
+        operation_id = str(endpoint.get("operation_id", "")).strip()
+        location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
+        if not operation_id:
+            found.append(Finding("api.operation-ids-unique", "operation_id가 비어 있음", location))
+        elif operation_id in seen:
+            found.append(Finding("api.operation-ids-unique", f"중복 operation_id '{operation_id}'", location))
+        seen.add(operation_id)
+    return found
+
+
+def api_traceability(model: dict, state: dict) -> list[Finding]:
+    classes, use_cases = _class_names_from_puml(state), _known_use_case_ids(state)
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []):
+        location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
+        for source_class in endpoint.get("source_classes", []):
+            if source_class and source_class not in classes:
+                found.append(Finding("api.references-exist", f"클래스 다이어그램에 없는 source_class '{source_class}'", location))
+        if use_cases:
+            for use_case in endpoint.get("use_case_ids", []):
+                if use_case and use_case not in use_cases:
+                    found.append(Finding("api.references-exist", f"입력에 없는 유스케이스 id '{use_case}'", location))
+    return found
+
+
+SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
+    "sequence_participants": sequence_participants,
+    "sequence_bce_flow": sequence_bce_flow,
+    "sequence_traceability": sequence_traceability,
+}
+API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
+    "api_path_parameters": api_path_parameters,
+    "api_schema_references": api_schema_references,
+    "api_operation_ids": api_operation_ids,
+    "api_traceability": api_traceability,
+}
+SPEC_DETECTORS = {**CLASS_DIAGRAM_DETECTORS, **SEQUENCE_DIAGRAM_DETECTORS, **API_SPEC_DETECTORS}
+
+
+def _artifact_findings(model: dict, state: dict, stage: str) -> list[Finding]:
+    found: list[Finding] = []
+    for rule in rules.judged_by(stage, rules.JUDGED_DETECTOR):
+        found.extend(SPEC_DETECTORS[rule.detector](model or {}, state or {}))
+    return found
+
+
+def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
+    return _artifact_findings(model, state, rules.SEQUENCE_DIAGRAM)
+
+
+def api_spec_findings(model: dict, state: dict) -> list[Finding]:
+    return _artifact_findings(model, state, rules.API_SPEC)
