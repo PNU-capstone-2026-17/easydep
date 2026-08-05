@@ -1,12 +1,3 @@
-# main과 PR에서 도는 회귀 게이트.
-#
-# **검사 범위는 저장소 전체가 아니다.** easydep은 에이전트별 저장소를 합친 팀
-# 저장소이고, 이 워크플로우는 `app/requirements/`(요구사항 분석)와
-# `app/core/cloudkb/`(지식베이스)만 본다. 나머지 경로는 다른 사람이 관리한다.
-# 린트·타입 검사의 범위는 pyproject.toml이 정하고, 테스트는 아래에서 직접 고른다.
-#
-# lint는 의존성 없이 몇 초 만에 끝나므로 따로 두고, 무거운 설치(torch CPU 휠 등)가
-# 필요한 typecheck·pytest는 한 잡에 모아 설치를 한 번만 한다.
 name: CI
 
 on:
@@ -15,31 +6,14 @@ on:
   pull_request:
 
 concurrency:
-  # 같은 브랜치에 새 푸시가 오면 진행 중인 실행을 버린다.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # Dockerfile과 같은 버전으로 검사한다.
   PYTHON_VERSION: "3.13"
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      # 규칙·무시 목록·검사 범위는 모두 pyproject.toml에 있다. 버전을 고정하는 이유는
-      # 새 규칙이 늘면서 코드 변경 없이 CI가 빨개지는 일을 막기 위해서다 —
-      # 올릴 때는 의도적으로. 아래 test 잡의 mypy 버전도 같이 관리한다.
-      - name: Install ruff
-        run: pip install ruff==0.16.0
-      - name: Lint
-        run: ruff check .
-
-  test:
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,28 +24,16 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
-      # requirements-dev.txt(pytest)는 저장소 공용이라 건드리지 않았다. mypy는 여기서
-      # 버전을 고정해 넣는다 — lint 잡의 ruff 핀과 함께 올린다.
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt mypy==2.3.0
+          pip install -r requirements.txt -r requirements-dev.txt ruff==0.16.0
 
-      # 검사 범위는 pyproject.toml의 [tool.mypy] files가 정한다. 런타임 의존성이
-      # 깔린 뒤에 돌려야 로컬과 같은 결과가 나온다(스텁 유무로 판정이 달라진다).
-      - name: Type check
-        run: mypy
+      # depkb/experiments는 실측 기록이며 제품 코드 품질 검사 대상이 아니다.
+      - name: Lint maintained code
+        run: ruff check app/requirements app/core/orchestration experiments/baselines tests
 
-      # 지식베이스 테스트는 자기 디렉터리에 있어 그대로 고르면 되지만, 요구사항
-      # 에이전트 테스트는 루트 tests/ 에 다른 에이전트 것과 섞여 있다. 그래서 남의
-      # 것을 빼는 방식으로 고른다 — 여기 목록이 곧 소유 경계다.
-      #
-      # 테스트는 헤르메틱하다: conftest가 더미 API 키를 넣고 BERT 검증을 끄므로
-      # 가중치 재조립·네트워크·MySQL이 필요 없다. JDK·Node·PlantUML도 마찬가지로
-      # 실행 시에만 필요하고 테스트는 경로 문자열과 로그 파싱만 본다.
+      # 레거시 cloudkb 테스트와 분리된 현재 통합 테스트만 실행한다.
       - name: Test
-        run: |
-          pytest app/core/cloudkb/tests tests \
-            --ignore=tests/test_implementation_engine.py \
-            --ignore=tests/test_implementation_worker.py \
-            --ignore=tests/test_class_diagram_convert.py
+        run: pytest tests

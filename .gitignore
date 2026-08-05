@@ -21,6 +21,7 @@ plantuml.jar
 artifacts/
 /.easydep/
 /.cleanup-backup/
+/.mypy_cache/
 /app/implementation/tools/puml2code-bce/node_modules/
 /app/implementation/tools/openapi-generator/*.jar
 **/.gradle/
