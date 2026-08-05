@@ -542,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
                           help="이번 호출에서 새로 물어볼 항목 수 상한(0=제한 없음)")
     p_dscore.set_defaults(fn=_cmd_dataset_score)
 
-    p_score = sub.add_parser("score", help="artifacts/run_*/ 를 채점한다")
+    p_score = sub.add_parser("score", help="requirements/run_*/ 를 채점한다")
     p_score.add_argument("run_dir")
     p_score.add_argument("--out", help="채점표를 이 경로에 JSON으로 쓴다")
     p_score.set_defaults(fn=_cmd_score)

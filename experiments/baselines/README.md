@@ -2,7 +2,7 @@
 
 EasyDep 본체와 격리된 두 기준선이다. 두 방식은 같은 케이스 JSON과 같은 LLM 설정을
 받고, 웹 검색과 EasyDep KB를 사용하지 않는다. 결과는 Git에서 제외되는
-`artifacts/baselines/<method>/<case>/<run>`에 보존한다.
+`artifacts/experiments/<method>-<case>-<run>/`에 보존한다.
 
 ## 기준선
 

@@ -30,7 +30,7 @@
 일반 실행의 산출물은 다음 구조로 저장한다.
 
 ```text
-artifacts/orchestration/runs/<run-id>/
+artifacts/runs/<run-id>/
 ├── manifest.json
 ├── 01-requirements/
 ├── 02-design/
@@ -53,7 +53,7 @@ $env:PYTHONIOENCODING='utf-8'
 python -m app.core.orchestration.sample_evaluation --resume
 ```
 
-평가 결과는 `artifacts/orchestration/sample-evaluation/<sample>/`에 저장된다.
+평가 결과는 `artifacts/evaluations/orchestration/<sample>/`에 저장된다.
 각 디렉터리에는 원본 응답, 요구사항·설계 산출물, 배포 다이어그램 두 종류,
 제약조건 출처와 구조 검증 결과가 포함된다.
 

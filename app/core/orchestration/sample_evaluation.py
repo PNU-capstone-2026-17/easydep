@@ -137,7 +137,7 @@ def main() -> None:
     parser.add_argument("samples", nargs="*")
     parser.add_argument("--input-dir", type=Path, default=Path("inputs"))
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("artifacts/orchestration/sample-evaluation")
+        "--output-dir", type=Path, default=Path("artifacts/evaluations/orchestration")
     )
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()

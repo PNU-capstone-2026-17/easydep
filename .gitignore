@@ -20,6 +20,7 @@ plantuml.jar
 # 실행 아티팩트 (재생성 가능) — 보존할 run만 선별 커밋
 artifacts/
 /.easydep/
+/.cleanup-backup/
 /app/implementation/tools/puml2code-bce/node_modules/
 /app/implementation/tools/openapi-generator/*.jar
 **/.gradle/

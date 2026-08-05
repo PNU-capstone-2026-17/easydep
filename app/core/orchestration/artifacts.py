@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-DEFAULT_ARTIFACT_ROOT = Path("artifacts/orchestration/runs")
+DEFAULT_ARTIFACT_ROOT = Path("artifacts/runs")
 
 
 def _write(path: Path, value: Any) -> None:

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from langgraph.checkpoint.memory import MemorySaver
 
-DEFAULT_CHECKPOINT_PATH = Path("artifacts/orchestration/checkpoints.sqlite3")
+DEFAULT_CHECKPOINT_PATH = Path(".easydep/checkpoints/orchestration.sqlite3")
 
 
 class SqliteMemorySaver(MemorySaver):

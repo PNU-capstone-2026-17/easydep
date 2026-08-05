@@ -102,7 +102,7 @@ CSP에 따라 표현이 다른 동등 리소스는 같은 추상 리소스로 �
 
 실행 코드는 `experiments/baselines/`에 격리한다. B1은 `cot.py`, B2는 별도 Python 3.11
 가상환경의 MetaGPT 0.8.2(`metagpt.py`)로 실행하며 공통 케이스 JSON을 입력받는다.
-산출물과 실행 설정은 `artifacts/baselines/`에 저장한다.
+산출물과 실행 설정은 `artifacts/experiments/`에 저장한다.
 
 1. 루트 `.env`의 `BASE_URL`, `MODEL`, `TEMPERATURE`, `SEED`를 모든 방식에 동일하게 적용하고,
    프롬프트·KB·가격 데이터 버전을 고정한다.

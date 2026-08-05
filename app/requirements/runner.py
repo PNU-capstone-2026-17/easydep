@@ -1,6 +1,7 @@
 """파이프라인 러너 + 아티팩트 저장.
 
-inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를 artifacts/run_*/에
+inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를
+artifacts/evaluations/requirements/run_*/에
 재현 가능한 형태로 남긴다:
   run_<UTC>_<input_sha10>/
     input.json          # 입력 재현용(그대로)
@@ -51,7 +52,7 @@ from app.requirements.config import settings
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
 _ROOT = Path(__file__).parent.parent.parent
 INPUTS_DIR = _ROOT / "inputs"
-ARTIFACTS_DIR = _ROOT / "artifacts"
+ARTIFACTS_DIR = _ROOT / "artifacts" / "evaluations" / "requirements"
 
 
 def load_input(name_or_path: str) -> dict:
@@ -63,7 +64,7 @@ def load_input(name_or_path: str) -> dict:
 
 
 def load_state(run_dir: str | Path) -> dict:
-    """artifacts/run_*/ 산출물을 파이프라인 state로 복원한다(피드백 재생성용)."""
+    """requirements/run_*/ 산출물을 파이프라인 state로 복원한다(피드백 재생성용)."""
     run_dir = Path(run_dir)
 
     def _j(name: str, default):
@@ -212,7 +213,7 @@ def persist_run(
     traceability_verdicts: list[dict] | None = None,
     run_metrics: dict | None = None,
 ) -> Path:
-    """실행 결과를 artifacts/run_*/ 에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
+    """실행 결과를 requirements/run_*/에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
     artifact_root = Path(artifact_root)
     sha = _sha256(input_obj)
     created = _now_utc()

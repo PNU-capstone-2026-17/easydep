@@ -14,7 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "baselines"
+DEFAULT_ARTIFACT_ROOT = ROOT / "artifacts" / "experiments"
 
 # EasyDep Settings와 같은 루트 .env를 읽는다. 셸에서 명시한 값은 유지되며 모든
 # 비교군은 같은 프로세스 환경을 전달받는다.
@@ -75,7 +75,8 @@ def safe_name(value: str) -> str:
 
 def begin_run(method: str, case: ExperimentCase, output_root: Path | None = None) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    path = (output_root or DEFAULT_ARTIFACT_ROOT) / method / safe_name(case.case_id) / stamp
+    run_name = f"{safe_name(method)}-{safe_name(case.case_id)}-{stamp}"
+    path = (output_root or DEFAULT_ARTIFACT_ROOT) / run_name
     path.mkdir(parents=True, exist_ok=False)
     return path
 
