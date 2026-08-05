@@ -197,3 +197,27 @@ def test_repair_owner_is_requested_before_failed_task(tmp_path: Path):
 
     assert result["tasks"] == ["mapping"]
     assert captured["nextRunnableTasks"] == ["mapping"]
+
+
+def test_end_to_end_failure_does_not_reopen_completed_implementation(tmp_path: Path):
+    reports = tmp_path / "reports"
+    executions = reports / "agent-executions"
+    executions.mkdir(parents=True)
+    (reports / "repair-plan.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "failedTaskId": "implement-end-to-end-flow",
+                        "ownerTaskIds": ["implement-orders-api-adapter"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (executions / "implement-application-wiring.result.json").write_text(
+        json.dumps({"status": "SUCCEEDED"}), encoding="utf-8"
+    )
+
+    assert ImplementationAdapter._production_scope_complete(tmp_path, {}) is True

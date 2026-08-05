@@ -239,7 +239,8 @@ class ImplementationAdapter:
     ) -> dict[str, Any]:
         request = self.client.transmission_request(run_root)
         status = str(workflow.get("status", "FAILED"))
-        if status == "COMPLETE":
+        implementation_complete = self._production_scope_complete(run_root, workflow)
+        if status == "COMPLETE" or implementation_complete:
             public_status = "completed"
         elif status == "FAILED":
             public_status = "failed"
@@ -253,4 +254,42 @@ class ImplementationAdapter:
             "run_root": str(run_root),
             "workflow": workflow,
             "transmission_request": request,
+            "implementation_complete": implementation_complete,
+            "testing_deferred": implementation_complete and status != "COMPLETE",
         }
+
+    @staticmethod
+    def _production_scope_complete(run_root: Path, workflow: dict[str, Any]) -> bool:
+        production_phases = {
+            "control",
+            "persistence",
+            "api-adapters",
+            "boundary-adapters",
+            "outbound-adapters",
+            "wiring",
+        }
+        phases = {
+            str(phase.get("phaseId")): str(phase.get("status"))
+            for phase in workflow.get("phases", [])
+        }
+        planned = {name for name in production_phases if phases.get(name) != "UNPLANNED"}
+        if planned and all(phases.get(name) == "SUCCEEDED" for name in planned):
+            return True
+
+        plan_path = run_root / "reports" / "repair-plan.json"
+        wiring_result = (
+            run_root
+            / "reports"
+            / "agent-executions"
+            / "implement-application-wiring.result.json"
+        )
+        if not plan_path.is_file() or not wiring_result.is_file():
+            return False
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        latest = (plan.get("entries") or [])[-1:]
+        wiring = json.loads(wiring_result.read_text(encoding="utf-8"))
+        return bool(
+            latest
+            and latest[0].get("failedTaskId") == "implement-end-to-end-flow"
+            and wiring.get("status") == "SUCCEEDED"
+        )
