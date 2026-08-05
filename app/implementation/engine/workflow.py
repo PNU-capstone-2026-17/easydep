@@ -28,6 +28,7 @@ from .repair_planner import (
     schedule_source_conformance_repair,
 )
 from .deployment_renderer import render_deployment
+from .iac_renderer import render_iac
 from .source_conformance import (
     SourceDesignConformanceError,
     restore_generated_contracts,
@@ -360,6 +361,8 @@ def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
     deployment = spec.inputs.get("deployment")
     if (intent and intent.is_file()) or (cloud and cloud.is_file()):
         render_deployment(run_root, spec)
+        if cloud and cloud.is_file():
+            render_iac(run_root, spec)
     elif deployment and deployment.is_file():
         raise ValueError(
             "Deployment rendering requires deploymentIntent or a cloud resource "

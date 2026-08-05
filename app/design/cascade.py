@@ -23,7 +23,13 @@ from typing import Any
 
 from app.db.models import ORIGIN_FEEDBACK_REVISED
 from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
-from app.design.nodes.artifact import DesignArtifactSpec, merge_model
+from app.design.nodes.artifact import (
+    CHECKED_ONLY,
+    CLEAN,
+    DesignArtifactSpec,
+    merge_model,
+    render_and_validate,
+)
 from app.design.rtm import affected_by_element, build_design_rtm
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories import artifact_repository
@@ -33,25 +39,49 @@ class UnknownTarget(Exception):
     """지목한 항목이 지금 산출물에 없다."""
 
 
+def _check_report(
+    spec: DesignArtifactSpec, model: dict, state: ArchitectureState
+) -> dict[str, Any]:
+    """고친 모델을 규칙으로 검사한다 — **재생성은 하지 않는다.**
+
+    **왜 여기서도 검사해야 하나.** 예전에는 이 경로가 규칙 검사를 아예 안 돌렸다. 그래서
+    그래프 실행이 남긴 `{findings: [], stopped: "clean"}`이 상태에 그대로 남고, 지목 수정이
+    모델을 고친 뒤에도 화면은 **아무도 검사하지 않은 새 모델에 대해 계속 "clean"을**
+    보여줬다. 낡은 판정이 새 산출물의 보증으로 둔갑하는 것이고, 이 기능 전체가 막으려던
+    실패("위반 없음"과 "검사하지 않았음"을 구별하기)와 정확히 같은 것이다.
+
+    **왜 재생성은 안 하나.** 이 경로의 보장은 "지목한 항목만 바뀐다"이고, 그것은
+    `merge_model`이 비대상 항목에 대해 LLM 출력을 아예 안 읽어서 성립한다. 그런데 재생성은
+    `targets=set()`(전체 수정)으로 부르므로, 여기서 루프를 돌리면 **그 보장을 스스로 깬다.**
+    사용자가 "Order 에 주문일시 추가"를 요청했는데 다른 클래스가 조용히 바뀌는 것이다.
+    그래서 드러내기만 하고, 고칠지는 사용자가 정한다.
+    """
+    findings = spec.check(model, state)
+    return {
+        "findings": [f.as_issue() for f in findings],
+        "repair_iters": 0,
+        "stopped": CLEAN if not findings else CHECKED_ONLY,
+    }
+
+
 def _apply(
     spec: DesignArtifactSpec,
     state: ArchitectureState,
     feedback: str,
     targets: set[str],
 ) -> dict[str, Any]:
-    """한 스테이지에서 대상 항목만 고치고, 렌더·검증까지 마친 상태 조각을 돌려준다."""
+    """한 스테이지에서 대상 항목만 고치고, 검사·렌더까지 마친 상태 조각을 돌려준다."""
     original = state.get(spec.model_key) or {}
     revised = spec.revise(original, feedback, state, targets)
     merged = merge_model(spec, original, revised, targets)
 
-    content = spec.render(merged)
-    validation = spec.validate(content)
-    return {
+    patch: dict[str, Any] = {
         spec.model_key: merged,
-        spec.content_key: content,
-        spec.valid_key: validation["syntax_valid"],
-        spec.errors_key: validation["syntax_errors"],
+        **render_and_validate(spec, merged),
     }
+    if spec.check_key:
+        patch[spec.check_key] = _check_report(spec, merged, state)
+    return patch
 
 
 def _reproject_erd(state: ArchitectureState) -> dict[str, Any]:
@@ -59,17 +89,13 @@ def _reproject_erd(state: ArchitectureState) -> dict[str, Any]:
 
     ERD 는 클래스 BCE 의 <<Entity>> 를 결정론적으로 투영한 것이다. 클래스가 바뀌면
     다시 투영하면 그만이고, 물어볼 것이 없다.
+
+    ERD 스펙에는 `check_key` 가 없으므로 검사 결과도 안 쓴다. 그게 맞다 — 검사할 규칙이
+    아직 없고, 빈 결과를 쓰면 "검사했고 깨끗하다"로 읽힌다.
     """
     spec = DESIGN_SPECS["erd"]
     model = spec.extract(state)
-    content = spec.render(model)
-    validation = spec.validate(content)
-    return {
-        spec.model_key: model,
-        spec.content_key: content,
-        spec.valid_key: validation["syntax_valid"],
-        spec.errors_key: validation["syntax_errors"],
-    }
+    return {spec.model_key: model, **render_and_validate(spec, model)}
 
 
 def revise_and_cascade(

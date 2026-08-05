@@ -237,3 +237,92 @@ def test_an_unknown_target_is_refused(naughty_llm):
         revise_and_cascade(STATE, "class_diagram:없는클래스", "x")
     with pytest.raises(UnknownTarget):
         revise_and_cascade(STATE, "erd:Order", "x")       # ERD 는 투영이라 대상이 아니다
+
+
+# ---------------------------------------------------------------------------
+# 규칙 검사가 이 경로에서도 따라오는가
+# ---------------------------------------------------------------------------
+#: 직전 그래프 실행이 남긴 "깨끗하다" 판정. 지목 수정이 모델을 고친 뒤에도 이것이 그대로
+#: 남아 있으면, 화면은 **아무도 검사하지 않은 새 모델**에 대해 계속 통과를 보여준다.
+STALE_CLEAN = {"findings": [], "repair_iters": 0, "stopped": "clean"}
+
+
+def test_a_stale_clean_verdict_does_not_survive_a_revision(monkeypatch, naughty_llm):
+    """고친 모델을 다시 검사한다 — 낡은 판정을 새 산출물의 보증으로 쓰지 않는다.
+
+    이게 없으면 이 기능 전체가 막으려던 실패가 지목 수정 경로로 되돌아온다:
+    "위반 없음"과 "검사하지 않았음"이 화면에서 같은 모양이 된다.
+    """
+    def breaks_the_target(current_bce, feedback, scenario_text="", targets=None):
+        # 대상(Order)의 스테레오타입을 BCE 밖으로 바꾼다. 대상이므로 병합을 통과한다.
+        return {"Classes": [
+            {"className": "Order", "stereotype": "Repository",
+             "fields": ["total: int"], "methods": [], "use_case_ids": ["UC1"]},
+        ], "Relationships": []}
+
+    monkeypatch.setattr(sg, "revise_bce_classes", breaks_the_target)
+
+    out = revise_and_cascade(
+        {**STATE, "class_diagram_check": STALE_CLEAN},
+        "class_diagram:Order",
+        "Order 를 리포지토리로 바꿔줘",
+    )
+    check = out["state"]["class_diagram_check"]
+
+    assert check["stopped"] == "checked_only"
+    assert any("class.stereotype-is-bce" in issue for issue in check["findings"])
+
+
+def test_a_revision_that_stays_within_the_rules_reports_clean(naughty_llm):
+    """위반이 없으면 `clean` 이다 — 경로가 달라도 그 뜻은 같아야 한다."""
+    out = revise_and_cascade(
+        {**STATE, "class_diagram_check": {"findings": ["낡은 지적"],
+                                          "repair_iters": 1, "stopped": "budget"}},
+        "class_diagram:Order",
+        "주문일시 필드 추가",
+    )
+    check = out["state"]["class_diagram_check"]
+
+    assert check["stopped"] == "clean"
+    assert check["findings"] == []      # 낡은 지적도 함께 사라진다
+
+
+def test_the_cascade_never_runs_the_repair_loop(monkeypatch, naughty_llm):
+    """검사는 하되 재생성은 하지 않는다.
+
+    재생성은 `targets=set()`(전체 수정)으로 리바이저를 부른다. 지목 수정 경로에서 그걸
+    돌리면 **"지목한 항목만 바뀐다"는 이 경로의 보장을 스스로 깬다** — 사용자가 Order 만
+    고쳐달라고 했는데 다른 클래스가 조용히 바뀐다.
+
+    그래서 위반이 남아도 리바이저 호출은 지목 수정 몫 한 번뿐이어야 한다.
+    """
+    seen_targets: list[set] = []
+
+    def breaks_the_target(current_bce, feedback, scenario_text="", targets=None):
+        seen_targets.append(targets)
+        return {"Classes": [
+            {"className": "Order", "stereotype": "Repository",
+             "fields": ["total: int"], "methods": [], "use_case_ids": ["UC1"]},
+        ], "Relationships": []}
+
+    monkeypatch.setattr(sg, "revise_bce_classes", breaks_the_target)
+
+    out = revise_and_cascade(STATE, "class_diagram:Order", "Order 를 리포지토리로")
+
+    assert out["state"]["class_diagram_check"]["findings"], "위반이 남아 있어야 하는 상황"
+    assert out["state"]["class_diagram_check"]["repair_iters"] == 0
+    # 한 번만, 그리고 언제나 지목된 대상으로만 불렀다.
+    assert seen_targets == [{"Order"}]
+
+
+def test_stages_without_rules_get_no_check_verdict(naughty_llm):
+    """규칙이 없는 스테이지에는 판정을 쓰지 않는다.
+
+    빈 결과를 써 두면 "검사했고 깨끗하다"로 읽힌다. 검사할 규칙이 아직 없다는 사실은
+    **값이 없는 것**으로 드러나야 한다.
+    """
+    out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
+
+    assert "api_spec" in out["changed"]          # 하류가 실제로 고쳐졌는데도
+    assert "api_spec_check" not in out["state"]  # 판정은 없다
+    assert "erd_check" not in out["state"]

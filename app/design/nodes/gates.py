@@ -39,6 +39,10 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
     feedback_key = FEEDBACK_KEYS[stage]
 
     def gate(state: ArchitectureState) -> dict:
+        # 규칙 검사 결과. 검사 노드가 없는 스테이지는 빈 dict이고, 그때 `check_status`는
+        # None이다 — **"위반 없음"이 아니라 "검사하지 않았다"**이고, 화면은 그 둘을
+        # 구별해야 한다. 남은 위반을 게이트에서 숨기면 사용자는 통과했다고 믿는다.
+        check = state.get(config.get("check_key") or "") or {}
         answer = interrupt(
             {
                 "stage": stage,
@@ -50,6 +54,9 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
                 "errors": (
                     state.get(config["errors_key"], []) if config["errors_key"] else []
                 ),
+                "findings": check.get("findings", []),
+                "check_status": check.get("stopped"),
+                "repair_iters": check.get("repair_iters", 0),
             }
         )
         if not str(answer or "").strip():

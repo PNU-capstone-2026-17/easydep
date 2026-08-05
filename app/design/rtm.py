@@ -30,8 +30,14 @@ from app.design.services.erd.plantuml import sanitize_entity_name
 UPSTREAM_KINDS = ("use_case", "class")
 
 
-def _upstream(state: dict) -> dict[str, set[str]]:
-    """참조가 가리킬 수 있는 이름들. 여기 없는 것을 가리키면 unknown_ref다."""
+def upstream_names(state: dict) -> dict[str, set[str]]:
+    """참조가 가리킬 수 있는 이름들. 여기 없는 것을 가리키면 unknown_ref다.
+
+    **공개인 이유**: `knowledge/detectors.py`의 `class.usecase-ids-exist` 검출기가 이것과
+    **같은 판정**을 한다. 다른 점은 시점뿐이다 — 검출기는 스테이지 안에서 고칠 기회를
+    주려고 보고, 여기는 다 만든 뒤 사후 보고로 본다. 판정이 두 벌이면 갈라지고, 갈라지면
+    스테이지에서 통과한 것이 추적표에서 환각으로 잡히는(또는 그 반대) 일이 생긴다.
+    """
     spec = state.get("usecase_spec") or {}
     use_cases = spec.get("use_cases", []) if isinstance(spec, dict) else []
     classes = (state.get("extracted_bce_classes") or {}).get("Classes", [])
@@ -81,7 +87,7 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
       unknown_refs — 존재하지 않는 것을 가리킨 참조
       summary      — 집계
     """
-    upstream = _upstream(state)
+    upstream = upstream_names(state)
     rows: list[dict[str, Any]] = []
     unknown: list[dict[str, str]] = []
 

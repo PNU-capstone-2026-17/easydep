@@ -87,6 +87,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "class_diagram_puml",
         "valid_key": "class_diagram_syntax_valid",
         "errors_key": "class_diagram_syntax_errors",
+        # 결정론 규칙 검사 결과(`app/design/knowledge/`). 문법 검증과 다른 질문이라
+        # 칸이 따로 있다 — 문법은 렌더러가 보장하고, 이건 아무도 보장하지 않는다.
+        # 이 키가 없는 스테이지는 검사할 규칙이 아직 없다는 뜻이다(빈 결과가 아니라).
+        "check_key": "class_diagram_check",
         # Stored as its BCE model; the PlantUML in state_key is derived from this.
         "source_key": "extracted_bce_classes",
         "source_format": FORMAT_JSON,

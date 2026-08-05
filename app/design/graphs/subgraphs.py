@@ -3,14 +3,18 @@
 상위 그래프(`design_graph.py`)의 노드명은 산출물 이름이고, 세부 작업은 서브그래프
 내부 노드로 캡슐화된다. 다섯 산출물이 모두 같은 골격을 따른다:
 
-  생성:   extract_{stage} → convert_{stage} → validate_{stage} → END
-  피드백: revise_{stage}  → convert_{stage} → validate_{stage} → END
+  생성:   extract_{stage} → [check_{stage}] → render_{stage} → END
+  피드백: revise_{stage}  → [check_{stage}] → render_{stage} → END
 
 예전에는 여기가 둘로 갈려 있었다. 클래스·ERD는 구조화된 모델에서 결정론적으로 렌더됐고,
 시퀀스·API·배포는 LLM이 PlantUML/JSON을 직접 써서 validate → repair 루프를 달고 있었다.
 지금은 다섯 모두 LLM에게 **구조화 모델만** 받고 산출물은 결정론적으로 렌더한다. 그래서
 수리 루프가 사라졌고(무한 루프 위험도 함께), 피드백은 언제나 모델을 편집하며, 모델과
 산출물이 어긋날 수 없다. 골격의 근거는 `app/design/nodes/artifact.py` 참조.
+
+대괄호가 붙은 `check`는 **규칙 지식베이스를 가진 스테이지에만** 생긴다(지금은 클래스
+다이어그램뿐). `render`는 렌더와 그 자기검사를 함께 한다 — 예전의 `convert` + `validate`를
+합친 것이고, 문법 검증이 렌더러의 출력만 보고 원리상 실패할 수 없어서 나눠 둘 값이 없었다.
 
 서브그래프는 체크포인터 없이 컴파일된다 — 상위 그래프의 세이버가 트리 전체를 관장한다.
 """
@@ -20,12 +24,13 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from app.design.knowledge.detectors import class_diagram_findings
 from app.design.nodes.artifact import (
     DesignArtifactSpec,
-    convert_node,
+    check_node,
     extract_node,
+    render_node,
     revise_node,
-    validate_node,
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.api_spec.extractor import extract_api_spec_model
@@ -115,6 +120,11 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     render=generate_plantuml_from_bce_json,
     validate=validate_puml_artifact,
     elements={"Classes": lambda c: c.get("className", "")},
+    # 다섯 산출물 중 유일하게 규칙 지식베이스를 가진 스테이지다. 나머지 넷은 아직
+    # `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는 사실이
+    # 그래프에 그대로 보인다.
+    check=class_diagram_findings,
+    check_key="class_diagram_check",
 )
 
 SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -230,43 +240,59 @@ FEEDBACK_KEYS: dict[str, str] = {
 }
 
 
-def _add_convert_and_validate(
+def _add_stage_tail(
     builder: StateGraph, spec: DesignArtifactSpec, entry_node: str
 ) -> None:
-    """생성과 피드백이 공유하는 꼬리: 모델 → 결정론적 변환 → (트립와이어) 검증 → END.
+    """생성과 피드백이 공유하는 꼬리: 모델 → [규칙 검사] → 렌더(+자기검사) → END.
 
-    변환이 유효성을 보장하므로 문법 수리 루프는 없다.
+    **검사 노드는 `check_key`를 가진 스펙에만 생긴다.** 규칙이 아직 없는 산출물에 빈
+    노드를 달면 그래프 그림이 "검사한다"고 거짓말을 한다 — 지금 규칙이 있는 것은 클래스
+    다이어그램뿐이고, 그 사실이 토폴로지에 그대로 보여야 한다.
+
+    렌더가 문법 유효성을 보장하므로 **문법** 수리 루프는 여전히 없다. 검사 노드가 도는
+    루프는 문법이 아니라 **의미**를 보고, 텍스트가 아니라 모델을 고치며, 위반 수가 줄지
+    않으면 멈춘다(`nodes/artifact.py`의 `check_node` 참조).
+
+    예전에는 꼬리가 노드 둘(`convert` → `validate`)이었다. 문법 검증이 변환의 출력만 보고
+    **원리상 실패할 수 없어서** 합쳤다 — 절대 울리지 않는 노드가 다섯 개 떠 있는 그림은
+    실제로 일어나는 일보다 커 보인다.
     """
-    convert = f"convert_{spec.stage}"
-    validate = f"validate_{spec.stage}"
-    builder.add_node(convert, convert_node(spec))
-    builder.add_node(validate, validate_node(spec))
-    builder.add_edge(entry_node, convert)
-    builder.add_edge(convert, validate)
-    builder.add_edge(validate, END)
+    render = f"render_{spec.stage}"
+    builder.add_node(render, render_node(spec))
+
+    if spec.check_key:
+        check = f"check_{spec.stage}"
+        builder.add_node(check, check_node(spec))
+        builder.add_edge(entry_node, check)
+        builder.add_edge(check, render)
+    else:
+        builder.add_edge(entry_node, render)
+
+    builder.add_edge(render, END)
 
 
 def build_generation_graph(spec: DesignArtifactSpec):
-    """생성: 앞선 산출물 → 구조화 모델 추출 → 변환 → 검증."""
+    """생성: 앞선 산출물 → 구조화 모델 추출 → [규칙 검사] → 렌더."""
     builder = StateGraph(ArchitectureState)
     entry = f"extract_{spec.stage}"
     builder.add_node(entry, extract_node(spec))
     builder.add_edge(START, entry)
-    _add_convert_and_validate(builder, spec, entry)
+    _add_stage_tail(builder, spec, entry)
     return builder.compile()
 
 
 def build_feedback_graph(spec: DesignArtifactSpec):
-    """피드백: 사용자 피드백을 모델에 적용 → 같은 변환 → 검증.
+    """피드백: 사용자 피드백을 모델에 적용 → [규칙 검사] → 같은 렌더.
 
     LLM은 구조화 모델만 편집하고 렌더된 텍스트는 만지지 않으므로, 모델과 산출물이
-    어긋나지 않는다. 생성 그래프와 convert/validate 노드를 공유한다.
+    어긋나지 않는다. 생성 그래프와 꼬리(`_add_stage_tail`)를 그대로 공유한다 — 피드백으로
+    만든 판도 생성한 판과 **같은 검사**를 거쳐야 하기 때문이다.
     """
     builder = StateGraph(ArchitectureState)
     entry = f"revise_{spec.stage}"
     builder.add_node(entry, revise_node(spec))
     builder.add_edge(START, entry)
-    _add_convert_and_validate(builder, spec, entry)
+    _add_stage_tail(builder, spec, entry)
     return builder.compile()
 
 

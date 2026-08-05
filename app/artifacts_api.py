@@ -123,18 +123,31 @@ def validate_stage_name(stage: str) -> None:
 
 
 def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
-    """상태 → 화면이 읽는 형태 {artifacts, validation, artifact_status}."""
+    """상태 → 화면이 읽는 형태 {artifacts, validation, artifact_status}.
+
+    `validation`은 **두 가지 다른 질문**을 함께 싣는다. `valid`/`errors`는 렌더된 산출물이
+    문법에 맞는지를 묻고, 이건 렌더러가 보장하므로 거의 언제나 참이다. `findings`는
+    **LLM이 낸 모델이 규칙을 지켰는지**를 묻고, 그건 보장된 것이 없다. 화면이 후자를
+    전자와 같은 자리에서 읽어야 "문법은 통과했지만 내용이 틀렸다"를 보여줄 수 있다.
+
+    `check_key`가 없는 스테이지는 `findings`가 빈 목록이고 `check_status`가 None이다.
+    **그건 "깨끗하다"가 아니라 "검사하지 않았다"이다** — 화면은 둘을 구별해야 한다.
+    """
     artifacts: dict[str, Any] = {}
     validation: dict[str, Any] = {}
 
     for stage, config in STAGE_ARTIFACTS.items():
         empty: Any = {} if config["format"] == FORMAT_JSON else ""
         artifacts[stage] = result.get(config["state_key"], empty)
+        check = result.get(config.get("check_key") or "") or {}
         validation[stage] = {
             "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
             "errors": (
                 result.get(config["errors_key"], []) if config["errors_key"] else []
             ),
+            "findings": check.get("findings", []),
+            "check_status": check.get("stopped"),
+            "repair_iters": check.get("repair_iters", 0),
         }
 
     return {
