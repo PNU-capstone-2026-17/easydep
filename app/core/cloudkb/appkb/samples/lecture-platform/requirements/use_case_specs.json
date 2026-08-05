@@ -1,0 +1,839 @@
+[
+  {
+    "use_case_id": "UC1",
+    "name": "Register Student Account",
+    "preconditions": [
+      "The student does not have an existing account on the platform."
+    ],
+    "trigger": "The student initiates the registration process.",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student provides an email address and a password.",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System validates the email address format and password strength.",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System creates a new student account with the supplied credentials.",
+        "covered_req_ids": [
+          "FR1"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System stores the student's personal data in a location that resides within the country.",
+        "covered_req_ids": [
+          "FR15",
+          "FR20"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System confirms successful registration to the student.",
+        "covered_req_ids": []
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "email format is invalid or password does not meet strength criteria",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that the provided information is invalid and requests correction."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "the email address is already associated with an existing account",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System informs the student that the email is already registered and suggests using password recovery."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "account creation fails due to an internal error",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System notifies the student of a temporary error and advises to retry later."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "storage of personal data fails",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System notifies the student of a temporary error and aborts the registration."
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "A student account exists with the provided email and password.",
+      "The student's personal data is stored within the country.",
+      "The student can authenticate using the registered credentials."
+    ],
+    "minimal_guarantee": [
+      "No partial student account remains after a failed registration.",
+      "Any temporary data created during a failed attempt is discarded.",
+      "Personal data is never stored outside the country even in error conditions.",
+      "The system records the registration attempt without exposing personal data."
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC2",
+    "name": "Login Student",
+    "preconditions": [
+      "Student has a registered account in the system"
+    ],
+    "trigger": "Student initiates login by providing an email address and a password",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student submits email and password",
+        "covered_req_ids": [
+          "FR2"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System validates the credentials",
+        "covered_req_ids": [
+          "FR2"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System confirms successful authentication",
+        "covered_req_ids": [
+          "FR2"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "the credentials are invalid",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that authentication failed"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "the system cannot process the authentication request",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System informs the student of a temporary error"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student is authenticated and may access the personal workspace"
+    ],
+    "minimal_guarantee": [
+      "No authenticated session is created when authentication fails",
+      "Submitted password is not retained after processing"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC3",
+    "name": "Search Lectures",
+    "preconditions": [
+      "Student is registered in the system",
+      "Student is authenticated and logged in",
+      "Lecture catalogue service is operational"
+    ],
+    "trigger": "Student initiates a lecture search",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student provides search criteria describing interests",
+        "covered_req_ids": [
+          "FR5"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System retrieves matching lectures using the lecture listing service",
+        "covered_req_ids": [
+          "FR14",
+          "FR17"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System returns the lecture listing to the student within two seconds",
+        "covered_req_ids": [
+          "FR16"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "The provided search criteria are empty or malformed",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System notifies the student that valid search criteria are required"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "The lecture listing service cannot be accessed",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System notifies the student that the search cannot be performed at this time"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "The system does not generate the response within two seconds",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System notifies the student of the delay and provides any available results when ready"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The student receives a list of lectures that match the provided interests"
+    ],
+    "minimal_guarantee": [
+      "No lecture data is persisted as a result of a failed search",
+      "The system remains available throughout the interaction",
+      "All communications are handled in compliance with security policies",
+      "The system continues to operate while new features are released, satisfying FR21"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC4",
+    "name": "View Lecture Details",
+    "preconditions": [
+      "Student is logged in"
+    ],
+    "trigger": "Student selects a lecture from the lecture list",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student selects the lecture of interest",
+        "covered_req_ids": [
+          "FR6"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System retrieves the description, price, and metadata for the selected lecture",
+        "covered_req_ids": [
+          "FR6"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System presents the lecture description, price, and metadata to the student",
+        "covered_req_ids": [
+          "FR6"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "the selected lecture does not exist",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that the lecture cannot be found"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "the system encounters an error while retrieving lecture details",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System informs the student that the details cannot be displayed due to a temporary error"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student has viewed the lecture description, price, and metadata"
+    ],
+    "minimal_guarantee": [
+      "No lecture data is altered",
+      "System remains available for other operations"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC5",
+    "name": "Purchase and Enroll in Lecture",
+    "preconditions": [
+      "Student has a registered account",
+      "Student is authenticated"
+    ],
+    "trigger": "Student initiates purchase of a lecture",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student selects a lecture to purchase",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System forwards the student's payment card information to the external payment provider for processing",
+        "covered_req_ids": [
+          "FR7",
+          "FR19"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System receives confirmation of successful payment from the external provider",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 4,
+        "sentence": "System enrolls the student in the selected lecture",
+        "covered_req_ids": [
+          "FR8"
+        ]
+      },
+      {
+        "step_number": 5,
+        "sentence": "System confirms enrollment to the student",
+        "covered_req_ids": []
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "payment is declined by the external provider",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs the student that the payment was declined"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2b",
+        "branch_step": 2,
+        "condition": "external payment provider is unavailable",
+        "handling_steps": [
+          {
+            "sub_step": "2b1",
+            "sentence": "System informs the student that the payment service is unavailable"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "lecture capacity is full preventing enrollment",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System initiates a refund through the external payment provider"
+          },
+          {
+            "sub_step": "4a2",
+            "sentence": "System informs the student that enrollment failed and the payment was refunded"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Student is enrolled in the lecture and can access its video content"
+    ],
+    "minimal_guarantee": [
+      "Card details are never stored by the system",
+      "Any payment that does not result in enrollment is refunded",
+      "System data remains consistent"
+    ],
+    "issues": [
+      "[semantic] Remove the refund step or add a requirement that authorizes refunds. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "repair_iters": 2,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  },
+  {
+    "use_case_id": "UC6",
+    "name": "Watch Lecture (Playback)",
+    "preconditions": [
+      "Student is authenticated and has access rights to the lecture"
+    ],
+    "trigger": "Student selects a lecture to watch",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Student selects the lecture to watch",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 2,
+        "sentence": "System streams the lecture video",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 3,
+        "sentence": "Student stops playback at any time",
+        "covered_req_ids": []
+      },
+      {
+        "step_number": 4,
+        "sentence": "System stores the current playback position for the student and lecture",
+        "covered_req_ids": [
+          "FR9"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "a stored playback position exists for the student and the lecture",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System streams the lecture video starting from the stored position"
+          }
+        ],
+        "outcome": "resume",
+        "resume_at_step": 3
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "the system encounters an error while storing the playback position",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System informs the student that the playback position could not be saved"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The lecture video has been played for the student",
+      "The playback position is stored and will be used for future resume"
+    ],
+    "minimal_guarantee": [
+      "The lecture video was streamed",
+      "No partial data is persisted and the system remains operational"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC7",
+    "name": "Upload Lecture Video",
+    "preconditions": [
+      "Instructor is registered",
+      "Instructor is authenticated",
+      "Lecture for which the video is to be uploaded exists"
+    ],
+    "trigger": "Instructor initiates upload of a video file for a lecture",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Instructor provides the video file for the selected lecture",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System stores the uploaded video file",
+        "covered_req_ids": [
+          "FR3"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System converts the stored video file into the playback format",
+        "covered_req_ids": [
+          "FR4"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System makes the converted video available to students for the lecture",
+        "covered_req_ids": [
+          "FR4"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "video conversion fails",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the instructor that conversion failed"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The video is available to students in the required playback format",
+      "The video is linked to the lecture"
+    ],
+    "minimal_guarantee": [
+      "No incomplete video remains accessible",
+      "The system continues to operate for other lectures and students"
+    ],
+    "issues": [],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC8",
+    "name": "View Enrollment Statistics",
+    "preconditions": [
+      "Instructor is authenticated and logged in"
+    ],
+    "trigger": "Instructor requests enrollment statistics for their lectures",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Instructor requests enrollment statistics for their lectures",
+        "covered_req_ids": [
+          "FR11"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System retrieves the instructor's lectures",
+        "covered_req_ids": [
+          "FR11"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System counts the number of students enrolled in each lecture",
+        "covered_req_ids": [
+          "FR11"
+        ]
+      },
+      {
+        "step_number": 4,
+        "sentence": "System presents the enrollment numbers to the instructor",
+        "covered_req_ids": [
+          "FR11"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "Instructor has no lectures",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System informs instructor that no lectures are available"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "Enrollment data cannot be retrieved",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs instructor that enrollment numbers could not be retrieved"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "4a",
+        "branch_step": 4,
+        "condition": "System encounters an error while presenting statistics",
+        "handling_steps": [
+          {
+            "sub_step": "4a1",
+            "sentence": "System notifies instructor of a temporary error and suggests retry later"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Instructor has received the number of students enrolled in each of their lectures"
+    ],
+    "minimal_guarantee": [
+      "No enrollment data is modified",
+      "Instructor's authenticated session remains active"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC9",
+    "name": "View Revenue Statistics",
+    "preconditions": [
+      "Instructor is authenticated and authorized to access their own lecture data"
+    ],
+    "trigger": "Instructor initiates a request to view revenue statistics for their lectures",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Instructor requests revenue statistics for their lectures",
+        "covered_req_ids": [
+          "FR12"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System gathers revenue amounts for each lecture owned by the instructor",
+        "covered_req_ids": [
+          "FR12"
+        ]
+      },
+      {
+        "step_number": 3,
+        "sentence": "System delivers the revenue summary to the instructor",
+        "covered_req_ids": [
+          "FR12"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "System cannot retrieve revenue data due to a technical error",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System notifies the instructor that revenue data could not be retrieved"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "The retrieved revenue list is empty",
+        "handling_steps": [
+          {
+            "sub_step": "3a1",
+            "sentence": "System informs the instructor that no revenue has been recorded for any lecture"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "Instructor's authentication becomes invalid before the use case completes",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System terminates the interaction and prompts the instructor to re-authenticate"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "Instructor has received a complete revenue summary for each of their lectures"
+    ],
+    "minimal_guarantee": [
+      "System does not disclose revenue data belonging to other instructors",
+      "System does not modify any revenue records during the interaction"
+    ],
+    "issues": [],
+    "repair_iters": 0,
+    "semantic_status": "ok",
+    "repair_stopped": "clean"
+  },
+  {
+    "use_case_id": "UC10",
+    "name": "Remove Inappropriate Lecture",
+    "preconditions": [
+      "Administrator is authenticated and has authority to remove lectures",
+      "The lecture to be removed is currently visible in public view"
+    ],
+    "trigger": "Administrator initiates removal of a lecture that violates policy",
+    "main_scenario": [
+      {
+        "step_number": 1,
+        "sentence": "Administrator requests removal of the identified lecture",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      },
+      {
+        "step_number": 2,
+        "sentence": "System removes the lecture from public view",
+        "covered_req_ids": [
+          "FR13"
+        ]
+      }
+    ],
+    "extensions": [
+      {
+        "label": "1a",
+        "branch_step": 1,
+        "condition": "The identified lecture does not exist or is not currently public",
+        "handling_steps": [
+          {
+            "sub_step": "1a1",
+            "sentence": "System informs the administrator that the lecture cannot be found or is already removed"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "2a",
+        "branch_step": 2,
+        "condition": "System encounters an internal error while removing the lecture",
+        "handling_steps": [
+          {
+            "sub_step": "2a1",
+            "sentence": "System records the error"
+          },
+          {
+            "sub_step": "2a2",
+            "sentence": "System notifies the administrator of the failure and suggests retry"
+          }
+        ],
+        "outcome": "fail",
+        "resume_at_step": null
+      },
+      {
+        "label": "*a",
+        "branch_step": null,
+        "condition": "Administrator aborts the removal request before system processes it",
+        "handling_steps": [
+          {
+            "sub_step": "*a1",
+            "sentence": "System cancels the removal request"
+          }
+        ],
+        "outcome": "alternate_success",
+        "resume_at_step": null
+      }
+    ],
+    "success_guarantee": [
+      "The lecture is no longer visible in public view",
+      "System records the removal action for audit"
+    ],
+    "minimal_guarantee": [
+      "If removal fails, the lecture remains visible in public view",
+      "System maintains integrity of lecture data and enforces access controls"
+    ],
+    "issues": [
+      "[semantic] Remove or rephrase the logging steps that introduce audit capability not required by FR13. [spec.no-scope-creep · easydep convention (hallucination guard) · 우리 판단]"
+    ],
+    "repair_iters": 1,
+    "semantic_status": "ok",
+    "repair_stopped": "no_improvement"
+  }
+]

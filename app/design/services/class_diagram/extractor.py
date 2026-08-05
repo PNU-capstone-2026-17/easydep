@@ -1,11 +1,26 @@
+"""유스케이스 명세에서 BCE 클래스 모델을 도출한다 (LLM 구조화 출력).
+
+**규칙은 여기 없다.** 프롬프트에 실리는 규범 문장은 `app/design/knowledge/rules.py`에서
+조립된다(`rules_section`). 예전에는 통신 규칙과 자기검사 목록이 이 파일의 산문 안에만
+있었고, 그래서 두 가지 일이 벌어졌다:
+
+  1. **아무도 판정하지 않았다.** 전부 기계로 확인할 수 있는 것들인데 LLM에게 "스스로
+     확인하라"고 부탁하는 것이 전부였다. 부탁이 검증인 적은 없다.
+  2. **갈라질 수 있었다.** 규칙을 코드로 옮기면서 산문을 그대로 두면, 검사하는 규칙과
+     쓰라고 시키는 규칙이 서로 다른 것이 된다. 요구사항 쪽에서 실제로 그렇게 갈라졌다
+     (`app/requirements/knowledge/rules.py` docstring 참조).
+
+지금은 쓰는 쪽과 판정하는 쪽이 **같은 레코드**에서 나온다. 산문으로 남은 것은 규범이
+아니라 **모양**이다 — 도출 절차와 예시. 그건 규칙이 아니라 쓰는 법이라서 여기 있다.
+"""
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
+
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
-from openai import OpenAI
+
+from app.design.knowledge import rules
+from app.design.services.common.structured import parse_structured
 
 
 class BCEClass(BaseModel):
@@ -14,6 +29,9 @@ class BCEClass(BaseModel):
     description: str = Field(default="")
     fields: list[str] = Field(default_factory=list)
     methods: list[str] = Field(default_factory=list)
+    #: 이 클래스를 낳은 유스케이스 id. 추적표(app/design/rtm.py)가 이걸 모아서
+    #: "이 유스케이스가 바뀌면 무엇이 영향받는가"를 답한다.
+    use_case_ids: list[str] = Field(default_factory=list)
 
 
 class BCERelationship(BaseModel):
@@ -28,7 +46,7 @@ class BCEExtractionResult(BaseModel):
     Relationships: list[BCERelationship] = Field(default_factory=list)
 
 
-BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = """
+_PREAMBLE = """
 You are a software architect with deep expertise in UML 2.0 Robustness \
 Analysis and Ivar Jacobson's Boundary-Control-Entity (BCE / ECB) pattern. \
 Your task is to analyze a use-case specification and derive analysis-level \
@@ -41,25 +59,16 @@ and Postconditions. Ignore fields that are absent. Do not fabricate content \
 for missing fields, and do not add any class, field, method, or relationship \
 that is not grounded in the given text.
 
-## BCE Stereotype Definitions (Jacobson, 1992)
+## BCE Stereotype Definitions
 - <<Boundary>>: Mediates interaction between an actor and the system (UI \
   screens, APIs, device/external-system interfaces).
 - <<Control>>: Coordinates flow and business logic for one use case or one \
   coherent sub-flow. Does not hold long-lived business data.
 - <<Entity>>: Persistent business information that outlives a single \
   use-case execution.
+"""
 
-## Communication Rules (mandatory — a violation must be corrected, not output)
-1. Actor <-> Boundary only.
-2. Boundary <-> Actor or Control only. Never Boundary-Boundary or \
-   Boundary-Entity directly.
-3. Control <-> Boundary, Entity, or other Control.
-4. Entity never initiates action toward a Control or Boundary. Entity-Entity \
-   links (aggregation/composition) are allowed but must not represent \
-   behavior initiation.
-If applying these rules to your draft reveals an illegal link, insert the \
-missing intermediary Control/Boundary instead of keeping the illegal link.
-
+_PROCEDURE = """
 ## Extraction Procedure (perform in order)
 1. Textual/noun-verb analysis: go through MainSuccessScenario, Extensions, \
    and Postconditions sentence by sentence. Noun phrases are Entity/Boundary \
@@ -67,11 +76,10 @@ missing intermediary Control/Boundary instead of keeping the illegal link.
 2. Boundary derivation: for each PrimaryActor/Stakeholder, identify each \
    distinct interaction touchpoint (an input screen, a query, a \
    notification, an external call). Create one Boundary per distinct \
-   interaction concern, not automatically one per actor.
+   interaction concern.
 3. Control derivation: treat each main-flow segment and each extension \
    branch as a coordination unit. Converge to the smallest number of \
-   Controls that still respects single responsibility (usually 1, more only \
-   if the logic is genuinely independent).
+   Controls that still respects single responsibility.
 4. Entity derivation: promote a noun to Entity only if it is created, read, \
    updated, deleted, or otherwise persists beyond the use case. Do not \
    promote one-off values or pure modifiers.
@@ -80,12 +88,16 @@ missing intermediary Control/Boundary instead of keeping the illegal link.
    across steps. Do not list getters/setters as methods.
 6. Method derivation: derive methods from actions each class performs or \
    delegates, named as verbNoun().
-7. Relationship derivation: apply the Communication Rules above.
-8. Self-check before finalizing: (a) class names are unique and PascalCase, \
-   (b) every relationship's source/target exists among the derived classes, \
-   (c) no Entity is a relationship source targeting a Boundary, (d) every \
-   MainSuccessScenario step is represented by at least one class or \
-   relationship.
+7. Relationship derivation: if a link would break one of the rules above, \
+   insert the missing intermediary Control/Boundary instead of keeping it.
+8. Traceability: set `use_case_ids` on every class to the id(s) of the use \
+   case(s) it was derived from.
+9. Self-check before finalizing: read the Rules section again and check your \
+   draft against every rule in it. Every one of them is verified by this \
+   project after you answer, so a violation you leave in will be found — \
+   correct it now instead.
+10. Coverage check: every MainSuccessScenario step should be represented by \
+   at least one class or relationship.
 
 ## Worked Example
 Input (excerpt):
@@ -118,34 +130,46 @@ schema fields.
 """
 
 
-def load_scenario_from_json(file_path: str) -> str:
-    with open(file_path, "r", encoding="utf-8") as file:
-        scenario_data = json.load(file)
-    return json.dumps(scenario_data, indent=2, ensure_ascii=False)
+def rules_section(stage: str = rules.CLASS_DIAGRAM) -> str:
+    """규범 문장을 지식베이스에서 조립한다 — **산문으로 다시 적지 않는다.**
+
+    두 절이 나오고, 둘째 절이 있는 이유가 첫째만큼 중요하다:
+
+      - **Rules** — 어겨서는 안 되는 것. 각 줄이 규칙 id를 달고 가므로, 나중에 검사가
+        낸 지적과 프롬프트의 어느 줄이 같은 것인지 사람이 맞춰 볼 수 있다. 짐작인
+        규칙은 그 사실("this project's reading")까지 함께 간다.
+      - **Not rules** — 규칙이 **아닌** 것. 과적합은 판정할 때가 아니라 쓸 때 일어난다:
+        "액터당 Boundary 하나"를 목표로 알아들은 모델은 필요 없는 Boundary를 지어내거나
+        필요한 것을 합친다. 그러니 이 사실을 받아야 하는 쪽은 판정자가 아니라 생성자다.
+    """
+    section = (
+        "\n## Rules (mandatory — a violation must be corrected, not output)\n"
+        "This project verifies every rule below after you answer. Where a rule is this "
+        "project's reading rather than a verified source, the line says so — judge the "
+        "intent in those cases, not the wording.\n\n"
+        f"{rules.generation_prompt_block(stage)}\n"
+    )
+    not_rules = rules.non_rules_block(stage)
+    if not_rules:
+        section += (
+            "\n## Not rules — do NOT optimise for these\n"
+            "These are recorded here precisely so you do not treat them as targets.\n\n"
+            f"{not_rules}\n"
+        )
+    return section
+
+
+#: 생성 프롬프트. 규범은 지식베이스에서, 모양(절차·예시)은 산문에서 온다.
+BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = _PREAMBLE + rules_section() + _PROCEDURE
 
 
 def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
-    """BCE 구조화 완성. 추출과 피드백 수정이 공유한다.
+    """BCE 구조화 완성. 클래스 다이어그램과 ERD의 추출·수정이 공유한다.
 
     LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
+    호출 배관 자체는 다섯 산출물이 공유한다(common.structured.parse_structured).
     """
-    load_dotenv()
-
-    client = OpenAI(
-        base_url=os.getenv("BASE_URL"),
-        api_key=os.getenv("API_KEY"),
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
-    )
-
-    response = client.chat.completions.parse(
-        model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
-        messages=messages,
-        temperature=0,
-        seed=42,
-        response_format=BCEExtractionResult,
-    )
-    return response.choices[0].message.parsed.model_dump()
+    return parse_structured(messages, BCEExtractionResult)
 
 
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:

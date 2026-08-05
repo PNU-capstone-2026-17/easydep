@@ -1,609 +1,262 @@
-"""시스템 설계 에이전트의 서빙 레이어.
+"""시스템 설계 에이전트의 서빙 레이어 — **설계 고유의 것만** 있다.
 
-원래는 엔드포인트가 server.py 본문에 직접 있었지만, 요구사항 에이전트
-(app/requirements/api.py)와 같은 방식으로 라우터로만 남기고 앱 생성은 server.py가
-맡는다. 그래프·서비스(app.design.graphs, app.design.services)는 서빙 방식과
-무관하게 재사용된다.
+앱 컨테이너 발급과 산출물 저장소는 여기 없다. 그건 세 에이전트가 함께 쓰는 것이라
+`app/artifacts_api.py`로 나갔다. 이 파일이 아는 것은 설계 파이프라인 하나다.
 
-app_id(앱 컨테이너) 관리와 산출물 stage 생성이 모두 이 라우터에 모여 있다. 둘 다
-같은 헬퍼(to_web_response, require_app 등)와 MySQL 저장소를 공유하므로 함께 둔다.
-요구사항 분석 산출물(EXTERNAL_STAGES)은 여기서 만들지 않고, 저장·조회만 한다.
+**산출물을 만드는 길은 하나다.**
+
+    /design/start    파이프라인을 처음부터. 첫 게이트에서 멈춘다.
+    /design/resume   멈춘 게이트에 답한다. 빈 피드백이면 다음 스테이지.
+    /design/rewind   특정 스테이지로 되감아 거기서부터 다시 만든다.
+    /design/session  지금 어디서 멈췄나 (새로고침한 화면이 복원할 때)
+    /design/trace    추적표 — 무엇이 무엇에서 나왔고, 고치면 무엇이 영향받나
+
+예전에는 `/stages/{stage}/generate`·`/feedback`으로 스테이지 하나만 따로 돌리는 두 번째
+길이 있었다. 지웠다 — 그 길은 **산출물을 낡게 만들 수 있었다.** API 명세만 다시 만들어도
+그것을 재료로 만들어진 배포 다이어그램은 옛 API 기준으로 남았다. 파이프라인은 앞으로만
+흐르므로 그 상태가 구조적으로 불가능하다. "그것만 다시"가 필요하면 `/design/rewind`가
+그 스테이지로 되감고, 이어서 진행하면 뒤쪽도 새 재료로 다시 만들어진다.
+
+app_id는 요구사항 분석이 발급하고, 설계는 `localStorage["easydep_app_id"]`로 이어받아
+쓰기만 한다.
 """
 from __future__ import annotations
-
-import os
-import uuid
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from app.db.models import (
-    FORMAT_JSON,
-    ORIGIN_AUTO_FIXED,
-    ORIGIN_FEEDBACK_REVISED,
-    ORIGIN_GENERATED,
-    ORIGIN_IMPORTED,
+from app.artifacts_api import (
+    require_app,
+    require_app_exists,
+    to_web_response,
+    validate_app_id,
 )
-from app.design.graphs.class_diagram_graph import (
-    class_diagram_feedback_graph,
-    class_diagram_graph,
+from app.design.cascade import UnknownTarget, persist_cascade, revise_and_cascade
+from app.design.graphs.design_graph import (
+    StageNotReached,
+    has_active_session,
+    has_design_run,
+    reset_design,
+    resume_design,
+    rewind_design,
+    session_status,
+    start_design,
+    sync_design_state,
 )
-from app.design.graphs.sequence_diagram_graph import (
-    sequence_diagram_feedback_graph,
-    sequence_diagram_graph,
-)
-from app.design.graphs.api_spec_graph import (
-    api_spec_feedback_graph,
-    api_spec_graph,
-)
-from app.design.nodes.artifact_generation import (
-    generate_api_spec,
-    generate_deployment_diagram,
-    generate_erd,
-    generate_sequence_diagram,
-)
-from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
-from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.sequence_diagram.plantuml import (
-    generate_plantuml_from_sequence_json,
-)
-from app.design.services.api_spec.openapi_builder import (
-    generate_openapi_spec_from_json,
-)
-from app.design.services.common.plantuml import render_plantuml
-from app.design.services.common.revision import revise_json_with_llm, revise_puml_with_llm
-from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
-from app.repositories import artifact_repository
-from app.repositories.artifact_repository import (
-    STAGE_ARTIFACTS,
-    AppNotFound,
-    StageBusy,
-)
+from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.rtm import build_design_rtm, render_design_rtm_md
 
 router = APIRouter(tags=["design"])
-
-
-def revision_attempt_limit() -> int:
-    """How many times to re-ask the LLM after a validation failure.
-
-    0 (the default) means keep going until the artifact validates. A cap can be
-    set through MAX_REVISION_ATTEMPTS when a run must be bounded.
-    """
-    return int(os.getenv("MAX_REVISION_ATTEMPTS", "0"))
-
-
-STAGES = list(STAGE_ARTIFACTS)
-
-# Produced by the requirements analysis agent, which now runs in this same
-# process but through its own endpoint (POST /api/requirements/analyze): the
-# analysis is one interactive session that yields all of them together, not four
-# independent one-shot generations. They can be stored and read here, and the
-# content endpoint still accepts them, but this generate endpoint does not drive
-# them.
-EXTERNAL_STAGES = {
-    "refined_requirements",
-    "usecase_spec",
-    "usecase_diagram",
-    "resource_spec",
-}
-
-PREREQUISITES = {
-    "refined_requirements": [],
-    "usecase_spec": ["refined_requirements"],
-    "usecase_diagram": ["usecase_spec"],
-    "resource_spec": ["refined_requirements"],
-    # Every design artifact is derived from the use case specification.
-    "class_diagram": ["usecase_spec"],
-    "sequence_diagram": ["class_diagram_puml"],
-    "api_spec": ["class_diagram_puml", "sequence_diagram_puml"],
-    "erd": ["class_diagram_puml", "sequence_diagram_puml", "api_spec"],
-    "deployment_diagram": [
-        "class_diagram_puml",
-        "sequence_diagram_puml",
-        "api_spec",
-        "erd_puml",
-    ],
-}
-
-PUML_FIELDS = {
-    "usecase_diagram": {
-        "code": "usecase_diagram_puml",
-        "valid": "usecase_diagram_syntax_valid",
-        "errors": "usecase_diagram_syntax_errors",
-        "label": "use case diagram",
-    },
-    "class_diagram": {
-        "code": "class_diagram_puml",
-        "valid": "class_diagram_syntax_valid",
-        "errors": "class_diagram_syntax_errors",
-        "label": "class diagram",
-    },
-    "sequence_diagram": {
-        "code": "sequence_diagram_puml",
-        "valid": "sequence_diagram_syntax_valid",
-        "errors": "sequence_diagram_syntax_errors",
-        "label": "sequence diagram",
-    },
-    "erd": {
-        "code": "erd_puml",
-        "valid": "erd_syntax_valid",
-        "errors": "erd_syntax_errors",
-        "label": "ERD",
-    },
-    "deployment_diagram": {
-        "code": "deployment_diagram_puml",
-        "valid": "deployment_diagram_syntax_valid",
-        "errors": "deployment_diagram_syntax_errors",
-        "label": "deployment diagram",
-    },
-}
-
-
-class CreateAppRequest(BaseModel):
-    requirements_text: str = ""
-    resource_constraints_text: str = ""
 
 
 class StageRequest(BaseModel):
     pass
 
 
-class ImportRequest(BaseModel):
-    content: Any
-
-
 class FeedbackRequest(StageRequest):
     feedback: str = ""
 
 
-@router.post("/api/apps")
-def create_app(request: CreateAppRequest) -> JSONResponse:
-    """Issue an app id. Every later request works from this id alone."""
-    app_id = artifact_repository.create_app(
-        requirements_text=request.requirements_text,
-        resource_constraints_text=request.resource_constraints_text,
-    )
-    return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
+class RewindRequest(BaseModel):
+    stage: str
 
 
-@router.get("/api/apps")
-def list_apps() -> JSONResponse:
-    return JSONResponse(content={"apps": artifact_repository.list_apps()})
+class ReviseRequest(BaseModel):
+    #: "{stage}:{element}" — 추적표의 change_plan 이 주는 ref 그대로.
+    target: str
+    feedback: str = ""
 
 
-@router.get("/api/apps/{app_id}")
-def get_app(app_id: str) -> JSONResponse:
-    validate_app_id(app_id)
-    return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
+@router.post("/api/apps/{app_id}/design/start")
+def start_design_session(app_id: str, request: StageRequest) -> JSONResponse:
+    """Run the design pipeline from the first stage, stopping at the first gate.
 
+    The response carries the class diagram and status "need_feedback". Answer it
+    with /design/resume — an empty feedback advances to the sequence diagram, a
+    non-empty one revises the class diagram and asks again.
 
-@router.post("/api/apps/{app_id}/stages/{stage}/generate")
-def generate_stage(app_id: str, stage: str, request: StageRequest) -> JSONResponse:
-    validate_app_id(app_id)
-    validate_stage_name(stage)
-    if stage in EXTERNAL_STAGES:
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "message": "This artifact comes from the requirements analysis "
-                "agent. Run POST /api/requirements/analyze with this app_id, or "
-                "store it with the content endpoint.",
-                "stage": stage,
-            },
-        )
-
-    state = prepare_state(app_id, request)
-    ensure_prerequisites(stage, state)
-    claim_stage(app_id, stage)
-
-    try:
-        if stage == "class_diagram":
-            updated = generate_class_diagram_once(state)
-        elif stage == "sequence_diagram":
-            updated = generate_sequence_diagram_once(state)
-        elif stage == "api_spec":
-            updated = generate_api_spec_once(state)
-        elif stage == "erd":
-            updated = merge_state(state, generate_erd(state))
-            updated = auto_fix_puml_stage(stage, updated, "")
-        else:
-            updated = merge_state(state, generate_deployment_diagram(state))
-            updated = auto_fix_puml_stage(stage, updated, "")
-
-        artifact_repository.save_stage(app_id, stage, updated, origin=ORIGIN_GENERATED)
-    except Exception as error:
-        artifact_repository.release_stage(app_id, stage)
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM/API generation failed: {error}",
-        ) from error
-
-    artifact_repository.release_stage(app_id, stage)
-    return JSONResponse(content={"app_id": app_id, **to_web_response(updated)})
-
-
-@router.post("/api/apps/{app_id}/stages/{stage}/feedback")
-def apply_stage_feedback(
-    app_id: str,
-    stage: str,
-    request: FeedbackRequest,
-) -> JSONResponse:
-    validate_app_id(app_id)
-    validate_stage_name(stage)
-    state = prepare_state(app_id, request)
-    ensure_prerequisites(stage, state)
-    claim_stage(app_id, stage)
-
-    try:
-        if stage == "class_diagram":
-            updated = revise_class_diagram_once(state, request.feedback)
-        elif stage == "sequence_diagram":
-            updated = revise_sequence_diagram_once(state, request.feedback)
-        elif stage == "api_spec":
-            updated = revise_api_spec_once(state, request.feedback)
-        else:
-            updated = auto_fix_puml_stage(stage, state, request.feedback)
-
-        artifact_repository.save_stage(
-            app_id,
-            stage,
-            updated,
-            origin=ORIGIN_FEEDBACK_REVISED if request.feedback else ORIGIN_AUTO_FIXED,
-        )
-    except Exception as error:
-        artifact_repository.release_stage(app_id, stage)
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM/API feedback revision failed: {error}",
-        ) from error
-
-    artifact_repository.release_stage(app_id, stage)
-    return JSONResponse(content={"app_id": app_id, **to_web_response(updated)})
-
-
-@router.post("/api/apps/{app_id}/stages/{stage}/content")
-def import_stage_content(
-    app_id: str,
-    stage: str,
-    request: ImportRequest,
-) -> JSONResponse:
-    """Store an artifact produced elsewhere.
-
-    The requirements analysis agent runs outside this service, so this is how
-    its output reaches the store. It is also how a use case specification can be
-    supplied by hand while that agent is not connected yet.
+    Restarting an app that already has a session would resume mid-pipeline rather
+    than begin again (LangGraph continues the thread), so the checkpoint is cleared
+    first. The stored artifacts are untouched; only "how far we got" is discarded.
     """
     validate_app_id(app_id)
-    validate_stage_name(stage)
-    require_app(app_id)
-
-    config = STAGE_ARTIFACTS[stage]
-    source_key = config.get("source_key")
-    if source_key:
-        if stage == "class_diagram":
-            spec_obj = generate_plantuml_from_bce_json(request.content)
-        elif stage == "sequence_diagram":
-            spec_obj = generate_plantuml_from_sequence_json(request.content)
-        elif stage == "api_spec":
-            spec_obj = generate_openapi_spec_from_json(request.content)
-        else:
-            spec_obj = {}
-        state: ArchitectureState = {source_key: request.content, config["state_key"]: spec_obj}
-        if stage in PUML_FIELDS:
-            validation = validate_puml_artifact(spec_obj)
-        elif stage == "api_spec":
-            validation = validate_api_spec(spec_obj)
-        else:
-            validation = {"syntax_valid": True, "syntax_errors": []}
-        state[config["valid_key"]] = validation["syntax_valid"]
-        state[config["errors_key"]] = validation["syntax_errors"]
-    else:
-        state = {config["state_key"]: request.content}
-        if config["valid_key"] and stage in PUML_FIELDS:
-            validation = validate_puml_artifact(request.content)
-            state[config["valid_key"]] = validation["syntax_valid"]
-            state[config["errors_key"]] = validation["syntax_errors"]
-
-    version_id = artifact_repository.save_stage(
-        app_id,
-        stage,
-        state,
-        origin=ORIGIN_IMPORTED,
-    )
-    if version_id is None:
-        raise HTTPException(status_code=400, detail="Content is empty.")
-
-    return JSONResponse(content={"app_id": app_id, **load_response(app_id)})
-
-
-@router.get("/api/apps/{app_id}/stages/{stage}/versions")
-def list_stage_versions(app_id: str, stage: str) -> JSONResponse:
-    validate_app_id(app_id)
-    validate_stage_name(stage)
-    require_app(app_id)
-    return JSONResponse(
-        content={"versions": artifact_repository.list_versions(app_id, stage)}
-    )
-
-
-@router.get("/api/apps/{app_id}/stages/{stage}/versions/{version_no}")
-def get_stage_version(app_id: str, stage: str, version_no: int) -> JSONResponse:
-    validate_app_id(app_id)
-    validate_stage_name(stage)
-    require_app(app_id)
-    content = artifact_repository.get_version_content(app_id, stage, version_no)
-    if content is None:
-        raise HTTPException(status_code=404, detail="Version not found.")
-    return JSONResponse(content={"version_no": version_no, "content": content})
-
-
-@router.get("/api/apps/{app_id}/stages/{stage}/image.{extension}")
-def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
-    """Render the stored PlantUML source to an image on demand.
-
-    Images are never stored; they are rebuilt from the artifact text in MySQL
-    and streamed straight back, so there is no render directory to collide over
-    or to go stale.
-    """
-    validate_app_id(app_id)
-    validate_stage_name(stage)
-    if extension not in ("png", "svg"):
-        raise HTTPException(status_code=404, detail="Unsupported image format.")
-    if stage not in PUML_FIELDS:
-        raise HTTPException(status_code=404, detail="Stage has no diagram image.")
-
     state = require_app(app_id)
-    puml_text = state.get(PUML_FIELDS[stage]["code"], "")
-    if not puml_text:
-        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
-
-    image = render_plantuml(puml_text, extension)
-    if not image:
-        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
-
-    media_type = "image/svg+xml" if extension == "svg" else "image/png"
-    return Response(content=image, media_type=media_type)
-
-
-def claim_stage(app_id: str, stage: str) -> None:
-    """Take the generation lock, or tell the caller someone else has it."""
-    try:
-        artifact_repository.claim_stage(app_id, stage)
-    except StageBusy as error:
+    # The pipeline's only prerequisite: everything downstream is derived from the
+    # use case specification, and the stage order takes care of the rest.
+    if not state.get("usecase_spec"):
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "This artifact is already being generated. "
-                "Wait for the running request to finish.",
-                "stage": stage,
+                "message": "The use case specification must exist first. Run "
+                "POST /api/requirements/analyze with this app_id.",
+                "missing": ["usecase_spec"],
             },
+        )
+
+    reset_design(app_id)
+    try:
+        return JSONResponse(content=start_design(app_id, state))
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Design pipeline failed: {error}"
         ) from error
 
 
-def validate_app_id(app_id: str) -> None:
-    try:
-        uuid.UUID(app_id)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail="Invalid app id.") from error
+@router.post("/api/apps/{app_id}/design/resume")
+def resume_design_session(app_id: str, request: FeedbackRequest) -> JSONResponse:
+    """Answer the gate the pipeline is waiting at.
 
-
-def require_app(app_id: str) -> ArchitectureState:
-    try:
-        return artifact_repository.load_state(app_id)
-    except AppNotFound as error:
-        raise HTTPException(status_code=404, detail="Unknown app id.") from error
-
-
-def prepare_state(app_id: str, request: StageRequest) -> ArchitectureState:
-    return require_app(app_id)
-
-
-def load_response(app_id: str) -> dict[str, Any]:
-    return to_web_response(require_app(app_id))
-
-
-def generate_class_diagram_once(state: ArchitectureState) -> ArchitectureState:
-    """Extract BCE elements, convert to PlantUML, and validate, run as a LangGraph."""
-    result = dict(class_diagram_graph.invoke(state))
-    result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
-    return result
-
-
-def revise_class_diagram_once(
-    state: ArchitectureState,
-    feedback: str,
-) -> ArchitectureState:
-    """Apply feedback to the BCE model, then re-render the diagram deterministically.
-
-    Feedback edits the stored source of truth (extracted_bce_classes), never the
-    PlantUML text, so the model and the diagram cannot drift apart.
+    Empty feedback advances to the next stage; anything else revises the current
+    stage and returns to the same gate.
     """
-    graph_input: ArchitectureState = dict(state)
-    graph_input["class_diagram_feedback"] = feedback
-    result = dict(class_diagram_feedback_graph.invoke(graph_input))
-    result["artifact_status"] = mark_status(result, "class_diagram", "implemented")
-    return result
+    validate_app_id(app_id)
+    # Only the 404 check is needed — resume_design restores the state it works
+    # from out of the checkpoint, not out of the artifact store.
+    require_app_exists(app_id)
+    require_active_session(app_id)
+    try:
+        return JSONResponse(content=resume_design(app_id, request.feedback))
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Design pipeline failed: {error}"
+        ) from error
 
 
-def generate_sequence_diagram_once(state: ArchitectureState) -> ArchitectureState:
-    """Extract sequence elements, convert to PlantUML, and validate, run as a LangGraph."""
-    result = dict(sequence_diagram_graph.invoke(state))
-    result["artifact_status"] = mark_status(result, "sequence_diagram", "implemented")
-    return result
+@router.post("/api/apps/{app_id}/design/rewind")
+def rewind_design_session(app_id: str, request: RewindRequest) -> JSONResponse:
+    """Go back to a stage and remake it — and everything after it.
+
+    This is how "just redo the ERD" is done. It deliberately does not remake only
+    that one artifact: the stages after it were derived from it, so leaving them
+    alone is how two artifacts end up disagreeing. Rewinding re-runs the stage and
+    stops at its gate; advancing from there rebuilds the rest on the new material.
+    """
+    validate_app_id(app_id)
+    require_app_exists(app_id)
+    # A finished run is exactly when rewinding matters most ("everything is made,
+    # but the API spec is wrong"), so this asks for a run to exist — not for one
+    # to still be paused at a gate.
+    require_design_run(app_id)
+
+    if request.stage not in DESIGN_STAGES:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown design stage: {request.stage}"
+        )
+    if request.stage == DESIGN_STAGES[0]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Rewinding to the first stage is what /design/start does.",
+                "stage": request.stage,
+            },
+        )
+
+    try:
+        return JSONResponse(content=rewind_design(app_id, request.stage))
+    except StageNotReached as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(error), "stage": request.stage},
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Design pipeline failed: {error}"
+        ) from error
 
 
-def revise_sequence_diagram_once(
-    state: ArchitectureState,
-    feedback: str,
-) -> ArchitectureState:
-    """Apply feedback to sequence elements model, then re-render deterministically."""
-    graph_input: ArchitectureState = dict(state)
-    graph_input["sequence_diagram_feedback"] = feedback
-    result = dict(sequence_diagram_feedback_graph.invoke(graph_input))
-    result["artifact_status"] = mark_status(result, "sequence_diagram", "implemented")
-    return result
+@router.post("/api/apps/{app_id}/design/revise")
+def revise_design_element(app_id: str, request: ReviseRequest) -> JSONResponse:
+    """Change one element, and only what the trace says depends on it.
+
+    This is the ordinary way to fix a finished design. Rewinding regenerates whole
+    stages from scratch, which throws away everything the user already approved;
+    here the untargeted elements are copied from the original and the model's output
+    for them is never read. See app/design/cascade.py.
+    """
+    validate_app_id(app_id)
+    state = require_app(app_id)
+
+    try:
+        result = revise_and_cascade(state, request.target, request.feedback)
+    except UnknownTarget as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Revision failed: {error}"
+        ) from error
+
+    persist_cascade(app_id, result)
+    # 파이프라인 밖에서 고쳤으므로 체크포인트도 맞춰둔다 — 안 그러면 재개할 때
+    # 고치기 전 상태로 돌아간다.
+    sync_design_state(app_id, result["state"])
+
+    return JSONResponse(
+        content={
+            "app_id": app_id,
+            **to_web_response(result["state"]),
+            "changed": result["changed"],
+            "touched": result["touched"],
+        }
+    )
 
 
-def generate_api_spec_once(state: ArchitectureState) -> ArchitectureState:
-    """Extract API elements, convert to OpenAPI dict, and validate, run as a LangGraph."""
-    result = dict(api_spec_graph.invoke(state))
-    result["artifact_status"] = mark_status(result, "api_spec", "implemented")
-    return result
+@router.get("/api/apps/{app_id}/design/session")
+def get_design_session(app_id: str) -> JSONResponse:
+    """Where the pipeline is paused, if anywhere.
+
+    The artifact store cannot answer this — it knows what was made, not how far the
+    run got. A refreshed screen asks here to tell "start a new run" from "answer the
+    gate you left open".
+    """
+    validate_app_id(app_id)
+    require_app_exists(app_id)
+    return JSONResponse(content={"app_id": app_id, "session": session_status(app_id)})
 
 
-def revise_api_spec_once(
-    state: ArchitectureState,
-    feedback: str,
-) -> ArchitectureState:
-    """Apply feedback to API elements model, then re-render deterministically."""
-    graph_input: ArchitectureState = dict(state)
-    graph_input["api_spec_feedback"] = feedback
-    result = dict(api_spec_feedback_graph.invoke(graph_input))
-    result["artifact_status"] = mark_status(result, "api_spec", "implemented")
-    return result
+@router.get("/api/apps/{app_id}/design/trace")
+def get_design_trace(app_id: str, format: str = "json") -> Response:
+    """Where each design element came from, and what an upstream change touches.
+
+    Aggregated from the trace fields the models already carry — no LLM call, so
+    the matrix cannot disagree with the artifacts it describes. See app/design/rtm.py.
+
+    format=md returns the same thing as a markdown table.
+    """
+    validate_app_id(app_id)
+    matrix = build_design_rtm(require_app(app_id))
+    if format == "md":
+        return Response(
+            content=render_design_rtm_md(matrix, title=app_id),
+            media_type="text/markdown; charset=utf-8",
+        )
+    return JSONResponse(content={"app_id": app_id, **matrix})
 
 
-def validate_stage_name(stage: str) -> None:
-    if stage not in STAGES:
-        raise HTTPException(status_code=404, detail=f"Unknown stage: {stage}")
+def require_active_session(app_id: str) -> None:
+    """409 unless a design session is paused at a gate.
 
-
-def ensure_prerequisites(stage: str, state: ArchitectureState) -> None:
-    missing = []
-    for key in PREREQUISITES[stage]:
-        value = state.get(key)
-        if value in (None, "", {}):
-            missing.append(key)
-
-    if missing:
+    Without this, LangGraph answers a resume for an unknown thread by running the
+    pipeline from the top with empty input — producing and storing an empty
+    artifact instead of failing.
+    """
+    if not has_active_session(app_id):
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "Previous artifacts must be generated first.",
-                "missing": missing,
+                "message": "No design session is in progress. "
+                "Start one with POST /design/start.",
             },
         )
 
 
-def auto_fix_puml_stage(
-    stage: str,
-    state: ArchitectureState,
-    feedback: str,
-) -> ArchitectureState:
-    fields = PUML_FIELDS[stage]
-    code_key = fields["code"]
-    valid_key = fields["valid"]
-    errors_key = fields["errors"]
-    current = state.get(code_key, "")
-    updated = dict(state)
-    limit = revision_attempt_limit()
-    attempt = 0
-
-    while True:
-        validation = validate_puml_artifact(current)
-        updated[valid_key] = validation["syntax_valid"]
-        updated[errors_key] = validation["syntax_errors"]
-        updated[code_key] = current
-
-        # User feedback is applied once; syntax errors keep the loop running.
-        needs_revision = (feedback and attempt == 0) or not validation["syntax_valid"]
-        if not needs_revision or (limit and attempt >= limit):
-            break
-
-        attempt += 1
-        current = revise_puml_with_llm(
-            artifact_name=fields["label"],
-            current_puml=current,
-            feedback=feedback,
-            syntax_errors=validation["syntax_errors"],
-            context=build_revision_context(updated),
+def require_design_run(app_id: str) -> None:
+    """409 unless the pipeline has run for this app — finished runs count."""
+    if not has_design_run(app_id):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This app has no design run to rewind. "
+                "Start one with POST /design/start.",
+            },
         )
-
-    updated["artifact_status"] = mark_status(updated, stage, "implemented")
-    return updated
-
-
-def auto_fix_api_spec(
-    state: ArchitectureState,
-    feedback: str,
-) -> ArchitectureState:
-    current = state.get("api_spec", {})
-    updated = dict(state)
-    limit = revision_attempt_limit()
-    attempt = 0
-
-    while True:
-        validation = validate_api_spec(current)
-        updated["api_spec"] = current
-        updated["api_spec_syntax_valid"] = validation["syntax_valid"]
-        updated["api_spec_syntax_errors"] = validation["syntax_errors"]
-
-        needs_revision = (feedback and attempt == 0) or not validation["syntax_valid"]
-        if not needs_revision or (limit and attempt >= limit):
-            break
-
-        attempt += 1
-        current = revise_json_with_llm(
-            artifact_name="API specification",
-            current_json=current,
-            feedback=feedback,
-            errors=validation["syntax_errors"],
-            context=build_revision_context(updated),
-        )
-
-    updated["artifact_status"] = mark_status(updated, "api_spec", "implemented")
-    return updated
-
-
-def build_revision_context(state: ArchitectureState) -> str:
-    return "\n\n".join(
-        [
-            "[Use Case Specification]\n" + usecase_spec_text(state),
-            "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
-            "[Sequence Diagram]\n" + state.get("sequence_diagram_puml", ""),
-            "[API Spec]\n" + str(state.get("api_spec", {})),
-            "[ERD]\n" + state.get("erd_puml", ""),
-        ]
-    )
-
-
-def merge_state(
-    state: ArchitectureState,
-    updates: ArchitectureState,
-) -> ArchitectureState:
-    merged = dict(state)
-    merged.update(updates)
-    return merged
-
-
-def mark_status(
-    state: ArchitectureState,
-    artifact_name: str,
-    status: str,
-) -> dict[str, str]:
-    current = dict(state.get("artifact_status", {}))
-    current[artifact_name] = status
-    return current
-
-
-def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
-    artifacts: dict[str, Any] = {}
-    validation: dict[str, Any] = {}
-
-    for stage, config in STAGE_ARTIFACTS.items():
-        empty: Any = {} if config["format"] == FORMAT_JSON else ""
-        artifacts[stage] = result.get(config["state_key"], empty)
-        validation[stage] = {
-            "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
-            "errors": (
-                result.get(config["errors_key"], []) if config["errors_key"] else []
-            ),
-        }
-
-    return {
-        "artifacts": artifacts,
-        "validation": validation,
-        "artifact_status": result.get("artifact_status", {}),
-    }

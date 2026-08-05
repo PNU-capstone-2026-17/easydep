@@ -1,0 +1,497 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "appkb 설계 산출물 입력 계약 v1",
+  "description": "상류(설계 단계 에이전트)가 주는 JSON. PlantUML은 이 JSON의 표현일 뿐이라 받지 않는다. 칸마다 소비자가 있다 — 소비자 없는 정보는 meta로만 받고 읽지 않는다. additionalProperties=false인 이유: 오타 난 칸이 조용히 무시되면 그 요소가 미매칭으로 빠지는데 왜 빠졌는지 아무도 모른다.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "name",
+    "components",
+    "artifacts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "meta": {
+      "type": "object",
+      "description": "우리가 읽지 않는 자유 칸. 렌더링 좌표 등은 여기로."
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+            "description": "조인 키이자 리소스 이름 씨앗. 소문자-하이픈으로 제한하는 이유: 이 id가 클라우드 리소스 이름이 되고, capacitykb의 이름 패턴 제약(135,745건)으로 검증된다 — 처음부터 어긋난 문자를 받지 않는다."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string"
+          },
+          "deployHint": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "설계자가 컴퓨트 방식을 지정하고 싶을 때. **설계자의 주장(stated-by-designer)으로 기록되지 우리 판단이 되지 않는다** — 배포 다이어그램에 근거로 그대로 실린다.",
+            "required": [
+              "compute"
+            ],
+            "properties": {
+              "compute": {
+                "enum": [
+                  "vm",
+                  "kubernetes",
+                  "serverlessFunction"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            }
+          },
+          "meta": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "externals": {
+      "type": "array",
+      "description": "PG사·외부 SaaS처럼 호출은 하지만 **프로비저닝 대상이 아닌** 것. 배포 다이어그램에 외부 노드로만 나온다.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/openapiArtifact"
+          },
+          {
+            "$ref": "#/$defs/erArtifact"
+          },
+          {
+            "$ref": "#/$defs/classArtifact"
+          },
+          {
+            "$ref": "#/$defs/sequenceArtifact"
+          }
+        ]
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "요구사항 단계 산출물(RESOURCE_SPEC, appkb/request.json 계약)에서 내려오는 비기능 요구의 투영. 칸 정의는 request.json과 같아야 하며(테스트가 대조로 고정), 필수 여부만 다르다 — 진입에서는 필수지만 여기서는 **비어 있으면 비용·리전 조인을 못 한다고 답하지, 임의 기본값을 채우지 않는다**(설계 계약 단독 사용을 허용).",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "aws | azure | gcp | … 값 조인의 축. 실측된 라우팅 변수 — 없으면 비용·성능·번들·벤더 타입 대응이 전부 닫힌다."
+        },
+        "region": {
+          "type": "string",
+          "description": "리전 코드(예: ap-northeast-2). 지명('서울')은 계약 진입 전에 리전 해석 도구(cap_resolve_region)로 코드로 바꿔 담는다 — 지명이 그대로 오면 조인이 조용히 빈 답이 된다(실측). 원문은 regionAsWritten에 남긴다."
+        },
+        "expectedConcurrentUsers": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "예상 동시 사용자. **필수가 아니다**(2026-07-29 재판정 — 이것으로 서는 판정이 없다). **이 값은 스펙 하한을 정하지 않는다** — 동시 사용자를 vCPU·메모리로 바꾸는 변환은 1차 소스가 없어 KB에서 명시적으로 배제했다(조사 2026-07-22, 재확인 2026-07-29). 소비자 둘: (1) 하한이 없을 때 되묻기의 근거 — '동시 사용자 3,000인데 하한이 없다'가 '하한을 달라'보다 강한 요청이다. (2) 배포 계획이 추정임을 밝히며 인용하는 규모 진술. 하한 자체는 minVCpu·minMemoryGiB가 준다."
+        },
+        "approxRequestsPerSecond": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "대략적 초당 요청 수. expectedConcurrentUsers의 대안 규모 신호이고, 소비자도 같다(하한이 아니라 되묻기의 근거)."
+        },
+        "minVCpu": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 소비자: 스펙 선택의 하한(층 2). 층 1은 sizingkb가 출처와 함께 들고 있는 하드 하한인데 실측상 k8s 노드에만 있어서, 일반 VM에는 이 칸이 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
+        },
+        "minMemoryGiB": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "이 워크로드가 요구하는 최소 메모리(GiB). minVCpu와 같은 층·같은 성격이고 같은 소비자가 읽는다."
+        },
+        "monthlyBudgetUSD": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "월 예산, USD. 비용 부합 판정의 기준값. 다른 통화는 **진입에서 USD로 환산해 담는다** — 요구사항 에이전트에 환율 도구(convert_to_usd, ECB 기준환율)가 있고, 쓴 환율과 기준일을 근거에 남긴다. (2026-07-29 정정: 예전 문구는 '환율 환산은 하지 않는다(환율 소스가 없다)'였는데, 그건 계약의 뜻이 아니라 그때 우리에게 소스가 없었다는 뜻이었다. 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다.) 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+        },
+        "multiZone": {
+          "type": "boolean",
+          "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
+        },
+        "trafficPattern": {
+          "enum": [
+            "steady",
+            "spiky"
+          ],
+          "description": "부하 모양 — steady(상시 부하) | spiky(간헐 폭증). 소비자: 버스트 적합 판정 — steady인데 계획의 스펙에 버스트 경고(perfkb)가 붙어 있으면 상충으로 판정한다. 이 칸이 없으면 버스트 경고는 경고로만 남고 이 앱에 문제인지는 판정하지 않는다."
+        },
+        "stateless": {
+          "type": "boolean",
+          "description": "앱이 인스턴스(컴퓨트)에 상태를 두지 않는가 — 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다). 소비자: 서버리스 적합 판정 — false인데 서버리스 컴포넌트가 있으면 상충 가능성으로 판정한다."
+        },
+        "dataResidency": {
+          "type": "string",
+          "description": "데이터가 머물러야 하는 국가·지역, 사용자 표현 그대로(예: '한국', 'EU'). 소비자: 배포 계획이 리전의 **원본 표시 이름**(예: 'South Korea (Seoul)')을 대조 자료로 싣고, 부합 판정문은 **판정 불가를 명시**한다 — 리전의 국가를 기계 판정할 소스가 없다(표시 이름이 프로바이더마다 자유 서식 — 실측 2026-07-24). 산문에서 국가를 추출해 판정하면 확신에 찬 오답이 된다. 확인은 사용자 몫이고, 그 사실이 답에 실린다."
+        },
+        "lowCarbonPreferred": {
+          "type": "boolean",
+          "description": "요구사항이 에너지 사용·탄소 배출에 제약을 두는가. 소비자: 리전 탄소 판정 — 참인데 선택 리전보다 탄소집약도가 낮은 리전이 같은 프로바이더에 있으면 그 사실을 낸다. **판정이 아니라 대조다** — 탄소 수치의 출처 등급이 프로바이더마다 다르고(GCP는 구글 직접 발표, AWS·Azure는 서드파티 추정) 방법론이 달라 서로 비교할 수 없다. 이 칸이 없으면 탄소 데이터 161건은 질의응답에만 쓰이고 계획에 닿지 않는다."
+        },
+        "meta": {
+          "type": "object"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifactBase": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "description": "산출물 내용 해시(선택). 사용자 산출물은 핀이 없으므로 이것이 '어느 설계도에서 나온 배포 계획인지'의 유일한 추적 수단이다."
+        },
+        "meta": {
+          "type": "object"
+        }
+      }
+    },
+    "openapiArtifact": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifactBase"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "componentId",
+        "openapi"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": true,
+        "sha256": true,
+        "meta": true,
+        "kind": {
+          "const": "openapi"
+        },
+        "componentId": {
+          "type": "string",
+          "description": "이 API를 제공하는 컴포넌트. 이름 매칭이 아니라 명시 조인."
+        },
+        "openapi": {
+          "type": "object",
+          "description": "OpenAPI 3.x 문서 전체(표준이라 재정의하지 않는다). 소비: info.title(표시명) · paths(표면 크기) · securitySchemes(인증→비밀 저장소 후보) · requestBody의 multipart/octet-stream(파일 업로드→객체 스토리지 후보)."
+        }
+      }
+    },
+    "erArtifact": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifactBase"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "entities"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": true,
+        "sha256": true,
+        "meta": true,
+        "kind": {
+          "const": "er"
+        },
+        "engineHint": {
+          "type": "string",
+          "description": "설계자가 엔진을 정했으면(postgresql·mysql·redis…). svcmap의 벤더 flavor 선택(Azure의 DBforPostgreSQL vs DBforMySQL)이 소비한다. 없으면 flavor를 고르지 않고 선택지를 보여준다."
+        },
+        "archetypeHint": {
+          "enum": [
+            "relationalDatabase",
+            "nosqlDatabase",
+            "keyValueCache",
+            "searchIndex",
+            "eventStream",
+            "objectStorage"
+          ],
+          "description": "설계자가 이 저장소의 아키타입을 직접 지정 — deployHint와 같은 등급이다(주장이지 검증된 사실이 아니라 hedge된다). **kafka 같은 모호 엔진의 해소 경로**: engineHint가 큐·스트림·저장 어느 축인지 못 가를 때(우리는 몰면 안 되므로 미결로 둔다), 설계자가 여기서 가른다. 어댑터 경로에서는 ERD PlantUML의 `' archetype: eventStream` 주석으로 지정한다(합의 안건 2, 2026-07-25 구현). 모르는 값을 적으면 조용히 버리지 않고 \"못 읽은 것\"에 싣는다."
+        },
+        "entities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "ownerComponentId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ownerComponentId": {
+                "type": "string",
+                "description": "이 엔티티를 소유한 컴포넌트. **필수인 이유**: 이게 없으면 DB 토폴로지(공유 DB vs 서비스별 DB)를 정할 수 없고, 그때 임의로 공유 DB를 기본값으로 두는 것이 정확히 '모르는 값을 채우는' 실패다."
+              },
+              "attributes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "isPrimaryKey": {
+                      "type": "boolean"
+                    },
+                    "meta": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "meta": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "relations": {
+          "type": "array",
+          "description": "소비: 서로 다른 컴포넌트가 소유한 엔티티 간 관계 → 데이터 결합 경고(advisory).",
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "cardinality"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "cardinality": {
+                "enum": [
+                  "1-1",
+                  "1-n",
+                  "n-1",
+                  "n-m"
+                ]
+              },
+              "meta": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "classArtifact": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifactBase"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "classes"
+      ],
+      "additionalProperties": false,
+      "description": "배포 신호로는 가장 약한 산출물이다 — 소비하는 것은 stereotype과 componentId 묶음뿐이고, 속성·메서드는 받지 않는다(소비자가 없다. 필요하면 meta로).",
+      "properties": {
+        "id": true,
+        "sha256": true,
+        "meta": true,
+        "kind": {
+          "const": "class"
+        },
+        "classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "componentId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "componentId": {
+                "type": "string"
+              },
+              "stereotypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Controller/Service/Repository/Entity 류. Repository·Entity → 영속성 신호(보조), Controller → HTTP 표면 신호(보조)."
+              },
+              "meta": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sequenceArtifact": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/artifactBase"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "participants",
+        "messages"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": true,
+        "sha256": true,
+        "meta": true,
+        "kind": {
+          "const": "sequence"
+        },
+        "participants": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "description": "셋 중 하나를 가리켜야 한다: componentId(우리가 배포) · externalId(외부 시스템) · actor(사람). 어느 것도 아니면 의미 검증이 거부한다.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "componentId": {
+                "type": "string"
+              },
+              "externalId": {
+                "type": "string"
+              },
+              "actor": {
+                "type": "boolean"
+              },
+              "name": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "messages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to",
+              "async"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "participant id"
+              },
+              "to": {
+                "type": "string"
+              },
+              "async": {
+                "type": "boolean",
+                "description": "true → 큐 후보(inferred). PlantUML의 ->> 화살표가 아니라 **의미**를 받는다 — 화살표 표기는 렌더링 사정이다."
+              },
+              "label": {
+                "type": "string"
+              },
+              "meta": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

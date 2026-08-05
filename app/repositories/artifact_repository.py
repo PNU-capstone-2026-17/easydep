@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import hashlib
-import os
 import uuid
 from typing import Any
 
-from sqlalchemy import func, or_, select, text, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -30,37 +28,30 @@ from app.db.models import (
 )
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.sequence_diagram.plantuml import (
-    generate_plantuml_from_sequence_json,
+from app.design.services.deployment_diagram.plantuml import (
+    generate_deployment_from_model,
 )
-from app.design.services.api_spec.openapi_builder import (
-    generate_openapi_spec_from_json,
-)
+from app.design.services.erd.plantuml import generate_erd_from_bce_json
+from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 
 
 class AppNotFound(Exception):
     """Raised when an app_id has no row in the apps table."""
 
 
-class StageBusy(Exception):
-    """Raised when another request is already generating this artifact."""
-
-
-# How long a GENERATING claim stays valid. Generation runs several LLM calls
-# plus up to three revision retries, so this is well above the worst observed
-# runtime; it only exists so a crashed worker cannot lock an artifact forever.
-def stage_lock_lease_seconds() -> int:
-    return int(os.getenv("STAGE_LOCK_LEASE_SECONDS", "900"))
-
-
 # Every stage the workflow can persist, and how it maps onto ArchitectureState.
 # state_key is what the web response and downstream stages read. A stage may also
 # declare a source_key: the structured model that is the real source of truth and
-# what actually gets stored, from which state_key is re-derived on load. The class
-# diagram works this way — its BCE model (extracted_bce_classes) is stored and the
-# PlantUML is a pure projection of it, so feedback edits the model and the diagram
-# is re-rendered deterministically instead of being rewritten (and never drifts).
+# what actually gets stored, from which state_key is re-derived on load through the
+# stage's `derive` function.
+#
+# All five design artifacts work this way. The LLM only ever produces and edits the
+# structured model; the diagram or OpenAPI document is a pure projection of it. So
+# feedback edits the model, the artifact is re-rendered deterministically, and the
+# two cannot drift apart. The requirements-analysis stages have no such model —
+# they are stored as they arrive.
 STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
     "refined_requirements": {
         "artifact_type": TYPE_REFINE_REQ,
@@ -96,9 +87,14 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "class_diagram_puml",
         "valid_key": "class_diagram_syntax_valid",
         "errors_key": "class_diagram_syntax_errors",
+        # 결정론 규칙 검사 결과(`app/design/knowledge/`). 문법 검증과 다른 질문이라
+        # 칸이 따로 있다 — 문법은 렌더러가 보장하고, 이건 아무도 보장하지 않는다.
+        # 이 키가 없는 스테이지는 검사할 규칙이 아직 없다는 뜻이다(빈 결과가 아니라).
+        "check_key": "class_diagram_check",
         # Stored as its BCE model; the PlantUML in state_key is derived from this.
         "source_key": "extracted_bce_classes",
         "source_format": FORMAT_JSON,
+        "derive": generate_plantuml_from_bce_json,
     },
     "sequence_diagram": {
         "artifact_type": TYPE_SEQUENCE,
@@ -106,9 +102,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "sequence_diagram_puml",
         "valid_key": "sequence_diagram_syntax_valid",
         "errors_key": "sequence_diagram_syntax_errors",
-        # Stored as its sequence elements model; the PlantUML in state_key is derived from this.
-        "source_key": "extracted_sequence_elements",
+        # Stored as its interaction model; the PlantUML is derived from this.
+        "source_key": "sequence_diagram_model",
         "source_format": FORMAT_JSON,
+        "derive": generate_sequence_from_model,
     },
     "api_spec": {
         "artifact_type": TYPE_API_SPEC,
@@ -116,9 +113,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "api_spec",
         "valid_key": "api_spec_syntax_valid",
         "errors_key": "api_spec_syntax_errors",
-        # Stored as its API elements model; state_key is derived from this.
-        "source_key": "extracted_api_elements",
+        # Stored as its endpoint model; the OpenAPI document is assembled from this.
+        "source_key": "api_spec_model",
         "source_format": FORMAT_JSON,
+        "derive": build_openapi_from_model,
     },
     "erd": {
         "artifact_type": TYPE_ERD,
@@ -126,6 +124,11 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "erd_puml",
         "valid_key": "erd_syntax_valid",
         "errors_key": "erd_syntax_errors",
+        # Stored as its own BCE entity copy; the PlantUML in state_key is derived
+        # from this, so ERD feedback edits the model, not the diagram text.
+        "source_key": "erd_bce_classes",
+        "source_format": FORMAT_JSON,
+        "derive": generate_erd_from_bce_json,
     },
     "deployment_diagram": {
         "artifact_type": TYPE_DEPLOYMENT,
@@ -133,6 +136,10 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "deployment_diagram_puml",
         "valid_key": "deployment_diagram_syntax_valid",
         "errors_key": "deployment_diagram_syntax_errors",
+        # Stored as its deployment topology model; the PlantUML is derived from this.
+        "source_key": "deployment_diagram_model",
+        "source_format": FORMAT_JSON,
+        "derive": generate_deployment_from_model,
     },
 }
 
@@ -183,6 +190,17 @@ def update_inputs(
             app.resource_constraints_text = resource_constraints_text
 
 
+def ensure_app_exists(app_id: str) -> None:
+    """Raise AppNotFound unless the app row exists. One row read, nothing built.
+
+    For callers that only need the 404 check. load_state() answers the same
+    question, but on the way it reads every artifact and re-renders every diagram
+    from its model — wasted work when the result is thrown away.
+    """
+    with session_scope() as session:
+        _require_app(session, app_id)
+
+
 def load_state(app_id: str) -> ArchitectureState:
     """Rebuild the workflow state for an app from its stored artifacts."""
     with session_scope() as session:
@@ -214,18 +232,7 @@ def load_state(app_id: str) -> ArchitectureState:
                 source_value = _decode_content(version.content, config["source_format"])
                 state[source_key] = source_value
                 # PlantUML is a pure projection of the stored model.
-                if stage == "class_diagram":
-                    state[config["state_key"]] = generate_plantuml_from_bce_json(
-                        source_value
-                    )
-                elif stage == "sequence_diagram":
-                    state[config["state_key"]] = generate_plantuml_from_sequence_json(
-                        source_value
-                    )
-                elif stage == "api_spec":
-                    state[config["state_key"]] = generate_openapi_spec_from_json(
-                        source_value
-                    )
+                state[config["state_key"]] = config["derive"](source_value)
             else:
                 state[config["state_key"]] = _decode_content(
                     version.content,
@@ -258,72 +265,6 @@ def save_stage(
 
         app.current_stage = stage
         return version_id
-
-
-def claim_stage(app_id: str, stage: str) -> None:
-    """Take the generation lock for one artifact.
-
-    generation_started_at is the lock: NULL means free, a timestamp means held
-    since then. Raises StageBusy when another request already holds it. The
-    claim is a lease, so a lock left behind by a crashed worker can be taken
-    over once stage_lock_lease_seconds has passed.
-    """
-    config = STAGE_ARTIFACTS[stage]
-    with session_scope() as session:
-        _require_app(session, app_id)
-        artifact = _find_artifact(session, app_id, config["artifact_type"])
-
-        if artifact is None:
-            try:
-                with session.begin_nested():
-                    session.add(
-                        Artifact(
-                            app_id=app_id,
-                            artifact_type=config["artifact_type"],
-                            generation_started_at=func.now(6),
-                        )
-                    )
-                return
-            except IntegrityError:
-                # A concurrent request created the row first; fall through and
-                # contend for it through the conditional update below.
-                artifact = _find_artifact(session, app_id, config["artifact_type"])
-                if artifact is None:
-                    raise StageBusy(stage) from None
-
-        expiry = func.date_sub(
-            func.now(6),
-            text("INTERVAL :lease_seconds SECOND").bindparams(
-                lease_seconds=stage_lock_lease_seconds()
-            ),
-        )
-        # Single conditional UPDATE: whoever changes the row wins the lock.
-        result = session.execute(
-            update(Artifact)
-            .where(
-                Artifact.id == artifact.id,
-                or_(
-                    Artifact.generation_started_at.is_(None),
-                    Artifact.generation_started_at < expiry,
-                ),
-            )
-            .values(generation_started_at=func.now(6))
-        )
-        if result.rowcount != 1:
-            raise StageBusy(stage)
-
-
-def release_stage(app_id: str, stage: str) -> None:
-    """Release the generation lock.
-
-    A failed run leaves whatever version was already current in place, so there
-    is nothing to roll back here.
-    """
-    config = STAGE_ARTIFACTS[stage]
-    with session_scope() as session:
-        artifact = _find_artifact(session, app_id, config["artifact_type"])
-        if artifact is not None:
-            artifact.generation_started_at = None
 
 
 def list_versions(app_id: str, stage: str) -> list[dict[str, Any]]:

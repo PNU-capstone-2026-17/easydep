@@ -3,6 +3,7 @@
 각 단계를 독립 서브그래프로 컴파일한다. 상위 그래프의 노드명은 단계별 '동작'을 나타낸다:
   refine_requirements  — intake → clarify → classify        (구체화 + FR/NFR 분류)
   cover_cloud_concerns — link_cloud_concerns                 (클라우드 관심사 커버리지)
+  structure_constraints — build_resource_spec                (제약 → RESOURCE_SPEC 계약)
   model_use_cases      — identify_actors → identify_use_cases → review_model → check_coverage
   write_specifications — generate_specs → check_specs
   draw_diagram         — identify_relationships → check_relationships → render_diagram
@@ -49,6 +50,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     render_diagram,
 )
 from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
+from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 
 
 def build_stage(group: str):

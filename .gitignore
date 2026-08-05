@@ -48,6 +48,8 @@ materials/PURE/
 /app/deployment/output/
 /app/deployment/.cache/
 /app/deployment/.claude/
+# graphkb build 산출물. 저장소 루트에도 떨어진다(`graphkb build --source cfn|azure|gcp`).
+/output/
 /app/deployment/token_budget.json
 /app/deployment/tool_count.json
 
@@ -58,3 +60,7 @@ materials/PURE/
 /test.py
 /main.py
 /report/
+
+# 코드를 읽으며 정리한 개인 학습 노트. 코드가 바뀌면 같이 낡으므로 저장소의 진실로
+# 삼지 않는다 — 공유할 설명은 각 모듈의 docstring에 둔다.
+/note/

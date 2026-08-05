@@ -134,3 +134,26 @@ def test_batch_pipeline_wiring_is_closed():
 
 def test_editable_stages_are_a_subset_of_the_cascade_order():
     assert set(stages.editable_keys()) <= set(stages.cascade_order())
+
+
+@pytest.mark.parametrize("gated", [False, True])
+def test_every_registered_group_is_actually_wired_into_the_parent_graph(gated):
+    """**목록에 넣었는데 부모 그래프에 안 이은 그룹**을 잡는다.
+
+    이 방향의 실수만 조용하다. 그룹을 지우면 `subs["..."]`가 KeyError로 크게 죽지만,
+    더하면 `add_node`만 하고 `add_edge`를 빠뜨려도 컴파일이 통과하고 그 단계는 영영
+    안 돈다. 그런데 배치 러너는 `batch_order()`로 파생되므로 **그 단계를 돈다** —
+    서빙 경로와 평가 세트가 재는 경로가 조용히 갈린다. `stages.py`가 없애려고 만들어진
+    바로 그 사고다.
+    """
+    from app.requirements.agent import graph as g
+
+    compiled = g._build_gated_graph(None) if gated else g._build_plain_graph(None)
+    nodes = set(compiled.get_graph().nodes)
+    missing = [group for group in stages.GROUPS if group not in nodes]
+    assert not missing, f"부모 그래프에 안 이어진 그룹: {missing}"
+
+    # 노드로 있기만 하면 안 된다 — 들어오는 엣지가 있어야 실제로 돈다.
+    reachable = {e.target for e in compiled.get_graph().edges}
+    orphans = [group for group in stages.GROUPS if group not in reachable]
+    assert not orphans, f"들어오는 엣지가 없어 영영 안 도는 그룹: {orphans}"

@@ -713,15 +713,6 @@ def judged_by(stage: str, judge: str) -> tuple[Rule, ...]:
     return tuple(r for r in rules_for(stage, DEFECT) if r.judged_by == judge)
 
 
-def validator_prompt_block(stage: str) -> str:
-    """의미 검증자가 판정할 규칙 목록.
-
-    근거의 성격까지 함께 넣는다. 모델이 "책이 정한 것"과 "우리 규약"을 구별하지 못하면
-    유보가 필요한 지적을 단언으로 낸다.
-    """
-    return "\n".join(r.prompt_line() for r in judged_by(stage, JUDGED_VALIDATOR))
-
-
 def generation_prompt_block(stage: str) -> str:
     """**생성** 프롬프트가 지켜야 할 규칙 목록.
 

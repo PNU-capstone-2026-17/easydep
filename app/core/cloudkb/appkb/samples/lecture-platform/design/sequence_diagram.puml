@@ -1,0 +1,222 @@
+@startuml
+' Actors
+actor Student
+actor Instructor
+actor Administrator
+actor PaymentProvider
+
+' Boundaries (UI)
+boundary StudentRegistrationForm
+boundary StudentLoginForm
+boundary LectureSearchForm
+boundary SearchResultsScreen
+boundary LectureDetailScreen
+boundary LecturePurchaseForm
+boundary EnrollmentConfirmationScreen
+boundary LecturePlaybackScreen
+boundary LectureUploadForm
+boundary StatisticsRequestForm
+boundary StatisticsResultScreen
+boundary LectureRemovalForm
+boundary PaymentGatewayInterface
+
+' Controls
+control RegistrationController
+control AuthenticationController
+control LectureSearchController
+control LectureDetailController
+control PaymentProcessorController
+control EnrollmentController
+control PlaybackController
+control VideoStorageController
+control VideoConversionController
+control StatisticsController
+control LectureRemovalController
+
+' Entities
+entity Student
+entity Lecture
+entity Enrollment
+entity Video
+entity PlaybackPosition
+entity PaymentTransaction
+
+' ==============================
+' UC1: Register Student Account
+' ==============================
+group UC1 Register Student Account
+    Student -> StudentRegistrationForm : submitRegistration()
+    StudentRegistrationForm -> RegistrationController : validateRegistrationData()
+    alt Valid data
+        RegistrationController -> Student : createStudentAccount()
+        RegistrationController -> Student : storePersonalData()
+        RegistrationController -> StudentRegistrationForm : confirmRegistration()
+    else Invalid email or weak password
+        RegistrationController -> StudentRegistrationForm : informInvalidData()
+    else Email already exists
+        RegistrationController -> StudentRegistrationForm : informEmailExists()
+    else Internal error creating account
+        RegistrationController -> StudentRegistrationForm : informTempError()
+    else Storage failure
+        RegistrationController -> StudentRegistrationForm : informStorageError()
+    end
+end
+
+' ==============================
+' UC2: Login Student
+' ==============================
+group UC2 Login Student
+    Student -> StudentLoginForm : submitLogin()
+    StudentLoginForm -> AuthenticationController : validateCredentials()
+    alt Credentials valid
+        AuthenticationController -> Student : establishSession()
+        AuthenticationController -> StudentLoginForm : confirmAuthentication()
+    else Credentials invalid
+        AuthenticationController -> StudentLoginForm : informAuthFailed()
+    else System error
+        AuthenticationController -> StudentLoginForm : informTempError()
+    end
+end
+
+' ==============================
+' UC3: Search Lectures
+' ==============================
+group UC3 Search Lectures
+    Student -> LectureSearchForm : submitSearchCriteria()
+    LectureSearchForm -> LectureSearchController : retrieveMatchingLectures()
+    alt Criteria valid
+        LectureSearchController -> Lecture : queryMatchingLectures()
+        LectureSearchController -> SearchResultsScreen : displayResults()
+    else Criteria empty/malformed
+        LectureSearchController -> LectureSearchForm : informInvalidCriteria()
+    else Listing service unavailable
+        LectureSearchController -> LectureSearchForm : informServiceUnavailable()
+    else Response delay > 2s
+        LectureSearchController -> LectureSearchForm : informDelay()
+    end
+end
+
+' ==============================
+' UC4: View Lecture Details
+' ==============================
+group UC4 View Lecture Details
+    Student -> LectureDetailScreen : selectLecture()
+    LectureDetailScreen -> LectureDetailController : fetchLectureDetails()
+    alt Lecture exists
+        LectureDetailController -> Lecture : getDetails()
+        LectureDetailController -> LectureDetailScreen : showLectureDetails()
+    else Lecture not found
+        LectureDetailController -> LectureDetailScreen : informNotFound()
+    else Retrieval error
+        LectureDetailController -> LectureDetailScreen : informTempError()
+    end
+end
+
+' ==============================
+' UC5: Purchase and Enroll in Lecture
+' ==============================
+group UC5 Purchase & Enroll
+    Student -> LecturePurchaseForm : submitPurchase()
+    LecturePurchaseForm -> PaymentProcessorController : forwardPaymentInfo()
+    PaymentProcessorController -> PaymentGatewayInterface : sendPaymentInfo()
+    PaymentProvider -> PaymentGatewayInterface : processPayment()
+    PaymentGatewayInterface -> PaymentProcessorController : receivePaymentConfirmation()
+    alt Payment successful
+        PaymentProcessorController -> PaymentTransaction : createRecord()
+        PaymentProcessorController -> EnrollmentController : enrollStudent()
+        EnrollmentController -> Enrollment : createEnrollment()
+        EnrollmentController -> EnrollmentConfirmationScreen : displayConfirmation()
+    else Payment declined
+        PaymentProcessorController -> LecturePurchaseForm : informDeclined()
+    else Payment provider unavailable
+        PaymentProcessorController -> LecturePurchaseForm : informProviderUnavailable()
+    else Lecture capacity full
+        PaymentProcessorController -> LecturePurchaseForm : informCapacityFull()
+        ' Note: refund step omitted per issue comment
+    end
+end
+
+' ==============================
+' UC6: Watch Lecture (Playback)
+' ==============================
+group UC6 Watch Lecture
+    Student -> LecturePlaybackScreen : startPlayback()
+    LecturePlaybackScreen -> PlaybackController : streamVideo()
+    PlaybackController -> Video : stream()
+    Student -> LecturePlaybackScreen : stopPlayback()
+    LecturePlaybackScreen -> PlaybackController : storePlaybackPosition()
+    alt Stored position exists
+        PlaybackController -> PlaybackPosition : updatePosition()
+    else Error storing position
+        PlaybackController -> LecturePlaybackScreen : informStoreError()
+    end
+end
+
+' ==============================
+' UC7: Upload Lecture Video
+' ==============================
+group UC7 Upload Lecture Video
+    Instructor -> LectureUploadForm : uploadVideoFile()
+    LectureUploadForm -> VideoStorageController : storeRawVideo()
+    VideoStorageController -> Video : createRawVideo()
+    VideoStorageController -> VideoConversionController : triggerConversion()
+    VideoConversionController -> Video : convertVideoFormat()
+    VideoConversionController -> Lecture : linkVideoToLecture()
+    alt Conversion fails
+        VideoConversionController -> LectureUploadForm : informConversionFailed()
+    end
+end
+
+' ==============================
+' UC8: View Enrollment Statistics
+' ==============================
+group UC8 View Enrollment Statistics
+    Instructor -> StatisticsRequestForm : requestEnrollmentStats()
+    StatisticsRequestForm -> StatisticsController : retrieveInstructorLectures()
+    StatisticsController -> Enrollment : countEnrollments()
+    StatisticsController -> StatisticsResultScreen : displayStatistics()
+    alt No lectures
+        StatisticsController -> StatisticsRequestForm : informNoLectures()
+    else Retrieval error
+        StatisticsController -> StatisticsRequestForm : informRetrievalError()
+    else Presentation error
+        StatisticsController -> StatisticsRequestForm : informPresentationError()
+    end
+end
+
+' ==============================
+' UC9: View Revenue Statistics
+' ==============================
+group UC9 View Revenue Statistics
+    Instructor -> StatisticsRequestForm : requestRevenueStats()
+    StatisticsRequestForm -> StatisticsController : calculateRevenueAmounts()
+    StatisticsController -> Lecture : aggregateRevenue()
+    StatisticsController -> StatisticsResultScreen : displayStatistics()
+    alt Retrieval error
+        StatisticsController -> StatisticsRequestForm : informRetrievalError()
+    else Empty revenue list
+        StatisticsController -> StatisticsRequestForm : informNoRevenue()
+    else Authentication becomes invalid
+        StatisticsController -> StatisticsRequestForm : terminateInteraction()
+    end
+end
+
+' ==============================
+' UC10: Remove Inappropriate Lecture
+' ==============================
+group UC10 Remove Inappropriate Lecture
+    Administrator -> LectureRemovalForm : submitRemovalRequest()
+    LectureRemovalForm -> LectureRemovalController : removeLectureFromPublicView()
+    alt Lecture exists & public
+        LectureRemovalController -> Lecture : setVisibility(false)
+        LectureRemovalController -> LectureRemovalForm : confirmRemoval()
+    else Lecture not found or not public
+        LectureRemovalController -> LectureRemovalForm : informNotFound()
+    else Internal error
+        LectureRemovalController -> LectureRemovalForm : informError()
+    else Administrator aborts
+        LectureRemovalController -> LectureRemovalForm : cancelRemoval()
+    end
+end
+
+@enduml

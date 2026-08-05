@@ -238,6 +238,9 @@ def link_cloud_concerns(state: AgentState) -> dict:
             "question": concern.question,
             "citation": concern.citation,
             "consumer": concern.consumer,
+            # 빈 문자열이면 "경계가 아니다"이지 "이유를 안 적었다"가 아니다 —
+            # 경계인 관심사만 사유를 갖는다(`knowledge/concerns.py`).
+            "out_of_scope": concern.out_of_scope,
             "evidence": concern.evidence,
             "status": status,
             "covered_by": covered_by,
@@ -246,21 +249,31 @@ def link_cloud_concerns(state: AgentState) -> dict:
             ),
         })
 
-    # 미충족을 **기계 소비자 유무로 가른다.**
+    # 미충족을 **세 갈래로 가른다.**
     #
-    #   `handoff` — 답이 흘러 들어갈 칸이 오늘 실재한다(`RESOURCE_SPEC`의 칸). 뒤 단계가
-    #               자동으로 받는다.
-    #   `noted`   — 근거는 있고 사람은 읽지만 받아 줄 기계가 없다.
+    #   `handoff`      답이 흘러 들어갈 칸이 오늘 실재한다(`RESOURCE_SPEC`의 칸).
+    #                  뒤 단계가 자동으로 받는다.
+    #   `noted`        받아 줄 기계가 **아직** 없다. 근거는 있고 사람은 읽는다. (예정)
+    #   `out_of_scope` 배포 계획이 **소비할 수 없다** — 설계·구현·운영의 것이다. (경계)
     #
-    # 둘을 합치면 "자동으로 이어지는 것"과 "리포트에만 있는 것"이 같아 보인다. 그 상태로
+    # 셋을 합치면 "자동으로 이어지는 것"과 "리포트에만 있는 것"이 같아 보이고, 그 상태로
     # 인계 목록을 내면 도구가 실제보다 많은 것을 약속하는 셈이 된다.
-    # 소비자 없는 관심사를 **선정에서** 빼지 않는 이유는 따로다 — 빼면 "근거가 없어서
-    # 뺐다"와 "우리 코드가 안 읽어서 뺐다"가 구별되지 않는다(`knowledge/concerns.py`).
+    #
+    # **뒤 둘을 가르는 것이 2026-07-28에 추가됐다.** 그전에는 `consumer=None` 하나가
+    # "이을 건데 아직"과 "안 이을 것"을 겸해서, 리포트를 읽는 사람이 **"안 한 것"과
+    # "안 하기로 한 것"을 구별할 수 없었다.** 소비자 없는 관심사를 **선정에서** 빼지 않는
+    # 이유는 또 따로다 — 빼면 "근거가 없어서 뺐다"와 "우리 코드가 안 읽어서 뺐다"가
+    # 구별되지 않는다(`knowledge/concerns.py`).
     unaddressed = [
         i["concern_id"] for i in items if i["status"] == UNADDRESSED and i["consumer"]
     ]
     noted = [
-        i["concern_id"] for i in items if i["status"] == UNADDRESSED and not i["consumer"]
+        i["concern_id"] for i in items
+        if i["status"] == UNADDRESSED and not i["consumer"] and not i["out_of_scope"]
+    ]
+    out_of_scope = [
+        i["concern_id"] for i in items
+        if i["status"] == UNADDRESSED and i["out_of_scope"]
     ]
     unjudged = [i["concern_id"] for i in items if i["status"] == UNJUDGED]
     if unjudged:
@@ -280,9 +293,14 @@ def link_cloud_concerns(state: AgentState) -> dict:
             "items": items,
             # 인계 항목. **결함 목록이 아니다** — 설계가 정해야 할 것들이다.
             "handoff": unaddressed,
-            # 근거는 있으나 이 시스템이 아직 안 읽는 관심사의 미충족. 인계와 섞지 않는다 —
-            # 섞으면 "우리가 소화할 수 있는 것"과 "문헌이 말하는 것"의 차이가 사라진다.
+            # 근거는 있으나 이 시스템이 **아직** 안 읽는 관심사의 미충족. 인계와 섞지
+            # 않는다 — 섞으면 "우리가 소화할 수 있는 것"과 "문헌이 말하는 것"의 차이가
+            # 사라진다.
             "noted": noted,
+            # 배포 계획이 **소비할 수 없는** 관심사의 미충족. `noted`와 섞지 않는다 —
+            # 섞으면 "아직 안 이은 것"과 "안 잇기로 한 것"이 같아 보이고, 그러면 이
+            # 목록이 영원히 줄지 않는 숙제처럼 읽힌다. 사유는 각 item의 `out_of_scope`.
+            "out_of_scope": out_of_scope,
             "unjudged": unjudged,
             "coverage_ratio": (
                 round(sum(1 for i in items if i["status"] == COVERED) / len(items), 4)

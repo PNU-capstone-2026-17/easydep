@@ -1,4 +1,4 @@
-"""agent-sdk 패키지의 절대 임포트를 새 배치(app/deployment/)로 옮긴다.
+"""agent-sdk 패키지의 절대 임포트를 새 배치(app/core/cloudkb/)로 옮긴다.
 
 병합 계획 3단계 도구 — `docs/agent-sdk-merge-plan.md` 참고.
 
@@ -8,7 +8,7 @@
     notes.append(Note(text, ORIGIN_KB, "costkb"))     # 답변에 실리는 출처 표시
     parser = argparse.ArgumentParser(prog="costkb")   # CLI 이름
 
-정규식으로 쓸면 이것들까지 `app.deployment.costkb`가 되어 출처 표시가 깨지고
+정규식으로 쓸면 이것들까지 `app.core.cloudkb.costkb`가 되어 출처 표시가 깨지고
 test_evidence_labels·test_claim_check 계열이 무너진다. 그래서 `ast.Import` /
 `ast.ImportFrom` 노드가 **가리키는 모듈 경로만** 고친다.
 
@@ -17,7 +17,7 @@ test_evidence_labels·test_claim_check 계열이 무너진다. 그래서 `ast.Im
 
 사용:
     python scripts/rewrite_kb_imports.py <경로>              # 미리보기(기본)
-    python scripts/rewrite_kb_imports.py <경로> --prefix app.deployment
+    python scripts/rewrite_kb_imports.py <경로> --prefix app.core.cloudkb
     python scripts/rewrite_kb_imports.py <경로> --apply      # 실제 수정
 """
 
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", type=Path, help="agent-sdk 패키지들이 있는 디렉터리")
-    parser.add_argument("--prefix", default="app.deployment", help="새 임포트 접두 (기본: app.deployment)")
+    parser.add_argument("--prefix", default="app.core.cloudkb", help="새 임포트 접두 (기본: app.core.cloudkb)")
     parser.add_argument("--apply", action="store_true", help="실제로 파일을 고친다")
     args = parser.parse_args(argv)
 

@@ -122,21 +122,35 @@ def _sentence(element: ET.Element) -> str:
     return _PREFIX.sub("", _WS.sub(" ", text)).strip()
 
 
-def extract(name: str, limit: int | None = None, min_words: int = 5) -> dict:
-    """문서 하나에서 파이프라인 입력을 만든다(FR/NFR은 BERT가 붙인다).
+#: 산문에서 캘 때의 문장 길이 상한. `min_words`와 짝이고, 둘이 이 코퍼스의 **정의**다.
+MAX_WORDS = 60
+
+
+def sentences_of(root, min_words: int = 5) -> tuple[list[str], str]:
+    """문서 하나의 요구사항 문장들과 그 출처 종류. **코퍼스의 정의는 여기 한 곳이다.**
 
     `min_words`보다 짧은 조각은 버린다 — 표 제목·번호만 있는 `req`가 섞여 있고, 그것들은
-    요구사항이 아니라 문서 구조다.
+    요구사항이 아니라 문서 구조다. `<req>`가 있으면 문서가 스스로 표시한 요구사항이니
+    먼저 쓰고, 없으면 산문에서 캔다.
+
+    함수로 빼 둔 이유: 같은 선택 규칙을 `extract`(파이프라인 입력)와
+    `concern_corpus`(분화 측정)가 함께 쓴다. 사본을 두면 한쪽만 고쳐질 때 **두 측정이
+    다른 문장 집합을 보게 되고**, 그 사실이 표에는 안 남는다.
     """
-    path = DOCUMENTS / f"{name}.xml"
-    root = ET.parse(path).getroot()
     tagged = [
         s for s in (_sentence(e) for e in root.iter() if e.tag == f"{_NS}req")
         if len(s.split()) >= min_words
     ]
-    # `<req>`가 있으면 그것이 문서가 스스로 표시한 요구사항이니 먼저 쓴다. 없으면 산문에서 캔다.
-    source_kind = "req-elements" if tagged else "prose-modal"
-    sentences = tagged or _prose_sentences(root, min_words, max_words=60)
+    if tagged:
+        return tagged, "req-elements"
+    return _prose_sentences(root, min_words, max_words=MAX_WORDS), "prose-modal"
+
+
+def extract(name: str, limit: int | None = None, min_words: int = 5) -> dict:
+    """문서 하나에서 파이프라인 입력을 만든다(FR/NFR은 BERT가 붙인다)."""
+    path = DOCUMENTS / f"{name}.xml"
+    root = ET.parse(path).getroot()
+    sentences, source_kind = sentences_of(root, min_words)
     if limit:
         sentences = even_sample(sentences, limit)
 

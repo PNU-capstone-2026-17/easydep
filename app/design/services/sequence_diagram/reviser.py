@@ -1,61 +1,58 @@
-"""사용자 피드백을 시퀀스 다이어그램 요소 모델(진실의 원천)에 적용한다.
+"""사용자 피드백을 시퀀스 상호작용 모델(진실의 원천)에 적용한다.
 
-LLM은 PlantUML 텍스트를 만지지 않고 구조화된 시퀀스 요소(JSON)만 편집한다.
-다이어그램은 그 뒤 결정론적 변환(generate_plantuml_from_sequence_json)으로 재렌더되므로,
-요소 모델과 PlantUML이 어긋나지 않으며 문법 오류도 방지된다.
+클래스 다이어그램의 리바이저와 같다: LLM은 PlantUML 텍스트를 만지지 않고 구조화된
+모델만 편집하고, 다이어그램은 그 뒤 결정론적 변환으로 재렌더된다. 그래서 모델과
+PlantUML이 절대 어긋나지 않고 문법 오류도 구성에 의해 방지된다.
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from app.design.services.sequence_diagram.extractor import run_sequence_parse
-
+from app.design.services.common.structured import parse_structured, revision_messages
+from app.design.services.sequence_diagram.extractor import SequenceModel
 
 SEQUENCE_REVISION_SYSTEM_PROMPT = """
-You edit an existing UML Sequence Diagram elements model expressed in JSON format.
-You are given:
-1. The [Use Case Specification]
-2. The [Class Diagram Information]
-3. The [Current Sequence Diagram Elements] (JSON)
-4. The [User Feedback]
+You edit an existing UML sequence interaction model. You are given the current
+model (as JSON), the use-case specification and class diagram it was derived from,
+and the user's natural-language feedback.
 
-Apply the feedback to the model and return the FULL revised model following the same schema.
-
-Rules:
-- Change only what the feedback asks for; keep everything else intact.
-- Keep the sequence diagram grounded in the Use Case Specification and Class Diagram.
-- Receiver Ownership: Called methods on messages MUST exist within the Receiver's class definition in the Class Diagram.
-- Return messages (`return_message`) use dashed return arrows with return values, not method calls.
-- Self-messages (`self_message`) are used for internal component calls.
-- Preserved combined fragments (`alt`, `opt`, `loop`).
-
-Return the revised model strictly according to the provided schema. Do not include markdown code fences or prose outside the schema fields.
+Apply the feedback to the model and return the FULL revised model, following the
+same schema. Rules:
+- Change only what the feedback asks for; leave everything else intact.
+- Keep the model grounded in the specification and class diagram — do not invent
+  participants or messages that the feedback and inputs do not support.
+- Every message's source and target must exist among the returned Participants.
+- Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,
+  Control<->Entity; never Actor->Control, Boundary->Entity, or Entity-initiated calls).
+- Messages belonging to one fragment must carry the same `group` and `condition`.
+- Keep the traceability fields (source_class / use_case_ids) accurate. Carry them over unchanged for
+  elements you did not touch; update them for elements you changed; fill them
+  in for elements you added. Never invent a reference — an empty list is
+  honest, a made-up one is a lie the trace matrix will believe.
+Return the revised model strictly according to the provided schema. Do not include
+markdown, code fences, or any prose outside the schema fields.
 """
 
 
-def revise_sequence_elements(
-    current_elements: dict[str, Any],
+def revise_sequence_model(
+    current_model: dict[str, Any],
     feedback: str,
-    scenario_text: str = "",
-    class_diagram_puml: str = "",
+    context_text: str = "",
+    targets: set[str] | None = None,
 ) -> dict[str, Any]:
-    """현재 시퀀스 요소 + 피드백 → 수정된 시퀀스 요소(구조화). 피드백이 없으면 원본 반환."""
-    if not current_elements or not feedback:
-        return current_elements or {}
+    """현재 모델 + 피드백 → 수정된 모델. 피드백이 없으면 원본을 그대로 둔다."""
+    if not current_model or not feedback:
+        return current_model or {}
 
-    user_content = (
-        "[Use Case Specification]\n"
-        f"{scenario_text}\n\n"
-        "[Class Diagram Information]\n"
-        f"{class_diagram_puml}\n\n"
-        "[Current Sequence Diagram Elements]\n"
-        f"{json.dumps(current_elements, ensure_ascii=False, indent=2)}\n\n"
-        "[User Feedback]\n"
-        f"{feedback}"
+    return parse_structured(
+        revision_messages(
+            SEQUENCE_REVISION_SYSTEM_PROMPT,
+            "Use Case Specification and Class Diagram",
+            context_text,
+            "Current Sequence Interaction Model",
+            current_model,
+            feedback,
+            targets,
+        ),
+        SequenceModel,
     )
-    messages = [
-        {"role": "system", "content": SEQUENCE_REVISION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-    return run_sequence_parse(messages)

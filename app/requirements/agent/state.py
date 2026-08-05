@@ -85,8 +85,6 @@ class AgentState(TypedDict):
     # Phase 2(RTM): clarify가 분리한 (constraint 문장 → qualify하는 functional 문장) 링크.
     # classify가 이 문장쌍을 id로 해소해 RequirementItem.qualifies를 채운다.
     constraint_links: NotRequired[list[dict]]
-    pending_questions: list[str]
-    is_concrete: bool
     classified: list[RequirementItem]
     phase: str
     # 클라우드 네이티브 관심사 커버리지(`steps/step_cloud.py`).
@@ -94,6 +92,20 @@ class AgentState(TypedDict):
     # 명세는 기술중립으로 남아야 하고(`spec.black-box-no-internal-components`), 클라우드
     # 리소스를 시나리오 스텝에 넣으면 에이전트가 자기 규칙을 위반한다.
     cloud_concerns: NotRequired[dict]
+    # 사용자가 쓴 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항 문장과
+    # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
+    # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).
+    resource_constraints_text: NotRequired[str]
+    # 되묻기의 답: 계약 칸 이름 → 사용자가 쓴 문자열. **값이 아니라 답이다** — 제약
+    # 구조화 에이전트가 산문과 같은 규율로 해석한다("서울"은 여전히 카탈로그를 거쳐
+    # 코드로 풀려야 하고, 후보가 여럿이면 여전히 모호하다).
+    resource_answers: NotRequired[dict[str, str]]
+    # 제약 구조화의 작업 기록: 초안·질문·근거·버린 후보(`steps/step_resource.py`).
+    # 계약을 만족하지 못해도 **여기는 늘 존재한다** — 왜 못 채웠는지가 사라지면 안 된다.
+    resource_intake: NotRequired[dict]
+    # `RESOURCE_SPEC` 계약 산출물. **계약을 만족할 때만 존재한다.** 반쯤 채운 사양을
+    # 내보내면 뒤 단계(배포 구성)가 그것을 사양으로 알고 조인을 돌린다.
+    resource_spec: NotRequired[dict]
     # 2단계 — 액터/유스케이스 도출 + FR 커버리지 점검
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]

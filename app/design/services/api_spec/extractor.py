@@ -1,154 +1,146 @@
+"""유스케이스·클래스·시퀀스 다이어그램에서 API 엔드포인트 모델을 도출한다.
+
+**왜 OpenAPI를 바로 만들지 않나.** OpenAPI 3.1은 중첩이 깊고 규칙이 많아서, LLM에게
+그것을 직접 쓰게 하면 필드 누락·스키마 참조 오류가 나고 그때마다 수리 루프가 필요했다.
+여기서는 훨씬 단순한 평평한 모델(엔드포인트 목록 + 스키마 목록)만 받고, OpenAPI 문서
+조립은 openapi.build_openapi_from_model이 결정론적으로 한다. 그래서 openapi/paths 같은
+필수 필드가 빠질 수 없고, $ref도 항상 실제 스키마를 가리킨다.
+"""
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
+
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
-from openai import OpenAI
+
+from app.design.services.common.structured import parse_structured
 
 
-class APIProperty(BaseModel):
-    name: str = Field(..., description="Property name in camelCase")
-    type: str = Field(
-        default="string",
-        description="string | integer | number | boolean | array | object",
-    )
-    format: str = Field(default="", description="float, double, date-time, etc.")
-    description: str = Field(default="")
-    required: bool = Field(default=False)
-    items_ref: str = Field(
-        default="",
-        description="If type is array, the reference schema name for array items",
-    )
-    example: str = Field(default="", description="Example value")
-
-
-class APISchema(BaseModel):
-    name: str = Field(..., description="Schema / DTO name (e.g. PurchaseRequest, PurchaseRecord)")
-    description: str = Field(default="")
-    type: str = Field(default="object")
-    properties: list[APIProperty] = Field(default_factory=list)
-
-
-class APIParameter(BaseModel):
-    name: str = Field(..., description="Parameter name")
-    in_location: str = Field(
-        default="path",
-        description="path | query | header",
-    )
+class ApiField(BaseModel):
+    name: str
+    #: string | integer | number | boolean | array | object, 또는 Schemas의 이름.
     type: str = Field(default="string")
     required: bool = Field(default=True)
     description: str = Field(default="")
 
 
-class APIResponse(BaseModel):
-    status_code: str = Field(
-        ...,
-        description="HTTP status code string, e.g., '200', '201', '202', '400', '404', '502'",
-    )
-    description: str = Field(...)
-    schema_ref: str = Field(
-        default="",
-        description="Schema name for response body (e.g. PurchaseRecord, ErrorResponse)",
-    )
-
-
-class APIEndpoint(BaseModel):
-    path: str = Field(..., description="API Path (e.g., /purchases, /portfolio)")
-    method: str = Field(..., description="HTTP Method: get | post | put | delete | patch")
-    summary: str = Field(default="")
+class ApiResponse(BaseModel):
+    status: int = Field(default=200)
     description: str = Field(default="")
-    tag: str = Field(default="Default", description="Logical tag for grouping endpoints")
-    parameters: list[APIParameter] = Field(default_factory=list)
-    request_body_schema_ref: str = Field(
-        default="", description="Schema name for request body payload"
-    )
-    request_body_required: bool = Field(default=False)
-    responses: list[APIResponse] = Field(default_factory=list)
+    #: 본문 스키마 이름(Schemas 중 하나). 본문이 없으면 빈 문자열.
+    schema_name: str = Field(default="")
+    #: 배열로 돌려주는지. schema_name이 있을 때만 의미가 있다.
+    is_array: bool = Field(default=False)
 
 
-class APISpecElements(BaseModel):
-    title: str = Field(default="System API", description="API Specification Title")
-    description: str = Field(default="", description="API Specification Overview")
-    version: str = Field(default="1.0.0", description="API Version")
-    endpoints: list[APIEndpoint] = Field(default_factory=list)
-    schemas: list[APISchema] = Field(default_factory=list)
+class ApiEndpoint(BaseModel):
+    #: "/orders/{orderId}" 처럼 중괄호로 경로 변수를 표기한다.
+    path: str = Field(default="/")
+    method: str = Field(default="get")
+    summary: str = Field(default="")
+    operation_id: str = Field(default="")
+    path_params: list[ApiField] = Field(default_factory=list)
+    query_params: list[ApiField] = Field(default_factory=list)
+    #: 요청 본문 스키마 이름(Schemas 중 하나). 본문이 없으면 빈 문자열.
+    request_schema: str = Field(default="")
+    responses: list[ApiResponse] = Field(default_factory=list)
+    #: 이 엔드포인트를 낳은 Boundary/Control 클래스 이름.
+    source_classes: list[str] = Field(default_factory=list)
+    #: 이 엔드포인트가 실현하는 유스케이스 id.
+    use_case_ids: list[str] = Field(default_factory=list)
 
 
-API_ELEMENT_EXTRACTION_SYSTEM_PROMPT = """
-You are an expert Software Architect and Backend Developer specializing in RESTful API design and Model-Driven Architecture (MDA).
-Your task is to analyze the provided [Class Diagram] and [Sequence Diagram] to extract structured elements required to build a production-ready OpenAPI specification.
+class ApiSchema(BaseModel):
+    name: str
+    description: str = Field(default="")
+    fields: list[ApiField] = Field(default_factory=list)
+    #: 이 스키마가 나온 Entity 클래스 이름. 요청 전용 스키마면 비울 수 있다.
+    source_class: str = Field(default="")
 
-## Execution Steps & Rules
 
-**Step 1: Identify Inbound Messages and Endpoints**
-- Analyze the Sequence Diagram to identify API requests. Specifically, identify messages sent from Boundary components (UI/Frontend) to Control components (Backend Controllers/Managers).
-- Filter out purely frontend UI rendering actions.
-- Map inbound messages to REST Endpoints (URIs) and HTTP Methods (GET, POST, PUT, DELETE, PATCH).
-- Group endpoints logically using tags based on Control classes.
+class ApiSpecModel(BaseModel):
+    title: str = Field(default="API")
+    version: str = Field(default="1.0.0")
+    Endpoints: list[ApiEndpoint] = Field(default_factory=list)
+    Schemas: list[ApiSchema] = Field(default_factory=list)
 
-**Step 2: Define Request and Response Schemas (DTOs)**
-- Analyze message parameters and cross-reference the Class Diagram to identify data types, property names (use camelCase), relationships (e.g. Portfolio holding Holdings), and payload DTOs.
-- Create schemas for Request bodies, Response bodies, and Error responses (e.g., ErrorResponse).
 
-**Step 3: Determine State Transitions and Exception Scenarios (Status Codes)**
-- Trace control flows and `alt`/`opt` conditional branches in the Sequence Diagram (e.g., validation failures, missing data, external gateway errors).
-- Map these branches to appropriate HTTP status codes:
-  - 200 OK / 201 Created: Successful execution / creation.
-  - 202 Accepted: Asynchronous or delayed processing (e.g. delayed purchase).
-  - 400 Bad Request: Missing info, invalid input, or unsupported site.
-  - 404 Not Found: Resource not found.
-  - 502 Bad Gateway: Connection or remote gateway failure.
+API_SPEC_EXTRACTION_SYSTEM_PROMPT = """
+You are an API designer deriving a REST API model from a use-case specification,
+the analysis-level class diagram, and the sequence diagram derived from them.
 
-**Step 4: Output Structured Elements**
-- Return the extracted endpoints and component schemas strictly according to the provided JSON schema. Do not include markdown code blocks or prose outside the schema fields.
+## Input
+A use-case specification, a class diagram in PlantUML using Boundary-Control-Entity
+stereotypes, and a sequence diagram in PlantUML. Do not invent endpoints or fields
+the inputs do not support.
+
+## Endpoints
+- Derive endpoints from the Boundary classes and from the messages that cross from
+  an actor into the system in the sequence diagram. One endpoint per distinct
+  operation the system exposes — not one per class and not one per scenario step.
+- `path` uses plural resource nouns and braces for variables: /orders/{orderId}.
+- `method` follows REST semantics: get (read), post (create), put (full replace),
+  patch (partial update), delete (remove). Choose from the operation's intent, not
+  from the method name in the class diagram.
+- `operation_id` is a unique camelCase verbNoun, e.g. createOrder, listOrders.
+- `path_params` must contain exactly the variables that appear in braces in `path`,
+  with the same names. `query_params` are filters and pagination only.
+- `request_schema` is set only for methods that carry a body (post, put, patch),
+  and must name one of the Schemas you return.
+- `responses` must include the success case and every failure the specification's
+  Extensions describe (e.g. 400 validation, 404 not found, 409 conflict).
+  Set `schema_name` only when the response carries a body; set `is_array` for
+  collection responses.
+
+## Schemas
+- Derive schemas from the Entity classes in the class diagram — their fields are the
+  schema's fields. Add request-shaped schemas (e.g. OrderCreateRequest) where the
+  request body is a subset of an entity.
+- `type` is one of string, integer, number, boolean, array, object — or the name of
+  another schema you return, for nested objects.
+- `name` is PascalCase and unique.
+
+## Traceability
+- `source_classes` on each endpoint: the Boundary/Control classes it came from,
+  copied exactly from the class diagram.
+- `use_case_ids` on each endpoint: the use case(s) it realizes, copied exactly
+  from the specification.
+- `source_class` on each schema: the Entity class it mirrors. Leave it empty for
+  request-shaped schemas that do not correspond to one entity.
+- **Never invent a name or an id.** An empty list is honest; a made-up
+  reference is a lie the trace matrix will believe.
+
+## Self-check before finalizing
+(a) every `request_schema` and every response `schema_name` names a schema you returned,
+(b) every brace variable in every `path` has a matching entry in `path_params`,
+(c) `operation_id` values are unique,
+(d) every use-case step where the actor asks the system to do something is reachable
+    through at least one endpoint,
+(e) every `source_classes` / `source_class` entry names a class in the given class
+    diagram, and every `use_case_ids` entry appears in the given specification.
+
+Populate the response strictly according to the provided schema. Do not include
+markdown, code fences, or any prose outside the schema fields.
 """
 
 
-def run_api_elements_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
-    """LLM에서 APISpecElements 구조체 파싱."""
-    load_dotenv()
-
-    api_key = os.getenv("API_KEY") or os.getenv("GEMINI_API_KEY")
-    base_url = os.getenv("BASE_URL")
-    if not base_url and os.getenv("GEMINI_API_KEY"):
-        base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
-    model_name = os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b")
-
-    client = OpenAI(
-        base_url=base_url,
-        api_key=api_key,
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
-    )
-
-    response = client.chat.completions.parse(
-        model=model_name,
-        messages=messages,
-        temperature=0,
-        response_format=APISpecElements,
-    )
-    return response.choices[0].message.parsed.model_dump()
-
-
-def extract_api_elements_from_diagrams(
+def extract_api_spec_model(
+    scenario_text: str,
     class_diagram_puml: str,
     sequence_diagram_puml: str,
 ) -> dict[str, Any]:
-    if not class_diagram_puml and not sequence_diagram_puml:
+    """유스케이스 + 클래스 + 시퀀스 → 구조화된 API 엔드포인트 모델."""
+    if not scenario_text:
         return {}
 
-    user_prompt = f"""[Sequence Diagram Information]
-{sequence_diagram_puml}
-
-[Class Diagram Information]
-{class_diagram_puml}
-"""
-
     messages = [
-        {"role": "system", "content": API_ELEMENT_EXTRACTION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
+        {"role": "system", "content": API_SPEC_EXTRACTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"[Use Case Specification]\n{scenario_text}\n\n"
+                f"[Class Diagram PlantUML]\n{class_diagram_puml}\n\n"
+                f"[Sequence Diagram PlantUML]\n{sequence_diagram_puml}"
+            ),
+        },
     ]
-    return run_api_elements_parse(messages)
+    return parse_structured(messages, ApiSpecModel)

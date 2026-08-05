@@ -3,7 +3,7 @@
 `RESOURCE_SPEC.region`은 **코드**여야 한다(`ap-northeast-2`). 지명('서울')이 그대로
 들어가면 뒤 단계의 조인이 조용히 빈 답이 된다 — 스키마가 그 사실을 실측이라고 적어 뒀다.
 
-해석은 `app/deployment/envkb/regions.py`가 한다. 여기서 덧붙이는 것은 **모호함을 감추지
+해석은 `app/core/cloudkb/envkb/regions.py`가 한다. 여기서 덧붙이는 것은 **모호함을 감추지
 않는 반환 모양** 하나다.
 
 ## 왜 하나로 좁혀 주지 않는가
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.deployment.envkb import regions as _regions
+from app.core.cloudkb.envkb import regions as _regions
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,16 @@ def resolve(query: str, *, provider: str | None = None) -> tuple[RegionCandidate
         )
         for m in matches
     )
+
+
+def providers() -> tuple[str, ...]:
+    """리전 지식베이스가 **실제로 아는** 프로바이더 id들.
+
+    `RESOURCE_SPEC.provider`는 자유 문자열이라 스키마가 값을 제한하지 않는다. 그래서
+    생산자 쪽에 어휘가 필요한데, 손으로 적으면 그건 임의 사전이고 KB가 늘어날 때
+    조용히 뒤처진다. 조인이 실제로 도는 축을 그대로 쓴다.
+    """
+    return _regions.providers()
 
 
 def is_region_code(value: str, *, provider: str | None = None) -> bool:

@@ -1,0 +1,251 @@
+@startuml
+allowmixing
+!theme plain
+skinparam classAttributeIconSize 0
+
+class Student <<Actor>> {
+}
+note top of Student : Primary actor who registers, logs in, searches, purchases, and watches lectures.
+
+class Instructor <<Actor>> {
+}
+note top of Instructor : Primary actor who creates content and views statistics.
+
+class Administrator <<Actor>> {
+}
+note top of Administrator : Primary actor who governs lecture content.
+
+class PaymentProvider <<Actor>> {
+}
+note top of PaymentProvider : External third-party service that processes payments.
+
+class StudentRegistrationForm <<Boundary>> {
+  + submitRegistration()
+}
+note top of StudentRegistrationForm : UI screen where a Student enters email and password to register.
+
+class StudentLoginForm <<Boundary>> {
+  + submitLogin()
+}
+note top of StudentLoginForm : UI screen where a Student enters credentials to log in.
+
+class LectureSearchForm <<Boundary>> {
+  + submitSearchCriteria()
+}
+note top of LectureSearchForm : UI screen where a Student provides search criteria.
+
+class SearchResultsScreen <<Boundary>> {
+  + displayResults()
+}
+note top of SearchResultsScreen : UI screen that displays the list of lectures matching the search.
+
+class LectureDetailScreen <<Boundary>> {
+  + showLectureDetails()
+}
+note top of LectureDetailScreen : UI screen that shows description, price and metadata of a selected lecture.
+
+class LecturePurchaseForm <<Boundary>> {
+  + submitPurchase()
+}
+note top of LecturePurchaseForm : UI screen where a Student initiates purchase of a lecture.
+
+class EnrollmentConfirmationScreen <<Boundary>> {
+  + displayConfirmation()
+}
+note top of EnrollmentConfirmationScreen : UI screen that confirms successful enrollment to the Student.
+
+class LecturePlaybackScreen <<Boundary>> {
+  + startPlayback()
+  + stopPlayback()
+}
+note top of LecturePlaybackScreen : UI screen that streams a lecture video and allows stop/resume.
+
+class LectureUploadForm <<Boundary>> {
+  + uploadVideoFile()
+}
+note top of LectureUploadForm : UI screen where an Instructor uploads a video file for a lecture.
+
+class StatisticsRequestForm <<Boundary>> {
+  + requestStatistics()
+}
+note top of StatisticsRequestForm : UI screen where an Instructor requests enrollment or revenue statistics.
+
+class StatisticsResultScreen <<Boundary>> {
+  + displayStatistics()
+}
+note top of StatisticsResultScreen : UI screen that presents statistics results to the Instructor.
+
+class LectureRemovalForm <<Boundary>> {
+  + submitRemovalRequest()
+}
+note top of LectureRemovalForm : UI screen where an Administrator requests removal of a lecture.
+
+class PaymentGatewayInterface <<Boundary>> {
+  + sendPaymentInfo()
+  + receivePaymentConfirmation()
+}
+note top of PaymentGatewayInterface : Technical interface used to communicate with the external Payment Provider.
+
+class RegistrationController <<Control>> {
+  + validateRegistrationData()
+  + createStudentAccount()
+  + storePersonalData()
+  + confirmRegistration()
+}
+note top of RegistrationController : Coordinates validation, account creation and storage of personal data for registration.
+
+class AuthenticationController <<Control>> {
+  + validateCredentials()
+  + establishSession()
+  + confirmAuthentication()
+}
+note top of AuthenticationController : Validates credentials and establishes an authenticated session.
+
+class LectureSearchController <<Control>> {
+  + retrieveMatchingLectures()
+  + returnLectureList()
+}
+note top of LectureSearchController : Handles retrieval of lectures that match search criteria.
+
+class LectureDetailController <<Control>> {
+  + fetchLectureDetails()
+  + prepareDetailView()
+}
+note top of LectureDetailController : Retrieves and prepares lecture description, price and metadata.
+
+class PaymentProcessorController <<Control>> {
+  + forwardPaymentInfo()
+  + handlePaymentConfirmation()
+}
+note top of PaymentProcessorController : Orchestrates sending payment data to the provider and handling the response.
+
+class EnrollmentController <<Control>> {
+  + enrollStudent()
+  + confirmEnrollment()
+}
+note top of EnrollmentController : Creates an enrollment record for a student and a lecture.
+
+class PlaybackController <<Control>> {
+  + streamVideo()
+  + storePlaybackPosition()
+}
+note top of PlaybackController : Manages video streaming and storage of playback position.
+
+class VideoStorageController <<Control>> {
+  + storeRawVideo()
+}
+note top of VideoStorageController : Persists the raw uploaded video file.
+
+class VideoConversionController <<Control>> {
+  + convertVideoFormat()
+  + linkVideoToLecture()
+}
+note top of VideoConversionController : Converts stored video into the required playback format and links it to a lecture.
+
+class StatisticsController <<Control>> {
+  + retrieveInstructorLectures()
+  + calculateEnrollmentNumbers()
+  + calculateRevenueAmounts()
+  + prepareStatisticsReport()
+}
+note top of StatisticsController : Aggregates enrollment or revenue data for an instructor's lectures.
+
+class LectureRemovalController <<Control>> {
+  + removeLectureFromPublicView()
+  + recordRemovalAudit()
+}
+note top of LectureRemovalController : Removes a lecture from public view and records the action.
+
+class Student <<Entity>> {
+  - email
+  - passwordHash
+  - personalDataLocation
+}
+note top of Student : Persistent student account.
+
+class Lecture <<Entity>> {
+  - lectureId
+  - title
+  - description
+  - price
+  - metadata
+}
+note top of Lecture : Persistent lecture catalogue entry.
+
+class Enrollment <<Entity>> {
+  - enrollmentId
+  - studentId
+  - lectureId
+  - enrollmentDate
+  - status
+}
+note top of Enrollment : Record linking a Student to a Lecture.
+
+class Video <<Entity>> {
+  - videoId
+  - lectureId
+  - filePath
+  - format
+  - conversionStatus
+}
+note top of Video : Stored video file associated with a Lecture.
+
+class PlaybackPosition <<Entity>> {
+  - positionId
+  - studentId
+  - lectureId
+  - timestamp
+}
+note top of PlaybackPosition : Saved playback cursor for a Student-Lecture pair.
+
+class PaymentTransaction <<Entity>> {
+  - transactionId
+  - studentId
+  - lectureId
+  - amount
+  - status
+  - timestamp
+}
+note top of PaymentTransaction : Record of a payment attempt; no card details are stored.
+
+Student --> StudentRegistrationForm : Student interacts with registration UI.
+StudentRegistrationForm --> RegistrationController : Form forwards data to controller.
+RegistrationController --> Student : Creates persistent Student entity.
+Student --> StudentLoginForm : Student provides credentials.
+StudentLoginForm --> AuthenticationController : Login form delegates authentication.
+AuthenticationController --> Student : Validates against stored Student data.
+Student --> LectureSearchForm : Student enters search criteria.
+LectureSearchForm --> LectureSearchController : Form passes criteria to controller.
+LectureSearchController --> Lecture : Retrieves matching Lecture entities.
+LectureSearchController --> SearchResultsScreen : Delivers result list to UI.
+Student --> LectureDetailScreen : Selects a lecture to view details.
+LectureDetailScreen --> LectureDetailController : Screen requests detailed data.
+LectureDetailController --> Lecture : Fetches Lecture entity.
+Student --> LecturePurchaseForm : Initiates purchase of a lecture.
+LecturePurchaseForm --> PaymentProcessorController : Forwards payment data.
+PaymentProcessorController --> PaymentGatewayInterface : Communicates with external Payment Provider.
+PaymentProvider --> PaymentGatewayInterface : External actor interacts via gateway boundary.
+PaymentProcessorController --> PaymentTransaction : Creates transaction record.
+PaymentProcessorController --> EnrollmentController : On success, forwards to enrollment.
+EnrollmentController --> Enrollment : Creates persistent enrollment.
+EnrollmentController --> EnrollmentConfirmationScreen : Confirms enrollment to student.
+Student --> LecturePlaybackScreen : Selects a lecture to watch.
+LecturePlaybackScreen --> PlaybackController : Screen delegates streaming and position storage.
+PlaybackController --> Video : Streams the video file.
+PlaybackController --> PlaybackPosition : Persists current playback position.
+Instructor --> LectureUploadForm : Uploads a video file.
+LectureUploadForm --> VideoStorageController : Passes raw file to storage controller.
+VideoStorageController --> Video : Creates Video entity with raw file.
+VideoStorageController --> VideoConversionController : Triggers conversion after storage.
+VideoConversionController --> Video : Updates format and status.
+VideoConversionController --> Lecture : Links converted video to its lecture.
+Instructor --> StatisticsRequestForm : Requests enrollment or revenue statistics.
+StatisticsRequestForm --> StatisticsController : Form forwards request to controller.
+StatisticsController --> Enrollment : Aggregates enrollment data.
+StatisticsController --> Lecture : Aggregates revenue data from lectures.
+StatisticsController --> StatisticsResultScreen : Presents statistics to instructor.
+Administrator --> LectureRemovalForm : Requests removal of a lecture.
+LectureRemovalForm --> LectureRemovalController : Form delegates removal operation.
+LectureRemovalController --> Lecture : Updates lecture visibility.
+
+@enduml

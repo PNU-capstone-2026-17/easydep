@@ -18,25 +18,6 @@ ReqType = Literal["FR", "NFR"]
 # ----------------------------------------------------------------------------
 # LLM 구조화 출력 스키마
 # ----------------------------------------------------------------------------
-class Assessment(BaseModel):
-    """요구사항이 유스케이스 도출에 충분히 구체적인지에 대한 LLM 판단."""
-
-    is_concrete: bool = Field(
-        description="True if every requirement is concrete enough to derive "
-        "actors and use cases without further clarification."
-    )
-    clarifying_questions: list[str] = Field(
-        default_factory=list,
-        description="Questions to ask the user when requirements are too abstract. "
-        "Empty when is_concrete is True.",
-    )
-    refined_requirements: list[str] = Field(
-        default_factory=list,
-        description="The current best set of concrete, single-sentence requirements "
-        "in English. Populated once enough information is available.",
-    )
-
-
 class ConstraintLink(BaseModel):
     """분리된 품질 제약(NFR)과 그것이 한정하는 기능 요구(FR)의 링크(추적성).
 
@@ -436,6 +417,23 @@ class FeedbackEdit(BaseModel):
     instruction: str
 
 
+class ResourceAnswer(BaseModel):
+    """되묻기(`RESOURCE_SPEC`의 못 채운 칸)에 대한 답. **요구사항 피드백이 아니다.**
+
+    같은 게이트에서 두 종류의 입력을 받기 때문에 형태로 가른다. 자연어로 받으면
+    "aws 서울 월 3000달러"를 요구사항 편집 지시로 알아듣고 분류를 다시 돌린다 —
+    사용자는 질문에 답했을 뿐인데 요구사항이 흔들린다.
+
+    값은 **문자열 그대로** 받는다. 해석은 제약 구조화 에이전트가 산문과 같은 규율로
+    한다(`steps/step_resource.py`) — 화면이 "서울"을 코드로 바꿔 보내면 그 해석이
+    어디서 왔는지 아무도 모르게 된다. 답했다는 사실이 모호함을 없애 주지도 않는다:
+    "서울"은 여전히 카탈로그를 거쳐야 하고, 후보가 여럿이면 여전히 되물어야 한다.
+    """
+
+    #: 계약 칸 이름 → 사용자가 쓴 답. 모르는 칸은 단계가 버린다.
+    answers: dict[str, str] = Field(default_factory=dict)
+
+
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
 # ----------------------------------------------------------------------------
@@ -455,10 +453,17 @@ class AnalyzeRequest(BaseModel):
     """
 
     requirements: list[str] | None = None
+    # 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항과 **따로** 받는다 —
+    # 여기서 `RESOURCE_SPEC`이 만들어진다(`steps/step_resource.py`). 없으면 필수 칸이
+    # 비고, 그 사실이 되묻기 질문으로 나간다.
+    resource_constraints_text: str | None = None
     answer: str | None = None
     # 자연어 대신 보내는 구조화 편집(피드백 게이트 전용). answer와 함께 보낼 수 없다 —
     # 둘 다 오면 무엇을 따를지가 모호해지므로 400으로 거절한다.
     edit: FeedbackEdit | None = None
+    # 되묻기의 답(칸 이름 → 사용자가 쓴 문자열). answer/edit과 함께 보낼 수 없다 —
+    # 재개 값은 하나이고, 섞이면 무엇을 따를지가 모호해진다.
+    resource_answers: dict[str, str] | None = None
     thread_id: str | None = None
     # 대화형 게이트(step1 clarify + 각 스텝 피드백) 사용 여부. None이면 서버 기본값(설정)을 따른다.
     # 신규 세션 시작 시에만 의미가 있으며, 이후 재개(answer)는 세션이 시작된 모드를 유지한다.
@@ -483,15 +488,25 @@ class AnalyzeResponse(BaseModel):
     # 화면이 이걸 쓰면 의도 분류 LLM 호출이 생략된다.
     edit_stage: str | None = None
     edit_targets: list[str] | None = None
+    # 이 게이트가 함께 묻는 `RESOURCE_SPEC` 되묻기. 각 항목은 {field, kind, why,
+    # question, seen}이고, 화면은 `field`를 키로 `resource_answers`를 만들어 보낸다.
+    resource_questions: list[dict] | None = None
     # status == completed 일 때 채워짐 (step1)
     requirements: list[RequirementItemOut] | None = None
     # step2~4 산출물 — 파이프라인은 항상 실행되지만, 게이트 interrupt로 중간에 멈춘
     # 시점에는 아직 안 만들어진 단계의 필드가 None일 수 있다.
     # 각 항목의 상세 구조는 상단의 Actor/UseCase/UseCaseSpec/RelationshipModel 스키마 및
     # state.py 의 대응 TypedDict 참조. (출력 전용이라 dict 그대로 통과시킨다.)
+    # 클라우드 층 산출물 둘. **요구사항과 나란한 별도 산출물이지 명세의 일부가 아니다.**
+    # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
+    # 만들어도 화면은 못 받는다(`cloud_concerns`가 실제로 그 상태였다).
+    cloud_concerns: dict | None = None          # 관심사 커버리지(B 트랙)
+    resource_spec: dict | None = None           # RESOURCE_SPEC — 계약을 만족할 때만 있다
+    resource_intake: dict | None = None         # 초안·질문·근거·버린 후보(A 트랙)
     actors: list[dict] | None = None            # ActorItem
     use_cases: list[dict] | None = None         # UseCaseItem
     coverage: dict | None = None                # check_coverage 결과
+    model_review: dict | None = None            # review_model(독립 의미 검증자)의 판정
     use_case_specs: list[dict] | None = None    # UseCaseSpecItem (Cockburn 명세)
     spec_report: dict | None = None             # check_specs 검증 집계
     relationships: dict | None = None           # associations/includes/extends/generalizations/derived
@@ -505,3 +520,9 @@ class AnalyzeResponse(BaseModel):
     # degradations가 비어 있지 않으면 산출물 일부가 검증을 못 거쳤다는 뜻이므로,
     # 화면은 결과를 그대로 신뢰해서는 안 된다. (app/requirements/common/telemetry.py)
     telemetry: dict | None = None
+
+
+# `ResourceFieldRead`·`ResourceReading`은 없앴다(2026-07-29). 제약 구조화를 **한 번
+# 읽고 끝내는 구조화 출력**에서 도구를 쓰는 에이전트 루프로 바꾸면서, 읽기의 결과는
+# 스키마가 아니라 도구 호출(`record_field`)로 들어온다 — 인용 대조는 그 문에서 그대로
+# 한다(`steps/step_resource._ground`).

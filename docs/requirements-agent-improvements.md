@@ -1,7 +1,13 @@
 # 요구사항 분석 에이전트 — 개선 후보
 
+> **이력이다. 참조하지 않는다.**
+>
+> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
+> 전제가 바뀐 자리가 있다. **여기 적힌 결정·계획을 근거로 새 작업을 시작하지 말 것.**
+> 이 안의 **실측치는 유효하다** — 다시 재지 말고 인용한다.
+
 `app/requirements/` 개편 후보를 모아 둔다. **아직 결정된 것은 없다** — 고르기 위한 재료다.
-판단 기준은 과제 원문(`app/deployment/document/research.md`)의 목표 3개다.
+판단 기준은 과제 원문(`app/core/cloudkb/document/research.md`)의 목표 3개다.
 
 - 목표 1) 요구사항 기반 산출물 **검증** 및 사용자 피드백을 위한 **AI 에이전트 갱신 과정** 설계
 - 목표 2) 클라우드 환경·리소스 특성을 고려한 **가이드라인 제공**
@@ -26,7 +32,7 @@
 | `repair_stopped="no_improvement"`는 원인이 상위 단계에 있다는 신호일 때가 많은데, 올려보낼 통로가 없다 | `step3_specifications.py:259-261` |
 | 상태가 평면 `AgentState` 하나. 모든 노드가 전체를 읽고 쓴다 | `agent/state.py:80` |
 | 파이프라인이 두 벌이다 | `agent/graph.py` vs `runner.run_pipeline` |
-| 같은 저장소의 배포 쪽은 이미 도구 기반 자율 에이전트다 | `app/deployment/nim_agent/`(agents SDK, `@function_tool` 9축, Runner agentic loop) |
+| 같은 저장소의 배포 쪽은 이미 도구 기반 자율 에이전트다 | `app/core/cloudkb/nim_agent/`(agents SDK, `@function_tool` 9축, Runner agentic loop) |
 
 **요약**: `app/requirements/`는 에이전트가 아니라 **고정 프롬프트 체인**이다. 배포 쪽과 세대가 다르다.
 
@@ -85,7 +91,7 @@
   Agent Skills의 progressive disclosure는 전량 주입(70,000토큰) → 색인만(500토큰)으로
   같은 지식을 훨씬 싸게 다룬다.
 - **깨지는 것**: `prompts.py` 대부분, `_UI_TERMS` 정규식 lint, `SPEC_VALIDATOR_SYSTEM`
-- **비용**: KB 구축. 단 `app/deployment/`가 이미 9축을 만들어 뒀고, 원래 4개 에이전트에
+- **비용**: KB 구축. 단 `app/core/cloudkb/`가 이미 9축을 만들어 뒀고, 원래 4개 에이전트에
   흡수시키려던 것이라 이게 그 첫 사례가 된다
 - **검증**: 검증 지적에 규칙 인용이 붙는 비율, 인용의 실제 존재 여부(허위 인용 검출)
 
@@ -851,6 +857,42 @@ EIRENE·ERTMS(철도) 등 **도메인이 우리 입력보다 넓다.**
 - 클라이언트 상한도 조건이다. 바꾸면 **어떤 요청이 성공하는지**가 달라지므로 같은 표에
   넣을 수 없다 → 행마다 `client.timeout`을 함께 찍는다.
 
+### 격자를 12종으로 채웠다 — §9의 숙제가 닫혔다 (2026-07-28)
+
+§13은 외부 코퍼스(PURE 6종)까지였다. 내부 입력 6종을 **같은 조건**으로 채워
+**도메인 12종 · 342행 · 균형 표본**(뺀 도메인 0)이 됐다. 조건은 `(반복 3, 명세 1)` 한 종류다.
+
+| 규칙 | 항상 | 때때로 | 없음 | 흔들림 | 도메인 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `spec.no-scope-creep` | 29 | 7 | 1 | **19%** | 12 |
+| `spec.consequence-is-a-guarantee` | 7 | 8 | 27 | 53% | 12 |
+| `spec.remerge-re-establishes-state` | 7 | 9 | 21 | 56% | 12 |
+| `spec.black-box-no-internal-components` | 6 | 8 | 28 | 57% | 12 |
+| `spec.no-precondition-recheck` | 2 | 3 | 35 | 60% | 12 |
+| `spec.no-hidden-branching` | 6 | 19 | 17 | **76%** | 12 |
+
+**`no-scope-creep`만 다른 무리다**(19% vs 53~76%). 나머지 다섯은 도메인을 두 배로 늘려도
+절반 넘게 흔들린다 — §7의 "판정 층 전체가 흔들린다"가 12종에서도 유지된다. `no-hidden-branching`이
+76%로 가장 나쁜데, §8에서 강등 후보였다가 §9에서 되살린 규칙이 바로 이것이다.
+
+### 옛 행의 판을 **재계산해서** 확인했다
+
+342행 중 **198행은 프로브 판(`prompts.fingerprint(['probe'])`)이 안 찍혀 있다** — 경로별
+지문이 생기기(`b6835e4`) 전에 잰 것이라 생성·검증 해시만 적혀 있다. 여기서 두 사실을 섞으면
+안 된다: **"판이 다르다"와 "판이 안 찍혔다"는 다른 사건이다.**
+
+안 찍힌 것은 밖에서 대조할 수 있다. 그때 커밋의 `prompts.py`를 꺼내 **그 코드로 프로브
+프롬프트를 다시 조립해** 해싱했다:
+
+    git show b5260ce:app/requirements/prompts.py   →  probe digest bf7d7c8849c9
+    git show ce30734:app/requirements/prompts.py   →  probe digest bf7d7c8849c9
+    현재 코드                                       →  probe digest bf7d7c8849c9
+
+셋이 같다. `rules.py`도 `b5260ce → HEAD` 무변경이다. **따라서 342행은 한 조건이고 이 표는
+순위로 읽어도 된다.** 도구(`_ranking_warnings`)는 이제 두 사건을 갈라 적고, 미기록 행에는
+"그때 커밋으로 재계산해 확인하라"는 **할 일**을 함께 낸다 — 예전에는 "판이 3가지 섞였다"로
+뭉뚱그려, 같은 프롬프트로 잰 표가 영원히 못 쓰는 표로 보였다.
+
 ## 14. C7 — 배선의 사본을 없앴다 (2026-07-27)
 
 `agent/stages.py`는 "무슨 단계가 어떤 순서로 있는가"의 단일 소스로 만들어졌는데, **두 곳이
@@ -905,7 +947,7 @@ C3의 주장("추적성을 1급으로")이 추상적이라, 추적 집계가 실
 없는 id를 `nfr_ids`에 적으면 대조 대상이 아니라 **미탐**. 하필 파이프라인이 쓰는 쪽이
 틀린 쪽이었고, 그 값이 `compare.py`를 통해 채점표 지표로도 나갔다.
 
-`agent/traceability.py`를 단일 소스로 두고 둘 다 파생시켰다. **링크 종류는 뭉개지 않는다** —
+`core/traceability.py`(2026-07-28에 `agent/`에서 옮김)를 단일 소스로 두고 둘 다 파생시켰다. **링크 종류는 뭉개지 않는다** —
 `requirement_ids`(실현 주장)와 `nfr_ids`(제약 부착)는 뜻이 달라 커버리지·부착은 칸을 구별해
 세고, 환각 판정만 둘을 합쳐 본다("이 id가 존재하는가"는 어느 칸에 적혔든 같은 질문이다).
 
@@ -983,7 +1025,7 @@ C3의 남은 값어치 주장은 "전체 재생성 반성 루프를 수술적 �
 
 | 파일 | 전 | 후 |
 | --- | ---: | ---: |
-| `agent/traceability.py` | 40% | 27% |
+| `core/traceability.py` | 40% | 27% |
 | `common/state_contract.py` | 40% | 35% |
 | `agent/playbook.py` | 32% | 29% |
 | `agent/subgraphs.py` | 48% | 44% |

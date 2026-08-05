@@ -60,8 +60,17 @@ Nickerson의 방법에서 모든 특성은 메타 특성의 논리적 귀결이�
 *comprehensive*(대상 영역의 모든 것이 분류될 수 있어야 한다)를 소비자로 거르면 바로
 어긴다. 게다가 **"근거가 없어서 뺐다"와 "우리 코드가 안 읽어서 뺐다"가 구별되지 않는다**
 — 첫 판에서 규제 준수를 그렇게 조용히 버렸고, 그건 표집 편향과 구현 편향을 섞은 것이다.
-`consumer=None`도 목록에 남고, 산출물에서 `handoff`(소비자 있음)와 `noted`(없음)로
-갈라 센다.
+`consumer=None`도 목록에 남고, 산출물에서 세 갈래로 갈라 센다.
+
+    handoff       소비자가 있다 — 뒤 단계가 **자동으로 받는다**
+    noted         소비자가 아직 없다 — 근거는 있고 사람은 읽는다 (**예정**)
+    out-of-scope  배포 계획이 **소비할 수 없다** — 다른 단계의 것이다 (**경계**)
+
+셋째 갈래는 2026-07-28 감사에서 생겼다. 그전에는 `consumer=None` 하나가 *"이을 건데
+아직"*과 *"안 이을 것"* 두 뜻을 겸했고, 그래서 **"안 한 것"과 "안 하기로 한 것"이
+구별되지 않았다** — 이 저장소가 다른 축에서 계속 지켜 온 규율(구현 범위와 근거를
+섞지 않는다)이 여기서만 깨져 있었다. 판정 기준과 8건의 분류 근거는
+`app/core/cloudkb/document/archive/pipeline-big-picture-2026-07-28.md` §5에 있다.
 
 ## 왜 이 목록이 임의 사전이 아닌가
 
@@ -69,12 +78,12 @@ Nickerson의 방법에서 모든 특성은 메타 특성의 논리적 귀결이�
 관심사는 얼마든지 지어낼 수 있고, 지어내면 그건 우리 취향이지 지식이 아니다.
 
 그래서 규칙과 같은 선을 긋는다 — **문장은 우리 것, 좌표는 코퍼스**. 모든 관심사가
-`app/deployment/patternkb`의 문서 id와 그 본문에 실재하는 열쇠 구절(`probe`)을 달고,
+`app/core/cloudkb/patternkb`의 문서 id와 그 본문에 실재하는 열쇠 구절(`probe`)을 달고,
 `verify_concerns`가 대조한다.
 
 **그리고 이 축은 규칙 축이 못 하는 것을 한다: 대조가 CI에서 돈다.** 도서 인용
 (`verify_citations`)은 로컬 사본이 있어야 돌아서 자동 검사가 될 수 없었는데, 패턴
-코퍼스는 저장소 안에 커밋돼 있다(`app/deployment/data/pattern-corpus.json.gz`, 346편).
+코퍼스는 저장소 안에 커밋돼 있다(`app/core/cloudkb/data/pattern-corpus.json.gz`, 346편).
 
 ## 심각도 축을 두지 않는다
 
@@ -94,6 +103,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.core import advisory
 from app.requirements.knowledge import basis
 
 #: **메타 특성** — 무엇이 관심사가 될 수 있는지를 정하는 단일 기준(Nickerson 외 2013).
@@ -123,21 +133,16 @@ ISO25010: tuple[str, ...] = (
     "safety",
 )
 
-#: 이 축의 유일한 근거 라벨. `app/deployment/patternkb/model.py`의 같은 이름과 맞춘다.
-#: basis는 **영원히 `inferred`**다 — 설계 산문은 사람이 검수해도 클라우드 사실이 되지
-#: 않는다. 그래서 이 축에는 `stated`로 올라갈 길이 없다(규칙 축과 다른 점이다).
-EVIDENCE = "pattern-advisory"
-
-#: 관심사를 실은 모든 출력에 붙는 고지. **어떤 출력 경로에서도 떼면 안 된다.**
+#: 이 축의 유일한 근거 라벨과, 관심사를 실은 모든 출력에 붙는 고지.
+#: **어떤 출력 경로에서도 고지를 떼면 안 된다.**
 #:
-#: `app/deployment/patternkb/model.py`의 `ADVISORY_NOTICE`와 **같은 문자열이어야 한다.**
-#: 사본인 것을 알고 둔다 — `app/requirements`는 `app/deployment` 없이 돌아야 해서
-#: import할 수 없다. 사본이 갈라지는 것은 `verify_concerns`가 잡는다(대조는 사본을
-#: 없애 주지 않지만, 갈라진 것을 조용하지 않게는 만든다).
-ADVISORY_NOTICE = (
-    "※ This is design guidance, not a cloud fact — confirm values, limits, and "
-    "verdicts with the knowledge-base tools (kb_*/cap_*/cost_*)."
-)
+#: 둘 다 `patternkb`가 정의하고 여기서는 `app/core`를 거쳐 받는다. 한동안은 사본이었다 —
+#: `app/requirements`가 `app/core/cloudkb` 없이 돌아야 한다는 규약 때문이었고, 그래서
+#: 사본이 갈라졌는지 대조하는 검사까지 따로 있었다. 그 규약은 2026-07-28에 `app/core`가
+#: 문을 하나로 좁히면서 바뀌었고, **사본을 둘 이유도 그때 사라졌다.**
+#: basis는 영원히 `inferred`다 — 설계 산문은 사람이 검수해도 클라우드 사실이 되지 않는다.
+EVIDENCE = advisory.EVIDENCE
+ADVISORY_NOTICE = advisory.ADVISORY_NOTICE
 
 
 @dataclass(frozen=True)
@@ -153,7 +158,7 @@ class Concern:
     #: **E2의 답.** 왜 이것이 클라우드 네이티브 때문에 요구사항 단계로 당겨지는가.
     #: 전통 개발에서도 똑같이 성립하면 여기 적을 말이 없고, 그러면 관심사가 아니다.
     cloud_specific: str
-    #: 근거 문서의 코퍼스 id(`app/deployment/patternkb`). **관심사마다 달라야 한다**
+    #: 근거 문서의 코퍼스 id(`app/core/cloudkb/patternkb`). **관심사마다 달라야 한다**
     #: — 입도 규칙의 기계 대리 기준(모듈 docstring).
     doc_id: str
     #: 그 문서 본문에 있어야 하는 짧은 구절(소문자). 좌표가 맞는지 보는 열쇠일 뿐이고,
@@ -174,7 +179,7 @@ class Concern:
     #: **오늘 실재하는 기계 소비자.** 이 답이 실제로 흘러 들어가는 칸의 이름을 적는다.
     #:
     #: 좁게 정의한다 — 이 저장소에서 **지금 그 값을 읽는 코드가 있어야** 한다.
-    #: 오늘 그것은 `RESOURCE_SPEC`의 칸뿐이다(`app/deployment/appkb/request.json`,
+    #: 오늘 그것은 `RESOURCE_SPEC`의 칸뿐이다(`app/core/cloudkb/appkb/request.json`,
     #: `app/design/api.py`의 `EXTERNAL_STAGES`가 `resource_spec`으로 받는다).
     #:
     #: `None`은 배제가 아니라 **범위 표시**다 — 근거는 있고 사람은 읽지만 받아 줄 기계가
@@ -185,6 +190,22 @@ class Concern:
     #: **`multiZone`을 받아 놓고 아무도 안 읽던 그 결함을 우리가 그대로 저지른 것이다.**
     #: 없는 소비자를 적으면 `handoff` 목록이 부풀고, 부푼 목록은 도구가 하는 거짓말이 된다.
     consumer: str | None = None
+    #: **배포 계획이 소비할 수 없는 관심사라면 그 이유**(어느 단계의 것인가).
+    #:
+    #: `consumer=None`과 뜻이 다르다. 저쪽은 *"받아 줄 기계가 아직 없다"*(예정)이고,
+    #: 이쪽은 *"배포 계획이 만드는 것 중 무엇도 이 답으로 달라지지 않는다"*(경계)다.
+    #: 둘을 한 값으로 두면 **"안 한 것"과 "안 하기로 한 것"이 구별되지 않는다** —
+    #: 이 저장소가 다른 축에서 계속 지켜 온 규율(구현 범위와 근거를 섞지 않는다)이
+    #: 여기서만 안 지켜지고 있었다(감사 2026-07-28).
+    #:
+    #: 판정 기준은 **배포 계획이 만드는 여섯**뿐이다 — 컴퓨트 노드·방식 / 관리형
+    #: 서비스 노드 / 공유 인프라 / 진입점 / 값 / 판정. 그중 하나가 달라지지 않으면
+    #: 경계다. **"관련은 있다"는 기준이 아니다.**
+    #:
+    #: 목록에서 빼지 않는다 — 요구사항 단계에서 물을 값은 그대로 있고, 다만 **뒤
+    #: 단계가 자동으로 받지 않는다는 사실**을 여기 적는다. 근거·분류는
+    #: `app/core/cloudkb/document/archive/pipeline-big-picture-2026-07-28.md` §5.
+    out_of_scope: str = ""
     #: 결정론 층이 쓰는 열쇠말(소문자). **한국어도 담는다** — 서빙 입력은 한국어이고
     #: 평가 코퍼스(PURE)는 영어라, 한쪽만 담으면 한쪽에서 결정론 층이 통째로 죽는다.
     #:
@@ -247,6 +268,10 @@ CONCERNS: tuple[Concern, ...] = (
             "아니라 요구사항이다."
         ),
         consumer=None,
+        out_of_scope=(
+            "이미 있는 칸과 겹친다 — `RESOURCE_SPEC.stateless`가 같은 결정을 받는다. 새로 이으면 "
+            "같은 답을 두 곳에서 받게 되고, 어긋날 때 어느 쪽이 진실인지 말할 수 없다"
+        ),
         doc_id="twelve-factor/disposability",
         probe=("shut down gracefully", "minimize startup time"),
         iso25010=("reliability",),        citation=f"{_12F} IX. Disposability",
@@ -282,11 +307,20 @@ CONCERNS: tuple[Concern, ...] = (
             "같은 이미지가 여러 환경에 배포되고 설정은 주입된다. 무엇이 환경마다 다른지가 정해지지 않으면 이미지 하나로 갈 수 있는지 자체가 미정이다."
         ),
         consumer=None,
+        out_of_scope=(
+            "이미 있는 칸과 겹친다 — 환경별 값의 분리는 시크릿·설정 저장소 노드로 이미 표현된다(OpenAPI의 "
+            "securitySchemes 신호). 별도 칸을 두면 같은 노드를 두 근거가 낳는다"
+        ),
         doc_id="twelve-factor/config",
         probe=("strict separation of config from code", "credentials"),
         iso25010=("flexibility", "maintainability",),        citation=f"{_12F} III. Config",
         signals=("configuration", "secret", "credential", "환경 변수", "설정", "자격 증명"),
     ),
+    # 아래 둘(`scale-out`·`traffic-shape`)은 **병합 검토를 거쳐 갈라 둔 것이다**(§6.11).
+    # 입력 11종에서는 열쇠말·LLM 두 층 모두에서 `scale-out ⊃ traffic-shape`으로 나왔지만,
+    # 두 측정이 **같은 코퍼스**를 읽고 있었다. PURE 18편(7,659문장)에서 다시 재니 교집합이
+    # 0이고 부하 모양만 말하는 요구사항이 실재한다("under both standard and peak conditions").
+    # 미분화의 원인은 개념 겹침이 아니라 표본이었다. 다시 논쟁하려면 코퍼스부터 늘릴 것.
     Concern(
         id="cn.scale-out",
         question=(
@@ -330,6 +364,10 @@ CONCERNS: tuple[Concern, ...] = (
             "요구사항으로 올라온다."
         ),
         consumer=None,
+        out_of_scope=(
+            "설계·구현 — 재시도·큐잉·성능저하 대응은 코드가 하는 일이라 배포 계획의 노드·값·판정 중 무엇도 이 답으로 "
+            "달라지지 않는다"
+        ),
         doc_id="best-practices/transient-faults",
         probe=("transient fault", "retry"),
         iso25010=("reliability",),        citation=f"{_AZ} — Transient fault handling",
@@ -350,6 +388,10 @@ CONCERNS: tuple[Concern, ...] = (
             "않으면 보관 자체가 설계에서 누락된다."
         ),
         consumer=None,
+        out_of_scope=(
+            "운영·감사 — 감사 추적은 로깅 아키타입이 받아야 하는데 `app::`에 로깅·모니터링 개념이 없다. "
+            "`app::eventStream`은 이벤트 전달이지 감사 기록이 아니라 섞으면 안 된다"
+        ),
         doc_id="twelve-factor/logs",
         probe=("event streams", "never concerns itself with routing or storage"),
         iso25010=("security",),        citation=f"{_12F} XI. Logs",
@@ -487,6 +529,10 @@ CONCERNS: tuple[Concern, ...] = (
             "무엇을 먼저 살릴지가 정해지지 않으면 스케일·격리 우선순위를 세울 수 없다."
         ),
         consumer=None,
+        out_of_scope=(
+            "운영 — 어느 흐름이 살아 있어야 하는가는 SLO이고, 계획은 그 목표를 받아 무엇을 다르게 놓을지 아직 "
+            "모른다. `cn.recovery-objective`(A갈래)가 다중화라는 형태로 그 일부를 받는다"
+        ),
         doc_id="well-architected/performance-efficiency/prioritize-critical-flows",
         probe=("critical flows", "prioritize"),
         iso25010=("performance efficiency", "reliability",),        citation=f"{_WAF} — Prioritize critical flows",
@@ -537,6 +583,10 @@ CONCERNS: tuple[Concern, ...] = (
             "파드를 재시작하는 형태로."
         ),
         consumer=None,
+        out_of_scope=(
+            "운영 — 과부하 때 무엇을 버릴지는 실행 중 정책이다. 계획은 무엇을 놓을지를 정할 뿐 부하 상황의 행동을 담지 "
+            "않는다"
+        ),
         doc_id="gcp-framework/reliability/graceful-degradation",
         probe=("graceful degradation", "overload"),
         iso25010=("reliability",),        citation=f"{_GCP} — Design for graceful degradation",
@@ -553,6 +603,10 @@ CONCERNS: tuple[Concern, ...] = (
             "정해지지 않으면 배포 전략과 필요 여유 용량이 함께 미정으로 남는다."
         ),
         consumer=None,
+        out_of_scope=(
+            "운영 — 무중단 배포는 릴리스 절차이지 배포 **구성**이 아니다. 블루/그린을 그리려면 계획이 아니라 "
+            "파이프라인을 그려야 한다"
+        ),
         doc_id="well-architected/operational-excellence/safe-deployments",
         probe=("safe deployment", "rollback"),
         iso25010=("reliability", "maintainability",),        citation=f"{_WAF} — Safe deployment practices",
@@ -667,7 +721,7 @@ CONCERNS: tuple[Concern, ...] = (
             "리전마다 전력 구성이 다르고 그 값이 리전 코드로 색인돼 있다. 제약이 있으면 "
             "리전 선택이 좁아지므로 요구사항 단계에서 알아야 한다."
         ),
-        consumer=None,
+        consumer="RESOURCE_SPEC.lowCarbonPreferred",
         doc_id="gcp-framework/sustainability/low-carbon-regions",
         probe=("carbon", "low-carbon"),
         iso25010=(),        citation=f"{_GCP} — Use regions that consume low-carbon energy",
@@ -704,6 +758,10 @@ CONCERNS: tuple[Concern, ...] = (
             "보장 수준을 안 적으면 남는 것은 '보장 없음'이고, 그건 선택한 적 없는 답이다."
         ),
         consumer=None,
+        out_of_scope=(
+            "설계·구현 — 보상 트랜잭션·사가는 코드 구조의 문제다. 배포 계획은 어느 서비스를 놓을지만 정하고 그 안의 "
+            "일관성 전략을 모른다"
+        ),
         doc_id="patterns/saga",
         probe=("compensating", "distributed transaction"),
         iso25010=("functional suitability", "reliability",),        citation=f"{_AZ} — Saga pattern",

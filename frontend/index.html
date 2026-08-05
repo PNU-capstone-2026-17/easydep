@@ -163,7 +163,8 @@
     }
 
     textarea,
-    input {
+    input,
+    select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -172,6 +173,37 @@
       font: inherit;
       outline: none;
     }
+
+    select {
+      padding: 8px 6px;
+    }
+
+    /* 되감기 영향 범위 안내 */
+    .impact {
+      margin: 8px 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fbfbfc;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--muted);
+    }
+
+    .impact.hidden { display: none; }
+    .impact strong { color: var(--text); }
+    .impact ul { margin: 4px 0 8px; padding-left: 18px; }
+    .impact li { word-break: break-all; }
+
+    .impact .warn {
+      display: block;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--line);
+      color: #b45309;
+    }
+
+    .field.hidden { display: none; }
 
     textarea:focus,
     input:focus {
@@ -401,13 +433,8 @@
         <div id="steps" class="steps"></div>
 
         <div class="field">
-          <label for="appIdInput">App ID</label>
-          <input id="appIdInput" placeholder="생성 시 자동 발급됩니다" spellcheck="false">
-        </div>
-
-        <div class="actions">
-          <button id="newAppButton" type="button" class="secondary">새 App ID 발급</button>
-          <button id="loadAppButton" type="button" class="secondary">App ID로 불러오기</button>
+          <label for="appIdInput">App ID — 요구사항 분석에서 이어받습니다</label>
+          <input id="appIdInput" placeholder="요구사항 분석을 먼저 진행하세요" spellcheck="false" readonly>
         </div>
 
         <div class="field">
@@ -416,14 +443,33 @@
         </div>
 
         <div class="field">
-          <label for="feedbackText">현재 산출물 피드백</label>
-          <textarea id="feedbackText" spellcheck="false"></textarea>
+          <label for="feedbackText">현재 산출물 피드백 — 비워두고 [다음 단계]를 누르면 그대로 진행합니다</label>
+          <textarea id="feedbackText" spellcheck="false" placeholder="예) 주문 클래스에 주문일시 필드를 추가해줘"></textarea>
         </div>
 
         <div class="actions">
-          <button id="generateButton" type="button">현재 단계 생성</button>
+          <button id="generateButton" type="button">설계 시작</button>
           <button id="feedbackButton" type="button" class="secondary">피드백 반영</button>
           <button id="nextButton" type="button" class="secondary">다음 단계</button>
+        </div>
+
+        <!-- 버튼이 왜 안 눌리는지 말해준다. 막혀 있는데 이유가 없으면 고장으로 보인다. -->
+        <div id="stateHint" class="impact hidden"></div>
+
+        <!-- 완성된 설계를 고치는 길. 무엇을 어떻게 고칠지 함께 받는다 —
+             고른 항목과 추적표가 알려준 하류 항목만 바뀌고 나머지는 그대로다. -->
+        <div class="field hidden" id="changeCard">
+          <label for="changeTarget">수정할 대상 — 고르면 함께 바뀔 것을 알려줍니다</label>
+          <select id="changeTarget"></select>
+          <div id="changeImpact" class="impact hidden"></div>
+          <label for="changeFeedback" id="changeFeedbackLabel" class="hidden">
+            어떻게 고칠까요
+          </label>
+          <textarea id="changeFeedback" class="hidden" spellcheck="false"
+                    placeholder="예) 주문일시 필드를 추가해줘"></textarea>
+          <button id="reviseButton" type="button" class="secondary" disabled>
+            수정하기
+          </button>
         </div>
       </div>
     </section>
@@ -477,12 +523,24 @@
 
     // The server owns the workflow state; the browser only keeps the app id
     // plus the last response it rendered.
+    //
+    // 두 인덱스를 구별한다:
+    //   currentIndex — 파이프라인이 실제로 멈춰 있는 단계. **서버가 정한다.**
+    //   viewIndex    — 사용자가 지금 보고 있는 단계. 단계 버튼을 누르면 바뀐다.
+    // 지난 단계를 눌러 내용을 확인해도 파이프라인은 제자리에 있다 — 보기는 읽기 전용이다.
     const workflow = {
       appId: localStorage.getItem(APP_ID_KEY) || "",
-      activeIndex: 0,
+      currentIndex: 0,
+      viewIndex: 0,
       artifacts: {},
       validation: {},
-      completed: new Set()
+      completed: new Set(),
+      sessionActive: false,
+      finished: false,
+      // 추적표가 계산해 준 "이걸 고치면 무엇이 영향받고 어디로 되감아야 하나".
+      // 서버가 만든다 — 브라우저가 순회를 다시 구현하면 서버와 어긋날 수 있고,
+      // 어긋난 쪽이 사용자에게 보이는 쪽이다.
+      changePlan: []
     };
 
     const stepsEl = document.getElementById("steps");
@@ -502,67 +560,67 @@
     const validMetric = document.getElementById("validMetric");
     const doneMetric = document.getElementById("doneMetric");
     const appIdInput = document.getElementById("appIdInput");
-    const newAppButton = document.getElementById("newAppButton");
-    const loadAppButton = document.getElementById("loadAppButton");
+    const stateHint = document.getElementById("stateHint");
+    const changeCard = document.getElementById("changeCard");
+    const changeTarget = document.getElementById("changeTarget");
+    const changeImpact = document.getElementById("changeImpact");
+    const changeFeedback = document.getElementById("changeFeedback");
+    const changeFeedbackLabel = document.getElementById("changeFeedbackLabel");
+    const reviseButton = document.getElementById("reviseButton");
 
-    feedbackText.value = "자연어 피드백을 입력";
     appIdInput.value = workflow.appId;
 
-    generateButton.addEventListener("click", () => runStage("generate"));
-    feedbackButton.addEventListener("click", () => runStage("feedback"));
-    newAppButton.addEventListener("click", () => issueAppId());
-    loadAppButton.addEventListener("click", () => loadApp(appIdInput.value.trim()));
-    nextButton.addEventListener("click", () => {
-      if (workflow.completed.has(currentStage().id) && workflow.activeIndex < stages.length - 1) {
-        workflow.activeIndex += 1;
-        feedbackText.value = "";
-        render();
-      }
-    });
+    generateButton.addEventListener("click", () => startDesign());
+    feedbackButton.addEventListener("click", () => resumeDesign(feedbackText.value));
+    nextButton.addEventListener("click", () => resumeDesign(""));
+    changeTarget.addEventListener("change", () => renderChangeImpact());
+    reviseButton.addEventListener("click", () => applySelectedChange());
 
-    function currentStage() {
-      return stages[workflow.activeIndex];
+    // 보고 있는 단계. 파이프라인 위치(currentStage)와 다를 수 있다.
+    function viewedStage() {
+      return stages[workflow.viewIndex];
     }
 
-    function isSelectable(index) {
-      if (index === 0) return true;
-      return workflow.completed.has(stages[index - 1].id);
+    function currentStage() {
+      return stages[workflow.currentIndex];
+    }
+
+    function stageIndex(stageId) {
+      const index = stages.findIndex((s) => s.id === stageId);
+      return index === -1 ? 0 : index;
+    }
+
+    // 볼 수 있는 단계 = 이미 만들어진 단계, 그리고 지금 진행 중인 단계.
+    function isViewable(index) {
+      return workflow.completed.has(stages[index].id) || index === workflow.currentIndex;
     }
 
     function isCompleted(stageId) {
       return workflow.completed.has(stageId);
     }
 
-    async function issueAppId() {
-      setBusy("App ID 발급 중");
-      try {
-        const data = await request("/api/apps", {
-          method: "POST",
-          body: JSON.stringify({})
-        });
-        applyResponse(data);
-        workflow.activeIndex = 0;
-        setStatus("App ID 발급 완료", true);
-      } catch (error) {
-        showError(error);
-      } finally {
-        render();
-      }
-    }
-
+    // App ID 는 요구사항 분석 화면이 발급해 localStorage 로 넘겨준다. 이 화면에서
+    // 따로 만들거나 바꾸지 않는다 — 설계는 유스케이스 명세 없이는 시작조차 못 하므로,
+    // 여기서 만든 빈 앱은 아무 쓸모가 없다.
+    //
     // Returns whether the app was actually loaded. The caller must not claim a
     // switch it did not get: on failure workflow.appId still points at the old
     // app, because only applyResponse moves it.
     async function loadApp(appId) {
       if (!appId) {
-        showError(new Error("App ID를 입력하세요."));
+        showError(new Error("요구사항 분석을 먼저 진행하세요. App ID가 그때 발급됩니다."));
         render();
         return false;
       }
 
       setBusy("산출물 조회 중");
       try {
-        applyResponse(await request(`/api/apps/${appId}`));
+        // 산출물은 공용 저장소가, 진행 상황은 설계가 안다 — 저장소는 "어디까지 왔나"를
+        // 모르기 때문에 두 번 물어본다.
+        const stored = await request(`/api/apps/${appId}`);
+        const { session } = await request(`/api/apps/${appId}/design/session`);
+        applyResponse({ ...stored, session });
+        await refreshChangePlan();
         setStatus("조회 완료", true);
         return true;
       } catch (error) {
@@ -573,32 +631,145 @@
       }
     }
 
-    async function runStage(action) {
-      const stage = currentStage();
+    // ── 파이프라인 구동 ────────────────────────────────────────────────────
+    // 서버를 부르고, 응답이 말해주는 단계로 화면을 맞춘다. 브라우저는 "지금 몇 번째인지"를
+    // 스스로 정하지 않는다 — 서버가 알고 있다.
 
-      // Generating without an app id would have nowhere to store the result.
+    async function drive(path, body, busyMessage) {
       if (!workflow.appId) {
-        await issueAppId();
-        if (!workflow.appId) return;
+        showError(new Error("요구사항 분석을 먼저 진행하세요. App ID가 그때 발급됩니다."));
+        render();
+        return;
       }
 
-      setBusy(action === "generate"
-        ? "생성 중: LLM 응답까지 30초 이상 걸릴 수 있습니다"
-        : "피드백 반영 중: LLM 수정과 문법 검증을 수행 중입니다"
-      );
-
+      setBusy(busyMessage);
       try {
-        const data = await request(`/api/apps/${workflow.appId}/stages/${stage.id}/${action}`, {
+        applyResponse(await request(`/api/apps/${workflow.appId}${path}`, {
           method: "POST",
-          body: JSON.stringify({ feedback: feedbackText.value })
-        });
-        applyResponse(data);
-        setStatus("완료", true);
+          body: JSON.stringify(body)
+        }));
+        setStatus(workflow.finished ? "설계 완료" : "완료", true);
+        // 산출물이 바뀌었으니 영향 범위도 바뀐다 — 다시 계산해 온다.
+        await refreshChangePlan();
       } catch (error) {
         showError(error);
       } finally {
         render();
       }
+    }
+
+    // 설계 시작. 아직 한 번도 안 돌린 앱에서만 누를 수 있다(render 가 그렇게 막는다).
+    function startDesign() {
+      feedbackText.value = "";
+      return drive("/design/start", {},
+        "설계 시작: 클래스 다이어그램 생성까지 30초 이상 걸릴 수 있습니다");
+    }
+
+    // 게이트에 답한다. 빈 피드백이면 다음 단계로, 아니면 이 단계를 다시 만든다.
+    function resumeDesign(feedback) {
+      const text = (feedback || "").trim();
+      return drive("/design/resume", { feedback: text },
+        text ? "피드백 반영 중: 모델을 수정하고 다시 렌더합니다"
+             : "다음 단계 생성 중: LLM 응답까지 30초 이상 걸릴 수 있습니다"
+      ).then(() => { if (text) feedbackText.value = ""; });
+    }
+
+    // 지난 단계 보기. **서버를 부르지 않는다** — 이미 받아둔 산출물을 보여줄 뿐이고,
+    // 파이프라인 위치는 그대로다.
+    function viewStage(index) {
+      workflow.viewIndex = index;
+      render();
+    }
+
+    // 클래스·유스케이스 이름은 LLM 이 만든 문자열이다. 그대로 innerHTML 에 넣으면
+    // 태그가 될 수 있으므로 중화한다.
+    function escapeHtml(text) {
+      return String(text ?? "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    const escapeAttr = escapeHtml;
+
+    // ── 수정 대상 → 되감을 지점 ───────────────────────────────────────────
+    // 사용자는 "Order 클래스를 고치고 싶다"를 안다. "api_spec 단계로 되감아야 한다"는
+    // 추적표가 계산한다. 여기서는 그 계산 결과를 보여주고 확인을 받을 뿐이다.
+
+    async function refreshChangePlan() {
+      if (!workflow.appId) {
+        workflow.changePlan = [];
+        return;
+      }
+      try {
+        const trace = await request(`/api/apps/${workflow.appId}/design/trace`);
+        workflow.changePlan = trace.change_plan || [];
+      } catch (_) {
+        // 추적표를 못 읽어도 본 흐름은 계속되어야 한다 — 수정 대상 고르기만 사라진다.
+        workflow.changePlan = [];
+      }
+      renderChangeTargets();
+    }
+
+    function selectedChange() {
+      return workflow.changePlan.find((item) => item.ref === changeTarget.value) || null;
+    }
+
+    function renderChangeTargets() {
+      const keep = changeTarget.value;
+      let html = '<option value="">— 선택 —</option>';
+      // 스테이지별로 묶는다. change_plan 은 이미 파이프라인 순서로 정렬돼 온다.
+      for (const stage of stages) {
+        const items = workflow.changePlan.filter((i) => i.stage === stage.id);
+        if (!items.length) continue;
+        html += `<optgroup label="${escapeAttr(stage.label)}">`;
+        for (const item of items) {
+          html += `<option value="${escapeAttr(item.ref)}">${escapeHtml(item.element)}</option>`;
+        }
+        html += "</optgroup>";
+      }
+      changeTarget.innerHTML = html;
+      // 파이프라인이 움직여도 고르던 대상은 유지한다.
+      if (workflow.changePlan.some((i) => i.ref === keep)) changeTarget.value = keep;
+      renderChangeImpact();
+    }
+
+    function renderChangeImpact() {
+      const item = selectedChange();
+      const chosen = Boolean(item);
+
+      changeImpact.classList.toggle("hidden", !chosen);
+      changeFeedback.classList.toggle("hidden", !chosen);
+      changeFeedbackLabel.classList.toggle("hidden", !chosen);
+      reviseButton.disabled = !chosen;
+      if (!chosen) return;
+
+      const list = item.affects.length
+        ? `<ul>${item.affects.map((a) => `<li>${escapeHtml(a)}</li>`).join("")}</ul>`
+        : "";
+      changeImpact.innerHTML = item.affects.length
+        ? `<strong>${escapeHtml(item.element)}</strong> 를 고치면 `
+          + `<strong>${item.affects.length}개</strong>가 함께 바뀝니다.${list}`
+          + `<span class="warn">여기 적힌 것 외에는 <strong>글자 하나 안 바뀝니다.</strong> `
+          + `대상이 아닌 항목은 원본을 그대로 씁니다.</span>`
+        : `<strong>${escapeHtml(item.element)}</strong> 는 다른 산출물이 참조하지 않습니다. `
+          + `이것만 바뀝니다.`;
+    }
+
+    // 지목 수정. 되감기(스테이지 통째로 재생성)와 다르다 — 고른 항목과 추적표가
+    // 알려준 하류 항목만 바뀐다.
+    function applySelectedChange() {
+      const item = selectedChange();
+      const instruction = changeFeedback.value.trim();
+      if (!item) return;
+      if (!instruction) {
+        showError(new Error("어떻게 고칠지 적어주세요."));
+        render();
+        return;
+      }
+
+      return drive("/design/revise", { target: item.ref, feedback: instruction },
+        `${item.element} 수정 중: 영향받는 항목까지 함께 고칩니다`
+      ).then(() => { changeFeedback.value = ""; });
     }
 
     async function request(url, options = {}) {
@@ -624,6 +795,36 @@
       workflow.completed = new Set();
       stages.forEach((stage) => updateCompletion(stage.id));
       syncUsecaseSpecField();
+
+      // 파이프라인 위치는 서버가 정한다. 실행 응답에는 status/stage가 오고,
+      // 단순 조회(GET /api/apps/{id})에는 session이 온다.
+      if (data.status === "need_feedback") {
+        workflow.sessionActive = true;
+        workflow.finished = false;
+        workflow.currentIndex = stageIndex(data.stage);
+      } else if (data.status === "completed") {
+        workflow.sessionActive = false;
+        workflow.finished = true;
+        workflow.currentIndex = stages.length - 1;
+      } else if (data.session) {
+        workflow.sessionActive = Boolean(data.session.active);
+        // 돌긴 돌았는데 멈춘 곳이 없다 = 끝까지 갔다.
+        workflow.finished = Boolean(data.session.exists) && !data.session.active;
+        workflow.currentIndex = data.session.stage
+          ? stageIndex(data.session.stage)
+          : lastCompletedIndex();
+      }
+
+      // 파이프라인이 움직이면 보는 화면도 따라간다 — 새 산출물이 나왔는데 옛 단계를
+      // 보고 있으면 답답하다. 지난 단계를 **직접 눌러서** 볼 때만 시선이 머문다.
+      workflow.viewIndex = workflow.currentIndex;
+    }
+
+    function lastCompletedIndex() {
+      for (let i = stages.length - 1; i >= 0; i -= 1) {
+        if (workflow.completed.has(stages[i].id)) return i;
+      }
+      return 0;
     }
 
     // 유스케이스 명세 칸(읽기 전용)을 이 app_id에 저장된 USECASE_SPEC으로 채운다.
@@ -654,9 +855,36 @@
     function render() {
       renderSteps();
       renderArtifact();
-      generateButton.disabled = false;
-      feedbackButton.disabled = !hasArtifact(currentStage().id);
-      nextButton.disabled = !workflow.completed.has(currentStage().id) || workflow.activeIndex >= stages.length - 1;
+      // 설계 시작은 **아직 한 번도 안 돌렸을 때만.** 이미 돌고 있는 세션을 처음부터
+      // 다시 돌리는 버튼은 두지 않는다 — 실수로 누르면 진행 상황이 통째로 날아간다.
+      const notStarted = !workflow.sessionActive && !workflow.finished;
+      generateButton.disabled = !notStarted || !workflow.appId;
+      // 피드백·다음은 게이트에서 멈춰 있을 때, 그리고 **그 단계를 보고 있을 때만**.
+      const atGate = workflow.sessionActive && workflow.viewIndex === workflow.currentIndex;
+      feedbackButton.disabled = !atGate;
+      nextButton.disabled = !atGate;
+      nextButton.textContent = workflow.currentIndex >= stages.length - 1
+        ? "완료하기" : "다음 단계";
+      // 수정 대상 고르기는 한 번이라도 돌린 뒤에만 의미가 있다.
+      changeCard.classList.toggle("hidden", !workflow.changePlan.length);
+      renderStateHint();
+    }
+
+    // 버튼이 안 눌릴 때 그 이유와 다음 행동을 말해준다.
+    function renderStateHint() {
+      let message = "";
+      if (!workflow.appId) {
+        message = "App ID 가 없습니다. <strong>요구사항 분석을 먼저 진행하세요</strong> — "
+                + "분석을 시작할 때 발급되고, 이 화면이 그대로 이어받습니다.";
+      } else if (workflow.finished) {
+        message = "이 앱은 설계가 <strong>이미 완료</strong>되어 있습니다. "
+                + "고칠 것이 있으면 아래 <strong>[수정할 대상]</strong>에서 고르세요 — "
+                + "어느 단계부터 다시 만들어야 하는지 계산해 줍니다.<br>"
+                + "새 프로젝트로 시작하려면 요구사항 분석 화면에서 "
+                + "<strong>[새 App ID 발급]</strong>을 먼저 누르세요.";
+      }
+      stateHint.innerHTML = message;
+      stateHint.classList.toggle("hidden", !message);
     }
 
     function renderSteps() {
@@ -665,36 +893,43 @@
         const button = document.createElement("button");
         button.type = "button";
         button.className = "step";
-        button.disabled = !isSelectable(index);
-        button.classList.toggle("active", index === workflow.activeIndex);
+        button.disabled = !isViewable(index);
+        button.classList.toggle("active", index === workflow.viewIndex);
         button.classList.toggle("done", isCompleted(stage.id));
+        const state = index === workflow.currentIndex && workflow.sessionActive ? "진행 중"
+          : isCompleted(stage.id) ? "done" : "locked";
         button.innerHTML = `
           <span class="step-index">${isCompleted(stage.id) ? "✓" : index + 1}</span>
           <span>${stage.label}</span>
-          <span class="badge">${isCompleted(stage.id) ? "done" : isSelectable(index) ? "ready" : "locked"}</span>
+          <span class="badge">${state}</span>
         `;
-        button.addEventListener("click", () => {
-          if (isSelectable(index)) {
-            workflow.activeIndex = index;
-            render();
-          }
-        });
+        // 단계 클릭 = **보기**. 서버를 부르지 않고 파이프라인도 안 움직인다.
+        if (isViewable(index)) {
+          button.title = `${stage.label} 내용 보기`;
+          button.addEventListener("click", () => viewStage(index));
+        }
         stepsEl.appendChild(button);
       });
     }
 
     function renderArtifact() {
-      const stage = currentStage();
+      // **보고 있는** 단계를 그린다. 파이프라인이 멈춰 있는 단계와 다를 수 있다.
+      const stage = viewedStage();
+      const isCurrent = workflow.viewIndex === workflow.currentIndex;
       const validation = getValidation(stage.id);
       const value = workflow.artifacts[stage.id];
       const output = stage.id === "api_spec"
         ? JSON.stringify(value || {}, null, 2)
         : value || "";
 
-      artifactTitle.textContent = stage.label;
+      artifactTitle.textContent = stage.label
+        + (isCurrent ? "" : "  (지난 단계 — 보기 전용)");
       artifactOutput.textContent = output || "아직 생성된 산출물이 없습니다.";
-      artifactBadge.textContent = isCompleted(stage.id) ? "done" : isSelectable(workflow.activeIndex) ? "ready" : "locked";
-      stepMetric.textContent = `${workflow.activeIndex + 1} / ${stages.length}`;
+      artifactBadge.textContent = !isCurrent ? "보기"
+        : workflow.finished ? "완료"
+        : workflow.sessionActive ? "확인 대기"
+        : isCompleted(stage.id) ? "done" : "locked";
+      stepMetric.textContent = `${workflow.viewIndex + 1} / ${stages.length}`;
       validMetric.textContent = validation.valid === true ? "OK" : validation.valid === false ? "FAIL" : "N/A";
       doneMetric.textContent = String(workflow.completed.size);
 

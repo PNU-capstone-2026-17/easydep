@@ -149,3 +149,64 @@ def test_stage_subgraphs_have_no_gate_nodes():
     s1 = sg.build_stage("refine_requirements").get_graph().nodes
     assert "clarify" in s1 and "classify" in s1
     assert not any(str(n).startswith("gate_") for n in s1)
+
+
+# --- 되묻기의 왕복(게이트 쪽) ------------------------------------------------
+def test_the_gate_carries_the_resource_questions(monkeypatch):
+    """질문이 게이트 payload에 실리지 않으면 사용자에게 영영 안 보인다."""
+    from app.requirements.agent.steps import feedback_gates as fg
+
+    seen: dict = {}
+
+    def fake_interrupt(payload):
+        seen.update(payload)
+        return ""            # 빈 답 = 진행
+
+    monkeypatch.setattr(fg, "interrupt", fake_interrupt)
+    state = {"classified": [], "resource_intake": {"questions": [
+        {"field": "provider", "kind": "missing", "why": "w", "question": "q"},
+    ]}}
+    assert fg.gate_requirements(state) == {"gate_route": "advance"}  # type: ignore[arg-type]
+    assert seen["resource_questions"][0]["field"] == "provider"
+
+
+def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):
+    """사용자는 질문에 답했을 뿐이다. 재분류를 돌리면 요구사항이 덩달아 흔들린다."""
+    from app.requirements.agent.steps import feedback_gates as fg
+    from app.requirements.schemas import ResourceAnswer
+
+    def boom(*_a, **_k):
+        raise AssertionError("되묻기의 답으로 classify가 돌면 안 된다")
+
+    monkeypatch.setattr(fg, "classify", boom)
+    monkeypatch.setattr(fg, "interrupt",
+                        lambda _p: ResourceAnswer(answers={"provider": "aws"}))
+
+    state = {"classified": [], "resource_answers": {"region": "Seoul"}}
+    out = fg.gate_requirements(state)  # type: ignore[arg-type]
+
+    # 관심사 커버리지를 다시 돌리지 않는 경로로 간다(입력이 안 바뀌었다).
+    assert out["gate_route"] == "answers"
+    # 앞서 답한 것과 **합쳐진다** — 한 칸씩 답해도 앞의 답이 사라지지 않는다.
+    assert out["resource_answers"] == {"region": "Seoul", "provider": "aws"}
+
+
+def test_an_all_blank_resource_answer_advances(monkeypatch):
+    """모르는 칸 하나가 세션을 게이트에 영원히 묶어 두면 안 된다."""
+    from app.requirements.agent.steps import feedback_gates as fg
+    from app.requirements.schemas import ResourceAnswer
+
+    monkeypatch.setattr(fg, "interrupt",
+                        lambda _p: ResourceAnswer(answers={"provider": "  "}))
+    assert fg.gate_requirements({"classified": []})["gate_route"] == "advance"  # type: ignore[arg-type]
+
+
+def test_a_resource_answer_never_becomes_natural_language_feedback():
+    """물어보지 않은 게이트로 흘러들면 pydantic 표현이 피드백 문장이 된다."""
+    import pytest
+
+    from app.requirements.agent.steps import feedback_gates as fg
+    from app.requirements.schemas import ResourceAnswer
+
+    with pytest.raises(TypeError):
+        fg._as_text(ResourceAnswer(answers={"provider": "aws"}))

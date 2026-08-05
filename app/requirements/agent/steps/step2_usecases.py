@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.core import traceability
 from app.requirements import prompts
-from app.requirements.agent import supervisor, traceability, validator
+from app.requirements.agent import supervisor, validator
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import ActorItem, AgentState, RequirementItem, UseCaseItem
 from app.requirements.common import telemetry
@@ -245,7 +246,7 @@ def check_coverage(state: AgentState) -> dict:
     - unattached NFR: 어떤 유스케이스에도 안 붙은 NFR (전역 제약 후보)
     - unknown refs: 제공되지 않은 id를 참조한 경우 (LLM 환각 표면화)
     """
-    # 집계는 `agent/traceability.py` 한 곳에서 한다. 예전에는 여기서 따로 굴렸고,
+    # 집계는 `core/traceability.py` 한 곳에서 한다. 예전에는 여기서 따로 굴렸고,
     # `rtm.build_rtm`이 같은 사실을 **다르게** 세고 있었다 — 환각 참조의 정의가 갈려
     # 같은 상태에서 서로 겹치지도 않는 답이 나왔다(그 모듈 docstring에 경위).
     trace = traceability.index(state)

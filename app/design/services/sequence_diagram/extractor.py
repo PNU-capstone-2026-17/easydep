@@ -1,123 +1,123 @@
+"""유스케이스 명세와 클래스 다이어그램에서 시퀀스 상호작용 모델을 도출한다.
+
+클래스 다이어그램의 BCE 추출과 같은 모양이다: LLM은 PlantUML을 쓰지 않고 구조화된
+상호작용 모델만 내놓는다. 다이어그램은 plantuml.generate_sequence_from_model이
+결정론적으로 렌더하므로 문법 오류가 구성에 의해 방지된다.
+"""
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
+
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
-from openai import OpenAI
+
+from app.design.services.common.structured import parse_structured
 
 
-class Participant(BaseModel):
-    type: str = Field(
-        default="participant",
-        description="actor | boundary | control | entity | database | participant",
-    )
-    label: str = Field(default="", description="Display Name")
-    alias: str = Field(default="", description="Short alias identifier")
+class SequenceParticipant(BaseModel):
+    name: str = Field(default="Unknown")
+    #: actor | boundary | control | entity | database — BCE 스테레오타입을 그대로 잇는다.
+    kind: str = Field(default="participant")
+    description: str = Field(default="")
+    #: 이 참가자에 해당하는 클래스 다이어그램의 클래스 이름. 액터는 비운다.
+    source_class: str = Field(default="")
 
 
-class SequenceStep(BaseModel):
-    type: str = Field(
-        default="message",
-        description=(
-            "message | self_message | return_message | activate | deactivate | "
-            "fragment_start | fragment_else | fragment_end"
-        ),
-    )
-    source: str = Field(default="", description="Caller alias for messages")
-    target: str = Field(
-        default="",
-        description="Receiver alias for messages or target for activate/deactivate",
-    )
-    text: str = Field(
-        default="", description="methodName() or return value text"
-    )
-    fragment_type: str = Field(
-        default="", description="alt | opt | loop (only for fragment_start)"
-    )
-    condition: str = Field(
-        default="", description="Condition text for fragment_start and fragment_else"
-    )
+class SequenceMessage(BaseModel):
+    source: str
+    target: str
+    label: str = Field(default="")
+    #: sync | async | return — PlantUML 화살표 모양을 정한다.
+    type: str = Field(default="sync")
+    #: 이 메시지가 속한 조각(alt/loop/opt). 비어 있으면 주 흐름.
+    group: str = Field(default="")
+    #: 조각의 조건문("재고가 없으면" 등). group이 있을 때만 의미가 있다.
+    condition: str = Field(default="")
+    #: 이 메시지를 낳은 유스케이스 id.
+    use_case_ids: list[str] = Field(default_factory=list)
 
 
-class SequenceDiagramElements(BaseModel):
-    participants: list[Participant] = Field(default_factory=list)
-    sequence: list[SequenceStep] = Field(default_factory=list)
+class SequenceModel(BaseModel):
+    Participants: list[SequenceParticipant] = Field(default_factory=list)
+    Messages: list[SequenceMessage] = Field(default_factory=list)
 
 
-SEQUENCE_ELEMENT_EXTRACTION_SYSTEM_PROMPT = """
-You are a Principal Software Architect proficient in Object-Oriented Analysis and Design (OOAD) and UML sequence modeling.
-Your goal is to analyze the provided [Use Case Specification] and [Class Diagram] to extract the structured logical elements required to build a sequence diagram.
+SEQUENCE_EXTRACTION_SYSTEM_PROMPT = """
+You are a software architect deriving a UML 2.0 sequence diagram model from a
+use-case specification and the analysis-level class diagram already derived from it.
 
-## Objective & Workflow
-You must derive the sequence diagram elements strictly following the 5-step analysis process below.
+## Input
+A use-case specification (UseCaseName, PrimaryActor, MainSuccessScenario,
+Extensions, ...) and a class diagram in PlantUML using the Boundary-Control-Entity
+(BCE) stereotypes. Ignore absent fields. Do not invent participants or messages
+that the inputs do not support.
 
-**Step 1: Target Identification**
-- Fully understand the Main Success Scenario, Alternative Flows, and Exception Flows of the provided [Use Case Specification].
+## Participants
+- Derive participants from the class diagram, not from imagination. Every
+  participant name must be a class that appears in the class diagram, except the
+  PrimaryActor and other actors, which come from the specification.
+- Set `kind` to one of: actor, boundary, control, entity, database.
+  Match the class's BCE stereotype; use "actor" for the specification's actors.
+- Order matters: list them left to right as the interaction reads —
+  actor first, then boundary, then control, then entity.
 
-**Step 2: Constrained Object Extraction**
-- Identify the actors and system components appearing in the use case scenario.
-- [IMPORTANT] System components (objects) MUST be identified EXCLUSIVELY from the classes existing in the provided [Class Diagram]. Do not arbitrarily invent or create new classes.
-- Categorize each object type as one of: `actor`, `boundary`, `control`, `entity`, `database`, or `participant`.
+## Messages
+- Walk MainSuccessScenario step by step. Each step becomes one or more messages.
+- `source` and `target` must both be participant names you listed.
+- Respect the BCE communication rules: Actor->Boundary, Boundary<->Control,
+  Control<->Entity. Never Actor->Control, Boundary->Entity, or Entity-initiated calls.
+- `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
+  fire-and-forget (notifications, events).
+- `label` is the operation being invoked, named as verbNoun() where it maps to a
+  class method in the class diagram; otherwise a short verb phrase.
+- Emit a return message only where the caller genuinely uses the result.
 
-**Step 3: Object Layout**
-- Define participants with a descriptive `label` and a unique PascalCase `alias`.
-- Layout ordering principle: Arrange participants in logical order from left to right: Actor -> Boundary (UI/Controller) -> Control (Service/Manager) -> Entity / Database (Repository/DB).
+## Fragments (alt / loop / opt)
+- Each Extensions branch becomes messages with `group` = "alt" and `condition`
+  set to that branch's trigger.
+- A step that repeats over a collection becomes `group` = "loop" with `condition`
+  describing the iteration.
+- A step that only sometimes happens becomes `group` = "opt".
+- Messages with the same `group` AND the same `condition` are rendered as one
+  fragment, so keep the condition text identical across a fragment's messages.
+- Leave both fields empty for main-flow messages.
 
-**Step 4: Strict Message Mapping & Directional Rules**
-- Translate each action step of the use case into a sequence step:
-  - **[RULE 4-1: Receiver Ownership]** When creating a synchronous call (`message`), the method specified in `text` (e.g. `methodName()`) MUST explicitly exist within the **Receiver's** class definition in the [Class Diagram]. NEVER call a method on a Receiver if it belongs to the Caller or another class.
-  - **[RULE 4-2: Self-Messages]** If an object triggers its own internal event or method, use `self_message` where `source` and `target` are the same component alias.
-  - **[RULE 4-3: Return Messages]** Use `return_message` EXCLUSIVELY for returning data or control back to the caller. Format `text` as return value (e.g. `memberId`, `success`). NEVER put method names with parentheses (e.g., `getMember()`) on a return message.
-  - **[RULE 4-4: Activations]** Emit `activate` and `deactivate` steps to represent object execution lifelines accurately.
+## Traceability
+- `source_class` on each participant: the class diagram class it stands for.
+  Copy the class name exactly. Leave it empty for actors — they are not classes.
+- `use_case_ids` on each message: the id(s) of the use case whose step it came
+  from, copied exactly from the specification (e.g. "UC1").
+- **Never invent a name or an id.** An empty list is honest; a made-up
+  reference is a lie the trace matrix will believe.
 
-**Step 5: Combined Fragments Integration**
-- Identify logical branches and iterations in the use case scenario and encapsulate them using fragment steps:
-  - Mutually exclusive branching (alt flow / exception flow): `fragment_start` (fragment_type="alt", condition="..."), `fragment_else` (condition="..."), `fragment_end`.
-  - Single conditional flow (optional flow): `fragment_start` (fragment_type="opt", condition="..."), `fragment_end`.
-  - Iterative loop: `fragment_start` (fragment_type="loop", condition="..."), `fragment_end`.
+## Self-check before finalizing
+(a) every message's source and target exist among Participants,
+(b) no message violates the BCE communication rules,
+(c) every MainSuccessScenario step is represented by at least one message,
+(d) participants are ordered actor -> boundary -> control -> entity,
+(e) every `source_class` names a class in the given class diagram, and every
+    `use_case_ids` entry appears in the given specification.
 
-Return the extracted elements strictly matching the response schema. Do not include markdown code fences or conversational text outside the schema fields.
+Populate the response strictly according to the provided schema. Do not include
+markdown, code fences, or any prose outside the schema fields.
 """
 
 
-def run_sequence_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
-    """LLM에서 SequenceDiagramElements 구조체 파싱."""
-    load_dotenv()
-
-    client = OpenAI(
-        base_url=os.getenv("BASE_URL"),
-        api_key=os.getenv("API_KEY"),
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
-    )
-
-    response = client.chat.completions.parse(
-        model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
-        messages=messages,
-        temperature=0,
-        response_format=SequenceDiagramElements,
-    )
-    return response.choices[0].message.parsed.model_dump()
-
-
-def extract_sequence_elements_from_scenario(
+def extract_sequence_model(
     scenario_text: str,
     class_diagram_puml: str,
 ) -> dict[str, Any]:
+    """유스케이스 명세 + 클래스 다이어그램 → 구조화된 시퀀스 상호작용 모델."""
     if not scenario_text:
         return {}
 
-    user_prompt = f"""[Use Case Specification]
-{scenario_text}
-
-[Class Diagram Information]
-{class_diagram_puml}
-"""
-
     messages = [
-        {"role": "system", "content": SEQUENCE_ELEMENT_EXTRACTION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
+        {"role": "system", "content": SEQUENCE_EXTRACTION_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"[Use Case Specification]\n{scenario_text}\n\n"
+                f"[Class Diagram PlantUML]\n{class_diagram_puml}"
+            ),
+        },
     ]
-    return run_sequence_parse(messages)
+    return parse_structured(messages, SequenceModel)
