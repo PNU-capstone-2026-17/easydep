@@ -34,12 +34,13 @@ artifacts/orchestration/runs/<run-id>/
 ├── manifest.json
 ├── 01-requirements/
 ├── 02-design/
-├── 03-infrastructure/
-└── 04-implementation/
+├── 03-implementation/
+└── 04-testing/        # 추후 연결
 ```
 
 설계 디렉터리에는 원본 결과와 클래스·시퀀스·ERD·OpenAPI·논리/클라우드 배포
-다이어그램을 저장한다. 구현 디렉터리에는 결과 상태, 생성 소스, 테스트,
+다이어그램을 저장한다. LLM 기반 임시 인프라 권고도 독립 단계가 아니라
+`02-design/cloud-native/` 아래에 저장한다. 구현 디렉터리에는 결과 상태, 생성 소스, 테스트,
 설정 파일과 실행 보고서를 저장한다. Gradle 캐시와 `build` 같은 재생성 가능한
 임시 파일, JVM 크래시 덤프는 제외한다.
 

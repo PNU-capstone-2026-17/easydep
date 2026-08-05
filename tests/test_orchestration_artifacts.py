@@ -42,6 +42,7 @@ def test_persist_run_artifacts_exports_every_available_stage(tmp_path: Path):
                 "status": "needs_approval",
                 "run_root": str(implementation_root),
             },
+            "testing_result": {"status": "deferred"},
             "current_stage": "implementation",
             "status": "needs_input",
         },
@@ -49,10 +50,20 @@ def test_persist_run_artifacts_exports_every_available_stage(tmp_path: Path):
     )
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert list(manifest["stages"]) == [
+        "requirements",
+        "design",
+        "implementation",
+        "testing",
+    ]
     assert all(manifest["stages"].values())
     assert (run_dir / "01-requirements" / "result.json").is_file()
     assert (run_dir / "02-design" / "deployment-cloud.puml").read_text() == "cloud"
-    assert (run_dir / "03-infrastructure" / "recommendation.json").is_file()
-    assert (run_dir / "04-implementation" / "application/src/main/App.java").is_file()
-    assert (run_dir / "04-implementation" / "reports/workflow-state.json").is_file()
-    assert not (run_dir / "04-implementation" / "application/build").exists()
+    assert (
+        run_dir
+        / "02-design/cloud-native/provisional-infrastructure-recommendation.json"
+    ).is_file()
+    assert (run_dir / "03-implementation" / "application/src/main/App.java").is_file()
+    assert (run_dir / "03-implementation" / "reports/workflow-state.json").is_file()
+    assert not (run_dir / "03-implementation" / "application/build").exists()
+    assert (run_dir / "04-testing" / "result.json").is_file()

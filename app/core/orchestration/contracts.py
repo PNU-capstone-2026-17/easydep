@@ -18,6 +18,7 @@ class OrchestrationState(TypedDict, total=False):
     cloud_design_result: dict[str, Any]
     infrastructure_recommendation: dict[str, Any]
     implementation_result: dict[str, Any]
+    testing_result: dict[str, Any]
     implementation_authorized: bool
     current_stage: StageName
     status: str

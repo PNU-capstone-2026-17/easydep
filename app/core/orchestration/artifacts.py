@@ -54,6 +54,18 @@ def persist_run_artifacts(
     cloud = state.get("cloud_design_result") or {}
     infrastructure = state.get("infrastructure_recommendation") or {}
     implementation = state.get("implementation_result") or {}
+    testing = state.get("testing_result") or {}
+
+    # Migrate the short-lived five-directory layout. Infrastructure is design
+    # enrichment, not a user-visible workflow stage.
+    legacy_implementation = run_dir / "04-implementation"
+    implementation_stage = run_dir / "03-implementation"
+    if legacy_implementation.is_dir():
+        shutil.copytree(legacy_implementation, implementation_stage, dirs_exist_ok=True)
+        shutil.rmtree(legacy_implementation)
+    legacy_infrastructure = run_dir / "03-infrastructure"
+    if legacy_infrastructure.is_dir():
+        shutil.rmtree(legacy_infrastructure)
 
     _write(
         run_dir / "manifest.json",
@@ -65,8 +77,8 @@ def persist_run_artifacts(
             "stages": {
                 "requirements": bool(requirements),
                 "design": bool(design or cloud),
-                "infrastructure": bool(infrastructure),
                 "implementation": bool(implementation),
+                "testing": bool(testing),
             },
         },
     )
@@ -103,13 +115,22 @@ def persist_run_artifacts(
         )
 
     if infrastructure:
-        _write(run_dir / "03-infrastructure" / "recommendation.json", infrastructure)
+        _write(
+            run_dir
+            / "02-design"
+            / "cloud-native"
+            / "provisional-infrastructure-recommendation.json",
+            infrastructure,
+        )
 
     if implementation:
-        stage = run_dir / "04-implementation"
+        stage = implementation_stage
         _write(stage / "result.json", implementation)
         run_root = Path(str(implementation.get("run_root") or ""))
         if str(run_root) not in {"", "."}:
             _copy_implementation(run_root, stage)
+
+    if testing:
+        _write(run_dir / "04-testing" / "result.json", testing)
 
     return run_dir
