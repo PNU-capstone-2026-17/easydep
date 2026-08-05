@@ -1,6 +1,6 @@
 """추적성 집계의 단일 소스 규율.
 
-`check_coverage`(파이프라인 게이트)와 `build_rtm`(저장 시점 매트릭스)이 같은 추적 링크를
+`check_coverage`(파이프라인 게이트)와 저장용 요구사항 추적이 같은 링크를
 각자 굴리다가 **환각 참조의 정의가 갈렸다.** 같은 상태에서 서로 겹치지도 않는 답을 냈고,
 하필 파이프라인이 쓰는 쪽이 틀린 쪽이었다.
 
@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from app.core import traceability
-from app.core.rtm import build_rtm
+from app.core.traceability import build_requirement_trace
 from app.requirements.agent.steps.step2_usecases import check_coverage
 
 
@@ -48,15 +48,15 @@ def test_an_invented_id_in_nfr_ids_is_a_hallucination():
     assert check_coverage(state)["coverage"]["unknown_requirement_refs"] == ["NFR9"]
 
 
-def test_the_gate_and_the_matrix_agree_on_hallucinations():
+def test_the_gate_and_the_saved_trace_agree_on_hallucinations():
     """두 소비자가 **같은 답**을 내야 한다. 갈리면 어느 쪽을 믿을지 알 수 없다."""
     state = _state(use_cases=[
         {"id": "UC1", "name": "x", "requirement_ids": ["FR1", "NFR1", "R9"],
          "nfr_ids": ["NFR9"]},
     ])
     gate = check_coverage(state)["coverage"]["unknown_requirement_refs"]
-    matrix = build_rtm(state)["unknown_refs"]
-    assert gate == matrix == ["NFR9", "R9"]
+    saved_trace = build_requirement_trace(state)["unknown_refs"]
+    assert gate == saved_trace == ["NFR9", "R9"]
 
 
 def test_link_kinds_stay_apart():
@@ -78,6 +78,21 @@ def test_link_kinds_stay_apart():
 def test_coverage_ratio_of_an_empty_input_is_not_a_failure():
     """FR이 하나도 없는 입력을 커버리지 0%로 읽으면 빈 실행이 실패로 보인다."""
     assert traceability.index({"classified": [], "use_cases": []}).coverage_ratio == 1.0
+
+
+def test_deployment_linked_nfr_is_not_reported_as_unattached():
+    state = _state(
+        use_cases=[{"id": "UC1", "requirement_ids": ["FR1"], "nfr_ids": []}],
+        deployment_needs={
+            "https_ingress": {"requirementIds": ["NFR1"]},
+        },
+    )
+
+    trace = traceability.index(state)
+
+    assert trace.attached_nfr_ids == ("NFR1",)
+    assert trace.unattached_nfr_ids == ()
+    assert check_coverage(state)["coverage"]["unattached_nfr_ids"] == []
 
 
 def test_spec_steps_are_traced_per_step_not_just_per_use_case():
@@ -109,4 +124,4 @@ def test_both_consumers_actually_go_through_the_index(monkeypatch):
 
     state = _state()
     assert check_coverage(state)["coverage"]["unknown_requirement_refs"] == ["GHOST"]
-    assert build_rtm(state)["unknown_refs"] == ["GHOST"]
+    assert build_requirement_trace(state)["unknown_refs"] == ["GHOST"]

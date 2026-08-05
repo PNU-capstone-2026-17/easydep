@@ -1,0 +1,53 @@
+{
+ "_note": "globalDns(gcp) — 사설 managed zone·record. 사설 한정 측정(공인 영역 미측정).",
+ "startedAt": "2026-07-31T10:57:54+00:00",
+ "steps": {
+  "A1.record-without-zone": {
+   "ok": false,
+   "httpStatus": 404,
+   "errorCodes": [
+    "notFound"
+   ],
+   "excerpt": "{\"error\": {\"code\": 404, \"message\": \"The 'parameters.managedZone' resource named 'depkb-zone' does not exist.\", \"errors\": [{\"message\": \"The 'parameters.managedZone' resource named 'depkb-zone' does not exist.\", \"domain\": \"global\", \"reason\": \"notFound\"}]}}"
+  },
+  "A2.create-private-zone": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"name\": \"depkb-zone\", \"dnsName\": \"depkb.internal.\", \"description\": \"depkb dep round\", \"id\": \"8167561167871489442\", \"nameServers\": [\"ns-gcp-private.googleapis.com.\"], \"creationTime\": \"2026-07-31T10:57:56.152Z\", \"visibility\": \"private\", \"privateVisibilityConfig\": {\"networks\": [{\"networkUrl\": \"https://compute.googleapis.com/compute/v1/projects/cloud-resource-testing/global/networks/default\", \"kind\":"
+  },
+  "A3.create-record": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"additions\": [{\"name\": \"api.depkb.internal.\", \"type\": \"A\", \"ttl\": 300, \"rrdatas\": [\"10.0.0.10\"], \"signatureRrdatas\": [], \"kind\": \"dns#resourceRecordSet\"}], \"deletions\": [], \"startTime\": \"2026-07-31T10:57:56.708Z\", \"id\": \"1\", \"status\": \"pending\", \"kind\": \"dns#change\"}"
+  },
+  "L1.delete-zone-with-record": {
+   "ok": false,
+   "httpStatus": 400,
+   "errorCodes": [
+    "containerNotEmpty"
+   ],
+   "excerpt": "{\"error\": {\"code\": 400, \"message\": \"The resource named 'depkb-zone' cannot be deleted because it contains one or more 'resource records'.\", \"errors\": [{\"message\": \"The resource named 'depkb-zone' cannot be deleted because it contains one or more 'resource records'.\", \"domain\": \"global\", \"reason\": \"containerNotEmpty\"}]}}"
+  },
+  "L2.delete-record": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"additions\": [], \"deletions\": [{\"name\": \"api.depkb.internal.\", \"type\": \"A\", \"ttl\": 300, \"rrdatas\": [\"10.0.0.10\"], \"signatureRrdatas\": [], \"kind\": \"dns#resourceRecordSet\"}], \"startTime\": \"2026-07-31T10:57:57.552Z\", \"id\": \"2\", \"status\": \"pending\", \"kind\": \"dns#change\"}"
+  },
+  "L3.delete-zone-after": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{}"
+  },
+  "T1.residual": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"managedZones\": [], \"kind\": \"dns#managedZonesListResponse\"}"
+  }
+ },
+ "finishedAt": "2026-07-31T10:57:59+00:00"
+}

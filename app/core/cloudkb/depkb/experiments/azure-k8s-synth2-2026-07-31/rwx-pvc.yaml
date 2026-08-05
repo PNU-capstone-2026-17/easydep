@@ -1,0 +1,12 @@
+# RWX PVC — azurefile-csi(1라운드 K5에서 실재·bind=Immediate 관측).
+# Immediate라 Pod 트리거 없이 바인딩되는지 자체가 관측 대상.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: depkb-synth2-rwx
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: azurefile-csi
+  resources:
+    requests:
+      storage: 5Gi

@@ -1,8 +1,7 @@
 """추적성 색인 — **누가 무엇을 커버한다고 주장하는가**를 한 곳에서 센다.
 
-집계는 여기서만 한다. `check_coverage`(파이프라인 게이트)도 `rtm.build_rtm`(추적 매트릭스)도
-여기서 파생한다. 예전에는 각자 굴렸고 환각 참조의 정의가 갈려 같은 상태에서 서로 겹치지도
-않는 답을 냈다 — 경위와 실제 사례는 `docs/requirements-agent-improvements.md` §15.
+집계는 여기서만 한다. 파이프라인 커버리지와 저장되는 추적 스냅샷도 여기서 파생한다.
+표나 문서를 렌더링하지 않고, 요구사항 ID가 어느 산출물에 연결되는지만 구조화해 제공한다.
 
 **링크 종류를 뭉개지 않는다.** `requirement_ids`(실현 주장)와 `nfr_ids`(제약 부착)는 뜻이
 달라 따로 센다. 환각 판정만 둘을 합쳐서 본다 — "이 id가 존재하는가"는 어느 칸에 적혔든
@@ -38,12 +37,14 @@ class Traceability:
     ucs_claiming: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 **제약으로 붙인** UC id들(`nfr_ids`).
     ucs_constrained_by: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: 요구 id → 그것에서 파생된 배포 필요사항 id들.
+    deployment_needs_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: 요구 id → 그것을 커버한다고 적힌 명세 스텝들(`"UC1.3"`). UC보다 정밀한 추적.
     steps_of: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     # -- 되읽기 ------------------------------------------------------------
     def ucs_of(self, req_id: str) -> tuple[str, ...]:
-        """어느 칸으로든 이 요구를 건 UC들. 매트릭스가 보는 시야다."""
+        """어느 칸으로든 이 요구를 건 UC들."""
         merged = list(self.ucs_claiming.get(req_id, ()))
         merged += [u for u in self.ucs_constrained_by.get(req_id, ()) if u not in merged]
         return tuple(merged)
@@ -74,13 +75,14 @@ class Traceability:
 
     @property
     def attached_nfr_ids(self) -> tuple[str, ...]:
-        """어떤 UC에 제약으로 붙은 NFR."""
-        return tuple(sorted(self.nfr_ids & frozenset(self.ucs_constrained_by)))
+        """Use Case 또는 배포 필요사항에 연결된 NFR."""
+        attached = frozenset(self.ucs_constrained_by) | frozenset(self.deployment_needs_of)
+        return tuple(sorted(self.nfr_ids & attached))
 
     @property
     def unattached_nfr_ids(self) -> tuple[str, ...]:
-        """어디에도 안 붙은 NFR — 전역 제약 후보."""
-        return tuple(sorted(self.nfr_ids - frozenset(self.ucs_constrained_by)))
+        """Use Case와 배포 필요사항 어디에도 연결되지 않은 NFR."""
+        return tuple(sorted(self.nfr_ids - frozenset(self.attached_nfr_ids)))
 
     @property
     def coverage_ratio(self) -> float:
@@ -111,11 +113,87 @@ def index(state: dict) -> Traceability:
             for rid in step.get("covered_req_ids", []) or []:
                 steps.setdefault(rid, []).append(f"{uc_id}.{step['step_number']}")
 
+    deployment: dict[str, list[str]] = {}
+    for need_id, need in (state.get("deployment_needs") or {}).items():
+        for requirement_id in need.get("requirementIds", []) or []:
+            deployment.setdefault(requirement_id, []).append(need_id)
+
     return Traceability(
         by_id=by_id,
         fr_ids=frozenset(r["id"] for r in classified if r.get("type") == "FR"),
         nfr_ids=frozenset(r["id"] for r in classified if r.get("type") == "NFR"),
         ucs_claiming={k: tuple(v) for k, v in claiming.items()},
         ucs_constrained_by={k: tuple(v) for k, v in constrained.items()},
+        deployment_needs_of={k: tuple(v) for k, v in deployment.items()},
         steps_of={k: tuple(v) for k, v in steps.items()},
     )
+
+
+def build_requirement_trace(state: dict, verdicts: list[dict] | None = None) -> dict:
+    """요구사항 ID를 중심으로 연결된 산출물을 구조화한다.
+
+    별도 표의 행을 만들지 않는다. 각 요구사항을 키로 사용하므로 호출자는 특정 요구가
+    어느 유스케이스·시나리오 스텝·배포 필요사항에 연결되는지 직접 조회할 수 있다.
+    """
+    trace = index(state)
+    real_by_req: dict[str, list[bool]] = {}
+    for verdict in verdicts or []:
+        requirement_id = verdict.get("requirement_id")
+        if isinstance(requirement_id, str):
+            real_by_req.setdefault(requirement_id, []).append(bool(verdict.get("realized")))
+
+    needs_by_req: dict[str, list[str]] = {}
+    referenced_by_needs: set[str] = set()
+    deployment_needs = state.get("deployment_needs") or {}
+    for need_id, need in deployment_needs.items():
+        for requirement_id in need.get("requirementIds", []):
+            referenced_by_needs.add(requirement_id)
+            if requirement_id in trace.by_id:
+                needs_by_req.setdefault(requirement_id, []).append(need_id)
+
+    requirements: dict[str, dict] = {}
+    for requirement_id, requirement in trace.by_id.items():
+        requirement_type = requirement.get("type")
+        verdict_values = real_by_req.get(requirement_id)
+        requirements[requirement_id] = {
+            "type": requirement_type,
+            "text": requirement.get("text", ""),
+            "use_cases": list(trace.ucs_of(requirement_id)),
+            "scenario_steps": list(trace.steps_of.get(requirement_id, ())),
+            "deployment_needs": sorted(needs_by_req.get(requirement_id, [])),
+            "qualifies": list(requirement.get("qualifies", [])),
+            "realized": any(verdict_values) if verdict_values else None,
+        }
+
+    use_cases = {
+        use_case["id"]: {
+            "name": use_case.get("name", ""),
+            "requirements": [
+                requirement_id
+                for requirement_id in (
+                    list(use_case.get("requirement_ids", []))
+                    + list(use_case.get("nfr_ids", []))
+                )
+                if requirement_id in trace.by_id
+            ],
+        }
+        for use_case in state.get("use_cases") or []
+        if use_case.get("id")
+    }
+    unknown_refs = sorted(
+        set(trace.unknown_refs) | (referenced_by_needs - frozenset(trace.by_id))
+    )
+    return {
+        "requirements": requirements,
+        "use_cases": use_cases,
+        "deployment_needs": deployment_needs,
+        "unknown_refs": unknown_refs,
+        "summary": {
+            "requirements": len(requirements),
+            "covered_functional_requirements": len(trace.covered_fr_ids),
+            "orphan_functional_requirements": list(trace.orphan_fr_ids),
+            "attached_nonfunctional_requirements": len(trace.attached_nfr_ids),
+            "unattached_nonfunctional_requirements": list(trace.unattached_nfr_ids),
+            "deployment_needs": len(deployment_needs),
+        },
+    }

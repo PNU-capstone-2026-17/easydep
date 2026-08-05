@@ -1,0 +1,120 @@
+{
+ "_note": "customImage(aws) — AMI는 인스턴스에서 나온다(원본이 디스크가 아님). 정리에 스냅샷 포함.",
+ "startedAt": "2026-07-31T10:21:35+00:00",
+ "ids": {
+  "srcInstance": "i-0af895146326e848b",
+  "ami": "ami-0cb7429073aedf4bc",
+  "snapshots": [
+   "snap-0124299d2db8cdcb9"
+  ],
+  "vm": "i-0ddf6ac359b7a46f7"
+ },
+ "steps": {
+  "R1.resolve-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "ami-04bb4ddfc0e51bb5e"
+  },
+  "R2.run-source-instance": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ReservationId\": \"r-0a43fa70fd4182b00\",\n    \"OwnerId\": \"838062934141\",\n    \"Groups\": [],\n    \"Instances\": [\n        {\n            \"Architecture\": \"x86_64\",\n            \"BlockDeviceMappings\": [],\n            \"ClientToken\": \"6374e20e-3110-4fd7-8b59-0fe63622cf92\",\n            \"EbsOptimized\": false,\n            \"EnaSupport\": true,\n            \"Hypervisor\": \"xen\",\n            \"NetworkInterfaces\": [\n                {\n                    \"Attachment\": {\n                        \"AttachTime\": \"2026-07-31T10:21:38+00:00\",\n                        \"AttachmentId\": \"eni-attach-0526fc64d7925f76b\",\n    "
+  },
+  "R3.source-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "running"
+  },
+  "A1.dangling-source-instance": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterValue"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterValue) when calling the CreateImage operation: Value (i-0aaaaaaaaaaaaaaaa) for parameter instance is invalid. Expected: 'i-...'."
+  },
+  "A2.create-image-from-instance": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ImageId\": \"ami-0cb7429073aedf4bc\"\n}"
+  },
+  "A3.ami-available": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "available"
+  },
+  "A4.ami-snapshots": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[\n    \"snap-0124299d2db8cdcb9\"\n]"
+  },
+  "L1.terminate-source-while-ami-exists": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"TerminatingInstances\": [\n        {\n            \"InstanceId\": \"i-0af895146326e848b\",\n            \"CurrentState\": {\n                \"Code\": 32,\n                \"Name\": \"shutting-down\"\n            },\n            \"PreviousState\": {\n                \"Code\": 16,\n                \"Name\": \"running\"\n            }\n        }\n    ]\n}"
+  },
+  "L1b.source-terminated": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "terminated"
+  },
+  "L1c.ami-after-source-terminate": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"state\": \"available\",\n    \"name\": \"depkb-cimg\"\n}"
+  },
+  "C1.run-instance-from-custom-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ReservationId\": \"r-07ff4c47a9296d107\",\n    \"OwnerId\": \"838062934141\",\n    \"Groups\": [],\n    \"Instances\": [\n        {\n            \"Architecture\": \"x86_64\",\n            \"BlockDeviceMappings\": [],\n            \"ClientToken\": \"fb5803bb-9522-4211-8e2c-4407eb53d2b9\",\n            \"EbsOptimized\": false,\n            \"EnaSupport\": true,\n            \"Hypervisor\": \"xen\",\n            \"NetworkInterfaces\": [\n                {\n                    \"Attachment\": {\n                        \"AttachTime\": \"2026-07-31T10:25:17+00:00\",\n                        \"AttachmentId\": \"eni-attach-068403710af8dcc99\",\n    "
+  },
+  "C2.vm-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "running"
+  },
+  "T1.terminate-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"TerminatingInstances\": [\n        {\n            \"InstanceId\": \"i-0ddf6ac359b7a46f7\",\n            \"CurrentState\": {\n                \"Code\": 32,\n                \"Name\": \"shutting-down\"\n            },\n            \"PreviousState\": {\n                \"Code\": 16,\n                \"Name\": \"running\"\n            }\n        }\n    ]\n}"
+  },
+  "T2.vm-terminated": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "terminated"
+  },
+  "T3.deregister-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true,\n    \"DeleteSnapshotResults\": []\n}"
+  },
+  "T4.delete-snapshot1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T5.residual-images": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "T6.residual-snapshots": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T10:26:19+00:00"
+}

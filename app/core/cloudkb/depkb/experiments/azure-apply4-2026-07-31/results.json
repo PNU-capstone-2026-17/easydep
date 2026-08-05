@@ -1,0 +1,19 @@
+{
+ "_note": "쌍 호환(SKU) 측정 — Basic PIP 생성 가능 여부부터가 데이터(퇴역 중). P2 거부가 가설.",
+ "ranAt": "2026-07-30T15:48:26+00:00",
+ "resourceGroup": "depkb-preflight",
+ "steps": {
+  "P1.create-basic-pip": {
+   "ok": false,
+   "errorCodes": [
+    "IPv4BasicSkuPublicIpCountLimitReached"
+   ],
+   "excerpt": "ERROR: (IPv4BasicSkuPublicIpCountLimitReached) Cannot create more than 0 IPv4 Basic SKU public IP addresses for this subscription in this region.\nCode: IPv4BasicSkuPublicIpCountLimitReached\nMessage: Cannot create more than 0 IPv4 Basic SKU public IP addresses for this subscription in this region."
+  },
+  "residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ }
+}

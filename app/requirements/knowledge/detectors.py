@@ -77,19 +77,19 @@ def extension_refs(spec: dict) -> list[Finding]:
         label = ext.get("label") or "?"
         branch = ext.get("branch_step")
         if branch is not None and branch not in step_nums:
-            found.append(Finding(rule_id, f"branch_step {branch}가 주 시나리오에 없음", label))
+            found.append(Finding(rule_id, f"branch_step {branch} is not in the main scenario", label))
         outcome = ext.get("outcome")
         resume = ext.get("resume_at_step")
         if outcome == "resume":
             if resume is None:
-                found.append(Finding(rule_id, "outcome=resume인데 resume_at_step 없음", label))
+                found.append(Finding(rule_id, "outcome=resume requires resume_at_step", label))
             elif resume not in step_nums:
                 found.append(
-                    Finding(rule_id, f"resume_at_step {resume}가 주 시나리오에 없음", label)
+                    Finding(rule_id, f"resume_at_step {resume} is not in the main scenario", label)
                 )
         elif resume is not None:
             found.append(
-                Finding(rule_id, f"outcome={outcome}인데 resume_at_step이 설정됨", label)
+                Finding(rule_id, f"outcome={outcome} must not set resume_at_step", label)
             )
     return found
 
@@ -97,7 +97,7 @@ def extension_refs(spec: dict) -> list[Finding]:
 def branch_words(spec: dict) -> list[Finding]:
     """문장에 명시적 분기어(if/else)가 있는지."""
     return [
-        Finding("spec.no-branching-in-a-step", "분기어(if/else) — 무분기여야 함(별도 확장으로 분리)", loc)
+        Finding("spec.no-branching-in-a-step", "branch word (if/else); move the branch to an extension", loc)
         for loc, sentence in _locations(spec)
         if _BRANCH.search(sentence)
     ]
@@ -106,7 +106,7 @@ def branch_words(spec: dict) -> list[Finding]:
 def control_tokens(spec: dict) -> list[Finding]:
     """문장에 시나리오 종결 토큰(Success!/Fail!)이 산문으로 섞였는지."""
     return [
-        Finding("spec.no-control-tokens-in-prose", "제어토큰(Success!/Fail!) — outcome 필드로 표현할 것", loc)
+        Finding("spec.no-control-tokens-in-prose", "control token (Success!/Fail!); use the outcome field", loc)
         for loc, sentence in _locations(spec)
         if _CONTROL_TOKEN.search(sentence)
     ]
@@ -119,7 +119,7 @@ def ui_terms(spec: dict) -> list[Finding]:
         words = ui_words(sentence)
         if words:
             found.append(
-                Finding("spec.black-box-no-ui-mechanics", f"UI 용어 {words} — black-box 위반", loc)
+                Finding("spec.black-box-no-ui-mechanics", f"UI terms {words} violate black-box wording", loc)
             )
     return found
 
@@ -129,9 +129,9 @@ def contract_fields(spec: dict) -> list[Finding]:
     rule_id = "spec.contract-completeness"
     found: list[Finding] = []
     if not spec.get("preconditions"):
-        found.append(Finding(rule_id, "preconditions 없음"))
+        found.append(Finding(rule_id, "preconditions are missing"))
     if not spec.get("success_guarantee"):
-        found.append(Finding(rule_id, "success_guarantee 없음"))
+        found.append(Finding(rule_id, "success_guarantee is missing"))
     return found
 
 

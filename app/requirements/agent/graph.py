@@ -4,12 +4,12 @@
 진입점이다. 세부 작업은 각 단계 서브그래프 안에 캡슐화돼 있다.
 
 전체 워크플로우(상위 그래프, 노드명 = 단계별 동작):
-  START → refine_requirements → cover_cloud_concerns → model_use_cases
+  START → refine_requirements → derive_deployment_needs → model_use_cases
       → write_specifications → draw_diagram → END
   (각 노드 = 컴파일된 스테이지 서브그래프. 세부 노드는 app/agent/subgraphs.py 참조)
 
 대화형 게이트는 gated 그래프에서만 스테이지 사이에 부모-레벨 노드로 삽입한다:
-  refine_requirements → cover_cloud_concerns → gate_requirements → model_use_cases
+  refine_requirements → derive_deployment_needs → gate_requirements → model_use_cases
       → gate_use_cases → write_specifications → gate_specs → draw_diagram
       → gate_relationships → END
 (게이트를 서브그래프 안이 아니라 부모 레벨에 두는 이유: LangGraph는 서브그래프가 interrupt로
@@ -50,7 +50,7 @@ from app.requirements.session_store import SqlCheckpointSaver
 def _build_plain_graph(saver):
     """게이트 없는 파이프라인 + **되돌아가기**.
 
-    START → refine_requirements → cover_cloud_concerns → model_use_cases → supervise_model
+    START → refine_requirements → derive_deployment_needs → model_use_cases → supervise_model
           → write_specifications → supervise_specs → draw_diagram → supervise_diagram → END
 
     각 `supervise_*`는 남은 결함을 보고 **그 결함을 낸 단계의 그룹으로 되돌린다**
@@ -67,7 +67,7 @@ def _build_plain_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
-    builder.add_node("cover_cloud_concerns", subs["cover_cloud_concerns"])
+    builder.add_node("derive_deployment_needs", subs["derive_deployment_needs"])
     builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
@@ -81,11 +81,10 @@ def _build_plain_graph(saver):
     )
 
     builder.add_edge(START, "refine_requirements")
-    # 관심사 커버리지는 되돌아가기의 대상도, 되돌아갈 자리도 아니다 — 결함을 내지 않고
-    # (인계 항목만 낸다) `classified`에서만 파생되므로 아래 단계가 다시 돌아도 답이 같다.
-    builder.add_edge("refine_requirements", "cover_cloud_concerns")
+    # 배포 필요사항은 `classified`에서 파생되는 인계 산출물이라 되돌아가기 대상이 아니다.
+    builder.add_edge("refine_requirements", "derive_deployment_needs")
     # 제약 구조화도 같은 성격이다 — 결함을 내지 않고 `classified`·제약 원문에서만 파생된다.
-    builder.add_edge("cover_cloud_concerns", "structure_constraints")
+    builder.add_edge("derive_deployment_needs", "structure_constraints")
     builder.add_edge("structure_constraints", "model_use_cases")
     builder.add_edge("model_use_cases", "supervise_model")
     builder.add_edge("write_specifications", "supervise_specs")
@@ -125,7 +124,7 @@ def _build_gated_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
-    builder.add_node("cover_cloud_concerns", subs["cover_cloud_concerns"])
+    builder.add_node("derive_deployment_needs", subs["derive_deployment_needs"])
     builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
@@ -136,24 +135,20 @@ def _build_gated_graph(saver):
     builder.add_node("gate_relationships", gate_relationships)
 
     builder.add_edge(START, "refine_requirements")
-    # 게이트 **앞**에 둔다 — 사용자가 요구사항을 확인하는 그 자리에서 "안 정해진 클라우드
-    # 관심사"를 함께 보게 하려는 것이다. 뒤에 두면 사용자가 이미 넘어간 뒤에 나온다.
-    builder.add_edge("refine_requirements", "cover_cloud_concerns")
+    # 게이트 앞에 둬 사용자가 요구사항과 배포 필요사항을 함께 확인하게 한다.
+    builder.add_edge("refine_requirements", "derive_deployment_needs")
     # 제약 구조화도 게이트 **앞**이다. 못 채운 필수 칸의 되묻기가 사용자가 요구사항을
     # 확인하는 바로 그 자리에서 함께 보여야 한다 — 뒤에 두면 이미 넘어간 뒤에 나온다.
-    builder.add_edge("cover_cloud_concerns", "structure_constraints")
+    builder.add_edge("derive_deployment_needs", "structure_constraints")
     builder.add_edge("structure_constraints", "gate_requirements")
-    # loop가 게이트 자신이 아니라 `cover_cloud_concerns`로 돌아간다. 이 게이트는 루프에서
-    # **`classify`를 다시 돌려 `classified`를 바꾼다** — 게이트로 바로 돌아오면 관심사
-    # 커버리지가 옛 분류 위에서 계산된 채로 남는다. 한 바퀴 더 도는 비용은 결정론 층에서
-    # 0이고, LLM 층을 켰을 때만 실제 비용이 된다.
+    # loop가 게이트 자신이 아니라 `derive_deployment_needs`로 돌아간다. 이 게이트는 루프에서
+    # classify 결과가 바뀌었으므로 배포 필요사항도 새 RTM ID를 기준으로 다시 도출한다.
     builder.add_conditional_edges(
         "gate_requirements", route_gate,
         {"advance": "model_use_cases",
-         "loop": "cover_cloud_concerns",
+         "loop": "derive_deployment_needs",
          # 되묻기의 답만 온 경우. 이 분기는 `classify`를 안 돌려 `classified`가 그대로이고,
-         # 관심사 링크는 그 입력의 순수 함수다 — 같은 답을 다시 계산할 뿐이다. LLM 층을
-         # 켜면 그 재계산이 표 3벌(실측 중앙값 23.6초/표)이라 답 한 번에 1~2분을 버린다.
+         # 제약 답변만 바뀌면 classified는 그대로이므로 배포 필요사항을 다시 부르지 않는다.
          "answers": "structure_constraints"},
     )
     builder.add_edge("model_use_cases", "gate_use_cases")
@@ -175,7 +170,12 @@ def _build_gated_graph(saver):
     return builder.compile(checkpointer=saver)
 
 
-def build_graph(feedback_gates: bool | None = None, *, persistent: bool = False):
+def build_graph(
+    feedback_gates: bool | None = None,
+    *,
+    persistent: bool = False,
+    saver=None,
+):
     """settings(또는 인자)에 따라 두 플랫 빌더 중 하나를 골라 컴파일한 그래프를 반환한다.
 
     feedback_gates=None이면 빌드 타임에 settings.enable_feedback_gates 를 1회 읽는다(기존
@@ -186,8 +186,12 @@ def build_graph(feedback_gates: bool | None = None, *, persistent: bool = False)
     DB 없이 돌 수 있어야 하는 경로이기도 하다.
     """
     gated = settings.enable_feedback_gates if feedback_gates is None else feedback_gates
-    saver = SqlCheckpointSaver() if persistent else MemorySaver()
-    return _build_gated_graph(saver) if gated else _build_plain_graph(saver)
+    checkpoint_saver = saver or (SqlCheckpointSaver() if persistent else MemorySaver())
+    return (
+        _build_gated_graph(checkpoint_saver)
+        if gated
+        else _build_plain_graph(checkpoint_saver)
+    )
 
 
 # 앱 전역에서 재사용할 컴파일된 그래프 (모듈 로드 시 1회 생성)
@@ -248,7 +252,7 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
 #: **한 곳에만 적는다** — 예전에는 게이트 응답과 완료 응답이 같은 목록을 따로 들고 있어서,
 #: 새 산출물을 추가하면 한쪽에만 들어가 화면에서 조용히 사라질 수 있었다.
 _ARTIFACT_KEYS = (
-    "cloud_concerns", "resource_spec", "resource_intake",
+    "deployment_needs", "resource_spec", "resource_intake",
     "actors", "use_cases", "model_review", "coverage", "use_case_specs", "spec_report",
     "relationships", "relationship_report", "diagram",
 )

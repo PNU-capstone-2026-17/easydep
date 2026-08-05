@@ -39,16 +39,9 @@
             "enum": [
               "aws",
               "azure",
-              "gcp",
-              "tencent",
-              "alibaba",
-              "ibm",
-              "ncp",
-              "kt",
-              "nhn",
-              "openstack"
+              "gcp"
             ],
-            "description": "cb-tumblebug이 아는 10개 프로바이더. 새 값이 오면 검증 실패시켜 조용한 드리프트를 막는다."
+            "description": "지원 범위인 AWS, Azure, GCP만 허용한다."
           },
           "region": {
             "type": "string",

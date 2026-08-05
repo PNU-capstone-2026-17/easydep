@@ -1,5 +1,7 @@
 # 클라우드 제약의 도출 — 자유 변수와 단계 배분
 
+> **보류 문서:** 현재 최소 `cloudContext` 및 기존 FR/NFR 계약과 재대조 전에는 구현 기준으로 사용하지 않는다. 현재 범위는 [`README.md`](README.md)를 따른다.
+
 > **살아 있는 문서다. 계속 갱신한다.** 아카이브에 넣지 않는다.
 >
 > 상위 근거는 `docs/research.md`(과제 원문)와 `docs/cloud-native-extension.md`(현재 진실).
@@ -195,7 +197,7 @@ src/interface/rest/server/server.go:587   g.POST("/:nsId/k8sClusterDynamic", …
 
 | | 칸 | 근거 |
 |---|---|---|
-| **뺀다** | `expectedConcurrentUsers` · `approxRequestsPerSecond` | 어느 자유 변수도 아니고(§3) 추천기 지표에도 없다(§3.2). 이미 필수에서 내려와 있었고 **독립된 두 절차가 같은 답을 냈다** |
+| **접는다** | `expectedConcurrentUsers` · `approxRequestsPerSecond` → `scale{value,unit}` | 어느 자유 변수도 아니고(§3) 추천기 지표에도 없다(§3.2). **여기서는 빼자고 적었는데 실제로는 남았다**(2026-08-01): 소비자가 하나 있다 — 하한이 없을 때 되묻는 근거(`sizing_floor.undecided_note`). 이 저장소의 규율은 소비자가 있으면 남기는 것이라 **맥락 계층**으로 내려 두고 두 칸을 한 칸으로 접었다. 두 칸이 같은 양의 두 *단위*였을 뿐이라 축이 하나였고, 접으면서 소비층의 택1 특수 처리가 사라졌다 |
 | **재정의** | `stateless` | 유일한 소비자였던 서버리스 적합 판정이 범위 밖으로 나갔다. *"영속 저장이 필요한가"*로 바꾸면 `dataDisk` 등장 결정이라는 새 소비자를 얻는다 |
 | **형태 변경** | `monthlyBudgetUSD` → **필터**(`costPerHour <=`) · `region` → 위치 제약 · `multiZone` → 배치 술어 | §3.2의 필터/우선순위 구분과 `coordinateClose/Within/Fair` |
 | **신설** | 형상 · 외부 노출+포트 · 외부 연결 · `architecture` · **가속기** · 지연 요구 · 대수 | §3.1·§3.2·§3.4 |

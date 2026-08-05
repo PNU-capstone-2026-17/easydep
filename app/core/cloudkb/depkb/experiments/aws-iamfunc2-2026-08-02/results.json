@@ -1,0 +1,311 @@
+{
+ "_note": "EKS IAM 기능 축 2차 — 변이를 터미널 상태까지 유지한다. 1차의 SIGNAL_INVALID(수락≠완료)와 IGW 부재(양성 대조 불성립)를 고친 판이다.",
+ "startedAt": "2026-08-01T15:30:31+00:00",
+ "ids": {
+  "roleArn": "arn:aws:iam::838062934141:role/depkb-iamfunc2-role",
+  "nodeRoleArn": "arn:aws:iam::838062934141:role/depkb-iamfunc2-node-role",
+  "vpc": "vpc-066a0daac6a4bf6f1",
+  "igw": "igw-0abe0e60400248729",
+  "routeTable": "rtb-01acd09d6742f8b5a",
+  "subnet1": "subnet-04283d2155780efae",
+  "subnet2": "subnet-0d8d8bd56ce4c3e6a"
+ },
+ "steps": {
+  "R1.create-cluster-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-iamfunc2-role\",\n        \"RoleId\": \"AROA4GIDRRB6SSTUYBSCH\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-iamfunc2-role\",\n        \"CreateDate\": \"2026-08-01T15:30:33+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"eks.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n      "
+  },
+  "R2.attach-cluster-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R3.create-node-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-iamfunc2-node-role\",\n        \"RoleId\": \"AROA4GIDRRB64XYTK3WDL\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-iamfunc2-node-role\",\n        \"CreateDate\": \"2026-08-01T15:30:37+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"ec2.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n          "
+  },
+  "R4.attach-node-policy1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R4.attach-node-policy2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R4.attach-node-policy3": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R5.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-07c4d4cd27b4d3051\",\n                \"CidrBlock\": \"10.109.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-066a0daac6a4bf6f1\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.109.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "R6.create-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"InternetGateway\": {\n        \"Attachments\": [],\n        \"InternetGatewayId\": \"igw-0abe0e60400248729\",\n        \"OwnerId\": \"838062934141\",\n        \"Tags\": []\n    }\n}"
+  },
+  "R7.attach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R8.main-route-table": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[\n    \"rtb-01acd09d6742f8b5a\"\n]"
+  },
+  "H1.helper-parse-trap": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "kickoff이 R9에서 TypeError로 죽음 — R8의 --query가 JSON 문자열을 냈고 aws()는 {/[ 시작만 파싱해 _data=None. 자원은 R1~R7까지 생성된 상태였다"
+  },
+  "R9.default-route-to-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true\n}"
+  },
+  "R10.create-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az1\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-04283d2155780efae\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R11.map-public-ip1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R10.create-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0d8d8bd56ce4c3e6a\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R11.map-public-ip2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "K1.create-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-iamfunc2\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-iamfunc2\",\n        \"createdAt\": \"2026-08-02T00:32:03.609000+09:00\",\n        \"version\": \"1.36\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-iamfunc2-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-04283d2155780efae\",\n                \"subnet-0d8d8bd56ce4c3e6a\"\n            ],\n            \"securityGroupIds\": [],\n            \"vpcId\": \"vpc-066a0daac6a4bf6f1\",\n            \"endpointPublicAccess\": true,\n            \"endpointPri"
+  },
+  "K2.cluster-active": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "ACTIVE"
+  },
+  "F0.control-nodegroup-create": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-control\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-control/26cfdefd-56f5-f79f-cfd4-49d8b65d85c4\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T00:39:13.311000+09:00\",\n        \"modifiedAt\": \"2026-08-02T00:39:13.311000+09:00\",\n        \"status\": \"CREATING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize\":"
+  },
+  "F0b.control-nodegroup-terminal": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\"status\": \"ACTIVE\", \"health\": {\"issues\": []}}"
+  },
+  "M1.detach-policy-while-active": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "M1b.policies-now-empty": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "M1c.cluster-still-active": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "ACTIVE"
+  },
+  "F1.nodegroup-without-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-nopolicy\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-nopolicy/38cfdefe-f9ef-c8ae-5776-9b5eef7cb06c\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T00:42:47.957000+09:00\",\n        \"modifiedAt\": \"2026-08-02T00:42:47.957000+09:00\",\n        \"status\": \"CREATING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize"
+  },
+  "F1b.nodegroup-terminal-under-mutation": {
+   "ok": false,
+   "errorCodes": [
+    "CREATE_FAILED"
+   ],
+   "excerpt": "{\"status\": \"CREATE_FAILED\", \"health\": {\"issues\": [{\"code\": \"NodeCreationFailure\", \"message\": \"Instances failed to join the kubernetes cluster\", \"resourceIds\": [\"i-07b275b6fb4e6e786\"]}]}}"
+  },
+  "F1c.policy-still-detached": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "O1.control-health-under-mutation": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"s\": \"ACTIVE\",\n    \"h\": {\n        \"issues\": []\n    }\n}"
+  },
+  "M2.reattach-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F2.nodegroup-after-restore": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-restored\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-restored/b4cfdf0e-ffd7-b7c8-98cc-9ce804e99797\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T01:17:47.235000+09:00\",\n        \"modifiedAt\": \"2026-08-02T01:17:47.235000+09:00\",\n        \"status\": \"CREATING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize"
+  },
+  "F2b.nodegroup-terminal-after-restore": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\"status\": \"ACTIVE\", \"health\": {\"issues\": []}}"
+  },
+  "T1.delete-nodegroup-ng-control": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-control\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-control/26cfdefd-56f5-f79f-cfd4-49d8b65d85c4\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T00:39:13.311000+09:00\",\n        \"modifiedAt\": \"2026-08-02T01:20:28.307000+09:00\",\n        \"status\": \"DELETING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize\":"
+  },
+  "T1.delete-nodegroup-ng-nopolicy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-nopolicy\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-nopolicy/38cfdefe-f9ef-c8ae-5776-9b5eef7cb06c\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T00:42:47.957000+09:00\",\n        \"modifiedAt\": \"2026-08-02T01:20:29.677000+09:00\",\n        \"status\": \"DELETING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize"
+  },
+  "T1.delete-nodegroup-ng-restored": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng-restored\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-iamfunc2/ng-restored/b4cfdf0e-ffd7-b7c8-98cc-9ce804e99797\",\n        \"clusterName\": \"depkb-iamfunc2\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-08-02T01:17:47.235000+09:00\",\n        \"modifiedAt\": \"2026-08-02T01:20:31.156000+09:00\",\n        \"status\": \"DELETING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize"
+  },
+  "T2.nodegroups-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  },
+  "T3.delete-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-iamfunc2\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-iamfunc2\",\n        \"createdAt\": \"2026-08-02T00:32:03.609000+09:00\",\n        \"version\": \"1.36\",\n        \"endpoint\": \"https://708C10DFC650B186B4CA3418B261213F.yl4.ap-northeast-2.eks.amazonaws.com\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-iamfunc2-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-04283d2155780efae\",\n                \"subnet-0d8d8bd56ce4c3e6a\"\n            ],\n            \"securityGroupIds\": [],\n           "
+  },
+  "T4.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gone"
+  },
+  "T5.delete-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T5.delete-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T6.detach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T7.delete-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T8.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T9.detach-cluster-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T10.delete-cluster-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T11.detach-node-policy1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T11.detach-node-policy2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T11.detach-node-policy3": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T12.delete-node-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T13.residual-clusters": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": []\n}"
+  },
+  "T14.residual-roles": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "T15.residual-vpcs": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-08-01T16:29:46+00:00"
+}

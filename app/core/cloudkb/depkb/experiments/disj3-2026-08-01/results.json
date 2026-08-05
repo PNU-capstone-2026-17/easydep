@@ -1,0 +1,74 @@
+{
+ "_note": "선언 술어의 배타성 3차 — vm→image(azure·gcp). 부팅 원천을 둘 다 주면 거부되는가. CLI 거부는 판정이 아니라는 규율을 지킨다(위협 ①).",
+ "startedAt": "2026-08-01T10:30:17+00:00",
+ "steps": {
+  "A0.create-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj3\",\n  \"location\": \"koreacentral\",\n  \"managedBy\": null,\n  \"name\": \"depkb-disj3\",\n  \"properties\": {\n    \"provisioningState\": \"Succeeded\"\n  },\n  \"tags\": null,\n  \"type\": \"Microsoft.Resources/resourceGroups\"\n}"
+  },
+  "A1.both-image-and-disk": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidTemplateDeployment",
+    "s",
+    "SkuNotAvailable"
+   ],
+   "excerpt": "ERROR: {\"code\": \"InvalidTemplateDeployment\", \"message\": \"The template deployment 'both-image-and-disk' is not valid according to the validation procedure. The following resource provider(s) - 'Microsoft.Compute/virtualMachines (2024-07-01)' reported preflight validation errors. Tracking id is 'c5b607ef-8c87-4a4d-b773-edd388949180'. See inner errors for details.\"}\n\nInner Errors: \n{\"code\": \"SkuNotAvailable\", \"message\": \"The requested VM size for resource 'Following SKUs have failed for Capacity Restrictions: Standard_B1s' is currently not available in location 'KoreaCentral'. Please try another "
+  },
+  "A2.image-only": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidTemplateDeployment",
+    "s",
+    "SkuNotAvailable"
+   ],
+   "excerpt": "ERROR: {\"code\": \"InvalidTemplateDeployment\", \"message\": \"The template deployment 'image-only' is not valid according to the validation procedure. The following resource provider(s) - 'Microsoft.Compute/virtualMachines (2024-07-01)' reported preflight validation errors. Tracking id is 'faeb256d-af84-40ea-bb30-1ecf2a351233'. See inner errors for details.\"}\n\nInner Errors: \n{\"code\": \"SkuNotAvailable\", \"message\": \"The requested VM size for resource 'Following SKUs have failed for Capacity Restrictions: Standard_B1s' is currently not available in location 'KoreaCentral'. Please try another size or d"
+  },
+  "A3.disk-only": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidTemplateDeployment",
+    "s",
+    "SkuNotAvailable"
+   ],
+   "excerpt": "ERROR: {\"code\": \"InvalidTemplateDeployment\", \"message\": \"The template deployment 'disk-only' is not valid according to the validation procedure. The following resource provider(s) - 'Microsoft.Compute/virtualMachines (2024-07-01)' reported preflight validation errors. Tracking id is 'eb50bb62-358e-4a03-bb9d-b889dd42d29d'. See inner errors for details.\"}\n\nInner Errors: \n{\"code\": \"SkuNotAvailable\", \"message\": \"The requested VM size for resource 'Following SKUs have failed for Capacity Restrictions: Standard_B1s' is currently not available in location 'KoreaCentral'. Please try another size or de"
+  },
+  "A9.delete-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "G0.create-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "WARNING: You have selected a disk size of under [200GB]. This may result in poor I/O performance. For more information, see: https://developers.google.com/compute/docs/disks#performance.\nCreated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj3-disk].\n[\n  {\n    \"architecture\": \"X86_64\",\n    \"creationTimestamp\": \"2026-08-01T03:30:44.083-07:00\",\n    \"enableConfidentialCompute\": false,\n    \"guestOsFeatures\": [\n      {\n        \"type\": \"VIRTIO_SCSI_MULTIQUEUE\"\n      },\n      {\n        \"type\": \"SEV_CAPABLE\"\n      },\n      {\n        \"type"
+  },
+  "G1.both-image-and-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instances/depkb-disj3-vm].\n[\n  {\n    \"canIpForward\": false,\n    \"cpuPlatform\": \"Intel Broadwell\",\n    \"creationTimestamp\": \"2026-08-01T03:30:49.277-07:00\",\n    \"deletionProtection\": false,\n    \"disks\": [\n      {\n        \"architecture\": \"X86_64\",\n        \"autoDelete\": false,\n        \"boot\": true,\n        \"deviceName\": \"persistent-disk-0\",\n        \"diskSizeGb\": \"10\",\n        \"guestOsFeatures\": [\n          {\n            \"type\": \"VIRTIO_SCSI_MULTIQUEUE\"\n          },\n          {\n            \"type\""
+  },
+  "G2.instance-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"disks\": [\n    {\n      \"boot\": true,\n      \"source\": \"https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj3-disk\"\n    }\n  ]\n}"
+  },
+  "G3.delete-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instances/depkb-disj3-vm]."
+  },
+  "G9.delete-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj3-disk]."
+  },
+  "T1.residual-gcp-vms": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  }
+ },
+ "finishedAt": "2026-08-01T10:33:25+00:00"
+}

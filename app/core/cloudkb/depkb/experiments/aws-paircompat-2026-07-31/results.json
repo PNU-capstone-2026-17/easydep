@@ -1,0 +1,28 @@
+{
+ "_note": "쌍 호환(아키텍처) 측정 — P1은 거부가 가설, P2는 대조군(DryRunOperation = 성공 상당). 자원 무생성.",
+ "ranAt": "2026-07-30T15:48:05+00:00",
+ "steps": {
+  "0.resolve-arm64-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Parameter\": {\n        \"Name\": \"/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64\",\n        \"Type\": \"String\",\n        \"Value\": \"ami-0a1231e819ae021a0\",\n        \"Version\": 182,\n        \"LastModifiedDate\": \"2026-07-28T04:34:08.617000+09:00\",\n        \"ARN\": \"arn:aws:ssm:ap-northeast-2::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64\",\n        \"DataType\": \"text\"\n    }\n}"
+  },
+  "P1.arch-mismatch-arm-ami-x86-type": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterValue"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterValue) when calling the RunInstances operation: The architecture 'x86_64' of the specified instance type does not match the architecture 'arm64' of the specified AMI. Specify an instance type and an AMI that have matching architectures, and try again. You can use 'describe-instance-types' or 'describe-images' to discover the architecture of the instance type or AMI."
+  },
+  "P2.arch-match-control-arm-type": {
+   "ok": false,
+   "errorCodes": [
+    "DryRunOperation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set."
+  }
+ }
+}

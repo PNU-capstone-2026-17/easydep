@@ -68,9 +68,7 @@ _MEMORY_BUG_PROVIDERS = frozenset({"gcp", "azure"})
 _MEMORY_BUG_FACTOR = 1.024
 
 # 스키마 enum과 같아야 한다. 새 프로바이더가 오면 조용히 흘리지 않고 경고한다.
-KNOWN_PROVIDERS = frozenset(
-    {"aws", "azure", "gcp", "tencent", "alibaba", "ibm", "ncp", "kt", "nhn", "openstack"}
-)
+KNOWN_PROVIDERS = frozenset({"aws", "azure", "gcp"})
 
 
 def _num(value: Any) -> float | None:

@@ -27,7 +27,7 @@ BUILT_FILENAME = "tumblebug-perf.json"
 #:
 #: `ibm-perf.json`은 **재배포 허가를 확인하지 못해 `data/`에 커밋하지 않는다** —
 #: 없는 것이 기본이고, 없다고 나머지가 못 도는 일은 없어야 한다.
-EXTRA_FILENAMES = ("ibm-perf.json",)
+EXTRA_FILENAMES: tuple[str, ...] = ()
 
 
 @lru_cache(maxsize=1)

@@ -1,0 +1,110 @@
+{
+ "_note": "기능 의존 2라운드(azure) — subnet→NSG 분리/재부착. 차단은 NSG 부재+Standard PIP secure-by-default의 합성.",
+ "startedAt": "2026-07-31T08:47:27+00:00",
+ "ids": {
+  "ip": "20.196.210.72"
+ },
+ "steps": {
+  "R1.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.101.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"dde1abfb-3de2-4ebd-82f2-d3115aae3689\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-f2-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-f2-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"resourceGuid\": \"c1bc2499-0b4c-4c6d-9dcc-f5393e34f40d\",\n  "
+  },
+  "R2.create-nsg-allow22": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"NewNSG\": {\n    \"defaultSecurityRules\": [\n      {\n        \"access\": \"Allow\",\n        \"description\": \"Allow inbound traffic from all VMs in VNET\",\n        \"destinationAddressPrefix\": \"VirtualNetwork\",\n        \"destinationAddressPrefixes\": [],\n        \"destinationPortRange\": \"*\",\n        \"destinationPortRanges\": [],\n        \"direction\": \"Inbound\",\n        \"etag\": \"W/\\\"3dd717a9-1f96-446d-a91c-5d1de9e73c8c\\\"\",\n        \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-f2-nsg/defaultSecurityRules/Allo"
+  },
+  "R3.nsg-rule-22": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"access\": \"Allow\",\n  \"destinationAddressPrefix\": \"*\",\n  \"destinationAddressPrefixes\": [],\n  \"destinationPortRange\": \"22\",\n  \"destinationPortRanges\": [],\n  \"direction\": \"Inbound\",\n  \"etag\": \"W/\\\"dfdb8339-537a-4918-8dfb-4e87174af8f7\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-f2-nsg/securityRules/allow22\",\n  \"name\": \"allow22\",\n  \"priority\": 100,\n  \"protocol\": \"Tcp\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"sourceAddressPrefix\": \"*\",\n  \"sourceAddressP"
+  },
+  "R4.attach-nsg-to-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"addressPrefix\": \"10.101.0.0/24\",\n  \"defaultOutboundAccess\": false,\n  \"delegations\": [],\n  \"etag\": \"W/\\\"6bf36ef3-d139-4b96-9357-546089f38bf2\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-f2-vnet/subnets/s\",\n  \"name\": \"s\",\n  \"networkSecurityGroup\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-f2-nsg\",\n    \"resourceGroup\": \"depkb-preflight\"\n  },\n  \"privateEndpointNetworkPolicies\": \"Disabl"
+  },
+  "R5.create-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"publicIp\": {\n    \"ddosSettings\": {\n      \"protectionMode\": \"VirtualNetworkInherited\"\n    },\n    \"etag\": \"W/\\\"c4cf60b2-e398-4816-9207-7f9de460c709\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/publicIPAddresses/depkb-f2-pip\",\n    \"idleTimeoutInMinutes\": 4,\n    \"ipAddress\": \"20.196.210.72\",\n    \"ipTags\": [],\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-f2-pip\",\n    \"provisioningState\": \"Succeeded\",\n    \"publicIPAddressVersion\": \"IPv4\",\n    \"publicIPAllocationMethod\": \"Static\",\n    \"resourceGroup\": \"depkb-p"
+  },
+  "R6.create-nic": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"NewNIC\": {\n    \"auxiliaryMode\": \"None\",\n    \"auxiliarySku\": \"None\",\n    \"disableTcpStateTracking\": false,\n    \"dnsSettings\": {\n      \"appliedDnsServers\": [],\n      \"dnsServers\": [],\n      \"internalDomainNameSuffix\": \"teslzqkmbnwuzhom4u2t2nhubf.syx.internal.cloudapp.net\"\n    },\n    \"enableAcceleratedNetworking\": false,\n    \"enableIPForwarding\": false,\n    \"etag\": \"W/\\\"83864c8e-cba3-4485-a357-96b07463ba65\\\"\",\n    \"hostedWorkloads\": [],\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkInterfaces/depkb-f2-nic\",\n  "
+  },
+  "R7.create-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/virtualMachines/depkb-f2-vm\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"7C-ED-8D-FB-36-79\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.101.0.4\",\n  \"publicIpAddress\": \"20.196.210.72\",\n  \"resourceGroup\": \"depkb-preflight\"\n}"
+  },
+  "F1.reachable-baseline": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=True (시도 1, 연속 1)"
+  },
+  "M1.detach-nsg-from-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidResourceReference",
+    "NotFound"
+   ],
+   "excerpt": "ERROR: (InvalidResourceReference) Resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/DEPKB-PREFLIGHT/providers/Microsoft.Network/networkSecurityGroups/ referenced by resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-f2-vnet/subnets/s was not found. Please make sure that the referenced resource exists, and that both resources are in the same region.\nCode: InvalidResourceReference\nMessage: Resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/DEPKB-PREFLIGHT/"
+  },
+  "F2.unreachable-after-detach": {
+   "ok": false,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "tcp22가 180초 내 False×2에 도달 못 함"
+  },
+  "M2.reattach-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"addressPrefix\": \"10.101.0.0/24\",\n  \"defaultOutboundAccess\": false,\n  \"delegations\": [],\n  \"etag\": \"W/\\\"b578d7fe-7565-4dd1-869b-eb1b06c0cdee\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-f2-vnet/subnets/s\",\n  \"ipConfigurations\": [\n    {\n      \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/DEPKB-PREFLIGHT/providers/Microsoft.Network/networkInterfaces/DEPKB-F2-NIC/ipConfigurations/IPCONFIG1\",\n      \"resourceGroup\": \"DEPKB-PREFLIGHT\"\n    }\n  ],\n  \"name\": \"s\",\n  \"netwo"
+  },
+  "F3.reachable-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=True (시도 1, 연속 1)"
+  },
+  "T1.delete-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-osdisk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T3.delete-nic": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T4.delete-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T5.delete-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T6.delete-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T7.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T08:53:04+00:00"
+}

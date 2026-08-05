@@ -1,0 +1,51 @@
+{
+ "_note": "선언 술어의 배타성 2차 — ARM 템플릿으로 컨트롤 플레인에 직접 건다. 1차는 CLI 클라이언트 거부라 무효였다.",
+ "startedAt": "2026-08-01T10:16:20+00:00",
+ "steps": {
+  "S1.create-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2\",\n  \"location\": \"koreacentral\",\n  \"managedBy\": null,\n  \"name\": \"depkb-disj2\",\n  \"properties\": {\n    \"provisioningState\": \"Succeeded\"\n  },\n  \"tags\": null,\n  \"type\": \"Microsoft.Resources/resourceGroups\"\n}"
+  },
+  "S2.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.91.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"0b9a323c-bcc9-4739-961e-ed0282947c7c\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2/providers/Microsoft.Network/virtualNetworks/d2-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"d2-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-disj2\",\n    \"resourceGuid\": \"33f42131-1db7-4be5-be46-3e81bcc152f3\",\n    \"subnets\": [\n      "
+  },
+  "S3.create-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"publicIp\": {\n    \"ddosSettings\": {\n      \"protectionMode\": \"VirtualNetworkInherited\"\n    },\n    \"etag\": \"W/\\\"db7135fa-3dfd-4958-8c5d-4d8403978d3a\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2/providers/Microsoft.Network/publicIPAddresses/d2-pip\",\n    \"idleTimeoutInMinutes\": 4,\n    \"ipAddress\": \"20.196.201.98\",\n    \"ipTags\": [],\n    \"location\": \"koreacentral\",\n    \"name\": \"d2-pip\",\n    \"provisioningState\": \"Succeeded\",\n    \"publicIPAddressVersion\": \"IPv4\",\n    \"publicIPAllocationMethod\": \"Static\",\n    \"resourceGroup\": \"depkb-disj2\",\n    \"reso"
+  },
+  "E1.arm-both-subnet-and-pip": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidTemplateDeployment",
+    "s",
+    "FrontendIPConfigHasBothSubnetAndPublicIP"
+   ],
+   "excerpt": "ERROR: {\"code\": \"InvalidTemplateDeployment\", \"message\": \"The template deployment 'lb-both' is not valid according to the validation procedure. The following resource provider(s) - 'Microsoft.Network/loadBalancers (2023-09-01)' reported preflight validation errors. Tracking id is '15ee2de9-4628-40df-b66d-25e989a07e25'. See inner errors for details.\"}\n\nInner Errors: \n{\"code\": \"FrontendIPConfigHasBothSubnetAndPublicIP\", \"target\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2/providers/Microsoft.Network/loadBalancers/lb-both\", \"message\": \"Frontend IP Configuration"
+  },
+  "E2.arm-subnet-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2/providers/Microsoft.Resources/deployments/lb-sub\",\n  \"location\": null,\n  \"name\": \"lb-sub\",\n  \"properties\": {\n    \"correlationId\": \"8c716d1d-7c17-4f86-8d99-b331b03ceb24\",\n    \"debugSetting\": null,\n    \"dependencies\": [],\n    \"diagnostics\": null,\n    \"duration\": \"PT5.5941532S\",\n    \"error\": null,\n    \"extensions\": [],\n    \"mode\": \"Incremental\",\n    \"onErrorDeployment\": null,\n    \"outputResources\": [\n      {\n        \"apiVersion\": null,\n        \"extension\": null,\n        \"id\": \"/subscriptions/414038da-b07b-44"
+  },
+  "E3.arm-pip-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj2/providers/Microsoft.Resources/deployments/lb-pip\",\n  \"location\": null,\n  \"name\": \"lb-pip\",\n  \"properties\": {\n    \"correlationId\": \"892c976d-e84c-4e38-9265-2e5fe375b0bd\",\n    \"debugSetting\": null,\n    \"dependencies\": [],\n    \"diagnostics\": null,\n    \"duration\": \"PT1.643427S\",\n    \"error\": null,\n    \"extensions\": [],\n    \"mode\": \"Incremental\",\n    \"onErrorDeployment\": null,\n    \"outputResources\": [\n      {\n        \"apiVersion\": null,\n        \"extension\": null,\n        \"id\": \"/subscriptions/414038da-b07b-447"
+  },
+  "T1.delete-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.residual-groups": {
+   "ok": false,
+   "errorCodes": [],
+   "excerpt": "].name은(는) 예상되지 않았습니다.\nC:\\Users\\projw\\Desktop\\dev\\easydep\\app\\core\\cloudkb\\depkb\\experiments\\azure-disj2-2026-08-01>  \"C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\\\..\\python.exe\" -IBm azure.cli group list --query [?starts_with(name,'depkb')].name -o json --only-show-errors"
+  }
+ },
+ "finishedAt": "2026-08-01T10:18:02+00:00"
+}

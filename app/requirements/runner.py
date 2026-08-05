@@ -1,11 +1,13 @@
 """파이프라인 러너 + 아티팩트 저장.
 
-inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를 artifacts/run_*/에
+inputs/*.json(분류된 요구사항)을 step2~4에 태우고, 실행 결과를
+artifacts/runs/<run-id>/에
 재현 가능한 형태로 남긴다:
-  run_<UTC>_<input_sha10>/
+  <system>-<variant>-<case>-<UTC>-<short-id>/
     input.json          # 입력 재현용(그대로)
     manifest.json       # run_id / config 스냅샷 / input_sha256 / 스테이지 요약
-    actors.json  use_cases.json  coverage.json  relationships.json
+    deployment_needs.json  resource_spec.json  resource_intake.json
+    traceability.json  actors.json  use_cases.json  coverage.json  relationships.json
     diagram.puml
     use_cases/uc_NN_<slug>/{use_case.json, spec.json}
 
@@ -20,7 +22,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from app.core.rtm import build_rtm, render_rtm_md
+from app.core.run_identity import identity_manifest, make_run_id
+from app.core.traceability import build_requirement_trace
 from app.requirements.agent import stages, supervisor
 from app.requirements.agent.state import AgentState
 
@@ -43,14 +46,14 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import link_cloud_concerns  # noqa: F401
+from app.requirements.agent.steps.step_cloud import derive_deployment_needs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.config import settings
 
 # app/requirements/runner.py 에서 저장소 루트까지는 세 단계 위다.
 _ROOT = Path(__file__).parent.parent.parent
 INPUTS_DIR = _ROOT / "inputs"
-ARTIFACTS_DIR = _ROOT / "artifacts"
+ARTIFACTS_DIR = _ROOT / "artifacts" / "runs"
 
 
 def load_input(name_or_path: str) -> dict:
@@ -62,7 +65,7 @@ def load_input(name_or_path: str) -> dict:
 
 
 def load_state(run_dir: str | Path) -> dict:
-    """artifacts/run_*/ 산출물을 파이프라인 state로 복원한다(피드백 재생성용)."""
+    """artifacts/runs/<run-id> 산출물을 파이프라인 state로 복원한다."""
     run_dir = Path(run_dir)
 
     def _j(name: str, default):
@@ -76,6 +79,10 @@ def load_state(run_dir: str | Path) -> dict:
         "use_cases": _j("use_cases.json", []),
         "coverage": _j("coverage.json", {}),
         "model_review": _j("model_review.json", {}),
+        "deployment_needs": _j("deployment_needs.json", {}),
+        "resource_spec": _j("resource_spec.json", {}),
+        "resource_intake": _j("resource_intake.json", {}),
+        "traceability": _j("traceability.json", {}),
         **_j("redo.json", {"redo_rounds": 0, "redo_history": []}),
         "use_case_specs": _j("use_case_specs.json", []),
         "relationships": _j("relationships.json", {}),
@@ -115,7 +122,11 @@ def _rerun_from(state: dict, owner: str) -> list[str]:
     return _run_stages(state, tuple(order[start:]))
 
 
-def run_pipeline(classified: list[dict]) -> dict:
+def run_pipeline(
+    classified: list[dict],
+    resource_constraints_text: str = "",
+    resource_answers: dict[str, str] | None = None,
+) -> dict:
     """step2~4를 순서대로 실행하고, 남은 결함은 **낸 단계로 되돌린다**.
 
     그래프(`agent/graph.py`)는 되돌아가기를 조건부 엣지로 표현하는데, 이 러너는 그래프를
@@ -123,7 +134,11 @@ def run_pipeline(classified: list[dict]) -> dict:
     여기서도 돌려야 한다 — **평가 세트가 재는 실행이 이 배치**이고, 여기에 되돌아가기가
     없으면 C2의 효과가 측정에 잡히지 않는다.
     """
-    state: dict = {"classified": classified}
+    state: dict = {
+        "classified": classified,
+        "resource_constraints_text": resource_constraints_text,
+        "resource_answers": resource_answers or {},
+    }
     # 정방향 패스는 `stages.batch_order()`에서 파생한다 — 파이프라인 모양을 말하는 곳은
     # `agent/stages.py` 하나다. 여기 손으로 적으면 그 목록의 두 번째 사본이 된다.
     _run_stages(state, stages.batch_order())
@@ -180,6 +195,8 @@ def _summarize(state: dict) -> dict:
         # 의미 검증이 실제로 돌았는지. 이게 없으면 결함 0건이 "깨끗하다"인지
         # "확인 못 했다"인지 매니페스트만 보고 알 수 없다.
         "model_review": state.get("model_review", {}),
+        "n_deployment_needs": len(state.get("deployment_needs", {})),
+        "resource_spec_valid": bool(state.get("resource_spec")),
         # 되돌아가기가 있었는지. 있었으면 이 실행의 비용은 한 바퀴 이상이다.
         "redo_rounds": state.get("redo_rounds", 0),
         "relationships": {
@@ -194,13 +211,17 @@ def persist_run(
     state: dict,
     dataset_name: str = "",
     artifact_root: Path | str = ARTIFACTS_DIR,
-    rtm_verdicts: list[dict] | None = None,
+    traceability_verdicts: list[dict] | None = None,
+    run_metrics: dict | None = None,
+    variant: str = "full",
+    purpose: str = "normal",
 ) -> Path:
-    """실행 결과를 artifacts/run_*/ 에 저장하고 그 디렉토리를 반환한다(순수 파일 IO)."""
+    """실행 결과를 artifacts/runs/<run-id>에 저장하고 그 디렉토리를 반환한다."""
     artifact_root = Path(artifact_root)
     sha = _sha256(input_obj)
     created = _now_utc()
-    run_id = f"run_{created}_{sha[:10]}"
+    case_id = dataset_name or str(input_obj.get("name") or "adhoc")
+    run_id = make_run_id("easydep", variant, case_id)
     run_dir = artifact_root / run_id
     (run_dir / "use_cases").mkdir(parents=True, exist_ok=True)
 
@@ -208,6 +229,9 @@ def persist_run(
     _dump(run_dir / "actors.json", state.get("actors", []))
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
+    _dump(run_dir / "deployment_needs.json", state.get("deployment_needs", {}))
+    _dump(run_dir / "resource_spec.json", state.get("resource_spec", {}))
+    _dump(run_dir / "resource_intake.json", state.get("resource_intake", {}))
     # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),
     # 다른 하나는 "규칙을 지켰나"(의미)이고, 채점표가 둘을 따로 읽어야 한다.
     _dump(run_dir / "model_review.json", state.get("model_review", {}))
@@ -221,11 +245,11 @@ def persist_run(
     _dump(run_dir / "relationships.json", state.get("relationships", {}))
     (run_dir / "diagram.puml").write_text(state.get("diagram", ""), encoding="utf-8")
 
-    # RTM(요구사항 추적 매트릭스) 물질화 — state의 추적 정보를 매트릭스로 집계(순수, LLM 없음).
-    # rtm_verdicts(semantic judge 판정)가 있으면 FR realized(검증) 컬럼도 채운다(compare 경로).
-    rtm = build_rtm(state, verdicts=rtm_verdicts)
-    _dump(run_dir / "rtm.json", rtm)
-    (run_dir / "rtm.md").write_text(render_rtm_md(rtm, dataset_name), encoding="utf-8")
+    # 요구사항 ID 중심의 추적 스냅샷. 표나 Markdown 문서는 만들지 않는다.
+    trace_state = dict(state)
+    trace_state.setdefault("classified", input_obj.get("classified", []))
+    requirement_trace = build_requirement_trace(trace_state, verdicts=traceability_verdicts)
+    _dump(run_dir / "traceability.json", requirement_trace)
 
     specs_by_id = {s["use_case_id"]: s for s in state.get("use_case_specs", [])}
     for i, uc in enumerate(state.get("use_cases", []), start=1):
@@ -236,7 +260,15 @@ def persist_run(
         if spec is not None:
             _dump(uc_dir / "spec.json", spec)
 
-    manifest = {
+    manifest = identity_manifest(
+        run_id,
+        system="easydep",
+        variant=variant,
+        case_id=case_id,
+        purpose=purpose,
+        completed_stages=["requirements"],
+    )
+    manifest.update({
         "run_id": run_id,
         "created_utc": created,
         "dataset": dataset_name,
@@ -246,9 +278,15 @@ def persist_run(
             "base_url": settings.base_url,
             "temperature": settings.temperature,
             "spec_concurrency": settings.spec_concurrency,
+            "max_repair_iters": settings.max_repair_iters,
+            "max_coverage_iters": settings.max_coverage_iters,
+            "max_redo_rounds": settings.max_redo_rounds,
+            "validator_votes": settings.validator_votes,
+            "validator_per_rule": settings.validator_per_rule,
             "enable_bert_verify": settings.enable_bert_verify,
         },
+        "metrics": run_metrics or {},
         "summary": _summarize(state),
-    }
+    })
     _dump(run_dir / "manifest.json", manifest)
     return run_dir

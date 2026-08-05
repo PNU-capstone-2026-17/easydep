@@ -1,0 +1,1643 @@
+{
+ "_note": "cb-spider 드라이버의 네이티브 생성/삭제 호출 색인(기계 층, 재계산 가능) + 기제 판정(judgments, 우리 구성 — 모든 판정은 색인의 호출을 인용해야 한다). 인용 형식: <csp>/<handler>.go:<line>.",
+ "_pin": {
+  "source": "cb-spider v0.12.37",
+  "tarballSha256": "a3c638c4f183055b1cc738e25f33a56e10b22f85182a497fe50aeeedea81b1c8"
+ },
+ "calls": [
+  {
+   "csp": "aws",
+   "handler": "DiskHandler",
+   "func": "CreateDisk",
+   "line": 117,
+   "receiver": "DiskHandler.Client",
+   "call": "CreateVolume",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "DiskHandler",
+   "func": "DeleteDisk",
+   "line": 274,
+   "receiver": "DiskHandler.Client",
+   "call": "DeleteVolume",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "KeyPairHandler",
+   "func": "CreateKey",
+   "line": 144,
+   "receiver": "keyPairHandler.Client",
+   "call": "CreateKeyPair",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "KeyPairHandler",
+   "func": "DeleteKey",
+   "line": 381,
+   "receiver": "keyPairHandler.Client",
+   "call": "DeleteKeyPair",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateListener",
+   "line": 118,
+   "receiver": "NLBHandler.Client",
+   "call": "CreateListener",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateTargetGroup",
+   "line": 237,
+   "receiver": "NLBHandler.Client",
+   "call": "CreateTargetGroup",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 536,
+   "receiver": "NLBHandler.Client",
+   "call": "CreateLoadBalancer",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 592,
+   "receiver": "NLBHandler",
+   "call": "CreateTargetGroup",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 598,
+   "receiver": "NLBHandler",
+   "call": "DeleteNLB",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 621,
+   "receiver": "NLBHandler",
+   "call": "DeleteNLB",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 637,
+   "receiver": "NLBHandler",
+   "call": "CreateListener",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 643,
+   "receiver": "NLBHandler",
+   "call": "DeleteNLB",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "DeleteListener",
+   "line": 1075,
+   "receiver": "NLBHandler.Client",
+   "call": "DeleteListener",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "DeleteTargetGroup",
+   "line": 1106,
+   "receiver": "NLBHandler.Client",
+   "call": "DeleteTargetGroup",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "DeleteNLB",
+   "line": 1150,
+   "receiver": "NLBHandler",
+   "call": "DeleteListener",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "DeleteNLB",
+   "line": 1167,
+   "receiver": "NLBHandler",
+   "call": "DeleteTargetGroup",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "NLBHandler",
+   "func": "DeleteNLB",
+   "line": 1194,
+   "receiver": "NLBHandler.Client",
+   "call": "DeleteLoadBalancer",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "SecurityHandler",
+   "func": "CreateSecurity",
+   "line": 88,
+   "receiver": "securityHandler.Client",
+   "call": "CreateSecurityGroup",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "SecurityHandler",
+   "func": "CreateSecurity",
+   "line": 271,
+   "receiver": "securityHandler.Client",
+   "call": "CreateTags",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "SecurityHandler",
+   "func": "loopDeleteSecurityGroup",
+   "line": 616,
+   "receiver": "client",
+   "call": "DeleteSecurityGroup",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VMHandler",
+   "func": "StartVM",
+   "line": 457,
+   "receiver": "vmHandler.Client",
+   "call": "RunInstances",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VMHandler",
+   "func": "StartVM",
+   "line": 481,
+   "receiver": "vmHandler.Client",
+   "call": "CreateTags",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VMHandler",
+   "func": "TerminateVM",
+   "line": 826,
+   "receiver": "vmHandler.Client",
+   "call": "TerminateInstances",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 68,
+   "receiver": "VPCHandler.Client",
+   "call": "CreateVpc",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 109,
+   "receiver": "VPCHandler.Client",
+   "call": "CreateInternetGateway",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 157,
+   "receiver": "VPCHandler",
+   "call": "CreateRouteIGW",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 170,
+   "receiver": "VPCHandler",
+   "call": "CreateSubnet",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateRouteIGW",
+   "line": 212,
+   "receiver": "VPCHandler.Client",
+   "call": "CreateRoute",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "CreateSubnet",
+   "line": 336,
+   "receiver": "VPCHandler.Client",
+   "call": "CreateSubnet",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteSubnet",
+   "line": 597,
+   "receiver": "VPCHandler.Client",
+   "call": "DeleteSubnet",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 633,
+   "receiver": "VPCHandler",
+   "call": "DeleteSubnet",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 650,
+   "receiver": "VPCHandler",
+   "call": "DeleteRouteIGW",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 664,
+   "receiver": "VPCHandler",
+   "call": "DeleteAllIGW",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 689,
+   "receiver": "VPCHandler.Client",
+   "call": "DeleteVpc",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteRouteIGWOld",
+   "line": 731,
+   "receiver": "VPCHandler.Client",
+   "call": "DeleteRoute",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteRouteIGW",
+   "line": 818,
+   "receiver": "VPCHandler.Client",
+   "call": "DeleteRoute",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteAllIGW",
+   "line": 882,
+   "receiver": "VPCHandler",
+   "call": "DeleteIGW",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "DeleteIGW",
+   "line": 923,
+   "receiver": "VPCHandler.Client",
+   "call": "DeleteInternetGateway",
+   "op": "delete"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "AddSubnet",
+   "line": 1111,
+   "receiver": "VPCHandler",
+   "call": "CreateSubnet",
+   "op": "create"
+  },
+  {
+   "csp": "aws",
+   "handler": "VPCHandler",
+   "func": "RemoveSubnet",
+   "line": 1151,
+   "receiver": "VPCHandler",
+   "call": "DeleteSubnet",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "DiskHandler",
+   "func": "CreateDisk",
+   "line": 88,
+   "receiver": "diskHandler.DiskClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "DiskHandler",
+   "func": "DeleteDisk",
+   "line": 271,
+   "receiver": "diskHandler.DiskClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "DiskHandler",
+   "func": "DetachDisk",
+   "line": 375,
+   "receiver": "diskHandler.VMClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "DiskHandler",
+   "func": "Attach",
+   "line": 668,
+   "receiver": "vmClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "DiskHandler",
+   "func": "AttachList",
+   "line": 738,
+   "receiver": "vmClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "KeyPairHandler",
+   "func": "CreateKey",
+   "line": 92,
+   "receiver": "keyPairHandler.Client",
+   "call": "Create",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "KeyPairHandler",
+   "func": "DeleteKey",
+   "line": 209,
+   "receiver": "keyPairHandler.Client",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 228,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "CreateNLB",
+   "line": 311,
+   "receiver": "nlbHandler.NLBBackendAddressPoolsClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "ChangeListener",
+   "line": 482,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "ChangeVMGroupInfo",
+   "line": 545,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "AddVMs",
+   "line": 668,
+   "receiver": "nlbHandler.NLBBackendAddressPoolsClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "AddVMs",
+   "line": 698,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "RemoveVMs",
+   "line": 845,
+   "receiver": "nlbHandler.NLBBackendAddressPoolsClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "ChangeHealthCheckerInfo",
+   "line": 983,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "NLBCleaner",
+   "line": 1177,
+   "receiver": "nlbHandler.PublicIPClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "NLBCleaner",
+   "line": 1204,
+   "receiver": "nlbHandler.NLBClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "NLBCleaner",
+   "line": 1213,
+   "receiver": "nlbHandler.PublicIPClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "createPublicIP",
+   "line": 1705,
+   "receiver": "nlbHandler.PublicIPClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "addAzureLoadBalancerRuleToNSG",
+   "line": 2004,
+   "receiver": "securityHandler.RuleClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "NLBHandler",
+   "func": "removeAzureLoadBalancerRuleFromNSG",
+   "line": 2096,
+   "receiver": "securityHandler.RuleClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "SecurityHandler",
+   "func": "CreateSecurity",
+   "line": 137,
+   "receiver": "securityHandler.Client",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "SecurityHandler",
+   "func": "DeleteSecurity",
+   "line": 220,
+   "receiver": "securityHandler.Client",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "SecurityHandler",
+   "func": "AddRules",
+   "line": 289,
+   "receiver": "securityHandler.RuleClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "SecurityHandler",
+   "func": "RemoveRules",
+   "line": 365,
+   "receiver": "securityHandler.RuleClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "StartVM",
+   "line": 385,
+   "receiver": "vmHandler.Client",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "cleanDeleteVm",
+   "line": 1016,
+   "receiver": "vmHandler.Client",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "CreatePublicIP",
+   "line": 1420,
+   "receiver": "vmHandler.PublicIPClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "cleanVMRelatedResource",
+   "line": 1505,
+   "receiver": "vmHandler.NicClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "cleanVMRelatedResource",
+   "line": 1509,
+   "receiver": "vmHandler.NicClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "cleanVMRelatedResource",
+   "line": 1537,
+   "receiver": "vmHandler.PublicIPClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "cleanVMRelatedResource",
+   "line": 1565,
+   "receiver": "vmHandler.DiskClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "CreateVNic",
+   "line": 1638,
+   "receiver": "vmHandler.NicClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "createAdministratorUser",
+   "line": 2013,
+   "receiver": "virtualMachineRunCommandsClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VMHandler",
+   "func": "changeUserPassword",
+   "line": 2040,
+   "receiver": "virtualMachineRunCommandsClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 93,
+   "receiver": "vpcHandler.Client",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 122,
+   "receiver": "vpcHandler.SubnetClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 200,
+   "receiver": "vpcHandler.Client",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "azure",
+   "handler": "VPCHandler",
+   "func": "AddSubnet",
+   "line": 242,
+   "receiver": "vpcHandler.SubnetClient",
+   "call": "BeginCreateOrUpdate",
+   "op": "create"
+  },
+  {
+   "csp": "azure",
+   "handler": "VPCHandler",
+   "func": "RemoveSubnet",
+   "line": 268,
+   "receiver": "vpcHandler.SubnetClient",
+   "call": "BeginDelete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "DiskHandler",
+   "func": "CreateDisk",
+   "line": 83,
+   "receiver": "DiskHandler.Client.Disks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "DiskHandler",
+   "func": "DeleteDisk",
+   "line": 238,
+   "receiver": "DiskHandler.Client.Disks",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertRegionAddresses",
+   "line": 1363,
+   "receiver": "nlbHandler.Client.Addresses",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "removeRegionAddresses",
+   "line": 1390,
+   "receiver": "nlbHandler.Client.Addresses",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertGlobalAddresses",
+   "line": 1455,
+   "receiver": "nlbHandler.Client.GlobalAddresses",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "removeGlobalAddresses",
+   "line": 1482,
+   "receiver": "nlbHandler.Client.GlobalAddresses",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertRegionForwardingRules",
+   "line": 1532,
+   "receiver": "nlbHandler.Client.ForwardingRules",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "deleteRegionForwardingRule",
+   "line": 1553,
+   "receiver": "nlbHandler.Client.ForwardingRules",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertGlobalForwardingRules",
+   "line": 1683,
+   "receiver": "nlbHandler.Client.GlobalForwardingRules",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertRegionBackendServices",
+   "line": 1745,
+   "receiver": "nlbHandler.Client.RegionBackendServices",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertGlobalBackendServices",
+   "line": 1818,
+   "receiver": "nlbHandler.Client.BackendServices",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertHttpHealthChecks",
+   "line": 2009,
+   "receiver": "nlbHandler.Client.HttpHealthChecks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertTargetPool",
+   "line": 2074,
+   "receiver": "nlbHandler.Client.TargetPools",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "insertHealthCheck",
+   "line": 2193,
+   "receiver": "nlbHandler.Client.HttpHealthChecks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "removeHttpHealthCheck",
+   "line": 2298,
+   "receiver": "nlbHandler.Client.HttpHealthChecks",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "removeHttpHealthCheck",
+   "line": 2311,
+   "receiver": "nlbHandler.Client.HttpHealthChecks",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "NLBHandler",
+   "func": "removeTargetPool",
+   "line": 2582,
+   "receiver": "nlbHandler.Client.TargetPools",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "SecurityHandler",
+   "func": "firewallInsert",
+   "line": 1867,
+   "receiver": "Firewalls",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "SecurityHandler",
+   "func": "firewallInsert",
+   "line": 1873,
+   "receiver": "securityHandler.Client.Firewalls",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "SecurityHandler",
+   "func": "firewallDelete",
+   "line": 1916,
+   "receiver": "Firewalls",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "SecurityHandler",
+   "func": "firewallDelete",
+   "line": 1922,
+   "receiver": "securityHandler.Client.Firewalls",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VMHandler",
+   "func": "StartVM",
+   "line": 449,
+   "receiver": "vmHandler.Client.Instances",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VMHandler",
+   "func": "StartVM",
+   "line": 468,
+   "receiver": "vmHandler.Client.Instances",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VMHandler",
+   "func": "TerminateVM",
+   "line": 853,
+   "receiver": "vmHandler.Client.Instances",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 88,
+   "receiver": "vVPCHandler.Client.Networks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "CreateVPC",
+   "line": 139,
+   "receiver": "vVPCHandler.Client.Subnetworks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 563,
+   "receiver": "vVPCHandler.Client.Subnetworks",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "DeleteVPC",
+   "line": 608,
+   "receiver": "vVPCHandler.Client.Networks",
+   "call": "Delete",
+   "op": "delete"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "AddSubnet",
+   "line": 644,
+   "receiver": "VPCHandler",
+   "call": "CreateSubnet",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "CreateSubnet",
+   "line": 696,
+   "receiver": "vVPCHandler.Client.Subnetworks",
+   "call": "Insert",
+   "op": "create"
+  },
+  {
+   "csp": "gcp",
+   "handler": "VPCHandler",
+   "func": "RemoveSubnet",
+   "line": 739,
+   "receiver": "vVPCHandler.Client.Subnetworks",
+   "call": "Delete",
+   "op": "delete"
+  }
+ ],
+ "judgments": {
+  "_note": "기제 분류는 **우리 구성**이다(native·synthesis·truncation·substitution·value-inlining·cloud-implicit + 후보 cross-injection). 모든 셀은 위 calls 색인의 실물을 인용하고, 인용 없는 셀은 absenceIsEvidence로만 허용된다. 생성·삭제 경로 각 21셀(7타입×3CSP). 미결: cross-injection의 분류 확정과 aws firewall 삭제 루프의 사유.",
+  "cells": {
+   "network.create.aws": {
+    "mechanisms": [
+     "native",
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 68
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 109
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 157
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 170
+     }
+    ],
+    "note": "VPC 외에 InternetGateway·Route를 합성하고 서브넷 목록을 함께 만든다 — 중립 VPC 하나가 네이티브 4종이다"
+   },
+   "network.create.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 93
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 122
+     }
+    ],
+    "note": "VNet과 서브넷을 각각 생성(중립 요청이 서브넷 목록을 안고 온다)"
+   },
+   "network.create.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 88
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 139
+     }
+    ],
+    "note": "Networks + Subnetworks. 커스텀/자동 모드 분기는 이 판정에서 안 봤다"
+   },
+   "subnet.create.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 336
+     }
+    ],
+    "note": "CreateSubnet 직결"
+   },
+   "subnet.create.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 242
+     }
+    ],
+    "note": "SubnetClient 직결"
+   },
+   "subnet.create.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 696
+     }
+    ],
+    "note": "Subnetworks.Insert 직결"
+   },
+   "firewall.create.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 88
+     },
+     {
+      "handler": "SecurityHandler",
+      "line": 271
+     }
+    ],
+    "note": "CreateSecurityGroup + 태그"
+   },
+   "firewall.create.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 137
+     },
+     {
+      "handler": "SecurityHandler",
+      "line": 289
+     }
+    ],
+    "note": "NSG 생성 + 규칙은 별도 클라이언트"
+   },
+   "firewall.create.gcp": {
+    "mechanisms": [
+     "substitution"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 1873
+     }
+    ],
+    "note": "자원 대응이 없다 — SG 하나가 Firewalls.Insert N건이 되고, VM 적용은 태그 문자열 일치다(VMHandler의 Tags, 소비측은 vm.create.gcp)"
+   },
+   "sshKey.create.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 144
+     }
+    ],
+    "note": "CreateKeyPair 직결"
+   },
+   "sshKey.create.azure": {
+    "mechanisms": [
+     "native",
+     "value-inlining"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 92
+     }
+    ],
+    "note": "로컬 생성 후 sshPublicKeys 자원으로 등록하되, VM에는 값으로 들어간다"
+   },
+   "sshKey.create.gcp": {
+    "mechanisms": [
+     "value-inlining"
+    ],
+    "cites": [],
+    "note": "gcp/KeyPairHandler에 네이티브 생성/삭제 호출이 0건 — 색인의 부재 자체가 관측이다. 키는 로컬 생성되어 VM 메타데이터 ssh-keys 값이 된다",
+    "absenceIsEvidence": true
+   },
+   "vm.create.aws": {
+    "mechanisms": [
+     "native",
+     "cloud-implicit"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 457
+     }
+    ],
+    "note": "RunInstances 한 번 — 서브넷·SG·키가 인자다. ENI는 서버측 암묵"
+   },
+   "vm.create.azure": {
+    "mechanisms": [
+     "synthesis",
+     "truncation"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 385
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1420
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1638
+     }
+    ],
+    "note": "드라이버가 PublicIP·NIC를 합성한 뒤 VM을 만든다. NSG는 목록의 첫 항만 부착된다(절단 — cb-neutralization-application-2026-07-30.md, VMHandler.go:1605)"
+   },
+   "vm.create.gcp": {
+    "mechanisms": [
+     "native",
+     "value-inlining"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 449
+     },
+     {
+      "handler": "VMHandler",
+      "line": 468
+     }
+    ],
+    "note": "Instances.Insert에 NIC 인라인. SG는 태그로, 키는 메타데이터 값으로 소비된다"
+   },
+   "disk.create.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 117
+     }
+    ],
+    "note": "CreateVolume 직결"
+   },
+   "disk.create.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 88
+     }
+    ],
+    "note": "생성은 직결. 단 부착이 VM 갱신(BeginCreateOrUpdate:668)이라 attach 기제가 다르다"
+   },
+   "disk.create.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 83
+     }
+    ],
+    "note": "Disks.Insert 직결"
+   },
+   "loadBalancer.create.aws": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 536
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 592
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 637
+     }
+    ],
+    "note": "LB + TargetGroup + Listener 3종 합성. 실패 시 보상 삭제(598·621·643)까지 드라이버가 든다"
+   },
+   "loadBalancer.create.azure": {
+    "mechanisms": [
+     "synthesis",
+     "cross-injection"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 228
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 311
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1705
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2004
+     }
+    ],
+    "note": "LB + 백엔드풀 + PublicIP 합성에 더해 **남의 자원(NSG)에 규칙을 주입**한다 (addAzureLoadBalancerRuleToNSG) — 기제 여섯째 후보라 이름만 달아 둔다"
+   },
+   "loadBalancer.create.gcp": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 1363
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1532
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1745
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2074
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2009
+     }
+    ],
+    "note": "Addresses·ForwardingRules·BackendServices·TargetPools·HealthChecks — 중립 NLB 하나가 최다 네이티브 성좌가 된다"
+   },
+   "network.delete.aws": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 633
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 650
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 664
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 689
+     }
+    ],
+    "note": "드라이버 캐스케이드 — 서브넷·라우트·IGW를 지운 뒤에야 VPC를 지운다. 생성의 합성(IGW·Route)이 삭제에 그대로 반사된다"
+   },
+   "network.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 200
+     }
+    ],
+    "note": "단일 BeginDelete"
+   },
+   "network.delete.gcp": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 563
+     },
+     {
+      "handler": "VPCHandler",
+      "line": 608
+     }
+    ],
+    "note": "Subnetworks를 명시적으로 먼저 지운다 — 드라이버 캐스케이드"
+   },
+   "subnet.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 597
+     }
+    ],
+    "note": "DeleteSubnet 직결"
+   },
+   "subnet.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 268
+     }
+    ],
+    "note": "SubnetClient 직결"
+   },
+   "subnet.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VPCHandler",
+      "line": 739
+     }
+    ],
+    "note": "Subnetworks.Delete 직결"
+   },
+   "firewall.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 616
+     }
+    ],
+    "note": "함수 이름이 loopDeleteSecurityGroup — 반복 삭제 시도. 우리가 azure에서 실측한 InUse류 거부(DependencyViolation)를 재시도로 넘는 구조로 읽히나, 루프의 사유는 코드 정독 전이라 판정하지 않는다"
+   },
+   "firewall.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 220
+     }
+    ],
+    "note": "BeginDelete 직결"
+   },
+   "firewall.delete.gcp": {
+    "mechanisms": [
+     "substitution"
+    ],
+    "cites": [
+     {
+      "handler": "SecurityHandler",
+      "line": 1922
+     }
+    ],
+    "note": "SG 하나의 삭제가 Firewalls.Delete N건이다 — 생성의 치환이 삭제에도 반사"
+   },
+   "sshKey.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 381
+     }
+    ],
+    "note": "DeleteKeyPair 직결"
+   },
+   "sshKey.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "KeyPairHandler",
+      "line": 209
+     }
+    ],
+    "note": "등록 자원 삭제"
+   },
+   "sshKey.delete.gcp": {
+    "mechanisms": [
+     "value-inlining"
+    ],
+    "cites": [],
+    "note": "삭제할 클라우드 자원이 없다 — 생성과 같은 부재 관측",
+    "absenceIsEvidence": true
+   },
+   "vm.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 826
+     }
+    ],
+    "note": "TerminateInstances 직결"
+   },
+   "vm.delete.azure": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 1016
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1509
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1537
+     },
+     {
+      "handler": "VMHandler",
+      "line": 1565
+     }
+    ],
+    "note": "VM 삭제 뒤 드라이버가 자기가 합성한 NIC·PIP·Disk를 직접 지운다 (cleanVMRelatedResource) — **합성은 생성이 아니라 생명주기 전체의 성질**이다. 순서를 지켜야 하는 이유는 우리가 azure에서 실측한 InUse 거부다"
+   },
+   "vm.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "VMHandler",
+      "line": 853
+     }
+    ],
+    "note": "Instances.Delete 직결"
+   },
+   "disk.delete.aws": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 274
+     }
+    ],
+    "note": "DeleteVolume 직결"
+   },
+   "disk.delete.azure": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 271
+     }
+    ],
+    "note": "BeginDelete 직결"
+   },
+   "disk.delete.gcp": {
+    "mechanisms": [
+     "native"
+    ],
+    "cites": [
+     {
+      "handler": "DiskHandler",
+      "line": 238
+     }
+    ],
+    "note": "Disks.Delete 직결"
+   },
+   "loadBalancer.delete.aws": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 1150
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1167
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1194
+     }
+    ],
+    "note": "Listener→TargetGroup→LB 역순 해체 — 생성 성좌의 거울"
+   },
+   "loadBalancer.delete.azure": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 1177
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1204
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 1213
+     }
+    ],
+    "note": "NLBCleaner가 합성했던 PIP까지 지운다"
+   },
+   "loadBalancer.delete.gcp": {
+    "mechanisms": [
+     "synthesis"
+    ],
+    "cites": [
+     {
+      "handler": "NLBHandler",
+      "line": 2298
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2311
+     },
+     {
+      "handler": "NLBHandler",
+      "line": 2582
+     }
+    ],
+    "note": "HealthCheck·TargetPool 등 성좌 해체"
+   }
+  }
+ }
+}

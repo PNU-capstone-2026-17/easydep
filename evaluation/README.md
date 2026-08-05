@@ -1,0 +1,13 @@
+# 평가
+
+이 디렉터리는 EasyDep의 효과를 검증하는 입력, 채점 코드와 비교 대상을 모아 둔다.
+제품 실행 코드는 `app/`에, 모든 실행 결과는 `artifacts/runs/`에 저장한다.
+
+- `easydep/`: EasyDep 자체를 단계별로 평가하는 입력, 정답과 채점기
+- `baselines/`: 동일 입력과 LLM 설정으로 실행하는 LLM CoT 및 MetaGPT 비교군
+
+새 하위 디렉터리는 독립적인 평가 목적이나 비교 방법이 생길 때만 추가한다. 실행 결과나
+캐시는 이곳에 커밋하지 않는다.
+
+실행 ID와 manifest 규칙은 `artifacts/README.md`를 따른다. EasyDep 기능 비교 시 variant는
+`full`, `no-cloud-kb`처럼 기능 차이를 명시하고, CoT·MetaGPT는 `standard`를 사용한다.

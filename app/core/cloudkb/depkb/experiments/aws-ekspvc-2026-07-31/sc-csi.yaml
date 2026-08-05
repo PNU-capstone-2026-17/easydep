@@ -1,0 +1,9 @@
+# EKS 기본 gp2 SC는 in-tree 프로비저너를 가리켜 CSI가 처리하지 않는다(실측).
+# 합성 여부를 판정하려면 CSI 프로비저너 SC가 필요하다 — 전제이지 판정 대상 아님.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: depkb-csi
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

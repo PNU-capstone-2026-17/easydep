@@ -5,6 +5,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-metagpt/
 venv/
 *.egg-info/
 
@@ -17,8 +18,11 @@ venv/
 plantuml.jar
 
 # 실행 아티팩트 (재생성 가능) — 보존할 run만 선별 커밋
-artifacts/
+artifacts/*
+!artifacts/README.md
 /.easydep/
+/.cleanup-backup/
+/.mypy_cache/
 /app/implementation/tools/puml2code-bce/node_modules/
 /app/implementation/tools/openapi-generator/*.jar
 **/.gradle/
@@ -64,3 +68,12 @@ materials/PURE/
 # 코드를 읽으며 정리한 개인 학습 노트. 코드가 바뀌면 같이 낡으므로 저장소의 진실로
 # 삼지 않는다 — 공유할 설명은 각 모듈의 docstring에 둔다.
 /note/
+
+# 데모 산출물 — 실행하면 다시 생긴다
+app/core/cloudkb/depkb/diagrams/
+
+# 실험 자격증명 — 절대 커밋하지 않는다(kubeconfig·SSH 키·인증서).
+app/core/cloudkb/depkb/experiments/**/kubeconfig
+app/core/cloudkb/depkb/experiments/**/*.pem
+app/core/cloudkb/depkb/experiments/**/id_depkb*
+app/core/cloudkb/depkb/experiments/**/ca.crt

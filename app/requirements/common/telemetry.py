@@ -135,6 +135,7 @@ class RunStats:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     llm_seconds: float = 0.0
+    wall_seconds: float = 0.0
     degradations: list[Degradation] = field(default_factory=list)
     #: 이 실행에서 응답한 백엔드 구성의 지문(OpenAI 호환 `system_fingerprint`).
     #: seed를 고정해도 지문이 바뀌면 결과가 달라질 수 있다 — **재현성 주장의 근거는
@@ -153,6 +154,7 @@ class RunStats:
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "llm_seconds": round(self.llm_seconds, 3),
+                "wall_seconds": round(self.wall_seconds, 3),
                 "degradations": [d.as_dict() for d in self.degradations],
                 "model_fingerprints": sorted(self.model_fingerprints),
             }
@@ -190,9 +192,9 @@ def run_scope(name: str = "run") -> Iterator[RunStats]:
                 "한 실행에서 백엔드 구성이 바뀌었다(seed를 고정해도 결과가 갈릴 수 있다)",
                 subject=",".join(sorted(stats.model_fingerprints)),
             )
+        stats.wall_seconds = time.perf_counter() - started
         _current.reset(token)
         summary = stats.as_dict()
-        summary["wall_seconds"] = round(time.perf_counter() - started, 3)
         _log.info("run finished", extra=_log_fields(summary))
 
 

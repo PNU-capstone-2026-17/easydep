@@ -1,0 +1,43 @@
+{
+  "name": "cloud_native_voucher_medium",
+  "description": "Synthetic medium-sized Docker-on-VM voucher management service inspired by the domain and requirements-document scale of PURE's Voucher Management System. No PURE requirement sentence is reproduced.",
+  "source": {
+    "kind": "synthetic",
+    "referenceCorpus": "PURE",
+    "referenceDocument": "2005 - microcare.xml",
+    "referenceTitle": "Software Requirements Specification for Voucher Management System",
+    "synthesisMethod": "Use the public document's domain and SRS-style requirement granularity, then author new cloud-native requirements for a Docker-on-VM experiment.",
+    "citation": "Ferrari, Spagnolo, Gnesi. PURE: A Dataset of Public Requirements Documents. RE'17, pp. 502-505. DOI 10.5281/zenodo.7118517."
+  },
+  "resource_constraints_text": "Deploy the Docker-based service to Azure Korea Central on Linux VMs. The monthly infrastructure budget is at most 600 USD. At least 4 vCPUs are required. Traffic is spiky, with campaign launches causing short peaks. A single availability zone is acceptable for this experiment.",
+  "classified": [
+    {"id": "FR1", "type": "FR", "text": "Issuer administrators create voucher campaigns with a name, active period, and total issuance limit."},
+    {"id": "FR2", "type": "FR", "text": "Issuer administrators define each campaign's voucher value, eligibility conditions, and redemption rules."},
+    {"id": "FR3", "type": "FR", "text": "Issuer administrators import eligible recipients and receive a report of accepted and rejected records."},
+    {"id": "FR4", "type": "FR", "text": "The system issues a unique voucher to each eligible recipient without exceeding the campaign limit."},
+    {"id": "FR5", "type": "FR", "text": "Recipients retrieve their active, redeemed, and expired vouchers."},
+    {"id": "FR6", "type": "FR", "text": "Merchant operators validate a voucher before accepting a purchase."},
+    {"id": "FR7", "type": "FR", "text": "Merchant operators redeem a valid voucher for an eligible purchase."},
+    {"id": "FR8", "type": "FR", "text": "The system rejects a second redemption of a voucher that has already been redeemed."},
+    {"id": "FR9", "type": "FR", "text": "Authorized issuer administrators reverse an erroneous redemption and record the reason."},
+    {"id": "FR10", "type": "FR", "text": "The system marks vouchers as expired after their campaign validity period ends."},
+    {"id": "FR11", "type": "FR", "text": "Issuer administrators suspend and resume voucher campaigns."},
+    {"id": "FR12", "type": "FR", "text": "Support agents search voucher issuance and redemption history by voucher, campaign, recipient, merchant, and time range."},
+    {"id": "FR13", "type": "FR", "text": "Issuer administrators request a campaign report containing issuance, redemption, reversal, and expiration totals."},
+    {"id": "FR14", "type": "FR", "text": "The system exports a requested campaign report as a downloadable file."},
+    {"id": "FR15", "type": "FR", "text": "The system notifies recipients when vouchers are issued, redeemed, reversed, or close to expiration."},
+    {"id": "FR16", "type": "FR", "text": "External issuer systems receive signed webhook events for voucher lifecycle changes."},
+    {"id": "NFR1", "type": "NFR", "text": "All external API traffic must use HTTPS."},
+    {"id": "NFR2", "type": "NFR", "text": "Voucher, campaign, recipient, and redemption records must remain durable across application and VM restarts."},
+    {"id": "NFR3", "type": "NFR", "text": "Concurrent redemption attempts for the same voucher must produce at most one successful redemption."},
+    {"id": "NFR4", "type": "NFR", "text": "The voucher validation API must respond within 500 milliseconds at the 95th percentile under 50 requests per second."},
+    {"id": "NFR5", "type": "NFR", "text": "The service must support short traffic peaks of 200 requests per second during campaign launches."},
+    {"id": "NFR6", "type": "NFR", "text": "Application processes must remain stateless so that any running instance can handle an API request."},
+    {"id": "NFR7", "type": "NFR", "text": "Webhook delivery must retry transient failures and retain undelivered events for 24 hours."},
+    {"id": "NFR8", "type": "NFR", "text": "Administrative changes and voucher lifecycle transitions must produce audit records retained for one year."},
+    {"id": "NFR9", "type": "NFR", "text": "Credentials, signing keys, and database passwords must be supplied at runtime and must not be stored in the application image."},
+    {"id": "NFR10", "type": "NFR", "text": "The service must emit structured logs and expose health and request-latency metrics."},
+    {"id": "NFR11", "type": "NFR", "text": "Campaign report files must remain downloadable for 30 days after generation."},
+    {"id": "NFR12", "type": "NFR", "text": "The application must be packaged as a Docker image and run on Linux virtual machines."}
+  ]
+}

@@ -11,7 +11,7 @@
 남겼습니다.
 
 기준 문서는 `document/research.md`입니다. 요구사항 단계의 짝은
-`docs/cloud-native-requirements.md`(목표 1)이고, 이 문서는 **목표 2**를 다룹니다.
+`cloud-native-requirements.md`(목표 1)이고, 이 문서는 **목표 2**를 다룹니다.
 
 > 숫자는 2026-07-28~29 실측입니다. 변하는 값의 진실은 코드·테스트이지 이 문서가
 > 아닙니다(`CLAUDE.md` 문서 정책).
@@ -327,7 +327,7 @@ needs_hedge  답에 유보를 붙여야 하는가        ← 검수도 면제가
 **반대 방향**(표준에 있는데 우리에게 없는 것)은 6절의 2·3·6·7이 그대로입니다.
 
 요구사항 쪽 관심사 축은 이미 ISO/IEC 25010에 양방향 매핑돼 있습니다
-(`docs/cloud-native-requirements.md`). 배포 쪽 매핑이 뒤늦은 것이 감사에서 지적된
+(`cloud-native-requirements.md`). 배포 쪽 매핑이 뒤늦은 것이 감사에서 지적된
 불균형이었습니다.
 
 ---
@@ -339,6 +339,6 @@ needs_hedge  답에 유보를 붙여야 하는가        ← 검수도 면제가
 | 만드는 방법 전부 | `document/kb-book.md` (유일한 가이드) |
 | 소스 47종의 원형 → 처리 → 산출 레코드 | `document/archive/kb-source-atlas-2026-07-29.md` |
 | 문외한용 해설 · 커버리지 격자 | `document/archive/kb-sourcebook-2026-07-28.md` |
-| 요구사항 단계의 클라우드 네이티브 (목표 1) | `docs/cloud-native-requirements.md` |
+| 요구사항 단계의 클라우드 네이티브 (목표 1) | `cloud-native-requirements.md` |
 | perfkb 필드 축 재설계 계획 | `document/archive/perfkb-field-axis-plan-2026-07-29.md` |
 | 현재 상태의 진실 | **코드와 테스트** — `pytest -q`, 각 KB의 `coverage` 명령 |

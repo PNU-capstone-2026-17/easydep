@@ -1,0 +1,79 @@
+{
+ "_note": "globalDns·fileSystem(azure) — 사설 DNS 영역과 스토리지 계정/파일 공유. CSI 실패가 구독 정책 탓인지 사용자 직접 생성으로 가른다.",
+ "startedAt": "2026-07-31T11:04:10+00:00",
+ "steps": {
+  "D1.record-without-zone": {
+   "ok": false,
+   "errorCodes": [
+    "ParentResourceNotFound",
+    "s"
+   ],
+   "excerpt": "ERROR: (ParentResourceNotFound) Failed to perform 'write' on resource(s) of type 'privateDnsZones/A', because the parent resource '/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal' could not be found.\nCode: ParentResourceNotFound\nMessage: Failed to perform 'write' on resource(s) of type 'privateDnsZones/A', because the parent resource '/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal' could not be found."
+  },
+  "D2.create-private-zone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"294628ae-67f6-462b-baa3-e36ffddfd7fc\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal\",\n  \"location\": \"global\",\n  \"maxNumberOfRecordSets\": 25000,\n  \"maxNumberOfVirtualNetworkLinks\": 1000,\n  \"maxNumberOfVirtualNetworkLinksWithRegistration\": 100,\n  \"name\": \"depkb.internal\",\n  \"numberOfRecordSets\": 1,\n  \"numberOfVirtualNetworkLinks\": 0,\n  \"numberOfVirtualNetworkLinksWithRegistration\": 0,\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft."
+  },
+  "D3.create-record": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"aRecords\": [\n    {\n      \"ipv4Address\": \"10.0.0.10\"\n    }\n  ],\n  \"etag\": \"c4e3e56c-2c9a-48e4-b329-2be69e99e9ef\",\n  \"fqdn\": \"api.depkb.internal.\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/A/api\",\n  \"isAutoRegistered\": false,\n  \"name\": \"api\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"ttl\": 3600,\n  \"type\": \"Microsoft.Network/privateDnsZones/A\"\n}"
+  },
+  "D4.delete-zone-with-record": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "D4b.zone-exists-after": {
+   "ok": false,
+   "errorCodes": [
+    "ResourceNotFound"
+   ],
+   "excerpt": "ERROR: (ResourceNotFound) The Resource 'Microsoft.Network/privateDnsZones/depkb.internal' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix\nCode: ResourceNotFound\nMessage: The Resource 'Microsoft.Network/privateDnsZones/depkb.internal' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix"
+  },
+  "F0.storage-rp-state": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Registered"
+  },
+  "F1.create-storage-account": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"accessTier\": \"Hot\",\n  \"accountMigrationInProgress\": null,\n  \"allowBlobPublicAccess\": false,\n  \"allowCrossTenantReplication\": false,\n  \"allowSharedKeyAccess\": null,\n  \"allowSharedKeyAccessForServices\": null,\n  \"allowedCopyScope\": null,\n  \"azureFilesIdentityBasedAuthentication\": null,\n  \"blobRestoreStatus\": null,\n  \"creationTime\": \"2026-07-31T11:05:34.908634+00:00\",\n  \"customDomain\": null,\n  \"dataCollaborationPolicyProperties\": null,\n  \"defaultToOAuthAuthentication\": null,\n  \"dnsEndpointType\": null,\n  \"dualStackEndpointPreference\": null,\n  \"enableExtendedGroups\": null,\n  \"enableHttpsTraffic"
+  },
+  "F2.create-file-share": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Storage/storageAccounts/depkbfs20260731a/fileServices/default/shares/depkbshare\",\n  \"name\": \"depkbshare\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"shareQuota\": 100,\n  \"type\": \"Microsoft.Storage/storageAccounts/fileServices/shares\"\n}"
+  },
+  "F3.delete-account-with-share": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F3b.account-exists-after": {
+   "ok": false,
+   "errorCodes": [
+    "ResourceNotFound"
+   ],
+   "excerpt": "ERROR: (ResourceNotFound) The Resource 'Microsoft.Storage/storageAccounts/depkbfs20260731a' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix\nCode: ResourceNotFound\nMessage: The Resource 'Microsoft.Storage/storageAccounts/depkbfs20260731a' under resource group 'depkb-preflight' was not found. For more details please go to https://aka.ms/ARMResourceNotFoundFix"
+  },
+  "T1.delete-zone-if-left": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-account-if-left": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T3.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T11:06:26+00:00"
+}

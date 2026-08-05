@@ -4,7 +4,7 @@
 
 사용:
   python -m app.requirements.apply_feedback <run_dir> "피드백 문장"
-  python -m app.requirements.apply_feedback artifacts/run_2026..._abcd "UC3 명세에 결제 실패 확장을 추가해줘"
+  python -m app.requirements.apply_feedback artifacts/runs/easydep-full-demo-2026...-abcd "UC3 명세에 결제 실패 확장을 추가해줘"
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     use_utf8_stdout()
     telemetry.configure_logging()
     ap = argparse.ArgumentParser(prog="python -m app.requirements.apply_feedback")
-    ap.add_argument("run_dir", help="피드백을 적용할 기존 artifacts/run_*/ 디렉토리")
+    ap.add_argument("run_dir", help="피드백을 적용할 기존 artifacts/runs/<run-id> 디렉토리")
     ap.add_argument("feedback", help="자연어 피드백")
     ap.add_argument("--out", default=str(ARTIFACTS_DIR), help="아티팩트 루트")
     args = ap.parse_args(argv)

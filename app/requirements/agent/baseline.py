@@ -46,7 +46,7 @@ def baseline_generate(state: AgentState) -> dict:
     )
 
     actors: list[ActorItem] = [
-        {"name": a.name, "description": a.description, "kind": a.kind,
+        {"name": a.name, "description": a.description,
          "parent_actor": a.parent_actor}
         for a in result.actors
     ]
@@ -73,8 +73,12 @@ def baseline_diagram(state: AgentState) -> dict:
     """1콜: 관계(association/include/extend/generalization)를 생성한다. 참조 가드/보강 없음."""
     actors = state.get("actors") or []
     use_cases = state.get("use_cases") or []
-    actor_listing = "\n".join(f"- {a['name']} ({a.get('kind', '?')})" for a in actors)
-    uc_listing = "\n".join(f"- {u['name']} [primary: {u.get('primary_actor', '?')}]" for u in use_cases)
+    actor_listing = "\n".join(f"- {a['name']}" for a in actors)
+    uc_listing = "\n".join(
+        f"- {u['name']} [primary: {u.get('primary_actor', '?')}; "
+        f"supporting: {', '.join(u.get('supporting_actors', [])) or 'none'}]"
+        for u in use_cases
+    )
     result: RelationshipModel = invoke_structured(
         RelationshipModel,
         [SystemMessage(content=prompts.BASELINE_DIAGRAM_SYSTEM),

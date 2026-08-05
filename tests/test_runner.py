@@ -28,6 +28,10 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
     empty_review = {"issues": [], "semantic_status": "ok", "unexamined_rules": []}
 
     monkeypatch.setattr(runner, "identify_actors", stage("actors", "actors"))
+    monkeypatch.setattr(runner, "derive_deployment_needs",
+                        stage("deployment_needs", "deployment_needs", {}))
+    monkeypatch.setattr(runner, "build_resource_spec",
+                        stage("resource_spec", "resource_intake", {"valid": False}))
     monkeypatch.setattr(runner, "identify_use_cases", stage("use_cases", "use_cases"))
     monkeypatch.setattr(runner, "review_model",
                         stage("review_model", "model_review", empty_review))
@@ -42,7 +46,8 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
-    assert calls == ["actors", "use_cases", "review_model", "coverage", "specs",
+    assert calls == ["deployment_needs", "resource_spec", "actors", "use_cases",
+                     "review_model", "coverage", "specs",
                      "check_specs", "rel", "check_rel", "diagram"]
     assert state["classified"][0]["id"] == "R1"      # 원본 입력 유지
     assert state["actors"] == "<actors>"
@@ -76,6 +81,9 @@ def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch
         return lambda state: {key: value}
 
     monkeypatch.setattr(runner, "identify_actors", noop("actors", []))
+    monkeypatch.setattr(runner, "derive_deployment_needs", noop("deployment_needs", {}))
+    monkeypatch.setattr(runner, "build_resource_spec",
+                        noop("resource_intake", {"valid": False}))
     monkeypatch.setattr(runner, "identify_use_cases", noop("use_cases", []))
     monkeypatch.setattr(runner, "review_model", noop("model_review", {"issues": []}))
     monkeypatch.setattr(runner, "check_coverage", noop("coverage", {}))
@@ -126,11 +134,19 @@ def _sample_state():
 
 def test_persist_run_writes_expected_tree(tmp_path):
     input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
-    run_dir = runner.persist_run(input_obj, _sample_state(), dataset_name="demo", artifact_root=tmp_path)
+    run_dir = runner.persist_run(
+        input_obj,
+        _sample_state(),
+        dataset_name="demo",
+        artifact_root=tmp_path,
+        run_metrics={"llm_calls": 9, "prompt_tokens": 100},
+    )
 
     # 최상위 산출물
     for f in ("input.json", "manifest.json", "actors.json", "use_cases.json",
-              "coverage.json", "relationships.json", "diagram.puml"):
+              "coverage.json", "deployment_needs.json", "resource_spec.json",
+              "resource_intake.json", "traceability.json", "relationships.json",
+              "diagram.puml"):
         assert (run_dir / f).exists(), f"{f} 누락"
 
     # UC별 디렉토리 + spec
@@ -139,12 +155,19 @@ def test_persist_run_writes_expected_tree(tmp_path):
     assert (run_dir / "use_cases" / "uc_02_place_order" / "spec.json").exists()
 
     # run_id / 디렉토리명 규칙
-    assert run_dir.name.startswith("run_") and run_dir.parent == tmp_path
+    assert run_dir.name.startswith("easydep-full-demo-") and run_dir.parent == tmp_path
 
     manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["dataset"] == "demo"
+    assert manifest["metrics"]["llm_calls"] == 9
+    assert manifest["config"]["max_repair_iters"] >= 0
     assert len(manifest["input_sha256"]) == 64
-    assert manifest["run_id"].endswith(manifest["input_sha256"][:10])
+    assert manifest["runId"] == run_dir.name == manifest["run_id"]
+    assert manifest["system"] == "easydep"
+    assert manifest["variant"] == "full"
+    assert manifest["caseId"] == "demo"
+    assert manifest["purpose"] == "normal"
+    assert manifest["completedStages"] == ["requirements"]
     # 요약: 개수 + 위반 있는 UC만 노출 + 관계 카운트
     summ = manifest["summary"]
     assert summ["n_actors"] == 1 and summ["n_use_cases"] == 2 and summ["n_specs"] == 2
@@ -163,6 +186,25 @@ def test_persist_run_input_sha_is_deterministic(tmp_path):
     sha1 = json.loads((d1 / "manifest.json").read_text(encoding="utf-8"))["input_sha256"]
     sha2 = json.loads((d2 / "manifest.json").read_text(encoding="utf-8"))["input_sha256"]
     assert sha1 == sha2  # 같은 입력 → 같은 해시
+
+
+def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
+    input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
+    state = _sample_state() | {
+        "deployment_needs": {"https_ingress": {"requirementIds": ["R1"]}},
+        "resource_spec": {"schemaVersion": "2", "workloads": ["vm"]},
+        "resource_intake": {"valid": True, "questions": []},
+    }
+    run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
+
+    restored = runner.load_state(run_dir)
+
+    assert restored["deployment_needs"] == state["deployment_needs"]
+    assert restored["resource_spec"] == state["resource_spec"]
+    assert restored["resource_intake"] == state["resource_intake"]
+    assert restored["traceability"]["requirements"]["R1"]["deployment_needs"] == [
+        "https_ingress"
+    ]
 
 
 # ---------------------------------------------------------------------------

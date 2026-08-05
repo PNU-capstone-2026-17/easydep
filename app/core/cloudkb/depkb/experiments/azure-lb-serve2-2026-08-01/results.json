@@ -1,0 +1,177 @@
+{
+ "_note": "기능 신호 5 재시도(azure) — 인스턴스 PIP 없이 LB 인바운드 NAT(2222→22)로 관리. 1차 미판정의 조건 반영.",
+ "startedAt": "2026-07-31T15:24:03+00:00",
+ "ids": {
+  "lbIp": "20.214.147.194"
+ },
+ "steps": {
+  "R1.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.113.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"4606ed01-447f-4c73-bfe4-b116e1566d66\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-lb2-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-lb2-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"resourceGuid\": \"d49c9103-4c63-4555-820e-295e88a25cfd\",\n"
+  },
+  "R2.create-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"NewNSG\": {\n    \"defaultSecurityRules\": [\n      {\n        \"access\": \"Allow\",\n        \"description\": \"Allow inbound traffic from all VMs in VNET\",\n        \"destinationAddressPrefix\": \"VirtualNetwork\",\n        \"destinationAddressPrefixes\": [],\n        \"destinationPortRange\": \"*\",\n        \"destinationPortRanges\": [],\n        \"direction\": \"Inbound\",\n        \"etag\": \"W/\\\"769b7702-5514-4a32-b6d8-ae3527cc7bd8\\\"\",\n        \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-lb2-nsg/defaultSecurityRules/All"
+  },
+  "R3.nsg-allow22": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"access\": \"Allow\",\n  \"destinationAddressPrefix\": \"*\",\n  \"destinationAddressPrefixes\": [],\n  \"destinationPortRange\": \"22\",\n  \"destinationPortRanges\": [],\n  \"direction\": \"Inbound\",\n  \"etag\": \"W/\\\"9f5f1b2d-e1f7-4428-b6e0-9b68100091e5\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-lb2-nsg/securityRules/allow22\",\n  \"name\": \"allow22\",\n  \"priority\": 100,\n  \"protocol\": \"Tcp\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"sourceAddressPrefix\": \"*\",\n  \"sourceAddress"
+  },
+  "R3.nsg-allow80": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"access\": \"Allow\",\n  \"destinationAddressPrefix\": \"*\",\n  \"destinationAddressPrefixes\": [],\n  \"destinationPortRange\": \"80\",\n  \"destinationPortRanges\": [],\n  \"direction\": \"Inbound\",\n  \"etag\": \"W/\\\"ee7b7b69-ae89-4ce4-be27-c5e1fd770061\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-lb2-nsg/securityRules/allow80\",\n  \"name\": \"allow80\",\n  \"priority\": 110,\n  \"protocol\": \"Tcp\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"sourceAddressPrefix\": \"*\",\n  \"sourceAddress"
+  },
+  "R4.attach-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"addressPrefix\": \"10.113.0.0/24\",\n  \"defaultOutboundAccess\": false,\n  \"delegations\": [],\n  \"etag\": \"W/\\\"7236d92c-518d-4b5c-bb39-538a520e01a1\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-lb2-vnet/subnets/s\",\n  \"name\": \"s\",\n  \"networkSecurityGroup\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-lb2-nsg\",\n    \"resourceGroup\": \"depkb-preflight\"\n  },\n  \"privateEndpointNetworkPolicies\": \"Disa"
+  },
+  "R5.create-lb-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"publicIp\": {\n    \"ddosSettings\": {\n      \"protectionMode\": \"VirtualNetworkInherited\"\n    },\n    \"etag\": \"W/\\\"52671fa8-9db0-4514-a786-ab4b5fb7524f\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/publicIPAddresses/depkb-lb2-pip\",\n    \"idleTimeoutInMinutes\": 4,\n    \"ipAddress\": \"20.214.147.194\",\n    \"ipTags\": [],\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-lb2-pip\",\n    \"provisioningState\": \"Succeeded\",\n    \"publicIPAddressVersion\": \"IPv4\",\n    \"publicIPAllocationMethod\": \"Static\",\n    \"resourceGroup\": \"depk"
+  },
+  "R6.create-lb": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"loadBalancer\": {\n    \"backendAddressPools\": [\n      {\n        \"etag\": \"W/\\\"1fdd5336-b641-4c65-aabb-89ae909b365a\\\"\",\n        \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n        \"name\": \"bepool\",\n        \"properties\": {\n          \"loadBalancerBackendAddresses\": [],\n          \"provisioningState\": \"Succeeded\"\n        },\n        \"resourceGroup\": \"depkb-preflight\",\n        \"type\": \"Microsoft.Network/loadBalancers/backendAddressPools\"\n      }\n    ],\n    \"frontendIPConfig"
+  },
+  "R7.create-probe": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"W/\\\"235c288b-d574-4c83-b043-49e4c63d9f03\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/probes/p80\",\n  \"intervalInSeconds\": 15,\n  \"name\": \"p80\",\n  \"numberOfProbes\": 2,\n  \"port\": 80,\n  \"probeThreshold\": 1,\n  \"protocol\": \"Tcp\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft.Network/loadBalancers/probes\"\n}"
+  },
+  "R8.create-rule": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"backendAddressPool\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n    \"resourceGroup\": \"depkb-preflight\"\n  },\n  \"backendAddressPools\": [\n    {\n      \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n      \"resourceGroup\": \"depkb-preflight\"\n    }\n  ],\n  \"backendPort\": 80,\n  \"disableOutboundSnat\": false,\n  \"enableFloatingIP\": false,\n  \"enable"
+  },
+  "R9.create-nat-rule": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"backendPort\": 22,\n  \"enableFloatingIP\": false,\n  \"enableTcpReset\": false,\n  \"etag\": \"W/\\\"5b5ee4c7-8507-4d60-9d52-c227d26fd6d1\\\"\",\n  \"frontendIPConfiguration\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/frontendIPConfigurations/fe\",\n    \"resourceGroup\": \"depkb-preflight\"\n  },\n  \"frontendPort\": 2222,\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/inboundNatRules/ssh\",\n  \"idleTimeoutInMinutes\""
+  },
+  "R10.create-vm-no-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/virtualMachines/depkb-lb2-vm\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"00-22-48-0F-2F-7F\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.113.0.4\",\n  \"publicIpAddress\": \"\",\n  \"resourceGroup\": \"depkb-preflight\"\n}"
+  },
+  "R11.lb-public-ip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "20.214.147.194"
+  },
+  "R12.add-nic-to-pool": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"W/\\\"8b8fc6af-753f-41f8-8c3a-496a888dc1e8\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkInterfaces/depkb-lb2-vmVMNic/ipConfigurations/ipconfigdepkb-lb2-vm\",\n  \"loadBalancerBackendAddressPools\": [\n    {\n      \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n      \"resourceGroup\": \"depkb-preflight\"\n    }\n  ],\n  \"name\": \"ipconfigdepkb-lb2-vm\",\n  \"primary\": true,\n  \"privateIPAddress"
+  },
+  "R13.attach-nat-rule": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"W/\\\"d981e266-b89d-4c3f-963d-f82167c7a418\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkInterfaces/depkb-lb2-vmVMNic/ipConfigurations/ipconfigdepkb-lb2-vm\",\n  \"loadBalancerBackendAddressPools\": [\n    {\n      \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n      \"resourceGroup\": \"depkb-preflight\"\n    }\n  ],\n  \"loadBalancerInboundNatRules\": [\n    {\n      \"id\": \"/subscriptions/414"
+  },
+  "R14.guest-via-nat": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "depkb-ok"
+  },
+  "R15.start-http-server": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "1"
+  },
+  "F1.lb-serves": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "http200=True (시도 1, 연속 1)"
+  },
+  "F1b.probe-hits-in-log": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "127.0.0.1 - - [31/Jul/2026 15:45:31] \"GET / HTTP/1.1\" 200 -\n58.231.192.172 - - [31/Jul/2026 15:46:43] \"GET / HTTP/1.0\" 200 -"
+  },
+  "M1.remove-nic-from-pool": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "M1b.lb-still-exists": {
+   "ok": false,
+   "errorCodes": [
+    "loadBalancingRules"
+   ],
+   "excerpt": "C:\\Users\\projw\\Desktop\\dev\\easydep\\app\\core\\cloudkb\\depkb\\experiments\\azure-lb-serve2-2026-08-01>  \"C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin\\\\..\\python.exe\" -IBm azure.cli network lb show -g depkb-preflight -n depkb-lb2 --query {name:name,rules:length(loadBalancingRules)} -o json --only-show-errors"
+  },
+  "F2.serving-lost": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "http200=False (시도 2, 연속 2)"
+  },
+  "M2.re-add-nic": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"W/\\\"2af3acd3-a652-47c1-ae0a-398a5b1c6c63\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkInterfaces/depkb-lb2-vmVMNic/ipConfigurations/ipconfigdepkb-lb2-vm\",\n  \"loadBalancerBackendAddressPools\": [\n    {\n      \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/loadBalancers/depkb-lb2/backendAddressPools/bepool\",\n      \"resourceGroup\": \"depkb-preflight\"\n    }\n  ],\n  \"loadBalancerInboundNatRules\": [\n    {\n      \"id\": \"/subscriptions/414"
+  },
+  "F3.serving-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "http200=True (시도 2, 연속 1)"
+  },
+  "Z1.root-cause-nic-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "**1차 미판정의 진짜 원인을 찾았다.** F1b(프로브 로그) 0줄 = 프로브 요청이 백엔드에 한 번도 안 왔다. az vm create가 **NIC에 자기 NSG(depkb-lb2-vmNSG)를 자동 생성해 붙이고** 그 규칙은 default-allow-ssh(22) 하나뿐이다. azure는 **서브넷 NSG와 NIC NSG를 둘 다** 통과해야 하므로, 서브넷에서 80을 열어도 NIC에서 막힌다. 1차(azure-lb-serve-2026-07-31)도 같은 원인이었고 잔여물 depkb-lb-vmNSG가 그 증거였다. 조치: NIC NSG에 80 허용 추가 후 재측정"
+  },
+  "T1.delete-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-disk-depkb-lb2-vm_OsDisk_": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T3.delete-lb": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T4.delete-nic": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T5.delete-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T6.delete-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T7.delete-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T8.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  {\n    \"changedTime\": \"2026-07-31T15:25:43.155017+00:00\",\n    \"createdTime\": \"2026-07-31T15:25:40.555950+00:00\",\n    \"extendedLocation\": null,\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-lb2-vmNSG\",\n    \"identity\": null,\n    \"kind\": null,\n    \"location\": \"koreacentral\",\n    \"managedBy\": null,\n    \"name\": \"depkb-lb2-vmNSG\",\n    \"plan\": null,\n    \"properties\": null,\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"sku\": null,\n    \"tags\": {},\n    \"type\": \""
+  },
+  "T9.vm-nsg-manual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "az vm create가 NIC에 붙인 depkb-lb2-vmNSG가 정리에서 빠져 수동 삭제했다 — 우리가 만들지 않은 자원이라 목록에 없었다. run.py의 finish에 T7b로 편입. 이 NSG가 곧 이 라운드 미판정의 원인이었다(Z1)"
+  }
+ },
+ "finishedAt": "2026-07-31T15:50:33+00:00"
+}

@@ -1,0 +1,316 @@
+{
+ "_note": "기능 신호(azure) — DNS 해석·볼륨 I/O. 게스트 안에서 OS 기본 도구로만 관측한다(앱 없음).",
+ "startedAt": "2026-07-31T14:03:00+00:00",
+ "ids": {
+  "ip": "20.41.97.6"
+ },
+ "steps": {
+  "R1.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.110.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"8965eafc-af2b-498d-8c12-77070e344ccb\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-s4-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-s4-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"resourceGuid\": \"a1f7e090-67df-45ea-990b-f313615b924b\",\n  "
+  },
+  "R2.create-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"NewNSG\": {\n    \"defaultSecurityRules\": [\n      {\n        \"access\": \"Allow\",\n        \"description\": \"Allow inbound traffic from all VMs in VNET\",\n        \"destinationAddressPrefix\": \"VirtualNetwork\",\n        \"destinationAddressPrefixes\": [],\n        \"destinationPortRange\": \"*\",\n        \"destinationPortRanges\": [],\n        \"direction\": \"Inbound\",\n        \"etag\": \"W/\\\"827ee325-8170-4762-815a-b45caea384be\\\"\",\n        \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-s4-nsg/defaultSecurityRules/Allo"
+  },
+  "R3.nsg-allow22": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"access\": \"Allow\",\n  \"destinationAddressPrefix\": \"*\",\n  \"destinationAddressPrefixes\": [],\n  \"destinationPortRange\": \"22\",\n  \"destinationPortRanges\": [],\n  \"direction\": \"Inbound\",\n  \"etag\": \"W/\\\"207a758b-873e-4905-aa9e-46193e3583b1\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-s4-nsg/securityRules/allow22\",\n  \"name\": \"allow22\",\n  \"priority\": 100,\n  \"protocol\": \"Tcp\",\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"sourceAddressPrefix\": \"*\",\n  \"sourceAddressP"
+  },
+  "R4.attach-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"addressPrefix\": \"10.110.0.0/24\",\n  \"defaultOutboundAccess\": false,\n  \"delegations\": [],\n  \"etag\": \"W/\\\"2e62dc0a-5968-4992-9550-c18d54b0ff39\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-s4-vnet/subnets/s\",\n  \"name\": \"s\",\n  \"networkSecurityGroup\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-s4-nsg\",\n    \"resourceGroup\": \"depkb-preflight\"\n  },\n  \"privateEndpointNetworkPolicies\": \"Disabl"
+  },
+  "R5.create-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"fqdns\": \"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/virtualMachines/depkb-s4-vm\",\n  \"location\": \"koreacentral\",\n  \"macAddress\": \"7C-ED-8D-FD-06-F6\",\n  \"powerState\": \"VM running\",\n  \"privateIpAddress\": \"10.110.0.4\",\n  \"publicIpAddress\": \"20.41.97.6\",\n  \"resourceGroup\": \"depkb-preflight\"\n}"
+  },
+  "R6.public-ip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "20.41.97.6"
+  },
+  "R7.guest-baseline": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=depkb-ok"
+  },
+  "D1.create-private-zone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"6313dd1f-1d13-4019-9417-e4aacb52158f\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal\",\n  \"location\": \"global\",\n  \"maxNumberOfRecordSets\": 25000,\n  \"maxNumberOfVirtualNetworkLinks\": 1000,\n  \"maxNumberOfVirtualNetworkLinksWithRegistration\": 100,\n  \"name\": \"depkb.internal\",\n  \"numberOfRecordSets\": 1,\n  \"numberOfVirtualNetworkLinks\": 0,\n  \"numberOfVirtualNetworkLinksWithRegistration\": 0,\n  \"provisioningState\": \"Succeeded\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft."
+  },
+  "D2.link-zone-to-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"\\\"46013527-0000-0100-0000-6a6cabbf0000\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/virtualNetworkLinks/depkb-s4-link\",\n  \"location\": \"global\",\n  \"name\": \"depkb-s4-link\",\n  \"provisioningState\": \"Succeeded\",\n  \"registrationEnabled\": false,\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft.Network/privateDnsZones/virtualNetworkLinks\",\n  \"virtualNetwork\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microso"
+  },
+  "D3.create-record": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"aRecords\": [\n    {\n      \"ipv4Address\": \"10.110.0.99\"\n    }\n  ],\n  \"etag\": \"e2055ef8-9005-45d9-b74f-8b0cc0a4a2f9\",\n  \"fqdn\": \"api.depkb.internal.\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/A/api\",\n  \"isAutoRegistered\": false,\n  \"name\": \"api\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"ttl\": 3600,\n  \"type\": \"Microsoft.Network/privateDnsZones/A\"\n}"
+  },
+  "F1.resolve-works": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 2, 연속 1, rc=0) out=10.110.0.99     api.depkb.internal"
+  },
+  "M1.delete-link": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F2.resolve-lost": {
+   "ok": false,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "300초 내 want_ok=False×2 미도달 — 마지막 rc=0 10.110.0.99     api.depkb.internal"
+  },
+  "M2.relink": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"\\\"47019f67-0000-0100-0000-6a6cad600000\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/virtualNetworkLinks/depkb-s4-link\",\n  \"location\": \"global\",\n  \"name\": \"depkb-s4-link\",\n  \"provisioningState\": \"Succeeded\",\n  \"registrationEnabled\": false,\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft.Network/privateDnsZones/virtualNetworkLinks\",\n  \"virtualNetwork\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microso"
+  },
+  "F3.resolve-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=10.110.0.99     api.depkb.internal"
+  },
+  "D4.cache-trap-note": {
+   "ok": true,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "F2 상실 미관측 — 계획서가 예상한 **캐시 함정**이 실제로 났다. 원인 둘: (a) add-record 기본 TTL 3600초 (b) 게스트 systemd-resolved 캐시. 둘 다 우회해 재측정한다(TTL 30초 + 질의 전 resolvectl flush-caches). 캐시를 안 비우면 \"결속 없음\"으로 오판할 자리였다"
+  },
+  "D5.set-short-ttl": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"aRecords\": [\n    {\n      \"ipv4Address\": \"10.110.0.99\"\n    }\n  ],\n  \"etag\": \"dd36ea86-5a8e-4364-99eb-b4a2812a3fa2\",\n  \"fqdn\": \"api.depkb.internal.\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/A/api\",\n  \"isAutoRegistered\": false,\n  \"name\": \"api\",\n  \"resourceGroup\": \"depkb-preflight\",\n  \"ttl\": 30,\n  \"type\": \"Microsoft.Network/privateDnsZones/A\"\n}"
+  },
+  "F1b.resolve-works-nocache": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=10.110.0.99     api.depkb.internal"
+  },
+  "M1b.delete-link-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F2b.resolve-lost-nocache": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=False 도달 (시도 2, 연속 2, rc=2) out="
+  },
+  "M2b.relink-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"etag\": \"\\\"47015ed7-0000-0100-0000-6a6cadf80000\\\"\",\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/privateDnsZones/depkb.internal/virtualNetworkLinks/depkb-s4-link\",\n  \"location\": \"global\",\n  \"name\": \"depkb-s4-link\",\n  \"provisioningState\": \"Succeeded\",\n  \"registrationEnabled\": false,\n  \"resourceGroup\": \"depkb-preflight\",\n  \"type\": \"Microsoft.Network/privateDnsZones/virtualNetworkLinks\",\n  \"virtualNetwork\": {\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microso"
+  },
+  "F3b.resolve-again-nocache": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=10.110.0.99     api.depkb.internal"
+  },
+  "K1.create-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"creationData\": {\n    \"createOption\": \"Empty\"\n  },\n  \"diskIOPSReadWrite\": 500,\n  \"diskMBpsReadWrite\": 60,\n  \"diskSizeBytes\": 4294967296,\n  \"diskSizeGB\": 4,\n  \"diskState\": \"Unattached\",\n  \"encryption\": {\n    \"type\": \"EncryptionAtRestWithPlatformKey\"\n  },\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Compute/disks/depkb-s4-disk\",\n  \"location\": \"koreacentral\",\n  \"name\": \"depkb-s4-disk\",\n  \"networkAccessPolicy\": \"AllowAll\",\n  \"provisioningState\": \"Succeeded\",\n  \"publicNetworkAccess\": \"Enabled\",\n  \"resourceGroup\": \"depkb-prefligh"
+  },
+  "K2.attach-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "K3.guest-format-mount": {
+   "ok": true,
+   "errorCodes": [],
+   "rc": 0,
+   "stdout": "mounted-sdb",
+   "excerpt": "mounted-sdb"
+  },
+  "F1.write-works": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=1048576 bytes (1.0 MB, 1.0 MiB) copied, 0.000745812 s, 1.4 GB/s"
+  },
+  "M1.detach-while-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "M1b.vm-still-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "VM running"
+  },
+  "F2.write-lost": {
+   "ok": false,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "300초 내 want_ok=False×2 미도달 — 마지막 rc=0 dd: failed to open '/mnt/depkb/probe': Input/output error"
+  },
+  "M2.reattach": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "M2b.guest-remount": {
+   "ok": true,
+   "errorCodes": [],
+   "rc": 0,
+   "stdout": "remounted-sdc",
+   "excerpt": "remounted-sdc"
+  },
+  "F3.write-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=1048576 bytes (1.0 MB, 1.0 MiB) copied, 0.000656312 s, 1.6 GB/s"
+  },
+  "K4.cache-trap-note": {
+   "ok": true,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "F2 상실 미관측 — DNS 셀과 **같은 부류의 캐시 함정**이다. dd가 페이지 캐시에만 쓰고 끝나 디스크에 안 닿았다. oflag=direct로 우회해 재측정한다. 캐시를 우회하지 않으면 \"결속 없음\"으로 오판할 자리였다(이 라운드에서 두 번째)"
+  },
+  "K5.remount-check": {
+   "ok": true,
+   "errorCodes": [],
+   "rc": 0,
+   "stdout": "remounted-sdc",
+   "excerpt": "remounted-sdc"
+  },
+  "F1c.write-direct-works": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=4096 bytes (4.1 kB, 4.0 KiB) copied, 0.00509166 s, 804 kB/s"
+  },
+  "M1c.detach-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F2c.write-direct-lost": {
+   "ok": false,
+   "errorCodes": [
+    "PROBE_TIMEOUT"
+   ],
+   "excerpt": "300초 내 want_ok=False×2 미도달 — 마지막 rc=0 dd: failed to open '/mnt/depkb/probe': Input/output error"
+  },
+  "M2c.reattach-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "M2d.remount": {
+   "ok": true,
+   "errorCodes": [],
+   "rc": 0,
+   "stdout": "remounted-sdb",
+   "excerpt": "remounted-sdb"
+  },
+  "F3c.write-direct-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out=4096 bytes (4.1 kB, 4.0 KiB) copied, 0.00543237 s, 754 kB/s"
+  },
+  "K6.pipe-swallows-rc-note": {
+   "ok": false,
+   "errorCodes": [
+    "SIGNAL_DEFECT"
+   ],
+   "excerpt": "F2c에서 dd가 \"Input/output error\"를 냈는데 **rc=0**이었다 — 명령 끝의  때문에 파이프 마지막 명령의 종료 코드가 반환된 탓이다(신호 함수의 결함, 다섯째 하네스 결함). 기능은 실제로 깨졌고 판정 방식만 틀렸다. 파이프 없는 명령으로 재확인한다"
+  },
+  "F1d.write-bare-works": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out="
+  },
+  "M1d.detach-third": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "F2d.write-bare-lost": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=False 도달 (시도 2, 연속 2, rc=1) out="
+  },
+  "M2e.reattach-third": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "M2f.remount-third": {
+   "ok": false,
+   "errorCodes": [
+    "EXIT_32"
+   ],
+   "rc": 32,
+   "stdout": "",
+   "excerpt": "\nawk: cmd. line:1: $2==\\disk\\ && $3==\\\\ {print $1}\nawk: cmd. line:1:     ^ backslash not last character on line\nmount: /mnt/depkb: /dev is not a block device.\n       dmesg(1) may have more information after failed mount system call."
+  },
+  "F3d.write-bare-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want_ok=True 도달 (시도 1, 연속 1, rc=0) out="
+  },
+  "T1.delete-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-disk-depkb-s4-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T2.delete-disk-depkb-s4-vm_OsDisk_1_0": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T3.delete-zone": {
+   "ok": false,
+   "errorCodes": [
+    "CannotDeleteResource"
+   ],
+   "excerpt": "ERROR: (CannotDeleteResource) Cannot delete resource while nested resources exist. Some existing nested resource IDs include: 'Microsoft.Network/privateDnsZones/depkb.internal/virtualNetworkLinks/depkb-s4-link'. Please delete all nested resources before deleting this resource.\nCode: CannotDeleteResource\nMessage: Cannot delete resource while nested resources exist. Some existing nested resource IDs include: 'Microsoft.Network/privateDnsZones/depkb.internal/virtualNetworkLinks/depkb-s4-link'. Please delete all nested resources before deleting this resource."
+  },
+  "T4.delete-nic": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T4.delete-public-ip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T5.delete-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T6.delete-nsg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "T7.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[\n  {\n    \"changedTime\": \"2026-07-31T14:03:46.036586+00:00\",\n    \"createdTime\": \"2026-07-31T14:03:43.422132+00:00\",\n    \"extendedLocation\": null,\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/networkSecurityGroups/depkb-s4-vmNSG\",\n    \"identity\": null,\n    \"kind\": null,\n    \"location\": \"koreacentral\",\n    \"managedBy\": null,\n    \"name\": \"depkb-s4-vmNSG\",\n    \"plan\": null,\n    \"properties\": null,\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"sku\": null,\n    \"tags\": {},\n    \"type\": \"Mi"
+  }
+ },
+ "finishedAt": "2026-07-31T14:36:56+00:00"
+}

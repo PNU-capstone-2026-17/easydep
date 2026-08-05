@@ -10,23 +10,21 @@
 import os
 
 import pytest
+from conftest import dataset_names, load_dataset
 
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
 from app.requirements.agent.steps import step4_diagram as s4
 from app.requirements.common import telemetry
+from app.requirements.knowledge import rules
 from app.requirements.schemas import (
     Association,
-    DerivedUseCase,
-    ExtendRelation,
-    GeneralizationRelation,
-    IncludeRelation,
     Critique,
+    DerivedUseCase,
+    IncludeRelation,
     RelationshipModel,
     RuleVerdict,
 )
-from app.requirements.knowledge import rules
-from conftest import dataset_names, load_dataset
 
 
 def _rel_verdicts(violated: dict[str, str] | None = None) -> Critique:
@@ -95,7 +93,8 @@ def test_render_diagram_supporting_actor_direction_and_placement():
             {"name": "Customer", "kind": "primary", "description": "shopper"},
             {"name": "Payment Gateway", "kind": "supporting", "description": "external"},
         ],
-        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "Customer"}],
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "Customer",
+                       "supporting_actors": ["Payment Gateway"]}],
         "relationships": {
             "associations": [
                 {"actor": "Customer", "use_case": "Place order"},
@@ -123,8 +122,9 @@ def test_render_diagram_empty_use_cases():
 
 
 def test_check_relationships_aggregates_report():
-    state = {"relationships": {
-        "associations": [1, 2, 3], "includes": [1], "extends": [], "generalizations": [1],
+    state = {"use_cases": [], "relationships": {
+        "associations": [{"actor": "A", "use_case": "U"}] * 3,
+        "includes": [1], "extends": [], "generalizations": [1],
         "derived_use_cases": [1], "orphan_actors": ["Ghost"], "dropped_refs": ["a->b"],
         "relationship_issues": ["[rel] fix"],
     }}
@@ -134,6 +134,25 @@ def test_check_relationships_aggregates_report():
     assert report["orphan_actors"] == ["Ghost"]
     assert report["dropped_refs"] == ["a->b"]
     assert report["relationship_issues"] == ["[rel] fix"]
+
+
+def test_relationships_backfill_declared_supporting_actor(monkeypatch):
+    result = RelationshipModel(
+        associations=[], includes=[], extends=[], generalizations=[], derived_use_cases=[]
+    )
+    monkeypatch.setattr(s4, "invoke_structured", lambda schema, messages: result)
+    state = {
+        "actors": [
+            {"name": "Customer", "description": "buyer"},
+            {"name": "Payment Gateway", "description": "external payment service"},
+        ],
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor": "Customer",
+                       "supporting_actors": ["Payment Gateway"]}],
+    }
+    rel = s4.identify_relationships(state)["relationships"]
+    assert {(a["actor"], a["use_case"]) for a in rel["associations"]} == {
+        ("Customer", "Place order"), ("Payment Gateway", "Place order")
+    }
 
 
 def test_san_alias():

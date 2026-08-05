@@ -22,7 +22,7 @@ from app.requirements.knowledge import rules
 from app.requirements.schemas import RelationshipModel
 
 
-def _rel_findings(rel: dict) -> tuple[list[str], str]:
+def _rel_findings(rel: dict, actors: list | None = None, use_cases: list | None = None) -> tuple[list[str], str]:
     """관계에 대한 의미 검증을 독립 검증자에게 맡긴다.
 
     검증자에게 주는 것은 **제안된 관계뿐이다** — 어떤 힌트로 그걸 뽑았는지, 사용자가 무슨
@@ -31,7 +31,9 @@ def _rel_findings(rel: dict) -> tuple[list[str], str]:
     `(결함 목록, 검증 상태)`를 돌려준다 — step3의 `_semantic_findings`와 같은 이유로,
     "결함 없음"과 "확인하지 못함"이 같은 값이 되면 안 된다.
     """
-    payload = {k: rel.get(k, []) for k in ("includes", "extends", "generalizations", "derived_use_cases")}
+    payload = {k: rel.get(k, []) for k in ("associations", "includes", "extends", "generalizations", "derived_use_cases")}
+    payload["actors"] = actors or []
+    payload["use_cases"] = use_cases or []
     result = validator.review(
         rules.DRAW_DIAGRAM, payload, prefix="rel", source="relationships.semantic_validator"
     )
@@ -88,7 +90,7 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     specs_by_name = {s["name"]: s for s in (state.get("use_case_specs") or [])}
 
     actor_lines = "\n".join(
-        f"- {a['name']} ({a['kind']})"
+        f"- {a['name']}"
         + (f" specializes {a['parent_actor']}" if a.get("parent_actor") else "")
         + f": {a['description']}"
         for a in actors
@@ -100,7 +102,9 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
         steps = "\n".join(
             f"    {st['step_number']}. {st['sentence']}" for st in spec.get("main_scenario", [])
         )
-        block = f"- {uc['name']} [primary actor: {uc.get('primary_actor', '?')}]: {uc.get('goal', '')}"
+        supporting = ", ".join(uc.get("supporting_actors", [])) or "none"
+        block = (f"- {uc['name']} [primary actor: {uc.get('primary_actor', '?')}; "
+                 f"supporting actors: {supporting}]: {uc.get('goal', '')}")
         uc_blocks.append(f"{block}\n{steps}" if steps else block)
     uc_lines = "\n".join(uc_blocks)
 
@@ -156,7 +160,7 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     # 채택 규칙과 멈춘 이유의 이름은 step3의 반성 루프와 같게 둔다 — 두 루프가 같은
     # 규율을 따른다는 걸 리포트에서 바로 읽을 수 있어야 한다.
     rel = _generate(human)
-    findings, semantic_status = _rel_findings(rel)
+    findings, semantic_status = _rel_findings(rel, actors, use_cases)
     attempts = 0
     stopped = "budget"
     for _ in range(settings.max_repair_iters):
@@ -173,7 +177,7 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
             telemetry.record_degradation("relationships.repair", f"{type(exc).__name__}: {exc}")
             stopped = "error"
             break
-        cand_findings, cand_status = _rel_findings(candidate)
+        cand_findings, cand_status = _rel_findings(candidate, actors, use_cases)
         if len(cand_findings) >= len(findings):
             stopped = "no_improvement"
             break
@@ -224,12 +228,18 @@ def identify_relationships(state: AgentState, feedback: str = "") -> dict:
     rel["generalizations"] = [g for g in rel["generalizations"] if _keep_general(g)]
     rel["dropped_refs"] = dropped
 
-    # 결정론 보강: 각 UC의 primary_actor association이 빠졌으면 추가(다이어그램 누락 방지).
+    # 유스케이스에서 확정한 액터 역할로 association을 결정론적으로 보강한다.
     have = {(a["actor"], a["use_case"]) for a in rel["associations"]}
     for uc in use_cases:
         key = (uc.get("primary_actor"), uc["name"])
         if key[0] and key not in have:
             rel["associations"].append({"actor": key[0], "use_case": key[1]})
+            have.add(key)
+        for actor in uc.get("supporting_actors", []):
+            supporting_key = (actor, uc["name"])
+            if actor in known_actor and supporting_key not in have:
+                rel["associations"].append({"actor": actor, "use_case": uc["name"]})
+                have.add(supporting_key)
 
     # 결정론 점검: 어떤 association에도 안 걸린 액터 → orphan_actors (UC와 무관한 액터 표면화).
     associated = {a["actor"] for a in rel["associations"]}
@@ -249,12 +259,22 @@ def check_relationships(state: AgentState) -> dict:
     안티패턴 issues·환각 drop·orphan 액터·관계 카운트)를 그래프에서 보이는 별도 단계로 집계한다.
     """
     rel = state.get("relationships") or {}
+    use_cases = state.get("use_cases") or []
+    declared_supporting = {
+        (actor, uc["name"])
+        for uc in use_cases for actor in uc.get("supporting_actors", [])
+    }
+    associations = {(a["actor"], a["use_case"]) for a in rel.get("associations", [])}
     report = {
         "counts": {
             k: len(rel.get(k, []))
             for k in ("associations", "includes", "extends", "generalizations", "derived_use_cases")
         },
         "orphan_actors": rel.get("orphan_actors", []),
+        "declared_supporting_associations": len(declared_supporting),
+        "missing_supporting_associations": sorted(
+            f"{actor} -> {uc}" for actor, uc in declared_supporting - associations
+        ),
         "dropped_refs": rel.get("dropped_refs", []),
         "relationship_issues": rel.get("relationship_issues", []),
         # 의미 검증을 실제로 거쳤는지. "failed"면 relationship_issues가 비어 있어도
@@ -298,9 +318,13 @@ def render_diagram(state: AgentState) -> dict:
 
     # UML 관례: primary 액터는 시스템 왼쪽, supporting 액터는 오른쪽에 둔다. PlantUML은
     # rectangle 앞에 선언하면 왼쪽, 뒤에 선언하면 오른쪽으로 배치되는 경향을 이용한다.
-    actor_kind = {a["name"]: a.get("kind", "primary") for a in actors}
-    primary = [a for a in actors if a.get("kind") != "supporting"]
-    supporting = [a for a in actors if a.get("kind") == "supporting"]
+    primary_names = {uc.get("primary_actor") for uc in use_cases}
+    supporting_names = {
+        actor for uc in use_cases for actor in uc.get("supporting_actors", [])
+    }
+    # 두 역할을 모두 하는 액터는 primary 측에 한 번만 배치한다.
+    primary = [a for a in actors if a["name"] in primary_names or a["name"] not in supporting_names]
+    supporting = [a for a in actors if a["name"] in supporting_names and a["name"] not in primary_names]
 
     lines = ["@startuml", "left to right direction"]
     for a in primary:
@@ -318,7 +342,8 @@ def render_diagram(state: AgentState) -> dict:
     #  - primary(발의자):     actor --- use case
     #  - supporting(피호출): use case --- actor
     for a in rel.get("associations", []):
-        if actor_kind.get(a["actor"]) == "supporting":
+        uc = next((u for u in use_cases if u["name"] == a["use_case"]), {})
+        if a["actor"] in uc.get("supporting_actors", []):
             lines.append(f'{uc_ref(a["use_case"])} --- {actor_ref(a["actor"])}')
         else:
             lines.append(f'{actor_ref(a["actor"])} --- {uc_ref(a["use_case"])}')

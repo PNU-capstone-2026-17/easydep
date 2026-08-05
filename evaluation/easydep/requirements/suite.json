@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "scope": "English requirements for Docker-based applications deployed on Linux VMs",
+  "development": [
+    "inputs/dev_stateless_conversion.json",
+    "inputs/dev_checkout_gateway.json",
+    "inputs/dev_notification_delivery.json",
+    "inputs/dev_iot_monitoring.json"
+  ],
+  "holdout": [
+    "inputs/holdout_telehealth.json",
+    "inputs/holdout_logistics.json",
+    "inputs/holdout_partner_reporting.json"
+  ],
+  "domainExpansion": [],
+  "frozenHashes": {
+    "inputs/holdout_telehealth.json": "06435316bd0b8c56986850d48b61d7c58e0972c6437a8468a3eccbdc5131bf70",
+    "inputs/holdout_logistics.json": "9857920ea43632c412a2dfafe38b3b13ef11510e523607598e49f6fc0f0e9d7e",
+    "inputs/holdout_partner_reporting.json": "19aa48d932e5f7adfa92c88b83c8b78bc9b7ce9377092af5f6b4429a5f859d81"
+  },
+  "selectionMetrics": [
+    "functionalRequirementCoverage",
+    "actorRolePrecision",
+    "actorRoleRecall",
+    "unsupportedActorCount",
+    "specificationIssueCount",
+    "llmCalls",
+    "totalTokens",
+    "wallSeconds"
+  ]
+}

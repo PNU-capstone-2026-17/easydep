@@ -233,6 +233,7 @@ def phase_pure_runs(c: Campaign, names: list[str], limit: int | None) -> None:
         run_dir = persist_run(
             payload, state, dataset_name=payload["name"],
             artifact_root=c.out_dir / "pure-artifacts",
+            purpose="evaluation",
         )
         jsonl.append(out, _stamped({
             "document": name, "dataset": payload["name"], "run_dir": str(run_dir),
@@ -289,6 +290,7 @@ def phase_input_runs(c: Campaign, names: list[str]) -> None:
         run_dir = persist_run(
             payload, state, dataset_name=name,
             artifact_root=c.out_dir / "input-artifacts",
+            purpose="evaluation",
         )
         jsonl.append(out, _stamped({
             "dataset": name, "run_dir": str(run_dir),

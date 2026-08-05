@@ -1,0 +1,52 @@
+{
+  "dev_stateless_conversion": {
+    "requiredActors": ["API Consumer"],
+    "forbiddenSupportingActors": ["Database", "Docker", "Linux VM"],
+    "roleFacts": []
+  },
+  "dev_checkout_gateway": {
+    "requiredActors": ["Shopper", "Support Agent", "Payment Gateway"],
+    "roleFacts": [
+      {"requirementIds":["FR3","FR4"],"actor":"Payment Gateway","role":"supporting"},
+      {"requirementIds":["FR6"],"actor":"Payment Gateway","role":"supporting"}
+    ]
+  },
+  "dev_notification_delivery": {
+    "requiredActors": ["Account Owner", "Support Agent", "Message Delivery Provider"],
+    "roleFacts": [
+      {"requirementIds":["FR3"],"actor":"Account Owner","role":"primary"},
+      {"requirementIds":["FR3"],"actor":"Message Delivery Provider","role":"supporting"},
+      {"requirementIds":["FR6"],"actor":"Message Delivery Provider","role":"supporting"}
+    ]
+  },
+  "dev_iot_monitoring": {
+    "requiredActors": ["Operator", "Device", "Sensor", "Message Delivery Provider"],
+    "roleFacts": [
+      {"requirementIds":["FR2"],"actor":"Sensor","role":"primary"},
+      {"requirementIds":["FR5"],"actor":"Message Delivery Provider","role":"supporting"}
+    ]
+  },
+  "holdout_telehealth": {
+    "requiredActors": ["Patient", "Clinician", "Video Service", "Pharmacy", "Payment Gateway", "Compliance Auditor"],
+    "roleFacts": [
+      {"requirementIds":["FR3"],"actor":"Video Service","role":"supporting"},
+      {"requirementIds":["FR5"],"actor":"Pharmacy","role":"primary"},
+      {"requirementIds":["FR6"],"actor":"Payment Gateway","role":"supporting"}
+    ]
+  },
+  "holdout_logistics": {
+    "requiredActors": ["Warehouse Operator", "Carrier", "Customer", "Support Agent"],
+    "roleFacts": [
+      {"requirementIds":["FR2","FR3"],"actor":"Carrier","role":"supporting"},
+      {"requirementIds":["FR5"],"actor":"Carrier","role":"primary"},
+      {"requirementIds":["FR7"],"actor":"Carrier","role":"supporting"}
+    ]
+  },
+  "holdout_partner_reporting": {
+    "requiredActors": ["Analyst", "Market Data Service", "Partner System", "Operations Staff"],
+    "roleFacts": [
+      {"requirementIds":["FR2","FR3"],"actor":"Market Data Service","role":"supporting"},
+      {"requirementIds":["FR6"],"actor":"Partner System","role":"primary"}
+    ]
+  }
+}

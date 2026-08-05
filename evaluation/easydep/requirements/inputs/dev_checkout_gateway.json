@@ -1,0 +1,18 @@
+{
+  "name": "dev_checkout_gateway",
+  "description": "Stateful checkout service with a genuine supporting payment actor.",
+  "resource_constraints_text": "Deploy Docker containers on Azure Linux VMs in Korea Central. Keep monthly infrastructure cost below 450 USD. A single availability zone is acceptable.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"Shoppers create a cart and add, change, or remove catalog items."},
+    {"id":"FR2","type":"FR","text":"Shoppers submit a delivery address and review the final order total before checkout."},
+    {"id":"FR3","type":"FR","text":"During checkout, the system requests payment authorization from the external Payment Gateway."},
+    {"id":"FR4","type":"FR","text":"The system creates an order only after the Payment Gateway approves the authorization."},
+    {"id":"FR5","type":"FR","text":"Shoppers view the current status and item details of their orders."},
+    {"id":"FR6","type":"FR","text":"Support agents cancel an unshipped order and the system requests a refund from the Payment Gateway."},
+    {"id":"NFR1","type":"NFR","text":"Cart and order records shall survive container and VM restarts."},
+    {"id":"NFR2","type":"NFR","text":"Concurrent checkout submissions for the same cart shall create at most one order."},
+    {"id":"NFR3","type":"NFR","text":"Checkout shall support peaks of 60 requests per second."},
+    {"id":"NFR4","type":"NFR","text":"Payment credentials shall be supplied at runtime and shall not be stored in the image."},
+    {"id":"NFR5","type":"NFR","text":"The application shall run in Docker containers on Linux VMs and expose health and latency metrics."}
+  ]
+}

@@ -10,6 +10,7 @@
 {
   "name": "<데이터셋 이름>",
   "description": "<무엇을 검증하려는 세트인지>",
+  "resource_constraints_text": "<별도로 입력받은 클라우드 제약 원문>",
   "classified": [
     { "id": "R1", "text": "...", "type": "FR" },
     { "id": "N1", "text": "...", "type": "NFR" }
@@ -19,7 +20,8 @@
 
 - `classified`는 step1 reconcile 산출물과 같은 형태다(개별 요구사항 + FR/NFR 라벨 + id).
 - id 규칙은 자유지만, FR/NFR을 구분 가능한 접두어(R*/N* 등)를 권장한다.
-- 파이프라인은 `id`, `text`, `type`만 사용하므로 나머지 필드(category 등)는 없어도 된다.
+- `resource_constraints_text`는 선택이며, 있으면 `RESOURCE_SPEC` 구조화 단계에 전달한다.
+- 요구사항 항목은 `id`, `text`, `type`만 사용하므로 나머지 필드는 없어도 된다.
 
 ## 아티팩트로 실행 (러너)
 
@@ -33,6 +35,7 @@ python -m app.run_pipeline --input path/to/custom.json
 ```
 
 산출물(run 디렉토리): `input.json`(재현용), `manifest.json`(config·input_sha256·스테이지 요약),
+`deployment_needs.json` / `resource_spec.json` / `resource_intake.json` / `traceability.json`,
 `actors.json` / `use_cases.json` / `coverage.json` / `relationships.json`, `diagram.puml`,
 `use_cases/uc_NN_<slug>/{use_case.json, spec.json}`. LLM(NIM)을 호출하므로 `.env`(API_KEY) 필요.
 
