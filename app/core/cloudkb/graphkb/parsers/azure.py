@@ -30,7 +30,11 @@ from pathlib import Path
 
 from app.core.cloudkb.graphkb.fetch import fetch_cached
 from app.core.cloudkb.graphkb.model import Edge, Graph, Node
-from app.core.cloudkb.graphkb.parsers.review import apply_review, check_freshness, load_reference_map
+from app.core.cloudkb.graphkb.parsers.review import (
+    apply_review,
+    check_freshness,
+    load_reference_map,
+)
 from app.core.cloudkb.kbcommon.fetch import describe_source_set
 from app.core.cloudkb.kbcommon.invariants import announce
 from app.core.cloudkb.kbcommon.sources import SOURCES

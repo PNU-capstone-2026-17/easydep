@@ -28,8 +28,8 @@ from __future__ import annotations
 import argparse
 import sys
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from ..kbcommon.console import use_utf8
 
@@ -170,8 +170,8 @@ def _steps() -> tuple[Step, ...]:
             "'지원 클라우드 목록에 이름이 있다'와 '그 질문에 답할 수 있다'는 "
             "다른 말이고, 그 차이를 데이터가 직접 말하게 한 것입니다.",
             (
-                ("cost.coverage_text()", lambda: cost.coverage_text()),
-                ("pat.coverage_text()", lambda: pat.coverage_text()),
+                ("cost.coverage_text()", cost.coverage_text),
+                ("pat.coverage_text()", pat.coverage_text),
             ),
         ),
     )

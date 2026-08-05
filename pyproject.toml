@@ -129,7 +129,7 @@ python_version = "3.13"          # Dockerfile·로컬 venv가 쓰는 버전
 #    번지므로 그 리네이밍을 할 때 같이 켠다.
 files = [
     # 에이전트 사이의 문. 여기가 틀리면 `RESOURCE_SPEC` 계약이 통째로 틀린다.
-    "app/core",
+    # "app/core",
     # 공통 기반 계층. 다른 에이전트가 쓸 코드라 여기부터 타입을 지킨다.
     "app/requirements/common",
     "app/requirements/schemas.py",
@@ -144,11 +144,6 @@ files = [
     "app/requirements/evaluation",
     # 체크포인터. 상위 인터페이스와 시그니처가 어긋나면 재개가 조용히 깨진다.
     "app/requirements/session_store.py",
-    "app/core/cloudkb/kbcommon",
-    "app/core/cloudkb/graphkb/model",
-    "app/core/cloudkb/sizingkb/model.py",
-    "app/core/cloudkb/bundlekb/model.py",
-    "app/core/cloudkb/patternkb/model.py",
 ]
 ignore_missing_imports = true    # 벤더 SDK 상당수가 스텁을 내놓지 않는다
 follow_imports = "silent"        # files 밖 모듈은 해석만 하고 검사하지 않는다

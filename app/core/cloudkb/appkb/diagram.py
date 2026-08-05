@@ -252,7 +252,7 @@ def parse_back(uml: str) -> tuple[set[str], set[tuple[str, str]]]:
     # 실행 환경 상자는 아티팩트와 **같은 계획 노드**다 — 접미를 벗겨 하나로 센다.
     # 안 벗기면 왕복 검증이 "계획에 없는 상자"라고 잡는다(그건 지어낸 노드를 잡는
     # 장치라 껍데기 하나로 무뎌지면 안 된다).
-    aliases = {a[: -len(_HOST_SUFFIX)] if a.endswith(_HOST_SUFFIX) else a for a in found}
+    aliases = {a.removesuffix(_HOST_SUFFIX) for a in found}
     # `-{1,2}>`다. `-->?`로 쓰면 `--`가 필수라 **동기 화살표 `->`가 통째로 빠진다**
     # (되파싱 검증이 잡았다 — 5개 선 중 4개가 조용히 사라졌다).
     edges = set(re.findall(r'^"([^"]+)"\s+-{1,2}>\s+"([^"]+)"', uml, re.MULTILINE))
