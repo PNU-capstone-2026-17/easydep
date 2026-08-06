@@ -142,6 +142,12 @@ class DesignArtifactSpec:
     #: 그 산출물에는 아직 규칙이 없다는 뜻이고, 없는 것을 있는 척하지 않는다.
     #: 값은 dict: {findings: list[str], repair_iters: int, stopped: str, error?: str}.
     check_key: str = ""
+    #: 모델이 만들어진 뒤, 검사 전에 **다른 산출물과 대사**하는 후크. 그래프에서
+    #: extract/revise 노드와 check/render 사이에 선택적으로 끼워진다. 시퀀스 다이어그램이
+    #: 이것으로 클래스 다이어그램에 빠진 메서드를 보강한다.
+    #: None이면 대사 노드가 생기지 않는다 — 그 산출물은 다른 것을 고칠 일이 없다는 뜻이고,
+    #: 그래프에 빈 노드가 뜨지 않는다.
+    reconcile: Callable[[ArchitectureState], dict] | None = None
 
 
 def merge_targeted(
