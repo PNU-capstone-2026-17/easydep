@@ -8,6 +8,9 @@ interpretations are documented in ``document/terminology-ledger.md``.
 from __future__ import annotations
 
 RELATION_FAMILIES = frozenset({"provisioning", "lifecycle", "runtime"})
+CONDITION_KINDS = frozenset(
+    {"always", "conditional", "placement", "exclusiveChoice", "compatibility"}
+)
 
 FINDINGS_BY_FAMILY = {
     "provisioning": frozenset(
@@ -70,6 +73,16 @@ def validate_claim(claim: dict) -> None:
         raise ValueError(f"invalid realizationBehavior: {behavior!r}")
     if not isinstance(claim.get("condition"), dict):
         raise ValueError("condition must be a structured object")
+    condition = claim["condition"]
+    if condition.get("kind") not in CONDITION_KINDS:
+        raise ValueError(f"unregistered condition kind: {condition.get('kind')!r}")
+    machine = condition.get("machine")
+    if machine is not None and not isinstance(machine, dict):
+        raise ValueError("condition.machine must be an object")
+    if condition.get("kind") == "exclusiveChoice":
+        cardinality = (machine or {}).get("cardinality")
+        if cardinality != {"min": 1, "max": 1}:
+            raise ValueError("exclusiveChoice must declare cardinality 1..1")
     if not claim.get("decisionRule"):
         raise ValueError("decisionRule is required")
     observations = claim.get("observations") or []

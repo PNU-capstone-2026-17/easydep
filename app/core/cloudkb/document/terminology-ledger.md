@@ -29,6 +29,20 @@
 | `replicationStatus` | 이번 연구 리비전의 재실행 상태 | 기존 증거의 참·거짓 |
 | `studyDisposition` | 연구 포함 또는 범위 제외 | 관계의 존재 여부 |
 
+조건의 `kind` 역시 본 연구의 내부 분류다.
+
+| 조건 종류 | 의미 |
+|---|---|
+| `always` | 측정한 구성에서는 별도 분기 조건을 두지 않음 |
+| `conditional` | CSP 모드나 구성값에 따라 결과가 달라지나 아직 기계식이 완전하지 않음 |
+| `placement` | 개수·리전·가용영역 같은 배치 조건 |
+| `exclusiveChoice` | 후보 집합의 cardinality가 1..1인 선택 조건 |
+| `compatibility` | 두 자원의 리전·존 등 호환 조건 |
+
+관측 방법 `schemaDeclaration`, `controlPlaneValidation`, `provisioningExecution`,
+`runtimeProbe`는 각각 고정 스키마 확인, API 사전 검증, 실제 생성 요청, 런타임 신호 측정을
+뜻한다. 이는 증거의 강도 순위가 아니라 서로 다른 획득 방법이다.
+
 ## 실험 시점의 한계
 
 기존 실험은 탐색 실행 뒤 코드와 결과에서 예상 결과를 복원한 **후향적

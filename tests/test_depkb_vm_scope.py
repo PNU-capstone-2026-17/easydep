@@ -21,6 +21,12 @@ def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
     assert len(build()["claims"]) == 56
 
 
+def test_exclusive_choice_uses_cardinality_not_borrowed_idl_labels():
+    claims = build()["claims"]
+    choice = next(c for c in claims if c["condition"]["kind"] == "exclusiveChoice")
+    assert choice["condition"]["machine"] == {"cardinality": {"min": 1, "max": 1}}
+
+
 @pytest.mark.parametrize("csp", ["aws", "azure", "gcp"])
 @pytest.mark.parametrize("anchor", ["vm", "disk", "loadBalancer"])
 def test_product_anchors_have_a_plan_for_each_csp(csp, anchor):

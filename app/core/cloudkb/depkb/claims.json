@@ -1669,8 +1669,10 @@
    "condition": {
     "kind": "exclusiveChoice",
     "machine": {
-     "exclusive": true,
-     "idl": "OnlyOne"
+     "cardinality": {
+      "min": 1,
+      "max": 1
+     }
     },
     "description": "셋 중 정확히 하나(배타적)"
    },
