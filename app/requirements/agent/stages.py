@@ -45,7 +45,7 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import link_cloud_concerns
+from app.requirements.agent.steps.step_cloud import derive_deployment_needs
 from app.requirements.agent.steps.step_resource import build_resource_spec
 from app.requirements.common.state_contract import StateContract, state_contract_of
 
@@ -77,21 +77,11 @@ PIPELINE: tuple[Stage, ...] = (
     Stage("intake", intake, group="refine_requirements"),
     Stage("clarify", clarify, group="refine_requirements"),
     Stage("classify", classify, group="refine_requirements"),
-    # 클라우드 관심사 커버리지는 **자기 그룹**이다. `refine_requirements`에 넣으면 안 된다 —
-    # 배치 러너가 그 그룹을 통째로 건너뛰므로(`PRECLASSIFIED_GROUP`) 평가 세트가 재는
-    # 실행에서 이 단계가 영원히 빠진다. C2에서 정확히 그 자리에 물렸다(효과를 측정에
-    # 못 잡았다). 입력은 `classified` 하나뿐이라 배치 입력이 이미 만족시킨다.
-    #
-    # `key`는 주지 않는다. cascade의 논리 이름은 **피드백이 겨눌 수 있는 단계**의 것이고,
-    # 이 단계는 `classified`에서 파생되는 집계라 상위가 다시 돌면 자연히 다시 돈다
-    # (`check_coverage`가 key를 갖는 것은 그것이 cascade **끝**이라서가 아니라 게이트가
-    # 그 이름으로 멈추기 때문이다). 게다가 cascade 순서의 맨 앞에 편집 불가 단계를 두면
-    # `_clamp_editable_stage`가 자기 위에서 편집 가능한 단계를 못 찾는다.
-    Stage("link_cloud_concerns", link_cloud_concerns, group="cover_cloud_concerns"),
-    # 제약 구조화(A 트랙)도 **자기 그룹**이다. 관심사(B)와 한 그룹에 두고 싶어지지만 둘은
-    # 방향이 반대다 — B는 "안 쓴 것"을 드러내고, 여기는 "쓴 것"을 계약 칸으로 옮긴다.
-    # 그룹을 갈라 두면 한쪽을 끄거나 다시 도는 것이 다른 쪽을 끌고 다니지 않는다.
-    # `key`를 주지 않는 이유는 `link_cloud_concerns`와 같다(입력에서 파생되는 결정론 단계).
+    # 분류된 요구사항에서 제네릭 배포 필요사항을 도출한다. 구체 리소스는 선택하지 않으며,
+    # 피드백 대상이 아니라 요구사항이 바뀌면 다시 파생되는 산출물이라 key를 두지 않는다.
+    Stage("derive_deployment_needs", derive_deployment_needs, group="derive_deployment_needs"),
+    # 사용자가 별도로 입력한 클라우드 제약을 RESOURCE_SPEC 계약으로 옮긴다.
+    # 이것도 입력에서 파생되므로 key를 두지 않는다.
     Stage("build_resource_spec", build_resource_spec, group="structure_constraints"),
     Stage("identify_actors", identify_actors, group="model_use_cases",
           key="actors", editable=True),

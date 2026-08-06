@@ -256,9 +256,15 @@ def test_every_detector_rule_names_a_detector_that_exists(stage):
 
 
 def test_every_detector_is_claimed_by_at_least_one_rule():
-    """아무 규칙도 안 쓰는 검출기는 지적을 근거 없이 낸다."""
+    """아무 규칙도 안 쓰는 검출기는 지적을 근거 없이 낸다.
+
+    **`STAGES`가 아니라 구현된 등록부 전부를 센다.** `STAGES`는 눈금을 재는 스테이지
+    (심어 둔 케이스와 대조군이 있는 것)만 담는데, 검출기는 그보다 앞서 늘어난다 —
+    시퀀스·API는 규칙과 검출기가 먼저 들어왔고 케이스는 아직 없다. `STAGES`로 세면
+    그 검출기들이 "아무 규칙도 안 쓴다"로 오인된다.
+    """
     claimed = {r.detector for r in rules.RULES if r.detector}
-    implemented = set().union(*(set(s.detector_registry) for s in STAGES))
+    implemented = set(detectors.SPEC_DETECTORS) | set(detectors.ERD_DETECTORS)
     assert implemented == claimed
 
 

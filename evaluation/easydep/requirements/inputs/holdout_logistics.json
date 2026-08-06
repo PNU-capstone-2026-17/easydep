@@ -1,0 +1,20 @@
+{
+  "name": "holdout_logistics",
+  "description": "Holdout: a carrier is supporting in one goal and primary in another.",
+  "resource_constraints_text": "Deploy on GCP Linux VMs in Seoul using Docker with a monthly budget of 500 USD. A single zone is acceptable. Daily label creation peaks occur at 18:00.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"Warehouse Operators create a shipment from a packed customer order."},
+    {"id":"FR2","type":"FR","text":"The system requests available delivery services and prices from the external Carrier."},
+    {"id":"FR3","type":"FR","text":"Warehouse Operators select a delivery service and the system requests a shipping label from the Carrier."},
+    {"id":"FR4","type":"FR","text":"Warehouse Operators download and print the generated shipping label."},
+    {"id":"FR5","type":"FR","text":"The Carrier submits pickup, transit, delivery, and exception events for a shipment."},
+    {"id":"FR6","type":"FR","text":"Customers view the latest shipment status and tracking history."},
+    {"id":"FR7","type":"FR","text":"Support Agents request cancellation of a shipment that has not been picked up, and the system sends the request to the Carrier."},
+    {"id":"NFR1","type":"NFR","text":"Shipment and tracking records shall survive container and VM restarts."},
+    {"id":"NFR2","type":"NFR","text":"Duplicate carrier event identifiers shall be processed at most once."},
+    {"id":"NFR3","type":"NFR","text":"Carrier calls shall time out within five seconds and transient failures shall be retried."},
+    {"id":"NFR4","type":"NFR","text":"The service shall process peaks of 100 label requests per second."},
+    {"id":"NFR5","type":"NFR","text":"Carrier credentials shall be injected at runtime."},
+    {"id":"NFR6","type":"NFR","text":"The application shall run in Docker containers on Linux VMs and emit structured logs."}
+  ]
+}

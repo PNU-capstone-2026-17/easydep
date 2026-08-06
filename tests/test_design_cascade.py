@@ -16,6 +16,7 @@ import pytest
 
 import app.design.graphs.subgraphs as sg
 from app.design.cascade import UnknownTarget, revise_and_cascade
+from app.design.knowledge import rules
 
 STATE = {
     "usecase_spec": {"use_cases": [{"id": "UC1"}]},
@@ -335,17 +336,26 @@ def test_the_cascade_never_runs_the_repair_loop(monkeypatch, naughty_llm):
     assert seen_targets == [{"Order"}]
 
 
-def test_stages_without_rules_get_no_check_verdict(naughty_llm):
-    """규칙이 없는 스테이지에는 판정을 쓰지 않는다.
+def test_only_stages_without_rules_get_no_check_verdict(naughty_llm):
+    """규칙이 없는 스테이지에만 판정을 쓰지 않는다.
 
     빈 결과를 써 두면 "검사했고 깨끗하다"로 읽힌다. 검사할 규칙이 아직 없다는 사실은
     **값이 없는 것**으로 드러나야 한다.
     """
     out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
 
-    assert "api_spec" in out["changed"]          # 하류가 실제로 고쳐졌는데도
-    assert "api_spec_check" not in out["state"]  # 판정은 없다
-    assert "sequence_diagram_check" not in out["state"]
+    # **기대값을 규칙 목록에서 뽑는다.** 스테이지 이름을 손으로 적어 두면, 규칙을
+    # 추가하고 배선을 잊었을 때 이 테스트가 그 사실을 못 잡는다.
+    #
+    # **다시 그려진 스테이지만 본다.** 안 그려진 스테이지에 판정이 없는 것은 규칙이
+    # 없어서가 아니라 아예 안 돌아서다 — 그건 이 테스트가 묻는 것이 아니다
+    # (`test_unaffected_stages_are_never_asked`가 맡는다).
+    with_rules = {r.stage for r in rules.RULES if r.severity == rules.DEFECT}
+    for stage in out["changed"]:
+        assert (f"{stage}_check" in out["state"]) is (stage in with_rules), stage
+
+    # 규칙이 없는 스테이지는 **다시 그려졌는데도** 판정이 없다 — 그것이 요점이다.
+    assert "deployment_diagram" in out["changed"]
     assert "deployment_diagram_check" not in out["state"]
 
 

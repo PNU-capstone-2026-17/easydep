@@ -80,8 +80,8 @@ STEP 4 — 관계 · 다이어그램
 ### STEP 2 — 액터 · 유스케이스 식별
 `app/requirements/agent/steps/step2_usecases.py`
 
-- **identify_actors**: FR에서만 액터 도출. primary(외부 인간·시스템)/supporting(외부 서비스) 두 종류.
-  **SuD(설계 대상 시스템)는 primary/supporting 액터가 아님**(Cockburn p.59). 경계 리트머스("앱의 일부로
+- **identify_actors**: FR에서 외부 액터를 도출. primary/supporting은 액터의 고정 종류가 아니라
+  유스케이스별 역할이다(Cockburn p.59). **SuD(설계 대상 시스템)는 두 역할 모두 아님**. 경계 리트머스("앱의 일부로
   배포되면 내부")로 내부 컴포넌트를 배제. `parent_actor`로 일반화 관계 기록.
 - **identify_use_cases**: FR만 유스케이스가 됨. **user-goal(EBP) 고도**로 군집(Cockburn coffee-break/EBP,
   p.62). subfunction FR은 상위 UC의 `requirement_ids`로 흡수. NFR은 유스케이스가 아니라 `nfr_ids` 제약으로 부착.
@@ -237,8 +237,8 @@ use_case_specs: list[UseCaseSpecItem]                                           
 relationships: dict, diagram: str                                                 # step4
 phase
 ```
-TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/kind/parent_actor) ·
-`UseCaseItem`(id/name/primary_actor/level/goal/requirement_ids/nfr_ids) ·
+TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/parent_actor) ·
+`UseCaseItem`(id/name/primary_actor/supporting_actors/level/goal/requirement_ids/nfr_ids) ·
 `UseCaseSpecItem`(main_scenario/extensions/guarantees/issues/repair_iters).
 
 ### 구조화 출력 스키마 (`app/requirements/schemas.py`)
@@ -259,10 +259,10 @@ TypedDict: `RequirementItem`(FR/NFR+BERT) · `ActorItem`(name/kind/parent_actor)
 | `app/requirements/agent/graph.py` | LangGraph StateGraph 조립·컴파일(MemorySaver 체크포인터). `start_analysis`/`resume_analysis` 서빙 헬퍼. `rebuild_graph()`로 런타임 플래그 변경 후 재컴파일. |
 | `app/requirements/api.py` (FastAPI 라우터) | `POST /api/requirements/analyze`(신규/재개), 정적 UI `/requirements`. 응답에 status(need_clarification/need_feedback/completed) + 산출물. `app_id`가 오면 완료 산출물을 MySQL 저장소에 기록. 앱 생성과 `/healthz`는 저장소 루트의 `server.py`. |
 | `app/requirements/cli.py` | 터미널 대화형. `--interactive/-i`로 게이트+파이프라인 켜고 재빌드, 종료 시 유스케이스·다이어그램 출력. |
-| `app/requirements/runner.py` + `app/requirements/run_pipeline.py` | **배치 러너**: `inputs/*.json`을 step2~4에 태우고(그래프 미사용, 함수 직접 호출) `artifacts/run_*/`에 재현 가능하게 저장. |
+| `app/requirements/runner.py` + `app/requirements/run_pipeline.py` | **배치 러너**: `inputs/*.json`을 step2~4에 태우고(그래프 미사용, 함수 직접 호출) `artifacts/runs/<run-id>/`에 재현 가능하게 저장. |
 | `app/requirements/apply_feedback.py` | 완료 run에 자연어 피드백 적용 → 새 run 저장. |
 
-### 아티팩트 (`artifacts/run_<UTC>_<inputsha10>/`)
+### 실행 아티팩트 (`artifacts/runs/<run-id>/`)
 `input.json` · `manifest.json`(config·sha·스테이지 요약) · `actors/use_cases/coverage/use_case_specs/
 relationships.json` · `diagram.puml` · `use_cases/uc_NN_<slug>/{use_case,spec}.json`. (`.gitignore`)
 

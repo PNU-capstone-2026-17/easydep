@@ -18,6 +18,7 @@ include = [
     "app/core/cloudkb/**/*.py",
     # 두 에이전트가 공유하는 얇은 층. 둘 다 내 범위라 여기도 같이 검사한다.
     "app/core/**/*.py",
+    "evaluation/baselines/**/*.py",
 ]
 extend-exclude = [
     "app/core/cloudkb/.cache",
@@ -144,6 +145,8 @@ files = [
     "app/requirements/evaluation",
     # 체크포인터. 상위 인터페이스와 시그니처가 어긋나면 재개가 조용히 깨진다.
     "app/requirements/session_store.py",
+    "app/core/cloudkb/kbcommon",
+    "app/core/cloudkb/sizingkb/model.py",
 ]
 ignore_missing_imports = true    # 벤더 SDK 상당수가 스텁을 내놓지 않는다
 follow_imports = "silent"        # files 밖 모듈은 해석만 하고 검사하지 않는다

@@ -1,1 +1,0 @@
-Deploy on AWS in the Seoul region. The monthly budget is at most 500 USD, and we expect about 300 concurrent users in normal times.

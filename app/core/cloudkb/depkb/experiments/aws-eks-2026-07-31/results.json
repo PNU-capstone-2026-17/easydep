@@ -1,0 +1,44 @@
+{
+ "_note": "EKS 거부 라운드 — 자원 무생성. 거부 코드가 어느 축(역할·서브넷 수·허상)에서 났는지와 검사 순서를 기록. 양성 대조(실제 클러스터)는 후속 라운드(비용·시간 게이트).",
+ "ranAt": "2026-07-30T16:28:18+00:00",
+ "steps": {
+  "E1.omit-vpc-config": {
+   "ok": false,
+   "errorCodes": [
+    "--resources-vpc-config"
+   ],
+   "rejectedAt": "client",
+   "excerpt": "aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: --resources-vpc-config\n\nusage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help"
+  },
+  "E2.omit-role": {
+   "ok": false,
+   "errorCodes": [
+    "--role-arn"
+   ],
+   "rejectedAt": "client",
+   "excerpt": "aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: --role-arn\n\nusage: aws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help"
+  },
+  "E3.one-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterException) when calling the CreateCluster operation: The subnet ID 'subnet-0fffffffffffffff0' does not exist (Service: AmazonEC2; Status Code: 400; Error Code: InvalidSubnetID.NotFound; Request ID: cba962d0-8b3d-4eb5-8db7-483721fec035; Proxy: null)\n\nAdditional error details:\nclusterName: depkb-eks"
+  },
+  "E4.two-dangling-subnets": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameterException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidParameterException) when calling the CreateCluster operation: The subnet ID 'subnet-0fffffffffffffff0' does not exist (Service: AmazonEC2; Status Code: 400; Error Code: InvalidSubnetID.NotFound; Request ID: b1408085-43d6-420b-8f57-0ddea0bcf59c; Proxy: null)\n\nAdditional error details:\nclusterName: depkb-eks"
+  },
+  "E5.confirm-no-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": []\n}"
+  }
+ }
+}

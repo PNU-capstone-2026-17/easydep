@@ -19,6 +19,10 @@ SIZING_FILES = (
     "reviewed-sizing.json",
 )
 
+_OUT_OF_SCOPE_PROVIDERS = frozenset(
+    {"alibaba", "ibm", "kt", "ncp", "nhn", "openstack", "oracle", "tencent"}
+)
+
 
 @lru_cache(maxsize=1)
 def schema() -> dict:
@@ -42,7 +46,11 @@ def _load(output_dir: str) -> tuple[tuple[Rule, ...], tuple[str, ...]]:
         if error:
             warnings.append(error)
             continue
-        rules.extend(Rule.from_dict(r) for r in data.get("rules") or [])
+        rules.extend(
+            Rule.from_dict(r)
+            for r in data.get("rules") or []
+            if str(r.get("scope", "")).strip().lower() not in _OUT_OF_SCOPE_PROVIDERS
+        )
     return tuple(rules), tuple(warnings)
 
 

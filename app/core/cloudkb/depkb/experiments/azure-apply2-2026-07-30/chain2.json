@@ -1,0 +1,87 @@
+{
+ "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+ "contentVersion": "1.0.0.0",
+ "resources": [
+  {
+   "type": "Microsoft.Network/virtualNetworks",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-vnet",
+   "location": "[resourceGroup().location]",
+   "properties": {
+    "addressSpace": {"addressPrefixes": ["10.50.0.0/16"]},
+    "subnets": [{"name": "s1", "properties": {"addressPrefix": "10.50.1.0/24"}}]
+   }
+  },
+  {
+   "type": "Microsoft.Network/publicIPAddresses",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-pip1",
+   "location": "[resourceGroup().location]",
+   "sku": {"name": "Standard"},
+   "properties": {"publicIPAllocationMethod": "Static"}
+  },
+  {
+   "type": "Microsoft.Network/publicIPAddresses",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-pip2",
+   "location": "[resourceGroup().location]",
+   "sku": {"name": "Standard"},
+   "properties": {"publicIPAllocationMethod": "Static"}
+  },
+  {
+   "type": "Microsoft.Network/networkInterfaces",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-nic",
+   "location": "[resourceGroup().location]",
+   "dependsOn": [
+    "[resourceId('Microsoft.Network/virtualNetworks', 'depkb2-vnet')]",
+    "[resourceId('Microsoft.Network/publicIPAddresses', 'depkb2-pip1')]"
+   ],
+   "properties": {
+    "ipConfigurations": [{
+     "name": "ipc",
+     "properties": {
+      "subnet": {"id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'depkb2-vnet', 's1')]"},
+      "publicIPAddress": {"id": "[resourceId('Microsoft.Network/publicIPAddresses', 'depkb2-pip1')]"}
+     }
+    }]
+   }
+  },
+  {
+   "type": "Microsoft.Network/loadBalancers",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-lbi",
+   "location": "[resourceGroup().location]",
+   "sku": {"name": "Standard"},
+   "dependsOn": [
+    "[resourceId('Microsoft.Network/virtualNetworks', 'depkb2-vnet')]"
+   ],
+   "properties": {
+    "frontendIPConfigurations": [{
+     "name": "fe",
+     "properties": {
+      "subnet": {"id": "[resourceId('Microsoft.Network/virtualNetworks/subnets', 'depkb2-vnet', 's1')]"}
+     }
+    }]
+   }
+  },
+  {
+   "type": "Microsoft.Network/loadBalancers",
+   "apiVersion": "2026-01-01",
+   "name": "depkb2-lbp",
+   "location": "[resourceGroup().location]",
+   "sku": {"name": "Standard"},
+   "dependsOn": [
+    "[resourceId('Microsoft.Network/publicIPAddresses', 'depkb2-pip2')]"
+   ],
+   "properties": {
+    "frontendIPConfigurations": [{
+     "name": "fe",
+     "properties": {
+      "publicIPAddress": {"id": "[resourceId('Microsoft.Network/publicIPAddresses', 'depkb2-pip2')]"}
+     }
+    }]
+   }
+  }
+ ]
+}

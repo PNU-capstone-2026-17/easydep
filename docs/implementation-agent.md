@@ -77,6 +77,66 @@ ClusterSecretStore의 정확한 `storeName`·`remoteKey`가 intent에 명시된 
 완전 개방 egress처럼 배포 전에 확정해야 할 사항은 render report의 warning으로 남긴다.
 검증된 결과는 새 `DEPLOYMENT_FILE` artifact 버전으로 저장된다.
 
+## 결정적 IaC 생성
+
+cloud resource spec의 `provider`가 `azure`, `aws`, `gcp` 중 하나이면 배포 파일 렌더링 직후
+implementation agent가 `application/terraform/`에 Terraform을 생성한다. Azure는 VNet, ACR,
+AKS, MySQL, Key Vault, Log Analytics를, AWS는 VPC/subnet, ECR, EKS, RDS, Secrets Manager,
+CloudWatch Logs를, GCP는 VPC/subnetwork, Artifact Registry, GKE, Cloud SQL, Secret Manager,
+Cloud Logging을 지원한다. 클러스터와 컨테이너 레지스트리가 함께 있으면 각 provider의
+이미지 pull 권한 연결(AcrPull, ECR read policy, Artifact Registry reader)을 함께 생성한다.
+EKS에는 managed node group을, GKE에는 node pool을 함께 생성하므로 생성된 Kubernetes
+manifest를 실제로 스케줄할 수 있다. AWS의 EKS cluster/node IAM role ARN·name과 region,
+GCP의 project/region 및 cluster별 GKE node service-account, Azure의 resource group/location 및 MySQL
+관리자 비밀번호는 배포 환경에서 Terraform 변수로 제공해야 한다.
+resource spec의 `dependsOn`은 VPC/VNet·subnet·Kubernetes cluster의 참조 관계를 결정한다.
+현재 자동 deployment intent 추론과 IaC 생성은 cloud resource spec당 Kubernetes cluster 하나만 지원한다.
+두 개 이상을 선언하면 누락 배포를 방지하기 위해 생성이 실패한다.
+특히 EKS cluster는 동일 네트워크에 연결된 서로 다른 `availabilityZone`의 subnet 두 개 이상을
+명시해야 하며, 이 조건을 충족하지 못하면 IaC 생성이 중단된다. `iac-render.json`의
+`requiredVariables`는 배포 전에 주입해야 하는 provider별 입력값을 구조화해 제공한다.
+`reports/iac-render.json`은 resource spec 리소스의 Terraform 반영 여부와 deployment intent의
+workload가 Kubernetes manifest 및 이미지 pull 권한과 연결되는지, EKS/GKE node 구성과
+VPC·subnetwork 참조가 존재하는지를 검증한다. 오류가 있으면 IaC artifact를 저장하지 않는다. IaC는 `IAC_CODE`의
+불변 artifact 버전으로 저장된다.
+
+Terraform CLI가 설치된 환경에서는 `python -m app.implementation.engine.cli validate-iac <run>`으로
+격리된 임시 복사본에서 `terraform fmt`, `init -backend=false`, `validate`를 실행할 수 있다.
+동일 검증은 IaC renderer가 workflow 완료 전에 자동 실행하며, Terraform이 설치되어 있지 않거나
+검증에 실패하면 IaC 생성 자체가 실패한다. 따라서 `IAC_CODE` artifact를 저장하기 전에 Terraform CLI를
+반드시 실행 환경에 설치해야 한다.
+기본적으로 `PATH`의 `terraform`을 사용하며, Windows 환경에서 PATH를 갱신하지 않은 경우에는
+`EASYDEP_TERRAFORM_PATH`에 `terraform.exe`의 절대 경로를 지정할 수 있다.
+
+## Registry image resolution
+
+배포 manifest는 workload별 `__EASYDEP_REGISTRY_<registryRef>__` marker를 보존하고, Terraform은 모든
+registry의 주소를 `registry_image_bases` map output으로 생성한다. 여러 registry를 사용하는 경우에는
+각 workload의 `registryRef`를 cloud resource spec의 registry `id`로 명시하고, 여러 cluster가 있으면
+`clusterRef`도 cluster `id`로 명시한다. IaC 검증은 workload의 두 참조에 해당하는 정확한 image-pull
+권한 리소스가 Terraform에 있는지 확인한다. registry가 하나뿐일 때는 registry와 cluster를 자동 추론할 수
+있지만, 여러 후보가 있으면 renderer가 실패로 처리한다.
+
+`application/k8s/build-push.sh <terraform-dir> <image-references.json>`은 Terraform output map을 바탕으로
+application Dockerfile을 build하고 모든 workload registry에 push한 뒤, push 결과의 digest를
+`image-references.json`으로 기록한다. `render-images.sh <image-references.json> <output-dir>`은 이 digest map으로
+marker를 치환한 별도 manifest tree를 생성한다. `application/k8s/deploy.sh <terraform-dir> [terraform apply options...]`는
+Terraform apply → build/push → digest 치환 → kubectl apply를 순서대로 실행하는 최종 배포 entry point이다. 실행 권한에
+의존하지 않도록 `sh application/k8s/deploy.sh <terraform-dir> [terraform apply options...]` 형태로 호출한다.
+원본 manifest를 수정하지 않으므로, 생성 단계에서는 결정적 산출물을 유지하면서도 실제 배포에서는 registry의
+최종 manifest는 tag가 아닌 Docker push 결과의 `@sha256:` digest를 사용한다. `EASYDEP_IMAGE_TAG`에는
+`latest`가 아닌 release tag를 지정해야 하며, 지정하지 않으면 build/push·치환·배포를 중단한다. 스크립트는
+`EASYDEP_TERRAFORM_PATH`가 있으면 그 절대 경로를, 없으면 PATH의 `terraform`을 사용한다. 실행에는 Terraform,
+Docker, Python 3, kubectl, registry push 권한 및 각 provider 인증이 필요하다.
+build/push 단계는 Terraform output의 provider에 따라 Azure CLI의 `az acr login`, AWS CLI의
+`aws ecr get-login-password`, 또는 gcloud의 `auth configure-docker`를 실행하므로 해당 CLI와 로그인된
+자격증명도 필요하다.
+
+IaC 검증이 성공하면 `application/deployment-bundle/`이 생성된다. bundle은 `application/` 아래에 소스,
+Dockerfile, Kubernetes manifest와 deployment intent, Terraform 파일을 함께 담으므로 artifact API에서
+`DEPLOYMENT_FILE` 하나를 내려받아도 실행에 필요한 run reports에 의존하지 않는다. bundle 디렉터리에서
+`sh application/k8s/deploy.sh application/terraform -auto-approve`를 실행한다.
+
 ## 자동 실행 단계
 
 1. MySQL에서 현재 `CLASS`, `SEQUENCE`, `API_SPEC`, `ERD`, `DEPLOYMENT`,

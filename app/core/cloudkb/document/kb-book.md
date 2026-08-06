@@ -1,5 +1,7 @@
 # 클라우드 지식베이스 만들기 — 처음부터 끝까지
 
+> **보류 문서:** 과거 전체 KB의 제작 기록이다. 현재 Docker-on-VM 범위와 활성 패키지 판단은 [`README.md`](README.md)를 따른다. 이 문서를 새 구현의 기준으로 사용하지 않는다.
+
 > **이 문서는 KB를 만드는 방법서다 — 무엇을 만들지 정하는 문서가 아니다.**
 >
 > 범위·어휘·경계의 현재 진실은 [`docs/cloud-native-extension.md`](../../../../docs/cloud-native-extension.md).
@@ -1760,7 +1762,7 @@ cb-tumblebug ─┬─ 스펙·정가 73,083   (costkb의 (가) 전부)
 | 22장 | 실험 소프트웨어공학의 **타당성 위협** 절 | 리뷰어가 찾는 자리가 생긴다 |
 
 > 요구사항 쪽 관심사 축은 이미 **ISO/IEC 25010**에 양방향 매핑돼 있습니다
-> (`docs/cloud-native-requirements.md`). 같은 저장소인데 **큰 축인 이쪽만 매핑이
+> (`archive/cloud-native-requirements.md`). 같은 저장소인데 **큰 축인 이쪽만 매핑이
 > 없던 것**이 감사에서 지적된 불균형이었습니다.
 
 ### (나) 표준에 있는데 우리에게 없는 칸 ★
@@ -2300,14 +2302,20 @@ contract.validate_design({"schemaVersion": "1", "components": [{"id": "x", "name
 판정식이기 때문입니다("그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수").
 
 ```python
-contract.validate_request({"schemaVersion": "1", "provider": "aws", "region": "서울"})
+cloud_contract.validate({"schemaVersion": "2", "provider": "aws", "region": "서울"})
 ```
 ```
-[required] monthlyBudgetUSD missing — it is the yardstick for judging whether cost fits
-  the requirement (USD)
-[required] no scale signal (expectedConcurrentUsers or approxRequestsPerSecond) — it is
-  the basis for the sizing verdict; without it every spec recommendation is arbitrary
+[required] workloads missing — 폐포 계산의 입력 — 생성 순서·삭제 순서·서버가 대신
+  만드는 것·운영 경고가 전부 여기서 나온다. 이것이 없으면 실측 주장 118건이 계획에
+  닿지 못한다
+[required] monthlyBudgetUSD missing — 비용 부합 판정의 기준값 — 없으면 판정문
+  자체가 안 나온다
 ```
+
+> **부르는 곳이 `contract`에서 `cloud_contract`로 바뀐 것이 이 예제의 절반입니다.**
+> 모양 검증(`appkb.contract`)은 칸 이름까지만 말하고, **왜** 필요한지는 질문·근거·
+> 계층을 들고 있는 `app/core/input_registry.py`가 압니다. 층을 그렇게 가른 뒤로는
+> 되묻기·화면·검증이 **같은 한 문장**을 씁니다.
 
 > `region`에 `"서울"`이 그대로 들어간 것은 **잡히지 않습니다.** 지명은 계약 진입 전에
 > 리전 해석 도구로 코드(`ap-northeast-2`)로 바꿔 담아야 하고, 그대로 오면 조인이

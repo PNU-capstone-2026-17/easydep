@@ -1,0 +1,58 @@
+{
+ "_note": "azure k8s·vpn 거부 라운드 — 자원 무생성(재료 vnet·PIP는 생성 후 즉시 삭제). 생성 기반 실험(양성 대조·노드풀·생명주기)은 후속 라운드.",
+ "ranAt": "2026-07-30T16:29:37+00:00",
+ "steps": {
+  "0.aks-api-version": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "2026-05-02-preview"
+  },
+  "K1.aks-omit-agentpools": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidParameter",
+    "null"
+   ],
+   "excerpt": "ERROR: Bad Request({\n  \"code\": \"InvalidParameter\",\n  \"details\": null,\n  \"message\": \"Required parameter agentPoolProfiles is missing (null).\",\n  \"subcode\": \"\",\n  \"target\": \"agentPoolProfiles\"\n })"
+  },
+  "K2.aks-dangling-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "NotFound"
+   ],
+   "excerpt": "ERROR: Bad Request({\n  \"code\": \"NotFound\",\n  \"details\": null,\n  \"message\": \"Failed to get a VNet: depkb-absent-vnet.\",\n  \"subcode\": \"\"\n })"
+  },
+  "V0.create-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"newVNet\": {\n    \"addressSpace\": {\n      \"addressPrefixes\": [\n        \"10.95.0.0/16\"\n      ]\n    },\n    \"enableDdosProtection\": false,\n    \"etag\": \"W/\\\"d420bee6-ba34-48de-b0e3-54592c27d4db\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-vpn-vnet\",\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-vpn-vnet\",\n    \"privateEndpointVNetPolicies\": \"Disabled\",\n    \"provisioningState\": \"Succeeded\",\n    \"resourceGroup\": \"depkb-preflight\",\n    \"resourceGuid\": \"154451ea-28a3-45a3-921c-88017ab19c61\",\n "
+  },
+  "V0.create-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"publicIp\": {\n    \"ddosSettings\": {\n      \"protectionMode\": \"VirtualNetworkInherited\"\n    },\n    \"etag\": \"W/\\\"b2ca2d99-ab8b-4601-942a-66daa497d16d\\\"\",\n    \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/publicIPAddresses/depkb-vpn-pip\",\n    \"idleTimeoutInMinutes\": 4,\n    \"ipAddress\": \"20.196.217.52\",\n    \"ipTags\": [],\n    \"location\": \"koreacentral\",\n    \"name\": \"depkb-vpn-pip\",\n    \"provisioningState\": \"Succeeded\",\n    \"publicIPAddressVersion\": \"IPv4\",\n    \"publicIPAllocationMethod\": \"Static\",\n    \"resourceGroup\": \"depkb"
+  },
+  "V1.vng-wrong-subnet-name": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidResourceReference"
+   ],
+   "excerpt": "ERROR: (InvalidResourceReference) Resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworks/depkb-vpn-vnet/subnets/GatewaySubnet referenced by resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-preflight/providers/Microsoft.Network/virtualNetworkGateways/depkb-vng was not found. Please make sure that the referenced resource exists, and that both resources are in the same region.\nCode: InvalidResourceReference\nMessage: Resource /subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resource"
+  },
+  "D.delete-pip": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "D.delete-vnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ }
+}

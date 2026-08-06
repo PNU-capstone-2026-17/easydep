@@ -1,38 +1,29 @@
-"""관심사의 코퍼스 좌표를 대조한다 — **CI에서 도는 검사**.
+"""관심사의 실측 좌표를 대조한다 — **CI에서 도는 검사**.
 
     python -m app.requirements.knowledge.verify_concerns
 
-## `verify_citations`와 무엇이 다른가
+## 2026-08-02 — 대조 대상이 바뀌었다
 
-같은 일을 하는데 **돌 수 있는 자리가 다르다.** 도서 인용 대조는 로컬 사본
-(`materials/Usecase_Knowledge/`, gitignore)이 있어야 해서 자동 검사가 될 수 없었다 —
-사본을 가진 사람이 생각날 때 돌리는 명령이다. 패턴 코퍼스는 저장소 안에 커밋돼 있어
-(`app/core/cloudkb/data/pattern-corpus.json.gz`) **아무 데서나 돈다.**
+구 판은 문헌 좌표(`doc_id`·`probe`)를 패턴 코퍼스와 대조했다. 실측 재도출 뒤
+관심사의 근거는 **claims.json의 주장 키**이고, 대조도 그쪽으로 옮겼다:
 
-그래서 이 축에서는 "인용을 손으로 적으면 틀린다"는 문제가 사람의 규율이 아니라 기계로
-막힌다. 규칙 축이 못 얻은 것이고, 관심사를 이 코퍼스에 매달기로 한 이유 중 하나다.
+  1. 관심사가 인용한 주장 키가 `claims.json`에 실재하는가.
+  2. **좌표 유일성** — 한 주장 키는 한 관심사에만 속한다(미분화 트립와이어,
+     구 판 doc_id 유일성의 계승).
+  3. claims가 빈 관심사는 `kb_ref`가 실재하는 실측 KB인가.
 
 ## 왜 여기서만 `app/core/cloudkb`를 import하는가
 
-`app/requirements`는 `app/core/cloudkb` 없이 돌아야 한다(`knowledge/basis.py`). 그 규약이
-지키는 것은 **런타임 경로**다 — 파이프라인 어느 단계도 배포 KB를 끌고 오면 안 된다.
-이 모듈은 파이프라인이 아니라 개발·CI 도구이고, 어디에서도 import되지 않는다(그 사실을
-`tests/test_common_isolation.py` 계열의 격리 검사가 지킨다).
-
-읽는 것은 KB 자신의 로더다. 코퍼스 형식이 바뀌면 우리가 따라 바뀌는 편이 낫고,
-`artifact.resolve`가 `output/` → 저장소의 `data/*.gz` 순으로 찾아 주므로 빌드 없이 돈다.
-
-## 무엇을 보는가
-
-  1. 관심사가 가리키는 문서가 코퍼스에 실재하는가.
-  2. `probe` 구절이 그 문서 본문에 실제로 있는가 — 좌표가 맞는지 보는 열쇠다.
-고지 문구 대조는 **없앴다**(2026-07-28). `concerns.ADVISORY_NOTICE`가 patternkb의
-사본이던 동안에는 갈라짐을 잡아야 했지만, 지금은 `app/core/advisory.py`를 거쳐 원본을
-그대로 받는다 — 갈라질 수가 없다. 대조는 사본을 없애 주지 않으므로, 사본을 없앴다.
+`app/requirements`는 `app/core/cloudkb` 없이 돌아야 한다(`knowledge/basis.py`). 그
+규약이 지키는 것은 **런타임 경로**다. 이 모듈은 파이프라인이 아니라 개발·CI 도구이고,
+어디에서도 import되지 않는다(격리 검사가 지킨다).
 """
 from __future__ import annotations
 
+import importlib
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.requirements.knowledge import concerns
 
@@ -42,45 +33,52 @@ class Verdict:
     """관심사 하나의 좌표 대조 결과."""
 
     concern_id: str
-    doc_id: str
-    #: 코퍼스에 그 문서가 없다. `missing`보다 앞선 실패다.
-    doc_found: bool
-    #: 문서 본문에서 찾지 못한 열쇠 구절들.
+    #: claims.json에 없는 주장 키들.
     missing: tuple[str, ...] = ()
+    #: 다른 관심사도 인용한 주장 키들 (키, 상대 관심사).
+    shared: tuple[tuple[str, str], ...] = ()
+    #: kb_ref가 필요한데 없거나, 있는데 import되지 않는다.
+    kb_problem: str = ""
 
     @property
     def ok(self) -> bool:
-        return self.doc_found and not self.missing
+        return not (self.missing or self.shared or self.kb_problem)
 
 
-def load_corpus() -> dict[str, str]:
-    """코퍼스 문서 id → 본문(소문자).
-
-    빈 코퍼스는 성공이 아니라 실패다 — 문서가 하나도 없으면 모든 대조가 "문서 없음"으로
-    떨어지는데, 그 상태를 그냥 통과시키면 검사가 있는 것이 없는 것보다 나쁘다.
-    """
-    from app.core.cloudkb.patternkb.dataset import all_docs  # 런타임 경로가 아니다
-
-    docs = all_docs(None)
-    if not docs:
-        raise SystemExit(
-            "패턴 코퍼스가 비어 있다 — app/core/cloudkb/data/pattern-corpus.json.gz 를 확인하라."
-        )
-    return {d.id: d.text.lower() for d in docs}
+def load_claim_keys() -> set[str]:
+    """claims.json의 주장 키 전부. 빈 집합은 성공이 아니라 실패다."""
+    path = (Path(__file__).resolve().parents[2]
+            / "core" / "cloudkb" / "depkb" / "claims.json")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    keys = {f"{c['csp']}/{c['subject']}->{c['object']}/{c['question']}"
+            for c in doc["claims"]}
+    if not keys:
+        raise SystemExit("claims.json이 비어 있다 — 대조가 성립하지 않는다.")
+    return keys
 
 
-def verify(corpus: dict[str, str] | None = None) -> list[Verdict]:
-    """관심사 전부를 대조한다. `probe`가 없는 관심사는 없다(그 규율은 테스트가 지킨다)."""
-    texts = load_corpus() if corpus is None else corpus
+def verify(claim_keys: set[str] | None = None) -> list[Verdict]:
+    """관심사 전부를 대조한다."""
+    keys = load_claim_keys() if claim_keys is None else claim_keys
 
+    owner: dict[str, str] = {}
     verdicts: list[Verdict] = []
     for concern in concerns.CONCERNS:
-        text = texts.get(concern.doc_id)
-        if text is None:
-            verdicts.append(Verdict(concern.id, concern.doc_id, doc_found=False))
-            continue
-        missing = tuple(key for key in concern.probe if key.lower() not in text)
-        verdicts.append(Verdict(concern.id, concern.doc_id, doc_found=True, missing=missing))
+        missing = tuple(k for k in concern.claims if k not in keys)
+        shared = tuple((k, owner[k]) for k in concern.claims if k in owner)
+        for k in concern.claims:
+            owner.setdefault(k, concern.id)
+        kb_problem = ""
+        if not concern.claims:
+            if not concern.kb_ref:
+                kb_problem = "claims도 kb_ref도 없다"
+            else:
+                try:
+                    importlib.import_module(f"app.core.cloudkb.{concern.kb_ref}")
+                except ImportError as exc:
+                    kb_problem = f"kb_ref {concern.kb_ref!r}: {exc}"
+        verdicts.append(Verdict(concern.id, missing=missing, shared=shared,
+                                kb_problem=kb_problem))
     return verdicts
 
 
@@ -89,14 +87,17 @@ def main() -> int:
     failed = [v for v in verdicts if not v.ok]
     for verdict in verdicts:
         mark = "OK  " if verdict.ok else "FAIL"
-        line = f"{mark} {verdict.concern_id}  ({verdict.doc_id})"
-        if not verdict.doc_found:
-            line += "  <- 코퍼스에 그 문서가 없다"
-        elif verdict.missing:
-            line += f"  <- 본문에 없다: {list(verdict.missing)}"
+        line = f"{mark} {verdict.concern_id}"
+        if verdict.missing:
+            line += f"  <- claims에 없다: {list(verdict.missing)}"
+        if verdict.shared:
+            line += f"  <- 좌표 겹침: {list(verdict.shared)}"
+        if verdict.kb_problem:
+            line += f"  <- {verdict.kb_problem}"
         print(line)
 
-    print(f"\n대조 {len(verdicts)}건 · 실패 {len(failed)}건")
+    total = sum(len(c.claims) for c in concerns.CONCERNS)
+    print(f"\n대조 {len(verdicts)}건(좌표 {total}개) · 실패 {len(failed)}건")
     return 1 if failed else 0
 
 

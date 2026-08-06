@@ -21,5 +21,5 @@
 `RUN_LIVE_TESTS=1`에서 **눈금이 죽지 않았는지**만 확인한다.
 
 실행 자체를 만드는 것은 이 패키지의 일이 아니다 — `python -m app.requirements.run_pipeline`이
-`artifacts/run_*/`를 남기고, 여기서는 그것을 읽는다.
+`artifacts/runs/<run-id>/`를 남기고, 여기서는 그것을 읽는다.
 """

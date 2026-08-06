@@ -30,7 +30,6 @@ class ActorItem(TypedDict):
 
     name: str
     description: str
-    kind: Literal["primary", "supporting"]
     parent_actor: str | None        # 일반화(상속) 부모 액터, 없으면 None
 
 
@@ -40,6 +39,7 @@ class UseCaseItem(TypedDict):
     id: str
     name: str
     primary_actor: str
+    supporting_actors: list[str]
     level: Literal["summary", "user_goal", "subfunction"]
     goal: str
     requirement_ids: list[str]      # 커버하는 FR id (서브펑션 흡수 포함, 추적성)
@@ -87,11 +87,9 @@ class AgentState(TypedDict):
     constraint_links: NotRequired[list[dict]]
     classified: list[RequirementItem]
     phase: str
-    # 클라우드 네이티브 관심사 커버리지(`steps/step_cloud.py`).
-    # 요구사항과 나란한 **별도 산출물**이다 — 유스케이스 명세에는 들어가지 않는다.
-    # 명세는 기술중립으로 남아야 하고(`spec.black-box-no-internal-components`), 클라우드
-    # 리소스를 시나리오 스텝에 넣으면 에이전트가 자기 규칙을 위반한다.
-    cloud_concerns: NotRequired[dict]
+    # 요구사항에서 도출한 제네릭 배포 필요사항. 구체 클라우드 리소스 선택은 설계 책임이다.
+    # 각 need는 기존 요구사항 ID를 참조해 근거를 추적한다.
+    deployment_needs: NotRequired[dict]
     # 사용자가 쓴 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항 문장과
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
     # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).

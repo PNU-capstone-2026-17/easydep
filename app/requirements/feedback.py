@@ -51,7 +51,7 @@ def _clamp_editable_stage(up_to: str) -> str:
 
 def _artifact_summary(state: dict) -> str:
     """의도 분류용 현재 산출물 요약(액터/UC/관계 개수)."""
-    actors = [f"{a['name']}({a['kind']})" for a in state.get("actors", [])]
+    actors = [a["name"] for a in state.get("actors", [])]
     ucs = [f"{u['id']}:{u['name']}" for u in state.get("use_cases", [])]
     rel = state.get("relationships", {})
     return (

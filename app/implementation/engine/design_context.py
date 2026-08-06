@@ -1027,8 +1027,10 @@ Rules:
 - Put explicit `@Bean` factory methods in `{spec.base_package}.config.ApplicationConfiguration` for every BCE Control service, stateful BCE Entity required directly by a service, concrete Boundary adapter, and concrete outbound Gateway adapter needed by the application graph.
 - Use only the exact public constructors below. Do not add annotations to or edit generated/agent-produced classes.
 - Generated Spring Data repositories are discovered by Spring Boot; do not instantiate repository proxies manually.
+- Every generated persistence mapper under `{spec.base_package}.persistence.mapper` has no Spring stereotype. Declare one explicit `@Bean` for each mapper using its no-argument constructor.
 - Do not add `@EnableJpaRepositories` exclusions, repository scan filters, or any workaround that removes a generated repository bean. If a repository contract is invalid, allow the context test to fail so the upstream repository task can be repaired.
 - Existing `@RestController` API adapters are component-scanned; do not declare duplicate controller beans.
+- Existing adapters annotated with `@Component`, `@Service`, `@Repository`, or `@RestController` are component-scanned. Do not also create an `@Bean` for any of those adapter classes; inject their port interface into the dependent Control instead. Each port must have exactly one candidate bean unless an explicit qualifier is part of the generated contract.
 - Detect constructor cycles where a Boundary adapter delegates to a Control that itself consumes the Boundary. Break only that Control parameter with Spring `@Lazy`; never enable global circular references and never use field injection or `ApplicationContext.getBean`.
 - It is acceptable to expose standalone UI adapters as beans even when no service currently consumes them.
 - Configure an H2 in-memory datasource and Flyway migration in `application.yml`. Do not store secrets and do not invent deployment/cloud settings that were not provided.

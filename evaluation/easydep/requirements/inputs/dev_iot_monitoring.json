@@ -1,0 +1,19 @@
+{
+  "name": "dev_iot_monitoring",
+  "description": "Event-driven IoT monitoring application with non-human primary actors.",
+  "resource_constraints_text": "Deploy Docker containers on AWS Linux VMs in the Seoul region with a 700 USD monthly budget. Use at least 8 vCPUs in total. Short ingestion peaks are expected.",
+  "classified": [
+    {"id":"FR1","type":"FR","text":"Operators register devices with a unique identifier and authentication credential."},
+    {"id":"FR2","type":"FR","text":"Registered Sensors submit timestamped temperature and humidity observations."},
+    {"id":"FR3","type":"FR","text":"Operators view the latest observations and connectivity state for each device."},
+    {"id":"FR4","type":"FR","text":"Operators define threshold rules for a device or device group."},
+    {"id":"FR5","type":"FR","text":"When a threshold is crossed, the system asks the external Message Delivery Provider to deliver an alert to the responsible Operator."},
+    {"id":"FR6","type":"FR","text":"Operators query historical observations by device and time range."},
+    {"id":"FR7","type":"FR","text":"Devices retrieve their current sampling interval and threshold configuration."},
+    {"id":"NFR1","type":"NFR","text":"The service shall ingest 2,000 observations per second with a 95th-percentile latency below one second."},
+    {"id":"NFR2","type":"NFR","text":"Observations shall be retained for 90 days and survive application or VM restarts."},
+    {"id":"NFR3","type":"NFR","text":"Duplicate observation identifiers shall not create duplicate records."},
+    {"id":"NFR4","type":"NFR","text":"Device and provider credentials shall be supplied at runtime."},
+    {"id":"NFR5","type":"NFR","text":"The application shall run in Docker containers on Linux VMs and expose ingestion health metrics."}
+  ]
+}

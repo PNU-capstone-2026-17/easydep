@@ -1,71 +1,29 @@
-"""제약 구조화 — 사용자의 클라우드 제약을 **구체화하고 확인해서** `RESOURCE_SPEC`으로.
+"""Turn natural-language cloud constraints into a validated ``RESOURCE_SPEC``.
 
-## 이 단계가 있는 이유
-
-`docs/cloud-native-requirements.md` §1이 진단한 공백이 이것이다: **`RESOURCE_SPEC`을
-아무도 만들지 않는다.** 스키마도, 필수 판정식도, 되묻기 문구(`REQUIRED_WHY`)도 이미
-있는데 생산자만 없었다. 이 단계가 그 생산자다.
-
-## 왜 다시 썼나 — 여기가 이 파일의 성격이다
-
-첫 판은 정규식 다섯 벌로 산문에서 칸을 캤다. 그것이 무너진 자리는 표현의 폭이었다
-(`"The monthly budget is at most 500 USD"`가 통째로 안 걸렸다 — 패턴이 통화 기호를
-**앞에** 요구했다). 더 나쁜 것은 `"USD가 아니다 — 계약이 환율 환산을 거부한다"`였다.
-계약은 그런 말을 한 적이 없다. **우리에게 환율 소스가 없다는 사실을 원칙으로 적어 둔
-것**이고, 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다(`resource_tools.convert_to_usd`).
-
-두 번째 판은 "정규식 → 못 채운 칸 계산 → LLM 한 번 → 거부"였는데, 그것도 답이 아니다.
-**제어 흐름을 우리가 정했으므로 그건 파이프라인이지 에이전트가 아니다.** 가르는 선은
-Anthropic이 적어 둔 그대로다 — 워크플로는 LLM과 도구가 미리 짜인 코드 경로로 엮인 것,
-에이전트는 LLM이 자기 과정과 도구 사용을 스스로 지휘하는 것.
-
-지금 판은 목표만 준다: **계약을 만족시키거나, 사용자에게 정확한 질문을 남겨라.**
-어느 도구를 언제 몇 번 부를지는 모델이 정한다.
-
-  지각   제약 원문 · 요구사항 문장 · 앞선 되묻기의 답 · 도구가 돌려준 것
-  행동   리전 해석 · 프로바이더 목록 · 환율 환산 · 웹 검색 ·
-         값 기록(`record_field`) · 계약 조회(`check_contract`) ·
-         **사용자에게 되묻기**(`ask_user`) · 마치기(`finish`)
-  관찰   기록이 받아들여졌는가 · 계약이 아직 무엇을 요구하는가
-  정지   `finish` · 도구 호출 없는 답변 · 턴 상한
-
-**되묻기는 폴백이 아니라 행동이다.** 요구사항을 구체화하고 확인해서 가져오는 것이 이
-단계의 본업이고, 그러라고 되묻기 기제(`resource_questions` → `ResourceAnswer` →
-`resume_analysis`)가 이미 깔려 있다.
-
-## 문법은 버렸지만 지식과 장치는 남았다
-
-코퍼스 실측(2026-07-28, 내부 11종 270문장 + PURE 18편 7,659문장)에서 얻은 함정 —
-단가는 예산이 아니다 · 숫자+동시성만으로는 규모가 아니다 · provider·region·예산은
-요구사항 산문에 0건이다 · 값이 둘로 갈리면 질문이다 — 은 정규식에서
-`prompts.RESOURCE_AGENT_SYSTEM`으로 옮겼다. 지식이 사라진 것이 아니라 층을 바꾼 것이다.
-
-지어냄을 막는 장치는 문법이 아니라 **대조**다. 값마다 자기가 본 자리를 인용하게 하고,
-그 조각이 **실제 입력 또는 이미 받은 도구 출력**에 실재하는지 확인한다(`_ground`).
-인용 못 하는 값은 버린다 — 조용히가 아니라 사유를 남기고서. 그리고 계약이 아는 칸인지,
-리전 코드가 카탈로그에 있는지는 여전히 기계가 판정한다(`_Session.record_field`).
-
-## 산출물이 두 갈래인 것은 그대로다
-
-  - `resource_spec` — **계약을 만족할 때만 존재한다.** 반쯤 채운 사양을 내보내면
-    뒤 단계가 그걸 사양으로 알고 조인을 돌린다.
-  - `resource_intake` — 초안·질문·근거·버린 값·에이전트가 되읽은 이해. 늘 존재한다.
+One structured LLM call performs language interpretation. Deterministic code then checks
+quoted evidence, normalizes the provider and region, applies the Docker-on-VM workload
+scope, and validates the contract. ``resource_spec`` exists only when required fields are
+valid; ``resource_intake`` always records the draft, questions, provenance, and rejected
+values. Missing required values become explicit English questions.
 """
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
 
-from app.core import cloud_contract, regions
+from app.core import cloud_contract, input_registry, regions
 from app.requirements import prompts
+from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
-from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS
+from app.requirements.agent.steps.resource_tools import LOOKUP_TOOLS, convert_to_usd
 from app.requirements.common import telemetry
 from app.requirements.common.state_contract import contract
 from app.requirements.config import settings
+from app.requirements.schemas import CloudConstraintExtraction
 
-#: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 여기서 정하는 것이 아니라 옮겨 적는다.
-SCHEMA_VERSION = "1"
+#: 계약 판. 스키마가 `const`로 못 박아 둔 값이라 **옮겨 적지 않고 읽는다** —
+#: 손으로 적어 두면 판을 올릴 때 여기가 조용히 낡는다(판 2에서 실제로 그럴 뻔했다).
+SCHEMA_VERSION = cloud_contract.schema_version()
 
 #: 질문의 종류. 빈 칸의 **이유**가 다르면 사용자가 할 일도 다르다.
 MISSING = "missing"        # 계약이 요구하는데 아직 값이 없다
@@ -122,25 +80,20 @@ def _ground(fragment: str, seen: list[str]) -> bool:
     return any(squeeze in " ".join(text.split()).lower() for text in seen)
 
 
-def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
-    """계약이 선언한 타입으로 맞춘다. 못 맞추면 (None, 사유).
+def _coerce_scalar(kind: str, allowed: tuple[str, ...],
+                   raw: object) -> tuple[object | None, str]:
+    """타입 하나짜리 마샬링. `_coerce`와 그 object 하위 칸이 **같은 규칙을 쓴다.**
 
-    **이건 자연어 파싱이 아니라 타입 마샬링이다.** 스키마가 `integer`라고 적어 둔 칸에
-    문자열 `"3000"`이 오면 JSON Schema 검증이 스펙 전체를 무효로 만든다. 허용하는 정리는
-    앞뒤 공백과 자릿수 구분자(`,` `_`)뿐이고, 그 이상은 손대지 않는다 — 표현을 읽어 내는
-    일은 모델의 몫이고, 애매하면 모델이 되물어야 한다.
+    떼어 낸 이유: `scale{value,unit}`이 생기면서 같은 판정("수여야 한다", "양수여야
+    한다", enum 목록)이 두 곳에 필요해졌다. 두 벌로 두면 한쪽만 고쳐진다.
     """
-    kind = cloud_contract.field_type(field_name)
-    if not kind:
-        return None, "계약에 없는 칸이다"
     text = raw.strip() if isinstance(raw, str) else raw
-
     if kind == "enum":
-        allowed = cloud_contract.field_enum(field_name)
         value = str(text).strip().lower()
-        if value not in allowed:
+        lowered = {a.lower(): a for a in allowed}
+        if value not in lowered:
             return None, f"{' 또는 '.join(allowed)}여야 한다"
-        return value, ""
+        return lowered[value], ""
     if kind == "boolean":
         if isinstance(text, bool):
             return text, ""
@@ -161,6 +114,72 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
     return str(text), ""
 
 
+def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
+    """계약이 선언한 타입으로 맞춘다. 못 맞추면 (None, 사유).
+
+    **이건 자연어 파싱이 아니라 타입 마샬링이다.** 스키마가 `integer`라고 적어 둔 칸에
+    문자열 `"3000"`이 오면 JSON Schema 검증이 스펙 전체를 무효로 만든다. 허용하는 정리는
+    앞뒤 공백과 자릿수 구분자(`,` `_`)뿐이고, 그 이상은 손대지 않는다 — 표현을 읽어 내는
+    일은 모델의 몫이고, 애매하면 모델이 되물어야 한다.
+    """
+    kind = cloud_contract.field_type(field_name)
+    if not kind:
+        return None, "계약에 없는 칸이다"
+    text = raw.strip() if isinstance(raw, str) else raw
+
+    if kind in ("enum", "boolean", "integer", "number"):
+        return _coerce_scalar(kind, cloud_contract.field_enum(field_name), text)
+    if kind == "array":
+        # 목록 칸(`workloads`)은 도구가 문자열로 받는다. JSON 배열도, 쉼표로 나눈
+        # 것도 받되 **거기까지다** — 무엇이 유효한 종류인지는 아래 도메인 검사가
+        # 본다(레지스트리가 claims에서 뽑은 목록).
+        if isinstance(text, list):
+            items = [str(x).strip() for x in text]
+        else:
+            body = str(text).strip()
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                parsed = None
+            items = ([str(x).strip() for x in parsed] if isinstance(parsed, list)
+                     else [p.strip() for p in body.replace("\n", ",").split(",")])
+        items = [i for i in items if i]
+        if not items:
+            return None, "적어도 하나는 있어야 한다"
+        # 순서는 뜻이 없고 중복은 스키마가 거부한다 — 여기서 정리해 준다.
+        return list(dict.fromkeys(items)), ""
+    if kind == "object":
+        # **2026-08-01에 생겼다.** `scale{value,unit}`이 계약의 첫 object 칸이다.
+        # 하위 칸의 이름·타입·필수는 스키마에서 읽는다 — 여기 옮겨 적으면 갈린다.
+        if isinstance(text, dict):
+            body = text
+        else:
+            try:
+                body = json.loads(str(text))
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                sub = ", ".join(n for n, _k, _e, _r in
+                                cloud_contract.field_object(field_name))
+                return None, f'JSON 객체여야 한다 — 하위 칸: {sub}'
+        out: dict[str, object] = {}
+        for name, sub_kind, allowed, required in cloud_contract.field_object(field_name):
+            if name not in body:
+                if required:
+                    return None, f"하위 칸 {name}이 없다"
+                continue
+            # 하위 칸도 같은 마샬링을 받는다 — 규칙이 갈라지지 않게.
+            value, why = _coerce_scalar(sub_kind, allowed, body[name])
+            if why:
+                return None, f"{name}: {why}"
+            out[name] = value
+        extra = set(body) - {n for n, _k, _e, _r in cloud_contract.field_object(field_name)}
+        if extra:
+            return None, f"계약에 없는 하위 칸이다: {', '.join(sorted(extra))}"
+        return out, ""
+    return str(text), ""
+
+
 def _domain_error(field_name: str, value: object, draft: dict) -> str:
     """스키마가 못 잡는 **조인 축의 유효성**. 통과하면 빈 문자열.
 
@@ -177,6 +196,19 @@ def _domain_error(field_name: str, value: object, draft: dict) -> str:
         if not regions.is_region_code(str(value), provider=draft.get("provider")):
             return ("리전 **코드**가 아니다 — 지명을 그대로 넣으면 뒤 단계 조인이 조용히 "
                     "빈 답이 된다. resolve_region으로 코드를 받아라")
+    if field_name == "workloads":
+        # 계획 전체가 이 값 위에 선다. **실측이 없는 종류를 받으면 그 부분 계획이
+        # 통째로 비는데, 비었다는 사실이 값으로는 안 보인다** — 그래서 여기서 막는다.
+        provider = draft.get("provider")
+        if not provider:
+            return ("provider를 먼저 정해야 한다 — 배포 가능한 종류가 프로바이더마다 "
+                    "다르고, 그 목록이 실측에서 나온다(list_workload_kinds)")
+        known = input_registry.anchors_for(str(provider))
+        unknown = [v for v in (value or []) if v not in known]
+        if unknown:
+            return (f"{provider}에서 실측이 없는 종류다: {', '.join(unknown)} — "
+                    f"list_workload_kinds가 주는 목록에서 골라라 "
+                    f"({', '.join(known[:8])}…)")
     return ""
 
 
@@ -189,7 +221,7 @@ class _Session:
     """
 
     def __init__(self, seen: list[str]) -> None:
-        self.draft: dict = {"schemaVersion": SCHEMA_VERSION}
+        self.draft: dict = {"schemaVersion": SCHEMA_VERSION, "workloads": ["vm"]}
         self.provenance: list[Candidate] = []
         self.rejected: list[dict] = []
         self.questions: list[dict] = []
@@ -201,7 +233,9 @@ class _Session:
         #: 붙인다). 목록 자체에 표시를 섞으면 인용 대조가 그 표시까지 건초더미로 센다.
         self.user_seen = len(self.seen)
         #: 실제로 무엇을 했는지. 사람이 되짚는 자리이고, 데모가 그대로 찍는다.
-        self.trace: list[dict] = []
+        self.trace: list[dict] = [
+            {"action": "system_scope", "field": "workloads", "value": ["vm"]}
+        ]
 
     # --- 관찰 ---------------------------------------------------------------
     def saw(self, text: str) -> None:
@@ -382,10 +416,13 @@ def _control_tools(session: _Session) -> list:
 
         Args:
             field: the contract field name (provider, region, regionAsWritten,
-                monthlyBudgetUSD, minVCpu, minMemoryGiB, expectedConcurrentUsers,
-                approxRequestsPerSecond, trafficPattern, multiZone, …).
-                Call check_contract if unsure.
+                monthlyBudgetUSD, minVCpu, minMemoryGiB, scale, trafficPattern,
+                multiZone, …). Call check_contract if unsure.
             value: the value, as a plain string. Numbers without separators.
+                An object field takes a JSON object — `scale` is
+                `{"value": 300, "unit": "concurrentUsers"}` (or
+                `"requestsPerSecond"`). **Do not convert between the two units**:
+                record whichever one the user actually stated.
             evidence: the fragment you read it from — verbatim from the user's text
                 or from a tool result you already received. Paraphrases are rejected.
         """
@@ -491,6 +528,93 @@ def _run(session: _Session, briefing: str) -> None:
             break
 
 
+_EXTRACTION_SYSTEM = """Extract only cloud constraints explicitly stated by the user.
+Return one structured object. Do not infer defaults or recommendations.
+Each *_evidence value must be an exact contiguous quote from the input.
+Use null and empty evidence when a value is absent. If statements conflict or are
+ambiguous, leave the value null and add its RESOURCE_SPEC field name to
+ambiguous_fields. The deployment workload is fixed by the system and is not extracted.
+Provider must be aws, azure, or gcp when explicit. Region stays in the user's words;
+code resolves it later. A monthly price or instance price is not a monthly budget.
+steady means sustained load; spiky means intermittent peaks. multi_zone is true only
+when service must survive an availability-zone failure, and false only when the user
+explicitly accepts a single zone. Do not derive vCPU or memory from users or traffic."""
+
+
+def _extract_once(briefing: str) -> CloudConstraintExtraction:
+    """Use one constrained LLM call to read natural-language constraints."""
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    return invoke_structured(
+        CloudConstraintExtraction,
+        [SystemMessage(content=_EXTRACTION_SYSTEM), HumanMessage(content=briefing)],
+    )
+
+
+def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> None:
+    """Normalize and validate an LLM extraction using deterministic code."""
+    direct = (
+        ("provider", found.provider, found.provider_evidence),
+        ("minVCpu", found.min_vcpu, found.min_vcpu_evidence),
+        ("minMemoryGiB", found.min_memory_gib, found.min_memory_evidence),
+        ("trafficPattern", found.traffic_pattern, found.traffic_pattern_evidence),
+        ("multiZone", found.multi_zone, found.multi_zone_evidence),
+        ("dataResidency", found.data_residency, found.data_residency_evidence),
+    )
+    for field, value, evidence in direct:
+        if value is not None:
+            session.record(field, value, evidence)
+
+    if found.region_as_written is not None:
+        session.record(
+            "regionAsWritten", found.region_as_written, found.region_evidence
+        )
+        matches = regions.resolve(
+            found.region_as_written,
+            provider=str(session.draft.get("provider") or "") or None,
+        )
+        if len(matches) == 1:
+            match = matches[0]
+            tool_result = f"{match.code} ({match.provider}, {match.display_name})"
+            session.saw(tool_result)
+            session.record("region", match.code, match.code)
+        elif len(matches) != 1:
+            session.ask("region", cloud_contract.question("region"))
+
+    if found.monthly_budget_amount is not None:
+        currency = (found.monthly_budget_currency or "").upper()
+        if currency == "USD":
+            session.record(
+                "monthlyBudgetUSD",
+                found.monthly_budget_amount,
+                found.monthly_budget_evidence,
+            )
+        elif currency:
+            conversion = str(convert_to_usd.invoke({
+                "amount": found.monthly_budget_amount,
+                "currency": currency,
+            }))
+            session.saw(conversion)
+            try:
+                usd = json.loads(conversion)["usd"]
+            except (json.JSONDecodeError, KeyError, TypeError):
+                session.ask("monthlyBudgetUSD", cloud_contract.question("monthlyBudgetUSD"))
+            else:
+                session.record("monthlyBudgetUSD", usd, str(usd))
+
+    if found.scale_value is not None and found.scale_unit is not None:
+        session.record(
+            "scale",
+            {"value": found.scale_value, "unit": found.scale_unit},
+            found.scale_evidence,
+        )
+
+    for field in found.ambiguous_fields:
+        if field in cloud_contract.schema_fields() and field != "workloads":
+            session.ask(field, cloud_contract.question(field) or f"Please confirm {field}.")
+    session.understanding = found.understanding.strip()
+
+
 @contract("build_resource_spec", requires=("classified",),
           produces=("resource_intake",))
 def build_resource_spec(state: AgentState) -> dict:
@@ -500,10 +624,10 @@ def build_resource_spec(state: AgentState) -> dict:
 
     degraded = ""
     if not settings.resource_agent_llm:
-        degraded = "resource_agent_llm이 꺼져 있다 — 아무것도 읽지 않았다"
+        degraded = "The resource constraint LLM is disabled; no constraints were extracted."
     else:
         try:
-            _run(session, briefing)
+            _record_extraction(session, _extract_once(briefing))
         except Exception as exc:  # noqa: BLE001 — 못 읽었으면 못 읽었다고 남기고 되묻는다
             degraded = f"{type(exc).__name__}: {exc}"
     if degraded:
@@ -519,7 +643,12 @@ def build_resource_spec(state: AgentState) -> dict:
         session.questions.append({
             "field": name, "kind": MISSING,
             "why": cloud_contract.why(name),
-            "question": f"{name} 값이 필요하다 — {cloud_contract.why(name)}",
+            # 사용자에게 하는 **말**과 그것이 필요한 **이유**는 다른 것이다.
+            # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
+            "question": cloud_contract.question(name)
+                        or f"A value for {name} is required: {cloud_contract.why(name)}",
+            "choices": list(cloud_contract.choices(
+                name, str(session.draft.get("provider") or ""))),
             "seen": [r for r in session.rejected if r["field"] == name],
         })
     # 권고 칸은 **막지 않는다.** 계약을 만족시키는 데는 필요 없고, 답하면 뒤 단계
@@ -530,8 +659,9 @@ def build_resource_spec(state: AgentState) -> dict:
         session.questions.append({
             "field": name, "kind": SUGGESTED,
             "why": cloud_contract.why(name),
-            "question": f"{name}을 알려 주면 판정이 하나 열린다 — "
-                        f"{cloud_contract.why(name)}",
+            "question": cloud_contract.question(name),
+            "choices": list(cloud_contract.choices(
+                name, str(session.draft.get("provider") or ""))),
             "seen": [],
         })
 

@@ -7,9 +7,9 @@ LLM 구조화 출력은 graph.py에서 ChatOpenAI.with_structured_output(...) �
 gpt-oss-120b가 스키마에 맞는 JSON을 반환하도록 강제하는 데 쓴다.
 (FR/NFR 분류는 LLM이 아니라 파인튜닝 BERT가 단독 수행한다 → step1 classify.)
 """
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # FR/NFR 라벨 타입 (BERT 매핑과 동일: 0=NFR, 1=FR)
 ReqType = Literal["FR", "NFR"]
@@ -53,23 +53,18 @@ class ClarifyOnlyResult(BaseModel):
 # ----------------------------------------------------------------------------
 # STEP 2 — 액터/유스케이스 구조화 출력
 # ----------------------------------------------------------------------------
-ActorKind = Literal["primary", "supporting"]
 UseCaseLevel = Literal["summary", "user_goal", "subfunction"]
 
 
 class Actor(BaseModel):
     """유스케이스와 상호작용하는 액터(역할). FR에서만 도출한다.
 
-    설계 대상 시스템(SuD)은 경계이지 액터가 아니다 → primary/supporting 두 종류뿐.
+    설계 대상 시스템(SuD)은 경계이지 액터가 아니다. Primary/supporting은
+    액터의 고정 속성이 아니라 유스케이스별 역할이다.
     """
 
     name: str = Field(description="Actor role name, e.g. 'Registered User'.")
     description: str = Field(description="One sentence describing the actor's role.")
-    kind: ActorKind = Field(
-        description="primary = an external human/system that has a goal the system fulfills; "
-        "supporting = an external system the application calls to fulfil a goal. The system "
-        "under design itself is NEVER an actor."
-    )
     parent_actor: str | None = Field(
         default=None,
         description="If this actor specializes another (e.g. Member specializes Guest), the "
@@ -83,6 +78,13 @@ class UseCase(BaseModel):
     name: str = Field(description="Active-verb goal phrase, e.g. 'Place an order'.")
     primary_actor: str = Field(
         description="Name of the primary actor (must be one of the given actors)."
+    )
+    supporting_actors: list[str] = Field(
+        default_factory=list,
+        description="Names of external actors whose services the system calls while carrying "
+        "out this use case. A recipient of system output is not supporting merely because it "
+        "receives that output. Use only given actor names. An actor may be primary in one use "
+        "case and supporting in another.",
     )
     level: UseCaseLevel = Field(
         default="user_goal",
@@ -170,6 +172,34 @@ class ConcernLinkage(BaseModel):
     links: list[ConcernLink] = Field(
         default_factory=list,
         description="One entry per concern in the concern list, in the same order.",
+    )
+
+
+class DeploymentNeed(BaseModel):
+    """One generic deployment capability grounded in existing requirement IDs."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    role: str = Field(description="What the deployment must provide and why it is needed.")
+    required: bool = Field(description="True when mandatory; false when a preference.")
+    requirement_ids: list[str] = Field(
+        alias="requirementIds",
+        min_length=1,
+        description="Exact IDs of requirements supporting this need.",
+    )
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Need-specific details; unresolved questions may use an unresolved list.",
+    )
+
+
+class DeploymentNeedsResult(BaseModel):
+    """Dynamic deployment needs keyed by LLM-chosen snake_case identifiers."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    deployment_needs: dict[str, DeploymentNeed] = Field(
+        alias="deploymentNeeds", default_factory=dict
     )
 
 
@@ -434,6 +464,37 @@ class ResourceAnswer(BaseModel):
     answers: dict[str, str] = Field(default_factory=dict)
 
 
+class CloudConstraintExtraction(BaseModel):
+    """One-pass LLM extraction of user-stated cloud constraints.
+
+    Every evidence field must be an exact substring of the input. Missing or ambiguous
+    values stay null; validation and normalization happen in code after extraction.
+    """
+
+    provider: str | None = None
+    provider_evidence: str = ""
+    region_as_written: str | None = None
+    region_evidence: str = ""
+    monthly_budget_amount: float | None = None
+    monthly_budget_currency: str | None = None
+    monthly_budget_evidence: str = ""
+    min_vcpu: int | None = None
+    min_vcpu_evidence: str = ""
+    min_memory_gib: float | None = None
+    min_memory_evidence: str = ""
+    traffic_pattern: Literal["steady", "spiky"] | None = None
+    traffic_pattern_evidence: str = ""
+    multi_zone: bool | None = None
+    multi_zone_evidence: str = ""
+    scale_value: float | None = None
+    scale_unit: Literal["concurrentUsers", "requestsPerSecond"] | None = None
+    scale_evidence: str = ""
+    data_residency: str | None = None
+    data_residency_evidence: str = ""
+    ambiguous_fields: list[str] = Field(default_factory=list)
+    understanding: str = ""
+
+
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
 # ----------------------------------------------------------------------------
@@ -499,8 +560,8 @@ class AnalyzeResponse(BaseModel):
     # state.py 의 대응 TypedDict 참조. (출력 전용이라 dict 그대로 통과시킨다.)
     # 클라우드 층 산출물 둘. **요구사항과 나란한 별도 산출물이지 명세의 일부가 아니다.**
     # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
-    # 만들어도 화면은 못 받는다(`cloud_concerns`가 실제로 그 상태였다).
-    cloud_concerns: dict | None = None          # 관심사 커버리지(B 트랙)
+    # 만들어도 화면은 받을 수 없으므로 출력 필드로 명시한다.
+    deployment_needs: dict | None = None        # 요구사항 ID 기반 제네릭 배포 필요사항
     resource_spec: dict | None = None           # RESOURCE_SPEC — 계약을 만족할 때만 있다
     resource_intake: dict | None = None         # 초안·질문·근거·버린 후보(A 트랙)
     actors: list[dict] | None = None            # ActorItem

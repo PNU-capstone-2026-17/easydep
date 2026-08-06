@@ -68,40 +68,8 @@ def _build_parser() -> argparse.ArgumentParser:
     show.add_argument("--provider", required=True, help="aws | azure | gcp")
     show.add_argument("--spec", required=True, help="CSP 스펙명 (t3.medium 등)")
 
-    # 미러가 아니라 **보강**이라 별도 서브커맨드다. 미러(build)를 먼저 돌려야
-    # 조인 대상이 생긴다. **산출물은 `data/`에 커밋하지 않는다**(재배포 허가 미확인).
-    ibm = sub.add_parser(
-        "build-ibm", help="IBM 성능 신호 보강 (Global Catalog)"
-    )
-    ibm.add_argument("--refresh", action="store_true", help="캐시를 무시하고 다시 받기")
-    ibm.add_argument("--output", type=Path, help="출력 경로 (기본: output/ibm-perf.json)")
-
     sub.add_parser("coverage", help="무엇을 알고 무엇을 모르는지 요약")
     return parser
-
-
-def _cmd_build_ibm(args: argparse.Namespace) -> int:
-    from app.core.cloudkb.costkb.dataset import BUILT_FILENAME as MIRROR_FILENAME
-    from app.core.cloudkb.perfkb.dataset import EXTRA_FILENAMES
-    from app.core.cloudkb.perfkb.parsers import ibm_catalog
-
-    mirror = DEFAULT_OUTPUT_DIR / MIRROR_FILENAME
-    if not mirror.exists():
-        print(
-            "costkb 미러가 없습니다. 먼저 `python -m costkb build`를 돌리세요 — "
-            "IBM 성능 신호는 미러의 ibm 스펙에 조인해 담습니다.",
-            file=sys.stderr,
-        )
-        return 1
-    output = args.output or (DEFAULT_OUTPUT_DIR / EXTRA_FILENAMES[0])
-    ibm_catalog.build(output, mirror=mirror, refresh=args.refresh)
-    print(
-        "※ 재배포 허가 문구가 없는 소스입니다(금지 문구도 없음). `data/`에 포장해 "
-        "넣되 NOTICE와 파일 안 `_note`에 그 사실을 밝힙니다 — 갱신했으면 다시 "
-        "포장하세요.",
-        file=sys.stderr,
-    )
-    return 0
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
@@ -265,7 +233,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     return {
         "build": _cmd_build,
-        "build-ibm": _cmd_build_ibm,
         "show": _cmd_show,
         "coverage": _cmd_coverage,
     }[args.command](args)

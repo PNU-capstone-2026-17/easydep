@@ -1,0 +1,120 @@
+{
+ "_note": "fileSystem(aws) — EFS·mount target. RWX의 자원 층을 k8s 없이 직접 잰다.",
+ "startedAt": "2026-07-31T10:58:58+00:00",
+ "ids": {
+  "fs": "fs-0697d4f1ab478f756",
+  "vpc": "vpc-06379dbde6a4d694a",
+  "subnet": "subnet-05a97a1be19346919",
+  "mountTarget": "fsmt-05d5b466831d4b563"
+ },
+ "steps": {
+  "A1.create-filesystem-no-network": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"OwnerId\": \"838062934141\",\n    \"CreationToken\": \"ca1eb56e-02b9-403d-b34a-5bf661d792ae\",\n    \"FileSystemId\": \"fs-0697d4f1ab478f756\",\n    \"FileSystemArn\": \"arn:aws:elasticfilesystem:ap-northeast-2:838062934141:file-system/fs-0697d4f1ab478f756\",\n    \"CreationTime\": \"2026-07-31T19:58:59+09:00\",\n    \"LifeCycleState\": \"creating\",\n    \"Name\": \"depkb-fs\",\n    \"NumberOfMountTargets\": 0,\n    \"SizeInBytes\": {\n        \"Value\": 0,\n        \"ValueInIA\": 0,\n        \"ValueInStandard\": 0,\n        \"ValueInArchive\": 0\n    },\n    \"PerformanceMode\": \"generalPurpose\",\n    \"Encrypted\": false,\n    \"ThroughputMod"
+  },
+  "A2.filesystem-available": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "available"
+  },
+  "R1.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-07a908a374f786bc7\",\n                \"CidrBlock\": \"10.105.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-06379dbde6a4d694a\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.105.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "R2.create-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-05a97a1be19346919\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "A3.mount-target-omit-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "--subnet-id"
+   ],
+   "rejectedAt": "client",
+   "excerpt": "aws: [ERROR]: An error occurred (ParamValidation): the following arguments are required: --subnet-id\n\n\u001b[1;34musage: \u001b[0m\u001b[35maws [options] <command> <subcommand> [<subcommand> ...] [parameters]\nTo see help text, you can run:\n\n  aws help\n  aws <command> help\n  aws <command> <subcommand> help\n\u001b[0m"
+  },
+  "A4.mount-target-dangling-subnet": {
+   "ok": false,
+   "errorCodes": [
+    "SubnetNotFound"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (SubnetNotFound) when calling the CreateMountTarget operation: The subnet ID 'subnet-0aaaaaaaaaaaaaaaa' does not exist\n\nAdditional error details:\nErrorCode: SubnetNotFound"
+  },
+  "A5.create-mount-target": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"OwnerId\": \"838062934141\",\n    \"MountTargetId\": \"fsmt-05d5b466831d4b563\",\n    \"FileSystemId\": \"fs-0697d4f1ab478f756\",\n    \"SubnetId\": \"subnet-05a97a1be19346919\",\n    \"LifeCycleState\": \"creating\",\n    \"IpAddress\": \"10.105.1.155\",\n    \"NetworkInterfaceId\": \"eni-0e72b78e3fa413bae\",\n    \"AvailabilityZoneId\": \"apne2-az2\",\n    \"AvailabilityZoneName\": \"ap-northeast-2b\",\n    \"VpcId\": \"vpc-06379dbde6a4d694a\"\n}"
+  },
+  "A6.mount-target-available": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "available"
+  },
+  "L1.delete-subnet-in-use": {
+   "ok": false,
+   "errorCodes": [
+    "DependencyViolation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DependencyViolation) when calling the DeleteSubnet operation: The subnet 'subnet-05a97a1be19346919' has dependencies and cannot be deleted."
+  },
+  "L2.delete-filesystem-with-mount-target": {
+   "ok": false,
+   "errorCodes": [
+    "FileSystemInUse"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (FileSystemInUse) when calling the DeleteFileSystem operation: The file system 'fs-0697d4f1ab478f756' cannot be deleted because it has mount targets. You must delete the mount targets, and then try again.\n\nAdditional error details:\nErrorCode: FileSystemInUse"
+  },
+  "T1.delete-mount-target": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T2.mount-target-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gone"
+  },
+  "T3.delete-filesystem": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T4.delete-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T5.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T6.residual-filesystems": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "T7.residual-vpcs": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T11:01:14+00:00"
+}

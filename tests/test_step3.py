@@ -12,6 +12,7 @@ import os
 import threading
 
 import pytest
+from conftest import dataset_names, load_dataset
 
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.agent.steps import step3_specifications as s3
@@ -19,14 +20,13 @@ from app.requirements.agent.steps.step3_specifications import _clean, _validate_
 from app.requirements.common import telemetry
 from app.requirements.knowledge import rules
 from app.requirements.schemas import (
+    Critique,
     Extension,
     ExtensionHandlingStep,
-    Critique,
     MainScenarioStep,
     RuleVerdict,
     UseCaseSpec,
 )
-from conftest import dataset_names, load_dataset
 
 
 def _uc(uc_id, name="Do thing", actor="User", goal="g", reqs=None, nfrs=None):
@@ -210,7 +210,7 @@ def test_validate_spec_flags_ui_branch_control():
         "handling_steps": [{"sub_step": "2a1", "sentence": "System shows Fail! on the screen"}],  # 제어토큰 + UI: screen
     }]
     joined = " ".join(_validate_spec(_spec(main, exts)))
-    assert "UI 용어" in joined and "분기어" in joined and "제어토큰" in joined
+    assert "UI terms" in joined and "branch word" in joined and "control token" in joined
 
 
 def test_validate_spec_flags_missing_contract():

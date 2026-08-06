@@ -1,0 +1,101 @@
+{
+ "_note": "기능 신호 6(gcp) — 서비스 디스커버리. agnhost는 애플리케이션이 아니라 관측자다.",
+ "startedAt": "2026-07-31T14:50:23+00:00",
+ "ids": {
+  "endpoint": "34.64.171.164"
+ },
+ "steps": {
+  "G1.create-network": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "\"DONE\"",
+   "httpStatus": 200
+  },
+  "G2.create-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "\"DONE\"",
+   "httpStatus": 200
+  },
+  "K1.create-cluster": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"name\": \"operation-1785509460545-94fa4bd9-8401-4a4b-b52e-cd0920b6c402\", \"zone\": \"asia-northeast3-a\", \"operationType\": \"CREATE_CLUSTER\", \"status\": \"RUNNING\", \"selfLink\": \"https://container.googleapis.com/v1/projects/771277701069/zones/asia-northeast3-a/operations/operation-1785509460545-94fa4bd9-8401-4a4b-b52e-cd0920b6c402\", \"targetLink\": \"https://container.googleapis.com/v1/projects/771277701069/"
+  },
+  "K2.cluster-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "RUNNING"
+  },
+  "K3.apply-manifests": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-backend created\nservice/depkb-svc created\npod/depkb-client created"
+  },
+  "K4.pods-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "depkb-backend=Running depkb-client=Running"
+  },
+  "F1.discovery-works": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want=True 도달 (시도 1, 연속 1) out=depkb-backend"
+  },
+  "M1.delete-service": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "service \"depkb-svc\" deleted"
+  },
+  "M1b.pods-still-running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "depkb-backend=Running depkb-client=Running"
+  },
+  "F2.discovery-lost": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want=False 도달 (시도 2, 연속 2) out=command terminated with exit code 28"
+  },
+  "M2.recreate-service": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-backend unchanged\nservice/depkb-svc created\npod/depkb-client unchanged"
+  },
+  "F3.discovery-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "want=True 도달 (시도 2, 연속 1) out=depkb-backend"
+  },
+  "T1.delete-cluster": {
+   "ok": true,
+   "httpStatus": 200,
+   "errorCodes": [],
+   "excerpt": "{\"name\": \"operation-1785510757011-75311785-1113-4901-90fb-45482b430c85\", \"zone\": \"asia-northeast3-a\", \"operationType\": \"DELETE_CLUSTER\", \"status\": \"RUNNING\", \"selfLink\": \"https://container.googleapis.com/v1/projects/771277701069/zones/asia-northeast3-a/operations/operation-1785510757011-75311785-1113-4901-90fb-45482b430c85\", \"targetLink\": \"https://container.googleapis.com/v1/projects/771277701069/"
+  },
+  "T2.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "404"
+  },
+  "T3.delete-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "\"DONE\"",
+   "httpStatus": 200
+  },
+  "T4.delete-network": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "\"DONE\"",
+   "httpStatus": 200
+  },
+  "T5.residual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T15:17:46+00:00"
+}

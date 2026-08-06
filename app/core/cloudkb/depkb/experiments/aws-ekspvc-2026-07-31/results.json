@@ -1,0 +1,566 @@
+{
+ "_note": "EKS PVC — 1라운드 미측정(전제 부재)을 노드그룹+EBS CSI 애드온으로 해소한다. IAM 실물도 함께 관측.",
+ "startedAt": "2026-07-31T11:25:01+00:00",
+ "ids": {
+  "roleArn": "arn:aws:iam::838062934141:role/depkb-ekspvc-role",
+  "nodeRoleArn": "arn:aws:iam::838062934141:role/depkb-ekspvc-node-role",
+  "vpc": "vpc-0c2c7a2b1a8be40f9",
+  "igw": "igw-074610b1c7168a20f",
+  "subnet1": "subnet-087f07ff131496b37",
+  "subnet2": "subnet-0b35d9e5a76eb62b0",
+  "oidcIssuer": "https://oidc.eks.ap-northeast-2.amazonaws.com/id/7FF70E4D2CFB8315FD68F1D57B7E4F24",
+  "irsaArn": "arn:aws:iam::838062934141:role/depkb-ekspvc-irsa"
+ },
+ "steps": {
+  "R1.create-cluster-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-ekspvc-role\",\n        \"RoleId\": \"AROA4GIDRRB6WDOTXUGB4\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-role\",\n        \"CreateDate\": \"2026-07-31T11:25:04+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"eks.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n        }\n"
+  },
+  "R2.attach-cluster-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R3.create-node-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-ekspvc-node-role\",\n        \"RoleId\": \"AROA4GIDRRB63RPVEWH74\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-node-role\",\n        \"CreateDate\": \"2026-07-31T11:25:08+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Service\": \"ec2.amazonaws.com\"\n                    },\n                    \"Action\": \"sts:AssumeRole\"\n                }\n            ]\n"
+  },
+  "R4.attach-node-policy1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R4.attach-node-policy2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R4.attach-node-policy3": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R4.attach-node-policy4": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R5.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-00346e304283ae34c\",\n                \"CidrBlock\": \"10.106.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-0c2c7a2b1a8be40f9\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.106.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "R6.create-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"InternetGateway\": {\n        \"Attachments\": [],\n        \"InternetGatewayId\": \"igw-074610b1c7168a20f\",\n        \"OwnerId\": \"838062934141\",\n        \"Tags\": []\n    }\n}"
+  },
+  "R7.attach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R8.default-route": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true\n}"
+  },
+  "R9.create-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az1\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-087f07ff131496b37\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R10.public-ip-on-launch1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R9.create-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0b35d9e5a76eb62b0\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R10.public-ip-on-launch2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "K1.create-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-ekspvc\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-ekspvc\",\n        \"createdAt\": \"2026-07-31T20:25:47.298000+09:00\",\n        \"version\": \"1.36\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-087f07ff131496b37\",\n                \"subnet-0b35d9e5a76eb62b0\"\n            ],\n            \"securityGroupIds\": [],\n            \"vpcId\": \"vpc-0c2c7a2b1a8be40f9\",\n            \"endpointPublicAccess\": true,\n            \"endpointPrivateAc"
+  },
+  "K2.cluster-active": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "ACTIVE"
+  },
+  "K3.cluster-iam-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"role\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-role\",\n    \"sg\": \"sg-0e75894b16e705919\"\n}"
+  },
+  "N1.create-nodegroup": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-ekspvc/ng/04cfdbf8-be40-a4bf-0c61-c82c02838067\",\n        \"clusterName\": \"depkb-ekspvc\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-07-31T20:31:27.301000+09:00\",\n        \"modifiedAt\": \"2026-07-31T20:31:27.301000+09:00\",\n        \"status\": \"CREATING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize\": 1\n        },\n      "
+  },
+  "N2.nodegroup-active": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "ACTIVE"
+  },
+  "N3.install-ebs-csi-addon": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"addon\": {\n        \"addonName\": \"aws-ebs-csi-driver\",\n        \"clusterName\": \"depkb-ekspvc\",\n        \"status\": \"CREATING\",\n        \"addonVersion\": \"v1.63.1-eksbuild.1\",\n        \"health\": {\n            \"issues\": []\n        },\n        \"addonArn\": \"arn:aws:eks:ap-northeast-2:838062934141:addon/depkb-ekspvc/aws-ebs-csi-driver/18cfdbfa-3c4e-1100-732b-ecbddded9119\",\n        \"createdAt\": \"2026-07-31T20:34:40.253000+09:00\",\n        \"modifiedAt\": \"2026-07-31T20:34:40.270000+09:00\",\n        \"tags\": {},\n        \"namespaceConfig\": {\n            \"namespace\": \"kube-system\"\n        }\n    }\n}"
+  },
+  "N4.addon-status": {
+   "ok": false,
+   "errorCodes": [
+    "CREATING"
+   ],
+   "excerpt": "CREATING"
+  },
+  "N5.update-kubeconfig": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "Added new context arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-ekspvc to C:\\Users\\projw\\Desktop\\dev\\easydep\\app\\core\\cloudkb\\depkb\\experiments\\aws-ekspvc-2026-07-31\\kubeconfig"
+  },
+  "N6.storageclasses": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gp2 prov=kubernetes.io/aws-ebs bind=WaitForFirstConsumer\\n"
+  },
+  "N7.nodes-ready": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "ip-10-106-2-168.ap-northeast-2.compute.internal Ready\\n"
+  },
+  "N4b.addon-status-at-probe": {
+   "ok": false,
+   "errorCodes": [
+    "CREATING"
+   ],
+   "excerpt": "aws-ebs-csi-driver 애드온이 15분 넘게 CREATING에 머물렀다(수동 재확인 포함). 애드온 완료를 기다리지 않고 PVC를 던진다 — 측정 대상은 볼륨 합성이지 애드온 상태가 아니고, gp2 SC의 in-tree 프로비저너는 CSI 마이그레이션으로 동작할 수 있다. 결과가 그 사실을 판정한다"
+  },
+  "P0.volumes-baseline": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "P1.apply-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim/depkb-ekspvc created"
+  },
+  "P2.pvc-status-alone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "phase=Pending"
+  },
+  "P3.volumes-after-pvc-alone": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "P4.apply-pod-trigger": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-ekspvc-pod created"
+  },
+  "P5.pvc-bound": {
+   "ok": false,
+   "errorCodes": [
+    "Pending"
+   ],
+   "excerpt": "Pending"
+  },
+  "P6.volumes-after-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "P7.pv-volumehandle-hint": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "P8.delete-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod \"depkb-ekspvc-pod\" deleted"
+  },
+  "P9.delete-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim \"depkb-ekspvc\" deleted"
+  },
+  "P10.volumes-after-pvc-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "cleaned"
+  },
+  "Q0.csi-controller-pods": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "aws-node-xqszk Running\ncoredns-dc886f85b-8c9qh Running\ncoredns-dc886f85b-ln6gm Running\nebs-csi-controller-56cd6fdc78-cm4cd Running\nebs-csi-controller-56cd6fdc78-rphxx Running\nebs-csi-node-9bvrh Running\nkube-proxy-m9t8l Running"
+  },
+  "Q1.create-csi-storageclass": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "storageclass.storage.k8s.io/depkb-csi created"
+  },
+  "Q2.apply-pvc-csi": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim/depkb-ekspvc2 created"
+  },
+  "Q3.pvc-status-alone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "phase=Pending"
+  },
+  "Q4.volumes-alone": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "Q5.apply-pod-trigger": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-ekspvc2-pod created"
+  },
+  "Q6.pvc-bound": {
+   "ok": false,
+   "errorCodes": [
+    "Pending"
+   ],
+   "excerpt": "Pending"
+  },
+  "Q7.volumes-after-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "Q8.pv-volumehandle": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "Q9.delete-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod \"depkb-ekspvc2-pod\" deleted"
+  },
+  "Q10.delete-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim \"depkb-ekspvc2\" deleted"
+  },
+  "Q11.volumes-after-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "cleaned"
+  },
+  "S0.node-taints-now": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "ip-10-106-2-168.ap-northeast-2.compute.internal taints="
+  },
+  "S1.default-sc-annotation": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "depkb-csi default=\ngp2 default="
+  },
+  "S2.apply-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim/depkb-ekspvc3 created"
+  },
+  "S3.apply-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-ekspvc3-pod created"
+  },
+  "S4.pvc-bound": {
+   "ok": false,
+   "errorCodes": [
+    "Pending"
+   ],
+   "excerpt": "Pending"
+  },
+  "S5.volumes-after-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "S6.pv-volumehandle": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "S7.delete-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod \"depkb-ekspvc3-pod\" deleted"
+  },
+  "S8.delete-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim \"depkb-ekspvc3\" deleted"
+  },
+  "S9.volumes-after-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "cleaned"
+  },
+  "I0.csi-controller-error": {
+   "ok": true,
+   "errorCodes": [
+    "FailedPrecondition"
+   ],
+   "excerpt": "CSI 컨트롤러 로그: no EC2 IMDS role found — dry-run EC2 API call failed(DescribeAvailabilityZones). 노드 역할에 EBS 정책을 붙였는데도 컨트롤러 파드가 IMDS로 자격증명을 못 얻는다. aws는 IRSA(OIDC 공급자+서비스계정 역할)가 추가 전제 — azure·gcp에는 없던 층"
+  },
+  "I1.oidc-issuer": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "https://oidc.eks.ap-northeast-2.amazonaws.com/id/7FF70E4D2CFB8315FD68F1D57B7E4F24"
+  },
+  "I2.create-oidc-provider": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"OpenIDConnectProviderArn\": \"arn:aws:iam::838062934141:oidc-provider/oidc.eks.ap-northeast-2.amazonaws.com/id/7FF70E4D2CFB8315FD68F1D57B7E4F24\"\n}"
+  },
+  "I3.create-irsa-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Role\": {\n        \"Path\": \"/\",\n        \"RoleName\": \"depkb-ekspvc-irsa\",\n        \"RoleId\": \"AROA4GIDRRB66QMMXJTTY\",\n        \"Arn\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-irsa\",\n        \"CreateDate\": \"2026-07-31T12:25:17+00:00\",\n        \"AssumeRolePolicyDocument\": {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\n                        \"Federated\": \"arn:aws:iam::838062934141:oidc-provider/oidc.eks.ap-northeast-2.amazonaws.com/id/7FF70E4D2CFB8315FD68F1D57B7E4F24\"\n              "
+  },
+  "I4.attach-ebs-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "I5.update-addon-with-irsa": {
+   "ok": false,
+   "errorCodes": [
+    "ResourceInUseException"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (ResourceInUseException) when calling the UpdateAddon operation: Addon aws-ebs-csi-driver cannot be updated as it is currently in CREATING state\n\nAdditional error details:\nclusterName: depkb-ekspvc\naddonName: aws-ebs-csi-driver"
+  },
+  "I6.addon-after-irsa": {
+   "ok": false,
+   "errorCodes": [
+    "CREATING"
+   ],
+   "excerpt": "CREATING"
+  },
+  "J1.annotate-sa-with-irsa": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "serviceaccount/ebs-csi-controller-sa annotated"
+  },
+  "J2.restart-controller": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "deployment.apps/ebs-csi-controller restarted"
+  },
+  "J3.rollout-status": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Waiting for deployment \"ebs-csi-controller\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"ebs-csi-controller\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"ebs-csi-controller\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"ebs-csi-controller\" successfully rolled out"
+  },
+  "J4.apply-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim/depkb-ekspvc4 created"
+  },
+  "J5.apply-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod/depkb-ekspvc4-pod created"
+  },
+  "J6.pvc-bound": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Bound"
+  },
+  "J7.volumes-after-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[\n    {\n        \"id\": \"vol-0739d1733749ab3b2\",\n        \"size\": 5,\n        \"state\": \"in-use\"\n    }\n]"
+  },
+  "J8.pv-volumehandle": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "vol-0739d1733749ab3b2"
+  },
+  "J9.delete-pod": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "pod \"depkb-ekspvc4-pod\" deleted"
+  },
+  "J10.delete-pvc": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "persistentvolumeclaim \"depkb-ekspvc4\" deleted"
+  },
+  "J11.volumes-after-delete": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "cleaned"
+  },
+  "F1.delete-nodegroup": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"nodegroup\": {\n        \"nodegroupName\": \"ng\",\n        \"nodegroupArn\": \"arn:aws:eks:ap-northeast-2:838062934141:nodegroup/depkb-ekspvc/ng/04cfdbf8-be40-a4bf-0c61-c82c02838067\",\n        \"clusterName\": \"depkb-ekspvc\",\n        \"version\": \"1.36\",\n        \"releaseVersion\": \"1.36.2-20260728\",\n        \"createdAt\": \"2026-07-31T20:31:27.301000+09:00\",\n        \"modifiedAt\": \"2026-07-31T21:37:25.470000+09:00\",\n        \"status\": \"DELETING\",\n        \"capacityType\": \"ON_DEMAND\",\n        \"scalingConfig\": {\n            \"minSize\": 1,\n            \"maxSize\": 1,\n            \"desiredSize\": 1\n        },\n      "
+  },
+  "F2.nodegroup-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gone"
+  },
+  "F3.delete-cluster": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"cluster\": {\n        \"name\": \"depkb-ekspvc\",\n        \"arn\": \"arn:aws:eks:ap-northeast-2:838062934141:cluster/depkb-ekspvc\",\n        \"createdAt\": \"2026-07-31T20:25:47.298000+09:00\",\n        \"version\": \"1.36\",\n        \"endpoint\": \"https://7FF70E4D2CFB8315FD68F1D57B7E4F24.sk1.ap-northeast-2.eks.amazonaws.com\",\n        \"roleArn\": \"arn:aws:iam::838062934141:role/depkb-ekspvc-role\",\n        \"resourcesVpcConfig\": {\n            \"subnetIds\": [\n                \"subnet-087f07ff131496b37\",\n                \"subnet-0b35d9e5a76eb62b0\"\n            ],\n            \"securityGroupIds\": [],\n            \"clus"
+  },
+  "F4.cluster-gone": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "gone"
+  },
+  "F5.delete-subnet1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F5.delete-subnet2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F6.detach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F7.delete-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F8.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F9.detach-cluster-policy": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F10.delete-cluster-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F11.detach-node-policy1": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F11.detach-node-policy2": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F11.detach-node-policy3": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F11.detach-node-policy4": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F12.delete-node-role": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F13.residual-volumes": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "F14.residual-vpcs": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  },
+  "F15.residual-clusters": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"clusters\": []\n}"
+  },
+  "F16.irsa-residual-manual": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "IRSA 잔여물(역할 depkb-ekspvc-irsa · OIDC 공급자)은 실험 도중 진단으로 필요해진 것이라 kickoff 목록에 없었고 수동 정리했다. run.py의 finish에 F12b~F12d로 추가해 재실행 시 자동 정리된다. 확인: 역할 0 · OIDC 공급자 0"
+  }
+ },
+ "finishedAt": "2026-07-31T12:45:30+00:00"
+}

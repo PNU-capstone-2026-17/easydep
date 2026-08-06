@@ -18,10 +18,10 @@ dataset_names 로 로드한다. 결정론/목킹 테스트는 shopping_mall 세�
 import os
 
 import pytest
+from conftest import dataset_names, load_dataset
 
 from app.requirements.agent.steps import step2_usecases as s2
 from app.requirements.schemas import Actor, ActorResult, UseCase, UseCaseResult
-from conftest import dataset_names, load_dataset
 
 # 결정론/목킹 테스트가 고정으로 쓰는 세트 (id R1..R5, N1..N2 를 이 테스트들이 참조).
 SAMPLE_CLASSIFIED = load_dataset("shopping_mall")["classified"]
@@ -86,8 +86,8 @@ def test_coverage_no_fr_is_full():
 def test_identify_actors_shapes_dicts(monkeypatch):
     result = ActorResult(
         actors=[
-            Actor(name="Registered User", description="shopper", kind="primary"),
-            Actor(name="Address Service", description="external", kind="supporting"),
+            Actor(name="Registered User", description="shopper"),
+            Actor(name="Address Service", description="external"),
         ]
     )
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
@@ -97,8 +97,8 @@ def test_identify_actors_shapes_dicts(monkeypatch):
 
     assert out["phase"] == "actors"
     assert [a["name"] for a in actors] == ["Registered User", "Address Service"]
-    assert actors[0]["kind"] == "primary"
-    assert actors[1]["kind"] == "supporting"
+    assert "kind" not in actors[0]
+    assert "kind" not in actors[1]
 
 
 def test_identify_actors_empty_when_no_fr(monkeypatch):

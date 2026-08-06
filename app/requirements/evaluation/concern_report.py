@@ -154,7 +154,7 @@ def layer_gain(rows: list[dict], chunk: int, k: int) -> dict:
 def undifferentiated_pairs(sets: dict[str, set]) -> tuple[list[dict], int]:
     """(미분화 쌍, 검사한 쌍 수). **분화 판정의 정의는 여기 한 곳에 있다.**
 
-    판정은 `docs/cloud-native-requirements.md` §6.7 그대로다: 두 관심사가 갈리려면
+    판정은 `app/core/cloudkb/document/archive/cloud-native-requirements.md` §6.7 그대로다: 두 관심사가 갈리려면
     **한쪽만 거는 요구사항이 양방향으로** 있어야 한다. 양쪽 다 안 걸린 쌍은 검사 대상이
     아니다(없는 것끼리는 비교할 수 없다).
 

@@ -1,4 +1,4 @@
-"""inputs/*.json 을 파이프라인에 태우고 artifacts/run_*/ 에 결과를 저장하는 러너 CLI.
+"""inputs/*.json을 처리하고 artifacts/runs/<run-id>/에 저장한다.
 
 사용 예:
   python -m app.requirements.run_pipeline shopping_mall           # 이름 하나
@@ -66,9 +66,17 @@ def main(argv: list[str] | None = None) -> int:
         # 데이터셋마다 스코프를 연다 — 합계가 "무엇 하나에 대한 것"인지 분명해야
         # 실행끼리 비교할 수 있다.
         with telemetry.run_scope(f"batch:{name}") as stats:
-            state = run_pipeline(classified)
+            state = run_pipeline(
+                classified,
+                resource_constraints_text=str(obj.get("resource_constraints_text") or ""),
+                resource_answers=obj.get("resource_answers") or {},
+            )
         run_dir = persist_run(
-            obj, state, dataset_name=obj.get("name", name), artifact_root=Path(args.out)
+            obj,
+            state,
+            dataset_name=obj.get("name", name),
+            artifact_root=Path(args.out),
+            run_metrics=stats.as_dict(),
         )
         cov = state.get("coverage", {})
         print(f"  → {run_dir}")
@@ -77,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
             f"use_cases={len(state.get('use_cases', []))} "
             f"coverage={cov.get('coverage_ratio')} "
             f"specs={len(state.get('use_case_specs', []))}"
+        )
+        print(
+            f"    deployment_needs={len(state.get('deployment_needs', {}))} "
+            f"resource_spec={'valid' if state.get('resource_spec') else 'missing'}"
         )
         summary = stats.as_dict()
         print(

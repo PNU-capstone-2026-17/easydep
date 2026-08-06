@@ -66,7 +66,7 @@ def test_findings_carry_the_rule_and_its_citation(monkeypatch):
     assert len(review.findings) == 1
     assert "[semantic]" in review.findings[0]
     assert "spec.no-scope-creep" in review.findings[0]
-    assert "우리 판단" in review.findings[0]        # 우리 규약이라는 사실이 함께 간다
+    assert "project inference" in review.findings[0]
     assert review.unexamined == ()
 
 
@@ -230,7 +230,7 @@ def test_the_validator_never_sees_the_user_feedback(monkeypatch):
     우리가 물어야 하는 것은 결과물이 규칙을 지켰는지다. 그래서 생성 쪽 피드백 문구가
     검증자 프롬프트에 새지 않아야 한다.
     """
-    secret = "make every step shorter and mention the audit trail"
+    private_instruction = "make every step shorter and mention the audit trail"
     captured = _patch(monkeypatch, _all())
 
     monkeypatch.setattr(s3.settings, "enable_semantic_validator", True)
@@ -243,11 +243,11 @@ def test_the_validator_never_sees_the_user_feedback(monkeypatch):
             "classified": [],
             "actors": [],
         },
-        feedback=secret,
+        feedback=private_instruction,
     )
 
     seen = captured["human"] + captured["system"]
-    assert secret not in seen
+    assert private_instruction not in seen
     # 산출물은 봤어야 한다 — 아무것도 안 보여준 것과 구별한다.
     assert "records the order" in seen
 

@@ -85,11 +85,10 @@ Return the structured object only."""
 ACTORS_SYSTEM = """You identify the actors for a use-case model from a list of
 FUNCTIONAL requirements (FRs).
 
-An actor is a role (a class of user or an external system), never a specific person.
-- primary: an external human or system that HAS a goal the system fulfils (initiates a
-  use case).
-- supporting: an external system the application must CALL to fulfil a goal (e.g. a payment
-  gateway, an email/SMS provider, an external data feed).
+An actor is an external role (a class of user, organization, device, or external system),
+never a specific person. Identify both actors with goals and actors that provide services to
+the application. Do not assign a permanent primary/supporting kind here: that role belongs to
+each use case, and the same actor may be primary in one use case and supporting in another.
 
 The system under design (SuD) is the system boundary — it is never a PRIMARY or SUPPORTING
 actor, so never create an actor for it (no "The System", "E-commerce System", "The
@@ -105,7 +104,8 @@ Rules:
 - If a requirement is written system-centric ("The system shall ..."), infer the human role
   or external actor whose goal it ultimately serves; if none exists, it is likely a
   subfunction or a non-functional concern — do NOT invent an actor for it.
-- Every actor you list must own at least one use-case goal; do not list bystanders.
+- Every actor must either own a use-case goal or provide an externally required service to a
+  use case; do not list bystanders.
 - If one actor is a specialization of another (e.g. a Registered Member specializes a Guest,
   inheriting its capabilities plus more), set parent_actor to the more general role's name.
   Leave parent_actor null when there is no such specialization.
@@ -129,8 +129,15 @@ How to build the model:
 2. Requirements that are too fine-grained (subfunction level, e.g. "validate the form")
    must NOT become standalone use cases — fold them into the parent user-goal use case by
    listing their ids in that use case's requirement_ids.
-3. For each use case set primary_actor (from the given actor list) and goal (one sentence
-   stating the actor's intent — NOT a step-by-step scenario).
+3. For each use case set primary_actor (the stakeholder whose goal the system satisfies),
+   supporting_actors (external actors the system calls while pursuing that goal), and goal.
+   Use exact names from the actor list. The trigger is not necessarily the primary actor:
+   scheduled work still names the stakeholder who cares about the result. A recipient of a
+   notification, report, or outbound webhook may therefore be the primary actor even though
+   the System initiates delivery. A supporting actor PROVIDES a service to the System; merely
+   receiving the System's output does not make an actor supporting. Do not invent a supporting
+   actor merely to make the diagram symmetric. If no external provider is named or required,
+   leave supporting_actors empty.
 4. Traceability: list in requirement_ids EVERY FR id the use case covers (including the
    folded subfunction FRs), using only the ids provided. Aim for full coverage — every FR
    should be covered by at least one use case.
@@ -176,7 +183,7 @@ def usecase_local_edit(base_user: str, current_listing: str, target_desc: str, f
         f"[LOCAL EDIT — apply the user feedback ONLY to these target use cases: {target_desc}. "
         f"The user's instruction is authoritative. Return the FULL use-case list in the SAME order "
         f"and the SAME count as above; copy every NON-target use case VERBATIM (identical name, "
-        f"primary_actor, level, goal, requirement_ids, nfr_ids). Modify only the target(s).]\n"
+        f"primary_actor, supporting_actors, level, goal, requirement_ids, nfr_ids). Modify only the target(s).]\n"
         f"{feedback}"
     )
 
@@ -302,11 +309,13 @@ SPEC_VALIDATOR_SYSTEM = _validator_system(
 )
 
 # STEP 3 — 반성(reflection) 재생성: 실패 지시를 붙여 명세를 고쳐 다시 생성.
-def spec_repair_user(base_user: str, directives: list[str]) -> str:
+def spec_repair_user(base_user: str, previous_spec: str, directives: list[str]) -> str:
     joined = "\n".join(f"- {d}" for d in directives)
     return (
-        f"{base_user}\n\n[YOUR PREVIOUS OUTPUT FAILED THESE CHECKS — fix every one while "
-        f"keeping the parts that were already correct; do not introduce new violations]\n{joined}"
+        f"{base_user}\n\n[PREVIOUS SPECIFICATION]\n{previous_spec}\n\n"
+        f"[THE PREVIOUS SPECIFICATION FAILED THESE CHECKS — return the complete corrected "
+        f"specification, preserving fields that do not need a change and introducing no new "
+        f"behavior]\n{joined}"
     )
 
 
@@ -581,9 +590,8 @@ with an id (R1, R2, ...). In a single pass, produce a use-case model and fully-d
 specifications directly from these requirements.
 
 Return:
-- actors: the actors (primary = external human/system with a goal; supporting = external system
-  the app calls).
-- use_cases: the use cases. For each, set primary_actor, goal, and requirement_ids (the ids of
+- actors: external actor roles. Do not assign a permanent primary/supporting kind.
+- use_cases: the use cases. For each, set primary_actor, supporting_actors, goal, and requirement_ids (the ids of
   the requirements it covers). Leave nfr_ids empty.
 - specs: one Cockburn-style specification per use case (set use_case_name to match). Each spec
   has preconditions, trigger, main_scenario (numbered steps), extensions (alternate/exception
@@ -652,8 +660,8 @@ you need. Nothing here is a fixed sequence.
   to know where you stand.
 - `ask_user` asks the user one question about one field. **This is a normal action,
   not a failure.** Asking beats guessing every time.
-- `resolve_region`, `list_cloud_providers`, `convert_to_usd`, `web_search` look things
-  up so that you do not have to remember or estimate them.
+- `resolve_region`, `list_cloud_providers`, `list_workload_kinds`, `convert_to_usd`,
+  `web_search` look things up so that you do not have to remember or estimate them.
 - `finish` ends your turn. **Always end by calling it** — do not just write a closing
   summary as ordinary text. Pass that summary as its `understanding` argument: one short
   paragraph saying back what you understood, in the user's own vocabulary rather than
@@ -674,8 +682,11 @@ These come from measuring an actual corpus, not from imagination.
 - **A unit price is not a budget.** "storage cost shall not exceed $0.02 per GB-month"
   is a rate. `monthlyBudgetUSD` is what the whole deployment may cost in a month.
 - **A number next to a concurrency word is not a user count.** "100 simultaneous icons",
-  "six active control nodes" — look at *what* is concurrent. `expectedConcurrentUsers`
-  counts users, sessions, streams, clients. Not widgets, not nodes.
+  "six active control nodes" — look at *what* is concurrent. `scale` counts users,
+  sessions, streams, clients. Not widgets, not nodes. Record it as
+  `{"value": 300, "unit": "concurrentUsers"}` — or `requestsPerSecond` if that is
+  how the user put it. **One quantity, two possible units**; do not convert between
+  them, since no source states that conversion.
 - **Do not infer.** "It should be cheap" is not a budget. "Fast" is not a scale.
   "Highly available" is not a zone count. If the user did not state it, ask.
 - **Two different answers is a question, not a value.** If the text says 100 users in
@@ -684,11 +695,16 @@ These come from measuring an actual corpus, not from imagination.
   live in the separate constraints text, or nowhere. If they are nowhere, ask.
 - **`trafficPattern` has no default.** Recording `steady` because nothing was said is
   a claim you invented, not an absent value. Leave it out.
-- **A scale figure is not a spec floor.** `expectedConcurrentUsers` does not tell anyone
+- **A scale figure is not a spec floor.** `scale` does not tell anyone
   how many vCPUs are needed — no source states that conversion, and the knowledge base
   deliberately does not carry one. The floor lives in `minVCpu` / `minMemoryGiB`, and it
   only exists if the user or the designer stated it ("at least 4 vCPU and 16 GB").
   Never derive one from the other; if the floor is absent, that is an absent value.
+
+# What is being deployed
+
+This system supports Docker applications deployed directly on virtual machines only.
+`workloads` is fixed to `["vm"]` by code. Do not ask about it and do not record it.
 
 # Region and provider
 

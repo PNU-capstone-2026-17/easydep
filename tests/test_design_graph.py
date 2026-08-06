@@ -276,10 +276,13 @@ def test_only_stages_with_rules_are_semantically_checked():
     }
     with_rules = {r.stage for r in rules.RULES if r.severity == rules.DEFECT}
 
-    assert checked == with_rules == {"class_diagram", "erd"}
+    assert checked == with_rules == {"class_diagram", "erd", "sequence_diagram", "api_spec"}
 
     # 생성과 피드백 **양쪽**에 있어야 한다. 피드백에 없으면 사용자 피드백으로 만든 판은
     # 아무도 검사하지 않은 채 저장된다.
+    assert "check_class_diagram" in DESIGN_SUBGRAPHS["class_diagram"]["feedback"].get_graph().nodes
+    assert "check_sequence_diagram" in DESIGN_SUBGRAPHS["sequence_diagram"]["feedback"].get_graph().nodes
+    assert "check_api_spec" in DESIGN_SUBGRAPHS["api_spec"]["feedback"].get_graph().nodes
     for stage in checked:
         feedback = DESIGN_SUBGRAPHS[stage]["feedback"].get_graph().nodes
         assert f"check_{stage}" in feedback, stage

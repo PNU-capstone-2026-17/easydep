@@ -1,0 +1,62 @@
+{
+ "_note": "배타성 4차 — azure는 크기를 바꿔 재판정, gcp는 --log-http로 **API가 무엇을 받았는지** 직접 본다(클라이언트가 버린 것과 API가 무시한 것은 다른 사실이다).",
+ "startedAt": "2026-08-01T10:34:41+00:00",
+ "steps": {
+  "A0.create-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj4\",\n  \"location\": \"koreacentral\",\n  \"managedBy\": null,\n  \"name\": \"depkb-disj4\",\n  \"properties\": {\n    \"provisioningState\": \"Succeeded\"\n  },\n  \"tags\": null,\n  \"type\": \"Microsoft.Resources/resourceGroups\"\n}"
+  },
+  "A1.both-image-and-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"error\": null,\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj4/providers/Microsoft.Resources/deployments/both-image-and-disk\",\n  \"name\": \"both-image-and-disk\",\n  \"properties\": {\n    \"correlationId\": \"1350dbb4-5846-4168-899d-acb56bf98be7\",\n    \"debugSetting\": null,\n    \"dependencies\": [],\n    \"diagnostics\": null,\n    \"duration\": \"PT0S\",\n    \"error\": null,\n    \"extensions\": [],\n    \"mode\": \"Incremental\",\n    \"onErrorDeployment\": null,\n    \"outputResources\": null,\n    \"outputs\": null,\n    \"parameters\": null,\n    \"parametersLink\": null,\n    \"providers\": "
+  },
+  "A2.image-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"error\": null,\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj4/providers/Microsoft.Resources/deployments/image-only\",\n  \"name\": \"image-only\",\n  \"properties\": {\n    \"correlationId\": \"51483104-f442-4499-b5e5-29a859f899cf\",\n    \"debugSetting\": null,\n    \"dependencies\": [],\n    \"diagnostics\": null,\n    \"duration\": \"PT0S\",\n    \"error\": null,\n    \"extensions\": [],\n    \"mode\": \"Incremental\",\n    \"onErrorDeployment\": null,\n    \"outputResources\": null,\n    \"outputs\": null,\n    \"parameters\": null,\n    \"parametersLink\": null,\n    \"providers\": [\n      {\n        "
+  },
+  "A3.disk-only": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"error\": null,\n  \"id\": \"/subscriptions/414038da-b07b-4474-a54e-2ccdbb2dc3db/resourceGroups/depkb-disj4/providers/Microsoft.Resources/deployments/disk-only\",\n  \"name\": \"disk-only\",\n  \"properties\": {\n    \"correlationId\": \"e94b51b1-eeee-4cd0-9d8b-637824d49fe6\",\n    \"debugSetting\": null,\n    \"dependencies\": [],\n    \"diagnostics\": null,\n    \"duration\": \"PT0S\",\n    \"error\": null,\n    \"extensions\": [],\n    \"mode\": \"Incremental\",\n    \"onErrorDeployment\": null,\n    \"outputResources\": null,\n    \"outputs\": null,\n    \"parameters\": null,\n    \"parametersLink\": null,\n    \"providers\": [\n      {\n        \"i"
+  },
+  "A9.delete-rg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": ""
+  },
+  "G0.create-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "WARNING: You have selected a disk size of under [200GB]. This may result in poor I/O performance. For more information, see: https://developers.google.com/compute/docs/disks#performance.\nCreated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj4-disk].\n[\n  {\n    \"architecture\": \"X86_64\",\n    \"creationTimestamp\": \"2026-08-01T03:35:07.797-07:00\",\n    \"enableConfidentialCompute\": false,\n    \"guestOsFeatures\": [\n      {\n        \"type\": \"VIRTIO_SCSI_MULTIQUEUE\"\n      },\n      {\n        \"type\": \"SEV_CAPABLE\"\n      },\n      {\n        \"type"
+  },
+  "G1.both-with-log-http": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "=======================\n==== request start ====\nuri: https://compute.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a?alt=json\nmethod: GET\n== headers start ==\nb'accept': b'application/json'\nb'accept-encoding': b'gzip, deflate'\nb'authorization': --- Token Redacted ---\nb'content-length': b'0'\nb'user-agent': b'google-cloud-sdk gcloud/578.0.0 agent-name/claude-code_2-1-220_agent command/gcloud.compute.instances.create invocation-id/2411c1aebadb4808b2119871e1b563f1 environment/None environment-version/None client-os/WINDOWS client-os-ver/10.0.26200 client-pltf-arch/"
+  },
+  "G2.request-carried-image": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "요청 본문에 initializeParams 없음 — **gcloud가 이미지를 안 보냈다**(클라이언트 층)"
+  },
+  "G3.instance-shape": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "{\n  \"disks\": [\n    {\n      \"boot\": true,\n      \"source\": \"https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj4-disk\"\n    }\n  ]\n}"
+  },
+  "G4.delete-vm": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instances/depkb-disj4-vm]."
+  },
+  "G9.delete-disk": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/disks/depkb-disj4-disk]."
+  }
+ },
+ "finishedAt": "2026-08-01T10:37:54+00:00"
+}

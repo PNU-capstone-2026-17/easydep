@@ -19,6 +19,7 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import cast
@@ -169,8 +170,11 @@ def _check(
     item: UseCaseSpecItem, requirements: list[dict] | None = None
 ) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
+    static_findings = _validate_spec(cast(dict, item))
+    if static_findings:
+        return static_findings, validator.PENDING
     findings, status = _semantic_findings(item, requirements)
-    return _validate_spec(cast(dict, item)) + findings, status
+    return findings, status
 
 
 def _spec_for(
@@ -215,7 +219,18 @@ def _spec_for(
         if not item["issues"]:
             stopped = "clean"
             break
-        repair_user = prompts.spec_repair_user(base_user, item["issues"])
+        previous_spec = {
+            key: item.get(key)
+            for key in (
+                "preconditions", "trigger", "main_scenario", "extensions",
+                "success_guarantee", "minimal_guarantee",
+            )
+        }
+        repair_user = prompts.spec_repair_user(
+            base_user,
+            json.dumps(previous_spec, ensure_ascii=False, indent=2),
+            item["issues"],
+        )
         attempts += 1
         try:
             candidate = _generate(
@@ -260,7 +275,7 @@ def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
         "extensions": [],
         "success_guarantee": [],
         "minimal_guarantee": [],
-        "issues": [f"[generation] 명세를 생성하지 못했다: {type(exc).__name__}: {exc}"],
+        "issues": [f"[generation] Could not generate the specification: {type(exc).__name__}: {exc}"],
         "repair_iters": 0,
         "semantic_status": validator.FAILED,
         "repair_stopped": "not_generated",

@@ -1,0 +1,209 @@
+{
+ "_note": "기능 의존 2라운드(aws) — SG 교체·IGW 라우트 삭제/복원. 기능 신호 = 로컬 TCP 22.",
+ "startedAt": "2026-07-31T08:47:30+00:00",
+ "ids": {
+  "vpc": "vpc-0d60f36658548a088",
+  "igw": "igw-00d9f72b1f12e1dca",
+  "rt": "rtb-0abae03c24b38052c",
+  "subnet": "subnet-0845fcc936e16a6e7",
+  "sg22": "sg-0457a016441b8c13b",
+  "sgEmpty": "sg-07baf26e8b76f7e2f",
+  "instance": "i-0c1f6ca64b1e64772",
+  "allocId": "eipalloc-082888b3fd1e92601",
+  "ip": "54.116.137.25"
+ },
+ "steps": {
+  "R1.resolve-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "ami-04bb4ddfc0e51bb5e"
+  },
+  "R2.create-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Vpc\": {\n        \"OwnerId\": \"838062934141\",\n        \"InstanceTenancy\": \"default\",\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"CidrBlockAssociationSet\": [\n            {\n                \"AssociationId\": \"vpc-cidr-assoc-00cb0cff122a5db1c\",\n                \"CidrBlock\": \"10.102.0.0/16\",\n                \"CidrBlockState\": {\n                    \"State\": \"associated\"\n                }\n            }\n        ],\n        \"IsDefault\": false,\n        \"VpcId\": \"vpc-0d60f36658548a088\",\n        \"State\": \"pending\",\n        \"CidrBlock\": \"10.102.0.0/16\",\n        \"DhcpOptionsId\": \"dopt-0c4e2064f71737b"
+  },
+  "R3.create-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"InternetGateway\": {\n        \"Attachments\": [],\n        \"InternetGatewayId\": \"igw-00d9f72b1f12e1dca\",\n        \"OwnerId\": \"838062934141\",\n        \"Tags\": []\n    }\n}"
+  },
+  "R4.attach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "R5.route-to-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true\n}"
+  },
+  "R6.create-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Subnet\": {\n        \"AvailabilityZoneId\": \"apne2-az2\",\n        \"MapCustomerOwnedIpOnLaunch\": false,\n        \"OwnerId\": \"838062934141\",\n        \"AssignIpv6AddressOnCreation\": false,\n        \"Ipv6CidrBlockAssociationSet\": [],\n        \"SubnetArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:subnet/subnet-0845fcc936e16a6e7\",\n        \"EnableDns64\": false,\n        \"Ipv6Native\": false,\n        \"PrivateDnsNameOptionsOnLaunch\": {\n            \"HostnameType\": \"ip-name\",\n            \"EnableResourceNameDnsARecord\": false,\n            \"EnableResourceNameDnsAAAARecord\": false\n        },\n        \"SubnetId\""
+  },
+  "R7.create-sg22": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"GroupId\": \"sg-0457a016441b8c13b\",\n    \"SecurityGroupArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:security-group/sg-0457a016441b8c13b\"\n}"
+  },
+  "R8.sg22-ingress": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0d88af09098d4fa1a\",\n            \"GroupId\": \"sg-0457a016441b8c13b\",\n            \"GroupOwnerId\": \"838062934141\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"0.0.0.0/0\",\n            \"SecurityGroupRuleArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:security-group-rule/sgr-0d88af09098d4fa1a\"\n        }\n    ]\n}"
+  },
+  "R9.create-sg-empty": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"GroupId\": \"sg-07baf26e8b76f7e2f\",\n    \"SecurityGroupArn\": \"arn:aws:ec2:ap-northeast-2:838062934141:security-group/sg-07baf26e8b76f7e2f\"\n}"
+  },
+  "R10.run-instance": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"ReservationId\": \"r-043fec6797eb6912b\",\n    \"OwnerId\": \"838062934141\",\n    \"Groups\": [],\n    \"Instances\": [\n        {\n            \"Architecture\": \"x86_64\",\n            \"BlockDeviceMappings\": [],\n            \"ClientToken\": \"63d2100a-0707-40f9-9126-5f597733424f\",\n            \"EbsOptimized\": false,\n            \"EnaSupport\": true,\n            \"Hypervisor\": \"xen\",\n            \"NetworkInterfaces\": [\n                {\n                    \"Attachment\": {\n                        \"AttachTime\": \"2026-07-31T08:47:47+00:00\",\n                        \"AttachmentId\": \"eni-attach-03e8676f65ea1cedd\",\n    "
+  },
+  "R11.running": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "running"
+  },
+  "R12.allocate-eip": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"AllocationId\": \"eipalloc-082888b3fd1e92601\",\n    \"PublicIpv4Pool\": \"amazon\",\n    \"NetworkBorderGroup\": \"ap-northeast-2\",\n    \"Domain\": \"vpc\",\n    \"PublicIp\": \"54.116.137.25\"\n}"
+  },
+  "R13.associate-eip": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"AssociationId\": \"eipassoc-012adf692dd643769\"\n}"
+  },
+  "F1.reachable-baseline": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=True (시도 1, 연속 1)"
+  },
+  "M1.swap-to-empty-sg": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F2.unreachable-empty-sg": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=False (시도 2, 연속 2)"
+  },
+  "M2.restore-sg22": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F3.reachable-again": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=True (시도 1, 연속 1)"
+  },
+  "M3.delete-default-route": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "F4.unreachable-no-route": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=False (시도 2, 연속 2)"
+  },
+  "M4.recreate-route": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true\n}"
+  },
+  "F5.reachable-final": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "tcp22=True (시도 1, 연속 1)"
+  },
+  "T1.disassociate": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T2.release-eip": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T3.terminate": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"TerminatingInstances\": [\n        {\n            \"InstanceId\": \"i-0c1f6ca64b1e64772\",\n            \"CurrentState\": {\n                \"Code\": 32,\n                \"Name\": \"shutting-down\"\n            },\n            \"PreviousState\": {\n                \"Code\": 16,\n                \"Name\": \"running\"\n            }\n        }\n    ]\n}"
+  },
+  "T4.terminated": {
+   "ok": true,
+   "errorCodes": [],
+   "excerpt": "terminated"
+  },
+  "T5.delete-sg22": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true,\n    \"GroupId\": \"sg-0457a016441b8c13b\"\n}"
+  },
+  "T6.delete-sg-empty": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "{\n    \"Return\": true,\n    \"GroupId\": \"sg-07baf26e8b76f7e2f\"\n}"
+  },
+  "T7.delete-subnet": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T8.detach-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T9.delete-igw": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T10.delete-vpc": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": ""
+  },
+  "T11.residual-vpcs": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "[]"
+  }
+ },
+ "finishedAt": "2026-07-31T08:49:48+00:00"
+}

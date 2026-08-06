@@ -1,0 +1,48 @@
+{
+ "_note": "vm→image(aws) — DryRun 사다리. 생략 거부의 층을 rejectedAt에 기록, 실물 생성 0.",
+ "startedAt": "2026-07-31T06:20:46+00:00",
+ "ids": {
+  "ami": "ami-04bb4ddfc0e51bb5e"
+ },
+ "steps": {
+  "D1.omit-image-and-lt": {
+   "ok": false,
+   "errorCodes": [
+    "MissingParameter"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (MissingParameter) when calling the RunInstances operation: The request must contain the parameter ImageId"
+  },
+  "D2.dangling-ami": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidAMIID.Malformed"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidAMIID.Malformed) when calling the RunInstances operation: Invalid id: \"ami-0aaaaaaaaaaaaaaaa\" (expecting \"ami-...\")"
+  },
+  "D3a.resolve-real-ami": {
+   "ok": true,
+   "errorCodes": [],
+   "rejectedAt": null,
+   "excerpt": "ami-04bb4ddfc0e51bb5e"
+  },
+  "D3b.valid-ami-dryrun": {
+   "ok": false,
+   "errorCodes": [
+    "DryRunOperation"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (DryRunOperation) when calling the RunInstances operation: Request would have succeeded, but DryRun flag is set."
+  },
+  "D2b.dangling-wellformed-ami": {
+   "ok": false,
+   "errorCodes": [
+    "InvalidAMIID.Malformed"
+   ],
+   "rejectedAt": "server",
+   "excerpt": "aws: [ERROR]: An error occurred (InvalidAMIID.Malformed) when calling the RunInstances operation: Invalid id: \"ami-0123456789abcdef0\" (expecting \"ami-...\")"
+  }
+ },
+ "finishedAt": "2026-07-31T06:20:54+00:00"
+}

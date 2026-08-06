@@ -1,0 +1,33 @@
+{
+ "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+ "contentVersion": "1.0.0.0",
+ "resources": [
+  {
+   "type": "Microsoft.Compute/virtualMachines",
+   "apiVersion": "2026-04-01",
+   "name": "depkb-vm1",
+   "location": "[resourceGroup().location]",
+   "properties": {
+    "hardwareProfile": {
+     "vmSize": "Standard_B2ats_v2"
+    },
+    "storageProfile": {
+     "imageReference": {
+      "publisher": "Canonical",
+      "offer": "ubuntu-24_04-lts",
+      "sku": "server",
+      "version": "latest"
+     },
+     "osDisk": {
+      "createOption": "FromImage"
+     }
+    },
+    "osProfile": {
+     "computerName": "depkb-vm1",
+     "adminUsername": "azureuser",
+     "adminPassword": "Depkb-P5a-2026!"
+    }
+   }
+  }
+ ]
+}

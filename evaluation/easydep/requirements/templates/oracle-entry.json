@@ -1,0 +1,13 @@
+{
+  "replace_with_the_same_application_name": {
+    "requiredActors": ["Actor explicitly supported by the requirements"],
+    "forbiddenSupportingActors": ["Database", "Docker", "Linux VM"],
+    "roleFacts": [
+      {
+        "requirementIds": ["FR2"],
+        "actor": "External service named in FR2",
+        "role": "supporting"
+      }
+    ]
+  }
+}

@@ -48,12 +48,14 @@ class ArchitectureState(TypedDict, total=False):
     sequence_diagram_puml: str
     sequence_diagram_syntax_valid: bool
     sequence_diagram_syntax_errors: list[str]
+    sequence_diagram_check: dict[str, Any]
 
     api_spec_model: dict[str, Any]
     api_spec_feedback: str
     api_spec: dict[str, Any]
     api_spec_syntax_valid: bool
     api_spec_syntax_errors: list[str]
+    api_spec_check: dict[str, Any]
 
     # The ERD keeps its own BCE entity copy so ERD feedback edits it without
     # touching the class diagram's model.
