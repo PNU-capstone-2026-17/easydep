@@ -1,0 +1,13 @@
+{
+  "caseId": "P2-aws",
+  "requirements": [
+    "Provide CRUD REST endpoints at /notes and /notes/{id}, store notes in SQLite, accept JSON fields title and content, return the created note with HTTP 201, and return a JSON array from GET /notes.",
+    "External clients access the API over HTTPS.",
+    "Notes must survive container replacement and VM restart.",
+    "Mount persistent storage at /var/lib/notes and allocate at least 20 GiB.",
+    "High availability is not required; deploy exactly one application VM.",
+    "Use Java 21, Spring Boot, Gradle, and Docker, expose GET /health, and listen on port 8080."
+  ],
+  "cloudConstraints": "Deploy to AWS ap-northeast-2. The monthly infrastructure budget is 150 USD. One availability zone is acceptable. Terraform must provision or explicitly reference every required cloud resource.",
+  "scope": {"providers":["aws"],"region":"ap-northeast-2","workload":"docker-on-vm","webSearch":false}
+}

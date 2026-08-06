@@ -2,7 +2,7 @@
 
 **costkb와 달리 번들 폴백이 없다.** costkb는 손 큐레이션 36건이 있어 빌드 없이도 동작하지만,
 성능 데이터는 손으로 옮겨 적을 만한 게 아니다(스펙당 10여 개 필드 × 3만 건). 산출물이 없으면
-도구가 빌드를 안내한다 — graphkb/capacitykb와 같은 방식이다.
+도구가 빌드를 안내한다 — 다른 cloudkb와 같은 방식이다.
 
 산출물이 없어도 **추천은 그대로 동작한다**(fail-open) — 다만 그 사실을 숨기지는 않는다.
 경고를 못 붙였으면 못 붙였다고 밝힌다. 자세한 건 `nim_agent/cost_tools.py`의 조인 부분 참고.
@@ -22,7 +22,7 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.json")
 DEFAULT_OUTPUT_DIR = Path("output")
 BUILT_FILENAME = "tumblebug-perf.json"
 
-#: 소스마다 파일을 따로 두고 **읽을 때 합친다**(capacitykb·bundlekb와 같은 방식).
+#: 소스마다 파일을 따로 두고 **읽을 때 합친다**.
 #: 소스별 핀·라이선스가 다르므로 한 파일에 섞으면 어느 부분이 언제 것인지 알 수 없다.
 #:
 #: `ibm-perf.json`은 **재배포 허가를 확인하지 못해 `data/`에 커밋하지 않는다** —

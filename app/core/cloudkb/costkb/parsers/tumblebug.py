@@ -24,8 +24,7 @@ CB-Spider의 `ConvertMBToMiBInt64`는 `mb * 1000 / 1024`로 비율을 제곱이 
 덤프 73,083행 실측으로 확인한 영향 범위 (`×1.024 하면 정수가 되는 비율`):
 
     gcp   77.6%   azure 64.2%    ← 버그 영향
-    aws    0.0%   tencent 0.0%   ibm 0.0%   ncp 0.0%   nhn 0.0%
-    alibaba 0.0%  kt 0.0%        openstack 0.0%        ← 정상
+    aws    0.0%                    ← 정상
 
 즉 **gcp/azure만** 보정 대상이다(코드 추적 결과와 실측이 일치).
 
@@ -129,7 +128,9 @@ def project_row(row: dict) -> dict | None:
     vcpu = _int(row.get("v_cpu"))
     mem = _num(row.get("memory_gi_b"))
 
-    if not (provider and region and spec_name) or not vcpu or vcpu < 1:
+    if provider not in KNOWN_PROVIDERS:
+        return None
+    if not (region and spec_name) or not vcpu or vcpu < 1:
         return None
     if mem is None or mem <= 0:
         return None
@@ -191,9 +192,6 @@ def project_rows(rows, *, namespace: str | None = SYSTEM_NAMESPACE) -> tuple[lis
             stats["skipped_invalid"] += 1
             continue
         provider = record["provider"]
-        if provider not in KNOWN_PROVIDERS:
-            stats["unknown_providers"][provider] += 1
-
         # 상위 버그 감시: ×1.024로 정수가 되면 버그 지문. 새 프로바이더가 버그 영향권에
         # 들어오면 여기서 드러난다 (보정 대상을 코드로 못 박아 두었으므로).
         audit = stats["memory_audit"][provider]

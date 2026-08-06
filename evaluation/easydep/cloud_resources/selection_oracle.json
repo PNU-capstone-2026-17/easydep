@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "frozenAt": "2026-08-06",
+    "costSnapshotSha256": "cc1a2f2b3533a791966d7f4075d1f036d55eebc9569c4182f51a7602dfefc4a8",
+    "performanceSnapshotSha256": "b93733e01dc6325dd312c4dffcbe28571f6973188bba2dbc2dfcaab1faddaE62",
+    "reviewMethod": "Filter the frozen catalog by exact provider, region, x86_64, per-VM capacity and compute-only budget; for steady load reject candidates carrying a burst or old-generation warning before choosing the lowest list price."
+  },
+  "select-aws-steady-small": {"status": "selected", "recommendedSpec": "c5a.large", "minimumVmCount": 1, "maxMonthlyComputeUSD": 120, "requireNoPerformanceWarning": true},
+  "select-azure-steady-small": {"status": "selected", "recommendedSpec": "Standard_D2als_v6", "minimumVmCount": 1, "maxMonthlyComputeUSD": 120, "requireNoPerformanceWarning": true},
+  "select-gcp-steady-small": {"status": "selected", "recommendedSpec": "e2-standard-2", "minimumVmCount": 1, "maxMonthlyComputeUSD": 120, "requireNoPerformanceWarning": true},
+  "reject-aws-ha-over-budget": {"status": "infeasible", "reason": "no_priced_candidate_meets_capacity_and_compute_budget", "minimumVmCount": 2},
+  "defer-missing-capacity": {"status": "deferred", "reason": "missing_capacity_floor"},
+  "defer-unpriced-region": {"status": "deferred", "reason": "region_not_exact_in_catalog"}
+}

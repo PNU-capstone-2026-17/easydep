@@ -1,0 +1,13 @@
+{
+  "caseId": "P1-azure",
+  "requirements": [
+    "Provide POST /conversions accepting JSON fields category, value, fromUnit, and toUnit, and return JSON fields result and unit. Support lowercase length units meter and centimeter and temperature units celsius and fahrenheit.",
+    "External clients access the API over HTTPS.",
+    "The server does not retain application data.",
+    "High availability is not required; deploy exactly one application VM.",
+    "Use Java 21, Spring Boot, Gradle, and Docker.",
+    "Expose GET /health and listen on application port 8080."
+  ],
+  "cloudConstraints": "Deploy to Azure Korea Central on a Linux VM. The monthly infrastructure budget is 100 USD. One availability zone is acceptable. Terraform must provision or explicitly reference every required cloud resource.",
+  "scope": {"providers":["azure"],"region":"koreacentral","workload":"docker-on-vm","webSearch":false}
+}

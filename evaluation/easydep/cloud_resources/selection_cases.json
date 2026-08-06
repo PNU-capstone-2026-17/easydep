@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "caseId": "select-aws-steady-small",
+      "resourceSpec": {"provider": "aws", "region": "ap-northeast-2", "minVCpu": 2, "minMemoryGiB": 4, "monthlyBudgetUSD": 120, "trafficPattern": "steady"},
+      "deploymentNeeds": {}
+    },
+    {
+      "caseId": "select-azure-steady-small",
+      "resourceSpec": {"provider": "azure", "region": "koreasouth", "minVCpu": 2, "minMemoryGiB": 4, "monthlyBudgetUSD": 120, "trafficPattern": "steady"},
+      "deploymentNeeds": {}
+    },
+    {
+      "caseId": "select-gcp-steady-small",
+      "resourceSpec": {"provider": "gcp", "region": "asia-northeast3", "minVCpu": 2, "minMemoryGiB": 4, "monthlyBudgetUSD": 120, "trafficPattern": "steady"},
+      "deploymentNeeds": {}
+    },
+    {
+      "caseId": "reject-aws-ha-over-budget",
+      "resourceSpec": {"provider": "aws", "region": "ap-northeast-2", "minVCpu": 4, "minMemoryGiB": 16, "monthlyBudgetUSD": 100, "multiZone": true, "trafficPattern": "steady"},
+      "deploymentNeeds": {}
+    },
+    {
+      "caseId": "defer-missing-capacity",
+      "resourceSpec": {"provider": "gcp", "region": "asia-northeast3", "monthlyBudgetUSD": 100},
+      "deploymentNeeds": {}
+    },
+    {
+      "caseId": "defer-unpriced-region",
+      "resourceSpec": {"provider": "azure", "region": "koreacentral", "minVCpu": 2, "minMemoryGiB": 4, "monthlyBudgetUSD": 120},
+      "deploymentNeeds": {}
+    }
+  ]
+}

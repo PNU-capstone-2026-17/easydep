@@ -16,6 +16,7 @@ from typing import Any
 from openai import OpenAI
 
 from evaluation.baselines.common import (
+    BUILD_COMPLETENESS_CONTRACT,
     ExperimentCase,
     base_url,
     begin_run,
@@ -38,14 +39,16 @@ CSP and region stated by the user. Return exactly one JSON object with these key
 - unresolved: array of unresolved constraints or contradictions
 - requirements: Markdown requirements with R1... trace identifiers
 - design: Markdown architecture and deployment decisions
-- deploymentDiagram: Mermaid flowchart text
 - files: object mapping relative repository paths to complete UTF-8 file contents
 - traceability: array of {requirementId, designElements, codeFiles, testFiles}
 
-The files must form a buildable repository and include Dockerfile, application source, tests,
-deployment documentation or IaC, and README instructions. Never include credentials. Paths must
-be relative and must not contain '..'. Use only Docker on Linux VMs; do not use Kubernetes or
-managed application platforms."""
+The files are the evaluated implementation. They must form a buildable repository and include
+application source, tests, a Dockerfile, deployable Terraform IaC, and README instructions. A deployment
+manifest may be included when useful, but is not required. A deployment diagram and EasyDep-specific
+intermediate formats such as cloud-plan.json are not required. Never include credentials. Paths
+must be relative and must not contain '..'. Use only Docker on Linux VMs; do not use Kubernetes
+or managed application platforms."""
+SYSTEM = f"{SYSTEM}\n\n{BUILD_COMPLETENESS_CONTRACT}"
 
 
 def _extract_object(text: str) -> dict[str, Any]:
@@ -55,10 +58,19 @@ def _extract_object(text: str) -> dict[str, Any]:
     value = json.loads(text[start : end + 1])
     if not isinstance(value, dict):
         raise TypeError("model response root must be an object")
-    for field in ("rationale", "unresolved", "requirements", "design",
-                  "deploymentDiagram", "files", "traceability"):
-        if field not in value:
-            raise ValueError(f"model response missing field: {field}")
+    if "files" not in value:
+        raise ValueError("model response missing field: files")
+    defaults: dict[str, Any] = {
+        "rationale": [],
+        "unresolved": [],
+        "requirements": "",
+        "design": "",
+        "traceability": [],
+    }
+    missing = [field for field in defaults if field not in value]
+    for field, default in defaults.items():
+        value.setdefault(field, default)
+    value["_missingBundleFields"] = missing
     return value
 
 
@@ -85,6 +97,8 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
         "cloudConstraints": case.cloud_constraints,
         "scope": case.scope,
     })
+    manifest.update({"status": "running", "generationStatus": "running"})
+    write_json(run_dir / "manifest.json", manifest)
     if dry_run:
         manifest.update({"status": "dry-run", "finishedAt": time.time()})
         write_json(run_dir / "manifest.json", manifest)
@@ -118,7 +132,6 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
         target.write_text(content, encoding="utf-8")
     (run_dir / "requirements.md").write_text(str(bundle["requirements"]), encoding="utf-8")
     (run_dir / "design.md").write_text(str(bundle["design"]), encoding="utf-8")
-    (run_dir / "deployment.mmd").write_text(str(bundle["deploymentDiagram"]), encoding="utf-8")
     write_json(run_dir / "traceability.json", bundle["traceability"])
     write_json(run_dir / "decisions.json", {
         "rationale": bundle["rationale"], "unresolved": bundle["unresolved"]
@@ -126,12 +139,14 @@ def run(case_path: Path, output_root: Path | None = None, dry_run: bool = False)
     usage = response.usage
     manifest.update({
         "status": "completed",
+        "generationStatus": "completed",
         "completedStages": ["requirements", "design", "implementation", "testing"],
         "elapsedSeconds": round(time.perf_counter() - started, 3),
         "promptTokens": getattr(usage, "prompt_tokens", None),
         "completionTokens": getattr(usage, "completion_tokens", None),
         "totalTokens": getattr(usage, "total_tokens", None),
         "systemFingerprint": getattr(response, "system_fingerprint", None),
+        "missingBundleFields": bundle["_missingBundleFields"],
     })
     write_json(run_dir / "manifest.json", manifest)
     return run_dir

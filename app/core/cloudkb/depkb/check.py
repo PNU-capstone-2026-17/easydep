@@ -14,7 +14,7 @@
 ## 계획의 형태
 
     {"resources": [{"id": "subnet", "instances": [{"name": "...", "zone": "a"}]},
-                   {"id": "k8sCluster", "instances": [{"name": "..."}]}]}
+                   {"id": "loadBalancer", "instances": [{"name": "..."}]}]}
 
 인스턴스가 없는 자원은 "안 만든다"는 뜻이고, 그 자체는 위반이 아니다(서버가
 채울 수 있다). 필수 자원의 부재는 별도 검사(`missing_required`)가 본다.
@@ -122,7 +122,7 @@ def check(intent: InfraIntent, plan: dict) -> Report:
     """구체 계획이 인프라 의도의 규칙을 지키는지 본다."""
     violations: list[Violation] = []
     unchecked: list[str] = []
-    # 이중 생성 — 합성물(동반 정리의 대상)은 k8s 층이 만든다. 계획이 그 자원의
+    # 이중 생성 — 합성물(동반 정리의 대상)은 클라우드가 만든다. 계획이 그 자원의
     # 인스턴스를 직접 내면 같은 것이 둘 생긴다(합성 라운드 실측이 근거).
     for owner, synth in intent.cleanupCascades:
         if _instances(plan, synth):

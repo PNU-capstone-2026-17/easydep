@@ -7,8 +7,6 @@
 | 패키지 | 역할 |
 |---|---|
 | `depkb` | 실측 기반 VM 리소스 의존관계 |
-| `capacitykb` | VM 및 연계 리소스의 용량·제약 |
-| `sizingkb` | 애플리케이션 요구량을 VM 하한으로 변환 |
 | `costkb` | VM 사양·가격과 비용 계산 |
 | `perfkb` | VM 성능 특성과 추천 보강 |
 | `kbcommon` | 공통 데이터 로더·출처·불변식 |
@@ -17,9 +15,7 @@
 
 ```text
 application requirements
-→ sizingkb
 → depkb
-→ capacitykb
 → costkb + perfkb
 → ResourcePlan
 ```
@@ -32,11 +28,17 @@ application requirements
 - `appkb`, `bundlekb`, `patternkb`, `graphkb`, `envkb`
 - Cloud KB의 기존 테스트 전체
 - 타 CSP, 그래프 구버전, 패턴·번들·환경 데이터
+- 전체 CSP 리소스 스키마였던 `capacitykb`
+- Kubernetes·컨테이너 프리셋 중심이었던 `sizingkb`
+- 관리형 서비스 가격 파서와 IBM 성능 파서
 
 과거 조사 문서는 [`document/archive/`](document/archive/)에 보존한다. 현재 문서 상태는 [`document/README.md`](document/README.md)를 따른다.
 
-## 남은 정리
+## 아직 구현하지 않은 부분
 
-- `capacitykb`, `costkb`, `perfkb` 내부의 관리형 서비스·타 CSP 코드 제거
-- `data/`의 AWS·Azure·GCP VM 데이터만 최종 검증
-- 새 VM 전용 계약을 기준으로 테스트를 다시 작성
+- 애플리케이션 부하를 VM 최소 vCPU·메모리로 변환하는 근거 기반 모델
+- 디스크 크기·IOPS 같은 VM 연계 리소스의 별도 용량 제약 KB
+- `costkb`·`perfkb`를 오케스트레이션에 연결한 RQ3 평가
+
+현재 이 값들은 사용자가 명시한 최소 요구량이 있을 때만 후보 필터에 사용할 수 있다.
+근거가 없는 최소 사양을 시스템이 임의로 추정하지 않는다.

@@ -1,6 +1,6 @@
 """에이전트용 사전 정의 질의 API (costkb).
 
-graphkb/capacitykb의 agent_api와 같은 관례: 예외 대신 에이전트가 그대로 읽을 수 있는
+다른 cloudkb 질의 API와 같은 관례: 예외 대신 에이전트가 그대로 읽을 수 있는
 한국어 텍스트를 반환한다.
 
 다른 두 KB와 달리 `_MISSING_MESSAGE`("먼저 build 하세요")가 없다 — 번들 36건이 항상

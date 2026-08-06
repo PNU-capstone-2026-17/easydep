@@ -40,7 +40,7 @@
     "minVCpu": {
       "type": "integer",
       "minimum": 1,
-      "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 소비자: 스펙 선택의 하한(층 2). 층 1은 sizingkb가 출처와 함께 들고 있는 하드 하한인데 실측상 k8s 노드에만 있어서, 일반 VM에는 이 칸이 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
+      "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 현재 일반 VM의 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
     },
     "minMemoryGiB": {
       "type": "number",
@@ -49,7 +49,7 @@
     },
     "multiZone": {
       "type": "boolean",
-      "description": "가용영역 분산. tumblebug vNet 정책·k8s requiredSubnetCount 조인."
+      "description": "가용영역 장애에도 서비스를 유지해야 하는지 나타낸다. VM 수와 서브넷·영역 배치는 설계 단계가 결정하며, 이 값만으로 특정 구성을 추정하지 않는다."
     },
     "trafficPattern": {
       "enum": [

@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "caseId": "aws-public-load-balancer",
+      "provider": "aws",
+      "region": "ap-northeast-2",
+      "anchors": ["loadBalancer"],
+      "description": "Complete the required resource dependencies for an AWS load balancer."
+    },
+    {
+      "caseId": "azure-docker-vm",
+      "provider": "azure",
+      "region": "koreacentral",
+      "anchors": ["vm"],
+      "description": "Complete the required resource dependencies for an Azure Docker host VM."
+    },
+    {
+      "caseId": "gcp-docker-vm",
+      "provider": "gcp",
+      "region": "asia-northeast3",
+      "anchors": ["vm"],
+      "description": "Complete the required resource dependencies for a GCP Docker host VM."
+    }
+  ]
+}

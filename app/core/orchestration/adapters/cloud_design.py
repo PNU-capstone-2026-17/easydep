@@ -68,6 +68,7 @@ class CloudDesignAdapter:
         *,
         requirements_result: dict[str, Any],
         design_result: dict[str, Any],
+        use_cloud_kb: bool = True,
     ) -> dict[str, Any]:
         resource_spec = requirements_result.get("resource_spec") or {}
         provider = str(resource_spec.get("provider") or "")
@@ -78,6 +79,22 @@ class CloudDesignAdapter:
             or artifacts.get("deployment_diagram")
             or ""
         )
+        if not use_cloud_kb:
+            return {
+                "status": "completed",
+                "reason": "cloud knowledge base disabled by evaluation variant",
+                "logical_deployment_diagram_puml": logical_puml,
+                "deployment_diagram_puml": logical_puml,
+                "dependency_plan": {},
+                "kb_used": [],
+                "deferred": [
+                    "dependencies",
+                    "capacity",
+                    "performance",
+                    "price",
+                    "vm_selection",
+                ],
+            }
         if provider not in {"aws", "azure", "gcp"} or not region:
             return {
                 "status": "skipped",
@@ -89,11 +106,15 @@ class CloudDesignAdapter:
             }
 
         anchors = ["vm"]
-        model = design_result.get("deployment_diagram_model") or {}
-        if any(
+        deployment_needs = requirements_result.get("deployment_needs") or {}
+        persistent_storage = deployment_needs.get("persistent_storage") or {}
+        deployment_model = design_result.get("deployment_diagram_model") or {}
+        design_has_database = any(
             str(node.get("kind", "")).lower() == "database"
-            for node in model.get("Nodes", [])
-        ):
+            for node in deployment_model.get("Nodes", [])
+            if isinstance(node, dict)
+        )
+        if persistent_storage.get("required") is True or design_has_database:
             anchors.append("disk")
         if resource_spec.get("multiZone") is True:
             anchors.append("loadBalancer")

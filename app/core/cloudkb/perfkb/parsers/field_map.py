@@ -234,7 +234,7 @@ AZURE: dict[str, Decision] = {
     "ParentSize": _d(OUT_OF_AXIS, "제약 크기의 부모 — 크기 족보이지 성능 사실이 아니다"),
     "vCPUsAvailable": _d(OUT_OF_AXIS, "제약 크기용 값 — 카탈로그 축"),
     "vCPUsConstraintsAllowed": _d(OUT_OF_AXIS, "같은 축"),
-    "MaxDataDiskCount": _d(OUT_OF_AXIS, "데이터 디스크 **개수** 한도 — capacitykb 축"),
+    "MaxDataDiskCount": _d(OUT_OF_AXIS, "데이터 디스크 **개수** 한도 — VM 성능 축 밖"),
 
     # --- 사실인데 칸이 없다 (후보) -------------------------------------------
     "RetirementDateUtc": _d(UNMAPPED, "수명주기 축이 없다 — envkb 후보"),

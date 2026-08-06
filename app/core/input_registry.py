@@ -215,9 +215,8 @@ ASKS: tuple[Ask, ...] = (
         tier=SUGGESTED,
         question="Must the service remain available if an entire availability zone fails?",
         opens="This determines whether the deployment must span multiple availability zones.",
-        # 다중화 요구의 수요 실물(PURE 24건)은 계보 감사 판정표에 있다 — 관심사
-        # 축은 실측 재도출로 거부(required) 계열을 안 담아 여기 대응 관심사가 없다.
-        basis=(Basis(CLAIM, "aws/k8sCluster→subnet/existence"),),
+        # 이 값은 특정 CSP 사실이 아니라 시스템이 가용성 배치를 결정하기 위한 입력이다.
+        basis=(Basis(CODE, "app/core/resource_spec.schema.json#multiZone"),),
     ),
     # ── 맥락축 — 판정을 열진 않지만 계획에 실린다 ────────────────────────────
     Ask(
@@ -265,8 +264,6 @@ HANDOFF: dict[str, str] = {
                          "종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 "
                          "받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 "
                          "남고, 그 자리표시자가 곧 인계 표시다",
-    "ingressController": "인그레스 컨트롤러와 클래스. 우리 실측은 '컨트롤러를 "
-                         "깔지는 사람이 정한다'까지만 말한다(k8sIngress 라운드)",
     "tlsCertificate": "TLS 인증서·시크릿. 운영·보안 결정이다",
 }
 

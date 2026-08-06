@@ -10,10 +10,8 @@
 
 ## 층 경계를 뷰가 말한다
 
-구현 에이전트는 manifest(k8s 오브젝트)와 IaC(클라우드 자원)를 **둘 다** 낸다.
-우리 주장은 전부 후자다. 그래서 `provision_view`는 `layer: "cloud"`를 달고,
-k8s 층에 대해서는 아무 말도 하지 않는다는 것을 `notForLayer`로 밝힌다 —
-밝히지 않으면 생성기가 우리 침묵을 "제약 없음"으로 읽는다.
+구현 에이전트는 Docker 실행 설정과 IaC를 낸다. 이 뷰는 그중 클라우드 자원의
+생성·삭제 순서만 다루며 컨테이너 내부 설정은 다루지 않는다.
 
 ## 다이어그램의 간선 방향
 
@@ -34,10 +32,8 @@ from .infra_intent import InfraIntent
 _GROUP: dict[str, str] = {
     "network": "네트워크", "subnet": "네트워크", "firewall": "네트워크",
     "publicIp": "네트워크", "nic": "네트워크", "loadBalancer": "네트워크",
-    "vm": "컴퓨트", "disk": "컴퓨트", "sshKey": "컴퓨트", "image": "컴퓨트",
-    "k8sCluster": "컨테이너", "k8sNodeGroup": "컨테이너",
-    "k8sService": "컨테이너", "k8sPvc": "컨테이너", "k8sIngress": "컨테이너",
-    "vpn": "연결",
+    "vm": "컴퓨트", "disk": "컴퓨트", "sshKey": "컴퓨트",
+    "iamRole": "컴퓨트", "internetGateway": "네트워크",
 }
 
 #: 역할 → 다이어그램 라벨. 사람이 읽는 말이다.
@@ -127,10 +123,10 @@ def provision_view(intent: InfraIntent) -> dict:
         "schemaVersion": intent.schemaVersion,
         "view": "provision",
         "layer": "cloud",
-        "notForLayer": ["kubernetes"],
+        "notForLayer": ["container-runtime"],
         "notForLayerNote": (
-            "이 뷰는 클라우드 자원만 말한다 — manifest(k8s 오브젝트)에 대해서는 "
-            "아무 주장도 하지 않는다. 침묵을 '제약 없음'으로 읽지 말 것"),
+            "이 뷰는 클라우드 자원만 말한다. Docker 이미지와 컨테이너 내부 "
+            "설정은 별도의 구현 산출물이다."),
         "csp": intent.csp,
         "region": intent.region,
         "createOrder": create,

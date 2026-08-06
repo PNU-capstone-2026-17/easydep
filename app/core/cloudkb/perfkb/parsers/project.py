@@ -15,7 +15,7 @@
 | Azure B계열 | 크레딧 모델 (AWS와 유사) | `Family` 이름 패턴 **추론** | 0.8 |
 
 그래서 값(`value`)과 함께 **왜 그렇게 판단했는지**(`note`)와 **어떻게 알았는지**
-(`evidence`/`basis`)를 항상 같이 준다. capacitykb와 같은 패턴이다.
+(`evidence`/`basis`)를 항상 같이 준다.
 costkb가 evidence를 안 두는 것과 대조된다 — 거긴 출처가 파일 단위로 균일한 미러라
 레코드별 evidence가 죽은 필드가 되지만, 여기선 같은 필드가 1.0에서도 0.8에서도 온다.
 
@@ -42,7 +42,7 @@ from .details import (
 )
 
 # costkb와 같은 값이지만 **의도적으로 복제한다** — KB끼리는 서로 import하지 않는다
-# (graphkb·capacitykb도 그렇다). 한 줄 중복이 패키지 간 결합보다 싸다.
+# 한 줄 중복이 패키지 간 결합보다 싸다.
 SYSTEM_NAMESPACE = "system"
 
 #: azure NIC 수의 **미러 값**을 잠시 담는 칸. 스키마에 없는 이름이라 산출물에 남으면

@@ -1,6 +1,6 @@
 """지식베이스 패키지들이 공유하는 인프라.
 
-각 KB(graphkb·capacitykb·costkb·perfkb)는 서로 독립적인 지식 차원이라 **서로 import하지
+각 KB(depkb·costkb·perfkb)는 서로 독립적인 지식 차원이라 **서로 import하지
 않는다**. 다만 어느 KB에도 속하지 않는 공용 인프라는 여기 모아 공유한다:
 
 - `fetch.py`         — 공개 스키마 다운로드 + 로컬 캐시 (CFN zip, bicep types, KCC CRD 등)

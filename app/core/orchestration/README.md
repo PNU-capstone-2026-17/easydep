@@ -1,33 +1,45 @@
-# 요구사항-구현 오케스트레이션
+# 4단계 오케스트레이션
 
-이 패키지는 다른 팀원이 소유한 요구사항·설계·구현 에이전트의 내부 코드를
-수정하지 않고 호출한다. 테스팅 에이전트는 아직 연결하지 않았다.
+이 패키지는 멤버 소유 코드를 수정하지 않고 요구사항·설계·구현·테스팅 함수를 연결한다.
+클라우드 작업은 별도 단계가 아니라 각 단계의 하위 작업이다.
 
-## 단계 구성
+## 실행
 
-1. 요구사항 분석에서 추적 가능한 유스케이스와 `resource_spec`을 생성한다.
-2. 설계에서 클래스·시퀀스·OpenAPI·ERD·논리 배포 산출물을 생성한다.
-3. `depkb`로 Docker-on-VM 배포 다이어그램을 보완한다.
-4. 구현 시작 전에 사용자 승인을 기다린다.
-5. 승인 후 LLM으로 임시 인프라 용량·비용 권고를 생성한다. 이 값은 실측값이
-   아니며 향후 성능·비용 추천기로 교체한다.
-6. 구현 워크플로가 코드를 생성하고 컴파일·테스트·수정하며 체크포인트를 남긴다.
+```python
+from app.core.orchestration import RunRequest, run_batch, start_run, resume_run
 
-주요 재개 함수는 `graph.py`에 있다.
+result = run_batch(RunRequest(
+    requirements=["Provide a REST API."],
+    resource_constraints_text="Deploy on GCP in Seoul within 100 USD/month.",
+))
+```
 
-- `complete_design(run_id)`: 구현 시작 경계까지 설계를 진행한다.
-- `start_implementation_from_completed_design(design_run_id)`: 저장된 설계 결과로
-  구현 실행을 시작한다.
-- `complete_implementation(run_id)`: 구현 전송을 승인하고 완료될 때까지 재개한다.
+- `start_run`: 사용자 입력이 필요하면 중단하는 interactive 실행
+- `resume_run`: 중단된 실행에 답변을 전달
+- `run_batch`: 동결된 입력으로 무인 실행
+- `get_run`: SQLite에 저장된 실행 상태 조회
 
-구현 어댑터는 저장소 루트의 `.env`에 있는 모델 설정을 작업자에게 전달하고,
-외부 LLM 전송 승인 절차를 유지한다. 현재 BCE 생성기와 설계 결과 사이의 계약을
-맞추기 위해 타입이 없는 설계 속성과 매개변수는 임시로 `String`으로 변환한다.
-이는 설계 결정이 아니라 호환을 위한 가정이다.
+기존 `start_workflow`, `complete_design`, `complete_implementation` API는 제거했다.
 
-## 산출물
+## Provider
 
-일반 실행의 산출물은 다음 구조로 저장한다.
+`RunRequest.providers`에서 각 하위 작업 구현을 `member`, `llm`, `builtin` 중 하나로
+명시한다. 등록되지 않은 조합이나 선택한 provider의 실패는 즉시 실행 실패다. 다른
+provider로 자동 전환하지 않는다.
+
+기본 구성은 멤버 요구사항·설계, 멤버 구현 골격, LLM 수용 테스트 생성, 한 번의 LLM 업무
+로직 완성, 결정론적 VM 선택, 한 번의 LLM Docker/VM Terraform 생성, 내장 애플리케이션
+테스트다. 생성된 수용 테스트는 업무 로직 provider가 수정할 수 없다. 현재 K8s
+중심 testing prototype은 VM 범위와 맞지 않아 기본 provider로 사용하지 않는다.
+
+멤버 구현기가 미완성인 동안 비교실험은 `implementation_scaffold=llm`을 명시한다. 이
+임시 provider는 고정된 Java 21/Spring Boot 빌드 골격과 LLM이 생성한 `src/main` 코드만
+만들며, 멤버 provider 실패 시 자동으로 선택되지 않는다.
+
+## 상태와 산출물
+
+실행 상태는 표준 라이브러리 `sqlite3`로 `.easydep/orchestration/runs.sqlite3`에 저장한다.
+사용자 산출물은 중복 없이 다음 위치에 기록한다.
 
 ```text
 artifacts/runs/<run-id>/
@@ -35,51 +47,8 @@ artifacts/runs/<run-id>/
 ├── 01-requirements/
 ├── 02-design/
 ├── 03-implementation/
-└── 04-testing/        # 추후 연결
+└── 04-testing/
 ```
 
-설계 디렉터리에는 원본 결과와 클래스·시퀀스·ERD·OpenAPI·논리/클라우드 배포
-다이어그램을 저장한다. LLM 기반 임시 인프라 권고도 독립 단계가 아니라
-`02-design/cloud-native/` 아래에 저장한다. 구현 디렉터리에는 결과 상태, 생성 소스, 테스트,
-설정 파일과 실행 보고서를 저장한다. Gradle 캐시와 `build` 같은 재생성 가능한
-임시 파일, JVM 크래시 덤프는 제외한다.
-
-## 다중 애플리케이션 설계 평가
-
-성공한 실행을 유지하면서 전체 샘플을 다시 실행하려면 다음 명령을 사용한다.
-
-```powershell
-$env:PYTHONIOENCODING='utf-8'
-python -m app.core.orchestration.sample_evaluation --resume
-```
-
-평가 실행도 `artifacts/runs/<run-id>/`에 저장되며 manifest로 일반 실행과 구분한다.
-각 디렉터리에는 원본 응답, 요구사항·설계 산출물, 배포 다이어그램 두 종류,
-제약조건 출처와 구조 검증 결과가 포함된다.
-
-2026-08-05 실제 실행 결과는 다음과 같다.
-
-| 샘플 | 결과 | 요구사항 / 액터 / 유스케이스 |
-|---|---|---:|
-| shopping_mall | 구조 검사 통과 | 9 / 3 / 4 |
-| toystore | 구조 검사 통과 | 30 / 4 / 10 |
-| cloud_native_voucher_medium | 구조 검사 통과 | 18 / 5 / 13 |
-| note_taking | API 시간 초과, 재실행 필요 | - |
-| bank_of_anthos | 호스트 `MemoryError`, 재실행 필요 | - |
-
-오케스트레이션 실행에서는 JVM 메모리 사용을 피하기 위해 PlantUML 구문 검증을
-건너뛴다. 산출물에는 이 상태를 `skipped`로 기록하며 구문 검증 통과로 간주하지
-않는다. OpenAPI 검증과 다이어그램의 결정론적 변환은 유지한다. 기존 Voucher
-샘플에서는 `depkb` 미해결 질문의 문자 인코딩 문제도 발견했다.
-
-## 구현 단계 실제 실행 결과
-
-Shopping Mall 설계를 구현 단계로 재개하여 18개 태스크 중 16개를 완료했다.
-남은 wiring 태스크는 이 호스트에서 반복된 JVM 네이티브 메모리 크래시로
-중단됐으며, 성공한 태스크의 체크포인트는 재사용할 수 있다. 구현 완료로는
-기록하지 않았다.
-
-Gradle을 단일 워커, Serial GC, 128 MiB 힙, 256 KiB 스레드 스택으로 제한한
-후에도 문제가 반복됐다. 워크플로는 컴파일·테스트를 우회하지 않았으며,
-JVM이 만든 `hs_err_pid`·`replay_pid` 파일을 작업 범위 밖 변경으로 감지해
-실행을 실패 처리했다.
+내부 testing은 생성 애플리케이션 테스트만 수행한다. Docker, OpenTofu, 업무 API와 코드
+품질 평가는 EasyDep·CoT·MetaGPT에 동일하게 적용하는 외부 공통 평가기의 책임이다.

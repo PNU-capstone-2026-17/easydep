@@ -5,7 +5,7 @@ from pathlib import Path
 from app.core.run_identity import identity_manifest, make_run_id
 from evaluation.baselines import cot, metagpt
 
-CASE = Path("evaluation/baselines/cases/p1-stateless-detailed.json")
+CASE = Path("evaluation/baselines/cases/p1-stateless-aws.json")
 
 
 def test_run_id_format_is_shared_across_systems() -> None:
@@ -46,5 +46,5 @@ def test_baselines_use_the_shared_run_directory_and_manifest(tmp_path: Path) -> 
 
         assert manifest["runId"] == run_dir.name
         assert manifest["variant"] == "standard"
-        assert manifest["caseId"] == "P1-detailed"
+        assert manifest["caseId"] == "P1-aws"
         assert manifest["purpose"] == "evaluation"

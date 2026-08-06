@@ -88,14 +88,12 @@ FIELDS: tuple[Field, ...] = (
     Field("maxPersistentDisks", "max persistent disks"),
     Field("maxPersistentDiskGB", "max persistent disk capacity", " GB"),
     Field("vendorDescription", "vendor description", kind="text", compare=False),
-    # IBM (Global Catalog). **클럭은 없다** — 원본이 310건 전부 2000이라 담지 않았다.
+    # Azure 크기 문서와 GCP 계열 자료에서 제공하는 네트워크·토폴로지 필드.
     Field("networkBandwidthMbps", "network bandwidth", " Mbps"),
     Field("portSpeedMbps", "port speed", " Mbps"),
     Field("maxNics", "max network interfaces"),
     Field("numaCount", "NUMA nodes"),
-    # IBM을 붙이며 드러난 구멍 — `cpuVendor`는 aws 61.9%·ibm 82.9%로 채워져 있는데
-    # **어느 목록에도 없어서 화면에 한 번도 나온 적이 없었다.** 필드 목록이 세 벌로
-    # 갈라졌던 그 문제의 잔재다.
+    # CPU 계열 표시는 비교 점수로 사용하지 않고 설명에만 사용한다.
     Field("cpuVendor", "CPU vendor", kind="text", compare=False),
     Field("cpuFamily", "CPU family", kind="text", compare=False),
     # **`sustainedCpu`로 옮기지 않은 이유가 라벨에 있어야 한다.** dedicated를 보고

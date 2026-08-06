@@ -1,0 +1,13 @@
+{
+  "caseId": "H2-gcp",
+  "requirements": [
+    "Warehouse operators create shipments and request delivery services, prices, and shipping labels from an external carrier adapter.",
+    "The carrier submits pickup, transit, delivery, and exception events; duplicate carrier event identifiers are processed at most once.",
+    "Customers retrieve the latest shipment state and complete tracking history.",
+    "Shipment and tracking records survive container replacement and VM restart using at least 30 GiB of mounted persistent storage.",
+    "High availability is not required; deploy exactly one application VM and inject carrier credentials at runtime.",
+    "Use Java 21, Spring Boot, Gradle, and Docker, expose GET /health, and listen on port 8080."
+  ],
+  "cloudConstraints": "Deploy to GCP asia-northeast3 with a monthly infrastructure budget of 500 USD. One zone is acceptable. Terraform must provision or explicitly reference every required cloud resource.",
+  "scope": {"providers":["gcp"],"region":"asia-northeast3","workload":"docker-on-vm","webSearch":false}
+}

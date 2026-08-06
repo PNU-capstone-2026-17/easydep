@@ -16,7 +16,7 @@
    "ok": true,
    "errorCodes": [],
    "rejectedAt": null,
-   "excerpt": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpQIBAAKCAQEAtr61qTx5hQC/MgI+pVcOxK6BH2t5ZlNy1yTNxUOx/tcw6FbI\nrdAjzA01mxl58G7I5w5PHGV8We6b7eL+9rYImuxTQAFO1fkgmdGP3DUMGXuO6E+k\n6/j2OdAltUiRwSteWBkliIN4st7v1/L5WpJbYcjzZajtO8wvmiXVI3EYROKbppDB\nAmaI81qBSClLyW21uI/BL6D9T5nP1mtoddm0V8CynmX+7xaSkcjNfiET38rXEtFd\nuz4R3m06wXOPHRLjl88ehDKO+VqmzYiJwNS5Z/+1TLa9jeVzvegJgq23ILAnEePw\n8jI4mVOr0CN5ky9yeQkCEHiShsLjG4sDt4ceTQIDAQABAoIBAHkSyRCi/G/eGs5r\nJk4s65/rbaj/b6MXzpIz1BDJ1PfeYozMUpC1wcHDTqy/qEZfX8OVe1x48HY03CIz\nrnCOEg1yXYWeWDjzoWHHseRXUPjhH8FSYxXkEF4lRZZhyg+NSCheILvdPu5jPcx5\nMjOLm/ehR4Em9mYT1cXvItMkbsvTqGipEpqe+4wu9f5zjIMS"
+   "excerpt": "[REDACTED: private key material]"
   },
   "R2.create-role": {
    "ok": false,

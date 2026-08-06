@@ -292,7 +292,7 @@
         },
         "networkBandwidthMbps": {
           "type": "number",
-          "description": "총 네트워크 대역폭(Mbps). IBM 카탈로그의 bandwidth, azure는 크기 문서 표의 Max Network Bandwidth."
+          "description": "총 네트워크 대역폭(Mbps). Azure 크기 문서 표의 Max Network Bandwidth 등 CSP별 원자료에서 가져온다."
         },
         "azureSizesEvidence": {
           "type": "string",

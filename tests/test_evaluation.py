@@ -12,6 +12,7 @@ from pathlib import Path
 from app.requirements.evaluation import scorecard as sc
 from app.requirements.evaluation import seeded
 from app.requirements.knowledge import rules
+from evaluation.implementation import inspect_repository
 
 _ROOT = Path(__file__).parent.parent
 
@@ -196,3 +197,38 @@ def test_cli_diff_reads_two_scorecards(tmp_path, capsys):
 
     assert cli.main(["diff", str(before), str(after)]) == 0
     assert "-1" in capsys.readouterr().out
+def test_markdown_wrappers_make_generated_repository_incomplete(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.java").write_text(
+        "## src/App.java\nclass App {}\n", encoding="utf-8"
+    )
+    (tmp_path / "src" / "AppTest.java").write_text("class AppTest {}\n", encoding="utf-8")
+    (tmp_path / "build.gradle").write_text("plugins {}\n", encoding="utf-8")
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (tmp_path / "main.tf").write_text("terraform {}\n", encoding="utf-8")
+
+    result = inspect_repository(tmp_path)
+
+    assert result["checks"]["generated_files_clean"] is False
+    assert result["markdownContaminatedFiles"] == ["src/App.java"]
+    assert result["implementationComplete"] is False
+
+
+def test_kotlin_sources_count_as_implementation_and_tests(tmp_path):
+    (tmp_path / "src" / "main").mkdir(parents=True)
+    (tmp_path / "src" / "test").mkdir(parents=True)
+    (tmp_path / "src" / "main" / "App.kt").write_text(
+        "fun main() = println(\"ok\")\n", encoding="utf-8"
+    )
+    (tmp_path / "src" / "test" / "AppTest.kt").write_text(
+        "class AppTest\n", encoding="utf-8"
+    )
+    (tmp_path / "build.gradle.kts").write_text("plugins {}\n", encoding="utf-8")
+    (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (tmp_path / "main.tf").write_text("terraform {}\n", encoding="utf-8")
+
+    result = inspect_repository(tmp_path)
+
+    assert result["checks"]["source_present"] is True
+    assert result["checks"]["test_present"] is True
+    assert result["implementationComplete"] is True

@@ -21,6 +21,8 @@ plantuml.jar
 artifacts/*
 !artifacts/README.md
 /.easydep/
+# 명시적 --basetemp로 만든 로컬 pytest 작업 디렉터리
+/.pytest-tmp-*/
 /.cleanup-backup/
 /.mypy_cache/
 /app/implementation/tools/puml2code-bce/node_modules/

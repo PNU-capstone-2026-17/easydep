@@ -1,7 +1,6 @@
 """리전 이름 ↔ 리전 코드. `서울` → 프로바이더별 리전 코드.
 
-**왜 인프라인가.** 네 지식베이스가 전부 리전을 키로 쓴다 — costkb는 가격을,
-perfkb는 스펙을, capacitykb는 리전별 허용값을 리전 코드로 색인한다. 그런데 사람은
+**왜 인프라인가.** costkb는 가격을, perfkb는 스펙을 리전 코드로 색인한다. 그런데 사람은
 `ap-northeast-2`라고 묻지 않고 "서울"이라고 묻는다. 둘 이상이 쓰는 공용 인프라라
 여기 둔다(`kbcommon/__init__.py`의 규칙).
 
@@ -17,11 +16,11 @@ perfkb는 스펙을, capacitykb는 리전별 허용값을 리전 코드로 색�
 `ap-northeast-2`(AWS)를 주고, GCP 서울은 모델의 기억에 맡겨야 했다. 실제로 모델이
 `asia-north`**h**`east3`로 오타를 냈고 그게 틀린 답으로 이어졌다(실측).
 
-지금은 cb-tumblebug `cloudinfo.yaml`이 주 소스다 — **프로바이더 10곳 188개 리전**:
+지금은 cb-tumblebug `cloudinfo.yaml`에서 **AWS·Azure·GCP만** 보존한다:
 
-    alibaba/aws  ap-northeast-2      gcp      asia-northeast3
-    azure        koreacentral·south  tencent  ap-seoul
-    kt           KR1                 ncp      KR          nhn  KR1·KR2
+    aws    ap-northeast-2
+    azure  koreacentral·south
+    gcp    asia-northeast3
 
 미러(costkb·perfkb)와 **같은 저장소**라 리전 코드가 정확히 맞는다(조인 95%).
 
@@ -305,10 +304,9 @@ def region_lookup(
     *,
     output_dir: str | None = None,
 ) -> str:
-    """사람이 쓴 말('서울')을 리전 코드로 옮긴다. 프로바이더 10곳을 안다.
+    """사람이 쓴 말('서울')을 세 CSP의 리전 코드로 옮긴다.
 
-    capacitykb.agent_api에서 이사 왔다(재편 계획 ⑤) — 리전 카탈로그는 이 KB의
-    산출물이라, 문장 표면도 여기가 소유하는 것이 맞다.
+    가격·성능 카탈로그가 함께 쓰는 공용 리전 해석기다.
 
     이게 없어서 실측에서 "서울 리전에서 GPU 인스턴스"에 답하지 못했다. 데이터는
     `aws-regions.json`에 있었고 `ap-northeast-2`라는 키만 못 만들고 있었다.

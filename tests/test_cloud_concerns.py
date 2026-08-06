@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from app.requirements.agent.steps import step_cloud
+from app.requirements.knowledge import concerns, verify_concerns
 from app.requirements.schemas import DeploymentNeed, DeploymentNeedsResult
 
 CLASSIFIED = [
@@ -89,3 +90,18 @@ def test_deployment_need_prompt_is_english_and_rejects_design_inference():
     assert not re.search(r"[가-힣]", step_cloud._SYSTEM)
     assert "not a mandate for one instance or no replication" in step_cloud._SYSTEM
     assert "Do not select or name concrete cloud resources" in step_cloud._SYSTEM
+
+
+def test_vm_concern_evidence_matches_the_current_dependency_kb():
+    assert all(verdict.ok for verdict in verify_concerns.verify())
+
+
+def test_vm_concerns_do_not_reintroduce_out_of_scope_workloads():
+    evidence = "\n".join(
+        claim for concern in concerns.CONCERNS for claim in concern.claims
+    ).lower()
+
+    assert not any(
+        token in evidence
+        for token in ("k8s", "kubernetes", "pvc", "ingress", "filesystem", "vpn")
+    )

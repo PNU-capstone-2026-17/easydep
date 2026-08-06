@@ -46,7 +46,7 @@
 
 - 필수: Network, Subnet, Firewall, VM, Docker Container
 - 조건부: NIC, Public IP, Internet Gateway
-- 불필요: Load Balancer, 영속 Disk
+- 불필요: Load Balancer, 별도 데이터 Disk(부팅 디스크는 제외)
 
 ### 예상 배포 구조
 
@@ -215,15 +215,17 @@ P5 호출 56회 중 48회는 12개 UC 명세의 생성·의미검증·수리였�
 | P3 | 부하·가용성 | 용량 충족률, LB 구성률, 장애 테스트 성공률 |
 | P4 | 예산 충돌 | 예산 위반률, 충돌 탐지율, 허위 충족 수 |
 
-코드 품질은 모든 프로필에서 테스트 통과 후 순환복잡도, Maintainability Index, 정적 분석 오류와 중복률로 비교한다.
+코드 품질은 Lizard의 함수별 CCN·NLOC 분포와 JaCoCo의 라인·분기·복잡도 커버리지로
+비교한다. 하나의 종합 점수로 합치지 않는다.
 
-## 8. 확정 전 필요한 값
+## 8. 동결된 핵심 조건
 
-- 공통 애플리케이션 포트 정책
-- P1의 월 예산
-- P3의 동시 요청 수·응답시간·테스트 시간
-- P4의 월 예산과 가격 기준일
-- CSP별 실제 배포 대상 조합
-- 골드 리소스의 CSP별 동등 매핑
+- 공통 애플리케이션 포트: 8080, 외부 접근: HTTPS
+- P1 월 예산: 100 USD, VM 한 대
+- P2 월 예산: 150 USD, 데이터 디스크 20 GiB 이상
+- P3 월 예산: 400 USD, 200 RPS·5분·p95 500 ms, 두 가용 영역의 VM 두 대 이상
+- 지역: AWS `ap-northeast-2`, Azure `koreacentral`, GCP `asia-northeast3`
+- IaC: Terraform, 필요한 외부 리소스는 생성하거나 명시적으로 참조
 
-이 값은 파일럿 결과와 실제 CSP 가격을 확인한 뒤 고정한다.
+P1·P2는 개발 세트, P3은 홀드아웃이다. P4는 종단 구현 비교에서 제외하고 충돌 탐지
+실험으로 분리한다. 파일과 SHA-256은 `evaluation/baselines/cases/suite.json`에서 관리한다.

@@ -19,4 +19,9 @@ metagpt-standard-p1-20260805T104500Z-j1k2l3
 ```
 
 각 실행 디렉터리의 `manifest.json`에는 `runId`, `system`, `variant`, `caseId`, `purpose`,
-`completedStages`가 공통으로 들어간다. 산출물은 Git에 포함하지 않는다.
+`completedStages`가 공통으로 들어간다. 실험 인덱스에서는 생성 결과인 `status`와
+`generationStatus`, 채점 실행 결과인 `evaluationStatus`를 구분한다. 재평가하더라도
+원래 생성 상태를 바꾸지 않는다.
+
+현재 채점 결과는 `evaluation.json`에 두고, 재평가 전 결과는 같은 디렉터리의
+`evaluation.<UTC timestamp>.<short id>.json`으로 보존한다. 산출물은 Git에 포함하지 않는다.

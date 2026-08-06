@@ -7,11 +7,9 @@
 
 - **현재 진실: `docs/cloud-native-extension.md`** — 범위·어휘·경계·단계 배분.
   이 영역을 건드리기 전에 여기부터. 다른 문서와 어긋나면 그쪽이 이긴다.
-- 제약 도출(갱신됨): `document/constraint-derivation.md`
-- 의존의 개념 모델(갱신됨): `document/dependency-model.md`
-- **다루는 자원 목록·필드 전수**: `document/resource-catalog.md`
-- 전체 구조·만드는 법: `document/kb-book.md` (**만드는 방법서**이지 무엇을 만들지
-  정하는 문서가 아니다)
+- 연구 정의와 판정 기준: `document/dependency-analysis.md`
+- Docker-on-VM 범위: `document/vm-scope.md`
+- 대조실험과 지표: `document/evaluation-protocol.md`
 - 과제 원문: `document/research.md` · 라이선스: `NOTICE`
 - 현재 상태(축·도구·테스트 개수 등 변하는 숫자)는 **코드·테스트가 진실** —
   문서에서 찾지 말 것. `pytest -q` / 각 KB의 `coverage` 명령.
@@ -22,9 +20,9 @@
    커밋 메시지(변경 기록) > 문서. 같은 사실을 두 번째 장소에 쓰지 않는다.
 2. **날짜 박힌 문서는 불변 기록** (`document/archive/`) — 완료 주석·추기 금지.
    완료는 커밋 메시지가 기록한다.
-3. **살아있는 문서**: README · kb-book · NOTICE(법적 필요) · 이 파일 ·
-   `document/{constraint-derivation,dependency-model,resource-catalog}.md`. 목록은 `tests/test_docs_structure.py`가
-   고정하고, 늘리려면 **"왜 archive가 아닌가"**에 답하는 커밋이 필요하다.
+3. **살아있는 문서**: README · NOTICE(법적 필요) · 이 파일 ·
+   `document/{research,dependency-analysis,vm-scope,evaluation-protocol}.md`.
+   나머지는 `document/archive/`의 과거 자료이며 현재 계약처럼 인용하지 않는다.
 4. **변경 시 문서 갱신 기본값 0회.** 조사가 필요한 작업만 새 문서를 만들되,
    완료 커밋에서 archive로 직행. 커밋 본문은 12줄 이내.
 5. **모든 주장에 근거가 있어야 한다** (2026-07-30). 근거는 `파일:줄` · 원문 · 인용 가능한

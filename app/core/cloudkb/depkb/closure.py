@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
+
 _ARTIFACT = Path(__file__).resolve().parent / "claims.json"
 
 #: 술어 접두 → 소비 방식. **우리 구성** — 새 술어 꼴은 여기 분류를 늘려야 한다.
@@ -56,7 +58,7 @@ PREDICATE_CLASSES: tuple[tuple[str, str], ...] = (
     ("수명주기 조건:", "detail"),
     # 동반 정리: 주체 삭제가 대상(합성물)을 함께 지운다 — 삭제 보호의 반대
     # 방향이라 lifecycle 소비가 deleteBefore가 아니라 cleanupCascades로 갈린다
-    # (k8s 합성 라운드 실측). 존재 간선에 실리면 detail로 읽는다.
+    # 존재 간선에 실리면 detail로 읽는다.
     ("동반 정리:", "detail"),
     # 무방비: 기능을 깨는 변이를 컨트롤 플레인이 막지 않는다 — 기능 의존
     # (question="function") 라운드의 술어. 기능 질문은 아직 closure가 소비하지
@@ -194,11 +196,21 @@ class Closure:
 
 @lru_cache(maxsize=1)
 def _claims() -> list[dict]:
-    return json.loads(_ARTIFACT.read_text(encoding="utf-8"))["claims"]
+    claims = json.loads(_ARTIFACT.read_text(encoding="utf-8"))["claims"]
+    outside = [claim for claim in claims if not is_vm_claim(claim)]
+    if outside:
+        names = sorted({str(claim.get("subject")) for claim in outside})
+        raise ValueError(f"depkb artifact contains resources outside VM scope: {names}")
+    return claims
 
 
 def closure(anchor: str, csp: str) -> Closure:
     """`anchor`를 `csp`에 만들려면 무엇이 함께 있어야 하나."""
+    if anchor not in VM_ANCHOR_TYPES:
+        raise KeyError(
+            f"Docker-on-VM 범위에서 시작할 수 없는 자원이다: {anchor}. "
+            f"허용 시작점: {sorted(VM_ANCHOR_TYPES)}"
+        )
     rows = [c for c in _claims() if c["csp"] == csp]
     if not rows:
         known = sorted({c["csp"] for c in _claims()})

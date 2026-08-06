@@ -1,0 +1,180 @@
+{
+  "schemaVersion": "easydep-end-to-end-oracle/v1",
+  "note": "Application capabilities and provider dependency claims are scored separately. A conceptual resource may be a Terraform resource, data source, or nested block.",
+  "profiles": {
+    "P1": {
+      "requiredCapabilities": {
+        "publicHttps": true,
+        "healthPath": "/health",
+        "applicationPort": 8080,
+        "vmCount": {"min": 1, "max": 1},
+        "persistentData": false,
+        "loadBalancer": false
+      },
+      "functionalAcceptance": [
+        {"name":"length conversion","method":"POST","path":"/conversions","status":200,"json":{"category":"length","value":1.0,"fromUnit":"meter","toUnit":"centimeter"},"expectJson":{"result":100.0,"unit":"centimeter"}},
+        {"name":"temperature conversion","method":"POST","path":"/conversions","status":200,"json":{"category":"temperature","value":0.0,"fromUnit":"celsius","toUnit":"fahrenheit"},"expectJson":{"result":32.0,"unit":"fahrenheit"}}
+      ],
+      "forbiddenConcepts": ["dataDisk", "loadBalancer", "kubernetes", "managedApplicationPlatform"]
+    },
+    "P2": {
+      "requiredCapabilities": {
+        "publicHttps": true,
+        "healthPath": "/health",
+        "applicationPort": 8080,
+        "vmCount": {"min": 1, "max": 1},
+        "persistentData": true,
+        "dataDiskGiB": {"min": 20},
+        "volumeMount": "/var/lib/notes",
+        "loadBalancer": false
+      },
+      "functionalAcceptance": [
+        {"name":"create note","method":"POST","path":"/notes","status":201,"json":{"title":"alpha","content":"first"},"expectJson":{"title":"alpha","content":"first"}},
+        {"name":"list notes","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"alpha","content":"first"}]}
+      ],
+      "forbiddenConcepts": ["loadBalancer", "kubernetes", "managedApplicationPlatform"]
+    },
+    "P3": {
+      "requiredCapabilities": {
+        "publicHttps": true,
+        "healthPath": "/health",
+        "applicationPort": 8080,
+        "vmCount": {"min": 2},
+        "availabilityZones": {"min": 2},
+        "loadBalancer": true,
+        "persistentData": false,
+        "load": {"requestsPerSecond": 200, "seconds": 300, "p95Milliseconds": 500}
+      },
+      "functionalAcceptance": [
+        {"name":"list products","method":"GET","path":"/products","status":200,"expectJson":[{"id":"p1","name":"Notebook","price":12.5},{"id":"p2","name":"Pen","price":2.0}]},
+        {"name":"product detail","method":"GET","path":"/products/p1","status":200,"expectJson":{"id":"p1","name":"Notebook","price":12.5}}
+      ],
+      "forbiddenConcepts": ["dataDisk", "kubernetes", "managedApplicationPlatform"]
+    },
+    "H1": {
+      "requiredCapabilities": {"publicHttps":true,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":2},"availabilityZones":{"min":2},"loadBalancer":true,"persistentData":true,"dataDiskGiB":{"min":40}},
+      "functionalAcceptance": [
+        {"name":"create appointment","method":"POST","path":"/appointments","status":201,"json":{"patientId":"patient-1","clinicianId":"clinician-1","slot":"2030-01-02T09:00:00Z"},"expectJson":{"patientId":"patient-1","clinicianId":"clinician-1"}},
+        {"name":"list appointments","method":"GET","path":"/appointments","status":200,"expectJson":[{"patientId":"patient-1","clinicianId":"clinician-1"}]}
+      ],
+      "forbiddenConcepts": ["kubernetes", "managedApplicationPlatform"]
+    },
+    "H2": {
+      "requiredCapabilities": {"publicHttps":true,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":1,"max":1},"loadBalancer":false,"persistentData":true,"dataDiskGiB":{"min":30}},
+      "functionalAcceptance": [
+        {"name":"create shipment","method":"POST","path":"/shipments","status":201,"json":{"orderId":"order-1"},"expectJson":{"orderId":"order-1"}},
+        {"name":"track shipment","method":"GET","path":"/shipments/order-1","status":200,"expectJson":{"orderId":"order-1"}}
+      ],
+      "forbiddenConcepts": ["loadBalancer", "kubernetes", "managedApplicationPlatform"]
+    },
+    "H3": {
+      "requiredCapabilities": {"publicHttps":true,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":1,"max":1},"loadBalancer":false,"persistentData":true,"dataDiskGiB":{"min":50}},
+      "functionalAcceptance": [
+        {"name":"create portfolio","method":"POST","path":"/portfolios","status":201,"json":{"name":"alpha","currency":"USD"},"expectJson":{"name":"alpha","currency":"USD"}},
+        {"name":"job health","method":"GET","path":"/job-health","status":200,"expectJson":{"status":"UP"}}
+      ],
+      "forbiddenConcepts": ["loadBalancer", "kubernetes", "managedApplicationPlatform"]
+    }
+  },
+  "providers": {
+    "aws": {
+      "regions": ["ap-northeast-2"],
+      "requiredDependencies": {
+        "P1": [{"from":"subnet","to":"network","condition":"when a custom subnet is declared"}],
+        "P2": [{"from":"subnet","to":"network","condition":"when a custom subnet is declared"}],
+        "H3": [{"from":"subnet","to":"network","condition":"when a custom subnet is declared"}],
+        "P3": [
+          {"from":"loadBalancer","to":"subnet"},
+          {"from":"subnet","to":"network"}
+        ]
+      },
+      "evidence": [
+        {"claimSelector":{"subject":"loadBalancer","object":"subnet","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"subnet","object":"network","question":"existence","verdict":"required"}}
+      ]
+    },
+    "azure": {
+      "regions": ["koreacentral"],
+      "requiredDependencies": {
+        "P1": [
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet"},
+          {"from":"subnet","to":"network"}
+        ],
+        "P2": [
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet"},
+          {"from":"subnet","to":"network"}
+        ],
+        "P3": [
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet"},
+          {"from":"subnet","to":"network"},
+          {"from":"loadBalancer","to":"subnet|publicIp|publicIPPrefix","constraint":"exactly one frontend choice"}
+        ],
+        "H1": [
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet"},
+          {"from":"subnet","to":"network"},
+          {"from":"loadBalancer","to":"subnet|publicIp|publicIPPrefix","constraint":"exactly one frontend choice"}
+        ]
+      },
+      "evidence": [
+        {"claimSelector":{"subject":"vm","object":"nic","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"nic","object":"subnet","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"subnet","object":"network","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"loadBalancer","object":"subnet|publicIp|publicIPPrefix","question":"existence","verdict":"required"}}
+      ]
+    },
+    "gcp": {
+      "regions": ["asia-northeast3"],
+      "requiredDependencies": {
+        "P1": [
+          {"from":"vm","to":"disk","meaning":"boot disk, not persistent application data"},
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet","condition":"custom network mode"},
+          {"from":"subnet","to":"network","condition":"custom network mode"}
+        ],
+        "P2": [
+          {"from":"vm","to":"disk","meaning":"boot disk plus the required persistent data disk"},
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet","condition":"custom network mode"},
+          {"from":"subnet","to":"network","condition":"custom network mode"}
+        ],
+        "P3": [
+          {"from":"vm","to":"disk","meaning":"boot disk, not persistent application data"},
+          {"from":"vm","to":"nic"},
+          {"from":"loadBalancer","to":"subnet","condition":"regional load balancer with custom subnet"},
+          {"from":"subnet","to":"network","condition":"custom network mode"}
+        ],
+        "H2": [
+          {"from":"vm","to":"disk","meaning":"boot disk plus the required persistent data disk"},
+          {"from":"vm","to":"nic"},
+          {"from":"nic","to":"subnet","condition":"custom network mode"},
+          {"from":"subnet","to":"network","condition":"custom network mode"}
+        ]
+      },
+      "evidence": [
+        {"claimSelector":{"subject":"vm","object":"disk","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"vm","object":"nic","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"nic","object":"subnet","question":"existence","verdict":"optional"}},
+        {"claimSelector":{"subject":"subnet","object":"network","question":"existence","verdict":"required"}},
+        {"claimSelector":{"subject":"loadBalancer","object":"subnet","question":"existence","verdict":"optional"}}
+      ]
+    }
+  },
+  "cases": {
+    "P1-aws": {"profile":"P1","provider":"aws","budgetUsd":100},
+    "P1-azure": {"profile":"P1","provider":"azure","budgetUsd":100},
+    "P1-gcp": {"profile":"P1","provider":"gcp","budgetUsd":100},
+    "P2-aws": {"profile":"P2","provider":"aws","budgetUsd":150},
+    "P2-azure": {"profile":"P2","provider":"azure","budgetUsd":150},
+    "P2-gcp": {"profile":"P2","provider":"gcp","budgetUsd":150},
+    "P3-aws": {"profile":"P3","provider":"aws","budgetUsd":400},
+    "P3-azure": {"profile":"P3","provider":"azure","budgetUsd":400},
+    "P3-gcp": {"profile":"P3","provider":"gcp","budgetUsd":400},
+    "H1-azure": {"profile":"H1","provider":"azure","budgetUsd":900},
+    "H2-gcp": {"profile":"H2","provider":"gcp","budgetUsd":500},
+    "H3-aws": {"profile":"H3","provider":"aws","budgetUsd":350}
+  }
+}

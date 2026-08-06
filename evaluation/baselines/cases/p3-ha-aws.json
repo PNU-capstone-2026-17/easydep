@@ -1,0 +1,13 @@
+{
+  "caseId": "P3-aws",
+  "requirements": [
+    "Provide GET /products and GET /products/{id} using immutable packaged data containing exactly p1 Notebook priced 12.5 and p2 Pen priced 2.0; list responses are JSON arrays and details contain id, name, and price.",
+    "External clients access the service over HTTPS.",
+    "Serve 200 requests per second for five minutes with 95th-percentile latency below 500 ms.",
+    "The service must remain available when one application VM stops; deploy at least two application VMs across two availability zones behind a load balancer.",
+    "Do not provision persistent application data storage.",
+    "Use Java 21, Spring Boot, Gradle, and Docker, expose GET /health, and listen on port 8080."
+  ],
+  "cloudConstraints": "Deploy to AWS ap-northeast-2 with a monthly infrastructure budget of 400 USD. Terraform must provision or explicitly reference every required cloud resource.",
+  "scope": {"providers":["aws"],"region":"ap-northeast-2","workload":"docker-on-vm","webSearch":false}
+}

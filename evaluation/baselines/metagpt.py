@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -11,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from evaluation.baselines.common import (
+    BUILD_COMPLETENESS_CONTRACT,
     ROOT,
     ExperimentCase,
     base_url,
@@ -28,6 +30,28 @@ DEFAULT_EXECUTABLE = ROOT / ".venv-metagpt" / (
 )
 
 
+def _materialize_repository(workspace: Path, destination: Path) -> Path | None:
+    """Copy MetaGPT's generated project into the method-neutral repo location."""
+    candidates: list[tuple[int, str, Path]] = []
+    for dockerfile in workspace.rglob("Dockerfile"):
+        root = dockerfile.parent
+        score = 1
+        score += 2 * any((root / name).is_file() for name in ("build.gradle", "build.gradle.kts"))
+        score += 2 * (root / "src" / "main").is_dir()
+        score += 3 * any(root.rglob("*.tf"))
+        candidates.append((score, root.as_posix(), root))
+    if not candidates:
+        return None
+    source = max(candidates, key=lambda item: (item[0], item[1]))[2]
+    shutil.copytree(
+        source,
+        destination,
+        dirs_exist_ok=False,
+        ignore=shutil.ignore_patterns(".git", ".gradle", "build", "__pycache__"),
+    )
+    return source
+
+
 def _executable() -> Path:
     configured = os.getenv("METAGPT_EXECUTABLE")
     executable = Path(configured) if configured else DEFAULT_EXECUTABLE
@@ -43,10 +67,14 @@ def _task(case: ExperimentCase) -> str:
     return f"""{case.prompt()}
 
 Act as the unmodified MetaGPT software company. Produce a complete Java 21 Spring Boot Gradle
-repository. Include requirements, architecture/design, Mermaid deployment diagram, source,
-tests, Dockerfile, VM deployment documentation or IaC, and a requirement traceability file.
+repository. The evaluated implementation must include application source, tests, a Dockerfile,
+deployable Terraform IaC, and README instructions. A deployment manifest may be included when useful, but
+is not required. Requirements, architecture/design, and traceability may be produced through
+MetaGPT's native workflow. Do not require a deployment diagram or EasyDep-specific intermediate
+formats such as cloud-plan.json.
 The scope is Docker on Linux VM only: no Kubernetes and no managed application platform.
 Do not use web search. Do not include credentials. Record unresolved contradictions explicitly.
+{BUILD_COMPLETENESS_CONTRACT}
 """
 
 
@@ -71,6 +99,8 @@ def run(
         "scope": case.scope,
     })
     (run_dir / "task.txt").write_text(_task(case), encoding="utf-8")
+    manifest.update({"status": "running", "generationStatus": "running"})
+    write_json(run_dir / "manifest.json", manifest)
     if dry_run:
         manifest["status"] = "dry-run"
         write_json(run_dir / "manifest.json", manifest)
@@ -101,7 +131,12 @@ def run(
             "--n-round", str(rounds),
         ]
         environment = os.environ.copy()
-        environment.update({"HOME": str(profile), "USERPROFILE": str(profile)})
+        environment.update({
+            "HOME": str(profile),
+            "USERPROFILE": str(profile),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        })
         completed = subprocess.run(
             metagpt_command,
             cwd=workspace,
@@ -116,6 +151,7 @@ def run(
     (run_dir / "stderr.log").write_text(completed.stderr, encoding="utf-8")
     manifest.update({
         "status": "completed" if completed.returncode == 0 else "failed",
+        "generationStatus": "completed" if completed.returncode == 0 else "failed",
         "completedStages": (
             ["requirements", "design", "implementation", "testing"]
             if completed.returncode == 0
@@ -127,6 +163,12 @@ def run(
     write_json(run_dir / "manifest.json", manifest)
     if completed.returncode != 0:
         raise RuntimeError(f"MetaGPT failed; inspect {run_dir / 'stderr.log'}")
+    generated_source = _materialize_repository(workspace, run_dir / "repo")
+    manifest["repositoryMaterialized"] = generated_source is not None
+    manifest["generatedRepositorySource"] = (
+        generated_source.relative_to(run_dir).as_posix() if generated_source else None
+    )
+    write_json(run_dir / "manifest.json", manifest)
     return run_dir
 
 
