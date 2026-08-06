@@ -12,7 +12,7 @@ _GROUP = {
     "network": "network", "subnet": "network", "firewall": "network",
     "publicIp": "network", "publicIPPrefix": "network", "nic": "network",
     "loadBalancer": "network", "internetGateway": "network",
-    "vm": "compute", "disk": "compute", "sshKey": "compute", "iamRole": "identity",
+    "vm": "compute", "disk": "compute", "sshKey": "compute", "workloadIdentity": "identity",
 }
 
 

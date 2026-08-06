@@ -61,7 +61,7 @@
 ## 벤더 중립 자원 어휘
 
 `network`, `subnet`, `firewall`, `nic`, `publicIp`, `loadBalancer`, `vm`, `disk`,
-`sshKey`, `iamRole`, `internetGateway`는 본 연구의 정규화 어휘다. Cloud-Barista에서
+`sshKey`, `workloadIdentity`, `internetGateway`는 본 연구의 정규화 어휘다. Cloud-Barista에서
 그대로 가져온 표준이라고 주장하지 않는다. TOSCA의 Compute·Network·Port·BlockStorage와
 각 CSP 공식 모델을 대조하며 CSP 원어와 정규화 결과를 함께 보고한다.
 
@@ -75,3 +75,12 @@
 Cloud-Barista는 멀티 클라우드 공통 인터페이스의 비교 사례로만 사용한다.
 [기술 개요](https://cloud-barista.github.io/technology/)와 현재 코드 명칭이 정확히 일치하지
 않으므로 “Cloud-Barista에서 유래한 어휘”라고 서술하지 않는다.
+
+`workloadIdentity`는 VM에서 CSP API 자격증명을 얻는 연결의 중립명이다. CSP별 실현은
+AWS IAM role+instance profile, Azure managed identity, GCP service account이며 이 셋을
+동일한 제품이라고 주장하지 않는다. 기존 `iamRole` 중립명은 AWS 용어를 다른 CSP에
+확장한 것이므로 폐기했다.
+
+- [AWS EC2 instance profile](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html)
+- [Azure VM managed identity](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-configure-managed-identities)
+- [GCP VM service account](https://docs.cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances)

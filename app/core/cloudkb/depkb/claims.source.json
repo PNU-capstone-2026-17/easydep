@@ -1068,7 +1068,7 @@
                    },
                    {
                        "subject":  "vm",
-                       "object":  "iamRole",
+                       "object":  "workloadIdentity",
                        "csp":  "aws",
                        "relationFamily":  "provisioning",
                        "finding":  "notMandatoryForProvisioning",
@@ -1101,7 +1101,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "aws에서 `vm`와 `iamRole`의 생성 의존성(대상이 없거나 잘못됐을 때 주체를 만들 수 있는지)을 확인한 결과는 `선택`이다. 조건: 별도 조건 없음.",
+                       "note":  "aws에서 `vm`와 `workloadIdentity`(IAM role+instance profile)의 생성 의존성을 확인한 결과, 명시하지 않아도 VM 생성은 가능했다.",
                        "realizationBehavior":  "explicitlyAttachable",
                        "replication":  {
                                            "session":  "2026-08-07",
@@ -1113,7 +1113,7 @@
                    },
                    {
                        "subject":  "vm",
-                       "object":  "iamRole",
+                       "object":  "workloadIdentity",
                        "csp":  "aws",
                        "relationFamily":  "runtime",
                        "finding":  "runtimeRequiredForSignal",
@@ -1207,7 +1207,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "aws에서 `vm`와 `iamRole`의 기능 의존성(대상 변화로 실제 기능이 깨지는지)을 확인한 결과는 `관계 확인됨`이다. 조건: 기능상 주의: 실행 중 인스턴스에서 인스턴스 프로필 분리를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 IMDSv2 자격증명 획득. 기능 확인 신호는 인스턴스 메타데이터에서 자격 증명을 받는지이다.",
+                       "note":  "AWS VM의 IAM role+instance profile을 분리했을 때 게스트의 IMDSv2 자격증명 획득 신호가 실패했다.",
                        "replication":  {
                                            "session":  "2026-08-07",
                                            "experiments":  [
@@ -3023,7 +3023,7 @@
                    },
                    {
                        "subject":  "vm",
-                       "object":  "iamRole",
+                       "object":  "workloadIdentity",
                        "csp":  "azure",
                        "relationFamily":  "provisioning",
                        "finding":  "notMandatoryForProvisioning",
@@ -3056,7 +3056,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "azure에서 `vm`와 `iamRole`의 생성 의존성(대상이 없거나 잘못됐을 때 주체를 만들 수 있는지)을 확인한 결과는 `선택`이다. 조건: 별도 조건 없음.",
+                       "note":  "Azure VM에서 managed identity를 명시하지 않아도 VM 생성은 가능했다.",
                        "realizationBehavior":  "explicitlyAttachable",
                        "replication":  {
                                            "session":  "2026-08-07",
@@ -4071,7 +4071,7 @@
                    },
                    {
                        "subject":  "vm",
-                       "object":  "iamRole",
+                       "object":  "workloadIdentity",
                        "csp":  "gcp",
                        "relationFamily":  "provisioning",
                        "finding":  "notMandatoryForProvisioning",
@@ -4134,7 +4134,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "gcp에서 `vm`와 `iamRole`의 생성 의존성(대상이 없거나 잘못됐을 때 주체를 만들 수 있는지)을 확인한 결과는 `선택`이다. 조건: 별도 조건 없음.",
+                       "note":  "GCP VM에서 service account를 명시하지 않아도 VM 생성은 가능했다.",
                        "realizationBehavior":  "explicitlyAttachable",
                        "replication":  {
                                            "session":  "2026-08-07",

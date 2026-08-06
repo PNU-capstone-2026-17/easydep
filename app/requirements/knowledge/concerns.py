@@ -252,10 +252,10 @@ CONCERNS: tuple[Concern, ...] = (
             "따라서 애플리케이션이 CSP API를 호출하는지는 요구사항에서 따로 확인해야 한다."
         ),
         claims=(
-            "aws/vm->iamRole/provisioning",
-            "azure/vm->iamRole/provisioning",
-            "gcp/vm->iamRole/provisioning",
-            "aws/vm->iamRole/runtime",
+            "aws/vm->workloadIdentity/provisioning",
+            "azure/vm->workloadIdentity/provisioning",
+            "gcp/vm->workloadIdentity/provisioning",
+            "aws/vm->workloadIdentity/runtime",
         ),
         citation="depkb Docker-on-VM 실측 4좌표 — VM identity 선택성 + AWS 기능 결속",
         iso25010=("security",),

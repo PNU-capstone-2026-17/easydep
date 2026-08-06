@@ -9,7 +9,7 @@
 ## 현재 측정 범위
 
 claim의 주체는 `vm`, `nic`, `network`, `subnet`, `firewall`, `loadBalancer` 여섯 종류다.
-대상에는 `disk`, `sshKey`, `iamRole`, `internetGateway`, `publicIp` 등이 추가된다.
+대상에는 `disk`, `sshKey`, `workloadIdentity`, `internetGateway`, `publicIp` 등이 추가된다.
 `publicIPPrefix`는 Azure 원어이며 벤더 중립 `publicIp`와 동일한 자원이라고 간주하지 않는다.
 
 이 어휘는 Cloud-Barista에서 복사한 것이 아니라 본 연구가 TOSCA와 CSP 원어를 대조하여
