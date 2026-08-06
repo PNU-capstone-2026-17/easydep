@@ -194,11 +194,11 @@ class VmDeliveryAdapter:
             return {
                 "csp": intent.get("csp"),
                 "region": intent.get("region"),
-                "anchors": intent.get("anchors") or [],
+                "startResources": intent.get("startResources") or [],
                 "resources": [
                     {
                         "id": item.get("id"),
-                        "role": item.get("role"),
+                        "provisioningStatus": item.get("provisioningStatus"),
                     }
                     for item in intent.get("resources") or []
                 ],
@@ -206,16 +206,17 @@ class VmDeliveryAdapter:
                     {
                         "from": item.get("from"),
                         "to": item.get("to"),
-                        "kind": item.get("kind"),
+                        "relation": item.get("relation"),
                     }
                     for item in plan.get("edges") or []
                 ],
                 "createOrder": intent.get("createOrder") or [],
-                "deleteBefore": intent.get("deleteBefore") or [],
-                "functionalDependencies": [
-                    {"from": item[0], "to": item[1]}
-                    for item in intent.get("functionalDeps") or []
-                    if isinstance(item, (list, tuple)) and len(item) >= 2
+                "deleteBlockedWhileAttached": intent.get("deleteBlockedWhileAttached") or [],
+                "detachRequiredBeforeDelete": intent.get("detachRequiredBeforeDelete") or [],
+                "runtimeDependencies": [
+                    {"from": item[0], "to": item[1], "signal": item[2]}
+                    for item in intent.get("runtimeRequiredForSignal") or []
+                    if isinstance(item, (list, tuple)) and len(item) >= 3
                 ],
                 "machineConstraints": [
                     {
@@ -232,14 +233,14 @@ class VmDeliveryAdapter:
             "csp": plan.get("csp"),
             "region": plan.get("region"),
             "resources": [
-                {"id": item.get("id"), "role": item.get("role")}
+                {"id": item.get("id"), "provisioningStatus": item.get("provisioningStatus")}
                 for item in plan.get("nodes") or []
             ],
             "edges": [
                 {
                     "from": item.get("from"),
                     "to": item.get("to"),
-                    "kind": item.get("kind"),
+                    "relation": item.get("relation"),
                 }
                 for item in plan.get("edges") or []
             ],

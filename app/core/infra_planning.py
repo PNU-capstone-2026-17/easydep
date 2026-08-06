@@ -107,7 +107,10 @@ def _assemble(anchors: list[str], csp: str, region: str,
         anchors = kept
     intent = build(anchors, csp, region)
     report = check(intent, concrete_plan) if concrete_plan is not None else None
-    questions = tuple(d.question for d in intent.decisions)
+    questions = tuple(
+        f"Resolve {d.kind} condition for {d.about}: {d.condition}"
+        for d in intent.decisions
+    )
     if t is not None:
         questions = tuple(t.open_questions) + questions
     notes = []

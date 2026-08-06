@@ -29,17 +29,21 @@ def _metric(actual: set, expected: set) -> dict[str, float | int]:
 def score(run_dir: Path) -> dict:
     manifest = _load(run_dir / "manifest.json")
     plan = _load(run_dir / "cloud-plan.json")
-    expected = _load(ROOT / "oracle.json")[manifest["caseId"]]
+    gold = _load(ROOT / "gold.json")
+    expected = gold[manifest["caseId"]]
+    independence = gold.get("_metadata", {}).get("independenceStatus", "unrecorded")
     actual_nodes = {
         str(node["id"])
         for node in plan.get("nodes", [])
-        if node.get("role") in {None, "anchor", "required"}
+        if node.get("provisioningStatus") in {
+            None, "selectedStartResource", "mandatoryForProvisioning"
+        }
     }
     actual_edges = {
         (str(edge["from"]), str(edge["to"])) for edge in plan.get("edges", [])
     }
-    expected_nodes = set(expected["requiredNodes"])
-    expected_edges = {tuple(edge) for edge in expected["requiredEdges"]}
+    expected_nodes = set(expected["mandatoryNodes"])
+    expected_edges = {tuple(edge) for edge in expected["mandatoryRelations"]}
     order = [
         str(item.get("id") if isinstance(item, dict) else item)
         for item in plan.get("createOrder", [])
@@ -55,6 +59,8 @@ def score(run_dir: Path) -> dict:
         "system": manifest["system"],
         "variant": manifest["variant"],
         "caseId": manifest["caseId"],
+        "goldIndependenceStatus": independence,
+        "thesisEligible": independence == "independently-reviewed",
         "nodes": _metric(actual_nodes, expected_nodes),
         "edges": _metric(actual_edges, expected_edges),
         "creationOrderViolations": order_violations,

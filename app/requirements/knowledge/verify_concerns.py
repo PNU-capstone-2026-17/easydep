@@ -50,7 +50,7 @@ def load_claim_keys() -> set[str]:
     path = (Path(__file__).resolve().parents[2]
             / "core" / "cloudkb" / "depkb" / "claims.json")
     doc = json.loads(path.read_text(encoding="utf-8"))
-    keys = {f"{c['csp']}/{c['subject']}->{c['object']}/{c['question']}"
+    keys = {f"{c['csp']}/{c['subject']}->{c['object']}/{c['relationFamily']}"
             for c in doc["claims"]}
     if not keys:
         raise SystemExit("claims.json이 비어 있다 — 대조가 성립하지 않는다.")

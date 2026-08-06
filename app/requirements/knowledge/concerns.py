@@ -123,7 +123,7 @@ class Concern:
     #: **침묵의 답** — 이 결정을 안 정하면 환경이 실제로 무엇을 하는지, 관측 그대로.
     #: 구 판의 `cloud_specific`(E2의 답) 자리이고 뜻이 좁아졌다: 서술이 아니라 관측이다.
     cloud_specific: str
-    #: **실측 좌표** — `claims.json`의 주장 키(`csp/subject->object/question`).
+    #: **실측 좌표** — `claims.json`의 주장 키(`csp/subject->object/relationFamily`).
     #: 전 좌표가 실재해야 하고(`verify_concerns`), 한 좌표는 한 관심사에만 속한다.
     claims: tuple[str, ...] = ()
     #: claims 밖의 실측 KB를 근거로 쓸 때 그 패키지 이름(예: "perfkb").
@@ -182,13 +182,13 @@ CONCERNS: tuple[Concern, ...] = (
             "선택적으로 포함한다. 따라서 전용망 여부는 요구사항에서 명시할 결정이다."
         ),
         claims=(
-            "aws/firewall->network/existence",
-            "aws/vm->subnet/existence",
-            "azure/network->subnet/existence",
-            "gcp/firewall->network/existence",
-            "gcp/loadBalancer->network/existence",
-            "gcp/nic->network/existence",
-            "gcp/nic->subnet/existence",
+            "aws/firewall->network/provisioning",
+            "aws/vm->subnet/provisioning",
+            "azure/network->subnet/provisioning",
+            "gcp/firewall->network/provisioning",
+            "gcp/loadBalancer->network/provisioning",
+            "gcp/nic->network/provisioning",
+            "gcp/nic->subnet/provisioning",
         ),
         citation="depkb Docker-on-VM 실측 7좌표 — 네트워크·서브넷 생략 가능 경로",
         iso25010=("security",),
@@ -206,13 +206,13 @@ CONCERNS: tuple[Concern, ...] = (
             "도달성만 사라진다."
         ),
         claims=(
-            "aws/nic->firewall/existence",
-            "aws/vm->firewall/existence",
-            "aws/vm->firewall/function",
-            "azure/nic->firewall/existence",
-            "azure/subnet->firewall/existence",
-            "azure/subnet->firewall/function",
-            "gcp/vm->firewall/function",
+            "aws/nic->firewall/provisioning",
+            "aws/vm->firewall/provisioning",
+            "aws/vm->firewall/runtime",
+            "azure/nic->firewall/provisioning",
+            "azure/subnet->firewall/provisioning",
+            "azure/subnet->firewall/runtime",
+            "gcp/vm->firewall/runtime",
         ),
         citation="depkb Docker-on-VM 실측 7좌표 — 방화벽 기본값·연결·도달성",
         iso25010=("security",),
@@ -233,9 +233,9 @@ CONCERNS: tuple[Concern, ...] = (
             "이 좌표들을 무방비 축에만 묶어 이 결정을 못 봤다.)"
         ),
         claims=(
-            "aws/vm->publicIp/function",
-            "azure/nic->publicIp/function",
-            "gcp/vm->publicIp/function",
+            "aws/vm->publicIp/runtime",
+            "azure/nic->publicIp/runtime",
+            "gcp/vm->publicIp/runtime",
         ),
         citation="depkb 실측 3좌표 — 회복 주소 3사 3색(임시 vs 소유)",
         iso25010=("reliability",),
@@ -252,10 +252,10 @@ CONCERNS: tuple[Concern, ...] = (
             "따라서 애플리케이션이 CSP API를 호출하는지는 요구사항에서 따로 확인해야 한다."
         ),
         claims=(
-            "aws/vm->iamRole/existence",
-            "azure/vm->iamRole/existence",
-            "gcp/vm->iamRole/existence",
-            "aws/vm->iamRole/function",
+            "aws/vm->iamRole/provisioning",
+            "azure/vm->iamRole/provisioning",
+            "gcp/vm->iamRole/provisioning",
+            "aws/vm->iamRole/runtime",
         ),
         citation="depkb Docker-on-VM 실측 4좌표 — VM identity 선택성 + AWS 기능 결속",
         iso25010=("security",),

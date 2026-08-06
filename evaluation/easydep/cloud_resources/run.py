@@ -39,7 +39,8 @@ def run(case_id: str, variant: str, output_root: Path = ARTIFACTS) -> Path:
             "csp": case["provider"],
             "region": case["region"],
             "nodes": [
-                {"id": anchor, "role": "anchor"} for anchor in case["anchors"]
+                {"id": anchor, "provisioningStatus": "selectedStartResource"}
+                for anchor in case["anchors"]
             ],
             "edges": [],
             "kbDisabled": True,

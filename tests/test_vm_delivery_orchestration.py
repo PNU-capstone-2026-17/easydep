@@ -28,10 +28,10 @@ def test_vm_delivery_writes_only_returned_terraform(tmp_path):
             "infra_intent": {
                 "csp": "aws",
                 "region": "ap-northeast-2",
-                "anchors": ["vm"],
+                "startResources": ["vm"],
                 "resources": [{
                     "id": "vm",
-                    "role": "anchor",
+                    "provisioningStatus": "selectedStartResource",
                     "because": [],
                     "detail": "Korean text must not cross the boundary",
                 }],
@@ -46,7 +46,7 @@ def test_vm_delivery_writes_only_returned_terraform(tmp_path):
     assert result["cloudKbProvided"] is True
     assert (application / "infra" / "main.tf").read_text(encoding="utf-8").endswith("\n")
     assert captured["dependencyPlan"]["resources"] == [
-        {"id": "vm", "role": "anchor"}
+        {"id": "vm", "provisioningStatus": "selectedStartResource"}
     ]
     assert "Korean text" not in json.dumps(captured)
     assert (application / "Dockerfile").is_file()

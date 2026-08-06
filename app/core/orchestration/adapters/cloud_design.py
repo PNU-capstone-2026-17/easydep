@@ -31,12 +31,12 @@ def _render_cloud_deployment(
     ]
     for node in sorted(nodes, key=lambda item: str(item.get("id", ""))):
         resource_id = str(node.get("id") or "unknown")
-        role = str(node.get("role") or "attachable")
+        role = str(node.get("provisioningStatus") or "notMandatoryForProvisioning")
         stereotype = {
-            "anchor": "selected",
-            "required": "required",
-            "attachable": "optional",
-        }.get(role, "optional")
+            "selectedStartResource": "selected",
+            "mandatoryForProvisioning": "mandatory",
+            "notMandatoryForProvisioning": "non-mandatory",
+        }.get(role, "unclassified")
         shape = "database" if resource_id == "disk" else "node"
         lines.append(
             f'{shape} "{resource_id}" as {_alias(resource_id)} <<{stereotype}>>'
@@ -45,7 +45,7 @@ def _render_cloud_deployment(
         source = _alias(str(edge.get("from") or ""))
         target = _alias(str(edge.get("to") or ""))
         if source != "resource_" and target != "resource_":
-            lines.append(f"{source} --> {target} : requires")
+            lines.append(f"{source} --> {target} : mandatory for provisioning")
     lines.extend(
         [
             "cloud_provider o-- resource_vm : contains",

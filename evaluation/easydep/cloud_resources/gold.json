@@ -1,0 +1,32 @@
+{
+  "_metadata": {
+    "schemaVersion": "easydep-cloud-resource-gold/v2",
+    "independenceStatus": "review-pending",
+    "rule": "This file must be frozen before evaluation and independently reviewed without reading system output. It is not generated from claims.json.",
+    "reviewRequired": true
+  },
+  "aws-public-load-balancer": {
+    "mandatoryNodes": ["loadBalancer", "subnet", "network"],
+    "mandatoryRelations": [["loadBalancer", "subnet"], ["subnet", "network"]],
+    "sourceBasis": [
+      "AWS Elastic Load Balancing Application Load Balancer documentation",
+      "AWS EC2 VPC and subnet documentation"
+    ]
+  },
+  "azure-docker-vm": {
+    "mandatoryNodes": ["vm", "nic", "subnet", "network"],
+    "mandatoryRelations": [["vm", "nic"], ["nic", "subnet"], ["subnet", "network"]],
+    "sourceBasis": [
+      "Azure Virtual Machines overview",
+      "Azure virtual network and network interface documentation"
+    ]
+  },
+  "gcp-docker-vm": {
+    "mandatoryNodes": ["vm", "nic", "disk"],
+    "mandatoryRelations": [["vm", "nic"], ["vm", "disk"]],
+    "sourceBasis": [
+      "Google Compute Engine instance resource model",
+      "Google Compute Engine disks documentation"
+    ]
+  }
+}

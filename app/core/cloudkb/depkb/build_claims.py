@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from app.core.cloudkb.depkb.scope import is_vm_claim
+from app.core.cloudkb.depkb.terminology import validate_claim
 
 _HERE = Path(__file__).resolve().parent
 _SOURCE = _HERE / "claims.source.json"
@@ -34,6 +35,7 @@ def build() -> dict:
 
     seen: set[tuple[str, str, str, str, str]] = set()
     for claim in claims:
+        validate_claim(claim)
         if not is_vm_claim(claim):
             raise ValueError(
                 f"claim outside Docker-on-VM scope: "
@@ -43,7 +45,7 @@ def build() -> dict:
             str(claim.get("csp")),
             str(claim.get("subject")),
             str(claim.get("object")),
-            str(claim.get("question")),
+            str(claim.get("relationFamily")),
             str(claim.get("signal") or ""),
         )
         if key in seen:
@@ -51,12 +53,7 @@ def build() -> dict:
         seen.add(key)
         if claim.get("csp") not in {"aws", "azure", "gcp"}:
             raise ValueError(f"unsupported CSP in claim: {claim.get('csp')}")
-        if claim.get("verdict") not in {"required", "optional", "holds", "unknown"}:
-            raise ValueError(f"unsupported verdict in claim: {claim.get('verdict')}")
-        evidence = claim.get("evidence") or []
-        if not evidence:
-            raise ValueError(f"claim has no evidence: {key}")
-        for item in evidence:
+        for item in claim["observations"]:
             experiment = item.get("experiment")
             step = item.get("step")
             if experiment and step and not _experiment_has_step(str(experiment), str(step)):
@@ -64,19 +61,20 @@ def build() -> dict:
 
     claims.sort(
         key=lambda claim: (
-            claim["csp"], claim["subject"], claim["object"], claim["question"]
+            claim["csp"], claim["subject"], claim["object"], claim["relationFamily"]
         )
     )
     counts: dict[str, int] = {}
     for claim in claims:
-        key = f"{claim['csp']}.{claim['verdict']}"
+        key = f"{claim['csp']}.{claim['finding']}"
         counts[key] = counts.get(key, 0) + 1
     return {
+        "schemaVersion": source.get("schemaVersion", "depkb-claims/v2"),
         "_note": (
             "Reviewed Docker-on-VM cloud resource dependency claims. Each claim is "
             "scoped to AWS, Azure, or GCP and retains its schema or experiment evidence."
         ),
-        "verdictCounts": counts,
+        "findingCounts": counts,
         "claims": claims,
     }
 
@@ -86,4 +84,4 @@ if __name__ == "__main__":
     _ARTIFACT.write_text(
         json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8"
     )
-    print("claims:", len(result["claims"]), "|", result["verdictCounts"])
+    print("claims:", len(result["claims"]), "|", result["findingCounts"])
