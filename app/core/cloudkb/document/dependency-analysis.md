@@ -38,5 +38,13 @@
 `replicationStatus`로 분리한다. 실험은 CSP별로 순차 실행하고 종료 상태와 무관하게 `depkb`
 접두 자원을 정리한 뒤 잔존 자원 0건을 확인한다.
 
+스키마 관측의 `cite`는 단순 문자열로 신뢰하지 않는다. 다음 명령은 활성 claim의 고유 좌표
+35개를 해시 고정 AWS CloudFormation·GCP Discovery 원문과 커밋된 Azure 스키마에서 직접
+해석하며, 경로가 하나라도 없으면 실패한다.
+
+```powershell
+python -m app.core.cloudkb.depkb.schema_evidence
+```
+
 활성 범위는 AWS·Azure·GCP의 Docker-on-VM 배포다. Kubernetes, VPN, 서버리스와 관리형
 애플리케이션 서비스는 범위 밖이며, 이들에 대해 의존성이 없다고 주장하지 않는다.
