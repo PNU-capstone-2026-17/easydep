@@ -310,6 +310,34 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="sequence_traceability",
     ),
+    Rule(
+        id="sequence.participant-classes-exist",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every non-actor sequence participant must correspond to a class declared "
+            "in the class diagram. If the participant has a source_class field, that "
+            "class name is checked; otherwise the participant name itself is checked."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (participant ↔ class alignment)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_participant_classes",
+    ),
+    Rule(
+        id="sequence.message-labels-match-methods",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every sequence message label on a non-return call must name a method "
+            "defined in the target class's BCE model. Comparison is at the name level: "
+            "visibility, parameters, and return type are stripped before matching."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_methods",
+    ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
         id="api.path-parameters-match",

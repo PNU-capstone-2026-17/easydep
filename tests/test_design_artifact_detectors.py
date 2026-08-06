@@ -2,8 +2,27 @@ from app.design.knowledge import detectors
 
 
 STATE = {
-    "class_diagram_puml": "class OrderBoundary <<Boundary>>\nclass OrderControl <<Control>>\n",
+    "class_diagram_puml": "class OrderBoundary <<Boundary>>\nclass OrderControl <<Control>>\nclass Order <<Entity>>\n",
     "usecase_spec": {"use_cases": [{"id": "UC1", "name": "Create order"}]},
+    "extracted_bce_classes": {
+        "Classes": [
+            {
+                "className": "OrderBoundary",
+                "stereotype": "Boundary",
+                "methods": ["displayOrderForm()", "showConfirmation()"],
+            },
+            {
+                "className": "OrderControl",
+                "stereotype": "Control",
+                "methods": ["+ createOrder(items: List): Order", "validateOrder()"],
+            },
+            {
+                "className": "Order",
+                "stereotype": "Entity",
+                "methods": ["- save()", "getTotal(): int"],
+            },
+        ],
+    },
 }
 
 
@@ -36,3 +55,175 @@ def test_api_detector_rejects_invalid_references_and_path_parameters():
     }
     found = {item.rule_id for item in detectors.api_spec_findings(model, STATE)}
     assert {"api.path-parameters-match", "api.schema-references-exist", "api.operation-ids-unique", "api.references-exist"} <= found
+
+
+# ---------------------------------------------------------------------------
+# sequence.participant-classes-exist
+# ---------------------------------------------------------------------------
+def test_participant_classes_valid_model_passes():
+    """모든 비-액터 참가자가 클래스 다이어그램에 존재하면 위반 0건."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary", "source_class": "OrderBoundary"},
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+            {"name": "Order", "kind": "entity", "source_class": "Order"},
+        ],
+        "Messages": [],
+    }
+    findings = detectors.sequence_participant_classes(model, STATE)
+    assert findings == []
+
+
+def test_participant_classes_rejects_nonexistent_class():
+    """클래스 다이어그램에 없는 참가자를 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "GhostService", "kind": "control"},
+        ],
+        "Messages": [],
+    }
+    findings = detectors.sequence_participant_classes(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.participant-classes-exist"
+    assert "GhostService" in findings[0].message
+
+
+def test_participant_classes_uses_source_class_when_present():
+    """source_class가 있으면 그것으로 대조한다 — name과 달라도 source_class가 맞으면 통과."""
+    model = {
+        "Participants": [
+            {"name": "OC", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [],
+    }
+    findings = detectors.sequence_participant_classes(model, STATE)
+    assert findings == []
+
+
+def test_participant_classes_source_class_wrong():
+    """source_class가 존재하지 않는 클래스를 가리키면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "OC", "kind": "control", "source_class": "NoSuchClass"},
+        ],
+        "Messages": [],
+    }
+    findings = detectors.sequence_participant_classes(model, STATE)
+    assert len(findings) == 1
+    assert "NoSuchClass" in findings[0].message
+
+
+def test_participant_classes_skips_actors():
+    """액터는 클래스가 아니므로 건너뛴다."""
+    model = {
+        "Participants": [
+            {"name": "Admin", "kind": "actor"},
+        ],
+        "Messages": [],
+    }
+    findings = detectors.sequence_participant_classes(model, STATE)
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# sequence.message-labels-match-methods
+# ---------------------------------------------------------------------------
+def test_message_methods_valid_model_passes():
+    """메시지 라벨이 target 클래스의 실제 메서드이면 위반 0건."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary", "source_class": "OrderBoundary"},
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+            {"name": "Order", "kind": "entity", "source_class": "Order"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "label": "displayOrderForm()", "type": "sync"},
+            {"source": "OrderBoundary", "target": "OrderControl", "label": "createOrder()", "type": "sync"},
+            {"source": "OrderControl", "target": "Order", "label": "save()", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert findings == []
+
+
+def test_message_methods_rejects_nonexistent_method():
+    """target 클래스에 없는 메서드를 호출하면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderControl", "label": "deleteOrder()", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.message-labels-match-methods"
+    assert "deleteOrder" in findings[0].message
+
+
+def test_message_methods_skips_return_messages():
+    """return 타입 메시지는 호출이 아니므로 건너뛴다."""
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+            {"name": "Order", "kind": "entity", "source_class": "Order"},
+        ],
+        "Messages": [
+            {"source": "Order", "target": "OrderControl", "label": "ghostMethod()", "type": "return"},
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert findings == []
+
+
+def test_message_methods_skips_empty_labels():
+    """라벨이 비어 있으면 건너뛴다."""
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+            {"name": "Order", "kind": "entity", "source_class": "Order"},
+        ],
+        "Messages": [
+            {"source": "OrderControl", "target": "Order", "label": "", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert findings == []
+
+
+def test_message_methods_normalizes_names():
+    """가시성 기호와 매개변수가 달라도 메서드 이름이 같으면 일치로 본다."""
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            # BCE methods에는 "+ createOrder(items: List): Order"
+            # 메시지 라벨은 간단히 "createOrder"만
+            {"source": "User", "target": "OrderControl", "label": "createOrder", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert findings == []
+
+
+def test_message_methods_integrated_via_findings():
+    """sequence_diagram_findings를 통해 새 검출기가 동작하는지 통합 확인."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "GhostService", "kind": "control"},
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderControl", "label": "nonExistentMethod()", "type": "sync"},
+        ],
+    }
+    found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
+    assert "sequence.participant-classes-exist" in found
+    assert "sequence.message-labels-match-methods" in found

@@ -344,6 +344,44 @@ def _known_use_case_ids(state: dict) -> set[str]:
     return rtm.upstream_names(state).get("use_case") or set()
 
 
+def _class_methods_from_state(state: dict) -> dict[str, set[str]]:
+    """BCE 모델에서 클래스별 메서드 집합을 뽑는다.
+
+    메서드 이름은 비교를 위해 **괄호와 앞뒤 공백을 벗긴** 형태로 정규화한다.
+    BCE 모델의 `methods`는 `list[str]`이고, 각 원소는 `"registerMember()"` 같은
+    자유 텍스트다. 시퀀스 메시지의 `label`도 같은 형태이므로 정규화된 이름으로
+    대조한다.
+    """
+    classes = (state.get("extracted_bce_classes") or {}).get("Classes", [])
+    result: dict[str, set[str]] = {}
+    for c in classes:
+        name = c.get("className")
+        if not name:
+            continue
+        methods: set[str] = set()
+        for m in c.get("methods") or []:
+            normalized = _normalize_method_name(str(m).strip())
+            if normalized:
+                methods.add(normalized)
+        result[name] = methods
+    return result
+
+
+def _normalize_method_name(raw: str) -> str:
+    """메서드 이름을 비교 가능한 형태로 정규화한다.
+
+    BCE 모델의 메서드(`"+ registerMember(name: String): void"`)와 시퀀스 메시지의
+    라벨(`"registerMember()"`)을 대조하려면 양쪽을 같은 형태로 만들어야 한다.
+    가시성 기호(`+`, `-`, `#`, `~`)와 반환 타입(`: Type`), 매개변수 목록 안의
+    내용을 전부 벗기고, 메서드 **이름만** 소문자로 남긴다.
+    """
+    # 가시성 기호 제거
+    raw = re.sub(r'^[+\-#~]\s*', '', raw)
+    # 괄호 이전의 이름만 추출
+    match = re.match(r'([A-Za-z_]\w*)', raw)
+    return match.group(1).lower() if match else raw.lower().strip()
+
+
 def sequence_participants(model: dict, state: dict) -> list[Finding]:
     declared = {str(item.get("name", "")).strip() for item in model.get("Participants", []) if item.get("name")}
     found: list[Finding] = []
@@ -382,6 +420,94 @@ def sequence_traceability(model: dict, state: dict) -> list[Finding]:
             for use_case in message.get("use_case_ids", []):
                 if use_case and use_case not in use_cases:
                     found.append(Finding("sequence.references-exist", f"입력에 없는 유스케이스 id '{use_case}'", f"{message.get('source', '?')} -> {message.get('target', '?')}"))
+    return found
+
+
+def sequence_participant_classes(model: dict, state: dict) -> list[Finding]:
+    """비-액터 참가자가 클래스 다이어그램에 실재하는 클래스인가.
+
+    `sequence_traceability`는 추적 필드(`source_class`)만 본다 — 그 필드가 비어 있으면
+    지적하지 않는다. 그런데 참가자 `name` 자체가 클래스 다이어그램에 없는 이름이면,
+    그 참가자에 매달린 메시지가 전부 유령 상호작용이 된다. 여기서 잡는다.
+
+    액터는 유스케이스 명세에서 오므로 클래스 목록에 없는 것이 정상이다 — 건너뛴다.
+    """
+    rule_id = "sequence.participant-classes-exist"
+    classes = _class_names_from_puml(state)
+    if not classes:
+        return []  # 클래스 다이어그램이 없으면 대조할 것이 없다
+
+    found: list[Finding] = []
+    for participant in model.get("Participants", []):
+        kind = str(participant.get("kind", "")).strip().lower()
+        if kind == "actor":
+            continue
+        name = str(participant.get("name", "")).strip()
+        if not name:
+            continue
+        # source_class가 있으면 그것으로 대조, 없으면 name으로 대조
+        class_ref = str(participant.get("source_class", "")).strip() or name
+        if class_ref not in classes:
+            found.append(
+                Finding(rule_id, f"클래스 다이어그램에 없는 참가자 '{name}' (대응 클래스 '{class_ref}')", name)
+            )
+    return found
+
+
+def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
+    """메시지 라벨이 target 클래스의 실제 메서드인가.
+
+    시퀀스 다이어그램의 메시지 라벨은 "호출되는 오퍼레이션"이다. 클래스 다이어그램에서
+    해당 클래스의 `methods`에 정의되지 않은 오퍼레이션을 호출하면 설계가 불일치한다.
+
+    라벨이 비어 있으면 건너뛴다 — 라벨 없는 메시지는 이름을 안 단 것이지 없는 메서드를
+    부른 것이 아니다. return 타입 메시지도 건너뛴다 — 응답은 호출이 아니다.
+
+    대조는 **이름 수준**이다. BCE 모델의 메서드가 `"registerMember(name: String): void"`이고
+    메시지 라벨이 `"registerMember()"` 또는 `"registerMember"`이면 일치로 본다.
+    """
+    rule_id = "sequence.message-labels-match-methods"
+    class_methods = _class_methods_from_state(state)
+    if not class_methods:
+        return []  # BCE 모델이 없으면 대조할 것이 없다
+
+    # 참가자 이름 → 대응 클래스 매핑 (source_class가 있으면 그것, 없으면 name)
+    participant_to_class: dict[str, str] = {}
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        kind = str(participant.get("kind", "")).strip().lower()
+        if kind == "actor" or not name:
+            continue
+        class_ref = str(participant.get("source_class", "")).strip() or name
+        participant_to_class[name] = class_ref
+
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        if str(message.get("type", "sync")).lower() == "return":
+            continue
+        label = str(message.get("label", "")).strip()
+        if not label:
+            continue
+        target = str(message.get("target", "")).strip()
+        source = str(message.get("source", "")).strip()
+        target_class = participant_to_class.get(target)
+        if not target_class:
+            continue  # 액터이거나 매핑이 없다 — 다른 검출기가 잡는다
+
+        methods = class_methods.get(target_class)
+        if methods is None:
+            continue  # 클래스 자체가 BCE에 없다 — participant_classes 검출기가 잡는다
+
+        normalized_label = _normalize_method_name(label)
+        if normalized_label and normalized_label not in methods:
+            location = f"{source} -> {target} : {label}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{target_class}' 클래스에 '{label}' 메서드가 정의되어 있지 않음",
+                    location,
+                )
+            )
     return found
 
 
@@ -441,6 +567,8 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
     "sequence_traceability": sequence_traceability,
+    "sequence_participant_classes": sequence_participant_classes,
+    "sequence_message_methods": sequence_message_methods,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_path_parameters": api_path_parameters,
