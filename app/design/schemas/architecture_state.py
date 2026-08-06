@@ -62,6 +62,11 @@ class ArchitectureState(TypedDict, total=False):
     erd_puml: str
     erd_syntax_valid: bool
     erd_syntax_errors: list[str]
+    # Same shape and same purpose as class_diagram_check, but it judges two layers: the
+    # BCE model *and* the logical data model the mapping derives from it (tables, keys,
+    # foreign keys — see app/design/services/erd/mapping.py). Questions like "does this
+    # table have a primary key" cannot be asked of the BCE model, which has no tables.
+    erd_check: dict[str, Any]
 
     deployment_diagram_model: dict[str, Any]
     deployment_diagram_feedback: str

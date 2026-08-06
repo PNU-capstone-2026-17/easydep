@@ -12,6 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.design.services.common import multiplicity
+
 
 # PlantUML 구조 문자: 멤버/라벨 텍스트에 그대로 들어가면 class 본문을 조기에 닫거나
 # 라벨을 깨뜨린다. 의미는 최대한 보존하며 안전한 문자로 바꾼다.
@@ -25,6 +27,19 @@ _PUML_UNSAFE = str.maketrans(
     }
 )
 
+
+#: 모델의 관계 종류 → PlantUML 기호. **이 표가 곧 아는 종류의 전부다.**
+#:
+#: 여기 없는 값은 조용히 `-->`(단순 연관)로 그려진다. 그 조용함이 문제라서
+#: `class.relationship-type-known` 규칙이 이 표를 기준으로 판정한다 — 검출기가 이것을
+#: import하므로 표를 늘리면 판정도 함께 늘어난다(두 벌로 적지 않는다).
+RELATION_SYMBOLS: dict[str, str] = {
+    "Inheritance": "<|--",
+    "Dependency": "..>",
+    "Association": "-->",
+    "Aggregation": "o--",
+    "Composition": "*--",
+}
 
 def sanitize_class_name(name: str) -> str:
     if not name:
@@ -95,14 +110,6 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
 
         puml_lines.append("")
 
-    relation_mapping = {
-        "Inheritance": "<|--",
-        "Dependency": "..>",
-        "Association": "-->",
-        "Aggregation": "o--",
-        "Composition": "*--",
-    }
-
     for relationship in relationships:
         source = sanitize_class_name(relationship.get("source", ""))
         target = sanitize_class_name(relationship.get("target", ""))
@@ -110,10 +117,23 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         description = relationship.get("description", "")
 
         if relation_type == "Inheritance":
+            # 상속만 방향이 뒤집힌다: PlantUML의 `<|--`는 부모에서 자식으로 그리는데
+            # 모델의 source는 자식이다. **다중도는 붙이지 않는다** — 일반화 관계에
+            # 다중도를 다는 것은 UML이 아니다.
             line = f"{target} <|-- {source}"
         else:
-            puml_symbol = relation_mapping.get(relation_type, "-->")
-            line = f"{source} {puml_symbol} {target}"
+            puml_symbol = RELATION_SYMBOLS.get(relation_type, "-->")
+            line = " ".join(
+                part
+                for part in (
+                    source,
+                    multiplicity.label(relationship.get("sourceMultiplicity")),
+                    puml_symbol,
+                    multiplicity.label(relationship.get("targetMultiplicity")),
+                    target,
+                )
+                if part
+            )
 
         if description:
             clean_description = sanitize_text(description)

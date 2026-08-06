@@ -124,6 +124,8 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "erd_puml",
         "valid_key": "erd_syntax_valid",
         "errors_key": "erd_syntax_errors",
+        # Rule check over the BCE model and the data model mapped from it.
+        "check_key": "erd_check",
         # Stored as its own BCE entity copy; the PlantUML in state_key is derived
         # from this, so ERD feedback edits the model, not the diagram text.
         "source_key": "erd_bce_classes",

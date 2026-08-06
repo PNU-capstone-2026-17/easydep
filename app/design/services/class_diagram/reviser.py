@@ -36,6 +36,18 @@ the same schema. How to edit:
   fields, methods, or relationships that the feedback and spec do not support.
 - Carry `use_case_ids` over unchanged for elements you did not touch; update them
   for elements you changed; fill them in for elements you added.
+- Behavioural links (through a Boundary or Control) carry no multiplicity.
+  Relationships between two Entities are structural and MUST carry both
+  `sourceMultiplicity` and `targetMultiplicity`, each exactly one of "1",
+  "0..1", "*", "1..*" (the equivalent spellings "0..*" and "1..1" are accepted
+  and read as "*" and "1"). They are what the ER diagram turns into foreign keys and
+  join tables; one left empty is not mapped at all. If the model you were given
+  has an Entity-to-Entity relationship without them, fill them in from the
+  use-case specification rather than leaving them as you found them.
+- `identifier` lists the Entity's own fields that already identify it. Leave it
+  empty when the specification names no such field — a surrogate key is added
+  downstream, and the empty list is what records that the key was this project's
+  choice rather than the specification's.
 """
 
 _REVISION_CLOSING = """

@@ -12,23 +12,24 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.design.services.class_diagram.extractor import run_bce_parse
+from app.design.knowledge import rules
+from app.design.services.class_diagram.extractor import rules_section, run_bce_parse
 from app.design.services.common.structured import focus_note
 
 
-ERD_BCE_REVISION_SYSTEM_PROMPT = """
+_ERD_REVISION_PREAMBLE = """
 You edit the entity model that an ERD is derived from. It is expressed in the
 Boundary-Control-Entity (BCE) pattern, but only <<Entity>> classes and the
-relationships between them become tables and foreign keys. You are given the
-current BCE model (as JSON), the use-case specification it was derived from, and
-the user's natural-language feedback about the ERD.
+structural relationships between them become tables and foreign keys. You are
+given the current BCE model (as JSON), the use-case specification it was derived
+from, and the user's natural-language feedback about the ERD.
 
 Apply the feedback to the model and return the FULL revised model, following the
-same schema. Rules:
+same schema. How to edit:
 - Change only what the feedback asks for; leave everything else intact.
 - ERD feedback usually concerns entities, their fields (which become columns),
-  and entity-to-entity relationships (which become foreign keys). Add, remove,
-  or rename these to satisfy the feedback.
+  and entity-to-entity relationships (which become foreign keys and join tables).
+  Add, remove, or rename these to satisfy the feedback.
 - Keep the model grounded in the use-case specification — do not invent entities,
   fields, or relationships that the feedback and spec do not support.
 - Preserve any <<Boundary>> and <<Control>> classes unchanged; they are not part
@@ -38,9 +39,40 @@ same schema. Rules:
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is
   honest, a made-up one is a lie the trace matrix will believe.
+
+## How the model becomes tables
+
+Knowing the mapping is what makes the rules below make sense:
+- an <<Entity>> becomes a table;
+- `identifier` names the fields that already identify it — leave it empty and a
+  surrogate key is added for you;
+- a field written `name : Type` becomes a typed column; with no type it becomes
+  a column with no type;
+- a relationship between two Entities becomes a foreign key when one side is
+  single and the other is many, a unique foreign key when both are single, and a
+  join table when both are many. Multiplicity is what decides this, so a
+  relationship missing one is not mapped at all.
+"""
+
+_ERD_REVISION_CLOSING = """
+The rules above hold for the model you return, not just for the parts you edited.
+A revision that fixes what was asked but breaks a rule elsewhere will be rejected
+whole, so re-read them against your full answer before returning it.
+
 Return the revised model strictly according to the provided schema. Do not
 include markdown, code fences, or any prose outside the schema fields.
 """
+
+#: 수정 프롬프트. **부르는 곳이 둘이다** — 사용자 피드백과 규칙 위반 재생성 루프
+#: (`nodes/artifact.py`의 `check_node`). 후자에게는 규범이 여기 실려 있는 것이 결정적이다:
+#: 지적받은 위반을 고치라고 하면서 규칙을 안 주면 모델은 지적 문구를 회피하는 쪽으로
+#: 고치고, 그 사이 다른 규칙을 새로 어겨 위반 수가 안 줄면 수정본이 통째로 버려진다.
+#:
+#: 그래서 규범은 산문이 아니라 지식베이스에서 온다. ERD는 **추출 프롬프트가 없으므로**
+#: (모델을 클래스 BCE에서 시드한다) 이것이 규칙을 받는 유일한 자리다.
+ERD_BCE_REVISION_SYSTEM_PROMPT = (
+    _ERD_REVISION_PREAMBLE + rules_section(rules.ERD) + _ERD_REVISION_CLOSING
+)
 
 
 def revise_erd_classes(

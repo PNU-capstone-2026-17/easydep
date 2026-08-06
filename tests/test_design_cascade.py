@@ -212,6 +212,26 @@ def test_erd_is_reprojected_without_the_llm(naughty_llm):
     assert "orderedAt" in out["state"]["erd_puml"]      # 그래도 반영됐다
 
 
+def test_the_erd_model_is_a_copy_not_the_class_diagram_itself(naughty_llm):
+    """ERD 모델이 클래스 BCE와 **다른 객체**인가.
+
+    한동안 같은 객체였다. 리바이저가 새 dict를 돌려주고 사상도 원본을 안 건드려서 사고는
+    안 났지만, `_seed_erd_model`의 docstring은 격리를 약속하고 있었다. 약속만 있고 격리가
+    없으면 다음 사람이 그것을 믿고 제자리 편집을 넣고, 그 순간 ERD 수정이 클래스
+    다이어그램을 조용히 오염시킨다.
+
+    같은 객체가 아니라는 것만 고정한다 — 값이 같은 것은 정상이다(투영이니까).
+    """
+    out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
+    state = out["state"]
+
+    assert state["erd_bce_classes"] is not state["extracted_bce_classes"]
+    for erd_class, class_class in zip(
+        state["erd_bce_classes"]["Classes"], state["extracted_bce_classes"]["Classes"]
+    ):
+        assert erd_class is not class_class
+
+
 def test_only_touched_stages_are_reported(naughty_llm):
     """무엇을 고쳤는지 화면에 정직하게 말해야 한다."""
     out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
@@ -325,4 +345,23 @@ def test_stages_without_rules_get_no_check_verdict(naughty_llm):
 
     assert "api_spec" in out["changed"]          # 하류가 실제로 고쳐졌는데도
     assert "api_spec_check" not in out["state"]  # 판정은 없다
-    assert "erd_check" not in out["state"]
+    assert "sequence_diagram_check" not in out["state"]
+    assert "deployment_diagram_check" not in out["state"]
+
+
+def test_the_reprojected_erd_is_checked_too(naughty_llm):
+    """ERD 는 물어보지 않고 다시 그리지만, 다시 그린 것도 **검사한다.**
+
+    클래스 다이어그램이 통과했다는 것이 ERD 의 보증이 아니다 — 두 스테이지가 보는 규칙이
+    다르다(다중도 없는 관계·이름으로 가리킨 참조는 ERD 쪽에서만 결함이다). 검사를 빼면
+    클래스 수정이 ERD 를 망가뜨려도 화면은 아무 말을 안 한다.
+
+    재생성은 하지 않는다(`checked_only`) — 이 경로의 보장은 "지목한 것만 바뀐다"이고,
+    ERD 는 애초에 물어보지 않고 다시 그리는 자리다.
+    """
+    out = revise_and_cascade(STATE, "class_diagram:Order", "주문일시 필드 추가")
+
+    assert "erd" in out["changed"]
+    verdict = out["state"]["erd_check"]
+    assert verdict["stopped"] in {"clean", "checked_only"}
+    assert verdict["repair_iters"] == 0

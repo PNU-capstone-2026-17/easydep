@@ -32,12 +32,32 @@ class BCEClass(BaseModel):
     #: 이 클래스를 낳은 유스케이스 id. 추적표(app/design/rtm.py)가 이걸 모아서
     #: "이 유스케이스가 바뀌면 무엇이 영향받는가"를 답한다.
     use_case_ids: list[str] = Field(default_factory=list)
+    #: 이 클래스를 식별하는 **자기 필드**들(자연키). 비어 있으면 우리가 대리키를 붙인다.
+    #:
+    #: 이 칸이 없을 때 ERD 사상은 모든 테이블에 `{table}_id BIGINT`를 만들고, 이름이
+    #: 겹치는 필드를 조용히 **버렸다.** 그래서 `Book.isbn` 같은 자연키가 산출물에서
+    #: 사라졌다. 대리키를 쓰는 것 자체는 흔한 선택이지만, 그건 우리가 고른 것이므로
+    #: **골랐다는 사실이 남아야 한다**(`erd/mapping.py`의 `keyOrigin`).
+    identifier: list[str] = Field(default_factory=list)
 
 
 class BCERelationship(BaseModel):
     source: str
     target: str
     type: str = Field(default="Association")
+    #: 양 끝의 다중도. `"1"` · `"0..1"` · `"*"` · `"1..*"` 중 하나이고, **빈 문자열은
+    #: "명시 안 됨"이다.**
+    #:
+    #: 다중도는 ERD만의 개념이 아니라 UML 클래스 다이어그램의 일부다. 이 칸이 없던 동안
+    #: ERD 사상은 모든 관계를 1:N으로 **단정**했고(`erd/plantuml.py`), 그래서 M:N이
+    #: 연결 테이블이 되는 경로가 아예 없었다. 관계형 사상에서 M:N → 연결 테이블은
+    #: 선택이 아니다.
+    #:
+    #: **기본값이 `"1"`이 아니라 빈 문자열인 것이 요점이다.** 모르는 것을 그럴듯한
+    #: 값으로 채우면 지어낸 값이 기본값 뒤에 숨는다. 비어 있으면 사상은 그 관계를
+    #: 옮기지 않고 보류로 표시하고, 검사가 그 사실을 지적한다.
+    sourceMultiplicity: str = Field(default="")
+    targetMultiplicity: str = Field(default="")
     description: str = Field(default="")
 
 
@@ -85,18 +105,34 @@ _PROCEDURE = """
    promote one-off values or pure modifiers.
 5. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
-   across steps. Do not list getters/setters as methods.
-6. Method derivation: derive methods from actions each class performs or \
-   delegates, named as verbNoun().
-7. Relationship derivation: if a link would break one of the rules above, \
+   across steps. Do not list getters/setters as methods. Write each field as \
+   `name : Type` when the text tells you the type; leave the type off rather \
+   than guessing one.
+6. Identifier derivation: for each Entity, if the text names a field that \
+   already identifies it (an ISBN, an account number, an email used as the \
+   login), list those field names in `identifier`. Leave `identifier` empty \
+   when no such field exists — a surrogate key will be added downstream, and \
+   an empty list is what says "this project chose the key", not you.
+7. Behavioural link derivation: connect Boundary, Control, and Entity to show \
+   the flow of a use case. If a link would break one of the rules above, \
    insert the missing intermediary Control/Boundary instead of keeping it.
-8. Traceability: set `use_case_ids` on every class to the id(s) of the use \
+8. Structural association derivation — DO NOT SKIP THIS STEP. Behavioural \
+   links are not data relationships. Separately from step 7, go through the \
+   Entities and record how they relate to each other as data: which Entity \
+   holds, owns, or refers to which. Give every Entity-to-Entity relationship \
+   BOTH `sourceMultiplicity` and `targetMultiplicity`, using exactly one of \
+   "1", "0..1", "*", "1..*". These become the foreign keys and join tables of \
+   the ER diagram; without the multiplicities that mapping cannot be made, so \
+   an Entity-to-Entity relationship with a missing multiplicity is worse than \
+   useless. Never express such a relationship by naming a field `memberId` and \
+   leaving the relationship out — write the relationship.
+9. Traceability: set `use_case_ids` on every class to the id(s) of the use \
    case(s) it was derived from.
-9. Self-check before finalizing: read the Rules section again and check your \
+10. Self-check before finalizing: read the Rules section again and check your \
    draft against every rule in it. Every one of them is verified by this \
    project after you answer, so a violation you leave in will be found — \
    correct it now instead.
-10. Coverage check: every MainSuccessScenario step should be represented by \
+11. Coverage check: every MainSuccessScenario step should be represented by \
    at least one class or relationship.
 
 ## Worked Example
@@ -108,6 +144,7 @@ Input (excerpt):
     "Visitor enters email and password on the sign-up form.",
     "System checks whether the email is already registered.",
     "System creates a new Member account.",
+    "System records the sign-up in the member's activity history.",
     "System sends a confirmation email to the Visitor."
   ]
 }
@@ -117,12 +154,33 @@ your actual output must follow the response schema, not this JSON text):
 - SignUpForm <<Boundary>> — collects email/password from the Visitor.
   methods: submitSignUpForm()
 - SignUpController <<Control>> — coordinates duplicate check, account
-  creation, and confirmation email.
+  creation, history recording, and confirmation email.
   methods: registerMember(), checkDuplicateEmail(), sendConfirmationEmail()
 - Member <<Entity>> — persistent account record.
-  fields: email, password, registeredAt
+  fields: email : String, password : String, registeredAt : DateTime
+  identifier: email          (the text says the email identifies the account)
+- ActivityEntry <<Entity>> — one recorded event in a member's history.
+  fields: occurredAt : DateTime, kind : String
+  identifier: (empty — nothing in the text identifies an entry)
 - Relationship: SignUpForm -> SignUpController (Dependency)
 - Relationship: SignUpController -> Member (Dependency)
+- Relationship: Member -> ActivityEntry (Association),
+  sourceMultiplicity "1", targetMultiplicity "*"
+
+Note the last one. The first two are BEHAVIOURAL — they show who calls whom,
+they carry no multiplicity, and they produce nothing in the ER diagram. The
+third is STRUCTURAL — it says one Member has many ActivityEntries, and it is
+the only kind of relationship that becomes a foreign key. An extraction that
+contains only behavioural links has not finished step 8.
+
+Multiplicity pairs and what each becomes downstream:
+- "1" with "*" or "1..*"      → a foreign key on the many side
+- "1" with "1" or "0..1"      → a foreign key with a uniqueness constraint
+- "*" with "*"                → a join table holding both keys
+- anything left empty         → NOT MAPPED AT ALL, and reported as a defect
+
+The equivalent spellings "0..*" and "1..1" are read as "*" and "1"; anything
+else ("n", "many", "0..N") is not multiplicity notation and is rejected.
 
 Populate the response strictly according to the provided schema. Do not \
 include markdown, code fences, or any conversational text outside the \

@@ -90,12 +90,20 @@ def _reproject_erd(state: ArchitectureState) -> dict[str, Any]:
     ERD 는 클래스 BCE 의 <<Entity>> 를 결정론적으로 투영한 것이다. 클래스가 바뀌면
     다시 투영하면 그만이고, 물어볼 것이 없다.
 
-    ERD 스펙에는 `check_key` 가 없으므로 검사 결과도 안 쓴다. 그게 맞다 — 검사할 규칙이
-    아직 없고, 빈 결과를 쓰면 "검사했고 깨끗하다"로 읽힌다.
+    **재투영한 모델도 검사한다.** 클래스 다이어그램이 통과했다는 것이 ERD 의 보증이
+    아니기 때문이다 — 같은 BCE 라도 두 스테이지가 보는 규칙이 다르다(다중도가 없는 관계,
+    기본키 없는 테이블, 이름으로 가리킨 참조는 전부 ERD 쪽에서만 결함이다). 검사를
+    빼면 클래스 쪽 수정이 ERD 를 조용히 망가뜨려도 화면은 아무 말을 안 한다.
+
+    여기서도 재생성은 안 한다(`checked_only`) — 이 경로의 보장은 "지목한 것만 바뀐다"이고,
+    ERD 는 애초에 물어보지 않고 다시 그리는 자리다.
     """
     spec = DESIGN_SPECS["erd"]
     model = spec.extract(state)
-    return {spec.model_key: model, **render_and_validate(spec, model)}
+    patch: dict[str, Any] = {spec.model_key: model, **render_and_validate(spec, model)}
+    if spec.check_key:
+        patch[spec.check_key] = _check_report(spec, model, state)
+    return patch
 
 
 def revise_and_cascade(

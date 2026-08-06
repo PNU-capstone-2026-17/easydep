@@ -13,18 +13,19 @@
 산출물이 어긋날 수 없다. 골격의 근거는 `app/design/nodes/artifact.py` 참조.
 
 대괄호가 붙은 `check`는 **규칙 지식베이스를 가진 스테이지에만** 생긴다(지금은 클래스
-다이어그램뿐). `render`는 렌더와 그 자기검사를 함께 한다 — 예전의 `convert` + `validate`를
+다이어그램과 ERD 둘). `render`는 렌더와 그 자기검사를 함께 한다 — 예전의 `convert` + `validate`를
 합친 것이고, 문법 검증이 렌더러의 출력만 보고 원리상 실패할 수 없어서 나눠 둘 값이 없었다.
 
 서브그래프는 체크포인터 없이 컴파일된다 — 상위 그래프의 세이버가 트리 전체를 관장한다.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.design.knowledge.detectors import class_diagram_findings
+from app.design.knowledge.detectors import class_diagram_findings, erd_findings
 from app.design.nodes.artifact import (
     DesignArtifactSpec,
     check_node,
@@ -68,8 +69,16 @@ def _seed_erd_model(state: ArchitectureState) -> dict[str, Any]:
     갖는 이유는 이후 ERD 피드백이 클래스 다이어그램을 건드리지 않게 하기 위해서다.
     생성은 현재 클래스 BCE에서 다시 시드하므로 이전 ERD 편집을 버린다(클래스 다이어그램
     생성이 유스케이스에서 다시 추출하는 것과 같다). 편집을 보존하는 길은 피드백이다.
+
+    **깊은 복사를 하는 것이 그 문장의 전부다.** 한동안 같은 객체를 그대로 돌려주고 있었다.
+    지금 리바이저가 새 dict를 돌려주고 사상도 원본을 안 건드려서 사고는 안 났지만,
+    격리가 있다고 적혀 있으니 다음 사람은 그것을 믿고 제자리 편집을 넣는다 — 그 순간
+    ERD 수정이 클래스 다이어그램을 조용히 오염시킨다. 문서가 앞서 있었으므로 코드를
+    문서에 맞춘다.
     """
-    return state.get("extracted_bce_classes") or state.get("erd_bce_classes") or {}
+    return copy.deepcopy(
+        state.get("extracted_bce_classes") or state.get("erd_bce_classes") or {}
+    )
 
 
 def _message_key(message: dict) -> str:
@@ -120,9 +129,9 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     render=generate_plantuml_from_bce_json,
     validate=validate_puml_artifact,
     elements={"Classes": lambda c: c.get("className", "")},
-    # 다섯 산출물 중 유일하게 규칙 지식베이스를 가진 스테이지다. 나머지 넷은 아직
-    # `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는 사실이
-    # 그래프에 그대로 보인다.
+    # 규칙 지식베이스를 가진 두 스테이지 중 하나다(다른 하나는 ERD). 시퀀스·API·배포는
+    # 아직 `check_key`가 없고, 그래서 검사 노드도 생기지 않는다 — 검사하지 않는다는
+    # 사실이 그래프에 그대로 보인다.
     check=class_diagram_findings,
     check_key="class_diagram_check",
 )
@@ -194,6 +203,11 @@ ERD_SPEC = DesignArtifactSpec(
     validate=validate_puml_artifact,
     # ERD 는 클래스 BCE 의 투영이라 직접 지목하지 않는다 — 클래스를 고치면 따라온다.
     elements={},
+    # ERD 모델은 클래스 BCE 의 **사본**이라 독립적으로 편집된다. 클래스 쪽이 통과했다는
+    # 것이 이쪽의 보증이 아니므로 여기서 다시 본다. 그리고 검사 대상이 BCE 만이 아니다 —
+    # `erd_findings` 가 사상을 돌려 나온 논리 데이터 모델(테이블·키·외래키)까지 판정한다.
+    check=erd_findings,
+    check_key="erd_check",
 )
 
 DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
@@ -247,7 +261,7 @@ def _add_stage_tail(
 
     **검사 노드는 `check_key`를 가진 스펙에만 생긴다.** 규칙이 아직 없는 산출물에 빈
     노드를 달면 그래프 그림이 "검사한다"고 거짓말을 한다 — 지금 규칙이 있는 것은 클래스
-    다이어그램뿐이고, 그 사실이 토폴로지에 그대로 보여야 한다.
+    다이어그램과 ERD 둘이고, 그 사실이 토폴로지에 그대로 보여야 한다.
 
     렌더가 문법 유효성을 보장하므로 **문법** 수리 루프는 여전히 없다. 검사 노드가 도는
     루프는 문법이 아니라 **의미**를 보고, 텍스트가 아니라 모델을 고치며, 위반 수가 줄지

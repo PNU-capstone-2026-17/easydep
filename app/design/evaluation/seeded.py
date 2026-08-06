@@ -196,6 +196,35 @@ def _not_pascal_case() -> dict[str, Any]:
     return model
 
 
+def _unknown_relationship_type() -> dict[str, Any]:
+    # 렌더러가 모르는 종류로 바꾼다. `Realization`은 구조적 종류가 아니므로
+    # `class.entity-association-multiplicity`를 함께 어기지 않는다.
+    model = _clean_model()
+    model["Relationships"][1]["type"] = "Realization"
+    return model
+
+
+def _entity_link_without_multiplicity() -> dict[str, Any]:
+    # Entity 둘을 구조적으로 잇되 다중도를 안 준다. 새 Entity는 나머지 규칙을 전부
+    # 지키게 둔다 — PascalCase, 이름 유일, UC1 참조, 끝점 선언됨. 그리고 Entity→Entity는
+    # BCE 통신 규칙이 금지하는 조합이 아니다(금지는 B↔E · B↔B · E→C 뿐).
+    model = _clean_model()
+    model["Classes"].append(
+        {
+            "className": "OrderLine",
+            "stereotype": "Entity",
+            "description": "One line of the recorded order.",
+            "fields": ["quantity"],
+            "methods": [],
+            "use_case_ids": ["UC1"],
+        }
+    )
+    model["Relationships"].append(
+        {"source": "Order", "target": "OrderLine", "type": "Composition"}
+    )
+    return model
+
+
 def _uncovered_use_case() -> dict[str, Any]:
     # 모델은 그대로 두고 **상류에 유스케이스를 하나 더** 둔다. 모델이 UC2를 아예 모르므로
     # 커버리지만 깨지고, 지어낸 id는 없으므로 `class.usecase-ids-exist`는 성립한다.
@@ -260,5 +289,303 @@ SEEDED: tuple[Seeded, ...] = (
         "상류의 UC2를 가리키는 클래스가 없다",
         _clean_model(),
         _uncovered_use_case(),
+    ),
+    Seeded(
+        "class.relationship-type-known",
+        "관계 종류가 렌더러가 모르는 Realization이다",
+        _unknown_relationship_type(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.entity-association-multiplicity",
+        "Order와 OrderLine을 구조적으로 이었는데 다중도가 없다",
+        _entity_link_without_multiplicity(),
+        _clean_state(),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# ERD
+# ---------------------------------------------------------------------------
+# 대조군이 따로 있는 이유: ERD 검사는 클래스 쪽과 **다른 것을 본다.** 클래스 대조군은
+# Entity가 하나뿐이고 엔티티 사이 관계가 없어서, ERD 규칙 대부분이 아예 안 걸린다 —
+# 그런 모델로는 "안 걸렸다"가 "지켰다"인지 "볼 것이 없었다"인지 구별되지 않는다.
+#
+# 그래서 이 대조군은 ERD가 판정하는 것을 **전부 한 번씩 갖고 있다**: 자연키를 쓰는
+# 테이블과 대리키를 쓰는 테이블, 다중도가 붙은 구조적 관계, 그리고 사상에서 제외돼야
+# 하는 행위 링크. 규칙마다 손으로 대조했다:
+#   - Entity가 둘 있다 (`erd.has-entity`)
+#   - 구조적 관계 하나에 양끝 다중도가 있고, 행위 링크는 Control이 끼어 있어 사상 대상이
+#     아니다 (`erd.relationship-mapped`)
+#   - Member의 `identifier`가 자기 필드 `email`을 가리킨다 (`erd.identifier-fields-exist`)
+#   - 테이블 이름 Member·Order가 서로 다르고, 사상이 만드는 이름도 없다
+#     (`erd.table-names-unique`)
+#   - `<X>Id` 꼴 필드가 하나도 없다 (`erd.field-looks-like-reference`)
+#   - Entity를 자료형으로 쓰는 필드가 없다 — 전부 String·Int·DateTime이다
+#     (`erd.entity-typed-field-needs-relationship`)
+ERD_CLEAN: dict[str, Any] = {
+    "Classes": [
+        {
+            "className": "OrderController",
+            "stereotype": "Control",
+            "description": "Coordinates order recording.",
+            "fields": [],
+            "methods": ["placeOrder()"],
+            "use_case_ids": ["UC1"],
+        },
+        {
+            "className": "Member",
+            "stereotype": "Entity",
+            "description": "The account that places orders.",
+            "fields": ["email : String", "displayName : String"],
+            "identifier": ["email"],
+            "methods": [],
+            "use_case_ids": ["UC1"],
+        },
+        {
+            "className": "Order",
+            "stereotype": "Entity",
+            "description": "The recorded order.",
+            "fields": ["orderedAt : DateTime", "totalAmount : Int"],
+            "identifier": [],
+            "methods": [],
+            "use_case_ids": ["UC1"],
+        },
+    ],
+    "Relationships": [
+        # 행위 링크 — 다중도가 없는 것이 정상이다. 끝 하나가 Control이라 사상이 지나간다.
+        {"source": "OrderController", "target": "Order", "type": "Dependency"},
+        # 구조적 연관 — 회원 하나가 주문 여럿을 갖는다. Order가 외래키를 든다.
+        {
+            "source": "Member",
+            "target": "Order",
+            "type": "Association",
+            "sourceMultiplicity": "1",
+            "targetMultiplicity": "*",
+        },
+    ],
+}
+
+
+def _clean_erd() -> dict[str, Any]:
+    return copy.deepcopy(ERD_CLEAN)
+
+
+def _erd_dangling_endpoint() -> dict[str, Any]:
+    # 행위 링크 쪽에 붙인다. 구조적 연관에 붙이면 다중도까지 줘야 하고, 안 주면
+    # `erd.relationship-mapped`를 함께 어긴다.
+    model = _clean_erd()
+    model["Relationships"].append(
+        {"source": "OrderController", "target": "GhostEntity", "type": "Dependency"}
+    )
+    return model
+
+
+def _erd_non_bce_stereotype() -> dict[str, Any]:
+    # **Control 의 딱지를 바꾼다.** Entity 쪽을 바꾸면 그 표가 사라지면서 Member–Order
+    # 관계도 못 옮기게 되어 `erd.relationship-mapped`가 함께 걸린다. Control 은 어차피
+    # 표가 아니므로 사상 결과가 안 바뀌고, 그래서 이 규칙만 남는다.
+    model = _clean_erd()
+    model["Classes"][0]["stereotype"] = "Persistence"
+    return model
+
+
+def _erd_unusable_entity_name() -> dict[str, Any]:
+    # 이름 없는 Entity 를 하나 **더한다.** 기존 것을 비우면 그것을 가리키던 관계가
+    # 매달린 끝이 되어 규칙 둘을 어긴다. 필드를 주는 이유는 빈 표에 대한 지침
+    # (`erd.entity-has-field`)이 지적은 안 하지만 대조군을 깨끗하게 두기 위해서다.
+    model = _clean_erd()
+    model["Classes"].append(
+        {
+            "className": "",
+            "stereotype": "Entity",
+            "description": "A class the model forgot to name.",
+            "fields": ["note : String"],
+            "identifier": [],
+            "methods": [],
+            "use_case_ids": ["UC1"],
+        }
+    )
+    return model
+
+
+def _no_entity_at_all() -> dict[str, Any]:
+    # 두 Entity를 Control로 바꾼다. 테이블이 0개가 되면 나머지 검사는 **볼 것이 없어**
+    # 조용하다 — 관계는 끝점이 테이블이 아니라 사상에서 지나가고, identifier 검사는
+    # Entity가 아니라 건너뛴다.
+    model = _clean_erd()
+    for class_item in model["Classes"]:
+        class_item["stereotype"] = "Control"
+    return model
+
+
+def _association_without_multiplicity() -> dict[str, Any]:
+    # 다중도만 뗀다. Order는 외래키를 잃지만 대리키가 남으므로 다른 규칙은 성립한다.
+    model = _clean_erd()
+    model["Relationships"][1].pop("sourceMultiplicity")
+    model["Relationships"][1].pop("targetMultiplicity")
+    return model
+
+
+def _identifier_names_a_missing_field() -> dict[str, Any]:
+    # Member가 자기에게 없는 필드를 식별자로 지목한다. 사상은 조용히 대리키로 떨어지고,
+    # Order의 외래키는 그 대리키를 가리키므로 참조는 여전히 성립한다.
+    model = _clean_erd()
+    model["Classes"][1]["identifier"] = ["memberNo"]
+    return model
+
+
+def _two_entities_share_a_name() -> dict[str, Any]:
+    # 같은 이름의 Entity를 하나 더 둔다. 필드는 `<X>Id` 꼴이 아닌 것으로 두어
+    # `erd.field-looks-like-reference`를 함께 어기지 않게 한다.
+    model = _clean_erd()
+    model["Classes"].append(
+        {
+            "className": "Order",
+            "stereotype": "Entity",
+            "description": "A second class that reuses the name.",
+            "fields": ["note : String"],
+            "identifier": [],
+            "methods": [],
+            "use_case_ids": ["UC1"],
+        }
+    )
+    return model
+
+
+def _mandatory_self_reference() -> dict[str, Any]:
+    # Order 가 자기를 필수로 가리키게 한다("모든 주문에는 원주문이 있다"). 참조되는 끝이
+    # `1` 이라 외래키가 NOT NULL 이 되고, 그러면 **첫 행을 넣을 수 없다.**
+    # 다중도는 아는 표기이고 끝점·딱지·키는 그대로라 다른 규칙은 조용하다.
+    model = _clean_erd()
+    model["Relationships"].append(
+        {
+            "source": "Order",
+            "target": "Order",
+            "type": "Association",
+            "sourceMultiplicity": "1",
+            "targetMultiplicity": "*",
+        }
+    )
+    return model
+
+
+def _composition_with_an_optional_owner() -> dict[str, Any]:
+    # Member–Order 를 합성으로 바꾸고 전체(Member) 쪽을 선택으로 만든다. 다중도는 아는
+    # 표기이므로 사상은 되고(`erd.relationship-mapped` 조용함), 끝점·딱지도 그대로다.
+    # 남는 것은 **종류와 다중도가 서로 다른 말을 한다**는 사실 하나다.
+    model = _clean_erd()
+    model["Relationships"][1]["type"] = "Composition"
+    model["Relationships"][1]["sourceMultiplicity"] = "0..1"
+    return model
+
+
+def _surrogate_key_name_taken() -> dict[str, Any]:
+    # Order 는 `identifier` 가 비어 있어 대리키 `order_id` 를 받는데, 같은 이름의 필드를
+    # 이미 갖고 있다. `<X>Id` 꼴이지만 `Order` 는 **자기 자신**이라
+    # `erd.field-looks-like-reference` 는 조용하다(자기 참조는 세지 않는다).
+    model = _clean_erd()
+    model["Classes"][2]["fields"].append("order_id : String")
+    return model
+
+
+def _field_points_at_an_entity_by_name() -> dict[str, Any]:
+    # 관계를 지우고 그 자리를 이름으로 메운다 — 지워진 이름 추론이 하던 바로 그 일이다.
+    # 관계가 없으므로 `erd.relationship-mapped`는 볼 것이 없다.
+    model = _clean_erd()
+    model["Relationships"] = [model["Relationships"][0]]
+    model["Classes"][2]["fields"].append("memberId : Long")
+    return model
+
+
+def _field_points_at_an_entity_by_type() -> dict[str, Any]:
+    # 관계를 지우고 그 자리를 **자료형**으로 메운다. 앞의 것(`memberId`)과 짝이다 —
+    # 저쪽은 이름이 신호이고 이쪽은 타입이 신호다. 사상은 이 필드로 컬럼을 만들지
+    # 않으므로 관계가 없으면 링크가 산출물 어디에도 안 남는다.
+    #
+    # 필드 이름을 `owner`로 둔 이유가 있다. `member : Member`로 두면 이름 신호에도
+    # 걸려 `erd.field-looks-like-reference`까지 함께 울릴 뻔한 자리인데, 그쪽이
+    # 타입 신호가 있는 필드를 비켜 주므로 실제로는 조용하다. 그래도 **한 시드가 한
+    # 규칙만 어긴다는 것이 이 말뭉치의 규율**이라, 두 신호를 겹치지 않게 갈라 둔다.
+    model = _clean_erd()
+    model["Relationships"] = [model["Relationships"][0]]
+    model["Classes"][2]["fields"].append("owner : Member")
+    return model
+
+
+#: ERD 규칙마다 하나. 클래스 쪽과 같은 규율이다 — **자기 규칙만** 어겨야 한다.
+ERD_SEEDED: tuple[Seeded, ...] = (
+    Seeded(
+        "erd.relationship-endpoints-exist",
+        "관계가 선언되지 않은 GhostEntity를 가리킨다",
+        _erd_dangling_endpoint(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.stereotype-is-bce",
+        "OrderController의 스테레오타입이 BCE 밖(Persistence)이다",
+        _erd_non_bce_stereotype(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.entity-name-usable",
+        "이름 없는 Entity가 있다",
+        _erd_unusable_entity_name(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.has-entity",
+        "Entity가 하나도 없어 테이블이 안 나온다",
+        _no_entity_at_all(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.relationship-mapped",
+        "Member–Order 연관에 다중도가 없어 사상되지 않는다",
+        _association_without_multiplicity(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.no-mandatory-reference-cycle",
+        "Order가 자기 자신을 필수로 가리킨다 — 첫 행을 넣을 수 없다",
+        _mandatory_self_reference(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.composition-owner-is-mandatory",
+        "합성인데 전체(Member) 쪽 다중도가 0..1이다",
+        _composition_with_an_optional_owner(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.identifier-fields-exist",
+        "Member의 identifier가 없는 필드 memberNo를 가리킨다",
+        _identifier_names_a_missing_field(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.surrogate-key-collides",
+        "Order가 우리가 붙일 대리키 order_id와 같은 이름의 필드를 갖고 있다",
+        _surrogate_key_name_taken(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.table-names-unique",
+        "Order라는 이름의 Entity가 둘이다",
+        _two_entities_share_a_name(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.field-looks-like-reference",
+        "Order.memberId가 관계 없이 Member를 이름으로 가리킨다",
+        _field_points_at_an_entity_by_name(),
+        _clean_state(),
+    ),
+    Seeded(
+        "erd.entity-typed-field-needs-relationship",
+        "Order.owner의 타입이 Member인데 둘 사이에 관계가 없다",
+        _field_points_at_an_entity_by_type(),
+        _clean_state(),
     ),
 )

@@ -47,7 +47,9 @@ from typing import Any
 
 from app.design import rtm
 from app.design.knowledge import rules
-from app.design.services.class_diagram.plantuml import sanitize_class_name
+from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
+from app.design.services.common import multiplicity
+from app.design.services.erd import mapping
 
 #: BCE 세 분류. 소문자로 비교한다 — 모델은 `<<Control>>`, `Control`, `control`을 섞어 낸다.
 BOUNDARY = "boundary"
@@ -105,6 +107,30 @@ def _relation_label(relationship: dict) -> str:
 # ---------------------------------------------------------------------------
 # 검출기
 # ---------------------------------------------------------------------------
+def _dangling_endpoints(model: dict, rule_id: str, consequence: str) -> list[Finding]:
+    """관계의 양 끝이 선언된 클래스인가 — **판정은 한 벌, 문구는 스테이지별로.**
+
+    같은 결함이 두 산출물에서 **정반대로** 나타나기 때문에 문구를 나눈다. 클래스
+    다이어그램에서는 PlantUML이 그 이름으로 유령 클래스를 *만들고*, ERD에서는 사상이
+    그 관계를 *버린다*. 하나는 없던 것이 생기고 하나는 있던 것이 사라진다 — 고치는
+    사람에게는 전혀 다른 이야기다.
+
+    그렇다고 검출기를 두 벌 쓰면 갈라진다. 그래서 로직은 여기 하나이고, 부르는 쪽이
+    자기 규칙 id와 결과 설명을 준다.
+    """
+    declared = {c.get("className") for c in _classes(model) if c.get("className")}
+    found: list[Finding] = []
+    for relationship in _relationships(model):
+        label = _relation_label(relationship)
+        for end in ("source", "target"):
+            name = relationship.get(end)
+            if name and name not in declared:
+                found.append(
+                    Finding(rule_id, f"{end} '{name}'가 Classes에 없음 — {consequence}", label)
+                )
+    return found
+
+
 def relationship_endpoints(model: dict, state: dict) -> list[Finding]:
     """관계의 양 끝이 선언된 클래스인가.
 
@@ -119,18 +145,11 @@ def relationship_endpoints(model: dict, state: dict) -> list[Finding]:
 
     즉 문법 검증도, 하류 파서도 이것을 막지 못한다. 여기서 막아야 한다.
     """
-    rule_id = "class.relationship-endpoints-exist"
-    declared = {c.get("className") for c in _classes(model) if c.get("className")}
-    found: list[Finding] = []
-    for relationship in _relationships(model):
-        label = _relation_label(relationship)
-        for end in ("source", "target"):
-            name = relationship.get(end)
-            if name and name not in declared:
-                found.append(
-                    Finding(rule_id, f"{end} '{name}'가 Classes에 없음", label)
-                )
-    return found
+    return _dangling_endpoints(
+        model,
+        "class.relationship-endpoints-exist",
+        "그림에 그 이름의 빈 클래스가 생긴다",
+    )
 
 
 def usecase_ids(model: dict, state: dict) -> list[Finding]:
@@ -159,24 +178,31 @@ def usecase_ids(model: dict, state: dict) -> list[Finding]:
     return found
 
 
-def stereotype_is_bce(model: dict, state: dict) -> list[Finding]:
-    """스테레오타입이 Boundary/Control/Entity 중 하나인가.
+def _broken_stereotypes(model: dict, rule_id: str, consequence: str = "") -> list[Finding]:
+    """스테레오타입이 Boundary/Control/Entity 중 하나인가 — 판정 한 벌, 문구는 스테이지별.
 
-    **통신 규칙보다 먼저 돈다.** 이게 깨지면 아래 세 규칙이 무판정이 되고, 무판정은
-    겉보기에 통과와 같다.
+    `_dangling_endpoints`와 같은 이유로 공유한다: 판정은 같고 **결과가 다르다**. 클래스
+    다이어그램에서는 통신 규칙이 무판정이 되고, ERD에서는 그 표와 관계가 사라진다.
     """
-    rule_id = "class.stereotype-is-bce"
+    tail = f" — {consequence}" if consequence else ""
     found: list[Finding] = []
     for class_item in _classes(model):
         name = class_item.get("className") or "?"
         stereotype = _stereotype_of(class_item)
         if not stereotype:
-            found.append(Finding(rule_id, "스테레오타입 없음", name))
+            found.append(Finding(rule_id, f"스테레오타입 없음{tail}", name))
         elif stereotype not in BCE_STEREOTYPES:
             found.append(
-                Finding(rule_id, f"BCE 밖의 스테레오타입 '{stereotype}'", name)
+                Finding(rule_id, f"BCE 밖의 스테레오타입 '{stereotype}'{tail}", name)
             )
     return found
+
+
+def stereotype_is_bce(model: dict, state: dict) -> list[Finding]:
+    """**통신 규칙보다 먼저 돈다.** 이게 깨지면 아래 세 규칙이 무판정이 되고, 무판정은
+    겉보기에 통과와 같다.
+    """
+    return _broken_stereotypes(model, "class.stereotype-is-bce")
 
 
 #: 금지된 (source 스테레오타입, target 스테레오타입) 조합 → (규칙 id, 왜 안 되는지).
@@ -231,6 +257,67 @@ def communication_rules(model: dict, state: dict) -> list[Finding]:
         if violation:
             rule_id, message = violation
             found.append(Finding(rule_id, message, _relation_label(relationship)))
+    return found
+
+
+def relationship_type_known(model: dict, state: dict) -> list[Finding]:
+    """관계의 종류가 렌더러가 아는 다섯 중 하나인가.
+
+    모르는 값은 그림에서 단순 연관(`-->`)이 되고, ERD 사상에서는 구조적 연관으로 세지지
+    않아 관계가 통째로 사라진다. **판정 기준을 여기 다시 적지 않고** 렌더러의 표를
+    그대로 쓴다 — 두 벌이면 표를 늘릴 때 판정이 안 따라온다.
+    """
+    rule_id = "class.relationship-type-known"
+    found: list[Finding] = []
+    for relationship in _relationships(model):
+        kind = str(relationship.get("type") or "")
+        if kind and kind not in RELATION_SYMBOLS:
+            found.append(
+                Finding(rule_id, f"모르는 관계 종류 '{kind}'", _relation_label(relationship))
+            )
+    return found
+
+
+def entity_association_multiplicity(model: dict, state: dict) -> list[Finding]:
+    """Entity 사이의 **구조적** 관계가 양끝 다중도를 갖고 있는가.
+
+    행위 링크(Boundary·Control이 낀 것)와 상속은 세지 않는다. 전자는 다중도를 가질 것이
+    아니고, 후자는 일반화라 UML에서도 다중도를 달지 않는다.
+
+    스테레오타입이 BCE 밖이거나 끝이 선언되지 않은 관계도 건너뛴다 — 그건
+    `stereotype_is_bce`와 `relationship_endpoints`가 이미 지적했고, 여기서 또 세면 한
+    결함이 여러 지적이 된다.
+    """
+    rule_id = "class.entity-association-multiplicity"
+    stereotype_by_name = {
+        c["className"]: _stereotype_of(c) for c in _classes(model) if c.get("className")
+    }
+
+    found: list[Finding] = []
+    for relationship in _relationships(model):
+        if str(relationship.get("type") or "Association") not in mapping.STRUCTURAL_TYPES:
+            continue
+        ends = (relationship.get("source"), relationship.get("target"))
+        if any(stereotype_by_name.get(end) != ENTITY for end in ends):
+            continue
+        label = _relation_label(relationship)
+        for side in ("source", "target"):
+            value = str(relationship.get(f"{side}Multiplicity") or "").strip()
+            # **판정을 사상과 같은 함수로 한다.** 두 벌이면 검출기는 통과시키는데 사상은
+            # 못 옮기는 어긋남이 나고, 그러면 아무 지적 없이 선이 사라진다.
+            if multiplicity.is_known(value):
+                continue
+            # 안 적은 것과 못 읽는 것을 구별해서 말한다 — 고치는 쪽이 할 일이 다르다.
+            found.append(
+                Finding(rule_id, f"{side} 다중도가 없음", label)
+                if not value
+                else Finding(
+                    rule_id,
+                    f"{side} 다중도 '{value}'는 아는 표기가 아님 "
+                    f"(쓸 수 있는 것: {', '.join(multiplicity.CANONICAL)})",
+                    label,
+                )
+            )
     return found
 
 
@@ -303,6 +390,397 @@ def usecase_coverage(model: dict, state: dict) -> list[Finding]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# ERD 검출기 — 두 층을 본다
+# ---------------------------------------------------------------------------
+# 앞의 검출기들은 전부 BCE 모델 하나만 봤다. ERD는 그럴 수 없다: "이 테이블에 기본키가
+# 있나", "이 외래키가 실재 테이블을 가리키나"는 **사상 결과**에 대한 질문이고, BCE에는
+# 테이블도 키도 없다.
+#
+# 그래서 여기 있는 것들은 `mapping.build_logical_model()`이 낸 논리 데이터 모델을 받는다.
+# 그림을 파싱하지 않는 이유는 앞의 것들과 같다 — 렌더는 정보를 지우고, 우리가 방금 만든
+# 문자열을 되읽는 것은 아무것도 확인하지 않는다.
+def _tables(logical: dict) -> list[dict]:
+    return [t for t in (logical.get("Tables") or []) if isinstance(t, dict)]
+
+
+def erd_relationship_endpoints(model: dict, logical: dict) -> list[Finding]:
+    return _dangling_endpoints(
+        model, "erd.relationship-endpoints-exist", "그 관계가 ERD에서 통째로 사라진다"
+    )
+
+
+def erd_stereotype_is_bce(model: dict, logical: dict) -> list[Finding]:
+    """`erd_has_entity`보다 **먼저** 돈다 — 딱지가 전부 깨져 표가 0개가 되면 원인은
+    하나인데 지적이 둘 나온다. 원인 쪽을 먼저 보여준다.
+    """
+    return _broken_stereotypes(model, "erd.stereotype-is-bce", "ERD에서 빠진다")
+
+
+def erd_entity_name_usable(model: dict, logical: dict) -> list[Finding]:
+    """딱지가 Entity인 것만 본다 — Boundary·Control은 표가 안 되므로 이름이 비어도 ERD에
+    영향이 없고, 그건 클래스 다이어그램 쪽이 볼 일이다.
+    """
+    rule_id = "erd.entity-name-usable"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        if not mapping.is_entity(class_item):
+            continue
+        name = str(class_item.get("className") or "")
+        if not name.strip():
+            found.append(Finding(rule_id, "className이 비어 있음 — 'UnknownEntity'가 된다"))
+        elif not mapping.sanitize_entity_name(name).strip("_"):
+            found.append(
+                Finding(rule_id, f"'{name}'은 전부 기호라 표 이름이 될 수 없음", name)
+            )
+    return found
+
+
+def erd_has_entity(model: dict, logical: dict) -> list[Finding]:
+    """표가 하나라도 있는가.
+
+    재생성이 모델을 **비워서** 위반을 없애는 길도 이것이 막는다 — 비우면 이 위반이 새로
+    생겨 위반 수가 안 줄고 후보가 버려진다. ERD 스펙에는 `elements`가 없어
+    `_is_degenerate`가 그 함정을 못 막으므로 막는 것은 이 규칙 하나다.
+    """
+    if _tables(logical):
+        return []
+    return [Finding("erd.has-entity", "<<Entity>> 클래스가 하나도 없어 ERD가 비어 있다")]
+
+
+#: 사상 못 한 사유 → **사람이 읽을 말.** 빠지면 `str(reason)`이 그대로 나가서
+#: `multiple-inheritance` 같은 영어 슬러그가 게이트 화면에 뜬다.
+#:
+#: **모듈 수준에 있는 것이 요점이다.** 사유는 `mapping.py`에서 늘어나고 문구는 여기서
+#: 붙는데, 함수 안에 숨어 있으면 둘이 갈라진 것을 아무도 못 본다. 밖에 있으면
+#: `tests/test_erd_check.py`가 `mapping`의 `UNMAPPED_*` 상수를 전수해 이 표와 대조한다.
+UNMAPPED_PROSE: dict[str, str] = {
+    mapping.UNMAPPED_MULTIPLICITY: "다중도가 없어 사상하지 못했다",
+    mapping.UNMAPPED_DEPENDENCY: "Entity 둘을 Dependency로 이었다 — 데이터 관계가 아니다",
+    mapping.UNMAPPED_MULTIPLE_INHERITANCE: (
+        "부모가 둘 이상이다 — 관계형에는 다중 상속이 없어 하나도 옮기지 않았다. "
+        "부모를 하나로 줄이거나, 나머지는 연관으로 바꿔라"
+    ),
+    mapping.UNMAPPED_INHERITANCE_CYCLE: (
+        "상속이 순환한다 — 어느 행도 먼저 만들 수 없어 하나도 옮기지 않았다"
+    ),
+    mapping.UNMAPPED_DUPLICATE_JUNCTION: (
+        "같은 두 Entity를 잇는 다대다가 둘 이상이다 — 연결 테이블 이름이 같아져 "
+        "둘째는 옮기지 않았다. 하나로 합치거나, 둘을 구별해야 한다면 그 관계를 "
+        "Entity로 승격시켜 양쪽과 각각 관계를 맺어라"
+    ),
+}
+
+
+def erd_relationships_mapped(model: dict, logical: dict) -> list[Finding]:
+    """옮기지 못한 관계가 남아 있는가 — **그림에 없는 관계가 모델에 있다.**"""
+    return [
+        Finding(
+            "erd.relationship-mapped",
+            UNMAPPED_PROSE.get(item.get("reason"), str(item.get("reason"))),
+            "{} -> {}".format(item.get("source", "?"), item.get("target", "?")),
+        )
+        for item in (logical.get("Unmapped") or [])
+    ]
+
+
+def erd_composition_owner(model: dict, logical: dict) -> list[Finding]:
+    """**BCE 층에서 본다** — 논리 모델에는 한쪽으로 정리된 결과만 남아 모순이 안 보인다."""
+    rule_id = "erd.composition-owner-is-mandatory"
+    entities = {c.get("className") for c in _classes(model) if mapping.is_entity(c)}
+
+    found: list[Finding] = []
+    for relationship in _relationships(model):
+        if str(relationship.get("type") or "") != "Composition":
+            continue
+        if not {relationship.get("source"), relationship.get("target")} <= entities:
+            continue
+        # source 가 전체(whole)이고 target 이 부분(part)이다 — 사상이 그렇게 읽는다.
+        owner = multiplicity.normalize(relationship.get("sourceMultiplicity"))
+        if not owner or owner == "1":
+            # 빈 값은 다중도 자체가 없는 것이라 `erd.relationship-mapped`가 이미 말한다.
+            continue
+        found.append(
+            Finding(
+                rule_id,
+                f"합성인데 전체 쪽이 '{owner}'다 — 합성은 부분이 전체 없이 존재할 수 없다는 "
+                "뜻이라 전체 쪽은 '1'이어야 한다. 관계 종류를 Association으로 바꾸거나 "
+                "다중도를 '1'로 고쳐라",
+                _relation_label(relationship),
+            )
+        )
+    return found
+
+
+def erd_mandatory_reference_cycle(model: dict, logical: dict) -> list[Finding]:
+    """필수 외래키만 따라가 **제자리로 돌아오는 고리**를 찾는다. 자기 참조도 고리다.
+
+    고리마다 **지적 하나**를 낸다. 간선마다 내면 한 실수가 여러 지적이 되어, 재생성이
+    하나를 고쳐도 위반 수가 안 줄고 수정본이 통째로 버려진다.
+    """
+    rule_id = "erd.no-mandatory-reference-cycle"
+    edges: dict[str, set[str]] = {}
+    for table in _tables(logical):
+        name = str(table.get("name") or "")
+        edges[name] = {
+            str(c["references"])
+            for c in table.get("columns") or []
+            if c.get("references") and c.get("mandatory")
+        }
+
+    found: list[Finding] = []
+    reported: set[frozenset[str]] = set()
+    for start in edges:
+        path: list[str] = []
+
+        def walk(node: str) -> list[str] | None:
+            if node == start and path:
+                return [*path, start]
+            if node in path:
+                return None
+            path.append(node)
+            for nxt in sorted(edges.get(node, ())):
+                cycle = walk(nxt)
+                if cycle:
+                    return cycle
+            path.pop()
+            return None
+
+        for first in sorted(edges[start]):
+            cycle = walk(first)
+            if not cycle:
+                continue
+            key = frozenset(cycle)
+            if key in reported:
+                break
+            reported.add(key)
+            found.append(
+                Finding(
+                    rule_id,
+                    "필수 외래키가 " + " → ".join([start, *cycle]) + " 로 제자리에 돌아온다 "
+                    "— 이 고리에는 첫 행을 넣을 수 없다. 한 곳의 다중도를 '0..1'로 바꾸거나 "
+                    "관계를 다시 보라",
+                    start,
+                )
+            )
+            break
+    return found
+
+
+def erd_identifier_fields(model: dict, logical: dict) -> list[Finding]:
+    """**없는 필드**를 가리키는 것과 있지만 **키가 될 수 없는** 필드(다중값)를 가리키는
+    것을 구별해 말한다 — 고치는 쪽이 할 일이 다르다. BCE 층에서 본다(논리 모델에는 이미
+    대리키로 떨어진 결과만 남아 있다).
+    """
+    rule_id = "erd.identifier-fields-exist"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        if not mapping.is_entity(class_item):
+            continue
+        name = class_item.get("className") or "?"
+        declared = {
+            field: raw_type
+            for field, raw_type in (
+                mapping.split_field(f) for f in class_item.get("fields") or [] if str(f).strip()
+            )
+            if field
+        }
+        for wanted in class_item.get("identifier") or []:
+            match = next(
+                (d for d in declared if mapping.squash(str(wanted)) == mapping.squash(d)), None
+            )
+            if match is None:
+                found.append(
+                    Finding(rule_id, f"identifier '{wanted}'가 이 Entity의 필드에 없음", name)
+                )
+            elif mapping.is_collection(declared[match]):
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"identifier '{wanted}'는 다중값 필드라 키가 될 수 없음 — "
+                        "제1정규화로 자식 표에 가므로 이 표에 칸이 안 남는다",
+                        name,
+                    )
+                )
+    return found
+
+
+def erd_surrogate_key_collides(model: dict, logical: dict) -> list[Finding]:
+    """사상이 표시해 둔 충돌(`surrogateCollidesWith`)을 지적으로 옮긴다."""
+    return [
+        Finding(
+            "erd.surrogate-key-collides",
+            f"우리가 붙이는 대리키와 이름이 같은 필드가 있다 — 선언한 '{collision}'이 밀려난다. "
+            "식별자라면 identifier에 적고, 아니라면 이름을 바꿔라",
+            str(table.get("name") or "?"),
+        )
+        for table in _tables(logical)
+        if (collision := table.get("surrogateCollidesWith"))
+    ]
+
+
+def erd_table_names_unique(model: dict, logical: dict) -> list[Finding]:
+    """테이블 이름이 유일한가 — **사상이 만든 이름(연결 표·1NF 자식)까지 세어서.**"""
+    rule_id = "erd.table-names-unique"
+    seen: set[str] = set()
+    found: list[Finding] = []
+    for table in _tables(logical):
+        name = str(table.get("name") or "")
+        if name in seen:
+            kind = table.get("origin", {}).get("kind", "class")
+            found.append(Finding(rule_id, f"테이블 이름이 겹친다 (출처: {kind})", name))
+        seen.add(name)
+    return found
+
+
+# 기본키 유무와 외래키 참조를 보는 검출기는 **일부러 없다.** 사상이 그 둘을 구성에 의해
+# 보장하므로 어떤 모델로도 위반이 안 나오고, 그러면 그 검출기의 "0건"은 아무 정보가
+# 아니다. 불변식은 `tests/test_erd_mapping.py`가 지킨다 — 사상이 깨지면 그쪽이 운다.
+
+
+def erd_entity_typed_field_needs_relationship(model: dict, logical: dict) -> list[Finding]:
+    """필드 타입이 Entity인데 그 둘 사이에 관계가 없다 — **사상이 조용히 버리는 자리다.**
+
+    `member : Member`나 `lines : List<OrderLine>`는 컬럼이 아니다. 그 사실을 들고 가는
+    것은 관계이고(`mapping.py`의 사상표), 그래서 사상은 컬럼을 안 만든다. 관계까지 없으면
+    **모델이 적은 링크가 산출물 어디에도 안 남는다** — 컬럼도 자식 표도 관계선도 없고
+    `Unmapped`에도 안 들어간다. 드러날 자리가 여기뿐이다.
+
+    한동안 컬렉션은 버려지고 스칼라는 가짜 컬럼이 됐다(`member : MEMBER` — SQL 타입도
+    아닌 것이 하류 DDL까지 갔다). 지금은 둘 다 안 만들고, 둘 다 여기서 말한다.
+
+    **이름이 아니라 타입을 본다.** `erd.fk-from-field-name`이 금지하는 추측과 다른
+    일이라는 것은 `mapping.names_an_entity`의 docstring에 적어 두었다.
+    """
+    rule_id = "erd.entity-typed-field-needs-relationship"
+    entities = {
+        c.get("className"): c for c in _classes(model)
+        if mapping.is_entity(c) and c.get("className")
+    }
+    linked: set[frozenset[str]] = {
+        frozenset((str(r.get("source")), str(r.get("target"))))
+        for r in _relationships(model)
+    }
+
+    found: list[Finding] = []
+    for name, class_item in entities.items():
+        for raw in class_item.get("fields") or []:
+            field_name, raw_type = mapping.split_field(raw)
+            if not field_name or not raw_type:
+                continue
+            target = mapping.referenced_entity(raw_type, entities)
+            # 자기 자신을 가리키는 필드도 관계를 요구한다 — 자기 참조는 정상적인 관계다.
+            if not target or frozenset((name, target)) in linked:
+                continue
+            collection = mapping.is_collection(raw_type)
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{field_name} : {raw_type}'가 Entity '{target}'를 가리키는데 둘 사이에 "
+                    "관계가 없다 — Entity 타입 필드는 컬럼이 되지 않으므로 이대로면 "
+                    "ERD에 아무것도 안 남는다. "
+                    + (
+                        f"'{name}'과 '{target}'을 다중도와 함께 관계로 적어라"
+                        if collection
+                        else f"'{name}'과 '{target}'을 관계로 적거나, 참조가 아니라면 "
+                        "필드 타입을 자료형으로 바꿔라"
+                    ),
+                    name,
+                )
+            )
+    return found
+
+
+#: `memberId` · `member_id` · `MemberID` 처럼 뒤에 붙은 식별자 접미사.
+_ID_SUFFIX = re.compile(r"[_\s]*id$", re.IGNORECASE)
+
+
+def erd_reference_like_fields(model: dict, logical: dict) -> list[Finding]:
+    """**좁게 건다.** 필드가 `<X>Id` 꼴이고, `X`가 실재 Entity이고, 그 둘 사이에 관계가
+    하나도 없을 때만 센다. 관계가 이미 있으면 일부러 적어 둔 칸일 수 있고, 그때 지적하면
+    고칠 것이 없는 지적으로 재생성 예산만 태운다.
+
+    **타입이 이미 Entity를 말하는 필드는 건너뛴다** —
+    `erd.entity-typed-field-needs-relationship`이 그쪽을 맡는다. `member : Member`처럼
+    이름과 타입이 둘 다 걸리는 필드가 있어서, 안 비키면 실수 하나가 지적 둘이 되어
+    재생성이 하나를 고쳐도 위반 수가 안 줄고 수정본이 통째로 버려진다.
+    """
+    rule_id = "erd.field-looks-like-reference"
+    entities = {
+        c.get("className"): c for c in _classes(model)
+        if mapping.is_entity(c) and c.get("className")
+    }
+    linked: set[frozenset[str]] = {
+        frozenset((str(r.get("source")), str(r.get("target"))))
+        for r in _relationships(model)
+    }
+
+    found: list[Finding] = []
+    for name, class_item in entities.items():
+        for raw in class_item.get("fields") or []:
+            field_name, raw_type = mapping.split_field(raw)
+            if mapping.referenced_entity(raw_type, entities):
+                continue
+            stem = _ID_SUFFIX.sub("", field_name).strip()
+            if not stem or mapping.squash(stem) == mapping.squash(name):
+                continue
+            target = next(
+                (e for e in entities if mapping.squash(e) == mapping.squash(stem)), None
+            )
+            if target and frozenset((name, target)) not in linked:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"'{field_name}'가 Entity '{target}'를 이름으로 가리킨다 — "
+                        "관계로 적어야 외래키가 된다",
+                        name,
+                    )
+                )
+    return found
+
+
+#: ERD 검출기. 클래스 쪽과 시그니처가 다르다 — 둘째 인자가 상태가 아니라 **논리 데이터
+#: 모델**이다. 같은 이름으로 두면 "상태를 받는다"고 읽히고, 실제로 상태를 넘기는 실수가
+#: 조용히 통과한다(dict라 아무 오류도 안 난다).
+#:
+#: **순서가 뜻을 갖는다**: 구조(끝점·딱지·이름) → 산출물이 있는가 → 관계가 옮겨졌는가
+#: → 키 → 이름 신호. 구조가 먼저인 이유는 그것이 깨지면 뒤의 것들이 **볼 것이 없어져
+#: 조용해지기** 때문이다 — 딱지가 깨져 표가 사라지면 그 표에 대한 어떤 검사도 안 돈다.
+ERD_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
+    "erd_relationship_endpoints": erd_relationship_endpoints,
+    "erd_stereotype_is_bce": erd_stereotype_is_bce,
+    "erd_entity_name_usable": erd_entity_name_usable,
+    "erd_has_entity": erd_has_entity,
+    "erd_relationships_mapped": erd_relationships_mapped,
+    "erd_composition_owner": erd_composition_owner,
+    "erd_mandatory_reference_cycle": erd_mandatory_reference_cycle,
+    "erd_identifier_fields": erd_identifier_fields,
+    "erd_surrogate_key_collides": erd_surrogate_key_collides,
+    "erd_table_names_unique": erd_table_names_unique,
+    # 타입 신호가 이름 신호보다 **먼저**다. 앞엣것은 모델이 적은 자료형을 읽는 것이고
+    # 뒤엣것은 이름에서 짐작하는 것이라, 둘 다 걸리는 필드에서는 앞엣것이 맡는다.
+    "erd_entity_typed_field_needs_relationship": erd_entity_typed_field_needs_relationship,
+    "erd_reference_like_fields": erd_reference_like_fields,
+}
+
+
+def erd_findings(model: dict, state: dict) -> list[Finding]:
+    """ERD 모델 하나에 대한 결정론 검증 전부.
+
+    `state`를 받지만 **안 쓴다.** 시그니처가 `DesignArtifactSpec.check`의 것이라 그대로
+    맞추고, 상류 대조가 필요한 ERD 규칙은 지금 없다 — ERD가 참조하는 유스케이스는 클래스
+    다이어그램에서 이미 판정됐다.
+
+    사상을 여기서 한 번 돌린다. 렌더가 다시 돌리므로 두 번 도는 셈인데, 순수 함수라
+    결과가 같고 캐시를 두면 "언제 무효화하나"가 새 문제가 된다.
+    """
+    logical = mapping.build_logical_model(model or {})
+    found: list[Finding] = []
+    for detect in ERD_DETECTORS.values():
+        found.extend(detect(model or {}, logical))
+    return found
+
+
 #: 검출기 이름 → 구현. 이름은 `rules.Rule.detector`가 가리키는 그것이다.
 #: 양방향으로 맞물려 있어야 한다 — 선언만 있고 구현이 없거나, 구현만 있고 아무 규칙도
 #: 안 쓰는 검출기가 있으면 테스트가 실패한다.
@@ -315,6 +793,8 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "usecase_ids": usecase_ids,
     "stereotype_is_bce": stereotype_is_bce,
     "communication_rules": communication_rules,
+    "relationship_type_known": relationship_type_known,
+    "entity_association_multiplicity": entity_association_multiplicity,
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,
     "usecase_coverage": usecase_coverage,

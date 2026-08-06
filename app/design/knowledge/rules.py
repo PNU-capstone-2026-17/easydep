@@ -68,6 +68,7 @@ JUDGES = (JUDGED_DETECTOR, JUDGED_VALIDATOR, JUDGED_NOWHERE)
 # 이름은 `graphs/subgraphs.py`의 `DESIGN_STAGES`와 같다. import하지 않는 이유는 순환이다
 # (subgraphs → services → knowledge). 두 목록이 맞는지는 테스트가 확인한다.
 CLASS_DIAGRAM = "class_diagram"
+ERD = "erd"
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,62 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="communication_rules",
     ),
+    # --- 관계가 데이터 모델까지 가려면 담아야 하는 것 ------------------------
+    Rule(
+        id="class.relationship-type-known",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A relationship's type must be one of Inheritance, Dependency, Association, "
+            "Aggregation, or Composition."
+        ),
+        # 렌더러는 모르는 종류를 조용히 단순 연관(`-->`)으로 그린다. 그림만 보면 모델이
+        # 무엇을 말하려 했는지 알 수 없고, ERD 사상은 그 종류로 구조적 연관인지 행위
+        # 링크인지를 가르므로 잘못 읽으면 관계가 통째로 사라지거나 잘못 생긴다.
+        citation="app/design/services/class_diagram/plantuml.py (RELATION_SYMBOLS)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="relationship_type_known",
+    ),
+    Rule(
+        id="class.entity-association-multiplicity",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A structural relationship between two Entity classes must carry both "
+            "sourceMultiplicity and targetMultiplicity, each one of \"1\", \"0..1\", "
+            "\"*\", \"1..*\". Behavioural links through a Boundary or Control carry none."
+        ),
+        # 다중도가 없으면 사상이 성립하지 않는다. 예전에는 없는 채로 **전부 1:N이라고
+        # 단정**했고, 그래서 다대다가 연결 테이블이 되는 경로가 코드에 아예 없었다.
+        # 지금은 단정하지 않고 `Unmapped`로 남긴다 — 즉 다중도가 없으면 그 관계는
+        # 그림에도 하류 스키마에도 **존재하지 않게 된다.**
+        citation="app/design/services/erd/mapping.py (build_logical_model — Unmapped)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="entity_association_multiplicity",
+        generation_note=(
+            "Multiplicity is what decides whether a relationship becomes a foreign key, "
+            "a unique foreign key, or a join table. There is no default: a missing one "
+            "is not \"1\", it is \"not mapped\"."
+        ),
+    ),
+    Rule(
+        id="class.entity-data-associations",
+        stage=CLASS_DIAGRAM,
+        severity=GUIDANCE,
+        statement=(
+            "Entities that relate to each other as data should be connected by a "
+            "structural relationship, not by naming a field after the other entity."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (추출 절차 8)",
+        evidence="project-convention",
+        caveat=(
+            "지침이지 규칙이 아니다. 어떤 필드가 참조인지 아닌지는 이름만으로 단정할 수 "
+            "없어서(`외부 시스템의 id`일 수도 있다) 여기서 결함으로 세지 않는다. "
+            "판정은 ERD 쪽에서 좁은 조건으로만 한다(`erd.field-looks-like-reference`)."
+        ),
+    ),
     # --- 형태 ---------------------------------------------------------------
     Rule(
         id="class.names-unique",
@@ -335,6 +392,352 @@ RULES: tuple[Rule, ...] = (
         caveat=(
             "개수 규칙을 두면 모델이 개수를 맞추려고 클래스를 지어내거나 지운다. "
             "코퍼스에서 분포를 세기 전에는 어떤 상한도 근거가 없다."
+        ),
+    ),
+    # =======================================================================
+    # ERD
+    # =======================================================================
+    # ERD 모델은 클래스 다이어그램과 **같은 BCE 스키마**이지만 자기 사본을 따로 편집한다
+    # (`erd_bce_classes`). 그래서 클래스 쪽이 통과했다는 것이 이쪽의 보증이 아니다.
+    #
+    # 규칙이 두 층에 걸쳐 있다. 앞 몇 개는 BCE 모델을 보고, 나머지는 그것을 사상해서 나온
+    # **논리 데이터 모델**(테이블·키·외래키)을 본다. 후자가 이 지식베이스에서 처음으로
+    # 그림도 원본 모델도 아닌 것을 판정한다 — 사상이 별도 단계가 되면서 생긴 자리다.
+    # --- 구조: ERD 사본이 성한가 ------------------------------------------
+    # 이 셋이 먼저 오는 이유는 클래스 다이어그램의 참조 무결성 규칙이 먼저 오는 이유와
+    # 같다. 나머지 ERD 규칙은 "데이터 모델이 덜 좋다"는 말이지만, 이 셋은 **있어야 할
+    # 것이 말없이 사라지거나 없던 것이 생기는** 것이다.
+    #
+    # 클래스 쪽이 통과했다는 것이 여기의 보증이 아니다 — ERD 모델은 그 사본을 따로
+    # 편집한 것이다(`erd/reviser.py`). 1차에서 ERD 검사를 붙인 근거가 정확히 그것이었는데
+    # 정작 구조 규칙은 안 걸어 두어서, 이 셋이 전부 지적 없이 지나갔다.
+    Rule(
+        id="erd.relationship-endpoints-exist",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Every relationship's source and target must name a class that exists in "
+            "Classes. Never reference a class you did not declare."
+        ),
+        # 클래스 쪽과 **결과가 정반대다.** 거기서는 PlantUML이 유령 클래스를 만들어 없던
+        # 것이 생기고, 여기서는 사상이 그 관계를 지나가 있던 것이 사라진다. 그리고 그
+        # 사라짐은 행위 링크를 정상적으로 건너뛰는 것과 같은 코드 경로라 흔적이 없다.
+        citation="app/design/services/erd/mapping.py (_map_relationship — 끝이 표가 아니면 반환)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_relationship_endpoints",
+        generation_note=(
+            "If a relationship needs a class that is not in your list, add the class — "
+            "do not leave the endpoint dangling."
+        ),
+    ),
+    Rule(
+        id="erd.stereotype-is-bce",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Every class must carry exactly one of the stereotypes Boundary, Control, "
+            "or Entity, including the ones an ERD never draws."
+        ),
+        # 딱지가 깨지면 그 클래스는 Entity로 안 읽히고 **표도 그 표에 걸린 관계도** 함께
+        # 사라진다. ERD 수정 프롬프트가 "Boundary와 Control을 그대로 두라"고 요구하는
+        # 것과 짝을 이룬다 — 요구만 하고 판정을 안 하면 그건 부탁이다.
+        citation="app/design/services/erd/mapping.py (is_entity)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_stereotype_is_bce",
+    ),
+    Rule(
+        id="erd.entity-name-usable",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Every Entity must have a name that can become a table name — not empty, "
+            "not punctuation only."
+        ),
+        # 빈 이름이면 사상이 `UnknownEntity`를 **지어낸다.** 그 이름이 하류에서 테이블
+        # 이름이 되어 스키마에 남는다.
+        citation="app/design/services/erd/mapping.py (sanitize_entity_name)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_entity_name_usable",
+    ),
+    Rule(
+        id="erd.has-entity",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "The model must contain at least one <<Entity>> class. An ERD with no table "
+            "is not a diagram, it is an empty file."
+        ),
+        # 테이블이 0개면 렌더가 빈 문자열을 내고, 문법 검사가 "PlantUML code is empty."로
+        # 잡는다. 그런데 그 칸의 뜻은 **"우리 렌더러가 깨졌다"**이다(`nodes/artifact.py`의
+        # `render_node`). 원인은 모델인데 귀속이 렌더러로 간다. 여기서 먼저 잡아야
+        # 귀속이 맞고 재생성 기회도 생긴다.
+        citation="app/design/services/common/plantuml.py:42-43 (빈 입력 → syntax_errors)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_has_entity",
+    ),
+    Rule(
+        id="erd.relationship-mapped",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Every relationship between two Entity classes must be mappable to the "
+            "relational model. One that is not carries no multiplicity, or is typed as a "
+            "Dependency while joining two Entities."
+        ),
+        # **사상되지 못한 관계는 그림에 없다.** 예전에는 다중도가 없어도 1:N으로 단정해서
+        # 무언가는 그려졌고, 그래서 틀린 선이 맞는 선처럼 보였다. 지금은 안 그려지므로,
+        # 이 지적이 없으면 관계가 조용히 사라진 것을 아무도 못 본다.
+        citation="app/design/services/erd/mapping.py (Unmapped)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_relationships_mapped",
+    ),
+    Rule(
+        id="erd.composition-owner-is-mandatory",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "In a Composition, the multiplicity at the whole's end must be \"1\". A part "
+            "cannot exist without its whole, and cannot belong to several at once."
+        ),
+        # 종류와 다중도가 서로 다른 말을 하는 자리다. **사상은 조정하지 않는다** — 어느
+        # 쪽이 의도인지 우리가 모르기 때문이다. 한쪽으로 정리하면 모델이 적은 것을 우리가
+        # 덮는 것이 되고, 그건 이 작업이 내내 막아 온 것이다. 모순을 가진 채 옮기고
+        # 여기서 드러내면 재생성이 둘 중 하나를 고친다.
+        citation="app/design/services/erd/mapping.py (_map_relationship — 합성은 식별 관계)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_composition_owner",
+        generation_note=(
+            "If the part can exist on its own, or can belong to more than one whole, it "
+            "is an Association or an Aggregation — not a Composition."
+        ),
+    ),
+    Rule(
+        id="erd.no-mandatory-reference-cycle",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Mandatory references must not form a cycle. If every row of A needs a row of "
+            "B and every row of B needs a row of A — or a row needs another row of its own "
+            "table — no first row can ever exist."
+        ),
+        # 외래키의 널 허용을 다중도에서 끌어오면서(그전에는 합성일 때만 필수였다) 이
+        # 조합에 닿는 길이 넓어졌다. `Emp "1" — "*" Emp`(모든 사원에게 상사가 있다) 같은,
+        # 자연스러워 보이는 모델이 **행을 하나도 못 넣는 스키마**가 된다.
+        #
+        # 널 허용으로 풀어 주지 않는다 — 그건 모델이 적은 `"1"`을 우리가 뒤집는 것이다.
+        citation="app/design/services/erd/mapping.py (_map_relationship — needed())",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_mandatory_reference_cycle",
+        generation_note=(
+            "A self-referencing parent link (manager, parent category, reply-to) is almost "
+            "always optional at the referenced end — write \"0..1\", not \"1\"."
+        ),
+    ),
+    Rule(
+        id="erd.identifier-fields-exist",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Every name in an Entity's `identifier` must be one of that Entity's own "
+            "fields. An empty `identifier` is honest; one naming a field that is not "
+            "there is not."
+        ),
+        # 실재하지 않는 필드를 가리키면 사상이 자연키를 포기하고 대리키로 떨어진다.
+        # 조용히 떨어지므로, 모델은 "이 자연키를 쓴다"고 말하는데 산출물은 다른 키를 쓴다.
+        citation="app/design/services/erd/mapping.py (_build_tables — keyOrigin)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_identifier_fields",
+    ),
+    Rule(
+        id="erd.surrogate-key-collides",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Do not declare a field with the same name as the surrogate key this project "
+            "would add (`<table>_id`). Either list it in `identifier` because it really is "
+            "the key, or give it a different name."
+        ),
+        # 겹치면 대리키가 그 자리를 차지하고 선언한 필드가 밀려난다. 모델이
+        # `order_id : String`이라 적었는데 산출물에는 `order_id : BIGINT`만 남는 것이라,
+        # **아무도 고르지 않은 타입이 하류 DDL까지 간다.**
+        #
+        # 자연키로 승격시키지 않는 것이 요점이다. 이름이 `{표}_id`라고 해서 그것이
+        # 식별자라고 읽으면, 그건 이름에서 의도를 읽는 것이고 이 작업이 지운 바로 그
+        # 추론이다(`erd.fk-from-field-name` 참조).
+        citation="app/design/services/erd/mapping.py (_build_tables — surrogateCollidesWith)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_surrogate_key_collides",
+    ),
+    Rule(
+        id="erd.table-names-unique",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Table names must be unique after rendering, counting the join tables and "
+            "first-normal-form child tables the mapping creates."
+        ),
+        # 두 층이 겹치는 자리다. Entity 이름끼리 겹치는 것뿐 아니라, 연결 테이블
+        # (`BookTag`)이나 1NF 자식(`LoanTags`)이 실재 Entity와 같은 이름이 될 수 있다.
+        # 사상은 이름을 짓기만 하고 충돌을 막지 않는다 — 막으면 어느 쪽을 버릴지 우리가
+        # 정하게 되고, 그건 모델이 정할 일이다.
+        citation="app/design/services/erd/mapping.py (_junction · _multivalued_child)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_table_names_unique",
+    ),
+    # "모든 테이블에 기본키가 있다"와 "외래키는 실재 테이블을 가리킨다"는 여기 없다.
+    # 규칙으로 적어 봤다가 뺐다 — **사상이 구성에 의해 보장하므로 어떤 모델로도 위반을
+    # 만들 수 없다.** 걸 수 없는 규칙은 "0건"이 "없다"인지 "못 잡는다"인지 구별되지 않아
+    # 눈금이 아니다(`app/design/evaluation/seeded.py`가 세우려는 것이 그 눈금이다).
+    # 그 둘은 모델에 대한 규칙이 아니라 **우리 코드의 불변식**이고, 불변식의 자리는
+    # 테스트다(`tests/test_erd_mapping.py`).
+    Rule(
+        id="erd.entity-typed-field-needs-relationship",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "A field whose type is another Entity — `member : Member`, "
+            "`lines : List<OrderLine>` — needs a relationship between the two Entities. "
+            "The field alone becomes nothing: an Entity-typed field is not a column."
+        ),
+        # **조용히 사라지던 자리다.** 사상은 Entity 타입 필드를 컬럼으로 만들지 않는다
+        # (그 사실을 들고 가는 것은 관계다). 관계까지 없으면 컬럼도 자식 표도 관계선도
+        # `Unmapped` 항목도 없어서, 모델이 적은 링크가 산출물 어디에도 안 남고 아무도
+        # 그것을 못 본다. 스칼라 쪽은 한술 더 떠서 `member : MEMBER`라는 SQL 아닌
+        # 타입의 가짜 컬럼을 만들어 하류 DDL까지 보냈다.
+        citation="app/design/services/erd/mapping.py (_build_tables · names_an_entity)",
+        evidence="pipeline-invariant",
+        caveat=(
+            "`erd.fk-from-field-name`과 헷갈리지 말 것. 저쪽이 금지하는 것은 필드 "
+            "**이름**(`memberId`)에서 외래키를 짐작하는 일이고, 이 규칙이 보는 것은 모델이 "
+            "직접 적은 **자료형**이다. 짐작이 없으므로 오탐의 종류가 다르다 — 걸리는 것은 "
+            "Entity와 이름이 같은 자료형을 쓴 경우뿐이다."
+        ),
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_entity_typed_field_needs_relationship",
+        generation_note=(
+            "Write the relationship with its multiplicities. The foreign key (or join "
+            "table, or child table) is generated from it — not from the field."
+        ),
+    ),
+    Rule(
+        id="erd.field-looks-like-reference",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "Do not point at another Entity by naming a field after it. A field named "
+            "`<Other>Id` where `<Other>` is an Entity must be a relationship instead."
+        ),
+        # **이 규칙이 지워진 코드의 자리를 대신한다.** 예전 사상은 `Loan.memberId`를 보고
+        # `Member`를 가리키는 외래키를 조용히 만들었다(이름에서 의도를 추론한 것이다).
+        # 그 추론을 지우면서 신호까지 버리지는 않았다 — 만들지 않고 지적한다.
+        citation="app/design/services/erd/mapping.py (모듈 docstring — 지워진 이름 추론)",
+        evidence="pipeline-invariant",
+        caveat=(
+            "판정을 좁게 걸었다: 필드 이름이 `<X>Id`/`<X>_id`이고 `X`가 실재 Entity이며 "
+            "**둘 사이에 관계가 없을 때만** 센다. 그래도 외부 시스템의 식별자를 그렇게 "
+            "이름 붙인 경우를 오탐할 수 있다. 실데이터로 오탐률을 재 본 적은 없다."
+        ),
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_reference_like_fields",
+        generation_note=(
+            "Write the relationship with its multiplicities; the foreign-key column is "
+            "generated from it."
+        ),
+    ),
+    # --- 지침(지적하지 않는다) ----------------------------------------------
+    Rule(
+        id="erd.entity-has-field",
+        stage=ERD,
+        severity=GUIDANCE,
+        statement=(
+            "An Entity should carry at least one field. Methods do not appear in an ERD, "
+            "so an Entity with only methods becomes a table with nothing but its key."
+        ),
+        citation="app/design/services/erd/mapping.py (_build_tables — fields만 읽는다)",
+        evidence="project-convention",
+        caveat=(
+            "지침이지 규칙이 아니다. 클래스 쪽 `class.no-empty-class`는 필드 **또는** "
+            "메서드를 세므로 여기와 판정이 다르다 — 메서드만 있는 Entity는 그쪽을 "
+            "통과하고 여기서는 빈 테이블이 된다. 그래도 열 없는 테이블이 분석 수준에서 "
+            "정당할 수 있어 결함으로 세지 않는다."
+        ),
+    ),
+    Rule(
+        id="erd.field-type-declared",
+        stage=ERD,
+        severity=GUIDANCE,
+        statement=(
+            "Write Entity fields as `name : Type`. A field with no type becomes a column "
+            "with no type, and the downstream schema generator picks one instead."
+        ),
+        citation="app/design/services/erd/mapping.py (split_field · sql_type)",
+        evidence="project-convention",
+        caveat=(
+            "지침이지 규칙이 아니다. 분석 수준에서 타입을 아직 정하지 않는 것이 정당할 수 "
+            "있다. 다만 예전처럼 `VARCHAR(255)`를 지어내지는 않으므로, 안 적으면 그 칸은 "
+            "비어서 하류로 간다."
+        ),
+    ),
+    # --- 규칙이 아니라는 기록 ------------------------------------------------
+    Rule(
+        id="erd.fk-from-field-name",
+        stage=ERD,
+        severity=NON_RULE,
+        statement=(
+            "Field naming is NOT a foreign-key declaration. This project does not turn "
+            "`memberId` into a key that points at `Member`; the relationship does that."
+        ),
+        citation="app/design/services/erd/mapping.py (모듈 docstring)",
+        evidence="engineering-guard",
+        caveat=(
+            "이 코드는 실재하는 문제를 풀려고 들어왔었다 — 관계에서만 외래키를 뽑으니 "
+            "ERD에 선이 거의 안 그려졌다. 지운 이유는 그 문제가 사라져서가 아니라 "
+            "**해결 방향이 틀려서**다: 관계가 없는 것을 이름으로 메우는 대신 관계를 "
+            "요구하도록 고쳤다. 적어 두지 않으면 다음 사람이 같은 증상을 보고 되살린다.\n"
+            "**경계**: 금지되는 것은 *이름*에서 읽는 것뿐이다. `member : Member`처럼 모델이 "
+            "**자료형**으로 Entity를 적은 것은 짐작이 아니라 선언이고, 그쪽은 "
+            "`erd.entity-typed-field-needs-relationship`이 관계를 요구한다. 그것까지 "
+            "이 NON_RULE로 읽으면 조용히 사라지는 필드가 다시 생긴다."
+        ),
+    ),
+    Rule(
+        id="erd.inheritance-strategy",
+        stage=ERD,
+        severity=NON_RULE,
+        statement=(
+            "The model does NOT choose how inheritance becomes tables. This project maps "
+            "it one way (the subclass table's primary key is a foreign key to the "
+            "superclass); do not restructure the classes to steer that choice."
+        ),
+        citation="app/design/services/erd/mapping.py (모듈 docstring — 상속)",
+        evidence="engineering-guard",
+        caveat=(
+            "관계형에는 상속이 없어 세 전략(단일 테이블·클래스별 테이블·구체 클래스 "
+            "테이블) 중 하나를 골라야 하고, **우리가 골랐다.** 어느 것이 옳은지는 질의 "
+            "패턴에 달렸는데 우리는 그것을 모른다. 모델에게 고르게 하면 그건 데이터 "
+            "모델이 아니라 물리 설계를 시키는 것이 된다."
+        ),
+    ),
+    Rule(
+        id="erd.table-count-bounds",
+        stage=ERD,
+        severity=NON_RULE,
+        statement="There is no upper or lower bound on how many tables an ERD has.",
+        citation="(관찰 없음 — 세어 본 적이 없다)",
+        evidence="engineering-guard",
+        caveat=(
+            "클래스 개수와 같은 이유다. 개수 규칙을 두면 모델이 개수를 맞추려고 엔티티를 "
+            "지어내거나 합친다."
         ),
     ),
 )
