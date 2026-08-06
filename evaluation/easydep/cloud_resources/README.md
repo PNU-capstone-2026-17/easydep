@@ -15,9 +15,10 @@ python -m evaluation.easydep.cloud_resources.score artifacts/runs/<run-id>
 CoT와 MetaGPT에는 이 내부 형식을 요구하지 않는다. 시스템 간 종단 비교는 각 방식의
 소스코드·Dockerfile·IaC와 선택적 배포 매니페스트를 대상으로 별도로 수행한다.
 
-`gold.json`은 제품 출력이나 `claims.json`에서 생성하지 않는다. 현재
-`independenceStatus`는 `review-pending`이며 독립 검토자가 시스템 출력 없이 CSP 공식 문서로
-재판정하고 동결하기 전에는 논문 본실험 점수로 사용할 수 없다.
+`gold.json`은 제품 출력이나 `claims.json`에서 생성하지 않는다. 2026-08-07에 대화 맥락을
+전달받지 않은 AI clean-room 검토자가 `review_packet.json`과 그 안의 CSP 공식 문서만으로
+재판정했다. 동결 파일의 `independenceStatus`는 `independently-reviewed`다. 이는 시스템
+출력으로 정답을 만든 순환을 차단하지만 인간 전문가 검토와 동의어는 아니다.
 
 독립 검토자는 `review_packet.json`만 전달받는다. 이 파일에는 정답이 없고 공식 CSP 문서,
 질문, 허용된 정규화 자원명만 있다. 검토자가 각 사례의 `mandatoryNodes`,
@@ -29,8 +30,9 @@ CoT와 MetaGPT에는 이 내부 형식을 요구하지 않는다. 시스템 간 
 python -m evaluation.easydep.cloud_resources.review_gold completed-review.json
 ```
 
-동결 결과에는 검토자·시각과 원본 검토 패킷 SHA-256이 기록된다. 검토 전 현재 gold는
-개발용 배선 검사에만 사용할 수 있으며 평가기의 `thesisEligible`은 `false`다.
+동결 결과에는 검토자·시각과 원본 검토 패킷 SHA-256이 기록된다. 실제 검토 응답은
+`completed-review.cleanroom.json`에 보존한다. 논문에는 검토자가 AI였음과 검토자가 지적한
+직접 관계 해석의 모호성을 함께 공개해야 한다. 가능하면 제출 전 인간 검토로 교차 확인한다.
 
 현재 결정론적 제거 실험의 수치와 해석 범위는 [`results.md`](results.md)에 기록한다.
 

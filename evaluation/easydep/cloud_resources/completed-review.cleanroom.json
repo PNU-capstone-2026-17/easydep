@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "easydep-cloud-resource-review/v1",
+  "reviewerId": "openai-codex-ai-clean-room-reviewer",
+  "reviewedAt": "2026-08-07T08:09:09.8400109+09:00",
+  "independenceAttestation": true,
+  "instructions": [
+    "Do not inspect gold.json, claims.json, cloud-plan.json, or system output.",
+    "Use only the linked CSP documentation and record the smallest mandatory set for the stated creation request.",
+    "A relation [A, B] means that creating A in the stated case requires B to be selected, supplied, or provider-created.",
+    "Copy this file, add reviewerId, reviewedAt, independenceAttestation=true, mandatoryNodes, mandatoryRelations, and rationale to every case, then run review_gold.py."
+  ],
+  "allowedResourceTerms": [
+    "disk",
+    "loadBalancer",
+    "network",
+    "nic",
+    "subnet",
+    "vm"
+  ],
+  "cases": [
+    {
+      "caseId": "aws-public-load-balancer",
+      "question": "For a newly created internet-facing AWS Application Load Balancer using Availability Zone subnets, which normalized resources and direct provisioning relations are mandatory?",
+      "sources": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html",
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-application-load-balancer.html"
+      ],
+      "mandatoryNodes": [
+        "loadBalancer",
+        "network",
+        "nic",
+        "subnet"
+      ],
+      "mandatoryRelations": [
+        [
+          "loadBalancer",
+          "network"
+        ],
+        [
+          "loadBalancer",
+          "nic"
+        ],
+        [
+          "loadBalancer",
+          "subnet"
+        ],
+        [
+          "nic",
+          "subnet"
+        ],
+        [
+          "subnet",
+          "network"
+        ]
+      ],
+      "rationale": "Creation requires selecting the load balancer VPC and at least two Availability Zone subnets in different zones. Elastic Load Balancing then creates network interfaces in the configured subnets. The normalized subnet node represents that mandatory set of two or more subnet instances."
+    },
+    {
+      "caseId": "azure-docker-vm",
+      "question": "For a newly created network-connected Azure VM, which normalized resources and direct provisioning relations are mandatory?",
+      "sources": [
+        "https://learn.microsoft.com/en-us/azure/virtual-network/network-overview",
+        "https://learn.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface-vm"
+      ],
+      "mandatoryNodes": [
+        "network",
+        "nic",
+        "subnet",
+        "vm"
+      ],
+      "mandatoryRelations": [
+        [
+          "nic",
+          "subnet"
+        ],
+        [
+          "subnet",
+          "network"
+        ],
+        [
+          "vm",
+          "nic"
+        ]
+      ],
+      "rationale": "An Azure VM must always have at least one attached NIC. Each VM NIC connects to one subnet in one virtual network; the portal can create the NIC and the required virtual network/default subnet during VM creation. Public IPs, NSGs, and load balancers are not mandatory for the stated network connectivity."
+    },
+    {
+      "caseId": "gcp-docker-vm",
+      "question": "For a newly created Google Compute Engine VM with a boot disk and network connectivity, which normalized resources and direct provisioning relations are mandatory, including provider defaults?",
+      "sources": [
+        "https://docs.cloud.google.com/compute/docs/reference/rest/v1/instances",
+        "https://docs.cloud.google.com/compute/docs/instances/instance-creation-overview"
+      ],
+      "mandatoryNodes": [
+        "disk",
+        "network",
+        "nic",
+        "subnet",
+        "vm"
+      ],
+      "mandatoryRelations": [
+        [
+          "nic",
+          "network"
+        ],
+        [
+          "nic",
+          "subnet"
+        ],
+        [
+          "subnet",
+          "network"
+        ],
+        [
+          "vm",
+          "disk"
+        ],
+        [
+          "vm",
+          "nic"
+        ]
+      ],
+      "rationale": "Every Compute Engine instance has a boot disk and, by default, one generated nic0 interface. If no network or subnetwork is supplied, the interface uses the default auto-mode VPC and its regional subnet; the system also assigns an internal IP. Thus the disk, interface, subnet, and network remain mandatory normalized dependencies even when defaults supply them."
+    }
+  ]
+}

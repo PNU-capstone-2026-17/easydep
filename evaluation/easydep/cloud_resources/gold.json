@@ -1,32 +1,98 @@
 {
   "_metadata": {
     "schemaVersion": "easydep-cloud-resource-gold/v2",
-    "independenceStatus": "review-pending",
-    "rule": "This file must be frozen before evaluation and independently reviewed without reading system output. It is not generated from claims.json.",
-    "reviewRequired": true
+    "independenceStatus": "independently-reviewed",
+    "reviewerId": "openai-codex-ai-clean-room-reviewer",
+    "reviewedAt": "2026-08-07T08:09:09.8400109+09:00",
+    "independenceAttestation": true,
+    "reviewPacketSha256": "01381ec629bd45e79e52fecba8b4a9f86f7973bf0a6bdb9fd03c4679e52b17f2",
+    "rule": "Independent reviewer used only review_packet.json sources and did not inspect system output.",
+    "reviewRequired": false
   },
   "aws-public-load-balancer": {
-    "mandatoryNodes": ["loadBalancer", "subnet", "network"],
-    "mandatoryRelations": [["loadBalancer", "subnet"], ["subnet", "network"]],
-    "sourceBasis": [
-      "AWS Elastic Load Balancing Application Load Balancer documentation",
-      "AWS EC2 VPC and subnet documentation"
-    ]
+    "mandatoryNodes": [
+      "loadBalancer",
+      "network",
+      "nic",
+      "subnet"
+    ],
+    "mandatoryRelations": [
+      [
+        "loadBalancer",
+        "network"
+      ],
+      [
+        "loadBalancer",
+        "nic"
+      ],
+      [
+        "loadBalancer",
+        "subnet"
+      ],
+      [
+        "nic",
+        "subnet"
+      ],
+      [
+        "subnet",
+        "network"
+      ]
+    ],
+    "rationale": "Creation requires selecting the load balancer VPC and at least two Availability Zone subnets in different zones. Elastic Load Balancing then creates network interfaces in the configured subnets. The normalized subnet node represents that mandatory set of two or more subnet instances."
   },
   "azure-docker-vm": {
-    "mandatoryNodes": ["vm", "nic", "subnet", "network"],
-    "mandatoryRelations": [["vm", "nic"], ["nic", "subnet"], ["subnet", "network"]],
-    "sourceBasis": [
-      "Azure Virtual Machines overview",
-      "Azure virtual network and network interface documentation"
-    ]
+    "mandatoryNodes": [
+      "network",
+      "nic",
+      "subnet",
+      "vm"
+    ],
+    "mandatoryRelations": [
+      [
+        "nic",
+        "subnet"
+      ],
+      [
+        "subnet",
+        "network"
+      ],
+      [
+        "vm",
+        "nic"
+      ]
+    ],
+    "rationale": "An Azure VM must always have at least one attached NIC. Each VM NIC connects to one subnet in one virtual network; the portal can create the NIC and the required virtual network/default subnet during VM creation. Public IPs, NSGs, and load balancers are not mandatory for the stated network connectivity."
   },
   "gcp-docker-vm": {
-    "mandatoryNodes": ["vm", "nic", "disk"],
-    "mandatoryRelations": [["vm", "nic"], ["vm", "disk"]],
-    "sourceBasis": [
-      "Google Compute Engine instance resource model",
-      "Google Compute Engine disks documentation"
-    ]
+    "mandatoryNodes": [
+      "disk",
+      "network",
+      "nic",
+      "subnet",
+      "vm"
+    ],
+    "mandatoryRelations": [
+      [
+        "nic",
+        "network"
+      ],
+      [
+        "nic",
+        "subnet"
+      ],
+      [
+        "subnet",
+        "network"
+      ],
+      [
+        "vm",
+        "disk"
+      ],
+      [
+        "vm",
+        "nic"
+      ]
+    ],
+    "rationale": "Every Compute Engine instance has a boot disk and, by default, one generated nic0 interface. If no network or subnetwork is supplied, the interface uses the default auto-mode VPC and its regional subnet; the system also assigns an internal IP. Thus the disk, interface, subnet, and network remain mandatory normalized dependencies even when defaults supply them."
   }
 }
