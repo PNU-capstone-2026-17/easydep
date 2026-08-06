@@ -378,6 +378,59 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="sequence_usecase_coverage",
     ),
+    Rule(
+        id="sequence.fragment-condition-consistency",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "If a message declares a combined fragment group (alt, loop, opt), it "
+            "must specify a condition explanation, and vice versa."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Fragment rendering)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_fragment_condition_consistency",
+    ),
+    Rule(
+        id="sequence.database-access-discipline",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Database participants must not be directly invoked by Actor or Boundary "
+            "participants; access must be mediated through Control or Entity components."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Layered architecture rules)",
+        evidence="project-convention",
+        caveat="데이터 접근 계층 캡슐화 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_database_access_discipline",
+    ),
+    Rule(
+        id="sequence.self-call-method-validation",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Self-calling messages (source == target) must have a non-empty label "
+            "naming the internal operation being invoked."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Self-call messages)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_self_call_method_validation",
+    ),
+    Rule(
+        id="sequence.orphan-participant-detection",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every participant declared in the sequence model must be involved in "
+            "at least one message as either source or target."
+        ),
+        citation="app/design/rtm.py (Participant active trace)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_orphan_participant_detection",
+    ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
         id="api.path-parameters-match",

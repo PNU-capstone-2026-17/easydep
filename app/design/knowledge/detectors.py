@@ -666,6 +666,139 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Finding]:
+    """복합 조각(group)과 조건문(condition) 간의 무결성 검사.
+
+    group(alt/loop/opt)이 선언되었으면 condition설명이 필수이며, 반대로 group이
+    없으면 condition만 독립적으로 유령 기입되어선 안 된다.
+    """
+    rule_id = "sequence.fragment-condition-consistency"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        group = str(msg.get("group", "")).strip()
+        condition = str(msg.get("condition", "")).strip()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+        location = f"{source} -> {target} : {label}"
+
+        if group and not condition:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"복합 조각 '{group}'에 대한 조건문(condition) 설명이 비어 있음",
+                    location,
+                )
+            )
+        elif not group and condition:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"복합 조각(group) 선언 없이 조건문('{condition}')만 독립 기입되어 있음",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_database_access_discipline(model: dict, state: dict) -> list[Finding]:
+    """데이터베이스(database) 직접 접근 주체 규약 검사.
+
+    Database 계층으로의 직접 접근은 Control 또는 Entity 계층에서만 허용되며,
+    Actor나 Boundary 계층에서 DB를 직접 호출하는 것은 아키텍처 위반이다.
+    """
+    rule_id = "sequence.database-access-discipline"
+    kinds = {
+        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        for p in model.get("Participants", [])
+    }
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        source_kind = kinds.get(source, "")
+        target_kind = kinds.get(target, "")
+
+        if target_kind == "database" and source_kind in ("actor", "boundary"):
+            location = f"{source} -> {target}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{source_kind}' 계층({source})에서 데이터베이스({target})를 직접 호출함 (Control/Entity를 거쳐야 함)",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_self_call_method_validation(model: dict, state: dict) -> list[Finding]:
+    """자기 자신 호출(Self-Call) 오퍼레이션 검증.
+
+    source == target 인 셀프 메시지가 발생할 때, 해당 호출 오퍼레이션이 정당하게
+    선언되어 있는지 및 라벨 기입 여부를 검사한다.
+    """
+    rule_id = "sequence.self-call-method-validation"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+
+        if source and source == target:
+            if not label:
+                location = f"{source} -> {target}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"자기 자신({source})을 호출하는 메시지의 라벨(오퍼레이션명)이 비어 있음",
+                        location,
+                    )
+                )
+
+    return found
+
+
+def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Finding]:
+    """메시지가 단 하나도 없는 고립된 참가자(Orphan Participant) 감지.
+
+    Participants 목록에는 선언되어 있으나 전체 Messages 중 단 한 번도 source 나 target으로
+    참여하지 않는 불필요한 유령 참가자를 탐지한다.
+    """
+    rule_id = "sequence.orphan-participant-detection"
+    active_participants: set[str] = set()
+
+    for msg in model.get("Messages", []):
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        if source:
+            active_participants.add(source)
+        if target:
+            active_participants.add(target)
+
+    found: list[Finding] = []
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        if name and name not in active_participants:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"메시지상에서 한 번도 호출/응답하지 않는 고립된 참가자 '{name}'",
+                    name,
+                )
+            )
+
+    return found
+
+
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
@@ -675,6 +808,10 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_initial_entry": sequence_initial_entry,
     "sequence_unmatched_returns": sequence_unmatched_returns,
     "sequence_usecase_coverage": sequence_usecase_coverage,
+    "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
+    "sequence_database_access_discipline": sequence_database_access_discipline,
+    "sequence_self_call_method_validation": sequence_self_call_method_validation,
+    "sequence_orphan_participant_detection": sequence_orphan_participant_detection,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_path_parameters": api_path_parameters,

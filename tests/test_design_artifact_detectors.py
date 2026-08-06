@@ -327,3 +327,124 @@ def test_usecase_coverage_rejects_uncovered_usecase():
     assert findings[0].rule_id == "sequence.usecase-step-coverage"
     assert "UC2" in findings[0].message
 
+
+# ---------------------------------------------------------------------------
+# sequence.fragment-condition-consistency
+# ---------------------------------------------------------------------------
+def test_fragment_condition_valid():
+    """group과 condition이 정당하게 짝지어져 있으면 통과."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "group": "alt", "condition": "재고 없음", "label": "msg()"},
+            {"source": "A", "target": "B", "group": "", "condition": "", "label": "msg2()"},
+        ],
+    }
+    assert detectors.sequence_fragment_condition_consistency(model, STATE) == []
+
+
+def test_fragment_condition_rejects_missing_condition():
+    """group은 선언되었으나 condition이 비어 있으면 지적한다."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "group": "loop", "condition": "", "label": "msg()"},
+        ],
+    }
+    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.fragment-condition-consistency"
+
+
+# ---------------------------------------------------------------------------
+# sequence.database-access-discipline
+# ---------------------------------------------------------------------------
+def test_database_access_valid():
+    """Control 또는 Entity에서 Database를 접근하면 통과."""
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control"},
+            {"name": "MyDB", "kind": "database"},
+        ],
+        "Messages": [
+            {"source": "OrderControl", "target": "MyDB", "type": "sync"},
+        ],
+    }
+    assert detectors.sequence_database_access_discipline(model, STATE) == []
+
+
+def test_database_access_rejects_actor_or_boundary_direct_access():
+    """Boundary 또는 Actor가 Database를 직접 접근하면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary"},
+            {"name": "MyDB", "kind": "database"},
+        ],
+        "Messages": [
+            {"source": "OrderBoundary", "target": "MyDB", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_database_access_discipline(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.database-access-discipline"
+
+
+# ---------------------------------------------------------------------------
+# sequence.self-call-method-validation
+# ---------------------------------------------------------------------------
+def test_self_call_valid():
+    """자기 자신 호출 시 라벨이 채워져 있으면 통과."""
+    model = {
+        "Messages": [
+            {"source": "OrderControl", "target": "OrderControl", "label": "internalCalc()", "type": "sync"},
+        ],
+    }
+    assert detectors.sequence_self_call_method_validation(model, STATE) == []
+
+
+def test_self_call_rejects_empty_label():
+    """자기 자신 호출 시 라벨이 비어 있으면 지적한다."""
+    model = {
+        "Messages": [
+            {"source": "OrderControl", "target": "OrderControl", "label": "", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_self_call_method_validation(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.self-call-method-validation"
+
+
+# ---------------------------------------------------------------------------
+# sequence.orphan-participant-detection
+# ---------------------------------------------------------------------------
+def test_orphan_participant_valid():
+    """모든 참가자가 메시지에 1회 이상 등장하면 통과."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "label": "open()"},
+        ],
+    }
+    assert detectors.sequence_orphan_participant_detection(model, STATE) == []
+
+
+def test_orphan_participant_rejects_unreferenced_participant():
+    """메시지상에서 한 번도 등장하지 않는 고립 참가자를 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary"},
+            {"name": "GhostControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "label": "open()"},
+        ],
+    }
+    findings = detectors.sequence_orphan_participant_detection(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.orphan-participant-detection"
+    assert "GhostControl" in findings[0].message
+
+
