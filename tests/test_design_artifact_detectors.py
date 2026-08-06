@@ -227,3 +227,103 @@ def test_message_methods_integrated_via_findings():
     found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
     assert "sequence.participant-classes-exist" in found
     assert "sequence.message-labels-match-methods" in found
+
+
+# ---------------------------------------------------------------------------
+# sequence.initial-message-entry
+# ---------------------------------------------------------------------------
+def test_initial_entry_valid():
+    """첫 메시지가 Actor -> Boundary이면 통과."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderBoundary", "kind": "boundary"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "type": "sync"},
+        ],
+    }
+    assert detectors.sequence_initial_entry(model, STATE) == []
+
+
+def test_initial_entry_invalid_direct_control():
+    """첫 메시지가 Actor -> Control이면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "User", "kind": "actor"},
+            {"name": "OrderControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "User", "target": "OrderControl", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_initial_entry(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.initial-message-entry"
+
+
+# ---------------------------------------------------------------------------
+# sequence.unmatched-return-message
+# ---------------------------------------------------------------------------
+def test_unmatched_returns_valid():
+    """선행 호출 후 return이 나오면 통과."""
+    model = {
+        "Participants": [
+            {"name": "OrderBoundary", "kind": "boundary"},
+            {"name": "OrderControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "OrderBoundary", "target": "OrderControl", "type": "sync"},
+            {"source": "OrderControl", "target": "OrderBoundary", "type": "return"},
+        ],
+    }
+    assert detectors.sequence_unmatched_returns(model, STATE) == []
+
+
+def test_unmatched_returns_rejects_dangling_return():
+    """선행 호출 없이 return이 나타나면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "OrderBoundary", "kind": "boundary"},
+            {"name": "OrderControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "OrderControl", "target": "OrderBoundary", "type": "return"},
+        ],
+    }
+    findings = detectors.sequence_unmatched_returns(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.unmatched-return-message"
+
+
+# ---------------------------------------------------------------------------
+# sequence.usecase-step-coverage
+# ---------------------------------------------------------------------------
+def test_usecase_coverage_valid():
+    """모든 상류 유스케이스 ID가 사용되었으면 통과."""
+    model = {
+        "Participants": [{"name": "User", "kind": "actor"}],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "use_case_ids": ["UC1"]},
+        ],
+    }
+    assert detectors.sequence_usecase_coverage(model, STATE) == []
+
+
+def test_usecase_coverage_rejects_uncovered_usecase():
+    """유스케이스 ID가 시퀀스에 매핑되지 않았으면 지적한다."""
+    state_multi_uc = {
+        **STATE,
+        "usecase_spec": {"use_cases": [{"id": "UC1"}, {"id": "UC2"}]},
+    }
+    model = {
+        "Participants": [{"name": "User", "kind": "actor"}],
+        "Messages": [
+            {"source": "User", "target": "OrderBoundary", "use_case_ids": ["UC1"]},
+        ],
+    }
+    findings = detectors.sequence_usecase_coverage(model, state_multi_uc)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.usecase-step-coverage"
+    assert "UC2" in findings[0].message
+

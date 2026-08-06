@@ -563,12 +563,118 @@ def api_traceability(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
+    """첫 번째 메시지는 반드시 Actor → Boundary 호출이어야 함.
+
+    사용자가 시스템에 접근할 때 Control이나 Entity로 직접 진입하는 잘못된 상호작용을
+    방지한다. 첫 번째 비-return 메시지를 기준으로 판정한다.
+    """
+    rule_id = "sequence.initial-message-entry"
+    kinds = {
+        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        for p in model.get("Participants", [])
+    }
+
+    first_msg = None
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() != "return":
+            first_msg = msg
+            break
+
+    if not first_msg:
+        return []
+
+    source = str(first_msg.get("source", "")).strip()
+    target = str(first_msg.get("target", "")).strip()
+    source_kind = kinds.get(source, "")
+    target_kind = kinds.get(target, "")
+
+    if source_kind != "actor" or target_kind != "boundary":
+        location = f"{source} -> {target}"
+        return [
+            Finding(
+                rule_id,
+                f"시퀀스 다이어그램의 최초 호출은 Actor → Boundary이어야 함 (현재: {source_kind or source} → {target_kind or target})",
+                location,
+            )
+        ]
+    return []
+
+
+def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
+    """선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
+
+    return 타입 메시지는 직전에 동일 상대방에 대한 동기/비동기 호출이 수행되었을 때만
+    정당하다. 선행 호출 없이 return만 나타나는 LLM 환각 현상을 차단한다.
+    """
+    rule_id = "sequence.unmatched-return-message"
+    found: list[Finding] = []
+    seen_calls: set[tuple[str, str]] = set()
+
+    for msg in model.get("Messages", []):
+        m_type = str(msg.get("type", "sync")).lower()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+
+        if m_type == "return":
+            # return의 (source -> target)에 대응하는 선행 호출은 (target -> source)
+            if (target, source) not in seen_calls:
+                location = f"{source} --> {target}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"선행 호출 없이 고립된 return 메시지 ({source} → {target})",
+                        location,
+                    )
+                )
+        else:
+            seen_calls.add((source, target))
+
+    return found
+
+
+def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
+    """입력 유스케이스 명세의 모든 유스케이스가 시퀀스 메시지에 최소 1회 반영되어 있는가.
+
+    유스케이스 명세의 핵심 기능 절차가 시퀀스 다이어그램 도출 과정에서 누락되는 현상을
+    방지한다.
+    """
+    rule_id = "sequence.usecase-step-coverage"
+    use_cases = _known_use_case_ids(state)
+    if not use_cases:
+        return []
+
+    covered: set[str] = set()
+    for msg in model.get("Messages", []):
+        for uc_id in msg.get("use_case_ids", []):
+            if uc_id:
+                covered.add(str(uc_id).strip())
+
+    uncovered = use_cases - covered
+    if not uncovered:
+        return []
+
+    found: list[Finding] = []
+    for uc_id in sorted(uncovered):
+        found.append(
+            Finding(
+                rule_id,
+                f"시퀀스 다이어그램에 반영되지 않은 유스케이스 id '{uc_id}'",
+                uc_id,
+            )
+        )
+    return found
+
+
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
     "sequence_traceability": sequence_traceability,
     "sequence_participant_classes": sequence_participant_classes,
     "sequence_message_methods": sequence_message_methods,
+    "sequence_initial_entry": sequence_initial_entry,
+    "sequence_unmatched_returns": sequence_unmatched_returns,
+    "sequence_usecase_coverage": sequence_usecase_coverage,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_path_parameters": api_path_parameters,

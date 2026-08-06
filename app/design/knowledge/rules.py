@@ -338,6 +338,46 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="sequence_message_methods",
     ),
+    Rule(
+        id="sequence.initial-message-entry",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "The initial non-return sequence message must be an Actor -> Boundary call. "
+            "External interactions must enter through a boundary component."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (BCE communication rules)",
+        evidence="project-convention",
+        caveat="Jacobson BCE 기법의 최초 진입점 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_initial_entry",
+    ),
+    Rule(
+        id="sequence.unmatched-return-message",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every return-type message must be preceded by a matching call between "
+            "the same pair of participants."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Return message guidelines)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_unmatched_returns",
+    ),
+    Rule(
+        id="sequence.usecase-step-coverage",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every use case ID from the specification must be referenced by at least "
+            "one sequence message through use_case_ids."
+        ),
+        citation="app/design/rtm.py (traceability references)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_usecase_coverage",
+    ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
         id="api.path-parameters-match",
