@@ -55,7 +55,7 @@
 ```
 { schemaVersion, csp, region,
   anchors: [...],                     # 무엇을 고른 결과인가
-  resources: [{id, role, because[]}], # 폐포 — role: required|attachable
+  resources: [{id, role, because[]}], # 연쇄 의존 자원 집합 — role: required|attachable
   createOrder: [...], deleteBefore: [[a,b]],
   autoFilled: [{id, what}],           # 서버가 채우는 것 + 고지 문장
   decisions: [{about, kind, question}],  # 사람이 정할 것 + 질문 문장

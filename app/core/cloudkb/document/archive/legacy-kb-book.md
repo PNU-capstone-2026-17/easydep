@@ -2305,7 +2305,7 @@ contract.validate_design({"schemaVersion": "1", "components": [{"id": "x", "name
 cloud_contract.validate({"schemaVersion": "2", "provider": "aws", "region": "서울"})
 ```
 ```
-[required] workloads missing — 폐포 계산의 입력 — 생성 순서·삭제 순서·서버가 대신
+[required] workloads missing — 연쇄 의존 자원 계산의 입력 — 생성 순서·삭제 순서·서버가 대신
   만드는 것·운영 경고가 전부 여기서 나온다. 이것이 없으면 실측 주장 118건이 계획에
   닿지 못한다
 [required] monthlyBudgetUSD missing — 비용 부합 판정의 기준값 — 없으면 판정문

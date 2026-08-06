@@ -35,9 +35,9 @@
 못 내면 정확한 질문을 남겨라.**
 
     지각   resource_spec(있으면) · cloud_concerns · 앞선 되묻기의 답
-    행동   앵커 후보 조회 · 폐포 계산 · CSP별 결정 조회 · 계획 검사 ·
+    행동   시작 리소스 후보 조회 · 연쇄 의존 자원 계산 · CSP별 결정 조회 · 계획 검사 ·
            **되묻기**(ask_user) · 기록(record) · 마치기(finish)
-    관찰   폐포가 성립했는가 · 아직 사람이 정할 것이 남았는가
+    관찰   연쇄 의존 자원 집합을 계산했는가 · 아직 사람이 정할 것이 남았는가
     정지   finish · 도구 호출 없는 답변 · 턴 상한
 
 **도구 목록**(전부 depkb의 사영 — 새 지식이 아니다):
@@ -45,7 +45,7 @@
 | 도구 | 하는 일 | 근거 |
 |---|---|---|
 | `list_anchors(csp)` | 이 CSP에서 앵커가 될 수 있는 자원 목록 | claims의 subject 집합 |
-| `plan_closure(anchors, csp)` | 폐포·생성 순서·doNotCreate·운영 경고 | `app/core/dependency` |
+| `plan_closure(anchors, csp)` | 연쇄 의존 자원 집합·생성 순서·직접 생성 금지·운영 경고 | `app/core/dependency` |
 | `open_decisions(csp)` | 사람이 정해야 하는 것(선언 술어·조건부) | claims의 predicate |
 | `check_plan(plan, csp)` | 구체 계획의 규칙 위반 | `depkb.check` |
 | `ask_user` · `record` · `finish` | `step_resource`와 같은 것을 재사용 | — |

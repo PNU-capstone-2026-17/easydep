@@ -49,7 +49,7 @@ spider만 9 · 둘 다 15이고, **`cloud` 권위는 아직 0이다** — CB 소
 | `spec`·`image`는 간선이 아니라 **속성**이다 | (가) `core/infra/control.go:1302` — 노드 삭제가 다른 자원에는 참조 카운트를 되돌리는데 `spec`만 주석으로 꺼져 있다 (나) TOSCA에서 `num_cpus`·`mem_size`는 관계가 아니라 `host` **capability 속성** |
 | `customImage`는 노드**로부터** 만들어진다 | 생성 경로가 `POST /ns/{ns}/infra/{i}/node/{n}/snapshot` |
 
-### 1.2 폐포 — 자원 하나를 고르면 무엇이 딸려오나
+### 1.2 연쇄 의존 자원 집합 — 자원 하나를 고르면 무엇이 딸려오나
 
 절차는 코드에 있다. **딸려오는 것을 세는 것으로 끝나지 않고, 자동으로 채워지는 것과
 사람이 정해야 하는 것을 가른다.**
@@ -225,7 +225,7 @@ completion`이 독립 하위범주**이고 결론이 **verification and validati
 
 | 우리 것 | 선행 |
 |---|---|
-| 의존 폐포 | **Hirmer, Breitenbücher, Binz, Leymann**(Informatik 2014) — 불완전 토폴로지 자동 완성, Eclipse Winery 구현 |
+| 연쇄 의존 자원 계산 | **Hirmer, Breitenbücher, Binz, Leymann**(Informatik 2014) — 불완전 토폴로지 자동 완성, Eclipse Winery 구현 |
 | 후보 매칭·탐색 | **Brogi & Soldani**(ESOCC 2013 · SCP 2016) · `DrACO`(2017) |
 | 토폴로지 검증 | **Brogi, Di Tommaso, Soldani**(2017) · `Sommelier` |
 | 멀티클라우드 분할 | **Saatkamp 외**(CLOSER 2017) |
@@ -265,7 +265,7 @@ limited 'architects'."* **과제 문제 ③이 정확히 그 갭이다.**
 |---|---|
 | 관측의 **형태** 이름(요청 스키마 필드·삭제 보호 코드 …) | 출처를 서술한 것. 등급이 아니다 |
 | 자원의 **역할** `compose`/`select` | `select`는 관측+표준 근거가 있다(§1.1). 분류 자체는 우리 구성 |
-| 폐포의 **자동/결정** 갈림 | 자동 생성 관측(`provisioning.go`)에 기댄다 |
+| 연쇄 의존 결과의 **자동/결정** 갈림 | 자동 생성 관측(`provisioning.go`)에 기댄다 |
 | 단계 배분 | `constraint-derivation.md` §4 — 거기서 근거/결정을 갈라 적는다 |
 
 ---
@@ -276,7 +276,7 @@ limited 'architects'."* **과제 문제 ③이 정확히 그 갭이다.**
 
 | 단계 | 이 문서가 대는 근거 |
 |---|---|
-| 2 · 설계 단계 산출물 정의 | §1.2 폐포가 **다이어그램에 무엇이 나와야 하는지** 정한다 |
+| 2 · 설계 단계 산출물 정의 | §1.2 연쇄 의존 자원 집합이 **다이어그램에 무엇이 나와야 하는지** 정한다 |
 | 3 · 부합 판정 축 도입 | §3.3의 **의도 오류 4종**을 판정문 축으로 쓴다 — 발명이 아니라 인용이고 **남의 수치와 비교 가능해진다** |
 | 4 · 측정 | 거절을 켜고 끌 때 그 4종이 어떻게 달라지나 |
 

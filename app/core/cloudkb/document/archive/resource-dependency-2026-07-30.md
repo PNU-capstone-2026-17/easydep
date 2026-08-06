@@ -230,7 +230,7 @@ TeaStore 등)를 조사했는데, **인프라를 만드는 코드가 하나도 �
 - 자원 21개 · 의존 39개(그중 필수 판정 28개) · 근거 83건
 - 소스: cb-tumblebug v0.12.25 (sha256 `0d5dd32b…`) · cb-spider v0.12.37
 - 파일: `graphkb/parsers/tumblebug_resources.json`
-- 폐포 절차: `graphkb/tumblebug_closure.py` — "이 자원을 고르면 무엇이 딸려오나"에 답한다
+- 연쇄 의존 자원 계산: `graphkb/tumblebug_closure.py` — "이 자원을 고르면 무엇이 딸려오나"에 답한다
 - 검사: `tests/test_tumblebug_resources.py`(12개) · `tests/test_tumblebug_closure.py`
 
 ### 6.2 둘째 갈래(외부)의 대상

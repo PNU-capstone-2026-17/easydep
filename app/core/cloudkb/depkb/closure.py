@@ -1,12 +1,12 @@
-"""폐포 — 검증된 주장만으로 "자원 하나를 고르면 무엇이 따라오나"에 답한다.
+"""연쇄 의존 자원 계산 — 검증된 주장만으로 "자원 하나를 고르면 무엇이 따라오나"에 답한다.
 
 과제 문제 ②(*"특정 리소스를 선택하는 경우 연계되는 다양한 리소스 군"*)의
 depkb 판, `graphkb/tumblebug_closure.py`의 후계다. 다른 점이 본질이다:
 
 - **근거가 도구 그래프가 아니라 3사 실측 주장(claims.json)이다.** 모든 항목이
   자기를 만든 주장(간선)을 들고 다닌다.
-- **CSP가 1급 인자다.** 같은 앵커의 폐포가 CSP마다 다르고(양상 반전 실측),
-  그 다름이 이 함수의 값이다 — aws의 VM 폐포는 필수가 **공집합**이다(전부
+- **CSP가 1급 인자다.** 같은 시작 리소스의 결과가 CSP마다 다르고(양상 반전 실측),
+  그 다름이 이 함수의 값이다 — aws의 VM 결과는 필수가 **공집합**이다(전부
   서버 대체). 그것은 버그가 아니라 측정 결과다.
 - **모르는 것은 소비를 거부한다.** unknown 판정 간선을 만나면 죽는다 — 어휘가
   자라면 실험이 따라와야 하고, 조용히 추측으로 채우지 않는다.
@@ -175,9 +175,9 @@ class Decision:
 class Closure:
     anchor: str
     csp: str
-    #: 앵커가 서기 위해 실재해야 하는 것(이행적).
+    #: 시작 리소스를 만들기 위해 연쇄적으로 필요한 자원.
     required: tuple[Item, ...]
-    #: 생성 순서 — 필수 존재 간선의 위상 정렬(앵커 포함, 앞이 먼저).
+    #: 생성 순서 — 필수 존재 간선의 위상 정렬(시작 리소스 포함, 앞이 먼저).
     createOrder: tuple[str, ...]
     attachable: tuple[Attachable, ...]
     decisions: tuple[Decision, ...]
@@ -279,7 +279,7 @@ def closure(anchor: str, csp: str) -> Closure:
         remaining.remove(ready[0])
 
     scope = seen | set(attachable)
-    # 기능 결속은 폐포 밖 자원(예: aws subnet→internetGateway)도 가리킬 수
+    # 기능 결속은 연쇄 의존 자원 집합 밖의 자원(예: aws subnet→internetGateway)도 가리킬 수
     # 있다 — 경고를 잃지 않도록 대상은 scope 밖도 받는다(아래 functional).
     life = [c for c in rows
             if c["question"] == "lifecycle" and c["verdict"] == "holds"

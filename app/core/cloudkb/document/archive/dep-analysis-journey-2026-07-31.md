@@ -64,7 +64,7 @@
 |---|---|
 | 결과 | `depkb/claims.json` — **112주장**(존재 72·생명주기 32·**기능 8** / required 28·optional 44·holds 40), 술어 부류 14 |
 | 증거 | `depkb/experiments/` **52라운드 873스텝** — 재실행 스크립트 + 원자료(오류 원문 발췌) |
-| 소비 | `depkb/closure.py` + `app/core/dependency.py` — 폐포·생성 순서·삭제 제약·동반 정리·**운영 경고**·사람 결정 |
+| 소비 | `depkb/closure.py` + `app/core/dependency.py` — 연쇄 의존 자원 집합·생성 순서·삭제 제약·동반 정리·**운영 경고**·사람 결정 |
 | 원문 | `depkb/cache/azure/`(커밋) · `.cache/cloudkb/`의 CFN·gcp 디스커버리·spider(핀만 커밋) |
 | CB 연구 | `depkb/neutralization_map.json` — 기제 판정 42셀 + 호출 색인 111 |
 | 시각화 | `depkb/dependency-graph.html` — 3패널 동일 배치, 간선만 다름. 노드마다 문외한용 설명 |

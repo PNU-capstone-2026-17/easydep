@@ -152,9 +152,9 @@ def _constraints_for(csp: str, ids: set[str]) -> tuple[Constraint, ...]:
 
 def _merge(closures: list[Closure], csp: str
            ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
-    """여러 앵커의 순서·삭제 제약을 합친다.
+    """여러 시작 리소스의 순서·삭제 제약을 합친다.
 
-    **각 폐포의 인덱스를 섞으면 안 된다.** 폐포마다 길이가 달라 인덱스가
+    **각 연쇄 의존 자원 목록의 인덱스를 섞으면 안 된다.** 목록마다 길이가 달라 인덱스가
     의미상 비교 불가이고, 실제로 위상 순서를 뒤집는 조합이 있다(A=(X,Y),
     B=(Z,X)이면 min-rank가 X를 Z 앞에 놓는데 Z→X가 필수다). 그래서 노드
     합집합 위에서 **다시 위상 정렬한다** — 결정적이도록 이름순 타이브레이크.
@@ -177,9 +177,9 @@ def _merge(closures: list[Closure], csp: str
 
 
 def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
-    """앵커들에서 인프라 의도를 만든다. unknown 간선을 만나면 죽는다."""
+    """시작 리소스들에서 배포 자원 계획을 만든다. 미확인 간선을 만나면 중단한다."""
     if not anchors:
-        raise ValueError("앵커가 없다 — 무엇을 고를지 정해지지 않으면 계획도 없다")
+        raise ValueError("시작 리소스가 없다 — 무엇을 배포할지 정해지지 않으면 계획도 없다")
     closures = [closure(a, csp) for a in anchors]
 
     resources: dict[str, Resource] = {}
@@ -216,9 +216,9 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
                 question=_sentence(_QUESTION, d.kind, subject=subject,
                                    object=obj.replace("|", " 또는 "))))
 
-    # **필수가 이긴다.** 한 앵커에서 서버가 채워 주더라도 다른 앵커가 명시적으로
+    # **필수가 이긴다.** 한 시작 리소스에서 서버가 채워 주더라도 다른 시작 리소스가 명시적으로
     # 요구하면 사용자가 정해야 한다 — 고지만 남기고 자동으로 두면 계획에서
-    # 빠진다(앵커 둘을 합칠 때 실제로 azure subnet이 그랬다).
+    # 빠진다(시작 리소스 둘을 합칠 때 실제로 azure subnet이 그랬다).
     autofilled = {k: v for k, v in autofilled.items()
                   if resources[k].role == "attachable"}
     order, delete_pairs = _merge(closures, csp)

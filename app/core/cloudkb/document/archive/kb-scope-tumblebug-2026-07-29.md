@@ -184,7 +184,7 @@ S5("파서까지 지운다")를 문자 그대로 적용하면 **경계 안 데�
 
 | | 방법 | 산출 |
 |---|---|---|
-| **(가)** | **의존 폐포** — swagger 필드가 요구하는 것을 따라간다 | VM 하나 → `image`·`spec`·`securityGroup`·`sshKey`·`subnet`·`vNet` + `mci`. 도구 `kb_creation_order`·`kb_deletion_impact`가 이미 쓴다. `tumblebug::dynamic-vm` 번들은 `provisioning.go`(v0.12.25)를 읽어 만든 것이다 |
+| **(가)** | **연쇄 의존 자원 집합** — swagger 필드가 요구하는 것을 따라간다 | VM 하나 → `image`·`spec`·`securityGroup`·`sshKey`·`subnet`·`vNet` + `mci`. 도구 `kb_creation_order`·`kb_deletion_impact`가 이미 쓴다. `tumblebug::dynamic-vm` 번들은 `provisioning.go`(v0.12.25)를 읽어 만든 것이다 |
 | **(나)** | **코퍼스 동시출현** — 템플릿·모듈에서 같이 나오는 것을 센다 | `awscfn` 1,147 · `aqt` 1,253 · `avm` 207 · `kcc` 296 |
 
 **(나)를 지우면 (가)가 좁아지는가**를 쟀습니다(2026-07-29).
