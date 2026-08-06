@@ -11,7 +11,7 @@ from .infra_intent import InfraIntent
 _GROUP = {
     "network": "network", "subnet": "network", "firewall": "network",
     "publicIp": "network", "publicIPPrefix": "network", "nic": "network",
-    "loadBalancer": "network", "internetGateway": "network",
+    "loadBalancer": "network", "defaultRoute": "network",
     "vm": "compute", "disk": "compute", "sshKey": "compute", "workloadIdentity": "identity",
 }
 

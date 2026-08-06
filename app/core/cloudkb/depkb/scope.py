@@ -15,7 +15,7 @@ VM_RESOURCE_TYPES = frozenset(
         "disk",
         "sshKey",
         "workloadIdentity",
-        "internetGateway",
+        "defaultRoute",
     }
 )
 

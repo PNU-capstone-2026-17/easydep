@@ -61,7 +61,7 @@
 ## 벤더 중립 자원 어휘
 
 `network`, `subnet`, `firewall`, `nic`, `publicIp`, `loadBalancer`, `vm`, `disk`,
-`sshKey`, `workloadIdentity`, `internetGateway`는 본 연구의 정규화 어휘다. Cloud-Barista에서
+`sshKey`, `workloadIdentity`, `defaultRoute`는 본 연구의 정규화 어휘다. Cloud-Barista에서
 그대로 가져온 표준이라고 주장하지 않는다. TOSCA의 Compute·Network·Port·BlockStorage와
 각 CSP 공식 모델을 대조하며 CSP 원어와 정규화 결과를 함께 보고한다.
 
@@ -84,3 +84,10 @@ AWS IAM role+instance profile, Azure managed identity, GCP service account이며
 - [AWS EC2 instance profile](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html)
 - [Azure VM managed identity](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-configure-managed-identities)
 - [GCP VM service account](https://docs.cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances)
+
+`defaultRoute`는 목적지 `0.0.0.0/0`인 라우트라는 제한된 의미다. AWS에서는 연결된 route
+table의 IGW next hop route, GCP에서는 `default-internet-gateway` next hop route를 뜻한다.
+기존 `internetGateway`는 실험이 게이트웨이를 제거한 것처럼 오해시키므로 폐기했다.
+
+- [AWS의 인터넷 게이트웨이 대상 기본 경로](https://docs.aws.amazon.com/vpc/latest/userguide/route-table-options.html#routing-options-igw)
+- [GCP의 IPv4 기본 경로](https://cloud.google.com/vpc/docs/routes#system-generated-default-routes)

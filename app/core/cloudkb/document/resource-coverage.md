@@ -9,7 +9,7 @@
 ## 현재 측정 범위
 
 claim의 주체는 `vm`, `nic`, `network`, `subnet`, `firewall`, `loadBalancer` 여섯 종류다.
-대상에는 `disk`, `sshKey`, `workloadIdentity`, `internetGateway`, `publicIp` 등이 추가된다.
+대상에는 `disk`, `sshKey`, `workloadIdentity`, `defaultRoute`, `publicIp` 등이 추가된다.
 `publicIPPrefix`는 Azure 원어이며 벤더 중립 `publicIp`와 동일한 자원이라고 간주하지 않는다.
 
 이 어휘는 Cloud-Barista에서 복사한 것이 아니라 본 연구가 TOSCA와 CSP 원어를 대조하여
@@ -20,7 +20,7 @@ claim의 주체는 `vm`, `nic`, `network`, `subnet`, `firewall`, `loadBalancer` 
 | 후보 | 필요한 이유 | 현재 처리 |
 |---|---|---|
 | machine image | VM 부팅 입력 | IaC 생성기가 다루지만 DepKB 관계 claim은 없음 |
-| route table / route | 외부 통신 경로 | 런타임 실험에만 등장하며 독립 자원 claim은 없음 |
+| route table / non-default route | 세부 통신 경로 | 기본 라우트는 런타임 claim에 포함되지만 일반 라우팅 모델은 없음 |
 | LB backend/attachment | VM을 LB 대상으로 연결 | 평가기에는 일부 개념이 있으나 DepKB 어휘에는 없음 |
 | listener | 요청 수신 포트·프로토콜 | DepKB 범위 밖 |
 | health check | LB가 정상 백엔드를 판정 | DepKB 범위 밖 |

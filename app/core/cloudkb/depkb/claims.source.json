@@ -486,7 +486,7 @@
                    },
                    {
                        "subject":  "subnet",
-                       "object":  "internetGateway",
+                       "object":  "defaultRoute",
                        "csp":  "aws",
                        "relationFamily":  "runtime",
                        "finding":  "runtimeRequiredForSignal",
@@ -580,7 +580,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "aws에서 `subnet`와 `internetGateway`의 기능 의존성(대상 변화로 실제 기능이 깨지는지)을 확인한 결과는 `관계 확인됨`이다. 조건: 기능상 주의: 0.0.0.0/0→IGW 라우트 삭제를 막지 않는다 — 기능 신호는 게스트에서 밖으로 나가는 HTTPS(아웃바운드). 기능 확인 신호는 인스턴스에서 외부 HTTPS로 나갈 수 있는지이다.",
+                       "note":  "AWS subnet에 연결된 route table의 0.0.0.0/0→IGW defaultRoute를 제거했을 때 게스트의 외부 HTTPS 신호가 실패했다.",
                        "replication":  {
                                            "session":  "2026-08-07",
                                            "experiments":  [
@@ -591,7 +591,7 @@
                    },
                    {
                        "subject":  "subnet",
-                       "object":  "internetGateway",
+                       "object":  "defaultRoute",
                        "csp":  "aws",
                        "relationFamily":  "runtime",
                        "finding":  "runtimeRequiredForSignal",
@@ -685,7 +685,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "aws에서 `subnet`와 `internetGateway`의 기능 의존성(대상 변화로 실제 기능이 깨지는지)을 확인한 결과는 `관계 확인됨`이다. 조건: 기능상 주의: 라우트 테이블에서 0.0.0.0/0→IGW 라우트 삭제를 컨트롤 플레인이 막지 않는다. 기능 확인 신호는 외부에서 TCP로 도달할 수 있는지이다.",
+                       "note":  "AWS subnet에 연결된 route table의 0.0.0.0/0→IGW defaultRoute를 제거했을 때 외부 TCP 도달 신호가 실패했다.",
                        "replication":  {
                                            "session":  "2026-08-07",
                                            "experiments":  [
@@ -3373,7 +3373,7 @@
                    },
                    {
                        "subject":  "network",
-                       "object":  "internetGateway",
+                       "object":  "defaultRoute",
                        "csp":  "gcp",
                        "relationFamily":  "runtime",
                        "finding":  "runtimeRequiredForSignal",
@@ -3467,7 +3467,7 @@
                                           "migrationSource":  "depkb-claims/v1",
                                           "migrationDate":  "2026-08-07"
                                       },
-                       "note":  "gcp에서 `network`와 `internetGateway`의 기능 의존성(대상 변화로 실제 기능이 깨지는지)을 확인한 결과는 `관계 확인됨`이다. 조건: 기능상 주의: 자동 생성 기본 라우트(0.0.0.0/0→default-internet-gateway) 삭제를 컨트롤 플레인이 막지 않는다. 기능 확인 신호는 외부에서 TCP로 도달할 수 있는지이다.",
+                       "note":  "GCP network의 0.0.0.0/0→default-internet-gateway defaultRoute를 제거했을 때 외부 TCP 도달 신호가 실패했다.",
                        "replication":  {
                                            "session":  "2026-08-07",
                                            "experiments":  [
