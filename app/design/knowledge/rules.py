@@ -431,6 +431,59 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="sequence_orphan_participant_detection",
     ),
+    Rule(
+        id="sequence.duplicate-consecutive-messages",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Duplicate identical messages must not be emitted consecutively outside "
+            "of explicit repetition fragments."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Redundant message check)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_duplicate_consecutive_messages",
+    ),
+    Rule(
+        id="sequence.message-naming-convention",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Message operation labels must follow camelCase or verbNoun() method "
+            "naming conventions rather than PascalCase class names."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Operation naming rule)",
+        evidence="project-convention",
+        caveat="오퍼레이션 표기법 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_naming_convention",
+    ),
+    Rule(
+        id="sequence.participant-kind-validity",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every participant kind must be one of the standard stereotypes: "
+            "actor, boundary, control, entity, database."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Participant kinds)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_participant_kind_validity",
+    ),
+    Rule(
+        id="sequence.message-type-validity",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every message type must be one of the standard call types: "
+            "sync, async, return."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Message call types)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_type_validity",
+    ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
         id="api.path-parameters-match",

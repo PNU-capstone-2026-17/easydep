@@ -799,6 +799,143 @@ def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Find
     return found
 
 
+def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Finding]:
+    """무의미한 연속 중복 메시지 탐지.
+
+    loop나 alt 같은 복합 조각 밖에서 동일한 source, target, label, type을 가진 메시지가
+    연달아 기입된 경우 지적한다.
+    """
+    rule_id = "sequence.duplicate-consecutive-messages"
+    found: list[Finding] = []
+    messages = model.get("Messages", [])
+
+    for i in range(1, len(messages)):
+        prev = messages[i - 1]
+        curr = messages[i]
+
+        prev_key = (
+            str(prev.get("source", "")).strip(),
+            str(prev.get("target", "")).strip(),
+            str(prev.get("label", "")).strip(),
+            str(prev.get("type", "sync")).strip().lower(),
+            str(prev.get("group", "")).strip(),
+            str(prev.get("condition", "")).strip(),
+        )
+        curr_key = (
+            str(curr.get("source", "")).strip(),
+            str(curr.get("target", "")).strip(),
+            str(curr.get("label", "")).strip(),
+            str(curr.get("type", "sync")).strip().lower(),
+            str(curr.get("group", "")).strip(),
+            str(curr.get("condition", "")).strip(),
+        )
+
+        if prev_key == curr_key and prev_key[2]:  # label이 비어있지 않은 경우
+            source, target, label = curr_key[0], curr_key[1], curr_key[2]
+            location = f"{source} -> {target} : {label}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"동일한 메시지 '{label}'가 연달아 중복 기입되어 있음 ({source} → {target})",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_message_naming_convention(model: dict, state: dict) -> list[Finding]:
+    """오퍼레이션 라벨 표기법 규약 검사.
+
+    메시지 라벨이 클래스 이름 형태(PascalCase, 예: OrderControl)로 잘못 기입된 경우를
+    지적한다. 오퍼레이션 라벨은 camelCase (예: registerOrder()) 또는 동사구이어야 한다.
+    """
+    rule_id = "sequence.message-naming-convention"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        label = str(msg.get("label", "")).strip()
+        if not label:
+            continue
+
+        # 괄호나 매개변수 이전의 첫 단어 추출
+        raw_name = re.sub(r'^[+\-#~]\s*', '', label)
+        match = re.match(r'([A-Za-z_]\w*)', raw_name)
+        if match:
+            first_word = match.group(1)
+            # 첫 문자가 대문자이고(PascalCase), 단어가 오퍼레이션이 아닌 클래스명으로 오인될 수 있는 형태 검사
+            # 단, ALL_CAPS 상수는 무시
+            if first_word[0].isupper() and not first_word.isupper():
+                source = str(msg.get("source", "")).strip()
+                target = str(msg.get("target", "")).strip()
+                location = f"{source} -> {target} : {label}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"메시지 라벨 '{label}'이 클래스 명칭 형태(PascalCase)로 시작함 (camelCase 또는 verbNoun() 권장)",
+                        location,
+                    )
+                )
+
+    return found
+
+
+def sequence_participant_kind_validity(model: dict, state: dict) -> list[Finding]:
+    """참가자 종류(Kind) 표준성 검사.
+
+    kind 필드가 5가지 표준 BCE/시퀀스 종류(actor, boundary, control, entity, database)
+    내에 속하는지 검사한다.
+    """
+    rule_id = "sequence.participant-kind-validity"
+    valid_kinds = {"actor", "boundary", "control", "entity", "database"}
+    found: list[Finding] = []
+
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        kind = str(participant.get("kind", "")).strip().lower()
+
+        if kind and kind not in valid_kinds:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"참가자 '{name}'의 kind '{kind}'가 표준 종류(actor, boundary, control, entity, database)에 속하지 않음",
+                    name,
+                )
+            )
+
+    return found
+
+
+def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
+    """메시지 호출 타입(Type) 표준성 검사.
+
+    type 필드가 3가지 표준 호출 화살표 타입(sync, async, return) 내에 속하는지 검사한다.
+    """
+    rule_id = "sequence.message-type-validity"
+    valid_types = {"sync", "async", "return"}
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        m_type = str(msg.get("type", "")).strip().lower()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+        location = f"{source} -> {target} : {label}"
+
+        if m_type and m_type not in valid_types:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"메시지 호출 타입 '{m_type}'이 표준 타입(sync, async, return)에 속하지 않음",
+                    location,
+                )
+            )
+
+    return found
+
+
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
@@ -812,6 +949,10 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_database_access_discipline": sequence_database_access_discipline,
     "sequence_self_call_method_validation": sequence_self_call_method_validation,
     "sequence_orphan_participant_detection": sequence_orphan_participant_detection,
+    "sequence_duplicate_consecutive_messages": sequence_duplicate_consecutive_messages,
+    "sequence_message_naming_convention": sequence_message_naming_convention,
+    "sequence_participant_kind_validity": sequence_participant_kind_validity,
+    "sequence_message_type_validity": sequence_message_type_validity,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_path_parameters": api_path_parameters,

@@ -448,3 +448,113 @@ def test_orphan_participant_rejects_unreferenced_participant():
     assert "GhostControl" in findings[0].message
 
 
+# ---------------------------------------------------------------------------
+# sequence.duplicate-consecutive-messages
+# ---------------------------------------------------------------------------
+def test_duplicate_consecutive_messages_valid():
+    """서로 다른 메시지거나 조각 조건이 다르면 통과."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "doB()", "type": "sync"},
+        ],
+    }
+    assert detectors.sequence_duplicate_consecutive_messages(model, STATE) == []
+
+
+def test_duplicate_consecutive_messages_rejects_duplicates():
+    """연달아 완전히 동일한 메시지가 기입되면 지적한다."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "doA()", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_duplicate_consecutive_messages(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.duplicate-consecutive-messages"
+
+
+# ---------------------------------------------------------------------------
+# sequence.message-naming-convention
+# ---------------------------------------------------------------------------
+def test_message_naming_convention_valid():
+    """camelCase나 verbNoun() 형태는 통과."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "registerOrder()", "type": "sync"},
+            {"source": "A", "target": "B", "label": "calculateTotal", "type": "sync"},
+        ],
+    }
+    assert detectors.sequence_message_naming_convention(model, STATE) == []
+
+
+def test_message_naming_convention_rejects_pascal_case_class_name():
+    """메시지 라벨이 PascalCase 클래스명 형태이면 지적한다."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "OrderControl", "type": "sync"},
+        ],
+    }
+    findings = detectors.sequence_message_naming_convention(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.message-naming-convention"
+
+
+# ---------------------------------------------------------------------------
+# sequence.participant-kind-validity
+# ---------------------------------------------------------------------------
+def test_participant_kind_validity_valid():
+    """표준 kind는 통과."""
+    model = {
+        "Participants": [
+            {"name": "U", "kind": "actor"},
+            {"name": "B", "kind": "boundary"},
+            {"name": "C", "kind": "control"},
+            {"name": "E", "kind": "entity"},
+            {"name": "DB", "kind": "database"},
+        ],
+    }
+    assert detectors.sequence_participant_kind_validity(model, STATE) == []
+
+
+def test_participant_kind_validity_rejects_invalid_kind():
+    """비표준 kind이면 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "CustomNode", "kind": "microservice"},
+        ],
+    }
+    findings = detectors.sequence_participant_kind_validity(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.participant-kind-validity"
+
+
+# ---------------------------------------------------------------------------
+# sequence.message-type-validity
+# ---------------------------------------------------------------------------
+def test_message_type_validity_valid():
+    """표준 type(sync, async, return)은 통과."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "type": "sync"},
+            {"source": "A", "target": "B", "type": "async"},
+            {"source": "B", "target": "A", "type": "return"},
+        ],
+    }
+    assert detectors.sequence_message_type_validity(model, STATE) == []
+
+
+def test_message_type_validity_rejects_invalid_type():
+    """비표준 type이면 지적한다."""
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "type": "rpc_call"},
+        ],
+    }
+    findings = detectors.sequence_message_type_validity(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.message-type-validity"
+
+
+
