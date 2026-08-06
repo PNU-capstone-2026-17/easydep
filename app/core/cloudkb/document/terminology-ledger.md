@@ -29,6 +29,14 @@
 | `replicationStatus` | 이번 연구 리비전의 재실행 상태 | 기존 증거의 참·거짓 |
 | `studyDisposition` | 연구 포함 또는 범위 제외 | 관계의 존재 여부 |
 
+## 실험 시점의 한계
+
+기존 실험은 탐색 실행 뒤 코드와 결과에서 예상 결과를 복원한 **후향적
+(`retrospective`) 프로토콜**이다. 따라서 이를 사전등록 실험이라고 부르지 않는다.
+2026-08-07 재측정은 동결된 기존 기대값을 기준으로 수행한 전향적 재현이지만, 원 실험의
+후향적 성격을 없애지는 않는다. 이 구분은 `claims.json.methodology`에 기계 판독 가능하게
+고정한다.
+
 ## 내부 전용어와 폐기어
 
 `startResource`, `selectedStartResource`, `unmeasured`, `unsupported`는 입력·진행·제품 상태다.

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "easydep-cloud-resource-review/v1",
+  "instructions": [
+    "Do not inspect gold.json, claims.json, cloud-plan.json, or system output.",
+    "Use only the linked CSP documentation and record the smallest mandatory set for the stated creation request.",
+    "A relation [A, B] means that creating A in the stated case requires B to be selected, supplied, or provider-created.",
+    "Copy this file, add reviewerId, reviewedAt, independenceAttestation=true, mandatoryNodes, mandatoryRelations, and rationale to every case, then run review_gold.py."
+  ],
+  "allowedResourceTerms": [
+    "disk",
+    "loadBalancer",
+    "network",
+    "nic",
+    "subnet",
+    "vm"
+  ],
+  "cases": [
+    {
+      "caseId": "aws-public-load-balancer",
+      "question": "For a newly created internet-facing AWS Application Load Balancer using Availability Zone subnets, which normalized resources and direct provisioning relations are mandatory?",
+      "sources": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/application-load-balancers.html",
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-application-load-balancer.html"
+      ]
+    },
+    {
+      "caseId": "azure-docker-vm",
+      "question": "For a newly created network-connected Azure VM, which normalized resources and direct provisioning relations are mandatory?",
+      "sources": [
+        "https://learn.microsoft.com/en-us/azure/virtual-network/network-overview",
+        "https://learn.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface-vm"
+      ]
+    },
+    {
+      "caseId": "gcp-docker-vm",
+      "question": "For a newly created Google Compute Engine VM with a boot disk and network connectivity, which normalized resources and direct provisioning relations are mandatory, including provider defaults?",
+      "sources": [
+        "https://docs.cloud.google.com/compute/docs/reference/rest/v1/instances",
+        "https://docs.cloud.google.com/compute/docs/instances/instance-creation-overview"
+      ]
+    }
+  ]
+}

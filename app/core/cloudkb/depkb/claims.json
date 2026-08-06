@@ -1,5 +1,11 @@
 {
  "schemaVersion": "easydep-dependency-claims/v2",
+ "methodology": {
+  "originalProtocolTiming": "retrospective",
+  "expectedOutcomeOrigin": "Migrated from experiment code and retained results after the original runs; not preregistered.",
+  "replicationProtocolTiming": "prospectiveAgainstFrozenHistoricalExpectations",
+  "interpretation": "Replication reduces accidental execution error but does not turn the original exploratory study into a preregistered confirmatory study."
+ },
  "_note": "Reviewed Docker-on-VM cloud resource dependency claims. Each claim is scoped to AWS, Azure, or GCP and retains its schema or experiment evidence.",
  "findingCounts": {
   "aws.notMandatoryForProvisioning": 9,

@@ -1,6 +1,12 @@
 {
     "schemaVersion":  "easydep-dependency-claims/v2",
     "_note":  "Docker-on-VM dependency claims use relation-specific findings. replicationStatus=pending means the retained evidence has not yet been independently rerun for this thesis revision.",
+    "methodology":  {
+                         "originalProtocolTiming":  "retrospective",
+                         "expectedOutcomeOrigin":  "Migrated from experiment code and retained results after the original runs; not preregistered.",
+                         "replicationProtocolTiming":  "prospectiveAgainstFrozenHistoricalExpectations",
+                         "interpretation":  "Replication reduces accidental execution error but does not turn the original exploratory study into a preregistered confirmatory study."
+                     },
     "claims":  [
                    {
                        "subject":  "firewall",

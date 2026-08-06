@@ -13,6 +13,13 @@ _SOURCE = _HERE / "claims.source.json"
 _ARTIFACT = _HERE / "claims.json"
 
 
+def _inside_depkb(relative: str) -> Path:
+    path = (_HERE / relative).resolve()
+    if _HERE.resolve() not in path.parents:
+        raise ValueError(f"evidence path escapes DepKB: {relative}")
+    return path
+
+
 def _experiment_has_step(experiment: str, step: str) -> bool:
     result_file = _HERE / "experiments" / experiment / "results.json"
     if not result_file.is_file():
@@ -58,6 +65,23 @@ def build() -> dict:
             step = item.get("step")
             if experiment and step and not _experiment_has_step(str(experiment), str(step)):
                 raise ValueError(f"missing experiment evidence: {experiment}/{step}")
+            if experiment:
+                expected_result = f"experiments/{experiment}/results.json"
+                if item.get("resultFile") != expected_result:
+                    raise ValueError(f"inconsistent result coordinate: {item.get('resultFile')}")
+                if not _inside_depkb(expected_result).is_file():
+                    raise ValueError(f"missing result file: {expected_result}")
+                definition = item.get("definition") or {}
+                definition_file = str(definition.get("file") or "")
+                definition_path = _inside_depkb(definition_file)
+                line = definition.get("line")
+                if not definition_path.is_file():
+                    raise ValueError(f"missing experiment definition: {definition_file}")
+                if not isinstance(line, int) or line < 1:
+                    raise ValueError(f"invalid definition line: {definition_file}:{line}")
+                line_count = len(definition_path.read_text(encoding="utf-8").splitlines())
+                if line > line_count:
+                    raise ValueError(f"definition line outside file: {definition_file}:{line}")
 
     claims.sort(
         key=lambda claim: (
@@ -70,6 +94,7 @@ def build() -> dict:
         counts[key] = counts.get(key, 0) + 1
     return {
         "schemaVersion": source.get("schemaVersion", "depkb-claims/v2"),
+        "methodology": source.get("methodology", {}),
         "_note": (
             "Reviewed Docker-on-VM cloud resource dependency claims. Each claim is "
             "scoped to AWS, Azure, or GCP and retains its schema or experiment evidence."

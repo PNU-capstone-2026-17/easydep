@@ -81,6 +81,13 @@ def validate_claim(claim: dict) -> None:
             raise ValueError(f"invalid acquisitionMethod: {method!r}")
         if not observation.get("expectedOutcome") or not observation.get("actualOutcome"):
             raise ValueError("every observation needs expectedOutcome and actualOutcome")
+        if method == "schemaDeclaration" and not observation.get("cite"):
+            raise ValueError("schemaDeclaration observations need a source locator")
+        if method != "schemaDeclaration":
+            required = {"experiment", "step", "resultFile", "definition"}
+            missing = required - set(observation)
+            if missing:
+                raise ValueError(f"dynamic observation is missing coordinates: {sorted(missing)}")
     provenance = claim.get("provenance")
     if not isinstance(provenance, dict) or not provenance.get("migrationSource"):
         raise ValueError("claim provenance is required")

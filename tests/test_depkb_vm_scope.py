@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.core.cloudkb.depkb.closure import closure
+from app.core.cloudkb.depkb.build_claims import build
 from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
 
 
@@ -14,6 +15,10 @@ def test_generated_claims_are_strictly_vm_scoped():
     assert claims
     assert all(is_vm_claim(claim) for claim in claims)
     assert {claim["csp"] for claim in claims} == {"aws", "azure", "gcp"}
+
+
+def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
+    assert len(build()["claims"]) == 56
 
 
 @pytest.mark.parametrize("csp", ["aws", "azure", "gcp"])
@@ -27,12 +32,15 @@ def test_product_anchors_have_a_plan_for_each_csp(csp, anchor):
 
 
 def test_claims_use_only_relation_specific_findings():
-    claims = json.loads(
+    artifact = json.loads(
         Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
-    )["claims"]
+    )
+    claims = artifact["claims"]
     forbidden_fields = {"question", "verdict", "predicate", "oracle", "evidence"}
     assert all(not (forbidden_fields & set(claim)) for claim in claims)
     assert all(claim["replicationStatus"] in {"pending", "replicated", "failed"} for claim in claims)
+    assert artifact["methodology"]["originalProtocolTiming"] == "retrospective"
+    assert "not preregistered" in artifact["methodology"]["expectedOutcomeOrigin"]
 
 
 @pytest.mark.parametrize(
