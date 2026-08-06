@@ -344,6 +344,44 @@ def _known_use_case_ids(state: dict) -> set[str]:
     return rtm.upstream_names(state).get("use_case") or set()
 
 
+def _class_methods_from_state(state: dict) -> dict[str, set[str]]:
+    """BCE 모델에서 클래스별 메서드 집합을 뽑는다.
+
+    메서드 이름은 비교를 위해 **괄호와 앞뒤 공백을 벗긴** 형태로 정규화한다.
+    BCE 모델의 `methods`는 `list[str]`이고, 각 원소는 `"registerMember()"` 같은
+    자유 텍스트다. 시퀀스 메시지의 `label`도 같은 형태이므로 정규화된 이름으로
+    대조한다.
+    """
+    classes = (state.get("extracted_bce_classes") or {}).get("Classes", [])
+    result: dict[str, set[str]] = {}
+    for c in classes:
+        name = c.get("className")
+        if not name:
+            continue
+        methods: set[str] = set()
+        for m in c.get("methods") or []:
+            normalized = _normalize_method_name(str(m).strip())
+            if normalized:
+                methods.add(normalized)
+        result[name] = methods
+    return result
+
+
+def _normalize_method_name(raw: str) -> str:
+    """메서드 이름을 비교 가능한 형태로 정규화한다.
+
+    BCE 모델의 메서드(`"+ registerMember(name: String): void"`)와 시퀀스 메시지의
+    라벨(`"registerMember()"`)을 대조하려면 양쪽을 같은 형태로 만들어야 한다.
+    가시성 기호(`+`, `-`, `#`, `~`)와 반환 타입(`: Type`), 매개변수 목록 안의
+    내용을 전부 벗기고, 메서드 **이름만** 소문자로 남긴다.
+    """
+    # 가시성 기호 제거
+    raw = re.sub(r'^[+\-#~]\s*', '', raw)
+    # 괄호 이전의 이름만 추출
+    match = re.match(r'([A-Za-z_]\w*)', raw)
+    return match.group(1).lower() if match else raw.lower().strip()
+
+
 def sequence_participants(model: dict, state: dict) -> list[Finding]:
     declared = {str(item.get("name", "")).strip() for item in model.get("Participants", []) if item.get("name")}
     found: list[Finding] = []
@@ -382,6 +420,94 @@ def sequence_traceability(model: dict, state: dict) -> list[Finding]:
             for use_case in message.get("use_case_ids", []):
                 if use_case and use_case not in use_cases:
                     found.append(Finding("sequence.references-exist", f"입력에 없는 유스케이스 id '{use_case}'", f"{message.get('source', '?')} -> {message.get('target', '?')}"))
+    return found
+
+
+def sequence_participant_classes(model: dict, state: dict) -> list[Finding]:
+    """비-액터 참가자가 클래스 다이어그램에 실재하는 클래스인가.
+
+    `sequence_traceability`는 추적 필드(`source_class`)만 본다 — 그 필드가 비어 있으면
+    지적하지 않는다. 그런데 참가자 `name` 자체가 클래스 다이어그램에 없는 이름이면,
+    그 참가자에 매달린 메시지가 전부 유령 상호작용이 된다. 여기서 잡는다.
+
+    액터는 유스케이스 명세에서 오므로 클래스 목록에 없는 것이 정상이다 — 건너뛴다.
+    """
+    rule_id = "sequence.participant-classes-exist"
+    classes = _class_names_from_puml(state)
+    if not classes:
+        return []  # 클래스 다이어그램이 없으면 대조할 것이 없다
+
+    found: list[Finding] = []
+    for participant in model.get("Participants", []):
+        kind = str(participant.get("kind", "")).strip().lower()
+        if kind == "actor":
+            continue
+        name = str(participant.get("name", "")).strip()
+        if not name:
+            continue
+        # source_class가 있으면 그것으로 대조, 없으면 name으로 대조
+        class_ref = str(participant.get("source_class", "")).strip() or name
+        if class_ref not in classes:
+            found.append(
+                Finding(rule_id, f"클래스 다이어그램에 없는 참가자 '{name}' (대응 클래스 '{class_ref}')", name)
+            )
+    return found
+
+
+def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
+    """메시지 라벨이 target 클래스의 실제 메서드인가.
+
+    시퀀스 다이어그램의 메시지 라벨은 "호출되는 오퍼레이션"이다. 클래스 다이어그램에서
+    해당 클래스의 `methods`에 정의되지 않은 오퍼레이션을 호출하면 설계가 불일치한다.
+
+    라벨이 비어 있으면 건너뛴다 — 라벨 없는 메시지는 이름을 안 단 것이지 없는 메서드를
+    부른 것이 아니다. return 타입 메시지도 건너뛴다 — 응답은 호출이 아니다.
+
+    대조는 **이름 수준**이다. BCE 모델의 메서드가 `"registerMember(name: String): void"`이고
+    메시지 라벨이 `"registerMember()"` 또는 `"registerMember"`이면 일치로 본다.
+    """
+    rule_id = "sequence.message-labels-match-methods"
+    class_methods = _class_methods_from_state(state)
+    if not class_methods:
+        return []  # BCE 모델이 없으면 대조할 것이 없다
+
+    # 참가자 이름 → 대응 클래스 매핑 (source_class가 있으면 그것, 없으면 name)
+    participant_to_class: dict[str, str] = {}
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        kind = str(participant.get("kind", "")).strip().lower()
+        if kind == "actor" or not name:
+            continue
+        class_ref = str(participant.get("source_class", "")).strip() or name
+        participant_to_class[name] = class_ref
+
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        if str(message.get("type", "sync")).lower() == "return":
+            continue
+        label = str(message.get("label", "")).strip()
+        if not label:
+            continue
+        target = str(message.get("target", "")).strip()
+        source = str(message.get("source", "")).strip()
+        target_class = participant_to_class.get(target)
+        if not target_class:
+            continue  # 액터이거나 매핑이 없다 — 다른 검출기가 잡는다
+
+        methods = class_methods.get(target_class)
+        if methods is None:
+            continue  # 클래스 자체가 BCE에 없다 — participant_classes 검출기가 잡는다
+
+        normalized_label = _normalize_method_name(label)
+        if normalized_label and normalized_label not in methods:
+            location = f"{source} -> {target} : {label}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{target_class}' 클래스에 '{label}' 메서드가 정의되어 있지 않음",
+                    location,
+                )
+            )
     return found
 
 
@@ -437,10 +563,396 @@ def api_traceability(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
+    """첫 번째 메시지는 반드시 Actor → Boundary 호출이어야 함.
+
+    사용자가 시스템에 접근할 때 Control이나 Entity로 직접 진입하는 잘못된 상호작용을
+    방지한다. 첫 번째 비-return 메시지를 기준으로 판정한다.
+    """
+    rule_id = "sequence.initial-message-entry"
+    kinds = {
+        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        for p in model.get("Participants", [])
+    }
+
+    first_msg = None
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() != "return":
+            first_msg = msg
+            break
+
+    if not first_msg:
+        return []
+
+    source = str(first_msg.get("source", "")).strip()
+    target = str(first_msg.get("target", "")).strip()
+    source_kind = kinds.get(source, "")
+    target_kind = kinds.get(target, "")
+
+    if source_kind != "actor" or target_kind != "boundary":
+        location = f"{source} -> {target}"
+        return [
+            Finding(
+                rule_id,
+                f"시퀀스 다이어그램의 최초 호출은 Actor → Boundary이어야 함 (현재: {source_kind or source} → {target_kind or target})",
+                location,
+            )
+        ]
+    return []
+
+
+def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
+    """선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
+
+    return 타입 메시지는 직전에 동일 상대방에 대한 동기/비동기 호출이 수행되었을 때만
+    정당하다. 선행 호출 없이 return만 나타나는 LLM 환각 현상을 차단한다.
+    """
+    rule_id = "sequence.unmatched-return-message"
+    found: list[Finding] = []
+    seen_calls: set[tuple[str, str]] = set()
+
+    for msg in model.get("Messages", []):
+        m_type = str(msg.get("type", "sync")).lower()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+
+        if m_type == "return":
+            # return의 (source -> target)에 대응하는 선행 호출은 (target -> source)
+            if (target, source) not in seen_calls:
+                location = f"{source} --> {target}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"선행 호출 없이 고립된 return 메시지 ({source} → {target})",
+                        location,
+                    )
+                )
+        else:
+            seen_calls.add((source, target))
+
+    return found
+
+
+def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
+    """입력 유스케이스 명세의 모든 유스케이스가 시퀀스 메시지에 최소 1회 반영되어 있는가.
+
+    유스케이스 명세의 핵심 기능 절차가 시퀀스 다이어그램 도출 과정에서 누락되는 현상을
+    방지한다.
+    """
+    rule_id = "sequence.usecase-step-coverage"
+    use_cases = _known_use_case_ids(state)
+    if not use_cases:
+        return []
+
+    covered: set[str] = set()
+    for msg in model.get("Messages", []):
+        for uc_id in msg.get("use_case_ids", []):
+            if uc_id:
+                covered.add(str(uc_id).strip())
+
+    uncovered = use_cases - covered
+    if not uncovered:
+        return []
+
+    found: list[Finding] = []
+    for uc_id in sorted(uncovered):
+        found.append(
+            Finding(
+                rule_id,
+                f"시퀀스 다이어그램에 반영되지 않은 유스케이스 id '{uc_id}'",
+                uc_id,
+            )
+        )
+    return found
+
+
+def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Finding]:
+    """복합 조각(group)과 조건문(condition) 간의 무결성 검사.
+
+    group(alt/loop/opt)이 선언되었으면 condition설명이 필수이며, 반대로 group이
+    없으면 condition만 독립적으로 유령 기입되어선 안 된다.
+    """
+    rule_id = "sequence.fragment-condition-consistency"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        group = str(msg.get("group", "")).strip()
+        condition = str(msg.get("condition", "")).strip()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+        location = f"{source} -> {target} : {label}"
+
+        if group and not condition:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"복합 조각 '{group}'에 대한 조건문(condition) 설명이 비어 있음",
+                    location,
+                )
+            )
+        elif not group and condition:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"복합 조각(group) 선언 없이 조건문('{condition}')만 독립 기입되어 있음",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_database_access_discipline(model: dict, state: dict) -> list[Finding]:
+    """데이터베이스(database) 직접 접근 주체 규약 검사.
+
+    Database 계층으로의 직접 접근은 Control 또는 Entity 계층에서만 허용되며,
+    Actor나 Boundary 계층에서 DB를 직접 호출하는 것은 아키텍처 위반이다.
+    """
+    rule_id = "sequence.database-access-discipline"
+    kinds = {
+        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        for p in model.get("Participants", [])
+    }
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        source_kind = kinds.get(source, "")
+        target_kind = kinds.get(target, "")
+
+        if target_kind == "database" and source_kind in ("actor", "boundary"):
+            location = f"{source} -> {target}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{source_kind}' 계층({source})에서 데이터베이스({target})를 직접 호출함 (Control/Entity를 거쳐야 함)",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_self_call_method_validation(model: dict, state: dict) -> list[Finding]:
+    """자기 자신 호출(Self-Call) 오퍼레이션 검증.
+
+    source == target 인 셀프 메시지가 발생할 때, 해당 호출 오퍼레이션이 정당하게
+    선언되어 있는지 및 라벨 기입 여부를 검사한다.
+    """
+    rule_id = "sequence.self-call-method-validation"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+
+        if source and source == target:
+            if not label:
+                location = f"{source} -> {target}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"자기 자신({source})을 호출하는 메시지의 라벨(오퍼레이션명)이 비어 있음",
+                        location,
+                    )
+                )
+
+    return found
+
+
+def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Finding]:
+    """메시지가 단 하나도 없는 고립된 참가자(Orphan Participant) 감지.
+
+    Participants 목록에는 선언되어 있으나 전체 Messages 중 단 한 번도 source 나 target으로
+    참여하지 않는 불필요한 유령 참가자를 탐지한다.
+    """
+    rule_id = "sequence.orphan-participant-detection"
+    active_participants: set[str] = set()
+
+    for msg in model.get("Messages", []):
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        if source:
+            active_participants.add(source)
+        if target:
+            active_participants.add(target)
+
+    found: list[Finding] = []
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        if name and name not in active_participants:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"메시지상에서 한 번도 호출/응답하지 않는 고립된 참가자 '{name}'",
+                    name,
+                )
+            )
+
+    return found
+
+
+def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Finding]:
+    """무의미한 연속 중복 메시지 탐지.
+
+    loop나 alt 같은 복합 조각 밖에서 동일한 source, target, label, type을 가진 메시지가
+    연달아 기입된 경우 지적한다.
+    """
+    rule_id = "sequence.duplicate-consecutive-messages"
+    found: list[Finding] = []
+    messages = model.get("Messages", [])
+
+    for i in range(1, len(messages)):
+        prev = messages[i - 1]
+        curr = messages[i]
+
+        prev_key = (
+            str(prev.get("source", "")).strip(),
+            str(prev.get("target", "")).strip(),
+            str(prev.get("label", "")).strip(),
+            str(prev.get("type", "sync")).strip().lower(),
+            str(prev.get("group", "")).strip(),
+            str(prev.get("condition", "")).strip(),
+        )
+        curr_key = (
+            str(curr.get("source", "")).strip(),
+            str(curr.get("target", "")).strip(),
+            str(curr.get("label", "")).strip(),
+            str(curr.get("type", "sync")).strip().lower(),
+            str(curr.get("group", "")).strip(),
+            str(curr.get("condition", "")).strip(),
+        )
+
+        if prev_key == curr_key and prev_key[2]:  # label이 비어있지 않은 경우
+            source, target, label = curr_key[0], curr_key[1], curr_key[2]
+            location = f"{source} -> {target} : {label}"
+            found.append(
+                Finding(
+                    rule_id,
+                    f"동일한 메시지 '{label}'가 연달아 중복 기입되어 있음 ({source} → {target})",
+                    location,
+                )
+            )
+
+    return found
+
+
+def sequence_message_naming_convention(model: dict, state: dict) -> list[Finding]:
+    """오퍼레이션 라벨 표기법 규약 검사.
+
+    메시지 라벨이 클래스 이름 형태(PascalCase, 예: OrderControl)로 잘못 기입된 경우를
+    지적한다. 오퍼레이션 라벨은 camelCase (예: registerOrder()) 또는 동사구이어야 한다.
+    """
+    rule_id = "sequence.message-naming-convention"
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        if str(msg.get("type", "sync")).lower() == "return":
+            continue
+        label = str(msg.get("label", "")).strip()
+        if not label:
+            continue
+
+        # 괄호나 매개변수 이전의 첫 단어 추출
+        raw_name = re.sub(r'^[+\-#~]\s*', '', label)
+        match = re.match(r'([A-Za-z_]\w*)', raw_name)
+        if match:
+            first_word = match.group(1)
+            # 첫 문자가 대문자이고(PascalCase), 단어가 오퍼레이션이 아닌 클래스명으로 오인될 수 있는 형태 검사
+            # 단, ALL_CAPS 상수는 무시
+            if first_word[0].isupper() and not first_word.isupper():
+                source = str(msg.get("source", "")).strip()
+                target = str(msg.get("target", "")).strip()
+                location = f"{source} -> {target} : {label}"
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"메시지 라벨 '{label}'이 클래스 명칭 형태(PascalCase)로 시작함 (camelCase 또는 verbNoun() 권장)",
+                        location,
+                    )
+                )
+
+    return found
+
+
+def sequence_participant_kind_validity(model: dict, state: dict) -> list[Finding]:
+    """참가자 종류(Kind) 표준성 검사.
+
+    kind 필드가 5가지 표준 BCE/시퀀스 종류(actor, boundary, control, entity, database)
+    내에 속하는지 검사한다.
+    """
+    rule_id = "sequence.participant-kind-validity"
+    valid_kinds = {"actor", "boundary", "control", "entity", "database"}
+    found: list[Finding] = []
+
+    for participant in model.get("Participants", []):
+        name = str(participant.get("name", "")).strip()
+        kind = str(participant.get("kind", "")).strip().lower()
+
+        if kind and kind not in valid_kinds:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"참가자 '{name}'의 kind '{kind}'가 표준 종류(actor, boundary, control, entity, database)에 속하지 않음",
+                    name,
+                )
+            )
+
+    return found
+
+
+def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
+    """메시지 호출 타입(Type) 표준성 검사.
+
+    type 필드가 3가지 표준 호출 화살표 타입(sync, async, return) 내에 속하는지 검사한다.
+    """
+    rule_id = "sequence.message-type-validity"
+    valid_types = {"sync", "async", "return"}
+    found: list[Finding] = []
+
+    for msg in model.get("Messages", []):
+        m_type = str(msg.get("type", "")).strip().lower()
+        source = str(msg.get("source", "")).strip()
+        target = str(msg.get("target", "")).strip()
+        label = str(msg.get("label", "")).strip()
+        location = f"{source} -> {target} : {label}"
+
+        if m_type and m_type not in valid_types:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"메시지 호출 타입 '{m_type}'이 표준 타입(sync, async, return)에 속하지 않음",
+                    location,
+                )
+            )
+
+    return found
+
+
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
     "sequence_traceability": sequence_traceability,
+    "sequence_participant_classes": sequence_participant_classes,
+    "sequence_message_methods": sequence_message_methods,
+    "sequence_initial_entry": sequence_initial_entry,
+    "sequence_unmatched_returns": sequence_unmatched_returns,
+    "sequence_usecase_coverage": sequence_usecase_coverage,
+    "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
+    "sequence_database_access_discipline": sequence_database_access_discipline,
+    "sequence_self_call_method_validation": sequence_self_call_method_validation,
+    "sequence_orphan_participant_detection": sequence_orphan_participant_detection,
+    "sequence_duplicate_consecutive_messages": sequence_duplicate_consecutive_messages,
+    "sequence_message_naming_convention": sequence_message_naming_convention,
+    "sequence_participant_kind_validity": sequence_participant_kind_validity,
+    "sequence_message_type_validity": sequence_message_type_validity,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_path_parameters": api_path_parameters,

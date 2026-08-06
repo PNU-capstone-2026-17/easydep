@@ -310,6 +310,180 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="sequence_traceability",
     ),
+    Rule(
+        id="sequence.participant-classes-exist",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every non-actor sequence participant must correspond to a class declared "
+            "in the class diagram. If the participant has a source_class field, that "
+            "class name is checked; otherwise the participant name itself is checked."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (participant ↔ class alignment)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_participant_classes",
+    ),
+    Rule(
+        id="sequence.message-labels-match-methods",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every sequence message label on a non-return call must name a method "
+            "defined in the target class's BCE model. Comparison is at the name level: "
+            "visibility, parameters, and return type are stripped before matching."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_methods",
+    ),
+    Rule(
+        id="sequence.initial-message-entry",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "The initial non-return sequence message must be an Actor -> Boundary call. "
+            "External interactions must enter through a boundary component."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (BCE communication rules)",
+        evidence="project-convention",
+        caveat="Jacobson BCE 기법의 최초 진입점 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_initial_entry",
+    ),
+    Rule(
+        id="sequence.unmatched-return-message",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every return-type message must be preceded by a matching call between "
+            "the same pair of participants."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Return message guidelines)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_unmatched_returns",
+    ),
+    Rule(
+        id="sequence.usecase-step-coverage",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every use case ID from the specification must be referenced by at least "
+            "one sequence message through use_case_ids."
+        ),
+        citation="app/design/rtm.py (traceability references)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_usecase_coverage",
+    ),
+    Rule(
+        id="sequence.fragment-condition-consistency",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "If a message declares a combined fragment group (alt, loop, opt), it "
+            "must specify a condition explanation, and vice versa."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Fragment rendering)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_fragment_condition_consistency",
+    ),
+    Rule(
+        id="sequence.database-access-discipline",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Database participants must not be directly invoked by Actor or Boundary "
+            "participants; access must be mediated through Control or Entity components."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Layered architecture rules)",
+        evidence="project-convention",
+        caveat="데이터 접근 계층 캡슐화 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_database_access_discipline",
+    ),
+    Rule(
+        id="sequence.self-call-method-validation",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Self-calling messages (source == target) must have a non-empty label "
+            "naming the internal operation being invoked."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Self-call messages)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_self_call_method_validation",
+    ),
+    Rule(
+        id="sequence.orphan-participant-detection",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every participant declared in the sequence model must be involved in "
+            "at least one message as either source or target."
+        ),
+        citation="app/design/rtm.py (Participant active trace)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_orphan_participant_detection",
+    ),
+    Rule(
+        id="sequence.duplicate-consecutive-messages",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Duplicate identical messages must not be emitted consecutively outside "
+            "of explicit repetition fragments."
+        ),
+        citation="app/design/services/sequence_diagram/plantuml.py (Redundant message check)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_duplicate_consecutive_messages",
+    ),
+    Rule(
+        id="sequence.message-naming-convention",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Message operation labels must follow camelCase or verbNoun() method "
+            "naming conventions rather than PascalCase class names."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Operation naming rule)",
+        evidence="project-convention",
+        caveat="오퍼레이션 표기법 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_naming_convention",
+    ),
+    Rule(
+        id="sequence.participant-kind-validity",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every participant kind must be one of the standard stereotypes: "
+            "actor, boundary, control, entity, database."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Participant kinds)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_participant_kind_validity",
+    ),
+    Rule(
+        id="sequence.message-type-validity",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every message type must be one of the standard call types: "
+            "sync, async, return."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Message call types)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_message_type_validity",
+    ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
         id="api.path-parameters-match",
