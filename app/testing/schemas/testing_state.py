@@ -8,6 +8,7 @@ class TestingState(TypedDict):
     # Inputs
     run_id: str
     manifests_dir: str # e.g. "application/k8s"
+    iac_dir: str # e.g. "application/terraform"
 
     # State
     current_node: str
