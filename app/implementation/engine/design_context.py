@@ -1243,30 +1243,11 @@ def slice_erd(source: str, entity_names: set[str]) -> str:
 
 
 def render_prompt(spec: JobSpec, context: dict[str, object], allowed: list[str]) -> str:
-    control_rules = {
-        "StockPurchaseController": (
-            "- In startPurchase, persist the site preference, require a successful web connection, "
-            "capture and save the PurchaseRecord, then branch on its exact status. A completed "
-            "record must call updatePortfolio; a delayed record must start its timer.\n"
-            "- Map every completed PurchaseRecord to an exact BCE Holding using stockSymbol, "
-            "quantity, and price; call PortfolioManager.addHolding, refresh the view, and return "
-            "the updated Portfolio. Save the Holding and Portfolio through "
-            "StockPurchasePersistenceGateway. A completed start or clarification must use this path.\n"
-            "- Use the exact generated PurchaseRecord/Holding accessors shown below. Do not leave "
-            "the purchase-to-holding mapping as a TODO or return a fabricated portfolio."
-        ),
-        "WebConnectionManager": (
-            "- Inject TradingSiteGateway and delegate openConnection to `connect`, "
-            "capturePurchase to `executePurchase`, and closeConnection to `disconnect`. Return the "
-            "exact gateway result and never hard-code ACK, purchase fields, or outcomes."
-        ),
-        "TimerManager": (
-            "- Inject DelayQueryScreen. On timer expiry, remove the timer, log the expiry, and call "
-            "DelayQueryScreen.promptForOutcome(purchaseId) exactly once. Outcome submission is "
-            "delegated by the Boundary adapter to StockPurchaseController; do not inject or call "
-            "StockPurchaseController directly."
-        ),
-    }.get(str(context["control"]), "")
+    control_rules = (
+        "- Implement all public operations defined in the Control contract.\n"
+        "- Delegate persistence and external system operations to output ports/gateways.\n"
+        "- Ensure clean domain logic with proper state transitions and no dummy fallbacks."
+    )
     return f"""# Implementation task: {context['control']}
 
 Implement the application behavior for `{context['control']}` using only the scoped contracts below.

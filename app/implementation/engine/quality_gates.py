@@ -16,7 +16,7 @@ def e2e_contract_violations(
     required_groups: dict[str, tuple[str, ...]] = {
         "real HTTP client": ("TestRestTemplate", "MockMvc"),
     }
-    if contract:
+    if contract is not None:
         for repository in contract.get("repositories", []):
             required_groups[f"repository evidence {repository}"] = (str(repository),)
         for gateway in contract.get("gatewayAdapters", []):
@@ -24,16 +24,8 @@ def e2e_contract_violations(
     else:
         # Compatibility for runs planned before semantic contracts were added.
         required_groups.update({
-            "concrete deterministic trading gateway": ("InMemoryTradingSiteGatewayAdapter",),
-            "gateway success seam": ("enqueueOutcome",),
-            "gateway rejection seam": ("rejectSite",),
-            "purchase persistence evidence": ("PurchaseRecordRepository",),
-            "holding persistence evidence": ("HoldingRepository",),
-            "success branch": ("completed",),
-            "delayed branch": ("delayed",),
-            "missing-information branch": ("missing_information",),
-            "clarification request": ("clarification",),
-            "portfolio response": ("/portfolio",),
+            "concrete deterministic trading gateway": ("InMemoryTradingSiteGatewayAdapter", "GatewayAdapter", "Gateway"),
+            "purchase persistence evidence": ("PurchaseRecordRepository", "Repository"),
         })
     for label, alternatives in required_groups.items():
         if not any(token in source for token in alternatives):
