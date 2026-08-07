@@ -692,7 +692,7 @@ RULES: tuple[Rule, ...] = (
         # 딱지가 깨지면 그 클래스는 Entity로 안 읽히고 **표도 그 표에 걸린 관계도** 함께
         # 사라진다. ERD 수정 프롬프트가 "Boundary와 Control을 그대로 두라"고 요구하는
         # 것과 짝을 이룬다 — 요구만 하고 판정을 안 하면 그건 부탁이다.
-        citation="app/design/services/erd/mapping.py (is_entity)",
+        citation="app/design/services/common/fields.py (is_entity)",
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="erd_stereotype_is_bce",
@@ -707,7 +707,7 @@ RULES: tuple[Rule, ...] = (
         ),
         # 빈 이름이면 사상이 `UnknownEntity`를 **지어낸다.** 그 이름이 하류에서 테이블
         # 이름이 되어 스키마에 남는다.
-        citation="app/design/services/erd/mapping.py (sanitize_entity_name)",
+        citation="app/design/services/common/fields.py (sanitize_entity_name)",
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="erd_entity_name_usable",
@@ -864,7 +864,7 @@ RULES: tuple[Rule, ...] = (
         # `Unmapped` 항목도 없어서, 모델이 적은 링크가 산출물 어디에도 안 남고 아무도
         # 그것을 못 본다. 스칼라 쪽은 한술 더 떠서 `member : MEMBER`라는 SQL 아닌
         # 타입의 가짜 컬럼을 만들어 하류 DDL까지 보냈다.
-        citation="app/design/services/erd/mapping.py (_build_tables · names_an_entity)",
+        citation="app/design/services/erd/mapping.py (_build_tables) · app/design/services/common/fields.py (names_an_entity)",
         evidence="pipeline-invariant",
         caveat=(
             "`erd.fk-from-field-name`과 헷갈리지 말 것. 저쪽이 금지하는 것은 필드 "
@@ -930,7 +930,7 @@ RULES: tuple[Rule, ...] = (
             "Write Entity fields as `name : Type`. A field with no type becomes a column "
             "with no type, and the downstream schema generator picks one instead."
         ),
-        citation="app/design/services/erd/mapping.py (split_field · sql_type)",
+        citation="app/design/services/common/fields.py (split_field · sql_type)",
         evidence="project-convention",
         caveat=(
             "지침이지 규칙이 아니다. 분석 수준에서 타입을 아직 정하지 않는 것이 정당할 수 "

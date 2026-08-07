@@ -23,7 +23,7 @@ from app.design.services.erd.mapping import build_logical_model
 # `sanitize_entity_name`은 여기서 안 쓰지만 다시 내보낸다 — `app/design/rtm.py`가 추적표의
 # ERD 항목 이름을 이 이름으로 맞추려고 여기서 가져간다. 그림에 적히는 이름과 추적표가
 # 가리키는 이름이 갈라지면 "erd:Order를 고쳐줘"가 통하지 않는다.
-from app.design.services.erd.mapping import sanitize_entity_name  # noqa: F401
+from app.design.services.common.fields import sanitize_entity_name  # noqa: F401
 
 
 def _column_line(column: dict[str, Any]) -> str:

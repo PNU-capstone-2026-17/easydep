@@ -11,9 +11,16 @@
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from app.design.knowledge.detectors import erd_findings
+from app.design.services.common import fields as mapping_fields
 from app.design.services.erd.inheritance import order_for_mapping
 from app.design.services.erd.mapping import build_logical_model
 
@@ -279,6 +286,24 @@ def test_a_declared_field_is_not_silently_retyped_by_the_surrogate_key():
     assert any("erd.surrogate-key-collides" in i for i in issues), issues
 
 
+def test_the_collision_is_reported_under_the_name_the_model_actually_wrote():
+    """대소문자만 다른 충돌에서 **모델이 적은 이름**을 말하는가.
+
+    `orderId`와 `order_id`는 `squash` 기준으로 같은 이름이라 칸이 하나로 모인다. 그런데
+    한동안 지적이 우리가 지은 이름(`order_id`)을 말했다 — 모델 안에 없는 이름이라
+    고치라는 말을 듣고도 **어디를 고쳐야 할지 알 수가 없었다.** 재생성도 마찬가지다.
+    """
+    model = {
+        "Classes": [_entity("Order", ["orderId : String", "at : Date"])],
+        "Relationships": [],
+    }
+    issues = [f.as_issue() for f in erd_findings(model, {})]
+    collisions = [i for i in issues if "erd.surrogate-key-collides" in i]
+
+    assert collisions, issues
+    assert "'orderId'" in collisions[0], collisions
+
+
 # ---------------------------------------------------------------------------
 # 컬럼
 # ---------------------------------------------------------------------------
@@ -328,6 +353,51 @@ def test_a_set_is_a_collection_too():
 
     assert "OrderTags" in _names(logical)
     assert _column(_table(logical, "OrderTags"), "tags_value")["type"] == "VARCHAR(255)"
+
+
+@pytest.mark.parametrize(
+    "raw_type",
+    ["Playlist", "Dataset", "Asset", "Ruleset", "Wishlist", "Checklist", "Offset",
+     "Subset", "Setting", "Listing"],
+)
+def test_a_type_that_merely_contains_a_collection_word_is_not_a_collection(raw_type):
+    """**부분 문자열로 보면 안 된다** — `Playlist`에 `list`가, `Dataset`에 `set`이 들어 있다.
+
+    한동안 `"list" in lowered` 식이었고, 그래서 이 흔한 이름들이 전부 다중값으로 읽혔다.
+    피해가 조용했다: 원소 타입을 못 읽으니 컬럼도 안 만들고 **모델에 없는 1NF 자식 표**를
+    하나 만들어 냈다. `referenced_entity`도 `None`을 돌려주어
+    `erd.entity-typed-field-needs-relationship`이 침묵했고,
+    `erd.identifier-fields-exist`는 "다중값이라 키가 될 수 없다"는 **거짓 지적**을 냈다.
+    """
+    assert mapping_fields.is_collection(raw_type) is False
+
+
+@pytest.mark.parametrize(
+    "raw_type",
+    ["List<String>", "Set<String>", "String[]", "HashSet<Long>", "TreeSet<X>",
+     "ArrayList<Y>", "Collection<Z>", "Iterable<Q>", "java.util.List<String>", "List"],
+)
+def test_the_real_collection_notations_still_read_as_collections(raw_type):
+    """좁히면서 **원래 읽던 것을 잃지 않았는가.** 구체 타입(`HashSet`)과 패키지 한정
+    이름(`java.util.List`)까지 본다 — 못 읽으면 제1정규화가 통째로 안 걸린다.
+    """
+    assert mapping_fields.is_collection(raw_type) is True
+
+
+def test_an_entity_named_like_a_collection_does_not_invent_a_table():
+    """`Playlist`를 가리키는 스칼라 필드가 **유령 자식 표**를 만들던 자리.
+
+    관계가 그 사실을 들고 가므로 `Member`에는 `playlist_id` 하나만 남아야 하고,
+    `MemberFav` 같은 표는 모델 어디에도 근거가 없다.
+    """
+    logical = build_logical_model({
+        "Classes": [_entity("Member", ["fav : Playlist"]), _entity("Playlist", ["title : String"])],
+        "Relationships": [{"source": "Playlist", "target": "Member", "type": "Association",
+                           "sourceMultiplicity": "1", "targetMultiplicity": "*"}],
+    })
+
+    assert _names(logical) == ["Member", "Playlist"]
+    assert [c["name"] for c in _table(logical, "Member")["columns"]] == ["member_id", "playlist_id"]
 
 
 def test_a_first_normal_form_child_cannot_exist_without_its_parent():
@@ -398,6 +468,23 @@ def test_an_inherited_composite_natural_key_stays_composite():
 
     assert sub["uniqueTogether"] == [["a", "b"]]
     assert not any(c["unique"] for c in sub["columns"])
+
+
+def test_an_inherited_composite_key_keeps_the_parents_column_order():
+    """물려받은 복합키의 **순서가 부모와 같아야** 한다.
+
+    한동안 자식이 `(b, a)`였다 — 외래키를 하나씩 `insert(0, …)` 로 앞에 밀어 넣어서
+    순서가 뒤집혔다. 외래키 자체는 칸마다 `referencesColumn`을 들고 있어 어긋나지
+    않지만, **그림이 부모와 자식을 다르게 보여주고 하류는 그 텍스트로 DDL을 만든다.**
+    """
+    logical = build_logical_model({
+        "Classes": [_entity("Base", ["a : String", "b : String", "x : Int"], identifier=["a", "b"]),
+                    _entity("Sub", ["y : Int"])],
+        "Relationships": [{"source": "Sub", "target": "Base", "type": "Inheritance"}],
+    })
+
+    assert _table(logical, "Base")["primaryKey"] == ["a", "b"]
+    assert _table(logical, "Sub")["primaryKey"] == ["a", "b"]
 
 
 def test_a_single_inherited_natural_key_still_uses_the_column_flag():
@@ -568,22 +655,22 @@ def assert_no_declared_field_is_lost(model: dict, logical: dict) -> None:
     사실을 들고 가고, 없으면 `erd.entity-typed-field-needs-relationship`이 지적한다.
     이 단언이 막으려던 것은 **아무 데도 안 남고 아무도 모르는 것**이지 칸 자체가 아니다.
     """
-    from app.design.services.erd import mapping
+    from app.design.services.common import fields
 
     entity_names = [
-        c.get("className") for c in model.get("Classes") or [] if mapping.is_entity(c)
+        c.get("className") for c in model.get("Classes") or [] if fields.is_entity(c)
     ]
     surviving = {c["name"] for t in logical["Tables"] for c in t["columns"]}
     for class_item in model.get("Classes") or []:
-        if not mapping.is_entity(class_item):
+        if not fields.is_entity(class_item):
             continue
         for raw in class_item.get("fields") or []:
-            name, raw_type = mapping.split_field(raw)
-            if not name or mapping.is_collection(raw_type):
+            name, raw_type = fields.split_field(raw)
+            if not name or fields.is_collection(raw_type):
                 continue
-            if mapping.referenced_entity(raw_type, entity_names):
+            if fields.referenced_entity(raw_type, entity_names):
                 continue
-            assert mapping.squash(name) in {mapping.squash(s) for s in surviving}, (
+            assert fields.squash(name) in {fields.squash(s) for s in surviving}, (
                 f"{class_item.get('className')}.{name} 이 사라졌다 — 남은 칸: {sorted(surviving)}"
             )
 
@@ -626,6 +713,28 @@ _TANGLED = {
     },
     "declared-field-collides-with-surrogate": {
         "Classes": [_entity("Order", ["order_id : String", "at : Date"])],
+        "Relationships": [],
+    },
+    "declared-field-collides-with-surrogate-by-case-only": {
+        # 이름이 **똑같지는 않고** `squash` 기준으로만 같다. 칸은 하나로 모이는데,
+        # 위의 것과 달리 살아남는 이름(`order_id`)이 모델이 적은 이름(`orderId`)과
+        # 다르다 — 그래서 "선언한 것이 사라지지 않았나"를 글자 그대로 세면 걸린다.
+        "Classes": [_entity("Order", ["orderId : String", "at : Date"])],
+        "Relationships": [],
+    },
+    "type-named-like-a-collection": {
+        # `Playlist`에 `list`가 들어 있다. 부분 문자열로 보면 다중값이 되어 모델에 없는
+        # 1NF 자식 표가 생기고, 그 표의 값 칸은 타입이 `None`이다.
+        "Classes": [_entity("Member", ["fav : Playlist", "tags : Set<String>"]),
+                    _entity("Playlist", ["title : String"])],
+        "Relationships": [{"source": "Playlist", "target": "Member", "type": "Association",
+                           "sourceMultiplicity": "1", "targetMultiplicity": "*"}],
+    },
+    "two-fields-that-squash-to-the-same-name": {
+        # `member_id`와 `memberId`가 `squash` 기준으로 같다. 후보를 집합에 담으면
+        # 어느 쪽이 자연키가 되는지가 **프로세스 해시 시드에 달린다.**
+        "Classes": [_entity("Book", ["member_id : String", "memberId : Int"],
+                            identifier=["memberid"])],
         "Relationships": [],
     },
     "identifier-referenced-by-someone-else": {
@@ -748,3 +857,41 @@ def test_no_declared_field_is_lost(model):
     그러나 **칸이 조용히 없어지는 것**은 다르다 — 드러날 자리가 아무 데도 없다.
     """
     assert_no_declared_field_is_lost(model, build_logical_model(model))
+
+
+@_MUST_TERMINATE
+@pytest.mark.parametrize("model", _ALL_MODELS.values(), ids=list(_ALL_MODELS))
+def test_the_mapping_does_not_depend_on_the_process_hash_seed(model):
+    """**순수 함수라는 말이 사실인가.** 같은 모델은 언제 돌려도 같은 산출물을 내야 한다.
+
+    한동안 아니었다. 기본키 후보를 **집합**에 담고 `next()`로 훑었는데, 문자열 집합의
+    순회 순서는 프로세스 해시 시드에 달려 있다. `member_id`와 `memberId`를 둘 다 선언한
+    모델은 실행마다 기본키가 달라졌다.
+
+    조용히 새는 결함이었다. `artifact_repository`가 **저장된 모델에서 매 로드마다 다시
+    그리므로**, 아무도 모델을 안 고쳤는데 그림이 바뀔 수 있었다. 단언 하나에도 안 걸리고
+    (한 번 돌리면 언제나 자기 자신과 같으니까) 눈금도 없었다.
+
+    하위 프로세스로 도는 이유가 그것이다 — 해시 시드는 프로세스가 시작할 때 정해져서
+    같은 인터프리터 안에서는 이 결함을 **원리상 볼 수 없다.**
+    """
+    script = (
+        "import json,sys;"
+        "from app.design.services.erd.mapping import build_logical_model;"
+        "print(json.dumps(build_logical_model(json.loads(sys.argv[1])),"
+        " ensure_ascii=False, sort_keys=True))"
+    )
+    payload = json.dumps(model, ensure_ascii=False)
+
+    seen = set()
+    for seed in ("0", "1", "4", "7"):
+        result = subprocess.run(
+            [sys.executable, "-c", script, payload],
+            capture_output=True, text=True, encoding="utf-8",
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            cwd=str(Path(__file__).resolve().parent.parent),
+        )
+        assert result.returncode == 0, result.stderr
+        seen.add(result.stdout)
+
+    assert len(seen) == 1, f"해시 시드마다 다른 산출물이 {len(seen)}가지 나왔다"

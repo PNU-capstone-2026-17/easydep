@@ -81,6 +81,10 @@ def test_the_check_judges_the_mapped_data_model_not_just_the_bce():
     [
         ([{"source": "Member", "target": "Order", "type": "Association"}], "다중도가 없어"),
         ([{"source": "Member", "target": "Order", "type": "Dependency"}], "Dependency로 이었다"),
+        # 구조적이지 않은 종류는 `Dependency` 말고도 있다 — 문구가 **모델이 적은 그 종류**를
+        # 말해야 한다. 한동안 전부 "Dependency로 이었다"였고, 그러면 `Realization`이라고
+        # 적은 사람은 자기가 안 쓴 것을 고치라는 말을 듣는다.
+        ([{"source": "Member", "target": "Order", "type": "Realization"}], "Realization로 이었다"),
         (
             [{"source": "Member", "target": "Order", "type": "Inheritance"},
              {"source": "Member", "target": "Extra", "type": "Inheritance"}],
@@ -99,8 +103,8 @@ def test_the_check_judges_the_mapped_data_model_not_just_the_bce():
             "연결 테이블 이름이 같아져",
         ),
     ],
-    ids=["multiplicity", "dependency", "multiple-inheritance", "cycle",
-         "duplicate-junction"],
+    ids=["multiplicity", "dependency", "non-structural-type", "multiple-inheritance",
+         "cycle", "duplicate-junction"],
 )
 def test_every_unmapped_reason_reaches_the_user_in_korean(relationships, expected):
     """사상 못 한 사유마다 **사람이 읽을 말**이 붙어 있는가.

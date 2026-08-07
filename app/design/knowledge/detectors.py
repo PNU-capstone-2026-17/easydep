@@ -48,7 +48,7 @@ from typing import Any
 from app.design import rtm
 from app.design.knowledge import rules
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
-from app.design.services.common import multiplicity
+from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 
 #: BCE 세 분류. 소문자로 비교한다 — 모델은 `<<Control>>`, `Control`, `control`을 섞어 낸다.
@@ -424,12 +424,12 @@ def erd_entity_name_usable(model: dict, logical: dict) -> list[Finding]:
     rule_id = "erd.entity-name-usable"
     found: list[Finding] = []
     for class_item in _classes(model):
-        if not mapping.is_entity(class_item):
+        if not fields.is_entity(class_item):
             continue
         name = str(class_item.get("className") or "")
         if not name.strip():
             found.append(Finding(rule_id, "className이 비어 있음 — 'UnknownEntity'가 된다"))
-        elif not mapping.sanitize_entity_name(name).strip("_"):
+        elif not fields.sanitize_entity_name(name).strip("_"):
             found.append(
                 Finding(rule_id, f"'{name}'은 전부 기호라 표 이름이 될 수 없음", name)
             )
@@ -456,7 +456,10 @@ def erd_has_entity(model: dict, logical: dict) -> list[Finding]:
 #: `tests/test_erd_check.py`가 `mapping`의 `UNMAPPED_*` 상수를 전수해 이 표와 대조한다.
 UNMAPPED_PROSE: dict[str, str] = {
     mapping.UNMAPPED_MULTIPLICITY: "다중도가 없어 사상하지 못했다",
-    mapping.UNMAPPED_DEPENDENCY: "Entity 둘을 Dependency로 이었다 — 데이터 관계가 아니다",
+    # `{type}`는 사상이 담아 둔 **실제 관계 종류**로 바뀐다(아래 함수). 이 사유는
+    # `Dependency`뿐 아니라 구조적이지 않은 종류 전부를 받으므로, 문구에 종류를 박아 두면
+    # `Realization`을 적은 모델에게 "Dependency로 이었다"고 **없는 말을 하게 된다.**
+    mapping.UNMAPPED_DEPENDENCY: "Entity 둘을 {type}로 이었다 — 데이터 관계가 아니다",
     mapping.UNMAPPED_MULTIPLE_INHERITANCE: (
         "부모가 둘 이상이다 — 관계형에는 다중 상속이 없어 하나도 옮기지 않았다. "
         "부모를 하나로 줄이거나, 나머지는 연관으로 바꿔라"
@@ -473,11 +476,18 @@ UNMAPPED_PROSE: dict[str, str] = {
 
 
 def erd_relationships_mapped(model: dict, logical: dict) -> list[Finding]:
-    """옮기지 못한 관계가 남아 있는가 — **그림에 없는 관계가 모델에 있다.**"""
+    """옮기지 못한 관계가 남아 있는가 — **그림에 없는 관계가 모델에 있다.**
+
+    `{type}`을 사상이 담아 둔 실제 종류로 바꾼다. **`.format`이 아니라 `.replace`다** —
+    문구는 사람이 쓰는 자유 텍스트라 언젠가 중괄호가 들어가고, 그때 `.format`은 검사
+    노드를 통째로 터뜨린다. 자리표시자가 없는 문구에서 `.replace`는 아무 일도 안 한다.
+    """
     return [
         Finding(
             "erd.relationship-mapped",
-            UNMAPPED_PROSE.get(item.get("reason"), str(item.get("reason"))),
+            UNMAPPED_PROSE.get(item.get("reason"), str(item.get("reason"))).replace(
+                "{type}", str(item.get("type") or "Dependency")
+            ),
             "{} -> {}".format(item.get("source", "?"), item.get("target", "?")),
         )
         for item in (logical.get("Unmapped") or [])
@@ -487,7 +497,7 @@ def erd_relationships_mapped(model: dict, logical: dict) -> list[Finding]:
 def erd_composition_owner(model: dict, logical: dict) -> list[Finding]:
     """**BCE 층에서 본다** — 논리 모델에는 한쪽으로 정리된 결과만 남아 모순이 안 보인다."""
     rule_id = "erd.composition-owner-is-mandatory"
-    entities = {c.get("className") for c in _classes(model) if mapping.is_entity(c)}
+    entities = {c.get("className") for c in _classes(model) if fields.is_entity(c)}
 
     found: list[Finding] = []
     for relationship in _relationships(model):
@@ -575,25 +585,25 @@ def erd_identifier_fields(model: dict, logical: dict) -> list[Finding]:
     rule_id = "erd.identifier-fields-exist"
     found: list[Finding] = []
     for class_item in _classes(model):
-        if not mapping.is_entity(class_item):
+        if not fields.is_entity(class_item):
             continue
         name = class_item.get("className") or "?"
         declared = {
             field: raw_type
             for field, raw_type in (
-                mapping.split_field(f) for f in class_item.get("fields") or [] if str(f).strip()
+                fields.split_field(f) for f in class_item.get("fields") or [] if str(f).strip()
             )
             if field
         }
         for wanted in class_item.get("identifier") or []:
             match = next(
-                (d for d in declared if mapping.squash(str(wanted)) == mapping.squash(d)), None
+                (d for d in declared if fields.squash(str(wanted)) == fields.squash(d)), None
             )
             if match is None:
                 found.append(
                     Finding(rule_id, f"identifier '{wanted}'가 이 Entity의 필드에 없음", name)
                 )
-            elif mapping.is_collection(declared[match]):
+            elif fields.is_collection(declared[match]):
                 found.append(
                     Finding(
                         rule_id,
@@ -650,12 +660,12 @@ def erd_entity_typed_field_needs_relationship(model: dict, logical: dict) -> lis
     아닌 것이 하류 DDL까지 갔다). 지금은 둘 다 안 만들고, 둘 다 여기서 말한다.
 
     **이름이 아니라 타입을 본다.** `erd.fk-from-field-name`이 금지하는 추측과 다른
-    일이라는 것은 `mapping.names_an_entity`의 docstring에 적어 두었다.
+    일이라는 것은 `fields.names_an_entity`의 docstring에 적어 두었다.
     """
     rule_id = "erd.entity-typed-field-needs-relationship"
     entities = {
         c.get("className"): c for c in _classes(model)
-        if mapping.is_entity(c) and c.get("className")
+        if fields.is_entity(c) and c.get("className")
     }
     linked: set[frozenset[str]] = {
         frozenset((str(r.get("source")), str(r.get("target"))))
@@ -665,14 +675,14 @@ def erd_entity_typed_field_needs_relationship(model: dict, logical: dict) -> lis
     found: list[Finding] = []
     for name, class_item in entities.items():
         for raw in class_item.get("fields") or []:
-            field_name, raw_type = mapping.split_field(raw)
+            field_name, raw_type = fields.split_field(raw)
             if not field_name or not raw_type:
                 continue
-            target = mapping.referenced_entity(raw_type, entities)
+            target = fields.referenced_entity(raw_type, entities)
             # 자기 자신을 가리키는 필드도 관계를 요구한다 — 자기 참조는 정상적인 관계다.
             if not target or frozenset((name, target)) in linked:
                 continue
-            collection = mapping.is_collection(raw_type)
+            collection = fields.is_collection(raw_type)
             found.append(
                 Finding(
                     rule_id,
@@ -708,7 +718,7 @@ def erd_reference_like_fields(model: dict, logical: dict) -> list[Finding]:
     rule_id = "erd.field-looks-like-reference"
     entities = {
         c.get("className"): c for c in _classes(model)
-        if mapping.is_entity(c) and c.get("className")
+        if fields.is_entity(c) and c.get("className")
     }
     linked: set[frozenset[str]] = {
         frozenset((str(r.get("source")), str(r.get("target"))))
@@ -718,14 +728,14 @@ def erd_reference_like_fields(model: dict, logical: dict) -> list[Finding]:
     found: list[Finding] = []
     for name, class_item in entities.items():
         for raw in class_item.get("fields") or []:
-            field_name, raw_type = mapping.split_field(raw)
-            if mapping.referenced_entity(raw_type, entities):
+            field_name, raw_type = fields.split_field(raw)
+            if fields.referenced_entity(raw_type, entities):
                 continue
             stem = _ID_SUFFIX.sub("", field_name).strip()
-            if not stem or mapping.squash(stem) == mapping.squash(name):
+            if not stem or fields.squash(stem) == fields.squash(name):
                 continue
             target = next(
-                (e for e in entities if mapping.squash(e) == mapping.squash(stem)), None
+                (e for e in entities if fields.squash(e) == fields.squash(stem)), None
             )
             if target and frozenset((name, target)) not in linked:
                 found.append(

@@ -36,11 +36,9 @@
 """
 from __future__ import annotations
 
-import re
-from collections.abc import Iterable
 from typing import Any
 
-from app.design.services.common import multiplicity
+from app.design.services.common import fields, multiplicity
 from app.design.services.erd.inheritance import order_for_mapping
 
 # `Unmapped` 사유는 이 모듈 출력의 어휘라 소비자가 한 곳에서 다 가져가야 한다. 상속 쪽
@@ -52,22 +50,6 @@ from app.design.services.erd.inheritance import (  # noqa: F401
 
 #: 기본키·외래키에 쓰는 정수 타입.
 _KEY_TYPE = "BIGINT"
-
-#: 언어 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면 원문 대문자,
-#: 타입이 아예 없으면 `None`.
-_SQL_TYPES: dict[str, str] = {
-    "string": "VARCHAR(255)",
-    "int": "INT",
-    "integer": "INT",
-    "long": "BIGINT",
-    "boolean": "BOOLEAN",
-    "bool": "BOOLEAN",
-    "date": "DATE",
-    "datetime": "DATETIME",
-    "float": "FLOAT",
-    "double": "DOUBLE",
-}
-
 
 #: 구조적 연관으로 취급하는 종류. `Dependency`는 행위 링크라 여기 없다.
 STRUCTURAL_TYPES = ("Association", "Aggregation", "Composition")
@@ -82,110 +64,6 @@ UNMAPPED_MULTIPLICITY = "multiplicity-missing"
 UNMAPPED_DEPENDENCY = "dependency-between-entities"
 #: 같은 두 표를 잇는 다 : 다가 둘 이상이다. 연결 표 이름이 같아져 표가 통째로 겹친다.
 UNMAPPED_DUPLICATE_JUNCTION = "duplicate-junction"
-
-
-def sanitize_entity_name(name: str) -> str:
-    """테이블 식별자에 안전한 단어 문자만 남긴다."""
-    if not name:
-        return "UnknownEntity"
-    return re.sub(r"[^a-zA-Z0-9_]", "_", name)
-
-
-def _sanitize_text(text: str) -> str:
-    """컬럼명 등 자유 텍스트의 특수 공백·줄바꿈을 한 줄로 정제한다."""
-    if not text:
-        return ""
-    return re.sub(r"\s+", " ", text).strip().replace("‑", "-")
-
-
-def squash(name: str) -> str:
-    """식별자 비교용 정규화: 대소문자·밑줄·공백을 없앤다. `memberId == member_id`."""
-    return re.sub(r"[_\s]", "", name).lower()
-
-
-def is_entity(class_item: dict) -> bool:
-    """이 클래스가 표가 되는가. **정확히 일치로 본다** — `NotAnEntity`가 표가 되면 안 된다.
-
-    읽는 관대함(`<<Entity>>`·`entity`)은 `detectors._stereotype_of`와 같게 유지한다.
-    """
-    raw = str(class_item.get("stereotype", ""))
-    return raw.replace("<", "").replace(">", "").strip().lower() == "entity"
-
-
-def split_field(raw: str) -> tuple[str, str | None]:
-    """`"name : Type"` → `("name", "Type")`. 타입이 없으면 `None` — **채우지 않는다.**
-    채우면 아무도 고르지 않은 타입이 하류 DDL까지 간다.
-    """
-    clean = _sanitize_text(raw)
-    if ":" in clean:
-        name, raw_type = clean.split(":", 1)
-        return name.strip(), (raw_type.strip() or None)
-    return clean, None
-
-
-def _sql_type(raw_type: str | None) -> str | None:
-    """언어 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
-    if not raw_type:
-        return None
-    return _SQL_TYPES.get(raw_type.strip().lower(), raw_type.strip().upper())
-
-
-def _inner_type(raw_type: str) -> str | None:
-    """`List<String>`·`String[]`에서 원소 타입을 꺼낸다. 못 읽으면 `None`."""
-    match = re.search(r"<(.*?)>", raw_type)
-    if match:
-        return match.group(1).strip() or None
-    if "[]" in raw_type:
-        return raw_type.replace("[]", "").strip() or None
-    return None
-
-
-#: 다중값으로 읽는 표기. **`Map`·`Dict`는 일부러 없다** — 원소가 쌍이라 자식 표의
-#: `{field}_value` 한 칸에 안 들어가고, 지금 형태로 제1정규화를 걸면 값의 절반이 사라진다.
-#: 그건 이 표에 한 줄 더하는 것으로 될 일이 아니라 별도 결정이다.
-_COLLECTION_WORDS = ("list", "array", "set", "collection")
-
-
-def is_collection(raw_type: str | None) -> bool:
-    """`List<T>`·`T[]`·`Set<T>`·`Collection<T>`. **`Set`이 한동안 빠져 있었다** —
-    흔한 선언인데 컬럼 하나로 눌러앉아 제1정규화가 안 됐고, `SET<STRING>`이라는 SQL
-    아닌 타입이 그림과 하류 DDL로 나갔다.
-
-    `erd_identifier_fields`도 이 함수를 쓴다. 여기가 못 읽으면 "다중값은 키가 될 수
-    없다"는 지적도 함께 사라진다.
-    """
-    lowered = (raw_type or "").lower()
-    return any(word in lowered for word in _COLLECTION_WORDS) or "[" in lowered
-
-
-def names_an_entity(raw_type: str | None, entity_names: Iterable[str]) -> bool:
-    """이 자료형이 Entity 이름인가. 컬렉션이면 원소 타입을 먼저 꺼내 볼 것.
-
-    **타입을 읽는 것이지 이름을 읽는 것이 아니다.** `erd.fk-from-field-name`이 금지하는
-    것은 `memberId`라는 *필드 이름*에서 외래키를 짐작하는 일이고, 여기서 보는 것은
-    모델이 `member : Member`라고 **직접 적은 자료형**이다. 짐작할 것이 없다.
-
-    `detectors.py`도 이 함수를 쓴다 — 사상이 컬럼을 안 만드는 기준과 검사기가 관계를
-    요구하는 기준이 갈라지면, 칸은 사라졌는데 아무도 지적하지 않는 자리가 생긴다.
-    """
-    if not raw_type:
-        return False
-    return any(squash(raw_type) == squash(str(name)) for name in entity_names)
-
-
-def referenced_entity(raw_type: str | None, entity_names: Iterable[str]) -> str | None:
-    """이 자료형이 가리키는 Entity 이름. 컬렉션이면 **원소 타입**을 보고, 아니면 `None`.
-
-    `names_an_entity`가 "그런가?"라면 이것은 "누구인가?"다. 사상은 앞엣것만 있으면 되지만
-    검사기는 지적 문구에 이름을 적어야 해서 뒤엣것이 필요하다. 컬렉션을 벗기는 자리가
-    둘로 갈라지지 않게 여기 한 번만 둔다.
-    """
-    if not raw_type:
-        return None
-    wanted = _inner_type(raw_type) if is_collection(raw_type) else raw_type
-    if not wanted:
-        return None
-    return next((str(n) for n in entity_names if squash(wanted) == squash(str(n))), None)
 
 
 def _column(
@@ -251,9 +129,9 @@ def _build_tables(classes: list[dict]) -> tuple[list[dict], dict[str, dict], lis
     children: list[dict] = []
 
     for class_item in classes:
-        if not is_entity(class_item):
+        if not fields.is_entity(class_item):
             continue
-        name = sanitize_entity_name(class_item.get("className", ""))
+        name = fields.sanitize_entity_name(class_item.get("className", ""))
         table = _table(name, {"kind": "class", "className": class_item.get("className", "")})
         table["_class"] = class_item
         made.append(table)
@@ -263,21 +141,34 @@ def _build_tables(classes: list[dict]) -> tuple[list[dict], dict[str, dict], lis
 
     for table in made:
         class_item = table["_class"]
-        declared = [split_field(f) for f in class_item.get("fields", []) if _sanitize_text(f)]
+        declared = [
+            fields.split_field(f)
+            for f in class_item.get("fields", [])
+            if fields.sanitize_text(f)
+        ]
 
         # --- 기본키 -------------------------------------------------------
         # **칸이 안 남는 필드는 후보가 아니다.** 다중값은 자식 표로 가고, Entity 타입은
         # 관계가 들고 간다. 후보로 두면 `primaryKey`가 실재하지 않는 칸 이름을 담는다
         # (`assert_sound` ②가 그걸 잡는다). 못 쓰는 이유는 `erd.identifier-fields-exist`가 말한다.
-        keyable = {
+        # **선언 순서를 지키는 목록이다. 집합이면 안 된다** — 아래에서 `next()`로 훑어
+        # 먼저 걸린 것을 쓰는데, 문자열 집합의 순회 순서는 프로세스 해시 시드에 달려
+        # 있다. 한동안 집합이었고, 그래서 `member_id`와 `memberId`를 둘 다 선언한 모델의
+        # 기본키가 **실행마다 달라졌다.** 순수 함수라던 것이 실은 아니었고, 저장된 모델에서
+        # 매 로드마다 다시 그리므로 모델을 안 고쳐도 그림이 바뀔 수 있었다.
+        # 목록이면 "먼저 선언된 것이 이긴다"로 확정된다.
+        keyable = [
             n
             for n, raw in declared
-            if n and not is_collection(raw) and not names_an_entity(raw, entity_names)
-        }
-        identifier = [str(i).strip() for i in (class_item.get("identifier") or []) if str(i).strip()]
-        # **집합으로 짝짓는다** — 개수로 비교하면 중복(`["isbn","isbn"]`)에서 키를 버린다.
+            if n and not fields.is_collection(raw) and not fields.names_an_entity(raw, entity_names)
+        ]
+        identifier = [
+            str(i).strip() for i in (class_item.get("identifier") or []) if str(i).strip()
+        ]
+        # **짝을 지어 본다** — 개수로 비교하면 중복(`["isbn","isbn"]`)에서 키를 버린다.
         matched = {
-            i: next((n for n in keyable if squash(n) == squash(i)), None) for i in identifier
+            i: next((n for n in keyable if fields.squash(n) == fields.squash(i)), None)
+            for i in identifier
         }
         natural = list(dict.fromkeys(n for n in matched.values() if n))
         if identifier and all(matched.values()):
@@ -289,8 +180,14 @@ def _build_tables(classes: list[dict]) -> tuple[list[dict], dict[str, dict], lis
             surrogate = f"{table['name'].lower()}_id"
             # 그 이름을 선언 필드가 이미 쓰면 **표시만 하고 덮어쓴다.** 자연키로 승격시키는
             # 것은 이름에서 의도를 읽는 것이라 안 한다.
-            collided = next((k for k in keyable if squash(k) == squash(surrogate)), None)
-            table["surrogateCollidesWith"] = surrogate if collided else None
+            #
+            # **담는 것은 모델이 적은 이름이지 우리가 지은 이름이 아니다.** 한동안
+            # `surrogate`를 담았는데, 대소문자만 다른 충돌(`orderId` ↔ `order_id`)에서
+            # 지적이 "선언한 `order_id`가 밀려난다"고 말했다 — 모델은 그렇게 안 적었고,
+            # 고치라는 이름이 모델 안에 없으니 어디를 고쳐야 할지 알 수가 없었다.
+            table["surrogateCollidesWith"] = next(
+                (k for k in keyable if fields.squash(k) == fields.squash(surrogate)), None
+            )
             _add_column(table, _column(surrogate, _KEY_TYPE, role="pk"))
             table["keyOrigin"] = KEY_SURROGATE
             table["primaryKey"] = [surrogate]
@@ -299,13 +196,15 @@ def _build_tables(classes: list[dict]) -> tuple[list[dict], dict[str, dict], lis
         for field_name, raw_type in declared:
             if not field_name:
                 continue
-            # 대리키와 의미상 충돌하는(대소문자만 다른) 필드는 대리키로 덮어써진 것이므로 생략한다.
-            if table.get("surrogateCollidesWith") and squash(field_name) == squash(table["surrogateCollidesWith"]):
+            # 대리키와 의미상 충돌하는(대소문자만 다른) 필드는 대리키로 덮어써진
+            # 것이므로 생략한다.
+            collision = table.get("surrogateCollidesWith")
+            if collision and fields.squash(field_name) == fields.squash(collision):
                 continue
-            if is_collection(raw_type):
-                inner = _inner_type(raw_type or "")
+            if fields.is_collection(raw_type):
+                inner = fields.inner_type(raw_type or "")
                 # 원소가 Entity면 컬럼이 아니라 관계다 — 만들면 같은 사실이 두 곳에서 나온다.
-                if names_an_entity(inner, entity_names):
+                if fields.names_an_entity(inner, entity_names):
                     continue
                 # **여기서 만들지 않는다** — 자식이 들고 갈 부모 기본키를 상속이 바꾼다.
                 # 무엇을 만들지만 적어 두고 생성은 관계가 끝난 뒤로 미룬다.
@@ -316,10 +215,10 @@ def _build_tables(classes: list[dict]) -> tuple[list[dict], dict[str, dict], lis
             # 옆에 `member : MEMBER`를 하나 더 만들었다. 같은 사실이 두 칸에 있었고,
             # `MEMBER`는 SQL 타입도 아닌데 하류가 그것으로 DDL을 만들었다.
             # 관계가 없으면 `erd.entity-typed-field-needs-relationship`이 지적한다.
-            if names_an_entity(raw_type, entity_names):
+            if fields.names_an_entity(raw_type, entity_names):
                 continue
             role = "pk" if field_name in table["primaryKey"] else "attribute"
-            _add_column(table, _column(field_name, _sql_type(raw_type), role=role))
+            _add_column(table, _column(field_name, fields.sql_type(raw_type), role=role))
 
     return made, tables, children
 
@@ -330,7 +229,7 @@ def _multivalued_child(parent: dict, field_name: str, inner_type: str | None) ->
     """
     pascal = field_name[0].upper() + field_name[1:] if field_name else "Items"
     child = _table(
-        sanitize_entity_name(f"{parent['name']}{pascal}"),
+        fields.sanitize_entity_name(f"{parent['name']}{pascal}"),
         {"kind": "multivalued", "table": parent["name"], "field": field_name},
     )
     own_key = f"{child['name'].lower()}_id"
@@ -342,7 +241,7 @@ def _multivalued_child(parent: dict, field_name: str, inner_type: str | None) ->
     # 서로 다른 말을 했다.** 연결 표는 처음부터 필수였고 여기만 빠져 있었다.
     for fk in _foreign_key_columns(parent, child, mandatory=True):
         _add_column(child, fk)
-    _add_column(child, _column(f"{field_name}_value", _sql_type(inner_type)))
+    _add_column(child, _column(f"{field_name}_value", fields.sql_type(inner_type)))
     return child
 
 
@@ -350,10 +249,17 @@ def _multivalued_child(parent: dict, field_name: str, inner_type: str | None) ->
 # 2) 외래키 컬럼
 # ---------------------------------------------------------------------------
 def _foreign_key_columns(
-    referenced: dict, holder: dict, unique: bool = False, mandatory: bool = False, inherited: bool = False
+    referenced: dict,
+    holder: dict,
+    unique: bool = False,
+    mandatory: bool = False,
+    inherited: bool = False,
 ) -> list[dict]:
     """`referenced`의 기본키를 `holder`가 들고 있을 컬럼들. 복합 기본키면 여러 개가 된다
     — 외래키는 참조되는 키의 **모양을 그대로** 따라야 하고 뭉뚱그릴 방법이 없다.
+
+    `inherited`면 부모의 키 이름을 그대로 쓴다 — 상속에서는 그 칸이 자식의 기본키
+    **이기도** 해서, 표 이름을 앞에 붙이면 같은 키가 층마다 다른 이름을 갖게 된다.
     """
     prefix = referenced["name"].lower()
     columns: list[dict] = []
@@ -366,14 +272,13 @@ def _foreign_key_columns(
             name = pk_name
         else:
             name = pk_name if pk_name.lower().startswith(prefix) else f"{prefix}_{pk_name}"
-            
+
         # 자기 참조·같은 표를 가리키는 관계들. **칸이 계속 필요한** 자리라 못 버린다.
-        original_name = name
-        counter = 1
+        wanted, counter = name, 1
         while name in _column_names(holder):
-            name = f"related_{original_name}" if counter == 1 else f"related{counter}_{original_name}"
+            name = f"related_{wanted}" if counter == 1 else f"related{counter}_{wanted}"
             counter += 1
-            
+
         columns.append(
             _column(
                 name,
@@ -381,15 +286,17 @@ def _foreign_key_columns(
                 role="fk",
                 references=referenced["name"],
                 references_column=pk_name,
-                # 복합키일 경우 컬럼 개별이 아닌 조합이 unique해야 하므로 여기선 단일키일때만 설정
+                # **복합키는 함께 유일하지 각자 유일하지 않다.** 칸마다 걸면
+                # `UNIQUE(a,b)`가 `UNIQUE(a) AND UNIQUE(b)`가 되어 모델에 없는 제약이
+                # 생긴다. 한 칸일 때만 컬럼에 적고, 여럿이면 아래에서 표 수준으로 올린다.
                 unique=unique and len(referenced["primaryKey"]) == 1,
                 mandatory=mandatory,
             )
         )
-        
+
     if unique and len(columns) > 1:
         holder["uniqueTogether"].append([c["name"] for c in columns])
-        
+
     return columns
 
 
@@ -399,15 +306,15 @@ def _foreign_key_columns(
 def _endpoints(relationship: dict, tables: dict[str, dict]) -> tuple[dict | None, dict | None]:
     """관계의 양 끝을 표로 바꾼다. 표가 아닌 끝은 `None`."""
     return (
-        tables.get(sanitize_entity_name(relationship.get("source", ""))),
-        tables.get(sanitize_entity_name(relationship.get("target", ""))),
+        tables.get(fields.sanitize_entity_name(relationship.get("source", ""))),
+        tables.get(fields.sanitize_entity_name(relationship.get("target", ""))),
     )
 
 
 def _junction(left: dict, right: dict) -> dict:
     """다 : 다 → 연결 테이블. 두 외래키가 함께 복합 기본키가 된다."""
     table = _table(
-        sanitize_entity_name(f"{left['name']}{right['name']}"),
+        fields.sanitize_entity_name(f"{left['name']}{right['name']}"),
         {"kind": "junction", "tables": [left["name"], right["name"]]},
     )
     for referenced in (left, right):
@@ -457,9 +364,14 @@ def _map_relationship(
         else:
             source["columns"] = [c for c in source["columns"] if c["role"] != "pk"]
         source["primaryKey"] = []
-        for fk in _foreign_key_columns(target, source, mandatory=True, inherited=True):
+        # **한 번에 앞에 붙인다.** 하나씩 `insert(0, …)` 하면 순서가 뒤집혀서, 부모가
+        # `(a, b)`인데 자식은 `(b, a)`가 됐다. 외래키 자체는 칸마다 `referencesColumn`을
+        # 들고 있어 어긋나지 않지만, 그림이 부모와 자식을 다르게 보여주고 하류는 그
+        # 텍스트로 DDL을 만든다.
+        inherited_keys = _foreign_key_columns(target, source, mandatory=True, inherited=True)
+        for fk in inherited_keys:
             fk["role"] = "pk"
-            source["columns"].insert(0, fk)
+        source["columns"][:0] = inherited_keys
         source["primaryKey"] = [c["name"] for c in source["columns"] if c["role"] == "pk"]
         source["keyOrigin"] = KEY_INHERITED
         # 상속은 언제나 식별 관계다 — 자식 행은 부모 행 없이 존재할 수 없다.
