@@ -336,7 +336,12 @@ class PrototypeOrchestrator:
 
     def _generate_bce(self, java_root: Path) -> None:
         bce_package = f"{self.spec.base_package}.bce"
+        workspace_root = str(self.spec.workspace_root)
         command = [
+            "docker", "run", "--rm",
+            "-v", f"{workspace_root}:{workspace_root}",
+            "-w", workspace_root,
+            "node:20",
             "node",
             str(self.spec.puml2code_root / "bin" / "puml2code"),
             "-i",
@@ -355,8 +360,11 @@ class PrototypeOrchestrator:
         }
 
     def _generate_openapi(self, application: Path) -> None:
+        workspace_root = str(self.spec.workspace_root)
         command = [
-            "java", "-jar", str(self.spec.openapi_generator_jar), "generate",
+            "docker", "run", "--rm",
+            "-v", f"{workspace_root}:{workspace_root}",
+            "openapitools/openapi-generator-cli", "generate",
             "-g", "spring",
             "-i", str(self.spec.inputs["openapi"]),
             "-o", str(application),
@@ -400,8 +408,7 @@ class PrototypeOrchestrator:
                 )
             )
         self.manifest.tools["openapi-generator"] = {
-            "version": "7.24.0",
-            "sha256": sha256_file(self.spec.openapi_generator_jar),
+            "version": "docker-latest",
         }
 
     def _write_gradle_project(self, application: Path) -> None:
@@ -511,13 +518,15 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
 
     def _compile(self, application: Path) -> None:
         gradle_home = self.spec.output_root.parent.parent / ".cache" / "gradle"
-        executable = gradle_command()
         self._run_command(
             "gradle-compile",
             [
-                *executable,
-                "--gradle-user-home",
-                str(gradle_home),
+                "docker", "run", "--rm",
+                "-v", f"{application}:{application}",
+                "-v", f"{gradle_home}:/home/gradle/.gradle",
+                "-w", str(application),
+                "gradle:21-jdk",
+                "gradle",
                 "compileJava",
                 "bootJar",
                 "--no-daemon",

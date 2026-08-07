@@ -15,17 +15,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def plantuml_jar_path() -> str:
-    """Where the PlantUML jar lives. Deployment config, not per-request data."""
-    return os.getenv("PLANTUML_JAR_PATH", "plantuml.jar")
-
-
 def plantuml_command(*arguments: str) -> list[str]:
     return [
-        "java",
-        "-Djava.awt.headless=true",
-        "-jar",
-        plantuml_jar_path(),
+        "docker",
+        "run",
+        "--rm",
+        "-i",
+        "plantuml/plantuml",
         "-charset",
         "UTF-8",
         *arguments,
@@ -53,7 +49,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
             check=False,
         )
     except FileNotFoundError:
-        return ["Java is not installed or PlantUML cannot be executed."]
+        return ["Docker is not installed or plantuml/plantuml cannot be executed."]
     except subprocess.TimeoutExpired:
         return ["PlantUML syntax check timed out."]
 
