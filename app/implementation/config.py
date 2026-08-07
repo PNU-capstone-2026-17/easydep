@@ -32,3 +32,12 @@ class ImplementationSettings:
                 60, int(os.getenv("IMPLEMENTATION_COMMAND_TIMEOUT_SECONDS", "3600"))
             ),
         )
+
+
+# System & Infrastructure Defaults
+DEFAULT_CONTAINER_PORT: int = int(os.getenv("IMPLEMENTATION_DEFAULT_CONTAINER_PORT", "8000"))
+DEFAULT_DOCKER_GRADLE_IMAGE: str = os.getenv("IMPLEMENTATION_DOCKER_GRADLE_IMAGE", "gradle:8.14.2-jdk21")
+DEFAULT_DOCKER_JRE_IMAGE: str = os.getenv("IMPLEMENTATION_DOCKER_JRE_IMAGE", "eclipse-temurin:21-jre-alpine")
+DEFAULT_AWS_LOG_RETENTION_DAYS: int = int(os.getenv("IMPLEMENTATION_AWS_LOG_RETENTION_DAYS", "30"))
+DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS: int = int(os.getenv("IMPLEMENTATION_AZURE_MYSQL_RETENTION_DAYS", "7"))
+
