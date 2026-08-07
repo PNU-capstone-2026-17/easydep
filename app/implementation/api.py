@@ -62,6 +62,16 @@ def approve_job(job_id: str, request: ApprovalRequest) -> dict:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+@router.post("/jobs/{job_id}/cancel", status_code=200)
+def cancel_job(job_id: str) -> dict:
+    try:
+        return worker.cancel(job_id)
+    except JobNotFound as error:
+        raise HTTPException(status_code=404, detail="Unknown implementation job.") from error
+    except InvalidJobState as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.get("/apps/{app_id}/artifacts/{artifact_type}")
 def get_file_artifact(app_id: str, artifact_type: str) -> dict:
     if artifact_type not in FILE_ARTIFACT_TYPES:

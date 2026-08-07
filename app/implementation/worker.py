@@ -152,6 +152,16 @@ class ImplementationWorker:
     def get(self, job_id: str) -> dict[str, Any]:
         return self.public_record(self._read(job_id))
 
+    def cancel(self, job_id: str) -> dict[str, Any]:
+        record = self._read(job_id)
+        if record["status"] in {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}:
+            raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
+        record["status"] = "CANCELLED"
+        record["error"] = "Job execution was cancelled by user request."
+        record["updated_at"] = _now()
+        self._write(record)
+        return self.public_record(record)
+
     def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool, delegate_repair_approvals: bool = True) -> dict[str, Any]:
         record = self._read(job_id)
         request = record.get("transmission_request") or {}
