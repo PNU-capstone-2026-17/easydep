@@ -47,42 +47,15 @@ _UNSUITABLE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
-def assess_feedback_eligibility(feedback: str, design: dict[str, Any] | None = None) -> dict[str, object]:
-    """Decide eligibility without an LLM and without routing to another agent."""
-    text = " ".join(feedback.strip().split())
-    matches: list[dict[str, str]] = []
-    for code, message, patterns in _UNSUITABLE_RULES:
-        for pattern in patterns:
-            found = re.search(pattern, text, flags=re.IGNORECASE)
-            if found:
-                matches.append({"code": code, "match": found.group(0), "message": message})
-                break
-    referenced = _referenced_design_names(design or {})
-    structural_action = re.search(
-        r"(?:추가|삭제|변경|수정|개명|rename|remove|add|change)\b", text,
-        flags=re.IGNORECASE,
-    )
-    if structural_action:
-        for name in referenced:
-            if re.search(rf"\b{re.escape(name)}\b", text):
-                matches.append({
-                    "code": "REFERENCED_DESIGN_STRUCTURE_CHANGE",
-                    "match": name,
-                    "message": "A named design element is being structurally changed outside implementation feedback.",
-                })
-                break
-    eligible = not matches
-    return {
-        "schemaVersion": SCHEMA_VERSION,
-        "status": "ELIGIBLE" if eligible else "UNSUITABLE",
-        "feedback": text,
-        "matches": matches,
-        "nextAction": (
-            "Create a constrained implementation feedback revision and run all verification gates."
-            if eligible
-            else "Do not create or execute an implementation feedback revision for this request."
-        ),
-    }
+def assess_feedback_eligibility(
+    feedback: str,
+    design: dict[str, Any] | None = None,
+    rtm_map: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    """Decide eligibility using RTM traceability mapping and design contract constraints."""
+    from app.implementation.engine.rtm_traceability import evaluate_feedback_rtm_traceability
+
+    return evaluate_feedback_rtm_traceability(feedback, design=design, rtm_map=rtm_map)
 
 
 def _referenced_design_names(design: dict[str, Any]) -> set[str]:

@@ -34,6 +34,7 @@ from .source_conformance import (
     restore_generated_contracts,
     verify_source_design_conformance,
 )
+from .rtm_traceability import build_rtm_traceability_map
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -78,6 +79,7 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         plan_gateway_adapter_tasks(spec, run_root)
     plan_wiring_tasks(spec, run_root)
     plan_e2e_tasks(spec, run_root)
+    build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
 
