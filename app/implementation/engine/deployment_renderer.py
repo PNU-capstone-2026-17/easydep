@@ -9,6 +9,12 @@ from typing import Any, Callable
 import yaml
 from jsonschema import Draft202012Validator
 
+from app.implementation.config import (
+    DEFAULT_CONTAINER_PORT,
+    DEFAULT_DOCKER_GRADLE_IMAGE,
+    DEFAULT_DOCKER_JRE_IMAGE,
+)
+
 SCHEMA_VERSION = "easydep-deployment-intent/v1alpha1"
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "Job", "CronJob"}
 CAPABILITIES = {
@@ -55,20 +61,20 @@ def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
     namespace = str(intent.get("namespace", "default"))
     write(
         "Dockerfile",
-        r"""FROM gradle:8.14.2-jdk21 AS build
+        f"""FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
 WORKDIR /app
 COPY . .
-RUN gradle bootJar --no-daemon \
-    && jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print | sort | head -n 1)" \
-    && test -n "$jar" \
+RUN gradle bootJar --no-daemon \\
+    && jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print | sort | head -n 1)" \\
+    && test -n "$jar" \\
     && cp "$jar" /tmp/app.jar
 
-FROM eclipse-temurin:21-jre-alpine
+FROM {DEFAULT_DOCKER_JRE_IMAGE}
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build /tmp/app.jar app.jar
 USER app
-EXPOSE 8000
+EXPOSE {DEFAULT_CONTAINER_PORT}
 ENTRYPOINT ["java", "-jar", "app.jar"]""",
     )
     write(
@@ -285,7 +291,7 @@ done
 def render_workload(write: Callable[[str, str], None], namespace: str, workload: dict[str, Any]) -> None:
     name, kind = workload["name"], workload["kind"]
     cap = workload["capabilities"]
-    port = int(workload.get("port", 8000))
+    port = int(workload.get("port", DEFAULT_CONTAINER_PORT))
     pod = pod_spec(workload, port)
     if kind in {"Deployment", "StatefulSet"}:
         service_name = f"\n  serviceName: {name}" if kind == "StatefulSet" else ""
@@ -424,7 +430,7 @@ def infer_intent(
             "image": registry_image(provider, registry, workload_name),
             **({"registryRef": resource_reference(registry)} if registry else {}),
             **({"clusterRef": resource_reference(cluster)} if cluster else {}),
-            "port": int(networking.get("containerPort", 8000)),
+            "port": int(networking.get("containerPort", DEFAULT_CONTAINER_PORT)),
             "replicas": replicas, "resources": source.get("resources", {}),
             "health": {
                 "readinessPath": source.get("probes", {}).get("readiness", "/healthz"),
@@ -756,7 +762,7 @@ def verify_manifest_workload(
     if str(container.get("image")) != str(workload["image"]):
         errors.append(f"{kind}/{name} image does not match deployment intent")
     ports = container.get("ports", [])
-    expected_port = int(workload.get("port", 8000))
+    expected_port = int(workload.get("port", DEFAULT_CONTAINER_PORT))
     if not any(port.get("containerPort") == expected_port for port in ports):
         errors.append(f"{kind}/{name} container port does not match deployment intent")
     if kind in {"Deployment", "StatefulSet"}:
@@ -845,7 +851,7 @@ def verify_cloud_resource_spec(
                         f"cloud workload {name} resources.{group}.{key} does not match deployment intent"
                     )
         expected_port = networking.get("containerPort")
-        if expected_port is not None and int(workload.get("port", 8000)) != int(expected_port):
+        if expected_port is not None and int(workload.get("port", DEFAULT_CONTAINER_PORT)) != int(expected_port):
             errors.append(f"cloud networking containerPort does not match workload {name}")
         health = workload.get("health", {})
         readiness = source.get("probes", {}).get("readiness")

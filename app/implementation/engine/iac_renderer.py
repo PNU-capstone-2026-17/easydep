@@ -11,6 +11,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from app.implementation.config import (
+    DEFAULT_AWS_LOG_RETENTION_DAYS,
+    DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
+)
+
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")
 SUPPORTED_PROVIDERS = ("azure", "aws", "gcp")
@@ -322,7 +327,7 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             mysql_sku = str(item.get("sku", "Standard_B2s"))
             if not re.match(r"^(?:B|GP|MO)_", mysql_sku):
                 mysql_sku = f"B_{mysql_sku}"
-            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(mysql_sku)}\n  version = {json.dumps(mysql_version)}\n  backup_retention_days = {int(item.get("backupRetentionDays", 7))}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
+            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  administrator_login = var.mysql_administrator_login\n  administrator_password = var.mysql_administrator_password\n  sku_name = {json.dumps(mysql_sku)}\n  version = {json.dumps(mysql_version)}\n  backup_retention_days = {int(item.get("backupRetentionDays", DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS))}{private_lines}\n  storage {{ size_gb = {int(item.get("storageGb", 32))} }}\n}}')
             for database in item.get("databases", []):
                 database_id = _tf_id(str(database))
                 blocks.append(f'resource "azurerm_mysql_flexible_database" "{logical}_{database_id}" {{\n  name = {json.dumps(str(database))}\n  server_name = azurerm_mysql_flexible_server.{logical}.name\n  resource_group_name = var.resource_group_name\n  charset = "utf8mb4"\n  collation = "utf8mb4_unicode_ci"\n}}')
@@ -369,7 +374,7 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
                 blocks.append(f'resource "aws_eks_node_group" "{logical}_{_tf_id(pool_name)}" {{\n  cluster_name = aws_eks_cluster.{logical}.name\n  node_group_name = {json.dumps(pool_name)}\n  node_role_arn = var.eks_node_role_arns[{json.dumps(logical)}]\n  subnet_ids = {subnet_ids}\n  scaling_config {{\n    desired_size = {desired}\n    min_size = {minimum}\n    max_size = {maximum}\n  }}\n}}')
         elif kind == "aws_db_instance": blocks.append(f'resource "aws_db_instance" "{logical}" {{\n  identifier = {name}\n  engine = {json.dumps(str(item.get("engine", "mysql")))}\n  instance_class = {json.dumps(str(item.get("instanceClass", "db.t3.micro")))}\n  allocated_storage = {int(item.get("allocatedStorage", 20))}\n  username = var.db_username\n  password = var.db_password\n  skip_final_snapshot = true\n}}')
         elif kind == "aws_secretsmanager_secret": blocks.append(f'resource "aws_secretsmanager_secret" "{logical}" {{\n  name = {name}\n}}')
-        elif kind == "aws_cloudwatch_log_group": blocks.append(f'resource "aws_cloudwatch_log_group" "{logical}" {{\n  name = {name}\n  retention_in_days = 30\n}}')
+        elif kind == "aws_cloudwatch_log_group": blocks.append(f'resource "aws_cloudwatch_log_group" "{logical}" {{\n  name = {name}\n  retention_in_days = {DEFAULT_AWS_LOG_RETENTION_DAYS}\n}}')
     clusters = [item for item in resources if _type("aws", item) == "aws_eks_cluster"]
     registries = [item for item in resources if _type("aws", item) == "aws_ecr_repository"]
     for target_cluster in clusters:
