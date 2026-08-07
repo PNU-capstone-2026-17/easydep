@@ -225,13 +225,15 @@ def _java_structure(source: str) -> dict[str, object]:
             clean,
         )
     }
+    # Normalize multiline signatures into continuous space for robust regex matching
+    normalized_signatures = re.sub(r"\s*[\r\n]+\s*", " ", clean)
     methods: dict[str, str] = {}
     for match in re.finditer(
-        r"(?m)^\s*(?:(?:public|protected|private|static|abstract|default|final|"
+        r"(?:(?:public|protected|private|static|abstract|default|final|"
         r"synchronized|native)\s+)*(?P<return>[A-Za-z_$][\w$<>,.?\[\] ]*)\s+"
         r"(?P<name>[A-Za-z_$]\w*)\s*\((?P<params>[^)]*)\)\s*"
         r"(?:throws\s+(?P<throws>[^\{;]+))?[\{;]",
-        clean,
+        normalized_signatures,
     ):
         parameters = _normalize_parameters(match.group("params"))
         throws = _normalize_java_type(match.group("throws") or "")

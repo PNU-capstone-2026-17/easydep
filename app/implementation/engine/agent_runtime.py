@@ -1154,7 +1154,12 @@ def read_gradle_test_failures(sandbox: Path) -> str:
             if detail:
                 message += "\n" + summarize_test_failure(detail)
             reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
-    return "\n\n".join(reports)[-8000:]
+    return _truncate_log_snippet("\n\n".join(reports), max_chars=8000)
+
+
+def _truncate_log_snippet(text: str, max_chars: int = 8000) -> str:
+    """Safely truncate log snippets to a maximum character count."""
+    return text[-max_chars:] if len(text) > max_chars else text
 
 
 def summarize_test_failure(detail: str) -> str:
@@ -1174,7 +1179,7 @@ def summarize_test_failure(detail: str) -> str:
     # Preserve a small tail for Gradle/JUnit-specific context without allowing a
     # stack trace to evict the causal message from the repair prompt.
     selected.extend(lines[-8:])
-    return "\n".join(dict.fromkeys(selected))[:8000]
+    return _truncate_log_snippet("\n".join(dict.fromkeys(selected)), max_chars=8000)
 
 
 def snapshot_files(root: Path) -> dict[str, str]:

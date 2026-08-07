@@ -431,10 +431,14 @@ def _gateway_adapter_complete(
     return False
 
 
-def _task_outputs(manifest: dict[str, object], task_type: str) -> list[str]:
-    for task in manifest.get("implementation_tasks", []):
+def _task_outputs(manifest: dict[str, object] | None, task_type: str) -> list[str]:
+    manifest_dict = manifest if isinstance(manifest, dict) else {}
+    tasks = manifest_dict.get("implementation_tasks", [])
+    if not isinstance(tasks, list):
+        return []
+    for task in tasks:
         if isinstance(task, dict) and task.get("task_type") == task_type:
-            return [str(path) for path in task.get("allowed_write_paths", [])]
+            return [str(path) for path in task.get("allowed_write_paths", []) if isinstance(path, (str, Path))]
     return []
 
 
