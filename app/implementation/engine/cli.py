@@ -29,6 +29,8 @@ from .workflow import plan_workflow, run_workflow, workflow_status
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     if len(sys.argv) > 1 and sys.argv[1] == "plan-e2e":
         parser = argparse.ArgumentParser(description="Plan the E2E flow or report design gaps")
         parser.add_argument("command")

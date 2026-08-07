@@ -128,6 +128,7 @@ class PrototypeClient:
 
     def _call(self, args: list[str]) -> dict[str, Any]:
         env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
         env.setdefault(
             "GRADLE_USER_HOME",
             str(self.settings.repository_root / ".easydep" / "gradle-cache"),
