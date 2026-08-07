@@ -357,7 +357,7 @@ tests/               # 결정론+목킹 단위 · 라이브(RUN_LIVE_TESTS) 통�
 ## 10. 근거 문서
 - `app/requirements/knowledge/rules.py` — **규칙과 인용의 단일 소스**(옛 `cockburn-grounding.md`의 자리).
   대조는 `python -m app.requirements.knowledge.verify_citations`.
-- `docs/requirements-agent-improvements.md` — 개편 후보(C1~C7) + 상용 방법론 조사
+- `docs/archive/requirements-agent-improvements.md` — 과거 개편 후보(C1~C7) + 상용 방법론 조사
 
 > 아래 `docs/research/*` 는 실행에 쓰이지 않아 저장소 밖 `report/easydep-research/docs/research/` 로
 > 옮겼다(`e10c527`). 경로는 그 안에서의 상대 경로다.

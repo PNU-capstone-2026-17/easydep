@@ -1,80 +1,59 @@
 # EasyDep
 
-> 현재 구현 구조와 목표 대비 부족한 점은
-> [EasyDep 현재 구조와 부족한 점](docs/current-system-status.md)을 먼저 참고한다.
+EasyDep은 자연어 요구사항에서 소프트웨어 설계, 구현, 테스트 및 VM 배포 산출물까지 생성하는
+멀티 AI 에이전트 기반 개발 지원 시스템이다. 현재 지원 범위는 AWS·Azure·GCP의
+Docker-on-VM 애플리케이션이다.
 
-요구사항 문장을 받아 요구사항 명세 → 시스템 설계 산출물까지 이어 만드는 캡스톤 프로젝트.
-에이전트별로 따로 개발하던 저장소를 하나로 합친 통합 저장소다.
+현재 구현 수준과 알려진 한계는 [현재 시스템 상태](docs/current-system-status.md)를 기준으로 한다.
+문서 전체의 역할은 [문서 안내](docs/README.md)에서 확인할 수 있다.
 
-| 에이전트 | 위치 | 상태 |
-|---|---|---|
-| 요구사항 분석 | `app/requirements/` | 구체화·FR/NFR 분류 → 액터/유스케이스 → 유스케이스 명세 → 유스케이스 다이어그램 |
-| 시스템 설계 | `app/design/` | 클래스·시퀀스 다이어그램, API 명세, ERD, 배포 다이어그램 |
-| 시스템 구현 | `app/implementation/` | 구현 계획·실행, phase별 HITL 승인, 생성 파일 버전 저장 |
-| 배포 (지식베이스) | `app/core/cloudkb/` | 클라우드 지식베이스 9축 + 배포 계획 구성기. 줄마다 근거가 달리고 이 단계에는 LLM 호출이 없다 |
-| 시스템 테스트 | (미합류) | 구현 worker가 E2E 생성·검증까지 담당하며 독립 테스트 에이전트는 추후 합류 |
-
-에이전트들은 **하나의 FastAPI 프로세스**(`server.py`)로 서빙되고,
-산출물은 **하나의 MySQL 저장소**(`app/db`, `app/repositories`)를 공유한다.
-
-`app/core/cloudkb/`은 2026-07-25에 별도 저장소(agent-sdk)에서 합류했다. 자기
-테스트(`app/core/cloudkb/tests/`)와 문서(`app/core/cloudkb/document/`)를 함께 갖고 있고,
-지식베이스 산출물은 `app/core/cloudkb/data/`에 커밋돼 있어 클론 직후 빌드 없이 돈다.
-
-합류는 main에 squash 한 커밋으로 들어왔다. **원본 커밋 198개는 태그
-`agent-sdk-history`에 있다** (`git log --oneline agent-sdk-history`). 그 저장소는
-리모트가 없었으므로 이 태그가 유일본이고, 그 코드의 판단 근거는 대부분 커밋
-메시지에만 적혀 있다 — 지우지 말 것.
-
-## 에이전트가 이어지는 지점
-
-산출물은 요청 본문이 아니라 `app_id`(UUID)로 오간다. 요구사항 분석이 끝나면 그 결과가
-저장소에 기록되고, 설계와 구현 에이전트는 같은 `app_id`로 앞 단계 산출물을 읽는다.
+## 파이프라인
 
 ```text
-POST /api/apps                              → app_id 발급
-POST /api/requirements/analyze  {app_id}    → refined_requirements / usecase_spec / usecase_diagram 저장
-POST /api/apps/{app_id}/stages/class_diagram/generate
-                                            → 저장된 usecase_spec 을 읽어 설계 산출물 생성
-POST /api/implementation/apps/{app_id}/jobs → 저장된 설계를 읽어 구현 workflow 계획
+사용자 요구사항
+  → 1. 요구사항 분석
+  → 2. 소프트웨어·클라우드 설계
+  → 3. 소스·수용 테스트·Dockerfile·Terraform 생성
+  → 4. 테스트
+  → 공통 외부 평가
 ```
 
-`app_id` 없이 `/api/requirements/analyze` 를 호출하면 저장 없이 응답만 돌려주므로,
-요구사항 에이전트만 단독으로 돌려보는 것도 그대로 된다.
+| 영역 | 위치 | 역할 |
+|---|---|---|
+| 요구사항 | `app/requirements/` | 요구사항 구체화, FR/NFR 분류, 유스케이스 및 다이어그램 생성 |
+| 설계 | `app/design/` | 클래스·시퀀스·ERD·OpenAPI·배포 설계 |
+| 구현 | `app/implementation/` | 애플리케이션 소스, 테스트, Dockerfile, Terraform 생성 |
+| 테스팅 | `app/testing/` | 생성 애플리케이션 검증 |
+| 오케스트레이션 | `app/core/orchestration/` | 4단계 provider 연결, 실행·재개·상태 저장 |
+| 클라우드 지식 | `app/core/cloudkb/` | VM 자원 의존성, 가격 및 성능 데이터 |
+| 평가 | `evaluation/` | EasyDep·CoT·MetaGPT 공통 비교 평가 |
 
-저장 자리(`STAGE_ARTIFACTS`)와 버전 관리 규칙은 [HANDOFF.md](HANDOFF.md)에 정리돼 있다.
+실행 결과는 `artifacts/runs/<run-id>/` 아래에 단계별로 저장되며, 오케스트레이션 상태는
+`.easydep/orchestration/runs.sqlite3`에 저장된다. 웹 API의 애플리케이션 산출물과 버전은
+MySQL 저장소를 사용한다.
 
-## 화면
+## 범위
 
-| 경로 | 내용 |
-|---|---|
-| `/` | 요구사항 분석 UI — 워크플로우의 시작 (`app/requirements/static/index.html`) |
-| `/design` | 시스템 설계 워크플로우 UI (`frontend/index.html`) |
-| `/docs` | FastAPI 자동 문서 |
-| `/healthz` | 쿠버네티스 프로브 |
+포함 범위:
 
-## 공통 필수 도구
+- AWS, Azure, GCP
+- Linux VM과 Docker
+- VM, 부트 디스크, 네트워크, 서브넷, NIC, 방화벽, 공인 IP
+- 요구될 때의 영속 데이터 디스크와 로드밸런서
+- VM 용량·가격·성능 후보 선택
 
-- Python 3.11 이상
-- JDK 21
-- Node.js와 npm
-- MySQL 8.0 이상
-- PlantUML JAR (`PLANTUML_JAR_PATH`로 위치 지정)
+현재 제외 범위:
 
-구현 도구 bootstrap은 npm production dependency, OpenAPI Generator 7.24.0과 Gradle
-8.14.2 Wrapper를 저장소 내부에 준비한다. 운영체제 전역 Gradle 설치는 필요 없다.
+- Kubernetes 기반 애플리케이션 배포
+- VPN, 서버리스, 관리형 애플리케이션 플랫폼
+- 모든 CSP 리소스를 포괄하는 범용 지식베이스
 
-## Windows 설치 및 실행
+## 실행
 
-PowerShell에서 필요한 도구를 설치한다. 설치 전 `winget search <이름>`으로 패키지 ID를
-확인할 수 있다.
+필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, MySQL 8 이상이다. 일부 다이어그램
+생성에는 PlantUML JAR가 필요하다.
 
 ```powershell
-winget install --id Python.Python.3.12 -e
-winget install --id EclipseAdoptium.Temurin.21.JDK -e
-winget install --id OpenJS.NodeJS.LTS -e
-winget install --id Oracle.MySQL -e
-
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -86,68 +65,35 @@ $env:PLANTUML_JAR_PATH="C:\tools\plantuml.jar"
 python -m uvicorn server:app --reload
 ```
 
-## Linux(Ubuntu/Debian) 설치 및 실행
+주요 화면과 상태 확인 경로:
 
-```bash
-sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip openjdk-21-jdk nodejs npm mysql-server curl
+| 경로 | 용도 |
+|---|---|
+| `/` | 요구사항 분석 UI |
+| `/design/` | 설계 UI |
+| `/docs` | OpenAPI 문서 |
+| `/healthz` | 배포 상태 확인 |
 
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements.txt
-sh scripts/bootstrap-implementation-tools.sh
+전체 테스트는 다음과 같이 실행한다.
 
-export NVIDIA_API_KEY='<NVIDIA NIM API key>'
-export API_KEY="$NVIDIA_API_KEY"
-export PLANTUML_JAR_PATH='/opt/plantuml/plantuml.jar'
-python -m uvicorn server:app --reload
-```
-
-## macOS 설치 및 실행
-
-```bash
-brew install python@3.12 openjdk@21 node mysql
-brew services start mysql
-export PATH="$(brew --prefix openjdk@21)/bin:$PATH"
-
-python3.12 -m venv .venv
-. .venv/bin/activate
-python -m pip install -r requirements.txt
-sh scripts/bootstrap-implementation-tools.sh
-
-export NVIDIA_API_KEY='<NVIDIA NIM API key>'
-export API_KEY="$NVIDIA_API_KEY"
-export PLANTUML_JAR_PATH="$HOME/tools/plantuml.jar"
-python -m uvicorn server:app --reload
-```
-
-Docker는 Linux bootstrap을 이미지 build 중 자동 실행한다.
-
-```bash
-docker build -t easydep .
-```
-
-MySQL은 서버 기동 시 `init_db()`가 데이터베이스와 테이블을 생성한다. DB 접속 환경변수와
-PlantUML 준비는 [요구사항 에이전트 문서](docs/requirements-agent.md)를 참고한다.
-
-BERT FR/NFR 분류기 가중치(417MiB)는 GitHub 파일당 100MiB 한도 때문에 45MiB 조각으로 쪼개
-저장소에 들어 있다. 따로 받을 것은 없고, 첫 기동 때 `.easydep/models/`에 한 번 재조립된다
-(약 2초, 이후 기동은 건너뜀). 자세한 방식은
-[요구사항 에이전트 문서 §0-1](docs/requirements-agent.md#0-1-bert-모델-가중치)에 있다.
-
-```bash
+```powershell
 python -m pytest
-python verify_db.py       # MySQL이 필요한 저장소 왕복 검사
 ```
 
-## 문서
+외부 LLM, MySQL, Docker 또는 클라우드 자격 증명이 필요한 테스트는 별도 환경 설정이 필요하다.
 
-- [HANDOFF.md](HANDOFF.md) — 산출물 저장소 설계와 설계 에이전트 인수인계 노트
-- [docs/requirements-agent.md](docs/requirements-agent.md) — 요구사항 분석 에이전트 상세, 배포(minikube/AKS), 운영 스크립트
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 요구사항 분석 그래프 구조
-- [docs/implementation-agent.md](docs/implementation-agent.md) — 구현 worker, 자동 phase DAG, HITL·재개·도구 설정
-- [docs/deployment-file-generation.md](docs/deployment-file-generation.md) — 시스템 구현 에이전트의 배포 의도 추론, Dockerfile·Kubernetes manifest 생성과 검증
-- [docs/api.md](docs/api.md) — 요구사항·설계·구현 HTTP API 명세
+## 주요 문서
 
-실험·조사 기록(`docs/research/`), PURE 데이터셋, 실험 스크립트, BERT 학습 노트북은
-실행에 쓰이지 않아 저장소에서 빼고 바탕화면 `report/easydep-research/`에 보관한다.
+- [현재 시스템 상태](docs/current-system-status.md): 구현 범위, 검증 결과, 부족한 점
+- [문서 안내](docs/README.md): 활성 문서와 이력 문서 구분
+- [HTTP API](docs/api.md): 요구사항·설계·구현 API 계약
+- [오케스트레이션](app/core/orchestration/README.md): 4단계 실행과 provider 계약
+- [비교실험 계약](evaluation/experiment-contract.md): 공통 평가 기준
+- [클라우드 지식베이스](app/core/cloudkb/document/README.md): DepKB 및 VM 지식 문서
+
+## 현재 주의점
+
+- 정식 구현 provider는 아직 확정되지 않았으며 비교실험에서는 명시적 LLM scaffold를 사용한다.
+- VM 최소 용량이 입력되지 않으면 선택기는 임의 추천 대신 추천을 보류한다.
+- 종단 성공은 현재 P1-GCP 파일럿 한 건으로 확인됐으며 일반화와 DepKB 효과는 추가 실험이 필요하다.
+- `.env`에는 비밀값이 들어갈 수 있으므로 커밋하지 않는다.
