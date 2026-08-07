@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .design_context import read_generated_java_contracts, referenced_openapi_model_names
+from .implementation_ir import remove_readonly
 from .quality_gates import e2e_contract_violations
 from .repair_planner import referenced_source_paths
 
@@ -837,7 +838,7 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
     suffix = 1
     while sandbox.exists():
         try:
-            shutil.rmtree(sandbox, onerror=_remove_readonly)
+            shutil.rmtree(sandbox, onerror=remove_readonly)
         except PermissionError:
             # A Gradle/IDE process can briefly lock files on Windows. Keep the
             # locked transient workspace and isolate this attempt in a sibling.
@@ -874,12 +875,6 @@ def verify_run_workspace(run_root: Path) -> dict[str, object]:
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
-
-
-def _remove_readonly(function, path: str, _error) -> None:
-    """Retry sandbox cleanup after making a Windows read-only entry writable."""
-    os.chmod(path, stat.S_IRWXU)
-    function(path)
 
 
 def verify_agent_workspace(sandbox: Path) -> dict[str, object]:

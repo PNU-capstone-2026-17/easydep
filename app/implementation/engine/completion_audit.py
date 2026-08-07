@@ -5,6 +5,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .implementation_ir import kebab_case
 from .quality_gates import e2e_contract_violations
 
 
@@ -304,7 +305,7 @@ def _build_backlog(
         stem = api_name.removesuffix("Api")
         tasks.append(
             BacklogTask(
-                f"implement-{_kebab(stem)}-api-adapter",
+                f"implement-{kebab_case(stem)}-api-adapter",
                 "api-adapter",
                 "HIGH",
                 f"Implement the Spring adapter for generated {api_name} and map API models to application commands/results.",
@@ -351,7 +352,7 @@ def _build_backlog(
                     f"application/src/test/java/{package}/config/ApplicationContextTest.java",
                 ],
                 (["implement-erd-persistence"] if missing_persistence_outputs else [])
-                + [f"implement-{_kebab(name.removesuffix('Api'))}-api-adapter" for name in api_names]
+                + [f"implement-{kebab_case(name.removesuffix('Api'))}-api-adapter" for name in api_names]
                 + (["implement-boundary-adapters"] if missing_boundaries else [])
                 + (["implement-outbound-gateway-adapters"] if missing_gateways else []),
                 [f"Missing wiring output: {path}" for path in missing_wiring_outputs],
@@ -493,10 +494,6 @@ def _expected_persistence_outputs(
         ]
     )
     return outputs
-
-
-def _kebab(value: str) -> str:
-    return "-".join(re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", value)).lower()
 
 
 def _render_markdown(report: dict[str, object]) -> str:

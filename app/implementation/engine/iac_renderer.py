@@ -15,6 +15,7 @@ from app.implementation.config import (
     DEFAULT_AWS_LOG_RETENTION_DAYS,
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
+from .implementation_ir import remove_readonly
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")
@@ -100,21 +101,12 @@ def sync_deployment_bundle(application: Path) -> Path:
             legacy_managed = (bundle / "application" / "terraform" / "main.tf").is_file()
             if not marker.is_file() and not legacy_managed:
                 raise ValueError(f"Refusing to replace unmanaged deployment bundle: {bundle}")
-            shutil.rmtree(bundle, onerror=_remove_readonly)
+            shutil.rmtree(bundle, onerror=remove_readonly)
         shutil.move(str(staging), str(bundle))
         return bundle
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-
-
-def _remove_readonly(function: Any, path: str, _error: Any) -> None:
-    """Retry managed bundle cleanup when Windows marks a copied file read-only."""
-    try:
-        os.chmod(path, stat.S_IWRITE)
-    except OSError:
-        pass
-    function(path)
 
 
 def validate_deployment_iac_conformance(cloud: dict[str, Any], intent: dict[str, Any], application: Path) -> dict[str, object]:

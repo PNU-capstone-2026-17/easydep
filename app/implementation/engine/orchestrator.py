@@ -24,7 +24,7 @@ from .design_context import (
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
-from .implementation_ir import pascal_case
+from .implementation_ir import pascal_case, remove_readonly
 
 
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
@@ -592,7 +592,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         if output_root not in target.parents:
             raise ValueError(f"Refusing to reset path outside output root: {target}")
         if target.exists():
-            shutil.rmtree(target)
+            shutil.rmtree(target, onerror=remove_readonly)
 
     def _promote(self, staging: Path, final: Path) -> None:
         self.spec.output_root.mkdir(parents=True, exist_ok=True)

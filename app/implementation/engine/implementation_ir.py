@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -293,5 +295,23 @@ def pascal_case(value: str) -> str:
     return result or "Generated"
 
 
+def kebab_case(value: str) -> str:
+    s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1-\2", value)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", s1).lower()
+
+
+camel_to_kebab = kebab_case
+
+
 def _read(path: Path | None) -> str:
     return path.read_text(encoding="utf-8") if path and path.is_file() else ""
+
+
+def remove_readonly(function: Any, path: str, _error: Any) -> None:
+    """Retry managed bundle cleanup when Windows marks a copied file read-only."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+    except OSError:
+        pass
+    function(path)
+
