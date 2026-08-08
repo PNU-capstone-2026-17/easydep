@@ -15,7 +15,7 @@ from app.implementation.config import (
     DEFAULT_AWS_LOG_RETENTION_DAYS,
     DEFAULT_AZURE_MYSQL_BACKUP_RETENTION_DAYS,
 )
-from .implementation_ir import remove_readonly
+from .domain.implementation_ir import remove_readonly
 
 SCHEMA_VERSION = "easydep-iac-render/v1alpha1"
 MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outputs.tf")

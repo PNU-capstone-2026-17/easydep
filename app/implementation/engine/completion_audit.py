@@ -5,7 +5,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .implementation_ir import kebab_case
+from .domain.implementation_ir import kebab_case
 from .quality_gates import e2e_contract_violations
 
 

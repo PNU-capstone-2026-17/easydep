@@ -12,8 +12,8 @@ from .agent_runtime import (
     verify_run_workspace,
 )
 from .completion_audit import audit_run_completion
-from .models import JobSpec
-from .implementation_ir import build_implementation_ir
+from .domain.models import JobSpec
+from .domain.implementation_ir import build_implementation_ir
 from .orchestrator import (
     plan_api_adapter_tasks,
     plan_boundary_adapter_tasks,

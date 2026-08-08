@@ -12,8 +12,11 @@ import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from ..design_context import read_generated_java_contracts, referenced_openapi_model_names
-from ..implementation_ir import remove_readonly
+from ..planning.design_context import (
+    read_generated_java_contracts,
+    referenced_openapi_model_names,
+)
+from ..domain.implementation_ir import remove_readonly
 from .verification.frontend import (
     frontend_contract_violations,
     has_mutating_operations,

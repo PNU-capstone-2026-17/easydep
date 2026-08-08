@@ -11,10 +11,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .models import CommandEvidence, Diagnostic, JobSpec, RunManifest
+from .domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from .agent_runtime import gradle_command, write_execution_plan
 from .source_conformance import capture_generated_contracts
-from .design_context import (
+from .planning.design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
@@ -25,7 +25,7 @@ from .design_context import (
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
-from .implementation_ir import pascal_case, remove_readonly
+from .domain.implementation_ir import pascal_case, remove_readonly
 from ..frontend_generation import generate_frontend_project
 
 
