@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+
+
+MAX_PROVIDER_RETRIES = 3
+
+
+def configured_api_key() -> str | None:
+    return (
+        os.environ.get("NVIDIA_API_KEY")
+        or os.environ.get("NVIDIA_NIM_API_KEY")
+        or os.environ.get("LLM_API_KEY")
+        or windows_user_environment("NVIDIA_API_KEY")
+        or windows_user_environment("NVIDIA_NIM_API_KEY")
+    )
+
+
+def configured_model(default: str) -> str:
+    return os.environ.get("OPENHANDS_MODEL") or os.environ.get("LLM_MODEL") or default
+
+
+def configured_max_output_tokens(default: int) -> int:
+    raw = os.environ.get("OPENHANDS_MAX_OUTPUT_TOKENS")
+    return int(raw) if raw else default
+
+
+def transient_provider_error(error: Exception) -> bool:
+    """Recognize retryable NIM/OpenAI-compatible transport failures."""
+    text = f"{error.__class__.__name__}: {error}".lower()
+    return any(
+        marker in text
+        for marker in (
+            "429",
+            "rate limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "connection error",
+            "temporarily unavailable",
+            "service unavailable",
+            "overloaded",
+            "bad gateway",
+            "gateway timeout",
+            "502",
+            "503",
+            "504",
+        )
+    )
+
+
+def provider_retry_delay(retry_number: int) -> float:
+    base = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_BASE_SECONDS", "1"))
+    cap = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_MAX_SECONDS", "30"))
+    return min(cap, base * (2 ** max(0, retry_number - 1)))
+
+
+def windows_user_environment(name: str) -> str | None:
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, name)
+            return value if isinstance(value, str) and value else None
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def openhands_compatibility() -> dict[str, object]:
+    return {
+        "python": ".".join(map(str, sys.version_info[:3])),
+        "pythonCompatible": sys.version_info >= (3, 12),
+        "sdkInstalled": module_available("openhands.sdk"),
+        "toolsInstalled": module_available("openhands.tools"),
+        "apiKeyConfigured": bool(configured_api_key()),
+    }
+
+
+def module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:
+        return False
