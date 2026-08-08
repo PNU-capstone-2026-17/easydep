@@ -9,17 +9,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.implementation.api import router
+from app.implementation.interfaces.http import router
 from app.implementation.config import ImplementationSettings
-from app.implementation.engine.agent_runtime import gradle_command
-from app.implementation.engine.orchestrator import PrototypeOrchestrator, load_job
-from app.implementation.feedback_impact import assess_feedback_eligibility
-from app.implementation.prototype_client import PrototypeClient, PrototypeExecutionError
-from app.implementation.schemas import (
+from app.implementation.engine.agents.verification.build import gradle_command
+from app.implementation.engine.generation.orchestrator import PrototypeOrchestrator, load_job
+from app.implementation.application.feedback import assess_feedback_eligibility
+from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
+from app.implementation.interfaces.schemas import (
     CreateImplementationFeedbackJobRequest,
     CreateImplementationJobRequest,
 )
-from app.implementation.worker import ImplementationWorker, InvalidJobState
+from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
 
 
 def test_job_contract_preserves_automated_placeholder_policy() -> None:
@@ -52,7 +52,7 @@ def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_p
         },
     }
     monkeypatch.setattr(
-        "app.implementation.worker.artifact_repository.load_file_snapshot",
+        "app.implementation.application.jobs.artifact_repository.load_file_snapshot",
         lambda *_args, **_kwargs: source_snapshot,
     )
     implementation_worker = ImplementationWorker(settings(tmp_path))
@@ -259,11 +259,11 @@ def test_public_job_record_hides_host_source_paths() -> None:
 
 def test_implementation_api_enqueues_job(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.implementation.api.artifact_repository.load_state",
+        "app.implementation.interfaces.http.artifact_repository.load_state",
         lambda app_id: {"class_diagram_puml": "class X", "api_spec": {"paths": {}}},
     )
     monkeypatch.setattr(
-        "app.implementation.api.worker.create_job",
+        "app.implementation.interfaces.http.worker.create_job",
         lambda app_id, design, base_package, allow_assumptions: {
             "job_id": "job-1",
             "app_id": app_id,
@@ -282,11 +282,11 @@ def test_implementation_api_enqueues_job(monkeypatch) -> None:
 
 def test_implementation_feedback_api_enqueues_revision_job(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.implementation.api.artifact_repository.load_state",
+        "app.implementation.interfaces.http.artifact_repository.load_state",
         lambda app_id: {"class_diagram_puml": "class X", "api_spec": {"paths": {}}},
     )
     monkeypatch.setattr(
-        "app.implementation.api.worker.create_feedback_job",
+        "app.implementation.interfaces.http.worker.create_feedback_job",
         lambda app_id, design, feedback, base_package, allow_assumptions: {
             "job_id": "feedback-1",
             "job_type": "FEEDBACK_REVISION",
@@ -310,7 +310,7 @@ def test_implementation_feedback_api_enqueues_revision_job(monkeypatch) -> None:
 
 def test_implementation_api_returns_conflict_for_stale_approval(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.implementation.api.worker.approve",
+        "app.implementation.interfaces.http.worker.approve",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             InvalidJobState("Approval does not match")
         ),

@@ -4,8 +4,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
-import tempfile
 import time
 import warnings
 from pathlib import Path
@@ -20,13 +18,8 @@ from .verification.frontend import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
-    gradle_command,
     production_placeholder_markers,
-    read_gradle_test_failures,
-    summarize_test_failure,
     verify_agent_workspace,
-    verify_frontend_workspace,
-    verify_run_workspace as _verify_run_workspace,
 )
 from .verification.e2e import e2e_contract_violations
 from ..workflows.repair import referenced_source_paths
@@ -44,7 +37,6 @@ from .prompts import (
     IMPLEMENTATION_SYSTEM_PROMPT,
     render_frontend_verification_feedback,
     render_verification_feedback,
-    verification_failure_hints,
 )
 from .workspace import (
     changed_files,
@@ -63,18 +55,6 @@ MAX_REPAIR_ITERATIONS = 4
 MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
-
-# The legacy ``engine.agent_runtime`` module aliases this module. Keep these
-# names reachable until downstream integrations migrate to the focused modules.
-_COMPATIBILITY_EXPORTS = (
-    subprocess,
-    tempfile,
-    gradle_command,
-    read_gradle_test_failures,
-    summarize_test_failure,
-    verification_failure_hints,
-    verify_frontend_workspace,
-)
 
 
 class EventJournal:
@@ -101,14 +81,6 @@ class EventJournal:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.event_count += 1
-
-
-def verify_run_workspace(run_root: Path) -> dict[str, object]:
-    """Compatibility-aware entry point for final workspace verification."""
-    return _verify_run_workspace(
-        run_root,
-        verify_workspace=verify_agent_workspace,
-    )
 
 
 def write_execution_plan(

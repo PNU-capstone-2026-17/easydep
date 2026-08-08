@@ -12,8 +12,8 @@ from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
 from app.artifacts_api import router as artifacts_router
 from app.requirements.api import router as requirements_router
 from app.requirements.classifier import warmup
-from app.implementation.api import router as implementation_router
-from app.implementation.worker import worker as implementation_worker
+from app.implementation.interfaces.http import router as implementation_router
+from app.implementation.application.jobs import worker as implementation_worker
 
 
 BASE_DIR = Path(__file__).resolve().parent

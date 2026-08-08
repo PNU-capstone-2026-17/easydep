@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
-from app.implementation.engine.design_context import (
+from app.implementation.engine.planning.design_context import (
     RELATION_PATTERN,
     parse_design_classes,
     parse_relations,

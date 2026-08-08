@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from ..agents.runtime import (
+from ..agents.runtime import execute_openhands_task
+from ..agents.verification.build import (
     WorkspaceVerificationError,
-    execute_openhands_task,
     verify_run_workspace,
 )
 from .completion import audit_run_completion

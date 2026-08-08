@@ -18,8 +18,8 @@ from .generation.orchestrator import (
 from .agents.runtime import (
     execute_openhands_task,
     validate_openhands_adapter,
-    verify_run_workspace,
 )
+from .agents.verification.build import verify_run_workspace
 from .delivery.kubernetes import render_deployment
 from .delivery.terraform import render_iac, validate_terraform
 from .workflows.completion import audit_run_completion

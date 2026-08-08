@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from app.implementation.config import ImplementationSettings
-from app.implementation.prototype_client import PrototypeClient
+from app.implementation.application.prototype import PrototypeClient
 
 
 def main(argv: list[str] | None = None) -> int:

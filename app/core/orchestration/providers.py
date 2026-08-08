@@ -26,7 +26,7 @@ from app.core.orchestration.contracts import (
 from app.core.orchestration.process import run_process_tree
 from app.core.orchestration.vm_selection import select_vm_candidates
 from app.implementation.config import ImplementationSettings
-from app.implementation.prototype_client import PrototypeClient
+from app.implementation.application.prototype import PrototypeClient
 
 
 def _failure(step: str, provider: ProviderKind, error: Exception) -> StepResult:

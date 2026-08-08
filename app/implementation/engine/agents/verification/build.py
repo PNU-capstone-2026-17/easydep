@@ -33,18 +33,13 @@ class WorkspaceVerificationError(RuntimeError):
         super().__init__("Agent workspace verification failed: " + output[-1000:])
 
 
-def verify_run_workspace(
-    run_root: Path,
-    *,
-    verify_workspace=None,
-) -> dict[str, object]:
+def verify_run_workspace(run_root: Path) -> dict[str, object]:
     """Verify all promoted sources from a short ASCII-safe workspace."""
     sandbox = prepare_agent_workspace(
         run_root,
         {"task_id": "final-verification", "allowed_write_paths": []},
     )
-    verifier = verify_workspace or verify_agent_workspace
-    verification = verifier(sandbox)
+    verification = verify_agent_workspace(sandbox)
     frontend_verification = None
     if (sandbox / "application" / "frontend" / "package.json").is_file():
         frontend_verification = verify_frontend_workspace(sandbox)

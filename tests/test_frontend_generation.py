@@ -9,26 +9,24 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.db.models import TYPE_FRONTEND_SOURCE_CODE
-from app.implementation.api import router
+from app.implementation.interfaces.http import router
 from app.implementation.config import ImplementationSettings
-from app.implementation.engine.agent_runtime import (
-    snapshot_files,
-    verify_frontend_workspace,
-)
-from app.implementation.engine.frontend_quality import frontend_contract_violations
-from app.implementation.engine.design_context import generate_frontend_tasks
-from app.implementation.engine.frontend_contracts import (
+from app.implementation.engine.agents.workspace import snapshot_files
+from app.implementation.engine.agents.verification.build import verify_frontend_workspace
+from app.implementation.engine.agents.verification.frontend import frontend_contract_violations
+from app.implementation.engine.planning.design_context import generate_frontend_tasks
+from app.implementation.engine.planning.frontend_contracts import (
     FrontendContractBudgetExceeded,
     GeneratedClientContracts,
 )
-from app.implementation.frontend_scaffold import (
+from app.implementation.engine.generation.frontend_scaffold import (
     FrontendScaffoldError,
     openapi_typescript_fetch_command,
     react_scaffold_files,
     resolve_api_base_url,
     validate_openapi,
 )
-from app.implementation.worker import ImplementationWorker
+from app.implementation.application.jobs import ImplementationWorker
 
 
 OPENAPI = {
@@ -164,7 +162,7 @@ def test_rejects_generated_contracts_over_budget_without_partial_output(
 def test_frontend_api_versions_generated_files(monkeypatch) -> None:
     saved: dict[str, object] = {}
     monkeypatch.setattr(
-        "app.implementation.api.artifact_repository.load_state",
+        "app.implementation.interfaces.http.artifact_repository.load_state",
         lambda app_id: {"api_spec": OPENAPI},
     )
     configured = ImplementationSettings(
@@ -176,7 +174,7 @@ def test_frontend_api_versions_generated_files(monkeypatch) -> None:
         base_url="http://localhost",
         command_timeout_seconds=60,
     )
-    monkeypatch.setattr("app.implementation.api.worker.settings", configured)
+    monkeypatch.setattr("app.implementation.interfaces.http.worker.settings", configured)
 
     def generated(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
         if "-o" in command:
@@ -192,15 +190,15 @@ def test_frontend_api_versions_generated_files(monkeypatch) -> None:
             )
         return subprocess.CompletedProcess(command, 0, "generated", "")
 
-    monkeypatch.setattr("app.implementation.api.subprocess.run", generated)
+    monkeypatch.setattr("app.implementation.interfaces.http.subprocess.run", generated)
 
     def save(app_id: str, artifact_type: str, files: dict[str, str], **kwargs: object) -> int:
         saved.update(app_id=app_id, artifact_type=artifact_type, files=files, metadata=kwargs["metadata"])
         return 41
 
-    monkeypatch.setattr("app.implementation.api.artifact_repository.save_file_snapshot", save)
+    monkeypatch.setattr("app.implementation.interfaces.http.artifact_repository.save_file_snapshot", save)
     monkeypatch.setattr(
-        "app.implementation.api.artifact_repository.load_file_snapshot",
+        "app.implementation.interfaces.http.artifact_repository.load_file_snapshot",
         lambda *_args: {
             "version_no": 2,
             "metadata": saved["metadata"],
@@ -226,8 +224,8 @@ def test_frontend_api_versions_generated_files(monkeypatch) -> None:
 
 
 def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path) -> None:
-    from app.implementation.engine.models import JobSpec
-    from app.implementation.engine.orchestrator import PrototypeOrchestrator
+    from app.implementation.engine.domain.models import JobSpec
+    from app.implementation.engine.generation.orchestrator import PrototypeOrchestrator
 
     openapi = tmp_path / "openapi.json"
     openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
@@ -283,8 +281,8 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
 def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     tmp_path: Path,
 ) -> None:
-    from app.implementation.engine.models import JobSpec
-    from app.implementation.engine.workflow import phase_for_task
+    from app.implementation.engine.domain.models import JobSpec
+    from app.implementation.engine.workflows.coordinator import phase_for_task
 
     openapi = tmp_path / "openapi.json"
     bce = tmp_path / "class.puml"
@@ -401,7 +399,7 @@ def test_frontend_verification_runs_install_then_production_build(
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     monkeypatch.setattr(
-        "app.implementation.engine.agent_runtime.subprocess.run", completed
+        "app.implementation.engine.agents.verification.build.subprocess.run", completed
     )
 
     result = verify_frontend_workspace(tmp_path)
@@ -472,7 +470,7 @@ def test_completed_job_persists_frontend_as_its_own_file_artifact(
         return 1
 
     monkeypatch.setattr(
-        "app.implementation.worker.artifact_repository.save_file_snapshot",
+        "app.implementation.application.jobs.artifact_repository.save_file_snapshot",
         save_snapshot,
     )
     settings = ImplementationSettings(
@@ -503,8 +501,8 @@ def test_completed_job_persists_frontend_as_its_own_file_artifact(
 def test_cli_run_to_completion_reuses_one_scoped_approval(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from app.implementation.engine.models import JobSpec
-    from app.implementation.engine.workflow import run_workflow_to_completion
+    from app.implementation.engine.domain.models import JobSpec
+    from app.implementation.engine.workflows.coordinator import run_workflow_to_completion
 
     reports = tmp_path / "reports"
     reports.mkdir()
@@ -547,7 +545,7 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
     approvals: list[dict[str, object]] = []
     states = iter([{"status": "READY"}, {"status": "COMPLETE"}])
     monkeypatch.setattr(
-        "app.implementation.engine.workflow.plan_workflow",
+        "app.implementation.engine.workflows.coordinator.plan_workflow",
         lambda *_args: {"status": "READY"},
     )
 
@@ -555,7 +553,7 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         approvals.append(json.loads(approval.read_text(encoding="utf-8")))
         return next(states)
 
-    monkeypatch.setattr("app.implementation.engine.workflow.run_workflow", run)
+    monkeypatch.setattr("app.implementation.engine.workflows.coordinator.run_workflow", run)
 
     result = run_workflow_to_completion(
         tmp_path, spec, approved_by="CLI user"
