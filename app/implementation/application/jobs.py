@@ -8,11 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE, TYPE_TEST_CODE
+from app.db.models import (
+    TYPE_DEPLOYMENT_FILE,
+    TYPE_FRONTEND_SOURCE_CODE,
+    TYPE_IAC_CODE,
+    TYPE_SOURCE_CODE,
+    TYPE_TEST_CODE,
+)
 from app.repositories import artifact_repository
-from .config import ImplementationSettings
-from .feedback_impact import assess_feedback_eligibility
-from .prototype_client import PrototypeClient
+from ..config import ImplementationSettings
+from .feedback import assess_feedback_eligibility
+from .prototype import PrototypeClient
 
 
 def _now() -> str:
@@ -103,6 +109,7 @@ class ImplementationWorker:
             TYPE_SOURCE_CODE: source_snapshot["version_no"],
         }
         for artifact_type in (
+            TYPE_FRONTEND_SOURCE_CODE,
             TYPE_TEST_CODE,
             TYPE_DEPLOYMENT_FILE,
             TYPE_IAC_CODE,
@@ -244,7 +251,16 @@ class ImplementationWorker:
 
     def _persist_outputs(self, record: dict[str, Any]) -> None:
         application = Path(record["run_root"]) / "application"
-        groups: dict[str, dict[str, str]] = {kind: {} for kind in (TYPE_SOURCE_CODE, TYPE_TEST_CODE, TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE)}
+        groups: dict[str, dict[str, str]] = {
+            kind: {}
+            for kind in (
+                TYPE_SOURCE_CODE,
+                TYPE_FRONTEND_SOURCE_CODE,
+                TYPE_TEST_CODE,
+                TYPE_DEPLOYMENT_FILE,
+                TYPE_IAC_CODE,
+            )
+        }
         for path in application.rglob("*"):
             if not path.is_file() or "build" in path.parts or ".gradle" in path.parts:
                 continue
@@ -254,7 +270,10 @@ class ImplementationWorker:
             except UnicodeDecodeError:
                 continue
             lowered = relative.lower()
-            if relative.startswith("deployment-bundle/"):
+            if relative.startswith("frontend/"):
+                kind = TYPE_FRONTEND_SOURCE_CODE
+                relative = relative.removeprefix("frontend/")
+            elif relative.startswith("deployment-bundle/"):
                 kind = TYPE_DEPLOYMENT_FILE
             elif "/test/" in f"/{lowered}":
                 kind = TYPE_TEST_CODE

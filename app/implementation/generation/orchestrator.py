@@ -9,27 +9,28 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
-from .models import CommandEvidence, Diagnostic, JobSpec, RunManifest
-from .agent_runtime import gradle_command, write_execution_plan
-from .source_conformance import capture_generated_contracts
-from .design_context import (
+from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
+from ..agents.runtime import write_execution_plan
+from ..workflows.conformance import capture_generated_contracts
+from ..planning.design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
     generate_e2e_tasks,
+    generate_frontend_tasks,
     generate_gateway_adapter_tasks,
     generate_implementation_tasks,
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
-from .implementation_ir import pascal_case, remove_readonly
+from ..domain.implementation_ir import pascal_case, remove_readonly
+from .frontend import generate_frontend_project
 
 
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
 BCE_GENERATOR_VERSION = "0.2.0"
-IMPLEMENTATION_PIPELINE_VERSION = "0.3.0-ir"
+IMPLEMENTATION_PIPELINE_VERSION = "0.5.0-agent-frontend"
 JAVA_BUILTIN_TYPES = {
     "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
     "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
@@ -134,6 +135,7 @@ class PrototypeOrchestrator:
             self.manifest.status = "GENERATING_CODE"
             self._generate_bce(java_root)
             self._generate_openapi(application)
+            self._generate_frontend(application)
             self._write_gradle_project(application)
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
@@ -320,8 +322,9 @@ class PrototypeOrchestrator:
         # Bind a run to the actual planner/runtime implementation, not only a
         # manually maintained version label. Prompt or gate edits therefore
         # always receive a new immutable run ID.
-        for source in sorted(Path(__file__).parent.glob("*.py")):
-            digest.update(source.name.encode())
+        implementation_root = Path(__file__).resolve().parents[1]
+        for source in sorted(implementation_root.rglob("*.py")):
+            digest.update(source.relative_to(implementation_root).as_posix().encode())
             digest.update(sha256_file(source).encode())
         for tool in (
             self.spec.puml2code_root / "package.json",
@@ -410,6 +413,20 @@ class PrototypeOrchestrator:
         self.manifest.tools["openapi-generator"] = {
             "version": "docker-latest",
         }
+
+    def _generate_frontend(self, application: Path) -> None:
+        openapi = json.loads(self.spec.inputs["openapi"].read_text(encoding="utf-8"))
+        frontend = application / "frontend"
+        generation = generate_frontend_project(
+            workspace_root=self.spec.workspace_root,
+            openapi_path=self.spec.inputs["openapi"],
+            frontend_root=frontend,
+            api_spec=openapi,
+            application_name=self.spec.name,
+            api_base_url=None,
+            run_command=self._run_command,
+        )
+        self.manifest.tools["easydep-frontend-generator"] = generation.tool_metadata()
 
     def _write_gradle_project(self, application: Path) -> None:
         build = """plugins {
@@ -724,6 +741,26 @@ def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add the design-driven React implementation task to the run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_frontend_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+        if item.get("task_type") != "frontend-implementation"
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()

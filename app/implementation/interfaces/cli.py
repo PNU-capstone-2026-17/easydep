@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .orchestrator import (
+from ..generation.orchestrator import (
     PrototypeOrchestrator,
     load_job,
     plan_api_adapter_tasks,
@@ -15,15 +15,20 @@ from .orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from .agent_runtime import (
+from ..agents.runtime import (
     execute_openhands_task,
     validate_openhands_adapter,
-    verify_run_workspace,
 )
-from .deployment_renderer import render_deployment
-from .iac_renderer import render_iac, validate_terraform
-from .completion_audit import audit_run_completion
-from .workflow import plan_workflow, run_workflow, workflow_status
+from ..agents.verification.build import verify_run_workspace
+from ..delivery.kubernetes import render_deployment
+from ..delivery.terraform import render_iac, validate_terraform
+from ..workflows.completion import audit_run_completion
+from ..workflows.coordinator import (
+    plan_workflow,
+    run_workflow,
+    run_workflow_to_completion,
+    workflow_status,
+)
 
 
 def main() -> int:
@@ -94,6 +99,7 @@ def main() -> int:
     if len(sys.argv) > 1 and sys.argv[1] in {
         "plan-workflow",
         "run-workflow",
+        "run-to-completion",
         "resume-workflow",
         "workflow-status",
     }:
@@ -103,6 +109,12 @@ def main() -> int:
         parser.add_argument("job", type=Path, nargs="?")
         parser.add_argument("--approval", type=Path)
         parser.add_argument("--retry-failed", action="store_true")
+        parser.add_argument(
+            "--approve-all-external-transmission",
+            action="store_true",
+            help="Approve all planned phases and bounded repairs for this exact run input.",
+        )
+        parser.add_argument("--approved-by", default="EasyDep CLI user")
         args = parser.parse_args()
         if args.command == "workflow-status":
             result = workflow_status(args.run.resolve())
@@ -112,6 +124,18 @@ def main() -> int:
             spec = load_job(args.job.resolve())
             if args.command == "plan-workflow":
                 result = plan_workflow(args.run.resolve(), spec)
+            elif args.command == "run-to-completion":
+                if not args.approve_all_external_transmission:
+                    parser.error(
+                        "run-to-completion requires "
+                        "--approve-all-external-transmission"
+                    )
+                result = run_workflow_to_completion(
+                    args.run.resolve(),
+                    spec,
+                    approved_by=args.approved_by,
+                    retry_failed=args.retry_failed,
+                )
             else:
                 result = run_workflow(
                     args.run.resolve(),

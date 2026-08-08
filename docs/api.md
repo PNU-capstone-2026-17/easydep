@@ -165,10 +165,30 @@ Control
 → Persistence / API adapter / Boundary adapter
 → Gateway outbound adapter
 → Spring wiring
+→ Frontend implementation
 → E2E integration test
 ```
 
-각 phase 완료 후 후속 prompt와 전송 요청 ID가 다시 계산되므로 새로운 승인이 필요하다.
+기본 `delegate_repair_approvals=true`이면 최초 승인에 현재 run ID, 입력 hash, 최초 계획 task,
+최대 수리 횟수와 총 시도 횟수가 함께 고정된다. 이후 phase와 그 범위 안의 수리는 같은 승인을
+재사용해 완료까지 자동 진행한다. 이 값을 `false`로 보내면 각 후속 전송 요청을 별도로 승인해야
+한다.
+
+### CLI에서 한 번 승인하고 완료까지 실행
+
+먼저 job JSON으로 결정론적 뼈대와 실행 계획을 생성한 뒤 다음 명령을 사용한다.
+
+```powershell
+python -m app.implementation.interfaces.cli run-to-completion <run-directory> <job.json> `
+  --approve-all-external-transmission `
+  --approved-by "EasyDep CLI user"
+```
+
+`--approve-all-external-transmission`은 필수이며, 해당 run의 정확한 입력 hash와 최초 계획 task에만
+승인 범위를 묶는다. CLI는 `COMPLETE`가 될 때까지 후속 phase 및 최대 3회의 계획된 수리를
+계속 실행한다. `FAILED`, `NEEDS_INPUT`, `NEEDS_PLANNER`, 최대 50회 task 시도 또는 100회 workflow
+cycle에 도달하면 범위를 임의로 넓히지 않고 종료한다. 승인 증거는
+`reports/one-time-run-approval.json`에 남는다.
 
 ## 구현 파일 산출물
 
@@ -176,6 +196,7 @@ Control
 
 ```text
 SOURCE_CODE
+FRONTEND_SOURCE_CODE
 TEST_CODE
 DEPLOYMENT_FILE
 IAC_CODE
@@ -189,3 +210,27 @@ IAC_CODE
 
 파일 버전은 전체 파일 트리를 하나의 불변 snapshot으로 저장한다. API 응답의 `file_path`는
 URL path이므로 `/`를 포함할 수 있다.
+
+### `POST /api/implementation/apps/{app_id}/frontend`
+
+저장된 OpenAPI 명세를 OpenAPI Generator의 `typescript-fetch` generator에 전달해
+React + TypeScript(Vite) 뼈대와 API client/model 계약을 만들고
+`FRONTEND_SOURCE_CODE`의 새 버전으로 저장한다. 이 API는 결정론적 scaffold 단계만 수행한다.
+
+```json
+{
+  "application_name": "Order Console",
+  "api_base_url": "/api"
+}
+```
+
+`api_base_url`은 선택값이다. 생략하면 OpenAPI `servers[0].url`과 server variable의
+default를 사용하며, `servers`도 없으면 임의의 `/api` prefix를 붙이지 않고 동일 origin의
+root를 사용한다.
+
+API 명세가 없거나 지원하는 operation이 하나도 없으면 `409`를 반환한다. 생성 파일은 위의
+파일 산출물 조회 API로 목록, 버전 이력, 개별 내용을 확인할 수 있다. 전체 시스템 구현 job은
+같은 scaffold 이후 Class Diagram, Sequence Diagram, OpenAPI와 생성된 TypeScript 계약만
+프론트엔드 구현 에이전트에 전달한다. 에이전트는 `application/frontend/src/generated`를
+수정할 수 없으며 React 화면 구현 후 generated-client 사용 검사와 `npm run build`를 통과해야
+다음 E2E 단계로 진행한다. 원문 요구사항은 프론트엔드 구현 prompt에 전달하지 않는다.

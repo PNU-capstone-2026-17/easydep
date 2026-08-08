@@ -11,7 +11,7 @@ SCHEMA_VERSION = "implementation-rtm-traceability/v1alpha1"
 
 def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
     """Build and persist an RTM Traceability Map linking implementation files to design artifacts."""
-    from .implementation_ir import build_implementation_ir
+    from ..domain.implementation_ir import build_implementation_ir
 
     ir = build_implementation_ir(spec, run_root)
     package_path = spec.base_package.replace(".", "/")

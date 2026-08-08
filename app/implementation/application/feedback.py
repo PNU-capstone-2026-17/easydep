@@ -53,7 +53,9 @@ def assess_feedback_eligibility(
     rtm_map: dict[str, Any] | None = None,
 ) -> dict[str, object]:
     """Decide eligibility using RTM traceability mapping and design contract constraints."""
-    from app.implementation.engine.rtm_traceability import evaluate_feedback_rtm_traceability
+    from app.implementation.workflows.traceability import (
+        evaluate_feedback_rtm_traceability,
+    )
 
     return evaluate_feedback_rtm_traceability(feedback, design=design, rtm_map=rtm_map)
 

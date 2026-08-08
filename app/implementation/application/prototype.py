@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .config import ImplementationSettings
+from ..config import ImplementationSettings
 
 
 class PrototypeExecutionError(RuntimeError):
@@ -135,7 +135,7 @@ class PrototypeClient:
         )
         try:
             result = subprocess.run(
-                [str(self.settings.python_executable), "-B", "-m", "app.implementation.engine.cli", *args],
+                [str(self.settings.python_executable), "-B", "-m", "app.implementation.interfaces.cli", *args],
                 cwd=self.settings.repository_root,
                 env=env,
                 capture_output=True,

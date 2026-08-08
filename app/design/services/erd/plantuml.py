@@ -10,7 +10,7 @@ PlantUML로 재렌더한다. jar 실행·렌더는 `common.plantuml`이 맡는�
 
 ## 하류가 이 형태에 기대고 있다
 
-`app/implementation/engine/design_context.py`의 `slice_erd`가 정규식으로
+`app/implementation/planning/design_context.py`의 `slice_erd`가 정규식으로
 `^entity "이름" as 이름 {` … `^}` 블록을 잘라 간다. 연결 테이블과 제1정규화 자식 테이블도
 **같은 형태로** 낸다 — 형태가 다르면 그 테이블만 하류에서 조용히 사라진다.
 """

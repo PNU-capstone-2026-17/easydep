@@ -24,7 +24,7 @@ EasyDep에는 서로 목적이 다른 두 구현 실행 경로가 남아 있다.
 | `app/core/orchestration/adapters/` | 구현, VM 선택, 테스트 provider 연결 |
 | `app/core/orchestration/scaffold_worker.py` | 격리된 구현 골격 작업 실행 |
 | `app/core/orchestration/vm_selection.py` | 최소 용량 필터와 가격·성능 후보 선택 |
-| `app/implementation/engine/` | 구현 IR, 품질 gate, Docker·IaC renderer |
+| `app/implementation/` | 구현 IR, 품질 gate, Docker·IaC renderer |
 | `app/core/cloudkb/` | VM 가격·성능·의존성 근거 |
 
 기본 provider 조합과 실행 API는 [오케스트레이션 문서](../app/core/orchestration/README.md)를

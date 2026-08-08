@@ -1,57 +1,60 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
 import shutil
-import stat
-import subprocess
-import sys
-import tempfile
 import time
 import warnings
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from .design_context import read_generated_java_contracts, referenced_openapi_model_names
-from .implementation_ir import remove_readonly
-from .quality_gates import e2e_contract_violations
-from .repair_planner import referenced_source_paths
+from ..planning.design_context import (
+    read_generated_java_contracts,
+    referenced_openapi_model_names,
+)
+from .verification.frontend import (
+    frontend_contract_violations,
+    has_mutating_operations,
+)
+from .verification.build import (
+    WorkspaceVerificationError,
+    production_placeholder_markers,
+    verify_agent_workspace,
+)
+from .verification.e2e import e2e_contract_violations
+from ..workflows.repair import referenced_source_paths
+from .provider import (
+    MAX_PROVIDER_RETRIES,
+    configured_api_key,
+    configured_max_output_tokens,
+    configured_model,
+    openhands_compatibility,
+    provider_retry_delay,
+    transient_provider_error,
+)
+from .prompts import (
+    FRONTEND_SYSTEM_PROMPT,
+    IMPLEMENTATION_SYSTEM_PROMPT,
+    render_frontend_verification_feedback,
+    render_verification_feedback,
+)
+from .workspace import (
+    changed_files,
+    load_task,
+    missing_required_outputs,
+    prepare_agent_workspace,
+    read_allowed_sources,
+    read_persistence_entity_contracts,
+    snapshot_files,
+    task_base_package,
+)
 
 
 MAX_AGENT_ITERATIONS = 6
 MAX_REPAIR_ITERATIONS = 4
 MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
-MAX_PROVIDER_RETRIES = 3
 _RESTRICTED_EDITOR_REGISTERED = False
-IMPLEMENTATION_SYSTEM_PROMPT = """You are a focused Java implementation worker.
-The user prompt contains the complete relevant design context and the exact writable files.
-Use only the restricted file editor. Its file argument is named path, not file_path. Never attempt shell commands, commits, or broad repository exploration.
-All relevant generated Java contracts are embedded in the user prompt. The writable parent directories are already created and verified; do not browse directories before creating the files.
-Do not edit generated contracts.
-For Control tasks, generated BCE Controls are application port interfaces: implement the matching Control interface and inject other ports through the constructor. For persistence tasks, follow the task-specific JPA, repository, mapper, and schema rules. For API adapter tasks, implement the exact generated OpenAPI interface and delegate only through existing application Control ports. Never edit generated BCE or OpenAPI contracts.
-Use only methods present in the embedded Java contracts and preserve their exact return types. Never assign the result of a void method. Mockito mocks already do nothing for void methods by default: never put a void call inside when(...), including when(...).thenReturn(...) or when(...).thenAnswer(...). If custom void behavior is genuinely required, use doAnswer(...).when(mock).method(...).
-Java has no import aliases. When API and BCE packages contain the same simple class name, use a fully qualified class name. Never invent Bce-prefixed aliases, use reflection to bypass contracts, or access private generated fields.
-If generated types do not expose data through exact public methods, omit that mapping, leave a focused TODO, and keep the known flow compilable. Never assume conventional getters or setters.
-Write each contracted file in its required format. Java files must contain valid Java with // or /* */ comments; SQL migration files must contain valid SQL with -- or /* */ comments. Never mix Markdown into source files.
-Keep source comments concise and implementation-focused. Never place chain-of-thought, self-dialogue, repeated design analysis, or speculative question-and-answer text in Java comments.
-Before writing a complete replacement, ensure each Java method signature appears only once in its class; never append a second copy of an existing helper method.
-Create every contracted output file, then call finish immediately. For a small correction use exact str_replace; when most of a file is wrong, use create to replace the existing allowlisted file completely.
-Create as many requested files in the same response as the output limit permits. When tests are requested, keep them focused to 3-5 meaningful scenarios and do not verify incidental logging calls. Never use verifyNoInteractions or verifyNoMoreInteractions. For negative Mockito verification, the only valid form is verify(mock, never()).method(...); never invent verifyNever. Use matchers for every argument when any matcher is used, including eq(value) for otherwise raw arguments; never concatenate a matcher into a String or other value. Stub the same method only once per test; use chained thenReturn(first, second) only when the implementation actually calls it repeatedly. Never invoke a mock in test setup unless the invocation is part of when(...) or do...when(...). Ensure every verification matches a branch the implementation actually executes.
-Never mock, spy, or call Mockito verify(...) on the service under test. Invoke the real service and verify only its mocked collaborators. Derive invocation counts from the exact implementation path; do not guess with times(...), duplicate verification of the same invocation, or use atLeast to hide uncertainty. Do not create stubs that the tested path does not consume.
-If a required contract is absent or contradictory, leave a focused TODO in an allowed file and finish.
-"""
-
-
-def gradle_command() -> list[str]:
-    """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
-    wrapper_name = "gradlew.bat" if os.name == "nt" else "gradlew"
-    wrapper = Path(__file__).resolve().parent.parent / "tools" / "gradle" / wrapper_name
-    if not wrapper.is_file():
-        raise RuntimeError(f"Bundled Gradle Wrapper is missing: {wrapper}")
-    return [str(wrapper)] if os.name == "nt" else ["sh", str(wrapper)]
 
 
 class EventJournal:
@@ -78,192 +81,6 @@ class EventJournal:
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.event_count += 1
-
-
-class WorkspaceVerificationError(RuntimeError):
-    def __init__(self, evidence: dict[str, object]):
-        self.evidence = evidence
-        output = str(
-            evidence.get("testResults")
-            or evidence.get("stderr")
-            or evidence.get("stdout")
-            or ""
-        )
-        super().__init__("Agent workspace verification failed: " + output[-1000:])
-
-
-def render_verification_feedback(
-    evidence: dict[str, object],
-    current_sources: str = "",
-    repair_targets: list[str] | None = None,
-) -> str:
-    output = (
-        str(evidence.get("stdout", ""))
-        + "\n"
-        + str(evidence.get("stderr", ""))
-        + "\n"
-        + str(evidence.get("testResults", ""))
-    )[-20000:]
-    hints = verification_failure_hints(output)
-    target_text = "\n".join(f"- `{path}`" for path in (repair_targets or []))
-    return f"""The orchestrator compiled and tested your files, and verification failed.
-Fix every reported error in the existing allowed files, including test compilation errors.
-Generated contracts are authoritative: never assume a return value or method that is absent from their exact signatures.
-Do not invent Java aliases, access private fields, or use reflection to bypass a generated contract.
-For a cannot-find-symbol diagnostic, remove the absent call or field access. Do not invent a replacement accessor; leave a focused TODO when the contract exposes no equivalent.
-For an already-defined-method diagnostic, keep one implementation of that signature and remove the duplicate.
-For Mockito negative verification, use verify(mock, never()).method(...); verifyNever does not exist.
-For a 'void type not allowed here' diagnostic, delete the unnecessary when(mock.voidMethod(...)) stub. If custom behavior is required, use Mockito doAnswer(...).when(mock).voidMethod(...).
-Use create to replace each affected allowlisted file completely. Do not call view or str_replace during this repair round; the current sources are included below.
-Write only the following repair targets; do not rewrite any other file:
-{target_text}
-Emit all required create calls in one response, then call finish immediately.
-
-Failure-specific guidance:
-{hints}
-
-Gradle output:
-```text
-{output}
-```
-
-Current allowlisted sources:
-{current_sources}
-"""
-
-
-def verification_failure_hints(output: str) -> str:
-    hints: list[str] = []
-    if "TooManyActualInvocations" in output:
-        hints.append(
-            "- TooManyActualInvocations: do not verify a broad matcher once when the "
-            "method is legitimately called with multiple arguments. Remove incidental log "
-            "verification or verify an exact argument."
-        )
-    if "TooFewActualInvocations" in output:
-        hints.append(
-            "- TooFewActualInvocations: the test expects more calls than the implementation "
-            "actually makes. Remove duplicate verification or reduce times(n) to the exact "
-            "observed count; do not add production calls solely to satisfy a mock count."
-        )
-    if "UnnecessaryStubbingException" in output or "Unnecessary stubbings detected" in output:
-        hints.append(
-            "- UnnecessaryStubbingException: delete every stubbing identified as unused. "
-            "Do not make it lenient and do not add production behavior just to consume it."
-        )
-    if "NotAMockException" in output or "Argument passed to verify() is of type" in output:
-        hints.append(
-            "- Mockito verify requires a mock collaborator. Never verify the real service "
-            "under test; call it normally and assert state or verify its mocked dependencies."
-        )
-    if "InvalidUseOfMatchersException" in output or "matchers expected" in output:
-        hints.append(
-            "- InvalidUseOfMatchersException: if one argument uses a matcher, wrap every "
-            "argument in that invocation with a matcher. For example, use "
-            "verify(timer).startTimer(eq(30), anyString()), not startTimer(30, anyString())."
-        )
-    if "ConnectionFails_HandlesFailure" in output and "Wanted but not invoked" in output:
-        hints.append(
-            "- Connection failure scenario: arrange the void openConnection call with "
-            "doThrow(new RuntimeException(...)).when(webConnectionManager).openConnection(...). "
-            "The service should catch that runtime failure, invoke handleFailure, and stop before "
-            "captureResponse. Do not expect failure after arranging a successful void call."
-        )
-    if "Wanted but not invoked" in output:
-        hints.append(
-            "- Wanted but not invoked: trace the implementation branch. Remove conflicting "
-            "stubs of the same method and do not verify a branch the arranged return values skip."
-        )
-    if "void type not allowed here" in output:
-        hints.append(
-            "- Void Mockito method: remove when(mock.voidMethod(...)); void mocks need no stub "
-            "unless doAnswer(...).when(mock).voidMethod(...) is genuinely required."
-        )
-    return "\n".join(hints) or "- Fix the reported compiler or test failure without weakening meaningful assertions."
-
-
-def configured_api_key() -> str | None:
-    return (
-        os.environ.get("NVIDIA_API_KEY")
-        or os.environ.get("NVIDIA_NIM_API_KEY")
-        or os.environ.get("LLM_API_KEY")
-        or windows_user_environment("NVIDIA_API_KEY")
-        or windows_user_environment("NVIDIA_NIM_API_KEY")
-    )
-
-
-def configured_model(default: str) -> str:
-    return os.environ.get("OPENHANDS_MODEL") or os.environ.get("LLM_MODEL") or default
-
-
-def configured_max_output_tokens(default: int) -> int:
-    raw = os.environ.get("OPENHANDS_MAX_OUTPUT_TOKENS")
-    return int(raw) if raw else default
-
-
-def transient_provider_error(error: Exception) -> bool:
-    """Recognize retryable NIM/OpenAI-compatible transport failures."""
-    text = f"{error.__class__.__name__}: {error}".lower()
-    return any(
-        marker in text
-        for marker in (
-            "429",
-            "rate limit",
-            "too many requests",
-            "timeout",
-            "timed out",
-            "connection error",
-            "temporarily unavailable",
-            "service unavailable",
-            "overloaded",
-            "bad gateway",
-            "gateway timeout",
-            "502",
-            "503",
-            "504",
-        )
-    )
-
-
-def provider_retry_delay(retry_number: int) -> float:
-    base = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_BASE_SECONDS", "1"))
-    cap = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_MAX_SECONDS", "30"))
-    return min(cap, base * (2 ** max(0, retry_number - 1)))
-
-
-def missing_required_outputs(sandbox: Path, relative_paths: list[str]) -> list[str]:
-    """Return contracted task outputs that the agent has not created as files."""
-    return [relative for relative in relative_paths if not (sandbox / relative).is_file()]
-
-
-def windows_user_environment(name: str) -> str | None:
-    if os.name != "nt":
-        return None
-    try:
-        import winreg
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            value, _ = winreg.QueryValueEx(key, name)
-            return value if isinstance(value, str) and value else None
-    except (FileNotFoundError, OSError):
-        return None
-
-
-def openhands_compatibility() -> dict[str, object]:
-    return {
-        "python": ".".join(map(str, sys.version_info[:3])),
-        "pythonCompatible": sys.version_info >= (3, 12),
-        "sdkInstalled": module_available("openhands.sdk"),
-        "toolsInstalled": module_available("openhands.tools"),
-        "apiKeyConfigured": bool(configured_api_key()),
-    }
-
-
-def module_available(name: str) -> bool:
-    try:
-        return importlib.util.find_spec(name) is not None
-    except ModuleNotFoundError:
-        return False
 
 
 def write_execution_plan(
@@ -293,6 +110,7 @@ def write_execution_plan(
 
 def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
+    task_type = str(task.get("task_type", ""))
 
     compatibility = openhands_compatibility()
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
@@ -303,7 +121,11 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     before = snapshot_files(sandbox)
     prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    api_model_names = referenced_openapi_model_names(str(context.get("openapi", "")))
+    api_model_names = (
+        set()
+        if task_type == "frontend-implementation"
+        else referenced_openapi_model_names(str(context.get("openapi", "")))
+    )
     missing_api_models = {
         name for name in api_model_names if f"// api/model/{name}.java" not in prompt
     }
@@ -358,6 +180,11 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 callbacks=[journal],
                 max_iterations=round_iteration_limit,
                 reasoning_effort=reasoning_effort,
+                system_prompt=(
+                    FRONTEND_SYSTEM_PROMPT
+                    if task_type == "frontend-implementation"
+                    else IMPLEMENTATION_SYSTEM_PROMPT
+                ),
             )
             conversation_error: Exception | None = None
             try:
@@ -458,7 +285,28 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "testResults": "",
                             }
                         )
-                verification = verify_agent_workspace(sandbox)
+                if task_type == "frontend-implementation":
+                    openapi_context = context.get("openapi", {})
+                    requires_success_feedback = has_mutating_operations(
+                        openapi_context
+                    )
+                    violations = frontend_contract_violations(
+                        sandbox,
+                        task["allowed_write_paths"],
+                        requires_success_feedback=requires_success_feedback,
+                    )
+                    if violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["frontend-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(violations),
+                                "testResults": "",
+                            }
+                        )
+                verification = verify_agent_workspace(sandbox, task_type)
                 break
             except WorkspaceVerificationError as error:
                 referenced = referenced_source_paths(error.evidence)
@@ -481,7 +329,12 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
                 round_iteration_limit = MAX_REPAIR_ITERATIONS
-                round_prompt = prompt + "\n\n## Verification repair\n\n" + render_verification_feedback(
+                feedback_renderer = (
+                    render_frontend_verification_feedback
+                    if task_type == "frontend-implementation"
+                    else render_verification_feedback
+                )
+                round_prompt = prompt + "\n\n## Verification repair\n\n" + feedback_renderer(
                     error.evidence,
                     read_allowed_sources(sandbox, task["allowed_write_paths"]),
                     repair_paths,
@@ -552,6 +405,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "validation-only-key",
         task["llm"],
         callbacks=[validation_journal],
+        system_prompt=(
+            FRONTEND_SYSTEM_PROMPT
+            if task.get("task_type") == "frontend-implementation"
+            else IMPLEMENTATION_SYSTEM_PROMPT
+        ),
     )
     try:
         conversation.send_message("Initialize this validation conversation; do not run it.")
@@ -626,7 +484,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "stuckDetection": False,
         "verificationRepairLimit": MAX_VERIFICATION_REPAIRS,
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
-        "systemPrompt": "focused-java-implementation",
+        "systemPrompt": (
+            "focused-frontend-implementation"
+            if task.get("task_type") == "frontend-implementation"
+            else "focused-java-implementation"
+        ),
         "validationEventCount": validation_journal.event_count,
         "allowedWritePaths": allowed,
         "modelCallMade": False,
@@ -646,6 +508,7 @@ def create_openhands_conversation(
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_ITERATIONS,
     reasoning_effort: str = "medium",
+    system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
 ):
     global _RESTRICTED_EDITOR_REGISTERED
 
@@ -766,7 +629,7 @@ def create_openhands_conversation(
         llm=LLM(**llm_options),
         tools=[Tool(name=registry_name, params={"allowed_edits_files": allowed_files})],
         include_default_tools=["FinishTool"],
-        system_prompt=IMPLEMENTATION_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
     )
     conversation = Conversation(
         agent=agent,
@@ -777,149 +640,6 @@ def create_openhands_conversation(
         visualizer=None,
     )
     return conversation, agent
-
-
-def load_task(run_root: Path, task_id: str) -> dict[str, object]:
-    task_dir = run_root / "reports" / "implementation-tasks"
-    for candidate in task_dir.glob("*.task.json"):
-        task = json.loads(candidate.read_text(encoding="utf-8"))
-        if task["task_id"] == task_id:
-            return task
-    raise ValueError(f"Unknown task: {task_id}")
-
-
-def task_base_package(task: dict[str, object]) -> str:
-    package_markers = {
-        "application", "persistence", "adapter", "integration", "config", "bce", "api"
-    }
-    for output in task["allowed_write_paths"]:
-        relative = Path(str(output))
-        parts = relative.parts
-        if "java" not in parts:
-            continue
-        java_index = parts.index("java")
-        marker_index = next(
-            (
-                index for index in range(java_index + 1, len(parts))
-                if parts[index] in package_markers
-            ),
-            None,
-        )
-        if marker_index is not None and marker_index > java_index + 1:
-            return ".".join(parts[java_index + 1 : marker_index])
-    raise ValueError("Cannot derive base package from task outputs")
-
-
-def read_persistence_entity_contracts(run_root: Path, base_package: str) -> str:
-    root = (
-        run_root
-        / "application"
-        / "src"
-        / "main"
-        / "java"
-        / Path(base_package.replace(".", "/"))
-        / "persistence"
-        / "entity"
-    )
-    contracts: list[str] = []
-    for path in sorted(root.glob("*Entity.java")):
-        contracts.append(
-            f"// persistence/entity/{path.name}\n"
-            + path.read_text(encoding="utf-8").strip()
-        )
-    return "\n\n".join(contracts) or "// No persistence entity contracts found"
-
-
-def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
-    run_key = run_root.name.removeprefix("run_")[:12]
-    task_key = str(task["task_id"]).removeprefix("implement-")
-    sandbox_base = Path(tempfile.gettempdir()) / "easydep-agent-workspaces" / run_key / task_key
-    sandbox = sandbox_base
-    suffix = 1
-    while sandbox.exists():
-        try:
-            shutil.rmtree(sandbox, onerror=remove_readonly)
-        except PermissionError:
-            # A Gradle/IDE process can briefly lock files on Windows. Keep the
-            # locked transient workspace and isolate this attempt in a sibling.
-            suffix += 1
-            sandbox = sandbox_base.with_name(f"{sandbox_base.name}-{suffix}")
-            continue
-        break
-    shutil.copytree(
-        run_root / "application",
-        sandbox / "application",
-        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle"),
-    )
-    for relative in task["allowed_write_paths"]:
-        target = sandbox / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if os.name == "nt" and len(str(target.resolve())) > 240:
-            raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
-    return sandbox
-
-
-def verify_run_workspace(run_root: Path) -> dict[str, object]:
-    """Verify all promoted sources from a short ASCII-safe workspace."""
-    sandbox = prepare_agent_workspace(
-        run_root,
-        {"task_id": "final-verification", "allowed_write_paths": []},
-    )
-    verification = verify_agent_workspace(sandbox)
-    result = {
-        "status": "SUCCEEDED",
-        "workspace": str(sandbox),
-        "verification": verification,
-    }
-    report = run_root / "reports" / "final-verification.json"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return result
-
-
-def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
-    executable = gradle_command()
-    started = time.monotonic()
-    result = subprocess.run(
-        [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
-        cwd=sandbox / "application",
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-        check=False,
-    )
-    evidence = {
-        "command": [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
-        "exitCode": result.returncode,
-        "durationMs": int((time.monotonic() - started) * 1000),
-        "stdout": result.stdout[-16000:],
-        "stderr": result.stderr[-16000:],
-        "testResults": read_gradle_test_failures(sandbox),
-    }
-    if result.returncode != 0:
-        raise WorkspaceVerificationError(evidence)
-    return evidence
-
-
-def production_placeholder_markers(
-    sandbox: Path, relative_paths: list[str]
-) -> list[str]:
-    """Reject unresolved implementation markers in contracted production Java outputs."""
-    evidence: list[str] = []
-    pattern = re.compile(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", re.IGNORECASE)
-    for relative in relative_paths:
-        normalized = relative.replace("\\", "/")
-        if "/src/main/java/" not in f"/{normalized}" or not normalized.endswith(".java"):
-            continue
-        path = sandbox / relative
-        if not path.is_file():
-            continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if pattern.search(line):
-                evidence.append(f"{normalized}:{number}: {line.strip()}")
-    return evidence
 
 
 def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:
@@ -1097,15 +817,6 @@ def _has_path(edges: dict[str, set[str]], current: str, target: str, seen: set[s
     return False
 
 
-def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
-    sections: list[str] = []
-    for relative in relative_paths:
-        path = sandbox / relative
-        content = path.read_text(encoding="utf-8") if path.is_file() else "// File missing"
-        sections.append(f"### {relative}\n```java\n{content}\n```")
-    return "\n\n".join(sections)
-
-
 def select_repair_paths(
     evidence: dict[str, object], allowed_paths: list[str]
 ) -> list[str]:
@@ -1128,67 +839,3 @@ def select_repair_paths(
         or relative.replace("\\", "/") in output
     ]
     return selected or list(allowed_paths)
-
-
-def read_gradle_test_failures(sandbox: Path) -> str:
-    result_dir = sandbox / "application" / "build" / "test-results" / "test"
-    reports: list[str] = []
-    for report in sorted(result_dir.glob("*.xml")):
-        try:
-            root = ET.parse(report).getroot()
-        except ET.ParseError:
-            continue
-        for case in root.findall("testcase"):
-            problem = case.find("failure")
-            if problem is None:
-                problem = case.find("error")
-            if problem is None:
-                continue
-            message = problem.get("message") or "test failed"
-            detail = (problem.text or "").strip()
-            if detail:
-                message += "\n" + summarize_test_failure(detail)
-            reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
-    return _truncate_log_snippet("\n\n".join(reports), max_chars=8000)
-
-
-def _truncate_log_snippet(text: str, max_chars: int = 8000) -> str:
-    """Safely truncate log snippets to a maximum character count."""
-    return text[-max_chars:] if len(text) > max_chars else text
-
-
-def summarize_test_failure(detail: str) -> str:
-    """Keep causal exception lines, rather than only the end of a long trace."""
-    lines = [line.rstrip() for line in detail.splitlines() if line.strip()]
-    causal = [
-        line
-        for line in lines
-        if re.search(
-            r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
-            r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
-            r"BeanCurrentlyInCreationException)",
-            line,
-        )
-    ]
-    selected = causal or lines[:30]
-    # Preserve a small tail for Gradle/JUnit-specific context without allowing a
-    # stack trace to evict the causal message from the repair prompt.
-    selected.extend(lines[-8:])
-    return _truncate_log_snippet("\n".join(dict.fromkeys(selected)), max_chars=8000)
-
-
-def snapshot_files(root: Path) -> dict[str, str]:
-    import hashlib
-
-    result: dict[str, str] = {}
-    for path in root.rglob("*"):
-        if path.is_file():
-            relative = path.relative_to(root)
-            if any(part in {"build", ".gradle"} for part in relative.parts):
-                continue
-            result[str(relative).replace("\\", "/")] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
-
-
-def changed_files(before: dict[str, str], after: dict[str, str]) -> set[str]:
-    return {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}

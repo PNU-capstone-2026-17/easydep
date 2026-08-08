@@ -6,11 +6,11 @@ import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 
-from app.implementation.engine.rtm_traceability import (
+from app.implementation.workflows.traceability import (
     build_rtm_traceability_map,
     evaluate_feedback_rtm_traceability,
 )
-from app.implementation.feedback_impact import assess_feedback_eligibility
+from app.implementation.application.feedback import assess_feedback_eligibility
 
 
 def test_rtm_traceability_map_building() -> None:

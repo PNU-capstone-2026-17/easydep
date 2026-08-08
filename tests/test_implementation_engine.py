@@ -9,38 +9,46 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.implementation.engine.orchestrator import (
+from app.implementation.generation.orchestrator import (
     find_undefined_bce_types,
     load_job,
     plan_e2e_tasks,
 )
-from app.implementation.engine.agent_runtime import (
+from app.implementation.agents.runtime import (
     EventJournal,
     break_configuration_cycles,
+    select_repair_paths,
+)
+from app.implementation.agents.workspace import (
     changed_files,
     missing_required_outputs,
-    openhands_compatibility,
-    production_placeholder_markers,
     prepare_agent_workspace,
     read_allowed_sources,
     read_persistence_entity_contracts,
-    read_gradle_test_failures,
-    render_verification_feedback,
-    select_repair_paths,
     snapshot_files,
-    summarize_test_failure,
     task_base_package,
+)
+from app.implementation.agents.provider import (
+    openhands_compatibility,
     transient_provider_error,
     provider_retry_delay,
-    verification_failure_hints,
+)
+from app.implementation.agents.verification.build import (
+    production_placeholder_markers,
+    read_gradle_test_failures,
+    summarize_test_failure,
     verify_run_workspace,
 )
-from app.implementation.engine.repair_planner import (
+from app.implementation.agents.prompts.feedback import (
+    render_verification_feedback,
+    verification_failure_hints,
+)
+from app.implementation.workflows.repair import (
     apply_repair_directives,
     referenced_source_paths,
     schedule_cross_phase_repair,
 )
-from app.implementation.engine.design_context import (
+from app.implementation.planning.design_context import (
     detect_e2e_design_gaps,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
@@ -54,28 +62,28 @@ from app.implementation.engine.design_context import (
     render_api_adapter_prompt,
     slice_sequence,
 )
-from app.implementation.engine.completion_audit import audit_run_completion
-from app.implementation.engine.quality_gates import e2e_contract_violations
-from app.implementation.engine.deployment_renderer import (
+from app.implementation.workflows.completion import audit_run_completion
+from app.implementation.agents.verification.e2e import e2e_contract_violations
+from app.implementation.delivery.kubernetes import (
     infer_intent,
     render_deployment,
     validate_intent,
 )
-from app.implementation.engine.iac_renderer import render_iac, validate_terraform
-from app.implementation.engine.source_conformance import (
+from app.implementation.delivery.terraform import render_iac, validate_terraform
+from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     capture_generated_contracts,
     restore_generated_contracts,
     verify_source_design_conformance,
 )
-from app.implementation.engine.implementation_ir import (
+from app.implementation.domain.implementation_ir import (
     ApiOperationIR,
     ApiPortIR,
     ApiResponseIR,
     build_implementation_ir,
     parse_openapi_operations as parse_ir_openapi_operations,
 )
-from app.implementation.engine.workflow import (
+from app.implementation.workflows.coordinator import (
     reconcile_workflow_state,
     validate_approval,
     validate_workflow_approval,
@@ -1502,7 +1510,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("path: /readyz", deployment_source)
             self.assertIn("path: /livez", deployment_source)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_matches_deployment_intent(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1528,7 +1536,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn('resource "azurerm_container_registry"', source)
             self.assertIn('resource "azurerm_key_vault"', source)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_supports_aws_and_gcp(self, _validation: object) -> None:
         cases = (
             ("aws", [{"type": "AWS::EC2::VPC", "name": "network"}, {"type": "AWS::EC2::Subnet", "name": "private-a", "availabilityZone": "ap-northeast-2a", "dependsOn": ["network"]}, {"type": "AWS::EC2::Subnet", "name": "private-c", "availabilityZone": "ap-northeast-2c", "dependsOn": ["network"]}, {"type": "AWS::ECR::Repository", "name": "orders"}, {"type": "AWS::EKS::Cluster", "name": "orders", "dependsOn": ["network"]}], ('resource "aws_ecr_repository"', 'resource "aws_eks_cluster"', 'resource "aws_iam_role_policy_attachment"')),
@@ -1551,7 +1559,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 for marker in expected:
                     self.assertIn(marker, source)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_iac_renderer_connects_networks_and_creates_cluster_nodes(self, _validation: object) -> None:
         cases = (
             (
@@ -1577,7 +1585,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 for marker in expected:
                     self.assertIn(marker, source)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_iac_renderer_resolves_network_references_independent_of_resource_order(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1594,7 +1602,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("vpc_id = aws_vpc.platform.id", source)
             self.assertIn("subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_c.id]", source)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_iac_renderer_resolves_type_safe_dependency_ids_when_names_overlap(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1619,7 +1627,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             with self.assertRaisesRegex(ValueError, "not supported"):
                 render_iac(root / "run", SimpleNamespace(inputs={"cloud": cloud}))
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_azure_iac_renderer_preserves_private_cluster_and_mysql_networking(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1678,7 +1686,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
         with self.assertRaisesRegex(ValueError, "exactly one Kubernetes cluster"):
             infer_intent("orders", cloud)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_iac_renderer_rejects_registry_pull_binding_for_wrong_registry(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1695,7 +1703,7 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             with self.assertRaisesRegex(ValueError, "has no image-pull binding"):
                 render_iac(run, spec)
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "SUCCEEDED"})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_aws_cloud_spec_renders_deployment_then_iac(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1730,11 +1738,11 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertTrue((bundle / "README.md").is_file())
             self.assertIn('output "registry_image_bases"', (run / "application/terraform/outputs.tf").read_text(encoding="utf-8"))
 
-    @patch("app.implementation.engine.iac_renderer.shutil.which", return_value=None)
+    @patch("app.implementation.delivery.terraform.shutil.which", return_value=None)
     def test_terraform_validation_reports_when_binary_is_unavailable(self, _which: object) -> None:
         self.assertEqual("FAILED", validate_terraform(Path("missing")).get("status"))
 
-    @patch("app.implementation.engine.iac_renderer.validate_terraform", return_value={"status": "FAILED", "errors": ["provider schema rejected configuration"]})
+    @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "FAILED", "errors": ["provider schema rejected configuration"]})
     def test_iac_renderer_blocks_artifact_promotion_when_terraform_validation_fails(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2282,7 +2290,7 @@ class ApplicationConfiguration {
             relative = "application/src/main/java/example/impl/Service.java"
             temp_root = Path(directory) / "temp"
             with patch(
-                "app.implementation.engine.agent_runtime.tempfile.gettempdir",
+                "app.implementation.agents.workspace.tempfile.gettempdir",
                 return_value=str(temp_root),
             ):
                 sandbox = prepare_agent_workspace(
@@ -2317,11 +2325,11 @@ class ApplicationConfiguration {
 
             with (
                 patch(
-                    "app.implementation.engine.agent_runtime.tempfile.gettempdir",
+                    "app.implementation.agents.workspace.tempfile.gettempdir",
                     return_value=str(temp_root),
                 ),
                 patch(
-                    "app.implementation.engine.agent_runtime.verify_agent_workspace",
+                    "app.implementation.agents.verification.build.verify_agent_workspace",
                     return_value=verification,
                 ),
             ):
@@ -2352,11 +2360,11 @@ class ApplicationConfiguration {
 
             with (
                 patch(
-                    "app.implementation.engine.agent_runtime.tempfile.gettempdir",
+                    "app.implementation.agents.workspace.tempfile.gettempdir",
                     return_value=str(temp_root),
                 ),
                 patch(
-                    "app.implementation.engine.agent_runtime.shutil.rmtree",
+                    "app.implementation.agents.workspace.shutil.rmtree",
                     side_effect=PermissionError("locked"),
                 ),
             ):

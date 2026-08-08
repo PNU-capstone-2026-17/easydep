@@ -6,35 +6,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .agent_runtime import (
+from ..agents.runtime import execute_openhands_task
+from ..agents.verification.build import (
     WorkspaceVerificationError,
-    execute_openhands_task,
     verify_run_workspace,
 )
-from .completion_audit import audit_run_completion
-from .models import JobSpec
-from .implementation_ir import build_implementation_ir
-from .orchestrator import (
+from .completion import audit_run_completion
+from ..domain.models import JobSpec
+from ..domain.implementation_ir import build_implementation_ir
+from ..generation.orchestrator import (
     plan_api_adapter_tasks,
     plan_boundary_adapter_tasks,
     plan_e2e_tasks,
+    plan_frontend_tasks,
     plan_gateway_adapter_tasks,
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from .repair_planner import (
+from .repair import (
     apply_repair_directives,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
 )
-from .deployment_renderer import render_deployment
-from .iac_renderer import render_iac
-from .source_conformance import (
+from ..delivery.kubernetes import render_deployment
+from ..delivery.terraform import render_iac
+from .conformance import (
     SourceDesignConformanceError,
     restore_generated_contracts,
     verify_source_design_conformance,
 )
-from .rtm_traceability import build_rtm_traceability_map
+from .traceability import build_rtm_traceability_map
 
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
@@ -51,7 +52,8 @@ PHASES = (
     ("boundary-adapters", ("control",), {"boundary-adapter"}),
     ("outbound-adapters", ("control", "persistence"), {"gateway-adapter"}),
     ("wiring", ("persistence", "api-adapters", "boundary-adapters", "outbound-adapters"), {"configuration"}),
-    ("end-to-end", ("wiring",), {"integration-test"}),
+    ("frontend", ("api-adapters",), {"frontend-implementation"}),
+    ("end-to-end", ("wiring", "frontend"), {"integration-test"}),
 )
 
 
@@ -78,6 +80,8 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if ir.gateways:
         plan_gateway_adapter_tasks(spec, run_root)
     plan_wiring_tasks(spec, run_root)
+    if (run_root / "application" / "frontend" / "src" / "generated").is_dir():
+        plan_frontend_tasks(spec, run_root)
     plan_e2e_tasks(spec, run_root)
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
@@ -355,6 +359,63 @@ def workflow_status(run_root: Path) -> dict[str, object]:
     if not path.is_file():
         raise ValueError("Workflow has not been planned for this run")
     return _read_json(path)
+
+
+def run_workflow_to_completion(
+    run_root: Path,
+    spec: JobSpec,
+    *,
+    approved_by: str,
+    retry_failed: bool = False,
+    max_cycles: int = 100,
+) -> dict[str, object]:
+    """Run every phase and bounded repair from one explicit transmission approval."""
+    run_root = run_root.resolve()
+    state = plan_workflow(run_root, spec)
+    request_path = run_root / "reports" / "external-transmission-request.json"
+    if not request_path.is_file():
+        if state.get("status") == "COMPLETE":
+            return state
+        raise PermissionError("No external transmission request is available to approve")
+    request = _read_json(request_path)
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    approval_path = run_root / "reports" / "one-time-run-approval.json"
+    approval = {
+        "requestId": request["requestId"],
+        "approved": True,
+        "approvedAt": _now(),
+        "approvedBy": approved_by,
+        "delegatedRepairApprovals": True,
+        "delegationScope": {
+            "runId": run_root.name,
+            "inputHash": manifest.get("input_hash"),
+            "initialTaskIds": sorted(
+                str(task["task_id"])
+                for task in manifest.get("implementation_tasks", [])
+            ),
+            "maxRepairRounds": 3,
+            "maxTaskAttempts": 50,
+        },
+    }
+    _write_json_atomic(approval_path, approval)
+
+    for _cycle in range(max_cycles):
+        state = run_workflow(
+            run_root,
+            spec,
+            approval_path,
+            retry_failed=retry_failed,
+        )
+        status = str(state.get("status", ""))
+        if status == "COMPLETE":
+            state["oneTimeApproval"] = approval_path.relative_to(run_root).as_posix()
+            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+            return state
+        if status in {"FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"}:
+            raise RuntimeError(
+                f"Run-to-completion stopped in {status}: {state.get('blockingReason')}"
+            )
+    raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
 
 
 def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
@@ -660,7 +721,6 @@ def _next_runnable_tasks(
 ) -> list[str]:
     phase_by_id = {phase["phaseId"]: phase for phase in phases}
     for phase_id, dependencies, _ in PHASES:
-        phase = phase_by_id[phase_id]
         candidates = [
             str(task["taskId"]) for task in tasks
             if task["phase"] == phase_id

@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from .implementation_ir import parse_components
+from ..domain.implementation_ir import parse_components
 
 
 SCHEMA_VERSION = "source-design-conformance/v1alpha1"

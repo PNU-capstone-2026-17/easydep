@@ -20,6 +20,7 @@ TASK_PHASES = {
     "boundary-adapter": "boundary-adapters",
     "gateway-adapter": "outbound-adapters",
     "configuration": "wiring",
+    "frontend-implementation": "frontend",
     "integration-test": "end-to-end",
 }
 PHASE_DEPENDENCIES = {
@@ -34,7 +35,8 @@ PHASE_DEPENDENCIES = {
         "boundary-adapters",
         "outbound-adapters",
     ),
-    "end-to-end": ("wiring",),
+    "frontend": ("api-adapters",),
+    "end-to-end": ("wiring", "frontend"),
 }
 
 
