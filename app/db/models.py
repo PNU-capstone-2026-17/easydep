@@ -37,6 +37,7 @@ TYPE_DEPLOYMENT = "DEPLOYMENT"
 # Implementation and test agents produce file trees.  Their version metadata
 # lives in artifact_versions while the immutable files live in artifact_files.
 TYPE_SOURCE_CODE = "SOURCE_CODE"
+TYPE_FRONTEND_SOURCE_CODE = "FRONTEND_SOURCE_CODE"
 TYPE_TEST_CODE = "TEST_CODE"
 TYPE_DEPLOYMENT_FILE = "DEPLOYMENT_FILE"
 TYPE_IAC_CODE = "IAC_CODE"

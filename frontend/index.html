@@ -453,6 +453,15 @@
           <button id="nextButton" type="button" class="secondary">다음 단계</button>
         </div>
 
+        <div class="field" id="frontendCard">
+          <label for="frontendName">프론트엔드 뼈대 생성 — OpenAPI Generator로 TypeScript client/model을 만듭니다</label>
+          <input id="frontendName" value="EasyDep Application" maxlength="120">
+          <label for="frontendBaseUrl">API 기본 주소</label>
+          <input id="frontendBaseUrl" value="/api" maxlength="500" spellcheck="false">
+          <button id="frontendButton" type="button" class="secondary" disabled>OpenAPI 뼈대 생성</button>
+          <div id="frontendResult" class="impact hidden"></div>
+        </div>
+
         <!-- 버튼이 왜 안 눌리는지 말해준다. 막혀 있는데 이유가 없으면 고장으로 보인다. -->
         <div id="stateHint" class="impact hidden"></div>
 
@@ -567,6 +576,10 @@
     const changeFeedback = document.getElementById("changeFeedback");
     const changeFeedbackLabel = document.getElementById("changeFeedbackLabel");
     const reviseButton = document.getElementById("reviseButton");
+    const frontendName = document.getElementById("frontendName");
+    const frontendBaseUrl = document.getElementById("frontendBaseUrl");
+    const frontendButton = document.getElementById("frontendButton");
+    const frontendResult = document.getElementById("frontendResult");
 
     appIdInput.value = workflow.appId;
 
@@ -575,6 +588,7 @@
     nextButton.addEventListener("click", () => resumeDesign(""));
     changeTarget.addEventListener("change", () => renderChangeImpact());
     reviseButton.addEventListener("click", () => applySelectedChange());
+    frontendButton.addEventListener("click", () => generateFrontend());
 
     // 보고 있는 단계. 파이프라인 위치(currentStage)와 다를 수 있다.
     function viewedStage() {
@@ -772,6 +786,33 @@
       ).then(() => { changeFeedback.value = ""; });
     }
 
+    async function generateFrontend() {
+      if (!workflow.appId || !hasArtifact("api_spec")) {
+        showError(new Error("API Specification을 먼저 생성하세요."));
+        render();
+        return;
+      }
+      frontendButton.disabled = true;
+      setStatus("OpenAPI Generator 실행 중", false);
+      try {
+        const result = await request(`/api/implementation/apps/${workflow.appId}/frontend`, {
+          method: "POST",
+          body: JSON.stringify({
+            application_name: frontendName.value.trim(),
+            api_base_url: frontendBaseUrl.value.trim()
+          })
+        });
+        const files = (result.files || []).map((item) => `<li><code>${escapeHtml(item.path)}</code></li>`).join("");
+        frontendResult.innerHTML = `<strong>FRONTEND_SOURCE_CODE v${result.version_no}</strong> 뼈대 생성 완료<ul>${files}</ul>`;
+        frontendResult.classList.remove("hidden");
+        setStatus("프론트엔드 뼈대 생성 완료", true);
+      } catch (error) {
+        showError(error);
+      } finally {
+        render();
+      }
+    }
+
     async function request(url, options = {}) {
       const response = await fetch(url, {
         headers: { "Content-Type": "application/json" },
@@ -867,6 +908,7 @@
         ? "완료하기" : "다음 단계";
       // 수정 대상 고르기는 한 번이라도 돌린 뒤에만 의미가 있다.
       changeCard.classList.toggle("hidden", !workflow.changePlan.length);
+      frontendButton.disabled = !workflow.appId || !hasArtifact("api_spec");
       renderStateHint();
     }
 
