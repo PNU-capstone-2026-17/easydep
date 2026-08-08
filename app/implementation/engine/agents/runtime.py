@@ -17,7 +17,6 @@ from ..planning.design_context import (
 from .verification.frontend import (
     frontend_contract_violations,
     has_mutating_operations,
-    run_frontend_verification,
 )
 from .verification.build import (
     WorkspaceVerificationError,
@@ -64,6 +63,18 @@ MAX_REPAIR_ITERATIONS = 4
 MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
+
+# The legacy ``engine.agent_runtime`` module aliases this module. Keep these
+# names reachable until downstream integrations migrate to the focused modules.
+_COMPATIBILITY_EXPORTS = (
+    subprocess,
+    tempfile,
+    gradle_command,
+    read_gradle_test_failures,
+    summarize_test_failure,
+    verification_failure_hints,
+    verify_frontend_workspace,
+)
 
 
 class EventJournal:

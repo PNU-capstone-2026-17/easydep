@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -269,7 +268,6 @@ def _main(provider: str, resources: list[dict[str, Any]], names: dict[str, str])
 
 def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
     blocks: list[str] = []
-    cluster = registry = None
     vnets = {_resource_name(item): item for item in resources if _type("azure", item) == "azurerm_virtual_network"}
     dns_zones = {str(item.get("name")): _logical(item) for item in resources if _type("azure", item) == "azurerm_private_dns_zone"}
     for item in resources:
@@ -285,9 +283,8 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
                     delegation = f'\n  delegation {{\n    name = "delegation"\n    service_delegation {{\n      name = {json.dumps(service)}\n      actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]\n    }}\n  }}'
                 blocks.append(f'resource "azurerm_subnet" "{logical}_{subnet_id}" {{\n  name = {json.dumps(subnet_name)}\n  resource_group_name = var.resource_group_name\n  virtual_network_name = azurerm_virtual_network.{logical}.name\n  address_prefixes = [{json.dumps(str(subnet.get("addressPrefix", "10.0.1.0/24")))}]{delegation}\n}}')
         elif kind == "azurerm_container_registry":
-            registry = logical; blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  sku = "Basic"\n  admin_enabled = false\n}}')
+            blocks.append(f'resource "{kind}" "{logical}" {{\n  name = {name}\n  resource_group_name = var.resource_group_name\n  location = var.location\n  sku = "Basic"\n  admin_enabled = false\n}}')
         elif kind == "azurerm_kubernetes_cluster":
-            cluster = logical
             pool = next(iter(item.get("nodePools", [])), {})
             networking = item.get("networking", {})
             subnet_reference = str(networking.get("subnet", ""))
@@ -312,7 +309,6 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
                 private_lines += f'\n  delegated_subnet_id = azurerm_subnet.{_logical(delegated_vnet)}_{_tf_id(delegated)}.id'
             if dns:
                 private_lines += f'\n  private_dns_zone_id = azurerm_private_dns_zone.{dns}.id\n  depends_on = [azurerm_private_dns_zone_virtual_network_link.{dns}_link]'
-            public_access = str(networking.get("publicNetworkAccess", "Enabled")).lower() != "disabled"
             mysql_version = str(item.get("version", "8.0"))
             if mysql_version == "8.0":
                 mysql_version = "8.0.21"
@@ -343,7 +339,7 @@ def _azure(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
 
 
 def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
-    blocks: list[str] = []; cluster = registry = None
+    blocks: list[str] = []
     for item in resources:
         logical, kind, name = _logical(item), _type("aws", item), names[_logical(item)]
         if kind == "aws_vpc":
@@ -354,9 +350,8 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             vpc = _single_related_resource(item, resources, "aws", "aws_vpc")
             vpc_expr = f'aws_vpc.{_logical(vpc)}.id' if vpc else 'var.existing_vpc_id'
             blocks.append(f'resource "aws_subnet" "{logical}" {{\n  vpc_id = {vpc_expr}\n  cidr_block = {json.dumps(str(item.get("cidrBlock", "10.0.1.0/24")))}\n  availability_zone = {zone_expr}\n  tags = {{ Name = {name} }}\n}}')
-        elif kind == "aws_ecr_repository": registry = logical; blocks.append(f'resource "aws_ecr_repository" "{logical}" {{\n  name = {name}\n}}')
+        elif kind == "aws_ecr_repository": blocks.append(f'resource "aws_ecr_repository" "{logical}" {{\n  name = {name}\n}}')
         elif kind == "aws_eks_cluster":
-            cluster = logical
             subnets = [_logical(subnet) for subnet in _related_resources(item, resources, "aws", "aws_subnet")]
             subnet_ids = "[" + ", ".join(f"aws_subnet.{item}.id" for item in subnets) + "]"
             blocks.append(f'resource "aws_eks_cluster" "{logical}" {{\n  name = {name}\n  role_arn = var.eks_cluster_role_arn\n  vpc_config {{ subnet_ids = {subnet_ids} }}\n}}')
@@ -377,7 +372,7 @@ def _aws(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
 
 
 def _gcp(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
-    blocks: list[str] = []; cluster = registry = None
+    blocks: list[str] = []
     for item in resources:
         logical, kind, name = _logical(item), _type("gcp", item), names[_logical(item)]
         if kind == "google_compute_network":
@@ -386,9 +381,8 @@ def _gcp(resources: list[dict[str, Any]], names: dict[str, str]) -> str:
             network = _single_related_resource(item, resources, "gcp", "google_compute_network")
             network_expr = f'google_compute_network.{_logical(network)}.id' if network else 'var.network_name'
             blocks.append(f'resource "google_compute_subnetwork" "{logical}" {{\n  name = {name}\n  ip_cidr_range = {json.dumps(str(item.get("ipCidrRange", "10.0.1.0/24")))}\n  region = var.region\n  network = {network_expr}\n}}')
-        elif kind == "google_artifact_registry_repository": registry = logical; blocks.append(f'resource "google_artifact_registry_repository" "{logical}" {{\n  location = var.region\n  repository_id = {name}\n  format = "DOCKER"\n}}')
+        elif kind == "google_artifact_registry_repository": blocks.append(f'resource "google_artifact_registry_repository" "{logical}" {{\n  location = var.region\n  repository_id = {name}\n  format = "DOCKER"\n}}')
         elif kind == "google_container_cluster":
-            cluster = logical
             subnet = _single_related_resource(item, resources, "gcp", "google_compute_subnetwork")
             network = _single_related_resource(subnet, resources, "gcp", "google_compute_network") if subnet else None
             network_expr = f'google_compute_network.{_logical(network)}.id' if network else 'null'

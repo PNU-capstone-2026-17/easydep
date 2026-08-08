@@ -9,10 +9,9 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
-from ..agents.runtime import gradle_command, write_execution_plan
+from ..agents.runtime import write_execution_plan
 from ..workflows.conformance import capture_generated_contracts
 from ..planning.design_context import (
     ImplementationTask,

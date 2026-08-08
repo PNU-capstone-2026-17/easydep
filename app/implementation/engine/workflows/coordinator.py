@@ -721,7 +721,6 @@ def _next_runnable_tasks(
 ) -> list[str]:
     phase_by_id = {phase["phaseId"]: phase for phase in phases}
     for phase_id, dependencies, _ in PHASES:
-        phase = phase_by_id[phase_id]
         candidates = [
             str(task["taskId"]) for task in tasks
             if task["phase"] == phase_id
