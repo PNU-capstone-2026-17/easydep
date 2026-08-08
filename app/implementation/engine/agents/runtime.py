@@ -22,8 +22,8 @@ from .verification.frontend import (
     has_mutating_operations,
     run_frontend_verification,
 )
-from ..quality_gates import e2e_contract_violations
-from ..repair_planner import referenced_source_paths
+from .verification.e2e import e2e_contract_violations
+from ..workflows.repair import referenced_source_paths
 from .provider import (
     MAX_PROVIDER_RETRIES,
     configured_api_key,

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from .orchestrator import (
+from .generation.orchestrator import (
     PrototypeOrchestrator,
     load_job,
     plan_api_adapter_tasks,
@@ -15,15 +15,15 @@ from .orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
-from .agent_runtime import (
+from .agents.runtime import (
     execute_openhands_task,
     validate_openhands_adapter,
     verify_run_workspace,
 )
-from .deployment_renderer import render_deployment
-from .iac_renderer import render_iac, validate_terraform
-from .completion_audit import audit_run_completion
-from .workflow import (
+from .delivery.kubernetes import render_deployment
+from .delivery.terraform import render_iac, validate_terraform
+from .workflows.completion import audit_run_completion
+from .workflows.coordinator import (
     plan_workflow,
     run_workflow,
     run_workflow_to_completion,

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .frontend_contracts import GeneratedClientContracts
 from ..domain.implementation_ir import ApiPortIR, GatewayIR, build_implementation_ir
-from ...frontend_scaffold import frontend_page_names, operation_ids
+from ..generation.frontend_scaffold import frontend_page_names, operation_ids
 from ..domain.models import JobSpec
 
 
