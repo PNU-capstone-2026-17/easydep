@@ -46,7 +46,7 @@ def test_testing_stage_uses_bundled_gradle_without_requesting_jacoco(
     test_file.parent.mkdir(parents=True)
     test_file.write_text("class AcceptanceTest {}", encoding="utf-8")
     monkeypatch.setattr(testing_module.shutil, "which", lambda _name: None)
-    from app.implementation.engine import agent_runtime
+    from app.implementation.agents.verification import build as agent_runtime
 
     monkeypatch.setattr(agent_runtime, "gradle_command", lambda: ["bundled-gradle"])
     calls = []

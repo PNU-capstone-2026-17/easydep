@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 from pathlib import Path
 
-from app.implementation.engine.workflows.traceability import (
+from app.implementation.workflows.traceability import (
     build_rtm_traceability_map,
     evaluate_feedback_rtm_traceability,
 )

@@ -87,7 +87,7 @@ class TestingAdapter:
             result["testFiles"] = [str(path.relative_to(repository)) for path in test_files]
             return result
         try:
-            from app.implementation.engine.agents.verification.build import gradle_command
+            from app.implementation.agents.verification.build import gradle_command
 
             bundled = gradle_command()
         except RuntimeError as error:

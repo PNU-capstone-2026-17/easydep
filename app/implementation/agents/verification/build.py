@@ -15,7 +15,7 @@ from .frontend import run_frontend_verification
 def gradle_command() -> list[str]:
     """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
     wrapper_name = "gradlew.bat" if os.name == "nt" else "gradlew"
-    wrapper = Path(__file__).resolve().parents[3] / "tools" / "gradle" / wrapper_name
+    wrapper = Path(__file__).resolve().parents[2] / "tools" / "gradle" / wrapper_name
     if not wrapper.is_file():
         raise RuntimeError(f"Bundled Gradle Wrapper is missing: {wrapper}")
     return [str(wrapper)] if os.name == "nt" else ["sh", str(wrapper)]

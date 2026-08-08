@@ -11,15 +11,15 @@ from fastapi.testclient import TestClient
 from app.db.models import TYPE_FRONTEND_SOURCE_CODE
 from app.implementation.interfaces.http import router
 from app.implementation.config import ImplementationSettings
-from app.implementation.engine.agents.workspace import snapshot_files
-from app.implementation.engine.agents.verification.build import verify_frontend_workspace
-from app.implementation.engine.agents.verification.frontend import frontend_contract_violations
-from app.implementation.engine.planning.design_context import generate_frontend_tasks
-from app.implementation.engine.planning.frontend_contracts import (
+from app.implementation.agents.workspace import snapshot_files
+from app.implementation.agents.verification.build import verify_frontend_workspace
+from app.implementation.agents.verification.frontend import frontend_contract_violations
+from app.implementation.planning.design_context import generate_frontend_tasks
+from app.implementation.planning.frontend_contracts import (
     FrontendContractBudgetExceeded,
     GeneratedClientContracts,
 )
-from app.implementation.engine.generation.frontend_scaffold import (
+from app.implementation.generation.frontend_scaffold import (
     FrontendScaffoldError,
     openapi_typescript_fetch_command,
     react_scaffold_files,
@@ -224,8 +224,8 @@ def test_frontend_api_versions_generated_files(monkeypatch) -> None:
 
 
 def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path) -> None:
-    from app.implementation.engine.domain.models import JobSpec
-    from app.implementation.engine.generation.orchestrator import PrototypeOrchestrator
+    from app.implementation.domain.models import JobSpec
+    from app.implementation.generation.orchestrator import PrototypeOrchestrator
 
     openapi = tmp_path / "openapi.json"
     openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
@@ -281,8 +281,8 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
 def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     tmp_path: Path,
 ) -> None:
-    from app.implementation.engine.domain.models import JobSpec
-    from app.implementation.engine.workflows.coordinator import phase_for_task
+    from app.implementation.domain.models import JobSpec
+    from app.implementation.workflows.coordinator import phase_for_task
 
     openapi = tmp_path / "openapi.json"
     bce = tmp_path / "class.puml"
@@ -399,7 +399,7 @@ def test_frontend_verification_runs_install_then_production_build(
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     monkeypatch.setattr(
-        "app.implementation.engine.agents.verification.build.subprocess.run", completed
+        "app.implementation.agents.verification.build.subprocess.run", completed
     )
 
     result = verify_frontend_workspace(tmp_path)
@@ -501,8 +501,8 @@ def test_completed_job_persists_frontend_as_its_own_file_artifact(
 def test_cli_run_to_completion_reuses_one_scoped_approval(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from app.implementation.engine.domain.models import JobSpec
-    from app.implementation.engine.workflows.coordinator import run_workflow_to_completion
+    from app.implementation.domain.models import JobSpec
+    from app.implementation.workflows.coordinator import run_workflow_to_completion
 
     reports = tmp_path / "reports"
     reports.mkdir()
@@ -545,7 +545,7 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
     approvals: list[dict[str, object]] = []
     states = iter([{"status": "READY"}, {"status": "COMPLETE"}])
     monkeypatch.setattr(
-        "app.implementation.engine.workflows.coordinator.plan_workflow",
+        "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {"status": "READY"},
     )
 
@@ -553,7 +553,7 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         approvals.append(json.loads(approval.read_text(encoding="utf-8")))
         return next(states)
 
-    monkeypatch.setattr("app.implementation.engine.workflows.coordinator.run_workflow", run)
+    monkeypatch.setattr("app.implementation.workflows.coordinator.run_workflow", run)
 
     result = run_workflow_to_completion(
         tmp_path, spec, approved_by="CLI user"

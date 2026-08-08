@@ -179,7 +179,7 @@ Control
 먼저 job JSON으로 결정론적 뼈대와 실행 계획을 생성한 뒤 다음 명령을 사용한다.
 
 ```powershell
-python -m app.implementation.engine.cli run-to-completion <run-directory> <job.json> `
+python -m app.implementation.interfaces.cli run-to-completion <run-directory> <job.json> `
   --approve-all-external-transmission `
   --approved-by "EasyDep CLI user"
 ```

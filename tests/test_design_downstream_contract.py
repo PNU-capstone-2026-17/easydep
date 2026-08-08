@@ -1,7 +1,7 @@
 """설계 산출물과 구현 에이전트 사이의 **텍스트 계약** (네트워크 불필요).
 
 구현 쪽은 설계 산출물을 dict가 아니라 **렌더된 문자열로** 받아 정규식으로 다시 읽는다
-(`app/implementation/engine/design_context.py`). 그래서 렌더 형태를 바꾸면 하류가 조용히
+(`app/implementation/planning/design_context.py`). 그래서 렌더 형태를 바꾸면 하류가 조용히
 덜 읽는다 — 예외가 아니라 빈 결과로 실패하므로 아무도 눈치채지 못한다.
 
 이 파일이 생긴 계기가 그 위험이었다. 클래스 관계에 다중도를 넣고(`A "1" --> "0..*" B`)
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
-from app.implementation.engine.planning.design_context import (
+from app.implementation.planning.design_context import (
     RELATION_PATTERN,
     parse_design_classes,
     parse_relations,

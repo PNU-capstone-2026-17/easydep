@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 
 from app.implementation.interfaces.http import router
 from app.implementation.config import ImplementationSettings
-from app.implementation.engine.agents.verification.build import gradle_command
-from app.implementation.engine.generation.orchestrator import PrototypeOrchestrator, load_job
+from app.implementation.agents.verification.build import gradle_command
+from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.application.feedback import assess_feedback_eligibility
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.interfaces.schemas import (
@@ -234,7 +234,7 @@ def test_cli_parser_uses_last_json_line(monkeypatch, tmp_path: Path) -> None:
         completed,
     )
     assert client._call(["workflow-status", "run"])["status"] == "READY"
-    assert "app.implementation.engine.cli" in captured["command"]
+    assert "app.implementation.interfaces.cli" in captured["command"]
     assert captured["cwd"] == tmp_path
 
 

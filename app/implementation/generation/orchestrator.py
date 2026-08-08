@@ -322,8 +322,9 @@ class PrototypeOrchestrator:
         # Bind a run to the actual planner/runtime implementation, not only a
         # manually maintained version label. Prompt or gate edits therefore
         # always receive a new immutable run ID.
-        for source in sorted(Path(__file__).parent.glob("*.py")):
-            digest.update(source.name.encode())
+        implementation_root = Path(__file__).resolve().parents[1]
+        for source in sorted(implementation_root.rglob("*.py")):
+            digest.update(source.relative_to(implementation_root).as_posix().encode())
             digest.update(sha256_file(source).encode())
         for tool in (
             self.spec.puml2code_root / "package.json",

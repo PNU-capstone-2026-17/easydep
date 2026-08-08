@@ -20,8 +20,8 @@ from .schemas import (
     CreateImplementationJobRequest,
     GenerateFrontendRequest,
 )
-from ..engine.generation.frontend_scaffold import FrontendScaffoldError
-from ..engine.generation.frontend import generate_frontend_project, write_openapi_input
+from ..generation.frontend_scaffold import FrontendScaffoldError
+from ..generation.frontend import generate_frontend_project, write_openapi_input
 from ..application.jobs import InvalidJobState, JobNotFound, worker
 
 
