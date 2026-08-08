@@ -4,23 +4,30 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
 import time
 import warnings
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
 )
-from ..domain.implementation_ir import remove_readonly
 from .verification.frontend import (
     frontend_contract_violations,
     has_mutating_operations,
     run_frontend_verification,
+)
+from .verification.build import (
+    WorkspaceVerificationError,
+    gradle_command,
+    production_placeholder_markers,
+    read_gradle_test_failures,
+    summarize_test_failure,
+    verify_agent_workspace,
+    verify_frontend_workspace,
+    verify_run_workspace as _verify_run_workspace,
 )
 from .verification.e2e import e2e_contract_violations
 from ..workflows.repair import referenced_source_paths
@@ -40,6 +47,16 @@ from .prompts import (
     render_verification_feedback,
     verification_failure_hints,
 )
+from .workspace import (
+    changed_files,
+    load_task,
+    missing_required_outputs,
+    prepare_agent_workspace,
+    read_allowed_sources,
+    read_persistence_entity_contracts,
+    snapshot_files,
+    task_base_package,
+)
 
 
 MAX_AGENT_ITERATIONS = 6
@@ -47,20 +64,6 @@ MAX_REPAIR_ITERATIONS = 4
 MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
-
-
-def gradle_command() -> list[str]:
-    """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
-    wrapper_name = "gradlew.bat" if os.name == "nt" else "gradlew"
-    wrapper = (
-        Path(__file__).resolve().parent.parent.parent
-        / "tools"
-        / "gradle"
-        / wrapper_name
-    )
-    if not wrapper.is_file():
-        raise RuntimeError(f"Bundled Gradle Wrapper is missing: {wrapper}")
-    return [str(wrapper)] if os.name == "nt" else ["sh", str(wrapper)]
 
 
 class EventJournal:
@@ -89,21 +92,12 @@ class EventJournal:
         self.event_count += 1
 
 
-class WorkspaceVerificationError(RuntimeError):
-    def __init__(self, evidence: dict[str, object]):
-        self.evidence = evidence
-        output = str(
-            evidence.get("testResults")
-            or evidence.get("stderr")
-            or evidence.get("stdout")
-            or ""
-        )
-        super().__init__("Agent workspace verification failed: " + output[-1000:])
-
-
-def missing_required_outputs(sandbox: Path, relative_paths: list[str]) -> list[str]:
-    """Return contracted task outputs that the agent has not created as files."""
-    return [relative for relative in relative_paths if not (sandbox / relative).is_file()]
+def verify_run_workspace(run_root: Path) -> dict[str, object]:
+    """Compatibility-aware entry point for final workspace verification."""
+    return _verify_run_workspace(
+        run_root,
+        verify_workspace=verify_agent_workspace,
+    )
 
 
 def write_execution_plan(
@@ -665,166 +659,6 @@ def create_openhands_conversation(
     return conversation, agent
 
 
-def load_task(run_root: Path, task_id: str) -> dict[str, object]:
-    task_dir = run_root / "reports" / "implementation-tasks"
-    for candidate in task_dir.glob("*.task.json"):
-        task = json.loads(candidate.read_text(encoding="utf-8"))
-        if task["task_id"] == task_id:
-            return task
-    raise ValueError(f"Unknown task: {task_id}")
-
-
-def task_base_package(task: dict[str, object]) -> str:
-    package_markers = {
-        "application", "persistence", "adapter", "integration", "config", "bce", "api"
-    }
-    for output in task["allowed_write_paths"]:
-        relative = Path(str(output))
-        parts = relative.parts
-        if "java" not in parts:
-            continue
-        java_index = parts.index("java")
-        marker_index = next(
-            (
-                index for index in range(java_index + 1, len(parts))
-                if parts[index] in package_markers
-            ),
-            None,
-        )
-        if marker_index is not None and marker_index > java_index + 1:
-            return ".".join(parts[java_index + 1 : marker_index])
-    raise ValueError("Cannot derive base package from task outputs")
-
-
-def read_persistence_entity_contracts(run_root: Path, base_package: str) -> str:
-    root = (
-        run_root
-        / "application"
-        / "src"
-        / "main"
-        / "java"
-        / Path(base_package.replace(".", "/"))
-        / "persistence"
-        / "entity"
-    )
-    contracts: list[str] = []
-    for path in sorted(root.glob("*Entity.java")):
-        contracts.append(
-            f"// persistence/entity/{path.name}\n"
-            + path.read_text(encoding="utf-8").strip()
-        )
-    return "\n\n".join(contracts) or "// No persistence entity contracts found"
-
-
-def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
-    run_key = run_root.name.removeprefix("run_")[:12]
-    task_key = str(task["task_id"]).removeprefix("implement-")
-    sandbox_base = Path(tempfile.gettempdir()) / "easydep-agent-workspaces" / run_key / task_key
-    sandbox = sandbox_base
-    suffix = 1
-    while sandbox.exists():
-        try:
-            shutil.rmtree(sandbox, onerror=remove_readonly)
-        except PermissionError:
-            # A Gradle/IDE process can briefly lock files on Windows. Keep the
-            # locked transient workspace and isolate this attempt in a sibling.
-            suffix += 1
-            sandbox = sandbox_base.with_name(f"{sandbox_base.name}-{suffix}")
-            continue
-        break
-    shutil.copytree(
-        run_root / "application",
-        sandbox / "application",
-        ignore=shutil.ignore_patterns(
-            "deployment-bundle", "build", ".gradle", "node_modules", "dist"
-        ),
-    )
-    for relative in task["allowed_write_paths"]:
-        target = sandbox / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if os.name == "nt" and len(str(target.resolve())) > 240:
-            raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
-    return sandbox
-
-
-def verify_run_workspace(run_root: Path) -> dict[str, object]:
-    """Verify all promoted sources from a short ASCII-safe workspace."""
-    sandbox = prepare_agent_workspace(
-        run_root,
-        {"task_id": "final-verification", "allowed_write_paths": []},
-    )
-    verification = verify_agent_workspace(sandbox)
-    frontend_verification = None
-    if (sandbox / "application" / "frontend" / "package.json").is_file():
-        frontend_verification = verify_frontend_workspace(sandbox)
-    result = {
-        "status": "SUCCEEDED",
-        "workspace": str(sandbox),
-        "verification": verification,
-        "frontendVerification": frontend_verification,
-    }
-    report = run_root / "reports" / "final-verification.json"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return result
-
-
-def verify_agent_workspace(
-    sandbox: Path, task_type: str = ""
-) -> dict[str, object]:
-    if task_type == "frontend-implementation":
-        return verify_frontend_workspace(sandbox)
-    executable = gradle_command()
-    started = time.monotonic()
-    result = subprocess.run(
-        [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
-        cwd=sandbox / "application",
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-        check=False,
-    )
-    evidence = {
-        "command": [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
-        "exitCode": result.returncode,
-        "durationMs": int((time.monotonic() - started) * 1000),
-        "stdout": result.stdout[-16000:],
-        "stderr": result.stderr[-16000:],
-        "testResults": read_gradle_test_failures(sandbox),
-    }
-    if result.returncode != 0:
-        raise WorkspaceVerificationError(evidence)
-    return evidence
-
-
-def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
-    evidence = run_frontend_verification(sandbox, subprocess.run)
-    if evidence["exitCode"] != 0:
-        raise WorkspaceVerificationError(evidence)
-    return evidence
-
-
-def production_placeholder_markers(
-    sandbox: Path, relative_paths: list[str]
-) -> list[str]:
-    """Reject unresolved implementation markers in contracted production Java outputs."""
-    evidence: list[str] = []
-    pattern = re.compile(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", re.IGNORECASE)
-    for relative in relative_paths:
-        normalized = relative.replace("\\", "/")
-        if "/src/main/java/" not in f"/{normalized}" or not normalized.endswith(".java"):
-            continue
-        path = sandbox / relative
-        if not path.is_file():
-            continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if pattern.search(line):
-                evidence.append(f"{normalized}:{number}: {line.strip()}")
-    return evidence
-
-
 def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, object]) -> None:
     """Remove manual beans for port adapters already discovered by component scanning.
 
@@ -1000,15 +834,6 @@ def _has_path(edges: dict[str, set[str]], current: str, target: str, seen: set[s
     return False
 
 
-def read_allowed_sources(sandbox: Path, relative_paths: list[str]) -> str:
-    sections: list[str] = []
-    for relative in relative_paths:
-        path = sandbox / relative
-        content = path.read_text(encoding="utf-8") if path.is_file() else "// File missing"
-        sections.append(f"### {relative}\n```java\n{content}\n```")
-    return "\n\n".join(sections)
-
-
 def select_repair_paths(
     evidence: dict[str, object], allowed_paths: list[str]
 ) -> list[str]:
@@ -1031,75 +856,3 @@ def select_repair_paths(
         or relative.replace("\\", "/") in output
     ]
     return selected or list(allowed_paths)
-
-
-def read_gradle_test_failures(sandbox: Path) -> str:
-    result_dir = sandbox / "application" / "build" / "test-results" / "test"
-    reports: list[str] = []
-    for report in sorted(result_dir.glob("*.xml")):
-        try:
-            root = ET.parse(report).getroot()
-        except ET.ParseError:
-            continue
-        for case in root.findall("testcase"):
-            problem = case.find("failure")
-            if problem is None:
-                problem = case.find("error")
-            if problem is None:
-                continue
-            message = problem.get("message") or "test failed"
-            detail = (problem.text or "").strip()
-            if detail:
-                message += "\n" + summarize_test_failure(detail)
-            reports.append(f"{case.get('classname')}.{case.get('name')}: {message}")
-    return _truncate_log_snippet("\n\n".join(reports), max_chars=8000)
-
-
-def _truncate_log_snippet(text: str, max_chars: int = 8000) -> str:
-    """Safely truncate log snippets to a maximum character count."""
-    return text[-max_chars:] if len(text) > max_chars else text
-
-
-def summarize_test_failure(detail: str) -> str:
-    """Keep causal exception lines, rather than only the end of a long trace."""
-    lines = [line.rstrip() for line in detail.splitlines() if line.strip()]
-    causal = [
-        line
-        for line in lines
-        if re.search(
-            r"(?:Caused by:|Suppressed:|Error creating bean|Requested bean is currently in creation|"
-            r"NoSuchBeanDefinitionException|NoUniqueBeanDefinitionException|UnsatisfiedDependencyException|"
-            r"BeanCurrentlyInCreationException)",
-            line,
-        )
-    ]
-    selected = causal or lines[:30]
-    # Preserve a small tail for Gradle/JUnit-specific context without allowing a
-    # stack trace to evict the causal message from the repair prompt.
-    selected.extend(lines[-8:])
-    return _truncate_log_snippet("\n".join(dict.fromkeys(selected)), max_chars=8000)
-
-
-def snapshot_files(root: Path) -> dict[str, str]:
-    import hashlib
-
-    result: dict[str, str] = {}
-    for path in root.rglob("*"):
-        if path.is_file():
-            relative = path.relative_to(root)
-            if path.name == "package-lock.json" or path.name.endswith(".tsbuildinfo"):
-                # Dependency setup and TypeScript verification can update these
-                # deterministic build inputs. They are not agent-authored outputs,
-                # so exclude them only from the agent change boundary.
-                continue
-            if any(
-                part in {"build", ".gradle", "node_modules", "dist"}
-                for part in relative.parts
-            ):
-                continue
-            result[str(relative).replace("\\", "/")] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
-
-
-def changed_files(before: dict[str, str], after: dict[str, str]) -> set[str]:
-    return {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}

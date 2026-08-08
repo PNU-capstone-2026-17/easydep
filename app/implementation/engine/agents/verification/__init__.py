@@ -6,10 +6,22 @@ from .frontend import (
     run_frontend_verification,
 )
 from .e2e import e2e_contract_violations
+from .build import (
+    WorkspaceVerificationError,
+    gradle_command,
+    verify_agent_workspace,
+    verify_frontend_workspace,
+    verify_run_workspace,
+)
 
 __all__ = [
     "frontend_contract_violations",
     "has_mutating_operations",
     "run_frontend_verification",
     "e2e_contract_violations",
+    "WorkspaceVerificationError",
+    "gradle_command",
+    "verify_agent_workspace",
+    "verify_frontend_workspace",
+    "verify_run_workspace",
 ]
