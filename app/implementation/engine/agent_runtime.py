@@ -511,8 +511,22 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             }
                         )
                 if task_type == "frontend-implementation":
+                    openapi_context = context.get("openapi", {})
+                    requires_success_feedback = any(
+                        method in {"post", "put", "patch", "delete"}
+                        for path_item in (
+                            openapi_context.get("paths", {}).values()
+                            if isinstance(openapi_context, dict)
+                            and isinstance(openapi_context.get("paths"), dict)
+                            else []
+                        )
+                        if isinstance(path_item, dict)
+                        for method in path_item
+                    )
                     violations = frontend_contract_violations(
-                        sandbox, task["allowed_write_paths"]
+                        sandbox,
+                        task["allowed_write_paths"],
+                        requires_success_feedback=requires_success_feedback,
                     )
                     if violations:
                         raise WorkspaceVerificationError(
@@ -1054,13 +1068,22 @@ def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
 
 
 def frontend_contract_violations(
-    sandbox: Path, relative_paths: list[str]
+    sandbox: Path,
+    relative_paths: list[str],
+    *,
+    requires_success_feedback: bool = False,
 ) -> list[str]:
     sources: list[str] = []
+    styles: list[str] = []
     violations: list[str] = []
     for relative in relative_paths:
         path = sandbox / relative
-        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+        if not path.is_file():
+            continue
+        if path.suffix == ".css":
+            styles.append(path.read_text(encoding="utf-8"))
+            continue
+        if path.suffix not in {".ts", ".tsx"}:
             continue
         text = path.read_text(encoding="utf-8")
         sources.append(text)
@@ -1076,6 +1099,30 @@ def frontend_contract_violations(
     if not re.search(r"from\s+['\"][^'\"]*generated", combined):
         violations.append(
             "Frontend implementation does not import the OpenAPI Generator client/models"
+        )
+    if requires_success_feedback and not re.search(
+        r"(?:role\s*=\s*['\"]status['\"]|aria-live\s*=\s*['\"](?:polite|assertive)['\"])",
+        combined,
+    ):
+        violations.append(
+            "Mutating API operations require an accessible success status announcement"
+        )
+    declared_ids = set(re.findall(r"\bid\s*=\s*['\"]([^'\"]+)['\"]", combined))
+    for value in re.findall(
+        r"aria-describedby\s*=\s*['\"]([^'\"]+)['\"]", combined
+    ):
+        for described_id in value.split():
+            if described_id not in declared_ids:
+                violations.append(
+                    f"aria-describedby references missing element id: {described_id}"
+                )
+    combined_styles = "\n".join(styles)
+    if "<table" in combined and not (
+        re.search(r"overflow-x\s*:\s*(?:auto|scroll)", combined_styles)
+        or "@media" in combined_styles
+    ):
+        violations.append(
+            "Data tables require responsive narrow-screen handling in styles.css"
         )
     return violations
 

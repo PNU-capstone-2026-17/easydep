@@ -435,7 +435,6 @@ class PrototypeOrchestrator:
             frontend,
             openapi,
             application_name=self.spec.name,
-            api_base_url="/api",
         )
         self.manifest.tools["easydep-frontend-generator"] = {
             "generator": "typescript-fetch",

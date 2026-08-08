@@ -456,8 +456,8 @@
         <div class="field" id="frontendCard">
           <label for="frontendName">프론트엔드 뼈대 생성 — OpenAPI Generator로 TypeScript client/model을 만듭니다</label>
           <input id="frontendName" value="EasyDep Application" maxlength="120">
-          <label for="frontendBaseUrl">API 기본 주소</label>
-          <input id="frontendBaseUrl" value="/api" maxlength="500" spellcheck="false">
+          <label for="frontendBaseUrl">API 기본 주소 (선택 — 비우면 OpenAPI servers 사용)</label>
+          <input id="frontendBaseUrl" value="" placeholder="예: https://api.example.com" maxlength="500" spellcheck="false">
           <button id="frontendButton" type="button" class="secondary" disabled>OpenAPI 뼈대 생성</button>
           <div id="frontendResult" class="impact hidden"></div>
         </div>
@@ -799,7 +799,7 @@
           method: "POST",
           body: JSON.stringify({
             application_name: frontendName.value.trim(),
-            api_base_url: frontendBaseUrl.value.trim()
+            api_base_url: frontendBaseUrl.value.trim() || null
           })
         });
         const files = (result.files || []).map((item) => `<li><code>${escapeHtml(item.path)}</code></li>`).join("");

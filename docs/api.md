@@ -224,6 +224,10 @@ React + TypeScript(Vite) 뼈대와 API client/model 계약을 만들고
 }
 ```
 
+`api_base_url`은 선택값이다. 생략하면 OpenAPI `servers[0].url`과 server variable의
+default를 사용하며, `servers`도 없으면 임의의 `/api` prefix를 붙이지 않고 동일 origin의
+root를 사용한다.
+
 API 명세가 없거나 지원하는 operation이 하나도 없으면 `409`를 반환한다. 생성 파일은 위의
 파일 산출물 조회 API로 목록, 버전 이력, 개별 내용을 확인할 수 있다. 전체 시스템 구현 job은
 같은 scaffold 이후 Class Diagram, Sequence Diagram, OpenAPI와 생성된 TypeScript 계약만

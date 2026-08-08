@@ -24,6 +24,7 @@ from .schemas import (
 from .frontend_scaffold import (
     FrontendScaffoldError,
     openapi_typescript_fetch_command,
+    resolve_api_base_url,
     write_react_scaffold,
 )
 from .worker import InvalidJobState, JobNotFound, worker
@@ -45,6 +46,9 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
     try:
         design = artifact_repository.load_state(app_id)
         api_spec = design.get("api_spec", {})
+        effective_api_base_url = resolve_api_base_url(
+            api_spec, request.api_base_url
+        )
         worker.settings.work_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
             prefix="frontend-scaffold-", dir=worker.settings.work_root
@@ -78,7 +82,7 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
                 frontend,
                 api_spec,
                 application_name=request.application_name,
-                api_base_url=request.api_base_url,
+                api_base_url=effective_api_base_url,
             )
             files = {
                 path.relative_to(frontend).as_posix(): path.read_text(encoding="utf-8")
@@ -93,7 +97,7 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
                 "generator": "openapi-generator/typescript-fetch@7.14.0",
                 "stage": "SCAFFOLD",
                 "application_name": request.application_name,
-                "api_base_url": request.api_base_url,
+                "api_base_url": effective_api_base_url,
             },
         )
         snapshot = artifact_repository.load_file_snapshot(

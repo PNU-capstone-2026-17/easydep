@@ -39,12 +39,20 @@ class ApprovalRequest(BaseModel):
 
 class GenerateFrontendRequest(BaseModel):
     application_name: str = Field(default="EasyDep Application", min_length=1, max_length=120)
-    api_base_url: str = Field(default="/api", min_length=1, max_length=500)
+    api_base_url: str | None = Field(default=None, max_length=500)
 
-    @field_validator("application_name", "api_base_url")
+    @field_validator("application_name")
     @classmethod
-    def trim_frontend_options(cls, value: str) -> str:
+    def trim_application_name(cls, value: str) -> str:
         value = value.strip()
         if not value:
             raise ValueError("value must not be blank")
         return value
+
+    @field_validator("api_base_url")
+    @classmethod
+    def trim_api_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None

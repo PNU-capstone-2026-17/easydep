@@ -63,15 +63,42 @@ def write_react_scaffold(
     api_spec: dict[str, Any],
     *,
     application_name: str,
-    api_base_url: str,
+    api_base_url: str | None = None,
 ) -> dict[str, str]:
     validate_openapi(api_spec)
-    files = react_scaffold_files(application_name, api_base_url)
+    files = react_scaffold_files(
+        application_name, resolve_api_base_url(api_spec, api_base_url)
+    )
     for relative, content in files.items():
         target = frontend_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
     return files
+
+
+def resolve_api_base_url(
+    api_spec: dict[str, Any], override: str | None = None
+) -> str:
+    """Resolve the generated client base URL without inventing an API prefix."""
+    if override is not None and override.strip():
+        return override.strip().rstrip("/")
+    servers = api_spec.get("servers", [])
+    if not isinstance(servers, list) or not servers:
+        return ""
+    server = servers[0]
+    if not isinstance(server, dict) or not isinstance(server.get("url"), str):
+        return ""
+    url = server["url"].strip()
+    variables = server.get("variables", {})
+    if isinstance(variables, dict):
+        for name, definition in variables.items():
+            if isinstance(definition, dict) and "default" in definition:
+                url = url.replace("{" + str(name) + "}", str(definition["default"]))
+    if re.search(r"\{[^{}]+\}", url):
+        raise FrontendScaffoldError(
+            "OpenAPI server URL contains a variable without a default value"
+        )
+    return url.rstrip("/")
 
 
 def react_scaffold_files(

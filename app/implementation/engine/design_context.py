@@ -640,7 +640,10 @@ Rules:
 - Use `API_BASE_URL` from `src/config.ts` when constructing generated client configuration.
 - Derive screens and user actions from BCE Boundary responsibilities and the sequence flow.
 - Create an accessible responsive UI with explicit loading, empty, success, validation, and
-  API-error states. Keep domain state inside React components; do not add dependencies.
+  API-error states. Mutating operations must announce success with `role="status"` or an
+  `aria-live` region. Every `aria-describedby` token must reference an existing element ID,
+  and data tables must remain usable on narrow screens (for example, an overflow container).
+  Keep domain state inside React components; do not add dependencies.
 - `App.tsx` owns routing, `AppShell.tsx` owns shared navigation/layout, and every contracted
   page must be reachable from the application.
 - Preserve all generated client/model files and project configuration exactly.

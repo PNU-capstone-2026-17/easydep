@@ -21,6 +21,7 @@ from app.implementation.frontend_scaffold import (
     FrontendScaffoldError,
     openapi_typescript_fetch_command,
     react_scaffold_files,
+    resolve_api_base_url,
     validate_openapi,
 )
 from app.implementation.worker import ImplementationWorker
@@ -93,6 +94,24 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
 def test_rejects_openapi_without_operations() -> None:
     with pytest.raises(FrontendScaffoldError, match="at least one operation"):
         validate_openapi({"openapi": "3.0.3", "paths": {}})
+
+
+def test_resolves_api_base_url_from_openapi_server_without_inventing_prefix() -> None:
+    with_server = {
+        **OPENAPI,
+        "servers": [
+            {
+                "url": "https://{tenant}.example.com/api/",
+                "variables": {"tenant": {"default": "orders"}},
+            }
+        ],
+    }
+
+    assert resolve_api_base_url(with_server) == "https://orders.example.com/api"
+    assert resolve_api_base_url(OPENAPI) == ""
+    assert resolve_api_base_url(with_server, " https://override.example/v1/ ") == (
+        "https://override.example/v1"
+    )
 
 
 def test_frontend_api_versions_generated_files(monkeypatch) -> None:
@@ -276,6 +295,34 @@ def test_frontend_contract_rejects_direct_http_and_requires_generated_client(
 
     assert any("direct HTTP" in item for item in violations)
     assert any("OpenAPI Generator" in item for item in violations)
+
+
+def test_frontend_contract_requires_accessible_success_and_responsive_table(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "application/frontend/src/App.tsx"
+    styles = tmp_path / "application/frontend/src/styles.css"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import { OrdersApi } from './generated/src';"
+        "export default function App(){return <form aria-describedby=\"form-error\">"
+        "<table><tbody /></table></form>;}",
+        encoding="utf-8",
+    )
+    styles.write_text("table { width: 100%; }", encoding="utf-8")
+
+    violations = frontend_contract_violations(
+        tmp_path,
+        [
+            "application/frontend/src/App.tsx",
+            "application/frontend/src/styles.css",
+        ],
+        requires_success_feedback=True,
+    )
+
+    assert any("success status" in item for item in violations)
+    assert any("missing element id: form-error" in item for item in violations)
+    assert any("responsive narrow-screen" in item for item in violations)
 
 
 def test_frontend_verification_runs_install_then_production_build(
