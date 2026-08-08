@@ -19,17 +19,22 @@ from .design_context import (
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
     generate_e2e_tasks,
+    generate_frontend_tasks,
     generate_gateway_adapter_tasks,
     generate_implementation_tasks,
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
 from .implementation_ir import pascal_case, remove_readonly
+from ..frontend_scaffold import (
+    openapi_typescript_fetch_command,
+    write_react_scaffold,
+)
 
 
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
 BCE_GENERATOR_VERSION = "0.2.0"
-IMPLEMENTATION_PIPELINE_VERSION = "0.3.0-ir"
+IMPLEMENTATION_PIPELINE_VERSION = "0.5.0-agent-frontend"
 JAVA_BUILTIN_TYPES = {
     "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
     "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
@@ -134,6 +139,7 @@ class PrototypeOrchestrator:
             self.manifest.status = "GENERATING_CODE"
             self._generate_bce(java_root)
             self._generate_openapi(application)
+            self._generate_frontend(application)
             self._write_gradle_project(application)
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
@@ -409,6 +415,31 @@ class PrototypeOrchestrator:
             )
         self.manifest.tools["openapi-generator"] = {
             "version": "docker-latest",
+        }
+
+    def _generate_frontend(self, application: Path) -> None:
+        openapi = json.loads(self.spec.inputs["openapi"].read_text(encoding="utf-8"))
+        frontend = application / "frontend"
+        generated_client = frontend / "src" / "generated"
+        command = openapi_typescript_fetch_command(
+            self.spec.workspace_root,
+            self.spec.inputs["openapi"],
+            generated_client,
+        )
+        self._run_command(
+            "openapi-generator-typescript-fetch",
+            command,
+            self.spec.workspace_root,
+        )
+        write_react_scaffold(
+            frontend,
+            openapi,
+            application_name=self.spec.name,
+            api_base_url="/api",
+        )
+        self.manifest.tools["easydep-frontend-generator"] = {
+            "generator": "typescript-fetch",
+            "version": "openapi-generator-cli/v7.14.0",
         }
 
     def _write_gradle_project(self, application: Path) -> None:
@@ -724,6 +755,26 @@ def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
     existing = {
         item.get("task_id"): item
         for item in manifest.get("implementation_tasks", [])
+    }
+    for task in tasks:
+        existing[task.task_id] = task.to_dict()
+    manifest["implementation_tasks"] = list(existing.values())
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task.to_dict() for task in tasks]
+
+
+def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:
+    """Add the design-driven React implementation task to the run manifest."""
+    run_root = run_root.resolve()
+    tasks = generate_frontend_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    existing = {
+        item.get("task_id"): item
+        for item in manifest.get("implementation_tasks", [])
+        if item.get("task_type") != "frontend-implementation"
     }
     for task in tasks:
         existing[task.task_id] = task.to_dict()

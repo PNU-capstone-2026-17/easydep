@@ -18,6 +18,7 @@ from .orchestrator import (
     plan_api_adapter_tasks,
     plan_boundary_adapter_tasks,
     plan_e2e_tasks,
+    plan_frontend_tasks,
     plan_gateway_adapter_tasks,
     plan_persistence_tasks,
     plan_wiring_tasks,
@@ -51,7 +52,8 @@ PHASES = (
     ("boundary-adapters", ("control",), {"boundary-adapter"}),
     ("outbound-adapters", ("control", "persistence"), {"gateway-adapter"}),
     ("wiring", ("persistence", "api-adapters", "boundary-adapters", "outbound-adapters"), {"configuration"}),
-    ("end-to-end", ("wiring",), {"integration-test"}),
+    ("frontend", ("api-adapters",), {"frontend-implementation"}),
+    ("end-to-end", ("wiring", "frontend"), {"integration-test"}),
 )
 
 
@@ -78,6 +80,8 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if ir.gateways:
         plan_gateway_adapter_tasks(spec, run_root)
     plan_wiring_tasks(spec, run_root)
+    if (run_root / "application" / "frontend" / "src" / "generated").is_dir():
+        plan_frontend_tasks(spec, run_root)
     plan_e2e_tasks(spec, run_root)
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)

@@ -99,6 +99,10 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
     e2e_gaps = [
         gap for gap in e2e_gap_report.get("gaps", []) if isinstance(gap, dict)
     ]
+    frontend_outputs = _task_outputs(manifest, "frontend-implementation")
+    missing_frontend_outputs = [
+        path for path in frontend_outputs if not (run_root / path).is_file()
+    ]
 
     tasks = _build_backlog(
         base_package,
@@ -115,6 +119,7 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
         missing_e2e_output,
         e2e_contract_errors,
         e2e_gaps,
+        missing_frontend_outputs,
     )
     critical = [task for task in tasks if task.priority == "CRITICAL"]
     high = [task for task in tasks if task.priority == "HIGH"]
@@ -142,6 +147,7 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
             "missingEndToEndOutputs": int(missing_e2e_output),
             "endToEndContractViolations": len(e2e_contract_errors),
             "unresolvedDesignGaps": len(e2e_gaps),
+            "missingFrontendOutputs": len(missing_frontend_outputs),
         },
         "completionCriteria": [
             "No production path delegates to a BCE method that throws UnsupportedOperationException.",
@@ -151,6 +157,7 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
             "Outbound Gateway ports have concrete adapters and tests.",
             "Application wiring and an end-to-end purchase flow test pass.",
             "The generated application compiles and its implementation and end-to-end tests pass.",
+            "The frontend uses the generated TypeScript client and passes its production build.",
         ],
         "evidence": {
             "unsupportedSkeletons": skeletons,
@@ -263,10 +270,24 @@ def _build_backlog(
     missing_e2e_output: bool,
     e2e_contract_errors: list[str],
     e2e_gaps: list[dict[str, object]],
+    missing_frontend_outputs: list[str],
 ) -> list[BacklogTask]:
     package = base_package.replace(".", "/")
     tasks: list[BacklogTask] = []
     domain_contract_blockers = ["replace-bce-runtime-skeletons"] if skeletons else []
+    if missing_frontend_outputs:
+        tasks.append(
+            BacklogTask(
+                "implement-frontend-application",
+                "frontend-implementation",
+                "HIGH",
+                "Implement the design-driven React UI using the generated TypeScript API client.",
+                ["bceClass", "sequence", "openapi", "generatedClientContracts"],
+                _task_outputs(manifest, "frontend-implementation"),
+                [],
+                [f"Missing frontend output: {path}" for path in missing_frontend_outputs],
+            )
+        )
     if skeletons:
         tasks.append(
             BacklogTask(

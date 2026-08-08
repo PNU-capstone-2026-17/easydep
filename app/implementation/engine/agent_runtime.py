@@ -44,6 +44,17 @@ Never mock, spy, or call Mockito verify(...) on the service under test. Invoke t
 If a required contract is absent or contradictory, leave a focused TODO in an allowed file and finish.
 """
 
+FRONTEND_SYSTEM_PROMPT = """You are a focused React and TypeScript implementation worker.
+The user prompt contains authoritative system-design artifacts, exact generated TypeScript
+client contracts, and the complete writable-file allowlist. Use only the restricted file
+editor. Never run shell commands, browse the repository, edit generated OpenAPI files, or
+change project configuration. Implement every contracted React file using the generated API
+client and models. Never use fetch, axios, XMLHttpRequest, or duplicate endpoint paths.
+Create accessible loading, empty, success, validation, and error states. Write valid TSX/CSS,
+create every contracted output, then call finish immediately. npm type-check and production
+build are enforced after your response.
+"""
+
 
 def gradle_command() -> list[str]:
     """Use EasyDep's pinned wrapper instead of a machine-global Gradle."""
@@ -129,6 +140,37 @@ Gradle output:
 
 Current allowlisted sources:
 {current_sources}
+"""
+
+
+def render_frontend_verification_feedback(
+    evidence: dict[str, object],
+    current_sources: str = "",
+    repair_targets: list[str] | None = None,
+) -> str:
+    output = (
+        str(evidence.get("stdout", ""))
+        + "\n"
+        + str(evidence.get("stderr", ""))
+    )[-20000:]
+    targets = "\n".join(f"- `{path}`" for path in (repair_targets or []))
+    return f"""The TypeScript frontend contract gate or npm production build failed.
+Fix every reported error using only the repair targets below. Preserve project configuration
+and all files under src/generated. Use exact generated API/model exports; do not replace them
+with fetch, axios, XMLHttpRequest, or hard-coded endpoint strings.
+
+Repair targets:
+{targets}
+
+Verification output:
+```text
+{output}
+```
+
+Current allowlisted sources:
+```text
+{current_sources}
+```
 """
 
 
@@ -293,6 +335,7 @@ def write_execution_plan(
 
 def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
+    task_type = str(task.get("task_type", ""))
 
     compatibility = openhands_compatibility()
     missing = [key for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured") if not compatibility[key]]
@@ -303,7 +346,11 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     before = snapshot_files(sandbox)
     prompt = (run_root / task["prompt_file"]).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    api_model_names = referenced_openapi_model_names(str(context.get("openapi", "")))
+    api_model_names = (
+        set()
+        if task_type == "frontend-implementation"
+        else referenced_openapi_model_names(str(context.get("openapi", "")))
+    )
     missing_api_models = {
         name for name in api_model_names if f"// api/model/{name}.java" not in prompt
     }
@@ -358,6 +405,11 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 callbacks=[journal],
                 max_iterations=round_iteration_limit,
                 reasoning_effort=reasoning_effort,
+                system_prompt=(
+                    FRONTEND_SYSTEM_PROMPT
+                    if task_type == "frontend-implementation"
+                    else IMPLEMENTATION_SYSTEM_PROMPT
+                ),
             )
             conversation_error: Exception | None = None
             try:
@@ -458,7 +510,22 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "testResults": "",
                             }
                         )
-                verification = verify_agent_workspace(sandbox)
+                if task_type == "frontend-implementation":
+                    violations = frontend_contract_violations(
+                        sandbox, task["allowed_write_paths"]
+                    )
+                    if violations:
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["frontend-contract-gate"],
+                                "exitCode": 1,
+                                "durationMs": 0,
+                                "stdout": "",
+                                "stderr": "\n".join(violations),
+                                "testResults": "",
+                            }
+                        )
+                verification = verify_agent_workspace(sandbox, task_type)
                 break
             except WorkspaceVerificationError as error:
                 referenced = referenced_source_paths(error.evidence)
@@ -481,7 +548,12 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
                 round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
                 round_iteration_limit = MAX_REPAIR_ITERATIONS
-                round_prompt = prompt + "\n\n## Verification repair\n\n" + render_verification_feedback(
+                feedback_renderer = (
+                    render_frontend_verification_feedback
+                    if task_type == "frontend-implementation"
+                    else render_verification_feedback
+                )
+                round_prompt = prompt + "\n\n## Verification repair\n\n" + feedback_renderer(
                     error.evidence,
                     read_allowed_sources(sandbox, task["allowed_write_paths"]),
                     repair_paths,
@@ -552,6 +624,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "validation-only-key",
         task["llm"],
         callbacks=[validation_journal],
+        system_prompt=(
+            FRONTEND_SYSTEM_PROMPT
+            if task.get("task_type") == "frontend-implementation"
+            else IMPLEMENTATION_SYSTEM_PROMPT
+        ),
     )
     try:
         conversation.send_message("Initialize this validation conversation; do not run it.")
@@ -626,7 +703,11 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "stuckDetection": False,
         "verificationRepairLimit": MAX_VERIFICATION_REPAIRS,
         "reasoningBudgetCap": MAX_REASONING_BUDGET,
-        "systemPrompt": "focused-java-implementation",
+        "systemPrompt": (
+            "focused-frontend-implementation"
+            if task.get("task_type") == "frontend-implementation"
+            else "focused-java-implementation"
+        ),
         "validationEventCount": validation_journal.event_count,
         "allowedWritePaths": allowed,
         "modelCallMade": False,
@@ -646,6 +727,7 @@ def create_openhands_conversation(
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_ITERATIONS,
     reasoning_effort: str = "medium",
+    system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
 ):
     global _RESTRICTED_EDITOR_REGISTERED
 
@@ -766,7 +848,7 @@ def create_openhands_conversation(
         llm=LLM(**llm_options),
         tools=[Tool(name=registry_name, params={"allowed_edits_files": allowed_files})],
         include_default_tools=["FinishTool"],
-        system_prompt=IMPLEMENTATION_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
     )
     conversation = Conversation(
         agent=agent,
@@ -849,7 +931,9 @@ def prepare_agent_workspace(run_root: Path, task: dict[str, object]) -> Path:
     shutil.copytree(
         run_root / "application",
         sandbox / "application",
-        ignore=shutil.ignore_patterns("deployment-bundle", "build", ".gradle"),
+        ignore=shutil.ignore_patterns(
+            "deployment-bundle", "build", ".gradle", "node_modules", "dist"
+        ),
     )
     for relative in task["allowed_write_paths"]:
         target = sandbox / relative
@@ -866,10 +950,14 @@ def verify_run_workspace(run_root: Path) -> dict[str, object]:
         {"task_id": "final-verification", "allowed_write_paths": []},
     )
     verification = verify_agent_workspace(sandbox)
+    frontend_verification = None
+    if (sandbox / "application" / "frontend" / "package.json").is_file():
+        frontend_verification = verify_frontend_workspace(sandbox)
     result = {
         "status": "SUCCEEDED",
         "workspace": str(sandbox),
         "verification": verification,
+        "frontendVerification": frontend_verification,
     }
     report = run_root / "reports" / "final-verification.json"
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -877,7 +965,11 @@ def verify_run_workspace(run_root: Path) -> dict[str, object]:
     return result
 
 
-def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
+def verify_agent_workspace(
+    sandbox: Path, task_type: str = ""
+) -> dict[str, object]:
+    if task_type == "frontend-implementation":
+        return verify_frontend_workspace(sandbox)
     executable = gradle_command()
     started = time.monotonic()
     result = subprocess.run(
@@ -901,6 +993,91 @@ def verify_agent_workspace(sandbox: Path) -> dict[str, object]:
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
+
+
+def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
+    frontend = sandbox / "application" / "frontend"
+    package = frontend / "package.json"
+    if not package.is_file():
+        raise WorkspaceVerificationError(
+            {
+                "command": ["npm", "run", "build"],
+                "exitCode": 1,
+                "durationMs": 0,
+                "stdout": "",
+                "stderr": "Frontend package.json was not found",
+                "testResults": "",
+            }
+        )
+    executable = "npm.cmd" if os.name == "nt" else "npm"
+    commands = [
+        [executable, "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+        [executable, "run", "build"],
+    ]
+    started = time.monotonic()
+    outputs: list[str] = []
+    errors: list[str] = []
+    exit_code = 0
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                cwd=frontend,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=300,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            exit_code = 1
+            errors.append(str(error))
+            break
+        outputs.append(result.stdout[-12000:])
+        errors.append(result.stderr[-12000:])
+        exit_code = result.returncode
+        if exit_code != 0:
+            break
+    evidence = {
+        "command": commands[-1],
+        "commands": commands,
+        "exitCode": exit_code,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "stdout": "\n".join(outputs)[-16000:],
+        "stderr": "\n".join(errors)[-16000:],
+        "testResults": "",
+    }
+    if exit_code != 0:
+        raise WorkspaceVerificationError(evidence)
+    return evidence
+
+
+def frontend_contract_violations(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    sources: list[str] = []
+    violations: list[str] = []
+    for relative in relative_paths:
+        path = sandbox / relative
+        if not path.is_file() or path.suffix not in {".ts", ".tsx"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        sources.append(text)
+        if re.search(r"\b(?:TODO|FIXME|PLACEHOLDER)\b", text, re.IGNORECASE):
+            violations.append(f"{relative}: unresolved implementation marker")
+        if re.search(r"\b(?:fetch|XMLHttpRequest)\s*\(", text) or re.search(
+            r"\baxios\b", text
+        ):
+            violations.append(
+                f"{relative}: direct HTTP calls are forbidden; use src/generated"
+            )
+    combined = "\n".join(sources)
+    if not re.search(r"from\s+['\"][^'\"]*generated", combined):
+        violations.append(
+            "Frontend implementation does not import the OpenAPI Generator client/models"
+        )
+    return violations
 
 
 def production_placeholder_markers(
@@ -1184,7 +1361,15 @@ def snapshot_files(root: Path) -> dict[str, str]:
     for path in root.rglob("*"):
         if path.is_file():
             relative = path.relative_to(root)
-            if any(part in {"build", ".gradle"} for part in relative.parts):
+            if path.name == "package-lock.json" or path.name.endswith(".tsbuildinfo"):
+                # npm install and TypeScript's incremental compiler create these
+                # verification byproducts. They are neither contracted agent
+                # outputs nor application source and are never promoted.
+                continue
+            if any(
+                part in {"build", ".gradle", "node_modules", "dist"}
+                for part in relative.parts
+            ):
                 continue
             result[str(relative).replace("\\", "/")] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result

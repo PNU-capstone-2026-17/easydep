@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .implementation_ir import ApiPortIR, GatewayIR, build_implementation_ir
+from ..frontend_scaffold import frontend_page_names, operation_ids
 from .models import JobSpec
 
 
@@ -579,6 +580,151 @@ def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationT
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task]
+
+
+def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
+    """Plan the UI implementation from system-design artifacts and generated API client."""
+    frontend = run_root / "application" / "frontend"
+    generated = frontend / "src" / "generated"
+    if not generated.is_dir():
+        raise ValueError("OpenAPI Generator frontend client was not found")
+    openapi = json.loads(_read(spec.inputs.get("openapi")))
+    bce = _read(spec.inputs.get("bceClass"))
+    sequence = _read(spec.inputs.get("sequence"))
+    pages = frontend_page_names(openapi)
+    operations = operation_ids(openapi)
+    generated_contracts = _frontend_generated_contracts(generated)
+
+    output = run_root / "reports" / "implementation-tasks"
+    output.mkdir(parents=True, exist_ok=True)
+    contracts_path = run_root / "reports" / "frontend-generated-client-contracts.txt"
+    contracts_path.write_text(generated_contracts, encoding="utf-8")
+    allowed = [
+        "application/frontend/src/App.tsx",
+        "application/frontend/src/components/AppShell.tsx",
+        *[f"application/frontend/src/pages/{name}.tsx" for name in pages],
+        "application/frontend/src/styles.css",
+    ]
+    task_id = "implement-frontend-application"
+    context = {
+        "schemaVersion": "frontend-implementation-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": "frontend-implementation",
+        "classDiagram": bce,
+        "sequenceDiagram": sequence,
+        "openapi": openapi,
+        "pages": pages,
+        "operationIds": operations,
+        "generatedTypescriptContracts": generated_contracts,
+        "generatedImportRoot": "src/generated/src",
+    }
+    context_path = output / "frontend-application.context.json"
+    context_path.write_text(
+        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    page_list = "\n".join(f"- `{name}`" for name in pages)
+    operation_list = "\n".join(f"- `{name}`" for name in operations)
+    prompt = f"""# Frontend implementation task: {spec.name}
+
+Implement the React application on top of the immutable TypeScript client produced by
+OpenAPI Generator. The system-design artifacts below are authoritative; do not invent API
+operations or behavior outside those contracts.
+
+Rules:
+- The OpenAPI Generator import root is exactly `src/generated/src`. From a page below
+  `src/pages`, import APIs from `../generated/src/apis`, models from
+  `../generated/src/models`, and `Configuration` from `../generated/src/runtime`.
+- Use only exports that exist below `src/generated/src`; import generated API classes, models, and
+  `Configuration` instead of hand-writing HTTP calls.
+- Never call `fetch`, axios, XMLHttpRequest, or hard-code an endpoint path in an application file.
+- Use `API_BASE_URL` from `src/config.ts` when constructing generated client configuration.
+- Derive screens and user actions from BCE Boundary responsibilities and the sequence flow.
+- Create an accessible responsive UI with explicit loading, empty, success, validation, and
+  API-error states. Keep domain state inside React components; do not add dependencies.
+- `App.tsx` owns routing, `AppShell.tsx` owns shared navigation/layout, and every contracted
+  page must be reachable from the application.
+- Preserve all generated client/model files and project configuration exactly.
+- Create every contracted output and finish immediately. `npm run build` is the acceptance gate.
+
+## Contracted pages
+{page_list}
+
+## OpenAPI operations that the UI must expose where meaningful
+{operation_list}
+
+## BCE class design
+```plantuml
+{bce}
+```
+
+## Sequence design
+```plantuml
+{sequence}
+```
+
+## OpenAPI contract
+```json
+{json.dumps(openapi, ensure_ascii=False, indent=2)}
+```
+
+## Exact OpenAPI Generator TypeScript contracts
+```typescript
+{generated_contracts}
+```
+"""
+    prompt += render_allowed_output_rules(allowed)
+    prompt_path = output / "frontend-application.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    task = ImplementationTask(
+        task_id=task_id,
+        control=f"{spec.name} frontend application",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=allowed,
+        immutable_paths=[
+            "application/frontend/src/generated",
+            "application/frontend/package.json",
+            "application/frontend/tsconfig.json",
+            "application/frontend/vite.config.ts",
+            "application/frontend/src/config.ts",
+            "application/frontend/src/main.tsx",
+        ],
+        source_artifacts={
+            **{
+                name: str(path)
+                for name, path in spec.inputs.items()
+                if name in {"bceClass", "sequence", "openapi"} and path.is_file()
+            },
+            "generatedClientContracts": str(contracts_path),
+        },
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=_llm_config(spec),
+        task_type="frontend-implementation",
+    )
+    (output / "frontend-application.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return [task]
+
+
+def _frontend_generated_contracts(generated: Path, max_chars: int = 100_000) -> str:
+    selected = [
+        path
+        for path in sorted(generated.rglob("*.ts"))
+        if "test" not in path.parts and not path.name.endswith("Test.ts")
+    ]
+    chunks: list[str] = []
+    size = 0
+    for path in selected:
+        content = path.read_text(encoding="utf-8")
+        chunk = f"// {path.relative_to(generated).as_posix()}\n{content.strip()}\n"
+        if size + len(chunk) > max_chars:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    if not chunks:
+        raise ValueError("OpenAPI Generator produced no TypeScript client contracts")
+    return "\n".join(chunks)
 
 
 def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
