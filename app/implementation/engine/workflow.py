@@ -361,6 +361,63 @@ def workflow_status(run_root: Path) -> dict[str, object]:
     return _read_json(path)
 
 
+def run_workflow_to_completion(
+    run_root: Path,
+    spec: JobSpec,
+    *,
+    approved_by: str,
+    retry_failed: bool = False,
+    max_cycles: int = 100,
+) -> dict[str, object]:
+    """Run every phase and bounded repair from one explicit transmission approval."""
+    run_root = run_root.resolve()
+    state = plan_workflow(run_root, spec)
+    request_path = run_root / "reports" / "external-transmission-request.json"
+    if not request_path.is_file():
+        if state.get("status") == "COMPLETE":
+            return state
+        raise PermissionError("No external transmission request is available to approve")
+    request = _read_json(request_path)
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    approval_path = run_root / "reports" / "one-time-run-approval.json"
+    approval = {
+        "requestId": request["requestId"],
+        "approved": True,
+        "approvedAt": _now(),
+        "approvedBy": approved_by,
+        "delegatedRepairApprovals": True,
+        "delegationScope": {
+            "runId": run_root.name,
+            "inputHash": manifest.get("input_hash"),
+            "initialTaskIds": sorted(
+                str(task["task_id"])
+                for task in manifest.get("implementation_tasks", [])
+            ),
+            "maxRepairRounds": 3,
+            "maxTaskAttempts": 50,
+        },
+    }
+    _write_json_atomic(approval_path, approval)
+
+    for _cycle in range(max_cycles):
+        state = run_workflow(
+            run_root,
+            spec,
+            approval_path,
+            retry_failed=retry_failed,
+        )
+        status = str(state.get("status", ""))
+        if status == "COMPLETE":
+            state["oneTimeApproval"] = approval_path.relative_to(run_root).as_posix()
+            _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+            return state
+        if status in {"FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"}:
+            raise RuntimeError(
+                f"Run-to-completion stopped in {status}: {state.get('blockingReason')}"
+            )
+    raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
+
+
 def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
     intent = spec.inputs.get("deploymentIntent")
     cloud = spec.inputs.get("cloud")
