@@ -11,6 +11,11 @@ class FrontendScaffoldError(ValueError):
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+OPENAPI_GENERATOR_VERSION = "7.14.0"
+OPENAPI_GENERATOR_NAME = "typescript-fetch"
+OPENAPI_GENERATOR_IMAGE = (
+    f"openapitools/openapi-generator-cli:v{OPENAPI_GENERATOR_VERSION}"
+)
 
 
 def validate_openapi(api_spec: dict[str, Any]) -> None:
@@ -44,10 +49,10 @@ def openapi_typescript_fetch_command(
         "--rm",
         "-v",
         f"{root}:/workspace",
-        "openapitools/openapi-generator-cli:v7.14.0",
+        OPENAPI_GENERATOR_IMAGE,
         "generate",
         "-g",
-        "typescript-fetch",
+        OPENAPI_GENERATOR_NAME,
         "-i",
         container_source.as_posix(),
         "-o",

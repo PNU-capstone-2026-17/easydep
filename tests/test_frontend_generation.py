@@ -12,10 +12,10 @@ from app.db.models import TYPE_FRONTEND_SOURCE_CODE
 from app.implementation.api import router
 from app.implementation.config import ImplementationSettings
 from app.implementation.engine.agent_runtime import (
-    frontend_contract_violations,
     snapshot_files,
     verify_frontend_workspace,
 )
+from app.implementation.engine.frontend_quality import frontend_contract_violations
 from app.implementation.engine.design_context import generate_frontend_tasks
 from app.implementation.engine.frontend_contracts import (
     FrontendContractBudgetExceeded,
@@ -178,13 +178,18 @@ def test_frontend_api_versions_generated_files(monkeypatch) -> None:
     )
     monkeypatch.setattr("app.implementation.api.worker.settings", configured)
 
-    def generated(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
-        relative = command[command.index("-o") + 1].removeprefix("/workspace/")
-        target = Path.cwd() / relative
-        target.mkdir(parents=True)
-        (target / "index.ts").write_text(
-            "export * from './apis/DefaultApi';", encoding="utf-8"
-        )
+    def generated(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        if "-o" in command:
+            relative = command[command.index("-o") + 1].removeprefix("/workspace/")
+            target = Path.cwd() / relative
+            target.mkdir(parents=True)
+            (target / "index.ts").write_text(
+                "export * from './apis/DefaultApi';", encoding="utf-8"
+            )
+        else:
+            (Path(str(kwargs["cwd"])) / "package-lock.json").write_text(
+                "{}", encoding="utf-8"
+            )
         return subprocess.CompletedProcess(command, 0, "generated", "")
 
     monkeypatch.setattr("app.implementation.api.subprocess.run", generated)
@@ -254,9 +259,14 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
 
     def generated(_name: str, command: list[str], _cwd: Path):
         commands.append(command)
-        target = application / "frontend/src/generated"
-        target.mkdir(parents=True)
-        (target / "index.ts").write_text("export class DefaultApi {}", encoding="utf-8")
+        if "-o" in command:
+            target = application / "frontend/src/generated"
+            target.mkdir(parents=True)
+            (target / "index.ts").write_text(
+                "export class DefaultApi {}", encoding="utf-8"
+            )
+        else:
+            (_cwd / "package-lock.json").write_text("{}", encoding="utf-8")
         return None
 
     orchestrator._run_command = generated
@@ -264,7 +274,9 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
 
     assert (application / "frontend/src/App.tsx").is_file()
     assert (application / "frontend/src/generated/index.ts").is_file()
+    assert (application / "frontend/package-lock.json").is_file()
     assert "typescript-fetch" in commands[0]
+    assert commands[1][1:3] == ["install", "--package-lock-only"]
     assert orchestrator.manifest.tools["easydep-frontend-generator"]["generator"] == "typescript-fetch"
 
 
@@ -356,7 +368,10 @@ def test_frontend_contract_requires_accessible_success_and_responsive_table(
         "<table><tbody /></table></form>;}",
         encoding="utf-8",
     )
-    styles.write_text("table { width: 100%; }", encoding="utf-8")
+    styles.write_text(
+        "table { width: 100%; } @media (max-width: 40rem) { table { width: 90%; } }",
+        encoding="utf-8",
+    )
 
     violations = frontend_contract_violations(
         tmp_path,
@@ -378,6 +393,7 @@ def test_frontend_verification_runs_install_then_production_build(
     frontend = tmp_path / "application/frontend"
     frontend.mkdir(parents=True)
     (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
     commands: list[list[str]] = []
 
     def completed(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
@@ -391,8 +407,36 @@ def test_frontend_verification_runs_install_then_production_build(
     result = verify_frontend_workspace(tmp_path)
 
     assert result["exitCode"] == 0
-    assert commands[0][1] == "install"
+    assert commands[0][1] == "ci"
     assert commands[1][1:] == ["run", "build"]
+
+
+def test_frontend_contract_checks_jsx_expression_aria_references(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "application/frontend/src/App.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "import { OrdersApi } from './generated/src';"
+        "export default function App(){const error=true;return "
+        "<form aria-describedby={error ? 'form-error' : undefined} />;}",
+        encoding="utf-8",
+    )
+
+    violations = frontend_contract_violations(
+        tmp_path, ["application/frontend/src/App.tsx"]
+    )
+
+    assert any("missing element id: form-error" in item for item in violations)
+
+
+def test_frontend_verification_requires_dependency_lock(tmp_path: Path) -> None:
+    frontend = tmp_path / "application/frontend"
+    frontend.mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="package-lock.json"):
+        verify_frontend_workspace(tmp_path)
 
 
 def test_frontend_snapshot_ignores_build_metadata(tmp_path: Path) -> None:

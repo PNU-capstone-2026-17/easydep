@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,12 +20,8 @@ from .schemas import (
     CreateImplementationJobRequest,
     GenerateFrontendRequest,
 )
-from .frontend_scaffold import (
-    FrontendScaffoldError,
-    openapi_typescript_fetch_command,
-    resolve_api_base_url,
-    write_react_scaffold,
-)
+from .frontend_scaffold import FrontendScaffoldError
+from .frontend_generation import generate_frontend_project, write_openapi_input
 from .worker import InvalidJobState, JobNotFound, worker
 
 
@@ -46,9 +41,6 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
     try:
         design = artifact_repository.load_state(app_id)
         api_spec = design.get("api_spec", {})
-        effective_api_base_url = resolve_api_base_url(
-            api_spec, request.api_base_url
-        )
         worker.settings.work_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
             prefix="frontend-scaffold-", dir=worker.settings.work_root
@@ -56,33 +48,35 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
             root = Path(directory)
             openapi_path = root / "openapi.json"
             frontend = root / "frontend"
-            openapi_path.write_text(
-                json.dumps(api_spec, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            command = openapi_typescript_fetch_command(
-                worker.settings.repository_root,
-                openapi_path,
-                frontend / "src" / "generated",
-            )
-            result = subprocess.run(
-                command,
-                cwd=worker.settings.repository_root,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=300,
-                check=False,
-            )
-            if result.returncode != 0:
-                raise FrontendScaffoldError(
-                    "OpenAPI Generator failed: " + (result.stderr or result.stdout)[-2000:]
+            write_openapi_input(openapi_path, api_spec)
+
+            def run_command(name: str, command: list[str], cwd: Path) -> object:
+                result = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=worker.settings.command_timeout_seconds,
+                    check=False,
                 )
-            write_react_scaffold(
-                frontend,
-                api_spec,
+                if result.returncode != 0:
+                    output = result.stderr or result.stdout
+                    raise FrontendScaffoldError(
+                        f"{name} failed with exit code {result.returncode}: "
+                        + output[-2000:]
+                    )
+                return result
+
+            generation = generate_frontend_project(
+                workspace_root=worker.settings.repository_root,
+                openapi_path=openapi_path,
+                frontend_root=frontend,
+                api_spec=api_spec,
                 application_name=request.application_name,
-                api_base_url=effective_api_base_url,
+                api_base_url=request.api_base_url,
+                run_command=run_command,
             )
             files = {
                 path.relative_to(frontend).as_posix(): path.read_text(encoding="utf-8")
@@ -93,12 +87,7 @@ def generate_frontend(app_id: str, request: GenerateFrontendRequest) -> dict:
             app_id,
             TYPE_FRONTEND_SOURCE_CODE,
             files,
-            metadata={
-                "generator": "openapi-generator/typescript-fetch@7.14.0",
-                "stage": "SCAFFOLD",
-                "application_name": request.application_name,
-                "api_base_url": effective_api_base_url,
-            },
+            metadata=generation.artifact_metadata(request.application_name),
         )
         snapshot = artifact_repository.load_file_snapshot(
             app_id, TYPE_FRONTEND_SOURCE_CODE

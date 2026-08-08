@@ -26,10 +26,7 @@ from .design_context import (
     generate_wiring_tasks,
 )
 from .implementation_ir import pascal_case, remove_readonly
-from ..frontend_scaffold import (
-    openapi_typescript_fetch_command,
-    write_react_scaffold,
-)
+from ..frontend_generation import generate_frontend_project
 
 
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
@@ -420,26 +417,16 @@ class PrototypeOrchestrator:
     def _generate_frontend(self, application: Path) -> None:
         openapi = json.loads(self.spec.inputs["openapi"].read_text(encoding="utf-8"))
         frontend = application / "frontend"
-        generated_client = frontend / "src" / "generated"
-        command = openapi_typescript_fetch_command(
-            self.spec.workspace_root,
-            self.spec.inputs["openapi"],
-            generated_client,
-        )
-        self._run_command(
-            "openapi-generator-typescript-fetch",
-            command,
-            self.spec.workspace_root,
-        )
-        write_react_scaffold(
-            frontend,
-            openapi,
+        generation = generate_frontend_project(
+            workspace_root=self.spec.workspace_root,
+            openapi_path=self.spec.inputs["openapi"],
+            frontend_root=frontend,
+            api_spec=openapi,
             application_name=self.spec.name,
+            api_base_url=None,
+            run_command=self._run_command,
         )
-        self.manifest.tools["easydep-frontend-generator"] = {
-            "generator": "typescript-fetch",
-            "version": "openapi-generator-cli/v7.14.0",
-        }
+        self.manifest.tools["easydep-frontend-generator"] = generation.tool_metadata()
 
     def _write_gradle_project(self, application: Path) -> None:
         build = """plugins {
