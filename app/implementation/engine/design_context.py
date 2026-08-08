@@ -6,6 +6,7 @@ import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .frontend_contracts import GeneratedClientContracts
 from .implementation_ir import ApiPortIR, GatewayIR, build_implementation_ir
 from ..frontend_scaffold import frontend_page_names, operation_ids
 from .models import JobSpec
@@ -593,7 +594,8 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
     sequence = _read(spec.inputs.get("sequence"))
     pages = frontend_page_names(openapi)
     operations = operation_ids(openapi)
-    generated_contracts = _frontend_generated_contracts(generated)
+    client_contracts = GeneratedClientContracts.discover(generated)
+    generated_contracts = client_contracts.render()
 
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
@@ -616,7 +618,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
         "pages": pages,
         "operationIds": operations,
         "generatedTypescriptContracts": generated_contracts,
-        "generatedImportRoot": "src/generated/src",
+        "generatedImportRoot": client_contracts.import_root,
     }
     context_path = output / "frontend-application.context.json"
     context_path.write_text(
@@ -624,6 +626,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[Implementatio
     )
     page_list = "\n".join(f"- `{name}`" for name in pages)
     operation_list = "\n".join(f"- `{name}`" for name in operations)
+    page_import_root = client_contracts.page_import_root
     prompt = f"""# Frontend implementation task: {spec.name}
 
 Implement the React application on top of the immutable TypeScript client produced by
@@ -631,10 +634,10 @@ OpenAPI Generator. The system-design artifacts below are authoritative; do not i
 operations or behavior outside those contracts.
 
 Rules:
-- The OpenAPI Generator import root is exactly `src/generated/src`. From a page below
-  `src/pages`, import APIs from `../generated/src/apis`, models from
-  `../generated/src/models`, and `Configuration` from `../generated/src/runtime`.
-- Use only exports that exist below `src/generated/src`; import generated API classes, models, and
+- The discovered OpenAPI Generator import root is exactly `{client_contracts.import_root}`. From a page below
+  `src/pages`, import APIs from `{page_import_root}/apis`, models from
+  `{page_import_root}/models`, and `Configuration` from `{page_import_root}/runtime`.
+- Use only exports that exist below `{client_contracts.import_root}`; import generated API classes, models, and
   `Configuration` instead of hand-writing HTTP calls.
 - Never call `fetch`, axios, XMLHttpRequest, or hard-code an endpoint path in an application file.
 - Use `API_BASE_URL` from `src/config.ts` when constructing generated client configuration.
@@ -708,26 +711,6 @@ Rules:
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task]
-
-
-def _frontend_generated_contracts(generated: Path, max_chars: int = 100_000) -> str:
-    selected = [
-        path
-        for path in sorted(generated.rglob("*.ts"))
-        if "test" not in path.parts and not path.name.endswith("Test.ts")
-    ]
-    chunks: list[str] = []
-    size = 0
-    for path in selected:
-        content = path.read_text(encoding="utf-8")
-        chunk = f"// {path.relative_to(generated).as_posix()}\n{content.strip()}\n"
-        if size + len(chunk) > max_chars:
-            break
-        chunks.append(chunk)
-        size += len(chunk)
-    if not chunks:
-        raise ValueError("OpenAPI Generator produced no TypeScript client contracts")
-    return "\n".join(chunks)
 
 
 def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:

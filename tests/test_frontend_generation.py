@@ -17,6 +17,10 @@ from app.implementation.engine.agent_runtime import (
     verify_frontend_workspace,
 )
 from app.implementation.engine.design_context import generate_frontend_tasks
+from app.implementation.engine.frontend_contracts import (
+    FrontendContractBudgetExceeded,
+    GeneratedClientContracts,
+)
 from app.implementation.frontend_scaffold import (
     FrontendScaffoldError,
     openapi_typescript_fetch_command,
@@ -112,6 +116,49 @@ def test_resolves_api_base_url_from_openapi_server_without_inventing_prefix() ->
     assert resolve_api_base_url(with_server, " https://override.example/v1/ ") == (
         "https://override.example/v1"
     )
+
+
+def test_discovers_standard_openapi_generator_source_layout(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    api = generated / "src/apis/OrdersApi.ts"
+    model = generated / "src/models/Order.ts"
+    runtime = generated / "src/runtime.ts"
+    for path in (api, model, runtime):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"export const {path.stem} = true;", encoding="utf-8")
+
+    contracts = GeneratedClientContracts.discover(generated)
+
+    assert contracts.import_root == "src/generated/src"
+    assert contracts.page_import_root == "../generated/src"
+    assert "// src/apis/OrdersApi.ts" in contracts.render()
+
+
+def test_discovers_flat_generated_client_layout(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    api = generated / "apis/DefaultApi.ts"
+    api.parent.mkdir(parents=True)
+    api.write_text("export class DefaultApi {}", encoding="utf-8")
+
+    contracts = GeneratedClientContracts.discover(generated)
+
+    assert contracts.import_root == "src/generated"
+    assert contracts.page_import_root == "../generated"
+
+
+def test_rejects_generated_contracts_over_budget_without_partial_output(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "src/generated"
+    source = generated / "src/apis/LargeApi.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text("export const contract = '" + ("x" * 200) + "';", encoding="utf-8")
+    contracts = GeneratedClientContracts.discover(generated)
+
+    with pytest.raises(
+        FrontendContractBudgetExceeded, match=r"\d+ > 100 characters"
+    ):
+        contracts.render(max_chars=100)
 
 
 def test_frontend_api_versions_generated_files(monkeypatch) -> None:
@@ -277,8 +324,8 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "requirements" not in context
     assert "OrderScreen" in prompt and "getOrder" in prompt
     assert "src/generated" in prompt
-    assert context["generatedImportRoot"] == "src/generated/src"
-    assert "../generated/src/apis" in prompt
+    assert context["generatedImportRoot"] == "src/generated"
+    assert "../generated/apis" in prompt
     assert "application/frontend/src/pages/OrdersPage.tsx" in task.allowed_write_paths
 
 
