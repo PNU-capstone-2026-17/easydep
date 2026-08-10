@@ -24,7 +24,7 @@
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
@@ -68,7 +68,7 @@ def lb_template(name: str, *, subnet: bool, pip: bool) -> dict:
 def main() -> None:
     doc = {"_note": ("선언 술어의 배타성 2차 — ARM 템플릿으로 컨트롤 플레인에 "
                      "직접 건다. 1차는 CLI 클라이언트 거부라 무효였다."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "steps": {}}
     steps = doc["steps"]
 
@@ -117,7 +117,7 @@ def main() -> None:
     step("T1.delete-rg", az(["group", "delete", "-n", RG, "--yes", "--no-wait"]))
     step("T2.residual-groups", az(
         ["group", "list", "--query", "[?starts_with(name,'depkb')].name", "-o", "json"]))
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

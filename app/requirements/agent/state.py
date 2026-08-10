@@ -90,6 +90,9 @@ class AgentState(TypedDict):
     # 요구사항에서 도출한 제네릭 배포 필요사항. 구체 클라우드 리소스 선택은 설계 책임이다.
     # 각 need는 기존 요구사항 ID를 참조해 근거를 추적한다.
     deployment_needs: NotRequired[dict]
+    # Auditable selective-prediction boundary.  ``deployment_needs`` remains the legacy
+    # compatibility projection during the v1 migration.
+    capability_contract: NotRequired[dict]
     # 사용자가 쓴 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항 문장과
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
     # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).

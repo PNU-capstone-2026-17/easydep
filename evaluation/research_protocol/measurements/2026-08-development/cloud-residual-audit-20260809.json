@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "easydep-cloud-residual-audit/v1",
+  "recordedAt": "2026-08-09T03:06:30.3622332Z",
+  "scope": "읽기 전용 실험 잔여 자원 점검",
+  "checks": [
+    {
+      "provider": "aws",
+      "scope": "ap-northeast-2, tag key easydep",
+      "command": "aws resourcegroupstaggingapi get-resources --region ap-northeast-2 --tag-filters Key=easydep",
+      "matched": 0
+    },
+    {
+      "provider": "azure",
+      "scope": "resource group name contains easydep",
+      "command": "az group list --query [easydep name filter]",
+      "matched": 0
+    },
+    {
+      "provider": "gcp",
+      "scope": "project name or projectId contains easydep",
+      "command": "gcloud projects list --filter=[easydep name filter]",
+      "matched": 0
+    }
+  ],
+  "localDocker": {
+    "nameFilter": "easydep",
+    "containers": 0,
+    "volumes": 0,
+    "images": 0
+  },
+  "interpretation": {
+    "cleanupEvidence": true,
+    "exhaustiveProviderInventory": false,
+    "cloudDeploymentSuccessEvidence": false
+  }
+}

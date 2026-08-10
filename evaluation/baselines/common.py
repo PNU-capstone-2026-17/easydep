@@ -30,6 +30,9 @@ Repository completeness rules:
   Kotlin, configure a Java 21-capable Kotlin version and compiler target explicitly.
 - Before finishing, mentally execute Docker build and verify that every COPY source and build command
   is satisfiable by the returned files.
+- Every generated source, test, build, configuration, Docker, and Terraform file must contain only
+  its native file syntax. Never place Markdown headings, path labels, commentary, or fenced code
+  markers inside a generated file.
 """.strip()
 
 # EasyDep Settings와 같은 루트 .env를 읽는다. 셸에서 명시한 값은 유지되며 모든
@@ -102,15 +105,25 @@ class ExperimentSuite:
     holdout: tuple[Path, ...]
     repetitions: int
     arms: tuple[str, ...]
+    oracle: Path
+    study_design: str
 
     @classmethod
-    def load(cls, path: Path) -> ExperimentSuite:
+    def load(
+        cls,
+        path: Path,
+        *,
+        expected_arms: set[str] | None = None,
+    ) -> ExperimentSuite:
         raw = json.loads(path.read_text(encoding="utf-8"))
         development = tuple(path.parent / str(name) for name in raw.get("development", []))
         holdout = tuple(path.parent / str(name) for name in raw.get("holdout", []))
         all_paths = development + holdout
-        if not development or not holdout:
-            raise ValueError("suite requires non-empty development and holdout splits")
+        study_design = str(raw.get("studyDesign", "end-to-end"))
+        if not development:
+            raise ValueError("suite requires a non-empty development split")
+        if study_design == "end-to-end" and not holdout:
+            raise ValueError("end-to-end suite requires a non-empty holdout split")
         if set(development) & set(holdout):
             raise ValueError("development and holdout splits must be disjoint")
         hashes = raw.get("frozenHashes", {})
@@ -139,25 +152,57 @@ class ExperimentSuite:
         ids = [case.case_id for case in cases]
         if len(ids) != len(set(ids)):
             raise ValueError("caseId values must be unique")
-        development_coverage = {
-            (case.case_id.split("-", 1)[0], case.scope["providers"][0])
-            for case in cases[: len(development)]
-        }
-        expected = {(profile, provider) for profile in ("P1", "P2", "P3")
-                    for provider in ("aws", "azure", "gcp")}
-        if development_coverage != expected:
-            raise ValueError("development must cross P1-P3 with all three providers")
-        holdout_cases = cases[len(development) :]
-        if {case.case_id for case in holdout_cases} != {"H1-azure", "H2-gcp", "H3-aws"}:
-            raise ValueError("holdout must contain the three frozen domain cases")
+        if study_design == "end-to-end":
+            development_coverage = {
+                (case.case_id.split("-", 1)[0], case.scope["providers"][0])
+                for case in cases[: len(development)]
+            }
+            expected = {(profile, provider) for profile in ("P1", "P2", "P3")
+                        for provider in ("aws", "azure", "gcp")}
+            if development_coverage != expected:
+                raise ValueError("development must cross P1-P3 with all three providers")
+            holdout_cases = cases[len(development) :]
+            if {case.case_id for case in holdout_cases} != {"H1-azure", "H2-gcp", "H3-aws"}:
+                raise ValueError("holdout must contain the three frozen domain cases")
+        elif study_design == "paired-components":
+            declared_pairs = raw.get("pairs")
+            if not isinstance(declared_pairs, list) or not declared_pairs:
+                raise ValueError("paired-components suite requires declared pairs")
+            actual = {
+                (
+                    str(case.scope.get("pairId", "")),
+                    str(case.scope.get("condition", "")),
+                    str(case.scope["providers"][0]),
+                )
+                for case in cases
+            }
+            expected_pairs = {
+                (str(pair["id"]), condition, provider)
+                for pair in declared_pairs
+                for condition in ("control", "treatment")
+                for provider in ("aws", "azure", "gcp")
+            }
+            if actual != expected_pairs or len(cases) != len(expected_pairs):
+                raise ValueError(
+                    "paired-components must contain control/treatment for every pair and provider"
+                )
+            if holdout:
+                raise ValueError("paired-components suite must not reuse the domain holdout split")
+        else:
+            raise ValueError(f"unsupported studyDesign: {study_design}")
         repetitions = int(raw.get("repetitions", 0))
         if repetitions < 1:
             raise ValueError("repetitions must be positive")
         arms = tuple(str(item) for item in raw.get("arms", []))
-        expected_arms = {"easydep-full", "cot-standard", "metagpt-standard"}
-        if len(arms) != 3 or set(arms) != expected_arms:
-            raise ValueError("suite must declare the three end-to-end experiment arms")
-        return cls(development, holdout, repetitions, arms)
+        required_arms = expected_arms or {
+            "easydep-full", "cot-standard", "metagpt-standard"
+        }
+        if len(arms) != len(required_arms) or set(arms) != required_arms:
+            raise ValueError(
+                "suite arms do not match the required study arms: "
+                + ", ".join(sorted(required_arms))
+            )
+        return cls(development, holdout, repetitions, arms, oracle_path, study_design)
 
     def cases(self, split: str) -> tuple[Path, ...]:
         if split == "development":

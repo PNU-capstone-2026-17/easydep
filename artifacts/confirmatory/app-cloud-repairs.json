@@ -1,0 +1,378 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-09T13:44:02.588543+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-build-dependency",
+      "group": "build-runtime-dependency",
+      "repairMode": "logic",
+      "repairOwner": "implementation.logic",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutationFiles": [
+        "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+      ],
+      "inputSha256": "aa433fedcb61b64155b1feadb4f485abf47e54f387474ec6b9db320ba14d34a9",
+      "outputSha256": "cbccc4e6e4d2c5a1f09b2cd75da0957d9f0a9c6f3a253b90616efe689e57c773",
+      "stepStatus": "completed",
+      "stepDiagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 1,
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 6.71837,
+      "changedFiles": {
+        "added": [],
+        "modified": [
+          "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+        ],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.logic"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "APP-DEP-001",
+            "message": "Observed API/configuration has no matching build dependency: java.spring-data-jpa",
+            "locations": [
+              "src/main/resources/application.yml",
+              "src/main/java/com/example/conversion/ConversionApplication.java",
+              "src/main/java/com/example/conversion/controller/ConversionController.java",
+              "src/main/java/com/example/conversion/controller/HealthController.java",
+              "src/main/java/com/example/conversion/exception/GlobalExceptionHandler.java",
+              "src/main/java/com/example/conversion/model/ConversionRequest.java",
+              "src/main/java/com/example/conversion/model/ConversionResponse.java",
+              "src/main/java/com/example/conversion/model/ErrorResponse.java",
+              "src/main/java/com/example/conversion/model/HealthResponse.java",
+              "src/main/java/com/example/conversion/service/ConversionService.java",
+              "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+            ],
+            "details": {
+              "rule": "java.spring-data-jpa",
+              "missingCoordinates": [
+                "org.springframework.boot:spring-boot-starter-data-jpa"
+              ]
+            }
+          }
+        ],
+        "observations": [],
+        "elapsedSeconds": 0.018752
+      },
+      "preflightAfter": {
+        "diagnostics": [],
+        "observations": [],
+        "elapsedSeconds": 0.009213
+      },
+      "diagnosticResolved": true,
+      "applicationTests": {
+        "status": "completed",
+        "passed": true,
+        "repository": "<temporary>\\run\\application",
+        "unitTests": {
+          "status": "passed",
+          "command": [
+            "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+            "test",
+            "--no-daemon"
+          ],
+          "exitCode": 0,
+          "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/run/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 40s\n4 actionable tasks: 4 executed\n",
+          "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+          "startedAt": "2026-08-09T13:40:16.005617+00:00",
+          "finishedAt": "2026-08-09T13:40:57.222668+00:00",
+          "elapsedSeconds": 41.217053,
+          "testFiles": [
+            "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+            "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+          ]
+        },
+        "diagnostics": []
+      },
+      "applicationTestsPassed": true,
+      "cloudApply": false,
+      "retainedCandidate": {
+        "path": "artifacts/confirmatory/app-cloud-retained/generated-build-dependency-cbccc4e6e4d2/application",
+        "sha256": "cbccc4e6e4d2c5a1f09b2cd75da0957d9f0a9c6f3a253b90616efe689e57c773"
+      }
+    },
+    {
+      "id": "generated-port-binding",
+      "group": "port-binding",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutationFiles": [
+        "infra/user_data.tpl"
+      ],
+      "inputSha256": "4c68d1116e641ac2fd6fdaaac2df8cad7d9057eb44750d60c2bb7545714758b5",
+      "outputSha256": "fee987f9a59947f3649d331c42b788161a9bec9a5859f8df42a0cb559e200c3b",
+      "stepStatus": "completed",
+      "stepDiagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 1,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:40:58.322197+00:00",
+            "finishedAt": "2026-08-09T13:41:26.608420+00:00",
+            "elapsedSeconds": 28.286244
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:41:26.632297+00:00",
+            "finishedAt": "2026-08-09T13:41:26.647306+00:00",
+            "elapsedSeconds": 0.015018
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:41:26.690623+00:00",
+            "finishedAt": "2026-08-09T13:41:33.052519+00:00",
+            "elapsedSeconds": 6.3619
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:41:33.052539+00:00",
+            "finishedAt": "2026-08-09T13:41:49.021076+00:00",
+            "elapsedSeconds": 15.968544
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 50.886783,
+      "changedFiles": {
+        "added": [
+          "infra/.terraform.lock.hcl",
+          "infra/easydep-provider.tf",
+          "infra/nginx.conf.tftpl",
+          "infra/user_data.sh.tftpl"
+        ],
+        "modified": [
+          "infra/main.tf"
+        ],
+        "removed": [
+          "infra/outputs.tf",
+          "infra/user_data.tpl",
+          "infra/variables.tf"
+        ]
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-PORT-001",
+            "message": "Generated IaC has an observable backend/container port that conflicts with the application contract.",
+            "locations": [
+              "user_data.tpl:docker-publish"
+            ],
+            "details": {
+              "expected": 8080,
+              "observed": [
+                9090
+              ]
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerPort",
+            "value": 9090,
+            "source": "user_data.tpl:docker-publish",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.494493
+      },
+      "preflightAfter": {
+        "diagnostics": [],
+        "observations": [
+          {
+            "kind": "containerPort",
+            "value": 8080,
+            "source": "user_data.sh.tftpl:docker-publish",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.027214
+      },
+      "diagnosticResolved": true,
+      "applicationTests": {
+        "status": "completed",
+        "passed": true,
+        "repository": "<temporary>\\run\\application",
+        "unitTests": {
+          "status": "passed",
+          "command": [
+            "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+            "test",
+            "--no-daemon"
+          ],
+          "exitCode": 0,
+          "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/run/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 32s\n4 actionable tasks: 4 executed\n",
+          "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+          "startedAt": "2026-08-09T13:41:49.266393+00:00",
+          "finishedAt": "2026-08-09T13:42:22.357927+00:00",
+          "elapsedSeconds": 33.091547,
+          "testFiles": [
+            "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+            "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+          ]
+        },
+        "diagnostics": []
+      },
+      "applicationTestsPassed": true,
+      "cloudApply": false,
+      "retainedCandidate": {
+        "path": "artifacts/confirmatory/app-cloud-retained/generated-port-binding-fee987f9a599/application",
+        "sha256": "fee987f9a59947f3649d331c42b788161a9bec9a5859f8df42a0cb559e200c3b"
+      }
+    },
+    {
+      "id": "generated-storage-binding",
+      "group": "storage-binding",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutationFiles": [
+        "infra/user_data.tpl",
+        "src/main/java/com/easydep/evaluation/LocalStateProbe.java"
+      ],
+      "inputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "outputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "stepStatus": "failed",
+      "stepDiagnostics": [
+        {
+          "code": "BIND-STORAGE-001",
+          "message": "Generated Terraform failed deployment binding validation after one repair: Generated IaC does not expose persistent storage at the contracted application path.",
+          "severity": "error"
+        }
+      ],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:42:22.959965+00:00",
+            "finishedAt": "2026-08-09T13:42:53.042759+00:00",
+            "elapsedSeconds": 30.082808
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:42:53.091712+00:00",
+            "finishedAt": "2026-08-09T13:42:53.165456+00:00",
+            "elapsedSeconds": 0.073768
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:43:18.145464+00:00",
+            "finishedAt": "2026-08-09T13:43:38.254164+00:00",
+            "elapsedSeconds": 20.108708
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T13:43:38.278318+00:00",
+            "finishedAt": "2026-08-09T13:43:38.318754+00:00",
+            "elapsedSeconds": 0.040461
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 99.498045,
+      "changedFiles": {
+        "added": [],
+        "modified": [],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.062746
+      },
+      "preflightAfter": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.064111
+      },
+      "diagnosticResolved": false,
+      "applicationTests": null,
+      "applicationTestsPassed": false,
+      "cloudApply": false,
+      "retainedCandidate": null
+    }
+  ],
+  "summary": {
+    "caseCount": 3,
+    "stepCompletedCount": 2,
+    "diagnosticResolvedCount": 2,
+    "applicationTestsPassedCount": 2,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 234.05041
+  }
+}

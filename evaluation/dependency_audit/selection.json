@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "easydep-dependency-audit-selection/v1",
+  "selectionRule": "canonical v3 control 셀을 provider, graph pass 여부, caseId, repeat 순으로 정렬하고 CSP별 첫 통과와 첫 실패를 선택한다.",
+  "limitations": [
+    "GCP의 graph pass control 셀은 불가능 요구사항에 대한 abstain 사례밖에 없다.",
+    "선정 셀은 모델 품질의 대표 표본이 아니라 오라클과 분석기의 판정 감사를 위한 층화 표본이다."
+  ],
+  "cells": [
+    {"provider": "aws", "stratum": "pass", "cellId": "h-composite-aws__control__r3"},
+    {"provider": "aws", "stratum": "fail", "cellId": "d-common-private-vm__control__r1"},
+    {"provider": "azure", "stratum": "pass", "cellId": "h-novel-composition-azure__control__r1"},
+    {"provider": "azure", "stratum": "fail", "cellId": "d-provider-extension-azure__control__r1"},
+    {"provider": "gcp", "stratum": "pass", "cellId": "h-impossible-gcp__control__r1"},
+    {"provider": "gcp", "stratum": "fail", "cellId": "d-config-boundary-gcp__control__r1"}
+  ]
+}

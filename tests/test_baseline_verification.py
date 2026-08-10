@@ -288,7 +288,7 @@ def test_container_check_reports_unavailable_daemon_without_building(tmp_path, m
 
     monkeypatch.setattr(implementation, "_command", command)
 
-    result = implementation.run_container_tools(tmp_path)
+    result = implementation.run_container_tools(tmp_path, application_port=8080)
 
     assert result["status"] == "unavailable"
     assert calls == [(["docker", "info", "--format", "{{json .ServerVersion}}"], 180)]
@@ -311,12 +311,89 @@ def test_container_diagnostics_are_captured_before_cleanup(tmp_path, monkeypatch
 
     monkeypatch.setattr(implementation, "_command", command)
 
-    result = implementation.run_container_tools(tmp_path)
+    result = implementation.run_container_tools(tmp_path, application_port=8080)
 
     assert result["health"]["status"] == "failed"
     assert result["containerInspect"]["stdout"] == "diagnostic"
     assert result["containerLogs"]["stdout"] == "diagnostic"
     assert [call[1] for call in calls[-4:]] == ["inspect", "logs", "rm", "image"]
+
+
+def test_persistence_check_recreates_container_with_same_volume_and_cleans_it(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
+    monkeypatch.setattr(implementation, "_tool_path", lambda *_args: "docker")
+    container_ids = iter(("primary", "before-restart", "after-restart"))
+    calls = []
+
+    def command(arguments, _cwd, timeout=180):
+        calls.append(arguments)
+        if arguments[1] == "run":
+            return {"status": "passed", "stdout": next(container_ids) + "\n", "stderr": ""}
+        return {"status": "passed", "stdout": "ok", "stderr": ""}
+
+    monkeypatch.setattr(implementation, "_command", command)
+    monkeypatch.setattr(
+        implementation,
+        "_wait_for_container_health",
+        lambda *_args, **_kwargs: {
+            "status": "passed",
+            "baseUrl": "http://127.0.0.1:12345",
+            "port": {"status": "passed"},
+        },
+    )
+    monkeypatch.setattr(
+        implementation,
+        "_run_http_acceptance",
+        lambda *_args: {"status": "passed", "passed": 1, "total": 1, "checks": []},
+    )
+
+    result = implementation.run_container_tools(
+        tmp_path,
+        [{"name": "기능", "path": "/notes"}],
+        {
+            "mountPath": "/srv/catalog-data",
+            "beforeRestart": [{"name": "쓰기", "path": "/notes"}],
+            "afterRestart": [{"name": "읽기", "path": "/notes"}],
+        },
+        application_port=9090,
+    )
+
+    assert result["status"] == "passed"
+    assert result["persistenceAcceptance"]["status"] == "passed"
+    mounted_runs = [call for call in calls if call[1] == "run" and "--mount" in call]
+    assert len(mounted_runs) == 2
+    assert mounted_runs[0][mounted_runs[0].index("--mount") + 1] == mounted_runs[1][mounted_runs[1].index("--mount") + 1]
+    assert any("target=/srv/catalog-data" in item for item in mounted_runs[0])
+    assert all("127.0.0.1::9090" in call for call in mounted_runs)
+    assert any(call[1:3] == ["volume", "rm"] for call in calls)
+    assert any(call[1:4] == ["stop", "--time", "30"] for call in calls)
+    assert any(call[1:4] == ["rm", "--force", "after-restart"] for call in calls)
+
+
+def test_container_evaluation_does_not_invent_port_or_mount_path(tmp_path, monkeypatch):
+    (tmp_path / "Dockerfile").write_text("FROM scratch", encoding="utf-8")
+    assert implementation.run_container_tools(tmp_path)["status"] == "not-configured"
+
+    calls = []
+    monkeypatch.setattr(
+        implementation,
+        "_command",
+        lambda arguments, *_args, **_kwargs: calls.append(arguments)
+        or {"status": "passed"},
+    )
+    result, _volume = implementation._run_persistence_acceptance(
+        "docker",
+        tmp_path,
+        "example/app",
+        {"beforeRestart": [], "afterRestart": []},
+        [],
+        9090,
+    )
+    assert result["status"] == "failed"
+    assert "mountPath" in result["reason"]
+    assert calls == []
 
 
 def test_open_firewall_port_443_is_not_mistaken_for_https(tmp_path):
@@ -368,6 +445,7 @@ def test_end_to_end_oracle_keeps_capabilities_separate_from_tool_graph():
         "create note",
         "list notes",
     ]
+    assert expected["persistenceAcceptance"]["mountPath"] == "/var/lib/notes"
 
 
 def test_json_acceptance_matches_fragments_and_numeric_values():

@@ -11,7 +11,7 @@ serviceAccounts를 생략하고 인스턴스를 만들면 서버가 기본 compu
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gcp-apply3-2026-07-31"))
@@ -28,7 +28,7 @@ def main() -> None:
     inst = f"{z}/instances/depkb-iam-vm"
     doc = {"_note": ("vm→iamRole(gcp) — SA 생략 생성 후 serviceAccounts "
                      "실물 관측. 실물이 판정한다."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "steps": {}}
     steps = doc["steps"]
 
@@ -77,7 +77,7 @@ def main() -> None:
         time.sleep(15)
     step("T2.vm-gone", {"ok": gone, "errorCodes": [],
                         "excerpt": "404" if gone else "timeout"})
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.design.services.common.structured import parse_structured
 
@@ -34,6 +34,14 @@ class SequenceMessage(BaseModel):
     condition: str = Field(default="")
     #: 이 메시지를 낳은 유스케이스 id.
     use_case_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("use_case_ids")
+    @classmethod
+    def use_case_ids_are_set_like(cls, value: list[str]) -> list[str]:
+        """추적 참조는 집합 의미이므로 중복은 정보가 아니라 생성 오류다."""
+        if len(value) != len(set(value)):
+            raise ValueError("use_case_ids must not contain duplicates")
+        return value
 
 
 class SequenceModel(BaseModel):
@@ -86,6 +94,8 @@ that the inputs do not support.
   Copy the class name exactly. Leave it empty for actors — they are not classes.
 - `use_case_ids` on each message: the id(s) of the use case whose step it came
   from, copied exactly from the specification (e.g. "UC1").
+- `use_case_ids` is a set-like reference list. Include each applicable id at
+  most once; repetition adds no traceability information.
 - **Never invent a name or an id.** An empty list is honest; a made-up
   reference is a lie the trace matrix will believe.
 

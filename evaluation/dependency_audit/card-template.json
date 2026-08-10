@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "easydep-dependency-audit-card/v2",
+  "cellId": "replace-me",
+  "classifications": ["insufficient-evidence"],
+  "evidence": [
+    {"source": "pinned-official-source-or-experiment", "finding": "replace-me"}
+  ],
+  "reviewers": {
+    "reviewerA": ["insufficient-evidence"],
+    "reviewerB": ["insufficient-evidence"],
+    "adjudication": null
+  }
+}

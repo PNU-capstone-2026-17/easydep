@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     # step1 구체화 프롬프트의 few-shot 예시 추출 방식.
     #  - "random"  : 무작위(baseline, 오프라인)
     #  - "mmr+nim" : NIM 임베딩으로 요구사항과 관련되면서 다양한 예시 선별(네트워크 필요)
-    example_sampling_method: str = "random"
+    # PURE의 FR/NFR 문장은 CNA 요구사항 코퍼스가 아니다. 비교실험은 명시적으로 켤 수
+    # 있지만, 실제 요구사항 합성 경로가 이 자료에 암묵적으로 의존해서는 안 된다.
+    example_sampling_method: str = "none"
 
     # --- 요구사항 분석 에이전트 설정 ---
     # materials의 파인튜닝 BERT(FR/NFR) 모델 디렉토리. (0=NFR, 1=FR)
@@ -120,6 +122,10 @@ class Settings(BaseSettings):
     # 두고, 그 칸들은 계약의 이유를 달고 되묻기 질문으로 나간다 — 반쯤 채운 사양이 새어
     # 나가지 않는다. 12는 "값 4~6개 기록 + 리전 해석 + 계약 조회 + 마무리"에 여유를 둔 값.
     resource_agent_max_turns: int = 12
+    # Independent samples used to estimate capability-proposal agreement.  The resulting
+    # agreement is calibrated on development labels; it is not treated as confidence by
+    # itself.  Confirmatory runs keep this at five.
+    capability_samples: int = 5
     # 관심사 링크를 몇 번 물어 **과반으로 확정할지**.
     #
     # 3인 이유는 `validator_votes`(기본 1)와 다르다. 링크는 **없는 것을 드러내는** 판정이라

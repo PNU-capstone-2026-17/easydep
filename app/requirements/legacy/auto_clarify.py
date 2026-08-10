@@ -4,13 +4,6 @@ from app.requirements.legacy.example_sampler import (
     sample_examples,
 )
 
-_DEFAULT_EXAMPLES = """[Reference Examples]
-        - The system must provide user authentication through a valid verification process.
-        - The system must provide a password reset functionality.
-        - The search response time must be within 2 seconds.
-        - The system must ensure 24/7 continuous availability without interruption.
-        """
-
 # few-shot 예시 추출 방법 → (strategy, backend) 매핑.
 # 실험(docs/research/fewshot-sampling-experiment-results.md) 결과 채택한 두 방법:
 #   - "random"  : 무작위 baseline. 쿼리 불필요, 오프라인.
@@ -25,7 +18,7 @@ def extract_examples_from_xlsx(
     file_path: str = DEFAULT_DATASET,
     sample_size: int = 5,
     query: str = "",
-    method: str = "random",
+    method: str = "none",
 ) -> str:
     """데이터셋에서 few-shot 예시를 뽑아 [Reference Examples] 블록으로 반환.
 
@@ -33,6 +26,8 @@ def extract_examples_from_xlsx(
     의미가 가까우면서 서로 다양한 예시를 NIM 임베딩으로 선별한다. 샘플링 로직은
     example_sampler 모듈 참고.
     """
+    if method == "none":
+        return ""
     try:
         strategy, backend = _METHODS.get(method, _METHODS["random"])
         items = sample_examples(
@@ -45,16 +40,17 @@ def extract_examples_from_xlsx(
         if not items:
             raise ValueError("샘플링 결과가 비었습니다.")
         return format_examples(items)
-    except Exception as e:
-        print(f"⚠️ 데이터셋 파일을 읽는 중 오류가 발생했습니다: {e}")
-        print("기본 예시를 사용합니다.\n")
-        return _DEFAULT_EXAMPLES
+    except Exception:
+        # 선택적 실험 자료나 스프레드시트 리더 때문에 실제 요구사항 경로가 중단되면
+        # 안 된다. Windows 레거시 인코딩에서 진단 기호 출력 자체가 실패할 수도 있어
+        # 여기서는 콘솔에도 쓰지 않는다.
+        return ""
 
 
 def refine_requirements_prompt(
     abstract_text: str,
     dataset_path: str = DEFAULT_DATASET,
-    method: str = "random",
+    method: str = "none",
 ):
     """
     데이터셋을 참고하여 추상적 요구사항을 분석하고 JSON 딕셔너리로 반환합니다.
@@ -69,6 +65,11 @@ def refine_requirements_prompt(
     )
 
     # 2. 동적 시스템 프롬프트 정의 (FR/NFR 분류 제거)
+    reference_block = (
+        f"[Reference Examples]\n{dataset_examples}"
+        if dataset_examples
+        else "[Reference Examples]\nNone. Follow the explicit rules below."
+    )
     SYSTEM_PROMPT = f"""
     You are a System Architect and an expert in Requirements Engineering.
     You are given a set of user requirement statements. You must decompose and refine them into specific, testable requirement statements.
@@ -90,8 +91,7 @@ def refine_requirements_prompt(
       sentence to the functional sentence it qualifies (both written verbatim as they appear in
       refined_requirements). This preserves the FR<-NFR traceability link.
 
-    [Reference Examples]
-    {dataset_examples}
+    {reference_block}
     """
 
     return SYSTEM_PROMPT

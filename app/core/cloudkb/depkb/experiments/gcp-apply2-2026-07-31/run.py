@@ -22,7 +22,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,7 +33,7 @@ BASE = "https://compute.googleapis.com/compute/v1"
 
 def token() -> str:
     return subprocess.run([str(GCLOUD), "auth", "print-access-token"],
-                          capture_output=True, text=True, timeout=60).stdout.strip()
+                          capture_output=True, text=True, timeout=60, check=False).stdout.strip()
 
 
 def call(method, url, body, tok):
@@ -163,7 +163,7 @@ def main() -> None:
         "_note": ("gcp 2라운드 측정 기록 — NIC의 네트워크 모드 조건부 양상과 "
                   "EXTERNAL LB의 network/subnet 불참. INTERNAL LB 측은 "
                   "미측정으로 남긴다."),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "project": project, "region": region, "zone": zone,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

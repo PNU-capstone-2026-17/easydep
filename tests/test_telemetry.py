@@ -24,6 +24,12 @@ def test_stats_only_accumulate_inside_a_scope():
     assert stats.as_dict()["llm_calls"] == 1
     assert stats.as_dict()["prompt_tokens"] == 5
     assert stats.as_dict()["completion_tokens"] == 7
+    event = stats.as_dict()["llm_timing_events"][0]
+    assert event["operation"] == "op"
+    assert event["status"] == "completed"
+    assert event["elapsedSeconds"] >= 0
+    assert event["startedAt"]
+    assert event["finishedAt"]
 
 
 def test_scope_is_restored_after_exit():

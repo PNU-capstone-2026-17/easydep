@@ -10,20 +10,65 @@ API·배포는 LLM이 PlantUML/JSON 텍스트를 직접 쓰고 그것을 파싱�
 내놓고, 그림/명세는 그 모델에서 결정론적으로 렌더된다. 그래서 수리 루프가 사라지고,
 피드백은 항상 모델을 편집하며, 모델과 산출물이 어긋날 수 없다.
 """
+
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import queue
 import threading
-from typing import Any, Type
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import UTC, datetime
+from time import perf_counter
+from typing import Any
 
 from pydantic import BaseModel
 
+from app.core.llm_stall_probe import start_stall_probe
 
-def run_with_wall_timeout(callable_obj):
+
+class StructuredLlmError(RuntimeError):
+    """어느 구조화 산출물 호출이 실패했는지 보존하는 경계 오류."""
+
+
+_TIMING_EVENTS: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "design_llm_timing_events", default=None
+)
+
+
+@contextmanager
+def capture_llm_timings():
+    events: list[dict[str, Any]] = []
+    token = _TIMING_EVENTS.set(events)
+    try:
+        yield events
+    finally:
+        _TIMING_EVENTS.reset(token)
+
+
+def run_with_wall_timeout(
+    callable_obj,
+    *,
+    operation: str = "structured-output",
+    observation: dict[str, Any] | None = None,
+):
     """벽시계 타임아웃. 클라이언트 타임아웃이 걸리지 않는 지연(연결 후 무응답 등)을 막는다."""
-    timeout_seconds = float(os.getenv("LLM_WALL_TIMEOUT_SECONDS", "150"))
+    timeout_seconds = float(os.getenv("LLM_WALL_TIMEOUT_SECONDS", "330"))
+    started_at = datetime.now(UTC)
+    started = perf_counter()
+    status = "failed"
+    error_type: str | None = None
     result_queue: queue.Queue = queue.Queue(maxsize=1)
+    stall_probe = start_stall_probe(operation)
+    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+        print(json.dumps({
+            "event": "llmOperationStarted",
+            "operation": operation,
+            "startedAt": started_at.isoformat(),
+            "wallTimeoutSeconds": timeout_seconds,
+        }, ensure_ascii=False), flush=True)
 
     def target():
         try:
@@ -35,21 +80,171 @@ def run_with_wall_timeout(callable_obj):
     thread.start()
 
     try:
-        ok, result = result_queue.get(timeout=timeout_seconds)
-    except queue.Empty as error:
-        raise TimeoutError(
-            f"LLM request timed out after {timeout_seconds:g} seconds."
-        ) from error
+        try:
+            ok, result = result_queue.get(timeout=timeout_seconds)
+        except queue.Empty as error:
+            error_type = "WallTimeout"
+            raise StructuredLlmError(
+                f"{operation}: LLM request timed out after {timeout_seconds:g} seconds."
+            ) from error
+        if ok:
+            status = "completed"
+            return result
+        error_type = type(result).__name__
+        raise StructuredLlmError(f"{operation}: {result}") from result
+    finally:
+        stall_probe.set()
+        elapsed_seconds = round(perf_counter() - started, 6)
+        if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+            print(json.dumps({
+                "event": "llmOperationFinished",
+                "operation": operation,
+                "status": status,
+                "errorType": error_type,
+                "elapsedSeconds": elapsed_seconds,
+            } | dict(observation or {}), ensure_ascii=False), flush=True)
+        events = _TIMING_EVENTS.get()
+        if events is not None:
+            finished_at = datetime.now(UTC)
+            events.append(
+                {
+                    "operation": operation,
+                    "status": status,
+                    "errorType": error_type,
+                    "startedAt": started_at.isoformat(),
+                    "finishedAt": finished_at.isoformat(),
+                    "elapsedSeconds": elapsed_seconds,
+                    "wallTimeoutSeconds": timeout_seconds,
+                    "clientTimeoutSeconds": float(os.getenv("LLM_TIMEOUT_SECONDS", "300")),
+                    "observationScope": "requestCompletionOnly",
+                    "ttftSeconds": None,
+                }
+                | dict(observation or {})
+            )
 
-    if ok:
-        return result
 
-    raise result
+def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": schema.__name__,
+            "strict": True,
+            "schema": schema.model_json_schema(),
+        },
+    }
+
+
+def _stream_structured(
+    client,
+    messages: list[dict[str, str]],
+    schema: type[BaseModel],
+    observation: dict[str, Any],
+) -> BaseModel:
+    """구조화 응답을 스트리밍으로 받아 진행 시간과 최종 스키마를 함께 검증한다."""
+    started = perf_counter()
+    previous_event: float | None = None
+    first_event: float | None = None
+    first_output: float | None = None
+    first_content: float | None = None
+    max_inter_event = 0.0
+    event_count = 0
+    content_parts: list[str] = []
+    content_characters = 0
+    reasoning_characters = 0
+    finish_reasons: list[str] = []
+    request: dict[str, Any] = {
+        "model": os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+        "messages": messages,
+        "temperature": 0,
+        "seed": 42,
+        "stream": True,
+        "response_format": _response_format(schema),
+    }
+    max_completion_tokens = os.getenv("LLM_MAX_COMPLETION_TOKENS")
+    if max_completion_tokens:
+        request["max_completion_tokens"] = int(max_completion_tokens)
+    stream = client.chat.completions.create(
+        **request,
+    )
+    observation["transport"] = "structuredStream"
+    observation["responseEstablishedSeconds"] = round(perf_counter() - started, 6)
+    for chunk in stream:
+        now = perf_counter()
+        event_at = datetime.now(UTC).isoformat()
+        event_count += 1
+        if first_event is None:
+            first_event = now - started
+            observation["firstEventAt"] = event_at
+        if previous_event is not None:
+            max_inter_event = max(max_inter_event, now - previous_event)
+        previous_event = now
+        for choice in chunk.choices:
+            content = choice.delta.content or ""
+            reasoning = str(getattr(choice.delta, "reasoning_content", "") or "")
+            if (content or reasoning) and first_output is None:
+                first_output = now - started
+            if content and first_content is None:
+                first_content = now - started
+            if content:
+                content_parts.append(content)
+                content_characters += len(content)
+            reasoning_characters += len(reasoning)
+            if choice.finish_reason:
+                finish_reasons.append(str(choice.finish_reason))
+        # Keep only aggregate progress.  This dict is shared with the wall-timeout
+        # observer, so a timeout retains evidence from the last received chunk
+        # without persisting prompts, reasoning, or response content.
+        observation.update(
+            firstEventSeconds=(
+                round(first_event, 6) if first_event is not None else None
+            ),
+            lastEventAt=event_at,
+            lastEventSeconds=round(now - started, 6),
+            maxInterEventSeconds=round(max_inter_event, 6),
+            eventCount=event_count,
+            contentCharacters=content_characters,
+            reasoningCharacters=reasoning_characters,
+            finishReasonObserved=bool(finish_reasons),
+            finishReasons=list(finish_reasons),
+        )
+    content_text = "".join(content_parts)
+    observation.update(
+        firstEventSeconds=round(first_event, 6) if first_event is not None else None,
+        ttftSeconds=round(first_output, 6) if first_output is not None else None,
+        firstContentSeconds=(
+            round(first_content, 6) if first_content is not None else None
+        ),
+        maxInterEventSeconds=round(max_inter_event, 6),
+        eventCount=event_count,
+        contentCharacters=len(content_text),
+        reasoningCharacters=reasoning_characters,
+        finishReasonObserved=bool(finish_reasons),
+        finishReasons=finish_reasons,
+    )
+    try:
+        return schema.model_validate_json(content_text)
+    except Exception:
+        # 실패 원문 전체와 reasoning은 보존하지 않는다. 실험에서 명시적으로 요청한
+        # 제한 길이의 양 끝 표본과 전체 content 지문만 남겨 토큰 절단, 반복 출력,
+        # 단순 문법 오류를 구분한다. 특정 schema나 사례에 의존하지 않는 공통 경계다.
+        sample_limit = int(os.getenv("LLM_FAILURE_RESPONSE_SAMPLE_CHARS", "0"))
+        if os.getenv("EASYDEP_EXPERIMENT_SESSION") and sample_limit > 0:
+            bounded = min(sample_limit, 4096)
+            observation.update(
+                failureContentSha256=hashlib.sha256(
+                    content_text.encode("utf-8")
+                ).hexdigest(),
+                failureContentPrefix=content_text[:bounded],
+                failureContentSuffix=content_text[-bounded:],
+                failureContentSampleCharacters=bounded,
+                failureContentSampleTruncated=len(content_text) > bounded * 2,
+            )
+        raise
 
 
 def parse_structured(
     messages: list[dict[str, str]],
-    schema: Type[BaseModel],
+    schema: type[BaseModel],
 ) -> dict[str, Any]:
     """LLM에게 schema를 강제해 구조화 결과를 받고 dict로 돌려준다.
 
@@ -64,24 +259,21 @@ def parse_structured(
     client = OpenAI(
         base_url=os.getenv("BASE_URL"),
         api_key=os.getenv("API_KEY"),
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "120")),
+        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "300")),
         max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
     )
 
-    response = run_with_wall_timeout(
-        lambda: client.chat.completions.parse(
-            model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
-            messages=messages,
-            temperature=0,
-            seed=42,
-            response_format=schema,
-        )
+    observation: dict[str, Any] = {}
+    parsed = run_with_wall_timeout(
+        lambda: _stream_structured(client, messages, schema, observation),
+        operation=schema.__name__,
+        observation=observation,
     )
-    return response.choices[0].message.parsed.model_dump()
+    return parsed.model_dump()
 
 
 def focus_note(targets: set[str] | None) -> str:
-    """"이 항목만 고쳐라"를 프롬프트에 얹는 문구. 대상이 없으면 빈 문자열.
+    """ "이 항목만 고쳐라"를 프롬프트에 얹는 문구. 대상이 없으면 빈 문자열.
 
     **이건 지시일 뿐이고 보장이 아니다.** 실제 보장은 코드가 한다 —
     `app/design/nodes/artifact.py`의 merge_model 이 비대상 항목에 대해서는 LLM 출력을
@@ -121,8 +313,7 @@ def revision_messages(
                 f"[{context_label}]\n{context_text}\n\n"
                 f"[{model_label}]\n"
                 f"{json.dumps(current_model, ensure_ascii=False, indent=2)}\n\n"
-                f"[User Feedback]\n{feedback}"
-                + focus_note(targets)
+                f"[User Feedback]\n{feedback}" + focus_note(targets)
             ),
         },
     ]

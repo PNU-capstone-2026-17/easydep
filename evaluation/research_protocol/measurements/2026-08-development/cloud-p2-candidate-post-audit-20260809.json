@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "easydep-cloud-candidate-post-audit/v1",
+  "createdAt": "2026-08-09T00:09:51.7510322Z",
+  "candidate": {
+    "sourceRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e/repairs/attempt-1",
+    "retainedApplicationSha256": "3663abf673fe368ec766caeef893219ef50d6bf3ca9263127b18e3df4a20ebc5",
+    "retainedPath": ".easydep/research-candidates/generated-p2-storage-idempotency-3663abf673fe/application"
+  },
+  "localApplicationGate": {
+    "status": "passed",
+    "imageSourceSha256Prefix": "706091064f72",
+    "elapsedSeconds": 29.407,
+    "healthPassed": true,
+    "postGetPassed": true,
+    "containerRestartPassed": true,
+    "recordPreserved": true
+  },
+  "postRetentionDeploymentGate": {
+    "status": "failed",
+    "diagnostics": [
+      {
+        "code": "BIND-STORAGE-DEVICE-AMBIGUOUS",
+        "source": "infra/user_data.sh.tftpl:13",
+        "observed": "lsblk pipeline selects head -n 1",
+        "expected": "stable provider device identity with bounded readiness wait"
+      }
+    ]
+  },
+  "cloudApply": false,
+  "registryPush": false,
+  "cleanup": {
+    "testContainers": 0,
+    "testVolumes": 0,
+    "localTaggedImages": 0
+  },
+  "interpretation": "Local business-function success does not override a failed deployment binding gate. The candidate is excluded from cloud apply."
+}

@@ -1,0 +1,4117 @@
+{
+  "schemaVersion": "easydep-component-snapshot-delivery/v1",
+  "createdAt": "2026-08-09T16:20:42.258704+00:00",
+  "kind": "same-application-fixed-needs-component-delivery",
+  "sourceApplication": "artifacts/runs/easydep-no-depkb-ps-control-aws-20260809T034126Z-78622c/repairs/attempt-6/03-implementation/application",
+  "sourceApplicationSha256": "fd33c726b8fbee4b6c377be8dcd21db3440aa71fbcc38809625daa5c679e245a",
+  "snapshotTests": {
+    "status": "completed",
+    "passed": true,
+    "repository": "artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\snapshot-test\\application",
+    "unitTests": {
+      "status": "passed",
+      "command": [
+        "C:\\Users\\projw\\Desktop\\dev\\easydep\\app\\implementation\\tools\\gradle\\gradlew.bat",
+        "test",
+        "--no-daemon"
+      ],
+      "exitCode": 0,
+      "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n\n> Task :compileJava\n\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n2026-08-10T01:16:04.196+09:00  INFO 22064 --- [ionShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'\n2026-08-10T01:16:04.199+09:00  INFO 22064 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown initiated...\n2026-08-10T01:16:04.221+09:00  INFO 22064 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown completed.\n2026-08-10T01:16:04.267+09:00  INFO 22064 --- [ionShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'\n2026-08-10T01:16:04.269+09:00  INFO 22064 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Shutdown initiated...\n2026-08-10T01:16:04.273+09:00  INFO 22064 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-2 - Shutdown completed.\n> Task :test\n\n[Incubating] Problems report is available at: file:///C:/Users/projw/Desktop/dev/easydep/artifacts/confirmatory/component-ps-snapshot-delivery-r1/snapshot-test/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 57s\n4 actionable tasks: 4 executed\n",
+      "stderr": "Note: C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\snapshot-test\\application\\src\\main\\java\\com\\example\\notes\\config\\SQLiteDialect.java uses or overrides a deprecated API.\nNote: Recompile with -Xlint:deprecation for details.\nOpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+      "startedAt": "2026-08-09T16:15:06.593656+00:00",
+      "finishedAt": "2026-08-09T16:16:04.732193+00:00",
+      "elapsedSeconds": 58.138541,
+      "testFiles": [
+        "src\\test\\java\\com\\example\\notes\\HealthEndpointTest.java",
+        "src\\test\\java\\com\\example\\notes\\NotesEndpointTest.java"
+      ]
+    },
+    "diagnostics": []
+  },
+  "configuration": {
+    "requirementsLlmCalls": 0,
+    "designLlmCalls": 0,
+    "applicationGenerationCalls": 0,
+    "deliveryLlmCallsPerCell": 1,
+    "cloudApply": false
+  },
+  "cells": [
+    {
+      "condition": "control",
+      "arm": "full",
+      "caseId": "PS-control-aws",
+      "inputApplicationSha256": "fd33c726b8fbee4b6c377be8dcd21db3440aa71fbcc38809625daa5c679e245a",
+      "fixedDeploymentNeeds": {
+        "http_ingress": {
+          "role": "Expose the service over HTTP so that clients can reach the API endpoints",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "protocol": "HTTP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "container_runtime": {
+          "role": "Run the application inside a Docker container as required by the build and runtime stack",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "runtime": "Docker",
+            "container_image_description": "Java 21 Spring Boot application built with Gradle"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "single_vm": {
+          "role": "Provision exactly one application virtual machine as the deployment target",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "instance_count": 1
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "port_exposure": {
+          "role": "Expose the application on TCP port 8080 to satisfy the service’s listening requirement",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "port": 8080,
+            "protocol": "TCP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "health_endpoint": {
+          "role": "Expose a GET /health endpoint for liveness/health checking",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "path": "/health",
+            "method": "GET"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "embedded_sql_database": {
+          "role": "Provide an embedded SQLite database for persisting notes",
+          "required": true,
+          "requirementIds": [
+            "R1"
+          ],
+          "metadata": {
+            "type": "SQLite"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "fixedDeploymentNeedsSha256": "0132c46c2171610d538ee6f6be24ad79b4b2909dee1085f2e7933b665607128e",
+      "cloudKbEnabled": true,
+      "modeledOutcomes": [
+        {
+          "source": "system_scope",
+          "field": "docker_on_vm",
+          "outcome": "vm"
+        }
+      ],
+      "realizationIds": [],
+      "stepStatus": "completed",
+      "diagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:16:04.956807+00:00",
+            "finishedAt": "2026-08-09T16:16:25.073112+00:00",
+            "elapsedSeconds": 20.116313
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:16:25.361631+00:00",
+            "finishedAt": "2026-08-09T16:16:25.386194+00:00",
+            "elapsedSeconds": 0.024576
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:16:25.454162+00:00",
+            "finishedAt": "2026-08-09T16:17:07.847020+00:00",
+            "elapsedSeconds": 42.392865
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "initial",
+            "status": "failed",
+            "startedAt": "2026-08-09T16:17:07.847047+00:00",
+            "finishedAt": "2026-08-09T16:17:13.799407+00:00",
+            "elapsedSeconds": 5.952369
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:17:14.015736+00:00",
+            "finishedAt": "2026-08-09T16:17:42.452348+00:00",
+            "elapsedSeconds": 28.436624
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:17:42.507452+00:00",
+            "finishedAt": "2026-08-09T16:17:42.566308+00:00",
+            "elapsedSeconds": 0.058866
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:17:42.675619+00:00",
+            "finishedAt": "2026-08-09T16:17:46.962694+00:00",
+            "elapsedSeconds": 4.287075
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:17:46.962706+00:00",
+            "finishedAt": "2026-08-09T16:17:52.064394+00:00",
+            "elapsedSeconds": 5.101695
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "elapsedSeconds": 107.276803,
+      "evaluation": {
+        "schemaVersion": "easydep-implementation-evaluation/v1",
+        "repository": {
+          "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\control-full\\application",
+          "fileCount": 24,
+          "javaFileCount": 14,
+          "testFileCount": 2,
+          "markdownContaminatedFiles": [],
+          "checks": {
+            "source_present": true,
+            "test_present": true,
+            "build_present": true,
+            "dockerfile_present": true,
+            "iac_present": true,
+            "generated_files_clean": true,
+            "deployment_manifest_present": false,
+            "requirements_documented": false,
+            "design_documented": false,
+            "deployment_diagram_present": false,
+            "traceability_present": false
+          },
+          "implementationComplete": true,
+          "requiredPassed": true,
+          "cloudNativePassed": true
+        },
+        "resourceGraph": {
+          "status": "not-run",
+          "nodes": [],
+          "edges": [],
+          "parseErrors": [],
+          "unknownProviderTypes": [],
+          "extractionMethod": null,
+          "reason": "OpenTofu/Terraform graph was not run"
+        },
+        "terraformSemantics": {
+          "status": "available",
+          "parser": "python-hcl2",
+          "resources": [
+            {
+              "address": "aws_security_group.alb_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_security_group.ec2_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_lb.app_lb",
+              "providerType": "aws_lb",
+              "declarationKind": "resource",
+              "concept": "loadBalancer",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb_target_group.app_tg",
+              "providerType": "aws_lb_target_group",
+              "declarationKind": "resource",
+              "concept": "backendPool",
+              "source": "infra/main.tf",
+              "blocks": [
+                "health_check"
+              ]
+            },
+            {
+              "address": "aws_lb_listener.https",
+              "providerType": "aws_lb_listener",
+              "declarationKind": "resource",
+              "concept": "listener",
+              "source": "infra/main.tf",
+              "blocks": [
+                "default_action"
+              ]
+            },
+            {
+              "address": "aws_instance.app",
+              "providerType": "aws_instance",
+              "declarationKind": "resource",
+              "concept": "vm",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb_target_group_attachment.app_attachment",
+              "providerType": "aws_lb_target_group_attachment",
+              "declarationKind": "resource",
+              "concept": "backendAttachment",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "data.aws_vpc.default",
+              "providerType": "aws_vpc",
+              "declarationKind": "data",
+              "concept": "network",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "data.aws_subnets.default",
+              "providerType": "aws_subnets",
+              "declarationKind": "data",
+              "concept": "unmapped",
+              "source": "infra/main.tf",
+              "blocks": [
+                "filter"
+              ]
+            },
+            {
+              "address": "data.aws_ami.amazon_linux",
+              "providerType": "aws_ami",
+              "declarationKind": "data",
+              "concept": "unmapped",
+              "source": "infra/main.tf",
+              "blocks": [
+                "filter"
+              ]
+            }
+          ],
+          "concepts": [
+            "backendAttachment",
+            "backendPool",
+            "firewall",
+            "listener",
+            "loadBalancer",
+            "network",
+            "nic",
+            "vm"
+          ],
+          "edges": [
+            {
+              "from": "backendAttachment",
+              "to": "backendPool"
+            },
+            {
+              "from": "backendAttachment",
+              "to": "vm"
+            },
+            {
+              "from": "backendPool",
+              "to": "network"
+            },
+            {
+              "from": "firewall",
+              "to": "firewall"
+            },
+            {
+              "from": "firewall",
+              "to": "network"
+            },
+            {
+              "from": "listener",
+              "to": "backendPool"
+            },
+            {
+              "from": "listener",
+              "to": "loadBalancer"
+            },
+            {
+              "from": "loadBalancer",
+              "to": "firewall"
+            },
+            {
+              "from": "nic",
+              "to": "subnet"
+            },
+            {
+              "from": "vm",
+              "to": "firewall"
+            },
+            {
+              "from": "vm",
+              "to": "nic"
+            }
+          ],
+          "resourceGraph": {
+            "nodes": [
+              {
+                "id": "aws_security_group.alb_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_security_group.ec2_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb.app_lb",
+                "providerType": "aws_lb",
+                "declarationKind": "resource",
+                "concept": "loadBalancer",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group.app_tg",
+                "providerType": "aws_lb_target_group",
+                "declarationKind": "resource",
+                "concept": "backendPool",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_listener.https",
+                "providerType": "aws_lb_listener",
+                "declarationKind": "resource",
+                "concept": "listener",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_instance.app",
+                "providerType": "aws_instance",
+                "declarationKind": "resource",
+                "concept": "vm",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group_attachment.app_attachment",
+                "providerType": "aws_lb_target_group_attachment",
+                "declarationKind": "resource",
+                "concept": "backendAttachment",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_vpc.default",
+                "providerType": "aws_vpc",
+                "declarationKind": "data",
+                "concept": "network",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_subnets.default",
+                "providerType": "aws_subnets",
+                "declarationKind": "data",
+                "concept": "unmapped",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_ami.amazon_linux",
+                "providerType": "aws_ami",
+                "declarationKind": "data",
+                "concept": "unmapped",
+                "source": "infra/main.tf"
+              }
+            ],
+            "edges": [
+              {
+                "from": "aws_instance.app",
+                "to": "aws_security_group.ec2_sg",
+                "fromConcept": "vm",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "data.aws_ami.amazon_linux",
+                "fromConcept": "vm",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "data.aws_subnets.default",
+                "fromConcept": "vm",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_lb",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "loadBalancer",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_lb",
+                "to": "data.aws_subnets.default",
+                "fromConcept": "loadBalancer",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https",
+                "to": "aws_lb.app_lb",
+                "fromConcept": "listener",
+                "toConcept": "loadBalancer",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "listener",
+                "toConcept": "backendPool",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group.app_tg",
+                "to": "data.aws_vpc.default",
+                "fromConcept": "backendPool",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.app_attachment",
+                "to": "aws_instance.app",
+                "fromConcept": "backendAttachment",
+                "toConcept": "vm",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.app_attachment",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "backendAttachment",
+                "toConcept": "backendPool",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_security_group.alb_sg",
+                "to": "data.aws_vpc.default",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.ec2_sg",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "firewall",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.ec2_sg",
+                "to": "data.aws_vpc.default",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "data.aws_subnets.default",
+                "to": "data.aws_vpc.default",
+                "fromConcept": "unmapped",
+                "toConcept": "network",
+                "relation": "references"
+              }
+            ],
+            "attributes": {
+              "vmPublicIp": true,
+              "internetIngressRule": true
+            }
+          },
+          "componentProjections": {
+            "status": "available",
+            "provider": "aws",
+            "deltas": {
+              "persistent-storage": {
+                "components": [
+                  {
+                    "componentId": "disk",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_ebs_volume",
+                    "instances": [],
+                    "status": "failed"
+                  },
+                  {
+                    "componentId": "attachment",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_volume_attachment",
+                    "instances": [],
+                    "status": "failed"
+                  },
+                  {
+                    "componentId": "mount",
+                    "terraformKind": "guestConfiguration",
+                    "terraformType": null,
+                    "instances": [],
+                    "status": "failed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "attachment",
+                    "to": "disk",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "attachment",
+                    "to": "vm",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "cardinality": null,
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "cardinality": null,
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "constraint": "same-availability-zone",
+                    "status": "requires-separate-gate"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "constraint": "device-must-be-formatted-and-mounted",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "load-balanced-multi-vm": {
+                "components": [
+                  {
+                    "componentId": "loadBalancer",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb",
+                    "instances": [
+                      "aws_lb.app_lb"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "listener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendGroup",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group",
+                    "instances": [
+                      "aws_lb_target_group.app_tg"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendMembership",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group_attachment",
+                    "instances": [
+                      "aws_lb_target_group_attachment.app_attachment"
+                    ],
+                    "status": "passed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "cardinality": "one-to-many",
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb.app_lb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.app_attachment",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "vm",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.app_attachment",
+                        "aws_instance.app"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "constraint": "multiple-availability-zones",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "https-termination": {
+                "components": [
+                  {
+                    "componentId": "httpsListener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "certificate",
+                    "terraformKind": "resourceOrDataSource",
+                    "terraformType": "aws_acm_certificate|data.aws_acm_certificate",
+                    "instances": [],
+                    "status": "failed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "httpsListener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb.app_lb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "cardinality": "many-to-many",
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "constraint": "exactly-one-default-certificate",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              }
+            },
+            "guestMountPaths": []
+          },
+          "capabilities": {
+            "vmCount": 1,
+            "availabilityZones": null,
+            "loadBalancer": true,
+            "persistentData": false,
+            "dataDiskGiB": null,
+            "volumeMount": null,
+            "publicHttps": true,
+            "healthPath": "/health",
+            "applicationPort": 8080
+          },
+          "unmappedProviderTypes": [
+            "aws_ami",
+            "aws_subnets"
+          ],
+          "errors": []
+        },
+        "codeQuality": {
+          "complexity": {
+            "status": "available",
+            "tool": "lizard",
+            "version": "1.23.0",
+            "fileCount": 12,
+            "functionCount": 18,
+            "nloc": 166,
+            "cyclomaticComplexity": {
+              "mean": 1.0,
+              "median": 1.0,
+              "p95": 1.0,
+              "max": 1,
+              "functionsAbove10": 0,
+              "functionsAbove10Ratio": 0.0
+            },
+            "functionNloc": {
+              "mean": 3.555556,
+              "p95": 7.15,
+              "max": 8
+            },
+            "decisionPointDensityPer100Nloc": 0.0
+          },
+          "coverage": {
+            "status": "unavailable",
+            "reason": "JaCoCo XML report not found"
+          },
+          "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+        },
+        "staticValidationPassed": true,
+        "expected": {
+          "schemaVersion": "easydep-end-to-end-oracle/v1",
+          "caseId": "PS-control-aws",
+          "profile": "PS-control",
+          "provider": "aws",
+          "budgetUsd": 100,
+          "requiredCapabilities": {
+            "publicHttps": false,
+            "healthPath": "/health",
+            "applicationPort": 8080,
+            "vmCount": {
+              "min": 1,
+              "max": 1
+            },
+            "persistentData": false,
+            "loadBalancer": false
+          },
+          "functionalAcceptance": [
+            {
+              "name": "create note",
+              "method": "POST",
+              "path": "/notes",
+              "status": 201,
+              "json": {
+                "title": "alpha",
+                "content": "first"
+              },
+              "expectJson": {
+                "title": "alpha",
+                "content": "first"
+              }
+            },
+            {
+              "name": "list notes",
+              "method": "GET",
+              "path": "/notes",
+              "status": 200,
+              "expectJson": [
+                {
+                  "title": "alpha",
+                  "content": "first"
+                }
+              ]
+            }
+          ],
+          "persistenceAcceptance": null,
+          "forbiddenConcepts": [
+            "dataDisk",
+            "loadBalancer",
+            "kubernetes",
+            "managedApplicationPlatform"
+          ],
+          "requiredDependencies": [],
+          "legacyProviderProjection": false,
+          "componentDependencyExpectations": {
+            "structuralReferences": [],
+            "cardinalities": [],
+            "constraints": []
+          }
+        },
+        "score": {
+          "status": "completed",
+          "passed": 6,
+          "failed": 3,
+          "unknown": 0,
+          "notApplicable": 0,
+          "notMeasured": 0,
+          "observedUnverified": 0,
+          "passRate": 0.666667,
+          "checks": [
+            {
+              "kind": "providerBoundary",
+              "expected": "aws",
+              "actual": "aws",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "publicHttps",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "capability",
+              "name": "healthPath",
+              "expected": "/health",
+              "actual": "/health",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "applicationPort",
+              "expected": 8080,
+              "actual": 8080,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "vmCount",
+              "expected": {
+                "min": 1,
+                "max": 1
+              },
+              "actual": 1,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "persistentData",
+              "expected": false,
+              "actual": false,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "loadBalancer",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "dataDisk",
+              "status": "passed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "loadBalancer",
+              "status": "failed"
+            }
+          ]
+        },
+        "externalTools": {
+          "status": "not-run",
+          "reason": "enable explicitly with --run-tools"
+        },
+        "experimentEligible": false
+      }
+    },
+    {
+      "condition": "control",
+      "arm": "no-depkb",
+      "caseId": "PS-control-aws",
+      "inputApplicationSha256": "fd33c726b8fbee4b6c377be8dcd21db3440aa71fbcc38809625daa5c679e245a",
+      "fixedDeploymentNeeds": {
+        "http_ingress": {
+          "role": "Expose the service over HTTP so that clients can reach the API endpoints",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "protocol": "HTTP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "container_runtime": {
+          "role": "Run the application inside a Docker container as required by the build and runtime stack",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "runtime": "Docker",
+            "container_image_description": "Java 21 Spring Boot application built with Gradle"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "single_vm": {
+          "role": "Provision exactly one application virtual machine as the deployment target",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "instance_count": 1
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "port_exposure": {
+          "role": "Expose the application on TCP port 8080 to satisfy the service’s listening requirement",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "port": 8080,
+            "protocol": "TCP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "health_endpoint": {
+          "role": "Expose a GET /health endpoint for liveness/health checking",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "path": "/health",
+            "method": "GET"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "embedded_sql_database": {
+          "role": "Provide an embedded SQLite database for persisting notes",
+          "required": true,
+          "requirementIds": [
+            "R1"
+          ],
+          "metadata": {
+            "type": "SQLite"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "fixedDeploymentNeedsSha256": "0132c46c2171610d538ee6f6be24ad79b4b2909dee1085f2e7933b665607128e",
+      "cloudKbEnabled": false,
+      "modeledOutcomes": [],
+      "realizationIds": [],
+      "stepStatus": "completed",
+      "diagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 1,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:17:52.462254+00:00",
+            "finishedAt": "2026-08-09T16:18:19.514750+00:00",
+            "elapsedSeconds": 27.052507
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:18:19.562600+00:00",
+            "finishedAt": "2026-08-09T16:18:19.595171+00:00",
+            "elapsedSeconds": 0.03258
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:18:19.662568+00:00",
+            "finishedAt": "2026-08-09T16:18:23.538457+00:00",
+            "elapsedSeconds": 3.875895
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:18:23.538481+00:00",
+            "finishedAt": "2026-08-09T16:18:31.919241+00:00",
+            "elapsedSeconds": 8.380774
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "elapsedSeconds": 39.804328,
+      "evaluation": {
+        "schemaVersion": "easydep-implementation-evaluation/v1",
+        "repository": {
+          "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\control-no-depkb\\application",
+          "fileCount": 23,
+          "javaFileCount": 14,
+          "testFileCount": 2,
+          "markdownContaminatedFiles": [],
+          "checks": {
+            "source_present": true,
+            "test_present": true,
+            "build_present": true,
+            "dockerfile_present": true,
+            "iac_present": true,
+            "generated_files_clean": true,
+            "deployment_manifest_present": false,
+            "requirements_documented": false,
+            "design_documented": false,
+            "deployment_diagram_present": false,
+            "traceability_present": false
+          },
+          "implementationComplete": true,
+          "requiredPassed": true,
+          "cloudNativePassed": true
+        },
+        "resourceGraph": {
+          "status": "not-run",
+          "nodes": [],
+          "edges": [],
+          "parseErrors": [],
+          "unknownProviderTypes": [],
+          "extractionMethod": null,
+          "reason": "OpenTofu/Terraform graph was not run"
+        },
+        "terraformSemantics": {
+          "status": "available",
+          "parser": "python-hcl2",
+          "resources": [
+            {
+              "address": "aws_vpc.app_vpc",
+              "providerType": "aws_vpc",
+              "declarationKind": "resource",
+              "concept": "network",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_internet_gateway.igw",
+              "providerType": "aws_internet_gateway",
+              "declarationKind": "resource",
+              "concept": "internetGateway",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_subnet.public_subnet",
+              "providerType": "aws_subnet",
+              "declarationKind": "resource",
+              "concept": "subnet",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_route_table.public_rt",
+              "providerType": "aws_route_table",
+              "declarationKind": "resource",
+              "concept": "routeTable",
+              "source": "infra/main.tf",
+              "blocks": [
+                "route"
+              ]
+            },
+            {
+              "address": "aws_route_table_association.public_assoc",
+              "providerType": "aws_route_table_association",
+              "declarationKind": "resource",
+              "concept": "routeAssociation",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_security_group.alb_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_security_group.instance_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_instance.app_instance",
+              "providerType": "aws_instance",
+              "declarationKind": "resource",
+              "concept": "vm",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb.app_alb",
+              "providerType": "aws_lb",
+              "declarationKind": "resource",
+              "concept": "loadBalancer",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb_target_group.app_tg",
+              "providerType": "aws_lb_target_group",
+              "declarationKind": "resource",
+              "concept": "backendPool",
+              "source": "infra/main.tf",
+              "blocks": [
+                "health_check"
+              ]
+            },
+            {
+              "address": "aws_lb_target_group_attachment.tg_attachment",
+              "providerType": "aws_lb_target_group_attachment",
+              "declarationKind": "resource",
+              "concept": "backendAttachment",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb_listener.https_listener",
+              "providerType": "aws_lb_listener",
+              "declarationKind": "resource",
+              "concept": "listener",
+              "source": "infra/main.tf",
+              "blocks": [
+                "default_action"
+              ]
+            },
+            {
+              "address": "data.aws_ami.amazon_linux",
+              "providerType": "aws_ami",
+              "declarationKind": "data",
+              "concept": "unmapped",
+              "source": "infra/main.tf",
+              "blocks": [
+                "filter"
+              ]
+            }
+          ],
+          "concepts": [
+            "backendAttachment",
+            "backendPool",
+            "firewall",
+            "internetGateway",
+            "listener",
+            "loadBalancer",
+            "network",
+            "nic",
+            "routeAssociation",
+            "routeTable",
+            "subnet",
+            "vm"
+          ],
+          "edges": [
+            {
+              "from": "backendAttachment",
+              "to": "backendPool"
+            },
+            {
+              "from": "backendAttachment",
+              "to": "vm"
+            },
+            {
+              "from": "backendPool",
+              "to": "network"
+            },
+            {
+              "from": "firewall",
+              "to": "firewall"
+            },
+            {
+              "from": "firewall",
+              "to": "network"
+            },
+            {
+              "from": "internetGateway",
+              "to": "network"
+            },
+            {
+              "from": "listener",
+              "to": "backendPool"
+            },
+            {
+              "from": "listener",
+              "to": "loadBalancer"
+            },
+            {
+              "from": "loadBalancer",
+              "to": "firewall"
+            },
+            {
+              "from": "loadBalancer",
+              "to": "subnet"
+            },
+            {
+              "from": "nic",
+              "to": "subnet"
+            },
+            {
+              "from": "routeAssociation",
+              "to": "routeTable"
+            },
+            {
+              "from": "routeAssociation",
+              "to": "subnet"
+            },
+            {
+              "from": "routeTable",
+              "to": "internetGateway"
+            },
+            {
+              "from": "routeTable",
+              "to": "network"
+            },
+            {
+              "from": "subnet",
+              "to": "network"
+            },
+            {
+              "from": "vm",
+              "to": "firewall"
+            },
+            {
+              "from": "vm",
+              "to": "nic"
+            },
+            {
+              "from": "vm",
+              "to": "subnet"
+            }
+          ],
+          "resourceGraph": {
+            "nodes": [
+              {
+                "id": "aws_vpc.app_vpc",
+                "providerType": "aws_vpc",
+                "declarationKind": "resource",
+                "concept": "network",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_internet_gateway.igw",
+                "providerType": "aws_internet_gateway",
+                "declarationKind": "resource",
+                "concept": "internetGateway",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_subnet.public_subnet",
+                "providerType": "aws_subnet",
+                "declarationKind": "resource",
+                "concept": "subnet",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_route_table.public_rt",
+                "providerType": "aws_route_table",
+                "declarationKind": "resource",
+                "concept": "routeTable",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_route_table_association.public_assoc",
+                "providerType": "aws_route_table_association",
+                "declarationKind": "resource",
+                "concept": "routeAssociation",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_security_group.alb_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_security_group.instance_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_instance.app_instance",
+                "providerType": "aws_instance",
+                "declarationKind": "resource",
+                "concept": "vm",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb.app_alb",
+                "providerType": "aws_lb",
+                "declarationKind": "resource",
+                "concept": "loadBalancer",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group.app_tg",
+                "providerType": "aws_lb_target_group",
+                "declarationKind": "resource",
+                "concept": "backendPool",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group_attachment.tg_attachment",
+                "providerType": "aws_lb_target_group_attachment",
+                "declarationKind": "resource",
+                "concept": "backendAttachment",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_listener.https_listener",
+                "providerType": "aws_lb_listener",
+                "declarationKind": "resource",
+                "concept": "listener",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_ami.amazon_linux",
+                "providerType": "aws_ami",
+                "declarationKind": "data",
+                "concept": "unmapped",
+                "source": "infra/main.tf"
+              }
+            ],
+            "edges": [
+              {
+                "from": "aws_instance.app_instance",
+                "to": "aws_security_group.instance_sg",
+                "fromConcept": "vm",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app_instance",
+                "to": "aws_subnet.public_subnet",
+                "fromConcept": "vm",
+                "toConcept": "subnet",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app_instance",
+                "to": "data.aws_ami.amazon_linux",
+                "fromConcept": "vm",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_internet_gateway.igw",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "internetGateway",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_alb",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "loadBalancer",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_alb",
+                "to": "aws_subnet.public_subnet",
+                "fromConcept": "loadBalancer",
+                "toConcept": "subnet",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https_listener",
+                "to": "aws_lb.app_alb",
+                "fromConcept": "listener",
+                "toConcept": "loadBalancer",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https_listener",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "listener",
+                "toConcept": "backendPool",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group.app_tg",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "backendPool",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.tg_attachment",
+                "to": "aws_instance.app_instance",
+                "fromConcept": "backendAttachment",
+                "toConcept": "vm",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.tg_attachment",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "backendAttachment",
+                "toConcept": "backendPool",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_route_table.public_rt",
+                "to": "aws_internet_gateway.igw",
+                "fromConcept": "routeTable",
+                "toConcept": "internetGateway",
+                "relation": "references"
+              },
+              {
+                "from": "aws_route_table.public_rt",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "routeTable",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_route_table_association.public_assoc",
+                "to": "aws_route_table.public_rt",
+                "fromConcept": "routeAssociation",
+                "toConcept": "routeTable",
+                "relation": "associates"
+              },
+              {
+                "from": "aws_route_table_association.public_assoc",
+                "to": "aws_subnet.public_subnet",
+                "fromConcept": "routeAssociation",
+                "toConcept": "subnet",
+                "relation": "associates"
+              },
+              {
+                "from": "aws_security_group.alb_sg",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.instance_sg",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "firewall",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.instance_sg",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_subnet.public_subnet",
+                "to": "aws_vpc.app_vpc",
+                "fromConcept": "subnet",
+                "toConcept": "network",
+                "relation": "references"
+              }
+            ],
+            "attributes": {
+              "vmPublicIp": true,
+              "internetIngressRule": true
+            }
+          },
+          "componentProjections": {
+            "status": "available",
+            "provider": "aws",
+            "deltas": {
+              "persistent-storage": {
+                "components": [
+                  {
+                    "componentId": "disk",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_ebs_volume",
+                    "instances": [],
+                    "status": "failed"
+                  },
+                  {
+                    "componentId": "attachment",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_volume_attachment",
+                    "instances": [],
+                    "status": "failed"
+                  },
+                  {
+                    "componentId": "mount",
+                    "terraformKind": "guestConfiguration",
+                    "terraformType": null,
+                    "instances": [],
+                    "status": "failed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "attachment",
+                    "to": "disk",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "attachment",
+                    "to": "vm",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "cardinality": null,
+                    "observedPairs": [],
+                    "status": "failed"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "cardinality": null,
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "constraint": "same-availability-zone",
+                    "status": "requires-separate-gate"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "constraint": "device-must-be-formatted-and-mounted",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "load-balanced-multi-vm": {
+                "components": [
+                  {
+                    "componentId": "loadBalancer",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb",
+                    "instances": [
+                      "aws_lb.app_alb"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "listener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https_listener"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendGroup",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group",
+                    "instances": [
+                      "aws_lb_target_group.app_tg"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendMembership",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group_attachment",
+                    "instances": [
+                      "aws_lb_target_group_attachment.tg_attachment"
+                    ],
+                    "status": "passed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "cardinality": "one-to-many",
+                    "observedPairs": [
+                      [
+                        "aws_lb.app_alb",
+                        "aws_subnet.public_subnet"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https_listener",
+                        "aws_lb.app_alb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https_listener",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.tg_attachment",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "vm",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.tg_attachment",
+                        "aws_instance.app_instance"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "constraint": "multiple-availability-zones",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "https-termination": {
+                "components": [
+                  {
+                    "componentId": "httpsListener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https_listener"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "certificate",
+                    "terraformKind": "resourceOrDataSource",
+                    "terraformType": "aws_acm_certificate|data.aws_acm_certificate",
+                    "instances": [],
+                    "status": "failed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "httpsListener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https_listener",
+                        "aws_lb.app_alb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "cardinality": "many-to-many",
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "constraint": "exactly-one-default-certificate",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              }
+            },
+            "guestMountPaths": []
+          },
+          "capabilities": {
+            "vmCount": 1,
+            "availabilityZones": null,
+            "loadBalancer": true,
+            "persistentData": false,
+            "dataDiskGiB": null,
+            "volumeMount": null,
+            "publicHttps": true,
+            "healthPath": "/health",
+            "applicationPort": 8080
+          },
+          "unmappedProviderTypes": [
+            "aws_ami"
+          ],
+          "errors": []
+        },
+        "codeQuality": {
+          "complexity": {
+            "status": "available",
+            "tool": "lizard",
+            "version": "1.23.0",
+            "fileCount": 12,
+            "functionCount": 18,
+            "nloc": 166,
+            "cyclomaticComplexity": {
+              "mean": 1.0,
+              "median": 1.0,
+              "p95": 1.0,
+              "max": 1,
+              "functionsAbove10": 0,
+              "functionsAbove10Ratio": 0.0
+            },
+            "functionNloc": {
+              "mean": 3.555556,
+              "p95": 7.15,
+              "max": 8
+            },
+            "decisionPointDensityPer100Nloc": 0.0
+          },
+          "coverage": {
+            "status": "unavailable",
+            "reason": "JaCoCo XML report not found"
+          },
+          "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+        },
+        "staticValidationPassed": true,
+        "expected": {
+          "schemaVersion": "easydep-end-to-end-oracle/v1",
+          "caseId": "PS-control-aws",
+          "profile": "PS-control",
+          "provider": "aws",
+          "budgetUsd": 100,
+          "requiredCapabilities": {
+            "publicHttps": false,
+            "healthPath": "/health",
+            "applicationPort": 8080,
+            "vmCount": {
+              "min": 1,
+              "max": 1
+            },
+            "persistentData": false,
+            "loadBalancer": false
+          },
+          "functionalAcceptance": [
+            {
+              "name": "create note",
+              "method": "POST",
+              "path": "/notes",
+              "status": 201,
+              "json": {
+                "title": "alpha",
+                "content": "first"
+              },
+              "expectJson": {
+                "title": "alpha",
+                "content": "first"
+              }
+            },
+            {
+              "name": "list notes",
+              "method": "GET",
+              "path": "/notes",
+              "status": 200,
+              "expectJson": [
+                {
+                  "title": "alpha",
+                  "content": "first"
+                }
+              ]
+            }
+          ],
+          "persistenceAcceptance": null,
+          "forbiddenConcepts": [
+            "dataDisk",
+            "loadBalancer",
+            "kubernetes",
+            "managedApplicationPlatform"
+          ],
+          "requiredDependencies": [],
+          "legacyProviderProjection": false,
+          "componentDependencyExpectations": {
+            "structuralReferences": [],
+            "cardinalities": [],
+            "constraints": []
+          }
+        },
+        "score": {
+          "status": "completed",
+          "passed": 6,
+          "failed": 3,
+          "unknown": 0,
+          "notApplicable": 0,
+          "notMeasured": 0,
+          "observedUnverified": 0,
+          "passRate": 0.666667,
+          "checks": [
+            {
+              "kind": "providerBoundary",
+              "expected": "aws",
+              "actual": "aws",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "publicHttps",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "capability",
+              "name": "healthPath",
+              "expected": "/health",
+              "actual": "/health",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "applicationPort",
+              "expected": 8080,
+              "actual": 8080,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "vmCount",
+              "expected": {
+                "min": 1,
+                "max": 1
+              },
+              "actual": 1,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "persistentData",
+              "expected": false,
+              "actual": false,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "loadBalancer",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "dataDisk",
+              "status": "passed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "loadBalancer",
+              "status": "failed"
+            }
+          ]
+        },
+        "externalTools": {
+          "status": "not-run",
+          "reason": "enable explicitly with --run-tools"
+        },
+        "experimentEligible": false
+      }
+    },
+    {
+      "condition": "treatment",
+      "arm": "full",
+      "caseId": "PS-treatment-aws",
+      "inputApplicationSha256": "fd33c726b8fbee4b6c377be8dcd21db3440aa71fbcc38809625daa5c679e245a",
+      "fixedDeploymentNeeds": {
+        "http_ingress": {
+          "role": "Expose the service over HTTP so that clients can reach the API endpoints",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "protocol": "HTTP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "persistent_block_storage": {
+          "role": "Provide durable storage that survives container and VM replacement for SQLite data files",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "size_gib": 20,
+            "mount_path": "/var/lib/notes"
+          },
+          "dependencyCapabilityIds": [
+            "persistent-block-storage"
+          ],
+          "decision": "accepted"
+        },
+        "container_runtime": {
+          "role": "Run the application inside a Docker container as required by the build and runtime stack",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "runtime": "Docker",
+            "container_image_description": "Java 21 Spring Boot application built with Gradle"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "single_vm": {
+          "role": "Provision exactly one application virtual machine as the deployment target",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "instance_count": 1
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "port_exposure": {
+          "role": "Expose the application on TCP port 8080 to satisfy the service’s listening requirement",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "port": 8080,
+            "protocol": "TCP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "health_endpoint": {
+          "role": "Expose a GET /health endpoint for liveness/health checking",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "path": "/health",
+            "method": "GET"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "embedded_sql_database": {
+          "role": "Provide an embedded SQLite database for persisting notes",
+          "required": true,
+          "requirementIds": [
+            "R1"
+          ],
+          "metadata": {
+            "type": "SQLite"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "fixedDeploymentNeedsSha256": "d24052cbf4f7d02cd2ee870d3b2695f04f4bcd45ab194f108640d7c62ce6ca11",
+      "cloudKbEnabled": true,
+      "modeledOutcomes": [
+        {
+          "source": "system_scope",
+          "field": "docker_on_vm",
+          "outcome": "vm"
+        },
+        {
+          "source": "deployment_needs",
+          "field": "persistent_block_storage",
+          "capabilityIds": [
+            "persistent-block-storage"
+          ],
+          "outcome": "disk"
+        }
+      ],
+      "realizationIds": [],
+      "stepStatus": "failed",
+      "diagnostics": [
+        {
+          "code": "ValueError",
+          "message": "Generated Terraform failed providerSchema validation after one repair: \nError: Invalid function argument\n\n  on main.tf line 101, in resource \"aws_instance\" \"app\":\n 101:   user_data                   = templatefile(\"${path.module}/user_data.sh.tftpl\", {\n 102:     container_image = var.container_image,\n 103:     ebs_device       = var.ebs_device_name,\n 104:     mount_point      = var.ebs_mount_point\n 105:   })\n    ├────────────────\n    │ while calling templatefile(path, vars)\n    │ var.container_image is a string\n    │ var.ebs_device_name is a string\n    │ var.ebs_mount_point is a string\n\nInvalid value for \"vars\" parameter: vars map does not contain key\n\"CONTAINER_NAME\", referenced at ./user_data.sh.tftpl:43,55-69.\n",
+          "severity": "error"
+        }
+      ],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:18:32.742615+00:00",
+            "finishedAt": "2026-08-09T16:19:05.214765+00:00",
+            "elapsedSeconds": 32.47216
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:19:05.247590+00:00",
+            "finishedAt": "2026-08-09T16:19:05.271558+00:00",
+            "elapsedSeconds": 0.023976
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:19:05.330282+00:00",
+            "finishedAt": "2026-08-09T16:19:22.906809+00:00",
+            "elapsedSeconds": 17.576546
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:19:22.941414+00:00",
+            "finishedAt": "2026-08-09T16:19:22.964856+00:00",
+            "elapsedSeconds": 0.023451
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:19:23.029534+00:00",
+            "finishedAt": "2026-08-09T16:19:26.892375+00:00",
+            "elapsedSeconds": 3.862844
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "failed",
+            "startedAt": "2026-08-09T16:19:26.892389+00:00",
+            "finishedAt": "2026-08-09T16:19:33.231759+00:00",
+            "elapsedSeconds": 6.339378
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "elapsedSeconds": 60.669626,
+      "evaluation": {
+        "schemaVersion": "easydep-implementation-evaluation/v1",
+        "repository": {
+          "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\treatment-full\\application",
+          "fileCount": 19,
+          "javaFileCount": 14,
+          "testFileCount": 2,
+          "markdownContaminatedFiles": [],
+          "checks": {
+            "source_present": true,
+            "test_present": true,
+            "build_present": true,
+            "dockerfile_present": true,
+            "iac_present": false,
+            "generated_files_clean": true,
+            "deployment_manifest_present": false,
+            "requirements_documented": false,
+            "design_documented": false,
+            "deployment_diagram_present": false,
+            "traceability_present": false
+          },
+          "implementationComplete": false,
+          "requiredPassed": false,
+          "cloudNativePassed": false
+        },
+        "resourceGraph": {
+          "status": "not-run",
+          "nodes": [],
+          "edges": [],
+          "parseErrors": [],
+          "unknownProviderTypes": [],
+          "extractionMethod": null,
+          "reason": "OpenTofu/Terraform graph was not run"
+        },
+        "terraformSemantics": {
+          "status": "failed",
+          "parser": "python-hcl2",
+          "resources": [],
+          "concepts": [],
+          "edges": [],
+          "resourceGraph": {
+            "nodes": [],
+            "edges": [],
+            "attributes": {
+              "vmPublicIp": false,
+              "internetIngressRule": false
+            }
+          },
+          "componentProjections": {
+            "status": "not-applicable",
+            "provider": null,
+            "deltas": {}
+          },
+          "capabilities": {
+            "vmCount": null,
+            "availabilityZones": null,
+            "loadBalancer": false,
+            "persistentData": false,
+            "dataDiskGiB": null,
+            "volumeMount": null,
+            "publicHttps": false,
+            "healthPath": "/health",
+            "applicationPort": 8080
+          },
+          "unmappedProviderTypes": [],
+          "errors": []
+        },
+        "codeQuality": {
+          "complexity": {
+            "status": "available",
+            "tool": "lizard",
+            "version": "1.23.0",
+            "fileCount": 12,
+            "functionCount": 18,
+            "nloc": 166,
+            "cyclomaticComplexity": {
+              "mean": 1.0,
+              "median": 1.0,
+              "p95": 1.0,
+              "max": 1,
+              "functionsAbove10": 0,
+              "functionsAbove10Ratio": 0.0
+            },
+            "functionNloc": {
+              "mean": 3.555556,
+              "p95": 7.15,
+              "max": 8
+            },
+            "decisionPointDensityPer100Nloc": 0.0
+          },
+          "coverage": {
+            "status": "unavailable",
+            "reason": "JaCoCo XML report not found"
+          },
+          "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+        },
+        "staticValidationPassed": false,
+        "expected": {
+          "schemaVersion": "easydep-end-to-end-oracle/v1",
+          "caseId": "PS-treatment-aws",
+          "profile": "PS-treatment",
+          "provider": "aws",
+          "budgetUsd": 150,
+          "requiredCapabilities": {
+            "publicHttps": false,
+            "healthPath": "/health",
+            "applicationPort": 8080,
+            "vmCount": {
+              "min": 1,
+              "max": 1
+            },
+            "persistentData": true,
+            "dataDiskGiB": {
+              "min": 20
+            },
+            "volumeMount": "/var/lib/notes",
+            "loadBalancer": false
+          },
+          "functionalAcceptance": [
+            {
+              "name": "create note",
+              "method": "POST",
+              "path": "/notes",
+              "status": 201,
+              "json": {
+                "title": "alpha",
+                "content": "first"
+              },
+              "expectJson": {
+                "title": "alpha",
+                "content": "first"
+              }
+            },
+            {
+              "name": "list notes",
+              "method": "GET",
+              "path": "/notes",
+              "status": 200,
+              "expectJson": [
+                {
+                  "title": "alpha",
+                  "content": "first"
+                }
+              ]
+            }
+          ],
+          "persistenceAcceptance": {
+            "mountPath": "/var/lib/notes",
+            "beforeRestart": [
+              {
+                "name": "재시작 전 노트 생성",
+                "method": "POST",
+                "path": "/notes",
+                "status": 201,
+                "json": {
+                  "title": "restart-proof",
+                  "content": "must-survive"
+                },
+                "expectJson": {
+                  "title": "restart-proof",
+                  "content": "must-survive"
+                }
+              }
+            ],
+            "afterRestart": [
+              {
+                "name": "재시작 후 노트 조회",
+                "method": "GET",
+                "path": "/notes",
+                "status": 200,
+                "expectJson": [
+                  {
+                    "title": "restart-proof",
+                    "content": "must-survive"
+                  }
+                ]
+              }
+            ]
+          },
+          "forbiddenConcepts": [
+            "loadBalancer",
+            "kubernetes",
+            "managedApplicationPlatform"
+          ],
+          "requiredDependencies": [],
+          "componentDeltas": [
+            "persistent-storage"
+          ],
+          "legacyProviderProjection": false,
+          "componentDependencyExpectations": {
+            "structuralReferences": [
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "disk",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ]
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ]
+              }
+            ],
+            "cardinalities": [
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "disk",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "cardinality": "one-to-one"
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "cardinality": "one-to-one"
+              }
+            ],
+            "constraints": [
+              {
+                "delta": "persistent-storage",
+                "from": "disk",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "constraint": "same-availability-zone"
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "mount",
+                "to": "attachment",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "constraint": "device-must-be-formatted-and-mounted"
+              }
+            ]
+          }
+        },
+        "score": {
+          "status": "completed",
+          "passed": 5,
+          "failed": 3,
+          "unknown": 5,
+          "notApplicable": 0,
+          "notMeasured": 4,
+          "observedUnverified": 0,
+          "passRate": 0.384615,
+          "checks": [
+            {
+              "kind": "providerBoundary",
+              "expected": "aws",
+              "actual": null,
+              "status": "unknown"
+            },
+            {
+              "kind": "capability",
+              "name": "publicHttps",
+              "expected": false,
+              "actual": false,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "healthPath",
+              "expected": "/health",
+              "actual": "/health",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "applicationPort",
+              "expected": 8080,
+              "actual": 8080,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "vmCount",
+              "expected": {
+                "min": 1,
+                "max": 1
+              },
+              "actual": null,
+              "status": "unknown"
+            },
+            {
+              "kind": "capability",
+              "name": "persistentData",
+              "expected": true,
+              "actual": false,
+              "status": "failed"
+            },
+            {
+              "kind": "capability",
+              "name": "dataDiskGiB",
+              "expected": {
+                "min": 20
+              },
+              "actual": null,
+              "status": "unknown"
+            },
+            {
+              "kind": "capability",
+              "name": "volumeMount",
+              "expected": "/var/lib/notes",
+              "actual": null,
+              "status": "unknown"
+            },
+            {
+              "kind": "capability",
+              "name": "loadBalancer",
+              "expected": false,
+              "actual": false,
+              "status": "passed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "loadBalancer",
+              "status": "passed"
+            },
+            {
+              "kind": "componentDependencyReference",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "disk",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "status": "failed"
+            },
+            {
+              "kind": "componentDependencyReference",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "status": "failed"
+            },
+            {
+              "kind": "componentCardinality",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "disk",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "cardinality": "one-to-one",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentCardinality",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "cardinality": "one-to-one",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentConstraintRequirement",
+              "delta": "persistent-storage",
+              "from": "disk",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "constraint": "same-availability-zone",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentConstraintRequirement",
+              "delta": "persistent-storage",
+              "from": "mount",
+              "to": "attachment",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentProjection",
+              "delta": "persistent-storage",
+              "status": "unknown",
+              "reason": "projection-unavailable"
+            }
+          ]
+        },
+        "externalTools": {
+          "status": "not-run",
+          "reason": "enable explicitly with --run-tools"
+        },
+        "experimentEligible": false
+      }
+    },
+    {
+      "condition": "treatment",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-aws",
+      "inputApplicationSha256": "fd33c726b8fbee4b6c377be8dcd21db3440aa71fbcc38809625daa5c679e245a",
+      "fixedDeploymentNeeds": {
+        "http_ingress": {
+          "role": "Expose the service over HTTP so that clients can reach the API endpoints",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "protocol": "HTTP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "persistent_block_storage": {
+          "role": "Provide durable storage that survives container and VM replacement for SQLite data files",
+          "required": true,
+          "requirementIds": [
+            "R2"
+          ],
+          "metadata": {
+            "size_gib": 20,
+            "mount_path": "/var/lib/notes"
+          },
+          "dependencyCapabilityIds": [
+            "persistent-block-storage"
+          ],
+          "decision": "accepted"
+        },
+        "container_runtime": {
+          "role": "Run the application inside a Docker container as required by the build and runtime stack",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "runtime": "Docker",
+            "container_image_description": "Java 21 Spring Boot application built with Gradle"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "single_vm": {
+          "role": "Provision exactly one application virtual machine as the deployment target",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "instance_count": 1
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "port_exposure": {
+          "role": "Expose the application on TCP port 8080 to satisfy the service’s listening requirement",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "port": 8080,
+            "protocol": "TCP"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "health_endpoint": {
+          "role": "Expose a GET /health endpoint for liveness/health checking",
+          "required": true,
+          "requirementIds": [
+            "R3"
+          ],
+          "metadata": {
+            "path": "/health",
+            "method": "GET"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "embedded_sql_database": {
+          "role": "Provide an embedded SQLite database for persisting notes",
+          "required": true,
+          "requirementIds": [
+            "R1"
+          ],
+          "metadata": {
+            "type": "SQLite"
+          },
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "fixedDeploymentNeedsSha256": "d24052cbf4f7d02cd2ee870d3b2695f04f4bcd45ab194f108640d7c62ce6ca11",
+      "cloudKbEnabled": false,
+      "modeledOutcomes": [],
+      "realizationIds": [],
+      "stepStatus": "completed",
+      "diagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:19:33.618469+00:00",
+            "finishedAt": "2026-08-09T16:20:12.252383+00:00",
+            "elapsedSeconds": 38.633923
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:20:12.280351+00:00",
+            "finishedAt": "2026-08-09T16:20:12.304846+00:00",
+            "elapsedSeconds": 0.024505
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:20:12.374103+00:00",
+            "finishedAt": "2026-08-09T16:20:32.239025+00:00",
+            "elapsedSeconds": 19.864929
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:20:32.267397+00:00",
+            "finishedAt": "2026-08-09T16:20:32.292874+00:00",
+            "elapsedSeconds": 0.025485
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:20:32.368266+00:00",
+            "finishedAt": "2026-08-09T16:20:36.568123+00:00",
+            "elapsedSeconds": 4.19986
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:20:36.568137+00:00",
+            "finishedAt": "2026-08-09T16:20:41.849711+00:00",
+            "elapsedSeconds": 5.281583
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "elapsedSeconds": 68.511892,
+      "evaluation": {
+        "schemaVersion": "easydep-implementation-evaluation/v1",
+        "repository": {
+          "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\confirmatory\\component-ps-snapshot-delivery-r1\\treatment-no-depkb\\application",
+          "fileCount": 24,
+          "javaFileCount": 14,
+          "testFileCount": 2,
+          "markdownContaminatedFiles": [],
+          "checks": {
+            "source_present": true,
+            "test_present": true,
+            "build_present": true,
+            "dockerfile_present": true,
+            "iac_present": true,
+            "generated_files_clean": true,
+            "deployment_manifest_present": false,
+            "requirements_documented": false,
+            "design_documented": false,
+            "deployment_diagram_present": false,
+            "traceability_present": false
+          },
+          "implementationComplete": true,
+          "requiredPassed": true,
+          "cloudNativePassed": true
+        },
+        "resourceGraph": {
+          "status": "not-run",
+          "nodes": [],
+          "edges": [],
+          "parseErrors": [],
+          "unknownProviderTypes": [],
+          "extractionMethod": null,
+          "reason": "OpenTofu/Terraform graph was not run"
+        },
+        "terraformSemantics": {
+          "status": "available",
+          "parser": "python-hcl2",
+          "resources": [
+            {
+              "address": "aws_vpc.main",
+              "providerType": "aws_vpc",
+              "declarationKind": "resource",
+              "concept": "network",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_subnet.public",
+              "providerType": "aws_subnet",
+              "declarationKind": "resource",
+              "concept": "subnet",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_internet_gateway.igw",
+              "providerType": "aws_internet_gateway",
+              "declarationKind": "resource",
+              "concept": "internetGateway",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_route_table.public",
+              "providerType": "aws_route_table",
+              "declarationKind": "resource",
+              "concept": "routeTable",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_route.default_route",
+              "providerType": "aws_route",
+              "declarationKind": "resource",
+              "concept": "route",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_route_table_association.public_assoc",
+              "providerType": "aws_route_table_association",
+              "declarationKind": "resource",
+              "concept": "routeAssociation",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_security_group.alb_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_security_group.instance_sg",
+              "providerType": "aws_security_group",
+              "declarationKind": "resource",
+              "concept": "firewall",
+              "source": "infra/main.tf",
+              "blocks": [
+                "egress",
+                "ingress"
+              ]
+            },
+            {
+              "address": "aws_instance.app",
+              "providerType": "aws_instance",
+              "declarationKind": "resource",
+              "concept": "vm",
+              "source": "infra/main.tf",
+              "blocks": [
+                "root_block_device"
+              ]
+            },
+            {
+              "address": "aws_ebs_volume.data",
+              "providerType": "aws_ebs_volume",
+              "declarationKind": "resource",
+              "concept": "dataDisk",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_volume_attachment.data_attach",
+              "providerType": "aws_volume_attachment",
+              "declarationKind": "resource",
+              "concept": "diskAttachment",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb.app_alb",
+              "providerType": "aws_lb",
+              "declarationKind": "resource",
+              "concept": "loadBalancer",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "aws_lb_target_group.app_tg",
+              "providerType": "aws_lb_target_group",
+              "declarationKind": "resource",
+              "concept": "backendPool",
+              "source": "infra/main.tf",
+              "blocks": [
+                "health_check"
+              ]
+            },
+            {
+              "address": "aws_lb_listener.https",
+              "providerType": "aws_lb_listener",
+              "declarationKind": "resource",
+              "concept": "listener",
+              "source": "infra/main.tf",
+              "blocks": [
+                "default_action"
+              ]
+            },
+            {
+              "address": "aws_lb_target_group_attachment.tg_attach",
+              "providerType": "aws_lb_target_group_attachment",
+              "declarationKind": "resource",
+              "concept": "backendAttachment",
+              "source": "infra/main.tf",
+              "blocks": []
+            },
+            {
+              "address": "data.aws_ami.amazon_linux",
+              "providerType": "aws_ami",
+              "declarationKind": "data",
+              "concept": "unmapped",
+              "source": "infra/main.tf",
+              "blocks": [
+                "filter"
+              ]
+            },
+            {
+              "address": "data.aws_availability_zones.available",
+              "providerType": "aws_availability_zones",
+              "declarationKind": "data",
+              "concept": "unmapped",
+              "source": "infra/main.tf",
+              "blocks": []
+            }
+          ],
+          "concepts": [
+            "backendAttachment",
+            "backendPool",
+            "dataDisk",
+            "diskAttachment",
+            "firewall",
+            "internetGateway",
+            "listener",
+            "loadBalancer",
+            "network",
+            "nic",
+            "route",
+            "routeAssociation",
+            "routeTable",
+            "subnet",
+            "vm"
+          ],
+          "edges": [
+            {
+              "from": "backendAttachment",
+              "to": "backendPool"
+            },
+            {
+              "from": "backendAttachment",
+              "to": "vm"
+            },
+            {
+              "from": "backendPool",
+              "to": "network"
+            },
+            {
+              "from": "dataDisk",
+              "to": "vm"
+            },
+            {
+              "from": "diskAttachment",
+              "to": "dataDisk"
+            },
+            {
+              "from": "diskAttachment",
+              "to": "vm"
+            },
+            {
+              "from": "firewall",
+              "to": "firewall"
+            },
+            {
+              "from": "firewall",
+              "to": "network"
+            },
+            {
+              "from": "internetGateway",
+              "to": "network"
+            },
+            {
+              "from": "listener",
+              "to": "backendPool"
+            },
+            {
+              "from": "listener",
+              "to": "loadBalancer"
+            },
+            {
+              "from": "loadBalancer",
+              "to": "firewall"
+            },
+            {
+              "from": "loadBalancer",
+              "to": "subnet"
+            },
+            {
+              "from": "nic",
+              "to": "subnet"
+            },
+            {
+              "from": "route",
+              "to": "internetGateway"
+            },
+            {
+              "from": "route",
+              "to": "routeTable"
+            },
+            {
+              "from": "routeAssociation",
+              "to": "routeTable"
+            },
+            {
+              "from": "routeAssociation",
+              "to": "subnet"
+            },
+            {
+              "from": "routeTable",
+              "to": "network"
+            },
+            {
+              "from": "subnet",
+              "to": "network"
+            },
+            {
+              "from": "vm",
+              "to": "firewall"
+            },
+            {
+              "from": "vm",
+              "to": "nic"
+            },
+            {
+              "from": "vm",
+              "to": "subnet"
+            }
+          ],
+          "resourceGraph": {
+            "nodes": [
+              {
+                "id": "aws_vpc.main",
+                "providerType": "aws_vpc",
+                "declarationKind": "resource",
+                "concept": "network",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_subnet.public",
+                "providerType": "aws_subnet",
+                "declarationKind": "resource",
+                "concept": "subnet",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_internet_gateway.igw",
+                "providerType": "aws_internet_gateway",
+                "declarationKind": "resource",
+                "concept": "internetGateway",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_route_table.public",
+                "providerType": "aws_route_table",
+                "declarationKind": "resource",
+                "concept": "routeTable",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_route.default_route",
+                "providerType": "aws_route",
+                "declarationKind": "resource",
+                "concept": "route",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_route_table_association.public_assoc",
+                "providerType": "aws_route_table_association",
+                "declarationKind": "resource",
+                "concept": "routeAssociation",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_security_group.alb_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_security_group.instance_sg",
+                "providerType": "aws_security_group",
+                "declarationKind": "resource",
+                "concept": "firewall",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_instance.app",
+                "providerType": "aws_instance",
+                "declarationKind": "resource",
+                "concept": "vm",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_ebs_volume.data",
+                "providerType": "aws_ebs_volume",
+                "declarationKind": "resource",
+                "concept": "dataDisk",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_volume_attachment.data_attach",
+                "providerType": "aws_volume_attachment",
+                "declarationKind": "resource",
+                "concept": "diskAttachment",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb.app_alb",
+                "providerType": "aws_lb",
+                "declarationKind": "resource",
+                "concept": "loadBalancer",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group.app_tg",
+                "providerType": "aws_lb_target_group",
+                "declarationKind": "resource",
+                "concept": "backendPool",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_listener.https",
+                "providerType": "aws_lb_listener",
+                "declarationKind": "resource",
+                "concept": "listener",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "aws_lb_target_group_attachment.tg_attach",
+                "providerType": "aws_lb_target_group_attachment",
+                "declarationKind": "resource",
+                "concept": "backendAttachment",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_ami.amazon_linux",
+                "providerType": "aws_ami",
+                "declarationKind": "data",
+                "concept": "unmapped",
+                "source": "infra/main.tf"
+              },
+              {
+                "id": "data.aws_availability_zones.available",
+                "providerType": "aws_availability_zones",
+                "declarationKind": "data",
+                "concept": "unmapped",
+                "source": "infra/main.tf"
+              }
+            ],
+            "edges": [
+              {
+                "from": "aws_ebs_volume.data",
+                "to": "aws_instance.app",
+                "fromConcept": "dataDisk",
+                "toConcept": "vm",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "aws_security_group.instance_sg",
+                "fromConcept": "vm",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "aws_subnet.public",
+                "fromConcept": "vm",
+                "toConcept": "subnet",
+                "relation": "references"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "data.aws_ami.amazon_linux",
+                "fromConcept": "vm",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_internet_gateway.igw",
+                "to": "aws_vpc.main",
+                "fromConcept": "internetGateway",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_alb",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "loadBalancer",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb.app_alb",
+                "to": "aws_subnet.public",
+                "fromConcept": "loadBalancer",
+                "toConcept": "subnet",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https",
+                "to": "aws_lb.app_alb",
+                "fromConcept": "listener",
+                "toConcept": "loadBalancer",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_listener.https",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "listener",
+                "toConcept": "backendPool",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group.app_tg",
+                "to": "aws_vpc.main",
+                "fromConcept": "backendPool",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.tg_attach",
+                "to": "aws_instance.app",
+                "fromConcept": "backendAttachment",
+                "toConcept": "vm",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_lb_target_group_attachment.tg_attach",
+                "to": "aws_lb_target_group.app_tg",
+                "fromConcept": "backendAttachment",
+                "toConcept": "backendPool",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_route.default_route",
+                "to": "aws_internet_gateway.igw",
+                "fromConcept": "route",
+                "toConcept": "internetGateway",
+                "relation": "routesTo"
+              },
+              {
+                "from": "aws_route.default_route",
+                "to": "aws_route_table.public",
+                "fromConcept": "route",
+                "toConcept": "routeTable",
+                "relation": "routesTo"
+              },
+              {
+                "from": "aws_route_table.public",
+                "to": "aws_vpc.main",
+                "fromConcept": "routeTable",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_route_table_association.public_assoc",
+                "to": "aws_route_table.public",
+                "fromConcept": "routeAssociation",
+                "toConcept": "routeTable",
+                "relation": "associates"
+              },
+              {
+                "from": "aws_route_table_association.public_assoc",
+                "to": "aws_subnet.public",
+                "fromConcept": "routeAssociation",
+                "toConcept": "subnet",
+                "relation": "associates"
+              },
+              {
+                "from": "aws_security_group.alb_sg",
+                "to": "aws_vpc.main",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.instance_sg",
+                "to": "aws_security_group.alb_sg",
+                "fromConcept": "firewall",
+                "toConcept": "firewall",
+                "relation": "references"
+              },
+              {
+                "from": "aws_security_group.instance_sg",
+                "to": "aws_vpc.main",
+                "fromConcept": "firewall",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_subnet.public",
+                "to": "aws_vpc.main",
+                "fromConcept": "subnet",
+                "toConcept": "network",
+                "relation": "references"
+              },
+              {
+                "from": "aws_subnet.public",
+                "to": "data.aws_availability_zones.available",
+                "fromConcept": "subnet",
+                "toConcept": "unmapped",
+                "relation": "references"
+              },
+              {
+                "from": "aws_volume_attachment.data_attach",
+                "to": "aws_ebs_volume.data",
+                "fromConcept": "diskAttachment",
+                "toConcept": "dataDisk",
+                "relation": "attaches"
+              },
+              {
+                "from": "aws_volume_attachment.data_attach",
+                "to": "aws_instance.app",
+                "fromConcept": "diskAttachment",
+                "toConcept": "vm",
+                "relation": "attaches"
+              }
+            ],
+            "attributes": {
+              "vmPublicIp": true,
+              "internetIngressRule": true
+            }
+          },
+          "componentProjections": {
+            "status": "available",
+            "provider": "aws",
+            "deltas": {
+              "persistent-storage": {
+                "components": [
+                  {
+                    "componentId": "disk",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_ebs_volume",
+                    "instances": [
+                      "aws_ebs_volume.data"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "attachment",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_volume_attachment",
+                    "instances": [
+                      "aws_volume_attachment.data_attach"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "mount",
+                    "terraformKind": "guestConfiguration",
+                    "terraformType": null,
+                    "instances": [
+                      "guest:mount:/var/lib/notes"
+                    ],
+                    "status": "observed-unverified"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "attachment",
+                    "to": "disk",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_volume_attachment.data_attach",
+                        "aws_ebs_volume.data"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "attachment",
+                    "to": "vm",
+                    "cardinality": "one-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_volume_attachment.data_attach",
+                        "aws_instance.app"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "cardinality": null,
+                    "observedPairs": [
+                      [
+                        "aws_ebs_volume.data",
+                        "aws_instance.app"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "cardinality": null,
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "disk",
+                    "to": "vm",
+                    "constraint": "same-availability-zone",
+                    "status": "requires-separate-gate"
+                  },
+                  {
+                    "from": "mount",
+                    "to": "attachment",
+                    "constraint": "device-must-be-formatted-and-mounted",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "load-balanced-multi-vm": {
+                "components": [
+                  {
+                    "componentId": "loadBalancer",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb",
+                    "instances": [
+                      "aws_lb.app_alb"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "listener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendGroup",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group",
+                    "instances": [
+                      "aws_lb_target_group.app_tg"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "backendMembership",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_target_group_attachment",
+                    "instances": [
+                      "aws_lb_target_group_attachment.tg_attach"
+                    ],
+                    "status": "passed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "cardinality": "one-to-many",
+                    "observedPairs": [
+                      [
+                        "aws_lb.app_alb",
+                        "aws_subnet.public"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb.app_alb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "listener",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "backendGroup",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.tg_attach",
+                        "aws_lb_target_group.app_tg"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "backendMembership",
+                    "to": "vm",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_target_group_attachment.tg_attach",
+                        "aws_instance.app"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "loadBalancer",
+                    "to": "subnet",
+                    "constraint": "multiple-availability-zones",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              },
+              "https-termination": {
+                "components": [
+                  {
+                    "componentId": "httpsListener",
+                    "terraformKind": "resource",
+                    "terraformType": "aws_lb_listener",
+                    "instances": [
+                      "aws_lb_listener.https"
+                    ],
+                    "status": "passed"
+                  },
+                  {
+                    "componentId": "certificate",
+                    "terraformKind": "resourceOrDataSource",
+                    "terraformType": "aws_acm_certificate|data.aws_acm_certificate",
+                    "instances": [],
+                    "status": "failed"
+                  }
+                ],
+                "relations": [
+                  {
+                    "from": "httpsListener",
+                    "to": "loadBalancer",
+                    "cardinality": "many-to-one",
+                    "observedPairs": [
+                      [
+                        "aws_lb_listener.https",
+                        "aws_lb.app_alb"
+                      ]
+                    ],
+                    "status": "observed-unverified"
+                  },
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "cardinality": "many-to-many",
+                    "observedPairs": [],
+                    "status": "failed"
+                  }
+                ],
+                "constraints": [
+                  {
+                    "from": "httpsListener",
+                    "to": "certificate",
+                    "constraint": "exactly-one-default-certificate",
+                    "status": "requires-separate-gate"
+                  }
+                ]
+              }
+            },
+            "guestMountPaths": [
+              "/var/lib/notes"
+            ]
+          },
+          "capabilities": {
+            "vmCount": 1,
+            "availabilityZones": null,
+            "loadBalancer": true,
+            "persistentData": true,
+            "dataDiskGiB": 20,
+            "volumeMount": "/var/lib/notes",
+            "publicHttps": true,
+            "healthPath": "/health",
+            "applicationPort": 8080
+          },
+          "unmappedProviderTypes": [
+            "aws_ami",
+            "aws_availability_zones"
+          ],
+          "errors": []
+        },
+        "codeQuality": {
+          "complexity": {
+            "status": "available",
+            "tool": "lizard",
+            "version": "1.23.0",
+            "fileCount": 12,
+            "functionCount": 18,
+            "nloc": 166,
+            "cyclomaticComplexity": {
+              "mean": 1.0,
+              "median": 1.0,
+              "p95": 1.0,
+              "max": 1,
+              "functionsAbove10": 0,
+              "functionsAbove10Ratio": 0.0
+            },
+            "functionNloc": {
+              "mean": 3.555556,
+              "p95": 7.15,
+              "max": 8
+            },
+            "decisionPointDensityPer100Nloc": 0.0
+          },
+          "coverage": {
+            "status": "unavailable",
+            "reason": "JaCoCo XML report not found"
+          },
+          "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+        },
+        "staticValidationPassed": true,
+        "expected": {
+          "schemaVersion": "easydep-end-to-end-oracle/v1",
+          "caseId": "PS-treatment-aws",
+          "profile": "PS-treatment",
+          "provider": "aws",
+          "budgetUsd": 150,
+          "requiredCapabilities": {
+            "publicHttps": false,
+            "healthPath": "/health",
+            "applicationPort": 8080,
+            "vmCount": {
+              "min": 1,
+              "max": 1
+            },
+            "persistentData": true,
+            "dataDiskGiB": {
+              "min": 20
+            },
+            "volumeMount": "/var/lib/notes",
+            "loadBalancer": false
+          },
+          "functionalAcceptance": [
+            {
+              "name": "create note",
+              "method": "POST",
+              "path": "/notes",
+              "status": 201,
+              "json": {
+                "title": "alpha",
+                "content": "first"
+              },
+              "expectJson": {
+                "title": "alpha",
+                "content": "first"
+              }
+            },
+            {
+              "name": "list notes",
+              "method": "GET",
+              "path": "/notes",
+              "status": 200,
+              "expectJson": [
+                {
+                  "title": "alpha",
+                  "content": "first"
+                }
+              ]
+            }
+          ],
+          "persistenceAcceptance": {
+            "mountPath": "/var/lib/notes",
+            "beforeRestart": [
+              {
+                "name": "재시작 전 노트 생성",
+                "method": "POST",
+                "path": "/notes",
+                "status": 201,
+                "json": {
+                  "title": "restart-proof",
+                  "content": "must-survive"
+                },
+                "expectJson": {
+                  "title": "restart-proof",
+                  "content": "must-survive"
+                }
+              }
+            ],
+            "afterRestart": [
+              {
+                "name": "재시작 후 노트 조회",
+                "method": "GET",
+                "path": "/notes",
+                "status": 200,
+                "expectJson": [
+                  {
+                    "title": "restart-proof",
+                    "content": "must-survive"
+                  }
+                ]
+              }
+            ]
+          },
+          "forbiddenConcepts": [
+            "loadBalancer",
+            "kubernetes",
+            "managedApplicationPlatform"
+          ],
+          "requiredDependencies": [],
+          "componentDeltas": [
+            "persistent-storage"
+          ],
+          "legacyProviderProjection": false,
+          "componentDependencyExpectations": {
+            "structuralReferences": [
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "disk",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ]
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ]
+              }
+            ],
+            "cardinalities": [
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "disk",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "cardinality": "one-to-one"
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "attachment",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "cardinality": "one-to-one"
+              }
+            ],
+            "constraints": [
+              {
+                "delta": "persistent-storage",
+                "from": "disk",
+                "to": "vm",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "constraint": "same-availability-zone"
+              },
+              {
+                "delta": "persistent-storage",
+                "from": "mount",
+                "to": "attachment",
+                "evidence": [
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                  "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                  "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+                ],
+                "constraint": "device-must-be-formatted-and-mounted"
+              }
+            ]
+          }
+        },
+        "score": {
+          "status": "completed",
+          "passed": 11,
+          "failed": 4,
+          "unknown": 0,
+          "notApplicable": 0,
+          "notMeasured": 4,
+          "observedUnverified": 4,
+          "passRate": 0.733333,
+          "checks": [
+            {
+              "kind": "providerBoundary",
+              "expected": "aws",
+              "actual": "aws",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "publicHttps",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "capability",
+              "name": "healthPath",
+              "expected": "/health",
+              "actual": "/health",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "applicationPort",
+              "expected": 8080,
+              "actual": 8080,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "vmCount",
+              "expected": {
+                "min": 1,
+                "max": 1
+              },
+              "actual": 1,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "persistentData",
+              "expected": true,
+              "actual": true,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "dataDiskGiB",
+              "expected": {
+                "min": 20
+              },
+              "actual": 20,
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "volumeMount",
+              "expected": "/var/lib/notes",
+              "actual": "/var/lib/notes",
+              "status": "passed"
+            },
+            {
+              "kind": "capability",
+              "name": "loadBalancer",
+              "expected": false,
+              "actual": true,
+              "status": "failed"
+            },
+            {
+              "kind": "forbidden",
+              "name": "loadBalancer",
+              "status": "failed"
+            },
+            {
+              "kind": "componentDependencyReference",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "disk",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "status": "passed"
+            },
+            {
+              "kind": "componentDependencyReference",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "status": "passed"
+            },
+            {
+              "kind": "componentCardinality",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "disk",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "cardinality": "one-to-one",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentCardinality",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "cardinality": "one-to-one",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentConstraintRequirement",
+              "delta": "persistent-storage",
+              "from": "disk",
+              "to": "vm",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "constraint": "same-availability-zone",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentConstraintRequirement",
+              "delta": "persistent-storage",
+              "from": "mount",
+              "to": "attachment",
+              "evidence": [
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+                "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+                "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+              ],
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "not-measured"
+            },
+            {
+              "kind": "componentProjection",
+              "delta": "persistent-storage",
+              "componentId": "disk",
+              "terraformKind": "resource",
+              "terraformType": "aws_ebs_volume",
+              "instances": [
+                "aws_ebs_volume.data"
+              ],
+              "status": "passed"
+            },
+            {
+              "kind": "componentProjection",
+              "delta": "persistent-storage",
+              "componentId": "attachment",
+              "terraformKind": "resource",
+              "terraformType": "aws_volume_attachment",
+              "instances": [
+                "aws_volume_attachment.data_attach"
+              ],
+              "status": "passed"
+            },
+            {
+              "kind": "componentProjection",
+              "delta": "persistent-storage",
+              "componentId": "mount",
+              "terraformKind": "guestConfiguration",
+              "terraformType": null,
+              "instances": [
+                "guest:mount:/var/lib/notes"
+              ],
+              "status": "observed-unverified"
+            },
+            {
+              "kind": "componentRelation",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "disk",
+              "cardinality": "one-to-one",
+              "observedPairs": [
+                [
+                  "aws_volume_attachment.data_attach",
+                  "aws_ebs_volume.data"
+                ]
+              ],
+              "status": "observed-unverified"
+            },
+            {
+              "kind": "componentRelation",
+              "delta": "persistent-storage",
+              "from": "attachment",
+              "to": "vm",
+              "cardinality": "one-to-one",
+              "observedPairs": [
+                [
+                  "aws_volume_attachment.data_attach",
+                  "aws_instance.app"
+                ]
+              ],
+              "status": "observed-unverified"
+            },
+            {
+              "kind": "componentRelation",
+              "delta": "persistent-storage",
+              "from": "disk",
+              "to": "vm",
+              "cardinality": null,
+              "observedPairs": [
+                [
+                  "aws_ebs_volume.data",
+                  "aws_instance.app"
+                ]
+              ],
+              "status": "observed-unverified"
+            },
+            {
+              "kind": "componentRelation",
+              "delta": "persistent-storage",
+              "from": "mount",
+              "to": "attachment",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "kind": "componentConstraint",
+              "delta": "persistent-storage",
+              "from": "disk",
+              "to": "vm",
+              "constraint": "same-availability-zone",
+              "status": "requires-separate-gate"
+            },
+            {
+              "kind": "componentConstraint",
+              "delta": "persistent-storage",
+              "from": "mount",
+              "to": "attachment",
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "externalTools": {
+          "status": "not-run",
+          "reason": "enable explicitly with --run-tools"
+        },
+        "experimentEligible": false
+      }
+    }
+  ],
+  "summary": {
+    "cellCount": 4,
+    "sameApplicationInputCount": 4,
+    "deliveryCompletedCount": 3,
+    "snapshotTestsPassed": true
+  }
+}

@@ -1,0 +1,330 @@
+{
+  "schemaVersion": "easydep-application-intent-pilot/v1",
+  "recordedAt": "2026-08-09T01:01:04.574025+00:00",
+  "scope": "Docker-on-Linux-VM",
+  "cases": [
+    {
+      "caseId": "explicit-node-scope",
+      "requirements": [
+        {
+          "id": "R-state",
+          "text": "The application shall persist mutable state on the VM filesystem.",
+          "type": "NFR"
+        },
+        {
+          "id": "R-ha",
+          "text": "The service shall remain available if one availability zone fails.",
+          "type": "NFR"
+        }
+      ],
+      "deploymentNeeds": {
+        "local_persistent_storage": {
+          "role": "Provide mutable state persistence on the VM's local filesystem so the application can store and retrieve its data across restarts.",
+          "required": true,
+          "requirementIds": [
+            "R-state"
+          ],
+          "metadata": {
+            "applicationState": {
+              "durability": "persistent",
+              "accessScope": "node-filesystem",
+              "accessPath": "filesystem"
+            }
+          },
+          "evidenceSpans": [
+            "The application shall persist mutable state on the VM filesystem."
+          ],
+          "origin": "explicit",
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        },
+        "multi_az_resilience": {
+          "role": "Ensure the service remains available when any single availability zone becomes unavailable.",
+          "required": true,
+          "requirementIds": [
+            "R-ha"
+          ],
+          "metadata": {
+            "high_availability": true,
+            "failureDomain": "availability_zone"
+          },
+          "evidenceSpans": [
+            "The service shall remain available if one availability zone fails."
+          ],
+          "origin": "explicit",
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "capabilityContract": {
+        "schemaVersion": "CapabilityContract/v1",
+        "capabilities": [
+          {
+            "id": "local_persistent_storage",
+            "statement": "Provide mutable state persistence on the VM's local filesystem so the application can store and retrieve its data across restarts.",
+            "requirementIds": [
+              "R-state"
+            ],
+            "evidenceSpans": [
+              "The application shall persist mutable state on the VM filesystem."
+            ],
+            "origin": "explicit",
+            "necessity": "required",
+            "decision": "accepted",
+            "decisionReason": "explicit-grounded-constraint",
+            "rawConfidence": 1.0,
+            "calibratedConfidence": 1.0,
+            "thresholdVersion": "development-no-inference-v1",
+            "confirmation": "notRequired",
+            "alternatives": [],
+            "unresolvedFields": [],
+            "dependencyCapabilityIds": []
+          },
+          {
+            "id": "multi_az_resilience",
+            "statement": "Ensure the service remains available when any single availability zone becomes unavailable.",
+            "requirementIds": [
+              "R-ha"
+            ],
+            "evidenceSpans": [
+              "The service shall remain available if one availability zone fails."
+            ],
+            "origin": "explicit",
+            "necessity": "required",
+            "decision": "accepted",
+            "decisionReason": "explicit-grounded-constraint",
+            "rawConfidence": 1.0,
+            "calibratedConfidence": 1.0,
+            "thresholdVersion": "development-no-inference-v1",
+            "confirmation": "notRequired",
+            "alternatives": [],
+            "unresolvedFields": [],
+            "dependencyCapabilityIds": []
+          }
+        ],
+        "questions": []
+      },
+      "applicationIntentContract": {
+        "modelProvenance": {
+          "owner": "EasyDep",
+          "status": "research-proposal",
+          "standardsCompliant": [],
+          "inspiredBy": []
+        },
+        "facts": [
+          {
+            "id": "intent.local_persistent_storage.state",
+            "kind": "runtime.storage.intent",
+            "attributes": {
+              "required": true,
+              "durability": "persistent",
+              "accessScope": "node-filesystem",
+              "accessPath": "filesystem"
+            },
+            "sourceRefs": [
+              "R-state"
+            ],
+            "evidenceRefs": [
+              "The application shall persist mutable state on the VM filesystem."
+            ],
+            "provenanceClass": "adapted",
+            "extensions": {
+              "source": "accepted-deployment-need",
+              "needId": "local_persistent_storage",
+              "basis": "TOSCA-requirement-capability-separation"
+            }
+          }
+        ],
+        "extensions": {},
+        "schemaVersion": "ApplicationRuntimeContract/v1"
+      },
+      "diagnostics": [
+        {
+          "code": "BIND-STATE-HA-001",
+          "message": "Multi-zone availability does not define how node-filesystem state remains consistent or available across instances.",
+          "locations": [
+            "R-state"
+          ],
+          "details": {
+            "decision": "needsUserInput",
+            "question": "Should the application externalize or replicate its state, or should the multi-zone requirement be revised?",
+            "alternatives": [
+              {
+                "id": "revise-state-requirement",
+                "repairOwner": "requirements.analysis"
+              },
+              {
+                "id": "revise-availability-requirement",
+                "repairOwner": "requirements.analysis"
+              }
+            ],
+            "automaticRepair": false,
+            "intentMandatesNodeScope": true,
+            "applicationFactIds": [
+              "intent.local_persistent_storage.state"
+            ],
+            "cloudFactId": "resource.availability"
+          }
+        }
+      ],
+      "wallSeconds": 26.450614
+    },
+    {
+      "caseId": "unspecified-state-scope",
+      "requirements": [
+        {
+          "id": "R-state",
+          "text": "The application shall persist mutable state across restarts.",
+          "type": "NFR"
+        },
+        {
+          "id": "R-ha",
+          "text": "The service shall remain available if one availability zone fails.",
+          "type": "NFR"
+        }
+      ],
+      "deploymentNeeds": {
+        "persistent_storage": {
+          "role": "Provide storage that persists mutable application state across restarts",
+          "required": true,
+          "requirementIds": [
+            "R-state"
+          ],
+          "metadata": {
+            "applicationState": {
+              "durability": "persistent"
+            }
+          },
+          "evidenceSpans": [
+            "persist mutable state across restarts"
+          ],
+          "origin": "explicit",
+          "dependencyCapabilityIds": [],
+          "decision": "accepted",
+          "rejectedMetadata": [
+            {
+              "path": "applicationState.accessScope",
+              "value": "node-filesystem",
+              "reason": "value-not-grounded-in-evidence-span"
+            }
+          ]
+        },
+        "az_failure_resilience": {
+          "role": "Ensure the service remains available when a single availability zone fails",
+          "required": true,
+          "requirementIds": [
+            "R-ha"
+          ],
+          "metadata": {
+            "availabilityRequirement": {
+              "highAvailability": true,
+              "failureDomain": "availability_zone",
+              "toleratedFailures": 1
+            }
+          },
+          "evidenceSpans": [
+            "remain available if one availability zone fails"
+          ],
+          "origin": "explicit",
+          "dependencyCapabilityIds": [],
+          "decision": "accepted"
+        }
+      },
+      "capabilityContract": {
+        "schemaVersion": "CapabilityContract/v1",
+        "capabilities": [
+          {
+            "id": "persistent_storage",
+            "statement": "Provide storage that persists mutable application state across restarts",
+            "requirementIds": [
+              "R-state"
+            ],
+            "evidenceSpans": [
+              "persist mutable state across restarts"
+            ],
+            "origin": "explicit",
+            "necessity": "required",
+            "decision": "accepted",
+            "decisionReason": "explicit-grounded-constraint",
+            "rawConfidence": 1.0,
+            "calibratedConfidence": 1.0,
+            "thresholdVersion": "development-no-inference-v1",
+            "confirmation": "notRequired",
+            "alternatives": [],
+            "unresolvedFields": [],
+            "dependencyCapabilityIds": []
+          },
+          {
+            "id": "az_failure_resilience",
+            "statement": "Ensure the service remains available when a single availability zone fails",
+            "requirementIds": [
+              "R-ha"
+            ],
+            "evidenceSpans": [
+              "remain available if one availability zone fails"
+            ],
+            "origin": "explicit",
+            "necessity": "required",
+            "decision": "accepted",
+            "decisionReason": "explicit-grounded-constraint",
+            "rawConfidence": 1.0,
+            "calibratedConfidence": 1.0,
+            "thresholdVersion": "development-no-inference-v1",
+            "confirmation": "notRequired",
+            "alternatives": [],
+            "unresolvedFields": [],
+            "dependencyCapabilityIds": []
+          }
+        ],
+        "questions": []
+      },
+      "applicationIntentContract": {
+        "modelProvenance": {
+          "owner": "EasyDep",
+          "status": "research-proposal",
+          "standardsCompliant": [],
+          "inspiredBy": []
+        },
+        "facts": [
+          {
+            "id": "intent.persistent_storage.state",
+            "kind": "runtime.storage.intent",
+            "attributes": {
+              "required": true,
+              "durability": "persistent"
+            },
+            "sourceRefs": [
+              "R-state"
+            ],
+            "evidenceRefs": [
+              "persist mutable state across restarts"
+            ],
+            "provenanceClass": "adapted",
+            "extensions": {
+              "source": "accepted-deployment-need",
+              "needId": "persistent_storage",
+              "basis": "TOSCA-requirement-capability-separation"
+            }
+          }
+        ],
+        "extensions": {},
+        "schemaVersion": "ApplicationRuntimeContract/v1"
+      },
+      "diagnostics": [],
+      "wallSeconds": 30.001984
+    }
+  ],
+  "checks": {
+    "explicitNodeScopeExtracted": true,
+    "unspecifiedScopeNotInvented": true,
+    "explicitConflictQuestioned": true
+  },
+  "claimLimits": {
+    "naturalLanguageExtractionMeasured": true,
+    "caseCount": 2,
+    "applicationGenerationMeasured": false,
+    "applicationFunctionMeasured": false,
+    "cloudApplyMeasured": false,
+    "generalizationMeasured": false
+  }
+}

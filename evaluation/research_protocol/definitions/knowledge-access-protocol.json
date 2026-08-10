@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "easydep-knowledge-access-study/v1",
+  "status": "development",
+  "purpose": "클라우드 의존성 모델의 품질과 에이전트 전달 방식의 효과를 분리한다.",
+  "scope": "docker-on-vm",
+  "sharedKnowledgeQuery": "app.core.cloudkb.depkb.knowledge_access.query_knowledge",
+  "apiEligibility": {
+    "requiredApi": "responses",
+    "sameEndpointAcrossArms": true,
+    "sameFrozenModelAcrossArms": true,
+    "requiredModelFeatures": ["functionCalling", "remoteMcp"],
+    "chatCompletionsTextWrapperIsNotMcp": true,
+    "missingFeatureAction": "keep-development-status-and-exclude-four-arm-confirmatory-claim"
+  },
+  "arms": [
+    {
+      "id": "no-knowledge-control",
+      "access": "none",
+      "description": "요구사항만 제공하고 의존성 지식은 제공하지 않는다."
+    },
+    {
+      "id": "direct-context",
+      "access": "prompt",
+      "description": "사례에 해당하는 근거 묶음 전체를 사용자 프롬프트 JSON에 한 번 제공한다."
+    },
+    {
+      "id": "on-demand-tool",
+      "access": "functionTool",
+      "description": "동일한 조회 함수를 모델 도구로 제공하고 모델이 호출 여부와 질의를 선택한다."
+    },
+    {
+      "id": "on-demand-mcp",
+      "access": "mcp",
+      "description": "동일한 입력·출력 스키마의 MCP 도구로 조회 함수를 제공한다."
+    }
+  ],
+  "invariants": {
+    "sameModelAndSeed": true,
+    "sameKnowledgeSnapshotAcrossArms": true,
+    "sameQueryResultForEquivalentArguments": true,
+    "sameFinalArtifactContract": true,
+    "sameEvaluator": true,
+    "toolResultsCountTowardTokenBudget": true,
+    "noHiddenRetrievalForControl": true,
+    "mcpAndFunctionToolHaveSameAffordance": true
+  },
+  "resourceLimits": {
+    "maxConcurrentRuns": 1,
+    "backgroundProcessesAllowed": false,
+    "minimumFreeDiskBytes": 5368709120,
+    "toolCallLimitPerRun": 8,
+    "cleanupTemporaryFilesAfterRun": true
+  },
+  "developmentPhase": {
+    "allowedChanges": [
+      "도구 설명과 질의 인자 이름",
+      "최대 호출 횟수",
+      "오류 메시지 형식"
+    ],
+    "forbiddenChanges": [
+      "holdout 사례 열람",
+      "실험군별 지식 내용 변경",
+      "실험군별 평가기 변경"
+    ],
+    "freezeBeforeConfirmatory": true
+  },
+  "measurements": {
+    "primary": [
+      "providerProjection.componentCompleteness",
+      "invalidCloudClaimsPerRun",
+      "containerFunctionalPassRate"
+    ],
+    "secondary": [
+      "semanticPassRate",
+      "knowledgeRetrievalRecall",
+      "knowledgeUsePrecision",
+      "unsupportedNecessityPromotionCount",
+      "toolCallCount",
+      "retrievedBytes",
+      "inputTokens",
+      "outputTokens",
+      "wallClockSeconds"
+    ]
+  },
+  "analysis": {
+    "comparison": "같은 사례·seed의 paired 비교",
+    "report": "개별 실행값, 중앙값, 분산, 효과크기와 신뢰구간",
+    "mcpInterpretation": "functionTool과 MCP의 차이는 지식 효과가 아니라 전달 프로토콜 효과로 해석한다.",
+    "failedAndZeroCallRunsIncluded": true
+  }
+}

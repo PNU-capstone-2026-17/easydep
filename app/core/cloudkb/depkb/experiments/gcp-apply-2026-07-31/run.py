@@ -18,14 +18,13 @@ C(생명주기 변이) → D(역순 정리 + 잔존 관측). azure 3라운드의
 """
 
 import json
-import re
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,7 +35,7 @@ BASE = "https://compute.googleapis.com/compute/v1"
 
 def token() -> str:
     return subprocess.run([str(GCLOUD), "auth", "print-access-token"],
-                          capture_output=True, text=True, timeout=60).stdout.strip()
+                          capture_output=True, text=True, timeout=60, check=False).stdout.strip()
 
 
 def call(method: str, url: str, body: dict | None, tok: str) -> tuple[int, dict]:
@@ -193,7 +192,7 @@ def main() -> None:
     (HERE / "results.json").write_text(json.dumps({
         "_note": ("gcp apply 측정 기록 — REST 직접 호출(gcloud CLI의 기본값 "
                   "주입을 배제). preflight 층 부재 자체가 CSP 색인 관측이다."),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "project": project, "region": region, "zone": zone,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

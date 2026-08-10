@@ -25,7 +25,7 @@
   "repetitions": 3,
   "arms": ["easydep-full", "cot-standard", "metagpt-standard"],
   "oracle": "oracle.json",
-  "oracleHash": "87e356bd2e8a53dbb3d0eff95a5553ec4604f1c245eb561d7a806d6e216b61c7",
+  "oracleHash": "f81ad4e4b65c8c6abfbb3dd53bcbcecd5c5c6df034072aa0cb5a20b1dd16b076",
   "frozenHashes": {
     "p1-stateless-aws.json": "3e3f28da7ec29089ad86b85460d049b908e20cec9337ac22925cb15448d9f881",
     "p1-stateless-azure.json": "a8a121b3b424f7132ff599adafc4351725e2bab35f8debe93ccdfcb3ad22b18e",

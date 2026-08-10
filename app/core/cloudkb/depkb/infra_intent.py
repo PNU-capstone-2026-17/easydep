@@ -7,6 +7,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .closure import Closure, _claims, closure
+from .official_dependency_model import PATH as OFFICIAL_DEPENDENCY_PATH
+from .official_dependency_model import dependencies_for
+from .projection_model import PATH as PROJECTION_PATH
+from .projection_model import capability_realizations
 
 SCHEMA_VERSION = "easydep-infra-intent/v2"
 
@@ -42,6 +46,16 @@ class Constraint:
 
 
 @dataclass(frozen=True)
+class UnavailableFinding:
+    subject: str
+    object: str
+    relationFamily: str
+    finding: str
+    evidenceStatus: str
+    replicationStatus: str
+
+
+@dataclass(frozen=True)
 class InfraIntent:
     schemaVersion: str
     csp: str
@@ -56,6 +70,9 @@ class InfraIntent:
     providerRealizations: tuple[ProviderRealization, ...]
     decisions: tuple[Decision, ...]
     constraints: tuple[Constraint, ...]
+    unavailableFindings: tuple[UnavailableFinding, ...]
+    capabilityRealizations: tuple[dict, ...] = ()
+    officialDependencies: tuple[dict, ...] = ()
     provenance: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -106,7 +123,12 @@ def _merge_order(closures: list[Closure], csp: str) -> tuple[str, ...]:
     return tuple(order)
 
 
-def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
+def build(
+    anchors: list[str],
+    csp: str,
+    region: str,
+    capability_ids: tuple[str, ...] = (),
+) -> InfraIntent:
     if not anchors:
         raise ValueError("at least one start resource is required")
     closures = [closure(anchor, csp) for anchor in anchors]
@@ -115,6 +137,7 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
     }
     realizations: dict[str, ProviderRealization] = {}
     decisions: list[Decision] = []
+    unavailable: dict[tuple[str, str, str, str], UnavailableFinding] = {}
     for item in closures:
         for mandatory in item.mandatoryForProvisioning:
             previous = resources.get(mandatory.id)
@@ -135,6 +158,21 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
             Decision(decision.about, decision.kind, decision.condition)
             for decision in item.decisions
         )
+        for finding in item.unavailableFindings:
+            key = (
+                finding.subject,
+                finding.object,
+                finding.relationFamily,
+                finding.finding,
+            )
+            unavailable[key] = UnavailableFinding(
+                finding.subject,
+                finding.object,
+                finding.relationFamily,
+                finding.finding,
+                finding.evidenceStatus,
+                finding.replicationStatus,
+            )
 
     # A mandatory path overrides a non-mandatory observation from another start resource.
     realizations = {
@@ -142,6 +180,14 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
         if resources[key].provisioningStatus == "notMandatoryForProvisioning"
     }
     ids = set(resources)
+    requested_capabilities = capability_ids or (
+        ("load-balanced-ingress",) if "loadBalancer" in anchors else ()
+    )
+    capability_projection = tuple({
+        realization["id"]: realization
+        for capability_id in requested_capabilities
+        for realization in capability_realizations(csp, capability_id)
+    }.values())
     return InfraIntent(
         schemaVersion=SCHEMA_VERSION, csp=csp, region=region,
         startResources=tuple(anchors), resources=tuple(resources[k] for k in sorted(resources)),
@@ -152,9 +198,18 @@ def build(anchors: list[str], csp: str, region: str) -> InfraIntent:
         runtimeRequiredForSignal=tuple(sorted({p for c in closures for p in c.runtimeRequiredForSignal})),
         providerRealizations=tuple(realizations[k] for k in sorted(realizations)),
         decisions=tuple(decisions), constraints=_constraints_for(csp, ids),
+        unavailableFindings=tuple(unavailable[key] for key in sorted(unavailable)),
+        capabilityRealizations=capability_projection,
+        officialDependencies=dependencies_for(csp, anchors),
         provenance={
             "claimsArtifact": str(Path(__file__).with_name("claims.json").name),
             "claimSchemaVersion": "easydep-dependency-claims/v2",
-            "interpretation": "relation-specific findings; prose is not parsed",
+            "providerProjection": str(PROJECTION_PATH.name),
+            "officialDependencyModel": str(OFFICIAL_DEPENDENCY_PATH.name),
+            "legacyClaimsRole": "exploratory-advisory-excluded-from-iac-agent-input",
+            "interpretation": (
+                "only confirmed and replicated relation-specific findings drive plans; "
+                "prose is not parsed"
+            ),
         },
     )

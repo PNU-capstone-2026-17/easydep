@@ -1,0 +1,469 @@
+{
+  "schemaVersion": "easydep-native-boundary-sample/v1",
+  "seed": 42,
+  "fraction": 0.2,
+  "minimum": 5,
+  "maximum": 20,
+  "strata": [
+    {
+      "provider": "gcp",
+      "serviceFamily": "backendServices",
+      "observationChannel": "operation",
+      "population": 17,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.backendServices.delete",
+        "compute.operation.backendServices.getIamPolicy",
+        "compute.operation.backendServices.list",
+        "compute.operation.backendServices.patch",
+        "compute.operation.backendServices.setEdgeSecurityPolicy"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "backendServices",
+      "observationChannel": "schema",
+      "population": 36,
+      "selected": 8,
+      "nativeIds": [
+        "compute.schema.BackendServiceCustomMetric",
+        "compute.schema.BackendServiceHAPolicy",
+        "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigCustomPolicy",
+        "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigPolicy",
+        "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicy",
+        "compute.schema.BackendServiceTlsSettingsSubjectAltName",
+        "compute.schema.CacheKeyPolicy",
+        "compute.schema.Subsetting"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "disks",
+      "observationChannel": "operation",
+      "population": 20,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.disks.aggregatedList",
+        "compute.operation.disks.setIamPolicy",
+        "compute.operation.disks.startAsyncReplication",
+        "compute.operation.disks.stopGroupAsyncReplication",
+        "compute.operation.disks.updateKmsKey"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "disks",
+      "observationChannel": "schema",
+      "population": 5,
+      "selected": 5,
+      "nativeIds": [
+        "compute.schema.Disk",
+        "compute.schema.DiskAsyncReplication",
+        "compute.schema.DiskParams",
+        "compute.schema.DiskResourceStatus",
+        "compute.schema.DiskResourceStatusAsyncReplicationStatus"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "firewalls",
+      "observationChannel": "operation",
+      "population": 7,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.firewalls.delete",
+        "compute.operation.firewalls.insert",
+        "compute.operation.firewalls.patch",
+        "compute.operation.firewalls.testIamPermissions",
+        "compute.operation.firewalls.update"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "firewalls",
+      "observationChannel": "schema",
+      "population": 3,
+      "selected": 3,
+      "nativeIds": [
+        "compute.schema.Firewall",
+        "compute.schema.FirewallLogConfig",
+        "compute.schema.FirewallParams"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "forwardingRules",
+      "observationChannel": "operation",
+      "population": 8,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.forwardingRules.aggregatedList",
+        "compute.operation.forwardingRules.insert",
+        "compute.operation.forwardingRules.list",
+        "compute.operation.forwardingRules.patch",
+        "compute.operation.forwardingRules.setTarget"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "forwardingRules",
+      "observationChannel": "schema",
+      "population": 3,
+      "selected": 3,
+      "nativeIds": [
+        "compute.schema.ForwardingRule",
+        "compute.schema.ForwardingRuleAttachedExtension",
+        "compute.schema.ForwardingRuleServiceDirectoryRegistration"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "healthChecks",
+      "observationChannel": "operation",
+      "population": 8,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.healthChecks.aggregatedList",
+        "compute.operation.healthChecks.delete",
+        "compute.operation.healthChecks.list",
+        "compute.operation.healthChecks.testIamPermissions",
+        "compute.operation.healthChecks.update"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "healthChecks",
+      "observationChannel": "schema",
+      "population": 9,
+      "selected": 5,
+      "nativeIds": [
+        "compute.schema.GRPCHealthCheck",
+        "compute.schema.HTTP2HealthCheck",
+        "compute.schema.HTTPHealthCheck",
+        "compute.schema.HTTPSHealthCheck",
+        "compute.schema.SSLHealthCheck"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "instanceGroups",
+      "observationChannel": "operation",
+      "population": 10,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.instanceGroups.addInstances",
+        "compute.operation.instanceGroups.delete",
+        "compute.operation.instanceGroups.removeInstances",
+        "compute.operation.instanceGroups.setNamedPorts",
+        "compute.operation.instanceGroups.testIamPermissions"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "instanceGroups",
+      "observationChannel": "schema",
+      "population": 2,
+      "selected": 2,
+      "nativeIds": [
+        "compute.schema.InstanceGroup",
+        "compute.schema.NamedPort"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "instances",
+      "observationChannel": "operation",
+      "population": 51,
+      "selected": 11,
+      "nativeIds": [
+        "compute.operation.instances.addNetworkInterface",
+        "compute.operation.instances.addResourcePolicies",
+        "compute.operation.instances.get",
+        "compute.operation.instances.getGuestAttributes",
+        "compute.operation.instances.getShieldedInstanceIdentity",
+        "compute.operation.instances.insert",
+        "compute.operation.instances.reset",
+        "compute.operation.instances.setMetadata",
+        "compute.operation.instances.setTags",
+        "compute.operation.instances.simulateMaintenanceEvent",
+        "compute.operation.instances.start"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "instances",
+      "observationChannel": "schema",
+      "population": 33,
+      "selected": 7,
+      "nativeIds": [
+        "compute.schema.ConfidentialInstanceConfig",
+        "compute.schema.GuestOsFeature",
+        "compute.schema.InitialStateConfig",
+        "compute.schema.ReservationAffinity",
+        "compute.schema.ResourceStatusPhysicalHostTopology",
+        "compute.schema.ResourceStatusScheduling",
+        "compute.schema.Tags"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "networks",
+      "observationChannel": "operation",
+      "population": 13,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.networks.addPeering",
+        "compute.operation.networks.cancelRequestRemovePeering",
+        "compute.operation.networks.delete",
+        "compute.operation.networks.list",
+        "compute.operation.networks.switchToCustomMode"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "networks",
+      "observationChannel": "schema",
+      "population": 7,
+      "selected": 5,
+      "nativeIds": [
+        "compute.schema.Network",
+        "compute.schema.NetworkParams",
+        "compute.schema.NetworkPeeringConnectionStatus",
+        "compute.schema.NetworkPeeringConnectionStatusTrafficConfiguration",
+        "compute.schema.NetworkRoutingConfig"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "sslCertificates",
+      "observationChannel": "operation",
+      "population": 5,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.sslCertificates.aggregatedList",
+        "compute.operation.sslCertificates.delete",
+        "compute.operation.sslCertificates.get",
+        "compute.operation.sslCertificates.insert",
+        "compute.operation.sslCertificates.list"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "sslCertificates",
+      "observationChannel": "schema",
+      "population": 3,
+      "selected": 3,
+      "nativeIds": [
+        "compute.schema.SslCertificate",
+        "compute.schema.SslCertificateManagedSslCertificate",
+        "compute.schema.SslCertificateSelfManagedSslCertificate"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "subnetworks",
+      "observationChannel": "operation",
+      "population": 12,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.subnetworks.expandIpCidrRange",
+        "compute.operation.subnetworks.insert",
+        "compute.operation.subnetworks.list",
+        "compute.operation.subnetworks.patch",
+        "compute.operation.subnetworks.setPrivateIpGoogleAccess"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "subnetworks",
+      "observationChannel": "schema",
+      "population": 8,
+      "selected": 5,
+      "nativeIds": [
+        "compute.schema.Subnetwork",
+        "compute.schema.SubnetworkParams",
+        "compute.schema.SubnetworkUtilizationDetails",
+        "compute.schema.SubnetworkUtilizationDetailsIPV4Utilization",
+        "compute.schema.Uint128"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "targetHttpsProxies",
+      "observationChannel": "operation",
+      "population": 11,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.targetHttpsProxies.delete",
+        "compute.operation.targetHttpsProxies.insert",
+        "compute.operation.targetHttpsProxies.list",
+        "compute.operation.targetHttpsProxies.setQuicOverride",
+        "compute.operation.targetHttpsProxies.setSslPolicy"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "targetHttpsProxies",
+      "observationChannel": "schema",
+      "population": 1,
+      "selected": 1,
+      "nativeIds": [
+        "compute.schema.TargetHttpsProxy"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "urlMaps",
+      "observationChannel": "operation",
+      "population": 10,
+      "selected": 5,
+      "nativeIds": [
+        "compute.operation.urlMaps.insert",
+        "compute.operation.urlMaps.patch",
+        "compute.operation.urlMaps.testIamPermissions",
+        "compute.operation.urlMaps.update",
+        "compute.operation.urlMaps.validate"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "serviceFamily": "urlMaps",
+      "observationChannel": "schema",
+      "population": 36,
+      "selected": 8,
+      "nativeIds": [
+        "compute.schema.CachePolicyNegativeCachingPolicy",
+        "compute.schema.HostRule",
+        "compute.schema.HttpRouteAction",
+        "compute.schema.HttpRouteRule",
+        "compute.schema.InstancesBulkInsertOperationMetadata",
+        "compute.schema.MetadataFilterLabelMatch",
+        "compute.schema.Operation",
+        "compute.schema.UrlMap"
+      ]
+    }
+  ],
+  "selectedNativeIds": [
+    "compute.operation.backendServices.delete",
+    "compute.operation.backendServices.getIamPolicy",
+    "compute.operation.backendServices.list",
+    "compute.operation.backendServices.patch",
+    "compute.operation.backendServices.setEdgeSecurityPolicy",
+    "compute.operation.disks.aggregatedList",
+    "compute.operation.disks.setIamPolicy",
+    "compute.operation.disks.startAsyncReplication",
+    "compute.operation.disks.stopGroupAsyncReplication",
+    "compute.operation.disks.updateKmsKey",
+    "compute.operation.firewalls.delete",
+    "compute.operation.firewalls.insert",
+    "compute.operation.firewalls.patch",
+    "compute.operation.firewalls.testIamPermissions",
+    "compute.operation.firewalls.update",
+    "compute.operation.forwardingRules.aggregatedList",
+    "compute.operation.forwardingRules.insert",
+    "compute.operation.forwardingRules.list",
+    "compute.operation.forwardingRules.patch",
+    "compute.operation.forwardingRules.setTarget",
+    "compute.operation.healthChecks.aggregatedList",
+    "compute.operation.healthChecks.delete",
+    "compute.operation.healthChecks.list",
+    "compute.operation.healthChecks.testIamPermissions",
+    "compute.operation.healthChecks.update",
+    "compute.operation.instanceGroups.addInstances",
+    "compute.operation.instanceGroups.delete",
+    "compute.operation.instanceGroups.removeInstances",
+    "compute.operation.instanceGroups.setNamedPorts",
+    "compute.operation.instanceGroups.testIamPermissions",
+    "compute.operation.instances.addNetworkInterface",
+    "compute.operation.instances.addResourcePolicies",
+    "compute.operation.instances.get",
+    "compute.operation.instances.getGuestAttributes",
+    "compute.operation.instances.getShieldedInstanceIdentity",
+    "compute.operation.instances.insert",
+    "compute.operation.instances.reset",
+    "compute.operation.instances.setMetadata",
+    "compute.operation.instances.setTags",
+    "compute.operation.instances.simulateMaintenanceEvent",
+    "compute.operation.instances.start",
+    "compute.operation.networks.addPeering",
+    "compute.operation.networks.cancelRequestRemovePeering",
+    "compute.operation.networks.delete",
+    "compute.operation.networks.list",
+    "compute.operation.networks.switchToCustomMode",
+    "compute.operation.sslCertificates.aggregatedList",
+    "compute.operation.sslCertificates.delete",
+    "compute.operation.sslCertificates.get",
+    "compute.operation.sslCertificates.insert",
+    "compute.operation.sslCertificates.list",
+    "compute.operation.subnetworks.expandIpCidrRange",
+    "compute.operation.subnetworks.insert",
+    "compute.operation.subnetworks.list",
+    "compute.operation.subnetworks.patch",
+    "compute.operation.subnetworks.setPrivateIpGoogleAccess",
+    "compute.operation.targetHttpsProxies.delete",
+    "compute.operation.targetHttpsProxies.insert",
+    "compute.operation.targetHttpsProxies.list",
+    "compute.operation.targetHttpsProxies.setQuicOverride",
+    "compute.operation.targetHttpsProxies.setSslPolicy",
+    "compute.operation.urlMaps.insert",
+    "compute.operation.urlMaps.patch",
+    "compute.operation.urlMaps.testIamPermissions",
+    "compute.operation.urlMaps.update",
+    "compute.operation.urlMaps.validate",
+    "compute.schema.BackendServiceCustomMetric",
+    "compute.schema.BackendServiceHAPolicy",
+    "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigCustomPolicy",
+    "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigPolicy",
+    "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicy",
+    "compute.schema.BackendServiceTlsSettingsSubjectAltName",
+    "compute.schema.CacheKeyPolicy",
+    "compute.schema.CachePolicyNegativeCachingPolicy",
+    "compute.schema.ConfidentialInstanceConfig",
+    "compute.schema.Disk",
+    "compute.schema.DiskAsyncReplication",
+    "compute.schema.DiskParams",
+    "compute.schema.DiskResourceStatus",
+    "compute.schema.DiskResourceStatusAsyncReplicationStatus",
+    "compute.schema.Firewall",
+    "compute.schema.FirewallLogConfig",
+    "compute.schema.FirewallParams",
+    "compute.schema.ForwardingRule",
+    "compute.schema.ForwardingRuleAttachedExtension",
+    "compute.schema.ForwardingRuleServiceDirectoryRegistration",
+    "compute.schema.GRPCHealthCheck",
+    "compute.schema.GuestOsFeature",
+    "compute.schema.HTTP2HealthCheck",
+    "compute.schema.HTTPHealthCheck",
+    "compute.schema.HTTPSHealthCheck",
+    "compute.schema.HostRule",
+    "compute.schema.HttpRouteAction",
+    "compute.schema.HttpRouteRule",
+    "compute.schema.InitialStateConfig",
+    "compute.schema.InstanceGroup",
+    "compute.schema.InstancesBulkInsertOperationMetadata",
+    "compute.schema.MetadataFilterLabelMatch",
+    "compute.schema.NamedPort",
+    "compute.schema.Network",
+    "compute.schema.NetworkParams",
+    "compute.schema.NetworkPeeringConnectionStatus",
+    "compute.schema.NetworkPeeringConnectionStatusTrafficConfiguration",
+    "compute.schema.NetworkRoutingConfig",
+    "compute.schema.Operation",
+    "compute.schema.ReservationAffinity",
+    "compute.schema.ResourceStatusPhysicalHostTopology",
+    "compute.schema.ResourceStatusScheduling",
+    "compute.schema.SSLHealthCheck",
+    "compute.schema.SslCertificate",
+    "compute.schema.SslCertificateManagedSslCertificate",
+    "compute.schema.SslCertificateSelfManagedSslCertificate",
+    "compute.schema.Subnetwork",
+    "compute.schema.SubnetworkParams",
+    "compute.schema.SubnetworkUtilizationDetails",
+    "compute.schema.SubnetworkUtilizationDetailsIPV4Utilization",
+    "compute.schema.Subsetting",
+    "compute.schema.Tags",
+    "compute.schema.TargetHttpsProxy",
+    "compute.schema.Uint128",
+    "compute.schema.UrlMap"
+  ]
+}

@@ -19,7 +19,7 @@
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
@@ -42,7 +42,7 @@ def load() -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     return {"_note": ("기능 신호(azure) — DNS 해석·볼륨 I/O. 게스트 안에서 "
                       "OS 기본 도구로만 관측한다(앱 없음)."),
-            "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
             "ids": {}, "steps": {}}
 
 
@@ -190,7 +190,7 @@ def main() -> None:
         step("T6.delete-nsg", az(["network", "nsg", "delete", "-g", rg,
                                   "-n", "depkb-s4-nsg"]))
         step("T7.residual", az(["resource", "list", "-g", rg, "-o", "json"]))
-        doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
         save(doc)
         return
 

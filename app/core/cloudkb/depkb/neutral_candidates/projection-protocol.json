@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "easydep-neutral-projection-protocol/v1",
+  "resourceConceptIds": [
+    "neutral.infrastructure-aggregate",
+    "neutral.compute-group",
+    "neutral.compute",
+    "neutral.virtual-network",
+    "neutral.ip-network-segment",
+    "neutral.ip-network-configuration",
+    "neutral.compute-network-attachment",
+    "neutral.network-security-policy-group",
+    "neutral.network-filter-rule",
+    "neutral.ssh-access-material",
+    "neutral.machine-image",
+    "neutral.machine-capacity-profile",
+    "neutral.data-storage",
+    "neutral.compute-storage-attachment",
+    "neutral.compute-contextualization",
+    "neutral.network-load-balancer",
+    "neutral.load-balancer-listener",
+    "neutral.load-balancer-backend-group",
+    "neutral.load-balancer-health-check"
+  ],
+  "structuralConceptIds": [
+    "neutral.tosca-service-template-structure",
+    "neutral.tosca-node-template-structure",
+    "neutral.tosca-node-type-structure",
+    "neutral.tosca-relationship-template-structure",
+    "neutral.tosca-relationship-type-structure",
+    "neutral.tosca-capability-definition-structure",
+    "neutral.tosca-capability-type-structure",
+    "neutral.tosca-requirement-definition-structure",
+    "neutral.tosca-requirement-assignment-structure",
+    "neutral.tosca-node-filter-definition-structure",
+    "neutral.tosca-property-structure",
+    "neutral.tosca-attribute-structure",
+    "neutral.tosca-interface-structure",
+    "neutral.tosca-operation-structure",
+    "neutral.tosca-artifact-structure"
+  ],
+  "rules": {
+    "mappingKinds": ["equivalent", "partial", "composite", "unmatched"],
+    "schemaCandidateIsProofOfRuntimeNecessity": false,
+    "unmatchedAllowed": true,
+    "providerExtensionAuditRequired": true
+  }
+}

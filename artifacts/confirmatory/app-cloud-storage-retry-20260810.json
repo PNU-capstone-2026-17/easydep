@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-09T16:53:10.032434+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-storage-binding",
+      "group": "storage-binding",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutationFiles": [
+        "infra/user_data.tpl",
+        "src/main/java/com/easydep/evaluation/LocalStateProbe.java"
+      ],
+      "inputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "outputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "stepStatus": "failed",
+      "stepDiagnostics": [
+        {
+          "code": "BIND-STORAGE-001",
+          "message": "Generated Terraform failed deployment binding validation after one repair: Generated IaC does not expose persistent storage at the contracted application path.",
+          "severity": "error"
+        }
+      ],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:51:11.904244+00:00",
+            "finishedAt": "2026-08-09T16:51:38.233812+00:00",
+            "elapsedSeconds": 26.329581
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:51:38.258823+00:00",
+            "finishedAt": "2026-08-09T16:51:38.290485+00:00",
+            "elapsedSeconds": 0.031669
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "initial",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:51:38.344163+00:00",
+            "finishedAt": "2026-08-09T16:52:08.625202+00:00",
+            "elapsedSeconds": 30.281045
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "initial",
+            "status": "failed",
+            "startedAt": "2026-08-09T16:52:08.625225+00:00",
+            "finishedAt": "2026-08-09T16:52:12.363335+00:00",
+            "elapsedSeconds": 3.73812
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:52:12.446446+00:00",
+            "finishedAt": "2026-08-09T16:53:03.172425+00:00",
+            "elapsedSeconds": 50.725976
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T16:53:03.203831+00:00",
+            "finishedAt": "2026-08-09T16:53:03.232321+00:00",
+            "elapsedSeconds": 0.0285
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 118.07815,
+      "changedFiles": {
+        "added": [],
+        "modified": [],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.144428
+      },
+      "preflightAfter": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.025096
+      },
+      "diagnosticResolved": false,
+      "applicationTests": null,
+      "applicationTestsPassed": false,
+      "cloudApply": false,
+      "retainedCandidate": null
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 0,
+    "diagnosticResolvedCount": 0,
+    "applicationTestsPassedCount": 0,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 118.684341
+  }
+}

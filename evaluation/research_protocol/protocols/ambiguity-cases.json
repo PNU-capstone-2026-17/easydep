@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "easydep-ambiguity-cases/v1",
+  "status": "development",
+  "policy": "app/requirements/knowledge/capability-threshold.json",
+  "cases": [
+    {"caseId":"explicit-grounded-region","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":[],"expectedDecision":"accept","expectedReason":"explicit-grounded-constraint"},
+    {"caseId":"missing-provider","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":["provider"],"expectedDecision":"question","expectedReason":"realization-changing-ambiguity"},
+    {"caseId":"missing-region","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":["region"],"expectedDecision":"question","expectedReason":"realization-changing-ambiguity"},
+    {"caseId":"performance-without-capacity-floor","rawScore":0.8,"origin":"inferred","evidenceValid":true,"unresolvedFields":["scale"],"expectedDecision":"question","expectedReason":"realization-changing-ambiguity"},
+    {"caseId":"ungrounded-persistence-inference","rawScore":1.0,"origin":"inferred","evidenceValid":false,"unresolvedFields":[],"expectedDecision":"question","expectedReason":"missing-or-ungrounded-evidence"},
+    {"caseId":"ha-budget-logical-conflict","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":[],"impossible":true,"expectedDecision":"abstain","expectedReason":"logically-impossible"},
+    {"caseId":"persistence-requirement-conflict","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":[],"impossible":true,"expectedDecision":"abstain","expectedReason":"logically-impossible"},
+    {"caseId":"managed-platform-outside-docker-vm-scope","rawScore":1.0,"origin":"explicit","evidenceValid":true,"unresolvedFields":[],"outOfScope":true,"expectedDecision":"abstain","expectedReason":"model-out-of-scope"},
+    {"caseId":"inferred-without-qualified-threshold","rawScore":1.0,"origin":"inferred","evidenceValid":true,"unresolvedFields":[],"expectedDecision":"question","expectedReason":"calibrated-threshold-not-met"}
+  ]
+}

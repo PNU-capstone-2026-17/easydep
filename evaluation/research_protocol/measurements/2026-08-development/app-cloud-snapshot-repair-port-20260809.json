@@ -1,0 +1,164 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-08T23:06:39.218482+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-port-binding",
+      "group": "port-binding",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutationFiles": [
+        "infra/user_data.tpl"
+      ],
+      "inputSha256": "4c68d1116e641ac2fd6fdaaac2df8cad7d9057eb44750d60c2bb7545714758b5",
+      "outputSha256": "1ed757450f1db05889571a6be55a666e9c5c856ed1163a2823ef5fee907be291",
+      "stepStatus": "completed",
+      "stepDiagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:04:32.568901+00:00",
+            "finishedAt": "2026-08-08T23:04:55.825292+00:00",
+            "elapsedSeconds": 23.2564
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:04:55.825427+00:00",
+            "finishedAt": "2026-08-08T23:04:55.842339+00:00",
+            "elapsedSeconds": 0.016927
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:04:55.898213+00:00",
+            "finishedAt": "2026-08-08T23:05:07.295896+00:00",
+            "elapsedSeconds": 11.397696
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:05:07.296034+00:00",
+            "finishedAt": "2026-08-08T23:05:07.319022+00:00",
+            "elapsedSeconds": 0.023002
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:05:07.373209+00:00",
+            "finishedAt": "2026-08-08T23:05:42.545752+00:00",
+            "elapsedSeconds": 35.172546
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:05:42.545769+00:00",
+            "finishedAt": "2026-08-08T23:05:50.677226+00:00",
+            "elapsedSeconds": 8.131464
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 78.45365,
+      "changedFiles": {
+        "added": [
+          "infra/.terraform.lock.hcl"
+        ],
+        "modified": [
+          "infra/main.tf",
+          "infra/user_data.tpl",
+          "infra/variables.tf"
+        ],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-PORT-001",
+            "message": "Generated IaC has an observable backend/container port that conflicts with the application contract.",
+            "locations": [
+              "user_data.tpl:docker-publish"
+            ],
+            "details": {
+              "expected": 8080,
+              "observed": [
+                9090
+              ]
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerPort",
+            "value": 9090,
+            "source": "user_data.tpl:docker-publish",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.166719
+      },
+      "preflightAfter": {
+        "diagnostics": [],
+        "observations": [
+          {
+            "kind": "containerPort",
+            "value": 8080,
+            "source": "user_data.tpl:docker-publish",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.041967
+      },
+      "diagnosticResolved": true,
+      "applicationTests": {
+        "status": "completed",
+        "passed": true,
+        "repository": "<temporary>\\run\\application",
+        "unitTests": {
+          "status": "passed",
+          "command": [
+            "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+            "test",
+            "--no-daemon"
+          ],
+          "exitCode": 0,
+          "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/run/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 47s\n4 actionable tasks: 4 executed\n",
+          "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+          "startedAt": "2026-08-08T23:05:51.231013+00:00",
+          "finishedAt": "2026-08-08T23:06:38.989361+00:00",
+          "elapsedSeconds": 47.758357,
+          "testFiles": [
+            "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+            "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+          ]
+        },
+        "diagnostics": []
+      },
+      "applicationTestsPassed": true,
+      "cloudApply": false
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 1,
+    "diagnosticResolvedCount": 1,
+    "applicationTestsPassedCount": 1,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 126.971703
+  }
+}

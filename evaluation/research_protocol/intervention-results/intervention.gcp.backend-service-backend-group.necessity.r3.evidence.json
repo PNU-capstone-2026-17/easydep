@@ -1,0 +1,885 @@
+{
+  "prefix": "edbgint-r3",
+  "startedAt": "2026-08-07T20:12:11+00:00",
+  "commands": [
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "create",
+        "edbgint-r3-net",
+        "--subnet-mode=custom",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME            SUBNET_MODE  BGP_ROUTING_MODE  IPV4_RANGE  GATEWAY_IPV4  INTERNAL_IPV6_RANGE\nedbgint-r3-net  CUSTOM       REGIONAL\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/networks/edbgint-r3-net].\n\nInstances on this network will not be reachable until firewall rules\nare created. As an example, you can allow all internal traffic between\ninstances as well as SSH, RDP, and ICMP by running:\n\n$ gcloud compute firewall-rules create <FIREWALL_NAME> --network edbgint-r3-net --allow tcp,udp,icmp --source-ranges <IP_RANGE>\n$ gcloud compute firewall-rules create <FIREWALL_NAME> --network edbgint-r3-net --allow tcp:22,tcp:3389,icmp\n\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "subnets",
+        "create",
+        "edbgint-r3-sub",
+        "--network=edbgint-r3-net",
+        "--region=asia-northeast3",
+        "--range=10.93.0.0/24",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME            REGION           NETWORK         RANGE         STACK_TYPE  IPV6_ACCESS_TYPE  INTERNAL_IPV6_PREFIX  EXTERNAL_IPV6_PREFIX\nedbgint-r3-sub  asia-northeast3  edbgint-r3-net  10.93.0.0/24  IPV4_ONLY\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/regions/asia-northeast3/subnetworks/edbgint-r3-sub].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "firewall-rules",
+        "create",
+        "edbgint-r3-hc",
+        "--network=edbgint-r3-net",
+        "--allow=tcp:8080",
+        "--source-ranges=35.191.0.0/16,130.211.0.0/22",
+        "--target-tags=easydep-hc",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME           NETWORK         DIRECTION  PRIORITY  ALLOW     DENY  DISABLED\nedbgint-r3-hc  edbgint-r3-net  INGRESS    1000      tcp:8080        False\n",
+      "stderr": "Creating firewall...\n..Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/firewalls/edbgint-r3-hc].\ndone.\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instances",
+        "create",
+        "edbgint-r3-vm",
+        "--zone=asia-northeast3-a",
+        "--machine-type=e2-micro",
+        "--image-family=debian-12",
+        "--image-project=debian-cloud",
+        "--subnet=edbgint-r3-sub",
+        "--no-address",
+        "--tags=easydep-hc",
+        "--metadata-from-file=<temporary-startup-script>",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME           ZONE               MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP  STATUS\nedbgint-r3-vm  asia-northeast3-a  e2-micro                   10.93.0.2                 RUNNING\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instances/edbgint-r3-vm].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instance-groups",
+        "unmanaged",
+        "create",
+        "edbgint-r3-group",
+        "--zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME              LOCATION           SCOPE  NETWORK  MANAGED  INSTANCES\nedbgint-r3-group  asia-northeast3-a  zone                     0\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instanceGroups/edbgint-r3-group].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instance-groups",
+        "unmanaged",
+        "add-instances",
+        "edbgint-r3-group",
+        "--zone=asia-northeast3-a",
+        "--instances=edbgint-r3-vm",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Updated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instanceGroups/edbgint-r3-group].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instance-groups",
+        "unmanaged",
+        "set-named-ports",
+        "edbgint-r3-group",
+        "--zone=asia-northeast3-a",
+        "--named-ports=http:8080",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Updated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instanceGroups/edbgint-r3-group].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "health-checks",
+        "create",
+        "http",
+        "edbgint-r3-health",
+        "--port=8080",
+        "--request-path=/readyz",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME               PROTOCOL\nedbgint-r3-health  HTTP\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/healthChecks/edbgint-r3-health].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "backend-services",
+        "create",
+        "edbgint-r3-backend",
+        "--global",
+        "--protocol=HTTP",
+        "--port-name=http",
+        "--health-checks=edbgint-r3-health",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME                BACKENDS  PROTOCOL\nedbgint-r3-backend            HTTP\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/backendServices/edbgint-r3-backend].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "backend-services",
+        "add-backend",
+        "edbgint-r3-backend",
+        "--global",
+        "--instance-group=edbgint-r3-group",
+        "--instance-group-zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Updated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/backendServices/edbgint-r3-backend].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "ssl-certificates",
+        "create",
+        "edbgint-r3-cert",
+        "--certificate=<temporary-certificate>",
+        "--private-key=<temporary-private-key>",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME             TYPE          CREATION_TIMESTAMP             EXPIRE_TIME                    REGION  MANAGED_STATUS\nedbgint-r3-cert  SELF_MANAGED  2026-08-07T13:16:26.233-07:00  2026-08-08T13:12:39.000-07:00\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/sslCertificates/edbgint-r3-cert].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "url-maps",
+        "create",
+        "edbgint-r3-map",
+        "--default-service=edbgint-r3-backend",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME            DEFAULT_SERVICE\nedbgint-r3-map  backendServices/edbgint-r3-backend\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/urlMaps/edbgint-r3-map].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "target-https-proxies",
+        "create",
+        "edbgint-r3-proxy",
+        "--url-map=edbgint-r3-map",
+        "--ssl-certificates=edbgint-r3-cert",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "NAME              SSL_CERTIFICATES  URL_MAP         REGION  CERTIFICATE_MAP\nedbgint-r3-proxy  edbgint-r3-cert   edbgint-r3-map\n",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/targetHttpsProxies/edbgint-r3-proxy].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "forwarding-rules",
+        "create",
+        "edbgint-r3-forward",
+        "--global",
+        "--target-https-proxy=edbgint-r3-proxy",
+        "--ports=443",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Created [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/forwardingRules/edbgint-r3-forward].\n"
+    }
+  ],
+  "controlProbe": {
+    "matched": true,
+    "expectSuccess": true,
+    "observations": [
+      {
+        "observedAt": "2026-08-07T20:17:01+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:17:12+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:17:22+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:17:32+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:17:42+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:17:52+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:02+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:13+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:23+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:33+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:43+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:18:53+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:03+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:14+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:24+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:34+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:44+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "URLError"
+          },
+          "/business": {
+            "error": "URLError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:19:55+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:20:05+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:20:15+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "removeBackend": {
+    "status": "passed",
+    "command": [
+      "gcloud",
+      "compute",
+      "backend-services",
+      "remove-backend",
+      "edbgint-r3-backend",
+      "--global",
+      "--instance-group=edbgint-r3-group",
+      "--instance-group-zone=asia-northeast3-a",
+      "--project",
+      "cloud-resource-testing",
+      "--quiet"
+    ],
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "Updated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/backendServices/edbgint-r3-backend].\n"
+  },
+  "interventionProbe": {
+    "matched": true,
+    "expectSuccess": false,
+    "observations": [
+      {
+        "observedAt": "2026-08-07T20:21:29+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "HTTPError"
+          },
+          "/business": {
+            "error": "HTTPError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:21:39+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "HTTPError"
+          },
+          "/business": {
+            "error": "HTTPError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:21:50+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "HTTPError"
+          },
+          "/business": {
+            "error": "HTTPError"
+          }
+        }
+      }
+    ]
+  },
+  "restoreBackend": {
+    "status": "passed",
+    "command": [
+      "gcloud",
+      "compute",
+      "backend-services",
+      "add-backend",
+      "edbgint-r3-backend",
+      "--global",
+      "--instance-group=edbgint-r3-group",
+      "--instance-group-zone=asia-northeast3-a",
+      "--project",
+      "cloud-resource-testing",
+      "--quiet"
+    ],
+    "exitCode": 0,
+    "stdout": "",
+    "stderr": "Updated [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/backendServices/edbgint-r3-backend].\n"
+  },
+  "restorationProbe": {
+    "matched": true,
+    "expectSuccess": true,
+    "observations": [
+      {
+        "observedAt": "2026-08-07T20:23:48+00:00",
+        "passed": false,
+        "responses": {
+          "/readyz": {
+            "error": "HTTPError"
+          },
+          "/business": {
+            "error": "HTTPError"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:23:58+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:24:09+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      },
+      {
+        "observedAt": "2026-08-07T20:24:19+00:00",
+        "passed": true,
+        "responses": {
+          "/readyz": {
+            "status": 200,
+            "body": {
+              "status": "ready"
+            }
+          },
+          "/business": {
+            "status": 200,
+            "body": {
+              "service": "easydep-intervention",
+              "result": "ok"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "cleanup": [
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "forwarding-rules",
+        "delete",
+        "edbgint-r3-forward",
+        "--global",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/forwardingRules/edbgint-r3-forward].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "target-https-proxies",
+        "delete",
+        "edbgint-r3-proxy",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/targetHttpsProxies/edbgint-r3-proxy].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "url-maps",
+        "delete",
+        "edbgint-r3-map",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/urlMaps/edbgint-r3-map].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "ssl-certificates",
+        "delete",
+        "edbgint-r3-cert",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/sslCertificates/edbgint-r3-cert].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "backend-services",
+        "delete",
+        "edbgint-r3-backend",
+        "--global",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/backendServices/edbgint-r3-backend].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "health-checks",
+        "delete",
+        "edbgint-r3-health",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/healthChecks/edbgint-r3-health].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instance-groups",
+        "unmanaged",
+        "delete",
+        "edbgint-r3-group",
+        "--zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instanceGroups/edbgint-r3-group].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instances",
+        "delete",
+        "edbgint-r3-vm",
+        "--zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/zones/asia-northeast3-a/instances/edbgint-r3-vm].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "firewall-rules",
+        "delete",
+        "edbgint-r3-hc",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/firewalls/edbgint-r3-hc].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "subnets",
+        "delete",
+        "edbgint-r3-sub",
+        "--region=asia-northeast3",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/regions/asia-northeast3/subnetworks/edbgint-r3-sub].\n"
+    },
+    {
+      "status": "passed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "delete",
+        "edbgint-r3-net",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "Deleted [https://www.googleapis.com/compute/v1/projects/cloud-resource-testing/global/networks/edbgint-r3-net].\n"
+    }
+  ],
+  "residualResources": [],
+  "finishedAt": "2026-08-07T20:27:43+00:00"
+}

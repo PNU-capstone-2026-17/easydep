@@ -1,0 +1,196 @@
+{
+  "prefix": "edbgint-r2",
+  "startedAt": "2026-08-07T19:34:43+00:00",
+  "commands": [],
+  "error": {
+    "type": "RuntimeError",
+    "message": "openssl is required for the isolated TLS oracle"
+  },
+  "cleanup": [
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "forwarding-rules",
+        "delete",
+        "edbgint-r2-forward",
+        "--global",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.forwarding-rules.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/forwardingRules/edbgint-r2-forward' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "target-https-proxies",
+        "delete",
+        "edbgint-r2-proxy",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.target-https-proxies.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/targetHttpsProxies/edbgint-r2-proxy' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "url-maps",
+        "delete",
+        "edbgint-r2-map",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.url-maps.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/urlMaps/edbgint-r2-map' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "ssl-certificates",
+        "delete",
+        "edbgint-r2-cert",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.ssl-certificates.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/sslCertificates/edbgint-r2-cert' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "backend-services",
+        "delete",
+        "edbgint-r2-backend",
+        "--global",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.backend-services.delete) Some requests did not succeed:\n - The resource 'projects/cloud-resource-testing/global/backendServices/edbgint-r2-backend' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "health-checks",
+        "delete",
+        "edbgint-r2-health",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.health-checks.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/healthChecks/edbgint-r2-health' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instance-groups",
+        "unmanaged",
+        "delete",
+        "edbgint-r2-group",
+        "--zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.instance-groups.unmanaged.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/zones/asia-northeast3-a/instanceGroups/edbgint-r2-group' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "instances",
+        "delete",
+        "edbgint-r2-vm",
+        "--zone=asia-northeast3-a",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.instances.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/zones/asia-northeast3-a/instances/edbgint-r2-vm' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "firewall-rules",
+        "delete",
+        "edbgint-r2-hc",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.firewall-rules.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/firewalls/edbgint-r2-hc' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "subnets",
+        "delete",
+        "edbgint-r2-sub",
+        "--region=asia-northeast3",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.networks.subnets.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/regions/asia-northeast3/subnetworks/edbgint-r2-sub' was not found\n\n"
+    },
+    {
+      "status": "failed",
+      "command": [
+        "gcloud",
+        "compute",
+        "networks",
+        "delete",
+        "edbgint-r2-net",
+        "--project",
+        "cloud-resource-testing",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "ERROR: (gcloud.compute.networks.delete) Could not fetch resource:\n - The resource 'projects/cloud-resource-testing/global/networks/edbgint-r2-net' was not found\n\n"
+    }
+  ],
+  "residualResources": [],
+  "finishedAt": "2026-08-07T19:36:31+00:00"
+}

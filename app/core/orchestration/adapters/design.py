@@ -24,9 +24,21 @@ class DesignAdapter:
     def __init__(self, checkpoint_path=DEFAULT_CHECKPOINT_PATH) -> None:
         from app.design.graphs.design_graph import build_design_graph
 
-        self.graph = build_design_graph(
-            SqliteMemorySaver(checkpoint_path, "design")
-        )
+        self.graph = build_design_graph(SqliteMemorySaver(checkpoint_path, "design"))
+        self._timings: dict[str, list[dict[str, Any]]] = {}
+
+    def timing_events(self, session_id: str) -> list[dict[str, Any]]:
+        return list(self._timings.get(session_id) or [])
+
+    def _invoke_with_timings(self, session_id: str, callable_obj):
+        from app.design.services.common.structured import capture_llm_timings
+
+        events: list[dict[str, Any]] = []
+        try:
+            with capture_llm_timings() as events:
+                return callable_obj()
+        finally:
+            self._timings.setdefault(session_id, []).extend(events)
 
     @staticmethod
     @contextmanager
@@ -45,9 +57,7 @@ class DesignAdapter:
     def _state(requirements_result: dict[str, Any]) -> dict[str, Any]:
         use_case_specs = requirements_result.get("use_case_specs") or []
         if not use_case_specs:
-            raise DesignContractError(
-                "Requirements analysis did not produce use_case_specs"
-            )
+            raise DesignContractError("Requirements analysis did not produce use_case_specs")
         return {
             "refined_requirements": requirements_result.get("requirements") or [],
             "usecase_spec": {
@@ -60,10 +70,16 @@ class DesignAdapter:
         }
 
     @staticmethod
-    def _payload(result: dict[str, Any], session_id: str) -> dict[str, Any]:
+    def _payload(
+        result: dict[str, Any], session_id: str, timing_events: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         from app.artifacts_api import to_web_response
 
-        payload: dict[str, Any] = {"app_id": session_id, **to_web_response(result)}
+        payload: dict[str, Any] = {
+            "app_id": session_id,
+            **to_web_response(result),
+            "llm_timing_events": timing_events,
+        }
         validation = payload.get("validation") or {}
         for name in ("class_diagram", "sequence_diagram", "erd", "deployment_diagram"):
             validation[name] = {
@@ -96,20 +112,50 @@ class DesignAdapter:
             payload.update(status="completed", stage=None)
         return payload
 
-    def start(
-        self, *, session_id: str, requirements_result: dict[str, Any]
-    ) -> dict[str, Any]:
+    def start(self, *, session_id: str, requirements_result: dict[str, Any]) -> dict[str, Any]:
         config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        self._timings[session_id] = []
         with self._without_plantuml_jvm():
-            result = dict(self.graph.invoke(self._state(requirements_result), config))
+            result = dict(
+                self._invoke_with_timings(
+                    session_id,
+                    lambda: self.graph.invoke(self._state(requirements_result), config),
+                )
+            )
         if not self.graph.get_state(config).next:
             result.pop("__interrupt__", None)
-        return self._payload(result, session_id)
+        return self._payload(result, session_id, self.timing_events(session_id))
+
+    def has_pending(self, *, session_id: str) -> bool:
+        config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        return bool(self.graph.get_state(config).next)
+
+    def retry_pending(self, *, session_id: str) -> dict[str, Any]:
+        """Retry only the pending failed graph node without replacing prior state."""
+        config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        if not self.graph.get_state(config).next:
+            raise ValueError(f"Design session has no pending node: {session_id}")
+        self._timings[session_id] = []
+        with self._without_plantuml_jvm():
+            result = dict(
+                self._invoke_with_timings(
+                    session_id,
+                    lambda: self.graph.invoke(None, config),
+                )
+            )
+        if not self.graph.get_state(config).next:
+            result.pop("__interrupt__", None)
+        return self._payload(result, session_id, self.timing_events(session_id))
 
     def resume(self, *, session_id: str, feedback: str) -> dict[str, Any]:
         config: RunnableConfig = {"configurable": {"thread_id": session_id}}
         with self._without_plantuml_jvm():
-            result = dict(self.graph.invoke(Command(resume=feedback), config))
+            result = dict(
+                self._invoke_with_timings(
+                    session_id,
+                    lambda: self.graph.invoke(Command(resume=feedback), config),
+                )
+            )
         if not self.graph.get_state(config).next:
             result.pop("__interrupt__", None)
-        return self._payload(result, session_id)
+        return self._payload(result, session_id, self.timing_events(session_id))

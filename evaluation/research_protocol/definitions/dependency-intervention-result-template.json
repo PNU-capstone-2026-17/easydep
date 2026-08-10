@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "easydep-dependency-intervention-result/v1",
+  "experimentId": "등록된 experimentId",
+  "provider": "gcp",
+  "replications": [
+    {
+      "replication": 1,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "functionBlocked",
+      "phases": [
+        {"id":"controlProvision","status":"passed","observedAt":"RFC3339 시각","evidence":"제어면 응답·리소스 ID·상태 위치"},
+        {"id":"controlStartup","status":"passed","observedAt":"RFC3339 시각","evidence":"VM·컨테이너·프로세스 상태 위치"},
+        {"id":"controlFunction","status":"passed","observedAt":"RFC3339 시각","evidence":"/readyz와 대표 업무 요청 원시 결과 위치"},
+        {"id":"dependencyIntervention","status":"passed","observedAt":"RFC3339 시각","evidence":"제거한 참조와 적용 후 구성 위치"},
+        {"id":"interventionProvision","status":"passed","observedAt":"RFC3339 시각","evidence":"개입 구성의 제어면 상태 위치"},
+        {"id":"interventionStartup","status":"passed","observedAt":"RFC3339 시각","evidence":"개입 후 런타임 상태 위치"},
+        {"id":"interventionFunction","status":"failed","observedAt":"RFC3339 시각","evidence":"동일 기능 오라클의 실패 원시 결과 위치"},
+        {"id":"restorationFunction","status":"passed","observedAt":"RFC3339 시각","evidence":"복구 후 동일 기능 오라클 결과 위치"}
+      ]
+    }
+  ],
+  "주의": "실제 결과에는 같은 구조의 독립 반복 3개가 필요하며 비밀값은 보존하지 않는다."
+}

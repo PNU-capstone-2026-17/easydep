@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "easydep-system-comparison-uniform/v1",
+  "caseId": "P2-azure",
+  "startedAt": "2026-08-09T01:21:11.729855+00:00",
+  "finishedAt": "2026-08-09T01:22:48.476586+00:00",
+  "cloudApplyExecuted": false,
+  "rows": [
+    {
+      "arm": "cot-standard",
+      "repository": "artifacts/runs/cot-standard-p2-azure-20260805T214305Z-a09252/repo",
+      "evidence": "evaluation/research_protocol/measurements/2026-08-development/system-comparison-p2-azure-cot-standard.json",
+      "elapsedSeconds": 4.430785,
+      "staticPassRate": 0.769231,
+      "iacValidation": "failed",
+      "containerValidation": "failed",
+      "health": null,
+      "functionalAcceptance": null,
+      "persistenceAcceptance": null,
+      "experimentEligible": false
+    },
+    {
+      "arm": "metagpt-standard",
+      "repository": "artifacts/runs/metagpt-standard-p2-azure-20260805T214412Z-4855e6/repo",
+      "evidence": "evaluation/research_protocol/measurements/2026-08-development/system-comparison-p2-azure-metagpt-standard.json",
+      "elapsedSeconds": 3.981869,
+      "staticPassRate": 0.769231,
+      "iacValidation": "failed",
+      "containerValidation": "failed",
+      "health": null,
+      "functionalAcceptance": null,
+      "persistenceAcceptance": null,
+      "experimentEligible": false
+    },
+    {
+      "arm": "easydep-full-repair-1",
+      "repository": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e/repairs/attempt-1/03-implementation/application",
+      "evidence": "evaluation/research_protocol/measurements/2026-08-development/system-comparison-p2-azure-easydep-full-repair-1.json",
+      "elapsedSeconds": 88.333816,
+      "staticPassRate": 1.0,
+      "iacValidation": "passed",
+      "containerValidation": "passed",
+      "health": "passed",
+      "functionalAcceptance": "passed",
+      "persistenceAcceptance": "passed",
+      "experimentEligible": true
+    }
+  ]
+}

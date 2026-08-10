@@ -1,0 +1,915 @@
+{
+  "schemaVersion": "easydep-official-evidence-model/v1",
+  "provider": "gcp",
+  "ruleVersion": "official-evidence-ladder/v1",
+  "claims": [
+    {
+      "claimId": "gcp.vm.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "vm",
+      "capabilityIds": [
+        "linux-vm-runtime"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/instances/methods/insert | compute#/resources/instances/methods/get | compute#/resources/instances/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/instances/methods/insert",
+            "read": "compute#/resources/instances/methods/get",
+            "delete": "compute#/resources/instances/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.vm.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "vm",
+      "conceptId": "neutral.compute",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/instances/methods/insert | compute#/resources/instances/methods/get | compute#/resources/instances/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/instances/methods/insert",
+            "read": "compute#/resources/instances/methods/get",
+            "delete": "compute#/resources/instances/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.disk.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "disk",
+      "capabilityIds": [
+        "persistent-block-storage"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/disks/methods/insert | compute#/resources/disks/methods/get | compute#/resources/disks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/disks/methods/insert",
+            "read": "compute#/resources/disks/methods/get",
+            "delete": "compute#/resources/disks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.disk.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "disk",
+      "conceptId": "neutral.data-storage",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/disks/methods/insert | compute#/resources/disks/methods/get | compute#/resources/disks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/disks/methods/insert",
+            "read": "compute#/resources/disks/methods/get",
+            "delete": "compute#/resources/disks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.data-storage",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.virtual-network.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "virtual-network",
+      "capabilityIds": [
+        "isolated-network"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/networks/methods/insert | compute#/resources/networks/methods/get | compute#/resources/networks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/networks/methods/insert",
+            "read": "compute#/resources/networks/methods/get",
+            "delete": "compute#/resources/networks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.virtual-network.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "virtual-network",
+      "conceptId": "neutral.virtual-network",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/networks/methods/insert | compute#/resources/networks/methods/get | compute#/resources/networks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/networks/methods/insert",
+            "read": "compute#/resources/networks/methods/get",
+            "delete": "compute#/resources/networks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.virtual-network",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.subnet.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "subnet",
+      "capabilityIds": [
+        "failure-domain-placement"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/subnetworks/methods/insert | compute#/resources/subnetworks/methods/get | compute#/resources/subnetworks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/subnetworks/methods/insert",
+            "read": "compute#/resources/subnetworks/methods/get",
+            "delete": "compute#/resources/subnetworks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.subnet.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "subnet",
+      "conceptId": "neutral.ip-network-segment",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/subnetworks/methods/insert | compute#/resources/subnetworks/methods/get | compute#/resources/subnetworks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/subnetworks/methods/insert",
+            "read": "compute#/resources/subnetworks/methods/get",
+            "delete": "compute#/resources/subnetworks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.ip-network-segment",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.firewall.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "firewall",
+      "capabilityIds": [
+        "network-access-control"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/firewalls/methods/insert | compute#/resources/firewalls/methods/get | compute#/resources/firewalls/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/firewalls/methods/insert",
+            "read": "compute#/resources/firewalls/methods/get",
+            "delete": "compute#/resources/firewalls/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.firewall.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "firewall",
+      "conceptId": "neutral.network-security-policy-group",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/firewalls/methods/insert | compute#/resources/firewalls/methods/get | compute#/resources/firewalls/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/firewalls/methods/insert",
+            "read": "compute#/resources/firewalls/methods/get",
+            "delete": "compute#/resources/firewalls/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-security-policy-group",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "backend-service",
+      "capabilityIds": [
+        "load-balanced-ingress"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/backendServices/methods/insert | compute#/resources/backendServices/methods/get | compute#/resources/backendServices/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/backendServices/methods/insert",
+            "read": "compute#/resources/backendServices/methods/get",
+            "delete": "compute#/resources/backendServices/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "backend-service",
+      "conceptId": "neutral.network-load-balancer",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/backendServices/methods/insert | compute#/resources/backendServices/methods/get | compute#/resources/backendServices/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/backendServices/methods/insert",
+            "read": "compute#/resources/backendServices/methods/get",
+            "delete": "compute#/resources/backendServices/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.forwarding-rule.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "forwarding-rule",
+      "capabilityIds": [
+        "load-balanced-ingress"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/forwardingRules/methods/insert | compute#/resources/forwardingRules/methods/get | compute#/resources/forwardingRules/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/forwardingRules/methods/insert",
+            "read": "compute#/resources/forwardingRules/methods/get",
+            "delete": "compute#/resources/forwardingRules/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.forwarding-rule.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "forwarding-rule",
+      "conceptId": "neutral.network-load-balancer",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/forwardingRules/methods/insert | compute#/resources/forwardingRules/methods/get | compute#/resources/forwardingRules/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/forwardingRules/methods/insert",
+            "read": "compute#/resources/forwardingRules/methods/get",
+            "delete": "compute#/resources/forwardingRules/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.target-https-proxy.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "target-https-proxy",
+      "capabilityIds": [
+        "load-balancer-listener",
+        "tls-termination"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/targetHttpsProxies/methods/insert | compute#/resources/targetHttpsProxies/methods/get | compute#/resources/targetHttpsProxies/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/targetHttpsProxies/methods/insert",
+            "read": "compute#/resources/targetHttpsProxies/methods/get",
+            "delete": "compute#/resources/targetHttpsProxies/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.target-https-proxy.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "target-https-proxy",
+      "conceptId": "neutral.load-balancer-listener",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/targetHttpsProxies/methods/insert | compute#/resources/targetHttpsProxies/methods/get | compute#/resources/targetHttpsProxies/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/targetHttpsProxies/methods/insert",
+            "read": "compute#/resources/targetHttpsProxies/methods/get",
+            "delete": "compute#/resources/targetHttpsProxies/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.url-map.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "url-map",
+      "capabilityIds": [
+        "load-balancer-listener"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/urlMaps/methods/insert | compute#/resources/urlMaps/methods/get | compute#/resources/urlMaps/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/urlMaps/methods/insert",
+            "read": "compute#/resources/urlMaps/methods/get",
+            "delete": "compute#/resources/urlMaps/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.url-map.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "url-map",
+      "conceptId": "neutral.load-balancer-listener",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/urlMaps/methods/insert | compute#/resources/urlMaps/methods/get | compute#/resources/urlMaps/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/urlMaps/methods/insert",
+            "read": "compute#/resources/urlMaps/methods/get",
+            "delete": "compute#/resources/urlMaps/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.ssl-certificate.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "ssl-certificate",
+      "capabilityIds": [
+        "tls-termination"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/sslCertificates/methods/insert | compute#/resources/sslCertificates/methods/get | compute#/resources/sslCertificates/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/sslCertificates/methods/insert",
+            "read": "compute#/resources/sslCertificates/methods/get",
+            "delete": "compute#/resources/sslCertificates/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.ssl-certificate.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "ssl-certificate",
+      "conceptId": "neutral.load-balancer-listener",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/sslCertificates/methods/insert | compute#/resources/sslCertificates/methods/get | compute#/resources/sslCertificates/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/sslCertificates/methods/insert",
+            "read": "compute#/resources/sslCertificates/methods/get",
+            "delete": "compute#/resources/sslCertificates/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-group.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "backend-group",
+      "capabilityIds": [
+        "compute-group",
+        "health-routed-backend"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/instanceGroups/methods/insert | compute#/resources/instanceGroups/methods/get | compute#/resources/instanceGroups/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/instanceGroups/methods/insert",
+            "read": "compute#/resources/instanceGroups/methods/get",
+            "delete": "compute#/resources/instanceGroups/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-group.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "backend-group",
+      "conceptId": "neutral.compute-group",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/instanceGroups/methods/insert | compute#/resources/instanceGroups/methods/get | compute#/resources/instanceGroups/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/instanceGroups/methods/insert",
+            "read": "compute#/resources/instanceGroups/methods/get",
+            "delete": "compute#/resources/instanceGroups/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute-group",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.health-check.boundary",
+      "claimType": "resourceBoundary",
+      "resourceId": "health-check",
+      "capabilityIds": [
+        "health-routed-backend"
+      ],
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/healthChecks/methods/insert | compute#/resources/healthChecks/methods/get | compute#/resources/healthChecks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/healthChecks/methods/insert",
+            "read": "compute#/resources/healthChecks/methods/get",
+            "delete": "compute#/resources/healthChecks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-lifecycle-and-identity",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.health-check.crosswalk",
+      "claimType": "neutralCrosswalk",
+      "resourceId": "health-check",
+      "conceptId": "neutral.load-balancer-health-check",
+      "mappingRelation": "partial",
+      "observations": [
+        {
+          "sourceRole": "vendorLifecycleSchema",
+          "sourceLocator": "compute#/resources/healthChecks/methods/insert | compute#/resources/healthChecks/methods/get | compute#/resources/healthChecks/methods/delete",
+          "operationLocators": {
+            "create": "compute#/resources/healthChecks/methods/insert",
+            "read": "compute#/resources/healthChecks/methods/get",
+            "delete": "compute#/resources/healthChecks/methods/delete"
+          },
+          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
+          "supports": true,
+          "independentIdentity": true,
+          "lifecycleOperations": [
+            "create",
+            "delete",
+            "read"
+          ]
+        },
+        {
+          "sourceRole": "neutralModel",
+          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-health-check",
+          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
+          "supports": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "neutral-hypothesis-vendor-validated",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service-health-check.existence",
+      "claimType": "dependencyExistence",
+      "fromResourceId": "backend-service",
+      "toResourceId": "health-check",
+      "semantics": [
+        "reference",
+        "conditionalRequired"
+      ],
+      "condition": "haPolicy가 없는 인스턴스 그룹 또는 zonal GCE_VM_IP NEG 백엔드에 적용한다.",
+      "modelGap": null,
+      "observations": [
+        {
+          "sourceRole": "vendorManual",
+          "sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices",
+          "sourceSha256": "2a4af0a5668ce51e4de152057f93722a316e71707bd6f07a59964135ed93fbbe",
+          "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17",
+          "retrievedOn": "2026-08-08",
+          "documentSection": "BackendService / healthChecks[]",
+          "finding": "인스턴스 그룹 또는 zonal NEG 백엔드는 haPolicy 예외가 아니면 헬스체크가 필요하며 인터넷·서버리스 NEG는 헬스체크를 두면 안 된다.",
+          "supports": true,
+          "normativeRequirement": true
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-reference-or-stronger-evidence",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service-health-check.necessity",
+      "claimType": "dependencyNecessity",
+      "eligibleForIntervention": false,
+      "fromResourceId": "backend-service",
+      "toResourceId": "health-check",
+      "semantics": [
+        "reference",
+        "conditionalRequired"
+      ],
+      "condition": "haPolicy가 없는 인스턴스 그룹 또는 zonal GCE_VM_IP NEG 백엔드에 적용한다.",
+      "modelGap": null,
+      "observations": [
+        {
+          "sourceRole": "vendorManual",
+          "sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices",
+          "sourceSha256": "2a4af0a5668ce51e4de152057f93722a316e71707bd6f07a59964135ed93fbbe",
+          "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17",
+          "retrievedOn": "2026-08-08",
+          "documentSection": "BackendService / healthChecks[]",
+          "finding": "인스턴스 그룹 또는 zonal NEG 백엔드는 haPolicy 예외가 아니면 헬스체크가 필요하며 인터넷·서버리스 NEG는 헬스체크를 두면 안 된다.",
+          "supports": true,
+          "normativeRequirement": true
+        }
+      ],
+      "decision": "documented",
+      "decisionReason": "vendor-normative-prerequisite",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service-backend-group.existence",
+      "claimType": "dependencyExistence",
+      "fromResourceId": "backend-service",
+      "toResourceId": "backend-group",
+      "semantics": [
+        "reference"
+      ],
+      "condition": "이 연구의 Docker-on-VM 경로에서 backend group은 독립 수명주기를 가진 unmanaged instance group으로 한정한다. NEG는 범위 밖 확장점이다.",
+      "modelGap": null,
+      "observations": [
+        {
+          "sourceRole": "vendorManual",
+          "sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices",
+          "sourceSha256": "267d62edb5880f5415fed030f7631b473fa47e0e3c58a991e95987a7a0d94c92",
+          "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17",
+          "retrievedOn": "2026-08-08",
+          "documentSection": "BackendService / backends[].group",
+          "finding": "각 backend 항목의 group은 instance group 또는 network endpoint group의 정규화된 URL을 참조한다.",
+          "supports": true,
+          "normativeRequirement": false
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "vendor-reference-or-stronger-evidence",
+      "humanReviewRequired": false
+    },
+    {
+      "claimId": "gcp.backend-service-backend-group.necessity",
+      "claimType": "dependencyNecessity",
+      "eligibleForIntervention": true,
+      "fromResourceId": "backend-service",
+      "toResourceId": "backend-group",
+      "semantics": [
+        "reference"
+      ],
+      "condition": "이 연구의 Docker-on-VM 경로에서 backend group은 독립 수명주기를 가진 unmanaged instance group으로 한정한다. NEG는 범위 밖 확장점이다.",
+      "modelGap": null,
+      "observations": [
+        {
+          "sourceRole": "vendorManual",
+          "sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices",
+          "sourceSha256": "267d62edb5880f5415fed030f7631b473fa47e0e3c58a991e95987a7a0d94c92",
+          "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17",
+          "retrievedOn": "2026-08-08",
+          "documentSection": "BackendService / backends[].group",
+          "finding": "각 backend 항목의 group은 instance group 또는 network endpoint group의 정규화된 URL을 참조한다.",
+          "supports": true,
+          "normativeRequirement": false
+        },
+        {
+          "sourceRole": "runtimeIntervention",
+          "sourceLocator": "evaluation/research_protocol/intervention-results/intervention.gcp.backend-service-backend-group.necessity.json",
+          "sourceSha256": "76f3f35af18530d354e8b30b24aa8cb142668800fafdcf01ba2666f8bd832324",
+          "supports": true,
+          "controlPassed": true,
+          "removalFailed": true,
+          "restorationPassed": true,
+          "replications": 3
+        }
+      ],
+      "decision": "confirmed",
+      "decisionReason": "replicated-removal-recovery",
+      "humanReviewRequired": false
+    }
+  ],
+  "exceptionClaimIds": [],
+  "freeze": {
+    "sha256": "9756ca79aedfa3632a634325f97d31ee0e95f74a4b6ad201a14d475427118671"
+  }
+}

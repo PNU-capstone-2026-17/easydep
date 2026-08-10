@@ -21,12 +21,12 @@ IMDS 전파 지연을 감안해 상실 관측 시한을 넉넉히 둔다(EKS IAM
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "aws-apply2-2026-07-31"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from _guest import probe, run as guest  # noqa: E402
+from _guest import probe  # noqa: E402
 from run import aws  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +53,7 @@ def load() -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     return {"_note": ("기능 신호(aws) — 메타데이터 자격증명·아웃바운드. "
                       "게스트 안에서 curl로만 관측(앱 없음)."),
-            "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
             "ids": {}, "steps": {}}
 
 
@@ -84,7 +84,7 @@ def main() -> None:
         proc = _sp.run([_sh.which("aws"), "--region", "ap-northeast-2",
                         "ec2", "create-key-pair", "--key-name", "depkb-sig4",
                         "--output", "json", "--no-cli-pager"],
-                       capture_output=True, text=True, timeout=120)
+                       capture_output=True, text=True, timeout=120, check=False)
         material = (json.loads(proc.stdout)["KeyMaterial"]
                     if proc.returncode == 0 else "")
         PEM.write_text(material, encoding="utf-8")
@@ -279,7 +279,7 @@ def main() -> None:
             ["iam", "list-roles", "--query",
              "Roles[?starts_with(RoleName,'depkb')].RoleName",
              "--output", "json"]))
-        doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
         save(doc)
         return
 

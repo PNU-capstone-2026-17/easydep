@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -27,7 +27,7 @@ def preflight(kind: str, template: Path, rg: str) -> dict:
            "--only-show-errors"]
     if kind == "what-if":
         cmd += ["--no-pretty-print"]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
     text = (r.stderr or "") + (r.stdout or "")
     codes = list(dict.fromkeys(_CODE.findall(text)))
     return {
@@ -45,7 +45,7 @@ def main() -> None:
             "의존 부재의 증거가 아니다 — 거부만이 증거다(계획 T7). "
             "자원 생성 없음(validate·what-if만)."
         ),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "resourceGroup": rg,
         "tests": {},
     }

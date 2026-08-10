@@ -1,0 +1,184 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-09T00:06:24.383917+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-p2-storage-idempotency",
+      "group": "storage-idempotency",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutationFiles": [],
+      "inputSha256": "706091064f72fb0dda83adf33ab2c83d709669580cbcbc69398829ab27e0722e",
+      "outputSha256": "3663abf673fe368ec766caeef893219ef50d6bf3ca9263127b18e3df4a20ebc5",
+      "stepStatus": "completed",
+      "stepDiagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:04:20.582511+00:00",
+            "finishedAt": "2026-08-09T00:04:56.367531+00:00",
+            "elapsedSeconds": 35.785033
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:04:56.367749+00:00",
+            "finishedAt": "2026-08-09T00:04:56.401132+00:00",
+            "elapsedSeconds": 0.0334
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:04:56.490364+00:00",
+            "finishedAt": "2026-08-09T00:05:12.704103+00:00",
+            "elapsedSeconds": 16.213751
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:05:12.704246+00:00",
+            "finishedAt": "2026-08-09T00:05:12.733000+00:00",
+            "elapsedSeconds": 0.028767
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:05:12.798579+00:00",
+            "finishedAt": "2026-08-09T00:05:22.325757+00:00",
+            "elapsedSeconds": 9.527165
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:05:22.325775+00:00",
+            "finishedAt": "2026-08-09T00:05:27.257620+00:00",
+            "elapsedSeconds": 4.931854
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 66.890734,
+      "changedFiles": {
+        "added": [
+          "infra/user_data.sh.tftpl",
+          "infra/variables.tf"
+        ],
+        "modified": [
+          "infra/.terraform.lock.hcl",
+          "infra/main.tf"
+        ],
+        "removed": [
+          "infra/cloud_init.tpl"
+        ]
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-DESTRUCTIVE-INIT",
+            "message": "Persistent storage formatting is unconditionally repeated during guest initialization.",
+            "locations": [
+              "cloud_init.tpl:38"
+            ],
+            "details": {
+              "expected": "format-only-when-no-filesystem-exists",
+              "observed": "unguarded-mkfs"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "containerMountPath",
+            "value": "/var/lib/notes",
+            "source": "cloud_init.tpl:containerMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": null,
+            "source": "cloud_init.tpl:dynamic-mount-command",
+            "confidence": "unresolved"
+          }
+        ],
+        "elapsedSeconds": 0.137426
+      },
+      "preflightAfter": {
+        "diagnostics": [],
+        "observations": [
+          {
+            "kind": "guestMountPath",
+            "value": null,
+            "source": "user_data.sh.tftpl:dynamic-mount-command",
+            "confidence": "unresolved"
+          }
+        ],
+        "elapsedSeconds": 0.086429
+      },
+      "diagnosticResolved": true,
+      "applicationTests": {
+        "status": "completed",
+        "passed": true,
+        "repository": "<temporary>\\run\\application",
+        "unitTests": {
+          "status": "passed",
+          "command": [
+            "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+            "test",
+            "--no-daemon"
+          ],
+          "exitCode": 0,
+          "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n2026-08-09T09:06:23.178+09:00  INFO 29820 --- [ionShutdownHook] j.LocalContainerEntityManagerFactoryBean : Closing JPA EntityManagerFactory for persistence unit 'default'\n2026-08-09T09:06:23.185+09:00  INFO 29820 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown initiated...\n2026-08-09T09:06:23.191+09:00  INFO 29820 --- [ionShutdownHook] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Shutdown completed.\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/run/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 55s\n4 actionable tasks: 4 executed\n",
+          "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+          "startedAt": "2026-08-09T00:05:27.807012+00:00",
+          "finishedAt": "2026-08-09T00:06:23.965936+00:00",
+          "elapsedSeconds": 56.158941,
+          "testFiles": [
+            "src\\test\\java\\com\\example\\notes\\HealthEndpointTest.java",
+            "src\\test\\java\\com\\example\\notes\\NoteApiIntegrationTest.java"
+          ]
+        },
+        "diagnostics": []
+      },
+      "applicationTestsPassed": true,
+      "cloudApply": false,
+      "retainedCandidate": {
+        "path": ".easydep/research-candidates/generated-p2-storage-idempotency-3663abf673fe/application",
+        "sha256": "3663abf673fe368ec766caeef893219ef50d6bf3ca9263127b18e3df4a20ebc5"
+      }
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 1,
+    "diagnosticResolvedCount": 1,
+    "applicationTestsPassedCount": 1,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 124.083211
+  }
+}

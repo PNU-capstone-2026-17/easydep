@@ -10,11 +10,11 @@
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import aws, HERE  # noqa: E402
+from run import HERE, aws  # noqa: E402
 
 
 def main() -> None:
@@ -54,7 +54,7 @@ def main() -> None:
         time.sleep(15)
     step("F.delete-vpc", aws(["ec2", "delete-vpc", "--vpc-id", vpc_id]))
 
-    results["ranAtFix"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    results["ranAtFix"] = datetime.now(UTC).isoformat(timespec="seconds")
     (HERE / "results.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 

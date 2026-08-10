@@ -10,10 +10,24 @@ from dataclasses import asdict
 from typing import Any
 
 from app.core.infra_planning import plan_for_anchors
+from app.requirements.capability_contract import (
+    SUPPORTED_DEPENDENCY_CAPABILITY_IDS,
+    link_dependency_capability,
+    requires_load_balanced_ingress,
+    requires_persistent_storage,
+)
 
 
 def _alias(value: str) -> str:
     return "resource_" + "".join(c if c.isalnum() else "_" for c in value)
+
+
+def _modeled_outcome(capability_ids: list[str], persistent: bool) -> str:
+    if "persistent-block-storage" in capability_ids:
+        return "disk" if persistent else "no_disk"
+    if "https-load-balanced-ingress" in capability_ids:
+        return "https-load-balanced-ingress"
+    return "load-balanced-ingress"
 
 
 def _render_cloud_deployment(
@@ -106,26 +120,117 @@ class CloudDesignAdapter:
             }
 
         anchors = ["vm"]
-        deployment_needs = requirements_result.get("deployment_needs") or {}
-        persistent_storage = deployment_needs.get("persistent_storage") or {}
-        deployment_model = design_result.get("deployment_diagram_model") or {}
-        design_has_database = any(
-            str(node.get("kind", "")).lower() == "database"
-            for node in deployment_model.get("Nodes", [])
-            if isinstance(node, dict)
-        )
-        if persistent_storage.get("required") is True or design_has_database:
+        all_needs = requirements_result.get("deployment_needs") or {}
+        accepted = {
+            key: value
+            for key, value in all_needs.items()
+            if isinstance(value, dict)
+            and value.get("decision", "accepted") == "accepted"
+        }
+        capabilities_by_need = {
+            key: sorted(
+                (
+                    set(value.get("dependencyCapabilityIds") or [])
+                    | {
+                        candidate
+                        for candidate in [link_dependency_capability(
+                            key, str(value.get("role") or "")
+                        )]
+                        if candidate
+                    }
+                )
+                & SUPPORTED_DEPENDENCY_CAPABILITY_IDS
+            )
+            for key, value in accepted.items()
+        }
+        # Stored CapabilityContract/v1 development runs predate stable IDs.
+        if "persistent_storage" in accepted and not capabilities_by_need.get(
+            "persistent_storage"
+        ):
+            capabilities_by_need["persistent_storage"] = [
+                "persistent-block-storage"
+            ]
+        normalized_needs = {
+            **all_needs,
+            **{
+                key: {**value, "dependencyCapabilityIds": capabilities_by_need[key]}
+                for key, value in accepted.items()
+            },
+        }
+        selected_capabilities = {
+            capability_id
+            for capability_ids in capabilities_by_need.values()
+            for capability_id in capability_ids
+        }
+        persistent_storage_required = requires_persistent_storage(normalized_needs)
+        if persistent_storage_required:
             anchors.append("disk")
+        load_balanced_capabilities = {
+            "load-balanced-ingress",
+            "https-load-balanced-ingress",
+        }
         if resource_spec.get("multiZone") is True:
+            selected_capabilities.add("load-balanced-ingress")
+        if requires_load_balanced_ingress(normalized_needs) or (
+            resource_spec.get("multiZone") is True
+        ):
             anchors.append("loadBalancer")
 
-        plan = plan_for_anchors(anchors, provider, region)
+        # HTTPS is the more specific realization when both IDs were emitted.
+        if "https-load-balanced-ingress" in selected_capabilities:
+            selected_capabilities.discard("load-balanced-ingress")
+        projection_capabilities = tuple(sorted(
+            selected_capabilities & load_balanced_capabilities
+        ))
+
+        plan = plan_for_anchors(
+            anchors,
+            provider,
+            region,
+            capability_ids=projection_capabilities,
+        )
         cloud_puml = _render_cloud_deployment(plan.design, provider, region)
         return {
             "status": "completed",
             "provider": provider,
             "region": region,
             "anchors": anchors,
+            "dependency_coverage": {
+                "modeledInputs": [
+                    {
+                        "source": "system_scope",
+                        "field": "docker_on_vm",
+                        "outcome": "vm",
+                    },
+                    *(
+                        [{
+                            "source": "deployment_needs",
+                            "field": key,
+                            "capabilityIds": capability_ids,
+                            "outcome": _modeled_outcome(
+                                capability_ids,
+                                persistent_storage_required,
+                            ),
+                        }
+                        for key, capability_ids in sorted(capabilities_by_need.items())
+                        if capability_ids]
+                    ),
+                    *(
+                        [{
+                            "source": "resource_spec",
+                            "field": "multiZone",
+                            "outcome": "loadBalancer",
+                        }]
+                        if resource_spec.get("multiZone") is True
+                        else []
+                    ),
+                ],
+                "unmodeledAcceptedNeeds": sorted(
+                    key
+                    for key in accepted
+                    if not capabilities_by_need.get(key)
+                ),
+            },
             "dependency_plan": plan.design,
             "open_questions": list(plan.questions),
             "unmeasured": list(plan.unmeasured),

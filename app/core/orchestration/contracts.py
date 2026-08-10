@@ -80,7 +80,7 @@ class StepResult(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)
     diagnostics: list[Diagnostic] = Field(default_factory=list)
-    metrics: dict[str, int | float | str] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
     prompt: Any | None = None
 
 
@@ -111,6 +111,8 @@ class StepContext(BaseModel):
     app_id: str
     mode: RunMode
     response: Any | None = None
+    requirement_revision: int = 0
+    checkpoint_retry_attempt: int = 0
 
 
 class StepProvider(Protocol):
@@ -129,6 +131,8 @@ class OrchestrationState(TypedDict, total=False):
     implementation: dict[str, Any]
     testing: dict[str, Any]
     error: str
+    retryHistory: list[dict[str, Any]]
+    requirementRevisionHistory: list[dict[str, Any]]
 
 
 class RunResult(BaseModel):

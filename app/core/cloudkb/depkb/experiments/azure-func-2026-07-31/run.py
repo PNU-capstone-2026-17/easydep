@@ -12,7 +12,7 @@ import json
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
@@ -51,7 +51,7 @@ def main() -> None:
     rg = sys.argv[1]
     doc = {"_note": ("기능 의존(azure) — nic→publicIp. 기능 신호 = 로컬 TCP 22. "
                      "회복(F3)까지 봐야 인과가 선다."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "ids": {}, "steps": {}}
     steps = doc["steps"]
 
@@ -122,7 +122,7 @@ def main() -> None:
     step("T5.delete-vnet", az(["network", "vnet", "delete", "-g", rg,
                                "-n", "depkb-func-vnet"]))
     step("T6.residual", az(["resource", "list", "-g", rg, "-o", "json"]))
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

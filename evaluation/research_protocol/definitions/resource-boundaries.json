@@ -1,0 +1,40 @@
+﻿{
+  "schemaVersion": "easydep-resource-boundary-hypotheses/v1",
+  "neutralSource": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json",
+  "providers": {
+    "aws": [
+      {"id":"vm","conceptId":"neutral.compute","serviceFamily":"ec2","operations":{"create":"RunInstances","read":"DescribeInstances","delete":"TerminateInstances"},"capabilityIds":["linux-vm-runtime"]},
+      {"id":"disk","conceptId":"neutral.data-storage","serviceFamily":"ec2","operations":{"create":"CreateVolume","read":"DescribeVolumes","delete":"DeleteVolume"},"capabilityIds":["persistent-block-storage"]},
+      {"id":"virtual-network","conceptId":"neutral.virtual-network","serviceFamily":"ec2","operations":{"create":"CreateVpc","read":"DescribeVpcs","delete":"DeleteVpc"},"capabilityIds":["isolated-network"]},
+      {"id":"subnet","conceptId":"neutral.ip-network-segment","serviceFamily":"ec2","operations":{"create":"CreateSubnet","read":"DescribeSubnets","delete":"DeleteSubnet"},"capabilityIds":["failure-domain-placement"]},
+      {"id":"security-group","conceptId":"neutral.network-security-policy-group","serviceFamily":"ec2","operations":{"create":"CreateSecurityGroup","read":"DescribeSecurityGroups","delete":"DeleteSecurityGroup"},"capabilityIds":["network-access-control"]},
+      {"id":"load-balancer","conceptId":"neutral.network-load-balancer","serviceFamily":"elbv2","operations":{"create":"CreateLoadBalancer","read":"DescribeLoadBalancers","delete":"DeleteLoadBalancer"},"capabilityIds":["load-balanced-ingress"]},
+      {"id":"listener","conceptId":"neutral.load-balancer-listener","serviceFamily":"elbv2","operations":{"create":"CreateListener","read":"DescribeListeners","delete":"DeleteListener"},"capabilityIds":["load-balancer-listener","tls-termination"]},
+      {"id":"backend-group","conceptId":"neutral.load-balancer-backend-group","serviceFamily":"elbv2","operations":{"create":"CreateTargetGroup","read":"DescribeTargetGroups","delete":"DeleteTargetGroup"},"capabilityIds":["health-routed-backend"]}
+    ],
+    "azure": [
+      {"id":"vm","conceptId":"neutral.compute","serviceFamily":"compute-ComputeRP","operations":{"create":"VirtualMachines_CreateOrUpdate","read":"VirtualMachines_Get","delete":"VirtualMachines_Delete"},"capabilityIds":["linux-vm-runtime"]},
+      {"id":"disk","conceptId":"neutral.data-storage","serviceFamily":"compute-DiskRP","operations":{"create":"Disks_CreateOrUpdate","read":"Disks_Get","delete":"Disks_Delete"},"capabilityIds":["persistent-block-storage"]},
+      {"id":"virtual-network","conceptId":"neutral.virtual-network","serviceFamily":"network-virtualNetwork","operations":{"create":"VirtualNetworks_CreateOrUpdate","read":"VirtualNetworks_Get","delete":"VirtualNetworks_Delete"},"capabilityIds":["isolated-network"]},
+      {"id":"subnet","conceptId":"neutral.ip-network-segment","serviceFamily":"network-virtualNetwork","operations":{"create":"Subnets_CreateOrUpdate","read":"Subnets_Get","delete":"Subnets_Delete"},"capabilityIds":["failure-domain-placement"]},
+      {"id":"network-interface","conceptId":"neutral.compute-network-attachment","serviceFamily":"network-virtualNetwork","operations":{"create":"NetworkInterfaces_CreateOrUpdate","read":"NetworkInterfaces_Get","delete":"NetworkInterfaces_Delete"},"capabilityIds":["compute-network-attachment"]},
+      {"id":"security-group","conceptId":"neutral.network-security-policy-group","serviceFamily":"network-virtualNetwork","operations":{"create":"NetworkSecurityGroups_CreateOrUpdate","read":"NetworkSecurityGroups_Get","delete":"NetworkSecurityGroups_Delete"},"capabilityIds":["network-access-control"]},
+      {"id":"load-balancer","conceptId":"neutral.network-load-balancer","serviceFamily":"network-loadBalancer","operations":{"create":"LoadBalancers_CreateOrUpdate","read":"LoadBalancers_Get","delete":"LoadBalancers_Delete"},"capabilityIds":["load-balanced-ingress","health-routed-backend"]}
+    ],
+    "gcp": [
+      {"id":"vm","conceptId":"neutral.compute","serviceFamily":"instances","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["linux-vm-runtime"]},
+      {"id":"disk","conceptId":"neutral.data-storage","serviceFamily":"disks","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["persistent-block-storage"]},
+      {"id":"virtual-network","conceptId":"neutral.virtual-network","serviceFamily":"networks","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["isolated-network"]},
+      {"id":"subnet","conceptId":"neutral.ip-network-segment","serviceFamily":"subnetworks","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["failure-domain-placement"]},
+      {"id":"firewall","conceptId":"neutral.network-security-policy-group","serviceFamily":"firewalls","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["network-access-control"]},
+      {"id":"backend-service","conceptId":"neutral.network-load-balancer","serviceFamily":"backendServices","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["load-balanced-ingress"]},
+      {"id":"forwarding-rule","conceptId":"neutral.network-load-balancer","serviceFamily":"forwardingRules","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["load-balanced-ingress"]},
+      {"id":"target-https-proxy","conceptId":"neutral.load-balancer-listener","serviceFamily":"targetHttpsProxies","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["load-balancer-listener","tls-termination"]},
+      {"id":"url-map","conceptId":"neutral.load-balancer-listener","serviceFamily":"urlMaps","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["load-balancer-listener"]},
+      {"id":"ssl-certificate","conceptId":"neutral.load-balancer-listener","serviceFamily":"sslCertificates","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["tls-termination"]},
+      {"id":"backend-group","conceptId":"neutral.compute-group","serviceFamily":"instanceGroups","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["compute-group","health-routed-backend"]},
+      {"id":"health-check","conceptId":"neutral.load-balancer-health-check","serviceFamily":"healthChecks","operations":{"create":"insert","read":"get","delete":"delete"},"capabilityIds":["health-routed-backend"]}
+    ]
+  }
+}
+

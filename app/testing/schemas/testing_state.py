@@ -19,3 +19,7 @@ class TestingState(TypedDict):
     dynamic_functional_report: Optional[dict[str, Any]]
     dynamic_nfr_report: Optional[dict[str, Any]]
     iac_report: Optional[dict[str, Any]]
+
+
+# 이름이 ``Test``로 시작하지만 pytest 수집 대상 클래스가 아니다.
+TestingState.__test__ = False

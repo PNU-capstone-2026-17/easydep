@@ -1,12 +1,14 @@
 # agent-sdk
 
-클라우드 지식베이스(패키지 9+개, 커밋 산출물 `data/*.gz`) + 배포 계획 생성.
+클라우드 지식베이스(현행 패키지 `depkb`·`costkb`·`perfkb`·`kbcommon`,
+커밋 산출물 `data/*.gz`) + 배포 계획 생성.
 원칙: **모르면 모른다고 답한다** — 짐작을 사실로 승격하지 않는다.
 
 ## 시작점
 
-- **현재 진실: `docs/cloud-native-extension.md`** — 범위·어휘·경계·단계 배분.
-  이 영역을 건드리기 전에 여기부터. 다른 문서와 어긋나면 그쪽이 이긴다.
+- **현재 패키지 경계: `README.md`** — 현행 코드·데이터·연구 증거·레거시의 구분.
+- 제품 전체 확장 흐름: `docs/cloud-native-extension.md` — 범위·어휘·단계 배분.
+  코드와 어긋나면 테스트와 실제 import 경계를 우선하고 문서를 함께 고친다.
 - 연구 정의와 판정 기준: `document/dependency-analysis.md`
 - Docker-on-VM 범위: `document/vm-scope.md`
 - 대조실험과 지표: `document/evaluation-protocol.md`

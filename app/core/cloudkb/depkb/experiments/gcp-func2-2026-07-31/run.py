@@ -14,7 +14,7 @@ import json
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gcp-apply3-2026-07-31"))
@@ -59,7 +59,7 @@ def main() -> None:
     inst = f"{z}/instances/depkbf2-vm"
     doc = {"_note": ("기능 의존 2라운드(gcp) — 방화벽 규칙·기본 라우트 "
                      "삭제/복원. 기능 신호 = 로컬 TCP 22."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "ids": {}, "steps": {}}
     steps = doc["steps"]
 
@@ -156,7 +156,7 @@ def main() -> None:
                 if n["name"].startswith("depkbf2")]
     step("T7.residual", {"ok": not residual, "errorCodes": [],
                          "excerpt": json.dumps(residual)})
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

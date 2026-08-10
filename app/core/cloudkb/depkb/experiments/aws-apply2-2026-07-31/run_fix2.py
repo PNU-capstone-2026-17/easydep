@@ -9,11 +9,11 @@ results.json에 F2 스텝으로 병합한다.
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run import aws, HERE  # noqa: E402
+from run import HERE, aws  # noqa: E402
 
 results = json.loads((HERE / "results.json").read_text(encoding="utf-8"))
 res = aws(["elbv2", "create-load-balancer", "--name", "depkb2f2-nlb",
@@ -24,6 +24,6 @@ tag = "OK" if res["ok"] else "/".join(res["errorCodes"])
 print(f"F2.internal-nlb-omit-subnets      {tag}")
 if res["ok"]:
     sys.exit("예상 밖 성공 — LB가 생겼다, 정리 필요")
-results["ranAtFix2"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+results["ranAtFix2"] = datetime.now(UTC).isoformat(timespec="seconds")
 (HERE / "results.json").write_text(
     json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")

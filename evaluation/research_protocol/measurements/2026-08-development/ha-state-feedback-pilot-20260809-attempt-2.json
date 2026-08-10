@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "easydep-ha-state-feedback-pilot/v1",
+  "recordedAt": "2026-08-09T00:35:52.491494+00:00",
+  "scope": "Docker-on-Linux-VM",
+  "naturalLanguageRequirement": "Create a Dockerized REST service that persists mutable application state on the VM filesystem and remains available across an availability-zone failure.",
+  "runId": "ha-state-feedback-20260809T003533Z-59e0bd",
+  "initial": {
+    "status": "failed",
+    "diagnosticCodes": [
+      "ValidationError"
+    ],
+    "promptKind": null,
+    "alternatives": [],
+    "applicationFileHashes": {}
+  },
+  "answer": {
+    "resolution": "externalize-or-replicate-state"
+  },
+  "resume": null,
+  "measurement": {
+    "llmCallSeconds": [
+      18.582912
+    ],
+    "wallSeconds": 18.629083,
+    "llmCalls": 1
+  },
+  "claimLimits": {
+    "actualLlmUsed": true,
+    "contractConflictMeasured": false,
+    "contractResolutionMeasured": false,
+    "applicationBuildMeasured": false,
+    "applicationFunctionMeasured": false,
+    "cloudApplyMeasured": false,
+    "generalizationMeasured": false
+  }
+}

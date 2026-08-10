@@ -1,0 +1,381 @@
+{
+  "schemaVersion": "easydep-neutral-hypotheses/v1",
+  "model": "tosca",
+  "sourceId": "oasis.tosca.2.0.csd07",
+  "scope": "VM-connected IaaS modeling abstractions present in the TOSCA 2.0 language specification; domain-specific Simple Profile resource types are outside this source.",
+  "candidates": [
+    {
+      "id": "tosca.service-template",
+      "sourceTerm": "service template",
+      "definition": "A design that defines a service topology as a directed graph whose component vertices are node templates and whose connections are expressed through requirements or relationship templates.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, \"Service Templates, Node Templates, and Relationship Templates\", paragraphs 1 and 6; section 5.1.2, \"Templates and Entity Assignments\", paragraph 1",
+      "scopeRationale": "It is the bounded topology container in which a VM and its directly connected IaaS components can be described together.",
+      "relations": [
+        {
+          "predicate": "definesDirectedGraphContaining",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 1; section 5.1.2, paragraph 1"
+        },
+        {
+          "predicate": "mayInclude",
+          "targetSourceTerm": "relationship template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.2, paragraph 1"
+        }
+      ]
+    },
+    {
+      "id": "tosca.node-template",
+      "sourceTerm": "node template",
+      "definition": "A typed template that states that a component is present in a service and supplies component-specific assignments such as property values.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, \"Service Templates, Node Templates, and Relationship Templates\", paragraphs 1-3; section 7.2, \"Node Template\"",
+      "scopeRationale": "A VM, volume, interface, or network may be represented as a component only through a domain-defined node type instantiated by this abstraction.",
+      "relations": [
+        {
+          "predicate": "isTypedBy",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraphs 1-2"
+        },
+        {
+          "predicate": "mayAssign",
+          "targetSourceTerm": "property",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.2, paragraph 3"
+        },
+        {
+          "predicate": "mayContain",
+          "targetSourceTerm": "requirement assignment",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.2, paragraphs 1-2; section 8.5, \"Requirement Assignment\""
+        }
+      ]
+    },
+    {
+      "id": "tosca.node-type",
+      "sourceTerm": "node type",
+      "definition": "A reusable component type that defines the component's semantics and management facade, including configurable properties, runtime attributes, interfaces, requirements, and capabilities.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.1, paragraphs 1-2; section 7.1, \"Node Type\"",
+      "scopeRationale": "This is the type boundary through which profiles can define vendor-neutral or technology-specific VM-connected infrastructure components.",
+      "relations": [
+        {
+          "predicate": "defines",
+          "targetSourceTerm": "property",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.1, paragraph 2"
+        },
+        {
+          "predicate": "defines",
+          "targetSourceTerm": "attribute",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.1, paragraph 2"
+        },
+        {
+          "predicate": "defines",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 8.2, paragraph 1"
+        },
+        {
+          "predicate": "defines",
+          "targetSourceTerm": "requirement definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 8.4, \"Requirement Definition\""
+        },
+        {
+          "predicate": "defines",
+          "targetSourceTerm": "interface",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 11.2, \"Interface Definition\""
+        },
+        {
+          "predicate": "mayDeriveFrom",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.3, \"Type Derivation, Augmentation, and Refinement\", paragraphs 1-3"
+        }
+      ]
+    },
+    {
+      "id": "tosca.relationship-template",
+      "sourceTerm": "relationship template",
+      "definition": "A typed occurrence of a directed relationship between a source node and a target node, with application-specific assignments for features defined by its relationship type.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraphs 6-7; section 7.4, \"Relationship Template\", paragraphs 1-2",
+      "scopeRationale": "It explicitly represents dependencies or interactions among a VM and connected infrastructure components when an out-of-band reusable relationship is needed.",
+      "relations": [
+        {
+          "predicate": "isTypedBy",
+          "targetSourceTerm": "relationship type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 7; section 7.4, paragraph 1"
+        },
+        {
+          "predicate": "connectsSourceToTarget",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraphs 6-7; section 7.4, paragraph 1"
+        }
+      ]
+    },
+    {
+      "id": "tosca.relationship-type",
+      "sourceTerm": "relationship type",
+      "definition": "A reusable type that defines the semantics and management features of relationships, including properties, attributes, interfaces, and restrictions on valid endpoint types.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 7; section 7.3, \"Relationship Type\"",
+      "scopeRationale": "It supplies the semantic category for VM attachment, hosting, dependency, or connectivity relationships defined by an IaaS profile.",
+      "relations": [
+        {
+          "predicate": "types",
+          "targetSourceTerm": "relationship template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 7; section 7.4, paragraph 1"
+        },
+        {
+          "predicate": "mayRestrict",
+          "targetSourceTerm": "capability type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 7.3, recognized keyname valid_capability_types"
+        },
+        {
+          "predicate": "mayRestrictEndpoint",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 7.3, recognized keynames valid_target_node_types and valid_source_node_types"
+        }
+      ]
+    },
+    {
+      "id": "tosca.capability-definition",
+      "sourceTerm": "capability definition",
+      "definition": "A typed set of data exposed by a node to describe a component feature that can satisfy a requirement of another node.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 8.2, \"Capability Definition\", paragraph 1",
+      "scopeRationale": "It is the target-side contract for attachable, hostable, connectable, or allocatable features of VM-connected infrastructure.",
+      "relations": [
+        {
+          "predicate": "isDefinedIn",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.2, paragraph 1"
+        },
+        {
+          "predicate": "isTypedBy",
+          "targetSourceTerm": "capability type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.2, recognized keyname type"
+        },
+        {
+          "predicate": "fulfills",
+          "targetSourceTerm": "requirement definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.2, paragraph 1; section 8.4, recognized keyname capability"
+        }
+      ]
+    },
+    {
+      "id": "tosca.capability-type",
+      "sourceTerm": "capability type",
+      "definition": "A reusable schema for a capability's properties and attributes that may also constrain valid source-node and relationship types.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 8.1, \"Capability Type\", recognized keynames and derivation rules",
+      "scopeRationale": "It gives profiles a reusable way to type capacity or connection features exposed by VM-related nodes.",
+      "relations": [
+        {
+          "predicate": "types",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.2, recognized keyname type"
+        },
+        {
+          "predicate": "mayRestrictSource",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.1, recognized keyname valid_source_node_types"
+        },
+        {
+          "predicate": "mayRestrict",
+          "targetSourceTerm": "relationship type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.1, recognized keyname valid_relationship_types"
+        }
+      ]
+    },
+    {
+      "id": "tosca.requirement-definition",
+      "sourceTerm": "requirement definition",
+      "definition": "A source-node contract that identifies the capability a target must expose and may constrain the target node type, relationship type, node filter, and allowed relationship count.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, \"Requirement Definition\", grammar and placeholder semantics",
+      "scopeRationale": "It expresses the typed need behind VM hosting, attachment, dependency, and network connection hypotheses without assuming a provider implementation.",
+      "relations": [
+        {
+          "predicate": "isDefinedIn",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 8.4"
+        },
+        {
+          "predicate": "requires",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, capability keyname and paragraphs following the grammar"
+        },
+        {
+          "predicate": "mayConstrainTarget",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, node keyname and node_type_name placeholder"
+        },
+        {
+          "predicate": "maySpecify",
+          "targetSourceTerm": "relationship type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, relationship keyname and relationship_type_name placeholder"
+        },
+        {
+          "predicate": "mayUse",
+          "targetSourceTerm": "node filter definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, node_filter keyname; section 8.6, paragraph 1"
+        }
+      ]
+    },
+    {
+      "id": "tosca.requirement-assignment",
+      "sourceTerm": "requirement assignment",
+      "definition": "A node-template assignment that fulfills a named requirement by selecting or constraining a target capability and node and by establishing the relationship used to reach it.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 8.5, \"Requirement Assignment\", subsections 8.5.1-8.5.2",
+      "scopeRationale": "It is the concrete topology mechanism by which a VM-related source component is bound to a volume, host, interface, or network target.",
+      "relations": [
+        {
+          "predicate": "assigns",
+          "targetSourceTerm": "requirement definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.5, requirement_name placeholder and requirement-assignment rules"
+        },
+        {
+          "predicate": "selectsTarget",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.5.2, node_template_name placeholder"
+        },
+        {
+          "predicate": "maySelect",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.5.2, capability_symbolic_name and capability_type_name placeholders"
+        },
+        {
+          "predicate": "creates",
+          "targetSourceTerm": "relationship",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.4, relationship_type_name placeholder; section 8.5.2, relationship assignment grammar"
+        },
+        {
+          "predicate": "mayAllocateFrom",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.5.5, \"Capability Allocation\", allocation rules"
+        }
+      ]
+    },
+    {
+      "id": "tosca.node-filter-definition",
+      "sourceTerm": "node filter definition",
+      "definition": "A Boolean condition used either to select an existing node or to restrict and validate the candidate target nodes that can fulfill a requirement.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 8.6, \"Node Filter Definition\", paragraphs 1-5",
+      "scopeRationale": "It captures deploy-time selection constraints such as compute capacity without turning an example's domain labels into standard resource types.",
+      "relations": [
+        {
+          "predicate": "filters",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.6, paragraphs 1-5"
+        },
+        {
+          "predicate": "mayEvaluate",
+          "targetSourceTerm": "capability definition",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 8.6, paragraphs 2 and 5"
+        }
+      ]
+    },
+    {
+      "id": "tosca.property",
+      "sourceTerm": "property",
+      "definition": "Typed configuration data defined by a type and assigned in a template, including values that may be supplied directly or obtained through TOSCA functions.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.2, paragraphs 2-3; sections 9.4-9.5",
+      "scopeRationale": "VM size, image choice, addresses, capacity, and attachment settings can be profile-defined as configurable data, while the language itself does not standardize those fields.",
+      "relations": [
+        {
+          "predicate": "isDefinedBy",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.1, paragraph 2"
+        },
+        {
+          "predicate": "isAssignedBy",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.2, paragraph 3"
+        }
+      ]
+    },
+    {
+      "id": "tosca.attribute",
+      "sourceTerm": "attribute",
+      "definition": "Typed runtime-state data expected from a component and updated by an orchestrator following lifecycle operations or notifications.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraphs 2-3; sections 9.6-9.7",
+      "scopeRationale": "It separates observed VM or connected-resource runtime state from desired configuration properties.",
+      "relations": [
+        {
+          "predicate": "isDefinedBy",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 2; section 5.1.1, paragraph 2"
+        },
+        {
+          "predicate": "isUpdatedFor",
+          "targetSourceTerm": "node template",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.1, paragraph 3"
+        }
+      ]
+    },
+    {
+      "id": "tosca.interface",
+      "sourceTerm": "interface",
+      "definition": "A typed grouping of operations and notifications associated with a common management purpose and exposed by node or relationship types.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, \"Interfaces, Operations, and Artifacts\"; sections 11.1-11.3",
+      "scopeRationale": "It is the management facade through which lifecycle actions on a VM or directly related infrastructure component can be described.",
+      "relations": [
+        {
+          "predicate": "groups",
+          "targetSourceTerm": "operation",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, paragraph describing interface definitions; section 11.2"
+        },
+        {
+          "predicate": "mayBeDefinedBy",
+          "targetSourceTerm": "node type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 11.2"
+        },
+        {
+          "predicate": "mayBeDefinedBy",
+          "targetSourceTerm": "relationship type",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 5.1.1, paragraph 2; section 11.2"
+        }
+      ]
+    },
+    {
+      "id": "tosca.operation",
+      "sourceTerm": "operation",
+      "definition": "A management action declared within an interface, optionally with inputs, outputs, and an implementation that an orchestrator may invoke during workflows.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, \"Interfaces, Operations, and Artifacts\"; sections 11.4-11.5",
+      "scopeRationale": "It represents lifecycle or management actions for VM-connected components while remaining independent of any provider API operation.",
+      "relations": [
+        {
+          "predicate": "isGroupedIn",
+          "targetSourceTerm": "interface",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, paragraph describing interface definitions; section 11.2"
+        },
+        {
+          "predicate": "mayBeImplementedBy",
+          "targetSourceTerm": "artifact",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, paragraph describing operation implementations; section 11.8"
+        }
+      ]
+    },
+    {
+      "id": "tosca.artifact",
+      "sourceTerm": "artifact",
+      "definition": "Typed content used to provide an operation implementation or otherwise support deployment, such as executable, configuration, data, image, or library content.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, \"Interfaces, Operations, and Artifacts\", paragraphs 4-5; section 12, \"Artifacts\"",
+      "scopeRationale": "VM images, configuration payloads, and lifecycle implementation content fall near the VM deployment boundary, without implying that every provider image resource is itself a TOSCA artifact.",
+      "relations": [
+        {
+          "predicate": "mayImplement",
+          "targetSourceTerm": "operation",
+          "sourceLocator": "TOSCA 2.0 CSD07, section 3.4, paragraph describing operation implementations; section 11.8"
+        }
+      ]
+    }
+  ],
+  "ambiguities": [
+    {
+      "issue": "The CSD07 prose identifies itself inconsistently: its visible title says Committee Specification Draft 07, while its citation-format paragraph says Committee Specification Draft 06; extraction follows the registered source identifier and CSD07 URL.",
+      "sourceLocator": "TOSCA 2.0 CSD07, title block and Citation Format paragraph"
+    },
+    {
+      "issue": "TOSCA 2.0 removes Simple Profile type definitions from the standard, so example labels such as Compute are illustrative and are not extracted as standardized neutral resource types.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 1.1, change 1; section 3.1, compute example; sections 8.5.5 and 8.6, Compute examples"
+    },
+    {
+      "issue": "Section 7.4 explicitly says relationship-template grammar is currently underspecified; the candidate retains only semantics stated directly in sections 3.1 and 7.4.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 7.4, paragraphs 1-3"
+    },
+    {
+      "issue": "Section 2.3 appears to call graph edges vertices in one sentence; the surrounding graph definition and representation terminology clearly distinguish node and relationship representations, so no alternate hypothesis was created.",
+      "sourceLocator": "TOSCA 2.0 CSD07, section 2.3, paragraphs describing the service representation graph"
+    }
+  ]
+}

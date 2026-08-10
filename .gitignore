@@ -20,10 +20,20 @@ artifacts/*
 !artifacts/README.md
 /.easydep/
 # 명시적 --basetemp로 만든 로컬 pytest 작업 디렉터리
+/.pytest-*/
 /.pytest-tmp-*/
+/.test-tmp/
+/.easydep-test-*/
+/.tmp-pytest-neutral-v2*/
+/.tmp-pytest-neutral-v3*/
+/evaluation/neutral_layer/.terraform-plugin-cache/
+/evaluation/neutral_layer/.terraform-lock-cache/
+/evaluation/neutral_layer/.terraform-init-cache/
 /.cleanup-backup/
 /.mypy_cache/
 /app/implementation/tools/puml2code-bce/node_modules/
+# 공식 bootstrap이 SHA-256 검증 후 내려받는 재생성 가능한 로컬 도구 캐시
+/app/implementation/tools/openapi-generator/
 # 모델 가중치. 원본 model.safetensors(417MiB)는 GitHub 파일당 100MiB 한도를 넘어
 # 커밋할 수 없다.
 *.safetensors

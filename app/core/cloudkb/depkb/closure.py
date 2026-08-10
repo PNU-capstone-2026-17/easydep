@@ -39,6 +39,16 @@ class Decision:
 
 
 @dataclass(frozen=True)
+class UnavailableFinding:
+    subject: str
+    object: str
+    relationFamily: str
+    finding: str
+    evidenceStatus: str
+    replicationStatus: str
+
+
+@dataclass(frozen=True)
 class Closure:
     startResource: str
     csp: str
@@ -50,6 +60,7 @@ class Closure:
     detachRequiredBeforeDelete: tuple[tuple[str, str], ...]
     cascadeDeletedWithOwner: tuple[tuple[str, str], ...]
     runtimeRequiredForSignal: tuple[tuple[str, str, str], ...]
+    unavailableFindings: tuple[UnavailableFinding, ...]
 
 
 @lru_cache(maxsize=1)
@@ -87,14 +98,17 @@ def closure(start_resource: str, csp: str) -> Closure:
             f"resource cannot start a Docker-on-VM plan: {start_resource}; "
             f"allowed={sorted(VM_ANCHOR_TYPES)}"
         )
-    rows = [
+    reviewed_rows = [
         claim for claim in _claims()
         if claim["csp"] == csp
         and claim["studyDisposition"] == "included"
         and claim["evidenceStatus"] == "confirmed"
     ]
-    if not rows:
+    if not reviewed_rows:
         raise KeyError(f"no included, confirmed DepKB findings for CSP: {csp}")
+    rows = [
+        claim for claim in reviewed_rows if claim["replicationStatus"] == "replicated"
+    ]
 
     provisioning = [r for r in rows if r["relationFamily"] == "provisioning"]
     mandatory: dict[str, dict] = {}
@@ -150,6 +164,24 @@ def closure(start_resource: str, csp: str) -> Closure:
         if claim["finding"] == "runtimeRequiredForSignal"
         and claim["subject"] in scope
     ))
+    unavailable = tuple(
+        UnavailableFinding(
+            subject=claim["subject"],
+            object=claim["object"],
+            relationFamily=claim["relationFamily"],
+            finding=claim["finding"],
+            evidenceStatus=claim["evidenceStatus"],
+            replicationStatus=claim["replicationStatus"],
+        )
+        for claim in sorted(
+            reviewed_rows,
+            key=lambda item: (
+                item["subject"], item["object"], item["relationFamily"], item["finding"]
+            ),
+        )
+        if claim["replicationStatus"] != "replicated"
+        and (claim["subject"] in scope or claim["object"] in scope)
+    )
     return Closure(
         startResource=start_resource,
         csp=csp,
@@ -164,6 +196,7 @@ def closure(start_resource: str, csp: str) -> Closure:
         detachRequiredBeforeDelete=pairs("detachRequiredBeforeDelete"),
         cascadeDeletedWithOwner=pairs("cascadeDeletedWithOwner"),
         runtimeRequiredForSignal=runtime,
+        unavailableFindings=unavailable,
     )
 
 

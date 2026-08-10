@@ -12,7 +12,7 @@
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gcp-apply3-2026-07-31"))
@@ -68,7 +68,7 @@ def main() -> None:
     (HERE / "results.json").write_text(json.dumps({
         "_note": ("쌍 호환(존) 측정 — P1 거부가 가설, P2 대조군. 인스턴스는 "
                   "대조군에서만 잠깐 존재."),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "project": project, "zones": [zone_a, zone_b],
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

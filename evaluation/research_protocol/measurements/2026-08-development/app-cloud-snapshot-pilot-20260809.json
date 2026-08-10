@@ -1,0 +1,322 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-ablation/v1",
+  "createdAt": "2026-08-08T22:57:28.536958+00:00",
+  "kind": "same-generated-application-snapshot-validator-ablation",
+  "configuration": {
+    "llmCalls": 0,
+    "cloudApply": false,
+    "downstreamTests": true
+  },
+  "cases": [
+    {
+      "id": "generated-build-dependency",
+      "group": "build-runtime-dependency",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "sourceSha256": "f6cfb449fcd5bcc77fe41da84139e4fa4a7abbbffc2c9d18c9e99e19848af119",
+      "sourceQualification": {
+        "eligible": true,
+        "applicationPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.011699
+        },
+        "deploymentPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.128044
+        }
+      },
+      "manipulatedSha256": "aa433fedcb61b64155b1feadb4f485abf47e54f387474ec6b9db320ba14d34a9",
+      "mutationFiles": [
+        "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+      ],
+      "sameInputAcrossArms": true,
+      "expectedDiagnostic": "APP-DEP-001",
+      "expectedRepairOwner": "implementation.logic",
+      "observedRepairOwner": "implementation.logic",
+      "fullDecisionCorrect": true,
+      "arms": {
+        "full": {
+          "validatorEnabled": true,
+          "inputSha256": "aa433fedcb61b64155b1feadb4f485abf47e54f387474ec6b9db320ba14d34a9",
+          "preflight": {
+            "diagnostics": [
+              {
+                "code": "APP-DEP-001",
+                "message": "Observed API/configuration has no matching build dependency: java.spring-data-jpa",
+                "locations": [
+                  "src/main/resources/application.yml",
+                  "src/main/java/com/example/conversion/ConversionApplication.java",
+                  "src/main/java/com/example/conversion/controller/ConversionController.java",
+                  "src/main/java/com/example/conversion/controller/HealthController.java",
+                  "src/main/java/com/example/conversion/exception/GlobalExceptionHandler.java",
+                  "src/main/java/com/example/conversion/model/ConversionRequest.java",
+                  "src/main/java/com/example/conversion/model/ConversionResponse.java",
+                  "src/main/java/com/example/conversion/model/ErrorResponse.java",
+                  "src/main/java/com/example/conversion/model/HealthResponse.java",
+                  "src/main/java/com/example/conversion/service/ConversionService.java",
+                  "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+                ],
+                "details": {
+                  "rule": "java.spring-data-jpa",
+                  "missingCoordinates": [
+                    "org.springframework.boot:spring-boot-starter-data-jpa"
+                  ]
+                }
+              }
+            ],
+            "observations": [],
+            "elapsedSeconds": 0.012303
+          },
+          "blockedBeforeDownstream": true,
+          "downstream": null
+        },
+        "noConsistencyValidator": {
+          "validatorEnabled": false,
+          "inputSha256": "aa433fedcb61b64155b1feadb4f485abf47e54f387474ec6b9db320ba14d34a9",
+          "preflight": {
+            "diagnostics": [],
+            "observations": [],
+            "elapsedSeconds": 0.0
+          },
+          "blockedBeforeDownstream": false,
+          "downstream": {
+            "status": "completed",
+            "passed": false,
+            "repository": "<temporary>\\noConsistencyValidator\\application",
+            "unitTests": {
+              "status": "failed",
+              "command": [
+                "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+                "test",
+                "--no-daemon"
+              ],
+              "exitCode": 1,
+              "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n\n> Task :compileJava\n\n> Task :compileJava FAILED\n\n[Incubating] Problems report is available at: file:///<temporary>/noConsistencyValidator/application/build/reports/problems/problems-report.html\n1 actionable task: 1 executed\n",
+              "stderr": "<temporary>\\noConsistencyValidator\\application\\src\\main\\java\\com\\easydep\\evaluation\\MissingDependencyProbe.java:3: error: package jakarta.persistence does not exist\nimport jakarta.persistence.Entity;\n                          ^\n<temporary>\\noConsistencyValidator\\application\\src\\main\\java\\com\\easydep\\evaluation\\MissingDependencyProbe.java:5: error: cannot find symbol\n@Entity\n ^\n  symbol: class Entity\n2 errors\n\nFAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':compileJava'.\n> Compilation failed; see the compiler output below.\n  <temporary>\\noConsistencyValidator\\application\\src\\main\\java\\com\\easydep\\evaluation\\MissingDependencyProbe.java:5: error: cannot find symbol\n  @Entity\n   ^\n    symbol: class Entity\n  <temporary>\\noConsistencyValidator\\application\\src\\main\\java\\com\\easydep\\evaluation\\MissingDependencyProbe.java:3: error: package jakarta.persistence does not exist\n  import jakarta.persistence.Entity;\n                            ^\n  2 errors\n\n* Try:\n> Check your code and dependencies to fix the compilation error(s)\n> Run with --scan to get full insights.\n\nBUILD FAILED in 27s\n",
+              "startedAt": "2026-08-08T22:55:35.892741+00:00",
+              "finishedAt": "2026-08-08T22:56:03.856139+00:00",
+              "elapsedSeconds": 27.963406,
+              "testFiles": [
+                "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+                "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+              ]
+            },
+            "diagnostics": [
+              {
+                "code": "APP-DEP-001",
+                "message": "Generated application tests failed."
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "generated-port-binding",
+      "group": "port-binding",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "sourceSha256": "f6cfb449fcd5bcc77fe41da84139e4fa4a7abbbffc2c9d18c9e99e19848af119",
+      "sourceQualification": {
+        "eligible": true,
+        "applicationPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.02572
+        },
+        "deploymentPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.068358
+        }
+      },
+      "manipulatedSha256": "4c68d1116e641ac2fd6fdaaac2df8cad7d9057eb44750d60c2bb7545714758b5",
+      "mutationFiles": [
+        "infra/user_data.tpl"
+      ],
+      "sameInputAcrossArms": true,
+      "expectedDiagnostic": "BIND-PORT-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "observedRepairOwner": "implementation.vm_delivery",
+      "fullDecisionCorrect": true,
+      "arms": {
+        "full": {
+          "validatorEnabled": true,
+          "inputSha256": "4c68d1116e641ac2fd6fdaaac2df8cad7d9057eb44750d60c2bb7545714758b5",
+          "preflight": {
+            "diagnostics": [
+              {
+                "code": "BIND-PORT-001",
+                "message": "Generated IaC has an observable backend/container port that conflicts with the application contract.",
+                "locations": [
+                  "user_data.tpl:docker-publish"
+                ],
+                "details": {
+                  "expected": 8080,
+                  "observed": [
+                    9090
+                  ]
+                }
+              }
+            ],
+            "observations": [
+              {
+                "kind": "containerPort",
+                "value": 9090,
+                "source": "user_data.tpl:docker-publish",
+                "confidence": "observed"
+              }
+            ],
+            "elapsedSeconds": 0.06045
+          },
+          "blockedBeforeDownstream": true,
+          "downstream": null
+        },
+        "noConsistencyValidator": {
+          "validatorEnabled": false,
+          "inputSha256": "4c68d1116e641ac2fd6fdaaac2df8cad7d9057eb44750d60c2bb7545714758b5",
+          "preflight": {
+            "diagnostics": [],
+            "observations": [],
+            "elapsedSeconds": 0.0
+          },
+          "blockedBeforeDownstream": false,
+          "downstream": {
+            "status": "completed",
+            "passed": true,
+            "repository": "<temporary>\\noConsistencyValidator\\application",
+            "unitTests": {
+              "status": "passed",
+              "command": [
+                "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+                "test",
+                "--no-daemon"
+              ],
+              "exitCode": 0,
+              "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/noConsistencyValidator/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 44s\n4 actionable tasks: 4 executed\n",
+              "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+              "startedAt": "2026-08-08T22:56:04.580036+00:00",
+              "finishedAt": "2026-08-08T22:56:49.665401+00:00",
+              "elapsedSeconds": 45.085377,
+              "testFiles": [
+                "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+                "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+              ]
+            },
+            "diagnostics": []
+          }
+        }
+      }
+    },
+    {
+      "id": "generated-storage-binding",
+      "group": "storage-binding",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "sourceSha256": "f6cfb449fcd5bcc77fe41da84139e4fa4a7abbbffc2c9d18c9e99e19848af119",
+      "sourceQualification": {
+        "eligible": true,
+        "applicationPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.019954
+        },
+        "deploymentPreflight": {
+          "diagnostics": [],
+          "observations": [],
+          "elapsedSeconds": 0.063474
+        }
+      },
+      "manipulatedSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "mutationFiles": [
+        "infra/user_data.tpl",
+        "src/main/java/com/easydep/evaluation/LocalStateProbe.java"
+      ],
+      "sameInputAcrossArms": true,
+      "expectedDiagnostic": "BIND-STORAGE-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "observedRepairOwner": "implementation.vm_delivery",
+      "fullDecisionCorrect": true,
+      "arms": {
+        "full": {
+          "validatorEnabled": true,
+          "inputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+          "preflight": {
+            "diagnostics": [
+              {
+                "code": "BIND-STORAGE-001",
+                "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+                "locations": [
+                  "user_data.tpl:containerMountPath"
+                ],
+                "details": {
+                  "expected": "/srv/state",
+                  "observed": [
+                    "/mnt/evaluation-mismatch"
+                  ],
+                  "observedBoundary": "container"
+                }
+              }
+            ],
+            "observations": [
+              {
+                "kind": "containerMountPath",
+                "value": "/mnt/evaluation-mismatch",
+                "source": "user_data.tpl:containerMountPath",
+                "confidence": "observed"
+              }
+            ],
+            "elapsedSeconds": 0.064985
+          },
+          "blockedBeforeDownstream": true,
+          "downstream": null
+        },
+        "noConsistencyValidator": {
+          "validatorEnabled": false,
+          "inputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+          "preflight": {
+            "diagnostics": [],
+            "observations": [],
+            "elapsedSeconds": 0.0
+          },
+          "blockedBeforeDownstream": false,
+          "downstream": {
+            "status": "completed",
+            "passed": true,
+            "repository": "<temporary>\\noConsistencyValidator\\application",
+            "unitTests": {
+              "status": "passed",
+              "command": [
+                "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+                "test",
+                "--no-daemon"
+              ],
+              "exitCode": 0,
+              "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/noConsistencyValidator/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 37s\n4 actionable tasks: 4 executed\n",
+              "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+              "startedAt": "2026-08-08T22:56:50.499839+00:00",
+              "finishedAt": "2026-08-08T22:57:28.292671+00:00",
+              "elapsedSeconds": 37.79284,
+              "testFiles": [
+                "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+                "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+              ]
+            },
+            "diagnostics": []
+          }
+        }
+      }
+    }
+  ],
+  "summary": {
+    "caseCount": 3,
+    "sameInputAcrossArmsCount": 3,
+    "fullEarlyDetectionCount": 3,
+    "noValidatorEarlyDetectionCount": 0,
+    "repairOwnerCorrectCount": 3,
+    "noValidatorDownstreamPassCount": 2,
+    "noValidatorDownstreamFailureCount": 1,
+    "repairExecutionMeasured": false,
+    "cloudFunctionMeasured": false,
+    "elapsedSeconds": 113.114547
+  }
+}

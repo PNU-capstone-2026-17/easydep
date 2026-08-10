@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "easydep-capacity-recommendation-cases/v1",
+  "cases": [
+    {
+      "caseId": "measured-200rps-aws",
+      "target": {
+        "targetRps": 200,
+        "maxP95LatencyMs": 100,
+        "maxErrorRate": 0.01,
+        "horizontallyScalable": true,
+        "cpuUtilizationTarget": 0.70,
+        "memoryHeadroomFactor": 1.25,
+        "persistentDataRequired": false
+      },
+      "resourceSpec": {
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady"
+      }
+    },
+    {
+      "caseId": "measured-200rps-azure",
+      "target": {
+        "targetRps": 200,
+        "maxP95LatencyMs": 100,
+        "maxErrorRate": 0.01,
+        "horizontallyScalable": true,
+        "cpuUtilizationTarget": 0.70,
+        "memoryHeadroomFactor": 1.25,
+        "persistentDataRequired": false
+      },
+      "resourceSpec": {
+        "provider": "azure",
+        "region": "eastus",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady"
+      }
+    },
+    {
+      "caseId": "measured-200rps-gcp",
+      "target": {
+        "targetRps": 200,
+        "maxP95LatencyMs": 100,
+        "maxErrorRate": 0.01,
+        "horizontallyScalable": true,
+        "cpuUtilizationTarget": 0.70,
+        "memoryHeadroomFactor": 1.25,
+        "persistentDataRequired": false
+      },
+      "resourceSpec": {
+        "provider": "gcp",
+        "region": "asia-northeast3",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady"
+      }
+    },
+    {
+      "caseId": "defer-unmeasured-persistent-growth",
+      "target": {
+        "targetRps": 200,
+        "maxP95LatencyMs": 100,
+        "maxErrorRate": 0.01,
+        "horizontallyScalable": true,
+        "persistentDataRequired": true,
+        "targetDurableWriteRps": 20,
+        "retentionHours": 720
+      },
+      "resourceSpec": {
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "monthlyBudgetUSD": 1000
+      }
+    }
+  ]
+}

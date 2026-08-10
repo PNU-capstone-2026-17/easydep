@@ -1,7 +1,12 @@
+import pytest
+
 from app.core.cloudkb.depkb import schema_evidence
+from app.core.cloudkb.depkb.fetch_vendors import is_cached
 
 
 def test_every_unique_schema_locator_resolves_against_its_pinned_source():
+    if not is_cached("gcp-compute"):
+        pytest.skip("고정 GCP 원천 스냅샷이 없는 환경에서는 전체 원천 대조를 실행하지 않는다")
     resolutions = schema_evidence.verify_claims()
     assert len(resolutions) == 35
     assert all(item.exists for item in resolutions)

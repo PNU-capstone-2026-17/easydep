@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import time
-import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -60,14 +60,14 @@ def _run(command: list[str], *, cwd: Path | None = None, timeout: int = 1800,
     ) or command[0]
     command = [str(executable), *command[1:]]
     print("+", " ".join(command), flush=True)
-    result = subprocess.run(command, cwd=cwd, text=True, timeout=timeout)
+    result = subprocess.run(command, cwd=cwd, text=True, timeout=timeout, check=False)
     if check and result.returncode:
         raise RuntimeError(f"command failed ({result.returncode}): {' '.join(command)}")
     return result
 
 
 def _json(command: list[str]) -> object:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout).strip())
     return json.loads(result.stdout or "null")
@@ -79,7 +79,7 @@ def _preserve_result(name: str, original: bytes | None) -> None:
         return
     result = EXPERIMENTS / name / "results.json"
     if result.is_file():
-        day = datetime.now(timezone.utc).date().isoformat()
+        day = datetime.now(UTC).date().isoformat()
         destination = ROOT / "replications" / day / f"{name}.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(result, destination)
@@ -181,7 +181,7 @@ def run_aws(region: str, only_experiment: str | None = None) -> dict:
 def run_azure(location: str) -> dict:
     failures: list[str] = []
     residual: list[str] = []
-    stamp = datetime.now(timezone.utc).strftime("%m%d%H%M")
+    stamp = datetime.now(UTC).strftime("%m%d%H%M")
     for index, (name, phases) in enumerate(AZURE_EXPERIMENTS):
         hardcoded = phases == ["__hardcoded_group__"]
         group = "depkb-disj2" if hardcoded else f"depkb-rm-{stamp}-{index}"
@@ -189,7 +189,7 @@ def run_azure(location: str) -> dict:
         original = result_path.read_bytes() if result_path.is_file() else None
         try:
             _run(["az", "group", "create", "-n", group, "-l", location, "-o", "none"])
-            for phase in ([None] if not phases else phases):
+            for phase in (phases or [None]):
                 args = [] if hardcoded else ([group] if phase is None else [phase, group])
                 _run([PYTHON, "run.py", *args], cwd=EXPERIMENTS / name)
         except Exception as exc:
@@ -200,7 +200,7 @@ def run_azure(location: str) -> dict:
             _run(["az", "group", "wait", "-n", group, "--deleted"], timeout=900, check=False)
             exists = subprocess.run(
                 [str(shutil.which("az") or "az"), "group", "exists", "-n", group],
-                capture_output=True, text=True,
+                capture_output=True, text=True, check=False,
             ).stdout.strip()
             if exists == "true":
                 residual.append(group)
@@ -212,7 +212,7 @@ def _gcloud_resources(kind: str, project: str, *, subnets: bool = False) -> list
     result = subprocess.run(
         [str(shutil.which("gcloud.cmd") or "gcloud"), "compute", *group, "list",
          "--project", project, "--filter=name~'^depkb'", "--format=json(name,zone,region)"],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True, text=True, timeout=180, check=False,
     )
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout).strip())
@@ -309,7 +309,7 @@ def main() -> None:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return
     CAPTURE_RESULTS = True
-    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    started = datetime.now(UTC).isoformat(timespec="seconds")
     report: dict[str, object] = {"startedAt": started}
     if args.provider in {"aws", "all"}:
         report["aws"] = run_aws(args.aws_region, args.experiment)
@@ -317,7 +317,7 @@ def main() -> None:
         report["azure"] = run_azure(args.azure_location)
     if args.provider in {"gcp", "all"}:
         report["gcp"] = run_gcp(args.gcp_project, args.gcp_region, args.gcp_zone, args.gcp_zone_b)
-    report["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    report["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     output = ROOT / "replication-report.json"
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(output)

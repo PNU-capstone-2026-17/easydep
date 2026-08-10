@@ -1,0 +1,298 @@
+{
+  "schemaVersion": "easydep-component-artifact-reassessment/v1",
+  "recordedAt": "2026-08-09T02:28:10.101661+00:00",
+  "oracleSha256": "7987bdf9d1bd2d25b963baf5f48b00f7c821f14dd3d1237e22782c8178440003",
+  "selection": "각 component run에서 application snapshot이 있는 완료 우선·최신 attempt",
+  "cells": [
+    {
+      "runId": "easydep-full-lb-control-azure-20260808T204721Z-cbb649",
+      "caseId": "LB-control-azure",
+      "variant": "full",
+      "checkpointAttempt": 1,
+      "manifest": "artifacts/runs/easydep-full-lb-control-azure-20260808T204721Z-cbb649/repairs/attempt-1/manifest.json",
+      "manifestSha256": "04b70f77ec24ca70d303d3b9aaf26846e40bf78ee89f664ab23746ad7aca9cce",
+      "requestedProvider": "azure",
+      "observedProvider": "azure",
+      "staticScore": {
+        "passed": 8,
+        "failed": 1,
+        "unknown": 0,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.888889
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-full-ps-control-azure-20260808T163719Z-68f843",
+      "caseId": "PS-control-azure",
+      "variant": "full",
+      "checkpointAttempt": 3,
+      "manifest": "artifacts/runs/easydep-full-ps-control-azure-20260808T163719Z-68f843/repairs/attempt-3/manifest.json",
+      "manifestSha256": "597820c37fa8cef19b87f5f0085cfcce4aeb3d928f0c9703181041390f446e62",
+      "requestedProvider": "azure",
+      "observedProvider": "aws",
+      "staticScore": {
+        "passed": 8,
+        "failed": 1,
+        "unknown": 0,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.888889
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-full-ps-control-azure-20260808T171359Z-ed1054",
+      "caseId": "PS-control-azure",
+      "variant": "full",
+      "checkpointAttempt": 3,
+      "manifest": "artifacts/runs/easydep-full-ps-control-azure-20260808T171359Z-ed1054/repairs/attempt-3/manifest.json",
+      "manifestSha256": "8a1f58f53d6b383ded3e177077ffe3974602ccb000608e794cc4e2164d67ad8c",
+      "requestedProvider": "azure",
+      "observedProvider": "azure",
+      "staticScore": {
+        "passed": 6,
+        "failed": 3,
+        "unknown": 0,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.666667
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-full-ps-control-azure-20260808T190819Z-1ee7bf",
+      "caseId": "PS-control-azure",
+      "variant": "full",
+      "checkpointAttempt": 6,
+      "manifest": "artifacts/runs/easydep-full-ps-control-azure-20260808T190819Z-1ee7bf/repairs/attempt-6/manifest.json",
+      "manifestSha256": "511790a27028c407f915eb75e6b6a85b20d62c221c013f4be4e793f9c1049a59",
+      "requestedProvider": "azure",
+      "observedProvider": "azure",
+      "staticScore": {
+        "passed": 8,
+        "failed": 1,
+        "unknown": 0,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.888889
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-full-ps-treatment-azure-20260808T085013Z-9d5397",
+      "caseId": "PS-treatment-azure",
+      "variant": "full",
+      "checkpointAttempt": 4,
+      "manifest": "artifacts/runs/easydep-full-ps-treatment-azure-20260808T085013Z-9d5397/repairs/attempt-4/manifest.json",
+      "manifestSha256": "ef45f02e5a7fa7a5134dee4c421259de36da3392d8101b10e70bd1f63628c273",
+      "requestedProvider": "azure",
+      "observedProvider": "aws",
+      "staticScore": {
+        "passed": 5,
+        "failed": 12,
+        "unknown": 2,
+        "notApplicable": 0,
+        "notMeasured": 3,
+        "observedUnverified": 0,
+        "passRate": 0.263158
+      },
+      "dependencyReferences": [
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "disk",
+          "status": "failed"
+        },
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "vm",
+          "status": "failed"
+        }
+      ],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-full-tls-treatment-azure-20260808T200851Z-30bcfe",
+      "caseId": "TLS-treatment-azure",
+      "variant": "full",
+      "checkpointAttempt": 2,
+      "manifest": "artifacts/runs/easydep-full-tls-treatment-azure-20260808T200851Z-30bcfe/repairs/attempt-2/manifest.json",
+      "manifestSha256": "651850c62446ddb15bd613a7685cc0fd6802322c04d2c6d48fb43c3648e9626c",
+      "requestedProvider": "azure",
+      "observedProvider": null,
+      "staticScore": {
+        "passed": 4,
+        "failed": 11,
+        "unknown": 5,
+        "notApplicable": 0,
+        "notMeasured": 10,
+        "observedUnverified": 0,
+        "passRate": 0.2
+      },
+      "dependencyReferences": [
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "gateway",
+          "to": "subnet",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "routingRule",
+          "to": "listener",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "routingRule",
+          "to": "backendPool",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "routingRule",
+          "to": "backendSettings",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "backendSettings",
+          "to": "probe",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "backendMembership",
+          "to": "backendPool",
+          "status": "failed"
+        },
+        {
+          "delta": "load-balanced-multi-vm",
+          "from": "backendMembership",
+          "to": "nic",
+          "status": "failed"
+        },
+        {
+          "delta": "https-termination",
+          "from": "httpsListener",
+          "to": "gateway",
+          "status": "failed"
+        },
+        {
+          "delta": "https-termination",
+          "from": "httpsListener",
+          "to": "certificate",
+          "status": "failed"
+        }
+      ],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-no-depkb-lb-control-azure-20260808T205804Z-4b376c",
+      "caseId": "LB-control-azure",
+      "variant": "no-depkb",
+      "checkpointAttempt": 1,
+      "manifest": "artifacts/runs/easydep-no-depkb-lb-control-azure-20260808T205804Z-4b376c/repairs/attempt-1/manifest.json",
+      "manifestSha256": "001fe1640bb0bb03837df3b2b422661769422d5c325e24081b62fd80f7254231",
+      "requestedProvider": "azure",
+      "observedProvider": "azure",
+      "staticScore": {
+        "passed": 8,
+        "failed": 1,
+        "unknown": 0,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.888889
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    },
+    {
+      "runId": "easydep-no-depkb-ps-control-azure-20260808T170819Z-8230c7",
+      "caseId": "PS-control-azure",
+      "variant": "no-depkb",
+      "checkpointAttempt": 0,
+      "manifest": "artifacts/runs/easydep-no-depkb-ps-control-azure-20260808T170819Z-8230c7/manifest.json",
+      "manifestSha256": "f062979ee70e157e33893ce12b59071ab342844c11c19fa313a2e583585e1123",
+      "requestedProvider": "azure",
+      "observedProvider": null,
+      "staticScore": {
+        "passed": 7,
+        "failed": 0,
+        "unknown": 2,
+        "notApplicable": 0,
+        "notMeasured": 0,
+        "observedUnverified": 0,
+        "passRate": 0.777778
+      },
+      "dependencyReferences": [],
+      "measurementBoundary": {
+        "providerToolsRun": false,
+        "cloudApplyRun": false,
+        "applicationFunctionRun": false,
+        "cardinalityScored": false,
+        "constraintScored": false
+      }
+    }
+  ],
+  "claimLimits": {
+    "developmentArtifactsOnly": true,
+    "notAnIndependentSample": true,
+    "notACloudCreationResult": true,
+    "notAnApplicationFunctionResult": true
+  }
+}

@@ -1,0 +1,472 @@
+{
+  "schemaVersion": "easydep-capacity-recommendation-evaluation/v1",
+  "measurementPath": "artifacts/measurements/http-capacity-development-point-20260810.json",
+  "measurementKind": "single-development-load-point",
+  "casesPath": "evaluation/research_protocol/capacity-recommendation-cases.json",
+  "cases": [
+    {
+      "caseId": "measured-200rps-aws",
+      "schemaVersion": "easydep-measured-capacity-recommendation/v1",
+      "status": "selected",
+      "capacityFloor": {
+        "schemaVersion": "easydep-capacity-floor/v1",
+        "status": "estimated",
+        "method": "measured-slo-point-with-headroom",
+        "minimumInstances": 1,
+        "resourceSpecPatch": {
+          "minVCpu": 8,
+          "minMemoryGiB": 0.5
+        },
+        "disk": {
+          "status": "not-required",
+          "minimumDataDiskGiB": null
+        },
+        "evidence": {
+          "measurementId": null,
+          "sustainableRpsPerInstance": 229.204,
+          "p95LatencyMs": 34.132,
+          "errorRate": 0.0,
+          "p95CpuCores": 5.094,
+          "p99RssBytes": 325373133.0,
+          "cpuUtilizationTarget": 0.7,
+          "memoryHeadroomFactor": 1.25
+        },
+        "limitations": [
+          "동일 이미지·런타임·부하 형태에서 측정한 개발 하한이다.",
+          "클라우드 VM 세대·CPU 모델·네트워크 차이는 실제 배포 후 재측정해야 한다."
+        ]
+      },
+      "effectiveResourceSpec": {
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady",
+        "minVCpu": 8,
+        "minMemoryGiB": 0.5
+      },
+      "vmSelection": {
+        "schemaVersion": "easydep-vm-selection/v1",
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "method": "capacity-filter-then-on-demand-compute-cost",
+        "catalog": "tumblebug-cost-and-performance",
+        "status": "selected",
+        "recommended": {
+          "specName": "c5a.2xlarge",
+          "provider": "aws",
+          "region": "ap-northeast-2",
+          "vCPU": 8,
+          "memoryGiB": 16.0,
+          "architecture": "x86_64",
+          "hourlyListPriceUsd": 0.34400001,
+          "monthlyComputeListPriceUsd": 251.12,
+          "performanceEvidence": {
+            "status": "ok",
+            "note": null
+          }
+        },
+        "selectionBasis": "lowest-cost-candidate-with-no-recorded-performance-warning",
+        "candidates": [
+          {
+            "specName": "c5a.2xlarge",
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.34400001,
+            "monthlyComputeListPriceUsd": 251.12,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "t3a.2xlarge",
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "vCPU": 8,
+            "memoryGiB": 32.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.37439999,
+            "monthlyComputeListPriceUsd": 273.31,
+            "performanceEvidence": {
+              "status": "warn",
+              "note": "Burstable instance — performance drops to baseline once the CPU credits run out."
+            }
+          },
+          {
+            "specName": "c5.2xlarge",
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.384,
+            "monthlyComputeListPriceUsd": 280.32,
+            "performanceEvidence": {
+              "status": "warn",
+              "note": "This is a previous-generation instance — a current generation may offer better price/performance."
+            }
+          },
+          {
+            "specName": "c6i.2xlarge",
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.384,
+            "monthlyComputeListPriceUsd": 280.32,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "c8i-flex.2xlarge",
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.40220001,
+            "monthlyComputeListPriceUsd": 293.61,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          }
+        ],
+        "evaluatedCandidateCount": 87,
+        "constraints": {
+          "minimumVCpuPerVm": 8,
+          "minimumMemoryGiBPerVm": 0.5,
+          "minimumVmCount": 1,
+          "monthlyBudgetUsd": 1000.0,
+          "hoursPerMonth": 730
+        },
+        "budgetScope": "compute-only",
+        "budgetInterpretation": "Passing means only that on-demand VM compute list price fits. Storage, network egress, load balancers, taxes, and discounts are excluded.",
+        "catalogWarning": null
+      },
+      "costScope": "on-demand-compute-list-price-only"
+    },
+    {
+      "caseId": "measured-200rps-azure",
+      "schemaVersion": "easydep-measured-capacity-recommendation/v1",
+      "status": "selected",
+      "capacityFloor": {
+        "schemaVersion": "easydep-capacity-floor/v1",
+        "status": "estimated",
+        "method": "measured-slo-point-with-headroom",
+        "minimumInstances": 1,
+        "resourceSpecPatch": {
+          "minVCpu": 8,
+          "minMemoryGiB": 0.5
+        },
+        "disk": {
+          "status": "not-required",
+          "minimumDataDiskGiB": null
+        },
+        "evidence": {
+          "measurementId": null,
+          "sustainableRpsPerInstance": 229.204,
+          "p95LatencyMs": 34.132,
+          "errorRate": 0.0,
+          "p95CpuCores": 5.094,
+          "p99RssBytes": 325373133.0,
+          "cpuUtilizationTarget": 0.7,
+          "memoryHeadroomFactor": 1.25
+        },
+        "limitations": [
+          "동일 이미지·런타임·부하 형태에서 측정한 개발 하한이다.",
+          "클라우드 VM 세대·CPU 모델·네트워크 차이는 실제 배포 후 재측정해야 한다."
+        ]
+      },
+      "effectiveResourceSpec": {
+        "provider": "azure",
+        "region": "eastus",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady",
+        "minVCpu": 8,
+        "minMemoryGiB": 0.5
+      },
+      "vmSelection": {
+        "schemaVersion": "easydep-vm-selection/v1",
+        "provider": "azure",
+        "region": "eastus",
+        "method": "capacity-filter-then-on-demand-compute-cost",
+        "catalog": "tumblebug-cost-and-performance",
+        "status": "selected",
+        "recommended": {
+          "specName": "Standard_D8als_v6",
+          "provider": "azure",
+          "region": "eastus",
+          "vCPU": 8,
+          "memoryGiB": 16.0,
+          "architecture": "x86_64",
+          "hourlyListPriceUsd": 0.322,
+          "monthlyComputeListPriceUsd": 235.06,
+          "performanceEvidence": {
+            "status": "ok",
+            "note": null
+          }
+        },
+        "selectionBasis": "lowest-cost-candidate-with-no-recorded-performance-warning",
+        "candidates": [
+          {
+            "specName": "Standard_D8als_v6",
+            "provider": "azure",
+            "region": "eastus",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.322,
+            "monthlyComputeListPriceUsd": 235.06,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "Standard_B8als_v2",
+            "provider": "azure",
+            "region": "eastus",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.266,
+            "monthlyComputeListPriceUsd": 194.18,
+            "performanceEvidence": {
+              "status": "warn",
+              "note": "B-series (burstable) — a credit model, so performance drops under sustained load."
+            }
+          },
+          {
+            "specName": "Standard_B8ls_v2",
+            "provider": "azure",
+            "region": "eastus",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.29499999,
+            "monthlyComputeListPriceUsd": 215.35,
+            "performanceEvidence": {
+              "status": "warn",
+              "note": "B-series (burstable) — a credit model, so performance drops under sustained load."
+            }
+          },
+          {
+            "specName": "Standard_B8as_v2",
+            "provider": "azure",
+            "region": "eastus",
+            "vCPU": 8,
+            "memoryGiB": 32.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.301,
+            "monthlyComputeListPriceUsd": 219.73,
+            "performanceEvidence": {
+              "status": "warn",
+              "note": "B-series (burstable) — a credit model, so performance drops under sustained load."
+            }
+          },
+          {
+            "specName": "Standard_D8als_v7",
+            "provider": "azure",
+            "region": "eastus",
+            "vCPU": 8,
+            "memoryGiB": 16.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.322,
+            "monthlyComputeListPriceUsd": 235.06,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          }
+        ],
+        "evaluatedCandidateCount": 100,
+        "constraints": {
+          "minimumVCpuPerVm": 8,
+          "minimumMemoryGiBPerVm": 0.5,
+          "minimumVmCount": 1,
+          "monthlyBudgetUsd": 1000.0,
+          "hoursPerMonth": 730
+        },
+        "budgetScope": "compute-only",
+        "budgetInterpretation": "Passing means only that on-demand VM compute list price fits. Storage, network egress, load balancers, taxes, and discounts are excluded.",
+        "catalogWarning": null
+      },
+      "costScope": "on-demand-compute-list-price-only"
+    },
+    {
+      "caseId": "measured-200rps-gcp",
+      "schemaVersion": "easydep-measured-capacity-recommendation/v1",
+      "status": "selected",
+      "capacityFloor": {
+        "schemaVersion": "easydep-capacity-floor/v1",
+        "status": "estimated",
+        "method": "measured-slo-point-with-headroom",
+        "minimumInstances": 1,
+        "resourceSpecPatch": {
+          "minVCpu": 8,
+          "minMemoryGiB": 0.5
+        },
+        "disk": {
+          "status": "not-required",
+          "minimumDataDiskGiB": null
+        },
+        "evidence": {
+          "measurementId": null,
+          "sustainableRpsPerInstance": 229.204,
+          "p95LatencyMs": 34.132,
+          "errorRate": 0.0,
+          "p95CpuCores": 5.094,
+          "p99RssBytes": 325373133.0,
+          "cpuUtilizationTarget": 0.7,
+          "memoryHeadroomFactor": 1.25
+        },
+        "limitations": [
+          "동일 이미지·런타임·부하 형태에서 측정한 개발 하한이다.",
+          "클라우드 VM 세대·CPU 모델·네트워크 차이는 실제 배포 후 재측정해야 한다."
+        ]
+      },
+      "effectiveResourceSpec": {
+        "provider": "gcp",
+        "region": "asia-northeast3",
+        "monthlyBudgetUSD": 1000,
+        "trafficPattern": "steady",
+        "minVCpu": 8,
+        "minMemoryGiB": 0.5
+      },
+      "vmSelection": {
+        "schemaVersion": "easydep-vm-selection/v1",
+        "provider": "gcp",
+        "region": "asia-northeast3",
+        "method": "capacity-filter-then-on-demand-compute-cost",
+        "catalog": "tumblebug-cost-and-performance",
+        "status": "selected",
+        "recommended": {
+          "specName": "e2-highcpu-8",
+          "provider": "gcp",
+          "region": "asia-northeast3",
+          "vCPU": 8,
+          "memoryGiB": 8.0,
+          "architecture": "x86_64",
+          "hourlyListPriceUsd": 0.25412399,
+          "monthlyComputeListPriceUsd": 185.51,
+          "performanceEvidence": {
+            "status": "ok",
+            "note": null
+          }
+        },
+        "selectionBasis": "lowest-cost-candidate-with-no-recorded-performance-warning",
+        "candidates": [
+          {
+            "specName": "e2-highcpu-8",
+            "provider": "gcp",
+            "region": "asia-northeast3",
+            "vCPU": 8,
+            "memoryGiB": 8.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.25412399,
+            "monthlyComputeListPriceUsd": 185.51,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "n2d-highcpu-8",
+            "provider": "gcp",
+            "region": "asia-northeast3",
+            "vCPU": 8,
+            "memoryGiB": 8.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.321464,
+            "monthlyComputeListPriceUsd": 234.67,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "e2-standard-8",
+            "provider": "gcp",
+            "region": "asia-northeast3",
+            "vCPU": 8,
+            "memoryGiB": 32.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.34386301,
+            "monthlyComputeListPriceUsd": 251.02,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "n1-highcpu-8",
+            "provider": "gcp",
+            "region": "asia-northeast3",
+            "vCPU": 8,
+            "memoryGiB": 7.2,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.36396101,
+            "monthlyComputeListPriceUsd": 265.69,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          },
+          {
+            "specName": "n2-highcpu-8",
+            "provider": "gcp",
+            "region": "asia-northeast3",
+            "vCPU": 8,
+            "memoryGiB": 8.0,
+            "architecture": "x86_64",
+            "hourlyListPriceUsd": 0.36828801,
+            "monthlyComputeListPriceUsd": 268.85,
+            "performanceEvidence": {
+              "status": "ok",
+              "note": null
+            }
+          }
+        ],
+        "evaluatedCandidateCount": 54,
+        "constraints": {
+          "minimumVCpuPerVm": 8,
+          "minimumMemoryGiBPerVm": 0.5,
+          "minimumVmCount": 1,
+          "monthlyBudgetUsd": 1000.0,
+          "hoursPerMonth": 730
+        },
+        "budgetScope": "compute-only",
+        "budgetInterpretation": "Passing means only that on-demand VM compute list price fits. Storage, network egress, load balancers, taxes, and discounts are excluded.",
+        "catalogWarning": null
+      },
+      "costScope": "on-demand-compute-list-price-only"
+    },
+    {
+      "caseId": "defer-unmeasured-persistent-growth",
+      "schemaVersion": "easydep-measured-capacity-recommendation/v1",
+      "status": "deferred",
+      "capacityFloor": {
+        "schemaVersion": "easydep-capacity-floor/v1",
+        "status": "deferred",
+        "reason": "missing_disk_growth_measurement"
+      },
+      "vmSelection": null
+    }
+  ],
+  "interpretation": {
+    "capacity": "single-development-load-point-floor",
+    "price": "on-demand-compute-list-price-only",
+    "notClaimed": [
+      "maximum-sustainable-throughput",
+      "cloud-instance-performance-equivalence",
+      "total-cloud-cost-optimum"
+    ]
+  }
+}

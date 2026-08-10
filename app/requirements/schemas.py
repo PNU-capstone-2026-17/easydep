@@ -191,6 +191,20 @@ class DeploymentNeed(BaseModel):
         default_factory=dict,
         description="Need-specific details; unresolved questions may use an unresolved list.",
     )
+    evidence_spans: list[str] = Field(
+        alias="evidenceSpans",
+        default_factory=list,
+        description="Exact requirement substrings supporting this capability proposal.",
+    )
+    origin: Literal["explicit", "inferred"] = "inferred"
+    dependency_capability_ids: list[str] = Field(
+        alias="dependencyCapabilityIds",
+        default_factory=list,
+        description=(
+            "Stable dependency-model capability IDs supported by the supplied registry; "
+            "empty when no supported meaning matches."
+        ),
+    )
 
 
 class DeploymentNeedsResult(BaseModel):
@@ -201,6 +215,46 @@ class DeploymentNeedsResult(BaseModel):
     deployment_needs: dict[str, DeploymentNeed] = Field(
         alias="deploymentNeeds", default_factory=dict
     )
+
+
+class CapabilityDecision(BaseModel):
+    """One auditable CapabilityContract/v1 decision."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    statement: str
+    requirement_ids: list[str] = Field(alias="requirementIds", min_length=1)
+    evidence_spans: list[str] = Field(alias="evidenceSpans", default_factory=list)
+    origin: Literal["explicit", "inferred"]
+    necessity: Literal["required", "preferred"]
+    decision: Literal["accepted", "needsQuestion", "abstained"]
+    decision_reason: str = Field(alias="decisionReason")
+    raw_confidence: float = Field(alias="rawConfidence", ge=0, le=1)
+    calibrated_confidence: float | None = Field(
+        alias="calibratedConfidence", default=None, ge=0, le=1
+    )
+    threshold_version: str = Field(alias="thresholdVersion")
+    confirmation: Literal[
+        "notRequired", "pending", "userConfirmed", "reviewerConfirmed"
+    ]
+    alternatives: list[str] = Field(default_factory=list)
+    unresolved_fields: list[str] = Field(alias="unresolvedFields", default_factory=list)
+    dependency_capability_ids: list[str] = Field(
+        alias="dependencyCapabilityIds", default_factory=list
+    )
+
+
+class CapabilityContract(BaseModel):
+    """Requirement-to-capability boundary consumed by design agents and evaluators."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_version: Literal["CapabilityContract/v1"] = Field(
+        alias="schemaVersion", default="CapabilityContract/v1"
+    )
+    capabilities: list[CapabilityDecision] = Field(default_factory=list)
+    questions: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ActorResult(BaseModel):
@@ -562,6 +616,7 @@ class AnalyzeResponse(BaseModel):
     # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
     # 만들어도 화면은 받을 수 없으므로 출력 필드로 명시한다.
     deployment_needs: dict | None = None        # 요구사항 ID 기반 제네릭 배포 필요사항
+    capability_contract: dict | None = None     # CapabilityContract/v1 selective decisions
     resource_spec: dict | None = None           # RESOURCE_SPEC — 계약을 만족할 때만 있다
     resource_intake: dict | None = None         # 초안·질문·근거·버린 후보(A 트랙)
     actors: list[dict] | None = None            # ActorItem

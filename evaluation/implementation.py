@@ -24,11 +24,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.cloudkb.depkb.provider_cache import (
+    provider_cache_environment,
+    provider_mirror_configuration,
+)
+from evaluation.component_projection import derive_component_dependency_expectations
 from evaluation.terraform_semantics import analyze_terraform_semantics, score_semantics
 
 SOURCE_SUFFIXES = (".java", ".kt", ".py", ".ts", ".js", ".go", ".rs")
 GENERATED_ARTIFACT_SUFFIXES = SOURCE_SUFFIXES + (
-    ".gradle", ".kts", ".xml", ".tf", ".yml", ".yaml",
+    ".gradle",
+    ".kts",
+    ".xml",
+    ".tf",
+    ".yml",
+    ".yaml",
 )
 
 EVALUATOR_SCHEMA = "easydep-implementation-evaluation/v1"
@@ -39,18 +49,20 @@ def write_evaluation(path: Path, result: dict[str, Any]) -> Path | None:
     history: Path | None = None
     if path.is_file():
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        history = path.with_name(
-            f"{path.stem}.{timestamp}.{uuid.uuid4().hex[:6]}{path.suffix}"
-        )
+        history = path.with_name(f"{path.stem}.{timestamp}.{uuid.uuid4().hex[:6]}{path.suffix}")
         history.write_bytes(path.read_bytes())
     value = dict(result)
-    value.setdefault("evaluationMetadata", {
-        "schema": EVALUATOR_SCHEMA,
-        "evaluatedAt": datetime.now(UTC).isoformat(),
-    })
+    value.setdefault(
+        "evaluationMetadata",
+        {
+            "schema": EVALUATOR_SCHEMA,
+            "evaluatedAt": datetime.now(UTC).isoformat(),
+        },
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return history
+
 
 RESOURCE_TYPES = {
     # AWS
@@ -107,7 +119,9 @@ def _files(root: Path) -> list[Path]:
         path
         for path in root.rglob("*")
         if path.is_file()
-        and not any(part in {".git", ".gradle", "node_modules", "build", "logs"} for part in path.parts)
+        and not any(
+            part in {".git", ".gradle", "node_modules", "build", "logs"} for part in path.parts
+        )
     ]
 
 
@@ -120,7 +134,10 @@ def inspect_repository(root: Path) -> dict[str, Any]:
 
     markdown_contaminated: list[str] = []
     for path in files:
-        if path.suffix.lower() not in GENERATED_ARTIFACT_SUFFIXES and path.name.lower() != "dockerfile":
+        if (
+            path.suffix.lower() not in GENERATED_ARTIFACT_SUFFIXES
+            and path.name.lower() != "dockerfile"
+        ):
             continue
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
@@ -154,14 +171,20 @@ def inspect_repository(root: Path) -> dict[str, Any]:
         "traceability_present": any("trace" in name or "rtm" in name for name in relative),
     }
     required = (
-        "source_present", "test_present", "build_present", "dockerfile_present",
-        "iac_present", "generated_files_clean",
+        "source_present",
+        "test_present",
+        "build_present",
+        "dockerfile_present",
+        "iac_present",
+        "generated_files_clean",
     )
     return {
         "root": str(root.resolve()),
         "fileCount": len(files),
         "javaFileCount": sum(name.endswith(".java") for name in relative),
-        "testFileCount": sum("test" in name and name.endswith(SOURCE_SUFFIXES) for name in relative),
+        "testFileCount": sum(
+            "test" in name and name.endswith(SOURCE_SUFFIXES) for name in relative
+        ),
         "markdownContaminatedFiles": markdown_contaminated,
         "checks": checks,
         "implementationComplete": all(checks[name] for name in required),
@@ -191,11 +214,13 @@ def normalize_tool_graph(dot: str, source: str) -> dict[str, Any]:
         identity: RESOURCE_TYPES.get(identity.split(".", 1)[0], "unknown")
         for identity in identities
     }
-    edges = sorted({
-        (labels[left], labels[right])
-        for left, right in raw_edges
-        if left in labels and right in labels and labels[left] != labels[right]
-    })
+    edges = sorted(
+        {
+            (labels[left], labels[right])
+            for left, right in raw_edges
+            if left in labels and right in labels and labels[left] != labels[right]
+        }
+    )
     return {
         "nodes": [
             {
@@ -216,11 +241,13 @@ def normalize_tool_graph(dot: str, source: str) -> dict[str, Any]:
             for left, right in edges
         ],
         "parseErrors": [],
-        "unknownProviderTypes": sorted({
-            identity.split(".", 1)[0]
-            for identity in identities
-            if node_types[identity] == "unknown"
-        }),
+        "unknownProviderTypes": sorted(
+            {
+                identity.split(".", 1)[0]
+                for identity in identities
+                if node_types[identity] == "unknown"
+            }
+        ),
         "extractionMethod": "opentofu-or-terraform-graph",
     }
 
@@ -245,8 +272,7 @@ def score_graph(graph: dict[str, Any], oracle: dict[str, Any]) -> dict[str, Any]
     actual_edges = {(edge["fromType"], edge["toType"]) for edge in graph["edges"]}
     expected_nodes = {str(item) for item in oracle.get("requiredResourceTypes", [])}
     expected_edges = {
-        (str(item["from"]), str(item["to"]))
-        for item in oracle.get("requiredDependencyTypes", [])
+        (str(item["from"]), str(item["to"])) for item in oracle.get("requiredDependencyTypes", [])
     }
     forbidden = {str(item) for item in oracle.get("forbiddenResourceTypes", [])}
     return {
@@ -267,8 +293,8 @@ def resolve_oracle(oracle: dict[str, Any], case_id: str | None) -> dict[str, Any
     profile_id = str(case["profile"])
     provider_id = str(case["provider"])
     profile = oracle["profiles"][profile_id]
-    provider = oracle["providers"][provider_id]
-    return {
+    provider = (oracle.get("providers") or {}).get(provider_id) or {}
+    resolved = {
         "schemaVersion": oracle["schemaVersion"],
         "caseId": case_id,
         "profile": profile_id,
@@ -276,9 +302,22 @@ def resolve_oracle(oracle: dict[str, Any], case_id: str | None) -> dict[str, Any
         "budgetUsd": case["budgetUsd"],
         "requiredCapabilities": profile["requiredCapabilities"],
         "functionalAcceptance": profile.get("functionalAcceptance", []),
+        "persistenceAcceptance": profile.get("persistenceAcceptance"),
         "forbiddenConcepts": profile["forbiddenConcepts"],
-        "requiredDependencies": provider["requiredDependencies"][profile_id],
+        "requiredDependencies": (provider.get("requiredDependencies") or {}).get(profile_id, []),
     }
+    for key in ("componentDelta", "componentDeltas", "legacyProviderProjection"):
+        if key in profile:
+            resolved[key] = profile[key]
+    delta_ids = resolved.get("componentDeltas") or (
+        [resolved["componentDelta"]] if resolved.get("componentDelta") else []
+    )
+    resolved["componentDependencyExpectations"] = derive_component_dependency_expectations(
+        provider_id, delta_ids
+    )
+    return resolved
+
+
 def _percentile(values: list[int], percentile: float) -> float:
     if not values:
         return 0.0
@@ -379,8 +418,13 @@ def analyze_code_quality(root: Path) -> dict[str, Any]:
             "Coverage is measured only when a JaCoCo XML artifact exists."
         ),
     }
+
+
 def _command(
-    command: list[str], cwd: Path, timeout: int = 180
+    command: list[str],
+    cwd: Path,
+    timeout: int = 180,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     try:
         completed = subprocess.run(
@@ -392,6 +436,7 @@ def _command(
             errors="replace",
             check=False,
             timeout=timeout,
+            env=environment,
         )
     except subprocess.TimeoutExpired as exc:
         return {"status": "timeout", "command": command, "seconds": timeout, "error": str(exc)}
@@ -405,11 +450,13 @@ def _command(
 
 
 def _terraform_roots(root: Path) -> list[Path]:
-    return sorted({
-        path.parent
-        for path in root.rglob("*.tf")
-        if ".terraform" not in path.parts and ".git" not in path.parts
-    })
+    return sorted(
+        {
+            path.parent
+            for path in root.rglob("*.tf")
+            if ".terraform" not in path.parts and ".git" not in path.parts
+        }
+    )
 
 
 def _tool_path(name: str, environment_name: str) -> str | None:
@@ -456,7 +503,18 @@ def run_iac_tools(root: Path) -> dict[str, Any]:
     }
     if executable:
         result["iacEngine"]["version"] = _command([executable, "version", "-json"], root)
-        with tempfile.TemporaryDirectory(prefix="easydep-iac-eval-") as directory:
+        evaluation_temp = Path(".easydep/evaluation-temp")
+        evaluation_temp.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="easydep-iac-eval-", dir=evaluation_temp.resolve()
+        ) as directory:
+            cli_config = Path(directory) / "tofu.rc"
+            cli_config.write_text(provider_mirror_configuration(), encoding="utf-8")
+            provider_environment = provider_cache_environment()
+            # 동일 경로를 mirror와 plugin cache로 함께 지정하면 OpenTofu가 provider를
+            # 자기 자신에게 복사하려 한다. 평가에서는 읽기 전용 mirror로만 사용한다.
+            provider_environment.pop("TF_PLUGIN_CACHE_DIR", None)
+            provider_environment["TF_CLI_CONFIG_FILE"] = str(cli_config.resolve())
             copy = Path(directory) / "repository"
             shutil.copytree(
                 root,
@@ -470,9 +528,14 @@ def run_iac_tools(root: Path) -> dict[str, Any]:
                 init = _command(
                     [executable, "init", "-backend=false", "-input=false", "-no-color"],
                     module,
+                    environment=provider_environment,
                 )
                 validate = (
-                    _command([executable, "validate", "-json", "-no-color"], module)
+                    _command(
+                        [executable, "validate", "-json", "-no-color"],
+                        module,
+                        environment=provider_environment,
+                    )
                     if init["status"] == "passed"
                     else {"status": "not-run", "reason": "initialization failed"}
                 )
@@ -482,7 +545,11 @@ def run_iac_tools(root: Path) -> dict[str, Any]:
                     except json.JSONDecodeError:
                         validate["json"] = None
                 graph = (
-                    _command([executable, "graph", "-type=plan"], module)
+                    _command(
+                        [executable, "graph", "-type=plan"],
+                        module,
+                        environment=provider_environment,
+                    )
                     if init["status"] == "passed"
                     else {"status": "not-run", "reason": "initialization failed"}
                 )
@@ -491,14 +558,16 @@ def run_iac_tools(root: Path) -> dict[str, Any]:
                     if graph["status"] == "passed"
                     else None
                 )
-                modules.append({
-                    "path": relative,
-                    "format": fmt,
-                    "initialize": init,
-                    "validate": validate,
-                    "graph": graph,
-                    "normalizedGraph": normalized_graph,
-                })
+                modules.append(
+                    {
+                        "path": relative,
+                        "format": fmt,
+                        "initialize": init,
+                        "validate": validate,
+                        "graph": graph,
+                        "normalizedGraph": normalized_graph,
+                    }
+                )
             result["iacEngine"]["modules"] = modules
             status, format_compliant = _iac_engine_result(modules)
             result["iacEngine"]["status"] = status
@@ -543,9 +612,13 @@ def _matches_json(actual: Any, expected: Any, *, tolerance: float = 1e-6) -> boo
             for key, value in expected.items()
         )
     if isinstance(expected, list):
-        return isinstance(actual, list) and len(actual) == len(expected) and all(
-            _matches_json(left, right, tolerance=tolerance)
-            for left, right in zip(actual, expected, strict=True)
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(
+                _matches_json(left, right, tolerance=tolerance)
+                for left, right in zip(actual, expected, strict=True)
+            )
         )
     if isinstance(expected, (int, float)) and not isinstance(expected, bool):
         return (
@@ -590,17 +663,150 @@ def _run_http_acceptance(base_url: str, scenarios: list[dict[str, Any]]) -> dict
             check["error"] = f"{type(error).__name__}: {error}"
         checks.append(check)
     return {
-        "status": "passed" if checks and all(item["status"] == "passed" for item in checks) else "failed",
+        "status": "passed"
+        if checks and all(item["status"] == "passed" for item in checks)
+        else "failed",
         "passed": sum(item["status"] == "passed" for item in checks),
         "total": len(checks),
         "checks": checks,
     }
 
 
+def _wait_for_container_health(
+    docker: str, root: Path, container_id: str, *, timeout_seconds: int = 60
+) -> dict[str, Any]:
+    port = _command([docker, "port", container_id, "8080/tcp"], root)
+    match = re.search(r"127\.0\.0\.1:(\d+)", str(port.get("stdout", "")))
+    if port["status"] != "passed" or not match:
+        return {"status": "failed", "port": port, "reason": "published port not found"}
+    base_url = f"http://127.0.0.1:{match.group(1)}"
+    url = f"{base_url}/health"
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    last_error = ""
+    while time.monotonic() < deadline:
+        attempts += 1
+        try:
+            with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
+                if 200 <= response.status < 400:
+                    return {
+                        "status": "passed",
+                        "url": url,
+                        "baseUrl": base_url,
+                        "httpStatus": response.status,
+                        "attempts": attempts,
+                        "port": port,
+                    }
+        except (OSError, urllib.error.URLError) as error:
+            last_error = str(error)
+        time.sleep(2)
+    return {
+        "status": "failed",
+        "url": url,
+        "attempts": attempts,
+        "error": last_error,
+        "port": port,
+    }
+
+
+def _run_persistence_acceptance(
+    docker: str,
+    root: Path,
+    tag: str,
+    contract: dict[str, Any],
+    cleanup_containers: list[str],
+    application_port: int,
+) -> tuple[dict[str, Any], str]:
+    """Write into a named volume, recreate the container, and verify the data."""
+    volume = f"easydep-evaluation-{uuid.uuid4().hex}"
+    mount_path = str(contract.get("mountPath") or "").strip()
+    result: dict[str, Any] = {"status": "failed", "volume": volume, "mountPath": mount_path}
+    if not mount_path.startswith("/"):
+        result["reason"] = "persistenceAcceptance.mountPath must be an absolute path"
+        return result, volume
+    created = _command([docker, "volume", "create", volume], root)
+    result["createVolume"] = created
+    if created["status"] != "passed":
+        return result, volume
+
+    def start() -> tuple[str, dict[str, Any]]:
+        run = _command(
+            [
+                docker,
+                "run",
+                "--detach",
+                "--publish",
+                f"127.0.0.1::{application_port}",
+                "--label",
+                "easydep.evaluation=true",
+                "--mount",
+                f"type=volume,source={volume},target={mount_path}",
+                tag,
+            ],
+            root,
+        )
+        container = str(run.get("stdout", "")).strip() if run["status"] == "passed" else ""
+        if container:
+            cleanup_containers.append(container)
+        return container, run
+
+    first_id, first_run = start()
+    result["beforeRestartRun"] = first_run
+    if not first_id:
+        return result, volume
+    before_health = _wait_for_container_health(docker, root, first_id)
+    result["beforeRestartHealth"] = before_health
+    if before_health["status"] != "passed":
+        return result, volume
+    before = _run_http_acceptance(
+        str(before_health["baseUrl"]), list(contract.get("beforeRestart") or [])
+    )
+    result["beforeRestart"] = before
+    if before["status"] != "passed":
+        return result, volume
+    stopped = _command([docker, "stop", "--time", "30", first_id], root, timeout=45)
+    result["stopBeforeRestart"] = stopped
+    if stopped["status"] != "passed":
+        return result, volume
+    removed = _command([docker, "rm", first_id], root)
+    result["removeBeforeRestart"] = removed
+    if removed["status"] != "passed":
+        return result, volume
+    cleanup_containers.remove(first_id)
+
+    second_id, second_run = start()
+    result["afterRestartRun"] = second_run
+    if not second_id:
+        return result, volume
+    after_health = _wait_for_container_health(docker, root, second_id)
+    result["afterRestartHealth"] = after_health
+    if after_health["status"] != "passed":
+        return result, volume
+    after = _run_http_acceptance(
+        str(after_health["baseUrl"]), list(contract.get("afterRestart") or [])
+    )
+    result["afterRestart"] = after
+    result["status"] = "passed" if after["status"] == "passed" else "failed"
+    return result, volume
+
+
 def run_container_tools(
-    root: Path, acceptance: list[dict[str, Any]] | None = None
+    root: Path,
+    acceptance: list[dict[str, Any]] | None = None,
+    persistence: dict[str, Any] | None = None,
+    application_port: int | None = None,
 ) -> dict[str, Any]:
     """Build, start, health-check, and black-box test the generated container."""
+    if not isinstance(application_port, int) or isinstance(application_port, bool):
+        return {
+            "status": "not-configured",
+            "reason": "requiredCapabilities.applicationPort is required for container evaluation",
+        }
+    if not 1 <= application_port <= 65_535:
+        return {
+            "status": "failed",
+            "reason": "requiredCapabilities.applicationPort is outside 1..65535",
+        }
     docker = _tool_path("docker", "EVALUATION_DOCKER_PATH")
     if not docker:
         return {"status": "unavailable", "tool": "docker", "reason": "Docker CLI not found"}
@@ -613,72 +819,71 @@ def run_container_tools(
     build = _command([docker, "build", "--tag", tag, "."], root, timeout=900)
     result: dict[str, Any] = {"status": "failed", "tool": "docker", "build": build}
     container_id = ""
+    cleanup_containers: list[str] = []
+    cleanup_volume = ""
     try:
         if build["status"] != "passed":
             return result
         run = _command(
-            [docker, "run", "--detach", "--publish", "127.0.0.1::8080", tag],
+            [
+                docker,
+                "run",
+                "--detach",
+                "--publish",
+                f"127.0.0.1::{application_port}",
+                "--label",
+                "easydep.evaluation=true",
+                tag,
+            ],
             root,
         )
         result["run"] = run
         if run["status"] != "passed":
             return result
         container_id = str(run.get("stdout", "")).strip()
-        port = _command([docker, "port", container_id, "8080/tcp"], root)
-        result["port"] = port
-        match = re.search(r"127\.0\.0\.1:(\d+)", str(port.get("stdout", "")))
-        if port["status"] != "passed" or not match:
+        cleanup_containers.append(container_id)
+        health = _wait_for_container_health(docker, root, container_id)
+        result["port"] = health.get("port")
+        result["health"] = health
+        if health["status"] != "passed":
             return result
-        url = f"http://127.0.0.1:{match.group(1)}/health"
-        deadline = time.monotonic() + 60
-        attempts = 0
-        last_error = ""
-        while time.monotonic() < deadline:
-            attempts += 1
-            try:
-                with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
-                    if 200 <= response.status < 400:
-                        result["health"] = {
-                            "status": "passed",
-                            "url": url,
-                            "httpStatus": response.status,
-                            "attempts": attempts,
-                        }
-                        acceptance_result = (
-                            _run_http_acceptance(
-                                f"http://127.0.0.1:{match.group(1)}", acceptance
-                            )
-                            if acceptance
-                            else {"status": "not-configured", "checks": []}
-                        )
-                        result["acceptance"] = acceptance_result
-                        result["status"] = (
-                            "passed"
-                            if acceptance_result["status"] in {"passed", "not-configured"}
-                            else "failed"
-                        )
-                        return result
-            except (OSError, urllib.error.URLError) as error:
-                last_error = str(error)
-            time.sleep(2)
-        result["health"] = {
-            "status": "failed",
-            "url": url,
-            "attempts": attempts,
-            "error": last_error,
-        }
-        return result
-    finally:
-        if container_id:
-            result["containerInspect"] = _command(
-                [docker, "inspect", container_id], root
-            )
-            result["containerLogs"] = _command(
-                [docker, "logs", container_id], root
-            )
-            result["cleanupContainer"] = _command(
+        acceptance_result = (
+            _run_http_acceptance(str(health["baseUrl"]), acceptance)
+            if acceptance
+            else {"status": "not-configured", "checks": []}
+        )
+        result["acceptance"] = acceptance_result
+        if acceptance_result["status"] not in {"passed", "not-configured"}:
+            return result
+        if persistence:
+            result["cleanupPrimaryContainer"] = _command(
                 [docker, "rm", "--force", container_id], root
             )
+            if result["cleanupPrimaryContainer"]["status"] != "passed":
+                return result
+            cleanup_containers.remove(container_id)
+            container_id = ""
+            persistence_result, cleanup_volume = _run_persistence_acceptance(
+                docker,
+                root,
+                tag,
+                persistence,
+                cleanup_containers,
+                application_port,
+            )
+            result["persistenceAcceptance"] = persistence_result
+            result["status"] = persistence_result["status"]
+            return result
+        result["persistenceAcceptance"] = {"status": "not-configured"}
+        result["status"] = "passed"
+        return result
+    finally:
+        for active_container in list(cleanup_containers):
+            result["containerInspect"] = _command([docker, "inspect", active_container], root)
+            result["containerLogs"] = _command([docker, "logs", active_container], root)
+            result["cleanupContainer"] = _command([docker, "rm", "--force", active_container], root)
+        if cleanup_volume:
+            result["cleanupVolume"] = _command([docker, "volume", "rm", cleanup_volume], root)
         if build["status"] == "passed":
             result["cleanupImage"] = _command([docker, "image", "rm", tag], root)
 
@@ -690,7 +895,11 @@ def evaluate_repository(
     case_id: str | None = None,
 ) -> dict[str, Any]:
     structure = inspect_repository(root)
-    terraform_semantics = analyze_terraform_semantics(root)
+    expected = resolve_oracle(oracle, case_id) if oracle is not None else None
+    persistence = (expected or {}).get("persistenceAcceptance") or {}
+    terraform_semantics = analyze_terraform_semantics(
+        root, expected_mount_path=persistence.get("mountPath")
+    )
     graph: dict[str, Any] = {
         "status": "not-run",
         "nodes": [],
@@ -700,13 +909,18 @@ def evaluate_repository(
         "extractionMethod": None,
         "reason": "OpenTofu/Terraform graph was not run",
     }
-    external_tools = run_iac_tools(root) if run_tools else {
-        "status": "not-run", "reason": "enable explicitly with --run-tools"
-    }
-    expected = resolve_oracle(oracle, case_id) if oracle is not None else None
+    external_tools = (
+        run_iac_tools(root)
+        if run_tools
+        else {"status": "not-run", "reason": "enable explicitly with --run-tools"}
+    )
     if run_tools:
+        required_capabilities = (expected or {}).get("requiredCapabilities") or {}
         external_tools["container"] = run_container_tools(
-            root, (expected or {}).get("functionalAcceptance")
+            root,
+            (expected or {}).get("functionalAcceptance"),
+            (expected or {}).get("persistenceAcceptance"),
+            required_capabilities.get("applicationPort"),
         )
     if run_tools:
         tool_graphs = [
@@ -720,11 +934,13 @@ def evaluate_repository(
                 "nodes": [node for item in tool_graphs for node in item["nodes"]],
                 "edges": [edge for item in tool_graphs for edge in item["edges"]],
                 "parseErrors": [],
-                "unknownProviderTypes": sorted({
-                    resource_type
-                    for item in tool_graphs
-                    for resource_type in item["unknownProviderTypes"]
-                }),
+                "unknownProviderTypes": sorted(
+                    {
+                        resource_type
+                        for item in tool_graphs
+                        for resource_type in item["unknownProviderTypes"]
+                    }
+                ),
                 "extractionMethod": "opentofu-or-terraform-graph",
             }
     result: dict[str, Any] = {
@@ -733,9 +949,7 @@ def evaluate_repository(
         "resourceGraph": graph,
         "terraformSemantics": terraform_semantics,
         "codeQuality": analyze_code_quality(root),
-        "staticValidationPassed": (
-            structure["implementationComplete"]
-        ),
+        "staticValidationPassed": (structure["implementationComplete"]),
     }
     if oracle is not None:
         assert expected is not None
@@ -757,12 +971,24 @@ def evaluate_repository(
         and external_tools.get("iacEngine", {}).get("status") == "passed"
         and external_tools.get("container", {}).get("status") == "passed"
         and result["codeQuality"]["complexity"]["status"] == "available"
+        and (
+            oracle is None
+            or (expected or {}).get("schemaVersion")
+            != "easydep-end-to-end-oracle/v1"
+            or (
+                (result.get("score") or {}).get("status") == "completed"
+                and (result.get("score") or {}).get("failed") == 0
+                and (result.get("score") or {}).get("unknown") == 0
+            )
+        )
     )
     return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate final Docker-on-VM implementation artifacts")
+    parser = argparse.ArgumentParser(
+        description="Evaluate final Docker-on-VM implementation artifacts"
+    )
     parser.add_argument("repository", type=Path)
     parser.add_argument("--oracle", type=Path)
     parser.add_argument("--case-id")

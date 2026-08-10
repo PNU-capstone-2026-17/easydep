@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "easydep-http-capacity-measurement/v1",
+  "measurementKind": "single-development-load-point",
+  "url": "http://127.0.0.1:18080/notes",
+  "method": "GET",
+  "resourceObserver": "docker-stats",
+  "concurrency": 4,
+  "requestedDurationSeconds": 15.0,
+  "observedDurationSeconds": 16.296,
+  "attempts": 3735,
+  "successes": 3735,
+  "sustainableRpsPerInstance": 229.204,
+  "errorRate": 0.0,
+  "p50LatencyMs": 13.359,
+  "p95LatencyMs": 34.132,
+  "p99LatencyMs": 64.316,
+  "p95CpuCores": 5.094,
+  "p99RssBytes": 325373133,
+  "dataBytesBefore": null,
+  "dataBytesAfter": null,
+  "bytesGrowthPerDurableWrite": null,
+  "limitations": [
+    "단일 동시성의 개발 환경 관측값이며 최대 지속 처리량을 뜻하지 않는다.",
+    "클라우드 후보 선정 전 동일 이미지와 대표 부하로 여러 지점을 반복 측정해야 한다."
+  ]
+}

@@ -23,6 +23,7 @@ from functools import lru_cache
 from app.core import input_registry
 from app.core import resource_contract as _contract
 
+
 @lru_cache(maxsize=1)
 def schema_fields() -> frozenset[str]:
     """`RESOURCE_SPEC`이 아는 칸 이름 전부(스키마에서 읽는다)."""

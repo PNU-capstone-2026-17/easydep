@@ -1,0 +1,77 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-cases/v1",
+  "note": "완료된 생성 앱을 사례별로 한 번만 변형한 뒤 두 arm에 동일하게 복제한다. 변경은 연구 처치이며 운영 진단 규칙이 아니다.",
+  "cases": [
+    {
+      "id": "generated-build-dependency",
+      "group": "build-runtime-dependency",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "boundary": "application",
+      "expectedDiagnostic": "APP-DEP-001",
+      "expectedRepairOwner": "implementation.logic",
+      "repairMode": "logic",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutations": [
+        {
+          "operation": "write",
+          "path": "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java",
+          "content": "package com.easydep.evaluation;\n\nimport jakarta.persistence.Entity;\n\n@Entity\npublic class MissingDependencyProbe {\n    private Long id;\n}\n"
+        }
+      ]
+    },
+    {
+      "id": "generated-port-binding",
+      "group": "port-binding",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "boundary": "deployment",
+      "expectedDiagnostic": "BIND-PORT-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "repairMode": "vm-delivery",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutations": [
+        {
+          "operation": "replace",
+          "path": "infra/user_data.tpl",
+          "old": "-p ${container_port}:${container_port}",
+          "new": "-p 9090:9090",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "generated-storage-binding",
+      "group": "storage-binding",
+      "sourceApplication": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da/03-implementation/application",
+      "boundary": "deployment",
+      "expectedDiagnostic": "BIND-STORAGE-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "repairMode": "vm-delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutations": [
+        {
+          "operation": "write",
+          "path": "src/main/java/com/easydep/evaluation/LocalStateProbe.java",
+          "content": "package com.easydep.evaluation;\n\nimport java.nio.file.Files;\nimport java.nio.file.Path;\n\npublic class LocalStateProbe {\n    public void save(String value) throws Exception {\n        Files.writeString(Path.of(\"/srv/state/data.txt\"), value);\n    }\n}\n"
+        },
+        {
+          "operation": "replace",
+          "path": "infra/user_data.tpl",
+          "old": "-p ${container_port}:${container_port} ${container_image}",
+          "new": "-p ${container_port}:${container_port} -v /mnt/data:/mnt/evaluation-mismatch ${container_image}",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "generated-p2-storage-idempotency",
+      "group": "storage-idempotency",
+      "sourceApplication": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e/repairs/attempt-1/03-implementation/application",
+      "boundary": "deployment",
+      "expectedDiagnostic": "BIND-STORAGE-DESTRUCTIVE-INIT",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "repairMode": "vm-delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutations": []
+    }
+  ]
+}

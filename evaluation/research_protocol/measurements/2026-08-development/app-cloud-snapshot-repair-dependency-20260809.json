@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-08T23:18:04.994253+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-build-dependency",
+      "group": "build-runtime-dependency",
+      "repairMode": "logic",
+      "repairOwner": "implementation.logic",
+      "contextRun": "artifacts/runs/easydep-full-p1-aws-20260808T023241Z-6991da",
+      "mutationFiles": [
+        "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+      ],
+      "inputSha256": "aa433fedcb61b64155b1feadb4f485abf47e54f387474ec6b9db320ba14d34a9",
+      "outputSha256": "0eba98882148228510f8a76a8fd6c2425b2bd10ae2f66d5c0661519ad6f0889d",
+      "stepStatus": "completed",
+      "stepDiagnostics": [],
+      "stepMetrics": {
+        "llm_calls": 1,
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 8.425972,
+      "changedFiles": {
+        "added": [],
+        "modified": [
+          "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+        ],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.logic"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "APP-DEP-001",
+            "message": "Observed API/configuration has no matching build dependency: java.spring-data-jpa",
+            "locations": [
+              "src/main/resources/application.yml",
+              "src/main/java/com/example/conversion/ConversionApplication.java",
+              "src/main/java/com/example/conversion/controller/ConversionController.java",
+              "src/main/java/com/example/conversion/controller/HealthController.java",
+              "src/main/java/com/example/conversion/exception/GlobalExceptionHandler.java",
+              "src/main/java/com/example/conversion/model/ConversionRequest.java",
+              "src/main/java/com/example/conversion/model/ConversionResponse.java",
+              "src/main/java/com/example/conversion/model/ErrorResponse.java",
+              "src/main/java/com/example/conversion/model/HealthResponse.java",
+              "src/main/java/com/example/conversion/service/ConversionService.java",
+              "src/main/java/com/easydep/evaluation/MissingDependencyProbe.java"
+            ],
+            "details": {
+              "rule": "java.spring-data-jpa",
+              "missingCoordinates": [
+                "org.springframework.boot:spring-boot-starter-data-jpa"
+              ]
+            }
+          }
+        ],
+        "observations": [],
+        "elapsedSeconds": 0.013588
+      },
+      "preflightAfter": {
+        "diagnostics": [],
+        "observations": [],
+        "elapsedSeconds": 0.011843
+      },
+      "diagnosticResolved": true,
+      "applicationTests": {
+        "status": "completed",
+        "passed": true,
+        "repository": "<temporary>\\run\\application",
+        "unitTests": {
+          "status": "passed",
+          "command": [
+            "<repository>\\app\\implementation\\tools\\gradle\\gradlew.bat",
+            "test",
+            "--no-daemon"
+          ],
+          "exitCode": 0,
+          "stdout": "To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\nDaemon will be stopped at the end of the build \n> Task :compileJava\n> Task :processResources\n> Task :classes\n> Task :compileTestJava\n> Task :processTestResources NO-SOURCE\n> Task :testClasses\n> Task :test\n\n[Incubating] Problems report is available at: file:///<temporary>/run/application/build/reports/problems/problems-report.html\n\nDeprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.\n\nYou can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.\n\nFor more on this, please refer to https://docs.gradle.org/8.14.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.\n\nBUILD SUCCESSFUL in 40s\n4 actionable tasks: 4 executed\n",
+          "stderr": "OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended\n",
+          "startedAt": "2026-08-08T23:17:23.888667+00:00",
+          "finishedAt": "2026-08-08T23:18:04.888259+00:00",
+          "elapsedSeconds": 40.999609,
+          "testFiles": [
+            "src\\test\\java\\com\\example\\conversion\\ConversionEndpointTest.java",
+            "src\\test\\java\\com\\example\\conversion\\HealthEndpointTest.java"
+          ]
+        },
+        "diagnostics": []
+      },
+      "applicationTestsPassed": true,
+      "cloudApply": false
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 1,
+    "diagnosticResolvedCount": 1,
+    "applicationTestsPassedCount": 1,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 49.735226
+  }
+}

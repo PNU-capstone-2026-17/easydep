@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "easydep-neutral-hypothesis-protocol/v1",
+  "purpose": "Use existing neutral models to generate bounded hypotheses, then validate them against provider-native evidence.",
+  "models": ["cloud-barista", "tosca", "occi"],
+  "rules": {
+    "externalModelIsProviderEvidence": false,
+    "candidatePresenceImpliesAcceptance": false,
+    "providerMappingsAllowedDuringExtraction": false,
+    "p1P2P3AllowedDuringExtraction": false,
+    "providerExtensionsMayBeAddedAfterNativeAudit": true,
+    "mappingKinds": ["equivalent", "partial", "composite", "unmatched"]
+  },
+  "stoppingRule": "Extract VM-connected IaaS concepts and their explicit relationships from each pinned source; do not expand into managed application, database, container orchestration, or billing catalogs.",
+  "status": "active"
+}

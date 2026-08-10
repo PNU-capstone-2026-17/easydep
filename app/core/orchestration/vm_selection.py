@@ -30,6 +30,8 @@ def minimum_vm_count(
     for need in deployment_needs.values():
         if not isinstance(need, dict):
             continue
+        if need.get("decision", "accepted") != "accepted":
+            continue
         metadata = need.get("metadata") or {}
         if not isinstance(metadata, dict):
             continue

@@ -1,0 +1,796 @@
+{
+  "schemaVersion": "easydep-implementation-evaluation/v1",
+  "repository": {
+    "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\runs\\easydep-full-ps-treatment-azure-20260808T085013Z-9d5397\\repairs\\attempt-4\\03-implementation\\application",
+    "fileCount": 20,
+    "javaFileCount": 11,
+    "testFileCount": 2,
+    "markdownContaminatedFiles": [],
+    "checks": {
+      "source_present": true,
+      "test_present": true,
+      "build_present": true,
+      "dockerfile_present": true,
+      "iac_present": true,
+      "generated_files_clean": true,
+      "deployment_manifest_present": false,
+      "requirements_documented": false,
+      "design_documented": false,
+      "deployment_diagram_present": false,
+      "traceability_present": false
+    },
+    "implementationComplete": true,
+    "requiredPassed": true,
+    "cloudNativePassed": true
+  },
+  "resourceGraph": {
+    "status": "not-run",
+    "nodes": [],
+    "edges": [],
+    "parseErrors": [],
+    "unknownProviderTypes": [],
+    "extractionMethod": null,
+    "reason": "OpenTofu/Terraform graph was not run"
+  },
+  "terraformSemantics": {
+    "status": "available",
+    "parser": "python-hcl2",
+    "resources": [
+      {
+        "address": "aws_security_group.app_sg",
+        "providerType": "aws_security_group",
+        "declarationKind": "resource",
+        "concept": "firewall",
+        "source": "infra/main.tf",
+        "blocks": [
+          "egress",
+          "ingress"
+        ]
+      },
+      {
+        "address": "aws_instance.app",
+        "providerType": "aws_instance",
+        "declarationKind": "resource",
+        "concept": "vm",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "aws_eip.app_eip",
+        "providerType": "aws_eip",
+        "declarationKind": "resource",
+        "concept": "publicIp",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "data.aws_ami.amazon_linux",
+        "providerType": "aws_ami",
+        "declarationKind": "data",
+        "concept": "unmapped",
+        "source": "infra/main.tf",
+        "blocks": [
+          "filter"
+        ]
+      },
+      {
+        "address": "data.aws_vpc.default",
+        "providerType": "aws_vpc",
+        "declarationKind": "data",
+        "concept": "network",
+        "source": "infra/main.tf",
+        "blocks": []
+      }
+    ],
+    "concepts": [
+      "firewall",
+      "network",
+      "publicIp",
+      "vm"
+    ],
+    "edges": [
+      {
+        "from": "firewall",
+        "to": "network"
+      },
+      {
+        "from": "publicIp",
+        "to": "vm"
+      },
+      {
+        "from": "vm",
+        "to": "firewall"
+      }
+    ],
+    "resourceGraph": {
+      "nodes": [
+        {
+          "id": "aws_security_group.app_sg",
+          "providerType": "aws_security_group",
+          "declarationKind": "resource",
+          "concept": "firewall",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "aws_instance.app",
+          "providerType": "aws_instance",
+          "declarationKind": "resource",
+          "concept": "vm",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "aws_eip.app_eip",
+          "providerType": "aws_eip",
+          "declarationKind": "resource",
+          "concept": "publicIp",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "data.aws_ami.amazon_linux",
+          "providerType": "aws_ami",
+          "declarationKind": "data",
+          "concept": "unmapped",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "data.aws_vpc.default",
+          "providerType": "aws_vpc",
+          "declarationKind": "data",
+          "concept": "network",
+          "source": "infra/main.tf"
+        }
+      ],
+      "edges": [
+        {
+          "from": "aws_eip.app_eip",
+          "to": "aws_instance.app",
+          "fromConcept": "publicIp",
+          "toConcept": "vm",
+          "relation": "references"
+        },
+        {
+          "from": "aws_instance.app",
+          "to": "aws_security_group.app_sg",
+          "fromConcept": "vm",
+          "toConcept": "firewall",
+          "relation": "references"
+        },
+        {
+          "from": "aws_instance.app",
+          "to": "data.aws_ami.amazon_linux",
+          "fromConcept": "vm",
+          "toConcept": "unmapped",
+          "relation": "references"
+        },
+        {
+          "from": "aws_security_group.app_sg",
+          "to": "data.aws_vpc.default",
+          "fromConcept": "firewall",
+          "toConcept": "network",
+          "relation": "references"
+        }
+      ],
+      "attributes": {
+        "vmPublicIp": true,
+        "internetIngressRule": true
+      }
+    },
+    "componentProjections": {
+      "status": "available",
+      "provider": "aws",
+      "deltas": {
+        "persistent-storage": {
+          "components": [
+            {
+              "componentId": "disk",
+              "terraformKind": "resource",
+              "terraformType": "aws_ebs_volume",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "attachment",
+              "terraformKind": "resource",
+              "terraformType": "aws_volume_attachment",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "mount",
+              "terraformKind": "guestConfiguration",
+              "terraformType": null,
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "attachment",
+              "to": "disk",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "attachment",
+              "to": "vm",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "disk",
+              "to": "vm",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "mount",
+              "to": "attachment",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "disk",
+              "to": "vm",
+              "constraint": "same-availability-zone",
+              "status": "requires-separate-gate"
+            },
+            {
+              "from": "mount",
+              "to": "attachment",
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "load-balanced-multi-vm": {
+          "components": [
+            {
+              "componentId": "loadBalancer",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "listener",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendGroup",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_target_group",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendMembership",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_target_group_attachment",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "loadBalancer",
+              "to": "subnet",
+              "cardinality": "one-to-many",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "listener",
+              "to": "loadBalancer",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "listener",
+              "to": "backendGroup",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "backendGroup",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "vm",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "loadBalancer",
+              "to": "subnet",
+              "constraint": "multiple-availability-zones",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "https-termination": {
+          "components": [
+            {
+              "componentId": "httpsListener",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "certificate",
+              "terraformKind": "resourceOrDataSource",
+              "terraformType": "aws_acm_certificate|data.aws_acm_certificate",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "httpsListener",
+              "to": "loadBalancer",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "httpsListener",
+              "to": "certificate",
+              "cardinality": "many-to-many",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "httpsListener",
+              "to": "certificate",
+              "constraint": "exactly-one-default-certificate",
+              "status": "requires-separate-gate"
+            }
+          ]
+        }
+      },
+      "guestMountPaths": []
+    },
+    "capabilities": {
+      "vmCount": 1,
+      "availabilityZones": null,
+      "loadBalancer": false,
+      "persistentData": false,
+      "dataDiskGiB": null,
+      "volumeMount": null,
+      "publicHttps": true,
+      "healthPath": "/health",
+      "applicationPort": 8080
+    },
+    "unmappedProviderTypes": [
+      "aws_ami"
+    ],
+    "errors": []
+  },
+  "codeQuality": {
+    "complexity": {
+      "status": "available",
+      "tool": "lizard",
+      "version": "1.23.0",
+      "fileCount": 9,
+      "functionCount": 32,
+      "nloc": 191,
+      "cyclomaticComplexity": {
+        "mean": 1.03125,
+        "median": 1.0,
+        "p95": 1.0,
+        "max": 2,
+        "functionsAbove10": 0,
+        "functionsAbove10Ratio": 0.0
+      },
+      "functionNloc": {
+        "mean": 3.25,
+        "p95": 6.45,
+        "max": 7
+      },
+      "decisionPointDensityPer100Nloc": 0.52356
+    },
+    "coverage": {
+      "status": "unavailable",
+      "reason": "JaCoCo XML report not found"
+    },
+    "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+  },
+  "staticValidationPassed": true,
+  "expected": {
+    "schemaVersion": "easydep-end-to-end-oracle/v1",
+    "caseId": "PS-treatment-azure",
+    "profile": "PS-treatment",
+    "provider": "azure",
+    "budgetUsd": 150,
+    "requiredCapabilities": {
+      "publicHttps": false,
+      "healthPath": "/health",
+      "applicationPort": 8080,
+      "vmCount": {
+        "min": 1,
+        "max": 1
+      },
+      "persistentData": true,
+      "dataDiskGiB": {
+        "min": 20
+      },
+      "volumeMount": "/var/lib/notes",
+      "loadBalancer": false
+    },
+    "functionalAcceptance": [
+      {
+        "name": "create note",
+        "method": "POST",
+        "path": "/notes",
+        "status": 201,
+        "json": {
+          "title": "alpha",
+          "content": "first"
+        },
+        "expectJson": {
+          "title": "alpha",
+          "content": "first"
+        }
+      },
+      {
+        "name": "list notes",
+        "method": "GET",
+        "path": "/notes",
+        "status": 200,
+        "expectJson": [
+          {
+            "title": "alpha",
+            "content": "first"
+          }
+        ]
+      }
+    ],
+    "persistenceAcceptance": {
+      "mountPath": "/var/lib/notes",
+      "beforeRestart": [
+        {
+          "name": "재시작 전 노트 생성",
+          "method": "POST",
+          "path": "/notes",
+          "status": 201,
+          "json": {
+            "title": "restart-proof",
+            "content": "must-survive"
+          },
+          "expectJson": {
+            "title": "restart-proof",
+            "content": "must-survive"
+          }
+        }
+      ],
+      "afterRestart": [
+        {
+          "name": "재시작 후 노트 조회",
+          "method": "GET",
+          "path": "/notes",
+          "status": 200,
+          "expectJson": [
+            {
+              "title": "restart-proof",
+              "content": "must-survive"
+            }
+          ]
+        }
+      ]
+    },
+    "forbiddenConcepts": [
+      "loadBalancer",
+      "kubernetes",
+      "managedApplicationPlatform"
+    ],
+    "requiredDependencies": [],
+    "componentDeltas": [
+      "persistent-storage"
+    ],
+    "legacyProviderProjection": false,
+    "componentDependencyExpectations": {
+      "structuralReferences": [
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "disk",
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ]
+        },
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "vm",
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ]
+        }
+      ],
+      "cardinalities": [
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "disk",
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ],
+          "cardinality": "one-to-one"
+        },
+        {
+          "delta": "persistent-storage",
+          "from": "attachment",
+          "to": "vm",
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ],
+          "cardinality": "one-to-one"
+        }
+      ],
+      "constraints": [
+        {
+          "delta": "persistent-storage",
+          "from": "mount",
+          "to": "attachment",
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ],
+          "constraint": "device-must-be-formatted-and-mounted"
+        }
+      ]
+    }
+  },
+  "score": {
+    "status": "completed",
+    "passed": 5,
+    "failed": 12,
+    "unknown": 2,
+    "notApplicable": 0,
+    "passRate": 0.263158,
+    "checks": [
+      {
+        "kind": "providerBoundary",
+        "expected": "azure",
+        "actual": "aws",
+        "status": "failed"
+      },
+      {
+        "kind": "capability",
+        "name": "publicHttps",
+        "expected": false,
+        "actual": true,
+        "status": "failed"
+      },
+      {
+        "kind": "capability",
+        "name": "healthPath",
+        "expected": "/health",
+        "actual": "/health",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "applicationPort",
+        "expected": 8080,
+        "actual": 8080,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "vmCount",
+        "expected": {
+          "min": 1,
+          "max": 1
+        },
+        "actual": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "persistentData",
+        "expected": true,
+        "actual": false,
+        "status": "failed"
+      },
+      {
+        "kind": "capability",
+        "name": "dataDiskGiB",
+        "expected": {
+          "min": 20
+        },
+        "actual": null,
+        "status": "unknown"
+      },
+      {
+        "kind": "capability",
+        "name": "volumeMount",
+        "expected": "/var/lib/notes",
+        "actual": null,
+        "status": "unknown"
+      },
+      {
+        "kind": "capability",
+        "name": "loadBalancer",
+        "expected": false,
+        "actual": false,
+        "status": "passed"
+      },
+      {
+        "kind": "forbidden",
+        "name": "loadBalancer",
+        "status": "passed"
+      },
+      {
+        "kind": "componentDependencyReference",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "disk",
+        "evidence": [
+          "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+          "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+        ],
+        "status": "failed"
+      },
+      {
+        "kind": "componentDependencyReference",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "vm",
+        "evidence": [
+          "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+          "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+        ],
+        "status": "failed"
+      },
+      {
+        "kind": "componentCardinality",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "disk",
+        "evidence": [
+          "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+          "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+        ],
+        "cardinality": "one-to-one",
+        "status": "requires-separate-gate"
+      },
+      {
+        "kind": "componentCardinality",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "vm",
+        "evidence": [
+          "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+          "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+        ],
+        "cardinality": "one-to-one",
+        "status": "requires-separate-gate"
+      },
+      {
+        "kind": "componentConstraintRequirement",
+        "delta": "persistent-storage",
+        "from": "mount",
+        "to": "attachment",
+        "evidence": [
+          "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+          "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+        ],
+        "constraint": "device-must-be-formatted-and-mounted",
+        "status": "requires-separate-gate"
+      },
+      {
+        "kind": "componentProjection",
+        "delta": "persistent-storage",
+        "componentId": "disk",
+        "terraformKind": "resource",
+        "terraformType": "aws_ebs_volume",
+        "instances": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentProjection",
+        "delta": "persistent-storage",
+        "componentId": "attachment",
+        "terraformKind": "resource",
+        "terraformType": "aws_volume_attachment",
+        "instances": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentProjection",
+        "delta": "persistent-storage",
+        "componentId": "mount",
+        "terraformKind": "guestConfiguration",
+        "terraformType": null,
+        "instances": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentRelation",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "disk",
+        "cardinality": "one-to-one",
+        "observedPairs": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentRelation",
+        "delta": "persistent-storage",
+        "from": "attachment",
+        "to": "vm",
+        "cardinality": "one-to-one",
+        "observedPairs": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentRelation",
+        "delta": "persistent-storage",
+        "from": "disk",
+        "to": "vm",
+        "cardinality": null,
+        "observedPairs": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentRelation",
+        "delta": "persistent-storage",
+        "from": "mount",
+        "to": "attachment",
+        "cardinality": null,
+        "observedPairs": [],
+        "status": "failed"
+      },
+      {
+        "kind": "componentConstraint",
+        "delta": "persistent-storage",
+        "from": "disk",
+        "to": "vm",
+        "constraint": "same-availability-zone",
+        "status": "requires-separate-gate"
+      },
+      {
+        "kind": "componentConstraint",
+        "delta": "persistent-storage",
+        "from": "mount",
+        "to": "attachment",
+        "constraint": "device-must-be-formatted-and-mounted",
+        "status": "requires-separate-gate"
+      }
+    ]
+  },
+  "externalTools": {
+    "status": "not-run",
+    "reason": "enable explicitly with --run-tools"
+  },
+  "experimentEligible": false,
+  "evaluationMetadata": {
+    "schema": "easydep-implementation-evaluation/v1",
+    "evaluatedAt": "2026-08-08T21:32:30.561644+00:00"
+  }
+}

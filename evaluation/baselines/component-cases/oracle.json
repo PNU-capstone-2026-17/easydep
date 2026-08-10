@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "easydep-end-to-end-oracle/v1",
+  "note": "단일 변수 쌍 평가용 개발 oracle이다. 정적 구성·관계와 애플리케이션 기능을 별도 gate로 채점한다.",
+  "profiles": {
+    "PS-control": {
+      "requiredCapabilities": {"publicHttps":false,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":1,"max":1},"persistentData":false,"loadBalancer":false},
+      "functionalAcceptance": [{"name":"create note","method":"POST","path":"/notes","status":201,"json":{"title":"alpha","content":"first"},"expectJson":{"title":"alpha","content":"first"}},{"name":"list notes","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"alpha","content":"first"}]}],
+      "forbiddenConcepts": ["dataDisk","loadBalancer","kubernetes","managedApplicationPlatform"],
+      "legacyProviderProjection": false
+    },
+    "PS-treatment": {
+      "requiredCapabilities": {"publicHttps":false,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":1,"max":1},"persistentData":true,"dataDiskGiB":{"min":20},"volumeMount":"/var/lib/notes","loadBalancer":false},
+      "functionalAcceptance": [{"name":"create note","method":"POST","path":"/notes","status":201,"json":{"title":"alpha","content":"first"},"expectJson":{"title":"alpha","content":"first"}},{"name":"list notes","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"alpha","content":"first"}]}],
+      "persistenceAcceptance": {"mountPath":"/var/lib/notes","beforeRestart":[{"name":"재시작 전 노트 생성","method":"POST","path":"/notes","status":201,"json":{"title":"restart-proof","content":"must-survive"},"expectJson":{"title":"restart-proof","content":"must-survive"}}],"afterRestart":[{"name":"재시작 후 노트 조회","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"restart-proof","content":"must-survive"}]}]},
+      "forbiddenConcepts": ["loadBalancer","kubernetes","managedApplicationPlatform"],
+      "componentDeltas": ["persistent-storage"],
+      "legacyProviderProjection": false
+    },
+    "LB-control": {
+      "requiredCapabilities": {"publicHttps":false,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":1,"max":1},"persistentData":false,"loadBalancer":false},
+      "functionalAcceptance": [{"name":"list products","method":"GET","path":"/products","status":200,"expectJson":[{"id":"p1","name":"Notebook","price":12.5},{"id":"p2","name":"Pen","price":2.0}]},{"name":"product detail","method":"GET","path":"/products/p1","status":200,"expectJson":{"id":"p1","name":"Notebook","price":12.5}}],
+      "forbiddenConcepts": ["dataDisk","loadBalancer","kubernetes","managedApplicationPlatform"],
+      "legacyProviderProjection": false
+    },
+    "LB-treatment": {
+      "requiredCapabilities": {"publicHttps":false,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":2},"availabilityZones":{"min":2},"persistentData":false,"loadBalancer":true},
+      "functionalAcceptance": [{"name":"list products","method":"GET","path":"/products","status":200,"expectJson":[{"id":"p1","name":"Notebook","price":12.5},{"id":"p2","name":"Pen","price":2.0}]},{"name":"product detail","method":"GET","path":"/products/p1","status":200,"expectJson":{"id":"p1","name":"Notebook","price":12.5}}],
+      "forbiddenConcepts": ["dataDisk","kubernetes","managedApplicationPlatform"],
+      "componentDeltas": ["load-balanced-multi-vm"],
+      "legacyProviderProjection": false
+    },
+    "TLS-control": {
+      "requiredCapabilities": {"publicHttps":false,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":2},"availabilityZones":{"min":2},"persistentData":false,"loadBalancer":true},
+      "functionalAcceptance": [{"name":"list products","method":"GET","path":"/products","status":200,"expectJson":[{"id":"p1","name":"Notebook","price":12.5},{"id":"p2","name":"Pen","price":2.0}]},{"name":"product detail","method":"GET","path":"/products/p1","status":200,"expectJson":{"id":"p1","name":"Notebook","price":12.5}}],
+      "forbiddenConcepts": ["dataDisk","certificate","kubernetes","managedApplicationPlatform"],
+      "componentDeltas": ["load-balanced-multi-vm"],
+      "legacyProviderProjection": false
+    },
+    "TLS-treatment": {
+      "requiredCapabilities": {"publicHttps":true,"healthPath":"/health","applicationPort":8080,"vmCount":{"min":2},"availabilityZones":{"min":2},"persistentData":false,"loadBalancer":true},
+      "functionalAcceptance": [{"name":"list products","method":"GET","path":"/products","status":200,"expectJson":[{"id":"p1","name":"Notebook","price":12.5},{"id":"p2","name":"Pen","price":2.0}]},{"name":"product detail","method":"GET","path":"/products/p1","status":200,"expectJson":{"id":"p1","name":"Notebook","price":12.5}}],
+      "forbiddenConcepts": ["dataDisk","kubernetes","managedApplicationPlatform"],
+      "componentDeltas": ["load-balanced-multi-vm","https-termination"],
+      "legacyProviderProjection": false
+    }
+  },
+  "cases": {
+    "PS-control-aws":{"profile":"PS-control","provider":"aws","budgetUsd":100},"PS-treatment-aws":{"profile":"PS-treatment","provider":"aws","budgetUsd":150},
+    "PS-control-azure":{"profile":"PS-control","provider":"azure","budgetUsd":100},"PS-treatment-azure":{"profile":"PS-treatment","provider":"azure","budgetUsd":150},
+    "PS-control-gcp":{"profile":"PS-control","provider":"gcp","budgetUsd":100},"PS-treatment-gcp":{"profile":"PS-treatment","provider":"gcp","budgetUsd":150},
+    "LB-control-aws":{"profile":"LB-control","provider":"aws","budgetUsd":150},"LB-treatment-aws":{"profile":"LB-treatment","provider":"aws","budgetUsd":300},
+    "LB-control-azure":{"profile":"LB-control","provider":"azure","budgetUsd":150},"LB-treatment-azure":{"profile":"LB-treatment","provider":"azure","budgetUsd":300},
+    "LB-control-gcp":{"profile":"LB-control","provider":"gcp","budgetUsd":150},"LB-treatment-gcp":{"profile":"LB-treatment","provider":"gcp","budgetUsd":300},
+    "TLS-control-aws":{"profile":"TLS-control","provider":"aws","budgetUsd":300},"TLS-treatment-aws":{"profile":"TLS-treatment","provider":"aws","budgetUsd":350},
+    "TLS-control-azure":{"profile":"TLS-control","provider":"azure","budgetUsd":300},"TLS-treatment-azure":{"profile":"TLS-treatment","provider":"azure","budgetUsd":350},
+    "TLS-control-gcp":{"profile":"TLS-control","provider":"gcp","budgetUsd":300},"TLS-treatment-gcp":{"profile":"TLS-treatment","provider":"gcp","budgetUsd":350}
+  }
+}

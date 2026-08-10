@@ -19,7 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,7 +30,7 @@ _CODE = re.compile(r'"code":\s*"([^"]+)"|ErrorCode:\s*(\S+)|\(([A-Za-z]+Error|[A
 
 def az(args: list[str], timeout: int = 420) -> dict:
     r = subprocess.run([AZ, *args, "--only-show-errors"],
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, text=True, timeout=timeout, check=False)
     text = (r.stderr or "") + (r.stdout or "")
     codes = [next(g for g in m.groups() if g) for m in _CODE.finditer(text)]
     return {"ok": r.returncode == 0,
@@ -87,7 +87,7 @@ def main() -> None:
             "C국면은 생명주기 질문의 직접 측정. residual이 빈 목록이어야 실험이 "
             "깨끗이 끝난 것이다."
         ),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "resourceGroup": rg,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

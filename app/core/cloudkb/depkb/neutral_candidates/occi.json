@@ -1,0 +1,221 @@
+{
+  "schemaVersion": "easydep-neutral-hypotheses/v1",
+  "model": "occi",
+  "sourceId": "ogf.occi.infrastructure.gfd224",
+  "candidates": [
+    {
+      "id": "occi.compute",
+      "sourceTerm": "Compute",
+      "definition": "A generic information-processing resource, such as a virtual machine or container, with configurable processor, memory, hostname, and lifecycle state.",
+      "sourceLocator": "GFD.224, Section 3.1, pp. 5-6, especially the opening paragraph and Tables 3-4",
+      "scopeRationale": "This is OCCI's VM-capable execution resource and is central to the bounded VM-connected IaaS scope.",
+      "relations": [
+        {
+          "predicate": "is source of",
+          "targetSourceTerm": "NetworkInterface",
+          "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4"
+        },
+        {
+          "predicate": "is source of",
+          "targetSourceTerm": "StorageLink",
+          "sourceLocator": "GFD.224, Sections 3 and 3.4.2, pp. 4 and 10"
+        },
+        {
+          "predicate": "is configured by",
+          "targetSourceTerm": "OS Template",
+          "sourceLocator": "GFD.224, Section 3.5.1 and Figure 9, pp. 11-12"
+        },
+        {
+          "predicate": "may be configured by",
+          "targetSourceTerm": "Resource Template",
+          "sourceLocator": "GFD.224, Section 3.5.2 and Figures 10, pp. 12-13"
+        },
+        {
+          "predicate": "is applicable target of",
+          "targetSourceTerm": "Credentials Mixin",
+          "sourceLocator": "GFD.224, Section 3.5.2.1, p. 13"
+        },
+        {
+          "predicate": "is applicable target of",
+          "targetSourceTerm": "Contextualization Mixin",
+          "sourceLocator": "GFD.224, Section 3.5.2.2, p. 13"
+        },
+        {
+          "predicate": "save action creates",
+          "targetSourceTerm": "OS Template",
+          "sourceLocator": "GFD.224, Section 3.1, Table 4 and paragraph following it, p. 5"
+        }
+      ]
+    },
+    {
+      "id": "occi.network",
+      "sourceTerm": "Network",
+      "definition": "An L2 interconnection resource, exemplified by a virtual switch, which can be extended with L3/L4 capabilities.",
+      "sourceLocator": "GFD.224, Section 3.2, pp. 6-7, especially the opening paragraph and Tables 5-6",
+      "scopeRationale": "It represents the network to which a VM-capable Compute resource is explicitly connected.",
+      "relations": [
+        {
+          "predicate": "is target of",
+          "targetSourceTerm": "NetworkInterface",
+          "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4"
+        },
+        {
+          "predicate": "is applicable target of",
+          "targetSourceTerm": "IPNetwork Mixin",
+          "sourceLocator": "GFD.224, Section 3.2.1, p. 7"
+        }
+      ]
+    },
+    {
+      "id": "occi.ipnetwork_mixin",
+      "sourceTerm": "IPNetwork Mixin",
+      "definition": "A mixin that adds an IP address range, gateway, and dynamic-or-static address allocation settings to a Network.",
+      "sourceLocator": "GFD.224, Section 3.2.1, p. 7, including Table 7",
+      "scopeRationale": "It supplies the L3 addressing configuration for a network connected to Compute.",
+      "relations": [
+        {
+          "predicate": "applies to",
+          "targetSourceTerm": "Network",
+          "sourceLocator": "GFD.224, Section 3.2.1, p. 7"
+        }
+      ]
+    },
+    {
+      "id": "occi.storage",
+      "sourceTerm": "Storage",
+      "definition": "A resource that records information on a data-storage device and exposes size and lifecycle state.",
+      "sourceLocator": "GFD.224, Section 3.3, p. 8, especially the opening paragraph and Tables 8-9",
+      "scopeRationale": "It is the persistent-storage resource explicitly attachable to a VM-capable Compute resource.",
+      "relations": [
+        {
+          "predicate": "is target of",
+          "targetSourceTerm": "StorageLink",
+          "sourceLocator": "GFD.224, Section 3.4.2, p. 10"
+        }
+      ]
+    },
+    {
+      "id": "occi.networkinterface",
+      "sourceTerm": "NetworkInterface",
+      "definition": "An L2 client-device link, such as a network adapter, used to connect a Compute instance to a Network instance.",
+      "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4; Section 3.4.1, p. 9, including Table 10",
+      "scopeRationale": "This is the explicit VM-to-network attachment boundary rather than a standalone network resource.",
+      "relations": [
+        {
+          "predicate": "connects source",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4"
+        },
+        {
+          "predicate": "connects to target",
+          "targetSourceTerm": "Network",
+          "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4"
+        },
+        {
+          "predicate": "is applicable target of",
+          "targetSourceTerm": "IPNetworkInterface Mixin",
+          "sourceLocator": "GFD.224, Section 3.4.1.1, p. 9"
+        }
+      ]
+    },
+    {
+      "id": "occi.ipnetworkinterface_mixin",
+      "sourceTerm": "IPNetworkInterface Mixin",
+      "definition": "A mixin that adds an IP address, optional gateway, and dynamic-or-static allocation mechanism to a NetworkInterface.",
+      "sourceLocator": "GFD.224, Section 3.4.1.1, pp. 9-10, including Table 11",
+      "scopeRationale": "It captures per-interface L3 addressing on the explicit Compute-to-Network link.",
+      "relations": [
+        {
+          "predicate": "applies to",
+          "targetSourceTerm": "NetworkInterface",
+          "sourceLocator": "GFD.224, Section 3.4.1.1, p. 9"
+        }
+      ]
+    },
+    {
+      "id": "occi.storagelink",
+      "sourceTerm": "StorageLink",
+      "definition": "A link from a Resource to a target Storage instance that lets Storage be attached to Compute while the implementation handles prerequisite low-level operations.",
+      "sourceLocator": "GFD.224, Section 3.4.2, pp. 10-11, especially the opening paragraph and Table 12",
+      "scopeRationale": "This is the explicit VM-to-storage attachment boundary and carries device and optional guest mount information.",
+      "relations": [
+        {
+          "predicate": "connects source",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3 and Figure 1, p. 4; Section 3.4.2, p. 10"
+        },
+        {
+          "predicate": "connects to target",
+          "targetSourceTerm": "Storage",
+          "sourceLocator": "GFD.224, Section 3.4.2, p. 10"
+        },
+        {
+          "predicate": "must not select",
+          "targetSourceTerm": "OS Template",
+          "sourceLocator": "GFD.224, Section 3.4.2, p. 10"
+        }
+      ]
+    },
+    {
+      "id": "occi.os_template",
+      "sourceTerm": "OS Template",
+      "definition": "A provider-defined template mixin identifying a particular operating-system image configuration to install on a requested Compute resource.",
+      "sourceLocator": "GFD.224, Section 3.5.1, pp. 11-12, including Figure 9",
+      "scopeRationale": "It represents the boot execution-environment choice for a VM-capable Compute resource.",
+      "relations": [
+        {
+          "predicate": "configures operating system of",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3.5.1 and Figure 9, pp. 11-12"
+        },
+        {
+          "predicate": "may be created from",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3.1, Table 4 and paragraph following it, p. 5"
+        }
+      ]
+    },
+    {
+      "id": "occi.resource_template",
+      "sourceTerm": "Resource Template",
+      "definition": "A provider-defined template mixin representing a preset Resource configuration whose values override applicable size-related attributes on an associated Resource.",
+      "sourceLocator": "GFD.224, Section 3.5.2, pp. 12-13, including Figure 10",
+      "scopeRationale": "Its Compute example captures preset VM sizing while retaining the document's broader Resource-level semantics.",
+      "relations": [
+        {
+          "predicate": "may configure",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3.5.2 and Figures 10, pp. 12-13"
+        }
+      ]
+    },
+    {
+      "id": "occi.credentials_mixin",
+      "sourceTerm": "Credentials Mixin",
+      "definition": "A Compute-only mixin that carries a client's public SSH key for provider-mediated injection when the Compute resource is created.",
+      "sourceLocator": "GFD.224, Section 3.5.2.1, p. 13, including Table 13",
+      "scopeRationale": "It is a bounded VM provisioning input for SSH-secured access, not a general identity or secret-management catalog.",
+      "relations": [
+        {
+          "predicate": "applies only to",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3.5.2.1, p. 13"
+        }
+      ]
+    },
+    {
+      "id": "occi.contextualization_mixin",
+      "sourceTerm": "Contextualization Mixin",
+      "definition": "A Compute-only mixin carrying one-time client contextualization data that is supplied during instantiation and executed at the end of the Compute boot order.",
+      "sourceLocator": "GFD.224, Section 3.5.2.2, p. 13, including Table 14",
+      "scopeRationale": "It captures VM bootstrap configuration directly tied to Compute creation without expanding into application management.",
+      "relations": [
+        {
+          "predicate": "applies only to",
+          "targetSourceTerm": "Compute",
+          "sourceLocator": "GFD.224, Section 3.5.2.2, p. 13"
+        }
+      ]
+    }
+  ]
+}

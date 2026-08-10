@@ -1,4 +1,7 @@
 from app.core.orchestration import vm_selection
+from app.core.orchestration.iac_binding_validation import (
+    validate_vm_selection_binding,
+)
 
 
 def _spec(**values):
@@ -105,3 +108,48 @@ def test_steady_workload_prefers_a_checked_non_warning_candidate(monkeypatch):
 
     assert result["recommended"]["specName"] == "steady"
     assert result["selectionBasis"].startswith("lowest-cost-candidate-with-no-recorded")
+
+
+def test_vm_selection_binding_reads_literals_and_variable_defaults():
+    cases = {
+        "aws": (
+            "t3.medium",
+            'variable "vm_type" { default = "t3.medium" }\n'
+            'resource "aws_instance" "app" { instance_type = var.vm_type }',
+        ),
+        "azure": (
+            "Standard_D2s_v5",
+            'resource "azurerm_linux_virtual_machine" "app" '
+            '{ size = "Standard_D2s_v5" }',
+        ),
+        "gcp": (
+            "e2-medium",
+            'resource "google_compute_instance" "app" '
+            '{ machine_type = "e2-medium" }',
+        ),
+    }
+
+    for provider, (expected, terraform) in cases.items():
+        report = validate_vm_selection_binding(
+            {"main.tf": terraform},
+            provider=provider,
+            expected_spec_name=expected,
+        )
+        assert report["status"] == "passed"
+
+
+def test_vm_selection_binding_rejects_a_different_or_unresolved_size():
+    different = validate_vm_selection_binding(
+        {"main.tf": 'resource "aws_instance" "app" { instance_type = "t3.small" }'},
+        provider="aws",
+        expected_spec_name="t3.medium",
+    )
+    unresolved = validate_vm_selection_binding(
+        {"main.tf": 'resource "aws_instance" "app" { instance_type = var.vm_type }'},
+        provider="aws",
+        expected_spec_name="t3.medium",
+    )
+
+    assert different["status"] == "failed"
+    assert unresolved["status"] == "failed"
+    assert different["diagnostics"][0]["code"] == "BIND-VM-SIZE-001"

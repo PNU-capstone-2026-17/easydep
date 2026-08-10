@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "easydep-natural-language-feedback-pilot/v1",
+  "caseId": "provider-region-budget-missing",
+  "scope": "Docker-on-Linux-VM",
+  "input": "Deploy a Dockerized Spring Boot REST service on Linux virtual machines.",
+  "checkpointThreadId": "research:nl-question-provider-region-20260809-v4",
+  "initialObservation": {
+    "status": "need_feedback",
+    "missingRequiredFields": ["provider", "region", "monthlyBudgetUSD"],
+    "suggestedFields": ["minVCpu", "trafficPattern", "multiZone"],
+    "resourceSpecValid": false,
+    "shellElapsedSeconds": 51.5,
+    "telemetryAvailable": false,
+    "telemetryNote": "The graph reached its checkpoint, but result serialization failed under CP949 after execution. The shell time includes imports and local BERT loading."
+  },
+  "answer": {
+    "provider": "azure",
+    "region": "Korea Central",
+    "monthlyBudgetUSD": "100"
+  },
+  "resumeObservation": {
+    "status": "need_feedback",
+    "resourceSpec": {
+      "schemaVersion": "2",
+      "workloads": ["vm"],
+      "provider": "azure",
+      "regionAsWritten": "Korea Central",
+      "region": "koreacentral",
+      "monthlyBudgetUSD": 100.0
+    },
+    "missingRequiredFields": [],
+    "rejectedAnswers": [],
+    "llmCalls": 1,
+    "llmSeconds": 4.638,
+    "wallSeconds": 7.139,
+    "upstreamDeploymentNeedsPreserved": true
+  },
+  "endpointProbe": {
+    "status": "completed",
+    "http429": false,
+    "ttftSeconds": 2.000341,
+    "elapsedSeconds": 2.161455
+  },
+  "claimLimits": {
+    "naturalLanguageQuestionObserved": true,
+    "structuredAnswerApplied": true,
+    "partialResumeObserved": true,
+    "fullRequirementsCompletionMeasured": false,
+    "applicationFunctionalSuccessMeasured": false,
+    "cloudApplyMeasured": false,
+    "generalizationMeasured": false
+  }
+}

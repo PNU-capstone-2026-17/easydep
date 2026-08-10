@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "easydep-component-fixed-input-config/v1",
+  "suite": "evaluation/baselines/component-cases/suite.json",
+  "oracle": "evaluation/baselines/component-cases/oracle.json",
+  "measurement": "artifacts/measurements/capability-projection-live-confirmation-20260809.json",
+  "pairs": {
+    "persistent-storage": {
+      "measurementAxis": "persistent-storage",
+      "capabilityIds": ["persistent-block-storage"],
+      "sourceApplication": "artifacts/runs/easydep-no-depkb-ps-control-aws-20260809T034126Z-78622c/repairs/attempt-6/03-implementation/application"
+    },
+    "load-balanced-multi-vm": {
+      "measurementAxis": "load-balanced-ingress",
+      "capabilityIds": ["load-balanced-ingress"],
+      "sourceApplication": "artifacts/runs/easydep-full-lb-control-azure-20260808T204721Z-cbb649/repairs/attempt-1/03-implementation/application"
+    },
+    "https-termination": {
+      "measurementAxis": "https-load-balanced-ingress",
+      "capabilityIds": ["https-load-balanced-ingress"],
+      "controlMeasurementAxis": "load-balanced-ingress",
+      "sourceApplication": "artifacts/runs/easydep-full-lb-control-azure-20260808T204721Z-cbb649/repairs/attempt-1/03-implementation/application"
+    }
+  }
+}

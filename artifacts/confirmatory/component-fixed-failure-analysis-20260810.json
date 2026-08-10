@@ -1,0 +1,4118 @@
+{
+  "schemaVersion": "easydep-component-failure-analysis/v1",
+  "configSha256": "2c6e4c52d1f9d5d5785ef293d139cfdbf7e46d748e5456be63ca833fac7c8479",
+  "sourceFiles": [
+    "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+    "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+    "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json"
+  ],
+  "cellCount": 54,
+  "outcomes": {
+    "delivered-dependency-complete": 22,
+    "delivered-dependency-incomplete": 13,
+    "delivery-failed": 19
+  },
+  "strata": [
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-incomplete": 3
+      }
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-incomplete": 3
+      }
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-incomplete": 2,
+        "delivery-failed": 1
+      }
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivery-failed": 3
+      }
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 1,
+        "delivered-dependency-incomplete": 1,
+        "delivery-failed": 1
+      }
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-incomplete": 2,
+        "delivery-failed": 1
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 3
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-incomplete": 1,
+        "delivery-failed": 2
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "full",
+      "outcomes": {
+        "delivery-failed": 3
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivery-failed": 3
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 2,
+        "delivery-failed": 1
+      }
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-incomplete": 1,
+        "delivery-failed": 2
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 2,
+        "delivery-failed": 1
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-complete": 3
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 3
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-complete": 3
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "outcomes": {
+        "delivered-dependency-complete": 3
+      }
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "outcomes": {
+        "delivered-dependency-complete": 2,
+        "delivery-failed": 1
+      }
+    }
+  ],
+  "recurrentFailedChecks": [
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "backendMembership->backendGroup",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "backendMembership->vm",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "httpsListener->certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "backendMembership",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "backendMembership->backendGroup",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "backendMembership->vm",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "httpsListener->certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "httpsListener->certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "httpsListener->certificate",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "capability",
+      "id": "vmCount",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "backendSettings->probe",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "backendSettings->probe",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "capability",
+      "id": "vmCount",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentDependencyReference",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "backendGroup",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "capability",
+      "id": "vmCount",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "vmCount",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "loadBalancer->subnet",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "loadBalancer->subnet",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "capability",
+      "id": "vmCount",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentDependencyReference",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "backendGroup->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "backendService->backendGroup",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "capability",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "disk->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "kind": "forbidden",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "loadBalancer",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "disk->vm",
+      "failedRepetitions": 1,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "kind": "forbidden",
+      "id": "loadBalancer",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "capability",
+      "id": "volumeMount",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "capability",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 3,
+      "systematicAcrossThreeRepetitions": true
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "kind": "forbidden",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "capability",
+      "id": "publicHttps",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentProjection",
+      "id": "mount",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "componentRelation",
+      "id": "mount->attachment",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "kind": "forbidden",
+      "id": "loadBalancer",
+      "failedRepetitions": 2,
+      "systematicAcrossThreeRepetitions": false
+    }
+  ],
+  "deliveryDiagnosticCodes": [
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "code": "ValueError",
+      "occurrences": 1
+    },
+    {
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 3
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "code": "ValueError",
+      "occurrences": 1
+    },
+    {
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 1
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 2
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "full",
+      "code": "ValueError",
+      "occurrences": 3
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 3
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "code": "ValueError",
+      "occurrences": 1
+    },
+    {
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 2
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "code": "ValueError",
+      "occurrences": 1
+    },
+    {
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "code": "ValueError",
+      "occurrences": 1
+    }
+  ],
+  "pairedCloudCandidates": [
+    {
+      "repetition": 1,
+      "capability": "https-termination",
+      "provider": "aws",
+      "classification": "paired-both-structurally-incomplete",
+      "fullCaseId": "TLS-treatment-aws",
+      "noDepkbCaseId": "TLS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 1,
+      "capability": "https-termination",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "TLS-treatment-azure",
+      "noDepkbCaseId": "TLS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "capability": "https-termination",
+      "provider": "gcp",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "TLS-treatment-gcp",
+      "noDepkbCaseId": "TLS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 1,
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-aws",
+      "noDepkbCaseId": "LB-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-azure",
+      "noDepkbCaseId": "LB-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "classification": "paired-structural-contrast",
+      "fullCaseId": "LB-treatment-gcp",
+      "noDepkbCaseId": "LB-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-aws",
+      "noDepkbCaseId": "PS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-azure",
+      "noDepkbCaseId": "PS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 1,
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-gcp",
+      "noDepkbCaseId": "PS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "https-termination",
+      "provider": "aws",
+      "classification": "paired-both-structurally-incomplete",
+      "fullCaseId": "TLS-treatment-aws",
+      "noDepkbCaseId": "TLS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 2,
+      "capability": "https-termination",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "TLS-treatment-azure",
+      "noDepkbCaseId": "TLS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "https-termination",
+      "provider": "gcp",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "TLS-treatment-gcp",
+      "noDepkbCaseId": "TLS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "classification": "paired-structural-contrast",
+      "fullCaseId": "LB-treatment-aws",
+      "noDepkbCaseId": "LB-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-azure",
+      "noDepkbCaseId": "LB-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-gcp",
+      "noDepkbCaseId": "LB-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-aws",
+      "noDepkbCaseId": "PS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-azure",
+      "noDepkbCaseId": "PS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "PS-treatment-gcp",
+      "noDepkbCaseId": "PS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "persistentData"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "https-termination",
+      "provider": "aws",
+      "classification": "paired-both-structurally-incomplete",
+      "fullCaseId": "TLS-treatment-aws",
+      "noDepkbCaseId": "TLS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 3,
+      "capability": "https-termination",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "TLS-treatment-azure",
+      "noDepkbCaseId": "TLS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "https-termination",
+      "provider": "gcp",
+      "classification": "paired-both-structurally-incomplete",
+      "fullCaseId": "TLS-treatment-gcp",
+      "noDepkbCaseId": "TLS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [],
+      "noDepkbRequirementGateFailures": []
+    },
+    {
+      "repetition": 3,
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-aws",
+      "noDepkbCaseId": "LB-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-azure",
+      "noDepkbCaseId": "LB-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "LB-treatment-gcp",
+      "noDepkbCaseId": "LB-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "classification": "delivery-not-comparable",
+      "fullCaseId": "PS-treatment-aws",
+      "noDepkbCaseId": "PS-treatment-aws",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "persistentData"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-azure",
+      "noDepkbCaseId": "PS-treatment-azure",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "classification": "paired-no-structural-contrast",
+      "fullCaseId": "PS-treatment-gcp",
+      "noDepkbCaseId": "PS-treatment-gcp",
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cloudExecutionPreflightRequired": true,
+      "fullRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ],
+      "noDepkbRequirementGateFailures": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        }
+      ]
+    }
+  ],
+  "cells": [
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "disk->vm"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": []
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "loadBalancer->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "listener->loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "listener->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendMembership"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendSettings->probe"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->gateway"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->proxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "proxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "urlMap->backendService"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->healthCheck"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->httpsProxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsProxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsProxy->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 1,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "disk->vm"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "persistentData"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "attachment->disk"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "attachment->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "loadBalancer->subnet"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "loadBalancer->subnet"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->proxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "proxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "urlMap->backendService"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->healthCheck"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendMembership"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendSettings->probe"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->gateway"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 2,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->proxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "proxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "urlMap->backendService"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->healthCheck"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->httpsProxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsProxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsProxy->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "unclassified-delivery"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "persistentData"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "attachment->disk"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "attachment->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-azure",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "dataDiskGiB"
+        },
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "persistent-storage",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "PS-treatment-gcp",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "forbidden",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "mount"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "mount->attachment"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "volumeMount"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivered-dependency-complete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-aws",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "loadBalancer->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "listener->loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "listener->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->proxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "proxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "urlMap->backendService"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->healthCheck"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "LB-treatment-gcp",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "forwardingRule->proxy"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "proxy->urlMap"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "urlMap->backendService"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->healthCheck"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "full",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendMembership"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendMembership->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "aws",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-aws",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "certificate"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "full",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->gateway"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "azure",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-azure",
+      "outcome": "delivery-failed",
+      "diagnosticCodes": [
+        "ValueError"
+      ],
+      "deliveryFailurePhases": [
+        "provider-schema-validation"
+      ],
+      "checksObservable": false,
+      "failedChecks": [
+        {
+          "kind": "capability",
+          "id": "publicHttps"
+        },
+        {
+          "kind": "capability",
+          "id": "loadBalancer"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "gateway->subnet"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->listener"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "routingRule->backendSettings"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendSettings->probe"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->backendPool"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendMembership->nic"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->gateway"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "httpsListener->certificate"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "providerBoundary",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "capability",
+          "id": "vmCount"
+        },
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "(unnamed)"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "full",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    },
+    {
+      "repetition": 3,
+      "sourceFile": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "capability": "https-termination",
+      "provider": "gcp",
+      "arm": "no-depkb",
+      "caseId": "TLS-treatment-gcp",
+      "outcome": "delivered-dependency-incomplete",
+      "diagnosticCodes": [],
+      "deliveryFailurePhases": [],
+      "checksObservable": true,
+      "failedChecks": [
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentDependencyReference",
+          "id": "backendGroup->vm"
+        },
+        {
+          "kind": "componentProjection",
+          "id": "backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendService->backendGroup"
+        },
+        {
+          "kind": "componentRelation",
+          "id": "backendGroup->vm"
+        }
+      ],
+      "unknownChecks": [
+        {
+          "kind": "capability",
+          "id": "availabilityZones"
+        }
+      ]
+    }
+  ],
+  "interpretationBoundary": {
+    "diagnosticCodeIsRootCause": false,
+    "failedCheckIsFunctionalFailure": false,
+    "structuralContrastIsCloudReady": false,
+    "checksAfterDeliveryFailureExcludedFromRecurrence": true,
+    "systematicMeans": "동일한 고정 입력·계층에서 3회 모두 같은 check가 실패함"
+  }
+}

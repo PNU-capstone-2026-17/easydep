@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "language": "English",
+  "workload": "Docker on Linux VM",
+  "iac": "Terraform",
+  "study": "easydep-dependency-component-ablation",
+  "studyDesign": "paired-components",
+  "pairs": [
+    {"id":"persistent-storage","changedFactor":"persistent block storage, attachment, and guest mount"},
+    {"id":"load-balanced-multi-vm","changedFactor":"multi-zone VM backends, load balancer, and health routing"},
+    {"id":"https-termination","changedFactor":"TLS listener and certificate binding on a fixed load-balanced topology"}
+  ],
+  "development": [
+    "ps-control-aws.json","ps-treatment-aws.json","ps-control-azure.json","ps-treatment-azure.json","ps-control-gcp.json","ps-treatment-gcp.json",
+    "lb-control-aws.json","lb-treatment-aws.json","lb-control-azure.json","lb-treatment-azure.json","lb-control-gcp.json","lb-treatment-gcp.json",
+    "tls-control-aws.json","tls-treatment-aws.json","tls-control-azure.json","tls-treatment-azure.json","tls-control-gcp.json","tls-treatment-gcp.json"
+  ],
+  "holdout": [],
+  "repetitions": 3,
+  "arms": ["easydep-full","easydep-no-depkb"],
+  "oracle": "oracle.json",
+  "oracleHash": "0b99ec9b71c3616ce300e871d5c4f0cdb2727b4fdf6dc6ccf9fb2e0ed958f874",
+  "frozenHashes": {
+    "lb-control-aws.json":"e731a855988041225b5a5b80082934efc160b9676b5f6c16b011ecb0411f480e","lb-control-azure.json":"3a70c3484e7920d76596ae52f6aeeae0329899b873b2853f9ae25139a2b2f809","lb-control-gcp.json":"5a3162c2bb31f4174bb3eb13a1bd8bfbccceecf0d532cd86d4d08dfc9e1f533e",
+    "lb-treatment-aws.json":"94beded1401ec36b0aa9003c1151d2cd20599396f51da459185749dd3cf26122","lb-treatment-azure.json":"f022ee0edad0bc71531606cdb00daf8474b25c9ce176062058d6aa9f733c30f0","lb-treatment-gcp.json":"77fa46a6e3249971fbbd1c9be499bcd7e860790ada57c20492404b181a2a43d1",
+    "ps-control-aws.json":"dc7a816b4e5f2906a577a8b384cb249a7e7cafa667e7fbf9351bb92454448bb2","ps-control-azure.json":"660d8fffc37acd9d8aeda2f6b32805a12490f4cc09dc9ed0e69b4be1ef1a32f4","ps-control-gcp.json":"4a76572060b106c7789cb0ef2b4c3d7ecaa21ef81986b1e750c88b3d2ebfd7b3",
+    "ps-treatment-aws.json":"d0f6f04f040f784b34ba69dc67f9f955eb51fd3d9749724d4f09353058aebf72","ps-treatment-azure.json":"f4ab7ad1f165d3744a2621d1cfb6c76719a1d111f7e8be85a4dc2214316d7e43","ps-treatment-gcp.json":"1f8e2b65d33da4795a99745e397f3a1f08b2c5f81c6982a444ac24e430bc26f0",
+    "tls-control-aws.json":"5311924e46f7254d88a45ab277bb234ee3d2c7935e687ebbf7855f368f5e81e4","tls-control-azure.json":"e05ed083cb3d5240e38fe0a8d461c7562a079ef5ea0b4b03f5fb2df6a131f544","tls-control-gcp.json":"dd6bc52180bc03b76dac12e1fecec1115da846d4f0de4edd07c68e211845ee1e",
+    "tls-treatment-aws.json":"7411a00653534f8cfa1b30fc731857d5fb9ddbac94364c6fee1b1f8ab0c566ab","tls-treatment-azure.json":"f037302a3d2ba1e72e30f350316a8cb21f1a0d4b1973397d5eb1de042a849ab4","tls-treatment-gcp.json":"c3537c8f5274703ac0f66d3d15500ab9510d93e6aafbad3dbc5c5efba283a10c"
+  }
+}

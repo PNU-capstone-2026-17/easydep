@@ -1,0 +1,147 @@
+{
+  "schemaVersion": "easydep-cna-case-audit/v2",
+  "scope": "docker-on-vm development component cases",
+  "axes": [
+    {
+      "axisId": "persistent-storage",
+      "providers": [
+        {
+          "provider": "aws",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "azure",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "gcp",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        }
+      ],
+      "evidenceAndPairContractComplete": true
+    },
+    {
+      "axisId": "load-balanced-multi-vm",
+      "providers": [
+        {
+          "provider": "aws",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "azure",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "gcp",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        }
+      ],
+      "evidenceAndPairContractComplete": true
+    },
+    {
+      "axisId": "https-termination",
+      "providers": [
+        {
+          "provider": "aws",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "azure",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        },
+        {
+          "provider": "gcp",
+          "officialEvidencePresent": true,
+          "projectionComponentsPresent": true,
+          "projectionRelationsPresent": true,
+          "pairedCasesInDevelopmentSuite": true,
+          "singleRequirementEntryChanged": true,
+          "applicationFunctionFixed": true,
+          "treatmentUsesProjectionDelta": true,
+          "dependencyExpectationsDerived": true,
+          "dependencyEvidenceLinked": true,
+          "constraintDeclarationsPreserved": true
+        }
+      ],
+      "evidenceAndPairContractComplete": true
+    }
+  ],
+  "projectionAndPairEvidenceComplete": true,
+  "synthesisProvenanceComplete": false,
+  "eligibleForDevelopmentPilot": true,
+  "eligibleForDependencyStructureMeasurement": true,
+  "eligibleForCardinalityOrConstraintClaim": false,
+  "eligibleAsReproducibleSyntheticCorpus": false
+}

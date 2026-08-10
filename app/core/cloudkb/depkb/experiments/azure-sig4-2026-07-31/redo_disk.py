@@ -15,7 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
-from _guest import probe, run as guest  # noqa: E402
+from _guest import probe  # noqa: E402
+from _guest import run as guest
 from run import az  # noqa: E402
 
 HERE = Path(__file__).resolve().parent

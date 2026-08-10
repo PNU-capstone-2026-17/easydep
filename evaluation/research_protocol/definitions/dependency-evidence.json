@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "easydep-dependency-evidence/v1",
+  "semantics": {
+    "reference": "소스 리소스가 대상 리소스를 식별자로 참조한다.",
+    "realizationRequired": "해당 배포 실현에는 대상 종류가 필요하지만 기본 리소스로 대체될 수 있다.",
+    "inputRequired": "생성 요청에 대상 식별자를 명시해야 한다.",
+    "conditionalRequired": "명시된 조건에서만 대상이 필수다."
+  },
+  "providers": {
+    "aws": [
+      {
+        "id": "vm-subnet", "from": "vm", "to": "subnet",
+        "semantics": ["reference", "realizationRequired"],
+        "condition": "기본 VPC가 있으면 기본 서브넷을 자동 선택하고, 없으면 SubnetId를 명시해야 한다.",
+        "manual": {"sourceLocator": "https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_RunInstances.html", "sourceVersion": "EC2 API Reference/current", "retrievedOn": "2026-08-08", "documentSection": "RunInstances / request rules and SubnetId", "finding": "모든 인스턴스에는 기본 네트워크 인터페이스가 있으며 서브넷을 생략하면 기본 VPC의 기본 서브넷을 선택한다. 기본 VPC가 없으면 서브넷 ID를 명시해야 한다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "vm-security-group", "from": "vm", "to": "security-group",
+        "semantics": ["reference", "realizationRequired"],
+        "condition": "식별자를 생략하면 VPC 기본 보안 그룹을 사용한다.",
+        "manual": {"sourceLocator": "https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_RunInstances.html", "sourceVersion": "EC2 API Reference/current", "retrievedOn": "2026-08-08", "documentSection": "RunInstances / SecurityGroupId.N", "finding": "보안 그룹 ID를 생략하면 EC2가 VPC의 기본 보안 그룹을 사용한다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "load-balancer-subnet", "from": "load-balancer", "to": "subnet",
+        "semantics": ["reference", "inputRequired"],
+        "condition": "Application Load Balancer는 서로 다른 가용 영역의 서브넷을 최소 두 개 명시한다.",
+        "manual": {"sourceLocator": "https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html", "sourceVersion": "Elastic Load Balancing API 2015-12-01/current", "retrievedOn": "2026-08-08", "documentSection": "CreateLoadBalancer / Subnets.member.N", "finding": "서브넷 또는 서브넷 매핑 중 하나를 명시해야 하며 Application Load Balancer는 최소 두 가용 영역의 서브넷을 요구한다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "backend-group-virtual-network", "from": "backend-group", "to": "virtual-network",
+        "semantics": ["reference", "conditionalRequired"],
+        "condition": "Lambda 대상이 아닌 target group에 적용한다.",
+        "manual": {"sourceLocator": "https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateTargetGroup.html", "sourceVersion": "Elastic Load Balancing API 2015-12-01/current", "retrievedOn": "2026-08-08", "documentSection": "CreateTargetGroup / VpcId", "finding": "Lambda 대상에는 VPC ID가 적용되지 않으며 그 외 대상 유형에는 VPC ID가 필요하다."},
+        "normativeRequirement": true
+      }
+    ],
+    "azure": [
+      {
+        "id": "subnet-virtual-network", "from": "subnet", "to": "virtual-network",
+        "semantics": ["reference", "inputRequired"],
+        "condition": "서브넷은 가상 네트워크 아래의 자식 리소스 경로로 생성한다.",
+        "manual": {"sourceLocator": "https://learn.microsoft.com/en-us/rest/api/virtualnetwork/subnets/create-or-update?view=rest-virtualnetwork-2025-05-01", "sourceVersion": "Microsoft.Network 2025-05-01", "retrievedOn": "2026-08-08", "documentSection": "Subnets - Create Or Update / HTTP request", "finding": "서브넷 생성 URI에는 virtualNetworks/{virtualNetworkName}/subnets/{subnetName} 경로가 필요하다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "vm-network-interface", "from": "vm", "to": "network-interface",
+        "semantics": ["reference"],
+        "condition": "NIC는 독립 수명주기를 가진 리소스이며 VM은 기존 NIC를 참조하거나 생성 구성을 포함한다.",
+        "manual": {"sourceLocator": "https://learn.microsoft.com/en-us/azure/virtual-network/virtual-network-network-interface-vm", "sourceVersion": "Microsoft Learn; page current 2026-08-08", "retrievedOn": "2026-08-08", "documentSection": "Constraints", "finding": "Azure VM에는 항상 하나 이상의 네트워크 인터페이스가 연결되어야 하며 마지막 NIC는 분리할 수 없다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "load-balancer-components", "from": "load-balancer", "to": "embedded-components",
+        "semantics": ["reference"],
+        "condition": "프런트엔드 IP, 백엔드 풀, 프로브는 Load Balancer의 하위 구성으로 표현된다.",
+        "manual": {"sourceLocator": "https://learn.microsoft.com/en-us/rest/api/load-balancer/load-balancers/create-or-update?view=rest-load-balancer-2025-05-01", "sourceVersion": "Microsoft.Network 2025-05-01", "retrievedOn": "2026-08-08", "documentSection": "Load Balancers - Create Or Update / request body", "finding": "Load Balancer 요청 본문은 frontendIPConfigurations, backendAddressPools, probes 컬렉션을 포함한다."},
+        "normativeRequirement": false,
+        "assessNecessity": false,
+        "modelGap": "embedded-resource-semantics"
+      }
+    ],
+    "gcp": [
+      {
+        "id": "backend-service-health-check", "from": "backend-service", "to": "health-check",
+        "semantics": ["reference", "conditionalRequired"],
+        "condition": "haPolicy가 없는 인스턴스 그룹 또는 zonal GCE_VM_IP NEG 백엔드에 적용한다.",
+        "manual": {"sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices", "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17", "retrievedOn": "2026-08-08", "documentSection": "BackendService / healthChecks[]", "finding": "인스턴스 그룹 또는 zonal NEG 백엔드는 haPolicy 예외가 아니면 헬스체크가 필요하며 인터넷·서버리스 NEG는 헬스체크를 두면 안 된다."},
+        "normativeRequirement": true
+      },
+      {
+        "id": "backend-service-backend-group", "from": "backend-service", "to": "backend-group",
+        "semantics": ["reference"],
+        "condition": "이 연구의 Docker-on-VM 경로에서 backend group은 독립 수명주기를 가진 unmanaged instance group으로 한정한다. NEG는 범위 밖 확장점이다.",
+        "manual": {"sourceLocator": "https://cloud.google.com/compute/docs/reference/rest/v1/backendServices", "sourceVersion": "Compute Engine REST v1; page updated 2026-07-17", "retrievedOn": "2026-08-08", "documentSection": "BackendService / backends[].group", "finding": "각 backend 항목의 group은 instance group 또는 network endpoint group의 정규화된 URL을 참조한다."},
+        "normativeRequirement": false,
+        "eligibleForIntervention": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "schemaVersion": "easydep-official-dependencies/v1",
+  "sourceModelSha256": {
+    "aws-evidence-model.json": "1f75480d08ceaf1afdba7ae07b7b0f77bdbf48004d891e261a148bb67e7eb954",
+    "azure-evidence-model.json": "eb986cbe124ec69443e351835e8a18d3d7acc56b2dbee1ef642609cb14af947f",
+    "gcp-evidence-model.json": "2348f5b61c10540f912d16acbd4d703046d602d17894da684e19161efdcd851d"
+  },
+  "providers": {
+    "aws": [
+      {
+        "id": "aws.vm-subnet",
+        "from": "vm",
+        "to": "subnet",
+        "semantics": [
+          "reference",
+          "realizationRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "aws.vm-subnet.existence",
+          "aws.vm-subnet.necessity"
+        ]
+      },
+      {
+        "id": "aws.vm-security-group",
+        "from": "vm",
+        "to": "security-group",
+        "semantics": [
+          "reference",
+          "realizationRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "aws.vm-security-group.existence",
+          "aws.vm-security-group.necessity"
+        ]
+      },
+      {
+        "id": "aws.load-balancer-subnet",
+        "from": "load-balancer",
+        "to": "subnet",
+        "semantics": [
+          "reference",
+          "inputRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "aws.load-balancer-subnet.existence",
+          "aws.load-balancer-subnet.necessity"
+        ]
+      },
+      {
+        "id": "aws.backend-group-virtual-network",
+        "from": "backend-group",
+        "to": "virtual-network",
+        "semantics": [
+          "reference",
+          "conditionalRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "aws.backend-group-virtual-network.existence",
+          "aws.backend-group-virtual-network.necessity"
+        ]
+      }
+    ],
+    "azure": [
+      {
+        "id": "azure.subnet-virtual-network",
+        "from": "subnet",
+        "to": "virtual-network",
+        "semantics": [
+          "reference",
+          "inputRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "azure.subnet-virtual-network.existence",
+          "azure.subnet-virtual-network.necessity"
+        ]
+      },
+      {
+        "id": "azure.vm-network-interface",
+        "from": "vm",
+        "to": "network-interface",
+        "semantics": [
+          "reference"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "azure.vm-network-interface.existence",
+          "azure.vm-network-interface.necessity"
+        ]
+      },
+      {
+        "id": "azure.load-balancer-components",
+        "from": "load-balancer",
+        "to": "embedded-components",
+        "semantics": [
+          "reference"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "notAssessed",
+        "sourceClaimIds": [
+          "azure.load-balancer-components.existence"
+        ]
+      }
+    ],
+    "gcp": [
+      {
+        "id": "gcp.backend-service-health-check",
+        "from": "backend-service",
+        "to": "health-check",
+        "semantics": [
+          "reference",
+          "conditionalRequired"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "documented",
+        "sourceClaimIds": [
+          "gcp.backend-service-health-check.existence",
+          "gcp.backend-service-health-check.necessity"
+        ]
+      },
+      {
+        "id": "gcp.backend-service-backend-group",
+        "from": "backend-service",
+        "to": "backend-group",
+        "semantics": [
+          "reference"
+        ],
+        "existenceDecision": "confirmed",
+        "necessityDecision": "confirmed",
+        "sourceClaimIds": [
+          "gcp.backend-service-backend-group.existence",
+          "gcp.backend-service-backend-group.necessity"
+        ]
+      }
+    ]
+  },
+  "freeze": {
+    "sha256": "6b52446537fbb56a204e564e16a9e77fc2127c049aee919630acde378d3a92c7"
+  }
+}

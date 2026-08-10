@@ -1,0 +1,176 @@
+{
+ "schemaVersion": "easydep-provider-extension-audit/v1",
+ "provider": "aws",
+ "inventorySource": {
+  "identity": "AWS CloudFormation Resource Specification",
+  "version": "258.0.0",
+  "sha256": "cb04ddec8e3e2e87f06a628c1e31b1640f49492e9d86d8cb48d7c2ef527dae63"
+ },
+ "population": 109,
+ "sampleSize": 18,
+ "selection": "round-robin strata by provider family and nativeForm; sha256 rank",
+ "samples": [
+  {
+   "nativeId": "AWS::EC2::TransitGatewayMulticastDomain",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TransitGatewayMulticastDomain",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The pinned schema requires TransitGatewayId and models a transit-gateway multicast domain; transit networking and multicast are beyond the scoped VM network, subnet, firewall, and ingress path."
+  },
+  {
+   "nativeId": "AWS::ElasticLoadBalancingV2::ListenerCertificate",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::ElasticLoadBalancingV2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::ListenerCertificate",
+   "classification": "covered",
+   "candidateConceptId": null,
+   "rationale": "Certificates plus required ListenerArn make this a separately managed certificate assignment on an existing listener, semantically subordinate to neutral.load-balancer-listener rather than a new VM-connected resource concept."
+  },
+  {
+   "nativeId": "AWS::IAM::InstanceProfile",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::IAM",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::IAM::InstanceProfile",
+   "classification": "extension",
+   "candidateConceptId": "neutral.compute-identity-profile",
+   "rationale": "The pinned schema requires one or more IAM Roles in an instance profile; this is the provider object attached to a VM to confer workload permissions, an important identity relation absent from the 19 concepts."
+  },
+  {
+   "nativeId": "AWS::EC2::PrefixList",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::PrefixList",
+   "classification": "extension",
+   "candidateConceptId": "neutral.network-prefix-set",
+   "rationale": "AddressFamily and PrefixListName identify a reusable set whose Entries hold network prefixes; it is an important referenced address-set abstraction distinct from an individual neutral.network-filter-rule."
+  },
+  {
+   "nativeId": "AWS::ElasticLoadBalancingV2::ListenerRule",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::ElasticLoadBalancingV2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::ListenerRule",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "Required Conditions, Actions, and Priority define application-layer listener routing behavior; the current neutral model and scoped load-balancer concept are network-load-balancing oriented."
+  },
+  {
+   "nativeId": "AWS::EC2::TransitGatewayMulticastGroupSource",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TransitGatewayMulticastGroupSource",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The schema binds a multicast group address and network interface to a transit-gateway multicast domain; multicast transit-network membership is outside the scoped VM topology."
+  },
+  {
+   "nativeId": "AWS::ElasticLoadBalancingV2::TrustStore",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::ElasticLoadBalancingV2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::TrustStore",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The S3-backed CA certificate bundle is a mutual-TLS trust configuration for a load balancer, not a basic VM-connected IaaS resource required by the scoped network-load-balancer model."
+  },
+  {
+   "nativeId": "AWS::EC2::LocalGatewayRouteTableVirtualInterfaceGroupAssociation",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::LocalGatewayRouteTableVirtualInterfaceGroupAssociation",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The two required identifiers associate a local-gateway route table with a virtual-interface group; hybrid/local gateway connectivity is outside the scoped VM deployment topology."
+  },
+  {
+   "nativeId": "AWS::ElasticLoadBalancingV2::TrustStoreRevocation",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::ElasticLoadBalancingV2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::ElasticLoadBalancingV2::TrustStoreRevocation",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "RevocationContents and TrustStoreArn manage certificate revocation within an mTLS trust store, a security detail outside the basic load-balancer and VM IaaS scope."
+  },
+  {
+   "nativeId": "AWS::EC2::TrafficMirrorSession",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TrafficMirrorSession",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The required network interface, mirror target, and mirror filter compose packet mirroring for inspection or observability; traffic capture is outside deployment connectivity and filtering scope."
+  },
+  {
+   "nativeId": "AWS::EC2::TrafficMirrorTarget",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TrafficMirrorTarget",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "This resource selects a mirror destination by network interface, NLB, or gateway-load-balancer endpoint; it supports packet mirroring, which is outside the scoped VM topology."
+  },
+  {
+   "nativeId": "AWS::EC2::NetworkAcl",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkAcl",
+   "classification": "covered",
+   "candidateConceptId": null,
+   "rationale": "Required VpcId makes this a VPC-scoped traffic-filter policy container; that meaning is already covered by neutral.network-security-policy-group, although AWS attaches this variant at subnet boundaries rather than directly to compute connectivity."
+  },
+  {
+   "nativeId": "AWS::EC2::ClientVpnTargetNetworkAssociation",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::ClientVpnTargetNetworkAssociation",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "The schema associates a Client VPN endpoint with a subnet target network; VPN is explicitly outside the scoped Docker-on-VM deployment topology."
+  },
+  {
+   "nativeId": "AWS::EC2::TransitGatewayRouteTable",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TransitGatewayRouteTable",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "Required TransitGatewayId identifies a routing table within a transit gateway; multi-network transit routing is beyond the scoped single-VM-network topology."
+  },
+  {
+   "nativeId": "AWS::EC2::InternetGateway",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::InternetGateway",
+   "classification": "extension",
+   "candidateConceptId": "neutral.public-network-gateway",
+   "rationale": "The standalone internet gateway supplies the public-network edge used by VPC routing; no current concept represents this important public ingress/egress gateway even though public VM and load-balancer reachability depend on it."
+  },
+  {
+   "nativeId": "AWS::EC2::TransitGatewayConnectPeer",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::TransitGatewayConnectPeer",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "TransitGatewayAttachmentId plus connect-peer configuration model a GRE/BGP transit-gateway peer; hybrid transit connectivity is outside the scoped VM deployment topology."
+  },
+  {
+   "nativeId": "AWS::EC2::ClientVpnRoute",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::ClientVpnRoute",
+   "classification": "outsideScope",
+   "candidateConceptId": null,
+   "rationale": "DestinationCidrBlock and ClientVpnEndpointId define a route for a Client VPN endpoint; VPN routing is explicitly outside the scoped topology."
+  },
+  {
+   "nativeId": "AWS::EC2::NatGateway",
+   "nativeForm": "standaloneResource",
+   "family": "AWS::EC2",
+   "sourceLocator": "aws-cfn#/ResourceTypes/AWS::EC2::NatGateway",
+   "classification": "extension",
+   "candidateConceptId": "neutral.egress-nat-gateway",
+   "rationale": "SubnetId, connectivity type, and public/private address allocation properties identify a managed NAT egress gateway; this is an important private-subnet-to-external-network path absent from the current 19 concepts."
+  }
+ ]
+}

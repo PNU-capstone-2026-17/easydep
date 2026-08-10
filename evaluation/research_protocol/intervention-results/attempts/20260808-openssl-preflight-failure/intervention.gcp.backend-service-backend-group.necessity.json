@@ -1,0 +1,185 @@
+{
+  "schemaVersion": "easydep-dependency-intervention-result/v1",
+  "experimentId": "intervention.gcp.backend-service-backend-group.necessity",
+  "provider": "gcp",
+  "project": "cloud-resource-testing",
+  "executionMode": "execute",
+  "replications": [
+    {
+      "replication": 1,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "provisionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:33:35+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        }
+      ]
+    },
+    {
+      "replication": 2,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "provisionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:35:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        }
+      ]
+    },
+    {
+      "replication": 3,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "provisionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "notReached",
+          "observedAt": "2026-08-07T19:37:10+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        }
+      ]
+    }
+  ],
+  "preflight": {
+    "projectMatched": true,
+    "computeApiEnabled": true,
+    "billingEnabled": true,
+    "estimatedCampaignCostUSD": 3.0,
+    "preexistingResources": []
+  },
+  "residualResources": []
+}

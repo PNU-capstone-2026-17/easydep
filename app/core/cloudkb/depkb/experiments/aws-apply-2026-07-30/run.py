@@ -18,7 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,7 +33,7 @@ _CODE = re.compile(r"\(([A-Za-z0-9._]+)\) when calling|"
 
 def aws(args: list[str], timeout: int = 120) -> dict:
     r = subprocess.run([AWS, "--region", REGION, *args, "--no-cli-pager"],
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, text=True, timeout=timeout, check=False)
     text = (r.stderr or "") + (r.stdout or "")
     codes = [next(g for g in m.groups() if g) for m in _CODE.finditer(text)]
     layer = "client" if "arguments are required" in text else "server"
@@ -136,7 +136,7 @@ def main() -> None:
         "_note": ("aws 측정 기록(P5a=DryRun·P5b=실자원 사슬). DryRunOperation "
                   "코드는 '만들었다면 성공했을 것'이라는 뜻의 성공 신호다. "
                   "rejectedAt은 거부가 난 층(client CLI/server API)."),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "region": REGION,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

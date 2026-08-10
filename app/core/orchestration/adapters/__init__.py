@@ -1,15 +1,23 @@
-"""Member and tool boundaries used by modular providers."""
+"""멤버·도구 경계 어댑터의 지연 로딩 공개 API."""
 
-from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
-from app.core.orchestration.adapters.design import DesignAdapter
-from app.core.orchestration.adapters.requirements import RequirementsAdapter
-from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
+from __future__ import annotations
 
-__all__ = [
-    "CloudDesignAdapter",
-    "DesignAdapter",
-    "RequirementsAdapter",
-    "TestingAdapter",
-    "VmDeliveryAdapter",
-]
+from importlib import import_module
+from typing import Any
+
+_EXPORTS = {
+    "CloudDesignAdapter": "cloud_design",
+    "DesignAdapter": "design",
+    "RequirementsAdapter": "requirements",
+    "TestingAdapter": "testing",
+    "VmDeliveryAdapter": "vm_delivery",
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(name)
+    return getattr(import_module(f"app.core.orchestration.adapters.{module}"), name)

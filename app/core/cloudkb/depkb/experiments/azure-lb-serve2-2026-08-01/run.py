@@ -20,7 +20,7 @@ import json
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
@@ -69,7 +69,7 @@ def load() -> dict:
         return json.loads(p.read_text(encoding="utf-8"))
     return {"_note": ("기능 신호 5 재시도(azure) — 인스턴스 PIP 없이 LB "
                       "인바운드 NAT(2222→22)로 관리. 1차 미판정의 조건 반영."),
-            "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
             "ids": {}, "steps": {}}
 
 
@@ -103,7 +103,7 @@ def main() -> None:
              "-o", "UserKnownHostsFile=/dev/null", "-o", "ConnectTimeout=10",
              "-o", "LogLevel=ERROR", "-o", "BatchMode=yes",
              "-p", str(SSH_PORT), "-i", KEY, f"{USER}@{ids['lbIp']}", cmd],
-            capture_output=True, text=True, timeout=timeout)
+            capture_output=True, text=True, timeout=timeout, check=False)
         text = (p.stdout or "") + (p.stderr or "")
         return {"ok": p.returncode == 0,
                 "errorCodes": [] if p.returncode == 0 else
@@ -240,7 +240,7 @@ def main() -> None:
         step("T7b.delete-vm-nsg", az(["network", "nsg", "delete", "-g", rg,
                                       "-n", "depkb-lb2-vmNSG"]))
         step("T8.residual", az(["resource", "list", "-g", rg, "-o", "json"]))
-        doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
         save(doc)
         return
 

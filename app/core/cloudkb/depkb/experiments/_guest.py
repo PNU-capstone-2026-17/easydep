@@ -43,7 +43,7 @@ def run(ip: str, user: str, key: str, command: str,
         return {"ok": False, "errorCodes": ["NO_SSH_CLIENT"], "excerpt": ""}
     proc = subprocess.run(
         [SSH, *_OPTS, "-i", key, f"{user}@{ip}", command],
-        capture_output=True, text=True, timeout=timeout)
+        capture_output=True, text=True, timeout=timeout, check=False)
     out = (proc.stdout or "").strip()
     err = (proc.stderr or "").strip()
     # ssh 자체가 못 붙으면 255를 내고 stdout이 비어 있다.

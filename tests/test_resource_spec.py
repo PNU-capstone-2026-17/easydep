@@ -107,3 +107,17 @@ def test_disabled_llm_reports_degradation_without_fabricating_values(monkeypatch
 
     assert intake["draft"] == {"schemaVersion": "2", "workloads": ["vm"]}
     assert intake["degraded"].startswith("The resource constraint LLM is disabled")
+
+
+def test_structured_user_answers_are_grounded_in_the_rendered_briefing():
+    seen, briefing = sr._perception({
+        "classified": [],
+        "resource_answers": {
+            "provider": "azure",
+            "monthlyBudgetUSD": "100",
+        },
+    })
+
+    assert "provider: azure" in briefing
+    assert sr._ground("provider: azure", seen)
+    assert sr._ground("monthlyBudgetUSD: 100", seen)

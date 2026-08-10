@@ -10,7 +10,7 @@ gcp lb→network의 술어가 완성된다.
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "gcp-apply3-2026-07-31"))
@@ -75,7 +75,7 @@ def main() -> None:
 
     (HERE / "results.json").write_text(json.dumps({
         "_note": "gcp 4라운드 — INTERNAL FR의 network 생략(스킴 술어의 반쪽 완성).",
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "project": project, "region": region, "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
 

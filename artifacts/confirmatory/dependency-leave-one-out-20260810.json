@@ -1,0 +1,465 @@
+{
+  "schemaVersion": "easydep-dependency-leave-one-out/v1",
+  "fixtureRoot": "C:/Users/projw/Desktop/dev/easydep/evaluation/research_protocol/provider-fixtures",
+  "measurementBoundary": {
+    "source": "provider-validated-static-fixtures",
+    "mutation": "one-observed-reference-pair-removed-in-semantic-view",
+    "providerValidateRerun": false,
+    "cloudApply": false,
+    "functionTest": false
+  },
+  "baselineExpectedReferenceCount": 31,
+  "interventionCount": 31,
+  "detectedCount": 31,
+  "nonTargetChangeCount": 0,
+  "rows": [
+    {
+      "provider": "aws",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "disk",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "vm",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+        "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "load-balanced-multi-vm",
+      "from": "loadBalancer",
+      "to": "subnet",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "load-balanced-multi-vm",
+      "from": "listener",
+      "to": "loadBalancer",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "load-balanced-multi-vm",
+      "from": "listener",
+      "to": "backendGroup",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendMembership",
+      "to": "backendGroup",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendMembership",
+      "to": "vm",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "https-termination",
+      "from": "httpsListener",
+      "to": "loadBalancer",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "aws",
+      "delta": "https-termination",
+      "from": "httpsListener",
+      "to": "certificate",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html",
+        "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "disk",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "vm",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "gateway",
+      "to": "subnet",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "routingRule",
+      "to": "listener",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "routingRule",
+      "to": "backendPool",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "routingRule",
+      "to": "backendSettings",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendSettings",
+      "to": "probe",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendMembership",
+      "to": "backendPool",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendMembership",
+      "to": "nic",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "https-termination",
+      "from": "httpsListener",
+      "to": "gateway",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/ssl-overview",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway"
+      ]
+    },
+    {
+      "provider": "azure",
+      "delta": "https-termination",
+      "from": "httpsListener",
+      "to": "certificate",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://learn.microsoft.com/en-us/azure/application-gateway/ssl-overview",
+        "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "disk",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/compute/docs/disks/attach-disks",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_attached_disk"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "persistent-storage",
+      "from": "attachment",
+      "to": "vm",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/compute/docs/disks/attach-disks",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_attached_disk"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "forwardingRule",
+      "to": "proxy",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "proxy",
+      "to": "urlMap",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "urlMap",
+      "to": "backendService",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendService",
+      "to": "backendGroup",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendService",
+      "to": "healthCheck",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "load-balanced-multi-vm",
+      "from": "backendGroup",
+      "to": "vm",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "https-termination",
+      "from": "forwardingRule",
+      "to": "httpsProxy",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_ssl_certificate"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "https-termination",
+      "from": "httpsProxy",
+      "to": "urlMap",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_ssl_certificate"
+      ]
+    },
+    {
+      "provider": "gcp",
+      "delta": "https-termination",
+      "from": "httpsProxy",
+      "to": "certificate",
+      "baselineStatus": "passed",
+      "interventionStatus": "failed",
+      "onlyTargetChanged": true,
+      "detected": true,
+      "evidence": [
+        "https://cloud.google.com/load-balancing/docs/https",
+        "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_ssl_certificate"
+      ]
+    }
+  ]
+}

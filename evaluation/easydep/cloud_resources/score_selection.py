@@ -3,21 +3,45 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+DATA_ROOT = ROOT.parents[2] / "app" / "core" / "cloudkb" / "data"
+SNAPSHOTS = {
+    "costSnapshotSha256": DATA_ROOT / "tumblebug-cost.json.gz",
+    "performanceSnapshotSha256": DATA_ROOT / "tumblebug-perf.json.gz",
+}
 
 
 def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def verify_snapshots(oracle: dict) -> dict[str, dict[str, str | bool]]:
+    metadata = oracle.get("_meta") or {}
+    checks = {}
+    for field, path in SNAPSHOTS.items():
+        expected = str(metadata.get(field) or "").lower()
+        actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+        checks[field] = {
+            "path": path.relative_to(ROOT.parents[2]).as_posix(),
+            "expected": expected, "actual": actual,
+            "matched": bool(expected and actual == expected),
+        }
+    if not all(item["matched"] for item in checks.values()):
+        raise ValueError("VM selection oracle does not match the frozen snapshots")
+    return checks
+
+
 def score(run_dir: Path) -> dict:
     manifest = _load(run_dir / "manifest.json")
     case = _load(run_dir / "input.json")
     actual = _load(run_dir / "vm-selection.json")
-    expected = _load(ROOT / "selection_oracle.json")[manifest["caseId"]]
+    oracle = _load(ROOT / "selection_oracle.json")
+    snapshot_checks = verify_snapshots(oracle)
+    expected = oracle[manifest["caseId"]]
     status_correct = actual.get("status") == expected["status"]
     reason_correct = (
         actual.get("reason") == expected["reason"] if expected.get("reason") else None
@@ -68,6 +92,7 @@ def score(run_dir: Path) -> dict:
             "computeBudgetSatisfied": budget_satisfied,
             "steadyPerformanceSuitable": performance_satisfied,
         },
+        "knowledgeSnapshots": snapshot_checks,
     }
     (run_dir / "evaluation.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"

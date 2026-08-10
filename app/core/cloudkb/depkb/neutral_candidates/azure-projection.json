@@ -1,0 +1,172 @@
+{
+  "schemaVersion": "easydep-provider-hypotheses/v1",
+  "provider": "azure",
+  "inventorySource": {
+    "identity": "Azure REST API Specifications",
+    "version": "478f542f0e4a8872a8c6e5cde5dd4e44a01bc120"
+  },
+  "mappings": [
+    {
+      "conceptId": "neutral.infrastructure-aggregate",
+      "kind": "unmatched",
+      "nativeIds": [],
+      "preservedMeaning": "The inventory establishes no lifecycle-managed Azure aggregate that contains compute nodes as one infrastructure unit.",
+      "lostOrDifferentMeaning": "An ARM resource group is outside this inventory, and VM scale sets are compute groups rather than a provider-neutral infrastructure aggregate.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "azure-inventory.json#/elements", "supports": "No inventoried native endpoint represents the proposed aggregate boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-group",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}"],
+      "preservedMeaning": "A virtual machine scale set is a named, lifecycle-managed collection of virtual-machine instances with capacity semantics.",
+      "lostOrDifferentMeaning": "The schema does not establish the neutral concept's generic collective load-balancer-backend selection semantics, and Azure scale-set behavior is more specific than an arbitrary compute group.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Compute~1virtualMachineScaleSets~1{vmScaleSetName}", "supports": "The pinned REST schema exposes a PUT lifecycle boundary for a virtual machine scale set."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}"],
+      "preservedMeaning": "An Azure virtual machine is a lifecycle-managed information-processing resource provisioned with machine sizing and an execution environment.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Compute~1virtualMachines~1{vmName}", "supports": "The pinned REST schema exposes the virtual-machine PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.virtual-network",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}"],
+      "preservedMeaning": "An Azure virtual network is a managed logical network boundary to which compute interfaces connect.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1virtualNetworks~1{virtualNetworkName}", "supports": "The pinned REST schema exposes a virtual-network PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ip-network-segment",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}"],
+      "preservedMeaning": "The subnet child resource has its own addressable identity inside a virtual network and represents an IP network segment.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1virtualNetworks~1{virtualNetworkName}~1subnets~1{subnetName}", "supports": "The pinned REST schema exposes a distinct subnet PUT child-resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ip-network-configuration",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}"],
+      "preservedMeaning": "The Azure subnet carries IP prefix and related Layer-3 configuration.",
+      "lostOrDifferentMeaning": "Azure binds this configuration to an identified subnet child resource; it is not merely composable configuration applied to the same virtual-network resource.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/definitions/SubnetPropertiesFormat", "supports": "The schema places address-prefix configuration on the subnet model."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-network-attachment",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}"],
+      "preservedMeaning": "A network interface is an explicit managed connectivity object used by compute and carrying IP configurations that refer to subnets.",
+      "lostOrDifferentMeaning": "The compute-to-interface reference and interface-to-subnet IP configuration are distributed across resource properties rather than represented by one explicit link resource.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1networkInterfaces~1{networkInterfaceName}", "supports": "The pinned REST schema exposes the network-interface PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-security-policy-group",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}"],
+      "preservedMeaning": "A network security group is a managed, assignable network-security policy object containing traffic-filtering rules.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1networkSecurityGroups~1{networkSecurityGroupName}", "supports": "The pinned REST schema exposes the network-security-group PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-filter-rule",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/securityRules/{securityRuleName}"],
+      "preservedMeaning": "An Azure security-rule child resource filters traffic by direction, protocol, ports, prefixes, priority, and action.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-virtualNetwork.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1networkSecurityGroups~1{networkSecurityGroupName}~1securityRules~1{securityRuleName}", "supports": "The pinned REST schema exposes a distinct security-rule PUT child-resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ssh-access-material",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/sshPublicKeys/{sshPublicKeyName}"],
+      "preservedMeaning": "An SSH public-key resource manages public-key material for virtual-machine access and provisioning.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Compute~1sshPublicKeys~1{sshPublicKeyName}", "supports": "The pinned REST schema exposes an SSH-public-key PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.machine-image",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/images/{imageName}"],
+      "preservedMeaning": "An Azure compute image is a managed execution-environment image selectable when creating compute.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Compute~1images~1{imageName}", "supports": "The pinned REST schema exposes the managed-image PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.machine-capacity-profile",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}"],
+      "preservedMeaning": "A virtual machine embeds a vmSize selection that determines compute capacity and machine sizing characteristics.",
+      "lostOrDifferentMeaning": "The selection is configuration on a VM rather than an independently identified reusable profile, and the schema candidate does not establish portable profile contents or reuse semantics.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/definitions/HardwareProfile/properties/vmSize", "supports": "The pinned schema models VM size as embedded hardware-profile configuration on the inventoried virtual-machine resource."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.data-storage",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}"],
+      "preservedMeaning": "An Azure managed disk is a lifecycle-managed storage resource with capacity that can be attached to compute.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-DiskRP.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Compute~1disks~1{diskName}", "supports": "The pinned REST schema exposes the managed-disk PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-storage-attachment",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}"],
+      "preservedMeaning": "A virtual machine embeds data-disk entries that associate storage with the compute instance and carry attachment settings.",
+      "lostOrDifferentMeaning": "The attachment is relationship configuration within the VM storage profile, not an independently identified attachment resource; portable guest-mount semantics are not established.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/definitions/StorageProfile/properties/dataDisks", "supports": "The pinned schema places data-disk attachment entries in configuration of the inventoried virtual-machine resource."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-contextualization",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}"],
+      "preservedMeaning": "A virtual machine embeds customData supplied at creation and made available inside the VM for bootstrap processing.",
+      "lostOrDifferentMeaning": "The schema says Azure saves the decoded data as a file but does not itself guarantee that the data is executed at the end of boot; execution depends on the guest image and bootstrap mechanism.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "compute-ComputeRP.json#/definitions/OSProfile/properties/customData", "supports": "The pinned schema defines base64-encoded custom data on the inventoried VM creation model, saved as a file in the virtual machine and not updatable after creation."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-load-balancer",
+      "kind": "equivalent",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}"],
+      "preservedMeaning": "An Azure Load Balancer is a lifecycle-managed network load-balancing resource.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-loadBalancer.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1loadBalancers~1{loadBalancerName}", "supports": "The pinned REST schema exposes the load-balancer PUT resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.load-balancer-listener",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}"],
+      "preservedMeaning": "The inventoried load balancer contains frontend IP configurations and load-balancing rules that together carry listener address, protocol, and port semantics.",
+      "lostOrDifferentMeaning": "Azure splits the neutral listener across child configurations rather than one listener object; their schema PUT paths are absent from the current inventory, so this containing-resource mapping cannot preserve their distinct child identities.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-loadBalancer.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1loadBalancers~1{loadBalancerName}~1loadBalancingRules~1{loadBalancingRuleName}", "supports": "The pinned schema exposes a load-balancing-rule PUT path, but its native ID is absent from azure-inventory.json."}, {"strength": "schemaCandidate", "sourceLocator": "network-loadBalancer.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1loadBalancers~1{loadBalancerName}~1frontendIPConfigurations~1{frontendIPConfigurationName}", "supports": "The pinned schema separately exposes frontend configuration, confirming composite Azure listener semantics."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.load-balancer-backend-group",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/backendAddressPools/{backendAddressPoolName}"],
+      "preservedMeaning": "A backend address pool is an identified load-balancer child resource grouping selected backend addresses or interfaces.",
+      "lostOrDifferentMeaning": "Forwarding protocol and frontend/backend ports belong to the load-balancing rule rather than the backend pool, so the pool preserves backend selection but not the full neutral backend-group meaning.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-loadBalancer.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1loadBalancers~1{loadBalancerName}~1backendAddressPools~1{backendAddressPoolName}", "supports": "The pinned REST schema exposes a backend-address-pool PUT child-resource boundary."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.load-balancer-health-check",
+      "kind": "partial",
+      "nativeIds": ["ARM PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}"],
+      "preservedMeaning": "The inventoried load balancer contains probes carrying protocol, port, interval, and health-threshold configuration.",
+      "lostOrDifferentMeaning": "The probe is a distinct Azure child configuration whose PUT path is absent from the current inventory, so the containing-resource mapping erases probe identity and does not prove runtime necessity.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "network-loadBalancer.json#/paths/~1subscriptions~1{subscriptionId}~1resourceGroups~1{resourceGroupName}~1providers~1Microsoft.Network~1loadBalancers~1{loadBalancerName}~1probes~1{probeName}", "supports": "The pinned schema exposes a probe PUT child-resource path whose native ID is absent from azure-inventory.json."}],
+      "runtimeNecessityConfirmed": false
+    }
+  ]
+}

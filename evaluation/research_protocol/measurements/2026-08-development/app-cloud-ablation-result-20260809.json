@@ -1,0 +1,208 @@
+{
+  "schemaVersion": "easydep-app-cloud-ablation-result/v1",
+  "kind": "offline-fixed-input-consistency-validator-ablation",
+  "createdAt": "2026-08-08T21:44:34.016781+00:00",
+  "sourceCasesSha256": "7ebcfbfa844098794d7d2cf6b26ab0798406a7e34da79cd1101cc1b85e7af901",
+  "configuration": {
+    "llmCalls": 0,
+    "cloudApply": false
+  },
+  "cases": [
+    {
+      "id": "build-dependency-mismatch",
+      "group": "build-runtime-dependency",
+      "inputSha256": "8c9c536deffdc7b51d4f33806c642dccfe947e2a56216b0ba590682e6a772044",
+      "expectedDiagnostic": "APP-DEP-001",
+      "expectedRepairOwner": "implementation.logic",
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [
+          "APP-DEP-001"
+        ],
+        "blockedBeforeDownstream": true,
+        "repairOwner": "implementation.logic",
+        "validationElapsedSeconds": 0.01558189999195747
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": true
+    },
+    {
+      "id": "build-dependency-control",
+      "group": "build-runtime-dependency",
+      "inputSha256": "2d89c80003cc662807e3d34f3ebe50201699e5ddad898065985b0800005b80b3",
+      "expectedDiagnostic": null,
+      "expectedRepairOwner": null,
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null,
+        "validationElapsedSeconds": 0.02275319999898784
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": null
+    },
+    {
+      "id": "runtime-integration-mismatch",
+      "group": "runtime-integration",
+      "inputSha256": "541a4c2f9244a8d76f64d23db52f05eb548c951db1135e1375cb841ed31ce2d2",
+      "expectedDiagnostic": "APP-DB-003",
+      "expectedRepairOwner": "implementation.logic",
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [
+          "APP-DB-003"
+        ],
+        "blockedBeforeDownstream": true,
+        "repairOwner": "implementation.logic",
+        "validationElapsedSeconds": 0.0126416999992216
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": true
+    },
+    {
+      "id": "runtime-integration-control",
+      "group": "runtime-integration",
+      "inputSha256": "dae583ddd145c92aceb7cdc0d2f5d50bbc036c9ebe973e12d265e75537beaaa3",
+      "expectedDiagnostic": null,
+      "expectedRepairOwner": null,
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null,
+        "validationElapsedSeconds": 0.01304119999986142
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": null
+    },
+    {
+      "id": "port-binding-mismatch",
+      "group": "port-binding",
+      "inputSha256": "fb9b1b441cd559a33518e73fea554f0acc24c8a3299d6056b05ce084aac858fc",
+      "expectedDiagnostic": "BIND-PORT-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [
+          "BIND-PORT-001"
+        ],
+        "blockedBeforeDownstream": true,
+        "repairOwner": "implementation.vm_delivery",
+        "validationElapsedSeconds": 0.00015069999790284783
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": true
+    },
+    {
+      "id": "port-binding-control",
+      "group": "port-binding",
+      "inputSha256": "953525672b79cb995948ce23e1a017515acc871395dbdfd1beb588ed3805f53f",
+      "expectedDiagnostic": null,
+      "expectedRepairOwner": null,
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null,
+        "validationElapsedSeconds": 8.889999298844486e-05
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": null
+    },
+    {
+      "id": "storage-binding-mismatch",
+      "group": "storage-binding",
+      "inputSha256": "9f00b74fd4c16d7fe5199f7f2c8f63f5720e44d774d3815d491a4911ff62275d",
+      "expectedDiagnostic": "BIND-STORAGE-001",
+      "expectedRepairOwner": "implementation.vm_delivery",
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [
+          "BIND-STORAGE-001"
+        ],
+        "blockedBeforeDownstream": true,
+        "repairOwner": "implementation.vm_delivery",
+        "validationElapsedSeconds": 6.479999865405262e-05
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": true
+    },
+    {
+      "id": "storage-binding-control",
+      "group": "storage-binding",
+      "inputSha256": "49e0525b6ec39c4a38586531534cf87303bab27670e69978dfab4e56c75eb915",
+      "expectedDiagnostic": null,
+      "expectedRepairOwner": null,
+      "easydepFull": {
+        "validatorEnabled": true,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null,
+        "validationElapsedSeconds": 5.3099996875971556e-05
+      },
+      "easydepNoConsistencyValidator": {
+        "validatorEnabled": false,
+        "diagnostics": [],
+        "blockedBeforeDownstream": false,
+        "repairOwner": null
+      },
+      "fullDecisionCorrect": true,
+      "repairOwnerCorrect": null
+    }
+  ],
+  "summary": {
+    "mismatchCaseCount": 4,
+    "controlCaseCount": 4,
+    "fullTruePositiveCount": 4,
+    "fullFalsePositiveCount": 0,
+    "noValidatorEarlyDetectionCount": 0,
+    "repairOwnerCorrectCount": 4,
+    "sameInputAcrossArmsCount": 8,
+    "functionalSuccessMeasured": false,
+    "repairExecutionMeasured": false,
+    "evaluationElapsedSeconds": 0.06507089998922311
+  }
+}

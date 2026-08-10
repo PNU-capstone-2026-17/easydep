@@ -12,7 +12,7 @@ import json
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "aws-apply2-2026-07-31"))
@@ -48,7 +48,7 @@ def probe(ip: str, want: bool, budget: int) -> dict:
 def main() -> None:
     doc = {"_note": ("기능 의존(aws) — vm→publicIp(EIP). 기능 신호 = 로컬 "
                      "TCP 22. EIP라 같은 주소로 회복 관측."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "ids": {}, "steps": {}}
     steps, ids = doc["steps"], doc["ids"]
 
@@ -148,7 +148,7 @@ def main() -> None:
     step("T6.residual-eips", aws(
         ["ec2", "describe-addresses", "--query", "Addresses[].PublicIp",
          "--output", "json"]))
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

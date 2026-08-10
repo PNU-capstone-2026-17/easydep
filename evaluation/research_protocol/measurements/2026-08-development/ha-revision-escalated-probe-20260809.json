@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "easydep-endpoint-latency/v1",
+  "probe": "simple",
+  "transport": "stream",
+  "inputSource": "probe-fixture",
+  "inputCharacters": 24,
+  "startedAt": "2026-08-09T02:32:16.749766+00:00",
+  "model": "openai/gpt-oss-120b",
+  "timeoutSeconds": 120.0,
+  "responseEstablishedSeconds": 1.885361,
+  "firstEventSeconds": 1.910506,
+  "firstTextSeconds": 1.9166,
+  "completedSeconds": 2.15649,
+  "eventCount": 39,
+  "contentCharacters": 4,
+  "reasoningCharacters": 148,
+  "structuredValid": null,
+  "structuredErrorType": null,
+  "finishReasons": [
+    "stop"
+  ],
+  "status": "completed",
+  "errorType": null,
+  "error": null
+}

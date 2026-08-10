@@ -77,13 +77,15 @@ def plan_from_deployment_intent(
 
 
 def plan_for_anchors(anchors: list[str], csp: str, region: str,
-                     concrete_plan: dict | None = None) -> InfraPlan:
+                     concrete_plan: dict | None = None,
+                     capability_ids: tuple[str, ...] = ()) -> InfraPlan:
     """앵커를 직접 아는 경우의 경로 — 배포 의도 없이도 부를 수 있다."""
-    return _assemble(anchors, csp, region, concrete_plan, None)
+    return _assemble(anchors, csp, region, concrete_plan, None, capability_ids)
 
 
 def _assemble(anchors: list[str], csp: str, region: str,
-              concrete_plan: dict | None, t: Translation | None) -> InfraPlan:
+              concrete_plan: dict | None, t: Translation | None,
+              capability_ids: tuple[str, ...] = ()) -> InfraPlan:
     # 번역 유래 앵커가 이 CSP에서 간선 자체가 없으면(범위 표시 — 예: aws의
     # k8sPvc→disk 미측정) 그 앵커만 unmeasured로 강등하고 나머지 계획은 낸다.
     # "미측정이면 계획을 내지 않는다"의 앵커 단위 적용이다. 직접 앵커 경로
@@ -105,7 +107,7 @@ def _assemble(anchors: list[str], csp: str, region: str,
                 f"{csp}에서 읽은 앵커 전부가 미측정이다: {anchors} — "
                 "계획을 낼 근거가 없다")
         anchors = kept
-    intent = build(anchors, csp, region)
+    intent = build(anchors, csp, region, capability_ids)
     report = check(intent, concrete_plan) if concrete_plan is not None else None
     questions = tuple(
         f"Resolve {d.kind} condition for {d.about}: {d.condition}"
@@ -117,6 +119,11 @@ def _assemble(anchors: list[str], csp: str, region: str,
     if t is not None and t.ignored:
         notes.extend(f"{signal}: {why}" for signal, why in t.ignored)
     unmeasured = (tuple(t.unmeasured) if t else ()) + tuple(extra_unmeasured)
+    unmeasured += tuple(
+        f"{item.relationFamily} finding unavailable for "
+        f"{item.subject}→{item.object}: replicationStatus={item.replicationStatus}"
+        for item in intent.unavailableFindings
+    )
     return InfraPlan(
         intent=intent,
         design=design_view(intent),

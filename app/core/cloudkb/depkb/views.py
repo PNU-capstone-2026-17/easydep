@@ -42,6 +42,9 @@ def design_view(intent: InfraIntent) -> dict:
         "nodes": nodes, "edges": edges,
         "unresolvedConditions": [asdict(item) for item in intent.decisions],
         "constraints": [asdict(item) for item in intent.constraints],
+        "unavailableFindings": [asdict(item) for item in intent.unavailableFindings],
+        "capabilityRealizations": list(intent.capabilityRealizations),
+        "officialDependencies": list(intent.officialDependencies),
         "provenance": intent.provenance,
     }
 
@@ -92,5 +95,8 @@ def provision_view(intent: InfraIntent) -> dict:
         ],
         "checks": [asdict(item) for item in intent.constraints],
         "blockedBy": [asdict(item) for item in intent.decisions],
+        "unavailableFindings": [asdict(item) for item in intent.unavailableFindings],
+        "capabilityRealizations": list(intent.capabilityRealizations),
+        "officialDependencies": list(intent.officialDependencies),
         "provenance": intent.provenance,
     }

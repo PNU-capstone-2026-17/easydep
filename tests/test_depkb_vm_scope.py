@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.core.cloudkb.depkb.closure import closure
 from app.core.cloudkb.depkb.build_claims import build
+from app.core.cloudkb.depkb.closure import closure
 from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
 
 
@@ -47,6 +47,20 @@ def test_claims_use_only_relation_specific_findings():
     assert all(claim["replicationStatus"] in {"pending", "replicated", "failed"} for claim in claims)
     assert artifact["methodology"]["originalProtocolTiming"] == "retrospective"
     assert "not preregistered" in artifact["methodology"]["expectedOutcomeOrigin"]
+
+
+def test_unreplicated_findings_do_not_drive_closure_but_remain_visible():
+    result = closure("vm", "aws")
+
+    unavailable = {
+        (item.subject, item.object, item.relationFamily, item.replicationStatus)
+        for item in result.unavailableFindings
+    }
+    assert ("vm", "workloadIdentity", "runtime", "failed") in unavailable
+    assert all(
+        not (subject == "vm" and object_ == "workloadIdentity")
+        for subject, object_, _signal in result.runtimeRequiredForSignal
+    )
 
 
 @pytest.mark.parametrize(

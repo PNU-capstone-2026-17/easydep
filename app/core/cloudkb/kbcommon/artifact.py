@@ -161,7 +161,9 @@ REBUILD_HINT = "rebuild it or delete the file"
 # --- 저장소에 커밋된 산출물 ------------------------------------------------
 #
 # 클론 직후 빌드 없이 동작하게 하려고 gzip한 산출물을 `data/`에 커밋한다.
-# `output/`(새로 빌드한 것)이 있으면 그쪽이 이기고, 없을 때만 `data/`에서 꺼낸다.
+# 기본 실행은 재현 가능한 `data/`를 먼저 읽는다. `output/`은 로컬 빌드 작업공간이며
+# 번들되지 않은 산출물에만 폴백으로 사용한다. 과거 KB가 남긴 같은 이름의 평문 파일이
+# 커밋된 현행 데이터를 조용히 덮어쓰지 못하게 하는 경계다.
 #
 # **폴백은 기본 위치에서만 한다.** 호출자가 다른 디렉터리를 명시하면 그 말을
 # 그대로 지킨다 — 테스트가 빈 tmp 디렉터리를 묶어 "미빌드 상태"나 "번들 36건
@@ -217,7 +219,7 @@ def load_merged(
     merged = empty()
     found = False
     for name in names:
-        # output/ 이 먼저, 없으면 저장소에 커밋된 data/*.gz.
+        # 기본 위치에서는 저장소에 커밋된 data/*.gz가 우선한다.
         path = resolve(output_dir, name)
         if path is not None:
             merged.merge(from_dict(load_json(path)))  # type: ignore[attr-defined]
@@ -240,16 +242,17 @@ def resolve(output_dir: Path | str, name: str) -> Path | None:
     base = Path(output_dir)
     if not base.is_absolute():
         base = REPO_ROOT / base
-    fresh = base / name
-    if fresh.exists():
-        return fresh
     try:
         is_default = base.resolve() == DEFAULT_OUTPUT
     except OSError:
         is_default = False
     if not is_default:
-        return None
+        fresh = base / name
+        return fresh if fresh.exists() else None
     packed = BUNDLED_DIR / f"{name}.gz"
-    return packed if packed.exists() else None
+    if packed.exists():
+        return packed
+    fresh = base / name
+    return fresh if fresh.exists() else None
 
 

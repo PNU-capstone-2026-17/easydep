@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "easydep-decision-anchors/v1",
+  "status": "frozen",
+  "cases": ["P1", "P2", "P3"],
+  "anchors": {
+    "aws": [
+      {"serviceFamily":"ec2","operation":"RunInstances","capabilityId":"linux-vm-runtime","requirementIds":["P1:R4","P2:R5","P3:R4"],"evidenceSpans":["deploy exactly one application VM","deploy at least two application VMs"]},
+      {"serviceFamily":"ec2","operation":"CreateVolume","capabilityId":"persistent-block-storage","requirementIds":["P2:R3","P2:R4"],"evidenceSpans":["survive container replacement and VM restart","at least 20 GiB"]},
+      {"serviceFamily":"ec2","operation":"CreateVpc","capabilityId":"isolated-network","requirementIds":["P1:C1","P2:C1","P3:C1"],"evidenceSpans":["Terraform must provision or explicitly reference every required cloud resource"]},
+      {"serviceFamily":"ec2","operation":"CreateSubnet","capabilityId":"failure-domain-placement","requirementIds":["P3:R4"],"evidenceSpans":["across two availability zones"]},
+      {"serviceFamily":"ec2","operation":"CreateSecurityGroup","capabilityId":"network-access-control","requirementIds":["P1:R2","P2:R2","P3:R2"],"evidenceSpans":["External clients access the API over HTTPS","External clients access the service over HTTPS"]},
+      {"serviceFamily":"elbv2","operation":"CreateLoadBalancer","capabilityId":"load-balanced-ingress","requirementIds":["P3:R4"],"evidenceSpans":["behind a load balancer"]},
+      {"serviceFamily":"elbv2","operation":"CreateListener","capabilityId":"load-balancer-listener","requirementIds":["P3:R2","P3:R4"],"evidenceSpans":["External clients access the service over HTTPS","behind a load balancer"]},
+      {"serviceFamily":"elbv2","operation":"CreateTargetGroup","capabilityId":"health-routed-backend","requirementIds":["P3:R4","P3:R6"],"evidenceSpans":["remain available when one application VM stops","expose GET /health"]}
+    ],
+    "azure": [
+      {"serviceFamily":"compute-ComputeRP","operation":"VirtualMachines_CreateOrUpdate","capabilityId":"linux-vm-runtime","requirementIds":["P1:R4","P2:R5","P3:R4"],"evidenceSpans":["deploy exactly one application VM","deploy at least two application VMs"]},
+      {"serviceFamily":"compute-DiskRP","operation":"Disks_CreateOrUpdate","capabilityId":"persistent-block-storage","requirementIds":["P2:R3","P2:R4"],"evidenceSpans":["survive container replacement and VM restart","at least 20 GiB"]},
+      {"serviceFamily":"network-virtualNetwork","operation":"VirtualNetworks_CreateOrUpdate","capabilityId":"isolated-network","requirementIds":["P1:C1","P2:C1","P3:C1"],"evidenceSpans":["Terraform must provision or explicitly reference every required cloud resource"]},
+      {"serviceFamily":"network-virtualNetwork","operation":"Subnets_CreateOrUpdate","capabilityId":"failure-domain-placement","requirementIds":["P3:R4"],"evidenceSpans":["across two availability zones"]},
+      {"serviceFamily":"network-virtualNetwork","operation":"NetworkInterfaces_CreateOrUpdate","capabilityId":"compute-network-attachment","requirementIds":["P1:R4","P2:R5","P3:R4"],"evidenceSpans":["application VM"]},
+      {"serviceFamily":"network-virtualNetwork","operation":"NetworkSecurityGroups_CreateOrUpdate","capabilityId":"network-access-control","requirementIds":["P1:R2","P2:R2","P3:R2"],"evidenceSpans":["External clients access the API over HTTPS","External clients access the service over HTTPS"]},
+      {"serviceFamily":"network-loadBalancer","operation":"LoadBalancers_CreateOrUpdate","capabilityId":"load-balanced-ingress","requirementIds":["P3:R4"],"evidenceSpans":["behind a load balancer"]}
+    ],
+    "gcp": [
+      {"serviceFamily":"instances","operation":"insert","capabilityId":"linux-vm-runtime","requirementIds":["P1:R4","P2:R5","P3:R4"],"evidenceSpans":["deploy exactly one application VM","deploy at least two application VMs"]},
+      {"serviceFamily":"disks","operation":"insert","capabilityId":"persistent-block-storage","requirementIds":["P2:R3","P2:R4"],"evidenceSpans":["survive container replacement and VM restart","at least 20 GiB"]},
+      {"serviceFamily":"networks","operation":"insert","capabilityId":"isolated-network","requirementIds":["P1:C1","P2:C1","P3:C1"],"evidenceSpans":["Terraform must provision or explicitly reference every required cloud resource"]},
+      {"serviceFamily":"subnetworks","operation":"insert","capabilityId":"failure-domain-placement","requirementIds":["P3:R4"],"evidenceSpans":["across two availability zones"]},
+      {"serviceFamily":"firewalls","operation":"insert","capabilityId":"network-access-control","requirementIds":["P1:R2","P2:R2","P3:R2"],"evidenceSpans":["External clients access the API over HTTPS","External clients access the service over HTTPS"]},
+      {"serviceFamily":"backendServices","operation":"insert","capabilityId":"load-balanced-ingress","requirementIds":["P3:R4"],"evidenceSpans":["behind a load balancer"]},
+      {"serviceFamily":"forwardingRules","operation":"insert","capabilityId":"load-balanced-ingress","requirementIds":["P3:R2","P3:R4"],"evidenceSpans":["External clients access the service over HTTPS","behind a load balancer"]},
+      {"serviceFamily":"targetHttpsProxies","operation":"insert","capabilityId":"load-balancer-listener","requirementIds":["P3:R2","P3:R4"],"evidenceSpans":["External clients access the service over HTTPS","behind a load balancer"]},
+      {"serviceFamily":"urlMaps","operation":"insert","capabilityId":"load-balancer-listener","requirementIds":["P3:R4"],"evidenceSpans":["behind a load balancer"]},
+      {"serviceFamily":"sslCertificates","operation":"insert","capabilityId":"tls-termination","requirementIds":["P3:R2"],"evidenceSpans":["External clients access the service over HTTPS"]},
+      {"serviceFamily":"instanceGroups","operation":"insert","capabilityId":"compute-group","requirementIds":["P3:R4"],"evidenceSpans":["at least two application VMs behind a load balancer"]},
+      {"serviceFamily":"healthChecks","operation":"insert","capabilityId":"health-routed-backend","requirementIds":["P3:R4","P3:R6"],"evidenceSpans":["remain available when one application VM stops","expose GET /health"]}
+    ]
+  }
+}

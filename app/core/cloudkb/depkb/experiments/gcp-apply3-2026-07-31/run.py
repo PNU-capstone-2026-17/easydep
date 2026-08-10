@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -28,7 +28,7 @@ BASE = "https://compute.googleapis.com/compute/v1"
 
 def token() -> str:
     return subprocess.run([str(GCLOUD), "auth", "print-access-token"],
-                          capture_output=True, text=True, timeout=60).stdout.strip()
+                          capture_output=True, text=True, timeout=60, check=False).stdout.strip()
 
 
 def call(method, url, body, tok):
@@ -136,7 +136,7 @@ def main() -> None:
 
     (HERE / "results.json").write_text(json.dumps({
         "_note": "gcp 3라운드 — INTERNAL 포워딩 규칙의 subnetwork 필수성 측정.",
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "project": project, "region": region,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

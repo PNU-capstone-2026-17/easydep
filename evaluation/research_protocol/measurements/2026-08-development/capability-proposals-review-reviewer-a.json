@@ -1,0 +1,212 @@
+{
+  "schemaVersion": "easydep-capability-review/v1",
+  "proposalsSha256": "2c6a7435a0bc97800e298184675cd6d1b0ee4c179f30a2dbbb7c0325ffb8a282",
+  "reviewer": "reviewer-a",
+  "decisions": [
+    {
+      "proposalId": "dev_stateless_conversion:0:response_time_latency",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_stateless_conversion:1:stateless_service",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_stateless_conversion:2:inbound_encryption",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_stateless_conversion:3:container_runtime",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_stateless_conversion:4:health_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:0:durable_storage",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:1:concurrency_control",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:2:request_rate_capacity",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:3:secret_management",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:4:container_runtime",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:5:metrics_exposure",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:6:outbound_payment_gateway_connectivity",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_checkout_gateway:7:outbound_network_access",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:0:durable_storage",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:1:retry_mechanism",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:2:low_latency_submission",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:3:secret_injection",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:4:container_runtime_linux",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:5:structured_logging",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:6:scheduled_summary",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:7:external_provider_integration",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:8:manual_retry_interface",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:9:delivery_status_inspection",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:10:support_agent_inspection",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_notification_delivery:11:event_notification_latency",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:0:ingestion_throughput",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:1:latency_sla",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:2:durable_storage",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:3:idempotent_ingestion",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:4:runtime_secret_injection",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:5:container_runtime",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:6:health_metrics_exposure",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:7:outbound_network_access",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:8:ingress_authentication",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:9:device_registration_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:10:observation_ingestion_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:11:latest_observation_view_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:12:threshold_rule_management",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:13:historical_observation_query_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:14:device_configuration_retrieval_endpoint",
+      "correct": null,
+      "reason": ""
+    },
+    {
+      "proposalId": "dev_iot_monitoring:15:operator_api_endpoint",
+      "correct": null,
+      "reason": ""
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 > **이력이다. 참조하지 않는다.**
 >
-> 현재 진실은 [`docs/cloud-native-extension.md`](cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
+> 현재 진실은 [`docs/cloud-native-extension.md`](../cloud-native-extension.md). 이 문서는 그때의 판단을 남긴 기록이고,
 > 전제가 바뀐 자리가 있다. **여기 적힌 결정·계획을 근거로 새 작업을 시작하지 말 것.**
 > 이 안의 **실측치는 유효하다** — 다시 재지 말고 인용한다.
 

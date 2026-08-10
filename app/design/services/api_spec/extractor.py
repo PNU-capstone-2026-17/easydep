@@ -123,16 +123,13 @@ markdown, code fences, or any prose outside the schema fields.
 """
 
 
-def extract_api_spec_model(
+def api_spec_messages(
     scenario_text: str,
     class_diagram_puml: str,
     sequence_diagram_puml: str,
-) -> dict[str, Any]:
-    """유스케이스 + 클래스 + 시퀀스 → 구조화된 API 엔드포인트 모델."""
-    if not scenario_text:
-        return {}
-
-    messages = [
+) -> list[dict[str, str]]:
+    """운영 호출과 지연 프로브가 공유하는 API 설계 메시지 계약."""
+    return [
         {"role": "system", "content": API_SPEC_EXTRACTION_SYSTEM_PROMPT},
         {
             "role": "user",
@@ -143,4 +140,17 @@ def extract_api_spec_model(
             ),
         },
     ]
+
+
+def extract_api_spec_model(
+    scenario_text: str,
+    class_diagram_puml: str,
+    sequence_diagram_puml: str,
+) -> dict[str, Any]:
+    """유스케이스 + 클래스 + 시퀀스 → 구조화된 API 엔드포인트 모델."""
+    if not scenario_text:
+        return {}
+    messages = api_spec_messages(
+        scenario_text, class_diagram_puml, sequence_diagram_puml
+    )
     return parse_structured(messages, ApiSpecModel)

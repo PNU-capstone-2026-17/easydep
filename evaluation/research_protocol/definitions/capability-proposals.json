@@ -1,0 +1,745 @@
+{
+  "schemaVersion": "easydep-capability-proposals/v1",
+  "split": "development",
+  "holdoutAccessed": false,
+  "suiteSha256": "cbc29326ea40cdbab2637f1754e48001701065c7673e60cc12437a04c95602cc",
+  "gitRevision": "ca54bed3697a706e908a000a1e5fc019db40b643",
+  "configuration": {
+    "model": "openai/gpt-oss-120b",
+    "temperature": 0.0,
+    "seed": 42
+  },
+  "inputs": [
+    {
+      "dataset": "dev_stateless_conversion",
+      "path": "inputs/dev_stateless_conversion.json",
+      "sha256": "a116952871b917e184b4d8be4b80586fb7f75825b98d8fb2b54fcbe18b190f57"
+    },
+    {
+      "dataset": "dev_checkout_gateway",
+      "path": "inputs/dev_checkout_gateway.json",
+      "sha256": "ac669183542b804c730a015ed561b01c30fb4087891fef8c76d67ecf767278f1"
+    },
+    {
+      "dataset": "dev_notification_delivery",
+      "path": "inputs/dev_notification_delivery.json",
+      "sha256": "e4b46c7c589e0c23eff16e247a8acb15e70c2866c73a745010a8b7688b910309"
+    },
+    {
+      "dataset": "dev_iot_monitoring",
+      "path": "inputs/dev_iot_monitoring.json",
+      "sha256": "85b6d1a78e66a81dc2a33b26f0797ddd333d6b68cf2218f26671bab7e407218c"
+    }
+  ],
+  "proposals": [
+    {
+      "proposalId": "dev_stateless_conversion:0:response_time_latency",
+      "split": "development",
+      "dataset": "dev_stateless_conversion",
+      "capabilityId": "response_time_latency",
+      "statement": "ensure conversion responses meet latency targets",
+      "requirementIds": [
+        "NFR1"
+      ],
+      "evidenceSpans": [
+        "Conversion responses shall complete within 300 milliseconds at the 95th percentile under 20 requests per second."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_stateless_conversion:1:stateless_service",
+      "split": "development",
+      "dataset": "dev_stateless_conversion",
+      "capabilityId": "stateless_service",
+      "statement": "operate without persisting any application data on the server",
+      "requirementIds": [
+        "NFR2"
+      ],
+      "evidenceSpans": [
+        "The service shall not store server-side application data."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_stateless_conversion:2:inbound_encryption",
+      "split": "development",
+      "dataset": "dev_stateless_conversion",
+      "capabilityId": "inbound_encryption",
+      "statement": "protect external traffic with TLS",
+      "requirementIds": [
+        "NFR3"
+      ],
+      "evidenceSpans": [
+        "External traffic shall use HTTPS."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_stateless_conversion:3:container_runtime",
+      "split": "development",
+      "dataset": "dev_stateless_conversion",
+      "capabilityId": "container_runtime",
+      "statement": "provide an isolated Linux execution environment via Docker containers",
+      "requirementIds": [
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "The application shall run as a Docker container on a Linux VM"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_stateless_conversion:4:health_endpoint",
+      "split": "development",
+      "dataset": "dev_stateless_conversion",
+      "capabilityId": "health_endpoint",
+      "statement": "expose a health‑check endpoint for orchestration and monitoring",
+      "requirementIds": [
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "and expose a health endpoint."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.8,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:0:durable_storage",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "durable_storage",
+      "statement": "Persist cart and order records across container and VM restarts",
+      "requirementIds": [
+        "NFR1"
+      ],
+      "evidenceSpans": [
+        "Cart and order records shall survive container and VM restarts."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:1:concurrency_control",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "concurrency_control",
+      "statement": "Guarantee at most one order is created when multiple checkout submissions target the same cart",
+      "requirementIds": [
+        "NFR2"
+      ],
+      "evidenceSpans": [
+        "Concurrent checkout submissions for the same cart shall create at most one order."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:2:request_rate_capacity",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "request_rate_capacity",
+      "statement": "Handle checkout traffic spikes of up to 60 requests per second",
+      "requirementIds": [
+        "NFR3"
+      ],
+      "evidenceSpans": [
+        "Checkout shall support peaks of 60 requests per second."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:3:secret_management",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "secret_management",
+      "statement": "Supply payment credentials at runtime without embedding them in container images",
+      "requirementIds": [
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "Payment credentials shall be supplied at runtime and shall not be stored in the image."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:4:container_runtime",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "container_runtime",
+      "statement": "Execute the application inside Docker containers on Linux virtual machines",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "run in Docker containers on Linux VMs"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:5:metrics_exposure",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "metrics_exposure",
+      "statement": "Expose health and latency metrics for observability",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "expose health and latency metrics"
+      ],
+      "origin": "explicit",
+      "rawScore": 0.8,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:6:outbound_payment_gateway_connectivity",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "outbound_payment_gateway_connectivity",
+      "statement": "Allow outbound communication to an external Payment Gateway for authorization and refunds",
+      "requirementIds": [
+        "FR3",
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "During checkout, the system requests payment authorization from the external Payment Gateway.",
+        "Support agents cancel an unshipped order and the system requests a refund from the Payment Gateway."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_checkout_gateway:7:outbound_network_access",
+      "split": "development",
+      "dataset": "dev_checkout_gateway",
+      "capabilityId": "outbound_network_access",
+      "statement": "Allow outbound calls to the external Payment Gateway for authorization and refunds",
+      "requirementIds": [
+        "FR3",
+        "FR4",
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "During checkout, the system requests payment authorization from the external Payment Gateway.",
+        "The system creates an order only after the Payment Gateway approves the authorization.",
+        "Support agents cancel an unshipped order and the system requests a refund from the Payment Gateway."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.4,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:0:durable_storage",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "durable_storage",
+      "statement": "Persist notification records and delivery attempts across service restarts",
+      "requirementIds": [
+        "NFR1"
+      ],
+      "evidenceSpans": [
+        "Notification records and delivery attempts shall remain durable across restarts."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:1:retry_mechanism",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "retry_mechanism",
+      "statement": "Automatically retry transient provider failures for a bounded period",
+      "requirementIds": [
+        "NFR2"
+      ],
+      "evidenceSpans": [
+        "Transient provider failures shall be retried for up to 24 hours."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:2:low_latency_submission",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "low_latency_submission",
+      "statement": "Submit event‑triggered notifications to the provider within a tight latency bound",
+      "requirementIds": [
+        "NFR3"
+      ],
+      "evidenceSpans": [
+        "Event-triggered notifications shall be submitted to the provider within 10 seconds."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.8,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:3:secret_injection",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "secret_injection",
+      "statement": "Inject provider credentials into the service at runtime",
+      "requirementIds": [
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "Provider credentials shall be injected at runtime."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:4:container_runtime_linux",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "container_runtime_linux",
+      "statement": "Run the Docker‑based service on Linux virtual machines",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "The Docker-based service shall run on Linux VMs"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:5:structured_logging",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "structured_logging",
+      "statement": "Emit delivery logs in a structured format for downstream consumption",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "emit structured delivery logs"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:6:scheduled_summary",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "scheduled_summary",
+      "statement": "Generate a daily summary of unread account events at a fixed wall‑clock time in the user’s time zone",
+      "requirementIds": [
+        "FR4"
+      ],
+      "evidenceSpans": [
+        "Account owners receive a daily summary of unread account events at 09:00 in their configured time zone."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:7:external_provider_integration",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "external_provider_integration",
+      "statement": "Communicate with an external Message Delivery Provider for sending notifications",
+      "requirementIds": [
+        "FR3"
+      ],
+      "evidenceSpans": [
+        "When a selected account event occurs, the system asks the external Message Delivery Provider to deliver the notification."
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:8:manual_retry_interface",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "manual_retry_interface",
+      "statement": "Allow support agents to manually retry a failed notification via the Message Delivery Provider",
+      "requirementIds": [
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "Support agents retry a failed notification through the Message Delivery Provider."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.4,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:9:delivery_status_inspection",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "delivery_status_inspection",
+      "statement": "Provide support agents with visibility into delivery status and failure reasons for notifications",
+      "requirementIds": [
+        "FR5"
+      ],
+      "evidenceSpans": [
+        "Support agents inspect the delivery status and failure reason of a notification."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.4,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:10:support_agent_inspection",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "support_agent_inspection",
+      "statement": "provide an interface for support agents to view delivery status, failure reasons, and retry failed notifications",
+      "requirementIds": [
+        "FR5",
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "Support agents inspect the delivery status and failure reason of a notification.",
+        "Support agents retry a failed notification through the Message Delivery Provider."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_notification_delivery:11:event_notification_latency",
+      "split": "development",
+      "dataset": "dev_notification_delivery",
+      "capabilityId": "event_notification_latency",
+      "statement": "ensure that event‑triggered notifications are handed off to the provider quickly enough to meet business expectations",
+      "requirementIds": [
+        "NFR3"
+      ],
+      "evidenceSpans": [
+        "Event‑triggered notifications shall be submitted to the provider within 10 seconds."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "needsQuestion",
+      "decisionReason": "missing-or-ungrounded-evidence"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:0:ingestion_throughput",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "ingestion_throughput",
+      "statement": "provide sufficient processing capacity to accept the required number of observations per second",
+      "requirementIds": [
+        "NFR1"
+      ],
+      "evidenceSpans": [
+        "The service shall ingest 2,000 observations per second"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:1:latency_sla",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "latency_sla",
+      "statement": "ensure 95th‑percentile end‑to‑end latency for observation ingestion stays below the defined threshold",
+      "requirementIds": [
+        "NFR1"
+      ],
+      "evidenceSpans": [
+        "with a 95th-percentile latency below one second"
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:2:durable_storage",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "durable_storage",
+      "statement": "persist observation data for the required retention period and survive application or VM restarts",
+      "requirementIds": [
+        "NFR2"
+      ],
+      "evidenceSpans": [
+        "Observations shall be retained for 90 days and survive application or VM restarts"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:3:idempotent_ingestion",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "idempotent_ingestion",
+      "statement": "prevent creation of duplicate records when the same observation identifier is received more than once",
+      "requirementIds": [
+        "NFR3"
+      ],
+      "evidenceSpans": [
+        "Duplicate observation identifiers shall not create duplicate records"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:4:runtime_secret_injection",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "runtime_secret_injection",
+      "statement": "allow device and provider credentials to be supplied to the service at start‑up or reload time without code changes",
+      "requirementIds": [
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "Device and provider credentials shall be supplied at runtime"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:5:container_runtime",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "container_runtime",
+      "statement": "run the application inside Docker containers on a Linux host as required by the deployment environment",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "The application shall run in Docker containers on Linux VMs"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:6:health_metrics_exposure",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "health_metrics_exposure",
+      "statement": "expose health‑related metrics for the ingestion path so that operators can monitor service health",
+      "requirementIds": [
+        "NFR5"
+      ],
+      "evidenceSpans": [
+        "expose ingestion health metrics"
+      ],
+      "origin": "explicit",
+      "rawScore": 0.8,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:7:outbound_network_access",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "outbound_network_access",
+      "statement": "enable the service to call an external Message Delivery Provider when a threshold is crossed",
+      "requirementIds": [
+        "FR5"
+      ],
+      "evidenceSpans": [
+        "the system asks the external Message Delivery Provider to deliver an alert"
+      ],
+      "origin": "explicit",
+      "rawScore": 1.0,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:8:ingress_authentication",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "ingress_authentication",
+      "statement": "authenticate devices/operators when they register or submit data using supplied credentials",
+      "requirementIds": [
+        "FR1",
+        "NFR4"
+      ],
+      "evidenceSpans": [
+        "Operators register devices with a unique identifier and authentication credential",
+        "Device and provider credentials shall be supplied at runtime"
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:9:device_registration_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "device_registration_endpoint",
+      "statement": "provide an API for operators to register devices with unique IDs and credentials",
+      "requirementIds": [
+        "FR1"
+      ],
+      "evidenceSpans": [
+        "Operators register devices with a unique identifier and authentication credential."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:10:observation_ingestion_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "observation_ingestion_endpoint",
+      "statement": "accept timestamped temperature and humidity observations from registered sensors",
+      "requirementIds": [
+        "FR2"
+      ],
+      "evidenceSpans": [
+        "Registered Sensors submit timestamped temperature and humidity observations."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.4,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:11:latest_observation_view_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "latest_observation_view_endpoint",
+      "statement": "allow operators to view the most recent observations and connectivity state per device",
+      "requirementIds": [
+        "FR3"
+      ],
+      "evidenceSpans": [
+        "Operators view the latest observations and connectivity state for each device."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:12:threshold_rule_management",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "threshold_rule_management",
+      "statement": "enable operators to define threshold rules for individual devices or groups",
+      "requirementIds": [
+        "FR4"
+      ],
+      "evidenceSpans": [
+        "Operators define threshold rules for a device or device group."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:13:historical_observation_query_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "historical_observation_query_endpoint",
+      "statement": "support queries for historical observations by device and time range",
+      "requirementIds": [
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "Operators query historical observations by device and time range."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:14:device_configuration_retrieval_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "device_configuration_retrieval_endpoint",
+      "statement": "allow devices to retrieve their current sampling interval and threshold configuration",
+      "requirementIds": [
+        "FR7"
+      ],
+      "evidenceSpans": [
+        "Devices retrieve their current sampling interval and threshold configuration."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.6,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    },
+    {
+      "proposalId": "dev_iot_monitoring:15:operator_api_endpoint",
+      "split": "development",
+      "dataset": "dev_iot_monitoring",
+      "capabilityId": "operator_api_endpoint",
+      "statement": "Expose APIs for operators to view latest observations, device connectivity state, and query historical observations by device and time range.",
+      "requirementIds": [
+        "FR3",
+        "FR6"
+      ],
+      "evidenceSpans": [
+        "Operators view the latest observations and connectivity state for each device.",
+        "Operators query historical observations by device and time range."
+      ],
+      "origin": "explicit",
+      "rawScore": 0.2,
+      "systemDecision": "accepted",
+      "decisionReason": "explicit-grounded-constraint"
+    }
+  ]
+}

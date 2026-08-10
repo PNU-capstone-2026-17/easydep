@@ -252,7 +252,7 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
 #: **한 곳에만 적는다** — 예전에는 게이트 응답과 완료 응답이 같은 목록을 따로 들고 있어서,
 #: 새 산출물을 추가하면 한쪽에만 들어가 화면에서 조용히 사라질 수 있었다.
 _ARTIFACT_KEYS = (
-    "deployment_needs", "resource_spec", "resource_intake",
+    "deployment_needs", "capability_contract", "resource_spec", "resource_intake",
     "actors", "use_cases", "model_review", "coverage", "use_case_specs", "spec_report",
     "relationships", "relationship_report", "diagram",
 )

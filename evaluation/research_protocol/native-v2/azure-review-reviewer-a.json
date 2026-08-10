@@ -1,0 +1,3100 @@
+{
+  "schemaVersion": "easydep-native-review/v2",
+  "provider": "azure",
+  "inventorySha256": "c020e8babaac8f7e7e2154e0a1a4cfa47e3073b1bcd02dfa8c1bb141c90abb47",
+  "reviewScopeNativeIds": [
+    "compute-ComputeRP.operation.AvailabilitySets_StartMigrationToVirtualMachineScaleSet",
+    "compute-ComputeRP.operation.CapacityReservations_CreateOrUpdate",
+    "compute-ComputeRP.operation.DedicatedHostGroups_CreateOrUpdate",
+    "compute-ComputeRP.operation.Images_CreateOrUpdate",
+    "compute-ComputeRP.operation.Images_Get",
+    "compute-ComputeRP.operation.RestorePointCollections_Delete",
+    "compute-ComputeRP.operation.RestorePointCollections_List",
+    "compute-ComputeRP.operation.RestorePoints_Create",
+    "compute-ComputeRP.operation.SshPublicKeys_Get",
+    "compute-ComputeRP.operation.VirtualMachineImagesEdgeZone_List",
+    "compute-ComputeRP.operation.VirtualMachineRunCommands_CreateOrUpdate",
+    "compute-ComputeRP.operation.VirtualMachineRunCommands_List",
+    "compute-ComputeRP.operation.VirtualMachineScaleSetExtensions_List",
+    "compute-ComputeRP.operation.VirtualMachineScaleSetExtensions_Update",
+    "compute-ComputeRP.operation.VirtualMachineScaleSetLifeCycleHookEvents_List",
+    "compute-ComputeRP.operation.VirtualMachineScaleSetVMs_GetInstanceView",
+    "compute-ComputeRP.operation.VirtualMachineScaleSets_DeleteInstances",
+    "compute-ComputeRP.operation.VirtualMachineScaleSets_ScaleOut",
+    "compute-ComputeRP.operation.VirtualMachines_ConvertToManagedDisks",
+    "compute-ComputeRP.operation.VirtualMachines_CreateOrUpdate",
+    "compute-ComputeRP.operation.VirtualMachines_ListAll",
+    "compute-ComputeRP.schema.AdditionalCapabilities",
+    "compute-ComputeRP.schema.AdditionalUnattendContent",
+    "compute-ComputeRP.schema.AllInstancesDown",
+    "compute-ComputeRP.schema.ApiEntityReference",
+    "compute-ComputeRP.schema.ApplicationProfile",
+    "compute-ComputeRP.schema.AvailablePatchSummary",
+    "compute-ComputeRP.schema.BillingProfile",
+    "compute-ComputeRP.schema.BootDiagnostics",
+    "compute-ComputeRP.schema.BootDiagnosticsInstanceView",
+    "compute-ComputeRP.schema.CachingTypes",
+    "compute-ComputeRP.schema.CapacityReservationProfile",
+    "compute-ComputeRP.schema.Common.OperatingSystemTypes",
+    "compute-ComputeRP.schema.Common.ResourceIdentityType",
+    "compute-ComputeRP.schema.ComponentNames",
+    "compute-ComputeRP.schema.DataDisk",
+    "compute-ComputeRP.schema.DeleteOptions",
+    "compute-ComputeRP.schema.DiagnosticsProfile",
+    "compute-ComputeRP.schema.DiffDiskOptions",
+    "compute-ComputeRP.schema.DiffDiskPlacement",
+    "compute-ComputeRP.schema.DiffDiskSettings",
+    "compute-ComputeRP.schema.DiskControllerTypes",
+    "compute-ComputeRP.schema.DiskCreateOptionTypes",
+    "compute-ComputeRP.schema.DiskDeleteOptionTypes",
+    "compute-ComputeRP.schema.DiskDetachOptionTypes",
+    "compute-ComputeRP.schema.DiskEncryptionSetParameters",
+    "compute-ComputeRP.schema.DiskEncryptionSettings",
+    "compute-ComputeRP.schema.DiskInstanceView",
+    "compute-ComputeRP.schema.DomainNameLabelScopeTypes",
+    "compute-ComputeRP.schema.EncryptionIdentity",
+    "compute-ComputeRP.schema.EventGridAndResourceGraph",
+    "compute-ComputeRP.schema.HardwareProfile",
+    "compute-ComputeRP.schema.HostEndpointSettings",
+    "compute-ComputeRP.schema.HyperVGenerationType",
+    "compute-ComputeRP.schema.IPVersions",
+    "compute-ComputeRP.schema.ImageReference",
+    "compute-ComputeRP.schema.InstanceViewStatus",
+    "compute-ComputeRP.schema.InterconnectBlockProfile",
+    "compute-ComputeRP.schema.InterconnectGroupProfile",
+    "compute-ComputeRP.schema.InterconnectInstanceView",
+    "compute-ComputeRP.schema.KeyVaultKeyReference",
+    "compute-ComputeRP.schema.KeyVaultSecretReference",
+    "compute-ComputeRP.schema.LastPatchInstallationSummary",
+    "compute-ComputeRP.schema.LinuxConfiguration",
+    "compute-ComputeRP.schema.LinuxPatchAssessmentMode",
+    "compute-ComputeRP.schema.LinuxPatchSettings",
+    "compute-ComputeRP.schema.LinuxVMGuestPatchAutomaticByPlatformRebootSetting",
+    "compute-ComputeRP.schema.LinuxVMGuestPatchAutomaticByPlatformSettings",
+    "compute-ComputeRP.schema.LinuxVMGuestPatchMode",
+    "compute-ComputeRP.schema.MaintenanceOperationResultCodeTypes",
+    "compute-ComputeRP.schema.MaintenanceRedeployStatus",
+    "compute-ComputeRP.schema.ManagedDiskParameters",
+    "compute-ComputeRP.schema.Mode",
+    "compute-ComputeRP.schema.Modes",
+    "compute-ComputeRP.schema.NetworkApiVersion",
+    "compute-ComputeRP.schema.NetworkInterfaceAuxiliaryMode",
+    "compute-ComputeRP.schema.NetworkInterfaceAuxiliarySku",
+    "compute-ComputeRP.schema.NetworkInterfaceReference",
+    "compute-ComputeRP.schema.NetworkInterfaceReferenceProperties",
+    "compute-ComputeRP.schema.NetworkProfile",
+    "compute-ComputeRP.schema.OSDisk",
+    "compute-ComputeRP.schema.OSImageNotificationProfile",
+    "compute-ComputeRP.schema.OSProfile",
+    "compute-ComputeRP.schema.PassNames",
+    "compute-ComputeRP.schema.PatchOperationStatus",
+    "compute-ComputeRP.schema.PatchSettings",
+    "compute-ComputeRP.schema.Placement",
+    "compute-ComputeRP.schema.Plan",
+    "compute-ComputeRP.schema.ProtocolTypes",
+    "compute-ComputeRP.schema.ProxyAgentSettings",
+    "compute-ComputeRP.schema.PublicIPAddressSku",
+    "compute-ComputeRP.schema.PublicIPAddressSkuName",
+    "compute-ComputeRP.schema.PublicIPAddressSkuTier",
+    "compute-ComputeRP.schema.PublicIPAllocationMethod",
+    "compute-ComputeRP.schema.ResiliencyProfile",
+    "compute-ComputeRP.schema.ScheduledEventsAdditionalPublishingTargets",
+    "compute-ComputeRP.schema.ScheduledEventsPolicy",
+    "compute-ComputeRP.schema.ScheduledEventsProfile",
+    "compute-ComputeRP.schema.SecurityEncryptionTypes",
+    "compute-ComputeRP.schema.SecurityProfile",
+    "compute-ComputeRP.schema.SecurityTypes",
+    "compute-ComputeRP.schema.SettingNames",
+    "compute-ComputeRP.schema.SshConfiguration",
+    "compute-ComputeRP.schema.SshPublicKey",
+    "compute-ComputeRP.schema.StatusLevelTypes",
+    "compute-ComputeRP.schema.StorageAccountTypes",
+    "compute-ComputeRP.schema.StorageAlignmentStatus",
+    "compute-ComputeRP.schema.StorageFaultDomainAlignmentType",
+    "compute-ComputeRP.schema.StorageProfile",
+    "compute-ComputeRP.schema.TerminateNotificationProfile",
+    "compute-ComputeRP.schema.UefiSettings",
+    "compute-ComputeRP.schema.UserInitiatedReboot",
+    "compute-ComputeRP.schema.UserInitiatedRedeploy",
+    "compute-ComputeRP.schema.VMDiskSecurityProfile",
+    "compute-ComputeRP.schema.VMGalleryApplication",
+    "compute-ComputeRP.schema.VMSizeProperties",
+    "compute-ComputeRP.schema.VaultCertificate",
+    "compute-ComputeRP.schema.VaultSecretGroup",
+    "compute-ComputeRP.schema.VirtualHardDisk",
+    "compute-ComputeRP.schema.VirtualMachine",
+    "compute-ComputeRP.schema.VirtualMachineAgentInstanceView",
+    "compute-ComputeRP.schema.VirtualMachineEvictionPolicyTypes",
+    "compute-ComputeRP.schema.VirtualMachineExtension",
+    "compute-ComputeRP.schema.VirtualMachineExtensionHandlerInstanceView",
+    "compute-ComputeRP.schema.VirtualMachineExtensionInstanceView",
+    "compute-ComputeRP.schema.VirtualMachineExtensionProperties",
+    "compute-ComputeRP.schema.VirtualMachineHealthStatus",
+    "compute-ComputeRP.schema.VirtualMachineIdentity",
+    "compute-ComputeRP.schema.VirtualMachineInstanceView",
+    "compute-ComputeRP.schema.VirtualMachineIpTag",
+    "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceConfiguration",
+    "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceConfigurationProperties",
+    "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceDnsSettingsConfiguration",
+    "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceIPConfiguration",
+    "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceIPConfigurationProperties",
+    "compute-ComputeRP.schema.VirtualMachinePatchStatus",
+    "compute-ComputeRP.schema.VirtualMachinePriorityTypes",
+    "compute-ComputeRP.schema.VirtualMachineProperties",
+    "compute-ComputeRP.schema.VirtualMachinePublicIPAddressConfiguration",
+    "compute-ComputeRP.schema.VirtualMachinePublicIPAddressConfigurationProperties",
+    "compute-ComputeRP.schema.VirtualMachinePublicIPAddressDnsSettingsConfiguration",
+    "compute-ComputeRP.schema.VirtualMachineSizeTypes",
+    "compute-ComputeRP.schema.WinRMConfiguration",
+    "compute-ComputeRP.schema.WinRMListener",
+    "compute-ComputeRP.schema.WindowsConfiguration",
+    "compute-ComputeRP.schema.WindowsPatchAssessmentMode",
+    "compute-ComputeRP.schema.WindowsVMGuestPatchAutomaticByPlatformRebootSetting",
+    "compute-ComputeRP.schema.WindowsVMGuestPatchAutomaticByPlatformSettings",
+    "compute-ComputeRP.schema.WindowsVMGuestPatchMode",
+    "compute-ComputeRP.schema.ZoneMovement",
+    "compute-ComputeRP.schema.ZonePlacementPolicyType",
+    "compute-DiskRP.operation.DiskAccesses_Get",
+    "compute-DiskRP.operation.DiskAccesses_GetPrivateLinkResources",
+    "compute-DiskRP.operation.DiskEncryptionSets_List",
+    "compute-DiskRP.operation.DiskEncryptionSets_ListAssociatedResources",
+    "compute-DiskRP.operation.Disks_CreateOrUpdate",
+    "compute-DiskRP.operation.Disks_Delete",
+    "compute-DiskRP.operation.Snapshots_List",
+    "compute-DiskRP.operation.Snapshots_RevokeAccess",
+    "compute-DiskRP.operation.Snapshots_UpdateImmutabilityPolicyLock",
+    "compute-DiskRP.schema.AvailabilityPolicy",
+    "compute-DiskRP.schema.AvailabilityPolicyDiskDelay",
+    "compute-DiskRP.schema.Common.Architecture",
+    "compute-DiskRP.schema.Common.HyperVGeneration",
+    "compute-DiskRP.schema.Common.OperatingSystemTypes",
+    "compute-DiskRP.schema.ConfidentialVMVersion",
+    "compute-DiskRP.schema.CreationData",
+    "compute-DiskRP.schema.DataAccessAuthMode",
+    "compute-DiskRP.schema.Disk",
+    "compute-DiskRP.schema.DiskCreateOption",
+    "compute-DiskRP.schema.DiskProperties",
+    "compute-DiskRP.schema.DiskPurchasePlan",
+    "compute-DiskRP.schema.DiskSecurityProfile",
+    "compute-DiskRP.schema.DiskSecurityTypes",
+    "compute-DiskRP.schema.DiskSku",
+    "compute-DiskRP.schema.DiskState",
+    "compute-DiskRP.schema.DiskStorageAccountTypes",
+    "compute-DiskRP.schema.Encryption",
+    "compute-DiskRP.schema.EncryptionSettingsCollection",
+    "compute-DiskRP.schema.EncryptionSettingsElement",
+    "compute-DiskRP.schema.EncryptionType",
+    "compute-DiskRP.schema.ImageDiskReference",
+    "compute-DiskRP.schema.KeyVaultAndKeyReference",
+    "compute-DiskRP.schema.KeyVaultAndSecretReference",
+    "compute-DiskRP.schema.NetworkAccessPolicy",
+    "compute-DiskRP.schema.PropertyUpdatesInProgress",
+    "compute-DiskRP.schema.ProvisionedBandwidthCopyOption",
+    "compute-DiskRP.schema.PublicNetworkAccess",
+    "compute-DiskRP.schema.ShareInfoElement",
+    "compute-DiskRP.schema.SourceVault",
+    "compute-DiskRP.schema.SupportedCapabilities",
+    "compute-DiskRP.schema.SupportedSecurityOption",
+    "network-loadBalancer.operation.InboundNatRules_Get",
+    "network-loadBalancer.operation.LoadBalancerBackendAddressPools_CreateOrUpdate",
+    "network-loadBalancer.operation.LoadBalancerFrontendIPConfigurations_List",
+    "network-loadBalancer.operation.LoadBalancerLoadBalancingRules_Get",
+    "network-loadBalancer.operation.LoadBalancerNetworkInterfaces_List",
+    "network-loadBalancer.operation.LoadBalancers_CreateOrUpdate",
+    "network-loadBalancer.schema.Common.BackendAddressPool",
+    "network-loadBalancer.schema.Common.BackendAddressPoolPropertiesFormat",
+    "network-loadBalancer.schema.Common.FrontendIPConfiguration",
+    "network-loadBalancer.schema.Common.FrontendIPConfigurationPropertiesFormat",
+    "network-loadBalancer.schema.Common.GatewayLoadBalancerTunnelInterface",
+    "network-loadBalancer.schema.Common.InboundNatPool",
+    "network-loadBalancer.schema.Common.InboundNatPoolPropertiesFormat",
+    "network-loadBalancer.schema.Common.InboundNatRule",
+    "network-loadBalancer.schema.Common.InboundNatRulePropertiesFormat",
+    "network-loadBalancer.schema.Common.LoadBalancer",
+    "network-loadBalancer.schema.Common.LoadBalancerBackendAddress",
+    "network-loadBalancer.schema.Common.LoadBalancerBackendAddressPropertiesFormat",
+    "network-loadBalancer.schema.Common.LoadBalancerPropertiesFormat",
+    "network-loadBalancer.schema.Common.LoadBalancerSku",
+    "network-loadBalancer.schema.Common.LoadBalancingRule",
+    "network-loadBalancer.schema.Common.LoadBalancingRulePropertiesFormat",
+    "network-loadBalancer.schema.Common.NatRulePortMapping",
+    "network-loadBalancer.schema.Common.OutboundRule",
+    "network-loadBalancer.schema.Common.OutboundRulePropertiesFormat",
+    "network-loadBalancer.schema.Common.Probe",
+    "network-loadBalancer.schema.Common.ProbePropertiesFormat",
+    "network-virtualNetwork.operation.ApplicationSecurityGroups_Get",
+    "network-virtualNetwork.operation.ApplicationSecurityGroups_ListAll",
+    "network-virtualNetwork.operation.CheckDnsNameAvailability",
+    "network-virtualNetwork.operation.DdosCustomPolicies_UpdateTags",
+    "network-virtualNetwork.operation.DisconnectActiveSessions",
+    "network-virtualNetwork.operation.DscpConfiguration_CreateOrUpdate",
+    "network-virtualNetwork.operation.IpAllocations_ListByResourceGroup",
+    "network-virtualNetwork.operation.IpGroups_Get",
+    "network-virtualNetwork.operation.NatGateways_ListAll",
+    "network-virtualNetwork.operation.NetworkInterfaces_Delete",
+    "network-virtualNetwork.operation.NetworkSecurityGroups_CreateOrUpdate",
+    "network-virtualNetwork.operation.NetworkVirtualAppliances_GetBootDiagnosticLogs",
+    "network-virtualNetwork.operation.NetworkVirtualAppliances_Reimage",
+    "network-virtualNetwork.operation.PublicIPAddresses_CreateOrUpdate",
+    "network-virtualNetwork.operation.PublicIPAddresses_ListCloudServicePublicIPAddresses",
+    "network-virtualNetwork.operation.ReachabilityAnalysisRuns_Delete",
+    "network-virtualNetwork.operation.Routes_CreateOrUpdate",
+    "network-virtualNetwork.operation.SecurityPartnerProviders_UpdateTags",
+    "network-virtualNetwork.operation.Subnets_CreateOrUpdate",
+    "network-virtualNetwork.operation.VerifierWorkspaces_Get",
+    "network-virtualNetwork.operation.VirtualNetworks_CreateOrUpdate",
+    "network-virtualNetwork.operation.VirtualNetworks_Delete",
+    "network-virtualNetwork.operation.VirtualNetworks_ListAll",
+    "network-virtualNetwork.schema.Common.AddressSpace",
+    "network-virtualNetwork.schema.Common.ApplicationSecurityGroup",
+    "network-virtualNetwork.schema.Common.ApplicationSecurityGroupPropertiesFormat",
+    "network-virtualNetwork.schema.Common.CustomDnsConfigPropertiesFormat",
+    "network-virtualNetwork.schema.Common.DdosSettings",
+    "network-virtualNetwork.schema.Common.Delegation",
+    "network-virtualNetwork.schema.Common.DhcpOptions",
+    "network-virtualNetwork.schema.Common.IPConfiguration",
+    "network-virtualNetwork.schema.Common.IPConfigurationProfile",
+    "network-virtualNetwork.schema.Common.IPConfigurationProfilePropertiesFormat",
+    "network-virtualNetwork.schema.Common.IPConfigurationPropertiesFormat",
+    "network-virtualNetwork.schema.Common.IpTag",
+    "network-virtualNetwork.schema.Common.IpamPoolPrefixAllocation",
+    "network-virtualNetwork.schema.Common.IpamPoolPrefixAllocationPool",
+    "network-virtualNetwork.schema.Common.NatGateway",
+    "network-virtualNetwork.schema.Common.NatGatewayPropertiesFormat",
+    "network-virtualNetwork.schema.Common.NatGatewaySku",
+    "network-virtualNetwork.schema.Common.NetworkInterface",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceDnsSettings",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfiguration",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfigurationPrivateLinkConnectionProperties",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfigurationPropertiesFormat",
+    "network-virtualNetwork.schema.Common.NetworkInterfacePropertiesFormat",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceTapConfiguration",
+    "network-virtualNetwork.schema.Common.NetworkInterfaceTapConfigurationPropertiesFormat",
+    "network-virtualNetwork.schema.Common.NetworkSecurityGroup",
+    "network-virtualNetwork.schema.Common.NetworkSecurityGroupPropertiesFormat",
+    "network-virtualNetwork.schema.Common.PrivateEndpoint",
+    "network-virtualNetwork.schema.Common.PrivateEndpointConnection",
+    "network-virtualNetwork.schema.Common.PrivateEndpointConnectionProperties",
+    "network-virtualNetwork.schema.Common.PrivateEndpointIPConfiguration",
+    "network-virtualNetwork.schema.Common.PrivateEndpointIPConfigurationProperties",
+    "network-virtualNetwork.schema.Common.PrivateEndpointProperties",
+    "network-virtualNetwork.schema.Common.PrivateLinkService",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceConnection",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceConnectionProperties",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceConnectionState",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceIpConfiguration",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceIpConfigurationProperties",
+    "network-virtualNetwork.schema.Common.PrivateLinkServiceProperties",
+    "network-virtualNetwork.schema.Common.PrivateLinkServicePropertiesAutoApproval",
+    "network-virtualNetwork.schema.Common.PrivateLinkServicePropertiesVisibility",
+    "network-virtualNetwork.schema.Common.PublicIPAddress",
+    "network-virtualNetwork.schema.Common.PublicIPAddressDnsSettings",
+    "network-virtualNetwork.schema.Common.PublicIPAddressPropertiesFormat",
+    "network-virtualNetwork.schema.Common.PublicIPAddressSku",
+    "network-virtualNetwork.schema.Common.ResourceNavigationLink",
+    "network-virtualNetwork.schema.Common.ResourceNavigationLinkFormat",
+    "network-virtualNetwork.schema.Common.Route",
+    "network-virtualNetwork.schema.Common.RouteNextHopEcmp",
+    "network-virtualNetwork.schema.Common.RoutePropertiesFormat",
+    "network-virtualNetwork.schema.Common.RouteTable",
+    "network-virtualNetwork.schema.Common.RouteTablePropertiesFormat",
+    "network-virtualNetwork.schema.Common.SecurityRule",
+    "network-virtualNetwork.schema.Common.SecurityRulePropertiesFormat",
+    "network-virtualNetwork.schema.Common.ServiceAssociationLink",
+    "network-virtualNetwork.schema.Common.ServiceAssociationLinkPropertiesFormat",
+    "network-virtualNetwork.schema.Common.ServiceDelegationPropertiesFormat",
+    "network-virtualNetwork.schema.Common.ServiceEndpointPropertiesFormat",
+    "network-virtualNetwork.schema.Common.Subnet",
+    "network-virtualNetwork.schema.Common.SubnetPropertiesFormat",
+    "network-virtualNetwork.schema.Common.VirtualNetwork",
+    "network-virtualNetwork.schema.Common.VirtualNetworkBgpCommunities",
+    "network-virtualNetwork.schema.Common.VirtualNetworkEncryption",
+    "network-virtualNetwork.schema.Common.VirtualNetworkPeering",
+    "network-virtualNetwork.schema.Common.VirtualNetworkPeeringPropertiesFormat",
+    "network-virtualNetwork.schema.Common.VirtualNetworkPropertiesFormat"
+  ],
+  "reviewer": "reviewer-a",
+  "decisions": [
+    {
+      "nativeId": "compute-ComputeRP.operation.AvailabilitySets_StartMigrationToVirtualMachineScaleSet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/availabilitySets/{availabilitySetName}/startMigrationToVirtualMachineScaleSet/post"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.CapacityReservations_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/capacityReservationGroups/{capacityReservationGroupName}/capacityReservations/{capacityReservationName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.DedicatedHostGroups_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/hostGroups/{hostGroupName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.Images_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/images/{imageName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.Images_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/images/{imageName}/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.RestorePointCollections_Delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/restorePointCollections/{restorePointCollectionName}/delete"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.RestorePointCollections_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/restorePointCollections/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.RestorePoints_Create",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/restorePointCollections/{restorePointCollectionName}/restorePoints/{restorePointName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.SshPublicKeys_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/sshPublicKeys/{sshPublicKeyName}/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineImagesEdgeZone_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/{location}/edgeZones/{edgeZone}/publishers/{publisherName}/artifacttypes/vmimage/offers/{offer}/skus/{skus}/versions/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineRunCommands_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/runCommands/{runCommandName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineRunCommands_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Compute/locations/{location}/runCommands/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSetExtensions_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/extensions/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSetExtensions_Update",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/extensions/{vmssExtensionName}/patch"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSetLifeCycleHookEvents_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/lifecycleHookEvents/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSetVMs_GetInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/virtualMachines/{instanceId}/instanceView/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSets_DeleteInstances",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/delete/post"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachineScaleSets_ScaleOut",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachineScaleSets/{vmScaleSetName}/scaleOut/post"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachines_ConvertToManagedDisks",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/convertToManagedDisks/post"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachines_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.operation.VirtualMachines_ListAll",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Compute/virtualMachines/get"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.AdditionalCapabilities",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/AdditionalCapabilities"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.AdditionalUnattendContent",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/AdditionalUnattendContent"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.AllInstancesDown",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/AllInstancesDown"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ApiEntityReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ApiEntityReference"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ApplicationProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ApplicationProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.AvailablePatchSummary",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/AvailablePatchSummary"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.BillingProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/BillingProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.BootDiagnostics",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/BootDiagnostics"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.BootDiagnosticsInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/BootDiagnosticsInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.CachingTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/CachingTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.CapacityReservationProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/CapacityReservationProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Common.OperatingSystemTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Common.OperatingSystemTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Common.ResourceIdentityType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Common.ResourceIdentityType"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ComponentNames",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ComponentNames"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DataDisk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DataDisk"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DeleteOptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DeleteOptions"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiagnosticsProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiagnosticsProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiffDiskOptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiffDiskOptions"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiffDiskPlacement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiffDiskPlacement"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiffDiskSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiffDiskSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskControllerTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskControllerTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskCreateOptionTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskCreateOptionTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskDeleteOptionTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskDeleteOptionTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskDetachOptionTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskDetachOptionTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskEncryptionSetParameters",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskEncryptionSetParameters"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskEncryptionSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskEncryptionSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DiskInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DiskInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.DomainNameLabelScopeTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/DomainNameLabelScopeTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.EncryptionIdentity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/EncryptionIdentity"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.EventGridAndResourceGraph",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/EventGridAndResourceGraph"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.HardwareProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/HardwareProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.HostEndpointSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/HostEndpointSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.HyperVGenerationType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/HyperVGenerationType"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.IPVersions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/IPVersions"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ImageReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ImageReference"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.InstanceViewStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/InstanceViewStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.InterconnectBlockProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/InterconnectBlockProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.InterconnectGroupProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/InterconnectGroupProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.InterconnectInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/InterconnectInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.KeyVaultKeyReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/KeyVaultKeyReference"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.KeyVaultSecretReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/KeyVaultSecretReference"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LastPatchInstallationSummary",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LastPatchInstallationSummary"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxPatchAssessmentMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxPatchAssessmentMode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxPatchSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxPatchSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxVMGuestPatchAutomaticByPlatformRebootSetting",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxVMGuestPatchAutomaticByPlatformRebootSetting"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxVMGuestPatchAutomaticByPlatformSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxVMGuestPatchAutomaticByPlatformSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.LinuxVMGuestPatchMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/LinuxVMGuestPatchMode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.MaintenanceOperationResultCodeTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/MaintenanceOperationResultCodeTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.MaintenanceRedeployStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/MaintenanceRedeployStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ManagedDiskParameters",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ManagedDiskParameters"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Mode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Mode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Modes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Modes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkApiVersion",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkApiVersion"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkInterfaceAuxiliaryMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkInterfaceAuxiliaryMode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkInterfaceAuxiliarySku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkInterfaceAuxiliarySku"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkInterfaceReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkInterfaceReference"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkInterfaceReferenceProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkInterfaceReferenceProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.NetworkProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/NetworkProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.OSDisk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/OSDisk"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.OSImageNotificationProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/OSImageNotificationProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.OSProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/OSProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PassNames",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PassNames"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PatchOperationStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PatchOperationStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PatchSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PatchSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Placement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Placement"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.Plan",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/Plan"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ProtocolTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ProtocolTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ProxyAgentSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ProxyAgentSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PublicIPAddressSku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PublicIPAddressSku"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PublicIPAddressSkuName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PublicIPAddressSkuName"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PublicIPAddressSkuTier",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PublicIPAddressSkuTier"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.PublicIPAllocationMethod",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/PublicIPAllocationMethod"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ResiliencyProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ResiliencyProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ScheduledEventsAdditionalPublishingTargets",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ScheduledEventsAdditionalPublishingTargets"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ScheduledEventsPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ScheduledEventsPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ScheduledEventsProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ScheduledEventsProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SecurityEncryptionTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SecurityEncryptionTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SecurityProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SecurityProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SecurityTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SecurityTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SettingNames",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SettingNames"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SshConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SshConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.SshPublicKey",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/SshPublicKey"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.StatusLevelTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/StatusLevelTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.StorageAccountTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/StorageAccountTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.StorageAlignmentStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/StorageAlignmentStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.StorageFaultDomainAlignmentType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/StorageFaultDomainAlignmentType"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.StorageProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/StorageProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.TerminateNotificationProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/TerminateNotificationProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.UefiSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/UefiSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.UserInitiatedReboot",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/UserInitiatedReboot"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.UserInitiatedRedeploy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/UserInitiatedRedeploy"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VMDiskSecurityProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VMDiskSecurityProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VMGalleryApplication",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VMGalleryApplication"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VMSizeProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VMSizeProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VaultCertificate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VaultCertificate"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VaultSecretGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VaultSecretGroup"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualHardDisk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualHardDisk"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachine",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachine"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineAgentInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineAgentInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineEvictionPolicyTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineEvictionPolicyTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineExtension",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineExtension"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineExtensionHandlerInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineExtensionHandlerInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineExtensionInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineExtensionInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineExtensionProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineExtensionProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineHealthStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineHealthStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineIdentity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineIdentity"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineInstanceView",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineInstanceView"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineIpTag",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineIpTag"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineNetworkInterfaceConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceConfigurationProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineNetworkInterfaceConfigurationProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceDnsSettingsConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineNetworkInterfaceDnsSettingsConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceIPConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineNetworkInterfaceIPConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineNetworkInterfaceIPConfigurationProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineNetworkInterfaceIPConfigurationProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachinePatchStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachinePatchStatus"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachinePriorityTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachinePriorityTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachinePublicIPAddressConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachinePublicIPAddressConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachinePublicIPAddressConfigurationProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachinePublicIPAddressConfigurationProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachinePublicIPAddressDnsSettingsConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachinePublicIPAddressDnsSettingsConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.VirtualMachineSizeTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/VirtualMachineSizeTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WinRMConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WinRMConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WinRMListener",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WinRMListener"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WindowsConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WindowsConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WindowsPatchAssessmentMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WindowsPatchAssessmentMode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WindowsVMGuestPatchAutomaticByPlatformRebootSetting",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WindowsVMGuestPatchAutomaticByPlatformRebootSetting"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WindowsVMGuestPatchAutomaticByPlatformSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WindowsVMGuestPatchAutomaticByPlatformSettings"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.WindowsVMGuestPatchMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/WindowsVMGuestPatchMode"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ZoneMovement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ZoneMovement"
+      ]
+    },
+    {
+      "nativeId": "compute-ComputeRP.schema.ZonePlacementPolicyType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-ComputeRP#/definitions/ZonePlacementPolicyType"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.DiskAccesses_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/diskAccesses/{diskAccessName}/get"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.DiskAccesses_GetPrivateLinkResources",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/diskAccesses/{diskAccessName}/privatelinkresources/get"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.DiskEncryptionSets_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Compute/diskEncryptionSets/get"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.DiskEncryptionSets_ListAssociatedResources",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/diskEncryptionSets/{diskEncryptionSetName}/associatedResources/get"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.Disks_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.Disks_Delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/delete"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.Snapshots_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Compute/snapshots/get"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.Snapshots_RevokeAccess",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/snapshots/{snapshotName}/endGetAccess/post"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.operation.Snapshots_UpdateImmutabilityPolicyLock",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/snapshots/{snapshotName}/updateImmutabilityPolicyLock/post"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.AvailabilityPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/AvailabilityPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.AvailabilityPolicyDiskDelay",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/AvailabilityPolicyDiskDelay"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.Common.Architecture",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/Common.Architecture"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.Common.HyperVGeneration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/Common.HyperVGeneration"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.Common.OperatingSystemTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/Common.OperatingSystemTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.ConfidentialVMVersion",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/ConfidentialVMVersion"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.CreationData",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/CreationData"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DataAccessAuthMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DataAccessAuthMode"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.Disk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/Disk"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskCreateOption",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskCreateOption"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskProperties"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskPurchasePlan",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskPurchasePlan"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskSecurityProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskSecurityProfile"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskSecurityTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskSecurityTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskSku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskSku"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskState"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.DiskStorageAccountTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/DiskStorageAccountTypes"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.Encryption",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/Encryption"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.EncryptionSettingsCollection",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/EncryptionSettingsCollection"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.EncryptionSettingsElement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/EncryptionSettingsElement"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.EncryptionType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/EncryptionType"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.ImageDiskReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/ImageDiskReference"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.KeyVaultAndKeyReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/KeyVaultAndKeyReference"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.KeyVaultAndSecretReference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/KeyVaultAndSecretReference"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.NetworkAccessPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/NetworkAccessPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.PropertyUpdatesInProgress",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/PropertyUpdatesInProgress"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.ProvisionedBandwidthCopyOption",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/ProvisionedBandwidthCopyOption"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.PublicNetworkAccess",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/PublicNetworkAccess"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.ShareInfoElement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/ShareInfoElement"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.SourceVault",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/SourceVault"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.SupportedCapabilities",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/SupportedCapabilities"
+      ]
+    },
+    {
+      "nativeId": "compute-DiskRP.schema.SupportedSecurityOption",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute-DiskRP#/definitions/SupportedSecurityOption"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.InboundNatRules_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/inboundNatRules/{inboundNatRuleName}/get"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.LoadBalancerBackendAddressPools_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/backendAddressPools/{backendAddressPoolName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.LoadBalancerFrontendIPConfigurations_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/frontendIPConfigurations/get"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.LoadBalancerLoadBalancingRules_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/loadBalancingRules/{loadBalancingRuleName}/get"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.LoadBalancerNetworkInterfaces_List",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/networkInterfaces/get"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.operation.LoadBalancers_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.BackendAddressPool",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.BackendAddressPool"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.BackendAddressPoolPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.BackendAddressPoolPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.FrontendIPConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.FrontendIPConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.FrontendIPConfigurationPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.FrontendIPConfigurationPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.GatewayLoadBalancerTunnelInterface",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.GatewayLoadBalancerTunnelInterface"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.InboundNatPool",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.InboundNatPool"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.InboundNatPoolPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.InboundNatPoolPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.InboundNatRule",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.InboundNatRule"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.InboundNatRulePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.InboundNatRulePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancer",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancer"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancerBackendAddress",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancerBackendAddress"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancerBackendAddressPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancerBackendAddressPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancerPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancerPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancerSku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancerSku"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancingRule",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancingRule"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.LoadBalancingRulePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.LoadBalancingRulePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.NatRulePortMapping",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.NatRulePortMapping"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.OutboundRule",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.OutboundRule"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.OutboundRulePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.OutboundRulePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.Probe",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.Probe"
+      ]
+    },
+    {
+      "nativeId": "network-loadBalancer.schema.Common.ProbePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-loadBalancer#/definitions/Common.ProbePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.ApplicationSecurityGroups_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/applicationSecurityGroups/{applicationSecurityGroupName}/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.ApplicationSecurityGroups_ListAll",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Network/applicationSecurityGroups/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.CheckDnsNameAvailability",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Network/locations/{location}/checkDnsNameAvailability/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.DdosCustomPolicies_UpdateTags",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/ddosCustomPolicies/{ddosCustomPolicyName}/patch"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.DisconnectActiveSessions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/bastionHosts/{bastionHostName}/disconnectActiveSessions/post"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.DscpConfiguration_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/dscpConfigurations/{dscpConfigurationName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.IpAllocations_ListByResourceGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/IpAllocations/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.IpGroups_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/ipGroups/{ipGroupsName}/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.NatGateways_ListAll",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Network/natGateways/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.NetworkInterfaces_Delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/delete"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.NetworkSecurityGroups_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.NetworkVirtualAppliances_GetBootDiagnosticLogs",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkVirtualAppliances/{networkVirtualApplianceName}/getBootDiagnosticLogs/post"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.NetworkVirtualAppliances_Reimage",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkVirtualAppliances/{networkVirtualApplianceName}/reimage/post"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.PublicIPAddresses_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/publicIPAddresses/{publicIpAddressName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.PublicIPAddresses_ListCloudServicePublicIPAddresses",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/microsoft.Compute/cloudServices/{cloudServiceName}/publicipaddresses/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.ReachabilityAnalysisRuns_Delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkManagers/{networkManagerName}/verifierWorkspaces/{workspaceName}/reachabilityAnalysisRuns/{reachabilityAnalysisRunName}/delete"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.Routes_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/routeTables/{routeTableName}/routes/{routeName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.SecurityPartnerProviders_UpdateTags",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/securityPartnerProviders/{securityPartnerProviderName}/patch"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.Subnets_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.VerifierWorkspaces_Get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkManagers/{networkManagerName}/verifierWorkspaces/{workspaceName}/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.VirtualNetworks_CreateOrUpdate",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.VirtualNetworks_Delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/delete"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.operation.VirtualNetworks_ListAll",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/providers/Microsoft.Network/virtualNetworks/get"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.AddressSpace",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.AddressSpace"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ApplicationSecurityGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ApplicationSecurityGroup"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ApplicationSecurityGroupPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ApplicationSecurityGroupPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.CustomDnsConfigPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.CustomDnsConfigPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.DdosSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.DdosSettings"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.Delegation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.Delegation"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.DhcpOptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.DhcpOptions"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IPConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IPConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IPConfigurationProfile",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IPConfigurationProfile"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IPConfigurationProfilePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IPConfigurationProfilePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IPConfigurationPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IPConfigurationPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IpTag",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IpTag"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IpamPoolPrefixAllocation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IpamPoolPrefixAllocation"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.IpamPoolPrefixAllocationPool",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.IpamPoolPrefixAllocationPool"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NatGateway",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NatGateway"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NatGatewayPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NatGatewayPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NatGatewaySku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NatGatewaySku"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterface",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterface"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceDnsSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceDnsSettings"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceIPConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfigurationPrivateLinkConnectionProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceIPConfigurationPrivateLinkConnectionProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceIPConfigurationPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfacePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfacePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceTapConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceTapConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkInterfaceTapConfigurationPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkInterfaceTapConfigurationPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkSecurityGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkSecurityGroup"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.NetworkSecurityGroupPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.NetworkSecurityGroupPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpoint",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpoint"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpointConnection",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpointConnection"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpointConnectionProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpointConnectionProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpointIPConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpointIPConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpointIPConfigurationProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpointIPConfigurationProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateEndpointProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateEndpointProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkService",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkService"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceConnection",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceConnection"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceConnectionProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceConnectionProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceConnectionState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceConnectionState"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceIpConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceIpConfiguration"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceIpConfigurationProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceIpConfigurationProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServiceProperties",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServiceProperties"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServicePropertiesAutoApproval",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServicePropertiesAutoApproval"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PrivateLinkServicePropertiesVisibility",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PrivateLinkServicePropertiesVisibility"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PublicIPAddress",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PublicIPAddress"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PublicIPAddressDnsSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PublicIPAddressDnsSettings"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PublicIPAddressPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PublicIPAddressPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.PublicIPAddressSku",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.PublicIPAddressSku"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ResourceNavigationLink",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ResourceNavigationLink"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ResourceNavigationLinkFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ResourceNavigationLinkFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.Route",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.Route"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.RouteNextHopEcmp",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.RouteNextHopEcmp"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.RoutePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.RoutePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.RouteTable",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.RouteTable"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.RouteTablePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.RouteTablePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.SecurityRule",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.SecurityRule"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.SecurityRulePropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.SecurityRulePropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ServiceAssociationLink",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ServiceAssociationLink"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ServiceAssociationLinkPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ServiceAssociationLinkPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ServiceDelegationPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ServiceDelegationPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.ServiceEndpointPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.ServiceEndpointPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.Subnet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.Subnet"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.SubnetPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.SubnetPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetwork",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetwork"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetworkBgpCommunities",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetworkBgpCommunities"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetworkEncryption",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetworkEncryption"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetworkPeering",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetworkPeering"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetworkPeeringPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetworkPeeringPropertiesFormat"
+      ]
+    },
+    {
+      "nativeId": "network-virtualNetwork.schema.Common.VirtualNetworkPropertiesFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "network-virtualNetwork#/definitions/Common.VirtualNetworkPropertiesFormat"
+      ]
+    }
+  ]
+}

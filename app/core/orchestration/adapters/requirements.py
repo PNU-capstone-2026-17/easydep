@@ -13,25 +13,44 @@ from app.core.orchestration.checkpoint import (
     SqliteMemorySaver,
 )
 from app.requirements.agent.state import AgentState
+from app.requirements.common import telemetry
 
 
 class RequirementsAdapter:
-    def __init__(self, checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH) -> None:
+    def __init__(
+        self,
+        checkpoint_path: str | Path = DEFAULT_CHECKPOINT_PATH,
+        *,
+        feedback_gates: bool = False,
+    ) -> None:
         from app.requirements.agent.graph import build_graph
 
         saver = SqliteMemorySaver(checkpoint_path, "requirements")
-        self.graph = build_graph(feedback_gates=False, saver=saver)
+        self.graph = build_graph(feedback_gates=feedback_gates, saver=saver)
+        self.last_telemetry: dict[str, Any] = {}
 
     @staticmethod
     def _payload(result: dict[str, Any], thread_id: str) -> dict[str, Any]:
         from app.requirements.agent.graph import _result_payload
 
-        return _result_payload(result, thread_id)
+        payload = _result_payload(result, thread_id)
+        telemetry_result = result.get("_orchestration_telemetry")
+        if isinstance(telemetry_result, dict):
+            payload["telemetry"] = telemetry_result
+        return payload
 
     def _invoke(self, value: Any, config: RunnableConfig) -> dict[str, Any]:
-        result = dict(self.graph.invoke(value, config))
-        if not self.graph.get_state(config).next:
-            result.pop("__interrupt__", None)
+        thread_id = str(config.get("configurable", {}).get("thread_id") or "requirements")
+        stats: telemetry.RunStats | None = None
+        try:
+            with telemetry.run_scope(f"orchestration:{thread_id}") as stats:
+                result = dict(self.graph.invoke(value, config))
+                if not self.graph.get_state(config).next:
+                    result.pop("__interrupt__", None)
+        finally:
+            if stats is not None:
+                self.last_telemetry = stats.as_dict()
+        result["_orchestration_telemetry"] = stats.as_dict()
         return result
 
     def start(

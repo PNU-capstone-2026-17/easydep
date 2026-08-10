@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "easydep-dependency-intervention-result/v1",
+  "experimentId": "intervention.gcp.backend-service-backend-group.necessity",
+  "provider": "gcp",
+  "project": "cloud-resource-testing",
+  "executionMode": "preflight",
+  "replications": [],
+  "preflight": {
+    "projectMatched": true,
+    "computeApiEnabled": true,
+    "billingEnabled": true,
+    "estimatedCampaignCostUSD": 3.0,
+    "preexistingResources": [],
+    "opensslExecutable": "C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe"
+  }
+}

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import tempfile
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -14,7 +17,20 @@ from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.core.orchestration.adapters.design import DesignAdapter
 from app.core.orchestration.adapters.requirements import RequirementsAdapter
 from app.core.orchestration.adapters.testing import TestingAdapter
-from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
+from app.core.orchestration.adapters.vm_delivery import BindingMismatchError, VmDeliveryAdapter
+from app.core.orchestration.api_traceability import missing_explicit_fields
+from app.core.orchestration.app_cloud_contracts import (
+    CloudCapabilityContract,
+    DeploymentBindingContract,
+    application_intent_contract_from_requirements,
+    cloud_contract_from_legacy,
+    dependency_declarations,
+    derive_deployment_bindings,
+    infer_application_contract,
+    merge_application_contracts,
+    validate_application_consistency,
+    validate_binding_consistency,
+)
 from app.core.orchestration.contracts import (
     Diagnostic,
     ProviderKind,
@@ -23,10 +39,18 @@ from app.core.orchestration.contracts import (
     StepResult,
     StepStatus,
 )
+from app.core.orchestration.linux_runner_transport import (
+    configured_runner_image,
+    runner_command,
+    to_container_path,
+    to_host_path,
+)
 from app.core.orchestration.process import run_process_tree
+from app.core.orchestration.provider_target import resolve_resource_spec
 from app.core.orchestration.vm_selection import select_vm_candidates
-from app.implementation.config import ImplementationSettings
 from app.implementation.application.prototype import PrototypeClient
+from app.implementation.config import ImplementationSettings
+from app.requirements.schemas import ResourceAnswer
 
 
 def _failure(step: str, provider: ProviderKind, error: Exception) -> StepResult:
@@ -34,9 +58,57 @@ def _failure(step: str, provider: ProviderKind, error: Exception) -> StepResult:
         step=step,
         provider=provider,
         status=StepStatus.FAILED,
+        diagnostics=[Diagnostic(code=type(error).__name__, message=str(error), severity="error")],
+    )
+
+
+def _consistency_failure(
+    step: str,
+    provider: ProviderKind,
+    diagnostics: list[Any],
+    *,
+    output: dict[str, Any] | None = None,
+) -> StepResult:
+    return StepResult(
+        step=step,
+        provider=provider,
+        status=StepStatus.FAILED,
+        output=output or {},
         diagnostics=[
-            Diagnostic(code=type(error).__name__, message=str(error), severity="error")
+            Diagnostic(code=item.code, message=item.message, severity="error")
+            for item in diagnostics
         ],
+    )
+
+
+def _consistency_outcome(
+    step: str,
+    provider: ProviderKind,
+    diagnostics: list[Any],
+    *,
+    output: dict[str, Any] | None = None,
+) -> StepResult:
+    """자동 수정할 수 없는 계약 질문은 실패와 구분해 사용자에게 돌려준다."""
+    questions = [
+        item for item in diagnostics
+        if item.details.get("decision") == "needsUserInput"
+    ]
+    if len(questions) != len(diagnostics):
+        return _consistency_failure(step, provider, diagnostics, output=output)
+    serialized = [item.model_dump(mode="json") for item in questions]
+    return StepResult(
+        step=step,
+        provider=provider,
+        status=StepStatus.NEEDS_INPUT,
+        output={**(output or {}), "pending_consistency_diagnostics": serialized},
+        diagnostics=[
+            Diagnostic(code=item.code, message=item.message, severity="warning")
+            for item in questions
+        ],
+        prompt={
+            "kind": "app-cloud-consistency",
+            "questions": [item.details for item in questions],
+        },
     )
 
 
@@ -44,23 +116,63 @@ class MemberRequirementsProvider:
     step = "requirements.analysis"
 
     def __init__(self, adapter: RequirementsAdapter | None = None) -> None:
-        self.adapter = adapter or RequirementsAdapter()
+        self.adapter = adapter
+        self._mode_adapters: dict[RunMode, RequirementsAdapter] = {}
+
+    def _adapter(self, mode: RunMode) -> RequirementsAdapter:
+        """실행 모드에 맞는 정적 요구사항 그래프를 선택한다.
+
+        대화형 실행은 질문/피드백 checkpoint가 필요하지만 배치 실험은 입력 대기로
+        멈추면 안 된다. 주입된 어댑터는 테스트·대체 구현의 명시적 선택이므로 그대로 쓴다.
+        """
+        if self.adapter is not None:
+            return self.adapter
+        if mode not in self._mode_adapters:
+            self._mode_adapters[mode] = RequirementsAdapter(
+                feedback_gates=mode == RunMode.INTERACTIVE
+            )
+        return self._mode_adapters[mode]
+
+    @staticmethod
+    def _resume_answer(previous: dict[str, Any], response: Any) -> Any:
+        """리소스 되묻기의 답을 요구사항 편집과 구별되는 계약으로 감싼다."""
+        questions = list(previous.get("resource_questions") or [])
+        if not questions or isinstance(response, ResourceAnswer):
+            return response
+        if isinstance(response, dict):
+            values = response.get("answers", response)
+            if isinstance(values, dict):
+                return ResourceAnswer(
+                    answers={str(key): str(value) for key, value in values.items()}
+                )
+        if len(questions) == 1:
+            return ResourceAnswer(
+                answers={str(questions[0]["field"]): str(response)}
+            )
+        return response
 
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:
+        adapter = self._adapter(context.mode)
+        revision_suffix = (
+            f":revision-{context.requirement_revision}"
+            if context.requirement_revision
+            else ""
+        )
+        thread_id = f"orchestration:{context.run_id}:requirements{revision_suffix}"
         try:
             previous = payload.get("member_result") or {}
             if previous and context.response is not None:
-                result = self.adapter.resume(
+                result = adapter.resume(
                     app_id=context.app_id,
-                    thread_id=f"orchestration:{context.run_id}:requirements",
-                    answer=context.response,
+                    thread_id=thread_id,
+                    answer=self._resume_answer(previous, context.response),
                 )
             elif previous:
                 result = previous
             else:
-                result = self.adapter.start(
+                result = adapter.start(
                     app_id=context.app_id,
-                    thread_id=f"orchestration:{context.run_id}:requirements",
+                    thread_id=thread_id,
                     requirements=list(payload.get("requirements") or []),
                     constraints_text=str(payload.get("resource_constraints_text") or ""),
                 )
@@ -99,9 +211,22 @@ class MemberRequirementsProvider:
                 status=status,
                 output={"member_result": result},
                 prompt=prompt or None,
+                metrics={
+                    "llm_calls": int((result.get("telemetry") or {}).get("llm_calls") or 0),
+                    "llm_seconds": float((result.get("telemetry") or {}).get("llm_seconds") or 0),
+                    "llm_timing_events": (result.get("telemetry") or {}).get("llm_timing_events")
+                    or [],
+                },
             )
         except Exception as error:  # noqa: BLE001 - provider failure is data
-            return _failure(self.step, ProviderKind.MEMBER, error)
+            failed = _failure(self.step, ProviderKind.MEMBER, error)
+            telemetry_result = adapter.last_telemetry
+            failed.metrics = {
+                "llm_calls": int(telemetry_result.get("llm_calls") or 0),
+                "llm_seconds": float(telemetry_result.get("llm_seconds") or 0),
+                "llm_timing_events": telemetry_result.get("llm_timing_events") or [],
+            }
+            return failed
 
 
 class MemberDesignProvider:
@@ -113,16 +238,24 @@ class MemberDesignProvider:
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:
         try:
             previous = payload.get("member_result") or {}
+            revision_suffix = (
+                f":revision-{context.requirement_revision}"
+                if context.requirement_revision
+                else ""
+            )
+            session_id = f"orchestration:{context.run_id}:design{revision_suffix}"
             if previous and context.response is not None:
                 result = self.adapter.resume(
-                    session_id=f"orchestration:{context.run_id}:design",
+                    session_id=session_id,
                     feedback=str(context.response),
                 )
             elif previous:
                 result = previous
+            elif self.adapter.has_pending(session_id=session_id):
+                result = self.adapter.retry_pending(session_id=session_id)
             else:
                 result = self.adapter.start(
-                    session_id=f"orchestration:{context.run_id}:design",
+                    session_id=session_id,
                     requirements_result=dict(payload["requirements_result"]),
                 )
             if context.mode == RunMode.BATCH:
@@ -130,7 +263,7 @@ class MemberDesignProvider:
                     if result.get("status") == "completed":
                         break
                     result = self.adapter.resume(
-                        session_id=f"orchestration:{context.run_id}:design",
+                        session_id=session_id,
                         feedback="",
                     )
             status = (
@@ -143,6 +276,10 @@ class MemberDesignProvider:
                 provider=ProviderKind.MEMBER,
                 status=status,
                 output={"member_result": result},
+                metrics={
+                    "llm_calls": len(result.get("llm_timing_events") or []),
+                    "llm_timing_events": result.get("llm_timing_events") or [],
+                },
                 prompt={
                     "stage": result.get("stage"),
                     "prompt": result.get("feedback_prompt"),
@@ -151,14 +288,35 @@ class MemberDesignProvider:
                 else None,
             )
         except Exception as error:  # noqa: BLE001
-            return _failure(self.step, ProviderKind.MEMBER, error)
+            failed = _failure(self.step, ProviderKind.MEMBER, error)
+            events = self.adapter.timing_events(f"orchestration:{context.run_id}:design")
+            failed.metrics = {
+                "llm_calls": len(events),
+                "llm_timing_events": events,
+            }
+            return failed
 
 
 class BuiltinCloudDesignProvider:
     step = "design.cloud_enrichment"
 
-    def __init__(self, adapter: CloudDesignAdapter | None = None) -> None:
+    def __init__(
+        self,
+        adapter: CloudDesignAdapter | None = None,
+        revise_api: Callable[..., dict[str, Any]] | None = None,
+        render_api: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         self.adapter = adapter or CloudDesignAdapter()
+        if revise_api is None:
+            from app.design.services.api_spec.reviser import revise_api_spec_model
+
+            revise_api = revise_api_spec_model
+        if render_api is None:
+            from app.design.services.api_spec.openapi import build_openapi_from_model
+
+            render_api = build_openapi_from_model
+        self._revise_api = revise_api
+        self._render_api = render_api
 
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
@@ -167,6 +325,57 @@ class BuiltinCloudDesignProvider:
             missing = [name for name in ("class_diagram", "api_spec") if not artifacts.get(name)]
             if missing:
                 raise ValueError("Design is missing implementation inputs: " + ", ".join(missing))
+            field_mismatches = missing_explicit_fields(
+                list(payload["requirements_result"].get("requirements") or []),
+                dict(artifacts["api_spec"]),
+            )
+            llm_calls = 0
+            repair_enabled = bool(payload.get("enable_repair_feedback", True))
+            if field_mismatches and repair_enabled:
+                details = ", ".join(
+                    f"{item.requirement_id}:{item.direction}:{item.field}"
+                    for item in field_mismatches
+                )
+                current_model = design.get("api_spec_model")
+                if not isinstance(current_model, dict) or not current_model:
+                    raise ValueError(
+                        "OpenAPI omits explicitly required JSON field(s), but no "
+                        "structured API model is available for one repair: " + details
+                    )
+                context_text = "\n\n".join(
+                    (
+                        "[Requirements]\n"
+                        + json.dumps(
+                            payload["requirements_result"].get("requirements") or [],
+                            ensure_ascii=False,
+                        ),
+                        "[Class Diagram]\n" + str(artifacts.get("class_diagram") or ""),
+                        "[Sequence Diagram]\n" + str(artifacts.get("sequence_diagram") or ""),
+                    )
+                )
+                feedback = (
+                    "The independent requirements-to-OpenAPI traceability gate found "
+                    "these missing explicit JSON fields: " + details + ". Correct the "
+                    "structured API model without changing unrelated requirements."
+                )
+                revised_model = self._revise_api(current_model, feedback, context_text, None)
+                revised_api = self._render_api(revised_model)
+                design["api_spec_model"] = revised_model
+                design["artifacts"] = {**artifacts, "api_spec": revised_api}
+                artifacts = design["artifacts"]
+                llm_calls = 1
+                remaining = missing_explicit_fields(
+                    list(payload["requirements_result"].get("requirements") or []),
+                    revised_api,
+                )
+                if remaining:
+                    remaining_details = ", ".join(
+                        f"{item.requirement_id}:{item.direction}:{item.field}" for item in remaining
+                    )
+                    raise ValueError(
+                        "OpenAPI still omits explicitly required JSON field(s) after "
+                        "one repair: " + remaining_details
+                    )
             cloud = self.adapter.finalize(
                 requirements_result=dict(payload["requirements_result"]),
                 design_result=design,
@@ -176,7 +385,13 @@ class BuiltinCloudDesignProvider:
                 step=self.step,
                 provider=ProviderKind.BUILTIN,
                 status=StepStatus.COMPLETED,
-                output={"cloud_design_result": cloud},
+                output={"design_result": design, "cloud_design_result": cloud},
+                metrics={
+                    "llm_calls": llm_calls,
+                    "api_traceability_repaired": bool(llm_calls),
+                    "repair_feedback_enabled": repair_enabled,
+                    "api_traceability_mismatches_observed": len(field_mismatches),
+                },
             )
         except Exception as error:  # noqa: BLE001
             return _failure(self.step, ProviderKind.BUILTIN, error)
@@ -203,9 +418,7 @@ class MemberScaffoldProvider:
                 "deployment_diagram_puml": payload.get("cloud_design_result", {}).get(
                     "deployment_diagram_puml", ""
                 ),
-                "resource_spec": payload.get("requirements_result", {}).get(
-                    "resource_spec", {}
-                ),
+                "resource_spec": payload.get("requirements_result", {}).get("resource_spec", {}),
             }
             job = self.client.prepare_job(
                 f"orchestration-{context.run_id}",
@@ -215,19 +428,63 @@ class MemberScaffoldProvider:
                 True,
             )
             job_config = json.loads(job.read_text(encoding="utf-8"))
-            job_config.setdefault("verification", {})["compile"] = False
-            job.write_text(
-                json.dumps(job_config, ensure_ascii=False, indent=2), encoding="utf-8"
+            execute_member_workflow = os.getenv(
+                "EASYDEP_APPROVE_MEMBER_IMPLEMENTATION", "0"
+            ) == "1"
+            job_config.setdefault("verification", {})["compile"] = (
+                execute_member_workflow
             )
-            completed = run_process_tree(
-                [
+            job.write_text(json.dumps(job_config, ensure_ascii=False, indent=2), encoding="utf-8")
+            runner_image = configured_runner_image()
+            worker_arguments = [str(job)]
+            if execute_member_workflow:
+                worker_arguments.append("--run-implemented-workflow")
+            if context.checkpoint_retry_attempt > 0:
+                worker_arguments.append("--retry-failed-generation")
+            worker_environment = os.environ.copy()
+            if os.name == "nt":
+                hook_root = self.settings.repository_root / "app/core/orchestration/runtime_hooks"
+                existing_pythonpath = worker_environment.get("PYTHONPATH")
+                worker_environment["PYTHONPATH"] = os.pathsep.join(
+                    part
+                    for part in (
+                        str(hook_root),
+                        str(self.settings.repository_root),
+                        existing_pythonpath,
+                    )
+                    if part
+                )
+                worker_environment["EASYDEP_DOCKER_WINDOWS_WORKSPACE"] = str(
+                    self.settings.repository_root.resolve()
+                )
+            if worker_environment.get("API_KEY") and not any(
+                worker_environment.get(name)
+                for name in ("NVIDIA_API_KEY", "NVIDIA_NIM_API_KEY", "LLM_API_KEY")
+            ):
+                worker_environment["LLM_API_KEY"] = worker_environment["API_KEY"]
+            if runner_image:
+                worker_arguments[0] = str(
+                    to_container_path(job, self.settings.repository_root)
+                )
+                command = runner_command(
+                    image=runner_image,
+                    repository_root=self.settings.repository_root,
+                    operation="worker",
+                    arguments=worker_arguments,
+                    environment=worker_environment,
+                )
+            else:
+                command = [
                     str(self.settings.python_executable),
                     "-B",
                     "-m",
                     "app.core.orchestration.scaffold_worker",
-                    str(job),
-                ],
+                    *worker_arguments,
+                ]
+            completed = run_process_tree(
+                command,
                 cwd=self.settings.repository_root,
+                env=worker_environment,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -237,8 +494,7 @@ class MemberScaffoldProvider:
             )
             if completed.returncode != 0:
                 raise RuntimeError(
-                    "Member scaffold failed: "
-                    + (completed.stderr or completed.stdout)[-4000:]
+                    "Member scaffold failed: " + (completed.stderr or completed.stdout)[-4000:]
                 )
             generated = None
             for line in reversed(completed.stdout.splitlines()):
@@ -251,16 +507,48 @@ class MemberScaffoldProvider:
                     break
             if generated is None:
                 raise RuntimeError("Member scaffold returned no structured result")
-            run_root = Path(str(generated["run_root"]))
+            generated_run_root = str(generated["run_root"])
+            if runner_image:
+                generated_run_root = to_host_path(
+                    generated_run_root, self.settings.repository_root
+                )
+            run_root = Path(generated_run_root)
+            output = {
+                "job_path": str(job),
+                "run_root": str(run_root),
+                "member_plan": generated.get("member_plan") or {},
+                "member_workflow_status": generated.get(
+                    "member_workflow_status"
+                ) or (generated.get("member_plan") or {}).get("status"),
+                "member_workflow_executed": execute_member_workflow,
+                "member_runner": (
+                    {"kind": "linux-container", "image": runner_image}
+                    if runner_image
+                    else {"kind": "host"}
+                ),
+            }
+            if not execute_member_workflow:
+                return StepResult(
+                    step=self.step,
+                    provider=ProviderKind.MEMBER,
+                    status=StepStatus.NEEDS_INPUT,
+                    output=output,
+                    artifacts={"application": str(run_root / "application")},
+                    diagnostics=[
+                        Diagnostic(
+                            code="MEMBER-APPROVAL-REQUIRED",
+                            message=(
+                                "The planned OpenHands implementation workflow requires "
+                                "explicit external-transmission approval."
+                            ),
+                        )
+                    ],
+                )
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.MEMBER,
                 status=StepStatus.COMPLETED,
-                output={
-                    "job_path": str(job),
-                    "run_root": str(run_root),
-                    "member_plan": generated.get("member_plan") or {},
-                },
+                output=output,
                 artifacts={"application": str(run_root / "application")},
             )
         except Exception as error:  # noqa: BLE001
@@ -269,11 +557,37 @@ class MemberScaffoldProvider:
 
 SCAFFOLD_SYSTEM_PROMPT = """You create the initial production sources for a minimal Java 21
 Spring Boot REST application. Use the supplied requirements, OpenAPI contract, and design.
-Return one JSON object with `files`, mapping only paths below src/main to complete Java or
-YAML source contents. Include a Spring Boot application entry point, /health, and the API
+Return one JSON object with `files`, an optional `runtimeContract`, and an optional
+`bindingContract`. `files` maps only paths
+below src/main to complete Java or YAML source contents. `runtimeContract` uses
+ApplicationRuntimeContract/v1 and may declare open `facts` with `id`, `kind`, and `attributes`;
+do not infer a database engine from a cloud volume requirement. File-backed runtime paths must
+be configurable through an environment placeholder declared as a runtime.environment fact.
+Include a Spring Boot entry point, /health, and the API
 surface required by the OpenAPI contract. Keep the scaffold compilable; later providers will
 add acceptance tests and complete business logic. Do not return build, test, Docker, or
-infrastructure files. Return JSON only and keep all text in English."""
+infrastructure files. The build uses Spring Boot 3.3 and Spring Framework 6: never annotate a
+method with `@Override` unless its exact superclass or interface signature is present and
+version-compatible. Prefer standalone `@ExceptionHandler` methods over guessing protected
+framework override signatures. When `consistencyResolution` is present, `files` is a complete
+replacement snapshot of src/main; omit obsolete sources rather than preserving the rejected
+state mechanism. Return JSON only and keep all text in English."""
+
+PRODUCTION_SOURCE_SUFFIXES = frozenset(
+    {
+        ".java",
+        ".json",
+        ".kt",
+        ".properties",
+        ".yaml",
+        ".yml",
+    }
+)
+
+
+def _completion_options() -> dict[str, int]:
+    value = os.getenv("LLM_MAX_COMPLETION_TOKENS")
+    return {"max_completion_tokens": int(value)} if value else {}
 
 
 class LlmScaffoldProvider:
@@ -296,6 +610,7 @@ class LlmScaffoldProvider:
             temperature=float(os.getenv("TEMPERATURE", "0")),
             seed=int(os.getenv("SEED", "42")),
             response_format={"type": "json_object"},
+            **_completion_options(),
             messages=[
                 {"role": "system", "content": SCAFFOLD_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -314,12 +629,10 @@ class LlmScaffoldProvider:
             path = PurePosixPath(name)
             if path.is_absolute() or ".." in path.parts:
                 raise ValueError(f"Unsafe scaffold path: {name}")
-            if tuple(path.parts[:2]) != ("src", "main") or path.suffix not in {
-                ".java",
-                ".kt",
-                ".yaml",
-                ".yml",
-            }:
+            if (
+                tuple(path.parts[:2]) != ("src", "main")
+                or path.suffix not in PRODUCTION_SOURCE_SUFFIXES
+            ):
                 raise ValueError(f"Scaffold provider may write src/main only: {name}")
             target = (application / Path(*path.parts)).resolve()
             if root not in target.parents:
@@ -332,12 +645,21 @@ class LlmScaffoldProvider:
         return sorted(written)
 
     @staticmethod
-    def _write_build(application: Path, app_id: str) -> None:
-        application.mkdir(parents=True, exist_ok=False)
+    def _write_build(
+        application: Path,
+        app_id: str,
+        *,
+        dependencies: list[tuple[str, str]] | None = None,
+    ) -> None:
         (application / "settings.gradle").write_text(
             f"rootProject.name = '{app_id.replace(chr(39), '') or 'easydep-app'}'\n",
             encoding="utf-8",
         )
+        dependency_lines = "".join(
+            f"    {configuration} '{coordinate}'\n"
+            for configuration, coordinate in sorted(set(dependencies or []))
+        )
+
         (application / "build.gradle").write_text(
             """plugins {
     id 'java'
@@ -355,7 +677,9 @@ repositories { mavenCentral() }
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+"""
+            + dependency_lines
+            + """    testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 
 tasks.named('test') { useJUnitPlatform() }
@@ -363,31 +687,287 @@ tasks.named('test') { useJUnitPlatform() }
             encoding="utf-8",
         )
 
+    @staticmethod
+    def _merge_build_dependencies(
+        application: Path,
+        app_id: str,
+        dependencies: list[tuple[str, str]] | None = None,
+    ) -> None:
+        """기존 생성기의 빌드 계약을 보존하며 새 런타임 의존성만 보탠다."""
+        build_path = application / "build.gradle"
+        if not build_path.is_file():
+            LlmScaffoldProvider._write_build(
+                application,
+                app_id,
+                dependencies=dependencies,
+            )
+            return
+
+        content = build_path.read_text(encoding="utf-8")
+        missing = [
+            (configuration, coordinate)
+            for configuration, coordinate in sorted(set(dependencies or []))
+            if coordinate not in content
+        ]
+        if not missing:
+            return
+
+        lines = content.splitlines(keepends=True)
+        start = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.match(r"^\s*dependencies\s*\{", line)
+            ),
+            None,
+        )
+        dependency_lines = [
+            f"    {configuration} '{coordinate}'\n"
+            for configuration, coordinate in missing
+        ]
+        if start is None:
+            separator = "" if not content or content.endswith(("\n", "\r")) else "\n"
+            build_path.write_text(
+                content
+                + separator
+                + "\ndependencies {\n"
+                + "".join(dependency_lines)
+                + "}\n",
+                encoding="utf-8",
+            )
+            return
+
+        depth = 0
+        end = None
+        for index in range(start, len(lines)):
+            depth += lines[index].count("{") - lines[index].count("}")
+            if depth == 0:
+                end = index
+                break
+        if end is None:
+            raise ValueError("Existing Gradle dependencies block is not balanced")
+        lines[end:end] = dependency_lines
+        build_path.write_text("".join(lines), encoding="utf-8")
+
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:
+        created_workspace = False
+        resolution_backup: Path | None = None
         try:
             run_root = Path(".easydep/orchestration/workspaces") / context.run_id
             application = run_root / "application"
-            if run_root.exists():
+            retry_root = str(payload.get("run_root") or "")
+            if run_root.exists() and Path(retry_root).resolve() != run_root.resolve():
                 raise FileExistsError(f"Run workspace already exists: {run_root}")
-            self._write_build(application, context.app_id)
+            requirements_result = payload.get("requirements_result") or {}
+            created_workspace = not run_root.exists()
+            application.mkdir(parents=True, exist_ok=True)
+            pending = list(payload.get("pending_consistency_diagnostics") or [])
+            resolution = None
+            if pending and context.response is not None:
+                response = context.response
+                if isinstance(response, dict):
+                    resolution = str(response.get("resolution") or "")
+                else:
+                    resolution = str(response)
+                allowed_resolutions = {
+                    str(alternative.get("id") or "")
+                    for item in pending
+                    for alternative in (item.get("details") or {}).get(
+                        "alternatives", []
+                    )
+                }
+                if (
+                    resolution not in allowed_resolutions
+                    or resolution != "externalize-or-replicate-state"
+                ):
+                    return StepResult(
+                        step=self.step,
+                        provider=ProviderKind.LLM,
+                        status=StepStatus.NEEDS_INPUT,
+                        output={
+                            "run_root": str(run_root.resolve()),
+                            "pending_consistency_diagnostics": pending,
+                        },
+                        prompt={
+                            "kind": "app-cloud-consistency",
+                            "questions": [item.get("details") or {} for item in pending],
+                            "upstreamRevisionResponses": [
+                                {
+                                    "resolution": item,
+                                    "revisedRequirements": [
+                                        "전체 활성 요구사항을 사용자가 수정한 문장으로 입력"
+                                    ],
+                                }
+                                for item in sorted(allowed_resolutions)
+                                if item.startswith("revise-")
+                                and item.endswith("-requirement")
+                            ],
+                            "note": (
+                                "상위 요구를 바꾸려면 전체 활성 요구사항을 사용자가 명시적으로 "
+                                "수정해야 하며, 구현 단계가 요구사항 소유 계약을 임의로 완화하지 "
+                                "않습니다."
+                            ),
+                        },
+                    )
+            existing_sources = {
+                path.relative_to(application).as_posix(): path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                for path in sorted((application / "src" / "main").rglob("*"))
+                if path.is_file() and path.suffix in PRODUCTION_SOURCE_SUFFIXES
+            }
+            if resolution:
+                backup_root = Path(
+                    tempfile.mkdtemp(
+                        prefix=".easydep-consistency-repair-",
+                        dir=run_root.parent,
+                    )
+                )
+                resolution_backup = backup_root / "application"
+                shutil.copytree(application, resolution_backup)
             prompt = json.dumps(
                 {
                     "requirements": payload.get("requirements_result") or {},
                     "design": payload.get("design_result") or {},
+                    "existingSources": existing_sources,
+                    "consistencyResolution": (
+                        {
+                            "choice": resolution,
+                            "instruction": (
+                                "Remove the node-filesystem state dependency. Use an "
+                                "external or explicitly replicated state mechanism that "
+                                "can support the requested multi-zone deployment. Preserve "
+                                "unrelated API behavior."
+                            ),
+                            "diagnostics": pending,
+                        }
+                        if resolution
+                        else None
+                    ),
                 },
                 ensure_ascii=False,
             )
             response = json.loads(self._invoke(prompt))
+            if resolution:
+                production_root = application / "src" / "main"
+                if production_root.is_dir():
+                    shutil.rmtree(production_root)
             written = self._apply(application, response.get("files"))
+            declared_contract = response.get("runtimeContract")
+            requirement_intent = application_intent_contract_from_requirements(
+                requirements_result
+            )
+            contract = infer_application_contract(
+                application,
+                merge_application_contracts(
+                    requirement_intent, declared_contract
+                ).model_dump(mode="json", by_alias=True),
+            )
+            self._write_build(
+                application,
+                context.app_id,
+                dependencies=dependency_declarations(contract),
+            )
+            validator_enabled = bool(payload.get("enable_consistency_validator", True))
+            diagnostics = (
+                validate_application_consistency(application, contract) if validator_enabled else []
+            )
+            if diagnostics:
+                if resolution_backup is not None:
+                    shutil.rmtree(application)
+                    shutil.copytree(resolution_backup, application)
+                    shutil.rmtree(resolution_backup.parent)
+                    resolution_backup = None
+                return _consistency_failure(
+                    self.step,
+                    ProviderKind.LLM,
+                    diagnostics,
+                    output={
+                        "run_root": str(run_root.resolve()),
+                        "application_runtime_contract": contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                    },
+                )
+            cloud_contract = cloud_contract_from_legacy(requirements_result)
+            cloud_contract, binding_contract = derive_deployment_bindings(
+                contract,
+                cloud_contract,
+                response.get("bindingContract"),
+            )
+            binding_diagnostics = (
+                validate_binding_consistency(contract, cloud_contract, binding_contract)
+                if validator_enabled
+                else []
+            )
+            if binding_diagnostics:
+                outcome = _consistency_outcome(
+                    self.step,
+                    ProviderKind.LLM,
+                    binding_diagnostics,
+                    output={
+                        "run_root": str(run_root.resolve()),
+                        "application_runtime_contract": contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                        "cloud_capability_contract": cloud_contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                        "deployment_binding_contract": binding_contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                    },
+                )
+                if resolution_backup is not None:
+                    shutil.rmtree(application)
+                    shutil.copytree(resolution_backup, application)
+                    shutil.rmtree(resolution_backup.parent)
+                    resolution_backup = None
+                if context.mode == RunMode.BATCH:
+                    outcome.status = StepStatus.FAILED
+                    outcome.diagnostics.append(
+                        Diagnostic(
+                            code="BATCH_INPUT_REQUIRED",
+                            message=(
+                                "Application-cloud consistency requires a user decision "
+                                "that is absent from the batch case."
+                            ),
+                        )
+                    )
+                return outcome
+            if resolution_backup is not None:
+                shutil.rmtree(resolution_backup.parent)
+                resolution_backup = None
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.LLM,
                 status=StepStatus.COMPLETED,
-                output={"run_root": str(run_root.resolve()), "scaffold_files": written},
+                output={
+                    "run_root": str(run_root.resolve()),
+                    "scaffold_files": written,
+                    "application_runtime_contract": contract.model_dump(mode="json", by_alias=True),
+                    "cloud_capability_contract": cloud_contract.model_dump(
+                        mode="json", by_alias=True
+                    ),
+                    "deployment_binding_contract": binding_contract.model_dump(
+                        mode="json", by_alias=True
+                    ),
+                },
                 artifacts={"application": str(application.resolve())},
-                metrics={"llm_calls": 1},
+                metrics={
+                    "llm_calls": 1,
+                    "consistency_validator_enabled": validator_enabled,
+                    "consistency_resolution": resolution,
+                },
             )
         except Exception as error:  # noqa: BLE001
+            if resolution_backup is not None and resolution_backup.is_dir():
+                if application.is_dir():
+                    shutil.rmtree(application)
+                shutil.copytree(resolution_backup, application)
+                shutil.rmtree(resolution_backup.parent)
+            if created_workspace and run_root.is_dir():
+                shutil.rmtree(run_root)
             return _failure(self.step, ProviderKind.LLM, error)
 
 
@@ -396,7 +976,11 @@ Use the supplied requirements, OpenAPI contract, design, and existing production
 Return one JSON object with `files`, mapping repository-relative production source paths to
 complete file contents. Never edit tests, build scripts, Docker files, or infrastructure.
 Do not return null/default stubs or UnsupportedOperationException. Implement concrete normal
-paths and preserve public signatures. Return JSON only and keep all text in English."""
+paths and preserve public signatures. The build uses Spring Boot 3.3 and Spring Framework 6:
+never add `@Override` unless the exact inherited signature is known from the existing source
+contract. If the supplied production sources already implement every required behavior, return
+an explicit empty `files` object; the immutable tests and build will verify that no-op decision.
+Return JSON only and keep all text in English."""
 
 ACCEPTANCE_TEST_SYSTEM_PROMPT = """You write immutable acceptance-oriented tests for a
 generated Java Spring Boot application. Use the requirements, OpenAPI contract, design, and
@@ -404,7 +988,13 @@ existing production source signatures. Return one JSON object with `files`, mapp
 repository-relative paths below src/test to complete JUnit 5 test contents. Cover /health and
 at least one concrete normal business path with meaningful expected values. Do not modify
 production code, build scripts, or infrastructure. Do not weaken assertions. Return JSON only
-and keep all text in English."""
+and keep all text in English. The generated build uses Spring Boot 3.3. For random-port tests,
+import `LocalServerPort` only from `org.springframework.boot.test.web.server`; the legacy
+`org.springframework.boot.web.server` package is not available."""
+
+TEST_RESOURCE_SUFFIXES = frozenset(
+    {".csv", ".json", ".properties", ".sql", ".txt", ".yaml", ".yml"}
+)
 
 
 class LlmAcceptanceTestsProvider:
@@ -425,6 +1015,7 @@ class LlmAcceptanceTestsProvider:
             temperature=float(os.getenv("TEMPERATURE", "0")),
             seed=int(os.getenv("SEED", "42")),
             response_format={"type": "json_object"},
+            **_completion_options(),
             messages=[
                 {"role": "system", "content": ACCEPTANCE_TEST_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -441,7 +1032,15 @@ class LlmAcceptanceTestsProvider:
         for raw_name, raw_content in files.items():
             name = str(raw_name).replace("\\", "/")
             path = PurePosixPath(name)
-            if path.is_absolute() or ".." in path.parts or path.suffix not in {".java", ".kt"}:
+            test_source = tuple(path.parts[:3]) in {
+                ("src", "test", "java"),
+                ("src", "test", "kotlin"),
+            } and path.suffix in {".java", ".kt"}
+            test_resource = (
+                tuple(path.parts[:3]) == ("src", "test", "resources")
+                and path.suffix in TEST_RESOURCE_SUFFIXES
+            )
+            if path.is_absolute() or ".." in path.parts or not (test_source or test_resource):
                 raise ValueError(f"Unsafe test source path: {name}")
             if tuple(path.parts[:2]) != ("src", "test"):
                 raise ValueError(f"Acceptance provider may write tests only: {name}")
@@ -455,6 +1054,17 @@ class LlmAcceptanceTestsProvider:
 
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
+            if payload.get("member_workflow_status") == "COMPLETE":
+                return StepResult(
+                    step=self.step,
+                    provider=ProviderKind.LLM,
+                    status=StepStatus.COMPLETED,
+                    output={
+                        "acceptance_tests": [],
+                        "member_output_preserved": True,
+                    },
+                    metrics={"llm_calls": 0, "member_workflow_complete": True},
+                )
             application = Path(payload["run_root"]) / "application"
             prompt = json.dumps(
                 {
@@ -495,6 +1105,7 @@ class LlmLogicProvider:
             temperature=float(os.getenv("TEMPERATURE", "0")),
             seed=int(os.getenv("SEED", "42")),
             response_format={"type": "json_object"},
+            **_completion_options(),
             messages=[
                 {"role": "system", "content": LOGIC_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
@@ -507,7 +1118,7 @@ class LlmLogicProvider:
         sources: dict[str, str] = {}
         size = 0
         for path in sorted((application / "src" / "main").rglob("*")):
-            if not path.is_file() or path.suffix not in {".java", ".kt", ".yaml", ".yml"}:
+            if not path.is_file() or path.suffix not in PRODUCTION_SOURCE_SUFFIXES:
                 continue
             content = path.read_text(encoding="utf-8", errors="replace")
             size += len(content)
@@ -520,19 +1131,18 @@ class LlmLogicProvider:
 
     @staticmethod
     def _apply(application: Path, files: Any) -> list[str]:
-        if not isinstance(files, dict) or not files:
-            raise ValueError("Logic completion returned no files")
+        if not isinstance(files, dict):
+            raise TypeError("Logic completion must return a files object")
         written: list[str] = []
         root = application.resolve()
         for raw_name, raw_content in files.items():
             name = str(raw_name).replace("\\", "/")
             path = PurePosixPath(name)
-            if path.is_absolute() or ".." in path.parts or path.suffix not in {
-                ".java",
-                ".kt",
-                ".yaml",
-                ".yml",
-            }:
+            if (
+                path.is_absolute()
+                or ".." in path.parts
+                or path.suffix not in PRODUCTION_SOURCE_SUFFIXES
+            ):
                 raise ValueError(f"Unsafe production source path: {name}")
             if tuple(path.parts[:2]) != ("src", "main"):
                 raise ValueError(f"LLM may edit production sources only: {name}")
@@ -546,13 +1156,56 @@ class LlmLogicProvider:
 
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
+            if payload.get("member_workflow_status") == "COMPLETE":
+                application = Path(payload["run_root"]) / "application"
+                contract = infer_application_contract(
+                    application,
+                    payload.get("application_runtime_contract"),
+                )
+                cloud_contract = CloudCapabilityContract.model_validate(
+                    payload.get("cloud_capability_contract") or {}
+                )
+                binding_contract = DeploymentBindingContract.model_validate(
+                    payload.get("deployment_binding_contract") or {}
+                )
+                cloud_contract, binding_contract = derive_deployment_bindings(
+                    contract,
+                    cloud_contract,
+                    binding_contract.model_dump(mode="json", by_alias=True),
+                )
+                return StepResult(
+                    step=self.step,
+                    provider=ProviderKind.LLM,
+                    status=StepStatus.COMPLETED,
+                    output={
+                        "files": [],
+                        "member_output_preserved": True,
+                        "application_runtime_contract": contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                        "cloud_capability_contract": cloud_contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                        "deployment_binding_contract": binding_contract.model_dump(
+                            mode="json", by_alias=True
+                        ),
+                    },
+                    metrics={"llm_calls": 0, "member_workflow_complete": True},
+                )
             application = Path(payload["run_root"]) / "application"
             sources = self._sources(application)
             prompt = json.dumps(
                 {
+                    "instruction": (
+                        "Resolve the supplied repairFeedback in production files before "
+                        "finishing. Do not edit immutable acceptance tests."
+                        if payload.get("repair_feedback")
+                        else "Implement the requested application logic."
+                    ),
                     "requirements": payload.get("requirements_result") or {},
                     "design": payload.get("design_result") or {},
                     "sources": sources,
+                    "repairFeedback": payload.get("repair_feedback") or [],
                     "immutableAcceptanceTests": {
                         path.relative_to(application).as_posix(): path.read_text(
                             encoding="utf-8", errors="replace"
@@ -564,13 +1217,62 @@ class LlmLogicProvider:
                 ensure_ascii=False,
             )
             response = json.loads(self._invoke(prompt))
-            written = self._apply(application, response.get("files"))
+            if "files" not in response:
+                raise ValueError("Logic completion omitted the files object")
+            written = self._apply(application, response["files"])
+            contract = infer_application_contract(
+                application,
+                payload.get("application_runtime_contract"),
+            )
+            LlmScaffoldProvider._merge_build_dependencies(
+                application,
+                context.app_id,
+                dependencies=dependency_declarations(contract),
+            )
+            validator_enabled = bool(payload.get("enable_consistency_validator", True))
+            diagnostics = (
+                validate_application_consistency(application, contract) if validator_enabled else []
+            )
+            if diagnostics:
+                return _consistency_failure(self.step, ProviderKind.LLM, diagnostics)
+            cloud_contract = CloudCapabilityContract.model_validate(
+                payload.get("cloud_capability_contract") or {}
+            )
+            binding_contract = DeploymentBindingContract.model_validate(
+                payload.get("deployment_binding_contract") or {}
+            )
+            cloud_contract, binding_contract = derive_deployment_bindings(
+                contract,
+                cloud_contract,
+                binding_contract.model_dump(mode="json", by_alias=True),
+            )
+            binding_diagnostics = (
+                validate_binding_consistency(contract, cloud_contract, binding_contract)
+                if validator_enabled
+                else []
+            )
+            if binding_diagnostics:
+                return _consistency_failure(self.step, ProviderKind.LLM, binding_diagnostics)
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.LLM,
                 status=StepStatus.COMPLETED,
-                output={"files": written, "run_root": payload["run_root"]},
-                metrics={"llm_calls": 1},
+                output={
+                    "files": written,
+                    "run_root": payload["run_root"],
+                    "noChanges": not written,
+                    "application_runtime_contract": contract.model_dump(mode="json", by_alias=True),
+                    "cloud_capability_contract": cloud_contract.model_dump(
+                        mode="json", by_alias=True
+                    ),
+                    "deployment_binding_contract": binding_contract.model_dump(
+                        mode="json", by_alias=True
+                    ),
+                },
+                metrics={
+                    "llm_calls": 1,
+                    "consistency_validator_enabled": validator_enabled,
+                },
             )
         except Exception as error:  # noqa: BLE001
             return _failure(self.step, ProviderKind.LLM, error)
@@ -582,8 +1284,12 @@ class BuiltinVmSelectionProvider:
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
             requirements = payload["requirements_result"]
-            selection = select_vm_candidates(
+            resource_spec = resolve_resource_spec(
                 requirements.get("resource_spec") or {},
+                str(payload.get("resource_constraints_text") or ""),
+            )
+            selection = select_vm_candidates(
+                resource_spec,
                 requirements.get("deployment_needs") or {},
             )
             return StepResult(
@@ -608,16 +1314,50 @@ class LlmVmDeliveryProvider:
                 requirements_result=payload["requirements_result"],
                 cloud_design_result=payload["cloud_design_result"],
                 implementation_result={"run_root": payload["run_root"]},
+                application_runtime_contract=payload.get("application_runtime_contract"),
+                cloud_capability_contract=payload.get("cloud_capability_contract"),
+                deployment_binding_contract=payload.get("deployment_binding_contract"),
+                enable_repair_feedback=bool(payload.get("enable_repair_feedback", True)),
+                enable_consistency_validator=bool(
+                    payload.get("enable_consistency_validator", True)
+                ),
+                resource_constraints_text=str(payload.get("resource_constraints_text") or ""),
             )
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.LLM,
                 status=StepStatus.COMPLETED,
                 output={"vm_delivery": delivery},
-                metrics={"llm_calls": 1},
+                metrics={
+                    "llm_calls": int(delivery.get("llmCalls") or 1),
+                    "timing_events": delivery.get("timingEvents") or [],
+                    "consistency_validator_enabled": bool(
+                        payload.get("enable_consistency_validator", True)
+                    ),
+                },
             )
         except Exception as error:  # noqa: BLE001
-            return _failure(self.step, ProviderKind.LLM, error)
+            failed = (
+                StepResult(
+                    step=self.step,
+                    provider=ProviderKind.LLM,
+                    status=StepStatus.FAILED,
+                    diagnostics=[Diagnostic(code=error.code, message=str(error), severity="error")],
+                )
+                if isinstance(error, BindingMismatchError)
+                else _failure(self.step, ProviderKind.LLM, error)
+            )
+            failed.metrics = {
+                "llm_calls": sum(
+                    event.get("operation") in {"iac.generate", "iac.repair"}
+                    for event in self.adapter.last_timing_events
+                ),
+                "timing_events": self.adapter.last_timing_events,
+                "consistency_validator_enabled": bool(
+                    payload.get("enable_consistency_validator", True)
+                ),
+            }
+            return failed
 
 
 class BuiltinTestingProvider:
@@ -629,14 +1369,21 @@ class BuiltinTestingProvider:
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
             result = self.adapter.run(
-                implementation_result={"run_root": payload["run_root"]},
+                implementation_result=payload,
                 case_id=str(payload.get("case_id") or "adhoc"),
             )
             status = StepStatus.COMPLETED if result.get("passed") else StepStatus.FAILED
             diagnostics = []
             if status == StepStatus.FAILED:
-                diagnostics.append(
-                    Diagnostic(code="APPLICATION_TESTS_FAILED", message="Generated application tests failed.")
+                diagnostics.extend(
+                    Diagnostic.model_validate(item)
+                    for item in result.get("diagnostics")
+                    or [
+                        {
+                            "code": "APPLICATION_TESTS_FAILED",
+                            "message": "Generated application tests failed.",
+                        }
+                    ]
                 )
             return StepResult(
                 step=self.step,

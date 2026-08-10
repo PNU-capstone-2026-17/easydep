@@ -72,7 +72,7 @@ def validate_claim(claim: dict) -> None:
     if behavior is not None and behavior not in REALIZATION_BEHAVIORS:
         raise ValueError(f"invalid realizationBehavior: {behavior!r}")
     if not isinstance(claim.get("condition"), dict):
-        raise ValueError("condition must be a structured object")
+        raise TypeError("condition must be a structured object")
     condition = claim["condition"]
     if condition.get("kind") not in CONDITION_KINDS:
         raise ValueError(f"unregistered condition kind: {condition.get('kind')!r}")

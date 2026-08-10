@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "easydep-app-cloud-ablation-cases/v1",
+  "scope": "Java 21 Spring Boot application on Docker-on-Linux-VM",
+  "note": "업무 도메인이 아니라 빌드, 런타임 통합, 포트, 저장 경로의 교차 계층 불변식만 바꾸는 개발용 고정입력 사례다.",
+  "evidence": {
+    "gradleDependencies": "https://docs.gradle.org/current/userguide/declaring_dependencies.html",
+    "springDataJpa": "https://docs.spring.io/spring-data/jpa/reference/index.html",
+    "hibernateCommunityDialects": "https://docs.hibernate.org/orm/6.6/dialect/",
+    "springExternalConfiguration": "https://docs.spring.io/spring-boot/3.4/reference/features/external-config.html",
+    "dockerfileExpose": "https://docs.docker.com/reference/dockerfile"
+  },
+  "cases": [
+    {
+      "id": "build-dependency-mismatch",
+      "group": "build-runtime-dependency",
+      "inputKind": "applicationFiles",
+      "expectedDiagnostic": "APP-DEP-001",
+      "expectedRepairOwner": "implementation.logic",
+      "files": {
+        "src/main/java/example/Entity.java": "package example; import jakarta.persistence.Entity; @Entity class RecordEntity {}",
+        "build.gradle": "plugins { id 'java' }\ndependencies {}\n"
+      }
+    },
+    {
+      "id": "build-dependency-control",
+      "group": "build-runtime-dependency",
+      "inputKind": "applicationFiles",
+      "expectedDiagnostic": null,
+      "files": {
+        "src/main/java/example/Entity.java": "package example; import jakarta.persistence.Entity; @Entity class RecordEntity {}",
+        "build.gradle": "plugins { id 'java' }\ndependencies { implementation 'org.springframework.boot:spring-boot-starter-data-jpa' }\n"
+      }
+    },
+    {
+      "id": "runtime-integration-mismatch",
+      "group": "runtime-integration",
+      "inputKind": "applicationFiles",
+      "expectedDiagnostic": "APP-DB-003",
+      "expectedRepairOwner": "implementation.logic",
+      "files": {
+        "src/main/resources/application.properties": "spring.datasource.url=jdbc:sqlite:/srv/state/app.db\nspring.jpa.database-platform=org.hibernate.dialect.SQLiteDialect\n",
+        "build.gradle": "dependencies { implementation 'org.xerial:sqlite-jdbc:3.46.1.0'; implementation 'org.hibernate.orm:hibernate-community-dialects' }\n"
+      }
+    },
+    {
+      "id": "runtime-integration-control",
+      "group": "runtime-integration",
+      "inputKind": "applicationFiles",
+      "expectedDiagnostic": null,
+      "files": {
+        "src/main/resources/application.properties": "spring.datasource.url=jdbc:sqlite:/srv/state/app.db\nspring.jpa.database-platform=org.hibernate.community.dialect.SQLiteDialect\n",
+        "build.gradle": "dependencies { implementation 'org.xerial:sqlite-jdbc:3.46.1.0'; implementation 'org.hibernate.orm:hibernate-community-dialects' }\n"
+      }
+    },
+    {
+      "id": "port-binding-mismatch",
+      "group": "port-binding",
+      "inputKind": "contractBinding",
+      "bindingKind": "network",
+      "applicationKind": "runtime.port",
+      "cloudKind": "cloud.network.backend",
+      "attribute": "port",
+      "applicationValue": 8080,
+      "cloudValue": 9090,
+      "expectedDiagnostic": "BIND-PORT-001",
+      "expectedRepairOwner": "implementation.vm_delivery"
+    },
+    {
+      "id": "port-binding-control",
+      "group": "port-binding",
+      "inputKind": "contractBinding",
+      "bindingKind": "network",
+      "applicationKind": "runtime.port",
+      "cloudKind": "cloud.network.backend",
+      "attribute": "port",
+      "applicationValue": 8080,
+      "cloudValue": 8080,
+      "expectedDiagnostic": null
+    },
+    {
+      "id": "storage-binding-mismatch",
+      "group": "storage-binding",
+      "inputKind": "contractBinding",
+      "bindingKind": "storage",
+      "applicationKind": "runtime.storage",
+      "cloudKind": "cloud.storage.mount",
+      "attribute": "path",
+      "applicationValue": "/srv/state",
+      "cloudValue": "/mnt/data",
+      "expectedDiagnostic": "BIND-STORAGE-001",
+      "expectedRepairOwner": "implementation.vm_delivery"
+    },
+    {
+      "id": "storage-binding-control",
+      "group": "storage-binding",
+      "inputKind": "contractBinding",
+      "bindingKind": "storage",
+      "applicationKind": "runtime.storage",
+      "cloudKind": "cloud.storage.mount",
+      "attribute": "path",
+      "applicationValue": "/srv/state",
+      "cloudValue": "/srv/state",
+      "expectedDiagnostic": null
+    }
+  ]
+}

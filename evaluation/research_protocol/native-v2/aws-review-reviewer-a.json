@@ -1,0 +1,1530 @@
+{
+  "schemaVersion": "easydep-native-review/v2",
+  "provider": "aws",
+  "inventorySha256": "887f6ae983b440887fe21630013b023f29653f9d63850afec718eaa54d98f24a",
+  "reviewScopeNativeIds": [
+    "ec2.operation.AssociateRouteTable",
+    "ec2.operation.CancelExportTask",
+    "ec2.operation.CancelReservedInstancesListing",
+    "ec2.operation.CreateLocalGatewayRoute",
+    "ec2.operation.CreateSecurityGroup",
+    "ec2.operation.CreateSubnet",
+    "ec2.operation.CreateTransitGatewayPolicyTable",
+    "ec2.operation.CreateTransitGatewayRouteTableAnnouncement",
+    "ec2.operation.CreateVolume",
+    "ec2.operation.CreateVpc",
+    "ec2.operation.CreateVpcEndpoint",
+    "ec2.operation.DeleteTags",
+    "ec2.operation.DeleteVpnGateway",
+    "ec2.operation.DescribeAwsNetworkPerformanceMetricSubscriptions",
+    "ec2.operation.DescribeInstanceTypes",
+    "ec2.operation.DescribeReservedInstancesListings",
+    "ec2.operation.DisableIpamOrganizationAdminAccount",
+    "ec2.operation.DisableTransitGatewayRouteTablePropagation",
+    "ec2.operation.GetSpotPlacementScores",
+    "ec2.operation.ImportImage",
+    "ec2.operation.ModifyIdFormat",
+    "ec2.operation.ModifyVpnTunnelOptions",
+    "ec2.operation.RestoreSnapshotTier",
+    "ec2.operation.RunInstances",
+    "ec2.operation.SearchTransitGatewayMulticastGroups",
+    "ec2.shape.AmdSevSnpSpecification",
+    "ec2.shape.AvailabilityZoneName",
+    "ec2.shape.BlockDeviceMappingRequestList",
+    "ec2.shape.Boolean",
+    "ec2.shape.CapacityReservationId",
+    "ec2.shape.CapacityReservationPreference",
+    "ec2.shape.CapacityReservationSpecification",
+    "ec2.shape.CapacityReservationTarget",
+    "ec2.shape.CoipPoolId",
+    "ec2.shape.CpuOptionsRequest",
+    "ec2.shape.CreateSecurityGroupRequest",
+    "ec2.shape.CreateSecurityGroupResult",
+    "ec2.shape.CreateSubnetRequest",
+    "ec2.shape.CreateSubnetResult",
+    "ec2.shape.CreateVolumeRequest",
+    "ec2.shape.CreateVpcRequest",
+    "ec2.shape.CreateVpcResult",
+    "ec2.shape.CreditSpecificationRequest",
+    "ec2.shape.DateTime",
+    "ec2.shape.ElasticGpuSpecifications",
+    "ec2.shape.ElasticInferenceAccelerators",
+    "ec2.shape.EnclaveOptionsRequest",
+    "ec2.shape.GroupIdentifierList",
+    "ec2.shape.HibernationOptionsRequest",
+    "ec2.shape.HostnameType",
+    "ec2.shape.HttpTokensState",
+    "ec2.shape.IamInstanceProfileSpecification",
+    "ec2.shape.ImageId",
+    "ec2.shape.InstanceAutoRecoveryState",
+    "ec2.shape.InstanceInterruptionBehavior",
+    "ec2.shape.InstanceIpv6AddressList",
+    "ec2.shape.InstanceList",
+    "ec2.shape.InstanceMaintenanceOptionsRequest",
+    "ec2.shape.InstanceMarketOptionsRequest",
+    "ec2.shape.InstanceMetadataEndpointState",
+    "ec2.shape.InstanceMetadataOptionsRequest",
+    "ec2.shape.InstanceMetadataProtocolState",
+    "ec2.shape.InstanceMetadataTagsState",
+    "ec2.shape.InstanceNetworkInterfaceSpecificationList",
+    "ec2.shape.InstanceType",
+    "ec2.shape.Integer",
+    "ec2.shape.IpamPoolId",
+    "ec2.shape.Ipv6PoolEc2Id",
+    "ec2.shape.KernelId",
+    "ec2.shape.KeyPairName",
+    "ec2.shape.KmsKeyId",
+    "ec2.shape.LaunchTemplateId",
+    "ec2.shape.LaunchTemplateSpecification",
+    "ec2.shape.LicenseSpecificationListRequest",
+    "ec2.shape.MarketType",
+    "ec2.shape.NetmaskLength",
+    "ec2.shape.Placement",
+    "ec2.shape.PlacementGroupId",
+    "ec2.shape.PlacementGroupName",
+    "ec2.shape.PrivateDnsNameOptionsOnLaunch",
+    "ec2.shape.PrivateDnsNameOptionsRequest",
+    "ec2.shape.RamdiskId",
+    "ec2.shape.Reservation",
+    "ec2.shape.RunInstancesMonitoringEnabled",
+    "ec2.shape.RunInstancesRequest",
+    "ec2.shape.RunInstancesUserData",
+    "ec2.shape.SSEType",
+    "ec2.shape.SecurityGroupIdStringList",
+    "ec2.shape.SecurityGroupStringList",
+    "ec2.shape.ShutdownBehavior",
+    "ec2.shape.SnapshotId",
+    "ec2.shape.SpotInstanceType",
+    "ec2.shape.SpotMarketOptions",
+    "ec2.shape.String",
+    "ec2.shape.Subnet",
+    "ec2.shape.SubnetId",
+    "ec2.shape.SubnetIpv6CidrBlockAssociationSet",
+    "ec2.shape.SubnetState",
+    "ec2.shape.TagList",
+    "ec2.shape.TagSpecificationList",
+    "ec2.shape.Tenancy",
+    "ec2.shape.Volume",
+    "ec2.shape.VolumeAttachmentList",
+    "ec2.shape.VolumeState",
+    "ec2.shape.VolumeType",
+    "ec2.shape.Vpc",
+    "ec2.shape.VpcCidrBlockAssociationSet",
+    "ec2.shape.VpcId",
+    "ec2.shape.VpcIpv6CidrBlockAssociationSet",
+    "ec2.shape.VpcState",
+    "elbv2.operation.CreateLoadBalancer",
+    "elbv2.operation.CreateTargetGroup",
+    "elbv2.operation.DeleteRule",
+    "elbv2.operation.DeleteSharedTrustStoreAssociation",
+    "elbv2.operation.DeleteTrustStore",
+    "elbv2.operation.DeregisterTargets",
+    "elbv2.operation.DescribeAccountLimits",
+    "elbv2.operation.DescribeTrustStoreAssociations",
+    "elbv2.operation.DescribeTrustStoreRevocations",
+    "elbv2.operation.GetTrustStoreCaCertificatesBundle",
+    "elbv2.operation.ModifyTargetGroup",
+    "elbv2.shape.CreateLoadBalancerInput",
+    "elbv2.shape.CreateLoadBalancerOutput",
+    "elbv2.shape.CreateTargetGroupInput",
+    "elbv2.shape.CreateTargetGroupOutput",
+    "elbv2.shape.CustomerOwnedIpv4Pool",
+    "elbv2.shape.GrpcCode",
+    "elbv2.shape.HealthCheckEnabled",
+    "elbv2.shape.HealthCheckIntervalSeconds",
+    "elbv2.shape.HealthCheckPort",
+    "elbv2.shape.HealthCheckThresholdCount",
+    "elbv2.shape.HealthCheckTimeoutSeconds",
+    "elbv2.shape.HttpCode",
+    "elbv2.shape.IpAddressType",
+    "elbv2.shape.LoadBalancerName",
+    "elbv2.shape.LoadBalancerSchemeEnum",
+    "elbv2.shape.LoadBalancerTypeEnum",
+    "elbv2.shape.LoadBalancers",
+    "elbv2.shape.Matcher",
+    "elbv2.shape.Path",
+    "elbv2.shape.Port",
+    "elbv2.shape.ProtocolEnum",
+    "elbv2.shape.ProtocolVersion",
+    "elbv2.shape.SecurityGroups",
+    "elbv2.shape.SubnetMappings",
+    "elbv2.shape.Subnets",
+    "elbv2.shape.TagList",
+    "elbv2.shape.TargetGroupIpAddressTypeEnum",
+    "elbv2.shape.TargetGroupName",
+    "elbv2.shape.TargetGroups",
+    "elbv2.shape.TargetTypeEnum",
+    "elbv2.shape.VpcId"
+  ],
+  "reviewer": "reviewer-a",
+  "decisions": [
+    {
+      "nativeId": "ec2.operation.AssociateRouteTable",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/AssociateRouteTable"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CancelExportTask",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CancelExportTask"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CancelReservedInstancesListing",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CancelReservedInstancesListing"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateLocalGatewayRoute",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateLocalGatewayRoute"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateSecurityGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateSecurityGroup"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateSubnet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateSubnet"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateTransitGatewayPolicyTable",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateTransitGatewayPolicyTable"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateTransitGatewayRouteTableAnnouncement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateTransitGatewayRouteTableAnnouncement"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateVolume",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateVolume"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateVpc",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateVpc"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.CreateVpcEndpoint",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/CreateVpcEndpoint"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DeleteTags",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DeleteTags"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DeleteVpnGateway",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DeleteVpnGateway"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DescribeAwsNetworkPerformanceMetricSubscriptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DescribeAwsNetworkPerformanceMetricSubscriptions"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DescribeInstanceTypes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DescribeInstanceTypes"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DescribeReservedInstancesListings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DescribeReservedInstancesListings"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DisableIpamOrganizationAdminAccount",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DisableIpamOrganizationAdminAccount"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.DisableTransitGatewayRouteTablePropagation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/DisableTransitGatewayRouteTablePropagation"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.GetSpotPlacementScores",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/GetSpotPlacementScores"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.ImportImage",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/ImportImage"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.ModifyIdFormat",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/ModifyIdFormat"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.ModifyVpnTunnelOptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/ModifyVpnTunnelOptions"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.RestoreSnapshotTier",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/RestoreSnapshotTier"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.RunInstances",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/RunInstances"
+      ]
+    },
+    {
+      "nativeId": "ec2.operation.SearchTransitGatewayMulticastGroups",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/operations/SearchTransitGatewayMulticastGroups"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.AmdSevSnpSpecification",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/AmdSevSnpSpecification"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.AvailabilityZoneName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/AvailabilityZoneName"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.BlockDeviceMappingRequestList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/BlockDeviceMappingRequestList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Boolean",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Boolean"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CapacityReservationId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CapacityReservationId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CapacityReservationPreference",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CapacityReservationPreference"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CapacityReservationSpecification",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CapacityReservationSpecification"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CapacityReservationTarget",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CapacityReservationTarget"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CoipPoolId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CoipPoolId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CpuOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CpuOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateSecurityGroupRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateSecurityGroupRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateSecurityGroupResult",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateSecurityGroupResult"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateSubnetRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateSubnetRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateSubnetResult",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateSubnetResult"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateVolumeRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateVolumeRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateVpcRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateVpcRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreateVpcResult",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreateVpcResult"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.CreditSpecificationRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/CreditSpecificationRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.DateTime",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/DateTime"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.ElasticGpuSpecifications",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/ElasticGpuSpecifications"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.ElasticInferenceAccelerators",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/ElasticInferenceAccelerators"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.EnclaveOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/EnclaveOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.GroupIdentifierList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/GroupIdentifierList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.HibernationOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/HibernationOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.HostnameType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/HostnameType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.HttpTokensState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/HttpTokensState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.IamInstanceProfileSpecification",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/IamInstanceProfileSpecification"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.ImageId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/ImageId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceAutoRecoveryState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceAutoRecoveryState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceInterruptionBehavior",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceInterruptionBehavior"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceIpv6AddressList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceIpv6AddressList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMaintenanceOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMaintenanceOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMarketOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMarketOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMetadataEndpointState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMetadataEndpointState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMetadataOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMetadataOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMetadataProtocolState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMetadataProtocolState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceMetadataTagsState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceMetadataTagsState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceNetworkInterfaceSpecificationList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceNetworkInterfaceSpecificationList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.InstanceType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/InstanceType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Integer",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Integer"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.IpamPoolId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/IpamPoolId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Ipv6PoolEc2Id",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Ipv6PoolEc2Id"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.KernelId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/KernelId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.KeyPairName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/KeyPairName"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.KmsKeyId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/KmsKeyId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.LaunchTemplateId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/LaunchTemplateId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.LaunchTemplateSpecification",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/LaunchTemplateSpecification"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.LicenseSpecificationListRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/LicenseSpecificationListRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.MarketType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/MarketType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.NetmaskLength",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/NetmaskLength"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Placement",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Placement"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.PlacementGroupId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/PlacementGroupId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.PlacementGroupName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/PlacementGroupName"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.PrivateDnsNameOptionsOnLaunch",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/PrivateDnsNameOptionsOnLaunch"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.PrivateDnsNameOptionsRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/PrivateDnsNameOptionsRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.RamdiskId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/RamdiskId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Reservation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Reservation"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.RunInstancesMonitoringEnabled",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/RunInstancesMonitoringEnabled"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.RunInstancesRequest",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/RunInstancesRequest"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.RunInstancesUserData",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/RunInstancesUserData"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SSEType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SSEType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SecurityGroupIdStringList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SecurityGroupIdStringList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SecurityGroupStringList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SecurityGroupStringList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.ShutdownBehavior",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/ShutdownBehavior"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SnapshotId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SnapshotId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SpotInstanceType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SpotInstanceType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SpotMarketOptions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SpotMarketOptions"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.String",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/String"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Subnet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Subnet"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SubnetId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SubnetId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SubnetIpv6CidrBlockAssociationSet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SubnetIpv6CidrBlockAssociationSet"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.SubnetState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/SubnetState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.TagList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/TagList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.TagSpecificationList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/TagSpecificationList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Tenancy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Tenancy"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Volume",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Volume"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VolumeAttachmentList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VolumeAttachmentList"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VolumeState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VolumeState"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VolumeType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VolumeType"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.Vpc",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/Vpc"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VpcCidrBlockAssociationSet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VpcCidrBlockAssociationSet"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VpcId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VpcId"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VpcIpv6CidrBlockAssociationSet",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VpcIpv6CidrBlockAssociationSet"
+      ]
+    },
+    {
+      "nativeId": "ec2.shape.VpcState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "ec2#/shapes/VpcState"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.CreateLoadBalancer",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/CreateLoadBalancer"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.CreateTargetGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/CreateTargetGroup"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DeleteRule",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DeleteRule"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DeleteSharedTrustStoreAssociation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DeleteSharedTrustStoreAssociation"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DeleteTrustStore",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DeleteTrustStore"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DeregisterTargets",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DeregisterTargets"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DescribeAccountLimits",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DescribeAccountLimits"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DescribeTrustStoreAssociations",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DescribeTrustStoreAssociations"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.DescribeTrustStoreRevocations",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/DescribeTrustStoreRevocations"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.GetTrustStoreCaCertificatesBundle",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/GetTrustStoreCaCertificatesBundle"
+      ]
+    },
+    {
+      "nativeId": "elbv2.operation.ModifyTargetGroup",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/operations/ModifyTargetGroup"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.CreateLoadBalancerInput",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/CreateLoadBalancerInput"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.CreateLoadBalancerOutput",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/CreateLoadBalancerOutput"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.CreateTargetGroupInput",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/CreateTargetGroupInput"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.CreateTargetGroupOutput",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/CreateTargetGroupOutput"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.CustomerOwnedIpv4Pool",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/CustomerOwnedIpv4Pool"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.GrpcCode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/GrpcCode"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HealthCheckEnabled",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HealthCheckEnabled"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HealthCheckIntervalSeconds",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HealthCheckIntervalSeconds"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HealthCheckPort",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HealthCheckPort"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HealthCheckThresholdCount",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HealthCheckThresholdCount"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HealthCheckTimeoutSeconds",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HealthCheckTimeoutSeconds"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.HttpCode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/HttpCode"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.IpAddressType",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/IpAddressType"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.LoadBalancerName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/LoadBalancerName"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.LoadBalancerSchemeEnum",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/LoadBalancerSchemeEnum"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.LoadBalancerTypeEnum",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/LoadBalancerTypeEnum"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.LoadBalancers",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/LoadBalancers"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.Matcher",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/Matcher"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.Path",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/Path"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.Port",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/Port"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.ProtocolEnum",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/ProtocolEnum"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.ProtocolVersion",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/ProtocolVersion"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.SecurityGroups",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/SecurityGroups"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.SubnetMappings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/SubnetMappings"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.Subnets",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/Subnets"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.TagList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/TagList"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.TargetGroupIpAddressTypeEnum",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/TargetGroupIpAddressTypeEnum"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.TargetGroupName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/TargetGroupName"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.TargetGroups",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/TargetGroups"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.TargetTypeEnum",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/TargetTypeEnum"
+      ]
+    },
+    {
+      "nativeId": "elbv2.shape.VpcId",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "elbv2#/shapes/VpcId"
+      ]
+    }
+  ]
+}

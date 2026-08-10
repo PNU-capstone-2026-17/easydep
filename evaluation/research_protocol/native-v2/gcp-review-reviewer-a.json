@@ -1,0 +1,1530 @@
+{
+  "schemaVersion": "easydep-native-review/v2",
+  "provider": "gcp",
+  "inventorySha256": "0657926c2f80d184776751277cea2511f70b50a7a4ba2414623e349458305410",
+  "reviewScopeNativeIds": [
+    "compute.operation.backendServices.delete",
+    "compute.operation.backendServices.getIamPolicy",
+    "compute.operation.backendServices.insert",
+    "compute.operation.backendServices.list",
+    "compute.operation.backendServices.patch",
+    "compute.operation.backendServices.setEdgeSecurityPolicy",
+    "compute.operation.disks.aggregatedList",
+    "compute.operation.disks.insert",
+    "compute.operation.disks.setIamPolicy",
+    "compute.operation.disks.startAsyncReplication",
+    "compute.operation.disks.stopGroupAsyncReplication",
+    "compute.operation.disks.updateKmsKey",
+    "compute.operation.firewalls.delete",
+    "compute.operation.firewalls.insert",
+    "compute.operation.firewalls.patch",
+    "compute.operation.firewalls.testIamPermissions",
+    "compute.operation.firewalls.update",
+    "compute.operation.healthChecks.aggregatedList",
+    "compute.operation.healthChecks.delete",
+    "compute.operation.healthChecks.insert",
+    "compute.operation.healthChecks.list",
+    "compute.operation.healthChecks.testIamPermissions",
+    "compute.operation.healthChecks.update",
+    "compute.operation.instances.addNetworkInterface",
+    "compute.operation.instances.addResourcePolicies",
+    "compute.operation.instances.get",
+    "compute.operation.instances.getGuestAttributes",
+    "compute.operation.instances.getShieldedInstanceIdentity",
+    "compute.operation.instances.insert",
+    "compute.operation.instances.reset",
+    "compute.operation.instances.setMetadata",
+    "compute.operation.instances.setTags",
+    "compute.operation.instances.simulateMaintenanceEvent",
+    "compute.operation.instances.start",
+    "compute.operation.networks.addPeering",
+    "compute.operation.networks.cancelRequestRemovePeering",
+    "compute.operation.networks.delete",
+    "compute.operation.networks.insert",
+    "compute.operation.networks.list",
+    "compute.operation.networks.switchToCustomMode",
+    "compute.operation.subnetworks.expandIpCidrRange",
+    "compute.operation.subnetworks.insert",
+    "compute.operation.subnetworks.list",
+    "compute.operation.subnetworks.patch",
+    "compute.operation.subnetworks.setPrivateIpGoogleAccess",
+    "compute.schema.AWSV4Signature",
+    "compute.schema.AcceleratorConfig",
+    "compute.schema.AccessConfig",
+    "compute.schema.AdvancedMachineFeatures",
+    "compute.schema.AliasIpRange",
+    "compute.schema.AttachedDisk",
+    "compute.schema.AttachedDiskInitializeParams",
+    "compute.schema.Backend",
+    "compute.schema.BackendBackendOrchestrationInfo",
+    "compute.schema.BackendCustomMetric",
+    "compute.schema.BackendService",
+    "compute.schema.BackendServiceCdnPolicy",
+    "compute.schema.BackendServiceCdnPolicyBypassCacheOnRequestHeader",
+    "compute.schema.BackendServiceCdnPolicyNegativeCachingPolicy",
+    "compute.schema.BackendServiceConnectionTrackingPolicy",
+    "compute.schema.BackendServiceCustomMetric",
+    "compute.schema.BackendServiceFailoverPolicy",
+    "compute.schema.BackendServiceHAPolicy",
+    "compute.schema.BackendServiceHAPolicyLeader",
+    "compute.schema.BackendServiceHAPolicyLeaderNetworkEndpoint",
+    "compute.schema.BackendServiceHttpCookie",
+    "compute.schema.BackendServiceIAP",
+    "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfig",
+    "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigCustomPolicy",
+    "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigPolicy",
+    "compute.schema.BackendServiceLogConfig",
+    "compute.schema.BackendServiceLogConfigLoggingHttpHeader",
+    "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicy",
+    "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicyZonalAffinity",
+    "compute.schema.BackendServiceOrchestrationInfo",
+    "compute.schema.BackendServiceParams",
+    "compute.schema.BackendServiceTlsSettings",
+    "compute.schema.BackendServiceTlsSettingsSubjectAltName",
+    "compute.schema.BackendServiceUsedBy",
+    "compute.schema.CacheKeyPolicy",
+    "compute.schema.CircuitBreakers",
+    "compute.schema.ConfidentialInstanceConfig",
+    "compute.schema.ConnectionDraining",
+    "compute.schema.ConsistentHashLoadBalancerSettings",
+    "compute.schema.ConsistentHashLoadBalancerSettingsHttpCookie",
+    "compute.schema.CustomerEncryptionKey",
+    "compute.schema.Disk",
+    "compute.schema.DiskAsyncReplication",
+    "compute.schema.DiskParams",
+    "compute.schema.DiskResourceStatus",
+    "compute.schema.DiskResourceStatusAsyncReplicationStatus",
+    "compute.schema.DisplayDevice",
+    "compute.schema.Duration",
+    "compute.schema.FileContentBuffer",
+    "compute.schema.Firewall",
+    "compute.schema.FirewallLogConfig",
+    "compute.schema.FirewallParams",
+    "compute.schema.GRPCHealthCheck",
+    "compute.schema.GRPCTLSHealthCheck",
+    "compute.schema.GetVersionOperationMetadata",
+    "compute.schema.GetVersionOperationMetadataSbomInfo",
+    "compute.schema.GuestOsFeature",
+    "compute.schema.HTTP2HealthCheck",
+    "compute.schema.HTTPHealthCheck",
+    "compute.schema.HTTPSHealthCheck",
+    "compute.schema.HealthCheck",
+    "compute.schema.HealthCheckLogConfig",
+    "compute.schema.InitialStateConfig",
+    "compute.schema.Instance",
+    "compute.schema.InstanceParams",
+    "compute.schema.InstancesBulkInsertOperationMetadata",
+    "compute.schema.Metadata",
+    "compute.schema.Network",
+    "compute.schema.NetworkInterface",
+    "compute.schema.NetworkParams",
+    "compute.schema.NetworkPeering",
+    "compute.schema.NetworkPeeringConnectionStatus",
+    "compute.schema.NetworkPeeringConnectionStatusConsensusState",
+    "compute.schema.NetworkPeeringConnectionStatusTrafficConfiguration",
+    "compute.schema.NetworkPerformanceConfig",
+    "compute.schema.NetworkRoutingConfig",
+    "compute.schema.Operation",
+    "compute.schema.OutlierDetection",
+    "compute.schema.ReservationAffinity",
+    "compute.schema.ResourceStatus",
+    "compute.schema.ResourceStatusEffectiveInstanceMetadata",
+    "compute.schema.ResourceStatusPhysicalHostTopology",
+    "compute.schema.ResourceStatusPhysicalHostTopologyAdditionalAttributes",
+    "compute.schema.ResourceStatusReservationConsumptionInfo",
+    "compute.schema.ResourceStatusScheduling",
+    "compute.schema.SSLHealthCheck",
+    "compute.schema.Scheduling",
+    "compute.schema.SchedulingNodeAffinity",
+    "compute.schema.SchedulingOnInstanceStopAction",
+    "compute.schema.SecuritySettings",
+    "compute.schema.ServiceAccount",
+    "compute.schema.SetCommonInstanceMetadataOperationMetadata",
+    "compute.schema.ShieldedInstanceConfig",
+    "compute.schema.ShieldedInstanceIntegrityPolicy",
+    "compute.schema.Subnetwork",
+    "compute.schema.SubnetworkLogConfig",
+    "compute.schema.SubnetworkParams",
+    "compute.schema.SubnetworkSecondaryRange",
+    "compute.schema.SubnetworkUtilizationDetails",
+    "compute.schema.SubnetworkUtilizationDetailsIPV4Utilization",
+    "compute.schema.SubnetworkUtilizationDetailsIPV6Utilization",
+    "compute.schema.Subsetting",
+    "compute.schema.TCPHealthCheck",
+    "compute.schema.Tags",
+    "compute.schema.Uint128",
+    "compute.schema.UpcomingMaintenance",
+    "compute.schema.WorkloadIdentityConfig"
+  ],
+  "reviewer": "reviewer-a",
+  "decisions": [
+    {
+      "nativeId": "compute.operation.backendServices.delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/delete"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.backendServices.getIamPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/getIamPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.backendServices.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.backendServices.list",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/list"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.backendServices.patch",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/patch"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.backendServices.setEdgeSecurityPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/backendServices/methods/setEdgeSecurityPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.aggregatedList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/aggregatedList"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.setIamPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/setIamPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.startAsyncReplication",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/startAsyncReplication"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.stopGroupAsyncReplication",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/stopGroupAsyncReplication"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.disks.updateKmsKey",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/disks/methods/updateKmsKey"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.firewalls.delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/firewalls/methods/delete"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.firewalls.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/firewalls/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.firewalls.patch",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/firewalls/methods/patch"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.firewalls.testIamPermissions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/firewalls/methods/testIamPermissions"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.firewalls.update",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/firewalls/methods/update"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.aggregatedList",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/aggregatedList"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/delete"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.list",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/list"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.testIamPermissions",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/testIamPermissions"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.healthChecks.update",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/healthChecks/methods/update"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.addNetworkInterface",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/addNetworkInterface"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.addResourcePolicies",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/addResourcePolicies"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.get",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/get"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.getGuestAttributes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/getGuestAttributes"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.getShieldedInstanceIdentity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/getShieldedInstanceIdentity"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.reset",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/reset"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.setMetadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/setMetadata"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.setTags",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/setTags"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.simulateMaintenanceEvent",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/simulateMaintenanceEvent"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.instances.start",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/instances/methods/start"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.addPeering",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/addPeering"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.cancelRequestRemovePeering",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/cancelRequestRemovePeering"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.delete",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/delete"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.list",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/list"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.networks.switchToCustomMode",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/networks/methods/switchToCustomMode"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.subnetworks.expandIpCidrRange",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/subnetworks/methods/expandIpCidrRange"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.subnetworks.insert",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/subnetworks/methods/insert"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.subnetworks.list",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/subnetworks/methods/list"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.subnetworks.patch",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/subnetworks/methods/patch"
+      ]
+    },
+    {
+      "nativeId": "compute.operation.subnetworks.setPrivateIpGoogleAccess",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/resources/subnetworks/methods/setPrivateIpGoogleAccess"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AWSV4Signature",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AWSV4Signature"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AcceleratorConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AcceleratorConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AccessConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AccessConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AdvancedMachineFeatures",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AdvancedMachineFeatures"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AliasIpRange",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AliasIpRange"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AttachedDisk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AttachedDisk"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.AttachedDiskInitializeParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/AttachedDiskInitializeParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Backend",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Backend"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendBackendOrchestrationInfo",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendBackendOrchestrationInfo"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendCustomMetric",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendCustomMetric"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendService",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendService"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceCdnPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceCdnPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceCdnPolicyBypassCacheOnRequestHeader",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceCdnPolicyBypassCacheOnRequestHeader"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceCdnPolicyNegativeCachingPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceCdnPolicyNegativeCachingPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceConnectionTrackingPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceConnectionTrackingPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceCustomMetric",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceCustomMetric"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceFailoverPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceFailoverPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceHAPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceHAPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceHAPolicyLeader",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceHAPolicyLeader"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceHAPolicyLeaderNetworkEndpoint",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceHAPolicyLeaderNetworkEndpoint"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceHttpCookie",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceHttpCookie"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceIAP",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceIAP"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceLocalityLoadBalancingPolicyConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigCustomPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceLocalityLoadBalancingPolicyConfigCustomPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceLocalityLoadBalancingPolicyConfigPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceLocalityLoadBalancingPolicyConfigPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceLogConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceLogConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceLogConfigLoggingHttpHeader",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceLogConfigLoggingHttpHeader"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceNetworkPassThroughLbTrafficPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceNetworkPassThroughLbTrafficPolicyZonalAffinity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceNetworkPassThroughLbTrafficPolicyZonalAffinity"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceOrchestrationInfo",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceOrchestrationInfo"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceTlsSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceTlsSettings"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceTlsSettingsSubjectAltName",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceTlsSettingsSubjectAltName"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.BackendServiceUsedBy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/BackendServiceUsedBy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.CacheKeyPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/CacheKeyPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.CircuitBreakers",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/CircuitBreakers"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ConfidentialInstanceConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ConfidentialInstanceConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ConnectionDraining",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ConnectionDraining"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ConsistentHashLoadBalancerSettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ConsistentHashLoadBalancerSettings"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ConsistentHashLoadBalancerSettingsHttpCookie",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ConsistentHashLoadBalancerSettingsHttpCookie"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.CustomerEncryptionKey",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/CustomerEncryptionKey"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Disk",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Disk"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.DiskAsyncReplication",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/DiskAsyncReplication"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.DiskParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/DiskParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.DiskResourceStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/DiskResourceStatus"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.DiskResourceStatusAsyncReplicationStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/DiskResourceStatusAsyncReplicationStatus"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.DisplayDevice",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/DisplayDevice"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Duration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Duration"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.FileContentBuffer",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/FileContentBuffer"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Firewall",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Firewall"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.FirewallLogConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/FirewallLogConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.FirewallParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/FirewallParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.GRPCHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/GRPCHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.GRPCTLSHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/GRPCTLSHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.GetVersionOperationMetadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/GetVersionOperationMetadata"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.GetVersionOperationMetadataSbomInfo",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/GetVersionOperationMetadataSbomInfo"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.GuestOsFeature",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/GuestOsFeature"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.HTTP2HealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/HTTP2HealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.HTTPHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/HTTPHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.HTTPSHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/HTTPSHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.HealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/HealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.HealthCheckLogConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/HealthCheckLogConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.InitialStateConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/InitialStateConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Instance",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Instance"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.InstanceParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/InstanceParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.InstancesBulkInsertOperationMetadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/InstancesBulkInsertOperationMetadata"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Metadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Metadata"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Network",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Network"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkInterface",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkInterface"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkPeering",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkPeering"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkPeeringConnectionStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkPeeringConnectionStatus"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkPeeringConnectionStatusConsensusState",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkPeeringConnectionStatusConsensusState"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkPeeringConnectionStatusTrafficConfiguration",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkPeeringConnectionStatusTrafficConfiguration"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkPerformanceConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkPerformanceConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.NetworkRoutingConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/NetworkRoutingConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Operation",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Operation"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.OutlierDetection",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/OutlierDetection"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ReservationAffinity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ReservationAffinity"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatus",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatus"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatusEffectiveInstanceMetadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatusEffectiveInstanceMetadata"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatusPhysicalHostTopology",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatusPhysicalHostTopology"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatusPhysicalHostTopologyAdditionalAttributes",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatusPhysicalHostTopologyAdditionalAttributes"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatusReservationConsumptionInfo",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatusReservationConsumptionInfo"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ResourceStatusScheduling",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ResourceStatusScheduling"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SSLHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SSLHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Scheduling",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Scheduling"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SchedulingNodeAffinity",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SchedulingNodeAffinity"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SchedulingOnInstanceStopAction",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SchedulingOnInstanceStopAction"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SecuritySettings",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SecuritySettings"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ServiceAccount",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ServiceAccount"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SetCommonInstanceMetadataOperationMetadata",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SetCommonInstanceMetadataOperationMetadata"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ShieldedInstanceConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ShieldedInstanceConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.ShieldedInstanceIntegrityPolicy",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/ShieldedInstanceIntegrityPolicy"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Subnetwork",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Subnetwork"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkLogConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkLogConfig"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkParams",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkParams"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkSecondaryRange",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkSecondaryRange"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkUtilizationDetails",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkUtilizationDetails"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkUtilizationDetailsIPV4Utilization",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkUtilizationDetailsIPV4Utilization"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.SubnetworkUtilizationDetailsIPV6Utilization",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/SubnetworkUtilizationDetailsIPV6Utilization"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Subsetting",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Subsetting"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.TCPHealthCheck",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/TCPHealthCheck"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Tags",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Tags"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.Uint128",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/Uint128"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.UpcomingMaintenance",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/UpcomingMaintenance"
+      ]
+    },
+    {
+      "nativeId": "compute.schema.WorkloadIdentityConfig",
+      "included": null,
+      "derivedTypes": [],
+      "reason": "",
+      "sourceLocators": [
+        "compute#/schemas/WorkloadIdentityConfig"
+      ]
+    }
+  ]
+}

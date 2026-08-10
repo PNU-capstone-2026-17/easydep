@@ -1,0 +1,456 @@
+{
+  "schemaVersion": "easydep-capability-projection-ablation/v1",
+  "kind": "offline-fixed-llm-output-depkb-ablation",
+  "createdAt": "2026-08-08T21:09:42.779497+00:00",
+  "gitRevision": "e8ffcf0687b8218bdb0b9951eada259f414ba575",
+  "sourceMeasurementSha256": "0571ce664238581705c724d21454d9e6814ee9871080deee2014848f56233c54",
+  "configuration": {
+    "model": "openai/gpt-oss-120b",
+    "temperature": 0.0,
+    "seed": 42,
+    "llmSamplesPerCell": 5,
+    "cloudApply": false,
+    "llmCalls": 0,
+    "fixedInputAcrossArms": true
+  },
+  "cells": [
+    {
+      "axis": "persistent-storage",
+      "condition": "treatment",
+      "sourceMeasurementCellSha256": "951f26f081dc42583bfb0722ff6146bec63ead04ce062d06b446995ed3c3b43e",
+      "fixedDeploymentNeedsSha256": "efd62fbd95b8f040ac108bd21d8974ee045b8549d2ce18de7e6cac17b81a0944",
+      "providers": [
+        {
+          "provider": "aws",
+          "fullInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "noDepkbInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "easydepFull": {
+            "provider": "aws",
+            "anchors": [
+              "vm",
+              "disk"
+            ],
+            "modeledOutcomes": [
+              "disk"
+            ],
+            "unmodeledAcceptedNeeds": [
+              "http_ingress"
+            ],
+            "realizationIds": [],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "aws",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 0
+        },
+        {
+          "provider": "azure",
+          "fullInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "noDepkbInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "easydepFull": {
+            "provider": "azure",
+            "anchors": [
+              "vm",
+              "disk"
+            ],
+            "modeledOutcomes": [
+              "disk"
+            ],
+            "unmodeledAcceptedNeeds": [
+              "http_ingress"
+            ],
+            "realizationIds": [],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "azure",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 0
+        },
+        {
+          "provider": "gcp",
+          "fullInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "noDepkbInputSha256": "3aed8b9e3ca81e48d15393a4691b7cd26ad257939b3c1f81fe69dc45f7947fd6",
+          "easydepFull": {
+            "provider": "gcp",
+            "anchors": [
+              "vm",
+              "disk"
+            ],
+            "modeledOutcomes": [
+              "disk"
+            ],
+            "unmodeledAcceptedNeeds": [
+              "http_ingress"
+            ],
+            "realizationIds": [],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "gcp",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 0
+        }
+      ]
+    },
+    {
+      "axis": "load-balanced-ingress",
+      "condition": "treatment",
+      "sourceMeasurementCellSha256": "3db287251d37d9543b02779e050201b8172b22ad38db15183ee716d59a4a62b7",
+      "fixedDeploymentNeedsSha256": "3e94a1679b1fccafad6eb4e3877f5b147cc39e5bbd0bd80b2cda7236838f723e",
+      "providers": [
+        {
+          "provider": "aws",
+          "fullInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "noDepkbInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "easydepFull": {
+            "provider": "aws",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "http-alb"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "aws",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        },
+        {
+          "provider": "azure",
+          "fullInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "noDepkbInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "easydepFull": {
+            "provider": "azure",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "http-application-gateway"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "azure",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        },
+        {
+          "provider": "gcp",
+          "fullInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "noDepkbInputSha256": "7b250e1689bd10c507b913c974c1bac5d467e5a4166bc48c04d515de58f99b76",
+          "easydepFull": {
+            "provider": "gcp",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "global-http-alb"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "gcp",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        }
+      ]
+    },
+    {
+      "axis": "https-load-balanced-ingress",
+      "condition": "treatment",
+      "sourceMeasurementCellSha256": "fb741af7c19f329353d5d790f1ca009f7a5c9142f0fb1382fdc23ab3ff26c138",
+      "fixedDeploymentNeedsSha256": "f4c85ebc11fdb3a357e458f67db6b66d61be7ce935927aaf1a8d330d7324dfa7",
+      "providers": [
+        {
+          "provider": "aws",
+          "fullInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "noDepkbInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "easydepFull": {
+            "provider": "aws",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "https-load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "https-alb"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "aws",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        },
+        {
+          "provider": "azure",
+          "fullInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "noDepkbInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "easydepFull": {
+            "provider": "azure",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "https-load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "https-application-gateway"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "azure",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        },
+        {
+          "provider": "gcp",
+          "fullInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "noDepkbInputSha256": "fc2b440aec1ead1c69cd925083cbd34e953bf1d7aee6936dec04afb192c810b3",
+          "easydepFull": {
+            "provider": "gcp",
+            "anchors": [
+              "vm",
+              "loadBalancer"
+            ],
+            "modeledOutcomes": [
+              "https-load-balanced-ingress"
+            ],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [
+              "global-https-alb"
+            ],
+            "kbUsed": [
+              "depkb"
+            ],
+            "deferred": [
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "easydepNoDepkb": {
+            "provider": "gcp",
+            "anchors": [],
+            "modeledOutcomes": [],
+            "unmodeledAcceptedNeeds": [],
+            "realizationIds": [],
+            "kbUsed": [],
+            "deferred": [
+              "dependencies",
+              "capacity",
+              "performance",
+              "price",
+              "vm_selection"
+            ]
+          },
+          "modeledOutcomeDelta": 1,
+          "realizationDelta": 1
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "axisCount": 3,
+    "providerCellCount": 9,
+    "sameInputCellCount": 9,
+    "fullModeledOutcomeCount": 9,
+    "noDepkbModeledOutcomeCount": 0,
+    "fullRealizationCount": 6,
+    "noDepkbRealizationCount": 0
+  }
+}

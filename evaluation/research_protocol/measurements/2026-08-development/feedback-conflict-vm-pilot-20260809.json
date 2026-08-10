@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "easydep-feedback-conflict-vm-pilot/v1",
+  "capacityQuestion": {
+    "inputControls": {
+      "provider": "aws",
+      "region": "ap-northeast-2",
+      "monthlyBudgetUSD": 100,
+      "capacityFloorInitiallyPresent": false
+    },
+    "initial": {
+      "status": "need_feedback",
+      "llmCalls": 7,
+      "llmSeconds": 33.963,
+      "wallSeconds": 42.666,
+      "askedField": "minVCpu"
+    },
+    "resume": {
+      "answer": {"minVCpu": "2"},
+      "resourceSpecMinVCpu": 2,
+      "llmCalls": 1,
+      "llmSeconds": 5.774,
+      "wallSeconds": 7.851,
+      "onlyLlmOperation": "structured:CloudConstraintExtraction"
+    }
+  },
+  "haLocalState": {
+    "naturalLanguageExtraction": {
+      "localStateAccepted": true,
+      "multiZone": true,
+      "llmCalls": 7,
+      "llmSeconds": 44.05,
+      "wallSeconds": 53.797
+    },
+    "generatedApplicationObservation": {
+      "detector": "file-io.external-path",
+      "accessPath": "/data",
+      "accessScope": "node-filesystem",
+      "diagnostic": "BIND-STATE-HA-001",
+      "decision": "needsUserInput",
+      "automaticRepair": false
+    },
+    "resolutionAttempt": {
+      "selectedAlternative": "externalize-or-replicate-state",
+      "result": "needs_input",
+      "reason": "The generated revision retained node-filesystem state and only described the path as shared; deterministic revalidation rejected it.",
+      "successfulResolutionMeasured": false
+    }
+  },
+  "vmSelectionAndIacBinding": {
+    "catalogRecords": 65032,
+    "catalogFiles": [
+      "app/core/cloudkb/data/tumblebug-cost.json.gz",
+      "app/core/cloudkb/data/tumblebug-perf.json.gz"
+    ],
+    "cases": [
+      {
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "recommended": "t3a.medium",
+        "monthlyComputeListPriceUsd": 34.16,
+        "performanceStatus": "warn",
+        "terraformField": "aws_instance.instance_type",
+        "bindingStatus": "passed"
+      },
+      {
+        "provider": "azure",
+        "region": "eastus",
+        "recommended": "Standard_B2als_v2",
+        "monthlyComputeListPriceUsd": 27.45,
+        "performanceStatus": "warn",
+        "terraformField": "azurerm_linux_virtual_machine.size",
+        "bindingStatus": "passed"
+      },
+      {
+        "provider": "gcp",
+        "region": "asia-northeast3",
+        "recommended": "e2-standard-2",
+        "monthlyComputeListPriceUsd": 62.76,
+        "performanceStatus": "ok",
+        "terraformField": "google_compute_instance.machine_type",
+        "bindingStatus": "passed"
+      }
+    ],
+    "azureKoreaCentral": {
+      "status": "deferred",
+      "reason": "region_not_exact_in_catalog"
+    },
+    "providerSchemaValidationMeasured": false,
+    "actualPerformanceMeasured": false,
+    "cloudApplyMeasured": false
+  }
+}

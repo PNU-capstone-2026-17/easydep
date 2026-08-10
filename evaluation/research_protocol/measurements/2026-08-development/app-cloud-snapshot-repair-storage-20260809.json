@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-08T23:49:45.279867+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-storage-binding",
+      "group": "storage-binding",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutationFiles": [
+        "infra/user_data.tpl",
+        "src/main/java/com/easydep/evaluation/LocalStateProbe.java"
+      ],
+      "inputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "outputSha256": "70c21b46338bfac3eec28a68654a01877294298120ab2f0d025739b38cf0f444",
+      "stepStatus": "failed",
+      "stepDiagnostics": [
+        {
+          "code": "ValueError",
+          "message": "Generated Terraform failed providerContract validation after one repair: required_providers source must be exactly hashicorp/azurerm: found []; provider version must be exactly 5.0.1: found []",
+          "severity": "error"
+        }
+      ],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:48:58.738134+00:00",
+            "finishedAt": "2026-08-08T23:49:28.958539+00:00",
+            "elapsedSeconds": 30.220415
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "failed",
+            "startedAt": "2026-08-08T23:49:28.958708+00:00",
+            "finishedAt": "2026-08-08T23:49:28.986577+00:00",
+            "elapsedSeconds": 0.027882
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:49:28.986932+00:00",
+            "finishedAt": "2026-08-08T23:49:45.110834+00:00",
+            "elapsedSeconds": 16.123934
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-08T23:49:45.111332+00:00",
+            "finishedAt": "2026-08-08T23:49:45.151654+00:00",
+            "elapsedSeconds": 0.040332
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 46.497142,
+      "changedFiles": {
+        "added": [],
+        "modified": [],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.355586
+      },
+      "preflightAfter": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-001",
+            "message": "Generated IaC does not expose persistent storage at the contracted application path.",
+            "locations": [
+              "user_data.tpl:containerMountPath"
+            ],
+            "details": {
+              "expected": "/srv/state",
+              "observed": [
+                "/mnt/evaluation-mismatch"
+              ],
+              "observedBoundary": "container"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "containerMountPath",
+            "value": "/mnt/evaluation-mismatch",
+            "source": "user_data.tpl:containerMountPath",
+            "confidence": "observed"
+          }
+        ],
+        "elapsedSeconds": 0.024148
+      },
+      "diagnosticResolved": false,
+      "applicationTests": null,
+      "applicationTestsPassed": false,
+      "cloudApply": false,
+      "retainedCandidate": null
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 0,
+    "diagnosticResolvedCount": 0,
+    "applicationTestsPassedCount": 0,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 47.056295
+  }
+}

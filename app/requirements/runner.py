@@ -6,7 +6,7 @@ artifacts/runs/<run-id>/에
   <system>-<variant>-<case>-<UTC>-<short-id>/
     input.json          # 입력 재현용(그대로)
     manifest.json       # run_id / config 스냅샷 / input_sha256 / 스테이지 요약
-    deployment_needs.json  resource_spec.json  resource_intake.json
+    deployment_needs.json  capability_contract.json  resource_spec.json  resource_intake.json
     traceability.json  actors.json  use_cases.json  coverage.json  relationships.json
     diagram.puml
     use_cases/uc_NN_<slug>/{use_case.json, spec.json}
@@ -80,6 +80,7 @@ def load_state(run_dir: str | Path) -> dict:
         "coverage": _j("coverage.json", {}),
         "model_review": _j("model_review.json", {}),
         "deployment_needs": _j("deployment_needs.json", {}),
+        "capability_contract": _j("capability_contract.json", {}),
         "resource_spec": _j("resource_spec.json", {}),
         "resource_intake": _j("resource_intake.json", {}),
         "traceability": _j("traceability.json", {}),
@@ -230,6 +231,7 @@ def persist_run(
     _dump(run_dir / "use_cases.json", state.get("use_cases", []))
     _dump(run_dir / "coverage.json", state.get("coverage", {}))
     _dump(run_dir / "deployment_needs.json", state.get("deployment_needs", {}))
+    _dump(run_dir / "capability_contract.json", state.get("capability_contract", {}))
     _dump(run_dir / "resource_spec.json", state.get("resource_spec", {}))
     _dump(run_dir / "resource_intake.json", state.get("resource_intake", {}))
     # 2단계 의미 검증 결과. 커버리지와 따로 남긴다 — 하나는 "빠진 게 없나"(결정론),

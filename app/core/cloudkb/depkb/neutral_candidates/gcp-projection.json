@@ -1,0 +1,229 @@
+{
+  "schemaVersion": "easydep-provider-hypotheses/v1",
+  "provider": "gcp",
+  "inventorySource": {
+    "identity": "Google Compute API Discovery Document",
+    "version": "20260722",
+    "sha256": "b71cb75cb68d790065cecb01363b0d714c6388304ae027c45108255b311a3203"
+  },
+  "scopeNote": "Schema-derived provider hypotheses only; this packet does not establish runtime necessity or observed behavior.",
+  "mappings": [
+    {
+      "conceptId": "neutral.infrastructure-aggregate",
+      "kind": "unmatched",
+      "nativeIds": [],
+      "preservedMeaning": "No lifecycle-managed Compute API collection in the inventory represents an aggregate containing arbitrary compute nodes as one infrastructure unit.",
+      "lostOrDifferentMeaning": "Projects and networks can scope resources, but the inventory does not establish the aggregate ownership and lifecycle semantics in this concept.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources", "supports": "The pinned collection inventory has no direct infrastructure-aggregate collection."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-group",
+      "kind": "composite",
+      "nativeIds": ["compute.instanceGroups", "compute.instanceGroupManagers", "compute.regionInstanceGroupManagers"],
+      "preservedMeaning": "Instance groups provide collective instance membership and can be backend targets; managed group managers add declared target size and lifecycle management.",
+      "lostOrDifferentMeaning": "Unmanaged groups lack manager-owned declared size, while zonal and regional managers are distinct collections and do not form one portable group resource.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/instanceGroups", "supports": "Instance groups are independently addressed collections."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/InstanceGroupManager/properties/targetSize", "supports": "A managed group manager declares target VM count."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Backend/properties/group", "supports": "A backend schema points to a group, but target-kind resolution remains heuristic."}
+      ],
+      "runtimeNecessityConfirmed": false,
+      "heuristicTargetRisk": "Backend.group is an untyped URL-like reference in discovery extraction; instance-group target compatibility requires documentation or experiment confirmation."
+    },
+    {
+      "conceptId": "neutral.compute",
+      "kind": "partial",
+      "nativeIds": ["compute.instances"],
+      "preservedMeaning": "Instances are lifecycle-managed VM compute resources with machine and execution-environment configuration.",
+      "lostOrDifferentMeaning": "The GCP collection is VM-specific and does not preserve the neutral concept's broader processing-resource range.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/instances", "supports": "Instances exposes insert, update, and delete lifecycle operations."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.virtual-network",
+      "kind": "partial",
+      "nativeIds": ["compute.networks"],
+      "preservedMeaning": "Networks are managed logical connectivity boundaries referenced by instance interfaces and subnetworks.",
+      "lostOrDifferentMeaning": "GCP network semantics include provider routing and subnet mode behavior beyond a generic interconnection boundary.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/networks", "supports": "Networks are independently lifecycle-managed collections."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ip-network-segment",
+      "kind": "equivalent",
+      "nativeIds": ["compute.subnetworks"],
+      "preservedMeaning": "Subnetworks are identified, lifecycle-managed IP segments associated with a broader network.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/subnetworks", "supports": "Subnetworks are independently managed collections."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Subnetwork/properties/network", "supports": "A subnetwork references its containing network."}
+      ],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ip-network-configuration",
+      "kind": "partial",
+      "nativeIds": ["compute.networks", "compute.subnetworks"],
+      "preservedMeaning": "Network and subnetwork schemas carry IP-range and address-allocation configuration.",
+      "lostOrDifferentMeaning": "GCP does not expose this as a composable configuration object applied to one existing network; configuration is distributed across collection resources and nested properties.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Subnetwork/properties/ipCidrRange", "supports": "The IP range is a property of a subnetwork rather than an independent lifecycle object."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-network-attachment",
+      "kind": "partial",
+      "nativeIds": ["compute.instances"],
+      "preservedMeaning": "An instance contains network-interface entries that connect it to networks or subnetworks and carry per-interface addressing.",
+      "lostOrDifferentMeaning": "NetworkInterface is nested instance configuration, not an independently inventoried lifecycle resource; its ownership and operations remain instance-scoped.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Instance/properties/networkInterfaces", "supports": "Compute-to-network attachment is represented by nested interface configuration on Instance."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-security-policy-group",
+      "kind": "partial",
+      "nativeIds": ["compute.firewalls"],
+      "preservedMeaning": "Firewall rules can be selected for sets of instances through target selectors and apply network traffic policy.",
+      "lostOrDifferentMeaning": "There is no security-group object containing separately managed rules; each firewall entry is itself a rule and target selectors are properties, not group membership resources.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Firewall/properties/targetTags", "supports": "A firewall rule can select instance targets through nested rule properties."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-filter-rule",
+      "kind": "partial",
+      "nativeIds": ["compute.firewalls"],
+      "preservedMeaning": "Each firewall resource declares allow or deny traffic matching direction, source or destination selectors, protocols, and ports.",
+      "lostOrDifferentMeaning": "GCP rule priority, implied rules, target selection, and network attachment are provider-specific and not captured by a generic filter rule.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/firewalls", "supports": "Firewalls is a lifecycle-managed collection of network filtering rules."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.ssh-access-material",
+      "kind": "partial",
+      "nativeIds": ["compute.instances"],
+      "preservedMeaning": "Instance metadata can carry key-value access material associated with a provisioned VM; project common-instance metadata provides a broader inherited metadata path for instances.",
+      "lostOrDifferentMeaning": "The discovery schema exposes generic metadata entries rather than an SSH-key type or convention, and the lifecycle inventory has no project or independent key-material native ID. Native documentation must establish the SSH metadata convention, precedence, and interaction with OS Login or other external identity mechanisms.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Instance/properties/metadata", "supports": "An inventoried Instance contains generic metadata through which access-related key-value material can be associated with that VM."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Project/properties/commonInstanceMetadata", "supports": "The pinned schema also exposes project-level common instance metadata, but projects are outside the current lifecycle inventory."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Metadata/properties/items", "supports": "Metadata consists of generic items; the schema alone does not identify which item keys carry SSH public keys."}
+      ],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.machine-image",
+      "kind": "partial",
+      "nativeIds": ["compute.images", "compute.machineImages"],
+      "preservedMeaning": "Both collections provide reusable machine-state inputs for creating VM instances.",
+      "lostOrDifferentMeaning": "Images and machine images preserve different scopes of state and are alternative provider-native resource kinds rather than one interchangeable image abstraction.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/images", "supports": "Images are independently managed reusable VM boot artifacts."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/machineImages", "supports": "Machine images are separately managed whole-machine capture resources."}
+      ],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.machine-capacity-profile",
+      "kind": "partial",
+      "nativeIds": ["compute.instances"],
+      "preservedMeaning": "An Instance selects its provider-defined machine capacity through the embedded machineType property.",
+      "lostOrDifferentMeaning": "The capacity profile is a reference embedded in the containing compute resource, not an independently inventoried lifecycle resource; the machine-type catalog and its concrete CPU, memory, accelerator, availability, and mutability semantics are outside this inventory mapping.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Instance/properties/machineType", "supports": "Machine capacity selection is represented by an Instance property even though machineTypes is absent from the lifecycle inventory."}],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.data-storage",
+      "kind": "partial",
+      "nativeIds": ["compute.disks", "compute.regionDisks"],
+      "preservedMeaning": "Zonal and regional persistent disks are lifecycle-managed block-storage resources attachable to compute.",
+      "lostOrDifferentMeaning": "The two collections encode distinct placement and replication scopes, and neither represents arbitrary data-storage modalities.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/disks", "supports": "Disks is a lifecycle-managed zonal storage collection."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/regionDisks", "supports": "RegionDisks is a distinct lifecycle-managed regional storage collection."}
+      ],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.compute-storage-attachment",
+      "kind": "composite",
+      "nativeIds": ["compute.instances", "compute.disks", "compute.regionDisks"],
+      "preservedMeaning": "Instance attached-disk entries connect a VM to zonal or regional disk resources.",
+      "lostOrDifferentMeaning": "The attachment is nested Instance configuration rather than an independent collection; source, mode, boot, and device behavior are attachment properties.",
+      "evidence": [{"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Instance/properties/disks", "supports": "Storage attachment is encoded as nested AttachedDisk entries on Instance."}],
+      "runtimeNecessityConfirmed": false,
+      "heuristicTargetRisk": "AttachedDisk.source is URL-like and inventory extraction may infer disk collection targets without resolving zonal versus regional runtime constraints."
+    },
+    {
+      "conceptId": "neutral.compute-contextualization",
+      "kind": "partial",
+      "nativeIds": ["compute.instances", "compute.instanceTemplates", "compute.regionInstanceTemplates"],
+      "preservedMeaning": "Instance metadata and template instance properties can convey guest initialization and startup configuration.",
+      "lostOrDifferentMeaning": "Contextualization has no independent identity or lifecycle and can also depend on guest agents, image behavior, and metadata conventions not proven by this schema.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/Instance/properties/metadata", "supports": "Context data is nested under an instance."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/InstanceTemplate/properties/properties", "supports": "Templates can carry nested instance configuration for later-created VMs."}
+      ],
+      "runtimeNecessityConfirmed": false
+    },
+    {
+      "conceptId": "neutral.network-load-balancer",
+      "kind": "composite",
+      "nativeIds": ["compute.forwardingRules", "compute.globalForwardingRules", "compute.backendServices", "compute.regionBackendServices", "compute.targetPools"],
+      "preservedMeaning": "GCP network load balancing is assembled from frontend forwarding rules and a backend-bearing service or target pool.",
+      "lostOrDifferentMeaning": "There is no single aggregate load-balancer lifecycle resource; product family, scope, protocol, proxy use, and backend model select different resource combinations.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/forwardingRules", "supports": "Regional forwarding rules provide independently managed frontends."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/backendServices", "supports": "Backend services are separately managed backend policy resources."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/targetPools", "supports": "Target pools supply a distinct legacy or passthrough backend model."}
+      ],
+      "runtimeNecessityConfirmed": false,
+      "heuristicTargetRisk": "ForwardingRule.target and backend group fields are polymorphic URL-like references; discovery alone cannot select the valid resource chain for a requested load-balancer family."
+    },
+    {
+      "conceptId": "neutral.load-balancer-listener",
+      "kind": "partial",
+      "nativeIds": ["compute.forwardingRules", "compute.globalForwardingRules", "compute.targetTcpProxies", "compute.targetSslProxies", "compute.targetHttpProxies", "compute.targetHttpsProxies", "compute.targetGrpcProxies", "compute.regionTargetTcpProxies", "compute.regionTargetHttpProxies", "compute.regionTargetHttpsProxies"],
+      "preservedMeaning": "Forwarding rules provide frontend address, protocol, and port matching; proxy-based products add a separate target proxy for protocol termination and routing.",
+      "lostOrDifferentMeaning": "The neutral listener is split across frontend and optional proxy collections, and the listed proxies are mutually product- and scope-specific alternatives rather than one listener object.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/ForwardingRule/properties/ports", "supports": "Frontend port matching is configured on ForwardingRule."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/ForwardingRule/properties/target", "supports": "Some forwarding rules reference a separate target proxy through a polymorphic target field."}
+      ],
+      "runtimeNecessityConfirmed": false,
+      "heuristicTargetRisk": "The target property does not encode one fixed proxy collection; protocol and scope compatibility need native documentation or experiments."
+    },
+    {
+      "conceptId": "neutral.load-balancer-backend-group",
+      "kind": "partial",
+      "nativeIds": ["compute.backendServices", "compute.regionBackendServices", "compute.targetPools", "compute.backendBuckets", "compute.regionBackendBuckets"],
+      "preservedMeaning": "Backend services, target pools, and backend buckets represent provider-native backend selection and backend policy for different load-balancer families.",
+      "lostOrDifferentMeaning": "Backend membership can be nested configuration or URL references to groups, endpoints, buckets, or instances; the collections are alternatives and do not preserve one uniform backend-group lifecycle.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/schemas/BackendService/properties/backends", "supports": "Backend membership and policy are nested within BackendService."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/targetPools", "supports": "Target pools provide another independently managed backend model."}
+      ],
+      "runtimeNecessityConfirmed": false,
+      "heuristicTargetRisk": "Backend.group and target-pool instance references are URL-like and may resolve to several native target kinds; inferred edges are not proof of compatibility."
+    },
+    {
+      "conceptId": "neutral.load-balancer-health-check",
+      "kind": "partial",
+      "nativeIds": ["compute.healthChecks", "compute.regionHealthChecks", "compute.httpHealthChecks", "compute.httpsHealthChecks", "compute.regionCompositeHealthChecks"],
+      "preservedMeaning": "These collections independently manage health-check definitions used by load-balancing backends in different scopes and generations.",
+      "lostOrDifferentMeaning": "Modern, regional, legacy HTTP(S), and composite checks have different compatibility and semantics and are not interchangeable instances of one portable check.",
+      "evidence": [
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/healthChecks", "supports": "Global health checks are independently managed resources."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/regionHealthChecks", "supports": "Regional health checks are a separate collection."},
+        {"strength": "schemaCandidate", "sourceLocator": "gcp-compute#/resources/httpHealthChecks", "supports": "Legacy HTTP checks remain a distinct collection."}
+      ],
+      "runtimeNecessityConfirmed": false
+    }
+  ],
+  "experimentGaps": [
+    "Confirm which forwarding-rule target chains are accepted for each regional and global load-balancer family.",
+    "Confirm backend group target kinds and scope compatibility for Backend.group URL references.",
+    "Confirm whether regional disks can be attached through the same instance attachment workflow and under which zone and replica constraints.",
+    "Observe effective guest contextualization for metadata and startup-script conventions; discovery schema only shows transport fields.",
+    "Determine whether SSH access in the target deployment path uses metadata keys, OS Login, or another identity mechanism.",
+    "Measure create/delete ordering and failure behavior across forwarding rules, proxies, backend services, health checks, instance groups, and managed group managers."
+  ]
+}

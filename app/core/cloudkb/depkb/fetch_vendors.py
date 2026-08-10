@@ -25,7 +25,7 @@ CACHE = Path(__file__).resolve().parents[1] / ".cache" / "cloudkb"
 #: 캐시 키 → (URL, 파일명, 기대 SHA-256). 해시가 다르면 다른 판이다.
 SOURCES: dict[str, dict] = {
     "aws-cfn": {
-        "url": ("https://d1uauaxba7bl26.cloudfront.net/latest/gzip/"
+        "url": ("https://d1uauaxba7bl26.cloudfront.net/258.0.0/gzip/"
                 "CloudFormationResourceSpecification.json"),
         "file": "cfn-spec-v258.0.0.json",
         "version": "258.0.0",  # 파일 안 ResourceSpecificationVersion과 일치해야 한다
@@ -38,6 +38,13 @@ SOURCES: dict[str, dict] = {
         "sha256": "b71cb75cb68d790065cecb01363b0d714c6388304ae027c45108255b311a3203",
     },
 }
+
+
+def is_cached(key: str) -> bool:
+    """고정 원천이 있고 그 내용이 선언된 해시와 일치하는지 확인한다."""
+    src = SOURCES[key]
+    path = CACHE / src["file"]
+    return path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == src["sha256"]
 
 
 def load(key: str) -> dict:

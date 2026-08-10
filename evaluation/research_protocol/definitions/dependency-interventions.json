@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "easydep-dependency-interventions/v1",
+  "planSha256": "eb703358bce8106c323fe5006593caa3088346eaf3c940bc28798e85e30e7b69",
+  "projectionSha256": "896c3ae8d8e2cdf5cd6ef1d185288fae0704a0b9678283591eff7fa9d743a3a3",
+  "modelFreezeSha256": {
+    "aws": "940cc0738d25c348b4f238ab4cffb0a2bb4c25fa5c8619778c6e7d18f41f83ef",
+    "azure": "d0c986b9f989c7a502b3884c67de88f704888423d21080f65e09b90273eef6ce",
+    "gcp": "9756ca79aedfa3632a634325f97d31ee0e95f74a4b6ad201a14d475427118671"
+  },
+  "cases": [
+    {
+      "experimentId": "intervention.gcp.backend-service-backend-group.necessity",
+      "provider": "gcp",
+      "claimId": "gcp.backend-service-backend-group.necessity",
+      "fromResourceId": "backend-service",
+      "toResourceId": "backend-group",
+      "condition": "이 연구의 Docker-on-VM 경로에서 backend group은 독립 수명주기를 가진 unmanaged instance group으로 한정한다. NEG는 범위 밖 확장점이다.",
+      "intervention": "대상 참조를 제거한 한 요인 개입",
+      "functionalOracle": {
+        "request": "외부 클라이언트가 배포된 서비스의 /readyz와 대표 업무 HTTP 경로를 호출한다.",
+        "successPredicate": "정해진 제한 시간 안에 /readyz가 200이고 대표 업무 응답의 상태·본문 계약이 모두 일치한다.",
+        "independentFromProvisioning": true
+      },
+      "replications": 3,
+      "status": "completed-confirmed",
+      "resultSha256": "76f3f35af18530d354e8b30b24aa8cb142668800fafdcf01ba2666f8bd832324"
+    }
+  ],
+  "manifestSha256": "c18753c73461699e03da07ec1f5ce6ee09a7cbd369e6ee6f0f96af93733f0bf9"
+}

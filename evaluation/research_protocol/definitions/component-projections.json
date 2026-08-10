@@ -1,0 +1,191 @@
+{
+  "schemaVersion": "easydep-component-projections/v1",
+  "status": "development-candidate",
+  "neutralSource": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json",
+  "scope": "docker-on-vm",
+  "deltas": [
+    {
+      "id": "persistent-storage",
+      "controlCapability": "ephemeral-application-data",
+      "treatmentCapabilities": ["persistent-block-storage", "compute-storage-attachment", "guest-volume-mount"],
+      "realizations": {
+        "aws": {
+          "components": [
+            {"id":"disk","terraformKind":"resource","terraformType":"aws_ebs_volume","neutralConcept":"neutral.data-storage"},
+            {"id":"attachment","terraformKind":"resource","terraformType":"aws_volume_attachment","neutralConcept":"neutral.compute-storage-attachment"},
+            {"id":"mount","terraformKind":"guestConfiguration","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"attachment","to":"disk","cardinality":"one-to-one"},
+            {"from":"attachment","to":"vm","cardinality":"one-to-one"},
+            {"from":"disk","to":"vm","constraint":"same-availability-zone"},
+            {"from":"mount","to":"attachment","constraint":"device-must-be-formatted-and-mounted"}
+          ],
+          "evidence": [
+            "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html",
+            "https://docs.aws.amazon.com/ebs/latest/userguide/ebs-using-volumes.html",
+            "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/volume_attachment"
+          ]
+        },
+        "azure": {
+          "components": [
+            {"id":"disk","terraformKind":"resource","terraformType":"azurerm_managed_disk","neutralConcept":"neutral.data-storage"},
+            {"id":"attachment","terraformKind":"resource","terraformType":"azurerm_virtual_machine_data_disk_attachment","neutralConcept":"neutral.compute-storage-attachment"},
+            {"id":"mount","terraformKind":"guestConfiguration","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"attachment","to":"disk","cardinality":"one-to-one"},
+            {"from":"attachment","to":"vm","cardinality":"one-to-one"},
+            {"from":"mount","to":"attachment","constraint":"device-must-be-formatted-and-mounted"}
+          ],
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/virtual-machines/linux/attach-disk-portal",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/virtual_machine_data_disk_attachment"
+          ]
+        },
+        "gcp": {
+          "components": [
+            {"id":"disk","terraformKind":"resource","terraformType":"google_compute_disk","neutralConcept":"neutral.data-storage"},
+            {"id":"attachment","terraformKind":"resourceOrNestedBlock","terraformType":"google_compute_attached_disk|google_compute_instance.attached_disk","neutralConcept":"neutral.compute-storage-attachment"},
+            {"id":"mount","terraformKind":"guestConfiguration","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"attachment","to":"disk","cardinality":"one-to-one"},
+            {"from":"attachment","to":"vm","cardinality":"one-to-one"},
+            {"from":"mount","to":"attachment","constraint":"device-must-be-formatted-and-mounted"}
+          ],
+          "evidence": [
+            "https://cloud.google.com/compute/docs/disks/attach-disks",
+            "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_attached_disk"
+          ]
+        }
+      }
+    },
+    {
+      "id": "load-balanced-multi-vm",
+      "controlCapability": "single-vm-ingress",
+      "treatmentCapabilities": ["multi-zone-compute", "load-balanced-ingress", "health-routed-backend"],
+      "realizations": {
+        "aws": {
+          "components": [
+            {"id":"loadBalancer","terraformKind":"resource","terraformType":"aws_lb","neutralConcept":"neutral.network-load-balancer"},
+            {"id":"listener","terraformKind":"resource","terraformType":"aws_lb_listener","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"backendGroup","terraformKind":"resource","terraformType":"aws_lb_target_group","neutralConcept":"neutral.load-balancer-backend-group"},
+            {"id":"backendMembership","terraformKind":"resource","terraformType":"aws_lb_target_group_attachment","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"loadBalancer","to":"subnet","cardinality":"one-to-many","constraint":"multiple-availability-zones"},
+            {"from":"listener","to":"loadBalancer","cardinality":"many-to-one"},
+            {"from":"listener","to":"backendGroup","cardinality":"many-to-one"},
+            {"from":"backendMembership","to":"backendGroup","cardinality":"many-to-one"},
+            {"from":"backendMembership","to":"vm","cardinality":"many-to-one"}
+          ],
+          "evidence": [
+            "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html",
+            "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb",
+            "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+          ]
+        },
+        "azure": {
+          "components": [
+            {"id":"gateway","terraformKind":"resource","terraformType":"azurerm_application_gateway","neutralConcept":"neutral.network-load-balancer"},
+            {"id":"frontend","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.frontend_ip_configuration","neutralConcept":null},
+            {"id":"listener","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.http_listener","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"backendPool","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.backend_address_pool","neutralConcept":"neutral.load-balancer-backend-group"},
+            {"id":"backendSettings","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.backend_http_settings","neutralConcept":null},
+            {"id":"routingRule","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.request_routing_rule","neutralConcept":null},
+            {"id":"probe","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.probe","neutralConcept":"neutral.load-balancer-health-check"},
+            {"id":"backendMembership","terraformKind":"resource","terraformType":"azurerm_network_interface_application_gateway_backend_address_pool_association","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"gateway","to":"subnet","cardinality":"one-to-one","constraint":"dedicated-subnet"},
+            {"from":"routingRule","to":"listener","cardinality":"many-to-one"},
+            {"from":"routingRule","to":"backendPool","cardinality":"many-to-one"},
+            {"from":"routingRule","to":"backendSettings","cardinality":"many-to-one"},
+            {"from":"backendSettings","to":"probe","cardinality":"many-to-one"},
+            {"from":"backendMembership","to":"backendPool","cardinality":"many-to-one"},
+            {"from":"backendMembership","to":"nic","cardinality":"many-to-one"}
+          ],
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-components",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/network_interface_application_gateway_backend_address_pool_association"
+          ]
+        },
+        "gcp": {
+          "components": [
+            {"id":"forwardingRule","terraformKind":"resource","terraformType":"google_compute_global_forwarding_rule","neutralConcept":"neutral.network-load-balancer"},
+            {"id":"proxy","terraformKind":"resource","terraformType":"google_compute_target_http_proxy|google_compute_target_https_proxy","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"urlMap","terraformKind":"resource","terraformType":"google_compute_url_map","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"backendService","terraformKind":"resource","terraformType":"google_compute_backend_service","neutralConcept":"neutral.network-load-balancer"},
+            {"id":"backendGroup","terraformKind":"resource","terraformType":"google_compute_instance_group","neutralConcept":"neutral.compute-group"},
+            {"id":"healthCheck","terraformKind":"resource","terraformType":"google_compute_health_check","neutralConcept":"neutral.load-balancer-health-check"}
+          ],
+          "relations": [
+            {"from":"forwardingRule","to":"proxy","cardinality":"many-to-one"},
+            {"from":"proxy","to":"urlMap","cardinality":"many-to-one"},
+            {"from":"urlMap","to":"backendService","cardinality":"many-to-one"},
+            {"from":"backendService","to":"backendGroup","cardinality":"many-to-many"},
+            {"from":"backendService","to":"healthCheck","cardinality":"many-to-many"},
+            {"from":"backendGroup","to":"vm","cardinality":"many-to-many"}
+          ],
+          "evidence": [
+            "https://cloud.google.com/load-balancing/docs/https",
+            "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_global_forwarding_rule"
+          ]
+        }
+      }
+    },
+    {
+      "id": "https-termination",
+      "controlCapability": "http-load-balanced-ingress",
+      "treatmentCapabilities": ["https-load-balanced-ingress", "tls-termination", "certificate-binding"],
+      "fixedCapabilities": ["multi-zone-compute", "load-balanced-ingress", "health-routed-backend"],
+      "realizations": {
+        "aws": {
+          "components": [
+            {"id":"httpsListener","terraformKind":"resource","terraformType":"aws_lb_listener","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"certificate","terraformKind":"resourceOrDataSource","terraformType":"aws_acm_certificate|data.aws_acm_certificate","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"httpsListener","to":"loadBalancer","cardinality":"many-to-one"},
+            {"from":"httpsListener","to":"certificate","cardinality":"many-to-many","constraint":"exactly-one-default-certificate"}
+          ],
+          "evidence": [
+            "https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html",
+            "https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener"
+          ]
+        },
+        "azure": {
+          "components": [
+            {"id":"httpsListener","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.http_listener","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"certificate","terraformKind":"nestedBlock","terraformType":"azurerm_application_gateway.ssl_certificate","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"httpsListener","to":"gateway","cardinality":"many-to-one"},
+            {"from":"httpsListener","to":"certificate","cardinality":"many-to-one"}
+          ],
+          "evidence": [
+            "https://learn.microsoft.com/en-us/azure/application-gateway/ssl-overview",
+            "https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/application_gateway"
+          ]
+        },
+        "gcp": {
+          "components": [
+            {"id":"httpsProxy","terraformKind":"resource","terraformType":"google_compute_target_https_proxy","neutralConcept":"neutral.load-balancer-listener"},
+            {"id":"certificate","terraformKind":"resource","terraformType":"google_compute_ssl_certificate|google_compute_managed_ssl_certificate","neutralConcept":null}
+          ],
+          "relations": [
+            {"from":"forwardingRule","to":"httpsProxy","cardinality":"many-to-one"},
+            {"from":"httpsProxy","to":"urlMap","cardinality":"many-to-one"},
+            {"from":"httpsProxy","to":"certificate","cardinality":"many-to-many"}
+          ],
+          "evidence": [
+            "https://cloud.google.com/load-balancing/docs/https",
+            "https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/compute_region_ssl_certificate"
+          ]
+        }
+      }
+    }
+  ]
+}

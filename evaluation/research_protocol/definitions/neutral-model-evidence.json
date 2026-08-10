@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "easydep-neutral-model-evidence/v1",
+  "models": [
+    {
+      "id": "cloud-barista", "researchRole": "candidateSource", "abstractionLevel": "iaas-resource",
+      "abstractionBasis": "여러 CSP의 IaaS를 실제로 생성·관리하는 공통 운용 API와 멀티클라우드 인프라 집합을 제공한다.",
+      "correspondenceMechanism": "CB-Tumblebug의 공통 리소스가 CB-Spider의 CSP별 드라이버와 연결된다.",
+      "knownLimits": "아직 1.0 이전이며 공통 API가 각 CSP의 수명주기·내장 구성·조건부 필수성을 그대로 증명하지 않는다.",
+      "easydepUse": "VM, VNet, subnet, security group, image, spec, node group 후보를 제안하고 Cloud-Barista 성능 측정과의 용어 호환성을 점검한다.",
+      "sources": [
+        {"url":"https://github.com/cloud-barista/cb-tumblebug/tree/c2c4e76b3cc7ba158a6f61918fe061470f039c6b","version":"git:c2c4e76b3cc7ba158a6f61918fe061470f039c6b","locator":"README / architecture and resource API; source structs at pinned revision"},
+        {"url":"https://www.kci.go.kr/kciportal/ci/sereArticleSearch/ciSereArtiView.kci?sereArticleSearchBean.artiId=ART002887219","version":"Journal of KIISE 49(10), 2022; DOI 10.5626/JOK.2022.49.10.816","locator":"abstract and bibliographic record"}
+      ]
+    },
+    {
+      "id": "tosca-2.0", "researchRole": "candidateSource", "abstractionLevel": "topology-metamodel",
+      "abstractionBasis": "애플리케이션·서비스 토폴로지를 node, relationship, requirement, capability, interface, artifact로 기술하는 재사용 가능한 메타모델이다.",
+      "correspondenceMechanism": "고정된 CSP 리소스 사전이 아니라 별도 node type/profile과 오케스트레이터의 requirement-capability 해소로 구체 구현에 대응한다.",
+      "knownLimits": "TOSCA 언어 메타모델 자체는 AWS·Azure·GCP 리소스 경계나 필수 의존성을 정하지 않는다.",
+      "easydepUse": "관계 방향, 요구-기능 계약, 합성 토폴로지 표현을 참고하되 CSP 리소스 후보의 단독 근거로 사용하지 않는다.",
+      "sources": [{"url":"https://docs.oasis-open.org/tosca/TOSCA/v2.0/cs01/TOSCA-v2.0-cs01.html","version":"OASIS Committee Specification 01, 2024-11-20","locator":"§7 Nodes and Relationships; §8 Capabilities and Requirements"}]
+    },
+    {
+      "id": "occi-1.2-infrastructure", "researchRole": "candidateSource", "abstractionLevel": "iaas-resource",
+      "abstractionBasis": "IaaS의 compute, network, storage 자원과 이들을 연결하는 link 및 mixin을 작은 공통 자원 모델로 정의한다.",
+      "correspondenceMechanism": "OCCI category·kind·mixin과 표준 속성에 구현체를 맞추며 compute template profile로 연합 환경의 용량 등급을 정규화한다.",
+      "knownLimits": "현대 CSP의 세분화된 VPC, IAM, 로드밸런서 합성 구조를 완결되게 포괄하지 않으며 구현체의 native 경계와 일대일이 아니다.",
+      "easydepUse": "compute/network/storage/link의 최소 구분과 구성(mixin)-리소스 경계 차이를 점검한다.",
+      "sources": [
+        {"url":"https://ogf.org/documents/GFD.224.pdf","version":"GFD.224, 2016-10-21","locator":"OCCI Infrastructure 1.2 resource and link types"},
+        {"url":"https://ogf.org/documents/GFD.222.pdf","version":"GFD.222, 2016-04-21","locator":"compute resource template profile rationale"}
+      ]
+    },
+    {
+      "id": "camel", "researchRole": "methodComparator", "abstractionLevel": "application-runtime",
+      "abstractionBasis": "배포, 요구사항, 위치, 보안, 조직, 지표, 확장 규칙을 통합한 multi-DSL과 models@runtime으로 멀티클라우드 애플리케이션의 설계·적응을 다룬다.",
+      "correspondenceMechanism": "공급자 독립 애플리케이션 모델을 공급자 모델과 실행 플랫폼이 구체 배포로 변환한다.",
+      "knownLimits": "EasyDep의 핵심인 control-plane 리소스 경계 판정용 표준이 아니며 실제 실행은 PaaSage의 다른 구성요소가 담당한다.",
+      "easydepUse": "리소스 그래프와 앱 기능·런타임 상태를 분리하면서도 연결해야 한다는 방법론적 근거로 사용한다.",
+      "sources": [{"url":"https://link.springer.com/article/10.1186/s13677-019-0138-7","version":"Journal of Cloud Computing 8, 2019; DOI 10.1186/s13677-019-0138-7","locator":"abstract, contributions, CAMEL language and PaaSage workflow"}]
+    },
+    {
+      "id": "crossplane-composition", "researchRole": "methodComparator", "abstractionLevel": "user-defined-composite",
+      "abstractionBasis": "플랫폼 작성자가 XRD로 상위 API를 정의하고 Composition으로 하나 이상의 managed resource를 합성한다.",
+      "correspondenceMechanism": "보편 온톨로지가 아니라 조직이 정의한 composite schema와 provider별 managed resource 템플릿 사이의 명시적 변환이다.",
+      "knownLimits": "동일한 상위 개념도 Composition 작성자마다 의미와 하위 리소스가 달라 객관적 CSP 사실 모델로 바로 사용할 수 없다.",
+      "easydepUse": "하나의 기능이 여러 native resource로 실현되는 다대다 projection 표현의 설계 비교군으로 사용한다.",
+      "sources": [{"url":"https://github.com/crossplane/crossplane/blob/main/design/design-doc-packages-v2.md","version":"main, retrieved 2026-08-08","locator":"composition goals and infrastructure abstraction"}]
+    },
+    {
+      "id": "terraform-provider-model", "researchRole": "boundaryComparator", "abstractionLevel": "provider-schema",
+      "abstractionBasis": "Terraform Core는 공급자와 무관한 상태·계획·그래프 실행을 제공하지만 리소스 스키마는 provider plugin이 정의한다.",
+      "correspondenceMechanism": "resource는 보통 underlying API의 단일 객체와 가깝게 대응하고 고수준 합성은 module에서 수행한다.",
+      "knownLimits": "통합 언어와 실행기는 중립적이지만 리소스 종류 자체는 벤더 중립 모델이 아니다.",
+      "easydepUse": "native 경계 교차검증과 생성 산출물 형식으로 사용하되 공통 리소스 온톨로지의 근거로 오인하지 않는다.",
+      "sources": [{"url":"https://developer.hashicorp.com/terraform/plugin/best-practices/hashicorp-provider-design-principles","version":"retrieved 2026-08-08","locator":"Resources should represent a single API object; schemas should match underlying API"}]
+    }
+  ]
+}

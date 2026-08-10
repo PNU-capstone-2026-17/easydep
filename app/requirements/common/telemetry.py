@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import json
 import logging
 import os
 import threading
@@ -32,7 +33,10 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
+
+from app.requirements.common.llm_stall_probe import start_stall_probe
 
 LOGGER_NAME = "easydep.agent"
 
@@ -141,6 +145,7 @@ class RunStats:
     #: seed를 고정해도 지문이 바뀌면 결과가 달라질 수 있다 — **재현성 주장의 근거는
     #: seed가 아니라 이 값이다.** 한 실행에서 둘 이상 보이면 그 실행은 이미 섞여 있다.
     model_fingerprints: set[str] = field(default_factory=set)
+    llm_timing_events: list[dict[str, Any]] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
@@ -157,6 +162,7 @@ class RunStats:
                 "wall_seconds": round(self.wall_seconds, 3),
                 "degradations": [d.as_dict() for d in self.degradations],
                 "model_fingerprints": sorted(self.model_fingerprints),
+                "llm_timing_events": list(self.llm_timing_events),
             }
 
 
@@ -278,15 +284,34 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
     계측의 결정이 아니다.
     """
     call = LlmCall(operation)
+    started_at = datetime.now(UTC)
     started = time.perf_counter()
     failed: BaseException | None = None
+    stall_probe = start_stall_probe(operation)
+    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+        print(json.dumps({
+            "event": "llmOperationStarted",
+            "operation": operation,
+            "startedAt": started_at.isoformat(),
+        }, ensure_ascii=False), flush=True)
     try:
         yield call
     except BaseException as exc:
         failed = exc
         raise
     finally:
+        stall_probe.set()
         elapsed = time.perf_counter() - started
+        finished_at = datetime.now(UTC)
+        if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+            print(json.dumps({
+                "event": "llmOperationFinished",
+                "operation": operation,
+                "status": "failed" if failed is not None else "completed",
+                "errorType": type(failed).__name__ if failed is not None else None,
+                "finishedAt": finished_at.isoformat(),
+                "elapsedSeconds": round(elapsed, 6),
+            }, ensure_ascii=False), flush=True)
         stats = current_run()
         if stats is not None:
             with stats._lock:
@@ -299,6 +324,17 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
                 if call.fallback_reason is not None:
                     stats.structured_fallbacks += 1
                 stats.model_fingerprints |= call.fingerprints
+                stats.llm_timing_events.append(
+                    {
+                        "operation": operation,
+                        "startedAt": started_at.isoformat(),
+                        "finishedAt": finished_at.isoformat(),
+                        "elapsedSeconds": round(elapsed, 6),
+                        "status": "failed" if failed is not None else "completed",
+                        "errorType": type(failed).__name__ if failed is not None else None,
+                        "structuredFallback": call.fallback_reason is not None,
+                    }
+                )
         record = {
             "operation": operation,
             "seconds": round(elapsed, 3),

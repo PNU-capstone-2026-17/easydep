@@ -13,7 +13,7 @@ import json
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure-apply2-2026-07-30"))
@@ -53,7 +53,7 @@ def main() -> None:
     rg = sys.argv[1]
     doc = {"_note": ("기능 의존 2라운드(azure) — subnet→NSG 분리/재부착. "
                      "차단은 NSG 부재+Standard PIP secure-by-default의 합성."),
-           "startedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+           "startedAt": datetime.now(UTC).isoformat(timespec="seconds"),
            "ids": {}, "steps": {}}
     steps = doc["steps"]
 
@@ -133,7 +133,7 @@ def main() -> None:
     step("T6.delete-nsg", az(["network", "nsg", "delete", "-g", rg,
                               "-n", "depkb-f2-nsg"]))
     step("T7.residual", az(["resource", "list", "-g", rg, "-o", "json"]))
-    doc["finishedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    doc["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
     save()
 
 

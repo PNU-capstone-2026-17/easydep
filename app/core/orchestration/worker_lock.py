@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from hashlib import sha256
 from pathlib import Path
 from typing import BinaryIO
 
 DEFAULT_WORKER_LOCK = Path(".easydep/orchestration/implementation-worker.lock")
+DEFAULT_RUN_LOCK_ROOT = Path(".easydep/orchestration/run-locks")
 
 
 def _lock(handle: BinaryIO) -> None:
@@ -57,3 +59,13 @@ def exclusive_implementation_worker(
         handle.seek(0)
         _unlock(handle)
         handle.close()
+
+
+@contextmanager
+def exclusive_run_execution(
+    run_id: str, root: str | Path = DEFAULT_RUN_LOCK_ROOT
+) -> Iterator[None]:
+    """같은 run의 start/resume/retry가 겹치지 않도록 프로세스 경계를 잠근다."""
+    digest = sha256(run_id.encode("utf-8")).hexdigest()
+    with exclusive_implementation_worker(Path(root) / f"{digest}.lock"):
+        yield

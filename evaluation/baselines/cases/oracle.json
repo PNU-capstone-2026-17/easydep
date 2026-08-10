@@ -32,6 +32,15 @@
         {"name":"create note","method":"POST","path":"/notes","status":201,"json":{"title":"alpha","content":"first"},"expectJson":{"title":"alpha","content":"first"}},
         {"name":"list notes","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"alpha","content":"first"}]}
       ],
+      "persistenceAcceptance": {
+        "mountPath": "/var/lib/notes",
+        "beforeRestart": [
+          {"name":"재시작 전 노트 생성","method":"POST","path":"/notes","status":201,"json":{"title":"restart-proof","content":"must-survive"},"expectJson":{"title":"restart-proof","content":"must-survive"}}
+        ],
+        "afterRestart": [
+          {"name":"재시작 후 노트 조회","method":"GET","path":"/notes","status":200,"expectJson":[{"title":"restart-proof","content":"must-survive"}]}
+        ]
+      },
       "forbiddenConcepts": ["loadBalancer", "kubernetes", "managedApplicationPlatform"]
     },
     "P3": {

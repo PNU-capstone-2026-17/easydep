@@ -23,7 +23,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +35,7 @@ _CODE = re.compile(r"\(([A-Za-z0-9._]+)\) when calling|"
 
 def aws(args: list[str], timeout: int = 180) -> dict:
     r = subprocess.run([AWS, "--region", REGION, *args, "--no-cli-pager"],
-                       capture_output=True, text=True, timeout=timeout)
+                       capture_output=True, text=True, timeout=timeout, check=False)
     text = (r.stderr or "") + (r.stdout or "")
     codes = [next(g for g in m.groups() if g) for m in _CODE.finditer(text)]
     parsed = None
@@ -141,7 +141,7 @@ def main() -> None:
     (HERE / "results.json").write_text(json.dumps({
         "_note": ("aws 2라운드 측정 기록 — DryRun 깊이가 증명 안 된 API는 실물 "
                   "생성으로 쟀다. server-filled-* 스텝이 서버 대체의 실물이다."),
-        "ranAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ranAt": datetime.now(UTC).isoformat(timespec="seconds"),
         "region": REGION,
         "steps": steps,
     }, ensure_ascii=False, indent=1), encoding="utf-8")

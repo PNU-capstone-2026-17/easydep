@@ -1,0 +1,186 @@
+{
+  "schemaVersion": "easydep-app-cloud-snapshot-repair/v1",
+  "createdAt": "2026-08-09T00:12:54.211677+00:00",
+  "kind": "single-owner-subtask-repair-pilot",
+  "configuration": {
+    "cloudApply": false,
+    "maximumRepairAttemptsPerCase": 1
+  },
+  "cases": [
+    {
+      "id": "generated-p2-storage-idempotency",
+      "group": "storage-idempotency",
+      "repairMode": "vm-delivery",
+      "repairOwner": "implementation.vm_delivery",
+      "contextRun": "artifacts/runs/easydep-full-p2-azure-20260808T064324Z-72f07e",
+      "mutationFiles": [],
+      "inputSha256": "706091064f72fb0dda83adf33ab2c83d709669580cbcbc69398829ab27e0722e",
+      "outputSha256": "706091064f72fb0dda83adf33ab2c83d709669580cbcbc69398829ab27e0722e",
+      "stepStatus": "failed",
+      "stepDiagnostics": [
+        {
+          "code": "ValueError",
+          "message": "Generated Terraform failed providerSchema validation after one repair: \nError: Invalid function argument\n\n  on main.tf line 113, in resource \"azurerm_linux_virtual_machine\" \"vm\":\n 113:   custom_data = base64encode(templatefile(\"${path.module}/cloudinit.tpl\", {\n 114:     container_image   = var.container_image,\n 115:     container_port    = var.application_port,\n 116:     mount_path        = var.application_mount_path,\n 117:     data_disk_device  = \"/dev/sdc\",\n 118:     mount_point       = \"/mnt/notes\",\n 119:     cert_pem          = var.tls_cert,\n 120:     key_pem           = var.tls_key\n 121:   }))\n    ├────────────────\n    │ while calling templatefile(path, vars)\n    │ var.application_mount_path is a string\n    │ var.application_port is a number\n    │ var.container_image is a string\n    │ var.tls_cert is a string\n    │ var.tls_key is a string\n\nInvalid value for \"vars\" parameter: vars map does not contain key\n\"application_port\", referenced at ./cloudinit.tpl:85,10-26.\n",
+          "severity": "error"
+        }
+      ],
+      "stepMetrics": {
+        "llm_calls": 2,
+        "timing_events": [
+          {
+            "operation": "iac.generate",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:11:33.734480+00:00",
+            "finishedAt": "2026-08-09T00:12:13.186084+00:00",
+            "elapsedSeconds": 39.451614
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:12:13.186226+00:00",
+            "finishedAt": "2026-08-09T00:12:13.209803+00:00",
+            "elapsedSeconds": 0.023591
+          },
+          {
+            "operation": "iac.repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:12:13.278866+00:00",
+            "finishedAt": "2026-08-09T00:12:33.721381+00:00",
+            "elapsedSeconds": 20.442524
+          },
+          {
+            "operation": "iac.hclPreflight",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:12:33.721542+00:00",
+            "finishedAt": "2026-08-09T00:12:33.749201+00:00",
+            "elapsedSeconds": 0.027673
+          },
+          {
+            "operation": "iac.provider.init",
+            "attempt": "repair",
+            "status": "completed",
+            "startedAt": "2026-08-09T00:12:33.822470+00:00",
+            "finishedAt": "2026-08-09T00:12:48.444421+00:00",
+            "elapsedSeconds": 14.62195
+          },
+          {
+            "operation": "iac.provider.validate",
+            "attempt": "repair",
+            "status": "failed",
+            "startedAt": "2026-08-09T00:12:48.444436+00:00",
+            "finishedAt": "2026-08-09T00:12:54.034236+00:00",
+            "elapsedSeconds": 5.589806
+          }
+        ],
+        "consistency_validator_enabled": true
+      },
+      "repairElapsedSeconds": 80.379519,
+      "changedFiles": {
+        "added": [],
+        "modified": [],
+        "removed": []
+      },
+      "upstreamStagesExecuted": [],
+      "executedSubtasks": [
+        "implementation.vm_delivery"
+      ],
+      "preflightBefore": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-DESTRUCTIVE-INIT",
+            "message": "Persistent storage formatting is unconditionally repeated during guest initialization.",
+            "locations": [
+              "cloud_init.tpl:38"
+            ],
+            "details": {
+              "expected": "format-only-when-no-filesystem-exists",
+              "observed": "unguarded-mkfs"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "containerMountPath",
+            "value": "/var/lib/notes",
+            "source": "cloud_init.tpl:containerMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": null,
+            "source": "cloud_init.tpl:dynamic-mount-command",
+            "confidence": "unresolved"
+          }
+        ],
+        "elapsedSeconds": 0.143309
+      },
+      "preflightAfter": {
+        "diagnostics": [
+          {
+            "code": "BIND-STORAGE-DESTRUCTIVE-INIT",
+            "message": "Persistent storage formatting is unconditionally repeated during guest initialization.",
+            "locations": [
+              "cloud_init.tpl:38"
+            ],
+            "details": {
+              "expected": "format-only-when-no-filesystem-exists",
+              "observed": "unguarded-mkfs"
+            }
+          }
+        ],
+        "observations": [
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": "/mnt/data",
+            "source": "cloud_init.tpl:guestMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "containerMountPath",
+            "value": "/var/lib/notes",
+            "source": "cloud_init.tpl:containerMountPath",
+            "confidence": "observed"
+          },
+          {
+            "kind": "guestMountPath",
+            "value": null,
+            "source": "cloud_init.tpl:dynamic-mount-command",
+            "confidence": "unresolved"
+          }
+        ],
+        "elapsedSeconds": 0.053335
+      },
+      "diagnosticResolved": false,
+      "applicationTests": null,
+      "applicationTestsPassed": false,
+      "cloudApply": false,
+      "retainedCandidate": null
+    }
+  ],
+  "summary": {
+    "caseCount": 1,
+    "stepCompletedCount": 0,
+    "diagnosticResolvedCount": 0,
+    "applicationTestsPassedCount": 0,
+    "upstreamStageExecutionCount": 0,
+    "elapsedSeconds": 80.73406
+  }
+}

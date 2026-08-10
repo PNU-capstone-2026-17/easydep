@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "easydep-cloud-agent-study/v1",
+  "status": "frozen",
+  "effortAllocation": {"resourceModelPercent": 30, "agentSystemPercent": 70},
+  "modelQuestions": [
+    "MQ1-native-resource-and-configuration-boundaries",
+    "MQ2-common-concepts-and-provider-extensions",
+    "MQ3-all-inclusion-minimal-capability-realizations"
+  ],
+  "sampling": {
+    "method": "decision-anchor-traversal-with-provider-service-family-observation-channel-boundary-audit",
+    "auditFraction": 0.2,
+    "minimumPerStratum": 5,
+    "maximumPerStratum": 20,
+    "seed": 42,
+    "criticalOmissionAction": "expand-entire-stratum-and-delay-freeze"
+  },
+  "review": {
+    "method": "official-evidence-rule-adjudication",
+    "humanReview": "conflicting-high-impact-exceptions-only",
+    "resourceBoundaryRule": "vendor-identity-plus-create-read-delete",
+    "dependencyNecessityRule": "vendor-normative-prerequisite-or-three-removal-recovery-replications",
+    "neutralModelsAreHypothesisOnly": true,
+    "llmMayProposeButCannotApprove": true
+  },
+  "projection": {
+    "neutralLayerRole": "comparison-coordinates-not-complete-ontology",
+    "cardinality": "many-to-many",
+    "representations": ["independent", "embedded", "composite-member"],
+    "coverage": ["full", "partial"],
+    "providerExtensionsPreserved": true
+  },
+  "dependencyValidation": {
+    "controlPlaneAndApplicationOutcomesSeparated": true,
+    "functionalOracleRequired": true,
+    "restorationRequired": true,
+    "replications": 3,
+    "pendingInterventionsBlockConfirmatoryAgentRuns": true
+  },
+  "capabilityDecision": {
+    "independentSamples": 5,
+    "calibration": "isotonic-pava",
+    "targetPrecision": 0.9,
+    "minimumWilsonLower95": 0.8,
+    "freezeBeforeHoldout": true,
+    "disableAutoAcceptWhenUnqualified": true
+  },
+  "cloudExecution": {
+    "repetitions": 3,
+    "measurementSeconds": 2700,
+    "cleanupSeconds": 3600,
+    "bundleCostCapUSD": 10,
+    "campaignCostCapUSD": 150,
+    "cleanupReserveUSD": 15,
+    "transientRetryDelaysSeconds": [15, 30],
+    "oneConcurrentBundlePerProviderAccount": true
+  },
+  "localExecution": {
+    "maxConcurrentJobs": 1,
+    "backgroundWorkersAllowed": false,
+    "minimumFreeDiskBytes": 5368709120,
+    "designLlmClientTimeoutSeconds": 300,
+    "designLlmWallTimeoutSeconds": 330,
+    "jobTimeoutSeconds": 1800,
+    "workerProcessTreeTerminatedOnTimeout": true,
+    "temporaryWorkerFilesRemovedAfterEveryJob": true,
+    "retainResearchArtifacts": true
+  },
+  "holdout": {
+    "primary": "frozen-model-coverage-and-correctness",
+    "secondary": "adaptive-question-abstention-and-recovery",
+    "secondaryMayRewritePrimary": false
+  },
+  "legacyClaims": {"count": 56, "status": "exploratory-remeasurement-required"}
+}

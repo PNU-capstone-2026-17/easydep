@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "easydep-provider-schema-audit/v1",
+  "startedAt": "2026-08-08T07:44:32.058984+00:00",
+  "projectionSha256": "e77bfe754f1a8884359760b7bbc3bc916aa801ba331ffe6adad5871c89d78c27",
+  "providers": {
+    "aws": {
+      "requested": {
+        "source": "hashicorp/aws",
+        "version": "5.100.0"
+      },
+      "initialize": {
+        "status": "failed",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "\nOpenTofu encountered problems during initialization, including problems\nwith the configuration, described below.\n\nThe OpenTofu configuration must be valid before initialization so that\nOpenTofu can determine which modules and providers need to be installed.\n\nError: Missing attribute separator\n\n  on main.tf line 3, in terraform:\n   3:     aws = { source = \"hashicorp/aws\" version = \"=5.100.0\" }\n\nExpected a newline or comma to mark the beginning of the next attribute.\n\n",
+        "command": [
+          "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color"
+        ]
+      },
+      "audit": {
+        "status": "failed",
+        "checks": []
+      }
+    },
+    "azure": {
+      "requested": {
+        "source": "hashicorp/azurerm",
+        "version": "5.0.1"
+      },
+      "initialize": {
+        "status": "failed",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "\nOpenTofu encountered problems during initialization, including problems\nwith the configuration, described below.\n\nThe OpenTofu configuration must be valid before initialization so that\nOpenTofu can determine which modules and providers need to be installed.\n\nError: Missing attribute separator\n\n  on main.tf line 3, in terraform:\n   3:     azurerm = { source = \"hashicorp/azurerm\" version = \"=5.0.1\" }\n\nExpected a newline or comma to mark the beginning of the next attribute.\n\n\nError: Argument definition required\n\n  on main.tf line 6, in provider \"azurerm\":\n   6: provider \"azurerm\" { features {} }\n\nA single-line block definition can contain only a single argument. If you\nmeant to define argument \"features\", use an equals sign to assign it a value.\nTo define a nested block, place it on a line of its own within its parent\nblock.\n\n",
+        "command": [
+          "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color"
+        ]
+      },
+      "audit": {
+        "status": "failed",
+        "checks": []
+      }
+    },
+    "gcp": {
+      "requested": {
+        "source": "hashicorp/google",
+        "version": "5.45.2"
+      },
+      "initialize": {
+        "status": "failed",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "\nOpenTofu encountered problems during initialization, including problems\nwith the configuration, described below.\n\nThe OpenTofu configuration must be valid before initialization so that\nOpenTofu can determine which modules and providers need to be installed.\n\nError: Missing attribute separator\n\n  on main.tf line 3, in terraform:\n   3:     google = { source = \"hashicorp/google\" version = \"=5.45.2\" }\n\nExpected a newline or comma to mark the beginning of the next attribute.\n\n",
+        "command": [
+          "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color"
+        ]
+      },
+      "audit": {
+        "status": "failed",
+        "checks": []
+      }
+    }
+  },
+  "completedAt": "2026-08-08T07:44:32.571733+00:00",
+  "status": "failed"
+}

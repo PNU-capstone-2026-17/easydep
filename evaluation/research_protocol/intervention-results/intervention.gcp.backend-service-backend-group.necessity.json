@@ -1,0 +1,187 @@
+{
+  "schemaVersion": "easydep-dependency-intervention-result/v1",
+  "experimentId": "intervention.gcp.backend-service-backend-group.necessity",
+  "provider": "gcp",
+  "project": "cloud-resource-testing",
+  "executionMode": "execute",
+  "replications": [
+    {
+      "replication": 1,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "functionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:45:15+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:45:17+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:48:44+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:49:58+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:50:00+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:50:02+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "failed",
+          "observedAt": "2026-08-07T19:50:23+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T19:53:15+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r1.evidence.json"
+        }
+      ]
+    },
+    {
+      "replication": 2,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "functionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:01:32+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:01:34+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:04:30+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:05:50+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:05:52+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:05:55+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "failed",
+          "observedAt": "2026-08-07T20:06:15+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:08:58+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r2.evidence.json"
+        }
+      ]
+    },
+    {
+      "replication": 3,
+      "budgetCensored": false,
+      "schedulerDelayed": false,
+      "outcomeClass": "functionBlocked",
+      "phases": [
+        {
+          "id": "controlProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:16:57+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "controlStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:16:59+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "controlFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:20:15+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "dependencyIntervention",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:21:24+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionProvision",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:21:27+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionStartup",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:21:29+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "interventionFunction",
+          "status": "failed",
+          "observedAt": "2026-08-07T20:21:50+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        },
+        {
+          "id": "restorationFunction",
+          "status": "passed",
+          "observedAt": "2026-08-07T20:24:19+00:00",
+          "evidence": "evaluation\\research_protocol\\intervention-results\\intervention.gcp.backend-service-backend-group.necessity.r3.evidence.json"
+        }
+      ]
+    }
+  ],
+  "preflight": {
+    "projectMatched": true,
+    "computeApiEnabled": true,
+    "billingEnabled": true,
+    "estimatedCampaignCostUSD": 3.0,
+    "preexistingResources": [],
+    "opensslExecutable": "C:\\Program Files\\Git\\mingw64\\bin\\openssl.exe"
+  },
+  "residualResources": [],
+  "cleanupVerified": true
+}

@@ -63,11 +63,11 @@ _STRUCTURED_METHOD = "json_schema"
 _llm: ChatOpenAI | None = None
 
 
-def build_llm() -> ChatOpenAI:
+def build_llm(*, seed_override: int | None = None) -> ChatOpenAI:
     """NIM(OpenAI 호환) 채팅 모델을 반환한다(프로세스당 1회 생성, 이후 재사용)."""
     global _llm
-    if _llm is None:
-        _llm = ChatOpenAI(
+    if _llm is None or seed_override is not None:
+        instance = ChatOpenAI(
             model=settings.model,
             base_url=settings.base_url,
             api_key=SecretStr(settings.api_key),
@@ -76,7 +76,7 @@ def build_llm() -> ChatOpenAI:
             # 무시할 수도 있고, 백엔드 구성이 바뀌면(system_fingerprint) 같은 seed라도
             # 결과가 달라진다. 그래서 지문을 telemetry에 남겨 사후에 확인할 수 있게 한다.
             # None이면 파라미터 자체를 안 보낸다.
-            seed=settings.seed,
+            seed=settings.seed if seed_override is None else seed_override,
             # 진짜 멈춘 호출이 무한 대기하지 않도록 두는 상한.
             #
             # **600에서 90으로 내렸다(2026-07-27). 근거는 실측 분포다** — 위 주석이
@@ -97,6 +97,9 @@ def build_llm() -> ChatOpenAI:
             timeout=90,
             max_retries=2,
         )
+        if seed_override is not None:
+            return instance
+        _llm = instance
     return _llm
 
 
@@ -201,9 +204,11 @@ def _json_mode(
     return schema.model_validate_json(_extract_json(_message_text(raw.content)))
 
 
-def invoke_structured(schema: type[T], messages: list) -> T:
+def invoke_structured(
+    schema: type[T], messages: list, *, seed_override: int | None = None
+) -> T:
     """구조화 출력 호출. 네이티브 structured output 실패 시 JSON 모드로 폴백한다."""
-    llm = build_llm()
+    llm = build_llm(seed_override=seed_override)
     with telemetry.record_llm_call(f"structured:{schema.__name__}") as call:
         parsed = _native_structured(llm, schema, messages, call)
         if parsed is not None:

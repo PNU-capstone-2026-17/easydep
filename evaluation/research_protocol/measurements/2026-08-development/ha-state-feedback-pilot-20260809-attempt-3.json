@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "easydep-ha-state-feedback-pilot/v1",
+  "recordedAt": "2026-08-09T00:36:47.430404+00:00",
+  "scope": "Docker-on-Linux-VM",
+  "naturalLanguageRequirement": "Create a Dockerized REST service that persists mutable application state on the VM filesystem and remains available across an availability-zone failure.",
+  "runId": "ha-state-feedback-20260809T003632Z-7b9112",
+  "initial": {
+    "status": "completed",
+    "diagnosticCodes": [],
+    "diagnostics": [],
+    "promptKind": null,
+    "alternatives": [],
+    "applicationFileHashes": {
+      "build.gradle": "c65834b86a4fa803545accdbb800e79933818c1678c2594f8e949c26bde34aec",
+      "settings.gradle": "6fafc5c082cf6974e7fa1387543e6e04a4120222f3f91dfd52a96b360ecb295e",
+      "src/main/java/com/example/demo/controller/HealthController.java": "b5b23cb6e602a621ac6c65ecaac55ca9325643281348f2a42b0a6417ed3b53d7",
+      "src/main/java/com/example/demo/controller/StateController.java": "64d07c8c281e70134e3d6487a18d435185bcb320487e2ef26913b36aa6fb5d48",
+      "src/main/java/com/example/demo/DemoApplication.java": "d464c7061117b007c55f835319d0858c254804445044e77664368def69b9660b",
+      "src/main/java/com/example/demo/service/StateService.java": "551afbc272578094ce23986b4f1d690be5c5c9edd4006e8803ea078761cde14e",
+      "src/main/resources/application.yml": "d1f93a0ea207b6d8d3e5c79a799288c16a9b64ecd3ec625dbbc66acfa6a9064a"
+    }
+  },
+  "answer": {
+    "resolution": "externalize-or-replicate-state"
+  },
+  "resume": null,
+  "measurement": {
+    "llmCallSeconds": [
+      14.518959
+    ],
+    "wallSeconds": 14.601483,
+    "llmCalls": 1
+  },
+  "claimLimits": {
+    "actualLlmUsed": true,
+    "contractConflictMeasured": false,
+    "contractResolutionMeasured": false,
+    "applicationBuildMeasured": false,
+    "applicationFunctionMeasured": false,
+    "cloudApplyMeasured": false,
+    "generalizationMeasured": false
+  }
+}

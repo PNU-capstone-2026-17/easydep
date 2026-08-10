@@ -1,0 +1,483 @@
+{
+  "schemaVersion": "easydep-component-effect-summary/v1",
+  "configSha256": "2c6e4c52d1f9d5d5785ef293d139cfdbf7e46d748e5456be63ca833fac7c8479",
+  "repetitions": [
+    {
+      "repetition": 1,
+      "path": "artifacts/confirmatory/component-fixed-treatment-r1-20260810.json",
+      "cellCount": 18,
+      "snapshotsPassed": true,
+      "sameInputs": true
+    },
+    {
+      "repetition": 2,
+      "path": "artifacts/confirmatory/component-fixed-treatment-r2-20260810.json",
+      "cellCount": 18,
+      "snapshotsPassed": true,
+      "sameInputs": true
+    },
+    {
+      "repetition": 3,
+      "path": "artifacts/confirmatory/component-fixed-treatment-r3-20260810.json",
+      "cellCount": 18,
+      "snapshotsPassed": true,
+      "sameInputs": true
+    }
+  ],
+  "measurementBoundary": {
+    "requirementsDesignApplicationGenerationCalls": 0,
+    "cloudApply": false,
+    "cardinalityScored": false,
+    "runtimeConstraintsScored": false,
+    "primarySeparatedMetrics": [
+      "deliveryCompleted",
+      "dependencyComplete",
+      "componentDependencyReference"
+    ]
+  },
+  "armSummary": {
+    "full": {
+      "cellCount": 27,
+      "deliveryCompleted": 20,
+      "dependencyComplete": 14,
+      "modeledOutcomeCount": 63,
+      "realizationCount": 18,
+      "elapsedSeconds": 1278.788767,
+      "referenceRecallMacro": 0.676661,
+      "referenceRecallMedian": 1.0,
+      "checks": {
+        "providerBoundary": {
+          "passed": 20,
+          "unknown": 7
+        },
+        "capability": {
+          "failed": 30,
+          "passed": 131,
+          "unknown": 37
+        },
+        "forbidden": {
+          "failed": 4,
+          "passed": 23
+        },
+        "componentProjection": {
+          "passed": 87,
+          "failed": 15,
+          "unknown": 9
+        },
+        "componentDependencyReference": {
+          "passed": 87,
+          "failed": 60
+        }
+      }
+    },
+    "no-depkb": {
+      "cellCount": 27,
+      "deliveryCompleted": 15,
+      "dependencyComplete": 8,
+      "modeledOutcomeCount": 0,
+      "realizationCount": 0,
+      "elapsedSeconds": 1259.632097,
+      "referenceRecallMacro": 0.503469,
+      "referenceRecallMedian": 0.777778,
+      "checks": {
+        "providerBoundary": {
+          "passed": 15,
+          "unknown": 12
+        },
+        "capability": {
+          "failed": 31,
+          "passed": 120,
+          "unknown": 47
+        },
+        "forbidden": {
+          "failed": 5,
+          "passed": 22
+        },
+        "componentProjection": {
+          "passed": 54,
+          "failed": 14,
+          "unknown": 16
+        },
+        "componentDependencyReference": {
+          "passed": 56,
+          "failed": 91
+        }
+      }
+    }
+  },
+  "pairedDelivery": {
+    "fullWins": 7,
+    "noDepkbWins": 2,
+    "ties": 18,
+    "discordantExactSignPValue": 0.1796875
+  },
+  "pairedDependencyComplete": {
+    "fullWins": 7,
+    "noDepkbWins": 1,
+    "ties": 19,
+    "discordantExactSignPValue": 0.0703125
+  },
+  "pairedReferenceRecall": {
+    "pairCount": 27,
+    "meanDifference": 0.173192,
+    "medianDifference": 0.0
+  },
+  "pairs": [
+    {
+      "repetition": 1,
+      "caseId": "LB-treatment-aws",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 1.0
+    },
+    {
+      "repetition": 1,
+      "caseId": "LB-treatment-azure",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "azure",
+      "fullDelivery": false,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 1,
+      "caseId": "LB-treatment-gcp",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.6666666666666666,
+      "referenceRecallDifference": 0.33333333333333337
+    },
+    {
+      "repetition": 1,
+      "caseId": "PS-treatment-aws",
+      "pairId": "persistent-storage",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 1,
+      "caseId": "PS-treatment-azure",
+      "pairId": "persistent-storage",
+      "provider": "azure",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 1,
+      "caseId": "PS-treatment-gcp",
+      "pairId": "persistent-storage",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 1,
+      "caseId": "TLS-treatment-aws",
+      "pairId": "https-termination",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.5714285714285714,
+      "noDepkbReferenceRecall": 0.8571428571428571,
+      "referenceRecallDifference": -0.2857142857142857
+    },
+    {
+      "repetition": 1,
+      "caseId": "TLS-treatment-azure",
+      "pairId": "https-termination",
+      "provider": "azure",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.8888888888888888,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.8888888888888888
+    },
+    {
+      "repetition": 1,
+      "caseId": "TLS-treatment-gcp",
+      "pairId": "https-termination",
+      "provider": "gcp",
+      "fullDelivery": false,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.7777777777777778,
+      "referenceRecallDifference": -0.7777777777777778
+    },
+    {
+      "repetition": 2,
+      "caseId": "LB-treatment-aws",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.8,
+      "referenceRecallDifference": 0.19999999999999996
+    },
+    {
+      "repetition": 2,
+      "caseId": "LB-treatment-azure",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "azure",
+      "fullDelivery": false,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 2,
+      "caseId": "LB-treatment-gcp",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 1.0
+    },
+    {
+      "repetition": 2,
+      "caseId": "PS-treatment-aws",
+      "pairId": "persistent-storage",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 2,
+      "caseId": "PS-treatment-azure",
+      "pairId": "persistent-storage",
+      "provider": "azure",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 2,
+      "caseId": "PS-treatment-gcp",
+      "pairId": "persistent-storage",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 1.0
+    },
+    {
+      "repetition": 2,
+      "caseId": "TLS-treatment-aws",
+      "pairId": "https-termination",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.5714285714285714,
+      "noDepkbReferenceRecall": 0.8571428571428571,
+      "referenceRecallDifference": -0.2857142857142857
+    },
+    {
+      "repetition": 2,
+      "caseId": "TLS-treatment-azure",
+      "pairId": "https-termination",
+      "provider": "azure",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.8888888888888888,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.8888888888888888
+    },
+    {
+      "repetition": 2,
+      "caseId": "TLS-treatment-gcp",
+      "pairId": "https-termination",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 1.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "LB-treatment-aws",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 1.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "LB-treatment-azure",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "azure",
+      "fullDelivery": false,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "LB-treatment-gcp",
+      "pairId": "load-balanced-multi-vm",
+      "provider": "gcp",
+      "fullDelivery": false,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "PS-treatment-aws",
+      "pairId": "persistent-storage",
+      "provider": "aws",
+      "fullDelivery": false,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": -1.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "PS-treatment-azure",
+      "pairId": "persistent-storage",
+      "provider": "azure",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "PS-treatment-gcp",
+      "pairId": "persistent-storage",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": true,
+      "noDepkbDependencyComplete": true,
+      "fullReferenceRecall": 1.0,
+      "noDepkbReferenceRecall": 1.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "TLS-treatment-aws",
+      "pairId": "https-termination",
+      "provider": "aws",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.5714285714285714,
+      "noDepkbReferenceRecall": 0.8571428571428571,
+      "referenceRecallDifference": -0.2857142857142857
+    },
+    {
+      "repetition": 3,
+      "caseId": "TLS-treatment-azure",
+      "pairId": "https-termination",
+      "provider": "azure",
+      "fullDelivery": false,
+      "noDepkbDelivery": false,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.0,
+      "noDepkbReferenceRecall": 0.0,
+      "referenceRecallDifference": 0.0
+    },
+    {
+      "repetition": 3,
+      "caseId": "TLS-treatment-gcp",
+      "pairId": "https-termination",
+      "provider": "gcp",
+      "fullDelivery": true,
+      "noDepkbDelivery": true,
+      "fullDependencyComplete": false,
+      "noDepkbDependencyComplete": false,
+      "fullReferenceRecall": 0.7777777777777778,
+      "noDepkbReferenceRecall": 0.7777777777777778,
+      "referenceRecallDifference": 0.0
+    }
+  ],
+  "interpretationLimits": [
+    "세 개발 반복이며 CNA 모집단의 무작위 표본이 아니다.",
+    "provider validate와 정적 참조는 실제 cloud 기능 성공을 대신하지 않는다.",
+    "sign test는 case·CSP 군집을 모델링하지 않은 기술적 보조값이다."
+  ]
+}

@@ -1,0 +1,1454 @@
+{
+  "schemaVersion": "easydep-ha-upstream-revision-e2e/v1",
+  "recordedAt": "2026-08-09T02:58:55.856531+00:00",
+  "runId": "ha-upstream-revision-20260809T013438Z-369300",
+  "scope": "Azure Docker-on-Linux-VM development pilot",
+  "originalRequirements": [
+    "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+    "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+    "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+    "The service must remain available when one availability zone fails.",
+    "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+  ],
+  "simulatedUserDecision": {
+    "resolution": "revise-availability-requirement",
+    "revisedRequirements": [
+      "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+      "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+      "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+      "Do not use multi-zone deployment or failover. High availability is not required; deploy exactly one application VM in one availability zone.",
+      "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+    ]
+  },
+  "initial": {
+    "status": "completed",
+    "stage": "completed",
+    "prompt": null,
+    "requirementCallsPreserved": true,
+    "designCallsPreserved": true
+  },
+  "failedStageRetry": null,
+  "preliminaryRequirementAnswers": [],
+  "preliminaryDesignAnswers": [],
+  "revision": null,
+  "requirementRevisionHistory": [
+    {
+      "revision": 1,
+      "reason": "app-cloud-consistency-user-decision",
+      "resolution": "revise-availability-requirement",
+      "previousRequirements": [
+        "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+        "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+        "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+        "The service must remain available when one availability zone fails.",
+        "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+      ],
+      "activeRequirements": [
+        "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+        "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+        "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+        "High availability is not required; one availability zone and exactly one application VM are acceptable.",
+        "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+      ],
+      "recordedAt": "2026-08-09T01:56:25.527479+00:00"
+    },
+    {
+      "revision": 2,
+      "reason": "app-cloud-consistency-user-decision",
+      "resolution": "revise-availability-requirement",
+      "previousRequirements": [
+        "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+        "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+        "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+        "High availability is not required; one availability zone and exactly one application VM are acceptable.",
+        "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+      ],
+      "activeRequirements": [
+        "Create a Java 21 Spring Boot and Gradle REST service with POST /records, GET /records, and GET /health, packaged with Docker and listening on port 8080.",
+        "Each record has name and value JSON fields, POST /records returns the created record with HTTP 201, and GET /records returns a JSON array.",
+        "Persist mutable record state on the VM filesystem at /var/lib/app-state and preserve it across container replacement and VM restart.",
+        "Do not use multi-zone deployment or failover. High availability is not required; deploy exactly one application VM in one availability zone.",
+        "Deploy on Azure Korea Central with at least 2 vCPU and 4 GiB memory, a monthly compute budget of 150 USD, and external HTTPS access."
+      ],
+      "recordedAt": "2026-08-09T02:14:39.059154+00:00"
+    }
+  ],
+  "artifactEvidence": {
+    "originalManifest": true,
+    "revisionManifestCount": 5
+  },
+  "evaluation": {
+    "schemaVersion": "easydep-implementation-evaluation/v1",
+    "repository": {
+      "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\runs\\ha-upstream-revision-20260809T013438Z-369300\\revisions\\revision-2\\repairs\\attempt-4\\03-implementation\\application",
+      "fileCount": 17,
+      "javaFileCount": 8,
+      "testFileCount": 2,
+      "markdownContaminatedFiles": [],
+      "checks": {
+        "source_present": true,
+        "test_present": true,
+        "build_present": true,
+        "dockerfile_present": true,
+        "iac_present": true,
+        "generated_files_clean": true,
+        "deployment_manifest_present": false,
+        "requirements_documented": false,
+        "design_documented": false,
+        "deployment_diagram_present": false,
+        "traceability_present": false
+      },
+      "implementationComplete": true,
+      "requiredPassed": true,
+      "cloudNativePassed": true
+    },
+    "resourceGraph": {
+      "status": "available",
+      "nodes": [
+        {
+          "id": "azurerm_linux_virtual_machine.vm",
+          "type": "vm",
+          "providerType": "azurerm_linux_virtual_machine",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_network_interface.nic",
+          "type": "networkInterface",
+          "providerType": "azurerm_network_interface",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_network_interface_security_group_association.nsg_assoc",
+          "type": "unknown",
+          "providerType": "azurerm_network_interface_security_group_association",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_network_security_group.nsg",
+          "type": "firewall",
+          "providerType": "azurerm_network_security_group",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_public_ip.pip",
+          "type": "publicIp",
+          "providerType": "azurerm_public_ip",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_resource_group.rg",
+          "type": "unknown",
+          "providerType": "azurerm_resource_group",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_subnet.subnet",
+          "type": "subnet",
+          "providerType": "azurerm_subnet",
+          "source": "infra"
+        },
+        {
+          "id": "azurerm_virtual_network.vnet",
+          "type": "network",
+          "providerType": "azurerm_virtual_network",
+          "source": "infra"
+        }
+      ],
+      "edges": [
+        {
+          "from": "azurerm_linux_virtual_machine.vm",
+          "to": "azurerm_network_interface.nic",
+          "fromType": "vm",
+          "toType": "networkInterface"
+        },
+        {
+          "from": "azurerm_network_interface.nic",
+          "to": "azurerm_public_ip.pip",
+          "fromType": "networkInterface",
+          "toType": "publicIp"
+        },
+        {
+          "from": "azurerm_network_interface.nic",
+          "to": "azurerm_subnet.subnet",
+          "fromType": "networkInterface",
+          "toType": "subnet"
+        },
+        {
+          "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+          "to": "azurerm_network_interface.nic",
+          "fromType": "unknown",
+          "toType": "networkInterface"
+        },
+        {
+          "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+          "to": "azurerm_network_security_group.nsg",
+          "fromType": "unknown",
+          "toType": "firewall"
+        },
+        {
+          "from": "azurerm_network_security_group.nsg",
+          "to": "azurerm_resource_group.rg",
+          "fromType": "firewall",
+          "toType": "unknown"
+        },
+        {
+          "from": "azurerm_public_ip.pip",
+          "to": "azurerm_resource_group.rg",
+          "fromType": "publicIp",
+          "toType": "unknown"
+        },
+        {
+          "from": "azurerm_subnet.subnet",
+          "to": "azurerm_virtual_network.vnet",
+          "fromType": "subnet",
+          "toType": "network"
+        },
+        {
+          "from": "azurerm_virtual_network.vnet",
+          "to": "azurerm_resource_group.rg",
+          "fromType": "network",
+          "toType": "unknown"
+        }
+      ],
+      "parseErrors": [],
+      "unknownProviderTypes": [
+        "azurerm_network_interface_security_group_association",
+        "azurerm_resource_group"
+      ],
+      "extractionMethod": "opentofu-or-terraform-graph"
+    },
+    "terraformSemantics": {
+      "status": "available",
+      "parser": "python-hcl2",
+      "resources": [
+        {
+          "address": "azurerm_resource_group.rg",
+          "providerType": "azurerm_resource_group",
+          "declarationKind": "resource",
+          "concept": "resourceScope",
+          "source": "infra/main.tf",
+          "blocks": []
+        },
+        {
+          "address": "azurerm_virtual_network.vnet",
+          "providerType": "azurerm_virtual_network",
+          "declarationKind": "resource",
+          "concept": "network",
+          "source": "infra/main.tf",
+          "blocks": []
+        },
+        {
+          "address": "azurerm_subnet.subnet",
+          "providerType": "azurerm_subnet",
+          "declarationKind": "resource",
+          "concept": "subnet",
+          "source": "infra/main.tf",
+          "blocks": []
+        },
+        {
+          "address": "azurerm_public_ip.pip",
+          "providerType": "azurerm_public_ip",
+          "declarationKind": "resource",
+          "concept": "publicIp",
+          "source": "infra/main.tf",
+          "blocks": []
+        },
+        {
+          "address": "azurerm_network_interface.nic",
+          "providerType": "azurerm_network_interface",
+          "declarationKind": "resource",
+          "concept": "nic",
+          "source": "infra/main.tf",
+          "blocks": [
+            "ip_configuration"
+          ]
+        },
+        {
+          "address": "azurerm_network_security_group.nsg",
+          "providerType": "azurerm_network_security_group",
+          "declarationKind": "resource",
+          "concept": "firewall",
+          "source": "infra/main.tf",
+          "blocks": [
+            "security_rule"
+          ]
+        },
+        {
+          "address": "azurerm_network_interface_security_group_association.nsg_assoc",
+          "providerType": "azurerm_network_interface_security_group_association",
+          "declarationKind": "resource",
+          "concept": "securityAssociation",
+          "source": "infra/main.tf",
+          "blocks": []
+        },
+        {
+          "address": "azurerm_linux_virtual_machine.vm",
+          "providerType": "azurerm_linux_virtual_machine",
+          "declarationKind": "resource",
+          "concept": "vm",
+          "source": "infra/main.tf",
+          "blocks": [
+            "os_disk",
+            "source_image_reference"
+          ]
+        }
+      ],
+      "concepts": [
+        "firewall",
+        "network",
+        "nic",
+        "publicIp",
+        "resourceScope",
+        "securityAssociation",
+        "subnet",
+        "vm"
+      ],
+      "edges": [
+        {
+          "from": "firewall",
+          "to": "resourceScope"
+        },
+        {
+          "from": "network",
+          "to": "resourceScope"
+        },
+        {
+          "from": "nic",
+          "to": "publicIp"
+        },
+        {
+          "from": "nic",
+          "to": "resourceScope"
+        },
+        {
+          "from": "nic",
+          "to": "subnet"
+        },
+        {
+          "from": "publicIp",
+          "to": "resourceScope"
+        },
+        {
+          "from": "securityAssociation",
+          "to": "firewall"
+        },
+        {
+          "from": "securityAssociation",
+          "to": "nic"
+        },
+        {
+          "from": "subnet",
+          "to": "network"
+        },
+        {
+          "from": "subnet",
+          "to": "resourceScope"
+        },
+        {
+          "from": "vm",
+          "to": "nic"
+        },
+        {
+          "from": "vm",
+          "to": "resourceScope"
+        }
+      ],
+      "resourceGraph": {
+        "nodes": [
+          {
+            "id": "azurerm_resource_group.rg",
+            "providerType": "azurerm_resource_group",
+            "declarationKind": "resource",
+            "concept": "resourceScope",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_virtual_network.vnet",
+            "providerType": "azurerm_virtual_network",
+            "declarationKind": "resource",
+            "concept": "network",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_subnet.subnet",
+            "providerType": "azurerm_subnet",
+            "declarationKind": "resource",
+            "concept": "subnet",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_public_ip.pip",
+            "providerType": "azurerm_public_ip",
+            "declarationKind": "resource",
+            "concept": "publicIp",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_network_interface.nic",
+            "providerType": "azurerm_network_interface",
+            "declarationKind": "resource",
+            "concept": "nic",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_network_security_group.nsg",
+            "providerType": "azurerm_network_security_group",
+            "declarationKind": "resource",
+            "concept": "firewall",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_network_interface_security_group_association.nsg_assoc",
+            "providerType": "azurerm_network_interface_security_group_association",
+            "declarationKind": "resource",
+            "concept": "securityAssociation",
+            "source": "infra/main.tf"
+          },
+          {
+            "id": "azurerm_linux_virtual_machine.vm",
+            "providerType": "azurerm_linux_virtual_machine",
+            "declarationKind": "resource",
+            "concept": "vm",
+            "source": "infra/main.tf"
+          }
+        ],
+        "edges": [
+          {
+            "from": "azurerm_linux_virtual_machine.vm",
+            "to": "azurerm_network_interface.nic",
+            "fromConcept": "vm",
+            "toConcept": "nic",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_linux_virtual_machine.vm",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "vm",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_network_interface.nic",
+            "to": "azurerm_public_ip.pip",
+            "fromConcept": "nic",
+            "toConcept": "publicIp",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_network_interface.nic",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "nic",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_network_interface.nic",
+            "to": "azurerm_subnet.subnet",
+            "fromConcept": "nic",
+            "toConcept": "subnet",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+            "to": "azurerm_network_interface.nic",
+            "fromConcept": "securityAssociation",
+            "toConcept": "nic",
+            "relation": "associates"
+          },
+          {
+            "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+            "to": "azurerm_network_security_group.nsg",
+            "fromConcept": "securityAssociation",
+            "toConcept": "firewall",
+            "relation": "associates"
+          },
+          {
+            "from": "azurerm_network_security_group.nsg",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "firewall",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_public_ip.pip",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "publicIp",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_subnet.subnet",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "subnet",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_subnet.subnet",
+            "to": "azurerm_virtual_network.vnet",
+            "fromConcept": "subnet",
+            "toConcept": "network",
+            "relation": "references"
+          },
+          {
+            "from": "azurerm_virtual_network.vnet",
+            "to": "azurerm_resource_group.rg",
+            "fromConcept": "network",
+            "toConcept": "resourceScope",
+            "relation": "references"
+          }
+        ],
+        "attributes": {
+          "vmPublicIp": true,
+          "internetIngressRule": false
+        }
+      },
+      "componentProjections": {
+        "status": "available",
+        "provider": "azure",
+        "deltas": {
+          "persistent-storage": {
+            "components": [
+              {
+                "componentId": "disk",
+                "terraformKind": "resource",
+                "terraformType": "azurerm_managed_disk",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "attachment",
+                "terraformKind": "resource",
+                "terraformType": "azurerm_virtual_machine_data_disk_attachment",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "mount",
+                "terraformKind": "guestConfiguration",
+                "terraformType": null,
+                "instances": [],
+                "status": "failed"
+              }
+            ],
+            "relations": [
+              {
+                "from": "attachment",
+                "to": "disk",
+                "cardinality": "one-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "attachment",
+                "to": "vm",
+                "cardinality": "one-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "mount",
+                "to": "attachment",
+                "cardinality": null,
+                "observedPairs": [],
+                "status": "failed"
+              }
+            ],
+            "constraints": [
+              {
+                "from": "mount",
+                "to": "attachment",
+                "constraint": "device-must-be-formatted-and-mounted",
+                "status": "requires-separate-gate"
+              }
+            ]
+          },
+          "load-balanced-multi-vm": {
+            "components": [
+              {
+                "componentId": "gateway",
+                "terraformKind": "resource",
+                "terraformType": "azurerm_application_gateway",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "frontend",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.frontend_ip_configuration",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "listener",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.http_listener",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "backendPool",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.backend_address_pool",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "backendSettings",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.backend_http_settings",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "routingRule",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.request_routing_rule",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "probe",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.probe",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "backendMembership",
+                "terraformKind": "resource",
+                "terraformType": "azurerm_network_interface_application_gateway_backend_address_pool_association",
+                "instances": [],
+                "status": "failed"
+              }
+            ],
+            "relations": [
+              {
+                "from": "gateway",
+                "to": "subnet",
+                "cardinality": "one-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "routingRule",
+                "to": "listener",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "routingRule",
+                "to": "backendPool",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "routingRule",
+                "to": "backendSettings",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "backendSettings",
+                "to": "probe",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "backendMembership",
+                "to": "backendPool",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "backendMembership",
+                "to": "nic",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              }
+            ],
+            "constraints": [
+              {
+                "from": "gateway",
+                "to": "subnet",
+                "constraint": "dedicated-subnet",
+                "status": "requires-separate-gate"
+              }
+            ]
+          },
+          "https-termination": {
+            "components": [
+              {
+                "componentId": "httpsListener",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.http_listener",
+                "instances": [],
+                "status": "failed"
+              },
+              {
+                "componentId": "certificate",
+                "terraformKind": "nestedBlock",
+                "terraformType": "azurerm_application_gateway.ssl_certificate",
+                "instances": [],
+                "status": "failed"
+              }
+            ],
+            "relations": [
+              {
+                "from": "httpsListener",
+                "to": "gateway",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              },
+              {
+                "from": "httpsListener",
+                "to": "certificate",
+                "cardinality": "many-to-one",
+                "observedPairs": [],
+                "status": "failed"
+              }
+            ],
+            "constraints": []
+          }
+        },
+        "guestMountPaths": []
+      },
+      "capabilities": {
+        "vmCount": 1,
+        "availabilityZones": null,
+        "loadBalancer": false,
+        "persistentData": false,
+        "dataDiskGiB": null,
+        "volumeMount": null,
+        "publicHttps": true,
+        "healthPath": "/health",
+        "applicationPort": 8080
+      },
+      "unmappedProviderTypes": [],
+      "errors": []
+    },
+    "codeQuality": {
+      "complexity": {
+        "status": "available",
+        "tool": "lizard",
+        "version": "1.23.0",
+        "fileCount": 6,
+        "functionCount": 22,
+        "nloc": 155,
+        "cyclomaticComplexity": {
+          "mean": 1.318182,
+          "median": 1.0,
+          "p95": 2.0,
+          "max": 6,
+          "functionsAbove10": 0,
+          "functionsAbove10Ratio": 0.0
+        },
+        "functionNloc": {
+          "mean": 4.5,
+          "p95": 9.0,
+          "max": 15
+        },
+        "decisionPointDensityPer100Nloc": 4.516129
+      },
+      "coverage": {
+        "status": "unavailable",
+        "reason": "JaCoCo XML report not found"
+      },
+      "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+    },
+    "staticValidationPassed": true,
+    "expected": {
+      "schemaVersion": "easydep-end-to-end-oracle/v1",
+      "caseId": "HA-feedback-azure",
+      "profile": "HA-REVISION",
+      "provider": "azure",
+      "budgetUsd": 150,
+      "requiredCapabilities": {
+        "publicHttps": true,
+        "healthPath": "/health",
+        "applicationPort": 8080,
+        "vmCount": {
+          "min": 1,
+          "max": 1
+        },
+        "persistentData": true,
+        "volumeMount": "/var/lib/app-state",
+        "loadBalancer": false
+      },
+      "functionalAcceptance": [
+        {
+          "name": "레코드 생성",
+          "method": "POST",
+          "path": "/records",
+          "status": 201,
+          "json": {
+            "name": "alpha",
+            "value": "first"
+          },
+          "expectJson": {
+            "name": "alpha",
+            "value": "first"
+          }
+        },
+        {
+          "name": "레코드 목록",
+          "method": "GET",
+          "path": "/records",
+          "status": 200,
+          "expectJson": [
+            {
+              "name": "alpha",
+              "value": "first"
+            }
+          ]
+        }
+      ],
+      "persistenceAcceptance": {
+        "mountPath": "/var/lib/app-state",
+        "beforeRestart": [
+          {
+            "name": "교체 전 레코드 생성",
+            "method": "POST",
+            "path": "/records",
+            "status": 201,
+            "json": {
+              "name": "restart",
+              "value": "survive"
+            },
+            "expectJson": {
+              "name": "restart",
+              "value": "survive"
+            }
+          }
+        ],
+        "afterRestart": [
+          {
+            "name": "교체 후 레코드 조회",
+            "method": "GET",
+            "path": "/records",
+            "status": 200,
+            "expectJson": [
+              {
+                "name": "restart",
+                "value": "survive"
+              }
+            ]
+          }
+        ]
+      },
+      "forbiddenConcepts": [
+        "loadBalancer"
+      ],
+      "requiredDependencies": [],
+      "componentDependencyExpectations": {
+        "structuralReferences": [],
+        "cardinalities": [],
+        "constraints": []
+      }
+    },
+    "score": {
+      "status": "completed",
+      "passed": 7,
+      "failed": 1,
+      "unknown": 1,
+      "notApplicable": 0,
+      "notMeasured": 0,
+      "observedUnverified": 0,
+      "passRate": 0.777778,
+      "checks": [
+        {
+          "kind": "providerBoundary",
+          "expected": "azure",
+          "actual": "azure",
+          "status": "passed"
+        },
+        {
+          "kind": "capability",
+          "name": "publicHttps",
+          "expected": true,
+          "actual": true,
+          "status": "passed"
+        },
+        {
+          "kind": "capability",
+          "name": "healthPath",
+          "expected": "/health",
+          "actual": "/health",
+          "status": "passed"
+        },
+        {
+          "kind": "capability",
+          "name": "applicationPort",
+          "expected": 8080,
+          "actual": 8080,
+          "status": "passed"
+        },
+        {
+          "kind": "capability",
+          "name": "vmCount",
+          "expected": {
+            "min": 1,
+            "max": 1
+          },
+          "actual": 1,
+          "status": "passed"
+        },
+        {
+          "kind": "capability",
+          "name": "persistentData",
+          "expected": true,
+          "actual": false,
+          "status": "failed"
+        },
+        {
+          "kind": "capability",
+          "name": "volumeMount",
+          "expected": "/var/lib/app-state",
+          "actual": null,
+          "status": "unknown"
+        },
+        {
+          "kind": "capability",
+          "name": "loadBalancer",
+          "expected": false,
+          "actual": false,
+          "status": "passed"
+        },
+        {
+          "kind": "forbidden",
+          "name": "loadBalancer",
+          "status": "passed"
+        }
+      ]
+    },
+    "externalTools": {
+      "iacEngine": {
+        "status": "passed",
+        "tool": "opentofu",
+        "modules": [
+          {
+            "path": "infra",
+            "format": {
+              "status": "failed",
+              "command": [
+                "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+                "fmt",
+                "-check",
+                "-recursive",
+                "-no-color"
+              ],
+              "exitCode": 3,
+              "stdout": "main.tf\n",
+              "stderr": ""
+            },
+            "initialize": {
+              "status": "passed",
+              "command": [
+                "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+                "init",
+                "-backend=false",
+                "-input=false",
+                "-no-color"
+              ],
+              "exitCode": 0,
+              "stdout": "\nInitializing provider plugins...\n- Reusing previous version of hashicorp/azurerm from the dependency lock file\n- Installing hashicorp/azurerm v5.0.1...\n- Installed hashicorp/azurerm v5.0.1 (unauthenticated)\n\nOpenTofu has been successfully initialized!\n\nYou may now begin working with OpenTofu. Try running \"tofu plan\" to see\nany changes that are required for your infrastructure. All OpenTofu commands\nshould now work.\n\nIf you ever set or change modules or backend configuration for OpenTofu,\nrerun this command to reinitialize your working directory. If you forget, other\ncommands will detect it and remind you to do so if necessary.\n",
+              "stderr": ""
+            },
+            "validate": {
+              "status": "passed",
+              "command": [
+                "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+                "validate",
+                "-json",
+                "-no-color"
+              ],
+              "exitCode": 0,
+              "stdout": "{\n  \"format_version\": \"1.0\",\n  \"valid\": true,\n  \"error_count\": 0,\n  \"warning_count\": 0,\n  \"diagnostics\": []\n}\n",
+              "stderr": "",
+              "json": {
+                "format_version": "1.0",
+                "valid": true,
+                "error_count": 0,
+                "warning_count": 0,
+                "diagnostics": []
+              }
+            },
+            "graph": {
+              "status": "passed",
+              "command": [
+                "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+                "graph",
+                "-type=plan"
+              ],
+              "exitCode": 0,
+              "stdout": "digraph {\n\tcompound = \"true\"\n\tnewrank = \"true\"\n\tsubgraph \"root\" {\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" [label = \"azurerm_linux_virtual_machine.vm\", shape = \"box\"]\n\t\t\"[root] azurerm_network_interface.nic (expand)\" [label = \"azurerm_network_interface.nic\", shape = \"box\"]\n\t\t\"[root] azurerm_network_interface_security_group_association.nsg_assoc (expand)\" [label = \"azurerm_network_interface_security_group_association.nsg_assoc\", shape = \"box\"]\n\t\t\"[root] azurerm_network_security_group.nsg (expand)\" [label = \"azurerm_network_security_group.nsg\", shape = \"box\"]\n\t\t\"[root] azurerm_public_ip.pip (expand)\" [label = \"azurerm_public_ip.pip\", shape = \"box\"]\n\t\t\"[root] azurerm_resource_group.rg (expand)\" [label = \"azurerm_resource_group.rg\", shape = \"box\"]\n\t\t\"[root] azurerm_subnet.subnet (expand)\" [label = \"azurerm_subnet.subnet\", shape = \"box\"]\n\t\t\"[root] azurerm_virtual_network.vnet (expand)\" [label = \"azurerm_virtual_network.vnet\", shape = \"box\"]\n\t\t\"[root] provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"]\" [label = \"provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"]\", shape = \"diamond\"]\n\t\t\"[root] var.cert_pem\" [label = \"var.cert_pem\", shape = \"note\"]\n\t\t\"[root] var.container_port\" [label = \"var.container_port\", shape = \"note\"]\n\t\t\"[root] var.docker_image\" [label = \"var.docker_image\", shape = \"note\"]\n\t\t\"[root] var.domain_name\" [label = \"var.domain_name\", shape = \"note\"]\n\t\t\"[root] var.key_pem\" [label = \"var.key_pem\", shape = \"note\"]\n\t\t\"[root] var.location\" [label = \"var.location\", shape = \"note\"]\n\t\t\"[root] var.resource_group_name\" [label = \"var.resource_group_name\", shape = \"note\"]\n\t\t\"[root] var.vm_admin_password\" [label = \"var.vm_admin_password\", shape = \"note\"]\n\t\t\"[root] var.vm_admin_username\" [label = \"var.vm_admin_username\", shape = \"note\"]\n\t\t\"[root] var.vm_size\" [label = \"var.vm_size\", shape = \"note\"]\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] azurerm_network_interface.nic (expand)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.cert_pem (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.container_port (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.docker_image (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.domain_name (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.key_pem (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.vm_admin_password (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.vm_admin_username (expand, reference)\"\n\t\t\"[root] azurerm_linux_virtual_machine.vm (expand)\" -> \"[root] var.vm_size (expand, reference)\"\n\t\t\"[root] azurerm_network_interface.nic (expand)\" -> \"[root] azurerm_public_ip.pip (expand)\"\n\t\t\"[root] azurerm_network_interface.nic (expand)\" -> \"[root] azurerm_subnet.subnet (expand)\"\n\t\t\"[root] azurerm_network_interface_security_group_association.nsg_assoc (expand)\" -> \"[root] azurerm_network_interface.nic (expand)\"\n\t\t\"[root] azurerm_network_interface_security_group_association.nsg_assoc (expand)\" -> \"[root] azurerm_network_security_group.nsg (expand)\"\n\t\t\"[root] azurerm_network_security_group.nsg (expand)\" -> \"[root] azurerm_resource_group.rg (expand)\"\n\t\t\"[root] azurerm_public_ip.pip (expand)\" -> \"[root] azurerm_resource_group.rg (expand)\"\n\t\t\"[root] azurerm_resource_group.rg (expand)\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"]\"\n\t\t\"[root] azurerm_resource_group.rg (expand)\" -> \"[root] var.location (expand, reference)\"\n\t\t\"[root] azurerm_resource_group.rg (expand)\" -> \"[root] var.resource_group_name (expand, reference)\"\n\t\t\"[root] azurerm_subnet.subnet (expand)\" -> \"[root] azurerm_virtual_network.vnet (expand)\"\n\t\t\"[root] azurerm_virtual_network.vnet (expand)\" -> \"[root] azurerm_resource_group.rg (expand)\"\n\t\t\"[root] output.public_ip_address (expand)\" -> \"[root] azurerm_public_ip.pip (expand)\"\n\t\t\"[root] provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"] (close)\" -> \"[root] azurerm_linux_virtual_machine.vm (expand)\"\n\t\t\"[root] provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"] (close)\" -> \"[root] azurerm_network_interface_security_group_association.nsg_assoc (expand)\"\n\t\t\"[root] root\" -> \"[root] output.public_ip_address (expand)\"\n\t\t\"[root] root\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/azurerm\\\"] (close)\"\n\t\t\"[root] var.cert_pem (expand, reference)\" -> \"[root] var.cert_pem\"\n\t\t\"[root] var.container_port (expand, reference)\" -> \"[root] var.container_port\"\n\t\t\"[root] var.docker_image (expand, reference)\" -> \"[root] var.docker_image\"\n\t\t\"[root] var.domain_name (expand, reference)\" -> \"[root] var.domain_name\"\n\t\t\"[root] var.key_pem (expand, reference)\" -> \"[root] var.key_pem\"\n\t\t\"[root] var.location (expand, reference)\" -> \"[root] var.location\"\n\t\t\"[root] var.resource_group_name (expand, reference)\" -> \"[root] var.resource_group_name\"\n\t\t\"[root] var.vm_admin_password (expand, reference)\" -> \"[root] var.vm_admin_password\"\n\t\t\"[root] var.vm_admin_username (expand, reference)\" -> \"[root] var.vm_admin_username\"\n\t\t\"[root] var.vm_size (expand, reference)\" -> \"[root] var.vm_size\"\n\t}\n}\n\n",
+              "stderr": ""
+            },
+            "normalizedGraph": {
+              "nodes": [
+                {
+                  "id": "azurerm_linux_virtual_machine.vm",
+                  "type": "vm",
+                  "providerType": "azurerm_linux_virtual_machine",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_network_interface.nic",
+                  "type": "networkInterface",
+                  "providerType": "azurerm_network_interface",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_network_interface_security_group_association.nsg_assoc",
+                  "type": "unknown",
+                  "providerType": "azurerm_network_interface_security_group_association",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_network_security_group.nsg",
+                  "type": "firewall",
+                  "providerType": "azurerm_network_security_group",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_public_ip.pip",
+                  "type": "publicIp",
+                  "providerType": "azurerm_public_ip",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_resource_group.rg",
+                  "type": "unknown",
+                  "providerType": "azurerm_resource_group",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_subnet.subnet",
+                  "type": "subnet",
+                  "providerType": "azurerm_subnet",
+                  "source": "infra"
+                },
+                {
+                  "id": "azurerm_virtual_network.vnet",
+                  "type": "network",
+                  "providerType": "azurerm_virtual_network",
+                  "source": "infra"
+                }
+              ],
+              "edges": [
+                {
+                  "from": "azurerm_linux_virtual_machine.vm",
+                  "to": "azurerm_network_interface.nic",
+                  "fromType": "vm",
+                  "toType": "networkInterface"
+                },
+                {
+                  "from": "azurerm_network_interface.nic",
+                  "to": "azurerm_public_ip.pip",
+                  "fromType": "networkInterface",
+                  "toType": "publicIp"
+                },
+                {
+                  "from": "azurerm_network_interface.nic",
+                  "to": "azurerm_subnet.subnet",
+                  "fromType": "networkInterface",
+                  "toType": "subnet"
+                },
+                {
+                  "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+                  "to": "azurerm_network_interface.nic",
+                  "fromType": "unknown",
+                  "toType": "networkInterface"
+                },
+                {
+                  "from": "azurerm_network_interface_security_group_association.nsg_assoc",
+                  "to": "azurerm_network_security_group.nsg",
+                  "fromType": "unknown",
+                  "toType": "firewall"
+                },
+                {
+                  "from": "azurerm_network_security_group.nsg",
+                  "to": "azurerm_resource_group.rg",
+                  "fromType": "firewall",
+                  "toType": "unknown"
+                },
+                {
+                  "from": "azurerm_public_ip.pip",
+                  "to": "azurerm_resource_group.rg",
+                  "fromType": "publicIp",
+                  "toType": "unknown"
+                },
+                {
+                  "from": "azurerm_subnet.subnet",
+                  "to": "azurerm_virtual_network.vnet",
+                  "fromType": "subnet",
+                  "toType": "network"
+                },
+                {
+                  "from": "azurerm_virtual_network.vnet",
+                  "to": "azurerm_resource_group.rg",
+                  "fromType": "network",
+                  "toType": "unknown"
+                }
+              ],
+              "parseErrors": [],
+              "unknownProviderTypes": [
+                "azurerm_network_interface_security_group_association",
+                "azurerm_resource_group"
+              ],
+              "extractionMethod": "opentofu-or-terraform-graph"
+            }
+          }
+        ],
+        "version": {
+          "status": "passed",
+          "command": [
+            "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+            "version",
+            "-json"
+          ],
+          "exitCode": 0,
+          "stdout": "{\n  \"terraform_version\": \"1.12.5\",\n  \"platform\": \"windows_amd64\",\n  \"provider_selections\": {}\n}\n",
+          "stderr": ""
+        },
+        "formatCompliant": false
+      },
+      "trivy": {
+        "status": "unavailable",
+        "tool": "trivy"
+      },
+      "container": {
+        "status": "passed",
+        "tool": "docker",
+        "build": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "build",
+            "--tag",
+            "easydep-evaluation:1f1acc48a7eb4c168917837294466dd0",
+            "."
+          ],
+          "exitCode": 0,
+          "stdout": "",
+          "stderr": "#0 building with \"desktop-linux\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 294B 0.0s done\n#1 DONE 0.1s\n\n#2 [internal] load metadata for docker.io/library/eclipse-temurin:21-jre\n#2 DONE 1.5s\n\n#3 [internal] load metadata for docker.io/library/gradle:8.14.2-jdk21\n#3 DONE 1.6s\n\n#4 [internal] load .dockerignore\n#4 transferring context: 80B 0.0s done\n#4 DONE 0.0s\n\n#5 [internal] load build context\n#5 DONE 0.0s\n\n#6 [build 1/4] FROM docker.io/library/gradle:8.14.2-jdk21@sha256:cf0caeaac06e2824fac26daa6a55728fcb0e0e0e2ff28a430d2292547fe84dff\n#6 resolve docker.io/library/gradle:8.14.2-jdk21@sha256:cf0caeaac06e2824fac26daa6a55728fcb0e0e0e2ff28a430d2292547fe84dff\n#6 resolve docker.io/library/gradle:8.14.2-jdk21@sha256:cf0caeaac06e2824fac26daa6a55728fcb0e0e0e2ff28a430d2292547fe84dff 0.1s done\n#6 DONE 0.1s\n\n#7 [stage-1 1/3] FROM docker.io/library/eclipse-temurin:21-jre@sha256:8cef5fc7bebe421363ab543a2f4db5caf7d119d8db67d56b0f56c485d2de4d55\n#7 resolve docker.io/library/eclipse-temurin:21-jre@sha256:8cef5fc7bebe421363ab543a2f4db5caf7d119d8db67d56b0f56c485d2de4d55 0.1s done\n#7 DONE 0.1s\n\n#5 [internal] load build context\n#5 transferring context: 1.35kB 0.0s done\n#5 DONE 0.0s\n\n#8 [build 4/4] RUN gradle bootJar --no-daemon\n#8 CACHED\n\n#9 [stage-1 2/3] WORKDIR /app\n#9 CACHED\n\n#10 [build 2/4] WORKDIR /workspace\n#10 CACHED\n\n#11 [build 3/4] COPY . .\n#11 CACHED\n\n#12 [stage-1 3/3] COPY --from=build /workspace/build/libs/*.jar app.jar\n#12 CACHED\n\n#13 exporting to image\n#13 exporting layers done\n#13 exporting manifest sha256:7a0ea5998800a24cdca887cdc10010b5109e7dfb1e7179ace8e74c49963b06e0 0.0s done\n#13 exporting config sha256:7722ae964badf234b89149aa53215260d81bfe0d01325d8d4eb972db87e11fb5 0.0s done\n#13 exporting attestation manifest sha256:f99b42fa11b71924709f6acf3945c488582b6775a2fbf8442e3a37b458d746ea 0.1s done\n#13 exporting manifest list sha256:e794eff30d117f89aa2e5f12472e4de0df988e6f049a6b539bcc3586e4d41735\n#13 exporting manifest list sha256:e794eff30d117f89aa2e5f12472e4de0df988e6f049a6b539bcc3586e4d41735 0.0s done\n#13 naming to docker.io/library/easydep-evaluation:1f1acc48a7eb4c168917837294466dd0 done\n#13 unpacking to docker.io/library/easydep-evaluation:1f1acc48a7eb4c168917837294466dd0\n#13 unpacking to docker.io/library/easydep-evaluation:1f1acc48a7eb4c168917837294466dd0 0.6s done\n#13 DONE 0.9s\n\nView build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/psotlvfrvhn9zodxj49z5gfdg\n"
+        },
+        "run": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "run",
+            "--detach",
+            "--publish",
+            "127.0.0.1::8080",
+            "--label",
+            "easydep.evaluation=true",
+            "easydep-evaluation:1f1acc48a7eb4c168917837294466dd0"
+          ],
+          "exitCode": 0,
+          "stdout": "57d00ee03b30937dbb29a382f6316523ba1c717a3b8edd82bdd2f220827207db\n",
+          "stderr": ""
+        },
+        "port": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "port",
+            "57d00ee03b30937dbb29a382f6316523ba1c717a3b8edd82bdd2f220827207db",
+            "8080/tcp"
+          ],
+          "exitCode": 0,
+          "stdout": "127.0.0.1:6669\n",
+          "stderr": ""
+        },
+        "health": {
+          "status": "passed",
+          "url": "http://127.0.0.1:6669/health",
+          "baseUrl": "http://127.0.0.1:6669",
+          "httpStatus": 200,
+          "attempts": 6,
+          "port": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "port",
+              "57d00ee03b30937dbb29a382f6316523ba1c717a3b8edd82bdd2f220827207db",
+              "8080/tcp"
+            ],
+            "exitCode": 0,
+            "stdout": "127.0.0.1:6669\n",
+            "stderr": ""
+          }
+        },
+        "acceptance": {
+          "status": "passed",
+          "passed": 2,
+          "total": 2,
+          "checks": [
+            {
+              "name": "레코드 생성",
+              "status": "passed",
+              "httpStatus": 201,
+              "actual": {
+                "name": "alpha",
+                "value": "first"
+              }
+            },
+            {
+              "name": "레코드 목록",
+              "status": "passed",
+              "httpStatus": 200,
+              "actual": [
+                {
+                  "name": "alpha",
+                  "value": "first"
+                }
+              ]
+            }
+          ]
+        },
+        "cleanupPrimaryContainer": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "rm",
+            "--force",
+            "57d00ee03b30937dbb29a382f6316523ba1c717a3b8edd82bdd2f220827207db"
+          ],
+          "exitCode": 0,
+          "stdout": "57d00ee03b30937dbb29a382f6316523ba1c717a3b8edd82bdd2f220827207db\n",
+          "stderr": ""
+        },
+        "persistenceAcceptance": {
+          "status": "passed",
+          "volume": "easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77",
+          "mountPath": "/var/lib/app-state",
+          "createVolume": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "volume",
+              "create",
+              "easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77"
+            ],
+            "exitCode": 0,
+            "stdout": "easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77\n",
+            "stderr": ""
+          },
+          "beforeRestartRun": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "run",
+              "--detach",
+              "--publish",
+              "127.0.0.1::8080",
+              "--label",
+              "easydep.evaluation=true",
+              "--mount",
+              "type=volume,source=easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77,target=/var/lib/app-state",
+              "easydep-evaluation:1f1acc48a7eb4c168917837294466dd0"
+            ],
+            "exitCode": 0,
+            "stdout": "e75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f\n",
+            "stderr": ""
+          },
+          "beforeRestartHealth": {
+            "status": "passed",
+            "url": "http://127.0.0.1:3830/health",
+            "baseUrl": "http://127.0.0.1:3830",
+            "httpStatus": 200,
+            "attempts": 5,
+            "port": {
+              "status": "passed",
+              "command": [
+                "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+                "port",
+                "e75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f",
+                "8080/tcp"
+              ],
+              "exitCode": 0,
+              "stdout": "127.0.0.1:3830\n",
+              "stderr": ""
+            }
+          },
+          "beforeRestart": {
+            "status": "passed",
+            "passed": 1,
+            "total": 1,
+            "checks": [
+              {
+                "name": "교체 전 레코드 생성",
+                "status": "passed",
+                "httpStatus": 201,
+                "actual": {
+                  "name": "restart",
+                  "value": "survive"
+                }
+              }
+            ]
+          },
+          "stopBeforeRestart": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "stop",
+              "--time",
+              "30",
+              "e75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f"
+            ],
+            "exitCode": 0,
+            "stdout": "Flag --time has been deprecated, use --timeout instead\ne75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f\n",
+            "stderr": ""
+          },
+          "removeBeforeRestart": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "rm",
+              "e75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f"
+            ],
+            "exitCode": 0,
+            "stdout": "e75f54a5770f3961b983c7c53a1122f61ff4f0015133b732b96d728815ee580f\n",
+            "stderr": ""
+          },
+          "afterRestartRun": {
+            "status": "passed",
+            "command": [
+              "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+              "run",
+              "--detach",
+              "--publish",
+              "127.0.0.1::8080",
+              "--label",
+              "easydep.evaluation=true",
+              "--mount",
+              "type=volume,source=easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77,target=/var/lib/app-state",
+              "easydep-evaluation:1f1acc48a7eb4c168917837294466dd0"
+            ],
+            "exitCode": 0,
+            "stdout": "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13\n",
+            "stderr": ""
+          },
+          "afterRestartHealth": {
+            "status": "passed",
+            "url": "http://127.0.0.1:9482/health",
+            "baseUrl": "http://127.0.0.1:9482",
+            "httpStatus": 200,
+            "attempts": 4,
+            "port": {
+              "status": "passed",
+              "command": [
+                "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+                "port",
+                "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13",
+                "8080/tcp"
+              ],
+              "exitCode": 0,
+              "stdout": "127.0.0.1:9482\n",
+              "stderr": ""
+            }
+          },
+          "afterRestart": {
+            "status": "passed",
+            "passed": 1,
+            "total": 1,
+            "checks": [
+              {
+                "name": "교체 후 레코드 조회",
+                "status": "passed",
+                "httpStatus": 200,
+                "actual": [
+                  {
+                    "name": "restart",
+                    "value": "survive"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "containerInspect": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "inspect",
+            "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13"
+          ],
+          "exitCode": 0,
+          "stdout": "[\n    {\n        \"Id\": \"781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13\",\n        \"Created\": \"2026-08-09T02:59:42.435847332Z\",\n        \"Path\": \"java\",\n        \"Args\": [\n            \"-jar\",\n            \"/app/app.jar\"\n        ],\n        \"State\": {\n            \"Status\": \"running\",\n            \"Running\": true,\n            \"Paused\": false,\n            \"Restarting\": false,\n            \"OOMKilled\": false,\n            \"Dead\": false,\n            \"Pid\": 7119,\n            \"ExitCode\": 0,\n            \"Error\": \"\",\n            \"StartedAt\": \"2026-08-09T02:59:42.597368792Z\",\n            \"FinishedAt\": \"0001-01-01T00:00:00Z\"\n        },\n        \"Image\": \"sha256:e794eff30d117f89aa2e5f12472e4de0df988e6f049a6b539bcc3586e4d41735\",\n        \"ResolvConfPath\": \"/var/lib/docker/containers/781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13/resolv.conf\",\n        \"HostnamePath\": \"/var/lib/docker/containers/781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13/hostname\",\n        \"HostsPath\": \"/var/lib/docker/containers/781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13/hosts\",\n        \"LogPath\": \"/var/lib/docker/containers/781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13/781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13-json.log\",\n        \"Name\": \"/sweet_jones\",\n        \"RestartCount\": 0,\n        \"Driver\": \"overlayfs\",\n        \"Platform\": \"linux\",\n        \"MountLabel\": \"\",\n        \"ProcessLabel\": \"\",\n        \"AppArmorProfile\": \"\",\n        \"ExecIDs\": null,\n        \"HostConfig\": {\n            \"Binds\": null,\n            \"ContainerIDFile\": \"\",\n            \"LogConfig\": {\n                \"Type\": \"json-file\",\n                \"Config\": {}\n            },\n            \"NetworkMode\": \"bridge\",\n            \"PortBindings\": {\n                \"8080/tcp\": [\n                    {\n                        \"HostIp\": \"127.0.0.1\",\n                        \"HostPort\": \"\"\n                    }\n                ]\n            },\n            \"RestartPolicy\": {\n                \"Name\": \"no\",\n                \"MaximumRetryCount\": 0\n            },\n            \"AutoRemove\": false,\n            \"VolumeDriver\": \"\",\n            \"VolumesFrom\": null,\n            \"ConsoleSize\": [\n                0,\n                0\n            ],\n            \"CapAdd\": null,\n            \"CapDrop\": null,\n            \"CgroupnsMode\": \"private\",\n            \"Dns\": [],\n            \"DnsOptions\": [],\n            \"DnsSearch\": [],\n            \"ExtraHosts\": null,\n            \"GroupAdd\": null,\n            \"IpcMode\": \"private\",\n            \"Cgroup\": \"\",\n            \"Links\": null,\n            \"OomScoreAdj\": 0,\n            \"PidMode\": \"\",\n            \"Privileged\": false,\n            \"PublishAllPorts\": false,\n            \"ReadonlyRootfs\": false,\n            \"SecurityOpt\": null,\n            \"UTSMode\": \"\",\n            \"UsernsMode\": \"\",\n            \"ShmSize\": 67108864,\n            \"Runtime\": \"runc\",\n            \"Isolation\": \"\",\n            \"CpuShares\": 0,\n            \"Memory\": 0,\n            \"NanoCpus\": 0,\n            \"CgroupParent\": \"\",\n            \"BlkioWeight\": 0,\n            \"BlkioWeightDevice\": [],\n            \"BlkioDeviceReadBps\": [],\n            \"BlkioDeviceWriteBps\": [],\n            \"BlkioDeviceReadIOps\": [],\n            \"BlkioDeviceWriteIOps\": [],\n            \"CpuPeriod\": 0,\n            \"CpuQuota\": 0,\n            \"CpuRealtimePeriod\": 0,\n            \"CpuRealtimeRuntime\": 0,\n            \"CpusetCpus\": \"\",\n            \"CpusetMems\": \"\",\n            \"Devices\": [],\n            \"DeviceCgroupRules\": null,\n            \"DeviceRequests\": null,\n            \"MemoryReservation\": 0,\n            \"MemorySwap\": 0,\n            \"MemorySwappiness\": null,\n            \"OomKillDisable\": null,\n            \"PidsLimit\": null,\n            \"Ulimits\": [],\n            \"CpuCount\": 0,\n            \"CpuPercent\": 0,\n            \"IOMaximumIOps\": 0,\n            \"IOMaximumBandwidth\": 0,\n            \"Mounts\": [\n                {\n                    \"Type\": \"volume\",\n                    \"Source\": \"easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77\",\n                    \"Target\": \"/var/lib/app-state\"\n                }\n            ],\n            \"MaskedPaths\": [\n                \"/proc/asound\",\n                \"/proc/acpi\",\n                \"/proc/interrupts\",\n                \"/proc/kcore\",\n                \"/proc/keys\",\n                \"/proc/latency_stats\",\n                \"/proc/timer_list\",\n                \"/proc/timer_stats\",\n                \"/proc/sched_debug\",\n                \"/proc/scsi\",\n                \"/sys/firmware\",\n                \"/sys/devices/virtual/powercap\"\n            ],\n            \"ReadonlyPaths\": [\n                \"/proc/bus\",\n                \"/proc/fs\",\n                \"/proc/irq\",\n                \"/proc/sys\",\n                \"/proc/sysrq-trigger\"\n            ]\n        },\n        \"GraphDriver\": {\n            \"Data\": null,\n            \"Name\": \"overlayfs\"\n        },\n        \"Mounts\": [\n            {\n                \"Type\": \"volume\",\n                \"Name\": \"easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77\",\n                \"Source\": \"/var/lib/docker/volumes/easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77/_data\",\n                \"Destination\": \"/var/lib/app-state\",\n                \"Driver\": \"local\",\n                \"Mode\": \"z\",\n                \"RW\": true,\n                \"Propagation\": \"\"\n            }\n        ],\n        \"Config\": {\n            \"Hostname\": \"781bbefdd514\",\n            \"Domainname\": \"\",\n            \"User\": \"\",\n            \"AttachStdin\": false,\n            \"AttachStdout\": false,\n            \"AttachStderr\": false,\n            \"ExposedPorts\": {\n                \"8080/tcp\": {}\n            },\n            \"Tty\": false,\n            \"OpenStdin\": false,\n            \"StdinOnce\": false,\n            \"Env\": [\n                \"PATH=/opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\",\n                \"JAVA_HOME=/opt/java/openjdk\",\n                \"LANG=en_US.UTF-8\",\n                \"LANGUAGE=en_US:en\",\n                \"LC_ALL=en_US.UTF-8\",\n                \"JAVA_VERSION=jdk-21.0.11+10\"\n            ],\n            \"Cmd\": null,\n            \"Image\": \"easydep-evaluation:1f1acc48a7eb4c168917837294466dd0\",\n            \"Volumes\": null,\n            \"WorkingDir\": \"/app\",\n            \"Entrypoint\": [\n                \"java\",\n                \"-jar\",\n                \"/app/app.jar\"\n            ],\n            \"OnBuild\": null,\n            \"Labels\": {\n                \"easydep.evaluation\": \"true\",\n                \"org.opencontainers.image.created\": \"2026-07-24T12:48:28.650696+00:00\",\n                \"org.opencontainers.image.description\": \"The Ubuntu container image maintained by Canonical\\n\\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\\n\",\n                \"org.opencontainers.image.title\": \"ubuntu\",\n                \"org.opencontainers.image.version\": \"26.04\"\n            }\n        },\n        \"NetworkSettings\": {\n            \"Bridge\": \"\",\n            \"SandboxID\": \"19c25679b752baf0c62cdd8d326c75fd714e2b43af3f0351ed229cf4c4c3637d\",\n            \"SandboxKey\": \"/var/run/docker/netns/19c25679b752\",\n            \"Ports\": {\n                \"8080/tcp\": [\n                    {\n                        \"HostIp\": \"127.0.0.1\",\n                        \"HostPort\": \"9482\"\n                    }\n                ]\n            },\n            \"HairpinMode\": false,\n            \"LinkLocalIPv6Address\": \"\",\n            \"LinkLocalIPv6PrefixLen\": 0,\n            \"SecondaryIPAddresses\": null,\n            \"SecondaryIPv6Addresses\": null,\n            \"EndpointID\": \"c071a0727d8e534b449a84dac43c5aad8a2a52a06fea50571c3780cb63d5d62f\",\n            \"Gateway\": \"172.17.0.1\",\n            \"GlobalIPv6Address\": \"\",\n            \"GlobalIPv6PrefixLen\": 0,\n            \"IPAddress\": \"172.17.0.2\",\n            \"IPPrefixLen\": 16,\n            \"IPv6Gateway\": \"\",\n            \"MacAddress\": \"da:08:13:24:e4:1d\",\n            \"Networks\": {\n                \"bridge\": {\n                    \"IPAMConfig\": null,\n                    \"Links\": null,\n                    \"Aliases\": null,\n                    \"MacAddress\": \"da:08:13:24:e4:1d\",\n                    \"DriverOpts\": null,\n                    \"GwPriority\": 0,\n                    \"NetworkID\": \"4dd839d10dd234337d00c32585e194dae228b1811022f4c2476b2dc683bc7a68\",\n                    \"EndpointID\": \"c071a0727d8e534b449a84dac43c5aad8a2a52a06fea50571c3780cb63d5d62f\",\n                    \"Gateway\": \"172.17.0.1\",\n                    \"IPAddress\": \"172.17.0.2\",\n                    \"IPPrefixLen\": 16,\n                    \"IPv6Gateway\": \"\",\n                    \"GlobalIPv6Address\": \"\",\n                    \"GlobalIPv6PrefixLen\": 0,\n                    \"DNSNames\": null\n                }\n            }\n        },\n        \"ImageManifestDescriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n            \"digest\": \"sha256:7a0ea5998800a24cdca887cdc10010b5109e7dfb1e7179ace8e74c49963b06e0\",\n            \"size\": 1813,\n            \"platform\": {\n                \"architecture\": \"amd64\",\n                \"os\": \"linux\"\n            }\n        }\n    }\n]\n",
+          "stderr": ""
+        },
+        "containerLogs": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "logs",
+            "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13"
+          ],
+          "exitCode": 0,
+          "stdout": "\n  .   ____          _            __ _ _\n /\\\\ / ___'_ __ _ _(_)_ __  __ _ \\ \\ \\ \\\n( ( )\\___ | '_ | '_| | '_ \\/ _` | \\ \\ \\ \\\n \\\\/  ___)| |_)| | | | | || (_| |  ) ) ) )\n  '  |____| .__|_| |_|_| |_\\__, | / / / /\n =========|_|==============|___/=/_/_/_/\n\n :: Spring Boot ::                (v3.3.5)\n\n2026-08-09T02:59:45.379Z  INFO 1 --- [           main] com.example.demo.DemoApplication         : Starting DemoApplication v0.0.1-SNAPSHOT using Java 21.0.11 with PID 1 (/app/app.jar started by root in /app)\n2026-08-09T02:59:45.385Z  INFO 1 --- [           main] com.example.demo.DemoApplication         : No active profile set, falling back to 1 default profile: \"default\"\n2026-08-09T02:59:48.128Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)\n2026-08-09T02:59:48.156Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]\n2026-08-09T02:59:48.156Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.31]\n2026-08-09T02:59:48.228Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext\n2026-08-09T02:59:48.232Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 2702 ms\n2026-08-09T02:59:49.114Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'\n2026-08-09T02:59:49.158Z  INFO 1 --- [           main] com.example.demo.DemoApplication         : Started DemoApplication in 4.795 seconds (process running for 6.223)\n2026-08-09T02:59:49.273Z  INFO 1 --- [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'\n2026-08-09T02:59:49.274Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'\n2026-08-09T02:59:49.276Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 2 ms\n",
+          "stderr": ""
+        },
+        "cleanupContainer": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "rm",
+            "--force",
+            "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13"
+          ],
+          "exitCode": 0,
+          "stdout": "781bbefdd5145762126ad8a0e419451b13e2beccd1bc6b53be871fbbcb373c13\n",
+          "stderr": ""
+        },
+        "cleanupVolume": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "volume",
+            "rm",
+            "easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77"
+          ],
+          "exitCode": 0,
+          "stdout": "easydep-evaluation-1b7565747f634aff9ec3a2ee891ccf77\n",
+          "stderr": ""
+        },
+        "cleanupImage": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "image",
+            "rm",
+            "easydep-evaluation:1f1acc48a7eb4c168917837294466dd0"
+          ],
+          "exitCode": 0,
+          "stdout": "Untagged: easydep-evaluation:1f1acc48a7eb4c168917837294466dd0\nDeleted: sha256:e794eff30d117f89aa2e5f12472e4de0df988e6f049a6b539bcc3586e4d41735\n",
+          "stderr": ""
+        }
+      }
+    },
+    "experimentEligible": false
+  },
+  "measurement": {
+    "wallSeconds": 53.156775,
+    "kind": "immutable-artifact-reevaluation"
+  },
+  "claimLimits": {
+    "actualLlmAndMemberAgentsUsed": true,
+    "simulatedUserDecision": true,
+    "cloudApplyMeasured": false,
+    "singleDevelopmentCase": true
+  },
+  "localStateStore": {
+    "path": ".easydep/orchestration/ha-upstream-revision-20260809T013438Z-369300.sqlite3",
+    "retainedForSameRunResume": false
+  }
+}

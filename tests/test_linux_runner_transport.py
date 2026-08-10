@@ -1,0 +1,46 @@
+from pathlib import Path
+
+from app.core.orchestration.linux_runner_transport import (
+    runner_command,
+    to_container_path,
+    to_host_path,
+)
+
+
+def test_runner_transport_round_trips_workspace_path(tmp_path: Path):
+    path = tmp_path / ".easydep" / "run" / "job.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")
+
+    container = to_container_path(path, tmp_path)
+
+    assert container.as_posix() == "/easydep-workspace/.easydep/run/job.json"
+    assert Path(to_host_path(str(container), tmp_path)) == path
+
+
+def test_runner_command_transmits_only_named_environment(tmp_path: Path):
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="worker",
+        arguments=["/easydep-workspace/job.json"],
+        environment={"LLM_API_KEY": "secret", "UNRELATED_SECRET": "do-not-pass"},
+    )
+
+    assert "LLM_API_KEY" in command
+    assert "UNRELATED_SECRET" not in command
+    assert "secret" not in command
+    assert command[-2:] == ["worker", "/easydep-workspace/job.json"]
+
+
+def test_runner_command_labels_the_experiment_session(tmp_path: Path):
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="worker",
+        arguments=["/easydep-workspace/job.json"],
+        environment={"EASYDEP_EXPERIMENT_SESSION": "session-123"},
+    )
+
+    assert "easydep.owner=member-runner" in command
+    assert "easydep.experiment-session=session-123" in command

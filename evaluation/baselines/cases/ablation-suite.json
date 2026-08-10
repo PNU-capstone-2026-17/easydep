@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "language": "English",
+  "workload": "Docker on Linux VM",
+  "iac": "Terraform",
+  "study": "easydep-internal-ablation",
+  "treatmentDefinition": {
+    "easydep-full": "Dependency knowledge and repair feedback enabled.",
+    "easydep-no-depkb": "Dependency knowledge disabled; all other EasyDep stages retained.",
+    "easydep-no-verification": "Validation remains observable, but its result is not fed back for generation repair."
+  },
+  "development": [
+    "p1-stateless-aws.json",
+    "p1-stateless-azure.json",
+    "p1-stateless-gcp.json",
+    "p2-persistent-aws.json",
+    "p2-persistent-azure.json",
+    "p2-persistent-gcp.json",
+    "p3-ha-aws.json",
+    "p3-ha-azure.json",
+    "p3-ha-gcp.json"
+  ],
+  "holdout": [
+    "h1-telehealth-azure.json",
+    "h2-logistics-gcp.json",
+    "h3-reporting-aws.json"
+  ],
+  "repetitions": 3,
+  "arms": ["easydep-full", "easydep-no-depkb", "easydep-no-verification"],
+  "oracle": "oracle.json",
+  "oracleHash": "f81ad4e4b65c8c6abfbb3dd53bcbcecd5c5c6df034072aa0cb5a20b1dd16b076",
+  "frozenHashes": {
+    "p1-stateless-aws.json": "3e3f28da7ec29089ad86b85460d049b908e20cec9337ac22925cb15448d9f881",
+    "p1-stateless-azure.json": "a8a121b3b424f7132ff599adafc4351725e2bab35f8debe93ccdfcb3ad22b18e",
+    "p1-stateless-gcp.json": "0c10943618ed02852d13dd0441e2a2de6d1cc45b28d1a5d80923ad51b3dcbf41",
+    "p2-persistent-aws.json": "6d762ec105da1b7154e2315507afbd20999cb0eff7f1bb6fb042cb37c70b5250",
+    "p2-persistent-azure.json": "b89a98e53afdeadd9609c07bdad5aa9860628ef093126d4d506dbb2f2827f096",
+    "p2-persistent-gcp.json": "24172adaf9c97b06795aa94247e7193ed902020d4fcf8c97bf8ff9b975bc89d7",
+    "p3-ha-aws.json": "a7b42162f9f1eec8e3beafdc6ff14e90c5bff5d643e9b1e13f85737dbf0347f4",
+    "p3-ha-azure.json": "7dadfc8c84dfa5a06ee3b1ddc79491a07111ed709d8c7984311dbaa4ff212f25",
+    "p3-ha-gcp.json": "f269428370447c3c7e6b801deed37871a9263fc642a461f752fe0545a1177018",
+    "h1-telehealth-azure.json": "916f6b538f08006ad79d5e6c9c783790525c24c5840447a53c2c0805a6d4b10a",
+    "h2-logistics-gcp.json": "48db53b8813320c3b6d249b0aa49829a37b7777fee57128baca5dccf4666db88",
+    "h3-reporting-aws.json": "2b7a9eb839adfe01e28674da5a5400e26270e05088fa722f4f18dbb0e6cbe1d9"
+  }
+}

@@ -385,7 +385,11 @@ def _perception(state: AgentState) -> tuple[list[str], str]:
     answers = {k: str(v).strip() for k, v in (state.get("resource_answers") or {}).items()
                if str(v or "").strip()}
 
-    haystack = [constraints, *sentences, *answers.values()]
+    # 모델은 답변 블록을 읽고 `provider: azure`처럼 필드 이름까지 포함해 인용하는
+    # 경향이 있다. 그 문자열은 실제로 모델에게 보여 준 사용자 답변 표현이므로 원문 값과
+    # 함께 근거 후보에 넣는다. 값만 넣으면 정직한 인용도 환각으로 오판한다.
+    rendered_answers = [f"{key}: {value}" for key, value in answers.items()]
+    haystack = [constraints, *sentences, *answers.values(), *rendered_answers]
     parts = [
         "# Cloud constraints the user wrote (separate from the requirements)",
         constraints or "(the user gave none — every required field will have to be asked)",
@@ -397,7 +401,7 @@ def _perception(state: AgentState) -> tuple[list[str], str]:
         parts += [
             "",
             "# Answers the user already gave to earlier questions",
-            "\n".join(f"{k}: {v}" for k, v in answers.items()),
+            "\n".join(rendered_answers),
             "These are the user's own words about that field — they outrank the prose. "
             "They still have to be resolved and checked like anything else "
             "(\"Seoul\" is still not a region code).",

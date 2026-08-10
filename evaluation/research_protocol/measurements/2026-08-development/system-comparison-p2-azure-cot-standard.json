@@ -1,0 +1,849 @@
+{
+  "schemaVersion": "easydep-implementation-evaluation/v1",
+  "repository": {
+    "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\artifacts\\runs\\cot-standard-p2-azure-20260805T214305Z-a09252\\repo",
+    "fileCount": 12,
+    "javaFileCount": 5,
+    "testFileCount": 1,
+    "markdownContaminatedFiles": [],
+    "checks": {
+      "source_present": true,
+      "test_present": true,
+      "build_present": true,
+      "dockerfile_present": true,
+      "iac_present": true,
+      "generated_files_clean": true,
+      "deployment_manifest_present": false,
+      "requirements_documented": false,
+      "design_documented": false,
+      "deployment_diagram_present": false,
+      "traceability_present": false
+    },
+    "implementationComplete": true,
+    "requiredPassed": true,
+    "cloudNativePassed": true
+  },
+  "resourceGraph": {
+    "status": "not-run",
+    "nodes": [],
+    "edges": [],
+    "parseErrors": [],
+    "unknownProviderTypes": [],
+    "extractionMethod": null,
+    "reason": "OpenTofu/Terraform graph was not run"
+  },
+  "terraformSemantics": {
+    "status": "available",
+    "parser": "python-hcl2",
+    "resources": [
+      {
+        "address": "azurerm_resource_group.rg",
+        "providerType": "azurerm_resource_group",
+        "declarationKind": "resource",
+        "concept": "resourceScope",
+        "source": "terraform/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "azurerm_virtual_network.vnet",
+        "providerType": "azurerm_virtual_network",
+        "declarationKind": "resource",
+        "concept": "network",
+        "source": "terraform/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "azurerm_subnet.subnet",
+        "providerType": "azurerm_subnet",
+        "declarationKind": "resource",
+        "concept": "subnet",
+        "source": "terraform/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "azurerm_public_ip.pip",
+        "providerType": "azurerm_public_ip",
+        "declarationKind": "resource",
+        "concept": "publicIp",
+        "source": "terraform/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "azurerm_network_interface.nic",
+        "providerType": "azurerm_network_interface",
+        "declarationKind": "resource",
+        "concept": "nic",
+        "source": "terraform/main.tf",
+        "blocks": [
+          "ip_configuration"
+        ]
+      },
+      {
+        "address": "azurerm_managed_disk.data_disk",
+        "providerType": "azurerm_managed_disk",
+        "declarationKind": "resource",
+        "concept": "dataDisk",
+        "source": "terraform/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "azurerm_linux_virtual_machine.vm",
+        "providerType": "azurerm_linux_virtual_machine",
+        "declarationKind": "resource",
+        "concept": "vm",
+        "source": "terraform/main.tf",
+        "blocks": [
+          "__comments__",
+          "admin_ssh_key",
+          "data_disk",
+          "os_disk",
+          "source_image_reference"
+        ]
+      }
+    ],
+    "concepts": [
+      "dataDisk",
+      "network",
+      "nic",
+      "publicIp",
+      "resourceScope",
+      "subnet",
+      "vm"
+    ],
+    "edges": [
+      {
+        "from": "dataDisk",
+        "to": "resourceScope"
+      },
+      {
+        "from": "network",
+        "to": "resourceScope"
+      },
+      {
+        "from": "nic",
+        "to": "publicIp"
+      },
+      {
+        "from": "nic",
+        "to": "resourceScope"
+      },
+      {
+        "from": "nic",
+        "to": "subnet"
+      },
+      {
+        "from": "publicIp",
+        "to": "resourceScope"
+      },
+      {
+        "from": "subnet",
+        "to": "network"
+      },
+      {
+        "from": "subnet",
+        "to": "resourceScope"
+      },
+      {
+        "from": "vm",
+        "to": "dataDisk"
+      },
+      {
+        "from": "vm",
+        "to": "nic"
+      },
+      {
+        "from": "vm",
+        "to": "resourceScope"
+      }
+    ],
+    "resourceGraph": {
+      "nodes": [
+        {
+          "id": "azurerm_resource_group.rg",
+          "providerType": "azurerm_resource_group",
+          "declarationKind": "resource",
+          "concept": "resourceScope",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_virtual_network.vnet",
+          "providerType": "azurerm_virtual_network",
+          "declarationKind": "resource",
+          "concept": "network",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_subnet.subnet",
+          "providerType": "azurerm_subnet",
+          "declarationKind": "resource",
+          "concept": "subnet",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_public_ip.pip",
+          "providerType": "azurerm_public_ip",
+          "declarationKind": "resource",
+          "concept": "publicIp",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_network_interface.nic",
+          "providerType": "azurerm_network_interface",
+          "declarationKind": "resource",
+          "concept": "nic",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_managed_disk.data_disk",
+          "providerType": "azurerm_managed_disk",
+          "declarationKind": "resource",
+          "concept": "dataDisk",
+          "source": "terraform/main.tf"
+        },
+        {
+          "id": "azurerm_linux_virtual_machine.vm",
+          "providerType": "azurerm_linux_virtual_machine",
+          "declarationKind": "resource",
+          "concept": "vm",
+          "source": "terraform/main.tf"
+        }
+      ],
+      "edges": [
+        {
+          "from": "azurerm_linux_virtual_machine.vm",
+          "to": "azurerm_managed_disk.data_disk",
+          "fromConcept": "vm",
+          "toConcept": "dataDisk",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_linux_virtual_machine.vm",
+          "to": "azurerm_network_interface.nic",
+          "fromConcept": "vm",
+          "toConcept": "nic",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_linux_virtual_machine.vm",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "vm",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_managed_disk.data_disk",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "dataDisk",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_network_interface.nic",
+          "to": "azurerm_public_ip.pip",
+          "fromConcept": "nic",
+          "toConcept": "publicIp",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_network_interface.nic",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "nic",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_network_interface.nic",
+          "to": "azurerm_subnet.subnet",
+          "fromConcept": "nic",
+          "toConcept": "subnet",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_public_ip.pip",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "publicIp",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_subnet.subnet",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "subnet",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_subnet.subnet",
+          "to": "azurerm_virtual_network.vnet",
+          "fromConcept": "subnet",
+          "toConcept": "network",
+          "relation": "references"
+        },
+        {
+          "from": "azurerm_virtual_network.vnet",
+          "to": "azurerm_resource_group.rg",
+          "fromConcept": "network",
+          "toConcept": "resourceScope",
+          "relation": "references"
+        }
+      ],
+      "attributes": {
+        "vmPublicIp": true,
+        "internetIngressRule": false
+      }
+    },
+    "componentProjections": {
+      "status": "available",
+      "provider": "azure",
+      "deltas": {
+        "persistent-storage": {
+          "components": [
+            {
+              "componentId": "disk",
+              "terraformKind": "resource",
+              "terraformType": "azurerm_managed_disk",
+              "instances": [
+                "azurerm_managed_disk.data_disk"
+              ],
+              "status": "passed"
+            },
+            {
+              "componentId": "attachment",
+              "terraformKind": "resource",
+              "terraformType": "azurerm_virtual_machine_data_disk_attachment",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "mount",
+              "terraformKind": "guestConfiguration",
+              "terraformType": null,
+              "instances": [
+                "guest:mount:/var/lib/notes"
+              ],
+              "status": "passed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "attachment",
+              "to": "disk",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "attachment",
+              "to": "vm",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "mount",
+              "to": "attachment",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "mount",
+              "to": "attachment",
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "load-balanced-multi-vm": {
+          "components": [
+            {
+              "componentId": "gateway",
+              "terraformKind": "resource",
+              "terraformType": "azurerm_application_gateway",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "frontend",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.frontend_ip_configuration",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "listener",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.http_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendPool",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.backend_address_pool",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendSettings",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.backend_http_settings",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "routingRule",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.request_routing_rule",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "probe",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.probe",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendMembership",
+              "terraformKind": "resource",
+              "terraformType": "azurerm_network_interface_application_gateway_backend_address_pool_association",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "gateway",
+              "to": "subnet",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "routingRule",
+              "to": "listener",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "routingRule",
+              "to": "backendPool",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "routingRule",
+              "to": "backendSettings",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendSettings",
+              "to": "probe",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "backendPool",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "nic",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "gateway",
+              "to": "subnet",
+              "constraint": "dedicated-subnet",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "https-termination": {
+          "components": [
+            {
+              "componentId": "httpsListener",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.http_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "certificate",
+              "terraformKind": "nestedBlock",
+              "terraformType": "azurerm_application_gateway.ssl_certificate",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "httpsListener",
+              "to": "gateway",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "httpsListener",
+              "to": "certificate",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": []
+        }
+      },
+      "guestMountPaths": [
+        "/var/lib/notes"
+      ]
+    },
+    "capabilities": {
+      "vmCount": 1,
+      "availabilityZones": null,
+      "loadBalancer": false,
+      "persistentData": false,
+      "dataDiskGiB": null,
+      "volumeMount": "/var/lib/notes",
+      "publicHttps": false,
+      "healthPath": "/health",
+      "applicationPort": 8080
+    },
+    "unmappedProviderTypes": [],
+    "errors": []
+  },
+  "codeQuality": {
+    "complexity": {
+      "status": "available",
+      "tool": "lizard",
+      "version": "1.23.0",
+      "fileCount": 4,
+      "functionCount": 13,
+      "nloc": 79,
+      "cyclomaticComplexity": {
+        "mean": 1.076923,
+        "median": 1.0,
+        "p95": 1.4,
+        "max": 2,
+        "functionsAbove10": 0,
+        "functionsAbove10Ratio": 0.0
+      },
+      "functionNloc": {
+        "mean": 3.153846,
+        "p95": 8.2,
+        "max": 10
+      },
+      "decisionPointDensityPer100Nloc": 1.265823
+    },
+    "coverage": {
+      "status": "unavailable",
+      "reason": "JaCoCo XML report not found"
+    },
+    "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+  },
+  "staticValidationPassed": true,
+  "expected": {
+    "schemaVersion": "easydep-end-to-end-oracle/v1",
+    "caseId": "P2-azure",
+    "profile": "P2",
+    "provider": "azure",
+    "budgetUsd": 150,
+    "requiredCapabilities": {
+      "publicHttps": true,
+      "healthPath": "/health",
+      "applicationPort": 8080,
+      "vmCount": {
+        "min": 1,
+        "max": 1
+      },
+      "persistentData": true,
+      "dataDiskGiB": {
+        "min": 20
+      },
+      "volumeMount": "/var/lib/notes",
+      "loadBalancer": false
+    },
+    "functionalAcceptance": [
+      {
+        "name": "create note",
+        "method": "POST",
+        "path": "/notes",
+        "status": 201,
+        "json": {
+          "title": "alpha",
+          "content": "first"
+        },
+        "expectJson": {
+          "title": "alpha",
+          "content": "first"
+        }
+      },
+      {
+        "name": "list notes",
+        "method": "GET",
+        "path": "/notes",
+        "status": 200,
+        "expectJson": [
+          {
+            "title": "alpha",
+            "content": "first"
+          }
+        ]
+      }
+    ],
+    "persistenceAcceptance": {
+      "mountPath": "/var/lib/notes",
+      "beforeRestart": [
+        {
+          "name": "재시작 전 노트 생성",
+          "method": "POST",
+          "path": "/notes",
+          "status": 201,
+          "json": {
+            "title": "restart-proof",
+            "content": "must-survive"
+          },
+          "expectJson": {
+            "title": "restart-proof",
+            "content": "must-survive"
+          }
+        }
+      ],
+      "afterRestart": [
+        {
+          "name": "재시작 후 노트 조회",
+          "method": "GET",
+          "path": "/notes",
+          "status": 200,
+          "expectJson": [
+            {
+              "title": "restart-proof",
+              "content": "must-survive"
+            }
+          ]
+        }
+      ]
+    },
+    "forbiddenConcepts": [
+      "loadBalancer",
+      "kubernetes",
+      "managedApplicationPlatform"
+    ],
+    "requiredDependencies": [
+      {
+        "from": "vm",
+        "to": "nic"
+      },
+      {
+        "from": "nic",
+        "to": "subnet"
+      },
+      {
+        "from": "subnet",
+        "to": "network"
+      }
+    ],
+    "componentDependencyExpectations": {
+      "structuralReferences": [],
+      "cardinalities": [],
+      "constraints": []
+    }
+  },
+  "score": {
+    "status": "completed",
+    "passed": 10,
+    "failed": 2,
+    "unknown": 1,
+    "notApplicable": 0,
+    "passRate": 0.769231,
+    "checks": [
+      {
+        "kind": "providerBoundary",
+        "expected": "azure",
+        "actual": "azure",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "publicHttps",
+        "expected": true,
+        "actual": false,
+        "status": "failed"
+      },
+      {
+        "kind": "capability",
+        "name": "healthPath",
+        "expected": "/health",
+        "actual": "/health",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "applicationPort",
+        "expected": 8080,
+        "actual": 8080,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "vmCount",
+        "expected": {
+          "min": 1,
+          "max": 1
+        },
+        "actual": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "persistentData",
+        "expected": true,
+        "actual": false,
+        "status": "failed"
+      },
+      {
+        "kind": "capability",
+        "name": "dataDiskGiB",
+        "expected": {
+          "min": 20
+        },
+        "actual": null,
+        "status": "unknown"
+      },
+      {
+        "kind": "capability",
+        "name": "volumeMount",
+        "expected": "/var/lib/notes",
+        "actual": "/var/lib/notes",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "loadBalancer",
+        "expected": false,
+        "actual": false,
+        "status": "passed"
+      },
+      {
+        "kind": "forbidden",
+        "name": "loadBalancer",
+        "status": "passed"
+      },
+      {
+        "kind": "dependency",
+        "from": "vm",
+        "to": "nic",
+        "status": "passed"
+      },
+      {
+        "kind": "dependency",
+        "from": "nic",
+        "to": "subnet",
+        "status": "passed"
+      },
+      {
+        "kind": "dependency",
+        "from": "subnet",
+        "to": "network",
+        "status": "passed"
+      }
+    ]
+  },
+  "externalTools": {
+    "iacEngine": {
+      "status": "failed",
+      "tool": "opentofu",
+      "modules": [
+        {
+          "path": "terraform",
+          "format": {
+            "status": "failed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "fmt",
+              "-check",
+              "-recursive",
+              "-no-color"
+            ],
+            "exitCode": 3,
+            "stdout": "main.tf\n",
+            "stderr": ""
+          },
+          "initialize": {
+            "status": "failed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "init",
+              "-backend=false",
+              "-input=false",
+              "-no-color"
+            ],
+            "exitCode": 1,
+            "stdout": "\nInitializing provider plugins...\n- Finding hashicorp/azurerm versions matching \"~> 3.0\"...\n",
+            "stderr": "\nError: Failed to resolve provider packages\n\nCould not resolve provider hashicorp/azurerm: no available releases match the\ngiven constraints ~> 3.0\n\n"
+          },
+          "validate": {
+            "status": "not-run",
+            "reason": "initialization failed"
+          },
+          "graph": {
+            "status": "not-run",
+            "reason": "initialization failed"
+          },
+          "normalizedGraph": null
+        }
+      ],
+      "version": {
+        "status": "passed",
+        "command": [
+          "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+          "version",
+          "-json"
+        ],
+        "exitCode": 0,
+        "stdout": "{\n  \"terraform_version\": \"1.12.5\",\n  \"platform\": \"windows_amd64\",\n  \"provider_selections\": {}\n}\n",
+        "stderr": ""
+      },
+      "formatCompliant": false
+    },
+    "trivy": {
+      "status": "unavailable",
+      "tool": "trivy"
+    },
+    "container": {
+      "status": "failed",
+      "tool": "docker",
+      "build": {
+        "status": "failed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "build",
+          "--tag",
+          "easydep-evaluation:59b036a4cbd64c9da701648fe33d0584",
+          "."
+        ],
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "#0 building with \"desktop-linux\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 513B 0.0s done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine\n#2 DONE 1.2s\n\n#3 [internal] load .dockerignore\n#3 transferring context: 2B done\n#3 DONE 0.0s\n\n#4 [internal] load build context\n#4 transferring context: 2B done\n#4 DONE 0.0s\n\n#5 [2/4] WORKDIR /app\n#5 CACHED\n\n#6 [3/4] COPY build/libs/notes-app.jar app.jar\n#6 ERROR: failed to calculate checksum of ref rk5s7kme26ur9synrv1mqyno7::i5pwsrqd2b696gfx8ezn7ap0g: \"/build/libs/notes-app.jar\": not found\n\n#7 [1/4] FROM docker.io/library/eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c\n#7 resolve docker.io/library/eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c 0.0s done\n#7 CANCELED\n------\n > [3/4] COPY build/libs/notes-app.jar app.jar:\n------\nDockerfile:3\n--------------------\n   1 |     FROM eclipse-temurin:21-jre-alpine\n   2 |     WORKDIR /app\n   3 | >>> COPY build/libs/notes-app.jar app.jar\n   4 |     # Generate a self‑signed keystore if not present (keystore.p12) – placeholder command\n   5 |     RUN if [ ! -f /var/lib/notes/keystore.p12 ]; then \\\n--------------------\nERROR: failed to build: failed to solve: failed to compute cache key: failed to calculate checksum of ref rk5s7kme26ur9synrv1mqyno7::i5pwsrqd2b696gfx8ezn7ap0g: \"/build/libs/notes-app.jar\": not found\n\nView build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/unthw36six8l1f370c2qfeotv\n"
+      }
+    }
+  },
+  "experimentEligible": false
+}
