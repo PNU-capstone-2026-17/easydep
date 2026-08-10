@@ -163,6 +163,124 @@ def test_unowned_compile_file_does_not_guess_a_repair_owner(tmp_path):
     }]
 
 
+def test_member_generated_unowned_test_compile_failure_routes_to_scaffold(tmp_path):
+    application = tmp_path / "run" / "application"
+    test_source = application / "src/test/java/example/ControllerTest.java"
+    test_source.parent.mkdir(parents=True)
+    test_source.write_text("class ControllerTest {}", encoding="utf-8")
+
+    diagnostics = VerificationAdapter._diagnostics(
+        {
+            "status": "failed",
+            "stdout": "> Task :compileTestJava FAILED\nCompilation failed",
+            "stderr": (
+                f"{test_source}:28: error: incompatible types: "
+                "OldDependency cannot be converted to NewAdapter"
+            ),
+        },
+        {
+            "member_workflow_executed": True,
+            "member_workflow_status": "COMPLETE",
+            "acceptance_tests": [],
+        },
+        application,
+    )
+
+    assert diagnostics == [{
+        "code": "APP-COMPILE-MEMBER-TEST-001",
+        "message": (
+            "Member-generated internal tests no longer compile against the "
+            "current production source contract."
+        ),
+        "repairOwner": "implementation.scaffold",
+        "failedFiles": ["src/test/java/example/ControllerTest.java"],
+        "ownedFailedFiles": ["src/test/java/example/ControllerTest.java"],
+    }]
+    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == (
+        "implementation.scaffold"
+    )
+
+
+def test_non_member_unowned_test_compile_failure_routes_to_acceptance_tests(tmp_path):
+    application = tmp_path / "run" / "application"
+    application.mkdir(parents=True)
+
+    diagnostics = VerificationAdapter._diagnostics(
+        {
+            "status": "failed",
+            "stdout": "> Task :compileTestJava FAILED\nCompilation failed",
+            "stderr": "src/test/java/example/AcceptanceTest.java:9: error: invalid method",
+        },
+        {"member_workflow_executed": False},
+        application,
+    )
+
+    assert diagnostics[0]["code"] == "APP-COMPILE-ACCEPTANCE-001"
+    assert diagnostics[0]["repairOwner"] == "implementation.acceptance_tests"
+
+
+def test_member_internal_test_failure_routes_to_scaffold(tmp_path):
+    application = tmp_path / "run" / "application"
+    application.mkdir(parents=True)
+
+    diagnostics = VerificationAdapter._diagnostics(
+        {
+            "status": "failed",
+            "stdout": (
+                "HealthCheckControllerServiceTest > "
+                "buildHealthResponse_callsHealthEndpoint() FAILED\n"
+            ),
+            "stderr": "2 tests completed, 1 failed",
+            "testFiles": [
+                "src/test/java/example/HealthCheckControllerServiceTest.java"
+            ],
+        },
+        {
+            "member_workflow_executed": True,
+            "acceptance_tests": ["src/test/java/example/FixedAcceptanceTest.java"],
+        },
+        application,
+    )
+
+    assert diagnostics == [{
+        "code": "APP-MEMBER-TEST-FAILURE-001",
+        "message": (
+            "Member-generated internal tests fail against the final composed "
+            "production source."
+        ),
+        "repairOwner": "implementation.scaffold",
+        "failedTestClasses": ["HealthCheckControllerServiceTest"],
+        "failedFiles": [
+            "src/test/java/example/HealthCheckControllerServiceTest.java"
+        ],
+    }]
+
+
+def test_fixed_acceptance_failure_is_not_routed_to_test_rewrite(tmp_path):
+    application = tmp_path / "run" / "application"
+    application.mkdir(parents=True)
+    fixed_test = "src/test/java/example/FixedAcceptanceTest.java"
+
+    diagnostics = VerificationAdapter._diagnostics(
+        {
+            "status": "failed",
+            "stdout": "FixedAcceptanceTest > requiredResult() FAILED\n",
+            "stderr": "1 test completed, 1 failed",
+            "testFiles": [fixed_test],
+        },
+        {
+            "member_workflow_executed": True,
+            "acceptance_tests": [fixed_test],
+        },
+        application,
+    )
+
+    assert diagnostics == [{
+        "code": "APPLICATION_TESTS_FAILED",
+        "message": "Generated application tests failed.",
+    }]
+
+
 def test_testing_stage_uses_bundled_gradle_without_requesting_jacoco(
     tmp_path, monkeypatch
 ):

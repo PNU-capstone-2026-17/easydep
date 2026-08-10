@@ -747,9 +747,21 @@ class Orchestrator:
             elapsedSeconds=round(perf_counter() - load_started, 6),
         )
         prior_status = state.get("status")
-        if prior_status not in {StepStatus.FAILED.value, "running"}:
+        if prior_status not in {
+            StepStatus.FAILED.value,
+            StepStatus.COMPLETED.value,
+            "running",
+        }:
             raise ValueError(f"Run is neither failed nor interrupted: {run_id}")
-        stage = StageName(state.get("current_stage", StageName.REQUIREMENTS.value))
+        if prior_status == StepStatus.COMPLETED.value and repair_owner is None:
+            raise ValueError(
+                "A completed run may be reopened only with an explicit repair owner"
+            )
+        stage = (
+            StageName.TESTING
+            if prior_status == StepStatus.COMPLETED.value
+            else StageName(state.get("current_stage", StageName.REQUIREMENTS.value))
+        )
         if repair_owner is not None:
             if stage not in {StageName.IMPLEMENTATION, StageName.TESTING}:
                 raise ValueError(

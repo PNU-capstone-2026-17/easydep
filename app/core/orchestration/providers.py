@@ -579,6 +579,7 @@ PRODUCTION_SOURCE_SUFFIXES = frozenset(
         ".json",
         ".kt",
         ".properties",
+        ".sql",
         ".yaml",
         ".yml",
     }
@@ -990,7 +991,10 @@ at least one concrete normal business path with meaningful expected values. Do n
 production code, build scripts, or infrastructure. Do not weaken assertions. Return JSON only
 and keep all text in English. The generated build uses Spring Boot 3.3. For random-port tests,
 import `LocalServerPort` only from `org.springframework.boot.test.web.server`; the legacy
-`org.springframework.boot.web.server` package is not available."""
+`org.springframework.boot.web.server` package is not available. Never encode a known stub,
+exception, or unimplemented response as the expected behavior when requirements define a
+successful outcome. When repair feedback is supplied, reconcile every existing test that
+contradicts the requirements while preserving unrelated meaningful assertions."""
 
 TEST_RESOURCE_SUFFIXES = frozenset(
     {".csv", ".json", ".properties", ".sql", ".txt", ".yaml", ".yml"}
@@ -1066,11 +1070,27 @@ class LlmAcceptanceTestsProvider:
                     metrics={"llm_calls": 0, "member_workflow_complete": True},
                 )
             application = Path(payload["run_root"]) / "application"
+            existing_tests = {
+                path.relative_to(application).as_posix(): path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                for path in sorted((application / "src" / "test").rglob("*"))
+                if path.is_file() and path.suffix in {".java", ".kt"}
+            }
             prompt = json.dumps(
                 {
+                    "instruction": (
+                        "Resolve repairFeedback by strengthening or correcting tests "
+                        "that contradict the requirements. Do not preserve expectations "
+                        "for known broken or unimplemented behavior."
+                        if payload.get("repair_feedback")
+                        else "Generate acceptance tests from the requirements."
+                    ),
                     "requirements": payload.get("requirements_result") or {},
                     "design": payload.get("design_result") or {},
                     "productionSources": LlmLogicProvider._sources(application),
+                    "existingTests": existing_tests,
+                    "repairFeedback": payload.get("repair_feedback") or [],
                 },
                 ensure_ascii=False,
             )

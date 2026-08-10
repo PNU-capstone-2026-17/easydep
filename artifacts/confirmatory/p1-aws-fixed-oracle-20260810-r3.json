@@ -1,0 +1,998 @@
+{
+  "schemaVersion": "easydep-implementation-evaluation/v1",
+  "repository": {
+    "root": "C:\\Users\\projw\\Desktop\\dev\\easydep\\.easydep\\implementation-runs\\orchestration-easydep-full-p1-aws-20260809T064921Z-2dc124\\generated\\runs\\run_d4a406f8ebbc\\application",
+    "fileCount": 80,
+    "javaFileCount": 34,
+    "testFileCount": 10,
+    "markdownContaminatedFiles": [],
+    "checks": {
+      "source_present": true,
+      "test_present": true,
+      "build_present": true,
+      "dockerfile_present": true,
+      "iac_present": true,
+      "generated_files_clean": true,
+      "deployment_manifest_present": false,
+      "requirements_documented": false,
+      "design_documented": false,
+      "deployment_diagram_present": false,
+      "traceability_present": false
+    },
+    "implementationComplete": true,
+    "requiredPassed": true,
+    "cloudNativePassed": true
+  },
+  "resourceGraph": {
+    "status": "available",
+    "nodes": [
+      {
+        "id": "aws_ami.amazon_linux",
+        "type": "unknown",
+        "providerType": "aws_ami",
+        "source": "infra"
+      },
+      {
+        "id": "aws_availability_zones.available",
+        "type": "unknown",
+        "providerType": "aws_availability_zones",
+        "source": "infra"
+      },
+      {
+        "id": "aws_instance.app",
+        "type": "vm",
+        "providerType": "aws_instance",
+        "source": "infra"
+      },
+      {
+        "id": "aws_security_group.sg",
+        "type": "firewall",
+        "providerType": "aws_security_group",
+        "source": "infra"
+      },
+      {
+        "id": "aws_subnet.main",
+        "type": "subnet",
+        "providerType": "aws_subnet",
+        "source": "infra"
+      },
+      {
+        "id": "aws_vpc.main",
+        "type": "network",
+        "providerType": "aws_vpc",
+        "source": "infra"
+      }
+    ],
+    "edges": [
+      {
+        "from": "aws_instance.app",
+        "to": "aws_ami.amazon_linux",
+        "fromType": "vm",
+        "toType": "unknown"
+      },
+      {
+        "from": "aws_instance.app",
+        "to": "aws_security_group.sg",
+        "fromType": "vm",
+        "toType": "firewall"
+      },
+      {
+        "from": "aws_instance.app",
+        "to": "aws_subnet.main",
+        "fromType": "vm",
+        "toType": "subnet"
+      },
+      {
+        "from": "aws_security_group.sg",
+        "to": "aws_vpc.main",
+        "fromType": "firewall",
+        "toType": "network"
+      },
+      {
+        "from": "aws_subnet.main",
+        "to": "aws_availability_zones.available",
+        "fromType": "subnet",
+        "toType": "unknown"
+      },
+      {
+        "from": "aws_subnet.main",
+        "to": "aws_vpc.main",
+        "fromType": "subnet",
+        "toType": "network"
+      }
+    ],
+    "parseErrors": [],
+    "unknownProviderTypes": [
+      "aws_ami",
+      "aws_availability_zones"
+    ],
+    "extractionMethod": "opentofu-or-terraform-graph"
+  },
+  "terraformSemantics": {
+    "status": "available",
+    "parser": "python-hcl2",
+    "resources": [
+      {
+        "address": "aws_vpc.main",
+        "providerType": "aws_vpc",
+        "declarationKind": "resource",
+        "concept": "network",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "aws_subnet.main",
+        "providerType": "aws_subnet",
+        "declarationKind": "resource",
+        "concept": "subnet",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "aws_security_group.sg",
+        "providerType": "aws_security_group",
+        "declarationKind": "resource",
+        "concept": "firewall",
+        "source": "infra/main.tf",
+        "blocks": [
+          "egress",
+          "ingress"
+        ]
+      },
+      {
+        "address": "aws_instance.app",
+        "providerType": "aws_instance",
+        "declarationKind": "resource",
+        "concept": "vm",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "data.aws_availability_zones.available",
+        "providerType": "aws_availability_zones",
+        "declarationKind": "data",
+        "concept": "unmapped",
+        "source": "infra/main.tf",
+        "blocks": []
+      },
+      {
+        "address": "data.aws_ami.amazon_linux",
+        "providerType": "aws_ami",
+        "declarationKind": "data",
+        "concept": "unmapped",
+        "source": "infra/main.tf",
+        "blocks": [
+          "filter"
+        ]
+      }
+    ],
+    "concepts": [
+      "firewall",
+      "network",
+      "nic",
+      "subnet",
+      "vm"
+    ],
+    "edges": [
+      {
+        "from": "firewall",
+        "to": "network"
+      },
+      {
+        "from": "nic",
+        "to": "subnet"
+      },
+      {
+        "from": "subnet",
+        "to": "network"
+      },
+      {
+        "from": "vm",
+        "to": "firewall"
+      },
+      {
+        "from": "vm",
+        "to": "nic"
+      },
+      {
+        "from": "vm",
+        "to": "subnet"
+      }
+    ],
+    "resourceGraph": {
+      "nodes": [
+        {
+          "id": "aws_vpc.main",
+          "providerType": "aws_vpc",
+          "declarationKind": "resource",
+          "concept": "network",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "aws_subnet.main",
+          "providerType": "aws_subnet",
+          "declarationKind": "resource",
+          "concept": "subnet",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "aws_security_group.sg",
+          "providerType": "aws_security_group",
+          "declarationKind": "resource",
+          "concept": "firewall",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "aws_instance.app",
+          "providerType": "aws_instance",
+          "declarationKind": "resource",
+          "concept": "vm",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "data.aws_availability_zones.available",
+          "providerType": "aws_availability_zones",
+          "declarationKind": "data",
+          "concept": "unmapped",
+          "source": "infra/main.tf"
+        },
+        {
+          "id": "data.aws_ami.amazon_linux",
+          "providerType": "aws_ami",
+          "declarationKind": "data",
+          "concept": "unmapped",
+          "source": "infra/main.tf"
+        }
+      ],
+      "edges": [
+        {
+          "from": "aws_instance.app",
+          "to": "aws_security_group.sg",
+          "fromConcept": "vm",
+          "toConcept": "firewall",
+          "relation": "references"
+        },
+        {
+          "from": "aws_instance.app",
+          "to": "aws_subnet.main",
+          "fromConcept": "vm",
+          "toConcept": "subnet",
+          "relation": "references"
+        },
+        {
+          "from": "aws_instance.app",
+          "to": "data.aws_ami.amazon_linux",
+          "fromConcept": "vm",
+          "toConcept": "unmapped",
+          "relation": "references"
+        },
+        {
+          "from": "aws_security_group.sg",
+          "to": "aws_vpc.main",
+          "fromConcept": "firewall",
+          "toConcept": "network",
+          "relation": "references"
+        },
+        {
+          "from": "aws_subnet.main",
+          "to": "aws_vpc.main",
+          "fromConcept": "subnet",
+          "toConcept": "network",
+          "relation": "references"
+        },
+        {
+          "from": "aws_subnet.main",
+          "to": "data.aws_availability_zones.available",
+          "fromConcept": "subnet",
+          "toConcept": "unmapped",
+          "relation": "references"
+        }
+      ],
+      "attributes": {
+        "vmPublicIp": true,
+        "internetIngressRule": true
+      }
+    },
+    "componentProjections": {
+      "status": "available",
+      "provider": "aws",
+      "deltas": {
+        "persistent-storage": {
+          "components": [
+            {
+              "componentId": "disk",
+              "terraformKind": "resource",
+              "terraformType": "aws_ebs_volume",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "attachment",
+              "terraformKind": "resource",
+              "terraformType": "aws_volume_attachment",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "mount",
+              "terraformKind": "guestConfiguration",
+              "terraformType": null,
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "attachment",
+              "to": "disk",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "attachment",
+              "to": "vm",
+              "cardinality": "one-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "disk",
+              "to": "vm",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "mount",
+              "to": "attachment",
+              "cardinality": null,
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "disk",
+              "to": "vm",
+              "constraint": "same-availability-zone",
+              "status": "requires-separate-gate"
+            },
+            {
+              "from": "mount",
+              "to": "attachment",
+              "constraint": "device-must-be-formatted-and-mounted",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "load-balanced-multi-vm": {
+          "components": [
+            {
+              "componentId": "loadBalancer",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "listener",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendGroup",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_target_group",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "backendMembership",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_target_group_attachment",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "loadBalancer",
+              "to": "subnet",
+              "cardinality": "one-to-many",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "listener",
+              "to": "loadBalancer",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "listener",
+              "to": "backendGroup",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "backendGroup",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "backendMembership",
+              "to": "vm",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "loadBalancer",
+              "to": "subnet",
+              "constraint": "multiple-availability-zones",
+              "status": "requires-separate-gate"
+            }
+          ]
+        },
+        "https-termination": {
+          "components": [
+            {
+              "componentId": "httpsListener",
+              "terraformKind": "resource",
+              "terraformType": "aws_lb_listener",
+              "instances": [],
+              "status": "failed"
+            },
+            {
+              "componentId": "certificate",
+              "terraformKind": "resourceOrDataSource",
+              "terraformType": "aws_acm_certificate|data.aws_acm_certificate",
+              "instances": [],
+              "status": "failed"
+            }
+          ],
+          "relations": [
+            {
+              "from": "httpsListener",
+              "to": "loadBalancer",
+              "cardinality": "many-to-one",
+              "observedPairs": [],
+              "status": "failed"
+            },
+            {
+              "from": "httpsListener",
+              "to": "certificate",
+              "cardinality": "many-to-many",
+              "observedPairs": [],
+              "status": "failed"
+            }
+          ],
+          "constraints": [
+            {
+              "from": "httpsListener",
+              "to": "certificate",
+              "constraint": "exactly-one-default-certificate",
+              "status": "requires-separate-gate"
+            }
+          ]
+        }
+      },
+      "guestMountPaths": []
+    },
+    "capabilities": {
+      "vmCount": 1,
+      "availabilityZones": null,
+      "loadBalancer": false,
+      "persistentData": false,
+      "dataDiskGiB": null,
+      "volumeMount": null,
+      "publicHttps": true,
+      "healthPath": "/health",
+      "applicationPort": 8080
+    },
+    "unmappedProviderTypes": [
+      "aws_ami",
+      "aws_availability_zones"
+    ],
+    "errors": []
+  },
+  "codeQuality": {
+    "complexity": {
+      "status": "available",
+      "tool": "lizard",
+      "version": "1.23.0",
+      "fileCount": 37,
+      "functionCount": 196,
+      "nloc": 1606,
+      "cyclomaticComplexity": {
+        "mean": 1.739796,
+        "median": 1.0,
+        "p95": 6.0,
+        "max": 15,
+        "functionsAbove10": 3,
+        "functionsAbove10Ratio": 0.015306
+      },
+      "functionNloc": {
+        "mean": 5.015306,
+        "p95": 12.0,
+        "max": 45
+      },
+      "decisionPointDensityPer100Nloc": 9.028643
+    },
+    "coverage": {
+      "status": "unavailable",
+      "reason": "JaCoCo XML report not found"
+    },
+    "interpretation": "Complexity is reported as a distribution, not a composite quality score. Coverage is measured only when a JaCoCo XML artifact exists."
+  },
+  "staticValidationPassed": true,
+  "expected": {
+    "schemaVersion": "easydep-end-to-end-oracle/v1",
+    "caseId": "P1-aws",
+    "profile": "P1",
+    "provider": "aws",
+    "budgetUsd": 100,
+    "requiredCapabilities": {
+      "publicHttps": true,
+      "healthPath": "/health",
+      "applicationPort": 8080,
+      "vmCount": {
+        "min": 1,
+        "max": 1
+      },
+      "persistentData": false,
+      "loadBalancer": false
+    },
+    "functionalAcceptance": [
+      {
+        "name": "length conversion",
+        "method": "POST",
+        "path": "/conversions",
+        "status": 200,
+        "json": {
+          "category": "length",
+          "value": 1.0,
+          "fromUnit": "meter",
+          "toUnit": "centimeter"
+        },
+        "expectJson": {
+          "result": 100.0,
+          "unit": "centimeter"
+        }
+      },
+      {
+        "name": "temperature conversion",
+        "method": "POST",
+        "path": "/conversions",
+        "status": 200,
+        "json": {
+          "category": "temperature",
+          "value": 0.0,
+          "fromUnit": "celsius",
+          "toUnit": "fahrenheit"
+        },
+        "expectJson": {
+          "result": 32.0,
+          "unit": "fahrenheit"
+        }
+      }
+    ],
+    "persistenceAcceptance": null,
+    "forbiddenConcepts": [
+      "dataDisk",
+      "loadBalancer",
+      "kubernetes",
+      "managedApplicationPlatform"
+    ],
+    "requiredDependencies": [
+      {
+        "from": "subnet",
+        "to": "network",
+        "condition": "when a custom subnet is declared"
+      }
+    ],
+    "componentDependencyExpectations": {
+      "structuralReferences": [],
+      "cardinalities": [],
+      "constraints": []
+    }
+  },
+  "score": {
+    "status": "completed",
+    "passed": 10,
+    "failed": 0,
+    "unknown": 0,
+    "notApplicable": 0,
+    "notMeasured": 0,
+    "observedUnverified": 0,
+    "passRate": 1.0,
+    "checks": [
+      {
+        "kind": "providerBoundary",
+        "expected": "aws",
+        "actual": "aws",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "publicHttps",
+        "expected": true,
+        "actual": true,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "healthPath",
+        "expected": "/health",
+        "actual": "/health",
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "applicationPort",
+        "expected": 8080,
+        "actual": 8080,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "vmCount",
+        "expected": {
+          "min": 1,
+          "max": 1
+        },
+        "actual": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "persistentData",
+        "expected": false,
+        "actual": false,
+        "status": "passed"
+      },
+      {
+        "kind": "capability",
+        "name": "loadBalancer",
+        "expected": false,
+        "actual": false,
+        "status": "passed"
+      },
+      {
+        "kind": "forbidden",
+        "name": "dataDisk",
+        "status": "passed"
+      },
+      {
+        "kind": "forbidden",
+        "name": "loadBalancer",
+        "status": "passed"
+      },
+      {
+        "kind": "dependency",
+        "from": "subnet",
+        "to": "network",
+        "status": "passed"
+      }
+    ]
+  },
+  "externalTools": {
+    "iacEngine": {
+      "status": "passed",
+      "tool": "opentofu",
+      "modules": [
+        {
+          "path": "infra",
+          "format": {
+            "status": "failed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "fmt",
+              "-check",
+              "-recursive",
+              "-no-color"
+            ],
+            "exitCode": 3,
+            "stdout": "main.tf\n",
+            "stderr": ""
+          },
+          "initialize": {
+            "status": "passed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "init",
+              "-backend=false",
+              "-input=false",
+              "-no-color"
+            ],
+            "exitCode": 0,
+            "stdout": "\nInitializing provider plugins...\n- Reusing previous version of hashicorp/aws from the dependency lock file\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (unauthenticated)\n\nOpenTofu has been successfully initialized!\n\nYou may now begin working with OpenTofu. Try running \"tofu plan\" to see\nany changes that are required for your infrastructure. All OpenTofu commands\nshould now work.\n\nIf you ever set or change modules or backend configuration for OpenTofu,\nrerun this command to reinitialize your working directory. If you forget, other\ncommands will detect it and remind you to do so if necessary.\n",
+            "stderr": ""
+          },
+          "validate": {
+            "status": "passed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "validate",
+              "-json",
+              "-no-color"
+            ],
+            "exitCode": 0,
+            "stdout": "{\n  \"format_version\": \"1.0\",\n  \"valid\": true,\n  \"error_count\": 0,\n  \"warning_count\": 0,\n  \"diagnostics\": []\n}\n",
+            "stderr": "",
+            "json": {
+              "format_version": "1.0",
+              "valid": true,
+              "error_count": 0,
+              "warning_count": 0,
+              "diagnostics": []
+            }
+          },
+          "graph": {
+            "status": "passed",
+            "command": [
+              "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+              "graph",
+              "-type=plan"
+            ],
+            "exitCode": 0,
+            "stdout": "digraph {\n\tcompound = \"true\"\n\tnewrank = \"true\"\n\tsubgraph \"root\" {\n\t\t\"[root] aws_instance.app (expand)\" [label = \"aws_instance.app\", shape = \"box\"]\n\t\t\"[root] aws_security_group.sg (expand)\" [label = \"aws_security_group.sg\", shape = \"box\"]\n\t\t\"[root] aws_subnet.main (expand)\" [label = \"aws_subnet.main\", shape = \"box\"]\n\t\t\"[root] aws_vpc.main (expand)\" [label = \"aws_vpc.main\", shape = \"box\"]\n\t\t\"[root] data.aws_ami.amazon_linux (expand)\" [label = \"data.aws_ami.amazon_linux\", shape = \"box\"]\n\t\t\"[root] data.aws_availability_zones.available (expand)\" [label = \"data.aws_availability_zones.available\", shape = \"box\"]\n\t\t\"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"]\" [label = \"provider[\\\"registry.opentofu.org/hashicorp/aws\\\"]\", shape = \"diamond\"]\n\t\t\"[root] var.aws_region\" [label = \"var.aws_region\", shape = \"note\"]\n\t\t\"[root] var.container_image\" [label = \"var.container_image\", shape = \"note\"]\n\t\t\"[root] var.instance_type\" [label = \"var.instance_type\", shape = \"note\"]\n\t\t\"[root] var.tls_cert\" [label = \"var.tls_cert\", shape = \"note\"]\n\t\t\"[root] var.tls_key\" [label = \"var.tls_key\", shape = \"note\"]\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] aws_security_group.sg (expand)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] aws_subnet.main (expand)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] data.aws_ami.amazon_linux (expand)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] var.container_image (expand, reference)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] var.instance_type (expand, reference)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] var.tls_cert (expand, reference)\"\n\t\t\"[root] aws_instance.app (expand)\" -> \"[root] var.tls_key (expand, reference)\"\n\t\t\"[root] aws_security_group.sg (expand)\" -> \"[root] aws_vpc.main (expand)\"\n\t\t\"[root] aws_subnet.main (expand)\" -> \"[root] aws_vpc.main (expand)\"\n\t\t\"[root] aws_subnet.main (expand)\" -> \"[root] data.aws_availability_zones.available (expand)\"\n\t\t\"[root] aws_vpc.main (expand)\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"]\"\n\t\t\"[root] data.aws_ami.amazon_linux (expand)\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"]\"\n\t\t\"[root] data.aws_availability_zones.available (expand)\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"]\"\n\t\t\"[root] output.instance_public_ip (expand)\" -> \"[root] aws_instance.app (expand)\"\n\t\t\"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"] (close)\" -> \"[root] aws_instance.app (expand)\"\n\t\t\"[root] root\" -> \"[root] output.instance_public_ip (expand)\"\n\t\t\"[root] root\" -> \"[root] provider[\\\"registry.opentofu.org/hashicorp/aws\\\"] (close)\"\n\t\t\"[root] root\" -> \"[root] var.aws_region (expand, reference)\"\n\t\t\"[root] var.aws_region (expand, reference)\" -> \"[root] var.aws_region\"\n\t\t\"[root] var.container_image (expand, reference)\" -> \"[root] var.container_image\"\n\t\t\"[root] var.instance_type (expand, reference)\" -> \"[root] var.instance_type\"\n\t\t\"[root] var.tls_cert (expand, reference)\" -> \"[root] var.tls_cert\"\n\t\t\"[root] var.tls_key (expand, reference)\" -> \"[root] var.tls_key\"\n\t}\n}\n\n",
+            "stderr": ""
+          },
+          "normalizedGraph": {
+            "nodes": [
+              {
+                "id": "aws_ami.amazon_linux",
+                "type": "unknown",
+                "providerType": "aws_ami",
+                "source": "infra"
+              },
+              {
+                "id": "aws_availability_zones.available",
+                "type": "unknown",
+                "providerType": "aws_availability_zones",
+                "source": "infra"
+              },
+              {
+                "id": "aws_instance.app",
+                "type": "vm",
+                "providerType": "aws_instance",
+                "source": "infra"
+              },
+              {
+                "id": "aws_security_group.sg",
+                "type": "firewall",
+                "providerType": "aws_security_group",
+                "source": "infra"
+              },
+              {
+                "id": "aws_subnet.main",
+                "type": "subnet",
+                "providerType": "aws_subnet",
+                "source": "infra"
+              },
+              {
+                "id": "aws_vpc.main",
+                "type": "network",
+                "providerType": "aws_vpc",
+                "source": "infra"
+              }
+            ],
+            "edges": [
+              {
+                "from": "aws_instance.app",
+                "to": "aws_ami.amazon_linux",
+                "fromType": "vm",
+                "toType": "unknown"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "aws_security_group.sg",
+                "fromType": "vm",
+                "toType": "firewall"
+              },
+              {
+                "from": "aws_instance.app",
+                "to": "aws_subnet.main",
+                "fromType": "vm",
+                "toType": "subnet"
+              },
+              {
+                "from": "aws_security_group.sg",
+                "to": "aws_vpc.main",
+                "fromType": "firewall",
+                "toType": "network"
+              },
+              {
+                "from": "aws_subnet.main",
+                "to": "aws_availability_zones.available",
+                "fromType": "subnet",
+                "toType": "unknown"
+              },
+              {
+                "from": "aws_subnet.main",
+                "to": "aws_vpc.main",
+                "fromType": "subnet",
+                "toType": "network"
+              }
+            ],
+            "parseErrors": [],
+            "unknownProviderTypes": [
+              "aws_ami",
+              "aws_availability_zones"
+            ],
+            "extractionMethod": "opentofu-or-terraform-graph"
+          }
+        }
+      ],
+      "version": {
+        "status": "passed",
+        "command": [
+          "C:\\Users\\projw\\AppData\\Local\\Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.EXE",
+          "version",
+          "-json"
+        ],
+        "exitCode": 0,
+        "stdout": "{\n  \"terraform_version\": \"1.12.5\",\n  \"platform\": \"windows_amd64\",\n  \"provider_selections\": {}\n}\n",
+        "stderr": ""
+      },
+      "formatCompliant": false
+    },
+    "trivy": {
+      "status": "unavailable",
+      "tool": "trivy"
+    },
+    "container": {
+      "status": "passed",
+      "tool": "docker",
+      "build": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "build",
+          "--tag",
+          "easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5",
+          "."
+        ],
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": "#0 building with \"desktop-linux\" instance using docker driver\n\n#1 [internal] load build definition from Dockerfile\n#1 DONE 0.0s\n\n#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 294B 0.0s done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/gradle:8.14.2-jdk21\n#2 DONE 0.1s\n\n#3 [internal] load metadata for docker.io/library/eclipse-temurin:21-jre\n#3 DONE 1.3s\n\n#4 [internal] load .dockerignore\n#4 transferring context: 80B done\n#4 DONE 0.0s\n\n#5 [build 1/4] FROM docker.io/library/gradle:8.14.2-jdk21@sha256:cf0caeaac06e2824fac26daa6a55728fcb0e0e0e2ff28a430d2292547fe84dff\n#5 resolve docker.io/library/gradle:8.14.2-jdk21@sha256:cf0caeaac06e2824fac26daa6a55728fcb0e0e0e2ff28a430d2292547fe84dff 0.0s done\n#5 DONE 0.0s\n\n#6 [stage-1 1/3] FROM docker.io/library/eclipse-temurin:21-jre@sha256:8cef5fc7bebe421363ab543a2f4db5caf7d119d8db67d56b0f56c485d2de4d55\n#6 resolve docker.io/library/eclipse-temurin:21-jre@sha256:8cef5fc7bebe421363ab543a2f4db5caf7d119d8db67d56b0f56c485d2de4d55 0.0s done\n#6 DONE 0.0s\n\n#7 [internal] load build context\n#7 transferring context: 12.02kB 0.0s done\n#7 DONE 0.1s\n\n#8 [build 2/4] WORKDIR /workspace\n#8 CACHED\n\n#9 [build 3/4] COPY . .\n#9 DONE 0.1s\n\n#10 [build 4/4] RUN gradle bootJar --no-daemon\n#10 1.333 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.\n#10 2.932 Daemon will be stopped at the end of the build \n#10 87.43 > Task :compileJava\n#10 98.63 > Task :processResources\n#10 98.63 > Task :classes\n#10 98.63 > Task :resolveMainClassName\n#10 107.0 > Task :bootJar\n#10 107.0 \n#10 107.0 BUILD SUCCESSFUL in 1m 46s\n#10 107.0 4 actionable tasks: 4 executed\n#10 DONE 107.4s\n\n#11 [stage-1 2/3] WORKDIR /app\n#11 CACHED\n\n#12 [stage-1 3/3] COPY --from=build /workspace/build/libs/*.jar app.jar\n#12 DONE 0.2s\n\n#13 exporting to image\n#13 exporting layers\n#13 exporting layers 5.0s done\n#13 exporting manifest sha256:d71a07441aa0b670dda522600a280268b771cf34317d40ac4ac2dd336de174c2 0.0s done\n#13 exporting config sha256:2ecf4c8808279c4c36b5b00f057ca9c2f13d7ed5ab08a8be987b06279a8f686f 0.0s done\n#13 exporting attestation manifest sha256:2846da12869aea96fc1d5a1e974b91a3e5ab3ba3ed23c2bdfaade2edeeb90bcf 0.0s done\n#13 exporting manifest list sha256:2183532273423bbb91bad5bde80e2ec91f5571d89c0e0a6a637317e88782af03 0.0s done\n#13 naming to docker.io/library/easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5 done\n#13 unpacking to docker.io/library/easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5\n#13 unpacking to docker.io/library/easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5 1.0s done\n#13 DONE 6.2s\n\nView build details: docker-desktop://dashboard/build/desktop-linux/desktop-linux/khky6aeo76tkly0j1td55jl0y\n"
+      },
+      "run": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "run",
+          "--detach",
+          "--publish",
+          "127.0.0.1::8080",
+          "--label",
+          "easydep.evaluation=true",
+          "easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5"
+        ],
+        "exitCode": 0,
+        "stdout": "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240\n",
+        "stderr": ""
+      },
+      "port": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "port",
+          "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240",
+          "8080/tcp"
+        ],
+        "exitCode": 0,
+        "stdout": "127.0.0.1:7779\n",
+        "stderr": ""
+      },
+      "health": {
+        "status": "passed",
+        "url": "http://127.0.0.1:7779/health",
+        "baseUrl": "http://127.0.0.1:7779",
+        "httpStatus": 200,
+        "attempts": 10,
+        "port": {
+          "status": "passed",
+          "command": [
+            "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+            "port",
+            "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240",
+            "8080/tcp"
+          ],
+          "exitCode": 0,
+          "stdout": "127.0.0.1:7779\n",
+          "stderr": ""
+        }
+      },
+      "acceptance": {
+        "status": "passed",
+        "passed": 2,
+        "total": 2,
+        "checks": [
+          {
+            "name": "length conversion",
+            "status": "passed",
+            "httpStatus": 200,
+            "actual": {
+              "result": 100.0,
+              "unit": "centimeter"
+            }
+          },
+          {
+            "name": "temperature conversion",
+            "status": "passed",
+            "httpStatus": 200,
+            "actual": {
+              "result": 32.0,
+              "unit": "fahrenheit"
+            }
+          }
+        ]
+      },
+      "persistenceAcceptance": {
+        "status": "not-configured"
+      },
+      "containerInspect": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "inspect",
+          "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240"
+        ],
+        "exitCode": 0,
+        "stdout": "[\n    {\n        \"Id\": \"2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240\",\n        \"Created\": \"2026-08-10T04:35:24.634453189Z\",\n        \"Path\": \"java\",\n        \"Args\": [\n            \"-jar\",\n            \"/app/app.jar\"\n        ],\n        \"State\": {\n            \"Status\": \"running\",\n            \"Running\": true,\n            \"Paused\": false,\n            \"Restarting\": false,\n            \"OOMKilled\": false,\n            \"Dead\": false,\n            \"Pid\": 4387,\n            \"ExitCode\": 0,\n            \"Error\": \"\",\n            \"StartedAt\": \"2026-08-10T04:35:27.057358165Z\",\n            \"FinishedAt\": \"0001-01-01T00:00:00Z\"\n        },\n        \"Image\": \"sha256:2183532273423bbb91bad5bde80e2ec91f5571d89c0e0a6a637317e88782af03\",\n        \"ResolvConfPath\": \"/var/lib/docker/containers/2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240/resolv.conf\",\n        \"HostnamePath\": \"/var/lib/docker/containers/2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240/hostname\",\n        \"HostsPath\": \"/var/lib/docker/containers/2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240/hosts\",\n        \"LogPath\": \"/var/lib/docker/containers/2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240/2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240-json.log\",\n        \"Name\": \"/elated_jackson\",\n        \"RestartCount\": 0,\n        \"Driver\": \"overlayfs\",\n        \"Platform\": \"linux\",\n        \"MountLabel\": \"\",\n        \"ProcessLabel\": \"\",\n        \"AppArmorProfile\": \"\",\n        \"ExecIDs\": null,\n        \"HostConfig\": {\n            \"Binds\": null,\n            \"ContainerIDFile\": \"\",\n            \"LogConfig\": {\n                \"Type\": \"json-file\",\n                \"Config\": {}\n            },\n            \"NetworkMode\": \"bridge\",\n            \"PortBindings\": {\n                \"8080/tcp\": [\n                    {\n                        \"HostIp\": \"127.0.0.1\",\n                        \"HostPort\": \"\"\n                    }\n                ]\n            },\n            \"RestartPolicy\": {\n                \"Name\": \"no\",\n                \"MaximumRetryCount\": 0\n            },\n            \"AutoRemove\": false,\n            \"VolumeDriver\": \"\",\n            \"VolumesFrom\": null,\n            \"ConsoleSize\": [\n                0,\n                0\n            ],\n            \"CapAdd\": null,\n            \"CapDrop\": null,\n            \"CgroupnsMode\": \"private\",\n            \"Dns\": [],\n            \"DnsOptions\": [],\n            \"DnsSearch\": [],\n            \"ExtraHosts\": null,\n            \"GroupAdd\": null,\n            \"IpcMode\": \"private\",\n            \"Cgroup\": \"\",\n            \"Links\": null,\n            \"OomScoreAdj\": 0,\n            \"PidMode\": \"\",\n            \"Privileged\": false,\n            \"PublishAllPorts\": false,\n            \"ReadonlyRootfs\": false,\n            \"SecurityOpt\": null,\n            \"UTSMode\": \"\",\n            \"UsernsMode\": \"\",\n            \"ShmSize\": 67108864,\n            \"Runtime\": \"runc\",\n            \"Isolation\": \"\",\n            \"CpuShares\": 0,\n            \"Memory\": 0,\n            \"NanoCpus\": 0,\n            \"CgroupParent\": \"\",\n            \"BlkioWeight\": 0,\n            \"BlkioWeightDevice\": [],\n            \"BlkioDeviceReadBps\": [],\n            \"BlkioDeviceWriteBps\": [],\n            \"BlkioDeviceReadIOps\": [],\n            \"BlkioDeviceWriteIOps\": [],\n            \"CpuPeriod\": 0,\n            \"CpuQuota\": 0,\n            \"CpuRealtimePeriod\": 0,\n            \"CpuRealtimeRuntime\": 0,\n            \"CpusetCpus\": \"\",\n            \"CpusetMems\": \"\",\n            \"Devices\": [],\n            \"DeviceCgroupRules\": null,\n            \"DeviceRequests\": null,\n            \"MemoryReservation\": 0,\n            \"MemorySwap\": 0,\n            \"MemorySwappiness\": null,\n            \"OomKillDisable\": null,\n            \"PidsLimit\": null,\n            \"Ulimits\": [],\n            \"CpuCount\": 0,\n            \"CpuPercent\": 0,\n            \"IOMaximumIOps\": 0,\n            \"IOMaximumBandwidth\": 0,\n            \"MaskedPaths\": [\n                \"/proc/asound\",\n                \"/proc/acpi\",\n                \"/proc/interrupts\",\n                \"/proc/kcore\",\n                \"/proc/keys\",\n                \"/proc/latency_stats\",\n                \"/proc/timer_list\",\n                \"/proc/timer_stats\",\n                \"/proc/sched_debug\",\n                \"/proc/scsi\",\n                \"/sys/firmware\",\n                \"/sys/devices/virtual/powercap\"\n            ],\n            \"ReadonlyPaths\": [\n                \"/proc/bus\",\n                \"/proc/fs\",\n                \"/proc/irq\",\n                \"/proc/sys\",\n                \"/proc/sysrq-trigger\"\n            ]\n        },\n        \"GraphDriver\": {\n            \"Data\": null,\n            \"Name\": \"overlayfs\"\n        },\n        \"Mounts\": [],\n        \"Config\": {\n            \"Hostname\": \"2fa7d137e5d4\",\n            \"Domainname\": \"\",\n            \"User\": \"\",\n            \"AttachStdin\": false,\n            \"AttachStdout\": false,\n            \"AttachStderr\": false,\n            \"ExposedPorts\": {\n                \"8080/tcp\": {}\n            },\n            \"Tty\": false,\n            \"OpenStdin\": false,\n            \"StdinOnce\": false,\n            \"Env\": [\n                \"PATH=/opt/java/openjdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\",\n                \"JAVA_HOME=/opt/java/openjdk\",\n                \"LANG=en_US.UTF-8\",\n                \"LANGUAGE=en_US:en\",\n                \"LC_ALL=en_US.UTF-8\",\n                \"JAVA_VERSION=jdk-21.0.11+10\"\n            ],\n            \"Cmd\": null,\n            \"Image\": \"easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5\",\n            \"Volumes\": null,\n            \"WorkingDir\": \"/app\",\n            \"Entrypoint\": [\n                \"java\",\n                \"-jar\",\n                \"/app/app.jar\"\n            ],\n            \"OnBuild\": null,\n            \"Labels\": {\n                \"easydep.evaluation\": \"true\",\n                \"org.opencontainers.image.created\": \"2026-07-24T12:48:28.650696+00:00\",\n                \"org.opencontainers.image.description\": \"The Ubuntu container image maintained by Canonical\\n\\nUbuntu is a Debian-based Linux operating system that runs from the desktop to the cloud, to all your internet connected things.\\nIt is the world's most popular operating system across public clouds and OpenStack clouds.\\nIt is the number one platform for containers; from Docker to Kubernetes to LXD, Ubuntu can run your containers at scale.\\nFast, secure and simple, Ubuntu powers millions of PCs worldwide.\\n\",\n                \"org.opencontainers.image.title\": \"ubuntu\",\n                \"org.opencontainers.image.version\": \"26.04\"\n            }\n        },\n        \"NetworkSettings\": {\n            \"Bridge\": \"\",\n            \"SandboxID\": \"282436aa9868147e213cca8c4b54b5a01acf5eb87b75145b6328b5cecac3884a\",\n            \"SandboxKey\": \"/var/run/docker/netns/282436aa9868\",\n            \"Ports\": {\n                \"8080/tcp\": [\n                    {\n                        \"HostIp\": \"127.0.0.1\",\n                        \"HostPort\": \"7779\"\n                    }\n                ]\n            },\n            \"HairpinMode\": false,\n            \"LinkLocalIPv6Address\": \"\",\n            \"LinkLocalIPv6PrefixLen\": 0,\n            \"SecondaryIPAddresses\": null,\n            \"SecondaryIPv6Addresses\": null,\n            \"EndpointID\": \"e9c2a1007fbd0715a84128a2d734bf49b91a68848421f286df29d63f47b147ce\",\n            \"Gateway\": \"172.17.0.1\",\n            \"GlobalIPv6Address\": \"\",\n            \"GlobalIPv6PrefixLen\": 0,\n            \"IPAddress\": \"172.17.0.2\",\n            \"IPPrefixLen\": 16,\n            \"IPv6Gateway\": \"\",\n            \"MacAddress\": \"aa:64:1c:80:9c:29\",\n            \"Networks\": {\n                \"bridge\": {\n                    \"IPAMConfig\": null,\n                    \"Links\": null,\n                    \"Aliases\": null,\n                    \"MacAddress\": \"aa:64:1c:80:9c:29\",\n                    \"DriverOpts\": null,\n                    \"GwPriority\": 0,\n                    \"NetworkID\": \"1b0abe4fa12051098a4441d39bc041d78f4550d5c0ba8691ef9e4556838f56f9\",\n                    \"EndpointID\": \"e9c2a1007fbd0715a84128a2d734bf49b91a68848421f286df29d63f47b147ce\",\n                    \"Gateway\": \"172.17.0.1\",\n                    \"IPAddress\": \"172.17.0.2\",\n                    \"IPPrefixLen\": 16,\n                    \"IPv6Gateway\": \"\",\n                    \"GlobalIPv6Address\": \"\",\n                    \"GlobalIPv6PrefixLen\": 0,\n                    \"DNSNames\": null\n                }\n            }\n        },\n        \"ImageManifestDescriptor\": {\n            \"mediaType\": \"application/vnd.oci.image.manifest.v1+json\",\n            \"digest\": \"sha256:d71a07441aa0b670dda522600a280268b771cf34317d40ac4ac2dd336de174c2\",\n            \"size\": 1813,\n            \"platform\": {\n                \"architecture\": \"amd64\",\n                \"os\": \"linux\"\n            }\n        }\n    }\n]\n",
+        "stderr": ""
+      },
+      "containerLogs": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "logs",
+          "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240"
+        ],
+        "exitCode": 0,
+        "stdout": "\n  .   ____          _            __ _ _\n /\\\\ / ___'_ __ _ _(_)_ __  __ _ \\ \\ \\ \\\n( ( )\\___ | '_ | '_| | '_ \\/ _` | \\ \\ \\ \\\n \\\\/  ___)| |_)| | | | | || (_| |  ) ) ) )\n  '  |____| .__|_| |_|_| |_\\__, | / / / /\n =========|_|==============|___/=/_/_/_/\n\n :: Spring Boot ::               (v3.3.13)\n\n2026-08-10T04:35:30.517Z  INFO 1 --- [           main] c.e.generated.EasydepP1AwsApplication    : Starting EasydepP1AwsApplication v0.1.0-SNAPSHOT using Java 21.0.11 with PID 1 (/app/app.jar started by root in /app)\n2026-08-10T04:35:30.524Z  INFO 1 --- [           main] c.e.generated.EasydepP1AwsApplication    : No active profile set, falling back to 1 default profile: \"default\"\n2026-08-10T04:35:34.192Z  INFO 1 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data JPA repositories in DEFAULT mode.\n2026-08-10T04:35:34.324Z  INFO 1 --- [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 113 ms. Found 1 JPA repository interface.\n2026-08-10T04:35:36.559Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)\n2026-08-10T04:35:36.600Z  INFO 1 --- [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]\n2026-08-10T04:35:36.601Z  INFO 1 --- [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.42]\n2026-08-10T04:35:36.715Z  INFO 1 --- [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext\n2026-08-10T04:35:36.720Z  INFO 1 --- [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 6074 ms\n2026-08-10T04:35:37.660Z  INFO 1 --- [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...\n2026-08-10T04:35:38.211Z  INFO 1 --- [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection conn0: url=jdbc:h2:mem:testdb user=SA\n2026-08-10T04:35:38.216Z  INFO 1 --- [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.\n2026-08-10T04:35:38.358Z  INFO 1 --- [           main] org.flywaydb.core.FlywayExecutor         : Database: jdbc:h2:mem:testdb (H2 2.2)\n2026-08-10T04:35:38.372Z  WARN 1 --- [           main] o.f.c.internal.database.base.Database    : Flyway upgrade recommended: H2 2.2.224 is newer than this version of Flyway and support has not been tested. The latest supported version of H2 is 2.2.220.\n2026-08-10T04:35:38.441Z  INFO 1 --- [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Schema history table \"PUBLIC\".\"flyway_schema_history\" does not exist yet\n2026-08-10T04:35:38.448Z  INFO 1 --- [           main] o.f.core.internal.command.DbValidate     : Successfully validated 1 migration (execution time 00:00.047s)\n2026-08-10T04:35:38.469Z  INFO 1 --- [           main] o.f.c.i.s.JdbcTableSchemaHistory         : Creating Schema History table \"PUBLIC\".\"flyway_schema_history\" ...\n2026-08-10T04:35:38.581Z  INFO 1 --- [           main] o.f.core.internal.command.DbMigrate      : Current version of schema \"PUBLIC\": << Empty Schema >>\n2026-08-10T04:35:38.598Z  INFO 1 --- [           main] o.f.core.internal.command.DbMigrate      : Migrating schema \"PUBLIC\" to version \"1 - initial schema\"\n2026-08-10T04:35:38.644Z  INFO 1 --- [           main] o.f.core.internal.command.DbMigrate      : Successfully applied 1 migration to schema \"PUBLIC\", now at version v1 (execution time 00:00.008s)\n2026-08-10T04:35:38.928Z  INFO 1 --- [           main] o.hibernate.jpa.internal.util.LogHelper  : HHH000204: Processing PersistenceUnitInfo [name: default]\n2026-08-10T04:35:39.140Z  INFO 1 --- [           main] org.hibernate.Version                    : HHH000412: Hibernate ORM core version 6.5.3.Final\n2026-08-10T04:35:39.265Z  INFO 1 --- [           main] o.h.c.internal.RegionFactoryInitiator    : HHH000026: Second-level cache disabled\n2026-08-10T04:35:40.213Z  INFO 1 --- [           main] o.s.o.j.p.SpringPersistenceUnitInfo      : No LoadTimeWeaver setup: ignoring JPA class transformer\n2026-08-10T04:35:41.995Z  INFO 1 --- [           main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set 'hibernate.transaction.jta.platform' to enable JTA platform integration)\n2026-08-10T04:35:42.001Z  INFO 1 --- [           main] j.LocalContainerEntityManagerFactoryBean : Initialized JPA EntityManagerFactory for persistence unit 'default'\n2026-08-10T04:35:42.363Z  WARN 1 --- [           main] JpaBaseConfiguration$JpaWebConfiguration : spring.jpa.open-in-view is enabled by default. Therefore, database queries may be performed during view rendering. Explicitly configure spring.jpa.open-in-view to disable this warning\n2026-08-10T04:35:44.317Z  INFO 1 --- [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint beneath base path '/actuator'\n2026-08-10T04:35:44.571Z  INFO 1 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'\n2026-08-10T04:35:44.620Z  INFO 1 --- [           main] c.e.generated.EasydepP1AwsApplication    : Started EasydepP1AwsApplication in 16.156 seconds (process running for 17.253)\n2026-08-10T04:35:45.742Z  INFO 1 --- [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'\n2026-08-10T04:35:45.743Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'\n2026-08-10T04:35:45.746Z  INFO 1 --- [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms\n",
+        "stderr": ""
+      },
+      "cleanupContainer": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "rm",
+          "--force",
+          "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240"
+        ],
+        "exitCode": 0,
+        "stdout": "2fa7d137e5d4ed9db0087494a3c2be5746ad9ce6009115b8d1d066e00d5b5240\n",
+        "stderr": ""
+      },
+      "cleanupImage": {
+        "status": "passed",
+        "command": [
+          "C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.EXE",
+          "image",
+          "rm",
+          "easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5"
+        ],
+        "exitCode": 0,
+        "stdout": "Untagged: easydep-evaluation:175dd809eb974dfea2a20901d97fb4d5\nDeleted: sha256:2183532273423bbb91bad5bde80e2ec91f5571d89c0e0a6a637317e88782af03\n",
+        "stderr": ""
+      }
+    }
+  },
+  "experimentEligible": true,
+  "evaluationMetadata": {
+    "schema": "easydep-implementation-evaluation/v1",
+    "evaluatedAt": "2026-08-10T04:35:47.312502+00:00"
+  }
+}

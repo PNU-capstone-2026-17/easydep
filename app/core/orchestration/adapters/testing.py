@@ -33,6 +33,9 @@ _COMPILE_FAILURE_MARKERS = (
     "compilejava failed",
     "compilekotlin failed",
 )
+_GRADLE_FAILED_TEST = re.compile(
+    r"(?m)^\s*(?P<class>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+>\s+.+?\s+FAILED\s*$"
+)
 _OWNER_FILE_FIELDS = (
     ("implementation.logic", "files"),
     ("implementation.acceptance_tests", "acceptance_tests"),
@@ -43,6 +46,44 @@ _OWNER_DIAGNOSTICS = {
     "implementation.acceptance_tests": "APP-COMPILE-ACCEPTANCE-001",
     "implementation.scaffold": "APP-COMPILE-SCAFFOLD-001",
 }
+
+
+def _unowned_test_compile_diagnostic(
+    failed_files: list[str], implementation_result: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Route generated test contract drift without guessing a production owner."""
+    test_files = sorted(
+        path
+        for path in failed_files
+        if path.startswith(("src/test/java/", "src/test/kotlin/"))
+    )
+    if not test_files:
+        return None
+    member_owned = (
+        implementation_result.get("member_workflow_executed") is True
+        or implementation_result.get("member_workflow_status") == "COMPLETE"
+    )
+    if member_owned:
+        return {
+            "code": "APP-COMPILE-MEMBER-TEST-001",
+            "message": (
+                "Member-generated internal tests no longer compile against the "
+                "current production source contract."
+            ),
+            "repairOwner": "implementation.scaffold",
+            "failedFiles": failed_files,
+            "ownedFailedFiles": test_files,
+        }
+    return {
+        "code": "APP-COMPILE-ACCEPTANCE-001",
+        "message": (
+            "Generated acceptance tests no longer compile against the current "
+            "production source contract."
+        ),
+        "repairOwner": "implementation.acceptance_tests",
+        "failedFiles": failed_files,
+        "ownedFailedFiles": test_files,
+    }
 
 
 def _relative_source_paths(output: str, repository: Path) -> list[str]:
@@ -96,7 +137,52 @@ def _compile_owner_diagnostic(
                 "failedFiles": failed_files,
                 "ownedFailedFiles": matched,
             }
-    return None
+    return _unowned_test_compile_diagnostic(failed_files, implementation_result)
+
+
+def _member_test_failure_diagnostic(
+    unit_tests: dict[str, Any], implementation_result: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Route final-composition drift in member-owned tests back to the member boundary."""
+    if implementation_result.get("member_workflow_executed") is not True:
+        return None
+    output = "\n".join(
+        str(unit_tests.get(field) or "") for field in ("stdout", "stderr")
+    )
+    failed_classes = {
+        match.group("class").rsplit(".", 1)[-1]
+        for match in _GRADLE_FAILED_TEST.finditer(output)
+    }
+    if not failed_classes:
+        return None
+    test_files = {
+        str(path).replace("\\", "/").lstrip("./")
+        for path in unit_tests.get("testFiles") or []
+    }
+    failed_files = sorted(
+        path for path in test_files if Path(path).stem in failed_classes
+    )
+    if not failed_files:
+        return None
+    acceptance_files = {
+        str(path).replace("\\", "/").lstrip("./")
+        for path in implementation_result.get("acceptance_tests") or []
+    }
+    # A fixed acceptance failure is evidence about production behavior, not
+    # permission to rewrite the evaluator. Only internal member tests are
+    # routed to the member workflow for joint source/test reconciliation.
+    if any(path in acceptance_files for path in failed_files):
+        return None
+    return {
+        "code": "APP-MEMBER-TEST-FAILURE-001",
+        "message": (
+            "Member-generated internal tests fail against the final composed "
+            "production source."
+        ),
+        "repairOwner": "implementation.scaffold",
+        "failedTestClasses": sorted(failed_classes),
+        "failedFiles": failed_files,
+    }
 
 
 def _run(
@@ -319,6 +405,11 @@ class TestingAdapter:
         if implementation_result is not None and repository is not None:
             ownership = _compile_owner_diagnostic(
                 unit_tests, implementation_result, repository
+            )
+            if ownership is not None:
+                return [ownership]
+            ownership = _member_test_failure_diagnostic(
+                unit_tests, implementation_result
             )
             if ownership is not None:
                 return [ownership]

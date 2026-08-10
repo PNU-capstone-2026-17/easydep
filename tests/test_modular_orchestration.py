@@ -783,6 +783,38 @@ def test_operator_can_route_testing_failure_to_acceptance_tests(tmp_path, monkey
     assert len(registry.resolve("implementation.acceptance_tests", ProviderKind.LLM).calls) == 2
 
 
+def test_completed_run_can_reopen_only_with_explicit_external_repair_owner(
+    tmp_path, monkeypatch
+):
+    registry = _registry(tmp_path)
+    orchestrator = _orchestrator(tmp_path, monkeypatch, registry)
+    first = orchestrator.start(
+        RunRequest(requirements=["An application."], mode=RunMode.BATCH)
+    )
+
+    with pytest.raises(ValueError, match="explicit repair owner"):
+        orchestrator.retry_failed(first.run_id, reason="external verification failed")
+
+    second = orchestrator.retry_failed(
+        first.run_id,
+        reason="An immutable external functional check failed.",
+        repair_owner="implementation.logic",
+    )
+
+    assert first.status == StepStatus.COMPLETED
+    assert second.status == StepStatus.COMPLETED
+    retry = second.state["retryHistory"][0]
+    assert retry["stage"] == "testing"
+    assert retry["repairOwner"] == "implementation.logic"
+    assert retry["invalidatedSteps"] == [
+        "implementation.logic",
+        "implementation.vm_selection",
+        "implementation.vm_delivery",
+    ]
+    assert len(registry.resolve("implementation.scaffold", ProviderKind.MEMBER).calls) == 1
+    assert len(registry.resolve("implementation.logic", ProviderKind.LLM).calls) == 2
+
+
 def test_operator_repair_owner_is_bounded_to_implementation_steps(tmp_path, monkeypatch):
     registry = _registry(tmp_path)
     testing = DiagnosticFailOnceProvider(
@@ -1200,6 +1232,38 @@ def test_llm_logic_distinguishes_explicit_noop_from_missing_files(tmp_path):
     assert malformed.status == StepStatus.FAILED
 
 
+def test_llm_logic_may_update_production_sql_resources(tmp_path):
+    application = tmp_path / "run" / "application"
+    source = application / "src/main/java/Example.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Example {}", encoding="utf-8")
+    provider = LlmLogicProvider(
+        lambda _prompt: json.dumps(
+            {
+                "files": {
+                    "src/main/resources/db/migration/V1__init.sql": (
+                        "create table example (id bigint primary key);"
+                    )
+                }
+            }
+        )
+    )
+
+    result = provider.run(
+        {
+            "run_root": str(application.parent),
+            "requirements_result": {},
+            "design_result": {},
+        },
+        StepContext(run_id="run", app_id="app", mode=RunMode.BATCH),
+    )
+
+    assert result.status == StepStatus.COMPLETED
+    assert (
+        application / "src/main/resources/db/migration/V1__init.sql"
+    ).is_file()
+
+
 def test_acceptance_llm_may_write_tests_only(tmp_path):
     application = tmp_path / "run" / "application"
     source = application / "src" / "main" / "java" / "Example.java"
@@ -1223,6 +1287,40 @@ def test_acceptance_llm_may_write_tests_only(tmp_path):
     assert result.status == StepStatus.COMPLETED
     assert (application / "src/test/java/ExampleTest.java").is_file()
     assert rejected.status == StepStatus.FAILED
+
+
+def test_acceptance_repair_receives_existing_tests_and_feedback(tmp_path):
+    application = tmp_path / "run" / "application"
+    source = application / "src/main/java/Example.java"
+    existing = application / "src/test/java/ExistingTest.java"
+    source.parent.mkdir(parents=True)
+    existing.parent.mkdir(parents=True)
+    source.write_text("class Example {}", encoding="utf-8")
+    existing.write_text("class ExistingTest {}", encoding="utf-8")
+    captured = {}
+
+    def invoke(prompt):
+        captured.update(json.loads(prompt))
+        return json.dumps(
+            {"files": {"src/test/java/ExistingTest.java": "class ExistingTest {}"}}
+        )
+
+    result = LlmAcceptanceTestsProvider(invoke).run(
+        {
+            "run_root": str(application.parent),
+            "requirements_result": {"requirements": ["GET /health returns 200"]},
+            "design_result": {},
+            "repair_feedback": [{"code": "EXTERNAL", "evidence": "/health was 500"}],
+        },
+        StepContext(run_id="run", app_id="app", mode=RunMode.BATCH),
+    )
+
+    assert result.status == StepStatus.COMPLETED
+    assert "correcting tests" in captured["instruction"]
+    assert captured["existingTests"] == {
+        "src/test/java/ExistingTest.java": "class ExistingTest {}"
+    }
+    assert captured["repairFeedback"][0]["code"] == "EXTERNAL"
 
 
 def test_acceptance_llm_may_write_declarative_test_resources_only(tmp_path):
