@@ -23,22 +23,34 @@ spec:
           envFrom:
             - secretRef:
                 name: nim-secret
+          # PyTorch + the 417MiB BERT checkpoint take about 750MiB RSS after the
+          # full API has been imported. Cold CPU startup can take around a minute,
+          # so keep liveness disabled until model warmup has completed.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 36
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8000
-            initialDelaySeconds: 10
             periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
               cpu: "500m"
-              memory: "512Mi"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"

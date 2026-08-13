@@ -6,15 +6,14 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.artifacts_api import router as artifacts_router
 from app.db.session import init_db
 from app.design.api import router as design_router
-from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
-from app.artifacts_api import router as artifacts_router
-from app.requirements.api import router as requirements_router
-from app.requirements.classifier import warmup
-from app.implementation.interfaces.http import router as implementation_router
 from app.implementation.application.jobs import worker as implementation_worker
-
+from app.implementation.interfaces.http import router as implementation_router
+from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
+from app.requirements.api import router as requirements_router
+from app.requirements.classifier import warmup_or_raise
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -38,7 +37,9 @@ def startup() -> None:
     init_db()
     # BERT 가중치를 1회 프리로드해 이후 요청은 캐시를 재사용한다.
     # (enable_bert_verify=False면 건너뛴다.)
-    loaded = warmup()
+    # STEP 1 has no second FR/NFR classifier.  If BERT was requested but cannot
+    # load, fail startup instead of serving deceptively healthy, all-FR results.
+    loaded = warmup_or_raise()
     print(f"[startup] BERT 분류기 프리로드: {'완료' if loaded else '건너뜀(비활성 또는 로드 실패)'}")
 
 

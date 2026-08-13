@@ -83,6 +83,24 @@ def warmup() -> bool:
     return True
 
 
+def warmup_or_raise() -> bool:
+    """Warm up the enabled classifier and fail startup when it cannot load.
+
+    STEP 1 uses BERT as its only FR/NFR classifier.  Continuing with BERT enabled
+    but unavailable silently turns every requirement into an FR, so a server must
+    not advertise itself as healthy in that state.  Operators that intentionally
+    run the lightweight mode can still set ``ENABLE_BERT_VERIFY=false``.
+    """
+    loaded = warmup()
+    if settings.enable_bert_verify and not loaded:
+        raise RuntimeError(
+            "BERT FR/NFR classifier is enabled but failed to load. "
+            "Check the classifier.bert degradation log and model assets, or set "
+            "ENABLE_BERT_VERIFY=false to explicitly use lightweight FR-only mode."
+        )
+    return loaded
+
+
 def classify_bert(text: str) -> tuple[str, float] | None:
     """단일 영어 요구사항 문장을 BERT로 분류.
 
