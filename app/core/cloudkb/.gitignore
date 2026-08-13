@@ -19,12 +19,19 @@ output/
 # 소스(AWS Price List)의 산출물이 들어오는 것도 함께 막는다.
 .cache/
 
-# speckb 원본 중 AWS만 커밋하지 않는다.
-# AWS 약관은 가격 데이터 재배포를 **명시적으로 금지**한다
+# speckb 원본 중 AWS와 GCP는 커밋하지 않는다. 이유가 서로 다르다.
+#
+# AWS — 약관이 가격 데이터 재배포를 **명시적으로 금지**한다
 # (`document/archive/kb-source-atlas-2026-07-29.md`의 `aws-price-list` 항목,
-# redistribution="denied"). 문구가 *없는* Azure·GCP(`not-stated`)와 다르다.
-# `python -m app.core.cloudkb.speckb.fetch_aws` 한 번이면 각자 재생성된다.
+# redistribution="denied"). 문구가 *없는* Azure(`not-stated`)와 다르다.
+#
+# GCP — machineTypes 응답의 `selfLink`마다 수집에 쓴 프로젝트 ID가 박혀 있다
+# (1페이지당 506회). 응답 본문 자체라 지우려면 원본을 고쳐야 하는데, 그러면
+# speckb의 무가공 보장이 깨진다. 그래서 원본을 그대로 두고 커밋만 하지 않는다.
+#
+# 둘 다 `python -m app.core.cloudkb.speckb.fetch_{aws,gcp}` 한 번이면 재생성된다.
 speckb/raw/aws/
+speckb/raw/gcp/
 
 .claude/worktrees/
 token_budget.json

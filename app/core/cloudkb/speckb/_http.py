@@ -25,6 +25,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -132,6 +133,22 @@ def _decode(raw: bytes, headers: dict[str, str]) -> bytes:
     return raw
 
 
+# provenance에 남기면 안 되는 값. Azure Resource SKUs는 요청 URL 경로에 구독 ID가
+# 들어가는데, 이 파일들은 공개 저장소에 커밋된다. 자격증명은 아니지만 개인 식별자라
+# 올릴 값이 아니다. GCP도 프로젝트 ID가 경로에 들어간다.
+_REDACTIONS = (
+    (re.compile(r"/subscriptions/[0-9a-fA-F-]{36}"), "/subscriptions/{subscriptionId}"),
+    (re.compile(r"/projects/[^/]+"), "/projects/{project}"),
+)
+
+
+def redact(url: str) -> str:
+    """URL에서 계정 식별자를 지운다. 나머지는 그대로 둔다."""
+    for pattern, replacement in _REDACTIONS:
+        url = pattern.sub(replacement, url)
+    return url
+
+
 def already_have(path: Path) -> bool:
     """provenance 사이드카까지 갖춘 파일만 '받았다'고 본다.
 
@@ -158,7 +175,7 @@ def save_gz(path: Path, body: bytes, url: str, *, headers: dict[str, str] | None
 
     source_headers = headers or {}
     record = {
-        "url": url,
+        "url": redact(url),
         "sha256": hashlib.sha256(body).hexdigest(),
         "bytes": len(body),
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

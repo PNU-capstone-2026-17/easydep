@@ -91,7 +91,7 @@ https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/<regio
 ### Retail Prices API
 
 `raw/azure/retail-prices/<armRegionName>/page-NNNN.json.gz` — 리전별 디렉터리, 응답 페이지당 한 파일.
-62개 리전, 675페이지, 644,061건.
+68개 리전, 661,563건. (81개 리전에 질의해 13개는 결과 없음)
 
 ```
 https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview
@@ -122,47 +122,97 @@ https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview
 > 예약 인스턴스 레코드는 `unitOfMeasure`가 `1 Hour`인데 `retailPrice`는 기간 총액이다
 > (1년이면 8,760시간분). 저장된 값은 해석 전 원본이다.
 
-### 가격 계산기
+### Resource SKUs API (스펙)
 
-`raw/azure/calculator-virtual-machines.json.gz` — 단일 파일 9.6MB, 전 리전 포함.
+`raw/azure/resource-skus/page-NNNN.json.gz` — 1페이지, 72,550건.
+포털의 VM 크기 선택 화면이 쓰는 소스다.
 
 ```
-https://azure.microsoft.com/api/v3/pricing/virtual-machines/calculator/?culture=en-us&discount=mosp
+https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus
+  ?api-version=2021-07-01
 ```
 
-인증 없음. 최상위 키: `offers`(3,496) `skus`(45,612) `regions`(62) `resources`(1,956)
-`sizesPayGo` `sizesOneYear` `sizesThreeYear` `sizesFiveYear` `sizesSavingsOneYear`
-`sizesSavingsThreeYear` `softwareLicenses` `operatingSystems` `linuxTypes` `windowsTypes`
-`tiers` `dropdown` `billingOptions` `computePaymentOptions` `subscriptionOptions`
-`discounts` `schema` `responseId` `responseTime`
+**인증 필요** — `az login` 후 `az account get-access-token`의 Bearer 토큰.
+페이지 최상위 키: `value` `nextLink`.
 
-`offers.<slug>` 필드:
+`resourceType` 분포: `virtualMachines` 64,970 · `disks` 4,405 ·
+`hostGroups/hosts` 2,818 · `snapshots` 201 · `availabilitySets` 156.
+VM 고유 이름 1,501종.
 
-| 필드 | |
-|---|---|
-| `cores` | vCPU 수 |
-| `ram` | GiB |
-| `series` | 예: `Dv5` |
-| `diskSize` | |
-| `gpu` | |
-| `isVcpu` `isHidden` `isOnPrem` `availableForML` | |
-| `offerType` `pricingTypes` | |
-| `prices.perhour.<region-slug>.value` | 시간당 USD |
+레코드 필드: `resourceType` `name` `tier` `size` `family` `locations`
+`locationInfo[]`(`location` `zones` `zoneDetails`) `capabilities[]` `restrictions[]`
 
-`skus.<name>` 값 키: `payg` `spot` `one-year` `three-year` `five-year` `sv-one-year`
-`sv-three-year` `ahb` `ahbspot` `ahbone-year` `ahbthree-year` `ahbfive-year`
-`ahbsv-one-year` `ahbsv-three-year` 및 구독 결합형(`paygone-year-subscription` 등)
+`name`이 **ARM SKU 이름 그대로**다 — `Standard_D4s_v5`. Retail의 `armSkuName`과 이 값으로 붙는다.
 
-`regions[]`: `slug` `displayName`
+`capabilities[]`는 `{name, value}` 배열이고 VM에서 48종이 나온다. 요청 항목 대응
+(전부 64,970/64,970 = 100% 보유):
 
-**여기에만 cores·ram이 있다.** 대신 meterId·예약가가 없어서 Retail API와 둘 다 필요하다.
+| 항목 | capability | 예 (`Standard_D4s_v5`) |
+|---|---|---|
+| vCPU | `vCPUs` | `4` |
+| RAM | `MemoryGB` | `16` |
+| 데이터 디스크 | `MaxDataDiskCount` | `8` |
+| 최대 IOPS | `UncachedDiskIOPS` | `6400` |
+| 로컬 스토리지 | `MaxResourceVolumeMB` | `0` (Dsv5는 임시 디스크 없음) |
+| 프리미엄 디스크 | `PremiumIO` | `True` |
 
-> `regions[].slug`는 `armRegionName`이 아니다 — slug `us-east` ↔ ARM `eastus`로 어순이 뒤집힌다.
-> `displayName`("East Asia")에서 공백을 없애고 소문자로 내리면 `armRegionName`이 된다.
+나머지 42종: `ACUs` `AcceleratedNetworkingEnabled` `CachedDiskBytes`
+`CombinedTempDiskAndCachedIOPS` `CombinedTempDiskAndCachedReadBytesPerSecond`
+`CombinedTempDiskAndCachedWriteBytesPerSecond` `CapacityReservationSupported`
+`ConfidentialComputingType` `CpuArchitectureType` `DiskControllerTypes`
+`EncryptionAtHostSupported` `EphemeralOSDiskSupported` `GPUs` `HibernationSupported`
+`HyperVGenerations` `LowPriorityCapable` `MaxNetworkInterfaces`
+`MaxWriteAcceleratorDisksAllowed` `MemoryPreservingMaintenanceSupported`
+`NvmeDiskSizeInMiB` `NvmeMaxReadBytesPerSecond` `NvmeMaxReadIops`
+`NvmeMaxWriteBytesPerSecond` `NvmeMaxWriteIops` `NvmeSizePerDiskInMiB` `OSVhdSizeMB`
+`ParentSize` `RdmaEnabled` `RetirementDateUtc` `ScaleOutType` `SubgroupSize`
+`SubgroupType` `SupportedCapacityReservationTypes` `SupportedEphemeralOSDiskPlacements`
+`SupportedVirtualizationTypes` `TrustedLaunchDisabled` `UltraSSDAvailable`
+`UncachedDiskBytesPerSecond` `VMDeploymentTypes` `vCPUsAvailable`
+`vCPUsConstraintsAllowed` `vCPUsPerCore`
+
+**가격이 없다.** 비용은 Retail Prices 쪽이다.
+
+> `locations` 값의 대소문자가 섞여 있다 — 같은 응답에 `KoreaCentral`과 `australiaeast`가
+>함께 나온다. Retail 질의에 쓸 때는 소문자로 맞춰야 한다(`azure_regions.json`이 그 역할).
+
+### 리전 목록 (파생 — 벤더 원본 아님)
+
+`azure_regions.json`. Retail을 리전별로 받을 때 쓴다. Resource SKUs의 `locations`를
+소문자로 맞춘 값과, 이미 Retail을 받아 둔 리전의 **합집합**이다.
+
+합집합인 이유: 일반 구독의 Resource SKUs에는 US GovCloud가 안 나오는데(별도 클라우드)
+공개 Retail API에는 `usgovarizona` 등의 가격이 있다. SKUs 결과만 쓰면 그 셋이 사라진다.
+
+가격이 없는 리전 이름 목록이라 `raw/` 밖에 두고 커밋한다.
+
+### 가격 계산기를 왜 안 쓰는가
+
+`azure.microsoft.com/api/v3/pricing/virtual-machines/calculator/`도 cores·ram을 주지만
+받지 않는다. 두 가지가 부족하다.
+
+첫째, 데이터 디스크 수·IOPS·프리미엄 디스크 지원 여부가 없다. compute offer의 필드는
+`cores` `ram` `diskSize` `gpu` `series` `isVcpu` `isHidden` `offerType` `pricingTypes`
+`prices` `availableForML` 11종이 전부다.
+
+둘째, **ARM SKU 이름을 주지 않는다.** 키가 `linux-d8adsv5-standard` 꼴인데 Terraform에는
+`Standard_D8ads_v5`가 들어가야 한다. 슬러그→ARM 변환을 규칙으로 시도하면 1,435개 중
+983개(68.5%)만 맞는다 — `d11s`의 실제 이름은 `Standard_DS11`로 s가 앞으로 가고,
+`dc128edsv6`는 `Standard_DC128eds_v6`로 DC가 대문자다. 나머지 452개는 손으로 예외 표를
+만들어야 해서 하지 않는다.
 
 ---
 
 ## GCP
+
+> **`raw/gcp/`는 커밋하지 않는다** (`.gitignore`). `machineTypes` 응답의 `selfLink`마다
+> 수집에 쓴 프로젝트 ID가 들어 있다(1페이지당 506회). 응답 본문 자체라 지우려면 원본을
+>고쳐야 하는데 그러면 무가공 보장이 깨지므로, 원본을 그대로 두고 커밋만 하지 않는다.
+> 아래 수치는 실제 수집 결과이고, 재생성은 명령 하나다:
+>
+> ```
+> python -m app.core.cloudkb.speckb.fetch_gcp
+> ```
 
 **사양과 가격이 다른 API로 분리돼 있다.** 두 파일 어느 쪽도 단독으로 vCPU+가격을 주지 않는다.
 
@@ -229,12 +279,16 @@ Compute Engine 전체 SKU라 디스크·네트워크·OS 라이선스도 포함�
 
 ## 요약
 
-| | vCPU·메모리 | 가격 | 한 레코드에 함께 |
-|---|---|---|---|
-| AWS 온디맨드 피드 | ✅ | ✅ | ✅ |
-| Azure Retail Prices | ❌ | ✅ | ❌ |
-| Azure 가격 계산기 | ✅ | ✅ | ✅ |
-| GCP machineTypes | ✅ | ❌ | ❌ |
-| GCP Billing SKU | ❌ | ✅ | ❌ |
+| | vCPU·메모리 | 디스크·IOPS | 가격 | 인증 |
+|---|---|---|---|---|
+| AWS 온디맨드 피드 | ✅ | ❌ | ✅ | 없음 |
+| Azure Resource SKUs | ✅ | ✅ | ❌ | **필요** |
+| Azure Retail Prices | ❌ | ❌ | ✅ | 없음 |
+| GCP machineTypes | ✅ | 일부 | ❌ | **필요** |
+| GCP Billing SKU | ❌ | ❌ | ✅ | **필요** |
+
+Azure와 GCP는 스펙과 가격이 다른 API로 갈라져 있다. 붙이는 키는 각각
+`armSkuName`↔`name`(Azure), 머신 타입 이름↔SKU `description` 문자열(GCP)이다.
+AWS만 한 레코드에 vCPU·메모리·가격이 함께 있다.
 
 수집 결과 수치는 `raw/<csp>/manifest.json`에 있다.

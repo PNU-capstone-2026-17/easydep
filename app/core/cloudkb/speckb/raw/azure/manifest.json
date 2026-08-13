@@ -15,18 +15,300 @@
     }
   ],
   "resource_skus": {
-    "pages": 0,
-    "records": 0
+    "pages": 1,
+    "records": 72550
   },
-  "regions_attempted": 1,
+  "regions_attempted": 81,
   "regions_failed": [],
-  "regions_empty": [],
-  "retail_items_total": 12335,
+  "regions_empty": [
+    "centraluseuap",
+    "eastus2euap",
+    "eastusslv",
+    "eastusstg",
+    "malaysiasouth",
+    "northeastus5",
+    "saudiarabiaeast",
+    "southcentralusstg",
+    "southeastasia3",
+    "southeastus3",
+    "southeastus5",
+    "taiwannorth",
+    "taiwannorthwest"
+  ],
+  "retail_items_total": 661563,
   "per_region": {
+    "australiacentral": {
+      "pages": 9,
+      "items": 8580
+    },
+    "australiacentral2": {
+      "pages": 9,
+      "items": 8169
+    },
+    "australiaeast": {
+      "pages": 14,
+      "items": 13702
+    },
+    "australiasoutheast": {
+      "pages": 10,
+      "items": 9383
+    },
+    "austriaeast": {
+      "pages": 8,
+      "items": 7243
+    },
+    "belgiumcentral": {
+      "pages": 8,
+      "items": 7102
+    },
+    "brazilsouth": {
+      "pages": 13,
+      "items": 12526
+    },
+    "brazilsoutheast": {
+      "pages": 9,
+      "items": 8682
+    },
+    "canadacentral": {
+      "pages": 14,
+      "items": 13336
+    },
+    "canadaeast": {
+      "pages": 9,
+      "items": 8906
+    },
+    "centralindia": {
+      "pages": 14,
+      "items": 13118
+    },
+    "centralus": {
+      "pages": 15,
+      "items": 14410
+    },
+    "chilecentral": {
+      "pages": 7,
+      "items": 6264
+    },
+    "denmarkeast": {
+      "pages": 6,
+      "items": 5455
+    },
+    "eastasia": {
+      "pages": 12,
+      "items": 11806
+    },
+    "eastus": {
+      "pages": 17,
+      "items": 16310
+    },
+    "eastus2": {
+      "pages": 16,
+      "items": 15927
+    },
+    "eastus3": {
+      "pages": 1,
+      "items": 272
+    },
+    "francecentral": {
+      "pages": 12,
+      "items": 11263
+    },
+    "francesouth": {
+      "pages": 8,
+      "items": 7839
+    },
+    "germanynorth": {
+      "pages": 9,
+      "items": 8667
+    },
+    "germanywestcentral": {
+      "pages": 14,
+      "items": 13351
+    },
+    "indiasouthcentral": {
+      "pages": 6,
+      "items": 5743
+    },
+    "indonesiacentral": {
+      "pages": 9,
+      "items": 8506
+    },
+    "israelcentral": {
+      "pages": 8,
+      "items": 7952
+    },
+    "israelnorthwest": {
+      "pages": 9,
+      "items": 8441
+    },
+    "italynorth": {
+      "pages": 12,
+      "items": 11595
+    },
+    "japaneast": {
+      "pages": 14,
+      "items": 13563
+    },
+    "japanwest": {
+      "pages": 12,
+      "items": 11021
+    },
+    "jioindiacentral": {
+      "pages": 4,
+      "items": 3856
+    },
+    "jioindiawest": {
+      "pages": 5,
+      "items": 4364
+    },
     "koreacentral": {
       "pages": 13,
       "items": 12335
+    },
+    "koreasouth": {
+      "pages": 9,
+      "items": 8335
+    },
+    "malaysiawest": {
+      "pages": 8,
+      "items": 7359
+    },
+    "mexicocentral": {
+      "pages": 10,
+      "items": 9844
+    },
+    "newzealandnorth": {
+      "pages": 8,
+      "items": 7611
+    },
+    "northcentralus": {
+      "pages": 13,
+      "items": 12101
+    },
+    "northeurope": {
+      "pages": 16,
+      "items": 15639
+    },
+    "norwayeast": {
+      "pages": 11,
+      "items": 10357
+    },
+    "norwaywest": {
+      "pages": 8,
+      "items": 7726
+    },
+    "polandcentral": {
+      "pages": 11,
+      "items": 10903
+    },
+    "qatarcentral": {
+      "pages": 9,
+      "items": 8753
+    },
+    "southafricanorth": {
+      "pages": 12,
+      "items": 11366
+    },
+    "southafricawest": {
+      "pages": 9,
+      "items": 8803
+    },
+    "southcentralus": {
+      "pages": 15,
+      "items": 14116
+    },
+    "southcentralus2": {
+      "pages": 1,
+      "items": 13
+    },
+    "southeastasia": {
+      "pages": 14,
+      "items": 13677
+    },
+    "southeastus": {
+      "pages": 1,
+      "items": 36
+    },
+    "southindia": {
+      "pages": 11,
+      "items": 10168
+    },
+    "southwestus": {
+      "pages": 1,
+      "items": 792
+    },
+    "spaincentral": {
+      "pages": 11,
+      "items": 10692
+    },
+    "swedencentral": {
+      "pages": 14,
+      "items": 13162
+    },
+    "swedensouth": {
+      "pages": 8,
+      "items": 7264
+    },
+    "switzerlandnorth": {
+      "pages": 13,
+      "items": 12282
+    },
+    "switzerlandwest": {
+      "pages": 9,
+      "items": 8378
+    },
+    "uaecentral": {
+      "pages": 9,
+      "items": 8734
+    },
+    "uaenorth": {
+      "pages": 13,
+      "items": 12212
+    },
+    "uksouth": {
+      "pages": 16,
+      "items": 15905
+    },
+    "ukwest": {
+      "pages": 10,
+      "items": 9246
+    },
+    "usgovarizona": {
+      "pages": 7,
+      "items": 6888
+    },
+    "usgovtexas": {
+      "pages": 6,
+      "items": 5613
+    },
+    "usgovvirginia": {
+      "pages": 9,
+      "items": 8403
+    },
+    "westcentralus": {
+      "pages": 10,
+      "items": 9094
+    },
+    "westeurope": {
+      "pages": 16,
+      "items": 15827
+    },
+    "westindia": {
+      "pages": 8,
+      "items": 7796
+    },
+    "westus": {
+      "pages": 15,
+      "items": 14067
+    },
+    "westus2": {
+      "pages": 15,
+      "items": 14626
+    },
+    "westus3": {
+      "pages": 15,
+      "items": 14088
     }
   },
-  "generated_at": "2026-08-13T12:11:06+00:00"
+  "generated_at": "2026-08-13T12:25:27+00:00"
 }

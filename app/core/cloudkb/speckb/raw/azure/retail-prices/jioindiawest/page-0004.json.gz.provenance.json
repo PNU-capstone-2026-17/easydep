@@ -1,0 +1,9 @@
+{
+  "url": "https://prices.azure.com:443/api/retail/prices?api-version=2023-01-01-preview&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27jioindiawest%27&$skip=3000",
+  "sha256": "873e71916e373820002fc536b52aeb69786e0fd85368a60bfa4ea62dc08b31e1",
+  "bytes": 612225,
+  "fetched_at": "2026-08-13T12:23:23+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

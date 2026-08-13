@@ -107,17 +107,35 @@ def load_regions() -> list[str]:
     return json.loads(path.read_text(encoding="utf-8")).get("regions", [])
 
 
+def collected_regions() -> set[str]:
+    """이미 Retail 데이터를 받아 둔 리전."""
+    root = out_dir() / "retail-prices"
+    if not root.exists():
+        return set()
+    return {entry.name for entry in root.iterdir() if entry.is_dir()}
+
+
 def write_regions(regions: list[str], source: str) -> None:
+    """Resource SKUs의 locations에 이미 받아 둔 리전을 합쳐 기록한다.
+
+    합집합이어야 하는 이유: 일반 구독의 Resource SKUs 조회에는 US GovCloud가
+    나오지 않는다(별도 클라우드다). 그런데 공개 Retail API에는 usgovarizona·
+    usgovtexas·usgovvirginia 가격이 있고 이미 받아 뒀다. SKUs 결과만 쓰면 그 셋이
+    목록에서 빠져 다음 실행부터 집계에서 사라진다 — 실제로 한 번 그렇게 돼서
+    총계가 644,061에서 640,659로 줄었다.
+    """
     regions_path().write_text(
         json.dumps(
             {
                 "_note": (
                     "Retail Prices를 리전별로 받을 때 쓰는 armRegionName 목록. "
-                    "Resource SKUs 응답의 locations 값에서 만들었다 — 변환하지 않은 "
-                    "Azure 원본 값이다. 가격은 들어 있지 않다."
+                    "Resource SKUs 응답의 locations를 소문자로 맞춘 값과, 이미 "
+                    "Retail을 받아 둔 리전의 합집합이다. Azure가 locations를 "
+                    "대소문자 뒤섞어 주기 때문에 소문자로 맞춘다. "
+                    "가격은 들어 있지 않다."
                 ),
                 "_source": source,
-                "regions": sorted(set(regions)),
+                "regions": sorted(set(regions) | collected_regions()),
             },
             ensure_ascii=False,
             indent=2,
@@ -127,8 +145,26 @@ def write_regions(regions: list[str], source: str) -> None:
     )
 
 
+# winget으로 az를 막 설치하면 이미 떠 있는 셸의 PATH에는 아직 안 잡힌다.
+# 터미널을 다시 열게 하는 대신 표준 설치 경로도 같이 본다.
+AZ_FALLBACK_PATHS = (
+    r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+    r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+)
+
+
+def az_executable() -> str | None:
+    found = shutil.which("az") or shutil.which("az.cmd")
+    if found:
+        return found
+    for candidate in AZ_FALLBACK_PATHS:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
 def _az(*args: str) -> str | None:
-    executable = shutil.which("az") or shutil.which("az.cmd")
+    executable = az_executable()
     if executable is None:
         return None
     try:
@@ -142,7 +178,7 @@ def _az(*args: str) -> str | None:
 
 def azure_credentials() -> tuple[str, str] | None:
     """(토큰, 구독 ID). 준비가 안 됐으면 이유를 찍고 None."""
-    if shutil.which("az") is None and shutil.which("az.cmd") is None:
+    if az_executable() is None:
         print("[azure] az CLI가 없어 Resource SKUs를 건너뛴다.")
         print("        winget install -e --id Microsoft.AzureCLI  후  az login")
         return None
@@ -198,7 +234,12 @@ def fetch_resource_skus(refresh: bool) -> tuple[int, int, list[str]]:
         entries = payload.get("value", [])
         total += len(entries)
         for entry in entries:
-            locations.update(entry.get("locations") or [])
+            # Azure가 `locations`를 대소문자 뒤섞어 돌려준다 — 같은 응답 안에
+            # "AustraliaCentral"과 "australiaeast"가 함께 나온다(137개 중 59개가
+            # 대문자 시작). Retail의 `armRegionName eq '<region>'` 필터는 소문자
+            # armRegionName을 받으므로 여기서 맞춰 둔다. 저장되는 원본 파일은
+            # 손대지 않고, 질의에 쓸 목록만 정규화한다.
+            locations.update(loc.lower() for loc in entry.get("locations") or [])
         url = payload.get("nextLink")
 
     return page, total, sorted(locations)
@@ -264,7 +305,9 @@ def main(argv: list[str] | None = None) -> int:
         print("[azure] --skus-only 이므로 Retail은 건너뛴다")
         return 0
 
-    regions = [args.region] if args.region else (locations or load_regions())
+    # 파일을 단일 출처로 삼는다. write_regions가 SKUs의 locations와 이미 받아 둔
+    # 리전을 합쳐 써 두므로, locations를 직접 쓰면 GovCloud가 빠진다.
+    regions = [args.region] if args.region else load_regions()
     if not regions:
         print(
             "[azure] 리전 목록이 없다. az login 후 한 번 실행하면 "
