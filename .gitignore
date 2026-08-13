@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .venv-metagpt/
+.venv-chatdev/
 venv/
 *.egg-info/
 

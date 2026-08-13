@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.run_identity import identity_manifest, make_run_id
-from evaluation.baselines import cot, metagpt
+from evaluation.baselines import chatdev, cot, metagpt
 
 CASE = Path("evaluation/baselines/cases/p1-stateless-aws.json")
 
@@ -40,7 +40,7 @@ def test_identity_manifest_has_the_same_fields_for_every_runner() -> None:
 
 
 def test_baselines_use_the_shared_run_directory_and_manifest(tmp_path: Path) -> None:
-    for run in (cot.run, metagpt.run):
+    for run in (cot.run, metagpt.run, chatdev.run):
         run_dir = run(CASE, output_root=tmp_path, dry_run=True)
         manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
@@ -48,3 +48,9 @@ def test_baselines_use_the_shared_run_directory_and_manifest(tmp_path: Path) -> 
         assert manifest["variant"] == "standard"
         assert manifest["caseId"] == "P1-aws"
         assert manifest["purpose"] == "evaluation"
+
+        if run is metagpt.run:
+            assert manifest["generationStatus"] == "dry-run"
+            assert manifest["qaEnabled"] is True
+            assert manifest["rounds"] == 8
+            assert manifest["command"][-1] == "--run-tests"

@@ -11,6 +11,17 @@ def _write(tmp_path: Path, name: str, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def test_malformed_hcl_is_recorded_instead_of_crashing_evaluation(tmp_path):
+    _write(tmp_path, "infra/main.tf", "'''not hcl'''\nresource broken")
+
+    result = analyze_terraform_semantics(tmp_path)
+
+    assert result["status"] == "failed"
+    assert result["resources"] == []
+    assert len(result["errors"]) == 1
+    assert result["errors"][0].startswith("infra/main.tf:")
+
+
 def test_gcp_nested_blocks_and_attached_disk_are_normalized(tmp_path):
     _write(tmp_path, "Dockerfile", "FROM eclipse-temurin:21\nEXPOSE 8080\n")
     _write(tmp_path, "src/main/App.java", 'class App { String health = "/health"; }')

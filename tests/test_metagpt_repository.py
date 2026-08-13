@@ -1,6 +1,20 @@
 from pathlib import Path
 
-from evaluation.baselines.metagpt import _materialize_repository
+import pytest
+
+from evaluation.baselines.metagpt import MIN_QA_ROUNDS, _command, _materialize_repository
+
+
+def test_command_enables_native_qa_and_uses_minimum_rounds():
+    command = _command(Path("metagpt"), "build it", 3.0, MIN_QA_ROUNDS)
+
+    assert command[-1] == "--run-tests"
+    assert command[command.index("--n-round") + 1] == "8"
+
+
+def test_command_rejects_too_few_rounds_for_qa():
+    with pytest.raises(ValueError, match="requires at least 8 rounds"):
+        _command(Path("metagpt"), "build it", 3.0, 7)
 
 
 def _write(root: Path, name: str, content: str = "") -> None:

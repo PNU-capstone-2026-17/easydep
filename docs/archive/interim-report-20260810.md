@@ -428,12 +428,12 @@ plan → apply → ready → 외부 업무 API → destroy → 잔여 리소스 
 
 ## 12. 근거 문서
 
-- [전체 연구 결과](research-results-20260810.md)
+- [전체 연구 결과](../research-results-20260810.md)
 - [VM 리소스 의존성 결과](vm-resource-dependency-results.md)
-- [DepKB 효과 평가](depkb-effect-evaluation-20260810.md)
-- [앱–클라우드 계약](app-cloud-contract-design.md)
-- [클라우드 리소스 안내](cloud-resource-guidance.md)
-- [현재 시스템 상태](current-system-status.md)
+- [DepKB 효과 평가](../depkb-effect-evaluation-20260810.md)
+- [앱–클라우드 계약](../app-cloud-contract-design.md)
+- [클라우드 리소스 안내](../cloud-resource-guidance.md)
+- [현재 시스템 상태](../current-system-status.md)
 - [구현 검증 시간 개선안](implementation-validation-efficiency.md)
 - [멤버 Linux 실행 경계](member-linux-runner-decision.md)
-- [주장과 증거 연결표](../evaluation/research_protocol/reports/research-claim-evidence-matrix-20260809.md)
+- [주장과 증거 연결표](../../evaluation/research_protocol/reports/research-claim-evidence-matrix-20260809.md)

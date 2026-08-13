@@ -1,93 +1,57 @@
-# 클라우드 의존성 용어 원장
+# DepKB 용어 원장
 
-이 문서는 활성 DepKB와 논문에서 허용되는 과학적 용어를 고정한다. 등록되지 않은 용어는
-관계 판정값으로 사용할 수 없고 내부 UI·알고리즘 명칭은 실증 결과로 인용하지 않는다.
+이 문서는 프로그램이 사용하는 관계 판정의 의미와 금지된 해석을 고정한다.
 
-## 외부 근거가 있는 개념
+## 관계 판정
 
-| 용어 | 분류 | 근거와 사용 제한 |
+| 용어 | 의미 | 금지된 해석 |
 |---|---|---|
-| resource, node, relationship, requirement, cardinality | 표준 용어 | [OASIS TOSCA 1.3](https://docs.oasis-open.org/tosca/TOSCA-Simple-Profile-YAML/v1.3/os/TOSCA-Simple-Profile-YAML-v1.3-os.html). 본 연구의 CSP 실측 결과를 TOSCA가 보증한다고 해석하지 않음 |
-| implicit/explicit dependency, create/destroy order | 도구 용어 | [Terraform references](https://developer.hashicorp.com/terraform/language/expressions/references), [dependency graph](https://developer.hashicorp.com/terraform/internals/graph). Terraform 실행 의미에만 적용 |
-| test oracle | 연구 용어 | [Memon et al.](https://www.cs.umd.edu/~atif/papers/MemonASE2003-abstract.html). 예상 결과와 실제 결과의 비교에만 사용 |
-| provenance | 표준 용어 | [W3C PROV-N](https://www.w3.org/TR/2013/REC-prov-n-20130430/). 출처 추적이며 사실성 보증이 아님 |
-| inter-parameter dependency | 선행연구 용어 | [IDL/RESTest](https://arxiv.org/abs/2005.03320). Web API 요청 파라미터 제약에만 사용 |
+| `mandatoryForProvisioning` | 관측한 구성에서 대상이 없으면 주체 생성이 거부된다. | 모든 리전과 API 버전에서 영구적으로 필수다. |
+| `conditionalForProvisioning` | 구조화된 조건에 따라 대상 필요 여부가 달라진다. | 조건을 생략하고 일반 규칙으로 사용한다. |
+| `notMandatoryForProvisioning` | 관측한 구성에서는 대상을 명시하지 않아도 생성된다. | 대상이 기능상 불필요하다. |
+| `runtimeRequiredForSignal` | 대상을 제거·변경하면 사전에 정한 인프라 신호가 실패한다. | 애플리케이션 전체 기능이나 성능을 보장한다. |
+| `noRuntimeEffectObserved` | 해당 실험의 신호 변화가 관측되지 않았다. | 두 리소스가 무관하다. |
 
-## 본 연구의 조작적 정의
+## 실현 방식
 
-| 용어 | 정의 | 금지 해석 |
-|---|---|---|
-| `mandatoryForProvisioning` | 명시한 구성에서 B를 제외하면 A 프로비저닝이 거부됨 | 모든 리전·API 버전에서 영구적으로 필수 |
-| `conditionalForProvisioning` | 구조화된 조건에 따라 B의 의무가 달라짐 | 조건을 생략한 일반 법칙 |
-| `notMandatoryForProvisioning` | 명시한 구성에서 B 없이 A가 프로비저닝됨 | B가 쓸모없거나 런타임에도 불필요 |
-| `providerDefaulted` | B를 생략하면 CSP가 기존 기본값을 선택함 | 새 B를 생성함 |
-| `providerCreated` | B를 생략하면 CSP가 B를 생성함 | 기존 기본값을 선택함 |
-| `explicitlyAttachable` | B 없이 생성 가능하지만 B를 명시적으로 연결할 수 있음 | 모든 조합이 호환됨 |
-| 생명주기 finding 4종 | 삭제 전후의 차단·분리·종속 삭제·잔존 관측 | 소유권 또는 삭제 정책의 보편 법칙 |
-| 런타임 finding 2종 | 사전에 정한 신호의 통제된 제거·복구 관측 | 애플리케이션 전체 기능·성능 보장 |
-| `evidenceStatus` | 현재 증거의 확정·불충분·충돌 상태 | 관계 종류 또는 실패 판정 |
-| `replicationStatus` | 이번 연구 리비전의 재실행 상태 | 기존 증거의 참·거짓 |
-| `studyDisposition` | 연구 포함 또는 범위 제외 | 관계의 존재 여부 |
-
-조건의 `kind` 역시 본 연구의 내부 분류다.
-
-| 조건 종류 | 의미 |
+| 용어 | 의미 |
 |---|---|
-| `always` | 측정한 구성에서는 별도 분기 조건을 두지 않음 |
-| `conditional` | CSP 모드나 구성값에 따라 결과가 달라지나 아직 기계식이 완전하지 않음 |
-| `placement` | 개수·리전·가용영역 같은 배치 조건 |
-| `exclusiveChoice` | 후보 집합의 cardinality가 1..1인 선택 조건 |
-| `compatibility` | 두 자원의 리전·존 등 호환 조건 |
+| `providerDefaulted` | 명시하지 않은 값을 CSP의 기존 기본값으로 보완한다. |
+| `providerCreated` | 명시하지 않은 하위 리소스를 CSP가 생성한다. |
+| `explicitlyAttachable` | 없어도 생성되지만 사용자가 별도로 만들어 연결할 수 있다. |
 
-관측 방법 `schemaDeclaration`, `controlPlaneValidation`, `provisioningExecution`,
-`runtimeProbe`는 각각 고정 스키마 확인, API 사전 검증, 실제 생성 요청, 런타임 신호 측정을
-뜻한다. 이는 증거의 강도 순위가 아니라 서로 다른 획득 방법이다.
+## 조건
 
-## 실험 시점의 한계
+| 종류 | 의미 |
+|---|---|
+| `always` | 관측 범위 안에서 추가 분기 조건이 없다. |
+| `conditional` | CSP 모드나 구성값에 따라 결과가 달라진다. |
+| `placement` | 개수·리전·가용 영역 같은 배치 조건이다. |
+| `exclusiveChoice` | 후보 중 정확히 하나를 선택해야 한다. |
+| `compatibility` | 두 리소스의 리전·영역·종류가 호환되어야 한다. |
 
-기존 실험은 탐색 실행 뒤 코드와 결과에서 예상 결과를 복원한 **후향적
-(`retrospective`) 프로토콜**이다. 따라서 이를 사전등록 실험이라고 부르지 않는다.
-2026-08-07 재측정은 동결된 기존 기대값을 기준으로 수행한 전향적 재현이지만, 원 실험의
-후향적 성격을 없애지는 않는다. 이 구분은 `claims.json.methodology`에 기계 판독 가능하게
-고정한다.
+## 증거 상태
 
-## 내부 전용어와 폐기어
+| 용어 | 의미 |
+|---|---|
+| `evidenceStatus` | 현재 근거가 확인·불충분·충돌 중 어느 상태인지 나타낸다. |
+| `replicationStatus` | 동결한 기대 결과를 반복 실행했는지 나타낸다. |
+| `studyDisposition` | 현재 연구 범위에 포함했는지 나타낸다. |
 
-`startResource`, `selectedStartResource`, `unmeasured`, `unsupported`는 입력·진행·제품 상태다.
-논문 finding으로 집계하지 않는다. 기존 `anchor`, `attachable`, 범용
-`required/optional/holds/unknown/outOfScope`, 산문 `predicate`, 증거 등급으로서의
-`oracle`은 활성 DepKB 스키마에서 폐기한다.
+`schemaDeclaration`, `controlPlaneValidation`, `provisioningExecution`, `runtimeProbe`는
+서로 다른 관측 방법이며 단순한 증거 강도 순위가 아니다.
 
-## 벤더 중립 자원 어휘
+## 제품에서 제외한 용어
 
-`network`, `subnet`, `firewall`, `nic`, `publicIp`, `loadBalancer`, `vm`, `disk`,
-`sshKey`, `workloadIdentity`, `defaultRoute`는 본 연구의 정규화 어휘다. Cloud-Barista에서
-그대로 가져온 표준이라고 주장하지 않는다. TOSCA의 Compute·Network·Port·BlockStorage와
-각 CSP 공식 모델을 대조하며 CSP 원어와 정규화 결과를 함께 보고한다.
+다음 삭제 전용 판정은 현재 제품 모델에서 제거했다.
 
-- [AWS EC2 시작 매개변수](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-launch-parameters.html)
-- [AWS ALB 구성요소](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html)
-- [Azure VM 개요](https://learn.microsoft.com/en-us/azure/virtual-machines/overview)
-- [Azure Load Balancer 구성요소](https://learn.microsoft.com/en-us/azure/load-balancer/components)
-- [Google Cloud VPC](https://docs.cloud.google.com/vpc/docs/vpc)
-- [Google Cloud Load Balancing 자원 모델](https://docs.cloud.google.com/load-balancing/docs/load-balancer-resource-model)
+- `deleteBlockedWhileAttached`
+- `detachRequiredBeforeDelete`
+- `cascadeDeletedWithOwner`
+- `persistsAfterOwnerDeletion`
 
-Cloud-Barista는 멀티 클라우드 공통 인터페이스의 비교 사례로만 사용한다.
-[기술 개요](https://cloud-barista.github.io/technology/)와 현재 코드 명칭이 정확히 일치하지
-않으므로 “Cloud-Barista에서 유래한 어휘”라고 서술하지 않는다.
+리소스 자체에 독립적인 create/read/update/delete API가 있는지는 리소스 경계 판별에 사용할 수
+있다. 하지만 연결된 리소스의 삭제 순서는 Terraform/OpenTofu의 실제 참조 그래프가 담당한다.
 
-`workloadIdentity`는 VM에서 CSP API 자격증명을 얻는 연결의 중립명이다. CSP별 실현은
-AWS IAM role+instance profile, Azure managed identity, GCP service account이며 이 셋을
-동일한 제품이라고 주장하지 않는다. 기존 `iamRole` 중립명은 AWS 용어를 다른 CSP에
-확장한 것이므로 폐기했다.
-
-- [AWS EC2 instance profile](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html)
-- [Azure VM managed identity](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-configure-managed-identities)
-- [GCP VM service account](https://docs.cloud.google.com/compute/docs/access/create-enable-service-accounts-for-instances)
-
-`defaultRoute`는 목적지 `0.0.0.0/0`인 라우트라는 제한된 의미다. AWS에서는 연결된 route
-table의 IGW next hop route, GCP에서는 `default-internet-gateway` next hop route를 뜻한다.
-기존 `internetGateway`는 실험이 게이트웨이를 제거한 것처럼 오해시키므로 폐기했다.
-
-- [AWS의 인터넷 게이트웨이 대상 기본 경로](https://docs.aws.amazon.com/vpc/latest/userguide/route-table-options.html#routing-options-igw)
-- [GCP의 IPv4 기본 경로](https://cloud.google.com/vpc/docs/routes#system-generated-default-routes)
+범용적인 `required`, `optional`, `holds`, `unknown`, `outOfScope`는 관계군을 숨기므로 claim
+판정으로 사용하지 않는다.

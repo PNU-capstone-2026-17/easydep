@@ -1,6 +1,6 @@
 # EasyDep 현재 구조와 부족한 점
 
-> 기준일: 2026-08-09
+> 기준일: 2026-08-14
 > 시스템 목표: **멀티 AI 에이전트를 활용한 클라우드 네이티브 애플리케이션 개발 지원**
 
 ## 한눈에 보기
@@ -9,12 +9,12 @@
 |---|---|---:|---|
 | 4단계 파이프라인 | 요구사항 → 설계 → 구현 → 테스팅 연결 | ✅ | 멤버 workflow의 미구현 planner 공백은 임시 LLM으로 제한 보완 |
 | 요구사항 분석 | 소프트웨어 요구사항과 클라우드 제약 구조화 | ✅ | 용량 산정에 필요한 트래픽·최소 사양이 자주 미확정 |
-| 설계 | 기존 설계 산출물 + VM 배포 설계 보강 | ✅ | 요구사항에서 IaC까지 이어지는 추적성 정량 평가 부족 |
+| 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 구조도·IaC 공동 생성과 Plan JSON 대조 미구현 |
 | 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | 멤버 생성기가 pinned 로컬 도구 대신 mutable Docker 이미지를 실행 |
 | 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 운영 품질·보안 검사는 공통 평가기에 일부만 존재 |
 | DepKB | AWS·Azure·GCP의 VM 자원 의존성 제공 | ⚠️ | 고정입력 절제 완료, 생성·기능 성공의 소규모 비교가 남음 |
 | VM 선택 | 용량 필터 후 가격·성능 추천 및 IaC 반영 gate | ✅ | 실제 처리량·전체 비용과 provider validate는 별도 증거 필요 |
-| 비교실험 | EasyDep·LLM CoT·MetaGPT 및 공통 평가기 준비 | ⚠️ | 전체 개발·홀드아웃 반복 실험 미실행 |
+| 비교실험 | EasyDep·LLM CoT·MetaGPT·ChatDev 실행기 준비 | ⚠️ | E1·E2 공통 의미 평가기와 반복 실험 미실행 |
 | 종단 검증 | P1 세 CSP 로컬·정적 gate, P2 복구 앱 로컬 기능 확인 | ⚠️ | 생성 앱의 실제 cloud apply·기능·정리 근거 부족 |
 
 범례: ✅ 동작 검증, ⚠️ 구조는 있으나 근거 또는 범위 부족, ❌ 미구현
@@ -189,7 +189,7 @@ cell의 입력 동일성과 projection 처치 충실도를 확인했다. 다만 
 - IaC 의미 검증 통과율
 - CSP별 생성·삭제 순서 및 호환성 위반률
 
-P1~P3은 DepKB의 실험군이 아니라 난이도별 종단 평가 과제다. 현재의 EasyDep·CoT·MetaGPT
+P1~P3은 DepKB의 실험군이 아니라 과거 구성요소·smoke 회귀 과제다. 현재의 EasyDep·CoT·MetaGPT·ChatDev
 비교는 시스템 전체의 실용 성능을 비교할 수 있지만, 구조·프롬프트·도구·검증·KB가 함께
 달라 DepKB 또는 멀티 에이전트 구조의 단독 인과효과를 입증하지 못한다. 이를 위해 같은
 EasyDep 실행 경로에서 `no-depkb`, `no-verification` 처치와 단일 클라우드 조건 쌍을 별도로
@@ -199,16 +199,17 @@ EasyDep 실행 경로에서 `no-depkb`, `no-verification` 처치와 단일 클�
 
 현재 P1-GCP·P1-AWS·P1-Azure에서 동일한 무상태 앱 기능 oracle과 CSP별 정적 의존성 oracle을
 통과했다. 이는 로컬 앱·IaC 개발 gate이며 실제 세 CSP cloud 배포 성공이나 반복 비교 결과가 아니다.
-다음 사례는 준비됐지만 전체 실행하지 않았다.
+다음 과거 사례는 회귀 근거로 보존하되 새 주 비교로 확대하지 않는다.
 
 - P1 무상태 앱: AWS, Azure, GCP
 - P2 영속 데이터 앱: AWS, Azure, GCP
 - P3 고가용성 앱: AWS, Azure, GCP
-- 도메인 홀드아웃: 원격진료, 물류, 파트너 리포팅
+- 새 주 비교: E1 단일 앱+영속 상태, E2 CSP 관리형 앱 VM 그룹+LB+같은 상태 Workload
+- 용어 전이: D1 제한 수량 예약
 
 ### 6. 비교실험 결과
 
-EasyDep, LLM CoT, MetaGPT 실행기와 공통 평가기는 준비됐다. 그러나 반복 실험 결과와
+EasyDep, LLM CoT, MetaGPT, ChatDev 실행기는 준비됐다. 그러나 공통 의미 adapter와 반복 실험 결과가
 통계가 없으므로 현재는 효용성 주장을 할 수 없다.
 
 핵심 지표는 다음으로 제한한다.
@@ -230,14 +231,14 @@ minikube·AKS 요구사항 배포, Kubernetes manifest 생성 및 완료된 병�
 
 | 우선순위 | 작업 | 완료 기준 |
 |---:|---|---|
-| 1 | 활성 문서 정합성 | 주장별 근거·한계·실행 파일 연결 |
-| 2 | HA 피드백 종단 | 의도↔관측 분리와 자연어 값별 근거 gate 통과. 실제 앱 수정·기능 종단은 남음 |
-| 3 | Azure P2 조건부 cloud gate | 안전 후보가 있을 때만 apply·기능·재시작·정리 |
-| 4 | 시스템 비교 파일럿 | EasyDep·CoT·MetaGPT 각 1회 비용·시간 확인 |
-| 5 | 최소 반복 결정 | 파일럿 결과로 감당 가능한 반복만 수행 |
+| 1 | 최소 ResourcePlan·구조도·IaC 공동 생성 | 같은 원본에서 CSP별 그림과 Terraform이 생성됨 |
+| 2 | E1 로컬 종단 | 다중 Workload, 동시성, 영속성 oracle 반복 통과 |
+| 3 | E2 앱 HA 종단 | 관리형 VM 그룹·LB, 앱 VM 장애 중 업무와 자동 교체 확인 |
+| 4 | 공통 의미 평가기 | 네 시스템 산출물을 요구 ID·설계 결정·code/test/IaC 의미로 정규화 |
+| 5 | 8회 비교 파일럿 | E1·E2 × 4시스템의 성공·실패·검열 정상 분류 |
 
-본실험 전 최소 조건은 P1·P2·P3에서 각기 다른 클라우드 특성이 실제 구현과 평가까지
-이어지는지 확인하는 것이다. 이후에만 전체 반복 실험을 실행한다.
+본실험 전 최소 조건은 E1·E2가 로컬에서 재현되고 사전 지정 CSP에서 기능·정리까지
+끝나는 것이다. 이후에만 반복 실험을 확대한다.
 
 ## 실행 시간과 병목 계측
 
@@ -254,12 +255,44 @@ LLM 생성·수정은 35.66초뿐이어서 나머지 약 128초가 공급자 초
 확인했다. 이후 실행부터 해당 명령도 개별 계측하므로 이 추정치를 직접 관측값으로 대체한다.
 이 수치는 개발 병목 탐색 자료이며 아직 방식 간 성능 우열의 근거로 사용하지 않는다.
 
-## 관련 문서
+## 구현 경계와 사용 인터페이스
 
-- `app/core/orchestration/README.md`: 4단계 실행과 provider 계약
-- `app/core/cloudkb/document/research.md`: 연구 목표와 범위
-- `app/core/cloudkb/document/dependency-analysis.md`: 의존성 분석 정의
-- `app/core/cloudkb/document/vm-scope.md`: VM 범위
-- `app/core/cloudkb/document/vm-resource-selection.md`: VM 선택 원칙
-- `evaluation/experiment-contract.md`: 비교실험 계약
-- `evaluation/pilot-results.md`: 종단 파일럿 기록
+새 종단 실행은 `app/core/orchestration/`을 기준으로 한다. 구현 단계는 다음 순서다.
+
+```text
+소프트웨어·클라우드 설계
+→ 애플리케이션 골격
+→ 수정 불가능한 수용 테스트
+→ 업무 로직
+→ VM 후보
+→ Dockerfile·Terraform
+```
+
+| 위치 | 역할 |
+|---|---|
+| `app/core/orchestration/` | 4단계 그래프, checkpoint, provider와 실행 상태 |
+| `app/core/orchestration/adapters/` | 멤버 구현·테스트·VM 선택 연결 |
+| `app/implementation/` | 구현 IR, 품질 gate, Docker·IaC renderer |
+| `app/core/cloudkb/` | 리소스 의존성·VM 가격·성능 근거 |
+| `evaluation/` | 모든 시스템에 적용하는 외부 공통 평가 |
+
+웹 UI용 비동기 구현 job은 별도 호환 경로다. 정확한 요청·응답 스키마는 실행 중인
+FastAPI `/docs`와 route 구현을 진실 원천으로 사용한다.
+
+| 메서드와 경로 | 역할 |
+|---|---|
+| `POST /api/apps` | 애플리케이션 세션 생성 |
+| `POST /api/requirements/analyze` | 요구사항 분석 시작 |
+| `POST /api/implementation/apps/{app_id}/jobs` | 비동기 구현 job 생성 |
+| `GET /api/implementation/jobs/{job_id}` | 구현 상태·승인 대기 조회 |
+| `POST /api/implementation/jobs/{job_id}/approval` | HITL 승인·거부 |
+| `POST /api/implementation/apps/{app_id}/feedback-jobs` | 기존 산출물 피드백 수정 |
+
+필요 도구는 Python 의존성, JDK 21과 Gradle wrapper, Node.js/npm, OpenAPI Generator,
+Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider는 run manifest에 남긴다.
+
+## 유지되는 외부 기술 문서
+
+- `app/core/orchestration/README.md`: 실행 명령과 provider 계약
+- `evaluation/experiment-contract.md`: subject·harness·environment failure 분류
+- FastAPI `/docs`: 현재 HTTP 계약

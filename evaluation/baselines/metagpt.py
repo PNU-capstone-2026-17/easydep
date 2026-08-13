@@ -28,6 +28,24 @@ from evaluation.baselines.common import (
 DEFAULT_EXECUTABLE = ROOT / ".venv-metagpt" / (
     "Scripts/metagpt.exe" if os.name == "nt" else "bin/metagpt"
 )
+MIN_QA_ROUNDS = 8
+
+
+def _command(executable: Path, task: str, investment: float, rounds: int) -> list[str]:
+    """Build the pinned MetaGPT command with its native QA role enabled."""
+    if rounds < MIN_QA_ROUNDS:
+        raise ValueError(
+            f"MetaGPT QA requires at least {MIN_QA_ROUNDS} rounds; got {rounds}."
+        )
+    return [
+        str(executable),
+        task,
+        "--investment",
+        str(investment),
+        "--n-round",
+        str(rounds),
+        "--run-tests",
+    ]
 
 
 def _materialize_repository(workspace: Path, destination: Path) -> Path | None:
@@ -83,26 +101,31 @@ def run(
     output_root: Path | None = None,
     dry_run: bool = False,
     investment: float = 3.0,
-    rounds: int = 5,
+    rounds: int = MIN_QA_ROUNDS,
 ) -> Path:
     case = ExperimentCase.load(case_path)
-    run_dir = begin_run("metagpt", case, output_root)
+    task = _task(case)
     executable = Path(os.getenv("METAGPT_EXECUTABLE", str(DEFAULT_EXECUTABLE)))
-    command = [str(executable), _task(case), "--investment", str(investment),
-               "--n-round", str(rounds)]
+    command = _command(executable, task, investment, rounds)
+    run_dir = begin_run("metagpt", case, output_root)
     manifest = run_manifest("metagpt", case, command, run_dir.name)
-    manifest.update({"metagptVersion": "0.8.2", "investment": investment, "rounds": rounds})
+    manifest.update({
+        "metagptVersion": "0.8.2",
+        "investment": investment,
+        "rounds": rounds,
+        "qaEnabled": True,
+    })
     write_json(run_dir / "input.json", {
         "caseId": case.case_id,
         "requirements": case.requirements,
         "cloudConstraints": case.cloud_constraints,
         "scope": case.scope,
     })
-    (run_dir / "task.txt").write_text(_task(case), encoding="utf-8")
+    (run_dir / "task.txt").write_text(task, encoding="utf-8")
     manifest.update({"status": "running", "generationStatus": "running"})
     write_json(run_dir / "manifest.json", manifest)
     if dry_run:
-        manifest["status"] = "dry-run"
+        manifest.update({"status": "dry-run", "generationStatus": "dry-run"})
         write_json(run_dir / "manifest.json", manifest)
         return run_dir
 
@@ -126,10 +149,7 @@ def run(
         config_path = profile / ".metagpt" / "config2.yaml"
         config_path.parent.mkdir()
         config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-        metagpt_command = [
-            str(executable), _task(case), "--investment", str(investment),
-            "--n-round", str(rounds),
-        ]
+        metagpt_command = _command(executable, task, investment, rounds)
         environment = os.environ.copy()
         environment.update({
             "HOME": str(profile),
@@ -177,7 +197,7 @@ def main() -> None:
     parser.add_argument("case", type=Path)
     parser.add_argument("--output-root", type=Path)
     parser.add_argument("--investment", type=float, default=3.0)
-    parser.add_argument("--rounds", type=int, default=5)
+    parser.add_argument("--rounds", type=int, default=MIN_QA_ROUNDS)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     print(run(args.case, args.output_root, args.dry_run, args.investment, args.rounds))

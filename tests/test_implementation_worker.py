@@ -66,9 +66,20 @@ def test_unsuitable_feedback_does_not_create_an_execution_run(monkeypatch, tmp_p
     finally:
         implementation_worker.shutdown()
 
-    assert record["status"] == "REJECTED"
+    assert record["status"] == "NEEDS_INPUT"
     assert record["feedback_eligibility"]["status"] == "UNSUITABLE"
+    assert record["prompt"]["kind"] == "upstream_revision_confirmation"
+    assert record["prompt"]["requiredStage"] == "design"
+    assert record["prompt"]["question"]
     assert (tmp_path / ".easydep/implementation-runs" / record["job_id"] / "feedback-eligibility.json").is_file()
+
+
+def test_requirement_feedback_asks_before_returning_to_requirements() -> None:
+    result = assess_feedback_eligibility("요구사항에 대기자 우선순위 업무 규칙을 추가해줘")
+
+    assert result["status"] == "UNSUITABLE"
+    assert result["requiredStage"] == "requirements"
+    assert "requirements 단계" in result["confirmationQuestion"]
 
 
 def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path) -> None:

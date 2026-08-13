@@ -195,7 +195,7 @@ class ExperimentSuite:
             raise ValueError("repetitions must be positive")
         arms = tuple(str(item) for item in raw.get("arms", []))
         required_arms = expected_arms or {
-            "easydep-full", "cot-standard", "metagpt-standard"
+            "easydep-full", "cot-standard", "metagpt-standard", "chatdev-standard"
         }
         if len(arms) != len(required_arms) or set(arms) != required_arms:
             raise ValueError(

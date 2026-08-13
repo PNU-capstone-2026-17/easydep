@@ -7,7 +7,7 @@ interpretations are documented in ``document/terminology-ledger.md``.
 
 from __future__ import annotations
 
-RELATION_FAMILIES = frozenset({"provisioning", "lifecycle", "runtime"})
+RELATION_FAMILIES = frozenset({"provisioning", "runtime"})
 CONDITION_KINDS = frozenset(
     {"always", "conditional", "placement", "exclusiveChoice", "compatibility"}
 )
@@ -18,14 +18,6 @@ FINDINGS_BY_FAMILY = {
             "mandatoryForProvisioning",
             "conditionalForProvisioning",
             "notMandatoryForProvisioning",
-        }
-    ),
-    "lifecycle": frozenset(
-        {
-            "deleteBlockedWhileAttached",
-            "detachRequiredBeforeDelete",
-            "cascadeDeletedWithOwner",
-            "persistsAfterOwnerDeletion",
         }
     ),
     "runtime": frozenset(

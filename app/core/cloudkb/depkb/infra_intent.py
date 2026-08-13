@@ -12,7 +12,7 @@ from .official_dependency_model import dependencies_for
 from .projection_model import PATH as PROJECTION_PATH
 from .projection_model import capability_realizations
 
-SCHEMA_VERSION = "easydep-infra-intent/v2"
+SCHEMA_VERSION = "easydep-infra-intent/v3"
 
 
 @dataclass(frozen=True)
@@ -63,9 +63,6 @@ class InfraIntent:
     startResources: tuple[str, ...]
     resources: tuple[Resource, ...]
     createOrder: tuple[str, ...]
-    deleteBlockedWhileAttached: tuple[tuple[str, str], ...]
-    detachRequiredBeforeDelete: tuple[tuple[str, str], ...]
-    cascadeDeletedWithOwner: tuple[tuple[str, str], ...]
     runtimeRequiredForSignal: tuple[tuple[str, str, str], ...]
     providerRealizations: tuple[ProviderRealization, ...]
     decisions: tuple[Decision, ...]
@@ -192,9 +189,6 @@ def build(
         schemaVersion=SCHEMA_VERSION, csp=csp, region=region,
         startResources=tuple(anchors), resources=tuple(resources[k] for k in sorted(resources)),
         createOrder=_merge_order(closures, csp),
-        deleteBlockedWhileAttached=tuple(sorted({p for c in closures for p in c.deleteBlockedWhileAttached})),
-        detachRequiredBeforeDelete=tuple(sorted({p for c in closures for p in c.detachRequiredBeforeDelete})),
-        cascadeDeletedWithOwner=tuple(sorted({p for c in closures for p in c.cascadeDeletedWithOwner})),
         runtimeRequiredForSignal=tuple(sorted({p for c in closures for p in c.runtimeRequiredForSignal})),
         providerRealizations=tuple(realizations[k] for k in sorted(realizations)),
         decisions=tuple(decisions), constraints=_constraints_for(csp, ids),

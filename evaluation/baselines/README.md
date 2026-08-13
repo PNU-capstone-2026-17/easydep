@@ -1,6 +1,6 @@
 # 비교 기준선
 
-EasyDep과 비교할 LLM CoT 및 MetaGPT 실행 코드를 둔다. 모든 비교군은 같은 케이스 JSON과
+EasyDep과 비교할 LLM CoT, MetaGPT 및 ChatDev 실행 코드를 둔다. 모든 비교군은 같은 케이스 JSON과
 저장소 루트 `.env`의 `MODEL`, `BASE_URL`, `API_KEY`, `TEMPERATURE`, `SEED`를 사용한다.
 실행 결과는 `artifacts/runs/<run-id>/`에 저장하며 Git에는 포함하지 않는다.
 
@@ -8,6 +8,7 @@ EasyDep과 비교할 LLM CoT 및 MetaGPT 실행 코드를 둔다. 모든 비교�
 
 - `cot.py`: 단일 LLM이 요구사항부터 테스트 계획까지 순차적으로 생성하는 기준선
 - `metagpt.py`: MetaGPT 0.8.2 Software Company 기준선
+- `chatdev.py`: ChatDev 1.1.6 Software Company 기준선
 - `cases/`: 비교군이 공통으로 사용하는 입력
 - `verify.py`: 공통 최종 구현물 평가기의 호환 CLI
 
@@ -16,7 +17,7 @@ EasyDep과 비교할 LLM CoT 및 MetaGPT 실행 코드를 둔다. 모든 비교�
 기준선에 EasyDep 전용 중간 형식을 강제하지 않는다. 공통 필수 평가는 생성 저장소의
 애플리케이션 소스코드, Dockerfile, Terraform IaC를 대상으로 하며 배포 매니페스트는 선택 사항이다.
 배포 다이어그램과 `cloud-plan.json`은 필수 산출물이 아니다.
-MetaGPT의 고유 workspace는 원본으로 보존하고, 생성 프로젝트는 공통 평가를 위해 같은
+MetaGPT의 고유 workspace와 ChatDev의 native 문서는 원본으로 보존하고, 생성 프로젝트는 공통 평가를 위해 같은
 실행 디렉터리의 `repo/`로 복사한다. Terraform이 누락된 출력도 보정하지 않고 그대로
 평가 실패로 기록한다.
 
@@ -28,11 +29,27 @@ MetaGPT는 Python 3.11 가상환경을 한 번 준비한다.
 evaluation/baselines/setup_metagpt.ps1
 ```
 
+ChatDev도 별도의 Python 3.11 환경에 공식 `v1.1.6` 소스의 고정 commit
+`bcab15717940818938402394a04aea2052d76665`을 한 번 준비한다. 최신 ChatDev 2.x는 범용
+멀티 에이전트 플랫폼이므로, 논문의 소프트웨어 회사형 비교군에는 1.x를 사용한다.
+
+```powershell
+evaluation/baselines/setup_chatdev.ps1
+```
+
+ChatDev 1.x는 모델 이름을 OpenAI 별칭으로 제한한다. 기준군 코드는 ChatDev 소스를 수정하지 않고
+로컬 프록시에서 그 별칭을 루트 `.env`의 `MODEL`로 변환하고 `TEMPERATURE`와 `SEED`도 공통
+실험값으로 맞춘다. ChatDev 1.1.6이 긴 프롬프트에서 음수 `max_tokens`를 만드는 경우에만
+`CHATDEV_MAX_COMPLETION_TOKENS`의 양수 상한(기본 4096)으로 교정한다. 공급자 응답의 비표준
+확장 필드는 OpenAI 표준 메시지 필드만 남기고 제거한다. 요청·응답 본문과 API 키는 기록하지 않으며
+호출 상태·시간과 이러한 호환 변환만 `llm-proxy-events.json`에 남긴다.
+
 API 호출 없는 설정 확인:
 
 ```powershell
 python -m evaluation.baselines.cot evaluation/baselines/cases/p1-stateless-aws.json --dry-run
 python -m evaluation.baselines.metagpt evaluation/baselines/cases/p1-stateless-aws.json --dry-run
+python -m evaluation.baselines.chatdev evaluation/baselines/cases/p1-stateless-aws.json --dry-run
 ```
 
 실제 실행은 `--dry-run`만 제거한다. 케이스에는 `caseId`, `requirements`,
@@ -40,7 +57,7 @@ python -m evaluation.baselines.metagpt evaluation/baselines/cases/p1-stateless-a
 
 ## 자원 제한 확인 파일럿
 
-확인적 본 실험 전에 같은 사례·같은 반복의 세 실험군을 직렬로 한 번씩 실행한다. 이
+확인적 본 실험 전에 같은 사례·같은 반복의 네 실험군을 직렬로 한 번씩 실행한다. 이
 파일럿은 실행 환경, 시간 제한, 프로세스 트리 정리, Docker 평가 가능성과 디스크 증가량을
 검증하기 위한 것이며 본 실험의 효과 크기나 통계적 결론으로 사용하지 않는다.
 
@@ -50,11 +67,11 @@ Docker 데몬을 사용자가 시작한 뒤 다음 읽기 전용 검사에서 `r
 python -m evaluation.experiment --check-environment
 ```
 
-실행 전에 선택된 세 작업만 출력되는지 확인한다.
+실행 전에 선택된 네 작업만 출력되는지 확인한다.
 
 ```powershell
 python -m evaluation.experiment --split development --confirmatory `
-  --case P1-gcp --repetition 1 --limit 3 --print-schedule
+  --case P1-gcp --repetition 1 --limit 4 --print-schedule
 ```
 
 같은 인자로 실제 파일럿을 실행한다. 작업은 한 번에 하나만 실행되며 각 작업의 시간 제한은
@@ -62,12 +79,12 @@ python -m evaluation.experiment --split development --confirmatory `
 
 ```powershell
 python -m evaluation.experiment --split development --confirmatory `
-  --case P1-gcp --repetition 1 --limit 3 --timeout-seconds 1800
+  --case P1-gcp --repetition 1 --limit 4 --timeout-seconds 1800
 ```
 
-파일럿 종료 후 실행 인덱스에서 세 작업 모두 종료 상태인지, 하위 프로세스가 남지 않았는지,
+파일럿 종료 후 실행 인덱스에서 네 작업 모두 종료 상태인지, 하위 프로세스가 남지 않았는지,
 Docker 평가가 `unavailable`이 아닌지, 실행 전후 여유 디스크가 5 GiB 이상인지 확인한다.
-확인되지 않은 상태에서는 다음 묶음이나 81회 개발 본 실험을 시작하지 않는다.
+확인되지 않은 상태에서는 다음 묶음이나 108회 개발 본 실험을 시작하지 않는다.
 
 `cases/suite.json`은 P1~P3과 세 CSP를 교차한 9개 입력, 개발·홀드아웃 분리, 반복 횟수와
 정규화 JSON의 SHA-256을 고정한다. 줄바꿈 형식은 해시에 영향을 주지 않는다. P4 예산 충돌은 만족 가능한 최종 구현물이 없으므로 별도 계획 평가에서
@@ -85,5 +102,5 @@ python -m evaluation.experiment --study ablation --split development `
 ```
 
 출력에는 같은 사례의 세 EasyDep 조건만 있어야 한다. 처치 충실도 단위시험과 P1~P3 개발
-게이트가 통과한 뒤에만 `--print-schedule`을 제거한다. 절제실험 결과는 CoT·MetaGPT 시스템
+게이트가 통과한 뒤에만 `--print-schedule`을 제거한다. 절제실험 결과는 CoT·MetaGPT·ChatDev 시스템
 비교와 같은 실험군으로 합산하지 않는다.

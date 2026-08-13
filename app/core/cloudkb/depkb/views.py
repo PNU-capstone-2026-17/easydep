@@ -78,12 +78,6 @@ def provision_view(intent: InfraIntent) -> dict:
         ],
         "providerRealizations": [asdict(item) for item in intent.providerRealizations],
         "waitFor": _wait_for(intent),
-        "deleteBlockedWhileAttached": [list(pair) for pair in intent.deleteBlockedWhileAttached],
-        "detachRequiredBeforeDelete": [list(pair) for pair in intent.detachRequiredBeforeDelete],
-        "cascadeDeletedWithOwner": [
-            {"owner": owner, "resource": resource}
-            for owner, resource in intent.cascadeDeletedWithOwner
-        ],
         "runtimeDependencies": [
             {"subject": subject, "object": object_, "signal": signal}
             for subject, object_, signal in intent.runtimeRequiredForSignal

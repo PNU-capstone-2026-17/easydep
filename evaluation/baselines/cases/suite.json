@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "language": "English",
   "workload": "Docker on Linux VM",
   "iac": "Terraform",
@@ -23,7 +23,7 @@
     "P4-budget-conflict": "No implementation can satisfy both fixed high availability and an infeasible budget; evaluate conflict detection separately."
   },
   "repetitions": 3,
-  "arms": ["easydep-full", "cot-standard", "metagpt-standard"],
+  "arms": ["easydep-full", "cot-standard", "metagpt-standard", "chatdev-standard"],
   "oracle": "oracle.json",
   "oracleHash": "f81ad4e4b65c8c6abfbb3dd53bcbcecd5c5c6df034072aa0cb5a20b1dd16b076",
   "frozenHashes": {

@@ -5,7 +5,9 @@ import pytest
 
 from app.core.cloudkb.depkb.build_claims import build
 from app.core.cloudkb.depkb.closure import closure
+from app.core.cloudkb.depkb.infra_intent import build as build_infra_intent
 from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
+from app.core.cloudkb.depkb.views import provision_view
 
 
 def test_generated_claims_are_strictly_vm_scoped():
@@ -18,7 +20,26 @@ def test_generated_claims_are_strictly_vm_scoped():
 
 
 def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
-    assert len(build()["claims"]) == 56
+    assert len(build()["claims"]) == 45
+
+
+def test_product_kb_contains_only_creation_and_runtime_dependencies():
+    claims = build()["claims"]
+
+    assert {claim["relationFamily"] for claim in claims} == {
+        "provisioning",
+        "runtime",
+    }
+
+
+def test_provision_view_has_no_teardown_only_model_fields():
+    view = provision_view(build_infra_intent(["vm"], "aws", "us-east-1"))
+
+    assert {
+        "deleteBlockedWhileAttached",
+        "detachRequiredBeforeDelete",
+        "cascadeDeletedWithOwner",
+    }.isdisjoint(view)
 
 
 def test_exclusive_choice_uses_cardinality_not_borrowed_idl_labels():

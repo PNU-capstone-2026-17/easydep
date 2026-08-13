@@ -165,6 +165,15 @@ def evaluate_feedback_rtm_traceability(
     # 1. Rule-based Contract Violation checks
     contract_rules: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         (
+            "REQUIREMENTS_CONTRACT_CHANGE",
+            "requirements",
+            "Requirements or use-case contract change requested.",
+            (
+                r"\b(?:requirement|use[ -]?case|business rule|acceptance criteria)\b",
+                r"(?:요구사항|유스\s*케이스|업무\s*규칙|인수\s*조건)",
+            ),
+        ),
+        (
             "CLASS_CONTRACT_CHANGE",
             "bceClass",
             "BCE/class-diagram contract change requested.",
@@ -235,16 +244,30 @@ def evaluate_feedback_rtm_traceability(
                 break
 
     eligible = not matches
+    required_stage = None
+    if matches:
+        required_stage = (
+            "requirements"
+            if any(item["originArtifact"] == "requirements" for item in matches)
+            else "design"
+        )
     return {
         "schemaVersion": SCHEMA_VERSION,
         "status": "ELIGIBLE" if eligible else "UNSUITABLE",
         "feedback": text,
         "matches": matches,
         "rtmValidated": True,
+        "requiredStage": required_stage,
+        "confirmationQuestion": (
+            f"이 피드백은 현재 구현 계약만 수정해서 반영할 수 없습니다. "
+            f"{required_stage} 단계로 돌아가 관련 산출물을 수정하고 이후 단계를 다시 진행할까요?"
+            if required_stage
+            else None
+        ),
         "nextAction": (
             "Create a constrained implementation feedback revision and run all verification gates."
             if eligible
-            else "Do not create or execute an implementation feedback revision for this request."
+            else "Do not execute an implementation revision until the user confirms returning to the required upstream stage."
         ),
     }
 

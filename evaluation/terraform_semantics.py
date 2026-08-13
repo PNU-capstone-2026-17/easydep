@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import hcl2
+from lark.exceptions import LarkError
 
 from app.core.cloudkb.depkb.projection_model import capability_realizations
 from evaluation.component_projection import analyze_component_projections
@@ -152,7 +153,7 @@ def _resources(root: Path) -> tuple[list[dict[str, Any]], list[str]]:
         try:
             with path.open(encoding="utf-8") as stream:
                 parsed = hcl2.load(stream)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, LarkError) as exc:
             errors.append(f"{path.relative_to(root).as_posix()}: {exc}")
             continue
         for declaration_kind in ("resource", "data"):

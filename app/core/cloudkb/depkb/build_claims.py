@@ -11,6 +11,7 @@ from app.core.cloudkb.depkb.terminology import validate_claim
 _HERE = Path(__file__).resolve().parent
 _SOURCE = _HERE / "claims.source.json"
 _ARTIFACT = _HERE / "claims.json"
+_PRODUCT_RELATION_FAMILIES = frozenset({"provisioning", "runtime"})
 
 
 def _inside_depkb(relative: str) -> Path:
@@ -36,7 +37,14 @@ def _experiment_has_step(experiment: str, step: str) -> bool:
 def build() -> dict:
     """Rebuild the product artifact after validating scope and local evidence."""
     source = json.loads(_SOURCE.read_text(encoding="utf-8"))
-    claims = list(source.get("claims") or [])
+    # The historical source ledger also contains teardown-only observations.
+    # EasyDep creates new deployments; Terraform owns teardown ordering.  Keep
+    # those raw observations auditable, but do not ship them in the product KB.
+    claims = [
+        claim
+        for claim in (source.get("claims") or [])
+        if claim.get("relationFamily") in _PRODUCT_RELATION_FAMILIES
+    ]
     if not claims:
         raise ValueError("the reviewed VM claim ledger is empty")
 
@@ -93,11 +101,11 @@ def build() -> dict:
         key = f"{claim['csp']}.{claim['finding']}"
         counts[key] = counts.get(key, 0) + 1
     return {
-        "schemaVersion": source.get("schemaVersion", "depkb-claims/v2"),
+        "schemaVersion": "easydep-dependency-claims/v3",
         "methodology": source.get("methodology", {}),
         "_note": (
-            "Reviewed Docker-on-VM cloud resource dependency claims. Each claim is "
-            "scoped to AWS, Azure, or GCP and retains its schema or experiment evidence."
+            "Docker-on-VM creation and runtime dependency claims for AWS, Azure, "
+            "and GCP. Teardown-only relationships are intentionally excluded."
         ),
         "findingCounts": counts,
         "claims": claims,

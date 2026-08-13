@@ -1,26 +1,23 @@
 {
- "schemaVersion": "easydep-dependency-claims/v2",
+ "schemaVersion": "easydep-dependency-claims/v3",
  "methodology": {
   "originalProtocolTiming": "retrospective",
   "expectedOutcomeOrigin": "Migrated from experiment code and retained results after the original runs; not preregistered.",
   "replicationProtocolTiming": "prospectiveAgainstFrozenHistoricalExpectations",
   "interpretation": "Replication reduces accidental execution error but does not turn the original exploratory study into a preregistered confirmatory study."
  },
- "_note": "Reviewed Docker-on-VM cloud resource dependency claims. Each claim is scoped to AWS, Azure, or GCP and retains its schema or experiment evidence.",
+ "_note": "Docker-on-VM creation and runtime dependency claims for AWS, Azure, and GCP. Teardown-only relationships are intentionally excluded.",
  "findingCounts": {
   "aws.notMandatoryForProvisioning": 9,
   "aws.mandatoryForProvisioning": 3,
-  "aws.deleteBlockedWhileAttached": 3,
   "aws.runtimeRequiredForSignal": 5,
   "azure.notMandatoryForProvisioning": 8,
   "azure.conditionalForProvisioning": 1,
   "azure.runtimeRequiredForSignal": 4,
-  "azure.deleteBlockedWhileAttached": 5,
   "azure.mandatoryForProvisioning": 3,
   "gcp.notMandatoryForProvisioning": 4,
   "gcp.conditionalForProvisioning": 2,
   "gcp.runtimeRequiredForSignal": 3,
-  "gcp.deleteBlockedWhileAttached": 3,
   "gcp.mandatoryForProvisioning": 3
  },
  "claims": [
@@ -249,73 +246,6 @@
    "subject": "nic",
    "object": "firewall",
    "csp": "aws",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/GroupSet",
-     "form": "name-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/GroupSet"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "C.delete-sg-attached",
-     "code": "DependencyViolation",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 118,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `DependencyViolation` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with DependencyViolation",
-     "actualOutcome": "DependencyViolation"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "D.delete-sg",
-     "code": "ok",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 124,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "aws에서 `nic`와 `firewall`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "aws-apply-2026-07-30"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "firewall",
-   "csp": "aws",
    "relationFamily": "provisioning",
    "finding": "notMandatoryForProvisioning",
    "evidenceStatus": "confirmed",
@@ -377,73 +307,6 @@
     "session": "2026-08-07",
     "experiments": [
      "aws-apply2-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "subnet",
-   "csp": "aws",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/SubnetId",
-     "form": "name-reference",
-     "requiredInSchema": true,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "aws-cfn#/ResourceTypes/AWS::EC2::NetworkInterface/Properties/SubnetId"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "C.delete-subnet-in-use",
-     "code": "DependencyViolation",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 114,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `DependencyViolation` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with DependencyViolation",
-     "actualOutcome": "DependencyViolation"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "D.delete-subnet",
-     "code": "ok",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 126,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "aws에서 `nic`와 `subnet`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "aws-apply-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
    }
@@ -706,73 +569,6 @@
     "session": "2026-08-07",
     "experiments": [
      "aws-func2-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "subnet",
-   "object": "network",
-   "csp": "aws",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "aws-cfn#/ResourceTypes/AWS::EC2::Subnet/Properties/VpcId",
-     "form": "name-reference",
-     "requiredInSchema": true,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "aws-cfn#/ResourceTypes/AWS::EC2::Subnet/Properties/VpcId"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "C.delete-vpc-in-use",
-     "code": "DependencyViolation",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 116,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `DependencyViolation` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with DependencyViolation",
-     "actualOutcome": "DependencyViolation"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "aws-apply-2026-07-30",
-     "step": "D.delete-vpc",
-     "code": "ok",
-     "resultFile": "experiments/aws-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/aws-apply-2026-07-30/run.py",
-      "line": 128,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "aws에서 `subnet`와 `network`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "aws-apply-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
    }
@@ -1955,73 +1751,6 @@
    "subject": "nic",
    "object": "firewall",
    "csp": "azure",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfacePropertiesFormat/properties/networkSecurityGroup",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-virtualNetwork.json#/definitions/Common.NetworkInterfacePropertiesFormat/properties/networkSecurityGroup"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "C.delete-nsg-attached",
-     "code": "InUseNetworkSecurityGroupCannotBeDeleted",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 68,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `InUseNetworkSecurityGroupCannotBeDeleted` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with InUseNetworkSecurityGroupCannotBeDeleted",
-     "actualOutcome": "InUseNetworkSecurityGroupCannotBeDeleted"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "D.delete-nsg",
-     "code": "ok",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 75,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `nic`와 `firewall`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-apply-2026-07-30"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "firewall",
-   "csp": "azure",
    "relationFamily": "provisioning",
    "finding": "notMandatoryForProvisioning",
    "evidenceStatus": "confirmed",
@@ -2067,81 +1796,6 @@
     "session": "2026-08-07",
     "experiments": [
      "azure-apply-2026-07-30"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "publicIp",
-   "csp": "azure",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/publicIPAddress"
-    },
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/publicIPAddress"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply2-2026-07-30",
-     "step": "C.delete-pip-attached",
-     "code": "PublicIPAddressCannotBeDeleted",
-     "resultFile": "experiments/azure-apply2-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply2-2026-07-30/run.py",
-      "line": 59,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `PublicIPAddressCannotBeDeleted` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with PublicIPAddressCannotBeDeleted",
-     "actualOutcome": "PublicIPAddressCannotBeDeleted"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply2-2026-07-30",
-     "step": "D.delete-pip1",
-     "code": "ok",
-     "resultFile": "experiments/azure-apply2-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply2-2026-07-30/run.py",
-      "line": 66,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `nic`와 `publicIp`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-apply2-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
    }
@@ -2339,89 +1993,6 @@
     "session": "2026-08-07",
     "experiments": [
      "azure-func-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "subnet",
-   "csp": "azure",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-loadBalancer.json#/definitions/Common.FrontendIPConfigurationPropertiesFormat/properties/subnet"
-    },
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/subnet",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-virtualNetwork.json#/definitions/Common.NetworkInterfaceIPConfigurationPropertiesFormat/properties/subnet"
-    },
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-virtualNetwork.json#/definitions/Common.PrivateLinkServiceIpConfigurationProperties/properties/subnet",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-virtualNetwork.json#/definitions/Common.PrivateLinkServiceIpConfigurationProperties/properties/subnet"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "C.delete-subnet-in-use",
-     "code": "InUseSubnetCannotBeDeleted",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 63,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `InUseSubnetCannotBeDeleted` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with InUseSubnetCannotBeDeleted",
-     "actualOutcome": "InUseSubnetCannotBeDeleted"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "D.delete-subnet",
-     "code": "ok",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 76,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `nic`와 `subnet`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-apply-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
    }
@@ -2680,73 +2251,6 @@
    "subject": "subnet",
    "object": "network",
    "csp": "azure",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "network-virtualNetwork.json#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}",
-     "form": "path-nesting",
-     "requiredInSchema": true,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "network-virtualNetwork.json#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "C.delete-vnet-in-use",
-     "code": "InUseSubnetCannotBeDeleted",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 66,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `InUseSubnetCannotBeDeleted` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with InUseSubnetCannotBeDeleted",
-     "actualOutcome": "InUseSubnetCannotBeDeleted"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply-2026-07-30",
-     "step": "D.delete-vnet",
-     "code": "ok",
-     "resultFile": "experiments/azure-apply-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply-2026-07-30/run.py",
-      "line": 78,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `subnet`와 `network`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-apply-2026-07-30"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "subnet",
-   "object": "network",
-   "csp": "azure",
    "relationFamily": "provisioning",
    "finding": "mandatoryForProvisioning",
    "evidenceStatus": "confirmed",
@@ -2791,81 +2295,6 @@
     "session": "2026-08-07",
     "experiments": [
      "azure-apply-2026-07-30"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "vm",
-   "object": "disk",
-   "csp": "azure",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk"
-    },
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply3-2026-07-30",
-     "step": "C1.delete-disk-attached",
-     "code": "OperationNotAllowed",
-     "resultFile": "experiments/azure-apply3-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply3-2026-07-30/run.py",
-      "line": 58,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `OperationNotAllowed` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with OperationNotAllowed",
-     "actualOutcome": "OperationNotAllowed"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "azure-apply3-2026-07-30",
-     "step": "D.delete-data-disk",
-     "code": "ok",
-     "resultFile": "experiments/azure-apply3-2026-07-30/results.json",
-     "definition": {
-      "file": "experiments/azure-apply3-2026-07-30/run.py",
-      "line": 67,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `vm`와 `disk`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-apply3-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
    }
@@ -3549,73 +2978,6 @@
    "subject": "nic",
    "object": "subnet",
    "csp": "gcp",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "gcp-compute#/schemas/NetworkInterface/properties/subnetwork",
-     "form": "pair-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "gcp-compute#/schemas/NetworkInterface/properties/subnetwork"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "C.delete-subnet-in-use",
-     "code": "resourceInUseByAnotherResource",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/run.py",
-      "line": 165,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `resourceInUseByAnotherResource` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with resourceInUseByAnotherResource",
-     "actualOutcome": "resourceInUseByAnotherResource"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "D.delete-subnet",
-     "code": "ok",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/run.py",
-      "line": 184,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "gcp에서 `nic`와 `subnet`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "gcp-apply-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "nic",
-   "object": "subnet",
-   "csp": "gcp",
    "relationFamily": "provisioning",
    "finding": "conditionalForProvisioning",
    "evidenceStatus": "confirmed",
@@ -3699,73 +3061,6 @@
    "subject": "subnet",
    "object": "network",
    "csp": "gcp",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "gcp-compute#/schemas/Subnetwork/properties/network",
-     "form": "pair-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "gcp-compute#/schemas/Subnetwork/properties/network"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "C.delete-network-in-use",
-     "code": "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/run.py",
-      "line": 166,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `RESOURCE_IN_USE_BY_ANOTHER_RESOURCE` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with RESOURCE_IN_USE_BY_ANOTHER_RESOURCE",
-     "actualOutcome": "RESOURCE_IN_USE_BY_ANOTHER_RESOURCE"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "D.delete-network",
-     "code": "ok",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/run.py",
-      "line": 185,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "gcp에서 `subnet`와 `network`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "gcp-apply-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "subnet",
-   "object": "network",
-   "csp": "gcp",
    "relationFamily": "provisioning",
    "finding": "mandatoryForProvisioning",
    "evidenceStatus": "confirmed",
@@ -3821,73 +3116,6 @@
     "migrationDate": "2026-08-07"
    },
    "note": "gcp에서 `subnet`와 `network`의 생성 의존성(대상이 없거나 잘못됐을 때 주체를 만들 수 있는지)을 확인한 결과는 `필수`이다. 조건: 별도 조건 없음.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "gcp-apply-2026-07-31"
-    ],
-    "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "vm",
-   "object": "disk",
-   "csp": "gcp",
-   "relationFamily": "lifecycle",
-   "finding": "deleteBlockedWhileAttached",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "replicated",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always"
-   },
-   "signal": null,
-   "decisionRule": "Finding is deleteBlockedWhileAttached when deletion of the target is rejected while the source still references it and succeeds after the reference is removed.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "gcp-compute#/schemas/AttachedDisk/properties/source",
-     "form": "pair-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "gcp-compute#/schemas/AttachedDisk/properties/source"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "C.delete-bootdisk-attached",
-     "code": "resourceInUseByAnotherResource",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/run.py",
-      "line": 167,
-      "sourceKind": "이 저장소의 실험 코드에서 정의한 이름"
-     },
-     "observed": "이 단계에서 CSP가 `resourceInUseByAnotherResource` 오류를 돌려줬다",
-     "expectedOutcome": "operation is rejected with resourceInUseByAnotherResource",
-     "actualOutcome": "resourceInUseByAnotherResource"
-    },
-    {
-     "acquisitionMethod": "provisioningExecution",
-     "experiment": "gcp-apply-2026-07-31",
-     "step": "D.delete-disk.depkbg-vm",
-     "code": "ok",
-     "resultFile": "experiments/gcp-apply-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/gcp-apply-2026-07-31/results.json",
-      "line": 127,
-      "sourceKind": "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "gcp에서 `vm`와 `disk`의 수명주기 의존성(대상이 연결된 상태에서 삭제·정리가 가능한지)을 확인한 결과는 `관계 확인됨`이다. 조건: 별도 조건 없음.",
    "replication": {
     "session": "2026-08-07",
     "experiments": [

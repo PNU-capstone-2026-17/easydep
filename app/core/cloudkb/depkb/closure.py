@@ -56,9 +56,6 @@ class Closure:
     createOrder: tuple[str, ...]
     nonMandatoryForProvisioning: tuple[NonMandatoryResource, ...]
     decisions: tuple[Decision, ...]
-    deleteBlockedWhileAttached: tuple[tuple[str, str], ...]
-    detachRequiredBeforeDelete: tuple[tuple[str, str], ...]
-    cascadeDeletedWithOwner: tuple[tuple[str, str], ...]
     runtimeRequiredForSignal: tuple[tuple[str, str, str], ...]
     unavailableFindings: tuple[UnavailableFinding, ...]
 
@@ -150,14 +147,6 @@ def closure(start_resource: str, csp: str) -> Closure:
     }
     scope = seen | set(non_mandatory)
 
-    def pairs(finding: str) -> tuple[tuple[str, str], ...]:
-        return tuple(sorted(
-            (claim["subject"], claim["object"])
-            for claim in rows
-            if claim["finding"] == finding
-            and claim["subject"] in scope and claim["object"] in scope
-        ))
-
     runtime = tuple(sorted(
         (claim["subject"], claim["object"], str(claim.get("signal") or ""))
         for claim in rows
@@ -192,9 +181,6 @@ def closure(start_resource: str, csp: str) -> Closure:
         createOrder=_topological_order(seen, mandatory_edges),
         nonMandatoryForProvisioning=tuple(non_mandatory[k] for k in sorted(non_mandatory)),
         decisions=tuple(decisions),
-        deleteBlockedWhileAttached=pairs("deleteBlockedWhileAttached"),
-        detachRequiredBeforeDelete=pairs("detachRequiredBeforeDelete"),
-        cascadeDeletedWithOwner=pairs("cascadeDeletedWithOwner"),
         runtimeRequiredForSignal=runtime,
         unavailableFindings=unavailable,
     )

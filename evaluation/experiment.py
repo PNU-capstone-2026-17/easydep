@@ -37,7 +37,12 @@ SUITE_PATH = ROOT / "evaluation" / "baselines" / "cases" / "suite.json"
 ABLATION_SUITE_PATH = SUITE_PATH.with_name("ablation-suite.json")
 COMPONENT_SUITE_PATH = ROOT / "evaluation" / "baselines" / "component-cases" / "suite.json"
 ORACLE_PATH = SUITE_PATH.with_name("oracle.json")
-SYSTEM_ARMS = {"easydep-full", "cot-standard", "metagpt-standard"}
+SYSTEM_ARMS = {
+    "easydep-full",
+    "cot-standard",
+    "metagpt-standard",
+    "chatdev-standard",
+}
 ABLATION_ARMS = {"easydep-full", "easydep-no-depkb", "easydep-no-verification"}
 COMPONENT_ARMS = {"easydep-full", "easydep-no-depkb"}
 DEFAULT_JOB_TIMEOUT_SECONDS = 7200
@@ -141,6 +146,8 @@ def _result_stem(
 
 def environment_report() -> dict[str, Any]:
     """Return a credential-safe, read-only experiment environment report."""
+    from evaluation.baselines.chatdev import DEFAULT_PYTHON as CHATDEV_PYTHON
+    from evaluation.baselines.chatdev import DEFAULT_SOURCE as CHATDEV_SOURCE
     from evaluation.baselines.metagpt import DEFAULT_EXECUTABLE
     from evaluation.implementation import _command, _tool_path
 
@@ -150,6 +157,12 @@ def environment_report() -> dict[str, Any]:
     trivy = _tool_path("trivy", "EVALUATION_TRIVY_PATH")
     lizard = shutil.which("lizard")
     configured_metagpt = Path(os.getenv("METAGPT_EXECUTABLE", str(DEFAULT_EXECUTABLE)))
+    configured_chatdev_python = Path(
+        os.getenv("CHATDEV_PYTHON", str(CHATDEV_PYTHON))
+    )
+    configured_chatdev_source = Path(
+        os.getenv("CHATDEV_SOURCE", str(CHATDEV_SOURCE))
+    )
     docker_daemon = (
         _command([docker, "info", "--format", "{{json .ServerVersion}}"], ROOT)
         if docker
@@ -158,6 +171,10 @@ def environment_report() -> dict[str, Any]:
     required = {
         "apiKey": bool(os.getenv("API_KEY")),
         "metaGPT": configured_metagpt.is_file(),
+        "chatDev": (
+            configured_chatdev_python.is_file()
+            and (configured_chatdev_source / "run.py").is_file()
+        ),
         "iacEngine": bool(tofu or terraform),
         "dockerDaemon": docker_daemon.get("status") == "passed",
         "lizard": bool(lizard),
@@ -176,6 +193,12 @@ def environment_report() -> dict[str, Any]:
             "lizard": lizard,
             "metaGPT": str(configured_metagpt.resolve())
             if configured_metagpt.is_file()
+            else None,
+            "chatDevPython": str(configured_chatdev_python.resolve())
+            if configured_chatdev_python.is_file()
+            else None,
+            "chatDevSource": str(configured_chatdev_source.resolve())
+            if (configured_chatdev_source / "run.py").is_file()
             else None,
         },
         "configuration": {
@@ -292,6 +315,10 @@ def _run_arm(job: Job, artifact_root: Path = DEFAULT_ARTIFACT_ROOT) -> Path:
         return run(case_path, artifact_root)
     if job.arm == "metagpt-standard":
         from evaluation.baselines.metagpt import run
+
+        return run(case_path, artifact_root)
+    if job.arm == "chatdev-standard":
+        from evaluation.baselines.chatdev import run
 
         return run(case_path, artifact_root)
     if job.arm.startswith("easydep-"):
@@ -1298,7 +1325,7 @@ def main() -> None:
         help="동결된 연구 준비도 검사를 통과한 실행만 허용합니다.",
     )
     parser.add_argument("--arm", action="append", choices=(
-        "easydep-full", "cot-standard", "metagpt-standard",
+        "easydep-full", "cot-standard", "metagpt-standard", "chatdev-standard",
         "easydep-no-depkb", "easydep-no-verification",
     ))
     parser.add_argument("--case", action="append")

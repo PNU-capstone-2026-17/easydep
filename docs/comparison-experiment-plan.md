@@ -1,178 +1,223 @@
-# 비교실험 계획
+# EasyDep 비교평가 계획과 현재 결과
 
-> 갱신일: 2026-08-08
->
-> 범위: AWS·Azure·GCP의 Docker-on-VM 애플리케이션
+> 갱신일: 2026-08-14  
+> 범위: AWS·Azure·GCP의 Docker-on-VM 개발 지원  
+> 상태: 현재 평가 기준 문서. P1~P3의 과거 108회 계획은 폐기하고 회귀 suite만 보존한다.
 
-## 1. 실험 목적
+## 1. 무엇을 비교하는가
 
-EasyDep이 일반 LLM 및 기존 멀티 에이전트 방식보다 다음 항목을 개선하는지 평가한다.
+EasyDep은 클라우드 리소스 선택기만이 아니라 요구사항부터 설계·구현·시험·배포 산출물을
+순서대로 만들고 서로 대조하는 개발 지원 시스템이다. 따라서 주 비교 질문은 다음과 같다.
 
-- 클라우드 리소스 선택과 의존관계
-- 요구 용량·성능·비용에 맞는 추천
-- 요구사항부터 테스트까지의 일관성
-- Docker 및 VM 배포 가능성
+> 같은 복잡한 요구와 예산 안에서 EasyDep이 기준 시스템보다 완결되고 서로 모순되지 않으며
+> 실제로 동작하는 설계·코드·시험·배포 산출물을 만드는가?
 
-## 2. 실험 단위와 비교 대상
+외부 비교는 시스템 전체 차이만 평가한다.
 
-P1~P3은 실험군이 아니라 난이도별 **평가 과제**다. AWS·Azure·GCP는 같은 과제를
-서로 다른 공급자에 투영하는 반복 조건이고, 처치 또는 비교군은 시스템 구성이다. 따라서
-`P1 대 P2`의 점수 차이를 DepKB 효과로 해석하지 않는다.
-
-### 2.1 종단 시스템 비교
-
-| 기호 | 방식 | 목적 |
+| 조건 | 방식 | 고정 버전·역할 |
 |---|---|---|
 | B1 | 단일 LLM + CoT | 단일 에이전트 기준선 |
-| B2 | MetaGPT | 기존 멀티 에이전트 기준선 |
+| B2 | MetaGPT | 0.8.2 기반 SOP 멀티 에이전트 |
+| B3 | ChatDev | 1.1.6 기반 대화형 단계 시스템 |
 | P | EasyDep full | 제안 시스템 |
 
-클라우드 지식베이스는 다음 세 기능을 포함한다.
+MetaGPT와 ChatDev도 순차 단계가 있으므로 “단계가 있다는 사실”은 차별점이 아니다.
+EasyDep의 평가 대상은 기계 판독 계약, 요구사항–설계–code/test–CSP 리소스 추적,
+공통 검증 gate와 checkpoint 부분수정의 결합이다. 외부 비교 결과로 DepKB나 멀티 에이전트
+구조 하나의 인과 효과를 주장하지 않는다.
 
-1. 리소스 의존관계
-2. 요구 용량 기반 후보 제한
-3. 성능·비용 기반 후보 추천
+구성요소 효과는 EasyDep 내부에서만 제한적으로 본다.
 
-현재 실행 가능한 동결 suite의 비교군은 B1·B2·P 세 개다. 이 비교는 “EasyDep 전체
-시스템이 기준선보다 나은가”만 답하며, 프롬프트·도구·단계별 검증·멀티 에이전트 구조와
-DepKB가 동시에 다르므로 어느 한 구성요소의 인과효과를 주장하지 않는다.
-
-### 2.2 EasyDep 내부 절제실험
-
-| 기호 | 방식 | 분리할 효과 |
+| 절제 | 질문 | 해석 한계 |
 |---|---|---|
-| A1 | EasyDep no-depkb | 근거 기반 의존성 지식 제공 효과 |
-| A2 | EasyDep no-verification | 단계별 검증·수정 루프 효과 |
-| P | EasyDep full | 두 기능을 모두 사용하는 기준 |
+| `no-depkb` | CSP 리소스 근거가 누락·참조·기능 결과에 영향을 주는가 | 같은 upstream 입력과 평가기를 사용해야 함 |
+| `no-verification` | 단계별 검증 피드백이 오류 발견·수정에 영향을 주는가 | full-restart 대비 효율을 직접 입증하지 않음 |
 
-A1·A2는 동일 오케스트레이터, 모델, 프롬프트 골격, 실행 예산과 평가기를 유지하고 명시된
-처치만 제거한다. 별도 `ablation-suite.json`과 `--study ablation` 실행 경로가 처치별 payload를
-검사하며, 종단 시스템 비교 결과와 같은 처치로 합산하지 않는다. `no-verification`은 검사를
-없애는 조건이 아니라 검사 결과를 관측하되 생성 모델에 수정 피드백을 주지 않는 조건이다.
-멀티 에이전트 구조 자체의 효과는
-CoT·MetaGPT 비교로 인과 추정하지 않고, 별도 통제 구성이 마련되기 전까지 시스템 수준 차이로만
-보고한다.
+## 2. 평가 사례
 
-## 3. 공정성 조건
+수강신청 자체가 cloud-native이기 때문이 아니라, 제한 수량에 대한 동시 변경과 공유 영속
+상태를 한 사례에서 시험할 수 있어 합성 통합 벤치마크로 사용한다. 모델과 평가기는 도메인
+이름이 아니라 Workload·Endpoint·Connection·영속성·업무 불변식을 입력받는다.
 
-모든 방식에 다음 조건을 동일하게 적용한다.
+### 2.1 고정 업무 범위
 
-- 같은 자연어 요구사항과 클라우드 제약
-- 같은 기반 LLM과 모델 설정(가능한 경우)
-- 같은 Docker-on-VM 범위와 CSP 후보
-- 같은 최종 산출물 요구
-- 같은 시간·토큰·재시도 제한
-- 같은 정적 검사, Docker 테스트와 배포 테스트
+- 강좌 조회
+- 신청과 취소
+- 정원 초과 금지
+- 동일 학생의 중복 신청 금지
+- 재시작 후 신청 데이터 보존
 
-MetaGPT의 고유 역할과 SOP, EasyDep의 고유 플로우와 지식베이스는 각 방식의 일부이므로 유지한다. 외부 웹 검색은 핵심 실험에서 모두 금지한다.
+인증·결제·선수과목·대기열·마이크로서비스·관리형 DB는 제외한다.
 
-## 4. 종단 통합 벤치마크
+동시성 oracle은 같은 seed와 초기 DB에서 barrier로 요청을 동시에 시작하고 응답뿐 아니라
+최종 DB row와 잔여 좌석을 함께 검사한다.
 
-| 시나리오 | 핵심 요구 | 확인할 항목 |
-|---|---|---|
-| S1 Stateless API | 외부 HTTPS, 영속성 없음 | 최소 리소스, 불필요한 디스크·LB |
-| S2 영속 메모 API | 재시작 후 데이터 보존 | 디스크, 볼륨, 데이터 보존 테스트 |
-| S3 고가용성 API | 부하 목표, 단일 VM 장애 허용 안 함 | 복수 VM, LB, 헬스 체크 |
-| S4 제약 충돌 API | 고가용성과 낮은 예산 | 별도 요구사항·계획 실험: 충돌 탐지, 대안, 미확정 처리 |
+- 남은 좌석 1개에 서로 다른 학생 N명이 신청하면 성공은 정확히 1개다.
+- 같은 학생이 같은 강좌에 N회 신청해도 최종 신청 row는 1개 이하다.
 
-P1~P3은 각각 S1~S3에 대응한다. 종단 구현 비교는 구현 가능한 P1~P3을 세 CSP에 교차
-배치한다. P4는 요구조건을 동시에
-만족하는 구현물이 존재하지 않으므로 구현물 누락을 실패로 처리하는 주 실험에 섞지 않는다.
+### 2.2 배포 조건
+
+| ID | 동일 업무 | 배포 구조 | 보는 것 |
+|---|---|---|---|
+| E1 | 위 업무 전체 | App 1개 + 자체 운영 상태 Workload 1개 + Volume | 산출물 연쇄, 동시성, 영속성 |
+| E2 | E1과 동일 | CSP 관리형 앱 VM 그룹 replica 2개 + LB + 같은 상태 Workload | 공유 상태 연결, 앱 VM 장애 중 업무와 자동 교체 |
+| D1 | 제한 수량 예약으로 용어만 변경 | E2와 같은 불변식 | 수강신청 문자열 오버피팅 탐지 |
+
+E2는 App 계층의 장애 대응만 평가한다. 단일 상태 Workload가 있으므로 종단 HA나 Zone
+전체 장애 무중단을 주장하지 않는다. D1은 가까운 용어 전이일 뿐 모든 도메인 일반화를
+증명하지 않는다.
+
+P1~P3과 기존 holdout은 동결된 구성요소·smoke 회귀다. 새 주 비교의 표본이나 토폴로지
+근거로 사용하지 않으며 추가 대규모 실행도 하지 않는다.
+
+## 3. 공정한 실행 조건
+
+모든 조건에 다음을 동일하게 준다.
+
+- 자연어 요구사항과 동결된 업무 oracle
+- 가능한 경우 같은 LLM endpoint·model·seed·temperature
+- wall-clock, token, LLM call과 tool 예산
+- 네트워크·Docker·Terraform 실행 환경
+- 최종 산출물의 의미 요구와 독립 공통 평가기
+
+framework가 요구하는 출력 형식은 adapter로 정규화하되 내부 EasyDep 스키마를 기준군에
+강요하지 않는다. 모델·endpoint가 달라지면 run별로 기록하고 “시스템+모델 묶음” 결과로만
+해석한다. 특정 MetaGPT·ChatDev 버전 결과를 최신판이나 framework 전체로 일반화하지 않는다.
+
+runner가 종료하고 공통 평가기가 성공 또는 실패를 정상 분류하면 subject 실패도 분모에
+포함한다. 파일 누락, 잘못된 코드·IaC, timeout과 자체 과도한 호출로 생긴 rate limit은
+시스템 결과다. 공통 외부 endpoint 장애, CSP control-plane 장애, runner 고장처럼 방식 밖의
+사건만 `environmentFailure` 또는 `harnessFailure`로 검열한다.
+
+## 4. 공통 평가 gate
+
+### 4.1 산출물 연쇄
+
+실행 전에 요구사항별 기대 불변식과 필수 연결을 동결한다. subject가 적은 trace ID를 그대로
+신뢰하지 않고 공통 evaluator가 다음을 의미 단위로 대조한다.
 
 ```text
-3개 과제 × 3개 CSP × 3개 시스템 × 3회 = 81회
+요구사항 ID
+→ 설계 결정·ERD·핵심 sequence·OpenAPI·RuntimeContract
+→ ResourcePlan·배포 구조도
+→ code·test·Terraform Plan
 ```
 
-현재 `evaluation/baselines/cases/suite.json`은 P1~P3의 9개 CSP 사례를 개발 세트로,
-업무 도메인을 바꾼 H1~H3을 홀드아웃으로 기록한다. H1~H3은 업무 도메인 일반화는 보지만
-새로운 클라우드 의존성 유형 일반화의 강한 근거로 사용하지 않는다. LLM 변동이 크더라도
-결과를 본 뒤 반복 수를 바꾸지 않고 별도 후속 실험으로 사전 등록한다. 실제 유료 배포 조합은
-예산에 따라 사전에 고정한다.
+지표는 요구 추적률, 필수 링크 recall, 교차 산출물 모순 수와 근거 없는 결정 수다.
+공통 의미 adapter가 완성되기 전에는 EasyDep의 산출물 연쇄 우위를 주장하지 않는다.
 
-## 5. 핵심 기여별 구성요소 과제
+### 4.2 사전 배포와 로컬 기능
 
-종단 벤치마크와 별도로 애플리케이션 계약을 고정하고 클라우드 조건 하나만 바꾼 쌍을 사용한다.
+- 구조·schema와 불변식 검사
+- compile, unit·integration test와 테스트 0개 성공 거부
+- Docker image build, readiness와 black-box 업무 oracle
+- 동시성 불변식
+- Volume을 유지한 새 container/VM에서 데이터 재조회
+- 실행이 만든 container·volume의 정리
 
-| 쌍 | 고정할 항목 | 바꿀 항목 | 주 측정값 |
-|---|---|---|---|
-| 무상태 ↔ 영속 | 같은 CRUD API·구현 계약 | 데이터 디스크·연결·마운트 | 리소스/간선 누락, 재시작 후 보존 |
-| 단일 VM ↔ 다중 VM | 같은 무상태 API | VM 수·영역·LB | 공급자 투영 완전성, 기능 성공 |
-| HTTP ↔ HTTPS | 같은 앱·VM 수 | TLS 종단 | 인증서·리스너·백엔드 연결 |
-| 완전 ↔ 모호·충돌 | 같은 업무 기능 | CSP·리전 누락, HA·예산 충돌 | 질문·보류율, 무근거 추측률 |
+### 4.3 배포 정합성
 
-비용·성능 추천은 최소 vCPU·메모리 또는 측정 가능한 부하 목표를 명시한 별도 사례에서 평가한다.
-P3처럼 VM 수·영역·LB·TLS·성능을 동시에 바꾸는 과제만으로 개별 원인의 효과를 주장하지 않는다.
+같은 `ResourcePlan`에서 배포 구조도와 Terraform을 생성하고 저장된 Plan JSON을 대조한다.
+VM 그룹·desired capacity·Region/Zone·network/Subnet·Volume·Endpoint/LB·port와 native 참조가
+일치해야 한다. `terraform validate`는 실제 배포나 기능 성공을 대신하지 않는다.
 
-## 6. 정량 평가 지표
+### 4.4 실제 cloud 기능과 NFR
 
-### 6.1 핵심 지표
+```text
+apply → ready → 같은 업무 oracle → NFR
+→ 요구된 app VM fault → 자동 교체와 업무 재확인
+→ destroy → 해당 run이 만든 리소스 잔여 0
+```
 
-| 평가 대상 | 지표 |
-|---|---|
-| 기능 | 테스트 통과율 |
-| 리소스 선택 | 노드 Precision·Recall·F1, 누락률, 과잉 생성률 |
-| 의존관계 | 의존 간선 Precision·Recall·F1, 생성 순서 위반 수 |
-| 용량·비용 | 용량 미충족 후보율, 예산 위반률, 허용 후보 Top-1 비율 |
-| 산출물 일관성 | 포트·볼륨·연결 불일치 수, 요구사항 추적률 |
-| 배포 가능성 | IaC 검증률, Docker 실행률, VM 배포 및 헬스 체크 성공률 |
-| 실험 비용 | 토큰 수, 실행시간, LLM 비용, 클라우드 비용 |
+고정 workload profile은 image·seed·operation 비율·payload·목표 도착률·시험시간·warm-up,
+p95와 오류율 상한, 부하 발생기 위치·quota를 포함한다. offered RPS, achieved success RPS,
+dropped request, p95, error rate를 합격 지표로 기록한다. CPU·memory·network·disk I/O는 요구
+threshold가 없으면 병목 진단값이다.
 
-### 6.2 코드 품질 보조 지표
+App VM 장애 시험은 요청을 계속 보내면서 한 instance를 중지하고, 허용 복구시간 동안 업무
+불변식과 SLO를 만족하는지 및 CSP 관리형 VM 그룹이 instance를 교체하는지 확인한다.
 
-- 함수별 순환복잡도 평균·중앙값·95백분위·최댓값과 CCN 10 초과 비율
-- 함수 NLOC와 100 NLOC당 결정 지점 수
-- JaCoCo 라인·분기·복잡도 커버리지
-- Trivy 정적 구성 오류 수
-- 코드 크기와 함수 수
+### 4.5 효율과 부분수정
 
-순환복잡도는 소스 코드 품질을 측정하므로 보조 지표로 사용한다. 정상 동작, 리소스 정확성, 제약 충족과 배포 가능성을 우선한다.
+- 전체·단계·하위 작업 시간
+- LLM call, token, retry와 rate limit
+- 실패 소유 단계 식별
+- 상류 checkpoint 보존 여부와 재실행 범위
+- 복구 후 최종 기능 성공
 
-## 7. 골드 스탠더드
+부분수정 효과는 고정 오류를 주입한 관찰에서 “상류 단계 재실행 0회로 복구했다”처럼 기술한다.
+별도 full-restart 통제군 없이 일반적으로 시간을 줄였다고 주장하지 않는다.
 
-각 시나리오 실행 전에 다음 기준 답안을 고정한다.
+## 5. VM 추천의 별도 평가
 
-- 필수·선택·불필요 리소스
-- 허용 가능한 대안
-- 필수 의존관계와 생성 순서
-- 워크로드와 최소 요구 용량
-- 허용 리소스 후보와 가격 기준일
-- 포트·볼륨·헬스 체크 조건
-- 정적 검사와 런타임 테스트
+개발 시스템 비교는 모든 방식에 동일한 평가 VM 사양을 사용한다. 그렇지 않으면 더 비싼
+리소스를 쓴 효과와 산출물 품질이 섞인다.
 
-CSP에 따라 표현이 다른 동등 리소스는 같은 추상 리소스로 정규화한다. 결과를 본 뒤 기준 답안을 유리하게 변경하지 않는다.
+추천 구성요소는 고정된 같은 image·seed·workload profile로 별도 평가한다.
 
-## 8. 실행 절차
+1. 목표 부하·p95·오류율 또는 명시 CPU·memory 하한이 없으면 `unresolved`다.
+2. Docker 관측으로 CSP 카탈로그 후보를 좁히면 `provisional`이다.
+3. 특정 CSP·SKU의 cloud 시험이 SLO를 통과하면 해당 profile에서만 `validated`다.
 
-실행 코드는 `evaluation/baselines/`에 격리한다. B1은 `cot.py`, B2는 별도 Python 3.11
-가상환경의 MetaGPT 0.8.2(`metagpt.py`)로 실행하며 공통 케이스 JSON을 입력받는다.
-산출물과 실행 설정은 공통 규칙에 따라 `artifacts/runs/<run-id>/`에 저장한다.
+결과는 SLO 통과 여부와 compute on-demand 목록가격을 함께 보고한다. disk, LB, public IP,
+egress·세금·할인은 제외하고 최적·최소 SKU라고 부르지 않는다. Disk는 용량 하한만 다루며
+IOPS·throughput 최적화는 평가 범위 밖이다.
 
-1. 루트 `.env`의 `BASE_URL`, `MODEL`, `TEMPERATURE`, `SEED`를 모든 방식에 동일하게 적용하고,
-   프롬프트·KB·가격 데이터 버전을 고정한다.
-2. 별도 파일럿으로 모든 방식이 산출물을 생성할 수 있는지 확인한다.
-3. 시나리오, 골드 스탠더드와 검사기를 동결한다.
-4. 실행 순서를 무작위화하고 독립 세션에서 반복한다.
-5. 성공과 실패를 포함한 모든 출력·로그·비용을 저장한다.
-6. 자동 검사 결과를 우선 집계한다.
-7. 충돌 처리처럼 자동화하기 어려운 항목만 블라인드 수동 평가한다.
+## 6. 실행 규모와 중단 기준
 
-OpenTofu/Terraform 검증과 그래프, Trivy, Lizard, JaCoCo 결과는
-`evaluation/implementation.py`가 공통 JSON으로 정규화한다. 배포 다이어그램과 EasyDep
-내부 계획은 종단 비교의 입력으로 사용하지 않는다.
+| 실행 | 상한 |
+|---|---:|
+| E1·E2 × 네 시스템 1회 파일럿 | 8회 |
+| runner와 evaluator가 결과를 정상 분류할 때 3회로 확대 | 종단 총 24회 |
+| D1 × 네 시스템 개발 실행 | 4회 |
+| E2 `no-depkb`, `no-verification`; full 재사용 | 추가 6회 이하 |
+| 실제 cloud | 사전 지정 CSP의 E1·E2 우선, 최대 6회 |
 
-## 9. 분석과 보고
+파일럿에서 시간·비용·검열률을 확인한 뒤 반복을 확대한다. 동일 오류가 반복되거나 환경 실패가
+지배적이면 대규모 실행을 중단하고 harness를 먼저 고친다. 반복이 부족하면 유의확률을 만들지
+않고 사례별 원시 결과와 한계를 보고한다.
 
-- 과제별로 네 방식을 paired 비교한다.
-- 평균뿐 아니라 중앙값, 범위와 개별 실행값을 공개한다.
-- 절대 차이와 효과 크기를 우선 보고한다.
-- 동결된 내부 절제실험에서만 `P 대 A1`, `P 대 A2`로 각 구성요소의 기여를 분석한다.
-- P1~P3 간 차이는 난이도·상호작용 관측으로 보고 인과효과로 해석하지 않는다.
-- 리소스 생성 가능성과 애플리케이션 기능·재시작 후 데이터 보존을 별도 게이트로 보고한다.
-- 작은 표본의 한계를 명시하고 결과를 Docker-on-VM 범위로 제한한다.
+## 7. 현재까지 나온 결과
 
-## 10. 참고 근거
+### 7.1 DepKB
 
-- [CNCF Cloud Native Definition](https://github.com/cncf/toc/blob/main/DEFINITION.md)
-- [MetaGPT, ICLR 2024](https://proceedings.iclr.cc/paper_files/paper/2024/file/6507b115562bb0a305f1958ccc87355a-Paper-Conference.pdf)
-- [IaC-Eval, NeurIPS 2024](https://proceedings.neurips.cc/paper_files/paper/2024/file/f26b29298ae8acd94bd7e839688e329b-Paper-Datasets_and_Benchmarks_Track.pdf)
-- [ACM SIGSOFT Empirical Standards](https://www2.sigsoft.org/EmpiricalStandards/docs/standards)
+- native 의존성 제품 KB: 프로비저닝 33개, 런타임 12개 claim
+- 반복 상태: 성공 38, 실패 5, 대기 2
+- 고정 LLM 출력 projection 처치 충실도: stable capability ID 3/3, CSP projection 9/9
+- 동일 앱·동일 요구분석 출력 54셀 개발 절제:
+  - VM delivery 완료: full 20/27, no-depkb 15/27
+  - 근거 참조 완결: full 14/27, no-depkb 8/27
+
+평균적인 양의 개발 관찰이지만 capability·CSP·반복별 편차가 크고 세 번째 반복의 평균 참조
+차이가 음수였다. 일반 효과나 인과효과로 확정하지 않는다.
+
+### 7.2 앱–cloud 계약과 부분수정
+
+- 고정 입력 mismatch 4/4 검출, control false positive 0/4, owner 4/4
+- build dependency·port·storage 세 snapshot에서 소유 하위 작업부터 복구하고 로컬 HTTP 통과
+- GCP 한 backend 관계의 제거→기능 실패→복원 성공 3회, 잔여 0
+
+이는 구조화 진단과 부분 복구가 가능한 개발 증거다. 세 CSP의 실제 cloud 기능 효과나 자연어
+질문→답변→계약 갱신의 일반 효과는 아직 아니다.
+
+### 7.3 종단 실행
+
+- P1 AWS·Azure·GCP에서 로컬 앱 기능과 CSP 정적 oracle 통과
+- 실제 cloud 기능 개입은 GCP 한 관계, Azure 영속 apply 후보는 보류
+- E1·E2와 네 시스템의 반복 비교 결과는 없음
+
+따라서 현재 말할 수 있는 것은 제한 범위의 구조와 개발 관찰이다. EasyDep이 기준군보다
+우수하다거나 실제 workload right-sizing·종단 HA·전체 비용 최적화를 달성했다는 주장은
+아직 할 수 없다.
+
+## 8. 구현 순서
+
+1. 축소 `ResourcePlan`과 구조 검증기
+2. 같은 plan의 CSP 구조도·Terraform renderer와 Plan JSON 대조
+3. E1 다중 Workload·동시성·영속성 로컬 종단
+4. E2 관리형 앱 VM 그룹·LB·자동 복구 종단
+5. 고정 profile의 VM 후보와 실제 cloud 재검증
+6. 공통 의미 adapter
+7. 8회 파일럿 후 조건부 반복 확대
+
+새 capability나 범용 토폴로지 유형을 추가하기보다 이 경로를 끝까지 연결하는 것을 우선한다.

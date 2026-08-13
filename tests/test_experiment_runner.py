@@ -8,6 +8,7 @@ import pytest
 import evaluation.experiment as experiment
 from app.core.orchestration.contracts import ProviderKind, StepStatus
 from app.core.orchestration.store import RunStore
+from evaluation.baselines.chatdev import _task as chatdev_task
 from evaluation.baselines.common import (
     BUILD_COMPLETENESS_CONTRACT,
     ExperimentCase,
@@ -43,7 +44,7 @@ def test_schedule_is_reproducible_and_balanced():
     second = build_schedule(suite, "development", 42)
 
     assert first == second
-    assert len(first) == 9 * 3 * 3
+    assert len(first) == 9 * 4 * 3
     assert len({job.key for job in first}) == len(first)
     assert {job.arm for job in first} == set(suite.arms)
 
@@ -137,7 +138,7 @@ def test_holdout_uses_three_domains_and_three_provider_assignments():
     suite = ExperimentSuite.load(Path("evaluation/baselines/cases/suite.json"))
     jobs = build_schedule(suite, "holdout", 42)
 
-    assert len(jobs) == 3 * 3 * 3
+    assert len(jobs) == 3 * 4 * 3
     assert {job.case_id for job in jobs} == {"H1-azure", "H2-gcp", "H3-aws"}
 
 
@@ -148,6 +149,7 @@ def test_baselines_share_the_same_build_completeness_contract():
 
     assert BUILD_COMPLETENESS_CONTRACT in COT_SYSTEM
     assert BUILD_COMPLETENESS_CONTRACT in _task(case)
+    assert BUILD_COMPLETENESS_CONTRACT in chatdev_task(case)
     assert "Never place Markdown headings" in BUILD_COMPLETENESS_CONTRACT
 
 
@@ -555,7 +557,7 @@ def test_job_selection_can_pair_all_arms_at_one_case_and_repetition():
 
     selected = select_jobs(schedule, cases={"P1-gcp"}, repetitions={1})
 
-    assert len(selected) == 3
+    assert len(selected) == 4
     assert {job.arm for job in selected} == set(suite.arms)
     assert {job.case_id for job in selected} == {"P1-gcp"}
     assert {job.repetition for job in selected} == {1}
