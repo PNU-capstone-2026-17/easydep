@@ -1,0 +1,9 @@
+{
+  "url": "https://prices.azure.com:443/api/retail/prices?api-version=2023-01-01-preview&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27southafricanorth%27&$skip=1000",
+  "sha256": "f28d403a0aa5acd9e934dd946cf66bda86a067443172d89d6b2cf4e0152db0ef",
+  "bytes": 612786,
+  "fetched_at": "2026-08-13T10:49:25+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

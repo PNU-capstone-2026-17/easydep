@@ -10,6 +10,12 @@
 | `costkb` | VM 사양·가격과 비용 계산 |
 | `perfkb` | VM 성능 특성과 추천 보강 |
 | `kbcommon` | 공통 데이터 로더·출처·불변식 |
+| `speckb` | CSP가 발행한 VM 카탈로그 원본 응답 (무가공 보관) |
+
+`speckb`는 위 규칙의 예외다. 다른 KB가 제3자 가공본(cb-tumblebug 덤프, Cyclenerd·
+vantage-sh 저장소)을 파싱하는 것과 달리 CSP 1차 응답을 그대로 보관하며, 그 대비를
+유지하려고 `kbcommon`을 포함해 저장소의 어떤 모듈도 import하지 않는다. 이유는
+`speckb/__init__.py`에 있다.
 
 ## 목표 흐름
 

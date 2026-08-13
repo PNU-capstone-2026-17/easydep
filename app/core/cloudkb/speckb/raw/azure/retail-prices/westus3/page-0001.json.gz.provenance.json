@@ -1,0 +1,9 @@
+{
+  "url": "https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview&$filter=serviceName%20eq%20%27Virtual%20Machines%27%20and%20armRegionName%20eq%20%27westus3%27",
+  "sha256": "c2fa0e7e69b6d70133cb8662af8d9f64507d5de73e43b2dcb478391c9fc7a48c",
+  "bytes": 607842,
+  "fetched_at": "2026-08-13T10:54:14+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}
