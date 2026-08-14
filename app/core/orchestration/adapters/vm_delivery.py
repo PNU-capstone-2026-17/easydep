@@ -9,7 +9,8 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from time import perf_counter
@@ -17,6 +18,7 @@ from typing import Any
 
 import hcl2
 
+from app.core.config import settings
 from app.core.cloudkb.depkb.knowledge_access import query_knowledge
 from app.core.cloudkb.depkb.provider_cache import (
     PINNED_PROVIDERS,
@@ -222,13 +224,13 @@ class VmDeliveryAdapter:
 
         response = OpenAI(
             api_key=os.environ["API_KEY"],
-            base_url=os.getenv("BASE_URL"),
+            base_url=settings.base_url,
             timeout=600,
             max_retries=0,
         ).chat.completions.create(
-            model=os.getenv("MODEL", "openai/gpt-oss-120b"),
-            temperature=float(os.getenv("TEMPERATURE", "0")),
-            seed=int(os.getenv("SEED", "42")),
+            model=settings.model,
+            temperature=settings.temperature,
+            seed=settings.seed,
             response_format={"type": "json_object"},
             messages=[
                 {
@@ -442,10 +444,10 @@ class VmDeliveryAdapter:
                 "status": "skipped",
                 "reason": "No OpenTofu or Terraform executable is available.",
             }
-        cache = Path(
-            os.getenv("EASYDEP_TOFU_PLUGIN_CACHE") or ".easydep/provider-plugin-cache"
+        plugin_cache_dir = Path(
+            settings.easydep_tofu_plugin_cache or ".easydep/provider-plugin-cache"
         ).resolve()
-        environment = provider_cache_environment(cache)
+        environment = provider_cache_environment(plugin_cache_dir)
         contract_errors = self._provider_contract_errors(files, self._expected_provider)
         if contract_errors:
             return {
@@ -454,7 +456,7 @@ class VmDeliveryAdapter:
                 "errors": contract_errors,
                 "reports": [],
             }
-        cache_audit = audit_provider_cache(cache)
+        cache_audit = audit_provider_cache(plugin_cache_dir)
         expected_contract = PINNED_PROVIDERS.get(self._expected_provider or "")
         expected_package = (
             {

@@ -147,7 +147,8 @@ def test_the_budget_is_not_exceeded_and_says_so(monkeypatch):
 
     남은 위반을 안고 멈춘 것과 깨끗해서 멈춘 것이 같은 값이면, 화면은 통과했다고 믿는다.
     """
-    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "3")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "design_max_repair_iters", 3)
 
     def with_ghosts(count):
         """매달린 끝을 `count`개 단 모델 — 위반이 정확히 `count`건이다."""
@@ -173,7 +174,8 @@ def test_the_budget_is_not_exceeded_and_says_so(monkeypatch):
 
 def test_a_zero_budget_checks_but_never_repairs(monkeypatch):
     """예산 0은 "검사만 하고 보고한다"이다 — 검사를 끄는 것이 아니다."""
-    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "0")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "design_max_repair_iters", 0)
 
     def never(*args, **kwargs):
         raise AssertionError("예산이 0인데 재생성을 불렀다")

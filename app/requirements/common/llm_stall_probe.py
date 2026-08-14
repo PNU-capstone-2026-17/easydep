@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+from typing import Any
 from time import perf_counter
+
+from app.core.config import settings
 
 
 def _emit(event: str, **fields: object) -> None:
@@ -14,6 +18,7 @@ def _emit(event: str, **fields: object) -> None:
 
 def _probe(operation: str, timeout_seconds: float) -> None:
     from openai import OpenAI
+    from app.core.config import settings
 
     started = perf_counter()
     first_event: float | None = None
@@ -23,13 +28,13 @@ def _probe(operation: str, timeout_seconds: float) -> None:
     _emit("llmStallProbeStarted", stalledOperation=operation)
     try:
         client = OpenAI(
-            base_url=os.getenv("BASE_URL"),
-            api_key=os.getenv("API_KEY"),
-            timeout=timeout_seconds,
+            base_url=settings.base_url,
+            api_key=settings.api_key,
             max_retries=0,
+            timeout=timeout_seconds,
         )
         stream = client.chat.completions.create(
-            model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+            model=settings.design_agent_model,
             messages=[{"role": "user", "content": "Reply with exactly: pong"}],
             temperature=0,
             seed=42,
@@ -60,13 +65,12 @@ def _probe(operation: str, timeout_seconds: float) -> None:
 def start_stall_probe(operation: str) -> threading.Event:
     """설정된 지연을 넘기면 독립적인 짧은 probe를 한 번 실행한다."""
     completed = threading.Event()
-    raw_threshold = os.getenv("EASYDEP_LLM_STALL_PROBE_AFTER_SECONDS")
+    raw_threshold = settings.easydep_llm_stall_probe_after_seconds
     if not raw_threshold:
-        return completed
+        return threading.Event()
+
     threshold = float(raw_threshold)
-    if threshold <= 0:
-        return completed
-    timeout_seconds = float(os.getenv("EASYDEP_LLM_STALL_PROBE_TIMEOUT_SECONDS", "60"))
+    timeout_seconds = settings.easydep_llm_stall_probe_timeout_seconds
 
     def watch() -> None:
         if not completed.wait(threshold):

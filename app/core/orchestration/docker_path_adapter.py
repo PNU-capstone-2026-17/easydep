@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+from app.core.config import settings
 
 CONTAINER_WORKSPACE = "/easydep-workspace"
 
@@ -67,10 +69,10 @@ def translate_docker_command(
 
 
 def install() -> None:
-    workspace = os.getenv("EASYDEP_DOCKER_COMMAND_WORKSPACE")
-    host_workspace = os.getenv("EASYDEP_DOCKER_HOST_WORKSPACE")
+    workspace = settings.easydep_docker_command_workspace
+    host_workspace = settings.easydep_docker_host_workspace
     if not workspace:
-        workspace = os.getenv("EASYDEP_DOCKER_WINDOWS_WORKSPACE")
+        workspace = settings.easydep_docker_windows_workspace
         host_workspace = host_workspace or workspace
     if not workspace or getattr(subprocess.run, "_easydep_docker_adapter", False):
         return

@@ -21,10 +21,15 @@ MANAGED_FILES = ("terraform/main.tf", "terraform/variables.tf", "terraform/outpu
 SUPPORTED_PROVIDERS = ("azure", "aws", "gcp")
 
 
+def _find_terraform() -> str | None:
+    from app.core.config import settings
+    configured = settings.easydep_terraform_path
+    return configured if configured and Path(configured).is_file() else shutil.which("terraform")
+
+
 def validate_terraform(application: Path) -> dict[str, object]:
     """Run Terraform's parser/provider validation in an isolated copy when available."""
-    configured = os.environ.get("EASYDEP_TERRAFORM_PATH")
-    executable = configured if configured and Path(configured).is_file() else shutil.which("terraform")
+    executable = _find_terraform()
     source = application / "terraform"
     if executable is None:
         return {"status": "FAILED", "errors": ["terraform executable is not installed"]}

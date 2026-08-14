@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+from typing import Any
+from app.core.config import settings
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,7 +76,7 @@ def schedule_cross_phase_repair(
         ),
         None,
     )
-    max_revisions = int(os.environ.get("IMPLEMENTATION_MAX_CROSS_PHASE_REPAIRS", "3"))
+    max_revisions = settings.implementation_max_cross_phase_repairs
     revision = int(matching.get("revision", 0)) + 1 if matching else 1
     if revision > max_revisions:
         return None
@@ -133,7 +134,7 @@ def schedule_source_conformance_repair(
     evidence_sha = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
     matching = next((item for item in plan.get("entries", []) if item.get("failedTaskId") == "source-design-conformance" and item.get("evidenceSha256") == evidence_sha), None)
     revision = int(matching.get("revision", 0)) + 1 if matching else 1
-    if revision > int(os.environ.get("IMPLEMENTATION_MAX_CONFORMANCE_REPAIRS", "3")):
+    if revision > settings.implementation_max_conformance_repairs:
         return None
     entry = {
         "failedTaskId": "source-design-conformance",

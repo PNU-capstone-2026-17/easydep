@@ -27,7 +27,6 @@ import contextvars
 import functools
 import json
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -36,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from app.core.config import settings
 from app.requirements.common.llm_stall_probe import start_stall_probe
 
 LOGGER_NAME = "easydep.agent"
@@ -65,6 +65,11 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _progress(event: str, **fields: Any) -> None:
+    if settings.easydep_experiment_session:
+        print(json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
+
+
 class _KeyValueFormatter(logging.Formatter):
     """메시지 뒤에 구조화 필드를 `key=value`로 붙이는 포매터.
 
@@ -92,7 +97,7 @@ def configure_logging(level: str | int | None = None) -> None:
     with _configure_lock:
         if _configured:
             return
-        resolved = level if level is not None else os.getenv("EASYDEP_LOG_LEVEL", "INFO")
+        resolved = level if level is not None else settings.easydep_log_level
         handler = logging.StreamHandler()
         handler.setFormatter(_KeyValueFormatter("%(asctime)s %(levelname)-7s %(name)s %(message)s"))
         logger = logging.getLogger(LOGGER_NAME)
@@ -288,12 +293,11 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
     started = time.perf_counter()
     failed: BaseException | None = None
     stall_probe = start_stall_probe(operation)
-    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
-        print(json.dumps({
-            "event": "llmOperationStarted",
-            "operation": operation,
-            "startedAt": started_at.isoformat(),
-        }, ensure_ascii=False), flush=True)
+    _progress(
+        "llmOperationStarted",
+        operation=operation,
+        startedAt=started_at.isoformat(),
+    )
     try:
         yield call
     except BaseException as exc:
@@ -303,7 +307,7 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
         stall_probe.set()
         elapsed = time.perf_counter() - started
         finished_at = datetime.now(UTC)
-        if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+        if settings.easydep_experiment_session:
             print(json.dumps({
                 "event": "llmOperationFinished",
                 "operation": operation,

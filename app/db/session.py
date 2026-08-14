@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import settings
+
 from app.db.models import Base
 
 
@@ -21,11 +23,11 @@ _session_factory: sessionmaker[Session] | None = None
 
 def database_settings() -> dict[str, str]:
     return {
-        "host": os.getenv("DB_HOST", "127.0.0.1"),
-        "port": os.getenv("DB_PORT", "3306"),
-        "user": os.getenv("DB_USER", "root"),
-        "password": os.getenv("DB_PASSWORD", ""),
-        "name": os.getenv("DB_NAME", "easydep"),
+        "host": settings.db_host,
+        "port": settings.db_port,
+        "user": settings.db_user,
+        "password": settings.db_password,
+        "name": settings.db_name,
     }
 
 

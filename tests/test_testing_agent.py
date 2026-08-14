@@ -111,7 +111,10 @@ def test_static_verification_node(temp_manifests_dir, temp_iac_dir):
     
     # We mock run_trivy_scan so we don't need a real Docker container during tests.
     with patch('app.testing.nodes.static_verification.run_trivy_scan') as mock_k8s_trivy, \
-         patch('app.testing.nodes.iac_verification.run_trivy_scan') as mock_iac_trivy:
+         patch('app.testing.nodes.iac_verification.run_trivy_scan') as mock_iac_trivy, \
+         patch('app.testing.nodes.dynamic_functional.RunStore') as mock_run_store:
+         
+        mock_run_store.return_value.load.return_value = {"requirements_result": {"requirements": []}}
          
         # Simulate Trivy findings for K8s
         mock_k8s_trivy.return_value = [

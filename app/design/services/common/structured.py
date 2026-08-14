@@ -26,6 +26,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.core.llm_stall_probe import start_stall_probe
 
 
@@ -55,14 +56,14 @@ def run_with_wall_timeout(
     observation: dict[str, Any] | None = None,
 ):
     """벽시계 타임아웃. 클라이언트 타임아웃이 걸리지 않는 지연(연결 후 무응답 등)을 막는다."""
-    timeout_seconds = float(os.getenv("LLM_WALL_TIMEOUT_SECONDS", "330"))
+    timeout_seconds = settings.llm_wall_timeout_seconds
     started_at = datetime.now(UTC)
     started = perf_counter()
     status = "failed"
     error_type: str | None = None
     result_queue: queue.Queue = queue.Queue(maxsize=1)
     stall_probe = start_stall_probe(operation)
-    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+    if settings.easydep_experiment_session:
         print(json.dumps({
             "event": "llmOperationStarted",
             "operation": operation,
@@ -95,7 +96,7 @@ def run_with_wall_timeout(
     finally:
         stall_probe.set()
         elapsed_seconds = round(perf_counter() - started, 6)
-        if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+        if settings.easydep_experiment_session:
             print(json.dumps({
                 "event": "llmOperationFinished",
                 "operation": operation,
@@ -115,7 +116,7 @@ def run_with_wall_timeout(
                     "finishedAt": finished_at.isoformat(),
                     "elapsedSeconds": elapsed_seconds,
                     "wallTimeoutSeconds": timeout_seconds,
-                    "clientTimeoutSeconds": float(os.getenv("LLM_TIMEOUT_SECONDS", "300")),
+                    "clientTimeoutSeconds": settings.llm_timeout_seconds,
                     "observationScope": "requestCompletionOnly",
                     "ttftSeconds": None,
                 }
@@ -153,14 +154,14 @@ def _stream_structured(
     reasoning_characters = 0
     finish_reasons: list[str] = []
     request: dict[str, Any] = {
-        "model": os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+        "model": settings.design_agent_model,
         "messages": messages,
         "temperature": 0,
         "seed": 42,
         "stream": True,
         "response_format": _response_format(schema),
     }
-    max_completion_tokens = os.getenv("LLM_MAX_COMPLETION_TOKENS")
+    max_completion_tokens = settings.llm_max_completion_tokens
     if max_completion_tokens:
         request["max_completion_tokens"] = int(max_completion_tokens)
     stream = client.chat.completions.create(
@@ -227,8 +228,8 @@ def _stream_structured(
         # 실패 원문 전체와 reasoning은 보존하지 않는다. 실험에서 명시적으로 요청한
         # 제한 길이의 양 끝 표본과 전체 content 지문만 남겨 토큰 절단, 반복 출력,
         # 단순 문법 오류를 구분한다. 특정 schema나 사례에 의존하지 않는 공통 경계다.
-        sample_limit = int(os.getenv("LLM_FAILURE_RESPONSE_SAMPLE_CHARS", "0"))
-        if os.getenv("EASYDEP_EXPERIMENT_SESSION") and sample_limit > 0:
+        sample_limit = settings.llm_failure_response_sample_chars
+        if settings.easydep_experiment_session and sample_limit > 0:
             bounded = min(sample_limit, 4096)
             observation.update(
                 failureContentSha256=hashlib.sha256(
@@ -257,10 +258,10 @@ def parse_structured(
     load_dotenv()
 
     client = OpenAI(
-        base_url=os.getenv("BASE_URL"),
-        api_key=os.getenv("API_KEY"),
-        timeout=float(os.getenv("LLM_TIMEOUT_SECONDS", "300")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "0")),
+        base_url=settings.base_url,
+        api_key=settings.api_key,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
     )
 
     observation: dict[str, Any] = {}

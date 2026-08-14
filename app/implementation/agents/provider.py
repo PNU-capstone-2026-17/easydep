@@ -4,26 +4,28 @@ import importlib.util
 import os
 import sys
 
+from app.core.config import settings
+
 
 MAX_PROVIDER_RETRIES = 3
 
 
 def configured_api_key() -> str | None:
     return (
-        os.environ.get("NVIDIA_API_KEY")
-        or os.environ.get("NVIDIA_NIM_API_KEY")
-        or os.environ.get("LLM_API_KEY")
+        settings.nvidia_api_key
+        or settings.nvidia_nim_api_key
+        or settings.llm_api_key
         or windows_user_environment("NVIDIA_API_KEY")
         or windows_user_environment("NVIDIA_NIM_API_KEY")
     )
 
 
 def configured_model(default: str) -> str:
-    return os.environ.get("OPENHANDS_MODEL") or os.environ.get("LLM_MODEL") or default
+    return settings.openhands_model or settings.llm_model or default
 
 
 def configured_max_output_tokens(default: int) -> int:
-    raw = os.environ.get("OPENHANDS_MAX_OUTPUT_TOKENS")
+    raw = settings.openhands_max_output_tokens
     return int(raw) if raw else default
 
 
@@ -52,8 +54,8 @@ def transient_provider_error(error: Exception) -> bool:
 
 
 def provider_retry_delay(retry_number: int) -> float:
-    base = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_BASE_SECONDS", "1"))
-    cap = float(os.environ.get("OPENHANDS_PROVIDER_RETRY_MAX_SECONDS", "30"))
+    base = settings.openhands_provider_retry_base_seconds
+    cap = settings.openhands_provider_retry_max_seconds
     return min(cap, base * (2 ** max(0, retry_number - 1)))
 
 

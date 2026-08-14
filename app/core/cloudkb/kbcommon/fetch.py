@@ -40,7 +40,8 @@ def cache_dir(namespace: str = DEFAULT_NAMESPACE) -> Path:
     Args:
         namespace: 캐시를 나눌 이름. 기본값은 모든 KB가 공유하는 "cloudkb".
     """
-    env = os.environ.get("CLOUDKB_CACHE_DIR") or os.environ.get("GRAPHKB_CACHE_DIR")
+    from app.core.config import settings
+    env = settings.cloudkb_cache_dir or settings.graphkb_cache_dir
     if env:
         return Path(env)
     # 저장소 기준이다. CWD 기준이면 easydep처럼 다른 데서 부르는 프로세스마다

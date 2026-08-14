@@ -46,3 +46,45 @@
 이 API에는 파생 데이터 재배포를 명시적으로 허가하거나 금지하는 문구를 찾지 못했다.
 허가를 받았다는 뜻은 아니며 권리자가 요청하면 제거한다. 버전이 없는 API이므로 파일의
 `_source` 해시와 수집 시점으로 사용한 응답을 식별한다.
+
+## speckb 원본 응답
+
+`speckb/raw/` 아래 파일은 위 항목들과 성격이 다르다. **유도한 데이터가 아니라
+CSP 응답 본문 그대로**이며, 파일별 `.provenance.json`에 URL·sha256·수집 시각이 있다.
+가공하지 않았으므로 각 CSP의 원문 조건이 그대로 적용된다.
+
+**AWS는 커밋하지 않는다.** `speckb/raw/aws/`는 `.gitignore`에 있다. AWS 약관이
+가격 데이터 재배포를 명시적으로 금지하기 때문이며(`aws-price-list`,
+`redistribution="denied"`), 문구가 *없는* Azure·GCP와 구분된다. 각자
+`python -m app.core.cloudkb.speckb.fetch_aws`로 받는다. 응답 본문도 스스로 밝힌다:
+
+    "This pricing list is for informational purposes only. All prices are
+    subject to the additional terms included in the pricing pages on
+    http://aws.amazon.com."
+
+`speckb/aws_locations.json`은 커밋한다. 리전 코드와 표시명만 담고 있고 가격
+데이터가 한 건도 없다.
+
+- `speckb/raw/azure/**` — Microsoft Azure Retail Prices 및 Compute Resource SKUs 응답
+  Copyright Microsoft Corporation
+  https://prices.azure.com/api/retail/prices
+  https://management.azure.com/subscriptions/{id}/providers/Microsoft.Compute/skus
+
+  Resource SKUs는 구독 인증이 필요한 API다. 응답에 구독 고유 정보는 없고 SKU 카탈로그와
+  리전별 가용성만 들어 있으나, 요청 URL에 구독 ID가 포함되므로 provenance 사이드카의
+  `url`에도 남는다.
+
+**GCP도 커밋하지 않는다.** `speckb/raw/gcp/`는 `.gitignore`에 있다. 재배포 조건 때문이
+아니라 `machineTypes` 응답의 `selfLink`마다 수집에 쓴 프로젝트 ID가 들어 있어서다.
+응답 본문이라 지우면 무가공 보장이 깨지므로 원본을 그대로 두고 커밋만 하지 않는다.
+각자 `python -m app.core.cloudkb.speckb.fetch_gcp`로 받는다.
+
+    https://compute.googleapis.com/compute/v1/projects/{project}/aggregated/machineTypes
+    https://cloudbilling.googleapis.com/v1/services/6F81-5844-456A/skus
+    Copyright Google LLC
+
+커밋하는 Azure·GCP 두 소스는 응답 재배포를 허가하거나 금지하는 문구를 찾지 못했다.
+허가를 받았다는 뜻이 아니며 권리자가 요청하면 제거한다. 모두 버전이 없는
+엔드포인트이므로 사이드카의 sha256과 수집 시각으로 사용한 응답을 식별한다.
+
+가격은 전부 특정 시점 스냅샷이며 실제 청구액이 아니다.

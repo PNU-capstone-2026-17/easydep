@@ -3,10 +3,8 @@ from langgraph.graph import StateGraph, START, END
 from app.testing.schemas.testing_state import TestingState
 from app.testing.nodes.static_verification import static_verification_node
 from app.testing.nodes.iac_verification import iac_verification_node
-from app.testing.nodes.placeholders import (
-    dynamic_functional_node,
-    dynamic_nfr_node
-)
+from app.testing.nodes.dynamic_functional import dynamic_functional_node
+from app.testing.nodes.placeholders import dynamic_nfr_node
 
 def create_testing_graph():
     """

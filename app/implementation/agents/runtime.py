@@ -8,6 +8,7 @@ import time
 import warnings
 from pathlib import Path
 
+from app.core.config import settings
 from ..planning.design_context import (
     read_generated_java_contracts,
     referenced_openapi_model_names,
@@ -602,7 +603,7 @@ def create_openhands_conversation(
     llm_options: dict[str, object] = {
         "model": model,
         "api_key": SecretStr(api_key),
-        "base_url": os.environ.get("LLM_BASE_URL", str(llm_config["baseUrl"])),
+        "base_url": settings.base_url or str(llm_config["baseUrl"]),
         "temperature": 0.2 if is_qwen_coder else float(llm_config["temperature"]),
         "max_output_tokens": configured_max_output_tokens(int(llm_config["maxOutputTokens"])),
     }

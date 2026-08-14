@@ -13,6 +13,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from app.core.config import settings
+
 from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.core.orchestration.adapters.design import DesignAdapter
 from app.core.orchestration.adapters.requirements import RequirementsAdapter
@@ -428,9 +430,7 @@ class MemberScaffoldProvider:
                 True,
             )
             job_config = json.loads(job.read_text(encoding="utf-8"))
-            execute_member_workflow = os.getenv(
-                "EASYDEP_APPROVE_MEMBER_IMPLEMENTATION", "0"
-            ) == "1"
+            execute_member_workflow = settings.easydep_approve_member_implementation == "1"
             job_config.setdefault("verification", {})["compile"] = (
                 execute_member_workflow
             )
@@ -587,7 +587,7 @@ PRODUCTION_SOURCE_SUFFIXES = frozenset(
 
 
 def _completion_options() -> dict[str, int]:
-    value = os.getenv("LLM_MAX_COMPLETION_TOKENS")
+    value = settings.llm_max_completion_tokens
     return {"max_completion_tokens": int(value)} if value else {}
 
 
@@ -603,13 +603,13 @@ class LlmScaffoldProvider:
     def _invoke_llm(prompt: str) -> str:
         response = OpenAI(
             api_key=os.environ["API_KEY"],
-            base_url=os.getenv("BASE_URL"),
+            base_url=settings.base_url,
             timeout=600,
             max_retries=0,
         ).chat.completions.create(
-            model=os.getenv("MODEL", "openai/gpt-oss-120b"),
-            temperature=float(os.getenv("TEMPERATURE", "0")),
-            seed=int(os.getenv("SEED", "42")),
+            model=settings.model,
+            temperature=settings.temperature,
+            seed=settings.seed,
             response_format={"type": "json_object"},
             **_completion_options(),
             messages=[
@@ -1011,13 +1011,13 @@ class LlmAcceptanceTestsProvider:
     def _invoke_llm(prompt: str) -> str:
         response = OpenAI(
             api_key=os.environ["API_KEY"],
-            base_url=os.getenv("BASE_URL"),
+            base_url=settings.base_url,
             timeout=600,
             max_retries=0,
         ).chat.completions.create(
-            model=os.getenv("MODEL", "openai/gpt-oss-120b"),
-            temperature=float(os.getenv("TEMPERATURE", "0")),
-            seed=int(os.getenv("SEED", "42")),
+            model=settings.model,
+            temperature=settings.temperature,
+            seed=settings.seed,
             response_format={"type": "json_object"},
             **_completion_options(),
             messages=[
@@ -1117,13 +1117,13 @@ class LlmLogicProvider:
     def _invoke_llm(prompt: str) -> str:
         response = OpenAI(
             api_key=os.environ["API_KEY"],
-            base_url=os.getenv("BASE_URL"),
+            base_url=settings.base_url,
             timeout=600,
             max_retries=0,
         ).chat.completions.create(
-            model=os.getenv("MODEL", "openai/gpt-oss-120b"),
-            temperature=float(os.getenv("TEMPERATURE", "0")),
-            seed=int(os.getenv("SEED", "42")),
+            model=settings.model,
+            temperature=settings.temperature,
+            seed=settings.seed,
             response_format={"type": "json_object"},
             **_completion_options(),
             messages=[
@@ -1405,6 +1405,29 @@ class BuiltinTestingProvider:
                         }
                     ]
                 )
+            
+            # --- Start Testing Agent Graph Integration ---
+            try:
+                from app.testing.graphs.testing_graph import create_testing_graph
+                testing_graph = create_testing_graph()
+                agent_state = {
+                    "run_id": context.run_id,
+                    "manifests_dir": "",
+                    "iac_dir": "",
+                    "target_url": "http://localhost:8080",
+                    "current_node": "",
+                    "errors": [],
+                    "static_report": None,
+                    "dynamic_functional_report": None,
+                    "dynamic_nfr_report": None,
+                    "iac_report": None,
+                }
+                agent_result = testing_graph.invoke(agent_state)
+                result["agent_testing_report"] = agent_result.get("dynamic_functional_report")
+            except Exception as graph_error:
+                result["agent_testing_error"] = str(graph_error)
+            # --- End Testing Agent Graph Integration ---
+
             return StepResult(
                 step=self.step,
                 provider=ProviderKind.BUILTIN,

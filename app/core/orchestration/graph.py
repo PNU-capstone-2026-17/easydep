@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import uuid
 from collections.abc import Callable
@@ -12,6 +11,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from app.core.config import settings
 from langgraph.graph import END, START, StateGraph
 
 from app.core.orchestration.adapters.testing import TestingAdapter
@@ -305,7 +305,7 @@ def _step_state(
 def _timed_run(provider, payload: dict[str, Any], context: StepContext) -> StepResult:
     started_at = datetime.now(UTC)
     started = perf_counter()
-    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+    if settings.easydep_experiment_session:
         print(
             json.dumps(
                 {
@@ -321,7 +321,7 @@ def _timed_run(provider, payload: dict[str, Any], context: StepContext) -> StepR
     try:
         result = provider.run(payload, context)
     except BaseException as error:
-        if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+        if settings.easydep_experiment_session:
             print(
                 json.dumps(
                     {
@@ -337,7 +337,7 @@ def _timed_run(provider, payload: dict[str, Any], context: StepContext) -> StepR
             )
         raise
     finished_at = datetime.now(UTC)
-    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+    if settings.easydep_experiment_session:
         print(
             json.dumps(
                 {
@@ -364,7 +364,7 @@ def _timed_run(provider, payload: dict[str, Any], context: StepContext) -> StepR
 
 
 def _progress(event: str, **fields: Any) -> None:
-    if os.getenv("EASYDEP_EXPERIMENT_SESSION"):
+    if settings.easydep_experiment_session:
         print(json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
 
 

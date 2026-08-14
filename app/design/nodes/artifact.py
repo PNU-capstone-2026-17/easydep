@@ -81,7 +81,8 @@ UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY)
 
 def repair_budget() -> int:
     """재생성을 몇 번까지 시도하는가. 0이면 검사만 하고 고치지 않는다."""
-    return max(0, int(os.getenv("DESIGN_MAX_REPAIR_ITERS", "2")))
+    from app.core.config import settings
+    return max(0, settings.design_max_repair_iters)
 
 
 def repair_directive(findings: list[Finding]) -> str:

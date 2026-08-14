@@ -89,7 +89,8 @@ def test_streaming_structured_output_accepts_an_explicit_completion_limit(monkey
     client = type("Client", (), {
         "chat": type("Chat", (), {"completions": Completions()})()
     })()
-    monkeypatch.setenv("LLM_MAX_COMPLETION_TOKENS", "8192")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "llm_max_completion_tokens", 8192)
 
     parsed = _stream_structured(
         client, [{"role": "user", "content": "x"}], Result, {}
@@ -134,8 +135,9 @@ def test_timeout_retains_incremental_stream_progress_without_content(
         "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
     )()
     observation = {}
-    monkeypatch.setenv("LLM_WALL_TIMEOUT_SECONDS", "0.05")
-    monkeypatch.setenv("EASYDEP_EXPERIMENT_SESSION", "test-session")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "llm_wall_timeout_seconds", 0.05)
+    monkeypatch.setattr(settings, "easydep_experiment_session", "test-session")
 
     try:
         with (
@@ -190,8 +192,9 @@ def test_invalid_structured_output_records_bounded_content_samples_only_in_exper
         "Client", (), {"chat": type("Chat", (), {"completions": completions})()}
     )()
     observation = {}
-    monkeypatch.setenv("EASYDEP_EXPERIMENT_SESSION", "diagnostic")
-    monkeypatch.setenv("LLM_FAILURE_RESPONSE_SAMPLE_CHARS", "16")
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "easydep_experiment_session", "diagnostic")
+    monkeypatch.setattr(settings, "llm_failure_response_sample_chars", 16)
 
     with pytest.raises(Exception):
         _stream_structured(
