@@ -1,0 +1,9 @@
+{
+  "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=location%20eq%20%27eastus2euap%27",
+  "sha256": "3a190d292d2bd9bb304be1157ea5345d3cf9cbcd440192d1027d49aa144181a0",
+  "bytes": 2160565,
+  "fetched_at": "2026-08-14T08:02:16+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

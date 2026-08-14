@@ -1,0 +1,9 @@
+{
+  "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=location%20eq%20%27koreasouth%27",
+  "sha256": "5eddd4309c337a633eef30605d0ecb5b5bb129c33e5b25fcad3b7ee65c619f3f",
+  "bytes": 1180635,
+  "fetched_at": "2026-08-14T08:04:23+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

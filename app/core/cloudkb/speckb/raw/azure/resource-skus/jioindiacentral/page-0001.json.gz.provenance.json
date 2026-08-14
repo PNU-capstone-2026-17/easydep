@@ -1,0 +1,9 @@
+{
+  "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=location%20eq%20%27jioindiacentral%27",
+  "sha256": "baf014588f9d67e6133e1ed9c449c6ccad12849f84703082a387ffade1aff474",
+  "bytes": 1345980,
+  "fetched_at": "2026-08-14T08:04:04+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

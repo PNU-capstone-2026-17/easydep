@@ -1,0 +1,9 @@
+{
+  "url": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus?api-version=2021-07-01&$filter=location%20eq%20%27chilecentral%27",
+  "sha256": "8fa4228a228dd6622a35681ee1d55a42d097c8947bc571928f6f0854dc05e359",
+  "bytes": 1320930,
+  "fetched_at": "2026-08-14T08:01:42+00:00",
+  "etag": null,
+  "last_modified": null,
+  "note": "sha256과 bytes는 압축 전 원본 응답 본문 기준이다."
+}

@@ -124,20 +124,33 @@ https://prices.azure.com/api/retail/prices?api-version=2023-01-01-preview
 
 ### Resource SKUs API (스펙)
 
-`raw/azure/resource-skus/page-NNNN.json.gz` — 1페이지, 72,550건.
+`raw/azure/resource-skus/<region>/page-NNNN.json.gz` — 78개 리전, 72,521건.
 포털의 VM 크기 선택 화면이 쓰는 소스다.
 
 ```
 https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus
-  ?api-version=2021-07-01
+  ?api-version=2021-07-01&$filter=location eq '<region>'
 ```
 
 **인증 필요** — `az login` 후 `az account get-access-token`의 Bearer 토큰.
-페이지 최상위 키: `value` `nextLink`.
+페이지 최상위 키: `value` `nextLink`. 리전당 1페이지로 끝난다(관찰값이라 코드는
+`nextLink` 루프를 유지한다).
 
-`resourceType` 분포: `virtualMachines` 64,970 · `disks` 4,405 ·
+`resourceType` 분포: `virtualMachines` 64,941 · `disks` 4,405 ·
 `hostGroups/hosts` 2,818 · `snapshots` 201 · `availabilitySets` 156.
 VM 고유 이름 1,501종.
+
+`$filter`는 location만 지원한다. **리전별로 나누는 이유는 용량이 아니라 열람
+가능성이다** — 필터 없이 받으면 파일 하나가 압축 풀어 123.8MB라 열 수 없다.
+나누면 리전당 0.36~2.68MB(평균 1.59)가 된다. 대신 디스크가 2.01MB에서 2.69MB로
+는다. gzip이 파일 하나일 때 리전 간 반복까지 접기 때문이고, 그 0.68MB가 대가다.
+
+나눠도 데이터는 같다. 필터 없는 응답도 항목마다 `locations` 길이가 정확히 1이라
+이미 (SKU, 리전) 쌍 단위였다(전수 확인). 대조했을 때 `koreacentral` 932 ·
+`eastus` 1356 · `uksouth` 1227로 VM 건수가 양쪽에서 일치했다.
+
+`resourceType`을 VM으로 거르지 않는다. VM이 아닌 7,580건은 **건수로는 10.4%지만
+용량으로는 3.5%**라, 무가공을 깨서 얻는 것이 80KB뿐이다.
 
 레코드 필드: `resourceType` `name` `tier` `size` `family` `locations`
 `locationInfo[]`(`location` `zones` `zoneDetails`) `capabilities[]` `restrictions[]`
@@ -145,7 +158,7 @@ VM 고유 이름 1,501종.
 `name`이 **ARM SKU 이름 그대로**다 — `Standard_D4s_v5`. Retail의 `armSkuName`과 이 값으로 붙는다.
 
 `capabilities[]`는 `{name, value}` 배열이고 VM에서 48종이 나온다. 요청 항목 대응
-(전부 64,970/64,970 = 100% 보유):
+(전부 64,941/64,941 = 100% 보유):
 
 | 항목 | capability | 예 (`Standard_D4s_v5`) |
 |---|---|---|
@@ -174,12 +187,33 @@ VM 고유 이름 1,501종.
 **가격이 없다.** 비용은 Retail Prices 쪽이다.
 
 > `locations` 값의 대소문자가 섞여 있다 — 같은 응답에 `KoreaCentral`과 `australiaeast`가
->함께 나온다. Retail 질의에 쓸 때는 소문자로 맞춰야 한다(`azure_regions.json`이 그 역할).
+>함께 나온다. 질의에 쓸 때는 소문자로 맞춰야 한다.
+
+#### SKU 리전 목록을 어디서 얻는가
+
+리전별로 받으려면 리전 목록이 먼저 있어야 한다. 후보 셋을 실측으로 대조했고
+**완전한 것은 필터 없는 SKUs 호출뿐이었다.**
+
+| 출처 | 커버 |
+|---|---|
+| 필터 없는 SKUs 응답 | **78 / 78** |
+| Subscriptions - Locations (`api-version=2022-12-01`) | 63 / 78 |
+| Providers - Microsoft.Compute (`api-version=2021-04-01`) | 49 / 78 |
+
+Locations API가 놓치는 15개는 `eastus3` `taiwannorth` `saudiarabiaeast`
+`southcentralus2` 같은 미공개·예정 리전이다. SKU 카탈로그에는 있는데 리전 목록에는
+아직 없어서, 그걸로 목록을 만들면 7,802건이 조용히 사라진다.
+
+그래서 전체 실행마다 **필터 없는 호출을 한 번 하고 리전 이름만 쓰고 버린다**(약
+124MB를 더 받는 것이 대가다). 같은 데이터를 리전별로 다시 받으므로 잃는 것은 없다.
+이때 센 리전별 건수를 저장된 파일과 대조해, 어긋나면 경고를 찍는다 — Azure
+카탈로그가 날마다 조금씩 움직이므로(하루 사이 `brazilsouth` -66, `westeurope` +4)
+어제의 총계와 비교하는 것은 검증이 되지 않는다.
 
 ### 리전 목록 (파생 — 벤더 원본 아님)
 
-`azure_regions.json`. Retail을 리전별로 받을 때 쓴다. Resource SKUs의 `locations`를
-소문자로 맞춘 값과, 이미 Retail을 받아 둔 리전의 **합집합**이다.
+`azure_regions.json`. **Retail**을 리전별로 받을 때 쓴다. SKU 데이터가 있는 리전과
+이미 Retail을 받아 둔 리전의 **합집합**이며 81개다.
 
 합집합인 이유: 일반 구독의 Resource SKUs에는 US GovCloud가 안 나오는데(별도 클라우드)
 공개 Retail API에는 `usgovarizona` 등의 가격이 있다. SKUs 결과만 쓰면 그 셋이 사라진다.
