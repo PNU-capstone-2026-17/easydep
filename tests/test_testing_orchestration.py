@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import app.core.orchestration.adapters.testing as testing_module
-from app.core.orchestration.adapters.testing import TestingAdapter as VerificationAdapter
+import app.testing.runtime.adapter as testing_module
 from app.core.orchestration.app_cloud_contracts import infer_application_contract
 from app.core.orchestration.repair_routing import DIAGNOSTIC_REPAIR_OWNER
+from app.testing.runtime.adapter import TestingAdapter as VerificationAdapter
 
 
 def test_testing_preserves_configured_gradle_cache(tmp_path, monkeypatch):
@@ -23,24 +23,26 @@ def test_testing_preserves_configured_gradle_cache(tmp_path, monkeypatch):
 
 
 def test_testing_classifies_missing_hibernate_strategy_as_database_mismatch():
-    diagnostics = VerificationAdapter._diagnostics({
-        "status": "failed",
-        "stdout": (
-            "Caused by: org.hibernate.boot.registry.selector.spi."
-            "StrategySelectionException\n"
-            "Caused by: java.lang.ClassNotFoundException"
-        ),
-    })
+    diagnostics = VerificationAdapter._diagnostics(
+        {
+            "status": "failed",
+            "stdout": (
+                "Caused by: org.hibernate.boot.registry.selector.spi."
+                "StrategySelectionException\n"
+                "Caused by: java.lang.ClassNotFoundException"
+            ),
+        }
+    )
 
-    assert diagnostics == [{
-        "code": "APP-DB-001",
-        "message": "Generated application tests failed.",
-    }]
+    assert diagnostics == [
+        {
+            "code": "APP-DB-001",
+            "message": "Generated application tests failed.",
+        }
+    ]
 
 
-def test_testing_stage_runs_application_tests_without_benchmark_evaluation(
-    tmp_path, monkeypatch
-):
+def test_testing_stage_runs_application_tests_without_benchmark_evaluation(tmp_path, monkeypatch):
     application = tmp_path / "run" / "application"
     application.mkdir(parents=True)
     adapter = VerificationAdapter()
@@ -66,12 +68,8 @@ def test_testing_stage_does_not_turn_missing_tools_into_success(tmp_path, monkey
     application = tmp_path / "run" / "application"
     application.mkdir(parents=True)
     adapter = VerificationAdapter()
-    monkeypatch.setattr(
-        adapter, "_unit_tests", lambda _root: {"status": "unavailable"}
-    )
-    result = adapter.run(
-        implementation_result={"run_root": str(tmp_path / "run")}
-    )
+    monkeypatch.setattr(adapter, "_unit_tests", lambda _root: {"status": "unavailable"})
+    result = adapter.run(implementation_result={"run_root": str(tmp_path / "run")})
 
     assert result["status"] == "completed"
     assert result["passed"] is False
@@ -113,12 +111,8 @@ def test_compile_failure_routes_to_the_recorded_scaffold_file_owner(tmp_path):
     )
 
     assert diagnostics[0]["code"] == "APP-COMPILE-SCAFFOLD-001"
-    assert diagnostics[0]["ownedFailedFiles"] == [
-        "src/main/java/example/Broken.java"
-    ]
-    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == (
-        "implementation.scaffold"
-    )
+    assert diagnostics[0]["ownedFailedFiles"] == ["src/main/java/example/Broken.java"]
+    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == ("implementation.scaffold")
 
 
 def test_latest_writer_owns_a_compile_failure_when_logic_modified_scaffold_file(
@@ -157,10 +151,12 @@ def test_unowned_compile_file_does_not_guess_a_repair_owner(tmp_path):
         application,
     )
 
-    assert diagnostics == [{
-        "code": "APPLICATION_TESTS_FAILED",
-        "message": "Generated application tests failed.",
-    }]
+    assert diagnostics == [
+        {
+            "code": "APPLICATION_TESTS_FAILED",
+            "message": "Generated application tests failed.",
+        }
+    ]
 
 
 def test_member_generated_unowned_test_compile_failure_routes_to_scaffold(tmp_path):
@@ -186,19 +182,19 @@ def test_member_generated_unowned_test_compile_failure_routes_to_scaffold(tmp_pa
         application,
     )
 
-    assert diagnostics == [{
-        "code": "APP-COMPILE-MEMBER-TEST-001",
-        "message": (
-            "Member-generated internal tests no longer compile against the "
-            "current production source contract."
-        ),
-        "repairOwner": "implementation.scaffold",
-        "failedFiles": ["src/test/java/example/ControllerTest.java"],
-        "ownedFailedFiles": ["src/test/java/example/ControllerTest.java"],
-    }]
-    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == (
-        "implementation.scaffold"
-    )
+    assert diagnostics == [
+        {
+            "code": "APP-COMPILE-MEMBER-TEST-001",
+            "message": (
+                "Member-generated internal tests no longer compile against the "
+                "current production source contract."
+            ),
+            "repairOwner": "implementation.scaffold",
+            "failedFiles": ["src/test/java/example/ControllerTest.java"],
+            "ownedFailedFiles": ["src/test/java/example/ControllerTest.java"],
+        }
+    ]
+    assert DIAGNOSTIC_REPAIR_OWNER[diagnostics[0]["code"]] == ("implementation.scaffold")
 
 
 def test_non_member_unowned_test_compile_failure_routes_to_acceptance_tests(tmp_path):
@@ -231,9 +227,7 @@ def test_member_internal_test_failure_routes_to_scaffold(tmp_path):
                 "buildHealthResponse_callsHealthEndpoint() FAILED\n"
             ),
             "stderr": "2 tests completed, 1 failed",
-            "testFiles": [
-                "src/test/java/example/HealthCheckControllerServiceTest.java"
-            ],
+            "testFiles": ["src/test/java/example/HealthCheckControllerServiceTest.java"],
         },
         {
             "member_workflow_executed": True,
@@ -242,18 +236,17 @@ def test_member_internal_test_failure_routes_to_scaffold(tmp_path):
         application,
     )
 
-    assert diagnostics == [{
-        "code": "APP-MEMBER-TEST-FAILURE-001",
-        "message": (
-            "Member-generated internal tests fail against the final composed "
-            "production source."
-        ),
-        "repairOwner": "implementation.scaffold",
-        "failedTestClasses": ["HealthCheckControllerServiceTest"],
-        "failedFiles": [
-            "src/test/java/example/HealthCheckControllerServiceTest.java"
-        ],
-    }]
+    assert diagnostics == [
+        {
+            "code": "APP-MEMBER-TEST-FAILURE-001",
+            "message": (
+                "Member-generated internal tests fail against the final composed production source."
+            ),
+            "repairOwner": "implementation.scaffold",
+            "failedTestClasses": ["HealthCheckControllerServiceTest"],
+            "failedFiles": ["src/test/java/example/HealthCheckControllerServiceTest.java"],
+        }
+    ]
 
 
 def test_fixed_acceptance_failure_is_not_routed_to_test_rewrite(tmp_path):
@@ -275,15 +268,15 @@ def test_fixed_acceptance_failure_is_not_routed_to_test_rewrite(tmp_path):
         application,
     )
 
-    assert diagnostics == [{
-        "code": "APPLICATION_TESTS_FAILED",
-        "message": "Generated application tests failed.",
-    }]
+    assert diagnostics == [
+        {
+            "code": "APPLICATION_TESTS_FAILED",
+            "message": "Generated application tests failed.",
+        }
+    ]
 
 
-def test_testing_stage_uses_bundled_gradle_without_requesting_jacoco(
-    tmp_path, monkeypatch
-):
+def test_testing_stage_uses_bundled_gradle_without_requesting_jacoco(tmp_path, monkeypatch):
     application = tmp_path / "run" / "application"
     application.mkdir(parents=True)
     (application / "build.gradle").write_text("plugins { id 'java' }", encoding="utf-8")
@@ -298,23 +291,18 @@ def test_testing_stage_uses_bundled_gradle_without_requesting_jacoco(
     monkeypatch.setattr(
         testing_module,
         "_run",
-        lambda command, cwd, timeout, environment_overrides=None: calls.append(
-            (command, cwd, timeout, environment_overrides)
-        )
-        or {"status": "passed"},
+        lambda command, cwd, timeout, environment_overrides=None: (
+            calls.append((command, cwd, timeout, environment_overrides)) or {"status": "passed"}
+        ),
     )
 
-    result = VerificationAdapter().run(
-        implementation_result={"run_root": str(tmp_path / "run")}
-    )
+    result = VerificationAdapter().run(implementation_result={"run_root": str(tmp_path / "run")})
 
     assert result["passed"] is True
     assert calls[0][0] == ["bundled-gradle", "test", "--no-daemon"]
 
 
-def test_testing_stage_isolates_sqlite_file_with_an_environment_override(
-    tmp_path, monkeypatch
-):
+def test_testing_stage_isolates_sqlite_file_with_an_environment_override(tmp_path, monkeypatch):
     application = tmp_path / "run" / "application"
     resources = application / "src" / "main" / "resources"
     resources.mkdir(parents=True)
@@ -334,15 +322,12 @@ def test_testing_stage_isolates_sqlite_file_with_an_environment_override(
     monkeypatch.setattr(
         testing_module,
         "_run",
-        lambda command, cwd, timeout, environment_overrides=None: calls.append(
-            environment_overrides
-        )
-        or {"status": "passed"},
+        lambda command, cwd, timeout, environment_overrides=None: (
+            calls.append(environment_overrides) or {"status": "passed"}
+        ),
     )
 
-    contract = infer_application_contract(application).model_dump(
-        mode="json", by_alias=True
-    )
+    contract = infer_application_contract(application).model_dump(mode="json", by_alias=True)
     result = VerificationAdapter().run(
         implementation_result={
             "run_root": str(tmp_path / "run"),

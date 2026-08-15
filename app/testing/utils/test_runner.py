@@ -4,12 +4,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from app.core.orchestration.linux_runner_transport import (
-    configured_runner_image,
-    runner_command,
-    to_container_path,
-)
-from app.core.orchestration.process import run_process_tree
+from app.testing.runtime.container_runner import to_container_path
+from app.testing.runtime.process import run_process_tree
 
 
 def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[str, Any]:
@@ -19,9 +15,14 @@ def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[
     """
     workspace_test_dir = repository_root / ".easydep" / "testing" / "generated"
     workspace_test_dir.mkdir(parents=True, exist_ok=True)
-    
+
     with tempfile.NamedTemporaryFile(
-        dir=workspace_test_dir, prefix="test_dynamic_", suffix=".py", delete=False, mode="w", encoding="utf-8"
+        dir=workspace_test_dir,
+        prefix="test_dynamic_",
+        suffix=".py",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
     ) as temp_file:
         temp_file.write(code)
         temp_path = Path(temp_file.name)
@@ -29,27 +30,35 @@ def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[
     report_path = temp_path.with_suffix(".json")
 
     environment = os.environ.copy()
-    
+
     # Auto-rewrite localhost to host.docker.internal so the container can reach the host network
     if "localhost" in target_url or "127.0.0.1" in target_url:
-        target_url = target_url.replace("localhost", "host.docker.internal").replace("127.0.0.1", "host.docker.internal")
-        
+        target_url = target_url.replace("localhost", "host.docker.internal").replace(
+            "127.0.0.1", "host.docker.internal"
+        )
+
     environment["TARGET_URL"] = target_url
 
     container_test_path = to_container_path(temp_path, repository_root)
     container_report_path = to_container_path(report_path, repository_root)
-    
+
     # Run inside isolated Playwright container
     command = [
-        "docker", "run", "--rm",
+        "docker",
+        "run",
+        "--rm",
         "--add-host=host.docker.internal:host-gateway",
-        "-v", f"{repository_root.resolve()}:/easydep-workspace",
-        "-w", "/easydep-workspace",
-        "-e", f"TARGET_URL={target_url}",
+        "-v",
+        f"{repository_root.resolve()}:/easydep-workspace",
+        "-w",
+        "/easydep-workspace",
+        "-e",
+        f"TARGET_URL={target_url}",
         "mcr.microsoft.com/playwright/python:v1.40.0-jammy",
-        "bash", "-c",
+        "bash",
+        "-c",
         f"pip install --quiet pytest pytest-json-report httpx requests playwright && "
-        f"python3 -m pytest {container_test_path} --json-report --json-report-file={container_report_path}"
+        f"python3 -m pytest {container_test_path} --json-report --json-report-file={container_report_path}",
     ]
 
     try:
@@ -64,7 +73,7 @@ def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[
             timeout=300,
             check=False,
         )
-        
+
         report_data = {}
         if report_path.exists():
             try:
@@ -79,9 +88,8 @@ def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[
             "exit_code": completed.returncode,
             "stdout": completed.stdout,
             "stderr": completed.stderr,
-            "report": report_data
+            "report": report_data,
         }
     finally:
         # Cleanup the temporary test file
         temp_path.unlink(missing_ok=True)
-

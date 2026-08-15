@@ -10,7 +10,7 @@
 | 4단계 파이프라인 | 요구사항 → 설계 → 구현 → 테스팅 연결 | ✅ | 멤버 workflow의 미구현 planner 공백은 임시 LLM으로 제한 보완 |
 | 요구사항 분석 | 소프트웨어 요구사항과 클라우드 제약 구조화 | ✅ | 용량 산정에 필요한 트래픽·최소 사양이 자주 미확정 |
 | 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 구조도·IaC 공동 생성과 Plan JSON 대조 미구현 |
-| 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | 멤버 생성기가 pinned 로컬 도구 대신 mutable Docker 이미지를 실행 |
+| 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | BCE·OpenAPI·Gradle 생성기는 Docker 도구와 `/workspace` 경로 계약을 사용 |
 | 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 운영 품질·보안 검사는 공통 평가기에 일부만 존재 |
 | DepKB | AWS·Azure·GCP의 VM 자원 의존성 제공 | ⚠️ | 고정입력 절제 완료, 생성·기능 성공의 소규모 비교가 남음 |
 | VM 선택 | 용량 필터 후 가격·성능 추천 및 IaC 반영 gate | ✅ | 실제 처리량·전체 비용과 provider validate는 별도 증거 필요 |
@@ -287,6 +287,8 @@ FastAPI `/docs`와 route 구현을 진실 원천으로 사용한다.
 | `GET /api/implementation/jobs/{job_id}` | 구현 상태·승인 대기 조회 |
 | `POST /api/implementation/jobs/{job_id}/approval` | HITL 승인·거부 |
 | `POST /api/implementation/apps/{app_id}/feedback-jobs` | 기존 산출물 피드백 수정 |
+| `POST /api/testing/apps/{app_id}/jobs` | 완료된 구현 산출물의 Gradle 테스트 시작 |
+| `GET /api/testing/jobs/{job_id}` | 테스팅 상태와 진단 결과 조회 |
 
 필요 도구는 Python 의존성, JDK 21과 Gradle wrapper, Node.js/npm, OpenAPI Generator,
 Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider는 run manifest에 남긴다.

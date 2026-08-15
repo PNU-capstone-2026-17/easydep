@@ -12,7 +12,8 @@ MAX_PROVIDER_RETRIES = 3
 
 def configured_api_key() -> str | None:
     return (
-        settings.nvidia_api_key
+        settings.api_key
+        or settings.nvidia_api_key
         or settings.nvidia_nim_api_key
         or settings.llm_api_key
         or windows_user_environment("NVIDIA_API_KEY")

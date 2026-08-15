@@ -14,7 +14,11 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 ENV JAVA_HOME=/opt/java/openjdk
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 ENV PYTHONUTF8=1
-ENV GRADLE_USER_HOME=/easydep-workspace/.easydep/gradle-cache
+# The workspace is a Windows bind mount in Docker Desktop. Gradle's metadata
+# and classpath snapshotting perform many small file operations, which are
+# disproportionately slow on that mount. Keep the cache in the Linux runner
+# filesystem for the lifetime of one member workflow instead.
+ENV GRADLE_USER_HOME=/opt/easydep/gradle-cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -33,6 +37,11 @@ RUN mkdir -p /opt/easydep \
     && printf '%s  %s\n' \
       e03186835022ca02da4aa95e3967b6a3b6d44c2e5f7606e6d5c22466f519c757 \
       /opt/easydep/openapi-generator-7.14.0.jar | sha256sum --check --status
+
+# BCE generator dependencies are embedded in the runner so its read-only
+# workspace bind mount never needs a host node_modules directory.
+COPY app/implementation/tools/puml2code-bce /opt/easydep/puml2code-bce
+RUN cd /opt/easydep/puml2code-bce && npm ci --omit=dev
 
 RUN printf '%s\n' '#!/bin/sh' \
       'exec python -B -m app.core.orchestration.runner_docker_shim "$@"' \

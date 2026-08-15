@@ -164,6 +164,22 @@ class ImplementationWorker:
     def get(self, job_id: str) -> dict[str, Any]:
         return self.public_record(self._read(job_id))
 
+    def get_testing_input(self, job_id: str) -> dict[str, Any]:
+        """Return the minimum private execution context needed by the test adapter.
+
+        ``get`` deliberately removes ``run_root`` from the browser-facing job
+        record.  The testing API is a trusted in-process consumer, so it gets a
+        narrow context instead of relying on the public record or exposing the
+        workspace path over HTTP.
+        """
+        record = self._read(job_id)
+        return {
+            "job_id": record["job_id"],
+            "app_id": record["app_id"],
+            "status": record["status"],
+            "run_root": record.get("run_root"),
+        }
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         record = self._read(job_id)
         if record["status"] in {"COMPLETED", "FAILED", "CANCELLED", "REJECTED"}:

@@ -11,7 +11,7 @@ class FrontendScaffoldError(ValueError):
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
-OPENAPI_GENERATOR_VERSION = "7.14.0"
+OPENAPI_GENERATOR_VERSION = "7.24.0"
 OPENAPI_GENERATOR_NAME = "typescript-fetch"
 OPENAPI_GENERATOR_IMAGE = (
     f"openapitools/openapi-generator-cli:v{OPENAPI_GENERATOR_VERSION}"

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EasyDep · 시스템 구현</title>
+  <link rel="stylesheet" href="/assets/workbench.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/"><span class="brand-mark">E</span>EasyDep</a>
+    <nav class="main-nav" aria-label="개발 단계">
+      <a href="/requirements/">요구사항 분석</a>
+      <a href="/design/">시스템 설계</a>
+      <a href="/implementation/" aria-current="page">시스템 구현</a>
+      <a href="/testing/">테스팅</a>
+    </nav>
+  </header>
+
+  <main class="page">
+    <p class="eyebrow">03 System implementation</p>
+    <h1>시스템 구현</h1>
+    <p class="lead">설계 산출물을 바탕으로 구현 작업을 실행합니다. 외부 에이전트 실행은 검토 후 직접 승인해야 시작됩니다.</p>
+
+    <section class="app-bar" aria-labelledby="implementation-app-title">
+      <div>
+        <label id="implementation-app-title" for="appId">대상 App ID</label>
+        <div class="app-id-row">
+          <input id="appId" placeholder="요구사항 분석에서 발급된 App ID" autocomplete="off" spellcheck="false">
+          <button id="loadApp" type="button" class="secondary">설계 확인</button>
+        </div>
+        <p id="appMessage" class="notice">클래스 다이어그램과 OpenAPI 명세가 준비된 App ID가 필요합니다.</p>
+      </div>
+      <a class="button secondary" href="/design/">설계 화면 열기</a>
+    </section>
+
+    <div class="split">
+      <section class="panel" aria-labelledby="implementation-title">
+        <p class="eyebrow">System implementation</p>
+        <h2 id="implementation-title">구현 작업</h2>
+        <div class="field">
+          <label for="basePackage">Java 기본 패키지</label>
+          <input id="basePackage" value="com.easydep.app" placeholder="예: com.example.orders" spellcheck="false">
+        </div>
+        <div class="actions">
+          <button id="startImplementation" type="button">구현 작업 시작</button>
+          <button id="cancelImplementation" type="button" class="secondary hidden">작업 취소</button>
+        </div>
+        <p id="implementationMessage" class="notice">구현을 시작하면 계획을 먼저 생성합니다.</p>
+
+        <div id="implementationJob" class="hidden">
+          <span id="implementationStatus" class="status-chip">대기</span>
+          <dl class="job-summary">
+            <div class="summary-item"><dt>작업 ID</dt><dd id="implementationJobId">—</dd></div>
+            <div class="summary-item"><dt>최근 갱신</dt><dd id="implementationUpdatedAt">—</dd></div>
+          </dl>
+          <pre id="implementationDetails" class="report"></pre>
+        </div>
+      </section>
+
+      <aside id="approvalPanel" class="panel approval hidden" aria-labelledby="approval-title">
+        <p class="eyebrow">Action required</p>
+        <h2 id="approval-title">외부 실행 승인</h2>
+        <p>구현 계획이 준비되었습니다. 아래 작업은 외부 구현 에이전트에 전송될 수 있으며, 승인 후에만 실행됩니다.</p>
+        <ul id="approvalTasks"></ul>
+        <div class="actions">
+          <button id="approveImplementation" type="button">검토 후 승인</button>
+          <button id="rejectImplementation" type="button" class="secondary">거부</button>
+        </div>
+        <p id="approvalMessage" class="notice"></p>
+      </aside>
+
+      <section class="panel" aria-labelledby="artifacts-title">
+        <p class="eyebrow">Outputs</p>
+        <h2 id="artifacts-title">생성 산출물</h2>
+        <p class="notice">구현이 완료되면 파일 스냅샷의 최신 버전과 파일 수를 표시합니다.</p>
+        <div id="artifactList" class="artifact-list"><p class="notice">아직 불러온 산출물이 없습니다.</p></div>
+      </section>
+    </div>
+  </main>
+  <script src="/assets/implementation.js"></script>
+</body>
+</html>

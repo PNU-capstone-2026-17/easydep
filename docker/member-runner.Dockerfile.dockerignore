@@ -1,2 +1,7 @@
 **
 !docker/member-runner-requirements.txt
+!app/
+!app/implementation/
+!app/implementation/tools/
+!app/implementation/tools/puml2code-bce/
+!app/implementation/tools/puml2code-bce/**

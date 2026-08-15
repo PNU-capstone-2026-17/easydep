@@ -11,7 +11,7 @@ from app.db.session import init_db
 from app.design.api import router as design_router
 from app.implementation.application.jobs import worker as implementation_worker
 from app.implementation.interfaces.http import router as implementation_router
-from app.requirements.api import STATIC_DIR as REQUIREMENTS_UI_DIR
+from app.testing.api import router as testing_router
 from app.requirements.api import router as requirements_router
 from app.requirements.classifier import warmup_or_raise
 
@@ -25,6 +25,7 @@ app.include_router(artifacts_router)
 app.include_router(requirements_router)
 app.include_router(design_router)
 app.include_router(implementation_router)
+app.include_router(testing_router)
 
 
 @app.on_event("startup")
@@ -59,21 +60,46 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/requirements", include_in_schema=False)
+def requirements_ui_redirect() -> RedirectResponse:
+    return RedirectResponse("/requirements/")
+
+
 @app.get("/design", include_in_schema=False)
 def design_ui_redirect() -> RedirectResponse:
-    """마운트는 "/design/"에만 걸린다.
-
-    보통은 Starlette이 슬래시를 붙여 리다이렉트해 주지만, 아래 "/" catch-all이
-    "/design"을 먼저 받아가 404로 끝난다. 주소창에 "/design"을 친 경우를 위해 직접 넘긴다.
-    """
     return RedirectResponse("/design/")
 
 
-# 워크플로우 순서대로 붙인다. 첫 화면 "/"는 요구사항 분석이고, 설계는 그 다음인
-# "/design". "/"는 나머지 전부를 받아가는 catch-all이라 반드시 마지막에 마운트한다.
-app.mount("/design", StaticFiles(directory=FRONTEND_DIR, html=True), name="design-ui")
+@app.get("/implementation", include_in_schema=False)
+def implementation_ui_redirect() -> RedirectResponse:
+    return RedirectResponse("/implementation/")
+
+
+@app.get("/testing", include_in_schema=False)
+def testing_ui_redirect() -> RedirectResponse:
+    return RedirectResponse("/testing/")
+
+
+# UI 파일은 frontend/ 아래에 단계별로 둔다. API 라우터가 먼저 등록되어 있으므로
+# 마지막의 루트 mount는 화면 요청만 처리한다.
 app.mount(
-    "/",
-    StaticFiles(directory=REQUIREMENTS_UI_DIR, html=True),
+    "/requirements",
+    StaticFiles(directory=FRONTEND_DIR / "requirements", html=True),
     name="requirements-ui",
 )
+app.mount(
+    "/design",
+    StaticFiles(directory=FRONTEND_DIR / "design", html=True),
+    name="design-ui",
+)
+app.mount(
+    "/implementation",
+    StaticFiles(directory=FRONTEND_DIR / "implementation", html=True),
+    name="implementation-ui",
+)
+app.mount(
+    "/testing",
+    StaticFiles(directory=FRONTEND_DIR / "testing", html=True),
+    name="testing-ui",
+)
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="workbench-ui")

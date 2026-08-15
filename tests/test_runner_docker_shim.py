@@ -10,7 +10,7 @@ def test_runner_shim_translates_declared_gradle_tool_only():
             "/easydep-workspace/app:/easydep-workspace/app",
             "-w",
             "/easydep-workspace/app",
-            "gradle:21-jdk",
+            "gradle:8.14.2-jdk21",
             "gradle",
             "test",
             "--no-daemon",
@@ -41,7 +41,7 @@ def test_runner_shim_maps_container_target_paths_to_local_bind_sources():
             "--rm",
             "-v",
             "/easydep-workspace:/workspace",
-            "openapitools/openapi-generator-cli:v7.14.0",
+            "openapitools/openapi-generator-cli:v7.24.0",
             "generate",
             "-i",
             "/workspace/design/openapi.json",
@@ -52,3 +52,36 @@ def test_runner_shim_maps_container_target_paths_to_local_bind_sources():
 
     assert "/easydep-workspace/design/openapi.json" in command
     assert "/easydep-workspace/generated/client" in command
+
+
+def test_runner_shim_accepts_the_pinned_backend_openapi_image():
+    command, _, _ = translate(
+        [
+            "run",
+            "--rm",
+            "openapitools/openapi-generator-cli:v7.24.0",
+            "generate",
+            "-g",
+            "spring",
+        ]
+    )
+
+    assert command[:3] == [
+        "java",
+        "-jar",
+        "/opt/easydep/openapi-generator-7.24.0.jar",
+    ]
+
+
+def test_runner_shim_uses_its_embedded_puml2code_tool():
+    command, _, _ = translate(
+        [
+            "run",
+            "--rm",
+            "easydep/puml2code-bce:0.2.0",
+            "-i",
+            "/workspace/design/class.puml",
+        ]
+    )
+
+    assert command[:2] == ["node", "/opt/easydep/puml2code-bce/bin/puml2code"]

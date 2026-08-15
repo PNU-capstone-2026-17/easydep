@@ -61,7 +61,6 @@ class PrototypeClient:
             "verification": {"compile": True},
             "tools": {
                 "puml2codeRoot": "app/implementation/tools/puml2code-bce",
-                "openapiGeneratorJar": "app/implementation/tools/openapi-generator/openapi-generator-cli-7.24.0.jar",
             },
             "agent": {"mode": "openhands", "model": self.settings.model, "baseUrl": self.settings.base_url},
         }

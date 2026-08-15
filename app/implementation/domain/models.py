@@ -37,7 +37,6 @@ class JobSpec:
     verify_compile: bool
     output_root: Path
     puml2code_root: Path
-    openapi_generator_jar: Path
     agent_mode: str
     agent_model: str
     agent_base_url: str

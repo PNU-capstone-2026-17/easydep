@@ -8,7 +8,6 @@
 요청에 app_id가 있을 때만 저장하므로, 저장소 없이 단독으로 돌려보는 것도 그대로 된다.
 """
 import uuid
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -24,9 +23,6 @@ from app.requirements.schemas import AnalyzeRequest, AnalyzeResponse, ResourceAn
 telemetry.configure_logging()
 
 router = APIRouter(prefix="/api/requirements", tags=["requirements"])
-
-STATIC_DIR = Path(__file__).parent / "static"
-
 
 def persist_analysis(app_id: str, payload: dict) -> list[str]:
     """응답에 실린 산출물 중 달라진 것을 새 버전으로 남기고, 저장한 stage를 돌려준다.

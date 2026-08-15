@@ -69,8 +69,10 @@ python -m uvicorn server:app --reload
 
 | 경로 | 용도 |
 |---|---|
-| `/` | 요구사항 분석 UI |
+| `/` | 4단계 개발 워크벤치 |
+| `/requirements/` | 요구사항 분석 UI |
 | `/design/` | 설계 UI |
+| `/implementation/` | 시스템 구현·테스팅 UI |
 | `/docs` | OpenAPI 문서 |
 | `/healthz` | 배포 상태 확인 |
 

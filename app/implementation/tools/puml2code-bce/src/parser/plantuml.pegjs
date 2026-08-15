@@ -133,8 +133,9 @@ methoddeclaration
 methodparameters
   = items:methodparameter* { return items; }
 methodparameter
-  = noise item:returntype membername:([ ] membername)? [=] defaultValue:(defaultvalue) [,]? { var Parameter = require("./Parameter"); return new Parameter(item, membername ? membername[1] : null, defaultValue); }
-  / noise item:returntype membername:([ ] membername)? [,]? { var Parameter = require("./Parameter"); return new Parameter(item, membername ? membername[1] : null); }
+  = noise datatype:returntype membername:([ ] membername) [=] defaultValue:(defaultvalue) [,]? { var Parameter = require("./Parameter"); return new Parameter(datatype, membername[1], defaultValue); }
+  / noise datatype:returntype membername:([ ] membername) [,]? { var Parameter = require("./Parameter"); return new Parameter(datatype, membername[1]); }
+  / noise membername:membername [,]? { var Parameter = require("./Parameter"); return new Parameter("Object", membername); }
 returntype
   = items:[^ ,\n\r\t(){}<>]+ template:([<] templateargs [>])? typeinfo:[*\[\]&]* { return items.join("") + (template ? template.join("") : "") + typeinfo.join(""); }
 templateargs

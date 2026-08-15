@@ -5,20 +5,24 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from app.core.orchestration.runner_compat import gradle_command
 
 OPENAPI_JARS = {
-    "openapitools/openapi-generator-cli": Path("/opt/easydep/openapi-generator-7.24.0.jar"),
-    "openapitools/openapi-generator-cli:latest": Path(
+    "openapitools/openapi-generator-cli": PurePosixPath("/opt/easydep/openapi-generator-7.24.0.jar"),
+    "openapitools/openapi-generator-cli:latest": PurePosixPath(
         "/opt/easydep/openapi-generator-7.24.0.jar"
     ),
-    "openapitools/openapi-generator-cli:v7.14.0": Path(
+    "openapitools/openapi-generator-cli:v7.24.0": PurePosixPath(
+        "/opt/easydep/openapi-generator-7.24.0.jar"
+    ),
+    "openapitools/openapi-generator-cli:v7.14.0": PurePosixPath(
         "/opt/easydep/openapi-generator-7.14.0.jar"
     ),
 }
-GRADLE_IMAGES = {"gradle:21-jdk", "gradle:8.14.2-jdk21"}
+GRADLE_IMAGES = {"gradle:8.14.2-jdk21"}
+PUML2CODE_IMAGE = "easydep/puml2code-bce:0.2.0"
 
 
 def translate(arguments: list[str]) -> tuple[list[str], Path | None, dict[str, str]]:
@@ -74,6 +78,12 @@ def translate(arguments: list[str]) -> tuple[list[str], Path | None, dict[str, s
         if not command or command[0] not in {"node", "npm"}:
             raise ValueError("node:20에서는 node 또는 npm만 허용합니다")
         return command, working_directory, environment
+    if image == PUML2CODE_IMAGE:
+        return [
+            "node",
+            "/opt/easydep/puml2code-bce/bin/puml2code",
+            *command,
+        ], working_directory, environment
     if image in OPENAPI_JARS:
         return ["java", "-jar", str(OPENAPI_JARS[image]), *command], working_directory, environment
     if image in GRADLE_IMAGES:

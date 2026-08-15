@@ -45,7 +45,7 @@ def test_translate_docker_command_handles_subdirectory_volumes():
             cache + ":/home/gradle/.gradle",
             "-w",
             application,
-            "gradle:21-jdk",
+            "gradle:8.14.2-jdk21",
         ],
         root,
     )

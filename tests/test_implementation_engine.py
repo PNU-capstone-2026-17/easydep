@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.implementation.generation.orchestrator import (
+    PrototypeOrchestrator,
     find_undefined_bce_types,
     load_job,
     plan_e2e_tasks,
@@ -29,6 +30,7 @@ from app.implementation.agents.workspace import (
     task_base_package,
 )
 from app.implementation.agents.provider import (
+    configured_api_key,
     openhands_compatibility,
     transient_provider_error,
     provider_retry_delay,
@@ -1376,6 +1378,82 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 [task["task_id"] for task in manifest["implementation_tasks"]],
             )
 
+    def test_e2e_planner_requires_executable_openapi_error_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bce.puml").write_text("@startuml\n@enduml", encoding="utf-8")
+            (root / "sequence.puml").write_text(
+                "alt product not found\nend", encoding="utf-8"
+            )
+            (root / "erd.puml").write_text("", encoding="utf-8")
+            (root / "openapi.yaml").write_text(
+                json.dumps({
+                    "openapi": "3.0.3",
+                    "paths": {
+                        "/products/{productId}": {
+                            "get": {
+                                "operationId": "getProduct",
+                                "responses": {
+                                    "200": {"description": "Product found"},
+                                    "404": {"description": "Product not found"},
+                                },
+                            }
+                        }
+                    },
+                }),
+                encoding="utf-8",
+            )
+            job = root / "job.json"
+            job.write_text(
+                json.dumps({
+                    "name": "product-catalog",
+                    "workspaceRoot": ".",
+                    "inputs": {
+                        "bceClass": "bce.puml",
+                        "sequence": "sequence.puml",
+                        "erd": "erd.puml",
+                        "openapi": "openapi.yaml",
+                    },
+                    "generation": {"basePackage": "com.example.products"},
+                    "tools": {"puml2codeRoot": ".", "openapiGeneratorJar": "bce.puml"},
+                }),
+                encoding="utf-8",
+            )
+            run = root / "run_product"
+            main = run / "application/src/main/java/com/example/products"
+            test = run / "application/src/test/java/com/example/products"
+            (main / "api").mkdir(parents=True)
+            (main / "adapter/in/web").mkdir(parents=True)
+            (test / "adapter/in/web").mkdir(parents=True)
+            (main / "api/ProductsApi.java").write_text(
+                "public interface ProductsApi { Object getProduct(String productId); }",
+                encoding="utf-8",
+            )
+            (main / "adapter/in/web/ProductsApiController.java").write_text(
+                "import org.springframework.http.ResponseEntity;\n"
+                "public class ProductsApiController {\n"
+                "  ResponseEntity<String> getProduct(String id) { return ResponseEntity.ok(id); }\n"
+                "}",
+                encoding="utf-8",
+            )
+            (test / "adapter/in/web/ProductsApiControllerTest.java").write_text(
+                "public class ProductsApiControllerTest {}", encoding="utf-8"
+            )
+
+            spec = load_job(job)
+            self.assertEqual([], generate_e2e_tasks(spec, run))
+            gaps = detect_e2e_design_gaps(spec, run)
+            self.assertEqual(
+                {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},
+                {gap["code"] for gap in gaps},
+            )
+            report = json.loads(
+                (run / "reports/design-gaps/end-to-end-flow.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("NEEDS_INPUT", report["status"])
+
     def test_e2e_planner_emits_bounded_real_integration_test_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2046,6 +2124,32 @@ TimerManager --> PurchaseRecord : Manager creates record
 """
         self.assertEqual(["TimerInfo"], find_undefined_bce_types(source))
 
+    def test_decimal_placeholder_exposes_a_lossless_value_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bce = root / "classes.puml"
+            bce.write_text(
+                "@startuml\nclass Product <<Entity>> {\n  - price : Decimal\n}\n@enduml\n",
+                encoding="utf-8",
+            )
+            orchestrator = object.__new__(PrototypeOrchestrator)
+            orchestrator.spec = SimpleNamespace(
+                inputs={"bceClass": bce},
+                allow_assumptions=True,
+                base_package="com.example.demo",
+            )
+            orchestrator.manifest = SimpleNamespace(assumptions=[], diagnostics=[])
+            java_root = root / "java"
+
+            orchestrator._write_missing_type_placeholders(java_root)
+
+            decimal = (
+                java_root / "com/example/demo/bce/Decimal.java"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Decimal(BigDecimal value)", decimal)
+            self.assertIn("BigDecimal getValue()", decimal)
+            self.assertIn("boolean equals(Object other)", decimal)
+
     def test_rejects_input_outside_workspace_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2125,6 +2229,16 @@ components: {}
         compatibility = openhands_compatibility()
         self.assertIn("sdkInstalled", compatibility)
         self.assertIsInstance(compatibility["sdkInstalled"], bool)
+
+    def test_openhands_uses_the_shared_project_api_key(self) -> None:
+        configured = SimpleNamespace(
+            api_key="shared-key",
+            nvidia_api_key=None,
+            nvidia_nim_api_key=None,
+            llm_api_key=None,
+        )
+        with patch("app.implementation.agents.provider.settings", configured):
+            self.assertEqual("shared-key", configured_api_key())
 
     def test_changed_files_detects_create_modify_and_delete(self) -> None:
         self.assertEqual(

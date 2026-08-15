@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..agents.runtime import write_execution_plan
@@ -31,6 +31,24 @@ from .frontend import generate_frontend_project
 OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
 BCE_GENERATOR_VERSION = "0.2.0"
 IMPLEMENTATION_PIPELINE_VERSION = "0.5.0-agent-frontend"
+PUML2CODE_IMAGE = "easydep/puml2code-bce:0.2.0"
+OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
+GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
+# A Docker bind mount can keep a directory handle open for a short time after
+# the container process has exited on Windows.  Retrying only the documented
+# sharing/access-denied errors keeps an immutable run promotion safe while
+# allowing Docker Desktop to release that transient handle.
+PROMOTION_RETRYABLE_WINERRORS = frozenset({5, 32, 33})
+PROMOTION_MAX_ATTEMPTS = 12
+PROMOTION_INITIAL_DELAY_SECONDS = 0.25
+PROMOTION_MAX_DELAY_SECONDS = 2.0
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
+GRADLE_COMMAND_TIMEOUT_SECONDS = 900
+# Docker Desktop accepts a Windows host path as the bind-mount source, but all
+# paths interpreted by the Linux container must be POSIX paths.  Mount every
+# implementation input below one fixed container root so BCE, OpenAPI, and
+# Gradle all use the same portable contract.
+CONTAINER_WORKSPACE = PurePosixPath("/workspace")
 JAVA_BUILTIN_TYPES = {
     "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
     "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
@@ -69,12 +87,6 @@ def load_job(path: Path) -> JobSpec:
                 "puml2codeRoot", "app/implementation/tools/puml2code-bce"
             )
         ),
-        openapi_generator_jar=resolve(
-            tools.get(
-                "openapiGeneratorJar",
-                "app/implementation/tools/openapi-generator/openapi-generator-cli-7.24.0.jar",
-            )
-        ),
         agent_mode=agent.get("mode", "plan-only"),
         agent_model=agent.get(
             "model", "nvidia_nim/openai/gpt-oss-120b"
@@ -98,15 +110,14 @@ class PrototypeOrchestrator:
         self.manifest.status = "VALIDATING_INPUT"
         self._validate_inputs()
         self.manifest.input_hash = self._combined_input_hash()
-        run_name = f"run_{self.manifest.input_hash[:12]}"
-        staging = self.spec.output_root / f".{run_name}.staging"
-        final = self.spec.output_root / run_name
-        existing_manifest = final / "reports" / "run-manifest.json"
-        if existing_manifest.is_file():
-            existing = json.loads(existing_manifest.read_text(encoding="utf-8"))
-            if existing.get("input_hash") == self.manifest.input_hash:
-                return final
-            raise RuntimeError(f"Existing run has a conflicting input hash: {final}")
+        staging, final = self._select_run_paths()
+        # A successful run for the exact input and generator fingerprint is an
+        # immutable checkpoint. Reusing it is essential when a member runner
+        # resumes an interrupted agent workflow; regenerating into the same
+        # destination would correctly be rejected by _promote, but only after
+        # spending time on every generator again.
+        if final.exists():
+            return final
         self._reset_target(staging)
         staging.mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +184,30 @@ class PrototypeOrchestrator:
         self._write_reports(staging)
         self._promote(staging, final)
         return final
+
+    def _select_run_paths(self) -> tuple[Path, Path]:
+        """Return an immutable destination, retrying only previously failed runs.
+
+        A failure report is useful evidence and must never be overwritten.  It
+        must also not permanently prevent a corrected generator/runtime from
+        retrying the same input hash.
+        """
+        base_name = f"run_{self.manifest.input_hash[:12]}"
+        attempt = 0
+        while True:
+            run_name = base_name if attempt == 0 else f"{base_name}_retry_{attempt}"
+            final = self.spec.output_root / run_name
+            existing_manifest = final / "reports" / "run-manifest.json"
+            if not existing_manifest.exists():
+                if final.exists():
+                    raise RuntimeError(f"Existing run is missing its manifest: {final}")
+                return self.spec.output_root / f".{run_name}.staging", final
+            existing = json.loads(existing_manifest.read_text(encoding="utf-8"))
+            if existing.get("input_hash") != self.manifest.input_hash:
+                raise RuntimeError(f"Existing run has a conflicting input hash: {final}")
+            if existing.get("status") != "FAILED":
+                return self.spec.output_root / f".{run_name}.staging", final
+            attempt += 1
 
     def _prepare_feedback_revision(self, staging: Path) -> None:
         snapshot_path = self.spec.inputs.get("baseSnapshot")
@@ -295,7 +330,7 @@ class PrototypeOrchestrator:
 
         required_tools = {} if self.spec.job_type == "FEEDBACK_REVISION" else {
             "puml2code": self.spec.puml2code_root / "bin" / "puml2code",
-            "openapiGenerator": self.spec.openapi_generator_jar,
+            "puml2codeDockerfile": self.spec.puml2code_root / "Dockerfile",
         }
         for name, path in required_tools.items():
             if not path.is_file():
@@ -318,6 +353,7 @@ class PrototypeOrchestrator:
         digest.update(str(self.spec.agent_max_output_tokens).encode())
         digest.update(str(self.spec.agent_reasoning_budget).encode())
         digest.update(BCE_GENERATOR_VERSION.encode())
+        digest.update(OPENAPI_GENERATOR_IMAGE.encode())
         digest.update(IMPLEMENTATION_PIPELINE_VERSION.encode())
         # Bind a run to the actual planner/runtime implementation, not only a
         # manually maintained version label. Prompt or gate edits therefore
@@ -328,49 +364,98 @@ class PrototypeOrchestrator:
             digest.update(sha256_file(source).encode())
         for tool in (
             self.spec.puml2code_root / "package.json",
-            self.spec.openapi_generator_jar,
+            self.spec.puml2code_root / "package-lock.json",
+            self.spec.puml2code_root / "Dockerfile",
         ):
             if tool.is_file():
+                digest.update(tool.relative_to(self.spec.puml2code_root).as_posix().encode())
                 digest.update(sha256_file(tool).encode())
+        generator_source = self.spec.puml2code_root / "src"
+        if generator_source.is_dir():
+            for source in sorted(generator_source.rglob("*")):
+                if source.is_file():
+                    digest.update(source.relative_to(self.spec.puml2code_root).as_posix().encode())
+                    digest.update(sha256_file(source).encode())
         for name in sorted(self.manifest.inputs):
             digest.update(name.encode())
             digest.update(self.manifest.inputs[name]["sha256"].encode())
         return digest.hexdigest()
 
+    def _container_path(self, path: Path) -> str:
+        """Return a workspace-relative path as seen by generation containers."""
+        root = self.spec.workspace_root.resolve()
+        source = path.resolve()
+        try:
+            relative = source.relative_to(root)
+        except ValueError as error:
+            raise ValueError(
+                f"Docker input/output must stay inside workspaceRoot: {source}"
+            ) from error
+        return (CONTAINER_WORKSPACE / relative.as_posix()).as_posix()
+
+    def _workspace_volume(self) -> str:
+        return f"{self.spec.workspace_root.resolve()}:{CONTAINER_WORKSPACE.as_posix()}"
+
+    def _ensure_puml2code_image(self) -> None:
+        """Build the BCE generator image with its npm dependencies included.
+
+        The repository bind mount intentionally contains only tracked source;
+        `node_modules` is ignored.  Building from the tool directory keeps the
+        generator's runtime dependencies out of the host workspace and makes
+        the command work on a fresh Windows checkout.
+        """
+        if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") == "1":
+            # The member runner embeds the exact same tool image contents and
+            # rewrites this invocation through runner_docker_shim.
+            return
+        dockerfile = self.spec.puml2code_root / "Dockerfile"
+        self._run_command(
+            "puml2code-bce-image",
+            [
+                "docker",
+                "build",
+                "--tag",
+                PUML2CODE_IMAGE,
+                "--file",
+                str(dockerfile),
+                str(self.spec.puml2code_root),
+            ],
+            self.spec.workspace_root,
+        )
+
     def _generate_bce(self, java_root: Path) -> None:
         bce_package = f"{self.spec.base_package}.bce"
-        workspace_root = str(self.spec.workspace_root)
+        self._ensure_puml2code_image()
         command = [
             "docker", "run", "--rm",
-            "-v", f"{workspace_root}:{workspace_root}",
-            "-w", workspace_root,
-            "node:20",
-            "node",
-            str(self.spec.puml2code_root / "bin" / "puml2code"),
+            "-v", self._workspace_volume(),
+            "-w", CONTAINER_WORKSPACE.as_posix(),
+            PUML2CODE_IMAGE,
             "-i",
-            str(self.spec.inputs["bceClass"]),
+            self._container_path(self.spec.inputs["bceClass"]),
             "-l",
             "java",
             "-p",
             bce_package,
             "-o",
-            str(java_root),
+            self._container_path(java_root),
         ]
         self._run_command("puml2code-bce", command, self.spec.puml2code_root)
         self.manifest.tools["puml2code-bce"] = {
             "upstream": "https://github.com/jupe/puml2code",
             "forkVersion": BCE_GENERATOR_VERSION,
+            "image": PUML2CODE_IMAGE,
         }
 
     def _generate_openapi(self, application: Path) -> None:
-        workspace_root = str(self.spec.workspace_root)
         command = [
             "docker", "run", "--rm",
-            "-v", f"{workspace_root}:{workspace_root}",
-            "openapitools/openapi-generator-cli", "generate",
+            "-v", self._workspace_volume(),
+            "-w", CONTAINER_WORKSPACE.as_posix(),
+            OPENAPI_GENERATOR_IMAGE, "generate",
             "-g", "spring",
-            "-i", str(self.spec.inputs["openapi"]),
-            "-o", str(application),
+            "-i", self._container_path(self.spec.inputs["openapi"]),
+            "-o", self._container_path(application),
             "--additional-properties=" + ",".join(
                 [
                     "library=spring-boot",
@@ -411,7 +496,7 @@ class PrototypeOrchestrator:
                 )
             )
         self.manifest.tools["openapi-generator"] = {
-            "version": "docker-latest",
+            "image": OPENAPI_GENERATOR_IMAGE,
         }
 
     def _generate_frontend(self, application: Path) -> None:
@@ -521,10 +606,46 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         target_dir = java_root / Path(package.replace(".", "/"))
         target_dir.mkdir(parents=True, exist_ok=True)
         for type_name in missing:
+            if type_name == "Decimal":
+                source = (
+                    f"package {package};\n\n"
+                    "import java.math.BigDecimal;\n"
+                    "import java.util.Objects;\n\n"
+                    "/** Assumed decimal value object for an undefined BCE type. */\n"
+                    "public final class Decimal {\n"
+                    "  private final BigDecimal value;\n\n"
+                    "  public Decimal() {\n"
+                    "    this(null);\n"
+                    "  }\n\n"
+                    "  public Decimal(BigDecimal value) {\n"
+                    "    this.value = value;\n"
+                    "  }\n\n"
+                    "  public BigDecimal getValue() {\n"
+                    "    return this.value;\n"
+                    "  }\n\n"
+                    "  @Override\n"
+                    "  public boolean equals(Object other) {\n"
+                    "    return other instanceof Decimal decimal\n"
+                    "        && Objects.equals(this.value, decimal.value);\n"
+                    "  }\n\n"
+                    "  @Override\n"
+                    "  public int hashCode() {\n"
+                    "    return Objects.hashCode(this.value);\n"
+                    "  }\n\n"
+                    "  @Override\n"
+                    "  public String toString() {\n"
+                    "    return this.value == null ? \"\" : this.value.toPlainString();\n"
+                    "  }\n"
+                    "}\n"
+                )
+            else:
+                source = (
+                    f"package {package};\n\n"
+                    f"/** Assumed placeholder for an undefined BCE type. */\n"
+                    f"public final class {type_name} {{}}\n"
+                )
             (target_dir / f"{type_name}.java").write_text(
-                f"package {package};\n\n"
-                f"/** Assumed placeholder for an undefined BCE type. */\n"
-                f"public final class {type_name} {{}}\n",
+                source,
                 encoding="utf-8",
             )
             assumption = f"Generated placeholder for undefined BCE type: {type_name}"
@@ -534,30 +655,37 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             )
 
     def _compile(self, application: Path) -> None:
-        gradle_home = self.spec.output_root.parent.parent / ".cache" / "gradle"
+        gradle_home = (self.spec.output_root.parent.parent / ".cache" / "gradle").resolve()
         self._run_command(
             "gradle-compile",
             [
                 "docker", "run", "--rm",
-                "-v", f"{application}:{application}",
+                "-v", self._workspace_volume(),
                 "-v", f"{gradle_home}:/home/gradle/.gradle",
-                "-w", str(application),
-                "gradle:21-jdk",
+                "-w", self._container_path(application),
+                GRADLE_GENERATOR_IMAGE,
                 "gradle",
                 "compileJava",
                 "bootJar",
                 "--no-daemon",
             ],
             application,
+            timeout_seconds=GRADLE_COMMAND_TIMEOUT_SECONDS,
         )
-        build_output = application / "build"
-        if build_output.exists():
-            shutil.rmtree(build_output)
+        # `bootJar` is a user-facing deployment artifact.  Keep build/libs in
+        # the completed run; deleting the whole build directory here made a
+        # successful packaging step indistinguishable from compile-only output.
         local_gradle = application / ".gradle"
         if local_gradle.exists():
             shutil.rmtree(local_gradle)
 
-    def _run_command(self, name: str, command: list[str], cwd: Path) -> CommandEvidence:
+    def _run_command(
+        self,
+        name: str,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: int = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    ) -> CommandEvidence:
         started = time.monotonic()
         result = subprocess.run(
             command,
@@ -566,7 +694,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=300,
+            timeout=timeout_seconds,
             check=False,
         )
         evidence = CommandEvidence(
@@ -622,9 +750,24 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
 
     def _promote(self, staging: Path, final: Path) -> None:
         self.spec.output_root.mkdir(parents=True, exist_ok=True)
-        if final.exists():
-            raise RuntimeError(f"Refusing to overwrite immutable run: {final}")
-        os.replace(staging, final)
+        for attempt in range(PROMOTION_MAX_ATTEMPTS):
+            if final.exists():
+                raise RuntimeError(f"Refusing to overwrite immutable run: {final}")
+            try:
+                os.replace(staging, final)
+                return
+            except OSError as error:
+                winerror = getattr(error, "winerror", None)
+                if (
+                    winerror not in PROMOTION_RETRYABLE_WINERRORS
+                    or attempt == PROMOTION_MAX_ATTEMPTS - 1
+                ):
+                    raise
+                delay = min(
+                    PROMOTION_INITIAL_DELAY_SECONDS * (2 ** attempt),
+                    PROMOTION_MAX_DELAY_SECONDS,
+                )
+                time.sleep(delay)
 
 
 def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> list[dict[str, object]]:

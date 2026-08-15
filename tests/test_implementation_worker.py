@@ -166,7 +166,7 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     assert sequence_path.name == "sequence-diagrams.puml"
     assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
     assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")
-    assert job["tools"]["openapiGeneratorJar"].startswith("app/implementation/tools/")
+    assert "openapiGeneratorJar" not in job["tools"]
 
 
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:

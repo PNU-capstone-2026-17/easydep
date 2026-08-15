@@ -27,6 +27,7 @@ from app.implementation.generation.frontend_scaffold import (
     validate_openapi,
 )
 from app.implementation.application.jobs import ImplementationWorker
+from app.implementation.domain.models import CommandEvidence
 
 
 OPENAPI = {
@@ -74,7 +75,7 @@ def test_builds_pinned_openapi_generator_typescript_fetch_command(tmp_path: Path
     target = tmp_path / "frontend/src/generated"
     command = openapi_typescript_fetch_command(tmp_path, source, target)
 
-    assert "openapitools/openapi-generator-cli:v7.14.0" in command
+    assert "openapitools/openapi-generator-cli:v7.24.0" in command
     assert command[command.index("-g") + 1] == "typescript-fetch"
     assert command[command.index("-i") + 1] == "/workspace/openapi.json"
     assert command[command.index("-o") + 1] == "/workspace/frontend/src/generated"
@@ -241,7 +242,6 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
         verify_compile=False,
         output_root=tmp_path / "runs",
         puml2code_root=tmp_path,
-        openapi_generator_jar=tmp_path / "generator.jar",
         agent_mode="plan-only",
         agent_model="model",
         agent_base_url="http://localhost",
@@ -278,6 +278,54 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
     assert orchestrator.manifest.tools["easydep-frontend-generator"]["generator"] == "typescript-fetch"
 
 
+def test_backend_openapi_generation_uses_a_pinned_docker_image(tmp_path: Path) -> None:
+    from app.implementation.domain.models import JobSpec
+    from app.implementation.generation.orchestrator import (
+        OPENAPI_GENERATOR_IMAGE,
+        PrototypeOrchestrator,
+    )
+
+    openapi = tmp_path / "openapi.json"
+    openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
+    spec = JobSpec(
+        job_type="INITIAL_IMPLEMENTATION",
+        feedback="",
+        name="orders",
+        workspace_root=tmp_path,
+        inputs={"openapi": openapi},
+        required_inputs=[],
+        base_package="com.example",
+        allow_assumptions=True,
+        verify_compile=False,
+        output_root=tmp_path / "runs",
+        puml2code_root=tmp_path,
+        agent_mode="plan-only",
+        agent_model="model",
+        agent_base_url="http://localhost",
+        agent_temperature=0.0,
+        agent_top_p=1.0,
+        agent_max_output_tokens=1000,
+        agent_reasoning_budget=0,
+    )
+    orchestrator = PrototypeOrchestrator(spec)
+    commands: list[list[str]] = []
+
+    def generated(name: str, command: list[str], cwd: Path) -> CommandEvidence:
+        commands.append(command)
+        return CommandEvidence(name, command, str(cwd), 0, 0, "", "")
+
+    orchestrator._run_command = generated
+    orchestrator._generate_openapi(tmp_path / "application")
+
+    assert OPENAPI_GENERATOR_IMAGE == "openapitools/openapi-generator-cli:v7.24.0"
+    assert OPENAPI_GENERATOR_IMAGE in commands[0]
+    assert commands[0][commands[0].index("-v") + 1] == f"{tmp_path.resolve()}:/workspace"
+    assert commands[0][commands[0].index("-w") + 1] == "/workspace"
+    assert commands[0][commands[0].index("-i") + 1] == "/workspace/openapi.json"
+    assert commands[0][commands[0].index("-o") + 1] == "/workspace/application"
+    assert orchestrator.manifest.tools["openapi-generator"]["image"] == OPENAPI_GENERATOR_IMAGE
+
+
 def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     tmp_path: Path,
 ) -> None:
@@ -309,7 +357,6 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         verify_compile=False,
         output_root=tmp_path / "runs",
         puml2code_root=tmp_path,
-        openapi_generator_jar=tmp_path / "generator.jar",
         agent_mode="plan-only",
         agent_model="model",
         agent_base_url="http://localhost",
@@ -533,7 +580,6 @@ def test_cli_run_to_completion_reuses_one_scoped_approval(
         verify_compile=False,
         output_root=tmp_path,
         puml2code_root=tmp_path,
-        openapi_generator_jar=tmp_path,
         agent_mode="plan-only",
         agent_model="model",
         agent_base_url="url",

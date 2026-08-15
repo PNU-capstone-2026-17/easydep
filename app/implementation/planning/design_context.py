@@ -50,6 +50,19 @@ STOP_WORDS = {
     "manager", "controller", "service", "get", "set", "is", "on", "log",
     "string", "boolean", "int", "float", "void", "message", "record",
 }
+HTTP_STATUS_ENUMS = {
+    "BAD_REQUEST": 400,
+    "UNAUTHORIZED": 401,
+    "FORBIDDEN": 403,
+    "NOT_FOUND": 404,
+    "CONFLICT": 409,
+    "UNPROCESSABLE_ENTITY": 422,
+    "TOO_MANY_REQUESTS": 429,
+    "INTERNAL_SERVER_ERROR": 500,
+    "BAD_GATEWAY": 502,
+    "SERVICE_UNAVAILABLE": 503,
+    "GATEWAY_TIMEOUT": 504,
+}
 
 
 def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask]:
@@ -858,6 +871,33 @@ def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]
                 "requiredAction": "Run and verify the API adapter phase.",
             })
 
+    expected_error_statuses = {
+        scenario.status for scenario in ir.e2e_scenarios if scenario.status >= 400
+    }
+    web_adapter_root = package_root / "adapter" / "in" / "web"
+    web_adapter_sources = (
+        sorted(web_adapter_root.rglob("*.java")) if web_adapter_root.is_dir() else []
+    )
+    implemented_error_statuses = _implemented_http_statuses(web_adapter_sources)
+    missing_error_statuses = sorted(expected_error_statuses - implemented_error_statuses)
+    if missing_error_statuses:
+        expected_text = ", ".join(str(status) for status in missing_error_statuses)
+        implemented_text = ", ".join(
+            str(status) for status in sorted(implemented_error_statuses) if status >= 400
+        ) or "none"
+        gaps.append({
+            "code": "OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED",
+            "source": "OpenAPI/BCE",
+            "evidence": (
+                f"The sequence-selected OpenAPI error outcome(s) {expected_text} have no "
+                f"executable web-adapter branch (implemented error statuses: {implemented_text})."
+            ),
+            "requiredAction": (
+                "Model each error outcome in the BCE Control return/error contract and "
+                "sequence alternative, then implement its explicit HTTP response mapping."
+            ),
+        })
+
     adapter_root = package_root / "adapter" / "out"
     adapter_sources = list(adapter_root.rglob("*.java")) if adapter_root.is_dir() else []
     for gateway in ir.gateways:
@@ -888,6 +928,33 @@ def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]
             "requiredAction": "Run and verify the ERD persistence phase.",
         })
     return gaps
+
+
+def _implemented_http_statuses(sources: list[Path]) -> set[int]:
+    """Return HTTP statuses with an executable Spring web-adapter mapping."""
+    statuses: set[int] = set()
+    for source in sources:
+        text = source.read_text(encoding="utf-8")
+        if re.search(r"\bResponseEntity\s*\.\s*ok\s*\(", text):
+            statuses.add(200)
+        if re.search(r"\bResponseEntity\s*\.\s*created\s*\(", text):
+            statuses.add(201)
+        if re.search(r"\bResponseEntity\s*\.\s*noContent\s*\(", text):
+            statuses.add(204)
+        if re.search(r"\bResponseEntity\s*\.\s*notFound\s*\(", text):
+            statuses.add(404)
+        statuses.update(
+            int(value)
+            for value in re.findall(
+                r"\bResponseEntity\s*\.\s*status\s*\(\s*(\d{3})\s*\)",
+                text,
+            )
+        )
+        statuses.update(
+            status for name, status in HTTP_STATUS_ENUMS.items()
+            if re.search(rf"\bHttpStatus\s*\.\s*{name}\b", text)
+        )
+    return statuses
 
 
 def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
@@ -931,6 +998,9 @@ Rules:
   represent a documented response, fail compilation rather than concealing the design gap.
 - Map BCE return values into generated API DTOs field by field using exact public accessors.
 - Unit tests must cover every documented status and verify exact Control arguments.
+- Never leave placeholder, empty fallback, or speculative response comments in production code.
+  If a Control cannot supply the documented response or error outcome, leave the contract
+  uncompilable and report the design gap; do not fabricate a response.
 - Create both contracted files, then finish immediately.
 
 ## OpenAPI response contract

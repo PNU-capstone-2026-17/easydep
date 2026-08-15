@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>요구사항 분석 AI 에이전트</title>
+  <title>EasyDep · 요구사항 분석</title>
   <style>
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
@@ -16,6 +16,10 @@
       font-size: 17px;
     }
     header small { display:block; font-weight: 400; font-size: 12px; opacity: .8; margin-top: 2px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .stage-nav { display:flex; gap:4px; flex-wrap:wrap; }
+    .stage-nav a { color:#dbeafe; text-decoration:none; padding:6px 8px; border-radius:7px; font-size:12px; font-weight:600; }
+    .stage-nav a:hover, .stage-nav a[aria-current="page"] { background:#374151; color:#fff; }
     main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 80px; }
     .card {
       background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
@@ -33,6 +37,8 @@
     /* .hidden 보다 뒤에 오는 규칙이라 display를 다시 눌러줘야 한다. */
     .steprow.hidden { display: none; }
     @media (max-width: 900px) {
+      header { align-items: flex-start; flex-direction: column; gap: 8px; }
+      .stage-nav { width: 100%; }
       /* 1fr이 아니라 minmax(0,1fr): 그냥 1fr이면 넓은 표가 칸을 밀어내 화면이 가로로 넘친다. */
       .steprow { grid-template-columns: minmax(0, 1fr); }
     }
@@ -126,8 +132,16 @@
 </head>
 <body>
   <header>
-    🧭 클라우드 네이티브 요구사항 분석 AI 에이전트
-    <small>요구사항 → 대화형 구체화 · FR/NFR 분류 · 액터/유스케이스 · Cockburn 명세 · 유스케이스 다이어그램</small>
+    <div>
+      🧭 EasyDep · 요구사항 분석
+      <small>요구사항 → 대화형 구체화 · FR/NFR 분류 · 액터/유스케이스 · Cockburn 명세 · 유스케이스 다이어그램</small>
+    </div>
+    <nav class="stage-nav" aria-label="개발 단계">
+      <a href="/requirements/" aria-current="page">요구사항 분석</a>
+      <a href="/design/">시스템 설계</a>
+      <a href="/implementation/">시스템 구현</a>
+      <a href="/testing/">테스팅</a>
+    </nav>
   </header>
   <main>
     <div class="card" id="appCard">
@@ -513,7 +527,7 @@
         // 마지막 단계(유스케이스 다이어그램)의 '다음 단계로'까지 끝나면 파이프라인이
         // 완료된다. 여기서 시스템 설계 화면으로 이어간다 — app_id는 localStorage
         // (easydep_app_id)로 공유되므로 설계 UI가 같은 앱을 그대로 이어받는다.
-        window.location.assign("/design");
+        window.location.assign("/design/");
         return;
       }
 
