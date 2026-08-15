@@ -82,7 +82,35 @@ def _missing_methods(sequence: dict, bce: dict, *, strict: bool) -> dict[str, li
 
 
 def _merge_method_revision(bce: dict, revised: dict, targets: set[str]) -> dict:
-    """LLM 수정본에서 지정 클래스의 methods만 채택한다."""
+    """기존 메서드를 보존하며 LLM의 추가·동일 시그니처 수정만 채택한다."""
+
+    def merge_methods(original: list, candidate: list) -> list:
+        candidate_by_signature: dict[str, str] = {}
+        candidate_order: list[str] = []
+        for raw_method in candidate:
+            method = str(raw_method)
+            signature = method_call_signature(method)
+            if not signature:
+                continue
+            if signature not in candidate_by_signature:
+                candidate_order.append(signature)
+            candidate_by_signature[signature] = method
+
+        merged: list = []
+        existing_signatures: set[str] = set()
+        for raw_method in original:
+            method = str(raw_method)
+            signature = method_call_signature(method)
+            if signature:
+                existing_signatures.add(signature)
+            merged.append(candidate_by_signature.get(signature, method))
+
+        for signature in candidate_order:
+            if signature not in existing_signatures:
+                merged.append(candidate_by_signature[signature])
+                existing_signatures.add(signature)
+        return merged
+
     revised_by_name = {
         str(item.get("className")): item
         for item in revised.get("Classes") or []
@@ -94,7 +122,10 @@ def _merge_method_revision(bce: dict, revised: dict, targets: set[str]) -> dict:
         class_name = str(item.get("className") or "")
         candidate = revised_by_name.get(class_name)
         if candidate and (not targets or class_name in targets):
-            item["methods"] = list(candidate.get("methods") or [])
+            item["methods"] = merge_methods(
+                list(item.get("methods") or []),
+                list(candidate.get("methods") or []),
+            )
         classes.append(item)
     return {**bce, "Classes": classes}
 

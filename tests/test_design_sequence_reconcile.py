@@ -41,7 +41,8 @@ def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
         "Classes": [
             {
                 "className": "OrderControl",
-                "methods": ["createOrder()", "reserveOrder()"],
+                # LLM이 기존 메서드를 누락해도 병합 단계가 보존해야 한다.
+                "methods": ["reserveOrder()"],
             }
         ]
     }
@@ -95,7 +96,12 @@ def test_sequence_finalizer_rejects_call_without_a_receiver_class():
 def test_reconcile_declares_return_type_for_a_required_result():
     state = {
         "extracted_bce_classes": {
-            "Classes": [{"className": "OrderControl", "methods": ["findOrder()"]}]
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "methods": ["findOrder()", "cancelOrder()"],
+                }
+            ]
         },
         "sequence_diagram_model": {
             "Participants": [
@@ -130,7 +136,8 @@ def test_reconcile_declares_return_type_for_a_required_result():
 
     revise.assert_called_once()
     assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
-        "findOrder(): Order"
+        "findOrder(): Order",
+        "cancelOrder()",
     ]
 
 
