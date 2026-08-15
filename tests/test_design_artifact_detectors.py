@@ -141,7 +141,7 @@ def test_message_methods_valid_model_passes():
         ],
         "Messages": [
             {"source": "User", "target": "OrderBoundary", "label": "displayOrderForm()", "type": "sync"},
-            {"source": "OrderBoundary", "target": "OrderControl", "label": "createOrder()", "type": "sync"},
+            {"source": "OrderBoundary", "target": "OrderControl", "label": "createOrder(items: List)", "type": "sync"},
             {"source": "OrderControl", "target": "Order", "label": "save()", "type": "sync"},
         ],
     }
@@ -196,20 +196,38 @@ def test_message_methods_skips_empty_labels():
     assert findings == []
 
 
-def test_message_methods_normalizes_names():
-    """가시성 기호와 매개변수가 달라도 메서드 이름이 같으면 일치로 본다."""
+def test_message_methods_normalizes_signature_whitespace():
+    """가시성/반환형은 제외하되 매개변수 선언까지 같은 시그니처여야 한다."""
     model = {
         "Participants": [
             {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
         ],
         "Messages": [
-            # BCE methods에는 "+ createOrder(items: List): Order"
-            # 메시지 라벨은 간단히 "createOrder"만
-            {"source": "User", "target": "OrderControl", "label": "createOrder", "type": "sync"},
+            {"source": "User", "target": "OrderControl", "label": "createOrder(items:List)", "type": "sync"},
         ],
     }
     findings = detectors.sequence_message_methods(model, STATE)
     assert findings == []
+
+
+def test_message_methods_rejects_hallucinated_parameter_content():
+    """괄호만 온전한 임의 문자열은 클래스의 실제 메서드로 인정하지 않는다."""
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            {
+                "source": "User",
+                "target": "OrderControl",
+                "label": "createOrder(not a declaration!)",
+                "type": "sync",
+            },
+        ],
+    }
+    findings = detectors.sequence_message_methods(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.message-labels-match-methods"
 
 
 def test_message_methods_integrated_via_findings():
@@ -232,7 +250,9 @@ def test_message_methods_integrated_via_findings():
 # ---------------------------------------------------------------------------
 # sequence.return-label-matches-method-return
 # ---------------------------------------------------------------------------
-def _order_return_model(return_label: str, method: str = "createOrder()") -> dict:
+def _order_return_model(
+    return_label: str, method: str = "createOrder(items: List)"
+) -> dict:
     return {
         "Participants": [
             {"name": "OrderBoundary", "kind": "boundary", "source_class": "OrderBoundary"},
@@ -283,6 +303,25 @@ def test_return_label_rejects_empty_result():
     )
     assert len(findings) == 1
     assert "비어 있음" in findings[0].message
+
+
+def test_async_call_cannot_have_a_return_message():
+    model = _order_return_model("Order")
+    model["Messages"][0]["type"] = "async"
+
+    findings = detectors.sequence_async_returns(model, STATE)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.async-call-has-no-return"
+
+
+def test_async_return_rule_is_integrated_via_findings():
+    model = _order_return_model("Order")
+    model["Messages"][0]["type"] = "async"
+
+    found = {item.rule_id for item in detectors.sequence_diagram_findings(model, STATE)}
+
+    assert "sequence.async-call-has-no-return" in found
 
 
 # ---------------------------------------------------------------------------

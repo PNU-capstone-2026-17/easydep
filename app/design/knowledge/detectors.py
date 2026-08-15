@@ -51,7 +51,7 @@ from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitiz
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.sequence_diagram.methods import (
-    method_name,
+    method_call_signature,
     method_return_type,
     normalize_return_type,
 )
@@ -1006,11 +1006,21 @@ def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
     라벨이 비어 있으면 건너뛴다 — 라벨 없는 메시지는 이름을 안 단 것이지 없는 메서드를
     부른 것이 아니다. return 타입 메시지도 건너뛴다 — 응답은 호출이 아니다.
 
-    대조는 **이름 수준**이다. BCE 모델의 메서드가 `"registerMember(name: String): void"`이고
-    메시지 라벨이 `"registerMember()"` 또는 `"registerMember"`이면 일치로 본다.
+    대조는 **전체 호출 시그니처 수준**이다. BCE 모델의 메서드가
+    `"registerMember(name: String): void"`이면 메시지도 `"registerMember(name: String)"`
+    이어야 한다. 반환 타입과 가시성만 비교에서 제외한다.
     """
     rule_id = "sequence.message-labels-match-methods"
-    class_methods = _class_methods_from_state(state)
+    classes = (state.get("extracted_bce_classes") or {}).get("Classes", [])
+    class_methods = {
+        str(class_item.get("className")): {
+            signature
+            for raw_method in class_item.get("methods") or []
+            if (signature := method_call_signature(str(raw_method)))
+        }
+        for class_item in classes
+        if class_item.get("className")
+    }
     if not class_methods:
         return []  # BCE 모델이 없으면 대조할 것이 없다
 
@@ -1041,7 +1051,7 @@ def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
         if methods is None:
             continue  # 클래스 자체가 BCE에 없다 — participant_classes 검출기가 잡는다
 
-        normalized_label = _normalize_method_name(label)
+        normalized_label = method_call_signature(label)
         if normalized_label and normalized_label not in methods:
             location = f"{source} -> {target} : {label}"
             found.append(
@@ -1176,6 +1186,43 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_async_returns(model: dict, state: dict) -> list[Finding]:
+    """fire-and-forget 비동기 호출에 연결된 반환 메시지를 검출한다."""
+    rule_id = "sequence.async-call-has-no-return"
+    pending_calls: list[dict] = []
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        message_type = str(message.get("type", "sync")).strip().lower()
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if message_type in {"sync", "async", "self"}:
+            pending_calls.append(message)
+            continue
+        if message_type != "return":
+            continue
+        call_index = next(
+            (
+                index
+                for index in range(len(pending_calls) - 1, -1, -1)
+                if str(pending_calls[index].get("source") or "").strip() == target
+                and str(pending_calls[index].get("target") or "").strip() == source
+            ),
+            None,
+        )
+        if call_index is None:
+            continue
+        call = pending_calls.pop(call_index)
+        if str(call.get("type", "sync")).strip().lower() == "async":
+            found.append(
+                Finding(
+                    rule_id,
+                    f"비동기 호출 '{call.get('label', '')}'은 반환 메시지를 가질 수 없음",
+                    f"{source} --> {target}",
+                )
+            )
+    return found
+
+
 def sequence_return_values_match_methods(model: dict, state: dict) -> list[Finding]:
     """반환 라벨이 대응 호출 메서드의 클래스 선언 반환 타입과 같은가."""
     rule_id = "sequence.return-label-matches-method-return"
@@ -1193,14 +1240,14 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
             continue
         by_method: dict[str, set[str]] = {}
         for raw_method in class_item.get("methods") or []:
-            name = method_name(str(raw_method))
-            if not name:
+            signature = method_call_signature(str(raw_method))
+            if not signature:
                 continue
             return_type = method_return_type(str(raw_method))
             if return_type:
-                by_method.setdefault(name, set()).add(return_type)
+                by_method.setdefault(signature, set()).add(return_type)
             else:
-                by_method.setdefault(name, set())
+                by_method.setdefault(signature, set())
         signatures[class_name] = by_method
 
     pending_calls: list[dict] = []
@@ -1209,7 +1256,7 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
         message_type = str(message.get("type", "sync")).strip().lower()
         source = str(message.get("source") or "").strip()
         target = str(message.get("target") or "").strip()
-        if message_type in {"sync", "async", "self"}:
+        if message_type in {"sync", "self"}:
             pending_calls.append(message)
             continue
         if message_type != "return":
@@ -1234,7 +1281,7 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
             continue  # 고립 반환은 sequence_unmatched_returns가 맡는다
         call = pending_calls.pop(call_index)
         class_name = participant_classes.get(source)
-        called_method = method_name(str(call.get("label") or ""))
+        called_method = method_call_signature(str(call.get("label") or ""))
         if not class_name or not called_method:
             continue
         class_signatures = signatures.get(class_name)
@@ -1591,6 +1638,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_methods": sequence_message_methods,
     "sequence_initial_entry": sequence_initial_entry,
     "sequence_unmatched_returns": sequence_unmatched_returns,
+    "sequence_async_returns": sequence_async_returns,
     "sequence_return_values_match_methods": sequence_return_values_match_methods,
     "sequence_usecase_coverage": sequence_usecase_coverage,
     "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,

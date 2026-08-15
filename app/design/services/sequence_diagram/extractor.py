@@ -145,7 +145,8 @@ that the inputs do not support.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
   fire-and-forget, and "self" for a call whose source and target are the same.
 - For every sync, async, or self call, `label` MUST be a method that already exists
-  on the receiver's class in the provided class diagram. Copy its method name;
+  on the receiver's class in the provided class diagram. Copy its complete call
+  signature including the parameter declaration, but omit visibility and return type;
   NEVER invent a method and NEVER use a descriptive phrase in its place.
 - Format a call `label` as `methodName(...)`. It must start with
   an ASCII letter or underscore and contain only ASCII letters, digits, or
@@ -154,6 +155,8 @@ that the inputs do not support.
 - Emit a return message only where the caller genuinely uses the result. Its
   `label` is mandatory and MUST exactly match the return type declared after `:`
   on the corresponding receiver-class method. Never use a narrative result label.
+  Async calls are fire-and-forget and MUST NOT have a corresponding return; use
+  sync instead when the caller consumes the declared result.
 - Use explicit `activate` and `deactivate` events only when an execution interval
   materially helps explain nested synchronous processing. Put the lifeline in both
   `source` and `target` for these events and leave `label` empty.

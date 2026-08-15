@@ -18,6 +18,13 @@ def is_complete_method_call(label: str) -> bool:
     return bool(_METHOD_CALL.fullmatch(label.strip()))
 
 
+def method_call_signature(raw: str) -> str:
+    """가시성·반환 타입을 제외한 전체 호출 시그니처를 정규화한다."""
+    raw = re.sub(r"^[+\-#~]\s*", "", raw.strip())
+    match = re.match(r"([A-Za-z_][A-Za-z0-9_]*\([^()\r\n]*\))", raw)
+    return re.sub(r"\s+", "", match.group(1)) if match else ""
+
+
 def method_name(raw: str) -> str:
     raw = re.sub(r"^[+\-#~]\s*", "", raw.strip())
     match = _METHOD_NAME.match(raw)

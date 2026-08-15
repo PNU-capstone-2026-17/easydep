@@ -22,14 +22,17 @@ same schema. Rules:
 - Keep the model grounded in the specification and class diagram — do not invent
   participants or messages that the feedback and inputs do not support.
 - For sync, async, and self calls, the label MUST name a method that already
-  exists on the receiver class. Repair an invalid message by remapping or removing
-  it; NEVER add a method to the class diagram and never invent a descriptive label.
+  exists on the receiver class and match its complete call signature, including
+  parameter declarations. Repair an invalid message by remapping or removing it;
+  NEVER invent a descriptive label.
 - Format a call label as `methodName(...)`, using an ASCII identifier for the
   method name and always including the parentheses. Never use a step or sequence
   number as a label; flow ordering belongs in `step_ids`.
 - Every return message must have a non-empty result label equal to the return type
   declared on its corresponding receiver-class method. Remove a return for a void
   method; never invent a narrative result label.
+- Async calls are fire-and-forget and cannot have return messages. If the caller
+  consumes a result, change the grounded call to sync; otherwise remove the return.
 - Every message's source and target must exist among the returned Participants.
 - Preserve unique participant aliases and use aliases for every message endpoint.
 - Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,

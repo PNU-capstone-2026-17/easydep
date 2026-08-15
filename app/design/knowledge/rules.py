@@ -387,8 +387,9 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every sequence message label on a non-return call must name a method "
-            "defined in the target class's BCE model. Comparison is at the name level: "
-            "visibility, parameters, and return type are stripped before matching."
+            "defined in the target class's BCE model. The complete call signature, "
+            "including its parameter declaration, must match; only visibility and the "
+            "declared return type are stripped before comparison."
         ),
         citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
         evidence="pipeline-invariant",
@@ -435,6 +436,19 @@ RULES: tuple[Rule, ...] = (
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="sequence_return_values_match_methods",
+    ),
+    Rule(
+        id="sequence.async-call-has-no-return",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "An async message is fire-and-forget and must not have a corresponding "
+            "return message. Use sync when the caller consumes a result, or remove the return."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (async message semantics)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_async_returns",
     ),
     Rule(
         id="sequence.usecase-step-coverage",
