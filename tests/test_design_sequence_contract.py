@@ -213,6 +213,7 @@ def test_renderer_preserves_alt_else_nested_fragments_and_lifecycle_events():
         ],
     }
     rendered = generate_sequence_from_model(model)
+    assert "autonumber" not in rendered
     assert "alt approved" in rendered
     assert "loop for each item" in rendered
     assert "else declined" in rendered

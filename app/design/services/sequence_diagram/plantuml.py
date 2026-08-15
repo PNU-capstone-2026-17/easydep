@@ -68,7 +68,6 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         "@startuml",
         "!theme plain",
         "skinparam sequenceMessageAlign center",
-        "autonumber",
         "",
     ]
 
