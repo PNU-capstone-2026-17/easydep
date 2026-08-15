@@ -423,6 +423,20 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_unmatched_returns",
     ),
     Rule(
+        id="sequence.return-label-matches-method-return",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every return message must have a non-empty result label exactly matching "
+            "the return type declared by its corresponding receiver-class method. A "
+            "method without a return type, or declared void, cannot emit a return message."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_return_values_match_methods",
+    ),
+    Rule(
         id="sequence.usecase-step-coverage",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,

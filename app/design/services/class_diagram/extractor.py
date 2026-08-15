@@ -103,20 +103,24 @@ _PROCEDURE = """
 4. Entity derivation: promote a noun to Entity only if it is created, read, \
    updated, deleted, or otherwise persists beyond the use case. Do not \
    promote one-off values or pure modifiers.
-5. Field derivation: assign fields to state a class must hold — Entities \
+5. Method signature derivation: write operations as `methodName(...)`. When the \
+   use-case flow says the caller uses a produced result, declare its type as \
+   `methodName(...): ReturnType`; that declaration is the contract used by return \
+   messages in the sequence diagram. Omit the return type rather than guessing it. \
+6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
    `name : Type` when the text tells you the type; leave the type off rather \
    than guessing one.
-6. Identifier derivation: for each Entity, if the text names a field that \
+7. Identifier derivation: for each Entity, if the text names a field that \
    already identifies it (an ISBN, an account number, an email used as the \
    login), list those field names in `identifier`. Leave `identifier` empty \
    when no such field exists — a surrogate key will be added downstream, and \
    an empty list is what says "this project chose the key", not you.
-7. Behavioural link derivation: connect Boundary, Control, and Entity to show \
+8. Behavioural link derivation: connect Boundary, Control, and Entity to show \
    the flow of a use case. If a link would break one of the rules above, \
    insert the missing intermediary Control/Boundary instead of keeping it.
-8. Structural association derivation — DO NOT SKIP THIS STEP. Behavioural \
+9. Structural association derivation — DO NOT SKIP THIS STEP. Behavioural \
    links are not data relationships. Separately from step 7, go through the \
    Entities and record how they relate to each other as data: which Entity \
    holds, owns, or refers to which. Give every Entity-to-Entity relationship \
@@ -126,13 +130,13 @@ _PROCEDURE = """
    an Entity-to-Entity relationship with a missing multiplicity is worse than \
    useless. Never express such a relationship by naming a field `memberId` and \
    leaving the relationship out — write the relationship.
-9. Traceability: set `use_case_ids` on every class to the id(s) of the use \
+10. Traceability: set `use_case_ids` on every class to the id(s) of the use \
    case(s) it was derived from.
-10. Self-check before finalizing: read the Rules section again and check your \
+11. Self-check before finalizing: read the Rules section again and check your \
    draft against every rule in it. Every one of them is verified by this \
    project after you answer, so a violation you leave in will be found — \
    correct it now instead.
-11. Coverage check: every MainSuccessScenario step should be represented by \
+12. Coverage check: every MainSuccessScenario step should be represented by \
    at least one class or relationship.
 
 ## Worked Example

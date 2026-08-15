@@ -34,6 +34,9 @@ the same schema. How to edit:
 - Change only what the feedback asks for; leave everything else intact.
 - Keep the model grounded in the use-case specification — do not invent classes,
   fields, methods, or relationships that the feedback and spec do not support.
+- Write methods as `methodName(...)`. If a caller uses a method's result, declare
+  its return type as `methodName(...): ReturnType`; sequence return labels are
+  validated against this declaration.
 - Carry `use_case_ids` over unchanged for elements you did not touch; update them
   for elements you changed; fill them in for elements you added.
 - Behavioural links (through a Boundary or Control) carry no multiplicity.

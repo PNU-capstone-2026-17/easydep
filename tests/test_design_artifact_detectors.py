@@ -230,6 +230,62 @@ def test_message_methods_integrated_via_findings():
 
 
 # ---------------------------------------------------------------------------
+# sequence.return-label-matches-method-return
+# ---------------------------------------------------------------------------
+def _order_return_model(return_label: str, method: str = "createOrder()") -> dict:
+    return {
+        "Participants": [
+            {"name": "OrderBoundary", "kind": "boundary", "source_class": "OrderBoundary"},
+            {"name": "OrderControl", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            {
+                "source": "OrderBoundary",
+                "target": "OrderControl",
+                "label": method,
+                "type": "sync",
+            },
+            {
+                "source": "OrderControl",
+                "target": "OrderBoundary",
+                "label": return_label,
+                "type": "return",
+            },
+        ],
+    }
+
+
+def test_return_label_matches_declared_method_return_type():
+    assert detectors.sequence_return_values_match_methods(
+        _order_return_model("Order"), STATE
+    ) == []
+
+
+def test_return_label_rejects_a_different_method_return_type():
+    findings = detectors.sequence_return_values_match_methods(
+        _order_return_model("Customer"), STATE
+    )
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.return-label-matches-method-return"
+
+
+def test_return_label_rejects_method_without_declared_return_type():
+    findings = detectors.sequence_return_values_match_methods(
+        _order_return_model("boolean", method="validateOrder()"), STATE
+    )
+    assert len(findings) == 1
+    assert "반환 타입" in findings[0].message
+
+
+def test_return_label_rejects_empty_result():
+    findings = detectors.sequence_return_values_match_methods(
+        _order_return_model(""), STATE
+    )
+    assert len(findings) == 1
+    assert "비어 있음" in findings[0].message
+
+
+# ---------------------------------------------------------------------------
 # sequence.initial-message-entry
 # ---------------------------------------------------------------------------
 def test_initial_entry_valid():

@@ -50,6 +50,11 @@ from app.design.knowledge import rules
 from app.design.services.class_diagram.plantuml import RELATION_SYMBOLS, sanitize_class_name
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
+from app.design.services.sequence_diagram.methods import (
+    method_name,
+    method_return_type,
+    normalize_return_type,
+)
 
 #: BCE 세 분류. 소문자로 비교한다 — 모델은 `<<Control>>`, `Control`, `control`을 섞어 낸다.
 BOUNDARY = "boundary"
@@ -1171,6 +1176,100 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_return_values_match_methods(model: dict, state: dict) -> list[Finding]:
+    """반환 라벨이 대응 호출 메서드의 클래스 선언 반환 타입과 같은가."""
+    rule_id = "sequence.return-label-matches-method-return"
+    participant_classes = {
+        _participant_id(participant): str(
+            participant.get("source_class") or participant.get("name") or ""
+        ).strip()
+        for participant in model.get("Participants", [])
+        if str(participant.get("kind", "")).strip().lower() != "actor"
+    }
+    signatures: dict[str, dict[str, set[str]]] = {}
+    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+        class_name = str(class_item.get("className") or "").strip()
+        if not class_name:
+            continue
+        by_method: dict[str, set[str]] = {}
+        for raw_method in class_item.get("methods") or []:
+            name = method_name(str(raw_method))
+            if not name:
+                continue
+            return_type = method_return_type(str(raw_method))
+            if return_type:
+                by_method.setdefault(name, set()).add(return_type)
+            else:
+                by_method.setdefault(name, set())
+        signatures[class_name] = by_method
+
+    pending_calls: list[dict] = []
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        message_type = str(message.get("type", "sync")).strip().lower()
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if message_type in {"sync", "async", "self"}:
+            pending_calls.append(message)
+            continue
+        if message_type != "return":
+            continue
+
+        label = str(message.get("label") or "").strip()
+        location = f"{source} --> {target} : {label or '<empty>'}"
+        if not label:
+            found.append(Finding(rule_id, "return 메시지의 결과 라벨이 비어 있음", location))
+            continue
+
+        call_index = next(
+            (
+                index
+                for index in range(len(pending_calls) - 1, -1, -1)
+                if str(pending_calls[index].get("source") or "").strip() == target
+                and str(pending_calls[index].get("target") or "").strip() == source
+            ),
+            None,
+        )
+        if call_index is None:
+            continue  # 고립 반환은 sequence_unmatched_returns가 맡는다
+        call = pending_calls.pop(call_index)
+        class_name = participant_classes.get(source)
+        called_method = method_name(str(call.get("label") or ""))
+        if not class_name or not called_method:
+            continue
+        class_signatures = signatures.get(class_name)
+        if class_signatures is None or called_method not in class_signatures:
+            continue  # 참가자/메서드 소유권 검출기가 맡는다
+
+        declared = class_signatures[called_method]
+        non_void = {
+            return_type
+            for return_type in declared
+            if normalize_return_type(return_type) != "void"
+        }
+        if not non_void:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"'{class_name}.{call.get('label', '')}'에 반환 타입이 선언되지 않았거나 void임",
+                    location,
+                )
+            )
+            continue
+        if normalize_return_type(label) not in {
+            normalize_return_type(return_type) for return_type in non_void
+        }:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"return 라벨 '{label}'이 '{class_name}.{call.get('label', '')}'의 "
+                    f"반환 타입 {sorted(non_void)}와 일치하지 않음",
+                    location,
+                )
+            )
+    return found
+
+
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
@@ -1492,6 +1591,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_methods": sequence_message_methods,
     "sequence_initial_entry": sequence_initial_entry,
     "sequence_unmatched_returns": sequence_unmatched_returns,
+    "sequence_return_values_match_methods": sequence_return_values_match_methods,
     "sequence_usecase_coverage": sequence_usecase_coverage,
     "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
     "sequence_database_access_discipline": sequence_database_access_discipline,
