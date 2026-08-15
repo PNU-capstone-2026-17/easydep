@@ -149,6 +149,8 @@ class DesignArtifactSpec:
     #: None이면 대사 노드가 생기지 않는다 — 그 산출물은 다른 것을 고칠 일이 없다는 뜻이고,
     #: 그래프에 빈 노드가 뜨지 않는다.
     reconcile: Callable[[ArchitectureState], dict] | None = None
+    #: 검사·수리가 모델을 바꾼 뒤 렌더 직전에 다시 강제할 산출물 불변식.
+    finalize: Callable[[ArchitectureState], dict] | None = None
 
 
 def merge_targeted(

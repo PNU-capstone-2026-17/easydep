@@ -26,22 +26,56 @@ from app.design.knowledge import rules
 #: 흐름뿐 아니라 "모델이 실제로 산출물이 되는가"까지 함께 본다.
 _BCE = {
     "Classes": [
-        {"className": "Order", "stereotype": "Entity", "fields": ["total: int"], "methods": []}
+        {
+            "className": "OrderBoundary",
+            "stereotype": "Boundary",
+            "fields": ["total: int"],
+            "methods": ["placeOrder()"],
+        },
+        {"className": "Order", "stereotype": "Entity", "fields": ["total: int"], "methods": []},
     ],
     "Relationships": [],
 }
 _BCE_REVISED = {
     "Classes": [
-        {"className": "OrderRevised", "stereotype": "Entity", "fields": [], "methods": []}
+        {
+            "className": "OrderBoundary",
+            "stereotype": "Boundary",
+            "fields": ["total: int", "note: String"],
+            "methods": ["placeOrder()"],
+        },
+        {"className": "Order", "stereotype": "Entity", "fields": ["total: int"], "methods": []},
     ],
     "Relationships": [],
 }
 _SEQUENCE = {
     "Participants": [
-        {"name": "Customer", "kind": "actor"},
-        {"name": "OrderController", "kind": "control"},
+        {
+            "name": "Customer",
+            "alias": "Customer",
+            "kind": "actor",
+            "description": "",
+            "source_class": "",
+        },
+        {
+            "name": "OrderBoundary",
+            "alias": "OrderBoundary",
+            "kind": "boundary",
+            "description": "",
+            "source_class": "OrderBoundary",
+        },
     ],
-    "Messages": [{"source": "Customer", "target": "OrderController", "label": "placeOrder()"}],
+    "Messages": [
+        {
+            "source": "Customer",
+            "target": "OrderBoundary",
+            "label": "placeOrder()",
+            "type": "sync",
+            "fragments": [],
+            "use_case_ids": ["UC1"],
+            "step_ids": [],
+        }
+    ],
 }
 _API = {
     "title": "Order API",

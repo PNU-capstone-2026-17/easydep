@@ -44,6 +44,78 @@ def test_self_message_requires_same_source_and_target():
         )
 
 
+@pytest.mark.parametrize(
+    "label", ["1", "2.", "2a", "create order", "createOrder", "Order.create()"]
+)
+def test_call_message_label_must_be_a_complete_method_call(label: str):
+    with pytest.raises(ValidationError, match="must be complete method calls"):
+        SequenceMessage(
+            source="A",
+            target="B",
+            label=label,
+            type="sync",
+            fragments=[],
+            use_case_ids=["UC1"],
+            step_ids=["UC1:main:1"],
+        )
+
+
+@pytest.mark.parametrize("label", ["createOrder()", "save_order(order: Order)"])
+def test_call_message_label_accepts_complete_method_calls(label: str):
+    message = SequenceMessage(
+        source="A",
+        target="B",
+        label=label,
+        type="sync",
+        fragments=[],
+        use_case_ids=["UC1"],
+        step_ids=["UC1:main:1"],
+    )
+
+    assert message.label == label
+
+
+def test_return_message_requires_a_result_label():
+    with pytest.raises(ValidationError, match="require a result label"):
+        SequenceMessage(
+            source="B",
+            target="A",
+            label="",
+            type="return",
+            fragments=[],
+            use_case_ids=["UC1"],
+            step_ids=["UC1:main:1"],
+        )
+
+
+def test_return_message_accepts_a_non_empty_result_label():
+    message = SequenceMessage(
+        source="B",
+        target="A",
+        label="Order",
+        type="return",
+        fragments=[],
+        use_case_ids=["UC1"],
+        step_ids=["UC1:main:1"],
+    )
+
+    assert message.label == "Order"
+
+
+@pytest.mark.parametrize("label", ["1", "order creation result", "Order result"])
+def test_return_message_rejects_non_type_result_labels(label: str):
+    with pytest.raises(ValidationError, match="must be return type identifiers"):
+        SequenceMessage(
+            source="B",
+            target="A",
+            label=label,
+            type="return",
+            fragments=[],
+            use_case_ids=["UC1"],
+            step_ids=["UC1:main:1"],
+        )
+
+
 def test_participant_aliases_must_be_unique():
     participants = [
         {

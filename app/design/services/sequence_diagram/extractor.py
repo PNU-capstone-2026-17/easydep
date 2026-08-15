@@ -11,6 +11,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.design.services.common.structured import parse_structured
+from app.design.services.sequence_diagram.methods import (
+    is_complete_method_call,
+    is_return_value_label,
+)
 
 
 class SequenceParticipant(BaseModel):
@@ -76,8 +80,22 @@ class SequenceMessage(BaseModel):
             raise ValueError("self messages require source == target")
         if self.type in {"activate", "deactivate"} and self.source != self.target:
             raise ValueError("activation events require source == target")
-        if self.type in {"sync", "async", "self"} and not self.label.strip():
-            raise ValueError("call messages require a method label")
+        if self.type in {"sync", "async", "self"}:
+            label = self.label.strip()
+            if not label:
+                raise ValueError("call messages require a method label")
+            if not is_complete_method_call(label):
+                raise ValueError(
+                    "call message labels must be complete method calls with a parameter list"
+                )
+            self.label = label
+        if self.type == "return":
+            label = self.label.strip()
+            if not label:
+                raise ValueError("return messages require a result label")
+            if not is_return_value_label(label):
+                raise ValueError("return message labels must be return type identifiers")
+            self.label = label
         return self
 
 
@@ -129,7 +147,13 @@ that the inputs do not support.
 - For every sync, async, or self call, `label` MUST be a method that already exists
   on the receiver's class in the provided class diagram. Copy its method name;
   NEVER invent a method and NEVER use a descriptive phrase in its place.
-- Emit a return message only where the caller genuinely uses the result.
+- Format a call `label` as `methodName(...)`. It must start with
+  an ASCII letter or underscore and contain only ASCII letters, digits, or
+  underscores in the method name, and the parentheses are mandatory. Never put a
+  step number or sequence number in `label`; `step_ids` carries flow ordering separately.
+- Emit a return message only where the caller genuinely uses the result. Its
+  `label` is mandatory and MUST exactly match the return type declared after `:`
+  on the corresponding receiver-class method. Never use a narrative result label.
 - Use explicit `activate` and `deactivate` events only when an execution interval
   materially helps explain nested synchronous processing. Put the lifeline in both
   `source` and `target` for these events and leave `label` empty.

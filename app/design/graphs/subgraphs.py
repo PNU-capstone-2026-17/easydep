@@ -3,8 +3,8 @@
 상위 그래프(`design_graph.py`)의 노드명은 산출물 이름이고, 세부 작업은 서브그래프
 내부 노드로 캡슐화된다. 다섯 산출물이 모두 같은 골격을 따른다:
 
-  생성:   extract_{stage} → [check_{stage}] → render_{stage} → END
-  피드백: revise_{stage}  → [check_{stage}] → render_{stage} → END
+  생성:   extract_{stage} → [reconcile] → [check] → [finalize] → render → END
+  피드백: revise_{stage}  → [reconcile] → [check] → [finalize] → render → END
 
 예전에는 여기가 둘로 갈려 있었다. 클래스·ERD는 구조화된 모델에서 결정론적으로 렌더됐고,
 시퀀스·API·배포는 LLM이 PlantUML/JSON을 직접 써서 validate → repair 루프를 달고 있었다.
@@ -53,6 +53,10 @@ from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
 from app.design.services.sequence_diagram.extractor import extract_sequence_model
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.services.sequence_diagram.reconcile import (
+    ensure_sequence_class_methods,
+    reconcile_class_methods,
+)
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
@@ -165,6 +169,8 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     },
     check=sequence_diagram_findings,
     check_key="sequence_diagram_check",
+    reconcile=reconcile_class_methods,
+    finalize=ensure_sequence_class_methods,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(
@@ -266,7 +272,7 @@ FEEDBACK_KEYS: dict[str, str] = {
 def _add_stage_tail(
     builder: StateGraph, spec: DesignArtifactSpec, entry_node: str
 ) -> None:
-    """생성과 피드백이 공유하는 꼬리: 모델 → [대사] → [규칙 검사] → 렌더(+자기검사) → END.
+    """공유 꼬리: 모델 → [대사] → [규칙 검사] → [최종 강제] → 렌더 → END.
 
     **검사 노드는 `check_key`를 가진 스펙에만 생긴다.** 규칙이 아직 없는 산출물에 빈
     노드를 달면 그래프 그림이 "검사한다"고 거짓말을 한다 — 지금 규칙이 있는 것은 클래스
@@ -275,6 +281,9 @@ def _add_stage_tail(
 
     **대사 노드는 `reconcile` 후크를 가진 스펙에만 생긴다.** 시퀀스 다이어그램이 이것으로
     클래스 다이어그램에 빠진 메서드를 보강한다.
+
+    **최종 강제 노드는 `finalize` 후크를 가진 스펙에만 생긴다.** 의미 수리에서 모델이
+    다시 바뀌어도 시퀀스 호출이 실제 수신 클래스 메서드라는 불변식을 렌더 직전에 보장한다.
 
     렌더가 문법 유효성을 보장하므로 **문법** 수리 루프는 여전히 없다. 검사 노드가 도는
     루프는 문법이 아니라 **의미**를 보고, 텍스트가 아니라 모델을 고치며, 위반 수가 줄지
@@ -288,16 +297,21 @@ def _add_stage_tail(
         builder.add_edge(current_node, reconcile)
         current_node = reconcile
 
-    render = f"render_{spec.stage}"
-    builder.add_node(render, render_node(spec))
-
     if spec.check_key:
         check = f"check_{spec.stage}"
         builder.add_node(check, check_node(spec))
         builder.add_edge(current_node, check)
-        builder.add_edge(check, render)
-    else:
-        builder.add_edge(current_node, render)
+        current_node = check
+
+    if spec.finalize:
+        finalize = f"finalize_{spec.stage}"
+        builder.add_node(finalize, spec.finalize)
+        builder.add_edge(current_node, finalize)
+        current_node = finalize
+
+    render = f"render_{spec.stage}"
+    builder.add_node(render, render_node(spec))
+    builder.add_edge(current_node, render)
 
     builder.add_edge(render, END)
 

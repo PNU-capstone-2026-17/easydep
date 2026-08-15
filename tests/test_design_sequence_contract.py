@@ -33,8 +33,8 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     return message
 
 
-def test_sequence_stage_never_mutates_class_diagram_to_accept_a_message():
-    assert SEQUENCE_DIAGRAM_SPEC.reconcile is None
+def test_sequence_stage_reconciles_missing_call_into_receiver_class():
+    assert SEQUENCE_DIAGRAM_SPEC.reconcile is reconcile_class_methods
     state = {
         "app_id": "test-app-id",
         "extracted_bce_classes": {
@@ -42,13 +42,16 @@ def test_sequence_stage_never_mutates_class_diagram_to_accept_a_message():
         },
         "sequence_diagram_model": {
             "Participants": [_participant("OrderControl", "control", "OrderControl")],
-            "Messages": [_message("OrderControl", "OrderControl", "inventedMethod()")],
+            "Messages": [_message("OrderControl", "OrderControl", "reserveOrder()")],
         },
     }
     with patch("app.repositories.artifact_repository.save_stage") as save_stage:
-        assert reconcile_class_methods(state) == {}
-    save_stage.assert_not_called()
-    assert state["extracted_bce_classes"]["Classes"][0]["methods"] == ["createOrder()"]
+        result = reconcile_class_methods(state)
+    save_stage.assert_called_once()
+    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
+        "createOrder()",
+        "reserveOrder()",
+    ]
 
 
 def test_receiver_must_already_own_the_called_method():

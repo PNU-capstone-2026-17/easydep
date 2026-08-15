@@ -75,12 +75,20 @@ def _apply(
     revised = spec.revise(original, feedback, state, targets)
     merged = merge_model(spec, original, revised, targets)
 
-    patch: dict[str, Any] = {
-        spec.model_key: merged,
-        **render_and_validate(spec, merged),
-    }
+    # 지목 수정은 비대상 보존이 계약이므로 전체 흐름 재추출을 포함하는 reconcile은
+    # 실행하지 않는다. 대신 최종 불변식은 반드시 적용해, 새 시퀀스 호출의 메서드는
+    # 수신 클래스에 결정론적으로 보강한 뒤에만 렌더한다.
+    working: ArchitectureState = {**state, spec.model_key: merged}
+    patch: dict[str, Any] = {spec.model_key: merged}
+    if spec.finalize:
+        finalized = spec.finalize(working)
+        patch.update(finalized)
+        working.update(finalized)
+        merged = working.get(spec.model_key) or merged
+
+    patch.update(render_and_validate(spec, merged))
     if spec.check_key:
-        patch[spec.check_key] = _check_report(spec, merged, state)
+        patch[spec.check_key] = _check_report(spec, merged, working)
     return patch
 
 
