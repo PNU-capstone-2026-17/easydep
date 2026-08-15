@@ -155,6 +155,7 @@ that the inputs do not support.
 - Emit a return message only where the caller genuinely uses the result. Its
   `label` is mandatory and MUST exactly match the return type declared after `:`
   on the corresponding receiver-class method. Never use a narrative result label.
+  A call can have at most one corresponding return message.
   Async calls are fire-and-forget and MUST NOT have a corresponding return; use
   sync instead when the caller consumes the declared result.
 - Use explicit `activate` and `deactivate` events only when an execution interval

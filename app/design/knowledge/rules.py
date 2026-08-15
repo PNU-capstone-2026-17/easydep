@@ -415,8 +415,8 @@ RULES: tuple[Rule, ...] = (
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Every return-type message must be preceded by a matching call between "
-            "the same pair of participants."
+            "Every return-type message must consume one preceding matching call between "
+            "the same pair of participants. A call can have at most one return message."
         ),
         citation="app/design/services/sequence_diagram/extractor.py (Return message guidelines)",
         evidence="pipeline-invariant",

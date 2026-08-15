@@ -6,6 +6,7 @@ from typing import Any
 from app.design.knowledge.detectors import (
     sequence_async_returns,
     sequence_return_values_match_methods,
+    sequence_unmatched_returns,
     sequence_usecase_coverage,
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
@@ -201,6 +202,7 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
             )
         )
     contract_findings = [
+        *sequence_unmatched_returns(sequence, state),
         *sequence_async_returns(sequence, state),
         *sequence_return_values_match_methods(sequence, state),
     ]

@@ -165,6 +165,55 @@ def test_finalizer_rejects_return_label_different_from_declared_type():
         ensure_sequence_class_methods(state)
 
 
+def test_finalizer_rejects_multiple_returns_for_one_call():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderControl", "methods": ["findOrder(): Order"]}
+            ]
+        },
+        "sequence_diagram_model": {
+            "Participants": [
+                {
+                    "name": "OrderControl",
+                    "alias": "Control",
+                    "kind": "control",
+                    "source_class": "OrderControl",
+                },
+                {
+                    "name": "OrderBoundary",
+                    "alias": "Boundary",
+                    "kind": "boundary",
+                    "source_class": "OrderBoundary",
+                },
+            ],
+            "Messages": [
+                {
+                    "source": "Boundary",
+                    "target": "Control",
+                    "label": "findOrder()",
+                    "type": "sync",
+                },
+                {
+                    "source": "Control",
+                    "target": "Boundary",
+                    "label": "Order",
+                    "type": "return",
+                },
+                {
+                    "source": "Control",
+                    "target": "Boundary",
+                    "label": "Customer",
+                    "type": "return",
+                },
+            ],
+        },
+    }
+
+    with pytest.raises(ValueError, match="고립된 return"):
+        ensure_sequence_class_methods(state)
+
+
 def test_uncovered_flow_causes_class_method_augmentation_and_sequence_reextraction():
     state = {
         "usecase_spec": {

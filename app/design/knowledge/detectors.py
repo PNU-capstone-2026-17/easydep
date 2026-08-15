@@ -1155,14 +1155,14 @@ def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
-    """선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
+    """소비할 선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
 
-    return 타입 메시지는 직전에 동일 상대방에 대한 동기/비동기 호출이 수행되었을 때만
-    정당하다. 선행 호출 없이 return만 나타나는 LLM 환각 현상을 차단한다.
+    하나의 호출은 최대 하나의 return만 소비할 수 있다. 호출을 반환 시점에 제거하여
+    선행 호출 없는 반환뿐 아니라 한 호출에 여러 반환이 붙는 LLM 환각도 차단한다.
     """
     rule_id = "sequence.unmatched-return-message"
     found: list[Finding] = []
-    seen_calls: set[tuple[str, str]] = set()
+    pending_calls: list[tuple[str, str]] = []
 
     for msg in model.get("Messages", []):
         m_type = str(msg.get("type", "sync")).lower()
@@ -1170,8 +1170,15 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
         target = str(msg.get("target", "")).strip()
 
         if m_type == "return":
-            # return의 (source -> target)에 대응하는 선행 호출은 (target -> source)
-            if (target, source) not in seen_calls:
+            call_index = next(
+                (
+                    index
+                    for index in range(len(pending_calls) - 1, -1, -1)
+                    if pending_calls[index] == (target, source)
+                ),
+                None,
+            )
+            if call_index is None:
                 location = f"{source} --> {target}"
                 found.append(
                     Finding(
@@ -1180,8 +1187,10 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
                         location,
                     )
                 )
-        elif m_type not in {"activate", "deactivate"}:
-            seen_calls.add((source, target))
+            else:
+                pending_calls.pop(call_index)
+        elif m_type in {"sync", "async", "self"}:
+            pending_calls.append((source, target))
 
     return found
 

@@ -391,6 +391,36 @@ def test_unmatched_returns_rejects_dangling_return():
     assert findings[0].rule_id == "sequence.unmatched-return-message"
 
 
+def test_unmatched_returns_rejects_a_second_return_for_one_call():
+    """하나의 호출은 첫 반환에서 소비되므로 추가 반환은 환각으로 지적한다."""
+    model = {
+        "Participants": [
+            {"name": "OrderBoundary", "kind": "boundary"},
+            {"name": "OrderControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "OrderBoundary", "target": "OrderControl", "type": "sync"},
+            {
+                "source": "OrderControl",
+                "target": "OrderBoundary",
+                "label": "Order",
+                "type": "return",
+            },
+            {
+                "source": "OrderControl",
+                "target": "OrderBoundary",
+                "label": "Customer",
+                "type": "return",
+            },
+        ],
+    }
+
+    findings = detectors.sequence_unmatched_returns(model, STATE)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.unmatched-return-message"
+
+
 # ---------------------------------------------------------------------------
 # sequence.usecase-step-coverage
 # ---------------------------------------------------------------------------

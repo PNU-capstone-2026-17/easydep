@@ -30,7 +30,8 @@ same schema. Rules:
   number as a label; flow ordering belongs in `step_ids`.
 - Every return message must have a non-empty result label equal to the return type
   declared on its corresponding receiver-class method. Remove a return for a void
-  method; never invent a narrative result label.
+  method; never invent a narrative result label. Each call can have at most one
+  corresponding return; remove duplicate or hallucinated returns.
 - Async calls are fire-and-forget and cannot have return messages. If the caller
   consumes a result, change the grounded call to sync; otherwise remove the return.
 - Every message's source and target must exist among the returned Participants.
