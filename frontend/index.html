@@ -326,6 +326,52 @@
       font-weight: 700;
     }
 
+    .diagram-image-wrap.sequence-gallery-mode {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      align-items: stretch;
+      justify-content: stretch;
+      gap: 16px;
+      text-align: left;
+    }
+
+    .sequence-diagram-card {
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .sequence-diagram-card h3 {
+      margin: 0 0 4px;
+      color: var(--ink);
+      font-size: 14px;
+    }
+
+    .sequence-diagram-id {
+      display: block;
+      margin-bottom: 12px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .sequence-diagram-image-frame {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+      overflow: auto;
+      border-radius: 6px;
+      background: #f9fafb;
+    }
+
+    .sequence-diagram-card img {
+      width: 100%;
+      max-height: 420px;
+    }
+
     /* ── Lightbox modal ── */
     .lightbox-overlay {
       display: none;
@@ -580,6 +626,7 @@
     const frontendBaseUrl = document.getElementById("frontendBaseUrl");
     const frontendButton = document.getElementById("frontendButton");
     const frontendResult = document.getElementById("frontendResult");
+    let diagramImageRequestToken = 0;
 
     appIdInput.value = workflow.appId;
 
@@ -983,21 +1030,81 @@
     }
 
     function renderDiagramImage(stageId) {
+      const requestToken = ++diagramImageRequestToken;
       if (!imageStages[stageId]) {
         diagramImageWrap.classList.add("hidden");
+        diagramImageWrap.classList.remove("sequence-gallery-mode");
         return;
       }
 
       diagramImageWrap.classList.remove("hidden");
 
       if (hasArtifact(stageId) && workflow.appId) {
+        if (stageId === "sequence_diagram") {
+          renderSequenceDiagramGallery(requestToken);
+          return;
+        }
+        diagramImageWrap.classList.remove("sequence-gallery-mode");
         const cacheBust = Date.now();
         const base = `/api/apps/${workflow.appId}/stages/${stageId}/image`;
         const pngSrc = `${base}.png?t=${cacheBust}`;
         const svgSrc = `${base}.svg?t=${cacheBust}`;
         diagramImageWrap.innerHTML = `<img src="${pngSrc}" alt="${stageId} diagram" title="클릭하여 전체화면으로 보기" onclick="openLightbox('${svgSrc}', '${pngSrc}')" onerror="this.parentElement.innerHTML='<span class=no-image>이미지 파일을 불러올 수 없습니다</span>'">`;
       } else {
+        diagramImageWrap.classList.remove("sequence-gallery-mode");
         diagramImageWrap.innerHTML = '<span class="no-image">이미지가 아직 생성되지 않았습니다</span>';
+      }
+    }
+
+    async function renderSequenceDiagramGallery(requestToken) {
+      diagramImageWrap.classList.add("sequence-gallery-mode");
+      diagramImageWrap.innerHTML = '<span class="no-image">시퀀스 다이어그램 목록을 불러오는 중입니다</span>';
+
+      try {
+        const result = await request(
+          `/api/apps/${workflow.appId}/stages/sequence_diagram/diagrams`
+        );
+        if (requestToken !== diagramImageRequestToken || viewedStage().id !== "sequence_diagram") {
+          return;
+        }
+
+        const diagrams = Array.isArray(result.diagrams) ? result.diagrams : [];
+        if (!diagrams.length) {
+          diagramImageWrap.innerHTML = '<span class="no-image">표시할 시퀀스 다이어그램이 없습니다</span>';
+          return;
+        }
+
+        const cacheBust = Date.now();
+        diagramImageWrap.innerHTML = diagrams.map((diagram) => {
+          const useCaseId = String(diagram.use_case_id || "");
+          const useCaseName = String(diagram.use_case_name || useCaseId);
+          const encodedId = encodeURIComponent(useCaseId);
+          const base = `/api/apps/${workflow.appId}/stages/sequence_diagram/diagrams/${encodedId}/image`;
+          const pngSrc = `${base}.png?t=${cacheBust}`;
+          const svgSrc = `${base}.svg?t=${cacheBust}`;
+          return `<article class="sequence-diagram-card">`
+            + `<h3>${escapeHtml(useCaseName)}</h3>`
+            + `<span class="sequence-diagram-id">${escapeHtml(useCaseId)}</span>`
+            + `<div class="sequence-diagram-image-frame">`
+            + `<img class="sequence-diagram-image" src="${escapeAttr(pngSrc)}" `
+            + `data-png="${escapeAttr(pngSrc)}" data-svg="${escapeAttr(svgSrc)}" `
+            + `alt="${escapeAttr(useCaseName)} 시퀀스 다이어그램" `
+            + `title="클릭하여 전체화면으로 보기">`
+            + `</div></article>`;
+        }).join("");
+
+        diagramImageWrap.querySelectorAll(".sequence-diagram-image").forEach((image) => {
+          image.addEventListener("click", () => openLightbox(image.dataset.svg, image.dataset.png));
+          image.addEventListener("error", () => {
+            const frame = image.closest(".sequence-diagram-image-frame");
+            if (frame) {
+              frame.innerHTML = '<span class="no-image">이미지를 불러올 수 없습니다</span>';
+            }
+          }, { once: true });
+        });
+      } catch (error) {
+        if (requestToken !== diagramImageRequestToken) return;
+        diagramImageWrap.innerHTML = `<span class="no-image">${escapeHtml(error.message)}</span>`;
       }
     }
 

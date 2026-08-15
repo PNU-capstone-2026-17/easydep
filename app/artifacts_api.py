@@ -34,6 +34,7 @@ from app.db.models import FORMAT_JSON, ORIGIN_IMPORTED
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.validation import validate_puml_artifact
+from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import STAGE_ARTIFACTS, AppNotFound
 
@@ -120,6 +121,39 @@ def require_app_exists(app_id: str) -> None:
 def validate_stage_name(stage: str) -> None:
     if stage not in STAGES:
         raise HTTPException(status_code=404, detail=f"Unknown stage: {stage}")
+
+
+def sequence_diagrams_from_state(state: ArchitectureState) -> list[dict[str, Any]]:
+    """저장 모델에서 프론트엔드가 개별 렌더링할 시퀀스 목록을 가져온다."""
+    model = state.get("sequence_diagram_model") or {}
+    if not isinstance(model, dict):
+        return []
+    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+    if isinstance(diagrams, list):
+        normalized: list[dict[str, Any]] = []
+        for index, diagram in enumerate(diagrams):
+            if not isinstance(diagram, dict):
+                continue
+            use_case_id = str(diagram.get("use_case_id") or f"sequence-{index + 1}")
+            normalized.append(
+                {
+                    **diagram,
+                    "use_case_id": use_case_id,
+                    "use_case_name": str(
+                        diagram.get("use_case_name") or use_case_id
+                    ),
+                }
+            )
+        return normalized
+    if model.get("Participants") or model.get("Messages"):
+        return [
+            {
+                "use_case_id": "sequence",
+                "use_case_name": "Sequence Diagram",
+                **model,
+            }
+        ]
+    return []
 
 
 def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
@@ -270,6 +304,53 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
     if not image:
         raise HTTPException(status_code=500, detail="Diagram rendering failed.")
 
+    return Response(
+        content=image,
+        media_type="image/svg+xml" if extension == "svg" else "image/png",
+    )
+
+
+@router.get("/api/apps/{app_id}/stages/sequence_diagram/diagrams")
+def list_sequence_diagrams(app_id: str) -> JSONResponse:
+    """프론트엔드 갤러리용 유스케이스별 시퀀스 다이어그램 목록."""
+    validate_app_id(app_id)
+    diagrams = sequence_diagrams_from_state(require_app(app_id))
+    return JSONResponse(
+        content={
+            "diagrams": [
+                {
+                    "use_case_id": str(diagram.get("use_case_id") or ""),
+                    "use_case_name": str(diagram.get("use_case_name") or ""),
+                }
+                for diagram in diagrams
+            ]
+        }
+    )
+
+
+@router.get(
+    "/api/apps/{app_id}/stages/sequence_diagram/diagrams/{use_case_id}/image.{extension}"
+)
+def get_sequence_diagram_image(
+    app_id: str, use_case_id: str, extension: str
+) -> Response:
+    """선택한 유스케이스의 시퀀스 다이어그램 하나만 이미지로 렌더링한다."""
+    validate_app_id(app_id)
+    if extension not in ("png", "svg"):
+        raise HTTPException(status_code=404, detail="Unsupported image format.")
+    diagram = next(
+        (
+            item
+            for item in sequence_diagrams_from_state(require_app(app_id))
+            if str(item.get("use_case_id") or "") == use_case_id
+        ),
+        None,
+    )
+    if diagram is None:
+        raise HTTPException(status_code=404, detail="Sequence diagram not found.")
+    image = render_plantuml(generate_sequence_from_model(diagram), extension)
+    if not image:
+        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
