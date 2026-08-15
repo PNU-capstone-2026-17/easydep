@@ -9,7 +9,7 @@ from app.design.services.sequence_diagram.reconcile import (
 )
 
 
-def test_sequence_reconcile_adds_missing_receiver_method_to_class_diagram():
+def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
     state = {
         "app_id": "test-app-id",
         "extracted_bce_classes": {
@@ -37,9 +37,25 @@ def test_sequence_reconcile_adds_missing_receiver_method_to_class_diagram():
 
     assert SEQUENCE_DIAGRAM_SPEC.reconcile is reconcile_class_methods
     assert SEQUENCE_DIAGRAM_SPEC.finalize is ensure_sequence_class_methods
-    with patch("app.repositories.artifact_repository.save_stage") as save_stage:
+    revised_bce = {
+        "Classes": [
+            {
+                "className": "OrderControl",
+                "methods": ["createOrder()", "reserveOrder()"],
+            }
+        ]
+    }
+    with (
+        patch(
+            "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+            return_value=revised_bce,
+        ) as revise,
+        patch("app.repositories.artifact_repository.save_stage") as save_stage,
+    ):
         result = reconcile_class_methods(state)
 
+    revise.assert_called_once()
+    assert "decide whether the use case genuinely requires it" in revise.call_args.kwargs["feedback"]
     save_stage.assert_called_once()
     assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
         "createOrder()",
@@ -103,8 +119,16 @@ def test_reconcile_declares_return_type_for_a_required_result():
         },
     }
 
-    result = reconcile_class_methods(state)
+    revised_bce = {
+        "Classes": [{"className": "OrderControl", "methods": ["findOrder(): Order"]}]
+    }
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=revised_bce,
+    ) as revise:
+        result = reconcile_class_methods(state)
 
+    revise.assert_called_once()
     assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
         "findOrder(): Order"
     ]
@@ -137,7 +161,7 @@ def test_finalizer_rejects_return_label_different_from_declared_type():
         },
     }
 
-    with pytest.raises(ValueError, match="must match class method return types"):
+    with pytest.raises(ValueError, match="call/return contracts remain invalid"):
         ensure_sequence_class_methods(state)
 
 
