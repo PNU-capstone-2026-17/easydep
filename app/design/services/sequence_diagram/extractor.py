@@ -6,34 +6,54 @@
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.design.services.common.structured import parse_structured
 
 
 class SequenceParticipant(BaseModel):
-    name: str = Field(default="Unknown")
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    alias: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     #: actor | boundary | control | entity | database — BCE 스테레오타입을 그대로 잇는다.
-    kind: str = Field(default="participant")
-    description: str = Field(default="")
+    kind: Literal["actor", "boundary", "control", "entity", "database"]
+    description: str
     #: 이 참가자에 해당하는 클래스 다이어그램의 클래스 이름. 액터는 비운다.
-    source_class: str = Field(default="")
+    source_class: str
+
+
+class SequenceFragment(BaseModel):
+    """한 메시지를 감싸는 복합 조각 경로의 한 레벨.
+
+    같은 ``id``의 ``alt``에서 ``branch``가 ``else``로 바뀌면 PlantUML ``else``가
+    생성된다. 목록을 바깥쪽부터 안쪽 순서로 적으므로 중첩 조각도 표현할 수 있다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    type: Literal["alt", "opt", "loop"]
+    branch: Literal["main", "else"]
+    condition: str = Field(min_length=1)
 
 
 class SequenceMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source: str
     target: str
-    label: str = Field(default="")
-    #: sync | async | return — PlantUML 화살표 모양을 정한다.
-    type: str = Field(default="sync")
-    #: 이 메시지가 속한 조각(alt/loop/opt). 비어 있으면 주 흐름.
-    group: str = Field(default="")
-    #: 조각의 조건문("재고가 없으면" 등). group이 있을 때만 의미가 있다.
-    condition: str = Field(default="")
+    label: str
+    #: sync | async | return | self | activate | deactivate
+    type: Literal["sync", "async", "return", "self", "activate", "deactivate"]
+    #: 바깥쪽부터 안쪽 순서의 fragment 경로. 빈 목록이면 주 흐름.
+    fragments: list[SequenceFragment]
     #: 이 메시지를 낳은 유스케이스 id.
-    use_case_ids: list[str] = Field(default_factory=list)
+    use_case_ids: list[str]
+    #: ``UC1:main:2`` 또는 ``UC1:extension:3a:3a1`` 형태의 정확한 흐름 단계 참조.
+    step_ids: list[str]
 
     @field_validator("use_case_ids")
     @classmethod
@@ -43,10 +63,36 @@ class SequenceMessage(BaseModel):
             raise ValueError("use_case_ids must not contain duplicates")
         return value
 
+    @field_validator("step_ids")
+    @classmethod
+    def step_ids_are_set_like(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("step_ids must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def event_shape_is_valid(self) -> "SequenceMessage":
+        if self.type == "self" and self.source != self.target:
+            raise ValueError("self messages require source == target")
+        if self.type in {"activate", "deactivate"} and self.source != self.target:
+            raise ValueError("activation events require source == target")
+        if self.type in {"sync", "async", "self"} and not self.label.strip():
+            raise ValueError("call messages require a method label")
+        return self
+
 
 class SequenceModel(BaseModel):
-    Participants: list[SequenceParticipant] = Field(default_factory=list)
-    Messages: list[SequenceMessage] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    Participants: list[SequenceParticipant]
+    Messages: list[SequenceMessage]
+
+    @model_validator(mode="after")
+    def aliases_are_unique(self) -> "SequenceModel":
+        aliases = [participant.alias for participant in self.Participants]
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("participant aliases must be unique")
+        return self
 
 
 SEQUENCE_EXTRACTION_SYSTEM_PROMPT = """
@@ -67,33 +113,46 @@ that the inputs do not support.
   Match the class's BCE stereotype; use "actor" for the specification's actors.
 - Order matters: list them left to right as the interaction reads —
   actor first, then boundary, then control, then entity.
+- `name` is the display/class name. Give every participant a unique PlantUML-safe
+  `alias` and use that alias, not the display name, in message source and target.
 
-## Messages
-- Walk MainSuccessScenario step by step. Each step becomes one or more messages.
-- `source` and `target` must both be participant names you listed.
+## Flow analysis
+- Fully analyze every MainSuccessScenario step and every Extensions alternate or
+  exception branch. Each individual main or handling step becomes one or more messages.
+
+## Messages and receiver ownership
+- `source` and `target` must both be participant aliases you listed.
 - Respect the BCE communication rules: Actor->Boundary, Boundary<->Control,
   Control<->Entity. Never Actor->Control, Boundary->Entity, or Entity-initiated calls.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
-  fire-and-forget (notifications, events).
-- `label` is the operation being invoked, named as verbNoun() where it maps to a
-  class method in the class diagram; otherwise a short verb phrase.
+  fire-and-forget, and "self" for a call whose source and target are the same.
+- For every sync, async, or self call, `label` MUST be a method that already exists
+  on the receiver's class in the provided class diagram. Copy its method name;
+  NEVER invent a method and NEVER use a descriptive phrase in its place.
 - Emit a return message only where the caller genuinely uses the result.
+- Use explicit `activate` and `deactivate` events only when an execution interval
+  materially helps explain nested synchronous processing. Put the lifeline in both
+  `source` and `target` for these events and leave `label` empty.
 
 ## Fragments (alt / loop / opt)
-- Each Extensions branch becomes messages with `group` = "alt" and `condition`
-  set to that branch's trigger.
-- A step that repeats over a collection becomes `group` = "loop" with `condition`
-  describing the iteration.
-- A step that only sometimes happens becomes `group` = "opt".
-- Messages with the same `group` AND the same `condition` are rendered as one
-  fragment, so keep the condition text identical across a fragment's messages.
-- Leave both fields empty for main-flow messages.
+- `fragments` is the outer-to-inner fragment path for a message; use [] for a
+  message outside fragments. This permits nested fragments.
+- Give each logical fragment a stable `id`. All branches of one fragment use the
+  same id and type.
+- The first branch uses `branch="main"`; an alternative branch of the same alt
+  uses `branch="else"`. This is rendered as PlantUML `else`, not a second alt.
+- Each Extensions branch becomes an alt/else or opt branch with its trigger as
+  `condition`. Repetition becomes loop. Do not use else for opt or loop.
 
 ## Traceability
 - `source_class` on each participant: the class diagram class it stands for.
   Copy the class name exactly. Leave it empty for actors — they are not classes.
 - `use_case_ids` on each message: the id(s) of the use case whose step it came
   from, copied exactly from the specification (e.g. "UC1").
+- `step_ids` on each message: copy the exact flow-step reference constructed as
+  `<use_case_id>:main:<step_number>` for MainSuccessScenario, or
+  `<use_case_id>:extension:<extension_label>:<sub_step>` for an extension handling
+  step. Activation/deactivation events inherit the step id of the call they frame.
 - `use_case_ids` is a set-like reference list. Include each applicable id at
   most once; repetition adds no traceability information.
 - **Never invent a name or an id.** An empty list is honest; a made-up
@@ -102,10 +161,12 @@ that the inputs do not support.
 ## Self-check before finalizing
 (a) every message's source and target exist among Participants,
 (b) no message violates the BCE communication rules,
-(c) every MainSuccessScenario step is represented by at least one message,
+(c) every main and extension handling step id is represented by at least one message,
 (d) participants are ordered actor -> boundary -> control -> entity,
 (e) every `source_class` names a class in the given class diagram, and every
-    `use_case_ids` entry appears in the given specification.
+    `use_case_ids` and `step_ids` entry appears in the given specification,
+(f) every call label already belongs to the receiver class; do not change or
+    extend the class diagram to make a message valid.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.

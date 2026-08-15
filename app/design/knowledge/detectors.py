@@ -834,6 +834,50 @@ def _known_use_case_ids(state: dict) -> set[str]:
     return rtm.upstream_names(state).get("use_case") or set()
 
 
+def _known_flow_step_ids(state: dict) -> set[str]:
+    """요구사항 명세의 주·확장 흐름 단계를 안정적인 참조 ID로 펼친다."""
+    spec = state.get("usecase_spec") or {}
+    if not isinstance(spec, dict):
+        return set()
+    result: set[str] = set()
+    for use_case in spec.get("use_case_specs") or []:
+        if not isinstance(use_case, dict):
+            continue
+        use_case_id = str(use_case.get("use_case_id") or "").strip()
+        if not use_case_id:
+            continue
+        for step in use_case.get("main_scenario") or []:
+            number = step.get("step_number") if isinstance(step, dict) else None
+            if number is not None:
+                result.add(f"{use_case_id}:main:{number}")
+        for extension in use_case.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            for step in extension.get("handling_steps") or []:
+                sub_step = str(step.get("sub_step") or "").strip() if isinstance(step, dict) else ""
+                if label and sub_step:
+                    result.add(f"{use_case_id}:extension:{label}:{sub_step}")
+    return result
+
+
+def _message_fragments(message: dict) -> list[dict]:
+    """새 fragment 경로를 읽고, 옛 group/condition 저장본도 한 레벨로 해석한다."""
+    fragments = message.get("fragments")
+    if isinstance(fragments, list):
+        return [item for item in fragments if isinstance(item, dict)]
+    group = str(message.get("group") or "").strip()
+    condition = str(message.get("condition") or "").strip()
+    if not group and not condition:
+        return []
+    return [{"id": f"legacy:{group}:{condition}", "type": group, "branch": "main", "condition": condition}]
+
+
+def _participant_id(participant: dict) -> str:
+    """메시지가 참조하는 참가자 ID. 옛 저장본은 name을 alias로 간주한다."""
+    return str(participant.get("alias") or participant.get("name") or "").strip()
+
+
 def _class_methods_from_state(state: dict) -> dict[str, set[str]]:
     """BCE 모델에서 클래스별 메서드 집합을 뽑는다.
 
@@ -873,7 +917,7 @@ def _normalize_method_name(raw: str) -> str:
 
 
 def sequence_participants(model: dict, state: dict) -> list[Finding]:
-    declared = {str(item.get("name", "")).strip() for item in model.get("Participants", []) if item.get("name")}
+    declared = {_participant_id(item) for item in model.get("Participants", []) if _participant_id(item)}
     found: list[Finding] = []
     for message in model.get("Messages", []):
         source, target = str(message.get("source", "")).strip(), str(message.get("target", "")).strip()
@@ -886,11 +930,11 @@ def sequence_participants(model: dict, state: dict) -> list[Finding]:
 
 
 def sequence_bce_flow(model: dict, state: dict) -> list[Finding]:
-    kinds = {str(item.get("name", "")).strip(): str(item.get("kind", "")).strip().lower() for item in model.get("Participants", [])}
+    kinds = {_participant_id(item): str(item.get("kind", "")).strip().lower() for item in model.get("Participants", [])}
     forbidden = {("actor", "control"), ("boundary", "entity"), ("entity", "boundary"), ("entity", "control")}
     found: list[Finding] = []
     for message in model.get("Messages", []):
-        if str(message.get("type", "sync")).lower() == "return":
+        if str(message.get("type", "sync")).lower() in {"return", "activate", "deactivate"}:
             continue
         source, target = str(message.get("source", "")).strip(), str(message.get("target", "")).strip()
         if (kinds.get(source), kinds.get(target)) in forbidden:
@@ -900,6 +944,7 @@ def sequence_bce_flow(model: dict, state: dict) -> list[Finding]:
 
 def sequence_traceability(model: dict, state: dict) -> list[Finding]:
     classes, use_cases = _class_names_from_puml(state), _known_use_case_ids(state)
+    flow_steps = _known_flow_step_ids(state)
     found: list[Finding] = []
     for participant in model.get("Participants", []):
         source_class, name = str(participant.get("source_class", "")).strip(), str(participant.get("name", "?")).strip()
@@ -910,6 +955,9 @@ def sequence_traceability(model: dict, state: dict) -> list[Finding]:
             for use_case in message.get("use_case_ids", []):
                 if use_case and use_case not in use_cases:
                     found.append(Finding("sequence.references-exist", f"입력에 없는 유스케이스 id '{use_case}'", f"{message.get('source', '?')} -> {message.get('target', '?')}"))
+            for step_id in message.get("step_ids", []):
+                if step_id and flow_steps and step_id not in flow_steps:
+                    found.append(Finding("sequence.references-exist", f"입력에 없는 흐름 단계 id '{step_id}'", f"{message.get('source', '?')} -> {message.get('target', '?')}"))
     return found
 
 
@@ -964,7 +1012,7 @@ def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
     # 참가자 이름 → 대응 클래스 매핑 (source_class가 있으면 그것, 없으면 name)
     participant_to_class: dict[str, str] = {}
     for participant in model.get("Participants", []):
-        name = str(participant.get("name", "")).strip()
+        name = _participant_id(participant)
         kind = str(participant.get("kind", "")).strip().lower()
         if kind == "actor" or not name:
             continue
@@ -973,7 +1021,7 @@ def sequence_message_methods(model: dict, state: dict) -> list[Finding]:
 
     found: list[Finding] = []
     for message in model.get("Messages", []):
-        if str(message.get("type", "sync")).lower() == "return":
+        if str(message.get("type", "sync")).lower() not in {"sync", "async", "self"}:
             continue
         label = str(message.get("label", "")).strip()
         if not label:
@@ -1061,13 +1109,13 @@ def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
     """
     rule_id = "sequence.initial-message-entry"
     kinds = {
-        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        _participant_id(p): str(p.get("kind", "")).strip().lower()
         for p in model.get("Participants", [])
     }
 
     first_msg = None
     for msg in model.get("Messages", []):
-        if str(msg.get("type", "sync")).lower() != "return":
+        if str(msg.get("type", "sync")).lower() not in {"return", "activate", "deactivate"}:
             first_msg = msg
             break
 
@@ -1117,19 +1165,29 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
                         location,
                     )
                 )
-        else:
+        elif m_type not in {"activate", "deactivate"}:
             seen_calls.add((source, target))
 
     return found
 
 
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
-    """입력 유스케이스 명세의 모든 유스케이스가 시퀀스 메시지에 최소 1회 반영되어 있는가.
-
-    유스케이스 명세의 핵심 기능 절차가 시퀀스 다이어그램 도출 과정에서 누락되는 현상을
-    방지한다.
-    """
+    """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
+    flow_steps = _known_flow_step_ids(state)
+    if flow_steps:
+        covered_steps = {
+            str(step_id).strip()
+            for message in model.get("Messages", [])
+            if str(message.get("type", "sync")).lower() not in {"activate", "deactivate"}
+            for step_id in message.get("step_ids", [])
+            if step_id
+        }
+        return [
+            Finding(rule_id, f"시퀀스 다이어그램에 반영되지 않은 흐름 단계 id '{step_id}'", step_id)
+            for step_id in sorted(flow_steps - covered_steps)
+        ]
+
     use_cases = _known_use_case_ids(state)
     if not use_cases:
         return []
@@ -1165,30 +1223,31 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
     rule_id = "sequence.fragment-condition-consistency"
     found: list[Finding] = []
 
+    definitions: dict[str, tuple[str, str]] = {}
+    main_branches_seen: set[str] = set()
     for msg in model.get("Messages", []):
-        group = str(msg.get("group", "")).strip()
-        condition = str(msg.get("condition", "")).strip()
         source = str(msg.get("source", "")).strip()
         target = str(msg.get("target", "")).strip()
         label = str(msg.get("label", "")).strip()
         location = f"{source} -> {target} : {label}"
-
-        if group and not condition:
-            found.append(
-                Finding(
-                    rule_id,
-                    f"복합 조각 '{group}'에 대한 조건문(condition) 설명이 비어 있음",
-                    location,
-                )
-            )
-        elif not group and condition:
-            found.append(
-                Finding(
-                    rule_id,
-                    f"복합 조각(group) 선언 없이 조건문('{condition}')만 독립 기입되어 있음",
-                    location,
-                )
-            )
+        for fragment in _message_fragments(msg):
+            fragment_id = str(fragment.get("id") or "").strip()
+            group = str(fragment.get("type") or "").strip()
+            branch = str(fragment.get("branch") or "").strip()
+            condition = str(fragment.get("condition") or "").strip()
+            if not fragment_id or group not in {"alt", "opt", "loop"} or not condition:
+                found.append(Finding(rule_id, "fragment의 id/type/condition이 완전하지 않음", location))
+                continue
+            if branch == "else" and group != "alt":
+                found.append(Finding(rule_id, "else branch는 alt fragment에서만 허용됨", location))
+            if branch == "else" and fragment_id not in main_branches_seen:
+                found.append(Finding(rule_id, "alt의 else branch가 main branch보다 먼저 나타남", location))
+            if branch == "main":
+                main_branches_seen.add(fragment_id)
+            prior = definitions.get(fragment_id)
+            if prior and prior[0] != group:
+                found.append(Finding(rule_id, f"fragment id '{fragment_id}'가 서로 다른 type을 사용함", location))
+            definitions.setdefault(fragment_id, (group, condition))
 
     return found
 
@@ -1201,13 +1260,13 @@ def sequence_database_access_discipline(model: dict, state: dict) -> list[Findin
     """
     rule_id = "sequence.database-access-discipline"
     kinds = {
-        str(p.get("name", "")).strip(): str(p.get("kind", "")).strip().lower()
+        _participant_id(p): str(p.get("kind", "")).strip().lower()
         for p in model.get("Participants", [])
     }
     found: list[Finding] = []
 
     for msg in model.get("Messages", []):
-        if str(msg.get("type", "sync")).lower() == "return":
+        if str(msg.get("type", "sync")).lower() in {"return", "activate", "deactivate"}:
             continue
         source = str(msg.get("source", "")).strip()
         target = str(msg.get("target", "")).strip()
@@ -1237,7 +1296,7 @@ def sequence_self_call_method_validation(model: dict, state: dict) -> list[Findi
     found: list[Finding] = []
 
     for msg in model.get("Messages", []):
-        if str(msg.get("type", "sync")).lower() == "return":
+        if str(msg.get("type", "sync")).lower() not in {"sync", "async", "self"}:
             continue
         source = str(msg.get("source", "")).strip()
         target = str(msg.get("target", "")).strip()
@@ -1276,8 +1335,9 @@ def sequence_orphan_participant_detection(model: dict, state: dict) -> list[Find
 
     found: list[Finding] = []
     for participant in model.get("Participants", []):
-        name = str(participant.get("name", "")).strip()
-        if name and name not in active_participants:
+        participant_id = _participant_id(participant)
+        name = str(participant.get("name") or participant_id).strip()
+        if participant_id and participant_id not in active_participants:
             found.append(
                 Finding(
                     rule_id,
@@ -1308,16 +1368,14 @@ def sequence_duplicate_consecutive_messages(model: dict, state: dict) -> list[Fi
             str(prev.get("target", "")).strip(),
             str(prev.get("label", "")).strip(),
             str(prev.get("type", "sync")).strip().lower(),
-            str(prev.get("group", "")).strip(),
-            str(prev.get("condition", "")).strip(),
+            repr(_message_fragments(prev)),
         )
         curr_key = (
             str(curr.get("source", "")).strip(),
             str(curr.get("target", "")).strip(),
             str(curr.get("label", "")).strip(),
             str(curr.get("type", "sync")).strip().lower(),
-            str(curr.get("group", "")).strip(),
-            str(curr.get("condition", "")).strip(),
+            repr(_message_fragments(curr)),
         )
 
         if prev_key == curr_key and prev_key[2]:  # label이 비어있지 않은 경우
@@ -1344,7 +1402,7 @@ def sequence_message_naming_convention(model: dict, state: dict) -> list[Finding
     found: list[Finding] = []
 
     for msg in model.get("Messages", []):
-        if str(msg.get("type", "sync")).lower() == "return":
+        if str(msg.get("type", "sync")).lower() not in {"sync", "async", "self"}:
             continue
         label = str(msg.get("label", "")).strip()
         if not label:
@@ -1404,7 +1462,7 @@ def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
     type 필드가 3가지 표준 호출 화살표 타입(sync, async, return) 내에 속하는지 검사한다.
     """
     rule_id = "sequence.message-type-validity"
-    valid_types = {"sync", "async", "return"}
+    valid_types = {"sync", "async", "return", "self", "activate", "deactivate"}
     found: list[Finding] = []
 
     for msg in model.get("Messages", []):

@@ -53,7 +53,6 @@ from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
 from app.design.services.sequence_diagram.extractor import extract_sequence_model
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
@@ -166,7 +165,6 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     },
     check=sequence_diagram_findings,
     check_key="sequence_diagram_check",
-    reconcile=reconcile_class_methods,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(

@@ -27,6 +27,7 @@ _ARROW = {
     "sync": "->",
     "async": "->>",
     "return": "-->",
+    "self": "->",
 }
 
 #: 조각 종류 → PlantUML 블록 키워드. 모르는 값은 그리지 않고 주 흐름으로 둔다.
@@ -75,7 +76,7 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
     # 그 메시지는 버린다 — 미선언 참가자를 그리면 그림이 조용히 거짓말을 한다.
     declared: set[str] = set()
     for participant in participants:
-        alias = sanitize_identifier(participant.get("name", ""))
+        alias = sanitize_identifier(participant.get("alias") or participant.get("name", ""))
         if alias in declared:
             continue
         declared.add(alias)
@@ -88,13 +89,57 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
 
     lines.append("")
 
-    open_fragment: tuple[str, str] | None = None
+    # 현재 열린 fragment 경로. 새 모델은 메시지마다 바깥→안쪽 경로를 들고 있어
+    # alt/else와 중첩을 잃지 않는다. 옛 저장본의 group/condition은 아래에서 깊이 1의
+    # fragment로 읽어 재생 가능성을 유지한다.
+    open_fragments: list[dict[str, str]] = []
 
-    def close_fragment() -> None:
-        nonlocal open_fragment
-        if open_fragment is not None:
+    def fragment_path(message: dict[str, Any]) -> list[dict[str, str]]:
+        path = message.get("fragments")
+        if isinstance(path, list):
+            return [item for item in path if isinstance(item, dict)]
+        legacy_type = _FRAGMENTS.get(str(message.get("group", "")).strip().lower(), "")
+        if not legacy_type:
+            return []
+        condition = sanitize_text(message.get("condition", ""))
+        return [{
+            "id": f"legacy:{legacy_type}:{condition}",
+            "type": legacy_type,
+            "branch": "main",
+            "condition": condition,
+        }]
+
+    def close_to(depth: int) -> None:
+        while len(open_fragments) > depth:
             lines.append("end")
-            open_fragment = None
+            open_fragments.pop()
+
+    def transition_fragments(wanted: list[dict[str, str]]) -> None:
+        common = 0
+        limit = min(len(open_fragments), len(wanted))
+        while common < limit:
+            current = open_fragments[common]
+            candidate = wanted[common]
+            if current.get("id") != candidate.get("id") or current.get("type") != candidate.get("type"):
+                break
+            if current.get("branch", "main") != candidate.get("branch", "main"):
+                # 같은 alt의 다른 branch는 fragment를 닫지 않고 PlantUML else로 전환한다.
+                close_to(common + 1)
+                if current.get("type") == "alt" and candidate.get("branch") == "else":
+                    lines.append(f"else {sanitize_text(candidate.get('condition', ''))}".rstrip())
+                    open_fragments[common] = dict(candidate)
+                    common += 1
+                break
+            common += 1
+
+        close_to(common)
+        for fragment in wanted[common:]:
+            kind = _FRAGMENTS.get(str(fragment.get("type", "")).lower(), "")
+            if not kind:
+                continue
+            condition = sanitize_text(fragment.get("condition", ""))
+            lines.append(f"{kind} {condition}".rstrip())
+            open_fragments.append(dict(fragment))
 
     for message in messages:
         source = sanitize_identifier(message.get("source", ""))
@@ -102,24 +147,24 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
         if source not in declared or target not in declared:
             continue
 
-        group = _FRAGMENTS.get(str(message.get("group", "")).strip().lower(), "")
-        condition = sanitize_text(message.get("condition", ""))
-        # 같은 (종류, 조건)이 이어지는 동안은 한 조각이다. 달라지면 닫고 새로 연다.
-        wanted = (group, condition) if group else None
-        if wanted != open_fragment:
-            close_fragment()
-            if wanted is not None:
-                lines.append(f"{group} {condition}".rstrip())
-                open_fragment = wanted
+        transition_fragments(fragment_path(message))
 
-        arrow = _ARROW.get(str(message.get("type", "")).strip().lower(), "->")
+        message_type = str(message.get("type", "sync")).strip().lower()
+        if message_type == "activate":
+            lines.append(f"activate {target}")
+            continue
+        if message_type == "deactivate":
+            lines.append(f"deactivate {target}")
+            continue
+
+        arrow = _ARROW.get(message_type, "->")
         label = sanitize_text(message.get("label", ""))
         line = f"{source} {arrow} {target}"
         if label:
             line += f" : {label}"
-        lines.append(f"  {line}" if open_fragment else line)
+        lines.append(f"  {line}" if open_fragments else line)
 
-    close_fragment()
+    close_to(0)
 
     lines.append("")
     lines.append("@enduml")

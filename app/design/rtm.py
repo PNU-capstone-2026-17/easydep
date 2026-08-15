@@ -120,7 +120,8 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
         note_unknown("sequence_diagram", name, "class", classes)
         rows.append(_row("sequence_diagram", name, {"class": classes}))
         if classes:
-            class_of_participant[name] = classes[0]
+            participant_id = participant.get("alias") or name
+            class_of_participant[participant_id] = classes[0]
 
     for message in sequence.get("Messages", []):
         endpoints = (message.get("source", "?"), message.get("target", "?"))

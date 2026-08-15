@@ -21,11 +21,17 @@ same schema. Rules:
 - Change only what the feedback asks for; leave everything else intact.
 - Keep the model grounded in the specification and class diagram — do not invent
   participants or messages that the feedback and inputs do not support.
+- For sync, async, and self calls, the label MUST name a method that already
+  exists on the receiver class. Repair an invalid message by remapping or removing
+  it; NEVER add a method to the class diagram and never invent a descriptive label.
 - Every message's source and target must exist among the returned Participants.
+- Preserve unique participant aliases and use aliases for every message endpoint.
 - Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,
   Control<->Entity; never Actor->Control, Boundary->Entity, or Entity-initiated calls).
-- Messages belonging to one fragment must carry the same `group` and `condition`.
-- Keep the traceability fields (source_class / use_case_ids) accurate. Carry them over unchanged for
+- Preserve each message's outer-to-inner `fragments` path. Use the same fragment
+  id for alt branches, `branch="main"` for the first branch and `branch="else"`
+  for the alternative so the renderer produces one alt/else block.
+- Keep the traceability fields (source_class / use_case_ids / step_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is
   honest, a made-up one is a lie the trace matrix will believe.

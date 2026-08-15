@@ -427,8 +427,9 @@ RULES: tuple[Rule, ...] = (
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "Every use case ID from the specification must be referenced by at least "
-            "one sequence message through use_case_ids."
+            "Every main-scenario and extension handling step from the specification "
+            "must be referenced by at least one sequence call through step_ids. Legacy "
+            "specifications without step structure fall back to use_case_ids coverage."
         ),
         citation="app/design/rtm.py (traceability references)",
         evidence="pipeline-invariant",
@@ -440,8 +441,8 @@ RULES: tuple[Rule, ...] = (
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
         statement=(
-            "If a message declares a combined fragment group (alt, loop, opt), it "
-            "must specify a condition explanation, and vice versa."
+            "Every fragment path entry must have a stable id, alt/loop/opt type and "
+            "condition. Else branches are valid only for alt and follow its main branch."
         ),
         citation="app/design/services/sequence_diagram/plantuml.py (Fragment rendering)",
         evidence="pipeline-invariant",
@@ -534,7 +535,7 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every message type must be one of the standard call types: "
-            "sync, async, return."
+            "sync, async, return, self, activate, deactivate."
         ),
         citation="app/design/services/sequence_diagram/extractor.py (Message call types)",
         evidence="pipeline-invariant",
