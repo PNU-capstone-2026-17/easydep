@@ -324,6 +324,36 @@ def test_async_return_rule_is_integrated_via_findings():
     assert "sequence.async-call-has-no-return" in found
 
 
+def test_sequence_collection_requires_one_diagram_per_use_case():
+    state = {
+        **STATE,
+        "usecase_spec": {
+            "use_cases": [
+                {"id": "UC1", "name": "Create order"},
+                {"id": "UC2", "name": "Cancel order"},
+            ]
+        },
+    }
+    model = {
+        "Diagrams": [
+            {
+                "use_case_id": "UC1",
+                "use_case_name": "Create order",
+                "Participants": [],
+                "Messages": [],
+            }
+        ]
+    }
+
+    findings = detectors.sequence_diagram_findings(model, state)
+
+    assert any(
+        finding.rule_id == "sequence.usecase-step-coverage"
+        and finding.location == "UC2"
+        for finding in findings
+    )
+
+
 # ---------------------------------------------------------------------------
 # sequence.initial-message-entry
 # ---------------------------------------------------------------------------

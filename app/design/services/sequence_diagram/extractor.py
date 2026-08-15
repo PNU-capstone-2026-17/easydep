@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -110,6 +111,36 @@ class SequenceModel(BaseModel):
         aliases = [participant.alias for participant in self.Participants]
         if len(aliases) != len(set(aliases)):
             raise ValueError("participant aliases must be unique")
+        return self
+
+
+class UseCaseSequenceModel(SequenceModel):
+    """하나의 유스케이스만 표현하는 독립 시퀀스 다이어그램."""
+
+    use_case_id: str = Field(min_length=1)
+    use_case_name: str = ""
+
+    @model_validator(mode="after")
+    def messages_belong_to_this_use_case(self) -> "UseCaseSequenceModel":
+        for message in self.Messages:
+            if message.use_case_ids != [self.use_case_id]:
+                raise ValueError(
+                    "every message in a use-case sequence must reference only its use_case_id"
+                )
+        return self
+
+
+class SequenceDiagramCollection(BaseModel):
+    """유스케이스별 시퀀스 다이어그램 모음."""
+
+    model_config = ConfigDict(extra="forbid")
+    Diagrams: list[UseCaseSequenceModel]
+
+    @model_validator(mode="after")
+    def use_case_ids_are_unique(self) -> "SequenceDiagramCollection":
+        identifiers = [diagram.use_case_id for diagram in self.Diagrams]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("sequence diagram use_case_ids must be unique")
         return self
 
 
@@ -220,3 +251,60 @@ def extract_sequence_model(
         },
     ]
     return parse_structured(messages, SequenceModel)
+
+
+def extract_sequence_diagrams(
+    usecase_spec: Any,
+    class_diagram_puml: str,
+) -> dict[str, Any]:
+    """각 유스케이스 명세를 독립적으로 추출하여 다이어그램 모음으로 만든다."""
+    if not usecase_spec:
+        return {}
+    if isinstance(usecase_spec, str):
+        return extract_sequence_model(usecase_spec, class_diagram_puml)
+
+    use_cases = {
+        str(item.get("id") or "").strip(): item
+        for item in usecase_spec.get("use_cases") or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    specifications = [
+        item
+        for item in usecase_spec.get("use_case_specs") or []
+        if isinstance(item, dict) and item.get("use_case_id")
+    ]
+    if not specifications:
+        specifications = [
+            {**item, "use_case_id": item.get("id")}
+            for item in use_cases.values()
+        ]
+    if not specifications:
+        return extract_sequence_model(
+            json.dumps(usecase_spec, ensure_ascii=False, indent=2),
+            class_diagram_puml,
+        )
+
+    diagrams: list[dict[str, Any]] = []
+    for specification in specifications:
+        use_case_id = str(specification.get("use_case_id") or "").strip()
+        summary = use_cases.get(use_case_id, {})
+        use_case_name = str(
+            specification.get("name") or summary.get("name") or ""
+        ).strip()
+        scenario = {
+            "use_case": summary,
+            "use_case_specification": specification,
+        }
+        extracted = extract_sequence_model(
+            json.dumps(scenario, ensure_ascii=False, indent=2),
+            class_diagram_puml,
+        )
+        diagrams.append(
+            {
+                "use_case_id": use_case_id,
+                "use_case_name": use_case_name,
+                **extracted,
+            }
+        )
+
+    return SequenceDiagramCollection(Diagrams=diagrams).model_dump()

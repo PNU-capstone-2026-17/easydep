@@ -59,17 +59,38 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
     if not model:
         return ""
 
+    diagrams = model.get("Diagrams")
+    if isinstance(diagrams, list):
+        return "\n\n".join(
+            rendered
+            for diagram in diagrams
+            if isinstance(diagram, dict)
+            and (rendered := generate_sequence_from_model(diagram))
+        )
+
     participants = model.get("Participants", [])
     messages = model.get("Messages", [])
     if not participants and not messages:
         return ""
 
+    diagram_id = sanitize_identifier(str(model.get("use_case_id") or ""))
+    start = f"@startuml {diagram_id}" if model.get("use_case_id") else "@startuml"
     lines = [
-        "@startuml",
+        start,
         "!theme plain",
         "skinparam sequenceMessageAlign center",
-        "",
     ]
+    title = " - ".join(
+        value
+        for value in (
+            sanitize_text(str(model.get("use_case_id") or "")),
+            sanitize_text(str(model.get("use_case_name") or "")),
+        )
+        if value
+    )
+    if title:
+        lines.append(f"title {title}")
+    lines.append("")
 
     # 선언된 참가자만 메시지에 쓸 수 있다. 모델이 어긋나 선언에 없는 이름이 나오면
     # 그 메시지는 버린다 — 미선언 참가자를 그리면 그림이 조용히 거짓말을 한다.

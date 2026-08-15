@@ -43,6 +43,8 @@ class ArchitectureState(TypedDict, total=False):
     # and "the budget ran out" are never the same value.
     class_diagram_check: dict[str, Any]
 
+    # New runs store {Diagrams: [{use_case_id, use_case_name, Participants, Messages}]};
+    # legacy runs may still contain one {Participants, Messages} model.
     sequence_diagram_model: dict[str, Any]
     sequence_diagram_feedback: str
     sequence_diagram_puml: str

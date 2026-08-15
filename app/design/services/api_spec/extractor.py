@@ -136,7 +136,7 @@ def api_spec_messages(
             "content": (
                 f"[Use Case Specification]\n{scenario_text}\n\n"
                 f"[Class Diagram PlantUML]\n{class_diagram_puml}\n\n"
-                f"[Sequence Diagram PlantUML]\n{sequence_diagram_puml}"
+                f"[Sequence Diagrams PlantUML]\n{sequence_diagram_puml}"
             ),
         },
     ]

@@ -110,6 +110,32 @@ def build_design_rtm(state: dict) -> dict[str, Any]:
     # --- 시퀀스 다이어그램: 참가자는 클래스, 메시지는 유스케이스 + (양끝 참가자의) 클래스 --
     sequence = state.get("sequence_diagram_model") or {}
 
+    diagrams = sequence.get("Diagrams")
+    if isinstance(diagrams, list):
+        for diagram in diagrams:
+            if not isinstance(diagram, dict):
+                continue
+            use_case_id = str(diagram.get("use_case_id") or "").strip()
+            if not use_case_id:
+                continue
+            classes = sorted(
+                {
+                    str(participant.get("source_class") or "").strip()
+                    for participant in diagram.get("Participants") or []
+                    if participant.get("source_class")
+                }
+            )
+            note_unknown("sequence_diagram", use_case_id, "use_case", [use_case_id])
+            note_unknown("sequence_diagram", use_case_id, "class", classes)
+            rows.append(
+                _row(
+                    "sequence_diagram",
+                    use_case_id,
+                    {"use_case": [use_case_id], "class": classes},
+                )
+            )
+        sequence = {}
+
     # 참가자 이름 → 클래스. 메시지가 어느 클래스에 의존하는지는 여기서 나온다.
     class_of_participant: dict[str, str] = {}
     for participant in sequence.get("Participants", []):

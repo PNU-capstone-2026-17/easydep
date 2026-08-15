@@ -88,6 +88,54 @@ def test_messages_are_traced_to_classes_through_their_participants():
     assert any("->" in t for t in impacted_by(rtm, "class", "OrderForm"))
 
 
+def test_sequence_collection_is_traced_per_use_case_diagram():
+    collection_state = {
+        **STATE,
+        "sequence_diagram_model": {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1",
+                    "use_case_name": "Create order",
+                    "Participants": [
+                        {
+                            "name": "OrderForm",
+                            "alias": "Boundary",
+                            "kind": "boundary",
+                            "source_class": "OrderForm",
+                        }
+                    ],
+                    "Messages": [],
+                },
+                {
+                    "use_case_id": "UC2",
+                    "use_case_name": "Cancel order",
+                    "Participants": [
+                        {
+                            "name": "Order",
+                            "alias": "Order",
+                            "kind": "entity",
+                            "source_class": "Order",
+                        }
+                    ],
+                    "Messages": [],
+                },
+            ]
+        },
+    }
+
+    rtm = build_design_rtm(collection_state)
+    sequence_rows = [
+        row for row in rtm["rows"] if row["stage"] == "sequence_diagram"
+    ]
+
+    assert [row["element"] for row in sequence_rows] == ["UC1", "UC2"]
+    assert sequence_rows[0]["sources"] == {
+        "use_case": ["UC1"],
+        "class": ["OrderForm"],
+    }
+    assert "sequence_diagram:UC1" in impacted_by(rtm, "class", "OrderForm")
+
+
 def test_a_bad_participant_class_is_reported_once_not_twice():
     """참가자의 source_class 가 틀리면 그 참가자 행에서만 보고한다.
 

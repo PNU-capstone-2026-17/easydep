@@ -93,6 +93,30 @@ def test_sequence_finalizer_rejects_call_without_a_receiver_class():
         ensure_sequence_class_methods(state)
 
 
+def test_sequence_finalizer_requires_one_diagram_per_use_case():
+    state = {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1"}, {"id": "UC2"}],
+        },
+        "extracted_bce_classes": {
+            "Classes": [{"className": "OrderControl", "methods": []}]
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1",
+                    "use_case_name": "Create order",
+                    "Participants": [],
+                    "Messages": [],
+                }
+            ]
+        },
+    }
+
+    with pytest.raises(ValueError, match="exactly one diagram per use case"):
+        ensure_sequence_class_methods(state)
+
+
 def test_reconcile_declares_return_type_for_a_required_result():
     state = {
         "extracted_bce_classes": {

@@ -51,13 +51,16 @@ from app.design.services.deployment_diagram.plantuml import generate_deployment_
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
-from app.design.services.sequence_diagram.extractor import extract_sequence_model
+from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import (
     ensure_sequence_class_methods,
     reconcile_class_methods,
 )
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
+
+# 기존 테스트·확장 코드가 패치하는 이름을 유지하되 실제 동작은 복수 추출이다.
+extract_sequence_model = extract_sequence_diagrams
 
 #: 설계 파이프라인의 순서. 상위 그래프의 엣지도, 저장 순회도 여기서만 나온다.
 #: 시퀀스·API는 클래스 다이어그램을, 배포는 그 앞의 모두를 재료로 쓴다. ERD는 클래스
@@ -113,7 +116,7 @@ def _design_context(state: ArchitectureState) -> str:
         [
             "[Use Case Specification]\n" + usecase_spec_text(state),
             "[Class Diagram]\n" + state.get("class_diagram_puml", ""),
-            "[Sequence Diagram]\n" + state.get("sequence_diagram_puml", ""),
+            "[Sequence Diagrams]\n" + state.get("sequence_diagram_puml", ""),
             "[API Spec]\n" + str(state.get("api_spec", {})),
             "[ERD]\n" + state.get("erd_puml", ""),
         ]
@@ -154,7 +157,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     feedback_key="sequence_diagram_feedback",
     empty="",
     extract=lambda state: extract_sequence_model(
-        usecase_spec_text(state),
+        state.get("usecase_spec"),
         state.get("class_diagram_puml", ""),
     ),
     revise=lambda current, feedback, state, targets: revise_sequence_model(
@@ -163,6 +166,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
     elements={
+        "Diagrams": lambda d: d.get("use_case_id", ""),
         "Participants": lambda p: p.get("name", ""),
         # 메시지에는 id 가 없다 — 추적표가 쓰는 것과 같은 조합으로 가리킨다.
         "Messages": _message_key,

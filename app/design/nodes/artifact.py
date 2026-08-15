@@ -204,6 +204,11 @@ def merge_model(
 
     merged = dict(original)
     for list_field, key_of in spec.elements.items():
+        # 한 스펙이 레거시와 컬렉션 모델의 서로 다른 목록 필드를 함께 선언할 수 있다.
+        # 현재 모델에 없는 필드를 빈 목록으로 새로 만들면 구조화 스키마의 extra 금지와
+        # 충돌하므로 실제로 존재하는 목록만 병합한다.
+        if list_field not in original and list_field not in revised:
+            continue
         merged[list_field] = merge_targeted(
             original.get(list_field) or [],
             revised.get(list_field) or [],

@@ -9,7 +9,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.design.services.common.structured import parse_structured, revision_messages
-from app.design.services.sequence_diagram.extractor import SequenceModel
+from app.design.services.sequence_diagram.extractor import (
+    SequenceDiagramCollection,
+    SequenceModel,
+)
 
 SEQUENCE_REVISION_SYSTEM_PROMPT = """
 You edit an existing UML sequence interaction model. You are given the current
@@ -18,6 +21,8 @@ and the user's natural-language feedback.
 
 Apply the feedback to the model and return the FULL revised model, following the
 same schema. Rules:
+- When the model contains `Diagrams`, preserve exactly one diagram for every
+  use case. Edit each diagram independently and never move messages between use cases.
 - Change only what the feedback asks for; leave everything else intact.
 - Keep the model grounded in the specification and class diagram — do not invent
   participants or messages that the feedback and inputs do not support.
@@ -60,6 +65,11 @@ def revise_sequence_model(
     if not current_model or not feedback:
         return current_model or {}
 
+    schema = (
+        SequenceDiagramCollection
+        if isinstance(current_model.get("Diagrams"), list)
+        else SequenceModel
+    )
     return parse_structured(
         revision_messages(
             SEQUENCE_REVISION_SYSTEM_PROMPT,
@@ -70,5 +80,5 @@ def revise_sequence_model(
             feedback,
             targets,
         ),
-        SequenceModel,
+        schema,
     )

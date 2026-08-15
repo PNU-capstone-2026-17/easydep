@@ -6,9 +6,10 @@ from app.design.knowledge.detectors import (
     sequence_message_methods,
     sequence_usecase_coverage,
 )
+from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
-from app.design.nodes.artifact import CLEAN, check_node
+from app.design.nodes.artifact import CLEAN, check_node, merge_model
 
 
 def _participant(name: str, kind: str, source_class: str = "") -> dict:
@@ -33,6 +34,60 @@ def _message(source: str, target: str, label: str, **overrides) -> dict:
     }
     message.update(overrides)
     return message
+
+
+def test_extracts_one_sequence_diagram_for_each_use_case():
+    specification = {
+        "use_cases": [
+            {"id": "UC1", "name": "Create order"},
+            {"id": "UC2", "name": "Cancel order"},
+        ],
+        "use_case_specs": [
+            {"use_case_id": "UC1", "main_scenario": []},
+            {"use_case_id": "UC2", "main_scenario": []},
+        ],
+    }
+
+    def extracted(scenario_text, class_diagram_puml):
+        use_case_id = "UC1" if '"UC1"' in scenario_text else "UC2"
+        return {
+            "Participants": [],
+            "Messages": [],
+        }
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        side_effect=extracted,
+    ) as extract:
+        result = extract_sequence_diagrams(specification, "class Order")
+
+    assert extract.call_count == 2
+    assert [item["use_case_id"] for item in result["Diagrams"]] == ["UC1", "UC2"]
+    assert [item["use_case_name"] for item in result["Diagrams"]] == [
+        "Create order",
+        "Cancel order",
+    ]
+
+
+def test_targeted_sequence_revision_preserves_other_use_case_diagrams():
+    original = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "Messages": [{"label": "before()"}]},
+            {"use_case_id": "UC2", "Messages": [{"label": "keep()"}]},
+        ]
+    }
+    revised = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "Messages": [{"label": "after()"}]},
+            {"use_case_id": "UC2", "Messages": [{"label": "changedByLlm()"}]},
+        ]
+    }
+
+    merged = merge_model(SEQUENCE_DIAGRAM_SPEC, original, revised, {"UC1"})
+
+    assert set(merged) == {"Diagrams"}
+    assert merged["Diagrams"][0]["Messages"][0]["label"] == "after()"
+    assert merged["Diagrams"][1]["Messages"][0]["label"] == "keep()"
 
 
 def test_sequence_stage_asks_llm_before_adding_receiver_method():
@@ -220,3 +275,36 @@ def test_renderer_preserves_alt_else_nested_fragments_and_lifecycle_events():
     assert rendered.count("alt ") == 1
     assert "activate OrderControl" in rendered
     assert "deactivate OrderControl" in rendered
+
+
+def test_renderer_emits_an_independent_plantuml_document_per_use_case():
+    participants = [
+        _participant("User", "actor"),
+        _participant("OrderBoundary", "boundary", "OrderBoundary"),
+    ]
+    model = {
+        "Diagrams": [
+            {
+                "use_case_id": "UC1",
+                "use_case_name": "Create order",
+                "Participants": participants,
+                "Messages": [_message("User", "OrderBoundary", "createOrder()")],
+            },
+            {
+                "use_case_id": "UC2",
+                "use_case_name": "Cancel order",
+                "Participants": participants,
+                "Messages": [_message("User", "OrderBoundary", "cancelOrder()")],
+            },
+        ]
+    }
+
+    rendered = generate_sequence_from_model(model)
+
+    assert rendered.count("@startuml") == 2
+    assert "@startuml UC1" in rendered
+    assert "@startuml UC2" in rendered
+    assert "title UC1 - Create order" in rendered
+    assert "title UC2 - Cancel order" in rendered
+    assert "createOrder()" in rendered
+    assert "cancelOrder()" in rendered

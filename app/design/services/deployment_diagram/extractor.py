@@ -123,7 +123,7 @@ def extract_deployment_model(
             "content": (
                 f"[Use Case Specification]\n{scenario_text}\n\n"
                 f"[Class Diagram PlantUML]\n{class_diagram_puml}\n\n"
-                f"[Sequence Diagram PlantUML]\n{sequence_diagram_puml}\n\n"
+                f"[Sequence Diagrams PlantUML]\n{sequence_diagram_puml}\n\n"
                 f"[API Spec JSON]\n{json.dumps(api_spec, ensure_ascii=False, indent=2)}\n\n"
                 f"[ERD PlantUML]\n{erd_puml}"
             ),

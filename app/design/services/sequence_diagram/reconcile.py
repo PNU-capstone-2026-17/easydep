@@ -13,7 +13,7 @@ from app.design.schemas.architecture_state import ArchitectureState, usecase_spe
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_puml_artifact
-from app.design.services.sequence_diagram.extractor import extract_sequence_model
+from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     method_call_signature,
@@ -21,6 +21,33 @@ from app.design.services.sequence_diagram.methods import (
 
 
 _CALL_TYPES = {"sync", "async", "self"}
+
+# 외부 패치 지점을 보존하면서 유스케이스별 복수 추출로 전환한다.
+extract_sequence_model = extract_sequence_diagrams
+
+
+def _sequence_diagrams(sequence: dict) -> list[dict]:
+    diagrams = sequence.get("Diagrams") if isinstance(sequence, dict) else None
+    if isinstance(diagrams, list):
+        return [diagram for diagram in diagrams if isinstance(diagram, dict)]
+    return [sequence]
+
+
+def _expected_use_case_ids(state: dict) -> set[str]:
+    specification = state.get("usecase_spec") or {}
+    if not isinstance(specification, dict):
+        return set()
+    identifiers = {
+        str(item.get("id") or "").strip()
+        for item in specification.get("use_cases") or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    identifiers.update(
+        str(item.get("use_case_id") or "").strip()
+        for item in specification.get("use_case_specs") or []
+        if isinstance(item, dict) and item.get("use_case_id")
+    )
+    return identifiers
 
 
 def _class_methods(bce: dict) -> dict[str, set[str]]:
@@ -158,20 +185,32 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
     if not bce.get("Classes"):
         return {}
 
-    missing = _missing_methods(sequence, bce, strict=False)
-    return_findings = sequence_return_values_match_methods(sequence, state)
-    uncovered = sequence_usecase_coverage(sequence, state)
+    diagrams = _sequence_diagrams(sequence)
+    missing: dict[str, list[str]] = {}
+    return_findings = []
+    uncovered = []
+    for diagram in diagrams:
+        for class_name, labels in _missing_methods(
+            diagram, bce, strict=False
+        ).items():
+            target_labels = missing.setdefault(class_name, [])
+            target_labels.extend(label for label in labels if label not in target_labels)
+        return_findings.extend(sequence_return_values_match_methods(diagram, state))
+        uncovered.extend(sequence_usecase_coverage(diagram, state))
     if not missing and not return_findings and not uncovered:
         return {}
 
-    participant_classes = _participant_classes(sequence)
     targets = set(missing)
     if return_findings:
-        targets.update(
-            participant_classes.get(str(message.get("source") or "").strip(), "")
-            for message in sequence.get("Messages") or []
-            if str(message.get("type", "")).lower() == "return"
-        )
+        for diagram in diagrams:
+            participant_classes = _participant_classes(diagram)
+            targets.update(
+                participant_classes.get(
+                    str(message.get("source") or "").strip(), ""
+                )
+                for message in diagram.get("Messages") or []
+                if str(message.get("type", "")).lower() == "return"
+            )
         targets.discard("")
 
     issues = [
@@ -207,7 +246,7 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
     if uncovered:
         class_puml = result.get("class_diagram_puml") or state.get("class_diagram_puml", "")
         result["sequence_diagram_model"] = extract_sequence_model(
-            usecase_spec_text(state), class_puml
+            state.get("usecase_spec"), class_puml
         )
     return result
 
@@ -216,14 +255,34 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
     """렌더 직전 호출 소유권과 반환 타입 계약을 강제하는 최종 장벽."""
     sequence = state.get("sequence_diagram_model") or {}
     bce = state.get("extracted_bce_classes") or {}
+    if isinstance(sequence.get("Diagrams"), list):
+        expected = _expected_use_case_ids(state)
+        actual = [
+            str(diagram.get("use_case_id") or "").strip()
+            for diagram in sequence.get("Diagrams") or []
+            if isinstance(diagram, dict)
+        ]
+        if expected and (set(actual) != expected or len(actual) != len(set(actual))):
+            raise ValueError(
+                "sequence diagrams must contain exactly one diagram per use case: "
+                f"expected {sorted(expected)}, got {actual}"
+            )
     if not bce.get("Classes"):
         if any(
             str(message.get("type", "sync")).lower() in _CALL_TYPES
-            for message in sequence.get("Messages") or []
+            for diagram in _sequence_diagrams(sequence)
+            for message in diagram.get("Messages") or []
         ):
             raise ValueError("cannot validate call messages without a class diagram")
         return {}
-    missing = _missing_methods(sequence, bce, strict=True)
+    diagrams = _sequence_diagrams(sequence)
+    missing: dict[str, list[str]] = {}
+    for diagram in diagrams:
+        for class_name, labels in _missing_methods(
+            diagram, bce, strict=True
+        ).items():
+            target_labels = missing.setdefault(class_name, [])
+            target_labels.extend(label for label in labels if label not in target_labels)
     if missing:
         raise ValueError(
             "call messages must exactly match receiver class method signatures: "
@@ -233,9 +292,13 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
             )
         )
     contract_findings = [
-        *sequence_unmatched_returns(sequence, state),
-        *sequence_async_returns(sequence, state),
-        *sequence_return_values_match_methods(sequence, state),
+        finding
+        for diagram in diagrams
+        for finding in (
+            *sequence_unmatched_returns(diagram, state),
+            *sequence_async_returns(diagram, state),
+            *sequence_return_values_match_methods(diagram, state),
+        )
     ]
     if contract_findings:
         raise ValueError(

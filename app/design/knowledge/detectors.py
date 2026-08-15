@@ -1329,7 +1329,14 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
+    diagram_use_case_id = str(model.get("use_case_id") or "").strip()
     flow_steps = _known_flow_step_ids(state)
+    if diagram_use_case_id:
+        flow_steps = {
+            step_id
+            for step_id in flow_steps
+            if step_id.startswith(f"{diagram_use_case_id}:")
+        }
     if flow_steps:
         covered_steps = {
             str(step_id).strip()
@@ -1344,6 +1351,8 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
         ]
 
     use_cases = _known_use_case_ids(state)
+    if diagram_use_case_id:
+        use_cases = {diagram_use_case_id}
     if not use_cases:
         return []
 
@@ -1676,6 +1685,61 @@ def _artifact_findings(model: dict, state: dict, stage: str) -> list[Finding]:
 
 
 def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
+    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+    if isinstance(diagrams, list):
+        found: list[Finding] = []
+        known = _known_use_case_ids(state)
+        identifiers = [
+            str(diagram.get("use_case_id") or "").strip()
+            for diagram in diagrams
+            if isinstance(diagram, dict)
+        ]
+        for use_case_id in sorted(known - set(identifiers)):
+            found.append(
+                Finding(
+                    "sequence.usecase-step-coverage",
+                    f"유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 없음",
+                    use_case_id,
+                )
+            )
+        for use_case_id in sorted(set(identifiers) - known if known else set()):
+            found.append(
+                Finding(
+                    "sequence.references-exist",
+                    f"입력에 없는 유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 있음",
+                    use_case_id,
+                )
+            )
+        seen: set[str] = set()
+        for diagram in diagrams:
+            if not isinstance(diagram, dict):
+                continue
+            use_case_id = str(diagram.get("use_case_id") or "").strip()
+            if use_case_id in seen:
+                found.append(
+                    Finding(
+                        "sequence.usecase-step-coverage",
+                        f"유스케이스 '{use_case_id}'의 시퀀스 다이어그램이 중복됨",
+                        use_case_id,
+                    )
+                )
+            seen.add(use_case_id)
+            for message in diagram.get("Messages") or []:
+                references = {
+                    str(value).strip()
+                    for value in message.get("use_case_ids") or []
+                    if value
+                }
+                if references != {use_case_id}:
+                    found.append(
+                        Finding(
+                            "sequence.references-exist",
+                            f"'{use_case_id}' 다이어그램 메시지가 다른 유스케이스를 참조함",
+                            str(message.get("label") or "<message>"),
+                        )
+                    )
+            found.extend(_artifact_findings(diagram, state, rules.SEQUENCE_DIAGRAM))
+        return found
     return _artifact_findings(model, state, rules.SEQUENCE_DIAGRAM)
 
 

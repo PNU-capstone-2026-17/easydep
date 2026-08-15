@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.design.services.sequence_diagram.extractor import SequenceMessage, SequenceModel
+from app.design.services.sequence_diagram.extractor import (
+    SequenceDiagramCollection,
+    SequenceMessage,
+    SequenceModel,
+)
 
 
 def test_sequence_traceability_ids_are_unique_set_like_references():
@@ -132,3 +136,38 @@ def test_participant_aliases_must_be_unique():
     ]
     with pytest.raises(ValidationError, match="aliases must be unique"):
         SequenceModel(Participants=participants, Messages=[])
+
+
+def test_use_case_sequence_rejects_messages_from_another_use_case():
+    with pytest.raises(ValidationError, match="reference only its use_case_id"):
+        SequenceDiagramCollection(
+            Diagrams=[
+                {
+                    "use_case_id": "UC1",
+                    "use_case_name": "Create order",
+                    "Participants": [],
+                    "Messages": [
+                        {
+                            "source": "A",
+                            "target": "B",
+                            "label": "createOrder()",
+                            "type": "sync",
+                            "fragments": [],
+                            "use_case_ids": ["UC2"],
+                            "step_ids": ["UC2:main:1"],
+                        }
+                    ],
+                }
+            ]
+        )
+
+
+def test_sequence_collection_rejects_duplicate_use_case_diagrams():
+    diagram = {
+        "use_case_id": "UC1",
+        "use_case_name": "Create order",
+        "Participants": [],
+        "Messages": [],
+    }
+    with pytest.raises(ValidationError, match="use_case_ids must be unique"):
+        SequenceDiagramCollection(Diagrams=[diagram, diagram])
