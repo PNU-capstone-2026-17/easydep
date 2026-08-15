@@ -144,7 +144,10 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
         "12345678-0000-0000-0000-000000000000",
         {
             "class_diagram_puml": "@startuml\nclass Order\n@enduml",
-            "sequence_diagram_puml": "@startuml\nA -> B\n@enduml",
+            "sequence_diagram_puml": (
+                "@startuml UC1\nA -> B : first()\n@enduml\n\n"
+                "@startuml UC2\nA -> B : second()\n@enduml"
+            ),
             "api_spec": {"openapi": "3.0.3", "paths": {}},
             "erd_puml": "@startuml\nentity orders\n@enduml",
             "deployment_diagram_puml": "@startuml\nnode app\n@enduml",
@@ -159,6 +162,9 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     }
     assert job["generation"]["basePackage"] == "com.example.orders"
     assert (tmp_path / job["inputs"]["openapi"]).is_file()
+    sequence_path = tmp_path / job["inputs"]["sequence"]
+    assert sequence_path.name == "sequence-diagrams.puml"
+    assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
     assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")
     assert job["tools"]["openapiGeneratorJar"].startswith("app/implementation/tools/")
 

@@ -72,6 +72,8 @@ from app.implementation.delivery.kubernetes import (
 from app.implementation.delivery.terraform import render_iac, validate_terraform
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
+    _participant_aliases,
+    _sequence_documents,
     capture_generated_contracts,
     restore_generated_contracts,
     verify_source_design_conformance,
@@ -96,6 +98,28 @@ class SourceDesignConformanceTest(unittest.TestCase):
         return SimpleNamespace(
             base_package="com.example.demo",
             inputs={"bceClass": bce, "sequence": sequence},
+        )
+
+    def test_sequence_documents_keep_aliases_scoped_per_use_case(self) -> None:
+        source = (
+            '@startuml UC1\nboundary "CreateBoundary" as Boundary\n@enduml\n\n'
+            '@startuml UC2\nboundary "CancelBoundary" as Boundary\n@enduml'
+        )
+
+        documents = _sequence_documents(source)
+
+        self.assertEqual(["UC1", "UC2"], [item[0] for item in documents])
+        self.assertEqual(
+            "CreateBoundary",
+            _participant_aliases(
+                documents[0][1], {"CreateBoundary", "CancelBoundary"}
+            )["Boundary"],
+        )
+        self.assertEqual(
+            "CancelBoundary",
+            _participant_aliases(
+                documents[1][1], {"CreateBoundary", "CancelBoundary"}
+            )["Boundary"],
         )
 
     def test_preserves_generated_contracts_and_observable_sequence_calls(self) -> None:

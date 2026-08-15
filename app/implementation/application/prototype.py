@@ -44,7 +44,9 @@ class PrototypeClient:
             inputs[name] = path.relative_to(self.settings.repository_root).as_posix()
 
         write("bceClass", "class-diagram.puml", design.get("class_diagram_puml"))
-        write("sequence", "sequence-diagram.puml", design.get("sequence_diagram_puml"))
+        # 하나의 파일에 유스케이스별 @startuml 블록을 모두 보존한다. 구현 계획·정합성
+        # 검사는 이 입력 전체를 순회하므로 모든 유스케이스 호출 흐름이 소스 생성에 반영된다.
+        write("sequence", "sequence-diagrams.puml", design.get("sequence_diagram_puml"))
         write("openapi", "openapi.json", design.get("api_spec"))
         write("erd", "erd.puml", design.get("erd_puml"))
         write("deployment", "deployment-diagram.puml", design.get("deployment_diagram_puml"))

@@ -109,54 +109,64 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
     bce_path = spec.inputs.get("bceClass")
     if sequence_path and sequence_path.is_file() and bce_path and bce_path.is_file():
         components = {component.name for component in parse_components(bce_path.read_text(encoding="utf-8"))}
-        aliases = _participant_aliases(sequence_path.read_text(encoding="utf-8"), components)
         invocations = _implementation_invocations(run_root, spec.base_package)
-        expected_by_source: dict[str, list[dict[str, str]]] = {}
-        for sequence_call in _sequence_calls(sequence_path.read_text(encoding="utf-8")):
-            source, target, method = (
-                sequence_call["source"], sequence_call["target"], sequence_call["method"]
-            )
-            resolved_source, resolved_target = aliases.get(source, source), aliases.get(target, target)
-            if resolved_source not in components or resolved_target not in components:
-                warnings.append({"code": "UNMAPPABLE_SEQUENCE_CALL",
-                                 "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components."})
-                continue
-            matched = any(
-                item["method"] == method and resolved_target in item["dependencies"]
-                for item in invocations.get(resolved_source, [])
-            )
-            check = {"from": resolved_source, "to": resolved_target, "method": method,
-                     "status": "PASSED" if matched else "FAILED"}
-            checks["sequenceCalls"].append(check)
-            if not matched:
-                violations.append({"code": "SEQUENCE_CALL_NOT_IMPLEMENTED",
-                                   "path": "application/src/main/java",
-                                   "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no matching source-to-target invocation."})
-                continue
-            expected_by_source.setdefault(resolved_source, []).append({
-                "method": method,
-                "branch": sequence_call["branch"],
-            })
-            branch_tokens = _branch_tokens(sequence_call["branch"])
-            if branch_tokens and not any(
-                any(token in item["source"].lower() for token in branch_tokens)
-                for item in invocations.get(resolved_source, [])
-            ):
-                violations.append({"code": "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
-                                   "path": "application/src/main/java",
-                                   "message": f"Sequence branch '{sequence_call['branch']}' for {method}(...) is not observable in {resolved_source}."})
-        for source, expected in expected_by_source.items():
-            ordered = any(_calls_in_order(item["calls"], [call["method"] for call in expected])
-                          for item in invocations.get(source, []))
-            checks.setdefault("sequenceOrder", []).append({
-                "source": source,
-                "methods": [call["method"] for call in expected],
-                "status": "PASSED" if ordered else "FAILED",
-            })
-            if not ordered:
-                violations.append({"code": "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
-                                   "path": "application/src/main/java",
-                                   "message": f"Sequence call order for {source} is not preserved in one implementation class."})
+        sequence_source = sequence_path.read_text(encoding="utf-8")
+        for diagram_id, document in _sequence_documents(sequence_source):
+            aliases = _participant_aliases(document, components)
+            expected_by_source: dict[str, list[dict[str, str]]] = {}
+            for sequence_call in _sequence_calls(document):
+                source, target, method = (
+                    sequence_call["source"], sequence_call["target"], sequence_call["method"]
+                )
+                resolved_source = aliases.get(source, source)
+                resolved_target = aliases.get(target, target)
+                if resolved_source not in components or resolved_target not in components:
+                    warnings.append({"code": "UNMAPPABLE_SEQUENCE_CALL",
+                                     "diagram": diagram_id,
+                                     "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components."})
+                    continue
+                matched = any(
+                    item["method"] == method and resolved_target in item["dependencies"]
+                    for item in invocations.get(resolved_source, [])
+                )
+                check = {"diagram": diagram_id, "from": resolved_source,
+                         "to": resolved_target, "method": method,
+                         "status": "PASSED" if matched else "FAILED"}
+                checks["sequenceCalls"].append(check)
+                if not matched:
+                    violations.append({"code": "SEQUENCE_CALL_NOT_IMPLEMENTED",
+                                       "path": "application/src/main/java",
+                                       "message": f"Sequence call {resolved_source} -> {resolved_target}: {method}(...) has no matching source-to-target invocation."})
+                    continue
+                expected_by_source.setdefault(resolved_source, []).append({
+                    "method": method,
+                    "branch": sequence_call["branch"],
+                })
+                branch_tokens = _branch_tokens(sequence_call["branch"])
+                if branch_tokens and not any(
+                    any(token in item["source"].lower() for token in branch_tokens)
+                    for item in invocations.get(resolved_source, [])
+                ):
+                    violations.append({"code": "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
+                                       "path": "application/src/main/java",
+                                       "message": f"Sequence branch '{sequence_call['branch']}' for {method}(...) is not observable in {resolved_source}."})
+            for source, expected in expected_by_source.items():
+                ordered = any(
+                    _calls_in_order(
+                        item["calls"], [call["method"] for call in expected]
+                    )
+                    for item in invocations.get(source, [])
+                )
+                checks.setdefault("sequenceOrder", []).append({
+                    "diagram": diagram_id,
+                    "source": source,
+                    "methods": [call["method"] for call in expected],
+                    "status": "PASSED" if ordered else "FAILED",
+                })
+                if not ordered:
+                    violations.append({"code": "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
+                                       "path": "application/src/main/java",
+                                       "message": f"Sequence call order for {source} in {diagram_id} is not preserved in one implementation class."})
     else:
         warnings.append({"code": "MISSING_SEQUENCE_INPUT", "message": "Sequence call verification was skipped because no sequence/BCE input is available."})
 
@@ -293,6 +303,22 @@ def _participant_aliases(sequence: str, components: set[str]) -> dict[str, str]:
         elif alias in components:
             aliases[display] = alias
     return aliases
+
+
+def _sequence_documents(sequence: str) -> list[tuple[str, str]]:
+    """여러 PlantUML 문서를 유스케이스별 독립 검증 단위로 분리한다."""
+    matches = list(
+        re.finditer(
+            r"(?ims)^\s*@startuml(?:\s+([^\r\n]+))?.*?^\s*@enduml\s*$",
+            sequence,
+        )
+    )
+    if not matches:
+        return [("sequence", sequence)]
+    return [
+        ((match.group(1) or f"sequence-{index}").strip(), match.group(0))
+        for index, match in enumerate(matches, start=1)
+    ]
 
 
 def _sequence_calls(sequence: str) -> list[dict[str, str]]:
