@@ -1392,28 +1392,19 @@ class BuiltinTestingProvider:
                 implementation_result=payload,
                 case_id=str(payload.get("case_id") or "adhoc"),
             )
-            status = StepStatus.COMPLETED if result.get("passed") else StepStatus.FAILED
-            diagnostics = []
-            if status == StepStatus.FAILED:
-                diagnostics.extend(
-                    Diagnostic.model_validate(item)
-                    for item in result.get("diagnostics")
-                    or [
-                        {
-                            "code": "APPLICATION_TESTS_FAILED",
-                            "message": "Generated application tests failed.",
-                        }
-                    ]
-                )
-            
             # --- Start Testing Agent Graph Integration ---
             try:
                 from app.testing.graphs.testing_graph import create_testing_graph
+                from app.core.orchestration.runner import workspace_root
+                
+                run_root = workspace_root() / ".easydep" / "orchestration" / "runs" / context.run_id / "candidate" / "application"
+                
                 testing_graph = create_testing_graph()
                 agent_state = {
                     "run_id": context.run_id,
-                    "manifests_dir": "",
-                    "iac_dir": "",
+                    "app_id": context.app_id,
+                    "manifests_dir": str(run_root / "k8s"),
+                    "iac_dir": str(run_root / "terraform"),
                     "target_url": "http://localhost:8080",
                     "current_node": "",
                     "errors": [],
@@ -1427,6 +1418,42 @@ class BuiltinTestingProvider:
             except Exception as graph_error:
                 result["agent_testing_error"] = str(graph_error)
             # --- End Testing Agent Graph Integration ---
+
+            static_passed = bool(result.get("passed"))
+            dynamic_report = result.get("agent_testing_report") or {}
+            dynamic_status = dynamic_report.get("status")
+            has_graph_error = "agent_testing_error" in result
+            dynamic_passed = (not has_graph_error) and (dynamic_status != "FAILED")
+            
+            status = StepStatus.COMPLETED if static_passed and dynamic_passed else StepStatus.FAILED
+            
+            diagnostics = []
+            if not static_passed:
+                diagnostics.extend(
+                    Diagnostic.model_validate(item)
+                    for item in result.get("diagnostics")
+                    or [
+                        {
+                            "code": "APPLICATION_TESTS_FAILED",
+                            "message": "Generated application tests failed.",
+                        }
+                    ]
+                )
+            if not dynamic_passed:
+                if has_graph_error:
+                    diagnostics.append(
+                        Diagnostic.model_validate({
+                            "code": "DYNAMIC_TESTS_CRASHED",
+                            "message": f"Testing Agent Graph crashed: {result['agent_testing_error']}"
+                        })
+                    )
+                else:
+                    diagnostics.append(
+                        Diagnostic.model_validate({
+                            "code": "DYNAMIC_TESTS_FAILED",
+                            "message": f"Dynamic functional tests failed: {dynamic_report.get('reason', 'Unknown reason')}"
+                        })
+                    )
 
             return StepResult(
                 step=self.step,

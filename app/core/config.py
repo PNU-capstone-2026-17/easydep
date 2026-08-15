@@ -86,4 +86,7 @@ class Settings(BaseSettings):
     # Workflow approval
     easydep_approve_member_implementation: str = "0"
     
+    # Testing
+    dynamic_test_max_retries: int = 3
+    
 settings = Settings()

@@ -28,17 +28,25 @@ def dynamic_functional_node(state: TestingState) -> dict:
     run_id = state.get("run_id")
     target_url = state.get("target_url", "http://localhost:8080")
     
-    # 1. Fetch requirements from RunStore
-    store = RunStore()
+    # 1. Fetch requirements from DB (ArtifactRepository)
+    app_id = state.get("app_id")
+    if not app_id:
+        return {
+            "current_node": "dynamic_functional",
+            "errors": [f"Missing app_id in state for run {run_id}"],
+            "dynamic_functional_report": {"status": "FAILED", "reason": "Missing app_id"}
+        }
+
     try:
-        run_state = store.load(run_id)
-        requirements_result = run_state.get("requirements_result", {})
-        requirements = requirements_result.get("requirements", [])
+        from app.repositories.artifact_repository import load_state
+        arch_state = load_state(app_id)
+        refined = arch_state.get("refined_requirements") or {}
+        requirements = refined.get("requirements", [])
     except Exception as e:
         return {
             "current_node": "dynamic_functional",
-            "errors": [f"Failed to load requirements from store for run {run_id}: {e}"],
-            "dynamic_functional_report": {"status": "FAILED", "reason": "Missing requirements"}
+            "errors": [f"Failed to load requirements from DB for app {app_id}: {e}"],
+            "dynamic_functional_report": {"status": "FAILED", "reason": "DB error"}
         }
 
     if not requirements:

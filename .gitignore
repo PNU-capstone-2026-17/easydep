@@ -85,3 +85,5 @@ app/core/cloudkb/depkb/experiments/**/kubeconfig
 app/core/cloudkb/depkb/experiments/**/*.pem
 app/core/cloudkb/depkb/experiments/**/id_depkb*
 app/core/cloudkb/depkb/experiments/**/ca.crt
+
+app/core/cloudkb/speckb/raw/

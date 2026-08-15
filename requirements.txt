@@ -57,3 +57,7 @@ ddgs>=9.14.4
 
 # 로컬 빌드 전용이라 넣지 않는 것: neo4j·pgdumplib(costkb/perfkb 덤프)·pypdf.
 # 필요해지면 `pip install neo4j pgdumplib pypdf`로 각자 넣는다.
+
+# --- 동적 테스트(Testing Agent) ---
+sqlalchemy>=2.0.25
+alembic>=1.13.1

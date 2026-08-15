@@ -61,10 +61,21 @@ def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
     namespace = str(intent.get("namespace", "default"))
     write(
         "Dockerfile",
-        f"""FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
+        f"""FROM node:20-alpine AS frontend-base
 WORKDIR /app
 COPY . .
-RUN gradle bootJar --no-daemon \\
+RUN if [ -d frontend ]; then \\
+        cd frontend && \\
+        if [ -f package.json ]; then npm install && npm run build; else mkdir -p dist && cp -r * dist/; fi; \\
+    else \\
+        mkdir -p frontend/dist; \\
+    fi
+
+FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
+WORKDIR /app
+COPY . .
+COPY --from=frontend-base /app/frontend/dist/ src/main/resources/static/
+RUN gradle bootJar --no-daemon \\\
     && jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print | sort | head -n 1)" \\
     && test -n "$jar" \\
     && cp "$jar" /tmp/app.jar
