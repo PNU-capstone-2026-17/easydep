@@ -2,13 +2,19 @@ import dataclasses
 import hashlib
 from unittest.mock import patch
 
+from app.design.services.common.structured import StructuredLlmError
+
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC
 from app.design.knowledge.detectors import (
     Finding,
     sequence_message_methods,
     sequence_usecase_coverage,
 )
-from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
+from app.design.services.sequence_diagram.extractor import (
+    SequenceModel,
+    extract_sequence_diagrams,
+    parse_sequence_structured,
+)
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
 from app.design.nodes.artifact import (
@@ -76,6 +82,27 @@ def test_extracts_one_sequence_diagram_for_each_use_case():
         "Cancel order",
     ]
     assert result["class_diagram_hash"] == hashlib.sha256(b"class Order").hexdigest()
+
+
+def test_sequence_structured_output_retries_with_schema_error(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "design_max_repair_iters", 1)
+    valid = {"Participants": [], "Messages": []}
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        side_effect=[StructuredLlmError("return messages require a result label"), valid],
+    ) as parse:
+        result = parse_sequence_structured(
+            [{"role": "system", "content": "rules"}],
+            SequenceModel,
+        )
+
+    assert result == valid
+    assert parse.call_count == 2
+    retry_messages = parse.call_args_list[1].args[0]
+    assert "STRUCTURED OUTPUT FAILED SCHEMA VALIDATION" in retry_messages[-1]["content"]
+    assert "return messages require a result label" in retry_messages[-1]["content"]
 
 
 def test_targeted_sequence_revision_preserves_other_use_case_diagrams():
@@ -280,6 +307,63 @@ def test_sequence_check_rejects_repair_that_replaces_a_finding_with_a_new_one(mo
     assert result["sequence_diagram_model"] == original
     assert result["sequence_diagram_check"]["stopped"] == NO_IMPROVEMENT
     assert "old defect" in result["sequence_diagram_check"]["findings"][0]
+
+
+def test_sequence_check_tries_structure_batch_after_contract_batch_stalls(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "2")
+    original = {"phase": "original", "Participants": [], "Messages": []}
+    stalled = {"phase": "stalled", "Participants": [], "Messages": []}
+    repaired = {"phase": "repaired", "Participants": [], "Messages": []}
+
+    def check(model, state):
+        if model.get("phase") == "repaired":
+            return []
+        return [
+            Finding("sequence.flow-order", "late extension", "UC1:extension:1a"),
+            Finding("sequence.message-labels-match-methods", "missing method", "A -> B"),
+        ]
+
+    feedback_seen = []
+
+    def revise(current, feedback, state, targets):
+        feedback_seen.append(feedback)
+        return stalled if len(feedback_seen) == 1 else repaired
+
+    spec = dataclasses.replace(SEQUENCE_DIAGRAM_SPEC, check=check, revise=revise)
+    result = check_node(spec)({"sequence_diagram_model": original})
+
+    assert len(feedback_seen) == 2
+    assert "sequence.message-labels-match-methods" in feedback_seen[0]
+    assert "sequence.flow-order" not in feedback_seen[0]
+    assert "sequence.flow-order" in feedback_seen[1]
+    assert result["sequence_diagram_model"] == repaired
+    assert result["sequence_diagram_check"]["stopped"] == CLEAN
+
+
+def test_sequence_check_retries_only_batch_with_remaining_budget(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "2")
+    original = {"phase": "original", "Participants": [], "Messages": []}
+    stalled = {"phase": "stalled", "Participants": [], "Messages": []}
+    repaired = {"phase": "repaired", "Participants": [], "Messages": []}
+
+    def check(model, state):
+        if model.get("phase") == "repaired":
+            return []
+        return [Finding("sequence.flow-order", "late extension", "UC1:extension:1a")]
+
+    attempts = []
+
+    def revise(current, feedback, state, targets):
+        attempts.append(feedback)
+        return stalled if len(attempts) == 1 else repaired
+
+    spec = dataclasses.replace(SEQUENCE_DIAGRAM_SPEC, check=check, revise=revise)
+    result = check_node(spec)({"sequence_diagram_model": original})
+
+    assert len(attempts) == 2
+    assert all("sequence.flow-order" in feedback for feedback in attempts)
+    assert result["sequence_diagram_model"] == repaired
+    assert result["sequence_diagram_check"]["stopped"] == CLEAN
 
 
 def test_sequence_check_allows_removing_hallucinated_trace_references(monkeypatch):

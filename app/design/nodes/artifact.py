@@ -87,6 +87,36 @@ UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY, NEEDS_INPUT)
 # 최종 게이트에는 그대로 남겨 사용자의 요구사항 결정을 기다린다.
 NON_REPAIRABLE_RULES = {"sequence.unresolved-usecase-step"}
 
+_SEQUENCE_REPAIR_RULE_GROUPS = (
+    {
+        "sequence.message-labels-match-methods",
+        "sequence.call-return-links",
+        "sequence.unmatched-return-message",
+        "sequence.return-label-matches-method-return",
+        "sequence.async-call-has-no-return",
+        "sequence.nonvoid-call-requires-return",
+        "sequence.argument-data-flow",
+        "sequence.self-call-method-validation",
+        "sequence.message-naming-convention",
+    },
+    {
+        "sequence.message-participants-exist",
+        "sequence.message-bce-flow",
+        "sequence.boundary-operation-direction",
+        "sequence.references-exist",
+        "sequence.participant-classes-exist",
+        "sequence.initial-message-entry",
+        "sequence.causal-call-chain",
+        "sequence.actor-step-involvement",
+        "sequence.usecase-step-coverage",
+        "sequence.flow-order",
+        "sequence.fragment-condition-consistency",
+        "sequence.database-access-discipline",
+        "sequence.orphan-participant-detection",
+        "sequence.duplicate-consecutive-messages",
+    },
+)
+
 
 def repair_budget() -> int:
     """재생성을 몇 번까지 시도하는가. 0이면 검사만 하고 고치지 않는다."""
@@ -359,6 +389,25 @@ def _repairable_findings(findings: list[Finding]) -> list[Finding]:
     return [finding for finding in findings if finding.rule_id not in NON_REPAIRABLE_RULES]
 
 
+def _repair_batch(
+    spec: DesignArtifactSpec,
+    findings: list[Finding],
+    skipped_rule_ids: set[str],
+) -> list[Finding]:
+    """시퀀스는 구조와 호출 계약을 나눠 최소 수정 후보를 만든다."""
+    if spec.stage != "sequence_diagram":
+        return findings
+    for rule_ids in _SEQUENCE_REPAIR_RULE_GROUPS:
+        batch = [
+            finding
+            for finding in findings
+            if finding.rule_id in rule_ids and finding.rule_id not in skipped_rule_ids
+        ]
+        if batch:
+            return batch
+    return [finding for finding in findings if finding.rule_id not in skipped_rule_ids]
+
+
 def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """모델이 규칙을 지켰는지 판정하고, 어겼으면 **유계로** 재생성한다.
 
@@ -385,6 +434,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
         repairable = _repairable_findings(findings)
         stopped = CLEAN if not findings else (BUDGET if repairable else NEEDS_INPUT)
+        skipped_rule_ids: set[str] = set()
 
         for _ in range(repair_budget()):
             if not findings:
@@ -393,11 +443,20 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             if not repairable:
                 stopped = NEEDS_INPUT
                 break
+            batch = _repair_batch(spec, repairable, skipped_rule_ids)
+            if not batch and spec.stage == "sequence_diagram" and skipped_rule_ids:
+                # 다른 종류의 결함이 없으면 첫 확률적 응답 한 번으로 포기하지 않는다.
+                # 예산은 그대로 소비되므로 반복은 여전히 유계다.
+                skipped_rule_ids.clear()
+                batch = _repair_batch(spec, repairable, skipped_rule_ids)
+            if not batch:
+                stopped = NO_IMPROVEMENT
+                break
             iterations += 1
             try:
                 # 전체 수정(targets=set())이다. 위반이 여러 클래스에 걸칠 수 있고,
                 # merge_model 은 targets 가 비면 revised 를 그대로 쓴다.
-                candidate = spec.revise(model, repair_directive(repairable), state, set())
+                candidate = spec.revise(model, repair_directive(batch), state, set())
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
                 stopped = ERROR
@@ -407,6 +466,9 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 spec, model, candidate, state
             ):
                 stopped = NO_IMPROVEMENT
+                if spec.stage == "sequence_diagram":
+                    skipped_rule_ids.update(finding.rule_id for finding in batch)
+                    continue
                 break
             current_keys = {_finding_key(finding) for finding in findings}
             candidate_keys = {_finding_key(finding) for finding in candidate_findings}
@@ -414,8 +476,12 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 # 기존 결함의 엄격한 부분집합일 때만 채택한다. 개수가 줄어도 새로운
                 # 결함을 만든 수정본은 다음 단계의 기준선으로 사용할 수 없다.
                 stopped = NO_IMPROVEMENT
+                if spec.stage == "sequence_diagram":
+                    skipped_rule_ids.update(finding.rule_id for finding in batch)
+                    continue
                 break
             model, findings = candidate, candidate_findings
+            skipped_rule_ids.clear()
             remaining_repairable = _repairable_findings(findings)
             stopped = (
                 CLEAN if not findings else (BUDGET if remaining_repairable else NEEDS_INPUT)
