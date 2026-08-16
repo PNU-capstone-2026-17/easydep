@@ -504,6 +504,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_argument_data_flow",
     ),
     Rule(
+        id="sequence.actor-step-involvement",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A resolved flow step whose subject is an actor must contain at least one "
+            "actor-originated call instead of being covered only by unrelated system messages."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (Flow analysis and traceability)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_actor_step_involvement",
+    ),
+    Rule(
         id="sequence.usecase-step-coverage",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,

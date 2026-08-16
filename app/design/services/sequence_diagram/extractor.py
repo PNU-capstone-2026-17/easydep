@@ -196,6 +196,8 @@ that the inputs do not support.
 - Derive participants from the class diagram, not from imagination. Every
   participant name must be a class that appears in the class diagram, except the
   PrimaryActor and other actors, which come from the specification.
+- Include only participants that send or receive at least one message justified
+  by this use case. Do not copy every class into Participants "just in case".
 - Set `kind` to one of: actor, boundary, control, entity, database.
   Match the class's BCE stereotype; use "actor" for the specification's actors.
 - Order matters: list them left to right as the interaction reads —
@@ -235,8 +237,11 @@ that the inputs do not support.
   call label, and [] for calls without parameters and for non-call events. Copy
   the parameter name and type exactly. Set `source_kind` to input, call_result,
   state, or literal. For call_result, `source_ref` is a preceding call_id whose
-  declared return type equals the parameter type. For input, it is an exact
-  step_id. Never claim a value source that the preceding interaction does not provide.
+  declared return type equals the parameter type and whose caller is the source
+  of the consuming call. A participant cannot use a result returned to another
+  participant unless an explicit intervening message transfers that value. For
+  input, `source_ref` is an exact step_id. Never claim a value source that the
+  preceding interaction does not provide.
 - Use explicit `activate` and `deactivate` events only when an execution interval
   materially helps explain nested synchronous processing. Put the lifeline in both
   `source` and `target` for these events and leave `label` empty.
@@ -257,6 +262,9 @@ that the inputs do not support.
 - If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
   asking what behavior to perform), do not invent behavior for it. Leave it for
   the validation gate to report as requiring clarification.
+- If a resolved step describes an action performed by the PrimaryActor or user,
+  at least one call for that step must originate from that actor and enter through
+  a Boundary. A traceability id on an unrelated system call is not step coverage.
 
 ## Traceability
 - `source_class` on each participant: the class diagram class it stands for.
@@ -286,7 +294,8 @@ that the inputs do not support.
 (h) every non-void sync/self call has exactly one matching return, and every alt
     contains both main and else branches,
 (i) call_id/reply_to links are unique and exact, every parameter has a grounded
-    argument binding, and main/extension steps appear in specification order.
+    argument binding owned by the consuming caller, actor-led steps contain an
+    actor-originated call, and main/extension steps appear in specification order.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.

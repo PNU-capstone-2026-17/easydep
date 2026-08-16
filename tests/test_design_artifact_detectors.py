@@ -955,6 +955,100 @@ def test_argument_data_flow_rejects_incompatible_preceding_result():
     assert any("타입 'String'" in finding.message for finding in findings)
 
 
+def test_argument_data_flow_rejects_result_returned_to_another_participant():
+    state = {
+        **STATE,
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "methods": ["capture(): Order", "accept(order: Order): void"],
+                },
+                {"className": "OrderBoundary", "stereotype": "Boundary", "methods": []},
+            ]
+        },
+    }
+    model = _sequence_contract_model([
+        {
+            "source": "Control", "target": "Control", "type": "self",
+            "label": "capture()", "call_id": "capture", "reply_to": "", "arguments": [],
+        },
+        {
+            "source": "Control", "target": "Control", "type": "return",
+            "label": "Order", "call_id": "", "reply_to": "capture", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "Control", "type": "sync",
+            "label": "accept(order: Order)", "call_id": "accept", "reply_to": "",
+            "arguments": [{
+                "parameter": "order", "type": "Order",
+                "source_kind": "call_result", "source_ref": "capture",
+            }],
+        },
+    ])
+
+    findings = detectors.sequence_argument_data_flow(model, state)
+
+    assert any("'Control'에게 반환" in finding.message for finding in findings)
+    assert any("'Boundary'가 사용할 수 없음" in finding.message for finding in findings)
+
+
+def test_actor_led_step_requires_an_actor_originated_call():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{
+                    "step_number": 4,
+                    "sentence": "Purchaser browses and buys stock from the web site.",
+                }],
+                "extensions": [],
+            }]
+        }
+    }
+    model = {
+        "Participants": [
+            {"name": "Purchaser", "alias": "actor1", "kind": "actor"},
+            {"name": "BuyScreen", "alias": "b1", "kind": "boundary"},
+            {"name": "PurchaseControl", "alias": "c1", "kind": "control"},
+        ],
+        "Messages": [{
+            "source": "c1", "target": "b1", "type": "sync",
+            "label": "captureResponse()", "step_ids": ["UC1:main:4"],
+        }],
+    }
+
+    findings = detectors.sequence_actor_step_involvement(model, state)
+
+    assert len(findings) == 1
+    assert findings[0].location == "UC1:main:4"
+
+
+def test_actor_led_step_accepts_actor_to_boundary_entry():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1, "sentence": "The user submits an order."}],
+                "extensions": [],
+            }]
+        }
+    }
+    model = {
+        "Participants": [
+            {"name": "Purchaser", "alias": "actor1", "kind": "actor"},
+            {"name": "OrderBoundary", "alias": "b1", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "actor1", "target": "b1", "type": "sync",
+            "label": "submitOrder()", "step_ids": ["UC1:main:1"],
+        }],
+    }
+
+    assert detectors.sequence_actor_step_involvement(model, state) == []
+
+
 def test_flow_order_rejects_reversed_main_step_and_late_extension():
     state = {
         "usecase_spec": {

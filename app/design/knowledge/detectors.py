@@ -1952,6 +1952,17 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
                 found.append(Finding(rule_id, f"선행 호출 결과 '{source_ref}'가 존재하지 않음", location))
                 continue
             result_call = source_call[1]
+            result_owner = str(result_call.get("source") or "").strip()
+            consumer = str(call.get("source") or "").strip()
+            if result_owner != consumer:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"호출 결과 '{source_ref}'는 '{result_owner}'에게 반환됐으므로 "
+                        f"명시적 전달 없이 '{consumer}'가 사용할 수 없음",
+                        location,
+                    )
+                )
             result_class = participant_classes.get(str(result_call.get("target") or "").strip(), "")
             result_signature = method_call_signature(str(result_call.get("label") or ""))
             result_contract = contracts.get(result_class, {}).get(result_signature)
@@ -1964,6 +1975,83 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
                         location,
                     )
                 )
+    return found
+
+
+def _flow_step_records(state: dict) -> list[tuple[str, str]]:
+    """검증 가능한 흐름 단계 ID와 원문을 명세 순서대로 펼친다."""
+    records: list[tuple[str, str]] = []
+    spec = state.get("usecase_spec") or {}
+    if not isinstance(spec, dict):
+        return records
+    for use_case in spec.get("use_case_specs") or []:
+        if not isinstance(use_case, dict):
+            continue
+        use_case_id = str(use_case.get("use_case_id") or "").strip()
+        if not use_case_id:
+            continue
+        for step in use_case.get("main_scenario") or []:
+            if isinstance(step, dict) and step.get("step_number") is not None:
+                records.append(
+                    (f"{use_case_id}:main:{step.get('step_number')}", _flow_step_sentence(step))
+                )
+        for extension in use_case.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            for step in extension.get("handling_steps") or []:
+                if isinstance(step, dict) and label and step.get("sub_step"):
+                    records.append(
+                        (
+                            f"{use_case_id}:extension:{label}:{step.get('sub_step')}",
+                            _flow_step_sentence(step),
+                        )
+                    )
+    return records
+
+
+def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
+    """액터가 수행한다고 적힌 단계를 무관한 시스템 호출로 덮지 못하게 한다."""
+    rule_id = "sequence.actor-step-involvement"
+    actors = {
+        _participant_id(participant): str(participant.get("name") or "").strip().lower()
+        for participant in model.get("Participants", [])
+        if str(participant.get("kind") or "").strip().lower() == "actor"
+    }
+    if not actors:
+        return []
+    actor_subjects = {name for name in actors.values() if name}
+    actor_subjects.update({"user", "the user"})
+    unresolved = _unresolved_flow_step_ids(state)
+    found: list[Finding] = []
+    for step_id, sentence in _flow_step_records(state):
+        if step_id in unresolved or not sentence:
+            continue
+        lowered = sentence.lower().lstrip(" '-\"")
+        if not any(
+            lowered == subject
+            or lowered.startswith(subject + " ")
+            or lowered.startswith(subject + "'")
+            for subject in actor_subjects
+        ):
+            continue
+        messages = [
+            message
+            for message in model.get("Messages", [])
+            if step_id in {str(value).strip() for value in message.get("step_ids") or []}
+            and str(message.get("type", "sync")).lower() in {"sync", "async", "self"}
+        ]
+        if not messages:
+            continue  # coverage detector owns an entirely absent step.
+        if any(str(message.get("source") or "").strip() in actors for message in messages):
+            continue
+        found.append(
+            Finding(
+                rule_id,
+                f"액터가 수행하는 단계 '{sentence}'에 액터가 시작하는 호출이 없음",
+                step_id,
+            )
+        )
     return found
 
 
@@ -2467,6 +2555,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_nonvoid_calls_have_returns": sequence_nonvoid_calls_have_returns,
     "sequence_causal_call_chain": sequence_causal_call_chain,
     "sequence_argument_data_flow": sequence_argument_data_flow,
+    "sequence_actor_step_involvement": sequence_actor_step_involvement,
     "sequence_usecase_coverage": sequence_usecase_coverage,
     "sequence_flow_order": sequence_flow_order,
     "sequence_unresolved_steps": sequence_unresolved_steps,

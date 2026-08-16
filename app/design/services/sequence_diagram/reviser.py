@@ -61,7 +61,12 @@ same schema. Rules:
   invented behavior.
 - Keep `arguments` exactly aligned with the receiver method parameters. A
   call_result source_ref must name a preceding call_id with a compatible return
-  type; use input, state, or literal only when that source is grounded in the inputs.
+  type that returned to the source of the consuming call. Never let one participant
+  consume a value returned to another participant without an explicit transfer;
+  use input, state, or literal only when that source is grounded in the inputs.
+- Remove participants that send and receive no messages. For every resolved step
+  whose subject is the PrimaryActor or user, preserve at least one actor-originated
+  call into a Boundary; do not claim coverage using only an unrelated system call.
 - Keep the traceability fields (source_class / use_case_ids / step_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is
