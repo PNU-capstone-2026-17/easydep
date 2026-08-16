@@ -1,0 +1,210 @@
+{
+  "schemaVersion": "easydep-resource-plan-plan-recheck/v1",
+  "reusedRunId": "resource-plan-iac-aws-20260814T214245Z",
+  "llmCalls": 0,
+  "changesSinceGeneration": [
+    "ephemeral plan-only required variable values",
+    "system-managed AWS provider region"
+  ],
+  "providerValidation": {
+    "status": "passed",
+    "reports": [
+      {
+        "command": "init",
+        "exitCode": 0,
+        "stdout": "\nInitializing provider plugins...\n- Finding hashicorp/aws versions matching \"5.100.0\"...\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (unauthenticated)\n\nOpenTofu has created a lock file .terraform.lock.hcl to record the provider\nselections it made above. Include this file in your version control repository\nso that OpenTofu can guarantee to make the same selections by default when\nyou run \"tofu init\" in the future.\n\n\nWarning: Incomplete lock file information for providers\n\nDue to your customized provider installation methods, OpenTofu was forced to\ncalculate lock file checksums locally for the following providers:\n  - hashicorp/aws\n\nThe current .terraform.lock.hcl file only includes checksums for\nwindows_amd64, so OpenTofu running on another platform will fail to install\nthese providers.\n\nTo calculate additional checksums for another platform, run:\n  tofu providers lock -platform=linux_amd64\n(where linux_amd64 is the platform to generate)\n\nOpenTofu has been successfully initialized!\n\nYou may now begin working with OpenTofu. Try running \"tofu plan\" to see\nany changes that are required for your infrastructure. All OpenTofu commands\nshould now work.\n\nIf you ever set or change modules or backend configuration for OpenTofu,\nrerun this command to reinitialize your working directory. If you forget, other\ncommands will detect it and remind you to do so if necessary.\n",
+        "stderr": "",
+        "startedAt": "2026-08-14T21:54:03.386599+00:00",
+        "finishedAt": "2026-08-14T21:54:51.300971+00:00",
+        "elapsedSeconds": 47.914368
+      },
+      {
+        "command": "validate",
+        "exitCode": 0,
+        "stdout": "\nWarning: Argument is deprecated\n\n  with aws_eip.api,\n  on main.tf line 75, in resource \"aws_eip\" \"api\":\n  75:   vpc = true\n\nvpc is deprecated. Use domain instead.\nSuccess! The configuration is valid, but there were some validation warnings\nas shown above.\n",
+        "stderr": "",
+        "startedAt": "2026-08-14T21:54:51.301595+00:00",
+        "finishedAt": "2026-08-14T21:55:04.596414+00:00",
+        "elapsedSeconds": 13.294835
+      },
+      {
+        "command": "plan",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": "",
+        "startedAt": "2026-08-14T21:55:04.596613+00:00",
+        "finishedAt": "2026-08-14T21:55:18.642147+00:00",
+        "elapsedSeconds": 14.045559
+      },
+      {
+        "command": "show-json",
+        "exitCode": 0,
+        "stdout": "",
+        "stderr": "",
+        "startedAt": "2026-08-14T21:55:18.642207+00:00",
+        "finishedAt": "2026-08-14T21:55:29.934219+00:00",
+        "elapsedSeconds": 11.292024
+      }
+    ],
+    "pluginCache": "C:\\Users\\projw\\Desktop\\dev\\easydep\\.easydep\\provider-plugin-cache",
+    "pluginCachePolicy": {
+      "status": "passed",
+      "packages": [
+        {
+          "provider": "aws",
+          "version": "5.100.0"
+        },
+        {
+          "provider": "azurerm",
+          "version": "5.0.1"
+        },
+        {
+          "provider": "google",
+          "version": "5.45.2"
+        }
+      ],
+      "unexpected": []
+    },
+    "providerLock": {
+      "sha256": "52b4dc878310c6299f997f1f5c793cca1cfdda07cd8a698da586a1abe9f4d7f0",
+      "selections": [
+        {
+          "source": "hashicorp/aws",
+          "version": "5.100.0"
+        }
+      ]
+    },
+    "terraformPlan": {
+      "status": "available",
+      "formatVersion": "1.2",
+      "terraformVersion": "1.12.5",
+      "resourceCounts": {
+        "aws_ebs_volume": 1,
+        "aws_eip": 1,
+        "aws_eip_association": 1,
+        "aws_instance": 2,
+        "aws_internet_gateway": 1,
+        "aws_route_table": 1,
+        "aws_route_table_association": 1,
+        "aws_security_group": 2,
+        "aws_subnet": 1,
+        "aws_volume_attachment": 1,
+        "aws_vpc": 1
+      },
+      "addresses": [
+        "aws_ebs_volume.state_data",
+        "aws_eip.api",
+        "aws_eip_association.api_eip_assoc",
+        "aws_instance.api",
+        "aws_instance.state",
+        "aws_internet_gateway.igw",
+        "aws_route_table.rt",
+        "aws_route_table_association.a",
+        "aws_security_group.api",
+        "aws_security_group.state",
+        "aws_subnet.main",
+        "aws_volume_attachment.state_data_attach",
+        "aws_vpc.main"
+      ],
+      "sha256": "ce20e21267f47d23cf3ccce6b3bbd2c37cd77df0d248651d134d48905a47aae1",
+      "ephemeralInputVariables": [
+        "api_image",
+        "instance_type_api",
+        "instance_type_state",
+        "postgres_db",
+        "postgres_password",
+        "postgres_user"
+      ]
+    },
+    "_lockFileContent": "# This file is maintained automatically by \"tofu init\".\n# Manual edits may be lost in future updates.\n\nprovider \"registry.opentofu.org/hashicorp/aws\" {\n  version     = \"5.100.0\"\n  constraints = \"5.100.0\"\n  hashes = [\n    \"h1:Wm5Ofhc15lX1OMMCt7iDV0NY5FDIouQDjX7I1iab55s=\",\n  ]\n}\n"
+  },
+  "resourcePlanTerraformPlanReport": {
+    "status": "passed",
+    "checks": [
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "disk"
+        ],
+        "terraformTypes": [
+          "aws_ebs_volume"
+        ],
+        "expectedCount": 1,
+        "observedCount": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "public-ip"
+        ],
+        "terraformTypes": [
+          "aws_eip"
+        ],
+        "expectedCount": 1,
+        "observedCount": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "compute-instance",
+          "compute-state-store"
+        ],
+        "terraformTypes": [
+          "aws_instance"
+        ],
+        "expectedCount": 2,
+        "observedCount": 2,
+        "status": "passed"
+      },
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "security-group",
+          "security-group-state-store"
+        ],
+        "terraformTypes": [
+          "aws_security_group"
+        ],
+        "expectedCount": 2,
+        "observedCount": 2,
+        "status": "passed"
+      },
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "subnet"
+        ],
+        "terraformTypes": [
+          "aws_subnet"
+        ],
+        "expectedCount": 1,
+        "observedCount": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "resourceCount",
+        "planIds": [
+          "network"
+        ],
+        "terraformTypes": [
+          "aws_vpc"
+        ],
+        "expectedCount": 1,
+        "observedCount": 1,
+        "status": "passed"
+      },
+      {
+        "kind": "diskAttachment",
+        "terraformTypes": [
+          "aws_volume_attachment"
+        ],
+        "observedCount": 1,
+        "status": "passed",
+        "nextGate": null
+      }
+    ],
+    "diagnostics": []
+  }
+}

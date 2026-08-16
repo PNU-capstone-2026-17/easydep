@@ -14,13 +14,10 @@ from evaluation.terraform_semantics import analyze_terraform_semantics, score_se
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECTIONS = ROOT / "evaluation/research_protocol/definitions/component-projections.json"
-CROSSWALK = ROOT / "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json"
 
 
 def test_component_projection_contract_is_complete_and_grounded():
     value = json.loads(PROJECTIONS.read_text(encoding="utf-8"))
-    crosswalk = json.loads(CROSSWALK.read_text(encoding="utf-8"))
-    concepts = {item["id"] for item in crosswalk["concepts"]}
 
     assert value["schemaVersion"] == "easydep-component-projections/v1"
     assert {item["id"] for item in value["deltas"]} == {
@@ -35,9 +32,6 @@ def test_component_projection_contract_is_complete_and_grounded():
             assert len(component_ids) == len(set(component_ids))
             assert realization["relations"]
             assert realization["evidence"]
-            for component in realization["components"]:
-                concept = component.get("neutralConcept")
-                assert concept is None or concept in concepts
             for source in realization["evidence"]:
                 parsed = urlparse(source)
                 assert parsed.scheme == "https"

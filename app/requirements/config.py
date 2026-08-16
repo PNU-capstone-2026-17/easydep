@@ -122,10 +122,10 @@ class Settings(BaseSettings):
     # 두고, 그 칸들은 계약의 이유를 달고 되묻기 질문으로 나간다 — 반쯤 채운 사양이 새어
     # 나가지 않는다. 12는 "값 4~6개 기록 + 리전 해석 + 계약 조회 + 마무리"에 여유를 둔 값.
     resource_agent_max_turns: int = 12
-    # Independent samples used to estimate capability-proposal agreement.  The resulting
-    # agreement is calibrated on development labels; it is not treated as confidence by
-    # itself.  Confirmatory runs keep this at five.
-    capability_samples: int = 5
+    # Interactive analysis uses one response so that research-only stability measurement
+    # does not delay the user workflow.  Confirmatory commands pass their sample count
+    # explicitly instead of changing this product default.
+    capability_samples: int = 1
     # 관심사 링크를 몇 번 물어 **과반으로 확정할지**.
     #
     # 3인 이유는 `validator_votes`(기본 1)와 다르다. 링크는 **없는 것을 드러내는** 판정이라

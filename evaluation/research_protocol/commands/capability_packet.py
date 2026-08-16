@@ -16,6 +16,7 @@ from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 ROOT = REPOSITORY_ROOT
 SUITE = ROOT / "evaluation/easydep/requirements/suite.json"
 INPUT_ROOT = SUITE.parent
+CONFIRMATORY_CAPABILITY_SAMPLES = 5
 
 
 def _digest(path: Path) -> str:
@@ -34,7 +35,12 @@ def _revision() -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def build_packet(suite_path: Path = SUITE) -> dict[str, Any]:
+def build_packet(
+    suite_path: Path = SUITE,
+    *,
+    capability_samples: int = CONFIRMATORY_CAPABILITY_SAMPLES,
+) -> dict[str, Any]:
+    capability_samples = max(1, int(capability_samples))
     suite = json.loads(suite_path.read_text(encoding="utf-8"))
     targets = suite.get("development") or []
     holdout = set(suite.get("holdout") or [])
@@ -49,7 +55,10 @@ def build_packet(suite_path: Path = SUITE) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
         dataset = str(value["name"])
         inputs.append({"dataset": dataset, "path": relative, "sha256": _digest(path)})
-        result = derive_deployment_needs({"classified": value["classified"]})
+        result = derive_deployment_needs(
+            {"classified": value["classified"]},
+            sample_count=capability_samples,
+        )
         contract = result["capability_contract"]
         for index, capability in enumerate(contract["capabilities"]):
             proposals.append({
@@ -71,7 +80,12 @@ def build_packet(suite_path: Path = SUITE) -> dict[str, Any]:
         "holdoutAccessed": False,
         "suiteSha256": _digest(suite_path),
         "gitRevision": _revision(),
-        "configuration": {"model": model(), "temperature": temperature(), "seed": seed()},
+        "configuration": {
+            "model": model(),
+            "temperature": temperature(),
+            "seed": seed(),
+            "capabilitySamples": capability_samples,
+        },
         "inputs": inputs,
         "proposals": proposals,
     }
@@ -88,8 +102,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--reviewers", nargs="*", default=[])
+    parser.add_argument(
+        "--capability-samples",
+        type=int,
+        default=CONFIRMATORY_CAPABILITY_SAMPLES,
+    )
     args = parser.parse_args()
-    packet = build_packet()
+    packet = build_packet(capability_samples=args.capability_samples)
     _write(args.output, packet)
     for reviewer in args.reviewers:
         _write(

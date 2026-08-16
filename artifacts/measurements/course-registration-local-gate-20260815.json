@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "easydep-course-registration-local-gate/v1",
+  "runId": "easydep-full-e1-course-registration-aws-20260814T040359Z-72cbfa",
+  "memberRunId": "run_f4bce57ef85a",
+  "scope": "existing generated checkpoint; local Docker and retrospective contract validation",
+  "memberVerification": {
+    "status": "passed",
+    "gradleElapsedSeconds": 118.512,
+    "gradleTestTask": "FROM-CACHE",
+    "frontendElapsedSeconds": 52.066
+  },
+  "dockerGate": {
+    "imageBuildSeconds": 142.3,
+    "applicationStartupSeconds": 10.744,
+    "results": [
+      {
+        "request": "GET /health",
+        "status": 500,
+        "passed": false,
+        "evidence": "HttpMessageNotWritableException"
+      },
+      {
+        "request": "GET /actuator/health",
+        "status": 200,
+        "passed": true,
+        "evidence": "status UP"
+      },
+      {
+        "request": "GET /courses",
+        "status": 200,
+        "passed": false,
+        "evidence": "empty list before and after POST /initialize"
+      },
+      {
+        "request": "POST /enrollments with valid identifiers",
+        "status": 500,
+        "passed": false,
+        "evidence": "LinkedHashMap cannot be cast to generated Enrollment"
+      }
+    ],
+    "observedDatabase": "jdbc:h2:mem:easydep-db",
+    "requiredDatabase": "PostgreSQL 16 in a separate container"
+  },
+  "retrospectiveContractGate": {
+    "status": "failed-as-expected",
+    "diagnosticCodes": [
+      "APP-DB-ENGINE-001",
+      "APP-DB-MODE-001",
+      "APP-STORAGE-001",
+      "APP-CONFIG-001"
+    ],
+    "requiredConfiguration": [
+      "DATABASE_URL",
+      "DATABASE_USER",
+      "DATABASE_PASSWORD"
+    ]
+  },
+  "decision": {
+    "cloudApply": "blocked",
+    "reason": "local business and application-runtime contract gates failed"
+  },
+  "cleanup": {
+    "experimentContainerResidual": 0,
+    "experimentImageResidual": 0,
+    "cloudResourcesCreated": false
+  },
+  "interpretationLimits": [
+    "This is one generated development checkpoint, not a success-rate estimate.",
+    "The Gradle result does not establish black-box business correctness.",
+    "No cloud deployment or non-functional requirement was measured."
+  ]
+}

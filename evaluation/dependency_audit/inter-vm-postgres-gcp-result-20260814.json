@@ -1,0 +1,99 @@
+{
+  "schemaVersion": "easydep-inter-vm-postgres-intervention/v1",
+  "provider": "gcp",
+  "runId": "easydep-ivm-d6bd4286",
+  "startedAt": "2026-08-14T12:09:12.040614+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 15.773,
+      "detail": "NAME                      SUBNET_MODE  BGP_ROUTING_MODE  IPV4_RANGE  GATEWAY_IPV4  INTERNAL_IPV6_RANGE\neasydep-ivm-d6bd4286-net  CUSTOM       REGIONAL"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 15.875,
+      "detail": "NAME                         REGION           NETWORK                   RANGE         STACK_TYPE  IPV6_ACCESS_TYPE  INTERNAL_IPV6_PREFIX  EXTERNAL_IPV6_PREFIX\neasydep-ivm-d6bd4286-subnet  asia-northeast3  easydep-ivm-d6bd4286-net  10.78.1.0/24  IPV4_ONLY"
+    },
+    {
+      "name": "firewall.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 11.873,
+      "detail": "state tcp/5432 from probe source tag"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 16.855,
+      "detail": "NAME                        ZONE               MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP   STATUS\neasydep-ivm-d6bd4286-state  asia-northeast3-a  e2-small                   10.78.1.2    34.64.200.28  RUNNING"
+    },
+    {
+      "name": "probe-vm.create",
+      "status": "passed",
+      "durationSeconds": 16.169,
+      "detail": "NAME                        ZONE               MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP    STATUS\neasydep-ivm-d6bd4286-probe  asia-northeast3-a  e2-small                   10.78.1.3    34.64.189.141  RUNNING"
+    },
+    {
+      "name": "baseline.private-postgres-write-read",
+      "status": "passed",
+      "durationSeconds": 101.784,
+      "detail": "EASYDEP_RESULT baseline passed"
+    },
+    {
+      "name": "intervention.delete-allow",
+      "status": "passed",
+      "durationSeconds": 7.409,
+      "detail": "tcp/5432 allow removed"
+    },
+    {
+      "name": "intervention.signal-block",
+      "status": "passed",
+      "durationSeconds": 5.765,
+      "detail": "probe phase=block"
+    },
+    {
+      "name": "intervention.connection-blocked",
+      "status": "passed",
+      "durationSeconds": 14.617,
+      "detail": "EASYDEP_RESULT blocked passed"
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 9.024,
+      "detail": "state tcp/5432 from probe source tag"
+    },
+    {
+      "name": "restore.signal",
+      "status": "passed",
+      "durationSeconds": 6.489,
+      "detail": "probe phase=restore"
+    },
+    {
+      "name": "restore.private-postgres-read",
+      "status": "passed",
+      "durationSeconds": 2.474,
+      "detail": "EASYDEP_RESULT restored passed"
+    }
+  ],
+  "outcome": "passed",
+  "networkObservation": {
+    "stateAddressUsedByProbe": "10.78.1.2",
+    "probeHadPublicBootstrapAddress": true,
+    "stateHadPublicBootstrapAddress": true,
+    "hostToVmManagementChannel": "none; guest serial markers and metadata phases"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T12:14:13.246635+00:00",
+  "interpretationLimits": [
+    "The experiment verifies private-address transport, not absence of a public address.",
+    "One development run does not establish a provider-wide success rate.",
+    "PostgreSQL connectivity does not establish high availability or performance."
+  ]
+}

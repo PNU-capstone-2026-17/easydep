@@ -1,6 +1,6 @@
 {
   "schemaVersion": "easydep-native-discovery-protocol/v1",
-  "scope": "Provider-native IaaS elements directly connected to Docker-on-VM provisioning, lifecycle, reachability, persistence, failure routing, or VM-attached identity.",
+  "scope": "Provider-native IaaS elements directly connected to Docker-on-VM provisioning, reachability, persistence, failure routing, or VM-attached identity.",
   "excluded": [
     "kubernetes",
     "serverless",
@@ -12,12 +12,10 @@
   ],
   "biasControls": {
     "forbiddenDiscoveryInputs": [
-      "depkb/claims.source.json",
       "depkb/vocabulary.py",
       "evaluation/baselines/cases",
       "docs/test-application-profiles.md"
     ],
-    "neutralTermsAllowedDuringDiscovery": false,
     "stoppingRule": "Stop provider traversal after two complete passes add no new included native element or relation candidate."
   },
   "providers": {

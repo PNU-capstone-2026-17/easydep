@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -24,6 +25,8 @@ class Base(DeclarativeBase):
 # Artifact types. Kept as plain strings so later phases (source code, IaC,
 # test results) can be added without a schema migration.
 TYPE_REFINE_REQ = "REFINE_REQ"
+TYPE_CAPABILITY_CONTRACT = "CAPABILITY_CONTRACT"
+TYPE_RESOURCE_INTAKE = "RESOURCE_INTAKE"
 TYPE_USECASE_SPEC = "USECASE_SPEC"
 TYPE_USECASE_DIAGRAM = "USECASE_DIAGRAM"
 TYPE_RESOURCE_SPEC = "RESOURCE_SPEC"
@@ -169,4 +172,77 @@ class ArtifactFile(Base):
             "file_path",
             name="uq_artifact_files_version_path",
         ),
+    )
+
+
+class DeploymentPreference(Base):
+    """User-selected cloud alternatives collected while requirements are analyzed."""
+
+    __tablename__ = "deployment_preferences"
+
+    app_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("apps.app_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    selection: Mapped[Any] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=6),
+        nullable=False,
+        server_default=func.now(6),
+        onupdate=func.now(6),
+    )
+
+
+class WorkspaceCommand(Base):
+    """One user-visible command executed from the conversational workspace."""
+
+    __tablename__ = "workspace_commands"
+
+    command_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    app_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("apps.app_id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    payload: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    result: Mapped[Any | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(LONGTEXT, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DATETIME(fsp=6), nullable=True)
+
+    __table_args__ = (
+        Index("ix_workspace_commands_app_created", "app_id", "created_at"),
+        Index("ix_workspace_commands_app_status", "app_id", "status"),
+    )
+
+
+class WorkspaceEvent(Base):
+    """An append-only, display-safe event in an application's workspace timeline."""
+
+    __tablename__ = "workspace_events"
+
+    event_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    app_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("apps.app_id", ondelete="CASCADE"), nullable=False
+    )
+    command_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False)
+    event_data: Mapped[Any] = mapped_column("metadata", JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DATETIME(fsp=6), nullable=False, server_default=func.now(6)
+    )
+
+    __table_args__ = (
+        Index("ix_workspace_events_app_event", "app_id", "event_id"),
     )

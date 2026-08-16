@@ -1,4 +1,5 @@
 """_result_payload 응답 변환 테스트."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -62,7 +63,8 @@ def test_analyze_response_accepts_and_omits_pipeline_fields():
     req = {"id": "FR1", "text": "log in", "type": "FR"}
     # 파이프라인 산출물이 있는 payload → AnalyzeResponse가 검증·직렬화한다.
     result = {
-        "phase": "diagram", "classified": [req],
+        "phase": "diagram",
+        "classified": [req],
         "use_cases": [{"id": "UC1", "name": "Log in"}],
         "diagram": "@startuml\n@enduml",
     }
@@ -80,10 +82,16 @@ def test_analyze_response_accepts_and_omits_pipeline_fields():
 # 구조화 편집(F) — 게이트가 준 재료가 응답까지 흘러가는가, 라우팅이 갈리는가.
 # ---------------------------------------------------------------------------
 def test_feedback_payload_carries_the_edit_material():
-    interrupt_obj = SimpleNamespace(value={
-        "stage": "specs", "status": "need_feedback", "prompt": "p", "summary": ["UC1"],
-        "edit_stage": "specs", "edit_targets": ["UC1", "UC2"],
-    })
+    interrupt_obj = SimpleNamespace(
+        value={
+            "stage": "specs",
+            "status": "need_feedback",
+            "prompt": "p",
+            "summary": ["UC1"],
+            "edit_stage": "specs",
+            "edit_targets": ["UC1", "UC2"],
+        }
+    )
     out = _result_payload({"__interrupt__": [interrupt_obj]}, "tid")
     assert out["status"] == "need_feedback"
     assert out["edit_stage"] == "specs"
@@ -109,6 +117,115 @@ def test_analyze_rejects_answer_and_edit_together():
     assert excinfo.value.status_code == 400
 
 
+def test_initial_cloud_constraints_are_structured_and_normalized():
+    from app.requirements.schemas import AnalyzeRequest
+
+    request = AnalyzeRequest(
+        requirements=["Users can sign in."],
+        cloud_constraints={
+            "provider": "aws",
+            "region": " Seoul ",
+            "monthly_budget_amount": 300,
+            "monthly_budget_currency": "usd",
+        },
+    )
+
+    assert request.cloud_constraints is not None
+    assert request.cloud_constraints.region == "Seoul"
+    assert request.cloud_constraints.monthly_budget_currency == "USD"
+
+
+def test_initial_cloud_constraints_do_not_require_an_optional_budget():
+    from app.requirements.schemas import AnalyzeRequest
+
+    request = AnalyzeRequest(
+        requirements=["Users can register for a course."],
+        cloud_constraints={"provider": "aws", "region": "ap-northeast-2"},
+    )
+
+    assert request.cloud_constraints is not None
+    assert request.cloud_constraints.provider == "aws"
+    assert request.cloud_constraints.region == "ap-northeast-2"
+    assert request.cloud_constraints.monthly_budget_amount is None
+
+
+def test_deployment_preferences_normalize_currency_and_validate_multi_zone_profile():
+    from pydantic import ValidationError
+
+    from app.requirements.schemas import DeploymentPreferences
+
+    with pytest.raises(ValidationError):
+        DeploymentPreferences.model_validate(
+            {
+                "targets": [
+                    {
+                        "provider": "aws",
+                        "region": "ap-northeast-2",
+                        "zones": ["ap-northeast-2a", "ap-northeast-2b"],
+                    }
+                ]
+            }
+        )
+
+    preferences = DeploymentPreferences.model_validate(
+        {
+            "targets": [
+                {
+                    "provider": "aws",
+                    "region": "ap-northeast-2",
+                    "zones": ["ap-northeast-2a", "ap-northeast-2b"],
+                },
+                {
+                    "provider": "azure",
+                    "region": "koreacentral",
+                        "zones": ["1", "2"],
+                },
+            ],
+            "compute_profile": "managedGroupManyMultiZone",
+            "replica_count": 2,
+            "public_ingress": "loadBalanced",
+            "monthly_budget_currency": "krw",
+        }
+    )
+
+    assert preferences.monthly_budget_currency == "KRW"
+    assert len(preferences.targets) == 2
+
+
+def test_minimal_deployment_intake_does_not_invent_topology_choices():
+    from app.requirements.schemas import DeploymentPreferences
+
+    preferences = DeploymentPreferences.model_validate(
+        {
+            "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
+            "monthly_budget_amount": 200,
+            "monthly_budget_currency": "usd",
+        }
+    )
+
+    assert preferences.model_dump(mode="json", exclude_unset=True) == {
+        "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
+        "monthly_budget_amount": 200.0,
+        "monthly_budget_currency": "USD",
+    }
+
+
+def test_deployment_preferences_reject_two_regions_for_one_provider():
+    from pydantic import ValidationError
+
+    from app.requirements.schemas import DeploymentPreferences
+
+    with pytest.raises(ValidationError, match="at most one region"):
+        DeploymentPreferences.model_validate(
+            {
+                "targets": [
+                    {"provider": "gcp", "region": "asia-northeast3"},
+                    {"provider": "gcp", "region": "us-central1"},
+                ]
+            }
+        )
+
+
 def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
     from app.requirements import api
     from app.requirements.schemas import AnalyzeRequest, FeedbackEdit
@@ -124,9 +241,9 @@ def test_analyze_routes_a_structured_edit_to_resume(monkeypatch):
     edit = FeedbackEdit(stage="specs", scope="local", target_ids=["UC1"], instruction="고쳐")
     api.analyze_endpoint(AnalyzeRequest(edit=edit, thread_id="t-9"))
 
-    assert seen["answer"] is edit        # 문자열로 뭉개지 않고 그대로 넘어간다
+    assert seen["answer"] is edit  # 문자열로 뭉개지 않고 그대로 넘어간다
     assert seen["thread_id"] == "t-9"
-    assert seen["persist"] is True       # 서빙 경로는 세션을 DB에 남긴다
+    assert seen["persist"] is True  # 서빙 경로는 세션을 DB에 남긴다
 
 
 def test_every_artifact_key_survives_the_response_schema():
@@ -144,10 +261,19 @@ def test_every_artifact_key_survives_the_response_schema():
 def test_feedback_payload_carries_the_resource_questions():
     """되묻기가 응답까지 못 오면 화면이 `resource_answers`를 만들 수 없다."""
     questions = [{"field": "region", "kind": "missing", "why": "w", "question": "q"}]
-    result = {"__interrupt__": [SimpleNamespace(value={
-        "status": "need_feedback", "stage": "requirements", "prompt": "p",
-        "summary": [], "resource_questions": questions,
-    })]}
+    result = {
+        "__interrupt__": [
+            SimpleNamespace(
+                value={
+                    "status": "need_feedback",
+                    "stage": "requirements",
+                    "prompt": "p",
+                    "summary": [],
+                    "resource_questions": questions,
+                }
+            )
+        ]
+    }
     out = _result_payload(result, "tid-r")
 
     assert out["resource_questions"] == questions

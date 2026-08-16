@@ -9,8 +9,8 @@ from pathlib import Path
 from .closure import Closure, _claims, closure
 from .official_dependency_model import PATH as OFFICIAL_DEPENDENCY_PATH
 from .official_dependency_model import dependencies_for
-from .projection_model import PATH as PROJECTION_PATH
-from .projection_model import capability_realizations
+from .provider_realizations import PATH as REALIZATION_PATH
+from .provider_realizations import capability_realizations
 
 SCHEMA_VERSION = "easydep-infra-intent/v3"
 
@@ -198,7 +198,7 @@ def build(
         provenance={
             "claimsArtifact": str(Path(__file__).with_name("claims.json").name),
             "claimSchemaVersion": "easydep-dependency-claims/v2",
-            "providerProjection": str(PROJECTION_PATH.name),
+            "providerRealizations": str(REALIZATION_PATH.name),
             "officialDependencyModel": str(OFFICIAL_DEPENDENCY_PATH.name),
             "legacyClaimsRole": "exploratory-advisory-excluded-from-iac-agent-input",
             "interpretation": (

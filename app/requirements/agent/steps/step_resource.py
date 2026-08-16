@@ -6,6 +6,7 @@ scope, and validates the contract. ``resource_spec`` exists only when required f
 valid; ``resource_intake`` always records the draft, questions, provenance, and rejected
 values. Missing required values become explicit English questions.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,9 +27,9 @@ from app.requirements.schemas import CloudConstraintExtraction
 SCHEMA_VERSION = cloud_contract.schema_version()
 
 #: 질문의 종류. 빈 칸의 **이유**가 다르면 사용자가 할 일도 다르다.
-MISSING = "missing"        # 계약이 요구하는데 아직 값이 없다
-ASKED = "asked"            # 에이전트가 직접 물었다(모호·불명확·확인)
-SUGGESTED = "suggested"    # 필수는 아닌데 **채우면 뒤 단계 판정이 하나 열린다**
+MISSING = "missing"  # 계약이 요구하는데 아직 값이 없다
+ASKED = "asked"  # 에이전트가 직접 물었다(모호·불명확·확인)
+SUGGESTED = "suggested"  # 필수는 아닌데 **채우면 뒤 단계 판정이 하나 열린다**
 
 #: `SUGGESTED`가 왜 별도인가 — 되묻기가 두 종류이기 때문이다. 못 채우면 나아갈 수
 #: 없는 것과, 채우면 판정이 하나 열리는 것을 같은 얼굴로 물으면 사용자가 전부 필수로
@@ -47,8 +48,8 @@ class Candidate:
     field: str
     value: object
     as_written: str
-    source: str   # "agent"
-    how: str      # "user"(사용자가 쓴 것) 또는 "tool"(도구가 알아 온 것)
+    source: str  # "agent"
+    how: str  # "user"(사용자가 쓴 것) 또는 "tool"(도구가 알아 온 것)
     #: 도구가 알아 온 값일 때, **그 도구가 돌려준 것 전체.** 인용 조각만으로는 근거가
     #: 반쪽이다 — 실측(2026-07-29): `700,000 KRW`를 환산한 `483.0`이 근거에 값만 남아
     #: 환율도 기준일도 사라졌다. 핀을 못 박는 소스는 **쓴 값과 시각을 남긴다**는 것이
@@ -80,8 +81,7 @@ def _ground(fragment: str, seen: list[str]) -> bool:
     return any(squeeze in " ".join(text.split()).lower() for text in seen)
 
 
-def _coerce_scalar(kind: str, allowed: tuple[str, ...],
-                   raw: object) -> tuple[object | None, str]:
+def _coerce_scalar(kind: str, allowed: tuple[str, ...], raw: object) -> tuple[object | None, str]:
     """타입 하나짜리 마샬링. `_coerce`와 그 object 하위 칸이 **같은 규칙을 쓴다.**
 
     떼어 낸 이유: `scale{value,unit}`이 생기면서 같은 판정("수여야 한다", "양수여야
@@ -141,8 +141,11 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
                 parsed = json.loads(body)
             except ValueError:
                 parsed = None
-            items = ([str(x).strip() for x in parsed] if isinstance(parsed, list)
-                     else [p.strip() for p in body.replace("\n", ",").split(",")])
+            items = (
+                [str(x).strip() for x in parsed]
+                if isinstance(parsed, list)
+                else [p.strip() for p in body.replace("\n", ",").split(",")]
+            )
         items = [i for i in items if i]
         if not items:
             return None, "적어도 하나는 있어야 한다"
@@ -159,9 +162,8 @@ def _coerce(field_name: str, raw: object) -> tuple[object | None, str]:
             except ValueError:
                 body = None
             if not isinstance(body, dict):
-                sub = ", ".join(n for n, _k, _e, _r in
-                                cloud_contract.field_object(field_name))
-                return None, f'JSON 객체여야 한다 — 하위 칸: {sub}'
+                sub = ", ".join(n for n, _k, _e, _r in cloud_contract.field_object(field_name))
+                return None, f"JSON 객체여야 한다 — 하위 칸: {sub}"
         out: dict[str, object] = {}
         for name, sub_kind, allowed, required in cloud_contract.field_object(field_name):
             if name not in body:
@@ -190,25 +192,33 @@ def _domain_error(field_name: str, value: object, draft: dict) -> str:
     if field_name == "provider":
         known = regions.providers()
         if value not in known:
-            return (f"아는 프로바이더가 아니다 — {', '.join(known)} 중 하나여야 한다 "
-                    "(list_cloud_providers)")
+            return (
+                f"아는 프로바이더가 아니다 — {', '.join(known)} 중 하나여야 한다 "
+                "(list_cloud_providers)"
+            )
     if field_name == "region":
         if not regions.is_region_code(str(value), provider=draft.get("provider")):
-            return ("리전 **코드**가 아니다 — 지명을 그대로 넣으면 뒤 단계 조인이 조용히 "
-                    "빈 답이 된다. resolve_region으로 코드를 받아라")
+            return (
+                "리전 **코드**가 아니다 — 지명을 그대로 넣으면 뒤 단계 조인이 조용히 "
+                "빈 답이 된다. resolve_region으로 코드를 받아라"
+            )
     if field_name == "workloads":
         # 계획 전체가 이 값 위에 선다. **실측이 없는 종류를 받으면 그 부분 계획이
         # 통째로 비는데, 비었다는 사실이 값으로는 안 보인다** — 그래서 여기서 막는다.
         provider = draft.get("provider")
         if not provider:
-            return ("provider를 먼저 정해야 한다 — 배포 가능한 종류가 프로바이더마다 "
-                    "다르고, 그 목록이 실측에서 나온다(list_workload_kinds)")
+            return (
+                "provider를 먼저 정해야 한다 — 배포 가능한 종류가 프로바이더마다 "
+                "다르고, 그 목록이 실측에서 나온다(list_workload_kinds)"
+            )
         known = input_registry.anchors_for(str(provider))
         unknown = [v for v in (value or []) if v not in known]
         if unknown:
-            return (f"{provider}에서 실측이 없는 종류다: {', '.join(unknown)} — "
-                    f"list_workload_kinds가 주는 목록에서 골라라 "
-                    f"({', '.join(known[:8])}…)")
+            return (
+                f"{provider}에서 실측이 없는 종류다: {', '.join(unknown)} — "
+                f"list_workload_kinds가 주는 목록에서 골라라 "
+                f"({', '.join(known[:8])}…)"
+            )
     return ""
 
 
@@ -233,9 +243,7 @@ class _Session:
         #: 붙인다). 목록 자체에 표시를 섞으면 인용 대조가 그 표시까지 건초더미로 센다.
         self.user_seen = len(self.seen)
         #: 실제로 무엇을 했는지. 사람이 되짚는 자리이고, 데모가 그대로 찍는다.
-        self.trace: list[dict] = [
-            {"action": "system_scope", "field": "workloads", "value": ["vm"]}
-        ]
+        self.trace: list[dict] = [{"action": "system_scope", "field": "workloads", "value": ["vm"]}]
 
     # --- 관찰 ---------------------------------------------------------------
     def saw(self, text: str) -> None:
@@ -246,13 +254,18 @@ class _Session:
     def contract_status(self) -> str:
         missing = cloud_contract.missing_fields(self.draft)
         if not missing:
-            return ("The contract is satisfied. Say back what you understood, "
-                    "then call finish.")
+            return "The contract is satisfied. Say back what you understood, then call finish."
         lines = [f"- {name}: {cloud_contract.why(name)}" for name in missing]
-        return ("Still required:\n" + "\n".join(lines)
-                + "\n\nFilled so far: "
-                + (json.dumps(self.draft, ensure_ascii=False) if len(self.draft) > 1
-                   else "(nothing yet)"))
+        return (
+            "Still required:\n"
+            + "\n".join(lines)
+            + "\n\nFilled so far: "
+            + (
+                json.dumps(self.draft, ensure_ascii=False)
+                if len(self.draft) > 1
+                else "(nothing yet)"
+            )
+        )
 
     # --- 행동 ---------------------------------------------------------------
     def record(self, field_name: str, raw: object, evidence: str) -> str:
@@ -260,8 +273,12 @@ class _Session:
         as_written = (evidence or "").strip()
 
         if not _ground(as_written, self.seen):
-            return self._reject(name, as_written, raw,
-                                "인용한 조각이 입력에도 도구 출력에도 없다 — 지어낸 것으로 본다")
+            return self._reject(
+                name,
+                as_written,
+                raw,
+                "인용한 조각이 입력에도 도구 출력에도 없다 — 지어낸 것으로 본다",
+            )
         value, why = _coerce(name, raw)
         if why:
             return self._reject(name, as_written, raw, why)
@@ -273,15 +290,15 @@ class _Session:
         if previous is not None and previous != value:
             # **조용히 덮지 않는다.** 덮으면 밀려난 값이 사라지고, 사라진 값은 되짚을
             # 수 없다. 값이 갈리는 것은 정보가 아니라 질문이라는 것이 이 단계의 규율이다.
-            return (f"Rejected: {name} is already {previous!r} from earlier evidence. "
-                    f"Two different values are a question for the user, not a value — "
-                    f"use ask_user, or explain which evidence supersedes the other.")
+            return (
+                f"Rejected: {name} is already {previous!r} from earlier evidence. "
+                f"Two different values are a question for the user, not a value — "
+                f"use ask_user, or explain which evidence supersedes the other."
+            )
 
         origin, via = self._origin(as_written)
         self.draft[name] = value
-        self.provenance.append(
-            Candidate(name, value, as_written, "agent", origin, via)
-        )
+        self.provenance.append(Candidate(name, value, as_written, "agent", origin, via))
         self.trace.append({"action": "record_field", "field": name, "value": value})
         return f"Accepted: {name} = {value!r}.\n\n{self.contract_status()}"
 
@@ -305,8 +322,9 @@ class _Session:
 
     def _reject(self, name: str, as_written: str, raw: object, why: str) -> str:
         # 버린 이유를 남긴다 — 빈 칸이 **정보 부재**인지 **읽기 실패**인지 구별된다.
-        self.rejected.append({"field": name, "as_written": as_written,
-                              "value": raw, "source": "agent", "why": why})
+        self.rejected.append(
+            {"field": name, "as_written": as_written, "value": raw, "source": "agent", "why": why}
+        )
         self.trace.append({"action": "record_field", "field": name, "rejected": why})
         return f"Rejected ({name}): {why}"
 
@@ -318,14 +336,19 @@ class _Session:
         # 계약이 아는 칸만 묻는다. 모르는 칸을 물으면 사용자가 답해도 갈 곳이 없다 —
         # 화면이 `field`를 키로 `resource_answers`를 만들기 때문이다.
         if name not in cloud_contract.schema_fields():
-            return (f"Rejected: {name!r} is not a field of the contract, so an answer "
-                    "would have nowhere to go. Ask about a real field.")
-        self.questions.append({
-            "field": name, "kind": ASKED,
-            "why": cloud_contract.why(name),
-            "question": text,
-            "seen": [r for r in self.rejected if r["field"] == name],
-        })
+            return (
+                f"Rejected: {name!r} is not a field of the contract, so an answer "
+                "would have nowhere to go. Ask about a real field."
+            )
+        self.questions.append(
+            {
+                "field": name,
+                "kind": ASKED,
+                "why": cloud_contract.why(name),
+                "question": text,
+                "seen": [r for r in self.rejected if r["field"] == name],
+            }
+        )
         self.trace.append({"action": "ask_user", "field": name, "question": text})
         return f"Recorded a question about {name}. The user will see it."
 
@@ -354,14 +377,20 @@ class _Session:
         self.understanding = body
 
     def finish(self, understanding: str) -> str:
-        pending = [n for n in cloud_contract.missing_fields(self.draft)
-                   if n not in {q["field"] for q in self.questions}]
+        pending = [
+            n
+            for n in cloud_contract.missing_fields(self.draft)
+            if n not in {q["field"] for q in self.questions}
+        ]
         if pending:
             # **못 채웠으면서 묻지도 않은 채로 끝낼 수는 없다.** 그러면 빈 칸이 사용자에게
             # 보이지 않고, 뒤 단계는 그것이 왜 없는지 영영 모른다.
-            return ("Not finished: " + ", ".join(pending)
-                    + " are required but neither filled nor asked about. "
-                      "Fill them or ask the user.")
+            return (
+                "Not finished: "
+                + ", ".join(pending)
+                + " are required but neither filled nor asked about. "
+                "Fill them or ask the user."
+            )
         self.understanding = (understanding or "").strip()
         self.finished = True
         self.trace.append({"action": "finish"})
@@ -377,20 +406,38 @@ def _perception(state: AgentState) -> tuple[list[str], str]:
     곳을 뒤진다.
     """
     constraints = (state.get("resource_constraints_text") or "").strip()
+    initial = dict(state.get("initial_cloud_constraints") or {})
     sentences = [
         f"[{item.get('id') or '?'}] {(item.get('text') or '').strip()}"
         for item in (state.get("classified") or [])
         if (item.get("text") or "").strip()
     ]
-    answers = {k: str(v).strip() for k, v in (state.get("resource_answers") or {}).items()
-               if str(v or "").strip()}
+    answers = {
+        k: str(v).strip()
+        for k, v in (state.get("resource_answers") or {}).items()
+        if str(v or "").strip()
+    }
 
     # 모델은 답변 블록을 읽고 `provider: azure`처럼 필드 이름까지 포함해 인용하는
     # 경향이 있다. 그 문자열은 실제로 모델에게 보여 준 사용자 답변 표현이므로 원문 값과
     # 함께 근거 후보에 넣는다. 값만 넣으면 정직한 인용도 환각으로 오판한다.
     rendered_answers = [f"{key}: {value}" for key, value in answers.items()]
-    haystack = [constraints, *sentences, *answers.values(), *rendered_answers]
+    rendered_initial = [
+        f"{key}: {value}" for key, value in initial.items() if str(value or "").strip()
+    ]
+    haystack = [
+        constraints,
+        *sentences,
+        *(str(value) for value in initial.values()),
+        *rendered_initial,
+        *answers.values(),
+        *rendered_answers,
+    ]
     parts = [
+        "# Structured cloud constraints supplied at intake",
+        "\n".join(rendered_initial) or "(none)",
+        "These values were entered in dedicated fields and outrank free-form prose.",
+        "",
         "# Cloud constraints the user wrote (separate from the requirements)",
         constraints or "(the user gave none — every required field will have to be asked)",
         "",
@@ -404,7 +451,7 @@ def _perception(state: AgentState) -> tuple[list[str], str]:
             "\n".join(rendered_answers),
             "These are the user's own words about that field — they outrank the prose. "
             "They still have to be resolved and checked like anything else "
-            "(\"Seoul\" is still not a region code).",
+            '("Seoul" is still not a region code).',
         ]
     return [h for h in haystack if h], "\n".join(parts)
 
@@ -421,7 +468,7 @@ def _control_tools(session: _Session) -> list:
         Args:
             field: the contract field name (provider, region, regionAsWritten,
                 monthlyBudgetUSD, minVCpu, minMemoryGiB, scale, trafficPattern,
-                multiZone, …). Call check_contract if unsure.
+                dataResidency, …). Call check_contract if unsure.
             value: the value, as a plain string. Numbers without separators.
                 An object field takes a JSON object — `scale` is
                 `{"value": 300, "unit": "concurrentUsers"}` (or
@@ -475,7 +522,8 @@ def _text_of(content: object) -> str:
     if isinstance(content, list):
         return "".join(
             part if isinstance(part, str) else str(part.get("text", ""))
-            for part in content if isinstance(part, str | dict)
+            for part in content
+            if isinstance(part, str | dict)
         )
     return ""
 
@@ -526,8 +574,7 @@ def _run(session: _Session, briefing: str) -> None:
                     telemetry.record_degradation(f"resource_agent.{name}", result)
                 else:
                     session.saw(result)
-            messages.append(ToolMessage(content=result,
-                                        tool_call_id=request.get("id") or name))
+            messages.append(ToolMessage(content=result, tool_call_id=request.get("id") or name))
         if session.finished:
             break
 
@@ -540,9 +587,9 @@ ambiguous, leave the value null and add its RESOURCE_SPEC field name to
 ambiguous_fields. The deployment workload is fixed by the system and is not extracted.
 Provider must be aws, azure, or gcp when explicit. Region stays in the user's words;
 code resolves it later. A monthly price or instance price is not a monthly budget.
-steady means sustained load; spiky means intermittent peaks. multi_zone is true only
-when service must survive an availability-zone failure, and false only when the user
-explicitly accepts a single zone. Do not derive vCPU or memory from users or traffic."""
+steady means sustained load; spiky means intermittent peaks. Do not derive vCPU or memory
+from users or traffic. Availability is a system deployment policy, not a user-supplied
+RESOURCE_SPEC field."""
 
 
 def _extract_once(briefing: str) -> CloudConstraintExtraction:
@@ -555,6 +602,44 @@ def _extract_once(briefing: str) -> CloudConstraintExtraction:
     )
 
 
+def extract_resource_constraints(state: AgentState) -> dict:
+    """자유문장 제약의 LLM 해석만 수행해 병렬 실행 가능한 중간 결과를 만든다.
+
+    구조화된 CSP·리전·예산은 이 함수의 대상이 아니다. 이 중간 결과는 질문이나
+    RESOURCE_SPEC을 확정하지 않으며, ``build_resource_spec``이 근거 대조와 계약 검증을
+    수행한다. 단독 호출 경로에서는 기존처럼 ``build_resource_spec``이 직접 추출한다.
+    """
+    # 전용 필드로 받은 CSP·리전·예산은 결정론 경로가 이미 처리한다. LLM에는 자유문장과
+    # 요구사항만 보여 같은 값을 다시 추출·확인하는 호출 낭비를 막는다.
+    extraction_state = dict(state)
+    extraction_state.pop("initial_cloud_constraints", None)
+    _haystack, briefing = _perception(extraction_state)  # type: ignore[arg-type]
+    if not settings.resource_agent_llm:
+        return {
+            "resource_constraint_extraction": {
+                "status": "disabled",
+                "degraded": (
+                    "The resource constraint LLM is disabled; no constraints were extracted."
+                ),
+            }
+        }
+    try:
+        found = _extract_once(briefing)
+    except Exception as exc:  # noqa: BLE001 - 최종 단계가 질문으로 안전하게 강등한다
+        return {
+            "resource_constraint_extraction": {
+                "status": "failed",
+                "degraded": f"{type(exc).__name__}: {exc}",
+            }
+        }
+    return {
+        "resource_constraint_extraction": {
+            "status": "completed",
+            "result": found.model_dump(mode="json"),
+        }
+    }
+
+
 def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> None:
     """Normalize and validate an LLM extraction using deterministic code."""
     direct = (
@@ -562,7 +647,6 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
         ("minVCpu", found.min_vcpu, found.min_vcpu_evidence),
         ("minMemoryGiB", found.min_memory_gib, found.min_memory_evidence),
         ("trafficPattern", found.traffic_pattern, found.traffic_pattern_evidence),
-        ("multiZone", found.multi_zone, found.multi_zone_evidence),
         ("dataResidency", found.data_residency, found.data_residency_evidence),
     )
     for field, value, evidence in direct:
@@ -570,9 +654,7 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
             session.record(field, value, evidence)
 
     if found.region_as_written is not None:
-        session.record(
-            "regionAsWritten", found.region_as_written, found.region_evidence
-        )
+        session.record("regionAsWritten", found.region_as_written, found.region_evidence)
         matches = regions.resolve(
             found.region_as_written,
             provider=str(session.draft.get("provider") or "") or None,
@@ -594,10 +676,14 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
                 found.monthly_budget_evidence,
             )
         elif currency:
-            conversion = str(convert_to_usd.invoke({
-                "amount": found.monthly_budget_amount,
-                "currency": currency,
-            }))
+            conversion = str(
+                convert_to_usd.invoke(
+                    {
+                        "amount": found.monthly_budget_amount,
+                        "currency": currency,
+                    }
+                )
+            )
             session.saw(conversion)
             try:
                 usd = json.loads(conversion)["usd"]
@@ -619,15 +705,106 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
     session.understanding = found.understanding.strip()
 
 
-@contract("build_resource_spec", requires=("classified",),
-          produces=("resource_intake",))
+def _record_initial_cloud_constraints(session: _Session, initial: dict) -> None:
+    """Dedicated intake fields bypass semantic extraction but keep normal validation."""
+    if not initial:
+        return
+
+    targets = [dict(item) for item in initial.get("targets") or [] if isinstance(item, dict)]
+    primary = targets[0] if targets else {}
+    provider = str(primary.get("provider") or initial.get("provider") or "").strip().lower()
+    if provider:
+        session.record("provider", provider, provider)
+
+    region = str(primary.get("region") or initial.get("region") or "").strip()
+    if region:
+        session.record("regionAsWritten", region, region)
+        matches = regions.resolve(region, provider=provider or None)
+        if len(matches) == 1:
+            match = matches[0]
+            tool_result = f"{match.code} ({match.provider}, {match.display_name})"
+            session.saw(tool_result)
+            session.record("region", match.code, match.code)
+        else:
+            session.ask("region", cloud_contract.question("region"))
+
+    if targets:
+        normalized_targets = [
+            {
+                "provider": str(target.get("provider") or "").strip().lower(),
+                "region": str(target.get("region") or "").strip(),
+                "zones": list(dict.fromkeys(str(zone).strip() for zone in target.get("zones") or [] if str(zone).strip())),
+            }
+            for target in targets
+        ]
+        session.draft["deploymentTargets"] = normalized_targets
+        session.provenance.append(
+            Candidate(
+                "deploymentTargets",
+                normalized_targets,
+                json.dumps(normalized_targets, ensure_ascii=False),
+                "agent",
+                "user",
+            )
+        )
+        session.trace.append(
+            {
+                "action": "record_structured_intake",
+                "field": "deploymentTargets",
+                "value": normalized_targets,
+            }
+        )
+
+    compute_profile = str(initial.get("compute_profile") or "").strip()
+    public_ingress = str(initial.get("public_ingress") or "").strip()
+    database_placement = str(initial.get("database_placement") or "").strip()
+    replica_count = initial.get("replica_count")
+    if compute_profile:
+        session.record("computeProfile", compute_profile, compute_profile)
+    if public_ingress:
+        session.record("publicIngress", public_ingress, public_ingress)
+    if database_placement:
+        session.record("databasePlacement", database_placement, database_placement)
+    if isinstance(replica_count, int) and not isinstance(replica_count, bool):
+        session.record("replicaCount", replica_count, str(replica_count))
+
+    amount = initial.get("monthly_budget_amount")
+    currency = str(initial.get("monthly_budget_currency") or "USD").strip().upper()
+    if amount is None:
+        return
+    if currency == "USD":
+        session.record("monthlyBudgetUSD", amount, str(amount))
+        return
+
+    conversion = str(convert_to_usd.invoke({"amount": amount, "currency": currency}))
+    session.saw(conversion)
+    try:
+        usd = json.loads(conversion)["usd"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        session.ask("monthlyBudgetUSD", cloud_contract.question("monthlyBudgetUSD"))
+    else:
+        session.record("monthlyBudgetUSD", usd, str(usd))
+
+
+@contract("build_resource_spec", requires=("classified",), produces=("resource_intake",))
 def build_resource_spec(state: AgentState) -> dict:
     """사용자의 클라우드 제약을 구체화·확인해 `RESOURCE_SPEC`으로 가져온다."""
     haystack, briefing = _perception(state)
     session = _Session(haystack)
+    _record_initial_cloud_constraints(session, dict(state.get("initial_cloud_constraints") or {}))
 
     degraded = ""
-    if not settings.resource_agent_llm:
+    cached = state.get("resource_constraint_extraction")
+    if cached is not None:
+        cached = dict(cached)
+        if cached.get("status") == "completed":
+            _record_extraction(
+                session,
+                CloudConstraintExtraction.model_validate(cached.get("result") or {}),
+            )
+        else:
+            degraded = str(cached.get("degraded") or "Cloud constraint extraction failed.")
+    elif not settings.resource_agent_llm:
         degraded = "The resource constraint LLM is disabled; no constraints were extracted."
     else:
         try:
@@ -644,30 +821,45 @@ def build_resource_spec(state: AgentState) -> dict:
     for name in cloud_contract.missing_fields(session.draft):
         if name in asked:
             continue
-        session.questions.append({
-            "field": name, "kind": MISSING,
-            "why": cloud_contract.why(name),
-            # 사용자에게 하는 **말**과 그것이 필요한 **이유**는 다른 것이다.
-            # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
-            "question": cloud_contract.question(name)
-                        or f"A value for {name} is required: {cloud_contract.why(name)}",
-            "choices": list(cloud_contract.choices(
-                name, str(session.draft.get("provider") or ""))),
-            "seen": [r for r in session.rejected if r["field"] == name],
-        })
+        session.questions.append(
+            {
+                "field": name,
+                "kind": MISSING,
+                "why": cloud_contract.why(name),
+                # 사용자에게 하는 **말**과 그것이 필요한 **이유**는 다른 것이다.
+                # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
+                "question": cloud_contract.question(name)
+                or f"A value for {name} is required: {cloud_contract.why(name)}",
+                "choices": list(
+                    cloud_contract.choices(name, str(session.draft.get("provider") or ""))
+                ),
+                "seen": [r for r in session.rejected if r["field"] == name],
+            }
+        )
     # 권고 칸은 **막지 않는다.** 계약을 만족시키는 데는 필요 없고, 답하면 뒤 단계
     # 판정이 하나씩 열린다. 이것들이 없어도 `resource_spec`은 나간다.
+    capacity_known = any(
+        session.draft.get(name) is not None for name in ("minVCpu", "minMemoryGiB")
+    )
     for name in cloud_contract.suggested_fields(session.draft):
+        # 임시 용량 하한만 후속 입력으로 받는다. trafficPattern 같은 선택 맥락은
+        # 사용자가 요구사항에 명시했을 때 추출하되, 모든 사용자에게 선제 질문하지 않는다.
+        if name not in {"minVCpu", "minMemoryGiB"} or capacity_known:
+            continue
         if name in asked:
             continue
-        session.questions.append({
-            "field": name, "kind": SUGGESTED,
-            "why": cloud_contract.why(name),
-            "question": cloud_contract.question(name),
-            "choices": list(cloud_contract.choices(
-                name, str(session.draft.get("provider") or ""))),
-            "seen": [],
-        })
+        session.questions.append(
+            {
+                "field": name,
+                "kind": SUGGESTED,
+                "why": cloud_contract.why(name),
+                "question": cloud_contract.question(name),
+                "choices": list(
+                    cloud_contract.choices(name, str(session.draft.get("provider") or ""))
+                ),
+                "seen": [],
+            }
+        )
 
     errors = cloud_contract.validate(session.draft)
     intake = {

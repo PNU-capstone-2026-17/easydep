@@ -1,0 +1,37 @@
+@startuml
+!theme plain
+skinparam shadowing false
+title Docker-on-VM deployment - aws / ap-northeast-2
+cloud "AWS (ap-northeast-2)" as cloud_provider
+node "EC2 Instance" as resource_compute_instance <<compute>>
+node "EC2 Instance" as resource_compute_state_store <<compute>>
+database "EBS Volume" as resource_disk <<storage>>
+node "Public HTTP endpoint" as resource_endpoint_api_runtime_http <<endpoint>>
+node "VPC" as resource_network <<network>>
+node "Elastic IP" as resource_public_ip <<network>>
+node "Security Group" as resource_security_group <<network>>
+node "Security Group" as resource_security_group_state_store <<network>>
+node "Subnet" as resource_subnet <<network>>
+node "API Runtime" as resource_workload_api_runtime <<runtime>>
+node "State Store" as resource_workload_state_store <<runtime>>
+resource_compute_instance --> resource_security_group : attaches
+resource_compute_instance --> resource_subnet : is placed in
+resource_compute_state_store --> resource_disk : attaches
+resource_compute_state_store --> resource_security_group_state_store : attaches
+resource_compute_state_store --> resource_subnet : is placed in
+resource_endpoint_api_runtime_http --> resource_public_ip : enters through
+resource_endpoint_api_runtime_http --> resource_workload_api_runtime : routes to
+resource_public_ip --> resource_compute_instance : exposes
+resource_security_group --> resource_network : belongs to
+resource_security_group_state_store --> resource_network : belongs to
+resource_subnet --> resource_network : belongs to
+resource_workload_api_runtime --> resource_compute_instance : runs on
+resource_workload_api_runtime --> resource_workload_state_store : TCP
+resource_workload_state_store --> resource_compute_state_store : runs on
+cloud_provider o-- resource_compute_instance : contains
+cloud_provider o-- resource_compute_state_store : contains
+note bottom
+  No high-availability objective was supplied; one instance is planned.
+  Performance, price, VM family, and traffic autoscaling are deferred.
+end note
+@enduml

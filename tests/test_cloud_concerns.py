@@ -69,6 +69,59 @@ def test_explicit_evidence_is_accepted_and_sample_seeds_are_distinct(monkeypatch
     assert len(set(seeds)) == len(seeds)
 
 
+def test_research_call_can_explicitly_request_multiple_capability_samples(monkeypatch):
+    seeds = []
+
+    def sample(*_args, **kwargs):
+        seeds.append(kwargs["seed_override"])
+        return _result({
+            "https_ingress": DeploymentNeed(
+                role="Provide external HTTPS access",
+                required=True,
+                requirementIds=["NFR1"],
+                evidenceSpans=["External clients use HTTPS."],
+                origin="explicit",
+            )
+        })
+
+    monkeypatch.setattr(step_cloud, "invoke_structured", sample)
+
+    step_cloud.derive_deployment_needs(
+        {"classified": CLASSIFIED}, sample_count=5
+    )
+
+    assert len(seeds) == 5
+    assert len(set(seeds)) == 5
+
+
+def test_ambiguous_multi_zone_metadata_produces_a_purpose_question(monkeypatch):
+    classified = [{
+        "id": "NFR-ZONE",
+        "text": "Deploy the application across multiple availability zones.",
+        "type": "NFR",
+    }]
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "zone_placement": DeploymentNeed(
+            role="Place the application across multiple availability zones",
+            required=True,
+            requirementIds=["NFR-ZONE"],
+            evidenceSpans=[classified[0]["text"]],
+            origin="explicit",
+            metadata={
+                "placementScope": "multiZone",
+                "unresolved": ["availability"],
+            },
+        )
+    }))
+
+    result = step_cloud.derive_deployment_needs({"classified": classified})
+
+    assert result["deployment_needs"]["zone_placement"]["decision"] == "needsQuestion"
+    question = result["capability_contract"]["questions"][0]
+    assert question["capabilityId"] == "zone_placement"
+    assert "independent VM replicas" in question["question"]
+
+
 def test_supported_dependency_capability_id_is_preserved(monkeypatch):
     classified = [{
         "id": "NFR1",
@@ -118,7 +171,9 @@ def test_dependency_capability_id_requires_sample_agreement(monkeypatch):
         })
 
     monkeypatch.setattr(step_cloud, "invoke_structured", sample)
-    result = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})
+    result = step_cloud.derive_deployment_needs(
+        {"classified": CLASSIFIED}, sample_count=5
+    )
 
     assert result["deployment_needs"]["secure_ingress"][
         "dependencyCapabilityIds"
@@ -146,6 +201,50 @@ def test_canonical_dynamic_key_becomes_stable_id_after_sample_agreement(monkeypa
     assert result["deployment_needs"]["persistent_block_storage"][
         "dependencyCapabilityIds"
     ] == ["persistent-block-storage"]
+
+
+def test_llm_cannot_promote_restart_persistence_to_vm_independent_block_storage(
+    monkeypatch,
+):
+    classified = [
+        {
+            "id": "NFR1",
+            "text": "Shared state shall not be lost when the application server restarts.",
+            "type": "NFR",
+        }
+    ]
+    monkeypatch.setattr(
+        step_cloud,
+        "invoke_structured",
+        lambda *_args, **_kwargs: _result(
+            {
+                "shared_state": DeploymentNeed(
+                    role="Keep shared state durable across restarts",
+                    required=True,
+                    requirementIds=["NFR1"],
+                    evidenceSpans=[classified[0]["text"]],
+                    origin="explicit",
+                    dependencyCapabilityIds=["persistent-block-storage"],
+                    metadata={
+                        "applicationState": {
+                            "durability": "durable",
+                            "accessScope": "shared-service",
+                        }
+                    },
+                )
+            }
+        ),
+    )
+
+    need = step_cloud.derive_deployment_needs({"classified": classified})[
+        "deployment_needs"
+    ]["shared_state"]
+
+    assert need["dependencyCapabilityIds"] == []
+    assert need["metadata"]["applicationState"] == {
+        "durability": "persistent",
+        "accessScope": "shared-service",
+    }
 
 
 def test_semantically_same_samples_are_clustered_by_requirement_evidence(monkeypatch):
@@ -289,6 +388,50 @@ def test_explicit_node_scope_metadata_is_preserved(monkeypatch):
         "durability": "persistent",
         "accessScope": "node-filesystem",
         "accessPath": "/srv/state",
+    }
+    assert "rejectedMetadata" not in need
+
+
+def test_persistence_and_shared_scope_accept_plain_requirement_wording(monkeypatch):
+    classified = [
+        {
+            "id": "NFR1",
+            "text": (
+                "Authoritative state shall be stored in a shared location accessible to all "
+                "application instances and shall not be lost when a server is restarted."
+            ),
+            "type": "NFR",
+        }
+    ]
+    monkeypatch.setattr(
+        step_cloud,
+        "invoke_structured",
+        lambda *_args, **_kwargs: _result(
+            {
+                "shared_state": DeploymentNeed(
+                    role="Keep authoritative state durable and shared",
+                    required=True,
+                    requirementIds=["NFR1"],
+                    evidenceSpans=[classified[0]["text"]],
+                    origin="explicit",
+                    metadata={
+                        "applicationState": {
+                            "durability": "durable",
+                            "accessScope": "shared-service",
+                        }
+                    },
+                )
+            }
+        ),
+    )
+
+    need = step_cloud.derive_deployment_needs({"classified": classified})[
+        "deployment_needs"
+    ]["shared_state"]
+
+    assert need["metadata"]["applicationState"] == {
+        "durability": "persistent",
+        "accessScope": "shared-service",
     }
     assert "rejectedMetadata" not in need
 

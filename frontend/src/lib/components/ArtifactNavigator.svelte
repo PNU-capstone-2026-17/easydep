@@ -1,0 +1,70 @@
+<script lang="ts">
+  import { AlertTriangle, CheckCircle2, Circle } from '@lucide/svelte';
+  import type { ArtifactDocument, FileArtifactSnapshot } from '$lib/types';
+  import { artifactLabels, artifactPresent, fileArtifactTypes } from '$lib/artifacts';
+
+  let {
+    document,
+    fileArtifacts,
+    selected,
+    onSelect
+  }: {
+    document?: ArtifactDocument | null;
+    fileArtifacts: Record<string, FileArtifactSnapshot>;
+    selected: string;
+    onSelect: (stage: string) => void;
+  } = $props();
+
+  const groups = [
+    {
+      label: 'Requirements',
+      stages: ['refined_requirements', 'usecase_spec', 'usecase_diagram']
+    },
+    {
+      label: 'Design',
+      stages: ['class_diagram', 'sequence_diagram', 'api_spec', 'erd', 'deployment_diagram']
+    },
+    { label: 'Implementation', stages: fileArtifactTypes }
+  ];
+
+  function available(stage: string) {
+    return Boolean(fileArtifacts[stage]) || artifactPresent(document?.artifacts?.[stage]);
+  }
+
+  function hasFindings(stage: string) {
+    const validation = document?.validation?.[stage];
+    return Boolean(validation?.errors?.length || validation?.findings?.length);
+  }
+
+</script>
+
+<nav class="scrollbar-thin grid max-h-72 grid-cols-3 gap-2 overflow-y-auto p-3" aria-label="Project artifacts">
+    {#each groups as group}
+      <section aria-label={group.label}>
+        <h3 class="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-[.12em] text-[#979990]">{group.label}</h3>
+        <div class="space-y-0.5">
+          {#each group.stages as stage}
+            {@const ready = available(stage)}
+            <button
+              class="focus-ring flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-[11px] transition {selected === stage
+                ? 'bg-[#edf4ef] text-[#1f5d45]'
+                : ready
+                  ? 'text-[#4e5149] hover:bg-[#f5f6f2]'
+                  : 'cursor-not-allowed text-[#a6a89f]'}"
+              disabled={!ready}
+              onclick={() => onSelect(stage)}
+            >
+              {#if !ready}
+                <Circle size={13} class="shrink-0" />
+              {:else if hasFindings(stage)}
+                <AlertTriangle size={14} class="shrink-0 text-[#a64a40]" />
+              {:else}
+                <CheckCircle2 size={14} class="shrink-0 text-[#4f8066]" />
+              {/if}
+              <span class="min-w-0 flex-1 truncate">{artifactLabels[stage]}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/each}
+</nav>

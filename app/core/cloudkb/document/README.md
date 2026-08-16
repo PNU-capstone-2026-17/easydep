@@ -3,19 +3,11 @@
 이 디렉터리에는 현재 연구와 구현의 기준이 되는 문서만 둔다.
 
 1. [`research.md`](research.md): 과제 목표와 현재 실증 범위
-2. [`resource-dependency-analysis-guide.md`](resource-dependency-analysis-guide.md): 입문자를 위한 리소스 의존성 분석의 목적·방법·활용·한계
-3. [`dependency-analysis.md`](dependency-analysis.md): 리소스 의존성의 간결한 정의·판정 기준·근거
-4. [`vm-scope.md`](vm-scope.md): AWS·Azure·GCP Docker-on-VM 연구 범위
-5. [`vm-resource-selection.md`](vm-resource-selection.md): VM 용량·가격·성능 선택 기준
-6. [`evaluation-protocol.md`](evaluation-protocol.md): 대조실험과 효과 측정 방법
-7. [`terminology-ledger.md`](terminology-ledger.md): 용어 출처·조작적 정의·금지 해석
-8. [`resource-coverage.md`](resource-coverage.md): 현재 자원 어휘의 충족 범위와 미측정 후보
-9. [`evidence-first-native-derivation.md`](evidence-first-native-derivation.md): CSP native
-   원문 분석부터 후행 중립화까지의 편향 방지·동결 절차
-
-중립 모델 후보의 학술적 근거와 추상화 대응은
-[`벤더-중립-모델-근거-검토.md`](벤더-중립-모델-근거-검토.md)에 둔다.
-`evidence-first-native-derivation.md`가 직접 연결하는 가설 문서는 해당 방법론의 보조 자료다.
+2. [`../../../../docs/logical-deployment-topology-decisions.md`](../../../../docs/logical-deployment-topology-decisions.md): Docker-on-VM 범위, 배포 다이어그램과 리소스 의존성의 통합 기준
+3. [`vm-resource-selection.md`](vm-resource-selection.md): VM 용량·가격·성능 선택 기준
+4. [`evaluation-protocol.md`](evaluation-protocol.md): 대조실험과 효과 측정 방법
+5. [`terminology-ledger.md`](terminology-ledger.md): 용어 출처·조작적 정의·금지 해석
+6. [`resource-coverage.md`](resource-coverage.md): 현재 자원 어휘의 충족 범위와 미측정 후보
 
 실행 상태와 채점기의 세부 불변식은 `evaluation/experiment-contract.md`에 둔다. 연구 질문과
 지표는 이 디렉터리의 평가 프로토콜이 기준이고, 실행 계약은 이를 구현하는 하위 규칙이다.

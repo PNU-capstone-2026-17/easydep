@@ -4,12 +4,60 @@ from pathlib import Path
 from app.core.orchestration.scaffold_worker import (
     APPROVAL_MISMATCH,
     MemberPlannerExhausted,
+    _explicit_checkpoint,
     _preserve_failed_generation_cache,
     _run_member_workflow_with_current_approvals,
 )
 
 
-def test_scaffold_retry_preserves_every_prior_generation_before_rebuild(tmp_path):
+def test_explicit_checkpoint_requires_same_job_and_input_hashes(monkeypatch, tmp_path):
+    source = tmp_path / "design.json"
+    source.write_text('{"version": 1}', encoding="utf-8")
+    import hashlib
+
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    checkpoint = tmp_path / "generated" / "runs" / "run_valid"
+    reports = checkpoint / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "SUCCEEDED",
+                "job_name": "example",
+                "inputs": {"design": {"sha256": digest}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps({"status": "FAILED", "tasks": []}), encoding="utf-8"
+    )
+    job = tmp_path / "job.json"
+    job.write_text(
+        json.dumps(
+            {
+                "name": "example",
+                "workspaceRoot": str(tmp_path),
+                "outputRoot": "generated/runs",
+                "inputs": {"design": "design.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EASYDEP_MEMBER_CHECKPOINT_RUN", "run_valid")
+
+    assert _explicit_checkpoint(job) == checkpoint
+
+    source.write_text('{"version": 2}', encoding="utf-8")
+    import pytest
+
+    with pytest.raises(ValueError, match="does not match"):
+        _explicit_checkpoint(job)
+
+
+def test_scaffold_retry_quarantines_failed_generation_but_keeps_task_checkpoint(
+    tmp_path,
+):
     output_root = tmp_path / "generated" / "runs"
     failed = output_root / "run_failed" / "reports"
     complete = output_root / "run_complete" / "reports"
@@ -19,7 +67,20 @@ def test_scaffold_retry_preserves_every_prior_generation_before_rebuild(tmp_path
         json.dumps({"status": "FAILED"}), encoding="utf-8"
     )
     (complete / "run-manifest.json").write_text(
-        json.dumps({"status": "COMPLETE"}), encoding="utf-8"
+        json.dumps({"status": "SUCCEEDED"}), encoding="utf-8"
+    )
+    workflow = complete / "workflow-state.json"
+    workflow.write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "tasks": [
+                    {"taskId": "done", "status": "SUCCEEDED"},
+                    {"taskId": "next", "status": "RUNNING"},
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     job = tmp_path / "job.json"
     job.write_text(
@@ -31,9 +92,12 @@ def test_scaffold_retry_preserves_every_prior_generation_before_rebuild(tmp_path
 
     preserved = _preserve_failed_generation_cache(job)
 
-    assert len(preserved) == 2
+    assert len(preserved) == 1
     assert not (output_root / "run_failed").exists()
-    assert not (output_root / "run_complete").exists()
+    assert (output_root / "run_complete").is_dir()
+    assert json.loads(workflow.read_text(encoding="utf-8"))["tasks"][0][
+        "status"
+    ] == "SUCCEEDED"
     assert all(Path(path, "reports", "run-manifest.json").is_file() for path in preserved)
 
 
@@ -42,6 +106,7 @@ def test_member_workflow_refreshes_only_stale_transmission_approval(monkeypatch,
 
     def run(*_args, **kwargs):
         assert kwargs["max_cycles"] == 1
+        assert kwargs["retry_failed"] is True
         calls.append(1)
         if len(calls) == 1:
             raise PermissionError(APPROVAL_MISMATCH)
@@ -52,7 +117,7 @@ def test_member_workflow_refreshes_only_stale_transmission_approval(monkeypatch,
     )
 
     result = _run_member_workflow_with_current_approvals(
-        tmp_path, object(), approved_by="tester"
+        tmp_path, object(), approved_by="tester", retry_failed=True
     )
 
     assert result["status"] == "COMPLETE"
@@ -128,5 +193,8 @@ def test_member_workflow_stops_repeating_one_failed_task(monkeypatch, tmp_path):
 
     with pytest.raises(MemberPlannerExhausted, match="exceeded 4 attempts"):
         _run_member_workflow_with_current_approvals(
-            tmp_path, object(), approved_by="tester"
+            tmp_path,
+            object(),
+            approved_by="tester",
+            max_attempts_per_task=4,
         )

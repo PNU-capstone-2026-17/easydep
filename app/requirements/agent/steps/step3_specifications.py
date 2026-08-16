@@ -259,6 +259,25 @@ def _spec_for(
     return item
 
 
+def _tracked_spec_for(
+    uc: UseCaseItem,
+    by_id: dict[str, RequirementItem],
+    actors: list,
+    feedback: str = "",
+) -> UseCaseSpecItem:
+    """Generate one specification while exposing only its live task boundary."""
+    fields = {"useCaseId": uc["id"], "useCaseName": uc.get("name", "")}
+    telemetry.emit_progress("specTaskStarted", **fields)
+    status = "completed"
+    try:
+        return _spec_for(uc, by_id, actors, feedback)
+    except BaseException:
+        status = "failed"
+        raise
+    finally:
+        telemetry.emit_progress("specTaskFinished", status=status, **fields)
+
+
 def _failed_spec(uc: UseCaseItem, exc: BaseException) -> UseCaseSpecItem:
     """생성이 끝내 실패한 UC 자리를 채우는 빈 명세.
 
@@ -315,7 +334,11 @@ def generate_specs(
             # 감싼다(Context 하나는 한 번만 실행할 수 있다).
             futures = {
                 pool.submit(
-                    telemetry.bind_context(_spec_for), uc, by_id, actors, feedback
+                    telemetry.bind_context(_tracked_spec_for),
+                    uc,
+                    by_id,
+                    actors,
+                    feedback,
                 ): uc["id"]
                 for uc in to_gen
             }

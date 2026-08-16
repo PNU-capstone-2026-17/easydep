@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
-from app.core.cloudkb.depkb.projection_model import capability_realizations
+from app.core.cloudkb.depkb.provider_realizations import capability_realizations
 from app.core.infra_planning import plan_for_anchors
 from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
 

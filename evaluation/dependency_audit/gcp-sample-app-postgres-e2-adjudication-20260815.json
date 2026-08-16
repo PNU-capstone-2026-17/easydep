@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "easydep-gcp-sample-app-postgres-e2-adjudication/v1",
+  "date": "2026-08-15",
+  "scope": "도메인 중립 합성 앱의 GCP App 계층 관리형 복구 개발 관찰",
+  "attempts": [
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815.json",
+      "sha256": "790a933e26fc4e8c9fc45748c5fb34e718876fd89969ee421689924378869ace",
+      "classification": "harness-failure",
+      "reason": "전역 instance template에서 subnet region을 명시하지 않았다."
+    },
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815-2.json",
+      "sha256": "bb79897d5be1df0194605bba357c214440b6e9dabbde514cd835fc311efdb4f5",
+      "classification": "harness-failure",
+      "reason": "설치된 gcloud에서 제거된 set-autohealing 명령을 사용했다."
+    },
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815-3.json",
+      "sha256": "1b06649383b6db8b3992363e1865ddf332f22d1a5073d77005946a89798023bd",
+      "classification": "harness-and-evaluator-failure",
+      "reason": "MIG 인스턴스 metadata 장애 주입이 지연됐고 같은 이름의 새 VM만 교체로 인정했다."
+    },
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815-4.json",
+      "sha256": "5e81be98a32cb5c6e370545ce2482bb7b90d0b1093772517d6c0e205227cd2f0",
+      "classification": "harness-aborted",
+      "reason": "GCP가 동일 VM을 관리형 재기동했으나 구 판정기가 VM ID 변경만 기다려 중단했다.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815-5.json",
+      "sha256": "3700a6afd962c99723a3adfc7aae8755ce80e120ed853d694366ee36341151d8",
+      "classification": "harness-aborted",
+      "reason": "PostgreSQL과 startup script는 성공했으나 단일 직렬 로그 마커 누락을 실패로 오인해 중단했다.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "gcp-sample-app-postgres-e2-result-20260815-6.json",
+      "sha256": "feac77c378ea3cfef7fbba1a68a56329827a379bf4d5707616dea0dea398a61d",
+      "runId": "easydep-e2-fe1bb9ac",
+      "classification": "unassisted-confirmation-pass",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "observation": {
+        "victimUnhealthySeconds": 101.647,
+        "managedRecoveryHealthySeconds": 217.956,
+        "managedRecoveryAction": "restart-in-place",
+        "probeCount": 167,
+        "successCount": 167,
+        "failureCount": 0,
+        "successRatio": 1.0,
+        "maxConsecutiveFailureSeconds": 0.0,
+        "successfulRequestsDuringManagedRecovery": 91
+      }
+    }
+  ],
+  "independentResidualCheck": {
+    "scope": "all GCP resources whose name starts with easydep-e2-",
+    "residual": []
+  },
+  "decision": "confirmed-for-gcp-development-scope",
+  "claimsSupported": [
+    "이 구성에서는 HTTP health check를 연결한 MIG가 중단된 App을 동일 VM 재기동으로 복구하고 healthy backend 수를 2로 되돌렸다.",
+    "관리형 복구 중에도 나머지 healthy backend가 기존 PostgreSQL 값을 반환했다.",
+    "GCP의 합법적인 관리형 복구는 VM 교체뿐 아니라 동일 VM 재기동일 수 있으므로 두 동작을 구분해 기록해야 한다."
+  ],
+  "claimsNotSupported": [
+    "GCP 전체의 성공률 또는 SLA",
+    "State 계층 또는 종단 고가용성",
+    "Zone·Region 장애 대응",
+    "HTTPS·성능·자동 확장·비용 최적성"
+  ]
+}

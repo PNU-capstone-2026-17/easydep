@@ -1,6 +1,6 @@
 # EasyDep 현재 구조와 부족한 점
 
-> 기준일: 2026-08-14
+> 기준일: 2026-08-15
 > 시스템 목표: **멀티 AI 에이전트를 활용한 클라우드 네이티브 애플리케이션 개발 지원**
 
 ## 한눈에 보기
@@ -9,13 +9,13 @@
 |---|---|---:|---|
 | 4단계 파이프라인 | 요구사항 → 설계 → 구현 → 테스팅 연결 | ✅ | 멤버 workflow의 미구현 planner 공백은 임시 LLM으로 제한 보완 |
 | 요구사항 분석 | 소프트웨어 요구사항과 클라우드 제약 구조화 | ✅ | 용량 산정에 필요한 트래픽·최소 사양이 자주 미확정 |
-| 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 구조도·IaC 공동 생성과 Plan JSON 대조 미구현 |
+| 설계 | 기존 설계 산출물 + 논리 토폴로지·CSP ResourcePlan | ⚠️ | 3사 정적 Plan·중립 앱 runtime 통과. 생성 앱은 AWS 1회만 harness 보정 후 통과 |
 | 구현 | 멤버 workflow 호출과 임시 공백 provider 연결 | ⚠️ | BCE·OpenAPI·Gradle 생성기는 Docker 도구와 `/workspace` 경로 계약을 사용 |
 | 테스팅 | Gradle 테스트 및 테스트 0개 성공 방지 | ✅ | 운영 품질·보안 검사는 공통 평가기에 일부만 존재 |
 | DepKB | AWS·Azure·GCP의 VM 자원 의존성 제공 | ⚠️ | 고정입력 절제 완료, 생성·기능 성공의 소규모 비교가 남음 |
 | VM 선택 | 용량 필터 후 가격·성능 추천 및 IaC 반영 gate | ✅ | 실제 처리량·전체 비용과 provider validate는 별도 증거 필요 |
 | 비교실험 | EasyDep·LLM CoT·MetaGPT·ChatDev 실행기 준비 | ⚠️ | E1·E2 공통 의미 평가기와 반복 실험 미실행 |
-| 종단 검증 | P1 세 CSP 로컬·정적 gate, P2 복구 앱 로컬 기능 확인 | ⚠️ | 생성 앱의 실제 cloud apply·기능·정리 근거 부족 |
+| 종단 검증 | 중립 앱 E1·E2 3사 및 수강신청 생성 앱 AWS 기능 검증 | ⚠️ | AWS 생성 앱은 harness 보정 포함. 순수 생성과 Azure·GCP 생성 앱은 미확인 |
 
 범례: ✅ 동작 검증, ⚠️ 구조는 있으나 근거 또는 범위 부족, ❌ 미구현
 
@@ -32,7 +32,7 @@ flowchart LR
     T --> A[공통 외부 평가]
 
     R1[소프트웨어 요구사항 분석] --> R
-    R2[CSP·리전·예산·가용성·영속성] --> R
+    R2[CSP·리전·예산 + 후속 용량 하한] --> R
 
     D --> D1[멤버 설계 에이전트]
     K[DepKB] --> D2[VM 자원 의존성 보강]
@@ -101,6 +101,25 @@ artifacts/runs/<run-id>/
 실행 상태는 추가 의존성이 없는 SQLite 저장소에 보존한다. 구현 단계는 동시에 하나만
 실행하며 timeout 시 하위 프로세스 트리도 종료한다.
 
+## 요구사항 입력 경계
+
+최초 요청에서 받는 값은 다음으로 제한한다.
+
+- 사용자가 만들려는 앱의 기능·품질 요구사항 문장
+- CSP
+- Region 또는 지역 표현
+- 월 예산과 통화
+
+최소 vCPU와 메모리는 최초 화면에서 받지 않는다. VM 선택에 용량 하한이 필요한 시점의
+요구사항 피드백에서 둘 중 하나 이상을 임시로 받는다. 서비스 목적·배포 목적·주요 사용자라는
+별도 설문은 두지 않으며, 필요한 내용은 기능 요구사항 자체에서만 분석한다.
+
+고가용성 여부, Zone 수, VM 수, 자동 복구 사용 여부를 선호도 설문으로 받지 않는다. 요구사항에
+단일 VM 또는 단일 Zone 장애 중 업무 지속 같은 필수 목표가 있으면 CSP 관리형 VM 그룹·서로
+다른 Zone 둘 이상·로드밸런서로 내리고, 근거가 없으면 단일 VM 최소 후보를 선택한다. 단순
+다중 Zone 배치와 Zone 장애 생존은 구분한다. 다중 Region 요구는 Region별 그룹과 전역
+라우팅·데이터 복구 계약이 없으므로 현재 단일 Region으로 축소하지 않고 `unsupported`로 남긴다.
+
 ## 클라우드 범위
 
 ### 포함
@@ -108,8 +127,9 @@ artifacts/runs/<run-id>/
 - AWS, Azure, GCP
 - Docker-on-VM 배포
 - VM, 부트 디스크, NIC, 네트워크, 서브넷, 공인 IP, 방화벽
-- 요구될 때만 영속 데이터 디스크와 로드밸런서
-- HTTPS 진입점, health endpoint, 애플리케이션 포트
+- 필수 장애 허용 요구가 있을 때 단일 Region의 CSP 관리형 VM 그룹·다중 Zone 배치·자동 복구·로드밸런서 적용
+- 영속 데이터 디스크는 요구될 때만 추가
+- HTTP 진입점, health endpoint, 애플리케이션 포트
 - VM 용량·가격·성능 후보 선택
 
 ### 제외
@@ -117,6 +137,9 @@ artifacts/runs/<run-id>/
 - Kubernetes 기반 배포
 - VPN
 - 서버리스 및 관리형 애플리케이션 플랫폼
+- 다중 Region 생성·전역 ingress·Region 간 데이터 복제와 failover
+- 영속 Workload HA와 관리형 데이터베이스
+- HTTPS/TLS, 인증서, 도메인 검증과 TLS reverse proxy
 - 모든 CSP 리소스를 포괄하는 범용 지식베이스
 
 이 제한은 학부 졸업과제에서 검증 가능한 범위를 확보하기 위한 의도적 결정이다.
@@ -139,6 +162,22 @@ P1-GCP 무상태 변환 API 사례에서 다음 로컬·정적 결과를 확인�
 
 이 결과는 **종단 실행 가능성**은 보여주지만 시스템의 일반적 우수성을 입증하지는 않는다.
 
+추가로 도메인 중립 App–State 앱은 AWS·Azure·GCP에서 다음 경로를 각 1회 완료했다.
+
+- E1: 사설 PostgreSQL 연결, CSP traffic filter 개입·복원, 별도 data disk, State VM 재기동 뒤 보존
+- E2: AWS ALB–ASG, Azure Standard LB–VMSS, GCP Backend Service–MIG의 App 장애 감지·관리형 복구
+- E3: State VM 교체, 기존 data disk 재연결, 새 사설 endpoint 주입, App image 재빌드 없이 기존 값 조회
+- 모든 실행: `apply → ready → 업무 probe → fault/restart → 재확인 → cleanup 잔여 0`
+
+현재 ResourcePlan이 선택하는 진입 경로와 E2의 관찰 경로는 AWS·GCP에서 일치한다. Azure의
+E2는 VMSS 복구와 Standard Load Balancer 경로를 관찰했지만 현재 ResourcePlan은 Application
+Gateway를 선택한다. 따라서 Azure에서는 VMSS 복구만 관찰됨으로 기록하고, 선택된 Application
+Gateway를 통한 연속성은 아직 측정되지 않은 것으로 남긴다.
+
+수강신청 생성 앱의 과거 검증은 AWS에서 HTTPS health, 업무·동시성 13/13, DB 중지 시 503/DOWN,
+DB VM 재기동 뒤 영속성 2/2와 실행 소유 잔여 0을 확인했다. 다만 순수 생성 IaC의 EBS
+bootstrap 오류를 실험 harness로 보정했으므로 시스템 단독 종단 성공으로 세지 않는다.
+
 ## 목표 대비 핵심 부족 사항
 
 ```mermaid
@@ -150,7 +189,7 @@ flowchart LR
 
     G1 --> X1[멤버 구현기 미완성]
     G2 --> X2[DepKB ablation 결과 없음]
-    G3 --> X3[생성 앱의 실제 cloud 기능 증거 부족]
+    G3 --> X3[생성 앱의 순수 IaC·3사 반복 근거 부족]
     G4 --> X4[CoT·MetaGPT 전체 실험 미실행]
 ```
 
@@ -178,6 +217,9 @@ RTM의 역할은 남아 있지만 다음 연결을 정량적으로 평가하지 
 VM 선택기는 최소 vCPU·메모리 같은 용량 하한이 없으면 추천을 보류한다. 이는 임의 추천을
 막는 올바른 동작이다. 현재 자연어에서 용량 하한이 빠지면 최소 vCPU 또는 메모리를 질문하고,
 답변 뒤 제약 구조화 작업만 재개해 선택기에 전달한다. 앱 부하에서 하한을 자동 추정하지 않는다.
+최초 요청에서는 CSP·리전·월 예산을 구조화 입력으로 받고, vCPU·메모리는 요구사항 피드백에서
+둘 중 하나 이상을 받는다. 고가용성 선호나 Zone 수를 사전 질문하지 않고, 요구사항의 장애
+허용 목표에서 필요한 가용성 구성을 도출한다.
 
 ### 4. DepKB 효과 입증
 
@@ -187,7 +229,7 @@ cell의 입력 동일성과 projection 처치 충실도를 확인했다. 다만 
 - EasyDep full과 cloud-KB 미사용 버전의 자원 누락률
 - 의존성 edge 정확도와 불필요 자원 수
 - IaC 의미 검증 통과율
-- CSP별 생성·삭제 순서 및 호환성 위반률
+- CSP별 필수 생성 관계 누락률과 호환성 위반률
 
 P1~P3은 DepKB의 실험군이 아니라 과거 구성요소·smoke 회귀 과제다. 현재의 EasyDep·CoT·MetaGPT·ChatDev
 비교는 시스템 전체의 실용 성능을 비교할 수 있지만, 구조·프롬프트·도구·검증·KB가 함께
@@ -198,7 +240,9 @@ EasyDep 실행 경로에서 `no-depkb`, `no-verification` 처치와 단일 클�
 ### 5. 앱과 CSP 일반화
 
 현재 P1-GCP·P1-AWS·P1-Azure에서 동일한 무상태 앱 기능 oracle과 CSP별 정적 의존성 oracle을
-통과했다. 이는 로컬 앱·IaC 개발 gate이며 실제 세 CSP cloud 배포 성공이나 반복 비교 결과가 아니다.
+통과했다. 또한 중립 E1·E2 앱은 세 CSP의 실제 cloud 경로를 각 1회 통과했고, 수강신청 생성 앱은
+AWS에서 harness 보정 뒤 기능·영속성 gate를 통과했다. 이는 개발 관찰이며 반복 비교 결과나
+순수 생성 IaC의 3사 성공이 아니다.
 다음 과거 사례는 회귀 근거로 보존하되 새 주 비교로 확대하지 않는다.
 
 - P1 무상태 앱: AWS, Azure, GCP
@@ -231,14 +275,14 @@ minikube·AKS 요구사항 배포, Kubernetes manifest 생성 및 완료된 병�
 
 | 우선순위 | 작업 | 완료 기준 |
 |---:|---|---|
-| 1 | 최소 ResourcePlan·구조도·IaC 공동 생성 | 같은 원본에서 CSP별 그림과 Terraform이 생성됨 |
-| 2 | E1 로컬 종단 | 다중 Workload, 동시성, 영속성 oracle 반복 통과 |
-| 3 | E2 앱 HA 종단 | 관리형 VM 그룹·LB, 앱 VM 장애 중 업무와 자동 교체 확인 |
+| 1 | 최소 ResourcePlan·구조도·IaC 공동 생성 | 완료: 3사 구조도·IaC 입력 공유와 HCL·Plan JSON 정적 대조 통과 |
+| 2 | E1 종단 | 완료: 중립 앱 3사 cloud 1회, 수강신청 AWS 업무·동시성·영속성 통과. 생성 IaC harness 보정 한계 기록 |
+| 3 | E2 App 계층 장애 대응 | 완료: AWS ASG 교체, Azure VMSS 교체, GCP MIG 동일 VM 재기동을 각 1회 관찰. 단일 State VM이라 종단 HA는 아님 |
 | 4 | 공통 의미 평가기 | 네 시스템 산출물을 요구 ID·설계 결정·code/test/IaC 의미로 정규화 |
 | 5 | 8회 비교 파일럿 | E1·E2 × 4시스템의 성공·실패·검열 정상 분류 |
 
-본실험 전 최소 조건은 E1·E2가 로컬에서 재현되고 사전 지정 CSP에서 기능·정리까지
-끝나는 것이다. 이후에만 반복 실험을 확대한다.
+E1·E2 개발 경로와 cleanup은 완료됐다. 다음 확대 여부는 공통 의미 평가기와 8회 비교
+파일럿이 성공·실패·검열을 정상 분류한 뒤 결정한다.
 
 ## 실행 시간과 병목 계측
 
@@ -298,3 +342,17 @@ Docker와 OpenTofu다. 생성·검증 도구의 고정 버전과 실제 provider
 - `app/core/orchestration/README.md`: 실행 명령과 provider 계약
 - `evaluation/experiment-contract.md`: subject·harness·environment failure 분류
 - FastAPI `/docs`: 현재 HTTP 계약
+
+## 2026-08-15 도메인 중립·수강신청 cloud 확인
+
+아래는 현재 HTTP 전용 범위 결정 전 수행한 TLS 연구 기록이며 생성 범위의 근거로 사용하지 않는다.
+직접 TLS는 로컬 중립 앱에서 terminator 제거·복원
+개입을 확인했고, 관리형 HTTPS는 AWS ALB 1회, Azure Application Gateway 1회, GCP External
+Application Load Balancer 3회에서 backend binding 제거 시 실패와 복원 후 회복을 관찰했다.
+DNS 소유권·공개 CA 신뢰·SLA는 측정하지 않았다.
+
+기존 생성 수강신청 E1 앱은 AWS·Azure·GCP 모두에서 동일한 13단계 업무·동시성 오라클,
+DB 중단 시 503/DOWN, State VM 재기동 뒤 영속성 2/2를 통과했다. 모든 실행의 소유 잔여는
+0이다. AWS는 기존 harness 보정 결과를 재사용했고 Azure·GCP는 의존성 검증 harness가 직접
+배포했으므로, 이를 자동 생성 IaC의 세 CSP 종단 성공으로 해석하지 않는다. 상세 근거는
+`evaluation/dependency_audit/domain-neutral-and-course-cloud-results-20260815.md`에 있다.

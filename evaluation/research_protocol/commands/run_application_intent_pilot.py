@@ -42,13 +42,18 @@ CASES = {
         },
     ],
 }
+CONFIRMATORY_CAPABILITY_SAMPLES = 5
 
 
-def run() -> dict:
+def run(*, capability_samples: int = CONFIRMATORY_CAPABILITY_SAMPLES) -> dict:
+    capability_samples = max(1, int(capability_samples))
     records = []
     for case_id, requirements in CASES.items():
         started = perf_counter()
-        extracted = derive_deployment_needs({"classified": requirements})
+        extracted = derive_deployment_needs(
+            {"classified": requirements},
+            sample_count=capability_samples,
+        )
         requirements_result = {
             **extracted,
             "resource_spec": {"multiZone": True},
@@ -81,6 +86,7 @@ def run() -> dict:
         "schemaVersion": "easydep-application-intent-pilot/v1",
         "recordedAt": datetime.now(UTC).isoformat(),
         "scope": "Docker-on-Linux-VM",
+        "configuration": {"capabilitySamples": capability_samples},
         "cases": records,
         "checks": {
             "explicitNodeScopeExtracted": "node-filesystem" in explicit_scopes,
@@ -104,8 +110,13 @@ def run() -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--capability-samples",
+        type=int,
+        default=CONFIRMATORY_CAPABILITY_SAMPLES,
+    )
     args = parser.parse_args()
-    result = run()
+    result = run(capability_samples=args.capability_samples)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

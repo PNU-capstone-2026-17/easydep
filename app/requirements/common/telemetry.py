@@ -43,6 +43,11 @@ LOGGER_NAME = "easydep.agent"
 _configured = False
 _configure_lock = threading.Lock()
 
+ProgressSink = Callable[[str, dict[str, Any]], None]
+_progress_sink: contextvars.ContextVar[ProgressSink | None] = contextvars.ContextVar(
+    "easydep_progress_sink", default=None
+)
+
 #: LogRecord가 이미 쓰는 속성 이름. 두 곳에서 쓴다 —
 #:  1) `extra=`로 이 중 하나를 넘기면 logging이 KeyError를 던진다. 그러면 **계측이
 #:     관측 대상을 죽인다.** 실제로 그랬다: RunStats의 "name"이 LogRecord.name과 부딪혔다.
@@ -66,8 +71,29 @@ def _log_fields(fields: dict[str, Any]) -> dict[str, Any]:
 
 
 def _progress(event: str, **fields: Any) -> None:
+    sink = _progress_sink.get()
+    if sink is not None:
+        try:
+            sink(event, fields)
+        except Exception:  # noqa: BLE001 - progress reporting must not fail the analysis
+            logging.getLogger(LOGGER_NAME).exception("progress sink failed")
     if settings.easydep_experiment_session:
         print(json.dumps({"event": event, **fields}, ensure_ascii=False), flush=True)
+
+
+def emit_progress(event: str, **fields: Any) -> None:
+    """Publish non-sensitive execution progress to the active observer, if any."""
+    _progress(event, **fields)
+
+
+@contextmanager
+def progress_scope(sink: ProgressSink) -> Iterator[None]:
+    """Bind one progress observer to the current execution context."""
+    token = _progress_sink.set(sink)
+    try:
+        yield
+    finally:
+        _progress_sink.reset(token)
 
 
 class _KeyValueFormatter(logging.Formatter):
@@ -307,15 +333,17 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
         stall_probe.set()
         elapsed = time.perf_counter() - started
         finished_at = datetime.now(UTC)
-        if settings.easydep_experiment_session:
-            print(json.dumps({
-                "event": "llmOperationFinished",
-                "operation": operation,
-                "status": "failed" if failed is not None else "completed",
-                "errorType": type(failed).__name__ if failed is not None else None,
-                "finishedAt": finished_at.isoformat(),
-                "elapsedSeconds": round(elapsed, 6),
-            }, ensure_ascii=False), flush=True)
+        _progress(
+            "llmOperationFinished",
+            operation=operation,
+            status="failed" if failed is not None else "completed",
+            errorType=type(failed).__name__ if failed is not None else None,
+            finishedAt=finished_at.isoformat(),
+            elapsedSeconds=round(elapsed, 6),
+            promptTokens=call.prompt_tokens,
+            completionTokens=call.completion_tokens,
+            structuredFallback=call.fallback_reason is not None,
+        )
         stats = current_run()
         if stats is not None:
             with stats._lock:

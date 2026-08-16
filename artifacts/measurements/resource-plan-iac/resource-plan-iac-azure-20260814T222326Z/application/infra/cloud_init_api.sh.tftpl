@@ -1,0 +1,8 @@
+#cloud-config
+runcmd:
+  - apt-get update && apt-get install -y docker.io
+  - systemctl enable docker
+  - docker run -d \
+      -p ${api_port}:8080 \
+      --name api-runtime \
+      ${api_container_image}

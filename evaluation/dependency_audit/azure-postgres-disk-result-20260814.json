@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "easydep-azure-postgres-disk-intervention/v1",
+  "runId": "easydep-pg-a2235218",
+  "provider": "azure",
+  "location": "koreacentral",
+  "vmSize": "Standard_B2ats_v2",
+  "vmImage": "Ubuntu2204",
+  "postgresImage": "postgres:17-bookworm",
+  "startedAt": "2026-08-14T10:43:53.845151+00:00",
+  "finishedAt": "2026-08-14T10:48:10.734376+00:00",
+  "outcome": "failed",
+  "error": "PostgreSQL value was not observed before and after restart",
+  "observations": {
+    "postgresRunsWithBootDiskOnly": true,
+    "additionalDataDiskIsNotProvisioningRequired": true,
+    "retainedDataDiskSurvivesVmReplacement": false
+  },
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 6.792,
+      "detail": "easydep-pg-a2235218"
+    },
+    {
+      "name": "root-vm.create",
+      "status": "passed",
+      "durationSeconds": 74.984,
+      "detail": null
+    },
+    {
+      "name": "root-vm.data-disk-count",
+      "status": "passed",
+      "durationSeconds": 2.293,
+      "detail": 0
+    },
+    {
+      "name": "root-vm.postgres",
+      "status": "passed",
+      "durationSeconds": 33.293,
+      "detail": "Enable succeeded: \n[stdout]\n\n[stderr]\n"
+    }
+  ],
+  "cleanup": {
+    "passed": true,
+    "resourceGroupExists": false
+  },
+  "interpretationLimits": [
+    "Both variants have an Azure OS disk; the comparison concerns an additional data disk.",
+    "The replacement observation supports independent data lifecycle, not high availability.",
+    "This is one development run in one Azure region and does not establish a cross-provider rate."
+  ]
+}

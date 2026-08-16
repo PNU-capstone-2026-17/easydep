@@ -3,33 +3,32 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.core.cloudkb.depkb.projection_model import projection_gaps, validate_projection
+from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 
-MODEL = Path("app/core/cloudkb/depkb/provider-projections.json")
+MODEL = Path("app/core/cloudkb/depkb/provider-realizations.json")
 
 
 def _load():
     return json.loads(MODEL.read_text(encoding="utf-8"))
 
 
-def test_projection_supports_one_native_resource_mapping_to_multiple_concepts():
+def test_provider_realization_preserves_embedded_native_components():
     model = _load()
-    validate_projection(model)
-    azure = model["providers"]["azure"]["mappings"]
-    assert len({item["neutralConceptId"] for item in azure}) > 1
+    validate_realizations(model)
+    azure = model["providers"]["azure"]["components"]
     assert {item.get("ownerResourceId") for item in azure if item["representation"] == "embedded"} == {"gateway"}
     assert [
         item["id"] for item in model["providers"]["azure"]["realizations"]
     ] == ["http-application-gateway", "https-application-gateway"]
 
 
-def test_projection_supports_one_neutral_realization_using_multiple_resources():
+def test_provider_realization_can_use_multiple_native_resources():
     model = _load()
     gcp = model["providers"]["gcp"]["realizations"][0]
     assert gcp["composition"] == "multi-resource"
-    assert len(gcp["mappingIds"]) == 6
+    assert len(gcp["componentIds"]) == 6
 
 
-def test_projection_exposes_missing_boundaries_instead_of_hiding_them():
-    gaps = projection_gaps(_load())
+def test_realization_catalog_exposes_missing_boundaries_instead_of_hiding_them():
+    gaps = realization_gaps(_load())
     assert gaps == []

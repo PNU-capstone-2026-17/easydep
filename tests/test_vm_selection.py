@@ -26,18 +26,16 @@ def _catalog(monkeypatch, specs=None, performance_status="ok"):
     monkeypatch.setattr(
         vm_selection,
         "recommend_note",
-        lambda *_args, **_kwargs: type(
-            "Note", (), {"status": performance_status, "text": None}
-        )(),
+        lambda *_args, **_kwargs: type("Note", (), {"status": performance_status, "text": None})(),
     )
 
 
 def test_selection_is_deferred_without_a_capacity_floor(monkeypatch):
     _catalog(monkeypatch)
 
-    result = vm_selection.select_vm_candidates({
-        "provider": "aws", "region": "ap-northeast-2", "monthlyBudgetUSD": 100
-    }, {})
+    result = vm_selection.select_vm_candidates(
+        {"provider": "aws", "region": "ap-northeast-2", "monthlyBudgetUSD": 100}, {}
+    )
 
     assert result["status"] == "deferred"
     assert result["reason"] == "missing_capacity_floor"
@@ -46,13 +44,16 @@ def test_selection_is_deferred_without_a_capacity_floor(monkeypatch):
 def test_selection_filters_capacity_and_compute_budget(monkeypatch):
     _catalog(monkeypatch, [_spec(hourlyUSD=0.05), _spec(specName="large", hourlyUSD=0.2)])
 
-    result = vm_selection.select_vm_candidates({
-        "provider": "aws",
-        "region": "ap-northeast-2",
-        "monthlyBudgetUSD": 100,
-        "minVCpu": 2,
-        "minMemoryGiB": 4,
-    }, {})
+    result = vm_selection.select_vm_candidates(
+        {
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "monthlyBudgetUSD": 100,
+            "minVCpu": 2,
+            "minMemoryGiB": 4,
+        },
+        {},
+    )
 
     assert result["status"] == "selected"
     assert result["recommended"]["specName"] == "t3.medium"
@@ -60,16 +61,19 @@ def test_selection_filters_capacity_and_compute_budget(monkeypatch):
     assert result["budgetScope"] == "compute-only"
 
 
-def test_high_availability_applies_the_two_vm_compute_floor(monkeypatch):
+def test_provider_projection_applies_the_two_vm_compute_floor(monkeypatch):
     _catalog(monkeypatch)
 
-    result = vm_selection.select_vm_candidates({
-        "provider": "aws",
-        "region": "ap-northeast-2",
-        "monthlyBudgetUSD": 50,
-        "minVCpu": 2,
-        "multiZone": True,
-    }, {})
+    result = vm_selection.select_vm_candidates(
+        {
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "monthlyBudgetUSD": 50,
+            "minVCpu": 2,
+        },
+        {},
+        projection_policy={"minimumInstances": 2},
+    )
 
     assert result["constraints"]["minimumVmCount"] == 2
     assert result["status"] == "infeasible"
@@ -81,9 +85,9 @@ def test_partial_region_match_is_not_used_as_one_price(monkeypatch):
         vm_selection, "resolve_region", lambda _region: ({"us-east-1", "us-east-2"}, "partial")
     )
 
-    result = vm_selection.select_vm_candidates({
-        "provider": "aws", "region": "us-east", "minVCpu": 2
-    }, {})
+    result = vm_selection.select_vm_candidates(
+        {"provider": "aws", "region": "us-east", "minVCpu": 2}, {}
+    )
 
     assert result["status"] == "deferred"
     assert result["reason"] == "region_not_exact_in_catalog"
@@ -98,13 +102,16 @@ def test_steady_workload_prefers_a_checked_non_warning_candidate(monkeypatch):
         return type("Note", (), {"status": status, "text": None})()
 
     monkeypatch.setattr(vm_selection, "recommend_note", note)
-    result = vm_selection.select_vm_candidates({
-        "provider": "aws",
-        "region": "ap-northeast-2",
-        "monthlyBudgetUSD": 100,
-        "minVCpu": 2,
-        "trafficPattern": "steady",
-    }, {})
+    result = vm_selection.select_vm_candidates(
+        {
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "monthlyBudgetUSD": 100,
+            "minVCpu": 2,
+            "trafficPattern": "steady",
+        },
+        {},
+    )
 
     assert result["recommended"]["specName"] == "steady"
     assert result["selectionBasis"].startswith("lowest-cost-candidate-with-no-recorded")
@@ -119,13 +126,11 @@ def test_vm_selection_binding_reads_literals_and_variable_defaults():
         ),
         "azure": (
             "Standard_D2s_v5",
-            'resource "azurerm_linux_virtual_machine" "app" '
-            '{ size = "Standard_D2s_v5" }',
+            'resource "azurerm_linux_virtual_machine" "app" { size = "Standard_D2s_v5" }',
         ),
         "gcp": (
             "e2-medium",
-            'resource "google_compute_instance" "app" '
-            '{ machine_type = "e2-medium" }',
+            'resource "google_compute_instance" "app" { machine_type = "e2-medium" }',
         ),
     }
 

@@ -146,6 +146,31 @@ def test_generate_specs_runs_in_parallel(monkeypatch):
     assert len(out["use_case_specs"]) == n
 
 
+def test_generate_specs_reports_only_per_use_case_task_boundaries(monkeypatch):
+    events = []
+
+    def fake_spec_for(uc, _by_id, _actors, _feedback=""):
+        return {"use_case_id": uc["id"], "name": uc["name"]}
+
+    monkeypatch.setattr(s3, "_spec_for", fake_spec_for)
+    ucs = [_uc("UC1", name="Browse courses"), _uc("UC2", name="Enroll")]
+    with telemetry.progress_scope(
+        lambda event, fields: events.append((event, fields))
+    ):
+        s3.generate_specs({"use_cases": ucs, "classified": _CLASSIFIED, "actors": []})
+
+    boundaries = [item for item in events if item[0].startswith("specTask")]
+    assert {
+        (event, fields["useCaseId"], fields.get("status"))
+        for event, fields in boundaries
+    } == {
+        ("specTaskStarted", "UC1", None),
+        ("specTaskFinished", "UC1", "completed"),
+        ("specTaskStarted", "UC2", None),
+        ("specTaskFinished", "UC2", "completed"),
+    }
+
+
 def test_generate_specs_respects_concurrency_cap(monkeypatch):
     monkeypatch.setattr(s3.settings, "spec_concurrency", 2)
     lock = threading.Lock()

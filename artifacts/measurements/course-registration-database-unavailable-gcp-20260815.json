@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-database-unavailable-health-v1",
+  "baseUrl": "https://34.64.189.141",
+  "observedAt": "2026-08-15T10:01:40.988535+00:00",
+  "tlsVerification": "disabled-for-synthetic-test",
+  "status": "passed",
+  "passedPhases": 1,
+  "totalPhases": 1,
+  "executedPhases": 1,
+  "results": [
+    {
+      "id": "health-reports-database-unavailable",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 503,
+        "json": {
+          "status": "DOWN"
+        },
+        "transportError": null
+      },
+      "expected": {
+        "status": 503,
+        "jsonContains": {
+          "status": "DOWN"
+        }
+      }
+    }
+  ],
+  "attemptsUntilPass": 1
+}

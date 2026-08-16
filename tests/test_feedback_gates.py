@@ -166,8 +166,18 @@ def test_the_gate_carries_the_resource_questions(monkeypatch):
     state = {"classified": [], "resource_intake": {"questions": [
         {"field": "provider", "kind": "missing", "why": "w", "question": "q"},
     ]}}
-    assert fg.gate_requirements(state) == {"gate_route": "advance"}  # type: ignore[arg-type]
+    assert fg.gate_requirements(state) == {"gate_route": "answers"}  # type: ignore[arg-type]
     assert seen["resource_questions"][0]["field"] == "provider"
+
+
+def test_a_suggested_resource_question_can_be_skipped(monkeypatch):
+    """Optional sizing guidance must not block requirement analysis."""
+    monkeypatch.setattr(fg, "interrupt", lambda _payload: "")
+    state = {"classified": [], "resource_intake": {"questions": [
+        {"field": "minVCpu", "kind": "suggested", "question": "q"},
+    ]}}
+
+    assert fg.gate_requirements(state) == {"gate_route": "advance"}  # type: ignore[arg-type]
 
 
 def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):

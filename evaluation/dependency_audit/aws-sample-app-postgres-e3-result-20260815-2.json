@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "easydep-sample-app-postgres-e3/v1",
+  "provider": "aws",
+  "runId": "easydep-e3-fa0fba27",
+  "startedAt": "2026-08-14T20:17:54.169654+00:00",
+  "transportUnderTest": "app VM/container to replacement state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 2.787,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.subnet",
+      "status": "passed",
+      "durationSeconds": 3.216,
+      "detail": "subnet-062eadd5b5b60354c"
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 2.497,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "app-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.796,
+      "detail": "sg-0c8aefd4a1a24e243"
+    },
+    {
+      "name": "state-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.613,
+      "detail": "sg-0b49fb87be55222a2"
+    },
+    {
+      "name": "sg-0c8aefd4a1a24e243.allow-ssh",
+      "status": "passed",
+      "durationSeconds": 2.48,
+      "detail": "tcp/22 from the runner /32"
+    },
+    {
+      "name": "sg-0b49fb87be55222a2.allow-ssh",
+      "status": "passed",
+      "durationSeconds": 2.749,
+      "detail": "tcp/22 from the runner /32"
+    },
+    {
+      "name": "state-sg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 2.037,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-09d0fa30da18706c8\",\n            \"GroupId\": \"sg-0b49fb87be55222a2\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 5432,\n            \"ToPort\": 5432,\n            \"ReferencedGroupInfo\": {\n                \"GroupId\": \"sg-0c8aefd4a1a24e243\",\n                \"UserId\": \"<redacted-account>\"\n            },\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 2.358,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "initial.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 2.818,
+      "detail": "i-0e4495f3b27ebb155"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 3.417,
+      "detail": "i-00f69b9a51fc491af"
+    },
+    {
+      "name": "initial.vms-running",
+      "status": "passed",
+      "durationSeconds": 16.69,
+      "detail": "initial VMs running"
+    },
+    {
+      "name": "initial.state-tools-ready",
+      "status": "passed",
+      "durationSeconds": 77.2,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-tools.ready",
+      "status": "passed",
+      "durationSeconds": 1.165,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-image.build",
+      "status": "passed",
+      "durationSeconds": 14.543,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-volume.create",
+      "status": "passed",
+      "durationSeconds": 2.427,
+      "detail": "vol-0419619bf5fb5bcf0"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 1.61,
+      "detail": "volume available"
+    },
+    {
+      "name": "initial.state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 1.84,
+      "detail": "{\n    \"VolumeId\": \"vol-0419619bf5fb5bcf0\",\n    \"InstanceId\": \"i-0e4495f3b27ebb155\",\n    \"Device\": \"/dev/sdf\",\n    \"State\": \"attaching\",\n    \"AttachTime\": \"2026-08-14T20:20:20.883000+00:00\"\n}"
+    },
+    {
+      "name": "initial.state-volume.in-use",
+      "status": "passed",
+      "durationSeconds": 1.759,
+      "detail": "volume in-use"
+    },
+    {
+      "name": "initial.state-ready",
+      "status": "passed",
+      "durationSeconds": 4.882,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-container.start",
+      "status": "passed",
+      "durationSeconds": 1.564,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "baseline.app-write-read",
+      "status": "passed",
+      "durationSeconds": 11.569,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "initial.state-vm.terminate",
+      "status": "passed",
+      "durationSeconds": 3.455,
+      "detail": "{\n    \"TerminatingInstances\": [\n        {\n            \"InstanceId\": \"i-0e4495f3b27ebb155\",\n            \"CurrentState\": {\n                \"Code\": 32,\n                \"Name\": \"shutting-down\"\n            },\n            \"PreviousState\": {\n                \"Code\": 16,\n                \"Name\": \"running\"\n            }\n        }\n    ]\n}"
+    },
+    {
+      "name": "initial.state-vm.terminated",
+      "status": "passed",
+      "durationSeconds": 79.349,
+      "detail": "state-a terminated"
+    },
+    {
+      "name": "replacement.state-volume.available",
+      "status": "passed",
+      "durationSeconds": 3.931,
+      "detail": "volume available"
+    },
+    {
+      "name": "replacement.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 5.366,
+      "detail": "i-0092fadda1a9f9290"
+    },
+    {
+      "name": "replacement.state-vm.running",
+      "status": "passed",
+      "durationSeconds": 2.648,
+      "detail": "state-b running"
+    },
+    {
+      "name": "replacement.state-tools-ready",
+      "status": "passed",
+      "durationSeconds": 82.322,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "replacement.state-volume.attach-existing",
+      "status": "passed",
+      "durationSeconds": 2.453,
+      "detail": "{\n    \"VolumeId\": \"vol-0419619bf5fb5bcf0\",\n    \"InstanceId\": \"i-0092fadda1a9f9290\",\n    \"Device\": \"/dev/sdf\",\n    \"State\": \"attaching\",\n    \"AttachTime\": \"2026-08-14T20:23:43.391000+00:00\"\n}"
+    },
+    {
+      "name": "replacement.state-volume.in-use",
+      "status": "passed",
+      "durationSeconds": 2.242,
+      "detail": "volume in-use"
+    },
+    {
+      "name": "replacement.state-ready",
+      "status": "passed",
+      "durationSeconds": 4.411,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "replacement.app-rebind-without-rebuild",
+      "status": "passed",
+      "durationSeconds": 6.938,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "replacement.app-read-existing-value",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "same-image rebind oracle read the pre-replacement value"
+    }
+  ],
+  "outcome": "passed",
+  "scope": "domain-neutral state-VM replacement and runtime-endpoint rebinding",
+  "pathUnderTest": "unchanged app VM/image -> replacement state VM private endpoint -> reattached provider data disk -> PostgreSQL data path",
+  "runtimeEndpointObservation": {
+    "initialStatePrivateIp": "172.31.33.90",
+    "replacementStatePrivateIp": "172.31.45.96",
+    "privateIpChanged": true,
+    "appVmRecreated": false,
+    "appImageRebuilt": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T20:25:53.830781+00:00",
+  "observations": {
+    "baselineWriteReadPassed": true,
+    "stateVmWasReplaced": true,
+    "sameDataDiskWasReattached": true,
+    "appImageWasNotRebuilt": true,
+    "existingValueReadAfterReplacement": true
+  },
+  "interpretationLimits": [
+    "This is a recoverability test, not automatic failover or high availability.",
+    "The application container is restarted to inject the replacement endpoint.",
+    "The state workload is unavailable during replacement.",
+    "One development run per provider does not establish a success rate.",
+    "The generic key-value oracle does not validate course-registration rules."
+  ]
+}

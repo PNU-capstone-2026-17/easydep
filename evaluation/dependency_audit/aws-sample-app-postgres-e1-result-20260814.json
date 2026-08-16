@@ -1,0 +1,152 @@
+{
+  "schemaVersion": "easydep-aws-sample-app-postgres-e1/v1",
+  "provider": "aws",
+  "runId": "easydep-e1-d093f783",
+  "startedAt": "2026-08-14T12:35:00.875603+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "runner.public-ip",
+      "status": "passed",
+      "durationSeconds": 0.387,
+      "detail": "58.231.192.172/32"
+    },
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 2.127,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.subnet",
+      "status": "passed",
+      "durationSeconds": 3.032,
+      "detail": {
+        "id": "subnet-062eadd5b5b60354c",
+        "az": "ap-northeast-2c"
+      }
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 4.658,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "app-sg.create",
+      "status": "passed",
+      "durationSeconds": 4.995,
+      "detail": "sg-0ffa2a6dda4010e3d"
+    },
+    {
+      "name": "state-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.844,
+      "detail": "sg-09ab406a8d4abbe3c"
+    },
+    {
+      "name": "security.allow-sg-0ffa2a6dda4010e3d-22",
+      "status": "passed",
+      "durationSeconds": 2.888,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-06c4794122951ee6f\",\n            \"GroupId\": \"sg-0ffa2a6dda4010e3d\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "security.allow-sg-0ffa2a6dda4010e3d-8080",
+      "status": "passed",
+      "durationSeconds": 2.751,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0bfab212b99cd1062\",\n            \"GroupId\": \"sg-0ffa2a6dda4010e3d\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 8080,\n            \"ToPort\": 8080,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "security.allow-sg-09ab406a8d4abbe3c-22",
+      "status": "passed",
+      "durationSeconds": 3.183,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-08c6499d253c4a15c\",\n            \"GroupId\": \"sg-09ab406a8d4abbe3c\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "state-sg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 2.586,
+      "detail": "state tcp/5432 from app security group"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 2.259,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 3.463,
+      "detail": "i-036f45dceb6cf416d"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 3.104,
+      "detail": "i-07a9f8be99486a584"
+    },
+    {
+      "name": "vms.running",
+      "status": "passed",
+      "durationSeconds": 16.99,
+      "detail": "both VMs running"
+    },
+    {
+      "name": "state-vm.tools-ready",
+      "status": "passed",
+      "durationSeconds": 78.185,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-vm.image-ready",
+      "status": "passed",
+      "durationSeconds": 12.379,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-volume.create",
+      "status": "passed",
+      "durationSeconds": 1.727,
+      "detail": "vol-0a68d42cd153ab959"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 1.463,
+      "detail": "volume available"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 1.871,
+      "detail": "{\n    \"VolumeId\": \"vol-0a68d42cd153ab959\",\n    \"InstanceId\": \"i-036f45dceb6cf416d\",\n    \"Device\": \"/dev/sdf\",\n    \"State\": \"attaching\",\n    \"AttachTime\": \"2026-08-14T12:37:32.625000+00:00\"\n}"
+    },
+    {
+      "name": "state-volume.mount-and-postgres",
+      "status": "failed",
+      "durationSeconds": 120.028,
+      "detail": "Command '['C:\\\\WINDOWS\\\\System32\\\\OpenSSH\\\\ssh.EXE', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=yes', '-i', 'C:\\\\Users\\\\projw\\\\Desktop\\\\dev\\\\easydep\\\\evaluation\\\\dependency_audit\\\\tmp2uo6jjcg\\\\aws.pem', 'ec2-user@13.125.182.152', '\\nset -eu\\nfor i in $(seq 1 60); do\\n  device=$(lsblk -dpno NAME,SERIAL | awk \\'$2==\"vol0a68d42cd153ab959\" {print $1}\\')\\n  [ -n \"$device\" ] && break\\n  sleep 2\\ndone\\ntest -n \"${device:-}\"\\nif ! sudo blkid \"$device\" >/dev/null 2>&1; then sudo mkfs.ext4 -F \"$device\"; fi\\nuuid=$(sudo blkid -s UUID -o value \"$device\")\\nsudo mkdir -p /var/lib/easydep-postgres\\ngrep -q \"$uuid\" /etc/fstab || echo \"UUID=$uuid /var/lib/easydep-postgres ext4 defaults,nofail 0 2\" | sudo tee -a /etc/fstab >/dev/null\\nsudo mount -a\\nsudo chown 999:999 /var/lib/easydep-postgres\\nsudo docker rm -f easydep-state >/dev/null 2>&1 || true\\nsudo docker run -d --name easydep-state --restart unless-stopped   -e POSTGRES_PASSWORD=\\'<redacted-password>\\' -p 5432:5432   -v /var/lib/easydep-postgres:/var/lib/postgresql/data:Z postgres:17-bookworm\\nfor i in $(seq 1 90); do\\n  sudo docker exec easydep-state pg_isready -U postgres && exit 0\\n  sleep 2\\ndone\\nexit 1\\n']' timed out after 120 seconds"
+    }
+  ],
+  "outcome": "failed",
+  "pathUnderTest": "public HTTP -> app VM/container -> state VM private IPv4:5432 -> PostgreSQL data path -> EBS data volume",
+  "scope": "domain-neutral dependency pilot; not course-registration behavior",
+  "networkObservation": {
+    "appEndpoint": "public IPv4 TCP/8080 restricted to runner /32",
+    "databaseEndpointUsedByApp": "172.31.35.214:5432",
+    "databaseIngressSource": "app security group"
+  },
+  "error": "Command '['C:\\\\WINDOWS\\\\System32\\\\OpenSSH\\\\ssh.EXE', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL', '-o', 'ConnectTimeout=15', '-o', 'BatchMode=yes', '-i', 'C:\\\\Users\\\\projw\\\\Desktop\\\\dev\\\\easydep\\\\evaluation\\\\dependency_audit\\\\tmp2uo6jjcg\\\\aws.pem', 'ec2-user@13.125.182.152', '\\nset -eu\\nfor i in $(seq 1 60); do\\n  device=$(lsblk -dpno NAME,SERIAL | awk \\'$2==\"vol0a68d42cd153ab959\" {print $1}\\')\\n  [ -n \"$device\" ] && break\\n  sleep 2\\ndone\\ntest -n \"${device:-}\"\\nif ! sudo blkid \"$device\" >/dev/null 2>&1; then sudo mkfs.ext4 -F \"$device\"; fi\\nuuid=$(sudo blkid -s UUID -o value \"$device\")\\nsudo mkdir -p /var/lib/easydep-postgres\\ngrep -q \"$uuid\" /etc/fstab || echo \"UUID=$uuid /var/lib/easydep-postgres ext4 defaults,nofail 0 2\" | sudo tee -a /etc/fstab >/dev/null\\nsudo mount -a\\nsudo chown 999:999 /var/lib/easydep-postgres\\nsudo docker rm -f easydep-state >/dev/null 2>&1 || true\\nsudo docker run -d --name easydep-state --restart unless-stopped   -e POSTGRES_PASSWORD=\\'<redacted-password>\\' -p 5432:5432   -v /var/lib/easydep-postgres:/var/lib/postgresql/data:Z postgres:17-bookworm\\nfor i in $(seq 1 90); do\\n  sudo docker exec easydep-state pg_isready -U postgres && exit 0\\n  sleep 2\\ndone\\nexit 1\\n']' timed out after 120 seconds",
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T12:40:51.477855+00:00",
+  "interpretationLimits": [
+    "The test app validates resource bindings, not course-registration rules.",
+    "Public HTTP is used; trusted HTTPS, DNS, and certificate dependencies are not tested.",
+    "A same-instance reboot is not state-VM replacement or state-tier high availability.",
+    "One development run does not establish an AWS-wide success rate."
+  ]
+}

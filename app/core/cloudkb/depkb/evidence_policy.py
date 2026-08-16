@@ -4,11 +4,11 @@ from __future__ import annotations
 from typing import Any
 
 CLAIM_TYPES = frozenset({
-    "resourceBoundary", "dependencyExistence", "dependencyNecessity", "neutralCrosswalk",
+    "resourceBoundary", "dependencyExistence", "dependencyNecessity",
 })
 SOURCE_ROLES = frozenset({
     "vendorLifecycleSchema", "vendorReferenceSchema", "vendorManual",
-    "runtimeIntervention", "neutralModel",
+    "runtimeIntervention",
 })
 
 
@@ -27,7 +27,7 @@ def _valid_observations(claim: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def adjudicate(claim: dict[str, Any]) -> dict[str, Any]:
-    """중립 모델이나 LLM의 의견이 벤더 사실로 승격되지 않게 고정 규칙을 적용한다."""
+    """공식 CSP 자료와 재현된 기능 개입만으로 판정하는 고정 규칙을 적용한다."""
     claim_type = claim.get("claimType")
     if claim_type not in CLAIM_TYPES:
         raise ValueError("unsupported evidence claim type")
@@ -44,7 +44,7 @@ def adjudicate(claim: dict[str, Any]) -> dict[str, Any]:
             item for item in supporting
             if item["sourceRole"] == "vendorLifecycleSchema"
             and item.get("independentIdentity") is True
-            and {"create", "read", "delete"} <= set(item.get("lifecycleOperations") or [])
+            and {"create", "read"} <= set(item.get("lifecycleOperations") or [])
         ]
         status = "confirmed" if lifecycle else "candidate"
         reason = "vendor-lifecycle-and-identity" if lifecycle else "lifecycle-proof-incomplete"
@@ -52,7 +52,7 @@ def adjudicate(claim: dict[str, Any]) -> dict[str, Any]:
         if roles & {"vendorReferenceSchema", "vendorManual", "runtimeIntervention"}:
             status, reason = "confirmed", "vendor-reference-or-stronger-evidence"
         else:
-            status, reason = "candidate", "neutral-hypothesis-only"
+            status, reason = "candidate", "provider-evidence-incomplete"
     elif claim_type == "dependencyNecessity":
         intervention = any(
             item["sourceRole"] == "runtimeIntervention"
@@ -73,13 +73,6 @@ def adjudicate(claim: dict[str, Any]) -> dict[str, Any]:
             status, reason = "documented", "vendor-normative-prerequisite"
         else:
             status, reason = "candidate", "reference-does-not-prove-necessity"
-    else:
-        neutral = any(item["sourceRole"] == "neutralModel" for item in supporting)
-        vendor = any(item["sourceRole"].startswith("vendor") for item in supporting)
-        status = "confirmed" if neutral and vendor else "candidate"
-        reason = "neutral-hypothesis-vendor-validated" if status == "confirmed" else (
-            "crosswalk-side-missing"
-        )
     return {
         **claim,
         "decision": status,

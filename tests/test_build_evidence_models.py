@@ -40,11 +40,9 @@ def test_replicated_gcp_function_intervention_confirms_necessity():
 def test_missing_official_operation_blocks_boundary_confirmation(tmp_path):
     config = tmp_path / "config.json"
     config.write_text(json.dumps({
-        "neutralSource": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json",
         "providers": {"aws": [{
-            "id": "vm", "conceptId": "neutral.compute", "serviceFamily": "ec2",
-            "operations": {"create": "DoesNotExist", "read": "DescribeInstances",
-                           "delete": "TerminateInstances"},
+            "id": "vm", "serviceFamily": "ec2",
+            "operations": {"create": "DoesNotExist", "read": "DescribeInstances"},
             "capabilityIds": ["linux-vm-runtime"],
         }]},
     }), encoding="utf-8")

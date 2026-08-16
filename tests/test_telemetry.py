@@ -38,6 +38,30 @@ def test_scope_is_restored_after_exit():
     assert telemetry.current_run() is None
 
 
+def test_progress_scope_receives_llm_start_and_finish_events():
+    events = []
+
+    with telemetry.progress_scope(lambda event, fields: events.append((event, fields))):
+        with telemetry.record_llm_call("structured:Example") as call:
+            call.observe_usage({"input_tokens": 3, "output_tokens": 2})
+
+    assert [event for event, _fields in events] == [
+        "llmOperationStarted",
+        "llmOperationFinished",
+    ]
+    assert events[-1][1]["promptTokens"] == 3
+    assert events[-1][1]["completionTokens"] == 2
+
+
+def test_progress_sink_failure_does_not_fail_the_observed_work():
+    def fail(_event, _fields):
+        raise RuntimeError("observer unavailable")
+
+    with telemetry.progress_scope(fail):
+        with telemetry.record_llm_call("op"):
+            pass
+
+
 def test_usage_accumulates_across_retries_in_one_call():
     """논리적 호출 1건이 실제 요청 2건일 수 있다(폴백). 토큰은 합산돼야 한다."""
     with telemetry.run_scope("run") as stats:

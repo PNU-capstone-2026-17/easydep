@@ -5,6 +5,7 @@ from app.core.orchestration.linux_runner_transport import (
     to_container_path,
     to_host_path,
 )
+from app.implementation.agents.verification.build import verification_timeout_seconds
 
 
 def test_runner_transport_round_trips_workspace_path(tmp_path: Path):
@@ -31,6 +32,30 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     assert "UNRELATED_SECRET" not in command
     assert "secret" not in command
     assert command[-2:] == ["worker", "/easydep-workspace/job.json"]
+
+
+def test_runner_command_transmits_verification_timeout(tmp_path: Path):
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="worker",
+        arguments=["/easydep-workspace/job.json"],
+        environment={
+            "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS": "1200",
+            "IMPLEMENTATION_MAX_TASK_ATTEMPTS": "5",
+            "EASYDEP_MEMBER_CHECKPOINT_RUN": "run_abc123",
+        },
+    )
+
+    assert "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS" in command
+    assert "IMPLEMENTATION_MAX_TASK_ATTEMPTS" in command
+    assert "EASYDEP_MEMBER_CHECKPOINT_RUN" in command
+
+
+def test_verification_timeout_is_configurable(monkeypatch):
+    monkeypatch.setenv("IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS", "1200")
+
+    assert verification_timeout_seconds() == 1200
 
 
 def test_runner_command_labels_the_experiment_session(tmp_path: Path):

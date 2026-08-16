@@ -1,0 +1,232 @@
+{
+  "schemaVersion": "easydep-gcp-sample-app-postgres-e2/v1",
+  "provider": "gcp",
+  "runId": "easydep-e2-fe1bb9ac",
+  "startedAt": "2026-08-14T17:07:46.544091+00:00",
+  "transportUnderTest": "public HTTP forwarding rule to a managed instance group of app VM containers, then private PostgreSQL",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 15.563,
+      "detail": "easydep-e2-fe1bb9ac-net"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 29.248,
+      "detail": "easydep-e2-fe1bb9ac-subnet"
+    },
+    {
+      "name": "firewall.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 9.837,
+      "detail": "state tcp/5432 from app source tag"
+    },
+    {
+      "name": "firewall.allow-google-health",
+      "status": "passed",
+      "durationSeconds": 9.937,
+      "detail": "NAME                          NETWORK                  DIRECTION  PRIORITY  ALLOW     DENY  DISABLED\neasydep-e2-fe1bb9ac-allow-lb  easydep-e2-fe1bb9ac-net  INGRESS    1000      tcp:8080        False"
+    },
+    {
+      "name": "state-disk.create",
+      "status": "passed",
+      "durationSeconds": 3.718,
+      "detail": "easydep-e2-fe1bb9ac-data"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 16.891,
+      "detail": "easydep-e2-fe1bb9ac-state"
+    },
+    {
+      "name": "state-vm.postgres-ready",
+      "status": "passed",
+      "durationSeconds": 101.858,
+      "detail": {
+        "postgres": "accepting connections",
+        "startupScript": "finished"
+      }
+    },
+    {
+      "name": "app-group.template",
+      "status": "passed",
+      "durationSeconds": 8.947,
+      "detail": "easydep-e2-fe1bb9ac-template"
+    },
+    {
+      "name": "health-check.create",
+      "status": "passed",
+      "durationSeconds": 4.178,
+      "detail": "NAME                    PROTOCOL\neasydep-e2-fe1bb9ac-hc  HTTP"
+    },
+    {
+      "name": "app-group.create",
+      "status": "passed",
+      "durationSeconds": 12.938,
+      "detail": "NAME                     LOCATION           SCOPE  BASE_INSTANCE_NAME  SIZE  TARGET_SIZE  INSTANCE_TEMPLATE             AUTOSCALED\neasydep-e2-fe1bb9ac-mig  asia-northeast3-a  zone   e2-fe1bb9ac-app     0     2            easydep-e2-fe1bb9ac-template  no"
+    },
+    {
+      "name": "app-group.named-port",
+      "status": "passed",
+      "durationSeconds": 5.176,
+      "detail": "http:8080"
+    },
+    {
+      "name": "load-balancer.backend-service",
+      "status": "passed",
+      "durationSeconds": 17.164,
+      "detail": "NAME                         BACKENDS  PROTOCOL\neasydep-e2-fe1bb9ac-backend            HTTP"
+    },
+    {
+      "name": "load-balancer.add-managed-group",
+      "status": "passed",
+      "durationSeconds": 94.476,
+      "detail": "managed instance group attached"
+    },
+    {
+      "name": "load-balancer.url-map",
+      "status": "passed",
+      "durationSeconds": 9.573,
+      "detail": "NAME                     DEFAULT_SERVICE\neasydep-e2-fe1bb9ac-map  backendServices/easydep-e2-fe1bb9ac-backend"
+    },
+    {
+      "name": "load-balancer.http-proxy",
+      "status": "passed",
+      "durationSeconds": 7.328,
+      "detail": "NAME                       URL_MAP\neasydep-e2-fe1bb9ac-proxy  easydep-e2-fe1bb9ac-map"
+    },
+    {
+      "name": "load-balancer.forwarding-rule",
+      "status": "passed",
+      "durationSeconds": 16.548,
+      "detail": "easydep-e2-fe1bb9ac-forwarding"
+    },
+    {
+      "name": "baseline.two-healthy-backends",
+      "status": "passed",
+      "durationSeconds": 4.808,
+      "detail": [
+        "e2-fe1bb9ac-app-6067",
+        "e2-fe1bb9ac-app-w41f"
+      ]
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 116.994,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "baseline.business-write",
+      "status": "passed",
+      "durationSeconds": 10.289,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "stored": true
+        }
+      }
+    },
+    {
+      "name": "baseline.business-read",
+      "status": "passed",
+      "durationSeconds": 0.229,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "app-group.enable-autohealing",
+      "status": "passed",
+      "durationSeconds": 87.753,
+      "detail": "MIG autohealing uses the HTTP health check"
+    },
+    {
+      "name": "fault.health-based-managed-recovery",
+      "status": "passed",
+      "durationSeconds": 217.956,
+      "detail": {
+        "victimInstance": "e2-fe1bb9ac-app-w41f",
+        "victimInstanceId": "7603672540364600021",
+        "managedRecovery": {
+          "instance": "e2-fe1bb9ac-app-w41f",
+          "instanceId": "7603672540364600021",
+          "lastStartTimestamp": "2026-08-14T10:18:34.668-07:00",
+          "action": "restart-in-place"
+        },
+        "faultRequest": {
+          "status": 202,
+          "body": {
+            "accepted": true,
+            "instance": "e2-fe1bb9ac-app-w41f"
+          }
+        },
+        "milestonesSeconds": {
+          "faultAccepted": 0.107,
+          "victimUnhealthy": 101.647,
+          "managedRecoveryHealthy": 217.956
+        },
+        "healthDerivedFunctionalRecoveryBudgetSeconds": 30,
+        "businessContinuity": {
+          "probeCount": 167,
+          "successCount": 167,
+          "failureCount": 0,
+          "successRatio": 1.0,
+          "maxConsecutiveFailureSeconds": 0.0
+        },
+        "successfulRequestsDuringManagedRecovery": 91
+      }
+    },
+    {
+      "name": "recovery.business-read",
+      "status": "passed",
+      "durationSeconds": 0.228,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "forwarding rule -> target HTTP proxy -> URL map -> backend service health -> managed app VM group (2) -> state VM private IPv4:5432 -> persistent disk",
+  "scope": "domain-neutral app-tier availability pilot; state tier remains singleton",
+  "availabilityObservation": {
+    "scope": "application tier",
+    "stateTier": "single state VM; not highly available",
+    "failureInjection": "stop one app process and let backend health feed MIG autohealing",
+    "groupScope": "single zone; zone failure is not tested"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T17:26:18.327229+00:00",
+  "interpretationLimits": [
+    "The test validates app-tier managed autohealing, not state-tier high availability.",
+    "Public HTTP is used; trusted HTTPS, DNS ownership, and certificates are not tested.",
+    "One zonal development run does not establish a GCP-wide success rate or an SLA.",
+    "Sequential probes are a functional continuity signal, not a performance load test."
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-e1-e2-v1",
+  "baseUrl": "http://127.0.0.1:12127",
+  "observedAt": "2026-08-15T03:45:44.149544+00:00",
+  "status": "failed",
+  "passedPhases": 1,
+  "totalPhases": 13,
+  "executedPhases": 2,
+  "results": [
+    {
+      "id": "initialize-for-basic-flow",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "id": "course-catalog",
+      "kind": "request",
+      "status": "failed",
+      "observed": {
+        "httpStatus": 200,
+        "json": [],
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": [
+          {
+            "courseId": "C-RACE",
+            "capacity": 1,
+            "remainingSeats": 1
+          },
+          {
+            "courseId": "C-DUP",
+            "capacity": 10,
+            "remainingSeats": 10
+          }
+        ]
+      }
+    }
+  ]
+}

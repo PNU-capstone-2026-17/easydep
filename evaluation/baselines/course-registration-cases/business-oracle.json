@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-e1-e2-v1",
+  "sourceRefs": [
+    "FR-01",
+    "FR-02",
+    "FR-03",
+    "FR-04",
+    "FR-05",
+    "FR-06",
+    "FR-07",
+    "FR-08",
+    "FR-09",
+    "NFR-01",
+    "NFR-02"
+  ],
+  "requestTimeoutSeconds": 15,
+  "phases": [
+    {
+      "id": "initialize-for-basic-flow",
+      "kind": "request",
+      "request": {"method": "POST", "path": "/initialize"},
+      "expect": {"status": 200}
+    },
+    {
+      "id": "course-catalog",
+      "kind": "request",
+      "request": {"method": "GET", "path": "/courses"},
+      "expect": {
+        "status": 200,
+        "jsonContainsItems": [
+          {"courseId": "C-RACE", "capacity": 1, "remainingSeats": 1},
+          {"courseId": "C-DUP", "capacity": 10, "remainingSeats": 10}
+        ],
+        "jsonLength": 2
+      }
+    },
+    {
+      "id": "enroll",
+      "kind": "request",
+      "request": {
+        "method": "POST",
+        "path": "/enrollments",
+        "json": {"studentId": "S1", "courseId": "C-DUP"}
+      },
+      "expect": {
+        "status": 201,
+        "jsonContains": {"studentId": "S1", "courseId": "C-DUP"}
+      }
+    },
+    {
+      "id": "duplicate-enrollment-rejected",
+      "kind": "request",
+      "request": {
+        "method": "POST",
+        "path": "/enrollments",
+        "json": {"studentId": "S1", "courseId": "C-DUP"}
+      },
+      "expect": {"status": 409}
+    },
+    {
+      "id": "student-enrollment-visible",
+      "kind": "request",
+      "request": {"method": "GET", "path": "/students/S1/enrollments"},
+      "expect": {
+        "status": 200,
+        "jsonContains": [{"studentId": "S1", "courseId": "C-DUP"}],
+        "jsonLength": 1
+      }
+    },
+    {
+      "id": "cancel-enrollment",
+      "kind": "request",
+      "request": {"method": "DELETE", "path": "/enrollments/S1/C-DUP"},
+      "expect": {"status": 200}
+    },
+    {
+      "id": "seat-restored-after-cancel",
+      "kind": "request",
+      "request": {"method": "GET", "path": "/courses/C-DUP"},
+      "expect": {
+        "status": 200,
+        "jsonContains": {"courseId": "C-DUP", "remainingSeats": 10}
+      }
+    },
+    {
+      "id": "initialize-for-last-seat-race",
+      "kind": "request",
+      "request": {"method": "POST", "path": "/initialize"},
+      "expect": {"status": 200}
+    },
+    {
+      "id": "last-seat-race",
+      "kind": "concurrentRequests",
+      "requests": [
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S2", "courseId": "C-RACE"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S3", "courseId": "C-RACE"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S4", "courseId": "C-RACE"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S5", "courseId": "C-RACE"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S6", "courseId": "C-RACE"}}
+      ],
+      "expect": {"statusCounts": {"201": 1, "409": 4}}
+    },
+    {
+      "id": "last-seat-not-oversold",
+      "kind": "request",
+      "request": {"method": "GET", "path": "/courses/C-RACE"},
+      "expect": {
+        "status": 200,
+        "jsonContains": {"courseId": "C-RACE", "capacity": 1, "remainingSeats": 0}
+      }
+    },
+    {
+      "id": "initialize-for-duplicate-race",
+      "kind": "request",
+      "request": {"method": "POST", "path": "/initialize"},
+      "expect": {"status": 200}
+    },
+    {
+      "id": "duplicate-race",
+      "kind": "concurrentRequests",
+      "requests": [
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S1", "courseId": "C-DUP"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S1", "courseId": "C-DUP"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S1", "courseId": "C-DUP"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S1", "courseId": "C-DUP"}},
+        {"method": "POST", "path": "/enrollments", "json": {"studentId": "S1", "courseId": "C-DUP"}}
+      ],
+      "expect": {"statusCounts": {"201": 1, "409": 4}}
+    },
+    {
+      "id": "duplicate-race-retains-one",
+      "kind": "request",
+      "request": {"method": "GET", "path": "/students/S1/enrollments"},
+      "expect": {
+        "status": 200,
+        "jsonContains": [{"studentId": "S1", "courseId": "C-DUP"}],
+        "jsonLength": 1
+      }
+    }
+  ]
+}

@@ -15,7 +15,6 @@ from typing import Any
 from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.requirements.agent.steps.step_cloud import derive_deployment_needs
 from app.requirements.capability_contract import link_dependency_capability
-from app.requirements.config import settings
 from evaluation.baselines.common import model, seed, temperature
 from evaluation.research_protocol.core.paths import REPOSITORY_ROOT
 
@@ -58,6 +57,7 @@ CELLS = (
         },
     ),
 )
+CONFIRMATORY_CAPABILITY_SAMPLES = 5
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -145,7 +145,10 @@ def _project(
     }
 
 
-def measure_llm() -> dict[str, Any]:
+def measure_llm(
+    *, capability_samples: int = CONFIRMATORY_CAPABILITY_SAMPLES
+) -> dict[str, Any]:
+    capability_samples = max(1, int(capability_samples))
     cells: list[dict[str, Any]] = []
     started = perf_counter()
     for axis, condition, filename, expected in CELLS:
@@ -155,7 +158,8 @@ def measure_llm() -> dict[str, Any]:
         result = derive_deployment_needs(
             {
                 "classified": _classified(selected_requirements),
-            }
+            },
+            sample_count=capability_samples,
         )
         elapsed = perf_counter() - before
         needs = result.get("deployment_needs") or {}
@@ -204,7 +208,7 @@ def measure_llm() -> dict[str, Any]:
             "model": model(),
             "temperature": temperature(),
             "seed": seed(),
-            "llmSamplesPerCell": int(settings.capability_samples),
+            "llmSamplesPerCell": capability_samples,
             "cloudApply": False,
         },
         "cells": cells,
@@ -214,7 +218,7 @@ def measure_llm() -> dict[str, Any]:
         },
         "summary": {
             "cellCount": len(cells),
-            "llmCallCount": len(cells) * int(settings.capability_samples),
+            "llmCallCount": len(cells) * capability_samples,
             "capabilityExtractionPassCount": sum(
                 item["capabilityExtractionPassed"] for item in cells
             ),
@@ -368,6 +372,11 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--replay", type=Path)
     parser.add_argument("--ablate", type=Path)
+    parser.add_argument(
+        "--capability-samples",
+        type=int,
+        default=CONFIRMATORY_CAPABILITY_SAMPLES,
+    )
     args = parser.parse_args()
     if args.replay and args.ablate:
         parser.error("--replay and --ablate are mutually exclusive")
@@ -376,7 +385,7 @@ def main() -> int:
         if args.ablate
         else replay(_read(args.replay))
         if args.replay
-        else measure_llm()
+        else measure_llm(capability_samples=args.capability_samples)
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

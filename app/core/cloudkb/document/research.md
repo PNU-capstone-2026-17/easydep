@@ -11,7 +11,8 @@
 테스팅의 네 단계를 유지하면서, 클라우드 부분을 AWS·Azure·GCP의 **Docker-on-VM 배포**로
 한정한다. 따라서 본 연구의 실증 범위는 컨테이너화, VM 네트워크·스토리지·진입점 의존성,
 CSP별 IaC와 실행 검증이다. Kubernetes·서버리스·관리형 데이터 서비스까지 포함하는
-클라우드 네이티브 전 영역을 지원한다고 주장하지 않는다. 세부 경계와 평가는 각각
-[`vm-scope.md`](vm-scope.md)와 [`evaluation-protocol.md`](evaluation-protocol.md)를 따른다.
+클라우드 네이티브 전 영역을 지원한다고 주장하지 않는다. 세부 경계·배포 다이어그램·리소스
+의존성은 [`docs/logical-deployment-topology-decisions.md`](../../../../docs/logical-deployment-topology-decisions.md),
+평가는 [`evaluation-protocol.md`](evaluation-protocol.md)를 따른다.
 현재 자원 어휘가 표현하는 범위와 미측정 구성요소는
 [`resource-coverage.md`](resource-coverage.md)에 명시하며, 이를 넘는 완전성을 주장하지 않는다.

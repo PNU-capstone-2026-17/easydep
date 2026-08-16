@@ -17,7 +17,7 @@
     },
     {
       "caseId": "reject-aws-ha-over-budget",
-      "resourceSpec": {"provider": "aws", "region": "ap-northeast-2", "minVCpu": 4, "minMemoryGiB": 16, "monthlyBudgetUSD": 100, "multiZone": true, "trafficPattern": "steady"},
+      "resourceSpec": {"provider": "aws", "region": "ap-northeast-2", "minVCpu": 4, "minMemoryGiB": 16, "monthlyBudgetUSD": 100, "trafficPattern": "steady"},
       "deploymentNeeds": {}
     },
     {

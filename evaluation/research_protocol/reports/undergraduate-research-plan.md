@@ -10,7 +10,7 @@
 
 | 제한된 주장 | 구현 산출물 | 최소 측정 | 성공 근거 | 주장하지 않는 것 |
 |---|---|---|---|---|
-| DepKB가 세 capability를 CSP 구성으로 투영한다 | 근거 claim, 중립 capability, 벤더 projection | 동일 LLM 출력의 full/no-depkb 결과, provider validate | 입력 해시, 구성요소·관계·제약 상태, 검증 로그 | 전체 클라우드의 완결 모델, 앱 성공 |
+| DepKB가 세 배포 capability를 CSP 구성으로 실현한다 | 근거 claim, 배포 capability, CSP별 native realization | 동일 LLM 출력의 full/no-depkb 결과, provider validate | 입력 해시, 구성요소·관계·제약 상태, 검증 로그 | 전체 클라우드의 완결 모델, 앱 성공 |
 | 앱 요구와 VM 환경의 불일치를 조기에 표시한다 | 앱–클라우드 계약과 validator | 발견 단계, 오탐, 수정 소유 작업, 최종 기능 | build/runtime 의존성·port·storage path·HA/local state의 고정 진단군 | 사례별 오류 문자열 지식의 일반화 |
 | 단계별 에이전트가 실패 지점부터 복구한다 | 4단계 및 구현 하위 체크포인트 | 실패 소유 작업 식별, 상류 재실행 회피, 복구 시간 | run 상태·retry history·timing summary | 멀티 에이전트 구조 자체의 단독 인과효과 |
 | 명시된 제약으로 VM 후보를 안내한다 | 고정 catalog 선택기 | 하한 유무, 예산 충족 여부, 경고, IaC 반영 | 가격 snapshot 시각·출처와 선택 근거 | 전체 비용, 실제 처리량, 최적 VM 보장 |

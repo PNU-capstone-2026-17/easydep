@@ -20,7 +20,6 @@ from app.design.graphs import design_graph as dg
 from app.design.graphs.subgraphs import DESIGN_STAGES, DESIGN_SUBGRAPHS
 from app.design.knowledge import rules
 
-
 #: 스테이지별 (추출 결과 모델, 수정 결과 모델). 다섯 산출물이 모두 구조화 모델을
 #: 내놓으므로 스텁도 모델만 돌려주면 되고, **렌더러는 진짜가 돈다** — 그래서 이 테스트는
 #: 흐름뿐 아니라 "모델이 실제로 산출물이 되는가"까지 함께 본다.
@@ -374,12 +373,20 @@ def test_no_session_is_distinguishable_from_a_paused_one(graph):
     도니 빈 산출물이 만들어지고 그게 저장까지 된다.
     """
     assert dg.session_status("한번도-시작한적-없는-앱") == {
-        "exists": False, "active": False, "stage": None
+        "exists": False,
+        "active": False,
+        "retryable": False,
+        "stage": None,
+        "node": None,
     }
 
     graph.invoke(SEED, THREAD)
     assert dg.session_status("test-app") == {
-        "exists": True, "active": True, "stage": "class_diagram"
+        "exists": True,
+        "active": True,
+        "retryable": False,
+        "stage": "class_diagram",
+        "node": "gate_class_diagram",
     }
 
     for _ in range(len(DESIGN_STAGES)):
@@ -389,6 +396,34 @@ def test_no_session_is_distinguishable_from_a_paused_one(graph):
     # 되감기가 가장 필요한 시점이 "다 만들고 나서"다.
     assert dg.has_active_session("test-app") is False
     assert dg.has_design_run("test-app") is True
+
+
+def test_failed_stage_is_retryable_without_restarting_upstream(graph, monkeypatch, stub_llm):
+    graph.invoke(SEED, THREAD)
+
+    def invalid_sequence(*_args, **_kwargs):
+        stub_llm.append("gen:sequence_diagram:failed")
+        raise ValueError("invalid sequence")
+
+    monkeypatch.setattr(sg, "extract_sequence_model", invalid_sequence)
+    with pytest.raises(ValueError, match="invalid sequence"):
+        dg.resume_design("test-app", "")
+
+    assert dg.session_status("test-app") == {
+        "exists": True,
+        "active": False,
+        "retryable": True,
+        "stage": "sequence_diagram",
+        "node": "gen_sequence_diagram",
+    }
+
+    monkeypatch.setattr(
+        sg, "extract_sequence_model", lambda *_args, **_kwargs: _SEQUENCE
+    )
+    result = dg.retry_design("test-app")
+
+    assert result["stage"] == "sequence_diagram"
+    assert stub_llm.count("gen:class_diagram") == 1
 
 
 def test_rewind_remakes_that_stage_and_everything_after(graph, stub_llm):
@@ -444,7 +479,6 @@ def test_serving_import_chain_pulls_in_the_checkpoint_tables():
     돌 때까지 아무도 모른다.
     """
     import app.design.api  # noqa: F401 - 서빙 경로의 진입점
-
     from app.db.models import Base
 
     assert {

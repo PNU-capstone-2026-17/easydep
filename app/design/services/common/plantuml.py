@@ -6,13 +6,20 @@
 """
 from __future__ import annotations
 
-import os
 import subprocess
 
 from dotenv import load_dotenv
 
-
 load_dotenv()
+
+
+# Keep checked-in SVG examples and API rendering on the exact same renderer.
+# Updating PlantUML is an intentional dependency change: change this digest,
+# regenerate the examples, and review the resulting SVG diff together.
+PLANTUML_IMAGE = (
+    "plantuml/plantuml@sha256:"
+    "47870c1f76cfb3747bc7090bfe83013a4e3105b5a0bb1515e2baf5d3e2b3ee9d"
+)
 
 
 def plantuml_command(*arguments: str) -> list[str]:
@@ -21,7 +28,7 @@ def plantuml_command(*arguments: str) -> list[str]:
         "run",
         "--rm",
         "-i",
-        "plantuml/plantuml",
+        PLANTUML_IMAGE,
         "-charset",
         "UTF-8",
         *arguments,

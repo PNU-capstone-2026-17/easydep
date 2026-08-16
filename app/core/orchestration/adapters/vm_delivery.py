@@ -7,18 +7,18 @@ import io
 import json
 import os
 import re
+import secrets
+import shlex
 import shutil
-import tempfile
-import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 import hcl2
 
-from app.core.config import settings
 from app.core.cloudkb.depkb.knowledge_access import query_knowledge
 from app.core.cloudkb.depkb.provider_cache import (
     PINNED_PROVIDERS,
@@ -26,6 +26,7 @@ from app.core.cloudkb.depkb.provider_cache import (
     provider_cache_environment,
     provider_mirror_configuration,
 )
+from app.core.config import settings
 from app.core.orchestration.app_cloud_contracts import (
     ApplicationRuntimeContract,
     CloudCapabilityContract,
@@ -33,22 +34,36 @@ from app.core.orchestration.app_cloud_contracts import (
     contract_value,
 )
 from app.core.orchestration.iac_binding_validation import (
+    observe_terraform_plan,
     validate_iac_bindings,
+    validate_managed_group_binding,
+    validate_resource_plan_against_plan,
+    validate_resource_plan_binding,
     validate_vm_selection_binding,
 )
 from app.core.orchestration.process import run_process_tree
+from app.core.orchestration.provider_deployment import (
+    bind_application_runtime,
+    resource_plan_digest,
+)
 from app.core.orchestration.provider_target import resolve_resource_spec
 from app.core.orchestration.vm_selection import select_vm_candidates
+from app.design.services.deployment_diagram.provider_plantuml import (
+    deployment_bundle_runtime_puml,
+)
 from app.requirements.capability_contract import (
     accepted_needs,
     requires_persistent_storage,
 )
 
-SYSTEM_PROMPT = """You generate deployable Terraform for one Docker application on Linux VMs.
-Use only the supplied structured requirements and dependency plan. Support only AWS, Azure,
+SYSTEM_PROMPT = """You translate one supplied ResourcePlan into deployable Terraform for Docker workloads on Linux VMs.
+Do not redesign, merge, or add workloads. Use only the supplied structured requirements,
+ResourcePlan, and dependency evidence. Support only AWS, Azure,
 or GCP. Do not use Kubernetes, managed application platforms,
 managed databases, VPNs, or serverless services. Provision every resource needed by the VM,
-network, external HTTPS entry, optional persistent data disk, and optional load balancer.
+network, the ResourcePlan's exact external endpoint protocol, optional persistent data disk,
+and optional load balancer. Public endpoints in the supported profile are HTTP only. Do not add
+HTTPS listeners, certificates, TLS proxies, domain validation, or port 443 resources.
 Interpret dependency evidence conservatively: `existenceDecision=confirmed` proves that a
 reference relation exists, while only `necessityDecision=confirmed` or `documented` supports a
 necessity claim. Never turn `candidate` or `notAssessed` necessity into a universal mandatory
@@ -57,17 +72,38 @@ realization, without implying that they are universally required for every provi
 Items in dependencyPlan.coverage.unmodeledAcceptedNeeds are requirements not modeled by the
 dependency knowledge base. Do not claim that the dependency plan satisfies or evidences them;
 use deploymentNeeds as their requirement source.
-Opening firewall port 443 alone is not HTTPS: configure real TLS termination with an HTTPS/SSL
-listener or a VM-side reverse proxy and certificate/domain variables.
 Use cloud-init/user-data to install Docker, run the supplied container image on the requested
 port, expose the health path, and mount persistent storage when required. Never embed
-credentials. Prefer variables for image IDs, project/subscription identifiers, certificate
-material, and container image. Return one JSON object with `terraformFiles`, a map from safe
+credentials. Prefer variables for image IDs, project/subscription identifiers, and container
+image. Return one JSON object with `terraformFiles`, a map from safe
 flat file names to complete contents. It must contain at least one .tf file and may include
 .tftpl, .tpl, or .sh files referenced by Terraform. Also return `deploymentNotes`, a short
 array. Do not
 return Markdown fences or any non-JSON text. All .tf files form one Terraform module: never
 declare the same resource, variable, output, data source, or module block more than once.
+Application migrations own application schemas and seed records. Infrastructure bootstrap may
+create the database service and database itself, but must not create application tables or insert
+domain records. Preserve every observed runtime environment value prefix, including language or
+driver prefixes such as `jdbc:`; a generic database URI is not interchangeable with a JDBC URL.
+When a load balancer is present, expose the application port only to that load balancer. Direct
+HTTP ingress may expose the application port through the planned public address and firewall.
+For AWS VM bootstrap, use current Amazon Linux 2023 commands (`dnf` and `systemctl`) unless the
+input explicitly selects another image family; do not pair a caller-supplied current AMI with
+legacy `amazon-linux-extras` commands.
+If VM bootstrap installs packages or pulls container images, provision a working outbound path.
+For a new AWS VPC this includes an internet gateway and associated default route; each bootstrapping
+instance then needs a public address or a NAT path. A security-group egress rule alone is not
+network reachability. On AWS Nitro instances, resolve an attached EBS volume by its volume
+identity with Amazon Linux `ebsnvme-id` or NVMe controller metadata. Do not invent a Linux
+`/dev/disk/by-id/aws-<volume-id>` path; AWS documents that convention for FreeBSD, not Linux.
+Never assume that `/dev/sdf` is the Linux guest device name.
+Persist attached-volume mounts with a filesystem UUID in `/etc/fstab` or an equivalent
+systemd mount. Do not bind a freshly formatted filesystem root directly to a container data
+directory. Filesystem-created entries such as `lost+found` can violate a runtime's empty-data-
+directory initialization contract. Create and permission a dedicated child directory below the
+guest mount, then bind that child or configure the runtime to use it as its actual data path. Long-running application
+and state containers started by VM bootstrap must
+declare a Docker restart policy so dependency startup order and VM reboot do not leave them down.
 Inside files consumed by Terraform `templatefile`, escape shell variable interpolation as
 `$${NAME}` or avoid shell variables; `${NAME}` is reserved for a key explicitly supplied in
 the templatefile vars map.
@@ -79,18 +115,57 @@ specName as the VM instance type/size. Declare it as a literal or as a Terraform
 that exact default so independent evaluation can verify the choice. When selection is deferred,
 do not claim that an arbitrary VM size satisfies capacity or budget."""
 
-PERSISTENCE_INSTRUCTION = """Create a separate application data disk only when
-applicationPersistentStorageRequired is true. A provider's mandatory VM boot disk is not an
-application data disk and should remain an inline boot-disk setting. Format and mount the data
-disk on the guest, then bind that guest path into the Docker container at exactly
-applicationMountPath. The guest source path may differ from the container target path. When the
-guest initializes, format the disk only when no filesystem exists; bootstrap must be idempotent
-and must never erase an already formatted persistent disk. Select the attached disk by a stable
-provider device identity, never by taking the first enumerated block device, and use a bounded
-wait for the attachment to become visible before formatting or mounting it. When the value is
-false, do not create, attach, mount, or advertise a separate persistent disk."""
+PERSISTENCE_INSTRUCTION = """Create a separate data disk only when ResourcePlan contains one.
+The ResourcePlan attachment and allocation identify the owning workload and compute; never move
+that disk to another workload merely because applicationPersistentStorageRequired is true. A
+provider's mandatory VM boot disk is not an application data disk. Format and mount the data disk
+on its owning guest. Bind it into a container at applicationMountPath only when that path is
+supplied for the same owning workload. For a separate persistent workload, do not pretend that an
+application mount path is its data path. Use that workload's ResourcePlan runtime.dataPath; an
+unresolved runtime contract must stop generation before this prompt. The guest source path may
+differ from the container target path. Format only
+when no filesystem exists; bootstrap must be idempotent and must never erase an already formatted
+persistent disk. Ensure the runtime's actual data directory is a dedicated child of the guest
+filesystem mount, either by binding that child or by configuring the runtime data path. Select the attached disk by a stable provider device identity, never by taking
+the first enumerated block device, and use a bounded wait for attachment visibility. When the
+ResourcePlan has no separate disk, do not create, attach, mount, or advertise one."""
+
+TOPOLOGY_INSTRUCTION = """Implement DeploymentTopology/v1 exactly. standaloneOne creates one
+standalone VM. managedGroupOne creates a CSP-native managed group with fixed desired capacity 1.
+managedGroupManySingleZone creates a fixed-size managed group with replicaCount >= 2 in one
+occupied zone. managedGroupManyMultiZone creates a fixed-size managed group with replicaCount >=
+2 spread over the selected zones. A managed group does not imply traffic autoscaling, automatic
+repair, high availability, or an SLA. publicIngress=direct is valid only for standaloneOne and
+uses its reserved public address. publicIngress=loadBalanced uses the provider-native L7 load
+balancer and private backend addresses. All supported public endpoints use HTTP. HTTPS/TLS,
+certificates, domain validation, and TLS reverse proxies are explicitly out of scope.
+Never replace a managed group with duplicated standalone VMs or claim an availability outcome."""
 
 PROVIDER_COMPATIBILITY = {
+    "aws": {
+        "providerConstraint": "hashicorp/aws 5.100.0",
+        "rules": [
+            {
+                "resourceType": "aws_instance",
+                "rule": (
+                    "For Amazon Linux 2023, use the official public SSM parameter "
+                    "/aws/service/ami-amazon-linux-latest/"
+                    "al2023-ami-kernel-default-x86_64 or a required ami_id variable. "
+                    "Do not guess a mutable aws_ami name filter."
+                ),
+            },
+            {
+                "resourceType": "aws_volume_attachment",
+                "rule": (
+                    "On Linux Nitro instances, enumerate /dev/nvme*n1 and call "
+                    "/sbin/ebsnvme-id for each candidate, then compare its Volume ID "
+                    "with the Terraform-supplied EBS volume ID after normalizing hyphens. "
+                    "Do not infer the device from nvme list ordering or an invented "
+                    "/dev/disk/by-id/aws-* path."
+                ),
+            }
+        ],
+    },
     "azure": {
         "providerConstraint": "hashicorp/azurerm 5.0.1",
         "rules": [
@@ -122,6 +197,39 @@ PROVIDER_COMPATIBILITY = {
 }
 
 SAFE_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:tf|tftpl|tpl|sh)$")
+PLAN_ONLY_SSH_PUBLIC_KEY = (
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g "
+    "easydep-plan-only"
+)
+
+
+@contextmanager
+def _inheriting_temporary_directory(parent: Path, prefix: str):
+    """Create a workspace-readable temp directory and wait out provider file locks."""
+    for _ in range(10):
+        root = parent / f"{prefix}{secrets.token_hex(8)}"
+        try:
+            root.mkdir()
+            break
+        except FileExistsError:
+            continue
+    else:  # pragma: no cover - cryptographic collision guard
+        raise FileExistsError("Could not allocate a validation directory")
+    try:
+        yield root
+    finally:
+        last_error: OSError | None = None
+        for _ in range(20):
+            try:
+                shutil.rmtree(root)
+                return
+            except FileNotFoundError:
+                return
+            except OSError as error:
+                last_error = error
+                sleep(0.25)
+        if last_error is not None:
+            raise last_error
 
 DOCKERFILE = """FROM gradle:8.14.2-jdk21 AS build
 WORKDIR /workspace
@@ -173,8 +281,10 @@ class VmDeliveryAdapter:
         started_at = datetime.now(UTC)
         started = perf_counter()
         status = "failed"
+        response_characters: int | None = None
         try:
             result = self._invoke(prompt)
+            response_characters = len(result)
             status = "completed"
             return result
         finally:
@@ -186,6 +296,7 @@ class VmDeliveryAdapter:
                     "startedAt": started_at.isoformat(),
                     "finishedAt": finished_at.isoformat(),
                     "elapsedSeconds": round(perf_counter() - started, 6),
+                    "responseCharacters": response_characters,
                 }
             )
 
@@ -296,6 +407,139 @@ class VmDeliveryAdapter:
         return normalized
 
     @staticmethod
+    def _block_labels(block: Any) -> list[str]:
+        return [str(label.serialize()).strip('"') for label in getattr(block, "labels", [])]
+
+    @staticmethod
+    def _source_span(element: Any) -> tuple[int, int]:
+        meta = element.to_lark().meta
+        return int(meta.start_pos), int(meta.end_pos)
+
+    @classmethod
+    def _normalize_provider_ownership(
+        cls, files: dict[str, str]
+    ) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        """Remove only top-level declarations owned by the pinned system policy."""
+        normalized = dict(files)
+        events: list[dict[str, Any]] = []
+        for name, content in sorted(files.items()):
+            if not name.endswith(".tf"):
+                continue
+            try:
+                tree = hcl2.parses(content)
+            except Exception:  # noqa: BLE001 - the normal HCL preflight owns syntax errors
+                continue
+            spans: list[tuple[int, int]] = []
+            removed: list[str] = []
+            for block in tree.body.children:
+                labels = cls._block_labels(block)
+                if not labels or labels[0] not in {"terraform", "provider"}:
+                    continue
+                spans.append(cls._source_span(block))
+                removed.append(".".join(labels[:2]))
+            if not spans:
+                continue
+            rewritten = content
+            for start, end in sorted(spans, reverse=True):
+                rewritten = rewritten[:start] + rewritten[end:]
+            normalized[name] = rewritten.strip() + "\n"
+            events.append(
+                {
+                    "kind": "systemProviderOwnership",
+                    "file": name,
+                    "removedBlocks": sorted(removed),
+                }
+            )
+        return normalized, events
+
+    @classmethod
+    def _normalize_native_templatefiles(
+        cls, files: dict[str, str]
+    ) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        """Lower the standard template provider shape to Terraform's built-in function."""
+        candidates: dict[str, dict[str, Any]] = {}
+        duplicates: set[str] = set()
+        for file_name, content in sorted(files.items()):
+            if not file_name.endswith(".tf"):
+                continue
+            try:
+                tree = hcl2.parses(content)
+            except Exception:  # noqa: BLE001 - the normal HCL preflight owns syntax errors
+                continue
+            for block in tree.body.children:
+                labels = cls._block_labels(block)
+                if len(labels) != 3 or labels[:2] != ["data", "template_file"]:
+                    continue
+                instance_name = labels[2]
+                attributes: dict[str, str] = {}
+                for child in block.body.children:
+                    if type(child).__name__ != "AttributeRule":
+                        continue
+                    serialized = child.serialize()
+                    if not isinstance(serialized, dict) or len(serialized) != 1:
+                        continue
+                    attribute_name = str(next(iter(serialized)))
+                    expression = child.children[-1]
+                    start, end = cls._source_span(expression)
+                    attributes[attribute_name] = content[start:end]
+                template = attributes.get("template", "")
+                match = re.fullmatch(r"\s*file\s*\((.*)\)\s*", template, flags=re.DOTALL)
+                if set(attributes) - {"template", "vars"} or match is None:
+                    continue
+                if instance_name in candidates:
+                    duplicates.add(instance_name)
+                    continue
+                candidates[instance_name] = {
+                    "file": file_name,
+                    "span": cls._source_span(block),
+                    "expression": (
+                        f"templatefile({match.group(1).strip()}, "
+                        f"{attributes.get('vars', '{}').strip()})"
+                    ),
+                }
+        for duplicate in duplicates:
+            candidates.pop(duplicate, None)
+        if not candidates:
+            return dict(files), []
+
+        rewritten = dict(files)
+        spans_by_file: dict[str, list[tuple[int, int]]] = {}
+        for candidate in candidates.values():
+            spans_by_file.setdefault(str(candidate["file"]), []).append(candidate["span"])
+        for file_name, spans in spans_by_file.items():
+            content = rewritten[file_name]
+            for start, end in sorted(spans, reverse=True):
+                content = content[:start] + content[end:]
+            rewritten[file_name] = content
+        for file_name, content in list(rewritten.items()):
+            if not file_name.endswith(".tf"):
+                continue
+            for instance_name, candidate in candidates.items():
+                content = re.sub(
+                    rf"\bdata\.template_file\.{re.escape(instance_name)}\.rendered\b",
+                    str(candidate["expression"]),
+                    content,
+                )
+            rewritten[file_name] = content.rstrip() + "\n"
+        events = [
+            {
+                "kind": "nativeTemplatefileLowering",
+                "file": str(candidate["file"]),
+                "dataSource": f"data.template_file.{instance_name}",
+            }
+            for instance_name, candidate in sorted(candidates.items())
+        ]
+        return rewritten, events
+
+    @classmethod
+    def _normalize_generated_files(
+        cls, files: dict[str, str]
+    ) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        normalized, provider_events = cls._normalize_provider_ownership(files)
+        normalized, template_events = cls._normalize_native_templatefiles(normalized)
+        return normalized, [*provider_events, *template_events]
+
+    @staticmethod
     def _validate_files(files: dict[str, str]) -> list[str]:
         declarations: set[tuple[str, ...]] = set()
         errors: list[str] = []
@@ -311,18 +555,255 @@ class VmDeliveryAdapter:
                 for declaration in parsed.get(block_type, []):
                     for provider_type, instances in declaration.items():
                         for instance_name in instances:
-                            identity = (block_type, str(provider_type), str(instance_name))
-                            if identity in declarations:
-                                errors.append(f"duplicate {' '.join(identity)}")
-                            declarations.add(identity)
+                            resource_identity = (
+                                block_type,
+                                str(provider_type),
+                                str(instance_name),
+                            )
+                            if resource_identity in declarations:
+                                errors.append(f"duplicate {' '.join(resource_identity)}")
+                            declarations.add(resource_identity)
             for block_type in ("variable", "output", "module"):
                 for declaration in parsed.get(block_type, []):
                     for instance_name in declaration:
-                        identity = (block_type, str(instance_name))
-                        if identity in declarations:
-                            errors.append(f"duplicate {' '.join(identity)}")
-                        declarations.add(identity)
+                        named_identity = (block_type, str(instance_name))
+                        if named_identity in declarations:
+                            errors.append(f"duplicate {' '.join(named_identity)}")
+                        declarations.add(named_identity)
+            for declaration in parsed.get("variable", []):
+                for raw_name, body in declaration.items():
+                    default = (body or {}).get("default")
+                    if isinstance(default, str) and re.search(
+                        r"\$\{(?:var|local|data|module|[a-z0-9]+_[a-z0-9_]+)\.",
+                        default,
+                        flags=re.IGNORECASE,
+                    ):
+                        errors.append(
+                            "variable "
+                            f"{raw_name} default references another Terraform object"
+                        )
         return sorted(set(errors))
+
+    @staticmethod
+    def _templatefile_binding_errors(files: dict[str, str]) -> list[str]:
+        """Reject supplied template variables escaped into literal shell placeholders."""
+        errors: list[str] = []
+
+        def values(value: Any):
+            if isinstance(value, dict):
+                for nested in value.values():
+                    yield from values(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    yield from values(nested)
+            elif isinstance(value, str):
+                yield value
+
+        calls: list[tuple[str, set[str]]] = []
+        for name, content in sorted(files.items()):
+            if not name.endswith(".tf"):
+                continue
+            try:
+                parsed = hcl2.loads(content)
+            except Exception:  # noqa: BLE001 - HCL preflight reports syntax failures
+                continue
+            for value in values(parsed):
+                for match in re.finditer(
+                    r'templatefile\(\s*"([^"\r\n]+)"\s*,\s*\{(.*?)\}\s*\)',
+                    value,
+                    flags=re.DOTALL,
+                ):
+                    keys = set(
+                        re.findall(r"(?m)(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", match[2])
+                    )
+                    calls.append((PurePosixPath(match[1]).name, keys))
+        for template_name, supplied_keys in calls:
+            template = files.get(template_name)
+            if template is None:
+                continue
+            escaped = set(re.findall(r"\$\$\{([A-Za-z_][A-Za-z0-9_]*)\}", template))
+            incorrectly_escaped = sorted(escaped & supplied_keys)
+            if incorrectly_escaped:
+                errors.append(
+                    f"{template_name}: templatefile input keys are escaped into literal "
+                    "shell placeholders: " + ", ".join(incorrectly_escaped)
+                )
+        return errors
+
+    @staticmethod
+    def _runtime_bootstrap_errors(
+        files: dict[str, str],
+        app_contract: ApplicationRuntimeContract,
+        provider: str = "",
+    ) -> list[str]:
+        """Check application-owned runtime facts that Terraform syntax cannot validate."""
+        text = "\n".join(files.values())
+        errors = VmDeliveryAdapter._templatefile_binding_errors(files)
+        application_owns_migrations = any(
+            fact.kind == "build.dependency"
+            and any(
+                "flyway" in str(item.get("coordinate") or "").lower()
+                for item in fact.attributes.get("declarations") or []
+                if isinstance(item, dict)
+            )
+            for fact in app_contract.facts
+        )
+        if application_owns_migrations and re.search(
+            r"(?im)^\s*(?:create|alter|drop)\s+(?:table|index|sequence|schema)\b|"
+            r"^\s*insert\s+into\b",
+            text,
+        ):
+            errors.append(
+                "Infrastructure bootstrap duplicates an application schema or seed-data "
+                "migration owned by the generated application."
+            )
+
+        required_environment: set[str] = set()
+        observed_prefixes: dict[str, str] = {}
+        for fact in app_contract.facts:
+            if fact.kind == "runtime.configuration.intent":
+                required_environment.update(
+                    str(item) for item in fact.attributes.get("requiredKeys") or []
+                )
+            if fact.kind != "runtime.environment":
+                continue
+            name = str(fact.attributes.get("name") or "")
+            prefix = str(fact.attributes.get("valuePrefix") or "")
+            if name and prefix:
+                observed_prefixes[name] = prefix
+        missing = sorted(name for name in required_environment if name not in text)
+        if missing:
+            errors.append(
+                "Infrastructure bootstrap omits required application environment keys: "
+                + ", ".join(missing)
+            )
+        for name, prefix in sorted(observed_prefixes.items()):
+            if name in text and prefix not in text:
+                errors.append(
+                    f"Infrastructure bootstrap does not preserve the observed {name} "
+                    f"value prefix {prefix!r}."
+                )
+        if provider == "aws":
+            lower = text.lower()
+            bootstrap_needs_internet = any(
+                marker in lower
+                for marker in ("dnf ", "yum ", "docker pull", "docker run")
+            )
+            creates_vpc = 'resource "aws_vpc"' in lower
+            has_public_route = (
+                'resource "aws_internet_gateway"' in lower
+                and (
+                    'resource "aws_route"' in lower
+                    or 'resource "aws_route_table"' in lower
+                )
+                and (
+                    'resource "aws_route_table_association"' in lower
+                    or "route_table_id" in lower
+                )
+                and "0.0.0.0/0" in lower
+            )
+            if bootstrap_needs_internet and creates_vpc and not has_public_route:
+                errors.append(
+                    "AWS VM bootstrap needs outbound internet but the new VPC has no "
+                    "internet gateway, associated route table, and default route."
+                )
+            has_private_bootstrap_instance = bool(
+                re.search(r"associate_public_ip_address\s*=\s*false", lower)
+            )
+            if (
+                bootstrap_needs_internet
+                and has_private_bootstrap_instance
+                and 'resource "aws_nat_gateway"' not in lower
+            ):
+                errors.append(
+                    "An AWS instance without a public address runs internet-dependent "
+                    "bootstrap but no NAT gateway path is declared."
+                )
+            fixed_device = re.search(
+                r"(?im)^\s*device\s*=\s*[\"']?/dev/(?:sd|xvd)[a-z0-9]+",
+                text,
+            )
+            supported_nvme_mapping = "/dev/nvme" in lower and any(
+                marker in lower for marker in ("ebsnvme-id", "nvme id-ctrl")
+            )
+            invented_linux_aws_symlink = "/dev/disk/by-id/aws-" in lower
+            if 'resource "aws_volume_attachment"' in lower and invented_linux_aws_symlink:
+                errors.append(
+                    "AWS EBS bootstrap uses an undocumented Linux /dev/disk/by-id/aws-* "
+                    "path instead of ebsnvme-id or NVMe controller metadata."
+                )
+            has_volume_attachment = 'resource "aws_volume_attachment"' in lower
+            storage_bootstrap = bool(re.search(r"(?im)^\s*(?:mkfs\S*|mount)\s", text))
+            if has_volume_attachment and storage_bootstrap and not supported_nvme_mapping:
+                errors.append(
+                    "AWS EBS format/mount bootstrap does not resolve the attached volume "
+                    "by enumerating /dev/nvme devices with ebsnvme-id or NVMe "
+                    "controller metadata."
+                )
+            elif has_volume_attachment and fixed_device and not supported_nvme_mapping:
+                errors.append(
+                    "AWS EBS bootstrap assumes a fixed guest device name instead of "
+                    "resolving the attached volume by stable identity."
+                )
+            if has_volume_attachment and storage_bootstrap and "/etc/fstab" not in lower:
+                errors.append(
+                    "AWS EBS mount bootstrap does not persist the filesystem mount in "
+                    "/etc/fstab for instance restart."
+                )
+        for name, content in sorted(files.items()):
+            if not name.endswith((".sh", ".tpl", ".tftpl")):
+                continue
+            if re.search(r"(?im)^\s*docker\s+run\s+-d\b", content) and not re.search(
+                r"(?i)(?:^|\s)--restart(?:=|\s+)", content
+            ):
+                errors.append(
+                    f"{name}: long-running Docker bootstrap has no restart policy."
+                )
+            mount_roots: set[str] = set()
+            for line in content.splitlines():
+                try:
+                    tokens = shlex.split(line, comments=True, posix=True)
+                except ValueError:
+                    continue
+                if tokens[:1] == ["sudo"]:
+                    tokens = tokens[1:]
+                if tokens[:1] != ["mount"]:
+                    continue
+                operands = [token for token in tokens[1:] if not token.startswith("-")]
+                if operands:
+                    mount_roots.add(operands[-1])
+            for bind_match in re.finditer(
+                r"(?i)(?:^|\s)(?:-v|--volume(?:=|\s+))\s*"
+                r"([^:\s]+):([^:\s]+)",
+                content,
+            ):
+                source = bind_match.group(1).strip("\"'")
+                child_path_used = re.search(
+                    rf"{re.escape(source)}/[^\s:\"']+", content
+                )
+                if source in mount_roots and child_path_used is None:
+                    errors.append(
+                        f"{name}: container data bind uses the filesystem mount root "
+                        f"{source} without a dedicated runtime data child directory."
+                    )
+            for reload_match in re.finditer(
+                r"(?im)^\s*(?:sudo\s+)?systemctl\s+reload\s+([A-Za-z0-9_.@-]+)\b",
+                content,
+            ):
+                service = reload_match.group(1)
+                earlier = content[: reload_match.start()]
+                started = re.search(
+                    rf"(?im)^\s*(?:sudo\s+)?systemctl\s+(?:"
+                    rf"(?:start|restart)\s+{re.escape(service)}|"
+                    rf"enable\s+--now\s+{re.escape(service)}|"
+                    rf"--now\s+enable\s+{re.escape(service)})\b",
+                    earlier,
+                )
+                if started is None:
+                    errors.append(
+                        f"{name}: systemd service {service} is reloaded before it is started."
+                    )
+        return errors
 
     @staticmethod
     def _provider_contract_errors(
@@ -394,32 +875,77 @@ class VmDeliveryAdapter:
 
     @staticmethod
     def _ensure_provider_contract(
-        files: dict[str, str], expected_provider: str | None
+        files: dict[str, str], expected_provider: str | None, region: str = ""
     ) -> dict[str, str]:
-        """Add the experiment-owned pinned provider declaration only when absent."""
+        """Add missing system-owned provider version and deterministic configuration."""
         if not expected_provider:
             return files
         contract = PINNED_PROVIDERS.get(expected_provider)
         if contract is None:
             return files
-        for name, content in files.items():
+        managed_name = "easydep-provider.tf"
+        candidate_files = dict(files)
+        if managed_name in candidate_files:
+            parsed_managed = hcl2.load(io.StringIO(candidate_files[managed_name]))
+            unsupported = set(parsed_managed) - {"terraform", "provider"}
+            if unsupported:
+                raise ValueError(
+                    "IaC generator used the system-managed provider file for "
+                    f"unsupported blocks: {sorted(unsupported)}"
+                )
+            # Provider declarations are policy-owned.  A semantically narrow collision
+            # can be normalized without accepting LLM-selected versions or settings.
+            candidate_files.pop(managed_name)
+        alias = contract["source"].split("/", 1)[1]
+        required_provider_present = False
+        provider_configuration_present = False
+        declared_variables: set[str] = set()
+        for name, content in candidate_files.items():
             if not name.endswith(".tf"):
                 continue
             parsed = hcl2.load(io.StringIO(content))
-            if any(
-                terraform.get("required_providers")
-                for terraform in parsed.get("terraform", [])
-            ):
-                return files
-        alias = contract["source"].split("/", 1)[1]
-        managed_name = "easydep-provider.tf"
-        if managed_name in files:
-            raise ValueError(
-                f"IaC generator used the system-managed file name: {managed_name}"
+            required_provider_present = required_provider_present or any(
+                terraform.get("required_providers") for terraform in parsed.get("terraform", [])
             )
-        return {
-            **files,
-            managed_name: (
+            provider_configuration_present = provider_configuration_present or any(
+                raw_name.strip('"') == alias
+                for block in parsed.get("provider") or []
+                for raw_name in block
+            )
+            declared_variables.update(
+                raw_name.strip('"')
+                for block in parsed.get("variable") or []
+                for raw_name in block
+            )
+        provider_block = ""
+        if not provider_configuration_present:
+            if expected_provider == "aws" and region:
+                provider_block = f'provider "aws" {{\n  region = {json.dumps(region)}\n}}\n'
+            elif expected_provider == "azure":
+                provider_block = 'provider "azurerm" {\n  features {}\n}\n'
+            elif expected_provider == "gcp" and region:
+                project_variable = next(
+                    (
+                        name
+                        for name in ("project_id", "project")
+                        if name in declared_variables
+                    ),
+                    None,
+                )
+                project_line = (
+                    f"  project = var.{project_variable}\n" if project_variable else ""
+                )
+                provider_block = (
+                    'provider "google" {\n'
+                    + project_line
+                    + f"  region = {json.dumps(region)}\n"
+                    + "}\n"
+                )
+        if required_provider_present and not provider_block:
+            return candidate_files
+        required_block = ""
+        if not required_provider_present:
+            required_block = (
                 "terraform {\n"
                 "  required_providers {\n"
                 f"    {alias} = {{\n"
@@ -428,7 +954,10 @@ class VmDeliveryAdapter:
                 "    }\n"
                 "  }\n"
                 "}\n"
-            ),
+            )
+        return {
+            **candidate_files,
+            managed_name: required_block + provider_block,
         }
 
     def _provider_validation(self, files: dict[str, str]) -> dict[str, Any]:
@@ -473,16 +1002,17 @@ class VmDeliveryAdapter:
                 "errors": [f"pinned provider is absent: {expected_package}"],
                 "reports": [],
             }
-        validation_temp = cache.parent / "provider-validation-temp"
+        validation_temp = plugin_cache_dir.parent / "provider-validation-temp"
         validation_temp.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix="easydep-iac-validation-", dir=validation_temp
-        ) as directory:
-            root = Path(directory)
+        with _inheriting_temporary_directory(
+            validation_temp, "easydep-iac-validation-"
+        ) as root:
             for name, content in files.items():
                 (root / name).write_text(content, encoding="utf-8")
             cli_config = root / "provider-mirror.tfrc"
-            cli_config.write_text(provider_mirror_configuration(cache), encoding="utf-8")
+            cli_config.write_text(
+                provider_mirror_configuration(plugin_cache_dir), encoding="utf-8"
+            )
             environment.pop("TF_PLUGIN_CACHE_DIR", None)
             environment["TF_CLI_CONFIG_FILE"] = str(cli_config)
             commands = [
@@ -516,7 +1046,137 @@ class VmDeliveryAdapter:
                 reports.append(report)
                 if completed.returncode:
                     return {"status": "failed", "reports": reports}
-            cache_audit = audit_provider_cache(cache)
+            plan_path = root / "easydep.tfplan"
+            plan_command = [
+                executable,
+                "plan",
+                "-refresh=false",
+                "-input=false",
+                "-lock=false",
+                "-no-color",
+                f"-out={plan_path.name}",
+            ]
+            plan_started_at = datetime.now(UTC)
+            plan_started = perf_counter()
+            plan_inputs = self._plan_variable_environment(files)
+            credential_environment: dict[str, str] = {}
+            credential_source: str | None = None
+            if self._expected_provider == "gcp" and not any(
+                environment.get(name)
+                for name in (
+                    "GOOGLE_APPLICATION_CREDENTIALS",
+                    "GOOGLE_OAUTH_ACCESS_TOKEN",
+                )
+            ):
+                gcloud = shutil.which("gcloud")
+                if gcloud:
+                    credential_started_at = datetime.now(UTC)
+                    credential_started = perf_counter()
+                    credential = run_process_tree(
+                        [gcloud, "auth", "print-access-token"],
+                        cwd=root,
+                        env=environment,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=False,
+                        timeout=60,
+                    )
+                    reports.append(
+                        {
+                            "command": "credential-bridge",
+                            "exitCode": credential.returncode,
+                            "stdout": "",
+                            "stderr": credential.stderr[-1000:],
+                            "startedAt": credential_started_at.isoformat(),
+                            "finishedAt": datetime.now(UTC).isoformat(),
+                            "elapsedSeconds": round(
+                                perf_counter() - credential_started, 6
+                            ),
+                        }
+                    )
+                    access_token = credential.stdout.strip()
+                    if credential.returncode == 0 and access_token:
+                        credential_environment["GOOGLE_OAUTH_ACCESS_TOKEN"] = access_token
+                        credential_source = "gcloud-cli-access-token"
+            planned = run_process_tree(
+                plan_command,
+                cwd=root,
+                env={**environment, **plan_inputs, **credential_environment},
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=300,
+            )
+            reports.append(
+                {
+                    "command": "plan",
+                    "exitCode": planned.returncode,
+                    "stdout": "",
+                    "stderr": planned.stderr[-4000:],
+                    "startedAt": plan_started_at.isoformat(),
+                    "finishedAt": datetime.now(UTC).isoformat(),
+                    "elapsedSeconds": round(perf_counter() - plan_started, 6),
+                }
+            )
+            terraform_plan: dict[str, Any]
+            if planned.returncode:
+                terraform_plan = {
+                    "status": "not-observed",
+                    "reason": "Terraform plan could not be produced with the generated defaults.",
+                    "exitCode": planned.returncode,
+                }
+            else:
+                show_started_at = datetime.now(UTC)
+                show_started = perf_counter()
+                shown = run_process_tree(
+                    [executable, "show", "-json", plan_path.name],
+                    cwd=root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    timeout=180,
+                )
+                reports.append(
+                    {
+                        "command": "show-json",
+                        "exitCode": shown.returncode,
+                        "stdout": "",
+                        "stderr": shown.stderr[-4000:],
+                        "startedAt": show_started_at.isoformat(),
+                        "finishedAt": datetime.now(UTC).isoformat(),
+                        "elapsedSeconds": round(perf_counter() - show_started, 6),
+                    }
+                )
+                if shown.returncode:
+                    terraform_plan = {
+                        "status": "not-observed",
+                        "reason": "Terraform Plan JSON could not be read.",
+                        "exitCode": shown.returncode,
+                    }
+                else:
+                    try:
+                        raw_plan = shown.stdout.encode("utf-8")
+                        terraform_plan = {
+                            **observe_terraform_plan(json.loads(shown.stdout)),
+                            "sha256": hashlib.sha256(raw_plan).hexdigest(),
+                            "ephemeralInputVariables": sorted(
+                                name.removeprefix("TF_VAR_") for name in plan_inputs
+                            ),
+                            "credentialSource": credential_source,
+                        }
+                    except (TypeError, ValueError, json.JSONDecodeError) as error:
+                        terraform_plan = {
+                            "status": "not-observed",
+                            "reason": f"Terraform Plan JSON parsing failed: {type(error).__name__}",
+                        }
+            cache_audit = audit_provider_cache(plugin_cache_dir)
             if cache_audit["status"] != "passed":
                 return {
                     "status": "failed",
@@ -534,17 +1194,77 @@ class VmDeliveryAdapter:
                     flags=re.DOTALL,
                 )
             ]
+            plan_available = terraform_plan.get("status") == "available"
+            plan_error = next(
+                (
+                    str(report.get("stderr") or report.get("stdout") or "").strip()
+                    for report in reversed(reports)
+                    if report.get("exitCode")
+                ),
+                "",
+            )
             return {
-                "status": "passed",
+                "status": "passed" if plan_available else "failed",
+                "stage": None if plan_available else "terraformPlan",
+                "errors": (
+                    []
+                    if plan_available
+                    else [
+                        plan_error
+                        or str(
+                            terraform_plan.get("reason")
+                            or "Terraform Plan JSON was not observed."
+                        )
+                    ]
+                ),
                 "reports": reports,
-                "pluginCache": str(cache),
+                "pluginCache": str(plugin_cache_dir),
                 "pluginCachePolicy": cache_audit,
                 "providerLock": {
                     "sha256": hashlib.sha256(lock_content.encode("utf-8")).hexdigest(),
                     "selections": selections,
                 },
+                "terraformPlan": terraform_plan,
                 "_lockFileContent": lock_content,
             }
+
+    @staticmethod
+    def _plan_variable_environment(files: dict[str, str]) -> dict[str, str]:
+        """Supply non-persisted sentinels for required variables during static planning."""
+        environment: dict[str, str] = {}
+        for name, content in sorted(files.items()):
+            if not name.endswith(".tf"):
+                continue
+            try:
+                parsed = hcl2.load(io.StringIO(content))
+            except Exception:
+                continue
+            for block in parsed.get("variable") or []:
+                for raw_name, body in block.items():
+                    body = body or {}
+                    if "default" in body:
+                        continue
+                    variable_name = raw_name.strip('"')
+                    raw_type = str(body.get("type") or "string").lower()
+                    normalized_name = variable_name.lower()
+                    if "public_key" in normalized_name or (
+                        "ssh" in normalized_name and "key" in normalized_name
+                    ):
+                        value = PLAN_ONLY_SSH_PUBLIC_KEY
+                    elif normalized_name in {"ami", "ami_id", "image_id"}:
+                        value = "ami-00000000000000000"
+                    elif "bool" in raw_type:
+                        value = "false"
+                    elif "number" in raw_type:
+                        value = "1"
+                    elif any(item in raw_type for item in ("list", "set", "tuple")):
+                        value = "[]"
+                    elif any(item in raw_type for item in ("map", "object")):
+                        value = "{}"
+                    else:
+                        value = "easydep-plan-only-value-000000000000"
+                    environment[f"TF_VAR_{variable_name}"] = value
+        return environment
 
     @staticmethod
     def _validation_errors(validation: dict[str, Any]) -> list[str]:
@@ -567,6 +1287,8 @@ class VmDeliveryAdapter:
         mount_path: str | None,
         provider: str,
         expected_vm_spec: str | None,
+        managed_group_required: bool,
+        resource_plan: dict[str, Any],
     ) -> dict[str, Any]:
         if validation.get("status") == "failed":
             return validation
@@ -580,22 +1302,70 @@ class VmDeliveryAdapter:
             provider=provider,
             expected_spec_name=expected_vm_spec,
         )
-        if report["status"] != "failed" and vm_report["status"] != "failed":
+        managed_group_report = validate_managed_group_binding(
+            files,
+            provider=provider,
+            required=managed_group_required,
+        )
+        resource_plan_report = validate_resource_plan_binding(
+            files,
+            resource_plan=resource_plan,
+        )
+        plan_report = validate_resource_plan_against_plan(
+            resource_plan,
+            validation.get("terraformPlan") or {},
+        )
+        authoritative_plan = bool(
+            resource_plan.get("deploymentTopology")
+            and resource_plan.get("providerProjectionPolicy")
+        )
+        plan_gate_passed = (
+            plan_report["status"] == "passed"
+            if authoritative_plan
+            else plan_report["status"] != "failed"
+        )
+        if (
+            report["status"] != "failed"
+            and vm_report["status"] != "failed"
+            and managed_group_report["status"] != "failed"
+            and resource_plan_report["status"] != "failed"
+            and plan_gate_passed
+        ):
             return {
                 **validation,
                 "bindingReport": report,
                 "vmSelectionBindingReport": vm_report,
+                "managedGroupBindingReport": managed_group_report,
+                "resourcePlanBindingReport": resource_plan_report,
+                "resourcePlanTerraformPlanReport": plan_report,
             }
         diagnostics = [
             *report["diagnostics"],
             *vm_report["diagnostics"],
+            *managed_group_report["diagnostics"],
+            *resource_plan_report["diagnostics"],
+            *plan_report["diagnostics"],
         ]
+        if authoritative_plan and plan_report["status"] == "not-observed":
+            diagnostics.append(
+                {
+                    "code": "BIND-RESOURCE-PLAN-JSON-UNOBSERVED",
+                    "message": (
+                        "Terraform Plan JSON is required before generated IaC can "
+                        "be promoted."
+                    ),
+                    "details": {"reason": plan_report.get("reason")},
+                }
+            )
         return {
             "status": "failed",
             "stage": "deploymentBinding",
             "errors": [item["message"] for item in diagnostics],
             "bindingReport": report,
             "vmSelectionBindingReport": vm_report,
+            "managedGroupBindingReport": managed_group_report,
+            "resourcePlanBindingReport": resource_plan_report,
+            "resourcePlanTerraformPlanReport": plan_report,
             "_lockFileContent": validation.get("_lockFileContent", ""),
         }
 
@@ -612,14 +1382,21 @@ class VmDeliveryAdapter:
         return created
 
     @staticmethod
-    def _promote_infra_files(
-        target: Path, files: dict[str, str], lock_content: str
-    ) -> list[str]:
+    def _promote_infra_files(target: Path, files: dict[str, str], lock_content: str) -> list[str]:
         """검증된 VM delivery 소유 파일 집합을 이전 산출물과 섞이지 않게 교체한다."""
         target.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(
-            tempfile.mkdtemp(prefix=".easydep-infra-promotion-", dir=target.parent)
-        )
+        # tempfile.mkdtemp creates a protected ACL on Windows.  A normal mkdir under
+        # the workspace inherits the sandbox/user ACL and remains readable after the
+        # atomic promotion.
+        for _ in range(10):
+            staging = target.parent / f".easydep-infra-promotion-{secrets.token_hex(8)}"
+            try:
+                staging.mkdir()
+                break
+            except FileExistsError:
+                continue
+        else:  # pragma: no cover - cryptographic collision guard
+            raise FileExistsError("Could not allocate an infrastructure staging directory")
         backup = staging.with_name(f"{staging.name}-previous")
         try:
             if target.is_dir():
@@ -639,9 +1416,7 @@ class VmDeliveryAdapter:
                 (staging / name).write_text(content, encoding="utf-8")
             promoted = sorted(files)
             if lock_content:
-                (staging / ".terraform.lock.hcl").write_text(
-                    lock_content, encoding="utf-8"
-                )
+                (staging / ".terraform.lock.hcl").write_text(lock_content, encoding="utf-8")
                 promoted.append(".terraform.lock.hcl")
             if target.exists():
                 target.rename(backup)
@@ -755,13 +1530,50 @@ class VmDeliveryAdapter:
         persistent_storage_required = requires_persistent_storage(
             requirements_result.get("deployment_needs") or {}
         )
-        vm_selection = select_vm_candidates(resource_spec, deployment_needs)
+        topology_policy = (
+            cloud_design_result.get("topology_policy")
+            or (cloud_design_result.get("resource_plan") or {}).get("deploymentTopology")
+            or {}
+        )
+        projection_policy = (
+            cloud_design_result.get("provider_projection_policy")
+            or (cloud_design_result.get("resource_plan") or {}).get("providerProjectionPolicy")
+            or {}
+        )
+        app_contract = ApplicationRuntimeContract.model_validate(application_runtime_contract or {})
+        resource_plan = (
+            cloud_design_result.get("resource_plan")
+            or cloud_design_result.get("deployment_diagram_model")
+            or {}
+        )
+        if resource_plan.get("workloads") and application_runtime_contract is not None:
+            resource_plan = bind_application_runtime(
+                resource_plan,
+                app_contract.model_dump(mode="json", by_alias=True),
+            )
+        unresolved_plan = list(resource_plan.get("unresolved") or [])
+        if unresolved_plan:
+            fields = sorted(
+                str(item.get("field") or "unknown")
+                for item in unresolved_plan
+                if isinstance(item, dict)
+            )
+            raise BindingMismatchError(
+                "RESOURCE-PLAN-UNRESOLVED",
+                "ResourcePlan contains unresolved deployment decisions: "
+                + ", ".join(fields or ["unknown"]),
+            )
+        vm_selection = select_vm_candidates(
+            resource_spec,
+            deployment_needs,
+            projection_policy=projection_policy,
+        )
         expected_vm_spec = (
             str((vm_selection.get("recommended") or {}).get("specName") or "") or None
         )
         provider = str(resource_spec.get("provider") or "").strip().lower()
+        provider_region = str(resource_spec.get("region") or "").strip()
         self._expected_provider = provider
-        app_contract = ApplicationRuntimeContract.model_validate(application_runtime_contract or {})
         cloud_contract = CloudCapabilityContract.model_validate(cloud_capability_contract or {})
         binding_contract = DeploymentBindingContract.model_validate(
             deployment_binding_contract or {}
@@ -773,11 +1585,34 @@ class VmDeliveryAdapter:
                 f"Application port is outside the valid TCP range: {application_port}.",
             )
         mount_path = contract_value(cloud_contract, "cloud.storage.mount", "mountPath")
+        persistence_owner = next(
+            (
+                decision.get("value")
+                for decision in resource_plan.get("decisions") or []
+                if decision.get("field") == "persistenceOwner"
+            ),
+            None,
+        )
+        owner_allocation: dict[str, Any] = next(
+            (
+                allocation
+                for allocation in resource_plan.get("allocations") or []
+                if allocation.get("workloadRef") == persistence_owner
+            ),
+            {},
+        )
+        application_mount_path = (
+            mount_path
+            if not persistence_owner
+            or owner_allocation.get("computeRef") == resource_plan.get("computeNodeId")
+            else None
+        )
         prompt = json.dumps(
             {
                 "resourceSpec": resource_spec,
                 "deploymentNeeds": deployment_needs,
                 "dependencyPlan": self._dependency_input(cloud_design_result),
+                "resourcePlan": resource_plan,
                 "vmSelection": vm_selection,
                 "applicationPersistentStorageRequired": persistent_storage_required,
                 "applicationRuntimeContract": app_contract.model_dump(mode="json", by_alias=True),
@@ -786,14 +1621,15 @@ class VmDeliveryAdapter:
                     mode="json", by_alias=True
                 ),
                 "applicationPort": application_port,
-                "applicationMountPath": mount_path,
+                "applicationMountPath": application_mount_path,
+                "persistenceOwner": persistence_owner,
                 "persistenceBoundary": PERSISTENCE_INSTRUCTION,
+                "deploymentTopology": topology_policy,
+                "topologyBoundary": TOPOLOGY_INSTRUCTION,
                 "providerCompatibility": PROVIDER_COMPATIBILITY.get(provider, {}),
                 "providerBoundary": {
                     "allowedProviderSource": (PINNED_PROVIDERS.get(provider) or {}).get("source"),
-                    "allowedProviderVersion": (PINNED_PROVIDERS.get(provider) or {}).get(
-                        "version"
-                    ),
+                    "allowedProviderVersion": (PINNED_PROVIDERS.get(provider) or {}).get("version"),
                     "managedDeclarationFile": "easydep-provider.tf",
                     "policy": (
                         "Use only the selected CSP provider for resource and data blocks. "
@@ -807,16 +1643,28 @@ class VmDeliveryAdapter:
             ensure_ascii=False,
         )
         llm_calls = 1
+        repair_events: list[dict[str, Any]] = []
+        normalization_events: list[dict[str, Any]] = []
+
+        def prepared_files(envelope: dict[str, Any], *, attempt: str) -> dict[str, str]:
+            generated = self._files(envelope)
+            normalized, events = self._normalize_generated_files(generated)
+            normalization_events.extend({**event, "attempt": attempt} for event in events)
+            return self._ensure_provider_contract(normalized, provider, provider_region)
+
         payload = json.loads(self._timed_invoke("iac.generate", prompt))
         if not isinstance(payload, dict):
             raise TypeError("IaC generator must return one JSON object")
         repaired = False
         try:
             payload = self._normalize_payload(payload)
-            files = self._ensure_provider_contract(self._files(payload), provider)
+            files = prepared_files(payload, attempt="initial")
         except (TypeError, ValueError) as error:
             if not enable_repair_feedback:
                 raise
+            repair_events.append(
+                {"stage": "outputEnvelope", "errors": [str(error)]}
+            )
             repair_prompt = json.dumps(
                 {
                     "task": "repairTerraform",
@@ -837,11 +1685,23 @@ class VmDeliveryAdapter:
             if not isinstance(repaired_payload, dict):
                 raise TypeError("IaC repair must return one JSON object")
             payload = self._normalize_payload(repaired_payload)
-            files = self._ensure_provider_contract(self._files(payload), provider)
+            files = prepared_files(payload, attempt="output-envelope-repair")
             repaired = True
-        errors = self._timed_hcl_validation(files)
+        hcl_errors = self._timed_hcl_validation(files)
+        runtime_bootstrap_errors = (
+            []
+            if hcl_errors
+            else self._runtime_bootstrap_errors(files, app_contract, provider)
+        )
+        errors = [*hcl_errors, *runtime_bootstrap_errors]
         validation = (
-            {"status": "failed", "stage": "hclPreflight", "errors": errors}
+            {
+                "status": "failed",
+                "stage": (
+                    "hclPreflight" if hcl_errors else "runtimeBootstrap"
+                ),
+                "errors": errors,
+            }
             if errors
             else self._validate_provider_schema(files)
         )
@@ -850,13 +1710,25 @@ class VmDeliveryAdapter:
                 validation,
                 files,
                 application_port=application_port,
-                mount_path=str(mount_path) if mount_path else None,
+                mount_path=(
+                    str(application_mount_path) if application_mount_path else None
+                ),
                 provider=provider,
                 expected_vm_spec=expected_vm_spec,
+                managed_group_required=(
+                    topology_policy.get("computeManagement") == "managedGroup"
+                ),
+                resource_plan=resource_plan,
             )
         if not errors:
             self._record_provider_timings(validation, attempt="repair" if repaired else "initial")
         if validation.get("status") == "failed" and enable_repair_feedback and not repaired:
+            repair_events.append(
+                {
+                    "stage": validation.get("stage") or "providerSchema",
+                    "errors": self._validation_errors(validation),
+                }
+            )
             repair_prompt = json.dumps(
                 {
                     "task": "repairTerraform",
@@ -876,11 +1748,17 @@ class VmDeliveryAdapter:
             if not isinstance(repaired_payload, dict):
                 raise TypeError("IaC repair must return one JSON object")
             payload = self._normalize_payload(repaired_payload)
-            files = self._ensure_provider_contract(self._files(payload), provider)
-            errors = self._timed_hcl_validation(files)
+            files = prepared_files(payload, attempt="validation-repair")
+            hcl_errors = self._timed_hcl_validation(files)
+            runtime_bootstrap_errors = (
+                []
+                if hcl_errors
+                else self._runtime_bootstrap_errors(files, app_contract, provider)
+            )
+            errors = [*hcl_errors, *runtime_bootstrap_errors]
             if errors:
                 raise ValueError(
-                    "Generated Terraform failed HCL preflight after one repair: "
+                    "Generated Terraform failed static preflight after one repair: "
                     + "; ".join(errors)
                 )
             validation = self._validate_provider_schema(files)
@@ -889,18 +1767,32 @@ class VmDeliveryAdapter:
                     validation,
                     files,
                     application_port=application_port,
-                    mount_path=str(mount_path) if mount_path else None,
+                    mount_path=(
+                        str(application_mount_path) if application_mount_path else None
+                    ),
                     provider=provider,
                     expected_vm_spec=expected_vm_spec,
+                    managed_group_required=(
+                        topology_policy.get("computeManagement") == "managedGroup"
+                    ),
+                    resource_plan=resource_plan,
                 )
             self._record_provider_timings(validation, attempt="repair")
             repaired = True
         if validation.get("status") == "failed" and enable_repair_feedback:
             stage = validation.get("stage") or "providerSchema"
             if stage == "deploymentBinding":
-                report_diagnostics = (validation.get("bindingReport") or {}).get(
-                    "diagnostics"
-                ) or []
+                report_diagnostics: list[dict[str, Any]] = []
+                for report_name in (
+                        "bindingReport",
+                        "vmSelectionBindingReport",
+                        "managedGroupBindingReport",
+                        "resourcePlanBindingReport",
+                        "resourcePlanTerraformPlanReport",
+                ):
+                    report = validation.get(report_name)
+                    if isinstance(report, dict):
+                        report_diagnostics.extend(report.get("diagnostics") or [])
                 code = str(
                     (report_diagnostics[0] if report_diagnostics else {}).get("code")
                     or "CLOUD-PROJ-001"
@@ -920,6 +1812,10 @@ class VmDeliveryAdapter:
         container_files = self._ensure_container_files(target.parent, application_port)
         if enable_consistency_validator:
             self._validate_container_port(target.parent, application_port)
+        authoritative_plan = bool(
+            resource_plan.get("deploymentTopology")
+            and resource_plan.get("providerProjectionPolicy")
+        )
         return {
             "status": "completed",
             "method": "same-llm-structured-iac-generation",
@@ -938,4 +1834,35 @@ class VmDeliveryAdapter:
             },
             "deploymentNotes": payload.get("deploymentNotes") or [],
             "vmSelection": vm_selection,
+            "repairEvents": repair_events,
+            "normalizationEvents": normalization_events,
+            "resourcePlan": resource_plan,
+            "resourcePlanDigest": (
+                resource_plan_digest(resource_plan) if authoritative_plan else None
+            ),
+            "deploymentDiagramPuml": (
+                deployment_bundle_runtime_puml(
+                    {
+                        "schemaVersion": "easydep-deployment-diagram/v1",
+                        "mode": "single",
+                        "logicalModel": {},
+                        "resourceSpec": resource_spec,
+                        "projections": [
+                            {
+                                "status": "completed",
+                                "provider": provider,
+                                "region": str(
+                                    resource_plan.get("region")
+                                    or resource_spec.get("region")
+                                    or ""
+                                ),
+                                "topology": topology_policy,
+                                "resourcePlan": resource_plan,
+                            }
+                        ],
+                    }
+                )
+                if authoritative_plan
+                else ""
+            ),
         }

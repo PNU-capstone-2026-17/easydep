@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "easydep-iac-replay-adjudication/v1",
+  "runId": "easydep-full-e1-course-registration-aws-20260814T040359Z-72cbfa",
+  "provider": "aws",
+  "method": "replay one stored initial LLM response and allow at most one external repair response per replay",
+  "replays": [
+    {
+      "id": "provider-boundary",
+      "elapsedSeconds": 96.039494,
+      "externalRepairSeconds": 36.939429,
+      "llmCalls": 2,
+      "normalizations": [
+        "remove LLM-owned terraform and provider blocks",
+        "lower two standard template_file data sources to templatefile()"
+      ],
+      "observedAtTheTime": "provider Plan passed",
+      "finalAdjudication": "not a runtime-semantic success"
+    },
+    {
+      "id": "runtime-template-first-repair",
+      "elapsedSeconds": 32.848702,
+      "externalRepairSeconds": 32.310937,
+      "llmCalls": 2,
+      "observedAtTheTime": "failed static preflight after the single repair",
+      "finalAdjudication": "failed"
+    },
+    {
+      "id": "runtime-template-second-development-replay",
+      "elapsedSeconds": 72.676926,
+      "externalRepairSeconds": 44.796714,
+      "llmCalls": 2,
+      "observedAtTheTime": "provider Plan passed",
+      "finalAdjudication": "failed after strengthening the EBS semantic rule",
+      "reason": "the output called ebsnvme-id with an EBS volume ID instead of enumerating Linux NVMe devices and identifying each device"
+    }
+  ],
+  "result": {
+    "systemOwnedProviderBoundary": "implemented",
+    "nativeTemplatefileLowering": "implemented for the standard supported pattern",
+    "pureSystemGeneratedIac": "failed",
+    "externalRepairLimit": 1,
+    "unboundedRetryUsed": false
+  },
+  "interpretationLimits": [
+    "A provider Plan does not prove guest bootstrap or workload behavior.",
+    "The final semantic classification uses the strengthened validator, not the earlier pass recorded by the raw development replay.",
+    "Raw replay envelopes are retained locally but are not research evidence because they contain verbose prompts and intermediate generated files."
+  ]
+}

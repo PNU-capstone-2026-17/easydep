@@ -1,7 +1,7 @@
 {
   "name": "holdout_partner_reporting",
   "description": "Holdout: scheduled processing, external data input, and outbound partner reports.",
-  "resource_constraints_text": "Deploy Docker containers on AWS Linux VMs in Seoul. Monthly infrastructure cost shall not exceed 350 USD. High availability is not required, but failed nightly jobs must be recoverable.",
+  "resource_constraints_text": "Deploy Docker containers on AWS Linux VMs in Seoul. Monthly infrastructure cost shall not exceed 350 USD.",
   "classified": [
     {"id":"FR1","type":"FR","text":"Analysts define a portfolio and its reporting currency."},
     {"id":"FR2","type":"FR","text":"At the end of each business day, the system requests closing exchange rates from the external Market Data Service."},

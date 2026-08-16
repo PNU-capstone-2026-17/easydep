@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "easydep-aws-sample-app-postgres-e1-adjudication/v1",
+  "studyDate": "2026-08-14",
+  "scope": "domain-neutral test app; AWS single-app E1 runtime dependency path",
+  "attempts": [
+    {
+      "file": "aws-sample-app-postgres-e1-result-20260814.json",
+      "sha256": "1B66591693249A12A4934D62DF310D34DD0A7212932059C293BB38C4CD7A1CF4",
+      "runId": "easydep-e1-d093f783",
+      "classification": "harness-failure",
+      "reason": "A bundled guest command reached its 120 second timeout while device discovery and PostgreSQL startup were not separately observed.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "aws-sample-app-postgres-e1-result-20260814-2.json",
+      "sha256": "71F1D0D1666605C8F0909426AD44CD977D9FDBA704940BB476CD9FF0E9BC76F4",
+      "runId": "easydep-e1-e2fb4bbc",
+      "classification": "development-assisted-pass",
+      "reason": "The mount-root lost+found cause was confirmed and PGDATA was moved to a child directory in the retained checkpoint before the run continued.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "aws-sample-app-postgres-e1-result-20260814-3.json",
+      "sha256": "02FB815ADA467005EA83765AE9D3C9AC39D2B8C1E2B1A31E7F11019EC1C6859B",
+      "runId": "easydep-e1-e5654dd2",
+      "classification": "unassisted-confirmation-pass",
+      "durationSeconds": 247.148,
+      "observations": {
+        "baselineReadiness": 200,
+        "baselineBusinessWriteRead": "passed",
+        "networkRuleRemovedReadiness": 503,
+        "networkRuleRemovedBusiness": 502,
+        "restoredBusinessValue": "kept",
+        "stateVmRebootReadiness": 503,
+        "postRebootReadiness": 200,
+        "postRebootBusinessValue": "kept"
+      },
+      "cleanupPassed": true,
+      "independentResidualCheck": {
+        "instances": [],
+        "volumes": [],
+        "securityGroups": [],
+        "keyPairs": []
+      }
+    }
+  ],
+  "decision": "confirmed-for-development-scope",
+  "supports": [
+    "The test application requires the configured private PostgreSQL endpoint and the AWS security-group path for readiness and record operations.",
+    "An attached EBS volume must be formatted, mounted, and bound to a PostgreSQL data subdirectory for data to survive a state-VM reboot."
+  ],
+  "doesNotSupport": [
+    "course-registration business correctness",
+    "trusted HTTPS, DNS, or certificate completion",
+    "state-VM replacement or state-tier high availability",
+    "performance or right-sizing",
+    "provider-wide success rates"
+  ]
+}

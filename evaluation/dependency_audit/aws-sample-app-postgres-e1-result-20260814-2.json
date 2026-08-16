@@ -1,0 +1,313 @@
+{
+  "schemaVersion": "easydep-aws-sample-app-postgres-e1/v1",
+  "provider": "aws",
+  "runId": "easydep-e1-e2fb4bbc",
+  "startedAt": "2026-08-14T12:41:50.106026+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "runner.public-ip",
+      "status": "passed",
+      "durationSeconds": 0.313,
+      "detail": "58.231.192.172/32"
+    },
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 1.586,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.subnet",
+      "status": "passed",
+      "durationSeconds": 1.635,
+      "detail": {
+        "id": "subnet-062eadd5b5b60354c",
+        "az": "ap-northeast-2c"
+      }
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 1.354,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "app-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.214,
+      "detail": "sg-05e814c32b852400b"
+    },
+    {
+      "name": "state-sg.create",
+      "status": "passed",
+      "durationSeconds": 1.782,
+      "detail": "sg-04dfe2dd2ec7791fd"
+    },
+    {
+      "name": "security.allow-sg-05e814c32b852400b-22",
+      "status": "passed",
+      "durationSeconds": 1.819,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0d5ad665074782ce9\",\n            \"GroupId\": \"sg-05e814c32b852400b\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "security.allow-sg-05e814c32b852400b-8080",
+      "status": "passed",
+      "durationSeconds": 1.7,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-084619c5432ea1d8a\",\n            \"GroupId\": \"sg-05e814c32b852400b\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 8080,\n            \"ToPort\": 8080,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "security.allow-sg-04dfe2dd2ec7791fd-22",
+      "status": "passed",
+      "durationSeconds": 1.769,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0cad04b56248f09af\",\n            \"GroupId\": \"sg-04dfe2dd2ec7791fd\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"58.231.192.172/32\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "state-sg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 1.727,
+      "detail": "state tcp/5432 from app security group"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 1.588,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 2.506,
+      "detail": "i-00493a20986483bed"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 2.612,
+      "detail": "i-064963471e81e33fc"
+    },
+    {
+      "name": "vms.running",
+      "status": "passed",
+      "durationSeconds": 16.96,
+      "detail": "both VMs running"
+    },
+    {
+      "name": "state-vm.tools-ready",
+      "status": "passed",
+      "durationSeconds": 66.512,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-vm.image-ready",
+      "status": "passed",
+      "durationSeconds": 11.579,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-volume.create",
+      "status": "passed",
+      "durationSeconds": 1.719,
+      "detail": "vol-0e4a4763e991cda93"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 1.933,
+      "detail": "volume available"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 1.963,
+      "detail": "{\n    \"VolumeId\": \"vol-0e4a4763e991cda93\",\n    \"InstanceId\": \"i-00493a20986483bed\",\n    \"Device\": \"/dev/sdf\",\n    \"State\": \"attaching\",\n    \"AttachTime\": \"2026-08-14T12:43:53.943000+00:00\"\n}"
+    },
+    {
+      "name": "state-volume.in-use",
+      "status": "passed",
+      "durationSeconds": 1.548,
+      "detail": "volume attachment complete"
+    },
+    {
+      "name": "state-volume.guest-device",
+      "status": "passed",
+      "durationSeconds": 0.698,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-volume.format-and-mount",
+      "status": "passed",
+      "durationSeconds": 1.027,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-postgres.start",
+      "status": "passed",
+      "durationSeconds": 219.574,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-container.start",
+      "status": "passed",
+      "durationSeconds": 1.542,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 0.622,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "baseline.business-write",
+      "status": "passed",
+      "durationSeconds": 0.128,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "stored": true
+        }
+      }
+    },
+    {
+      "name": "baseline.business-read",
+      "status": "passed",
+      "durationSeconds": 0.118,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "intervention.revoke-postgres",
+      "status": "passed",
+      "durationSeconds": 1.52,
+      "detail": "{\n    \"Return\": true,\n    \"RevokedSecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-012dfc386579a4851\",\n            \"GroupId\": \"sg-04dfe2dd2ec7791fd\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 5432,\n            \"ToPort\": 5432,\n            \"ReferencedGroupId\": \"sg-05e814c32b852400b\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "intervention.readiness-failed",
+      "status": "passed",
+      "durationSeconds": 5.04,
+      "detail": {
+        "status": 503,
+        "body": {
+          "ready": false,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "intervention.business-failed",
+      "status": "passed",
+      "durationSeconds": 5.031,
+      "detail": {
+        "status": 502,
+        "body": {
+          "error": "state-unavailable"
+        }
+      }
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 1.568,
+      "detail": "state tcp/5432 from app security group"
+    },
+    {
+      "name": "restore.readiness",
+      "status": "passed",
+      "durationSeconds": 0.069,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "restore.business-read",
+      "status": "passed",
+      "durationSeconds": 0.116,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "persistence.state-vm-reboot",
+      "status": "passed",
+      "durationSeconds": 1.59,
+      "detail": "state VM reboot requested"
+    },
+    {
+      "name": "persistence.state-vm-status-ok",
+      "status": "passed",
+      "durationSeconds": 1.305,
+      "detail": "state VM status ok"
+    },
+    {
+      "name": "persistence.readiness-after-reboot",
+      "status": "passed",
+      "durationSeconds": 21.288,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "persistence.business-read-after-reboot",
+      "status": "passed",
+      "durationSeconds": 0.15,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "public HTTP -> app VM/container -> state VM private IPv4:5432 -> PostgreSQL data path -> EBS data volume",
+  "scope": "domain-neutral dependency pilot; not course-registration behavior",
+  "networkObservation": {
+    "appEndpoint": "public IPv4 TCP/8080 restricted to runner /32",
+    "databaseEndpointUsedByApp": "172.31.44.25:5432",
+    "databaseIngressSource": "app security group"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T12:49:19.333105+00:00",
+  "interpretationLimits": [
+    "The test app validates resource bindings, not course-registration rules.",
+    "Public HTTP is used; trusted HTTPS, DNS, and certificate dependencies are not tested.",
+    "A same-instance reboot is not state-VM replacement or state-tier high availability.",
+    "One development run does not establish an AWS-wide success rate."
+  ]
+}

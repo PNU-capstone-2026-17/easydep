@@ -41,17 +41,10 @@
 `schemaDeclaration`, `controlPlaneValidation`, `provisioningExecution`, `runtimeProbe`는
 서로 다른 관측 방법이며 단순한 증거 강도 순위가 아니다.
 
-## 제품에서 제외한 용어
+## 제품 모델에서 다루지 않는 정보
 
-다음 삭제 전용 판정은 현재 제품 모델에서 제거했다.
-
-- `deleteBlockedWhileAttached`
-- `detachRequiredBeforeDelete`
-- `cascadeDeletedWithOwner`
-- `persistsAfterOwnerDeletion`
-
-리소스 자체에 독립적인 create/read/update/delete API가 있는지는 리소스 경계 판별에 사용할 수
-있다. 하지만 연결된 리소스의 삭제 순서는 Terraform/OpenTofu의 실제 참조 그래프가 담당한다.
+리소스 경계는 독립 식별자와 생성·조회 제어면을 근거로 판별한다. 실험 종료 시의 자원 정리는
+비용과 안전을 위한 실행 장치이며, 배포 의존성 claim에는 포함하지 않는다.
 
 범용적인 `required`, `optional`, `holds`, `unknown`, `outOfScope`는 관계군을 숨기므로 claim
 판정으로 사용하지 않는다.

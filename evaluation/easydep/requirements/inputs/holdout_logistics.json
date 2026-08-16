@@ -1,7 +1,7 @@
 {
   "name": "holdout_logistics",
   "description": "Holdout: a carrier is supporting in one goal and primary in another.",
-  "resource_constraints_text": "Deploy on GCP Linux VMs in Seoul using Docker with a monthly budget of 500 USD. A single zone is acceptable. Daily label creation peaks occur at 18:00.",
+  "resource_constraints_text": "Deploy on GCP Linux VMs in Seoul using Docker with a monthly budget of 500 USD. Daily label creation peaks occur at 18:00.",
   "classified": [
     {"id":"FR1","type":"FR","text":"Warehouse Operators create a shipment from a packed customer order."},
     {"id":"FR2","type":"FR","text":"The system requests available delivery services and prices from the external Carrier."},

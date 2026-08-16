@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "easydep-aws-sample-app-postgres-e2-adjudication/v1",
+  "date": "2026-08-15",
+  "scope": "도메인 중립 앱의 AWS App 계층 관리형 장애 대응 개발 관찰",
+  "acceptanceBasis": {
+    "healthCheckIntervalSeconds": 10,
+    "unhealthyThresholdCount": 2,
+    "routingPropagationAllowanceSeconds": 10,
+    "functionalRecoveryBudgetSeconds": 30,
+    "requirements": [
+      "ALB가 App target 두 개를 healthy로 판정한다.",
+      "한 App Container 정지 뒤 target이 unhealthy가 된다.",
+      "ASG가 다른 인스턴스를 만들고 healthy target 두 개로 복구한다.",
+      "교체 진행 중 기존 값을 반환하는 성공 요청이 존재한다.",
+      "최대 연속 기능 실패시간이 health 설정에서 유도한 30초 이하다.",
+      "실행 소유 리소스의 잔여가 0이다."
+    ]
+  },
+  "attempts": [
+    {
+      "file": "aws-sample-app-postgres-e2-result-20260814.json",
+      "sha256": "159ad7ca2c90758ecb7dab13aff30a64e9c0ffcdccc5e0d9b53b896fac3c145e",
+      "runId": "easydep-e2-00109139",
+      "classification": "harness-failure-aborted",
+      "reason": "Launch Template user-data에 shebang이 없어 cloud-init이 App 스크립트를 실행하지 않았다.",
+      "independentResidualCheck": {
+        "instances": 0,
+        "volumes": 0,
+        "securityGroups": 0,
+        "autoScalingGroups": 0
+      }
+    },
+    {
+      "file": "aws-sample-app-postgres-e2-result-20260814-2.json",
+      "sha256": "ecf252f0717da497a06bdf539b7d3befbe23a785c7cef07c6f90e01e9a9994aa",
+      "runId": "easydep-e2-4e81e27b",
+      "classification": "evaluator-policy-failure",
+      "reason": "관리형 교체는 완료됐지만 실제 장애에서 ALB health 탐지 전 발생한 202회 중 9회 실패까지 0건 정책으로 거부했다. 설정 기반 복구시간을 기록하지 않아 확인 결과로 선택하지 않았다.",
+      "independentResidualCheck": {
+        "instances": 0,
+        "volumes": 0,
+        "securityGroups": 0,
+        "autoScalingGroups": 0
+      }
+    },
+    {
+      "file": "aws-sample-app-postgres-e2-result-20260815-3.json",
+      "sha256": "b69075f9b57c866abca21d091a57cc49301ed06e247952e6c80f75d8d36b6a97",
+      "runId": "easydep-e2-b53649d9",
+      "classification": "unassisted-confirmation-pass",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "observation": {
+        "victimUnhealthySeconds": 37.972,
+        "replacementHealthySeconds": 245.027,
+        "probeCount": 208,
+        "successCount": 201,
+        "failureCount": 7,
+        "successRatio": 0.966346,
+        "maxConsecutiveFailureSeconds": 2.087,
+        "successesDuringReplacement": 174
+      },
+      "independentResidualCheck": {
+        "instances": 0,
+        "volumes": 0,
+        "securityGroups": 0,
+        "autoScalingGroups": 0
+      }
+    }
+  ],
+  "decision": "confirmed-for-aws-development-scope",
+  "claimsSupported": [
+    "이 구성에서 ALB health와 ASG ELB health source를 연결하면 중지된 App Container를 가진 인스턴스가 교체되고 healthy backend 수가 2로 회복된다.",
+    "단일 App target 장애의 탐지·교체 중에도 남은 healthy target이 일반 업무 조회를 처리했다.",
+    "실제 강제 장애에는 짧은 오류 구간이 있었으므로 무중단이나 SLA를 주장하지 않는다."
+  ],
+  "claimsNotSupported": [
+    "AWS 전체의 성공률 또는 SLA",
+    "State 계층 고가용성이나 종단 고가용성",
+    "HTTPS, 성능, 자동 확장 또는 비용 최적화",
+    "Azure·GCP 관리형 그룹에 대한 일반화"
+  ]
+}

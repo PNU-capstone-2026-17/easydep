@@ -5,7 +5,7 @@
 이 연구는 Docker-on-VM 배포 지원에 한정한다. 리소스 모델 자체의 타당성(MQ)과 그 모델이 멀티 에이전트의 산출물에 미치는 효과(RQ)를 분리한다.
 
 - MQ1: 공급자별 리소스와 하위 구성 경계를 공식 제어 평면 API에서 재현할 수 있는가?
-- MQ2: 중립 개념과 공급자 구현 사이의 다대다 대응 및 의미 손실을 표현할 수 있는가?
+- MQ2: 같은 capability가 공급자별 native 리소스와 내장 구성요소로 어떻게 실현되는가?
 - MQ3: 문서상 전제와 실제 기능상 필수 의존성을 구별할 수 있는가?
 - RQ1: 근거 모델이 누락된 공급자 구성요소와 잘못된 IaC 주장을 줄이는가?
 - RQ2: 생성 가능한 인프라를 넘어 애플리케이션의 대표 기능까지 정상 작동시키는가?
@@ -13,20 +13,19 @@
 
 ## 모델의 역할
 
-중립 모델은 완결된 공통 온톨로지가 아니라 비교 좌표다. `load-balanced-ingress` 같은 capability는 AWS, Azure, GCP에서 서로 다른 수의 독립 리소스와 내장 블록으로 실현된다. 정본은 `app/core/cloudkb/depkb/provider-projections.json`이며 다음을 보존한다.
+`load-balanced-ingress` 같은 capability는 AWS, Azure, GCP에서 서로 다른 수의 독립 리소스와 내장 블록으로 실현된다. 정본은 `app/core/cloudkb/depkb/provider-realizations.json`이며 다음을 보존한다.
 
 - `independent`, `embedded`, `composite-member` 표현 방식
-- `full`, `partial` 의미 범위
-- 하나의 중립 개념과 여러 공급자 구성요소 사이의 다대다 대응
-- 공급자 고유 확장과 Terraform 타입 또는 소유 블록 근거
+- capability 하나를 함께 실현하는 native 구성요소 집합
+- 공급자 고유 구성요소와 Terraform 타입 또는 소유 블록 근거
 
-이 projection은 문서 전용 자료가 아니다. 요구사항에서 load balancer가 채택되면 `InfraIntent.capabilityRealizations`를 통해 설계·프로비저닝 뷰와 IaC 생성 에이전트 입력에 전달된다. 모델에 없는 capability는 추측해 만들지 않는다.
+이 카탈로그는 문서 전용 자료가 아니다. 요구사항에서 load balancer가 채택되면 `InfraIntent.capabilityRealizations`를 통해 설계·프로비저닝 뷰와 IaC 생성 에이전트 입력에 전달된다. 모델에 없는 capability는 추측해 만들지 않는다.
 
 공식 의존관계는 동결된 공급자 근거 모델에서 `official-dependencies.json`으로 기계적으로 생성한다. 과거 `claims.json`은 기존 화면과 감사 추적을 위한 탐색 자료로만 유지하며, IaC 에이전트 입력에서는 리소스·간선·생성 순서·런타임 주장을 모두 제외한다. 따라서 확정 비교에서 새 근거 모델의 효과와 과거 실험 KB의 효과가 섞이지 않는다. 후보 필수성은 `candidate` 그대로 전달하며 mandatory로 해석하지 않는다.
 
 ## 근거와 의존성 검증
 
-공식 공급자 문서와 API 스키마는 리소스 경계 및 문서상 전제의 우선 근거다. 중립 모델과 논문은 후보 개념과 비교 축을 만드는 데만 사용한다. 문서가 필수성을 명시하지 않으면 제거·복구 개입을 3회 반복한다.
+공식 공급자 문서와 API 스키마는 리소스 경계 및 문서상 전제의 우선 근거다. 문서가 필수성을 명시하지 않으면 제거·복구 개입을 3회 반복한다.
 
 각 개입은 다음 결과를 별도로 기록한다.
 
@@ -79,6 +78,4 @@ LLM의 자기보고 confidence는 사용하지 않는다. 서로 독립인 5회 
 - IaC-Eval, NeurIPS 2024 Datasets and Benchmarks Track
 - Empirical Standards for Software Engineering Research, arXiv:2010.03525
 - OpenTofu `validate -json` 및 계획 JSON 명세
-- Cloud-Barista CB-Tumblebug, OASIS TOSCA 2.0, OCCI 1.2, CAMEL, Crossplane Composition, Terraform 공급자 설계 원칙
-
-중립 모델별 추상화 근거와 실제 대응은 `벤더-중립-모델-근거-검토.md`에 정리한다.
+- Terraform 공급자 설계 원칙과 각 CSP 공식 API·서비스 문서

@@ -4,14 +4,94 @@ import json
 import threading
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from app.design.services.common.structured import (
     StructuredLlmError,
+    _parse_with_schema_repair,
     _stream_structured,
     capture_llm_timings,
     run_with_wall_timeout,
 )
+
+
+def test_local_schema_failure_gets_one_bounded_full_object_retry(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    calls: list[list[dict[str, str]]] = []
+
+    def stream(_client, messages, schema, _observation):
+        calls.append(messages)
+        if len(calls) == 1:
+            return schema.model_validate({})
+        return schema(answer="ok")
+
+    monkeypatch.setattr(
+        "app.design.services.common.structured._stream_structured", stream
+    )
+
+    parsed = _parse_with_schema_repair(
+        object(), [{"role": "user", "content": "generate"}], Result
+    )
+
+    assert parsed.answer == "ok"
+    assert len(calls) == 2
+    assert "Regenerate the entire object" in calls[1][-1]["content"]
+    assert '"loc": ["answer"]' in calls[1][-1]["content"]
+
+
+def test_value_error_context_is_serialized_for_schema_repair(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+        @model_validator(mode="after")
+        def answer_is_not_empty(self):
+            if not self.answer.strip():
+                raise ValueError("answer must not be empty")
+            return self
+
+    calls: list[list[dict[str, str]]] = []
+
+    def stream(_client, messages, schema, _observation):
+        calls.append(messages)
+        if len(calls) == 1:
+            return schema.model_validate({"answer": ""})
+        return schema(answer="ok")
+
+    monkeypatch.setattr(
+        "app.design.services.common.structured._stream_structured", stream
+    )
+
+    parsed = _parse_with_schema_repair(
+        object(), [{"role": "user", "content": "generate"}], Result
+    )
+
+    assert parsed.answer == "ok"
+    assert len(calls) == 2
+    assert "answer must not be empty" in calls[1][-1]["content"]
+
+
+def test_non_validation_failure_is_not_retried(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    calls = 0
+
+    def stream(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("endpoint stalled")
+
+    monkeypatch.setattr(
+        "app.design.services.common.structured._stream_structured", stream
+    )
+
+    with pytest.raises(StructuredLlmError, match="endpoint stalled"):
+        _parse_with_schema_repair(
+            object(), [{"role": "user", "content": "generate"}], Result
+        )
+    assert calls == 1
 
 
 def test_structured_llm_error_names_the_output_schema():

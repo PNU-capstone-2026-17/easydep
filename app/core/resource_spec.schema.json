@@ -1,87 +1,121 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "RESOURCE_SPEC v2 — 클라우드 리소스 제약 계약",
-  "description": "**2026-08-02 범위 결정 — existingResources 제거.** 이 시스템의 대상은 신규 앱 개발이라 인계받을 기존 자원이 없다(사용자 결정). 근거 부재가 아니라 범위 선언이다 — '폐포는 이미 있는가를 원리적으로 모른다'는 8-01 도출 논리는 유효하되, 그 질문이 서는 전제(브라운필드)가 범위 밖이다. 되살리려면 범위 확장이 먼저고, 그때 클린룸 논거 둘(필수 승격·{종류,식별자} 쌍)도 함께 본다. || **2026-08-02 계보 감사 — lowCarbonPreferred 제거.** 계보를 따라가면 GCP Architecture Framework 문헌 → 우리 관심사 축 → 우리 배선(2026-07-28)이고, 사용자가 그 제약을 말한 실물은 코퍼스 어디에도 없다(내부 11종 0건 · PURE 7,659문장 중 열쇠말 13건 전부 오탐 — 거버넌스 지속성). 8-01 제로베이스 도출이 이 칸을 통과시킨 것은 도출의 출발 집합이 '현행 사슬이 소비하는 값'이라 우리 배선이 자기 근거가 되는 순환이 있었기 때문이다(감사 문서 참조). 탄소 데이터·질의응답 축(envkb·cap_region_carbon)은 유지 — 계약 배선만 걷는다. || **2026-08-01 제로베이스 재구성.** 앞 회차의 '재도출'은 목록만 도출하고 이름·모양은 기존 것을 물려받았다. 이번에는 항목 11개에서 **모양까지** 다시 짰고, 그 결과 둘이 달라졌다: (1) `meta` 제거 — 읽는 곳이 **0곳**이라 '모든 칸에 소비자가 있어야 한다'는 이 파일 자신의 규율을 어기고 있었다. (2) 규모 두 칸을 `scale{value,unit}` 하나로 — 같은 양의 두 단위였다. 나머지는 처음부터 짜도 같은 모양이 나왔고, **그 수렴 자체가 결과다**. || **2026-08-01 판 2 — 위상축 신설.** 계약을 제로베이스에서 다시 물었더니 축이 하나뿐이었다: 15칸이 전부 '어떻게 고르나'(조인·규모·정책)이고 '무엇을 놓나'가 없었다. 그래서 3사 실측 의존 주장 118건이 사슬에 진입할 입구가 없었다(앵커 후보는 CSP당 13~14종인데 받을 칸이 없었다). workloads를 필수로 신설한다 — **필수가 느는 방향이라 기존 명세가 전부 무효가 되므로 판을 2로 올린다**(판 1에서 규모 신호를 내릴 때 판을 유지한 것과 반대 방향이다). 그리고 이 파일이 산문으로 적어 온 규율 — '모든 칸에는 소비자가 있어야 한다' — 은 app/core/input_registry.py에서 항목의 칸(`opens`)이 되어 기계가 지킨다. 질문 문구·근거 좌표·계층·선행조건도 거기 있다. || 사용자 첫 요청의 클라우드 리소스 제약을 구조화한 것. easydep에서 요구사항 분석이 resource_constraints_text(원문 산문)로부터 만들어 RESOURCE_SPEC 산출물로 저장하고, 배포 구성이 읽는다. 필수의 기준은 목록이 아니라 판정식이다 — 그 칸이 없으면 뒤 단계 산출물의 요구사항 부합을 잴 수 없는 것만 필수다. **2026-07-29 재판정**: 이 판정식을 전 칸에 다시 걸어 규모 신호(expectedConcurrentUsers·approxRequestsPerSecond)를 필수에서 내렸다 — 그것으로 서는 판정이 하나도 없었기 때문이다(스펙 하한은 minVCpu·minMemoryGiB가 준다). 필수가 줄어드는 방향이라 기존 명세는 전부 유효해서 schemaVersion은 그대로 1이다. 필수는 아니지만 없으면 판정이 하나 닫히는 칸은 contract.SUGGESTED_WHY에 있고, 요구사항 에이전트가 그것을 '권고 질문'으로 함께 낸다. 그리고 모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다 — multiZone을 받아 놓고 안 읽던 결함의 일반화. 소비자 없는 칸(데이터 볼륨·runtime·환경)은 여기 없고, 소비자가 생길 때 연다(dataResidency는 2층 보강에서 대조 소비자가 생겨 열렸다). **일부러 닫아 둔 칸**: availabilityTarget — 복제 수 판정의 근거(SLA)가 부재 확정이라(재조사 금지 목록) 소비자를 만들 수 없다. 규모→스펙 변환 계수 — 소스가 없다(사이징은 판단이지 사실이 아니다). 다시 열려면 그 소스부터.",
+  "title": "RESOURCE_SPEC v3",
+  "description": "Cloud coordinates and an explicit Docker-on-VM deployment topology. The topology records placement and ingress structure without making an availability or SLA claim.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
     "provider",
     "region",
-    "workloads",
-    "monthlyBudgetUSD"
+    "workloads"
   ],
   "properties": {
     "schemaVersion": {
-      "const": "2"
+      "const": "3"
     },
     "workloads": {
       "const": ["vm"],
-      "description": "시스템 범위에서 고정한 Docker 기반 VM 배포. 사용자에게 묻지 않는다."
+      "description": "EasyDep currently targets Docker-on-VM deployment."
     },
     "provider": {
       "type": "string",
       "enum": ["aws", "azure", "gcp"],
-      "description": "지원 CSP: aws | azure | gcp."
+      "description": "Cloud provider selected before design starts."
     },
     "region": {
       "type": "string",
-      "description": "리전 코드(예: ap-northeast-2). 지명('서울')은 계약 진입 전에 리전 해석 도구(cap_resolve_region)로 코드로 바꿔 담는다 — 지명이 그대로 오면 조인이 조용히 빈 답이 된다(실측). 원문은 regionAsWritten에 남긴다."
+      "minLength": 1,
+      "description": "Resolved provider region code, such as ap-northeast-2."
     },
     "regionAsWritten": {
       "type": "string",
-      "description": "사용자가 쓴 리전 표현 원문('서울' 등). 해석이 틀렸을 때 되짚을 근거 — REFINE_REQ가 원문을 남기는 것과 같은 이유다."
+      "description": "Original region expression supplied by the user."
+    },
+    "deploymentTargets": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "description": "Provider-specific deployment alternatives selected by the user. The compatibility provider and region fields identify the first candidate only; downstream code must not silently discard the remaining alternatives.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "region", "zones"],
+        "properties": {
+          "provider": {"enum": ["aws", "azure", "gcp"]},
+          "region": {"type": "string", "minLength": 1},
+          "zones": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
     },
     "monthlyBudgetUSD": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "월 예산, USD. 비용 부합 판정의 기준값. 다른 통화는 **진입에서 USD로 환산해 담는다** — 요구사항 에이전트에 환율 도구(convert_to_usd, ECB 기준환율)가 있고, 쓴 환율과 기준일을 근거에 남긴다. (2026-07-29 정정: 예전 문구는 '환율 환산은 하지 않는다(환율 소스가 없다)'였는데, 그건 계약의 뜻이 아니라 그때 우리에게 소스가 없었다는 뜻이었다. 없는 능력은 거부할 것이 아니라 쥐어 줄 것이다.) 판정은 비대칭이다: 값이 붙는 부분의 하한만으로 초과는 확정할 수 있지만, 미가격 구성원이 있어 부합은 단정하지 못한다."
+      "description": "Monthly infrastructure budget normalized to USD."
     },
     "minVCpu": {
       "type": "integer",
       "minimum": 1,
-      "description": "이 워크로드가 요구하는 **최소 vCPU**. 사용자·설계자의 주장으로 기록된다(검증된 사실이 아니다 — stateless와 같은 성격). 현재 일반 VM의 유일한 하한이다. 없으면 **스펙을 고르지 않는다** — 최저가를 고르는 것은 중립이 아니라 '가장 작은 것으로 충분하다'는 근거 없는 주장이다."
+      "description": "User- or designer-supplied minimum vCPU floor. It may be collected during requirements feedback."
     },
     "minMemoryGiB": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "이 워크로드가 요구하는 최소 메모리(GiB). minVCpu와 같은 층·같은 성격이고 같은 소비자가 읽는다."
-    },
-    "multiZone": {
-      "type": "boolean",
-      "description": "가용영역 장애에도 서비스를 유지해야 하는지 나타낸다. VM 수와 서브넷·영역 배치는 설계 단계가 결정하며, 이 값만으로 특정 구성을 추정하지 않는다."
+      "description": "User- or designer-supplied minimum memory floor in GiB. It may be collected during requirements feedback."
     },
     "trafficPattern": {
-      "enum": [
-        "steady",
-        "spiky"
-      ],
-      "description": "부하 모양 — steady(상시 부하) | spiky(간헐 폭증). 소비자: 버스트 적합 판정 — steady인데 계획의 스펙에 버스트 경고(perfkb)가 붙어 있으면 상충으로 판정한다. 이 칸이 없으면 버스트 경고는 경고로만 남고 이 앱에 문제인지는 판정하지 않는다."
+      "enum": ["steady", "spiky"],
+      "description": "Optional explicit traffic-shape signal."
     },
     "dataResidency": {
       "type": "string",
-      "description": "데이터가 머물러야 하는 국가·지역, 사용자 표현 그대로(예: '한국', 'EU'). 소비자: 배포 계획이 리전의 **원본 표시 이름**(예: 'South Korea (Seoul)')을 대조 자료로 싣고, 부합 판정문은 **판정 불가를 명시**한다 — 리전의 국가를 기계 판정할 소스가 없다(표시 이름이 프로바이더마다 자유 서식 — 실측 2026-07-24). 산문에서 국가를 추출해 판정하면 확신에 찬 오답이 된다. 확인은 사용자 몫이고, 그 사실이 답에 실린다."
+      "description": "Optional user-stated data residency constraint."
+    },
+    "computeProfile": {
+      "enum": [
+        "standaloneOne",
+        "managedGroupOne",
+        "managedGroupManySingleZone",
+        "managedGroupManyMultiZone"
+      ],
+      "description": "Finite app-compute topology family. It describes lifecycle control, replica multiplicity, and occupied-zone layout without claiming availability."
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Exact fixed app replica count. Autoscaling is outside v1."
+    },
+    "publicIngress": {
+      "enum": ["direct", "loadBalanced"],
+      "description": "Public HTTPS ingress realization. Direct is valid only for standaloneOne."
+    },
+    "databasePlacement": {
+      "enum": ["none", "colocated", "dedicated"],
+      "description": "Self-hosted PostgreSQL placement. Colocated is valid only for standaloneOne; dedicated uses one private state VM and a separate persistent disk."
+    },
+    "applicationStateless": {
+      "type": "boolean",
+      "description": "Evidence gate for more than one app replica; true means local sessions, uploads, singleton schedulers, and writable local state are absent or externalized."
     },
     "scale": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "value",
-        "unit"
-      ],
+      "required": ["value", "unit"],
       "properties": {
         "value": {
           "type": "number",
           "exclusiveMinimum": 0
         },
         "unit": {
-          "enum": [
-            "concurrentUsers",
-            "requestsPerSecond"
-          ]
+          "enum": ["concurrentUsers", "requestsPerSecond"]
         }
       },
-      "description": "예상 부하의 크기와 그 단위. **2026-08-01 제로베이스 재구성**: 전에는 expectedConcurrentUsers·approxRequestsPerSecond 두 칸이었는데, 그 둘은 **같은 양의 두 단위**이지 두 축이 아니다(하한의 vCPU·메모리는 둘 다 필터를 잡는 진짜 두 축이라 두 칸으로 남는다). 두 칸이던 탓에 소비층에 '둘 중 하나만 있으면 더 안 묻는다'는 특수 처리가 있었고, 모양을 고치니 그 특수 처리가 사라진다. **이 값은 스펙 하한을 정하지 않는다** — 규모→스펙 변환은 1차 소스가 없어 KB에서 배제했다. 소비자: 하한이 없을 때 되묻기의 근거(sizing_floor.undecided_note)와 계획의 규모 진술."
+      "description": "Optional expected load magnitude; it does not determine a VM size by itself."
     }
   }
 }

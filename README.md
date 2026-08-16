@@ -50,8 +50,14 @@ MySQL 저장소를 사용한다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, MySQL 8 이상이다. 일부 다이어그램
-생성에는 PlantUML JAR가 필요하다.
+필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, Docker Desktop이다. 일부 다이어그램
+생성에는 PlantUML JAR가 필요하다. 개발용 MySQL은 통합 실행 스크립트가 Docker 컨테이너로
+준비한다.
+
+### 통합 실행 스크립트
+
+최초 한 번 Python 가상환경과 구현 도구를 준비하고, 사용할 LLM과 PlantUML 환경 변수를
+설정한다.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -62,6 +68,51 @@ powershell -ExecutionPolicy Bypass -File scripts\bootstrap-implementation-tools.
 $env:NVIDIA_API_KEY="<NVIDIA NIM API key>"
 $env:API_KEY=$env:NVIDIA_API_KEY
 $env:PLANTUML_JAR_PATH="C:\tools\plantuml.jar"
+```
+
+Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령을 사용한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -OpenBrowser
+```
+
+이 스크립트는 다음 작업을 한 번에 수행한다.
+
+1. `package-lock.json`이 바뀌었거나 설치본이 없을 때만 `npm ci`를 실행한다.
+2. 프론트엔드 입력 파일의 SHA-256이 바뀌었을 때만 SvelteKit을 다시 빌드한다.
+3. `easydep-mysql-dev` 컨테이너를 생성하거나 재사용하고 준비 완료까지 기다린다.
+4. FastAPI 백엔드를 시작하고 UI·워크스페이스 API의 종단 연결을 확인한다.
+
+정상적으로 준비되면 기본 UI는 `http://127.0.0.1:8000/`, API 문서는
+`http://127.0.0.1:8000/docs`에서 볼 수 있다. 실행 상태와 로그는 `.easydep/dev/`에 저장된다.
+
+| 옵션 | 용도 |
+|---|---|
+| `-OpenBrowser` | 준비 완료 후 기본 브라우저에서 UI를 연다. |
+| `-SkipFrontendBuild` | 기존 `frontend/build/index.html`을 그대로 사용한다. 빌드가 없으면 실패한다. |
+| `-ForceFrontendBuild` | 입력 해시가 같아도 프론트엔드를 다시 빌드한다. |
+| `-Port 8010` | 백엔드 포트를 변경한다. 기본값은 `8000`이다. |
+| `-DatabasePort 33061` | 호스트의 개발용 MySQL 포트를 변경한다. 기본값은 `33060`이다. |
+| `-DatabaseImage mysql:8.4` | 최초 컨테이너 생성에 사용할 MySQL 이미지를 지정한다. |
+| `-Stop` | 이 스크립트가 시작한 백엔드와 개발용 MySQL을 중지한다. |
+
+프론트엔드가 이미 빌드되어 있을 때 빠르게 재시작하거나 전체를 중지하는 예시는 다음과 같다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -SkipFrontendBuild
+powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1 -Stop
+```
+
+`-Stop`은 `easydep-mysql-dev-data` Docker 볼륨을 삭제하지 않으므로 기존 개발 데이터가
+보존된다. 문제가 발생하면 `.easydep/dev/server.stderr.log`와
+`.easydep/dev/server.stdout.log`를 먼저 확인한다.
+
+### 백엔드만 직접 실행
+
+MySQL과 프론트엔드를 별도로 준비한 개발 환경에서는 백엔드만 직접 실행할 수 있다.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
 python -m uvicorn server:app --reload
 ```
 

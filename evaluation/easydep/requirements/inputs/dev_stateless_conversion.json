@@ -1,7 +1,7 @@
 {
   "name": "dev_stateless_conversion",
   "description": "Small stateless API with no supporting actor or persistent state.",
-  "resource_constraints_text": "Deploy a Docker image on AWS Linux VMs in the Seoul region. The monthly budget is 100 USD. High availability is not required.",
+  "resource_constraints_text": "Deploy a Docker image on AWS Linux VMs in the Seoul region. The monthly budget is 100 USD.",
   "classified": [
     {"id":"FR1","type":"FR","text":"API consumers convert values between supported length, weight, and temperature units."},
     {"id":"FR2","type":"FR","text":"API consumers retrieve the list of supported units and conversion formulas."},

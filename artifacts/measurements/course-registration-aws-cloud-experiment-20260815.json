@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "easydep-cloud-functional-experiment/v1",
+  "experimentId": "course-registration-e1-aws-20260815",
+  "runId": "easydep-full-e1-course-registration-aws-20260814T040359Z-72cbfa",
+  "provider": "aws",
+  "region": "ap-northeast-2",
+  "status": "passed-with-harness-repair",
+  "scope": {
+    "applicationInstances": 1,
+    "stateInstances": 1,
+    "persistentDataVolumes": 1,
+    "managedLoadBalancer": false,
+    "performanceSloMeasured": false
+  },
+  "image": {
+    "reference": "public.ecr.aws/w3q5i0g7/easydep-course-experiment-20260815:v1",
+    "digest": "sha256:b61475a8c77668af3dbc395ab2d9cb4d9e4cd4f300ccbf417b137367c35391d8"
+  },
+  "iac": {
+    "plannedResourceCount": 18,
+    "initialApplySeconds": 113.2,
+    "systemGeneratedStatus": "failed-semantic-preflight",
+    "deploymentInput": "system output with explicit experiment-harness corrections",
+    "harnessCorrections": [
+      "resolve the attached EBS volume by enumerating NVMe devices and matching the EBS volume ID",
+      "persist the filesystem UUID in /etc/fstab",
+      "declare container restart policies",
+      "configure the workload data directory as a child below the filesystem mount"
+    ],
+    "repairApply": {
+      "scope": [
+        "application VM",
+        "state VM",
+        "EBS attachment",
+        "Elastic IP association"
+      ],
+      "added": 4,
+      "changed": 0,
+      "destroyed": 4,
+      "elapsedSeconds": 99.8
+    }
+  },
+  "observations": {
+    "initialRuntimeFailure": {
+      "status": "failed",
+      "symptom": "state and application containers repeatedly restarted",
+      "cause": "the newly formatted ext4 filesystem root was bound directly to the state runtime data path",
+      "evidenceStrength": "intervention-supported",
+      "successfulGeneralRepair": "use a dedicated runtime data directory below the guest filesystem mount"
+    },
+    "healthAfterRepair": {
+      "status": "passed",
+      "httpStatus": 200,
+      "applicationStatus": "UP"
+    },
+    "businessAndConcurrency": {
+      "status": "passed",
+      "passedPhases": 13,
+      "totalPhases": 13,
+      "evidence": "course-registration-business-oracle-aws-cloud-20260815.json"
+    },
+    "databaseUnavailableHealth": {
+      "status": "passed",
+      "httpStatus": 503,
+      "applicationStatus": "DOWN",
+      "evidence": "course-registration-database-unavailable-aws-cloud-20260815.json"
+    },
+    "databaseVmRestart": {
+      "statusCheckRecoverySeconds": 148.4,
+      "applicationHealthAfterStatusCheck": "UP"
+    },
+    "persistenceAfterDatabaseVmRestart": {
+      "status": "passed",
+      "passedPhases": 2,
+      "totalPhases": 2,
+      "evidence": "course-registration-persistence-aws-cloud-20260815.json"
+    }
+  },
+  "testTls": {
+    "certificate": "synthetic self-signed one-day certificate",
+    "verification": "disabled-for-synthetic-test"
+  },
+  "interpretationLimits": [
+    "This is one AWS development run, not evidence for Azure or GCP application behavior.",
+    "The result is not a pure system-generated IaC success because the experiment harness repaired runtime bootstrap semantics.",
+    "Database VM restart and data preservation do not prove state-tier high availability.",
+    "No performance SLO, right-sizing, or cost optimality was measured."
+  ],
+  "cleanup": {
+    "status": "passed",
+    "destroyElapsedSeconds": 80.3,
+    "destroyedStateResources": 18,
+    "stateEntriesAfterDestroy": 0,
+    "activeInstances": 0,
+    "volumes": 0,
+    "elasticIps": 0,
+    "nonDeletedNatGateways": 0,
+    "vpcs": 0,
+    "subnets": 0,
+    "securityGroups": 0,
+    "routeTables": 0,
+    "internetGateways": 0,
+    "publicEcrRepositories": 0,
+    "ownedResidualResources": 0
+  }
+}

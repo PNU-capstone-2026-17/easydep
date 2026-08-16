@@ -45,7 +45,7 @@ from app.requirements.agent.steps.step4_diagram import (
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs
+from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs
 from app.requirements.agent.steps.step_resource import build_resource_spec
 from app.requirements.common.state_contract import StateContract, state_contract_of
 
@@ -79,7 +79,7 @@ PIPELINE: tuple[Stage, ...] = (
     Stage("classify", classify, group="refine_requirements"),
     # 분류된 요구사항에서 제네릭 배포 필요사항을 도출한다. 구체 리소스는 선택하지 않으며,
     # 피드백 대상이 아니라 요구사항이 바뀌면 다시 파생되는 산출물이라 key를 두지 않는다.
-    Stage("derive_deployment_needs", derive_deployment_needs, group="derive_deployment_needs"),
+    Stage("analyze_cloud_inputs", analyze_cloud_inputs, group="analyze_cloud_inputs"),
     # 사용자가 별도로 입력한 클라우드 제약을 RESOURCE_SPEC 계약으로 옮긴다.
     # 이것도 입력에서 파생되므로 key를 두지 않는다.
     Stage("build_resource_spec", build_resource_spec, group="structure_constraints"),

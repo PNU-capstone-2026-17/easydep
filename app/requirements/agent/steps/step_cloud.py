@@ -14,7 +14,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.capability_contract import (
-    SUPPORTED_DEPENDENCY_CAPABILITY_IDS,
     decide,
     link_dependency_capability,
     load_policy,
@@ -62,6 +61,11 @@ Use `accessScope: node-filesystem` only when the text explicitly says local, nod
 filesystem state; use `shared-service` only when it explicitly requires shared or external
 state. Omit every unknown key rather than inferring it. This object describes application
 intent and does not select a storage product.
+When a requirement explicitly names deployment locations, metadata may contain
+`placementScope: singleZone | multiZone | multiRegion`. Preserve the stated placement
+without translating it into a high-availability or failover claim. Multi-region is outside
+the current deployment scope, so preserve it as `placementScope: multiRegion` rather than
+silently lowering it to multi-zone.
 Use an empty metadata object when there are no grounded details. Merge equivalent needs and
 keep distinct roles separate.
 
@@ -102,9 +106,26 @@ def _ground_application_state_metadata(
     state: dict[str, str] = {}
     rejected: list[dict[str, str]] = []
 
-    durability = str(raw_state.get("durability") or "")
+    raw_durability = str(raw_state.get("durability") or "").strip().casefold()
+    durability = {
+        "durable": "persistent",
+        "retained": "persistent",
+        "temporary": "ephemeral",
+        "volatile": "ephemeral",
+    }.get(raw_durability, raw_durability)
     durability_evidence = {
-        "persistent": ("persist", "durable", "survive", "retain", "영속", "보존"),
+        "persistent": (
+            "persist",
+            "durable",
+            "survive",
+            "retain",
+            "not be lost",
+            "without data loss",
+            "영속",
+            "보존",
+            "유실",
+            "손실",
+        ),
         "ephemeral": ("ephemeral", "temporary", "volatile", "휘발", "임시"),
     }
     if durability:
@@ -115,7 +136,7 @@ def _ground_application_state_metadata(
         else:
             rejected.append({
                 "path": "applicationState.durability",
-                "value": durability,
+                "value": raw_durability,
                 "reason": "value-not-grounded-in-evidence-span",
             })
 
@@ -134,6 +155,8 @@ def _ground_application_state_metadata(
         "shared-service": (
             "shared state",
             "shared storage",
+            "shared location",
+            "all application instances",
             "external state",
             "external storage",
             "external database",
@@ -179,7 +202,9 @@ def _ground_application_state_metadata(
     requires=("classified",),
     produces=("deployment_needs", "capability_contract"),
 )
-def derive_deployment_needs(state: AgentState) -> dict:
+def derive_deployment_needs(
+    state: AgentState, *, sample_count: int | None = None
+) -> dict:
     """Return a generic need dictionary grounded through existing requirement IDs."""
     classified = list(state.get("classified") or [])
     known = {str(item.get("id")) for item in classified if item.get("id")}
@@ -188,8 +213,11 @@ def derive_deployment_needs(state: AgentState) -> dict:
         for item in classified
     ]
     samples: list[DeploymentNeedsResult] = []
-    sample_count = max(1, int(settings.capability_samples))
-    for _sample in range(sample_count):
+    resolved_sample_count = max(
+        1,
+        int(settings.capability_samples if sample_count is None else sample_count),
+    )
+    for _sample in range(resolved_sample_count):
         try:
             samples.append(invoke_structured(
                 DeploymentNeedsResult,
@@ -233,15 +261,15 @@ def derive_deployment_needs(state: AgentState) -> dict:
             if cluster_key not in seen_clusters:
                 appearances[cluster_key] = appearances.get(cluster_key, 0) + 1
                 counts = dependency_capability_appearances.setdefault(cluster_key, {})
-                normalized_key = key.replace("_", "-")
                 linked_capability_id = link_dependency_capability(
                     key, need.role, need.evidence_spans
                 )
+                # A structured LLM field is a proposal, not evidence. Stable IDs enter
+                # the downstream plan only when the deterministic linker can reproduce
+                # the same ID from the key, role, and quoted evidence.
                 observed_capability_ids = (
-                    set(need.dependency_capability_ids) | {normalized_key}
-                ) & SUPPORTED_DEPENDENCY_CAPABILITY_IDS
-                if linked_capability_id:
-                    observed_capability_ids.add(linked_capability_id)
+                    {linked_capability_id} if linked_capability_id else set()
+                )
                 for capability_id in observed_capability_ids:
                     counts[capability_id] = counts.get(capability_id, 0) + 1
                 seen_clusters.add(cluster_key)
@@ -282,7 +310,7 @@ def derive_deployment_needs(state: AgentState) -> dict:
             ).items()
             if count == appearances[key]
         })
-        raw_confidence = appearances[key] / sample_count
+        raw_confidence = appearances[key] / resolved_sample_count
         decision, reason, calibrated = decide(
             raw_score=raw_confidence,
             origin=need.origin,
@@ -324,10 +352,19 @@ def derive_deployment_needs(state: AgentState) -> dict:
         }
         capabilities.append(capability)
         if decision == "needsQuestion":
+            question = f"Should the deployment provide this capability: {role}?"
+            if (
+                grounded_metadata.get("placementScope") == "multiZone"
+                and "availability" in unresolved
+            ):
+                question = (
+                    "Does multi-zone mean only placing independent VM replicas in different "
+                    "zones, or must the service continue during a zone failure?"
+                )
             questions.append({
                 "capabilityId": key,
                 "reason": reason,
-                "question": f"Should the deployment provide this capability: {role}?",
+                "question": question,
             })
 
     capability_contract = CapabilityContract.model_validate({

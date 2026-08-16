@@ -13,59 +13,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/instances/methods/insert | compute#/resources/instances/methods/get | compute#/resources/instances/methods/delete",
+          "sourceLocator": "compute#/resources/instances/methods/insert | compute#/resources/instances/methods/get",
           "operationLocators": {
             "create": "compute#/resources/instances/methods/insert",
-            "read": "compute#/resources/instances/methods/get",
-            "delete": "compute#/resources/instances/methods/delete"
+            "read": "compute#/resources/instances/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.vm.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "vm",
-      "conceptId": "neutral.compute",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/instances/methods/insert | compute#/resources/instances/methods/get | compute#/resources/instances/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/instances/methods/insert",
-            "read": "compute#/resources/instances/methods/get",
-            "delete": "compute#/resources/instances/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -78,59 +41,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/disks/methods/insert | compute#/resources/disks/methods/get | compute#/resources/disks/methods/delete",
+          "sourceLocator": "compute#/resources/disks/methods/insert | compute#/resources/disks/methods/get",
           "operationLocators": {
             "create": "compute#/resources/disks/methods/insert",
-            "read": "compute#/resources/disks/methods/get",
-            "delete": "compute#/resources/disks/methods/delete"
+            "read": "compute#/resources/disks/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.disk.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "disk",
-      "conceptId": "neutral.data-storage",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/disks/methods/insert | compute#/resources/disks/methods/get | compute#/resources/disks/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/disks/methods/insert",
-            "read": "compute#/resources/disks/methods/get",
-            "delete": "compute#/resources/disks/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.data-storage",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -143,59 +69,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/networks/methods/insert | compute#/resources/networks/methods/get | compute#/resources/networks/methods/delete",
+          "sourceLocator": "compute#/resources/networks/methods/insert | compute#/resources/networks/methods/get",
           "operationLocators": {
             "create": "compute#/resources/networks/methods/insert",
-            "read": "compute#/resources/networks/methods/get",
-            "delete": "compute#/resources/networks/methods/delete"
+            "read": "compute#/resources/networks/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.virtual-network.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "virtual-network",
-      "conceptId": "neutral.virtual-network",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/networks/methods/insert | compute#/resources/networks/methods/get | compute#/resources/networks/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/networks/methods/insert",
-            "read": "compute#/resources/networks/methods/get",
-            "delete": "compute#/resources/networks/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.virtual-network",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -208,59 +97,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/subnetworks/methods/insert | compute#/resources/subnetworks/methods/get | compute#/resources/subnetworks/methods/delete",
+          "sourceLocator": "compute#/resources/subnetworks/methods/insert | compute#/resources/subnetworks/methods/get",
           "operationLocators": {
             "create": "compute#/resources/subnetworks/methods/insert",
-            "read": "compute#/resources/subnetworks/methods/get",
-            "delete": "compute#/resources/subnetworks/methods/delete"
+            "read": "compute#/resources/subnetworks/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.subnet.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "subnet",
-      "conceptId": "neutral.ip-network-segment",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/subnetworks/methods/insert | compute#/resources/subnetworks/methods/get | compute#/resources/subnetworks/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/subnetworks/methods/insert",
-            "read": "compute#/resources/subnetworks/methods/get",
-            "delete": "compute#/resources/subnetworks/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.ip-network-segment",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -273,59 +125,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/firewalls/methods/insert | compute#/resources/firewalls/methods/get | compute#/resources/firewalls/methods/delete",
+          "sourceLocator": "compute#/resources/firewalls/methods/insert | compute#/resources/firewalls/methods/get",
           "operationLocators": {
             "create": "compute#/resources/firewalls/methods/insert",
-            "read": "compute#/resources/firewalls/methods/get",
-            "delete": "compute#/resources/firewalls/methods/delete"
+            "read": "compute#/resources/firewalls/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.firewall.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "firewall",
-      "conceptId": "neutral.network-security-policy-group",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/firewalls/methods/insert | compute#/resources/firewalls/methods/get | compute#/resources/firewalls/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/firewalls/methods/insert",
-            "read": "compute#/resources/firewalls/methods/get",
-            "delete": "compute#/resources/firewalls/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-security-policy-group",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -338,59 +153,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/backendServices/methods/insert | compute#/resources/backendServices/methods/get | compute#/resources/backendServices/methods/delete",
+          "sourceLocator": "compute#/resources/backendServices/methods/insert | compute#/resources/backendServices/methods/get",
           "operationLocators": {
             "create": "compute#/resources/backendServices/methods/insert",
-            "read": "compute#/resources/backendServices/methods/get",
-            "delete": "compute#/resources/backendServices/methods/delete"
+            "read": "compute#/resources/backendServices/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.backend-service.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "backend-service",
-      "conceptId": "neutral.network-load-balancer",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/backendServices/methods/insert | compute#/resources/backendServices/methods/get | compute#/resources/backendServices/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/backendServices/methods/insert",
-            "read": "compute#/resources/backendServices/methods/get",
-            "delete": "compute#/resources/backendServices/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -403,59 +181,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/forwardingRules/methods/insert | compute#/resources/forwardingRules/methods/get | compute#/resources/forwardingRules/methods/delete",
+          "sourceLocator": "compute#/resources/forwardingRules/methods/insert | compute#/resources/forwardingRules/methods/get",
           "operationLocators": {
             "create": "compute#/resources/forwardingRules/methods/insert",
-            "read": "compute#/resources/forwardingRules/methods/get",
-            "delete": "compute#/resources/forwardingRules/methods/delete"
+            "read": "compute#/resources/forwardingRules/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.forwarding-rule.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "forwarding-rule",
-      "conceptId": "neutral.network-load-balancer",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/forwardingRules/methods/insert | compute#/resources/forwardingRules/methods/get | compute#/resources/forwardingRules/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/forwardingRules/methods/insert",
-            "read": "compute#/resources/forwardingRules/methods/get",
-            "delete": "compute#/resources/forwardingRules/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -469,59 +210,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/targetHttpsProxies/methods/insert | compute#/resources/targetHttpsProxies/methods/get | compute#/resources/targetHttpsProxies/methods/delete",
+          "sourceLocator": "compute#/resources/targetHttpsProxies/methods/insert | compute#/resources/targetHttpsProxies/methods/get",
           "operationLocators": {
             "create": "compute#/resources/targetHttpsProxies/methods/insert",
-            "read": "compute#/resources/targetHttpsProxies/methods/get",
-            "delete": "compute#/resources/targetHttpsProxies/methods/delete"
+            "read": "compute#/resources/targetHttpsProxies/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.target-https-proxy.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "target-https-proxy",
-      "conceptId": "neutral.load-balancer-listener",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/targetHttpsProxies/methods/insert | compute#/resources/targetHttpsProxies/methods/get | compute#/resources/targetHttpsProxies/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/targetHttpsProxies/methods/insert",
-            "read": "compute#/resources/targetHttpsProxies/methods/get",
-            "delete": "compute#/resources/targetHttpsProxies/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -534,59 +238,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/urlMaps/methods/insert | compute#/resources/urlMaps/methods/get | compute#/resources/urlMaps/methods/delete",
+          "sourceLocator": "compute#/resources/urlMaps/methods/insert | compute#/resources/urlMaps/methods/get",
           "operationLocators": {
             "create": "compute#/resources/urlMaps/methods/insert",
-            "read": "compute#/resources/urlMaps/methods/get",
-            "delete": "compute#/resources/urlMaps/methods/delete"
+            "read": "compute#/resources/urlMaps/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.url-map.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "url-map",
-      "conceptId": "neutral.load-balancer-listener",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/urlMaps/methods/insert | compute#/resources/urlMaps/methods/get | compute#/resources/urlMaps/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/urlMaps/methods/insert",
-            "read": "compute#/resources/urlMaps/methods/get",
-            "delete": "compute#/resources/urlMaps/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -599,59 +266,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/sslCertificates/methods/insert | compute#/resources/sslCertificates/methods/get | compute#/resources/sslCertificates/methods/delete",
+          "sourceLocator": "compute#/resources/sslCertificates/methods/insert | compute#/resources/sslCertificates/methods/get",
           "operationLocators": {
             "create": "compute#/resources/sslCertificates/methods/insert",
-            "read": "compute#/resources/sslCertificates/methods/get",
-            "delete": "compute#/resources/sslCertificates/methods/delete"
+            "read": "compute#/resources/sslCertificates/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.ssl-certificate.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "ssl-certificate",
-      "conceptId": "neutral.load-balancer-listener",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/sslCertificates/methods/insert | compute#/resources/sslCertificates/methods/get | compute#/resources/sslCertificates/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/sslCertificates/methods/insert",
-            "read": "compute#/resources/sslCertificates/methods/get",
-            "delete": "compute#/resources/sslCertificates/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -665,59 +295,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/instanceGroups/methods/insert | compute#/resources/instanceGroups/methods/get | compute#/resources/instanceGroups/methods/delete",
+          "sourceLocator": "compute#/resources/instanceGroups/methods/insert | compute#/resources/instanceGroups/methods/get",
           "operationLocators": {
             "create": "compute#/resources/instanceGroups/methods/insert",
-            "read": "compute#/resources/instanceGroups/methods/get",
-            "delete": "compute#/resources/instanceGroups/methods/delete"
+            "read": "compute#/resources/instanceGroups/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.backend-group.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "backend-group",
-      "conceptId": "neutral.compute-group",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/instanceGroups/methods/insert | compute#/resources/instanceGroups/methods/get | compute#/resources/instanceGroups/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/instanceGroups/methods/insert",
-            "read": "compute#/resources/instanceGroups/methods/get",
-            "delete": "compute#/resources/instanceGroups/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute-group",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -730,59 +323,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/healthChecks/methods/insert | compute#/resources/healthChecks/methods/get | compute#/resources/healthChecks/methods/delete",
+          "sourceLocator": "compute#/resources/healthChecks/methods/insert | compute#/resources/healthChecks/methods/get",
           "operationLocators": {
             "create": "compute#/resources/healthChecks/methods/insert",
-            "read": "compute#/resources/healthChecks/methods/get",
-            "delete": "compute#/resources/healthChecks/methods/delete"
+            "read": "compute#/resources/healthChecks/methods/get"
           },
           "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "gcp.health-check.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "health-check",
-      "conceptId": "neutral.load-balancer-health-check",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute#/resources/healthChecks/methods/insert | compute#/resources/healthChecks/methods/get | compute#/resources/healthChecks/methods/delete",
-          "operationLocators": {
-            "create": "compute#/resources/healthChecks/methods/insert",
-            "read": "compute#/resources/healthChecks/methods/get",
-            "delete": "compute#/resources/healthChecks/methods/delete"
-          },
-          "sourceSha256": "d1c6547ec075a0f672c43d0dfa4bfa1d255ff21ada3301069d435c8ac701e7b6",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-health-check",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -895,7 +451,7 @@
         {
           "sourceRole": "runtimeIntervention",
           "sourceLocator": "evaluation/research_protocol/intervention-results/intervention.gcp.backend-service-backend-group.necessity.json",
-          "sourceSha256": "76f3f35af18530d354e8b30b24aa8cb142668800fafdcf01ba2666f8bd832324",
+          "sourceSha256": "7339ac30dc7b55fa4fc21b42a23a40823158a0c7f9f841bfc7c27c1449ebce74",
           "supports": true,
           "controlPassed": true,
           "removalFailed": true,
@@ -910,6 +466,6 @@
   ],
   "exceptionClaimIds": [],
   "freeze": {
-    "sha256": "9756ca79aedfa3632a634325f97d31ee0e95f74a4b6ad201a14d475427118671"
+    "sha256": "12564ed48fb72c4a0ab04362b3eaca14967f2eef2af04f4c037029a19c22a492"
   }
 }

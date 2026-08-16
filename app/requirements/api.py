@@ -7,6 +7,7 @@
 산출물은 단계가 끝날 때마다 설계 에이전트와 같은 MySQL 저장소에 저장된다.
 요청에 app_id가 있을 때만 저장하므로, 저장소 없이 단독으로 돌려보는 것도 그대로 된다.
 """
+
 import uuid
 from typing import Any
 
@@ -30,10 +31,10 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
     단계가 끝날 때마다(피드백 게이트 응답 포함) 호출되므로, 4단계까지 가지 않고
     중간에 그만둬도 그때까지의 산출물은 남는다.
 
-    2단계(액터·유스케이스)에는 따로 저장할 자리가 없다. 액터·유스케이스는 3단계
-    명세와 함께 usecase_spec 한 건으로 저장되므로, 2단계 게이트에서는 아무것도
-    쓰지 않는다. 덕분에 명세가 비어 있는 usecase_spec이 저장돼 설계 에이전트의
-    선행조건 검사를 통과해 버리는 일도 없다.
+    액터·유스케이스와 상세 명세는 같은 usecase_spec 산출물의 순차 버전으로 저장한다.
+    2단계 게이트에서는 현재까지 완성된 유스케이스 모델을 보여주고, 3단계에서 상세
+    명세가 추가되면 같은 산출물의 새 버전으로 갱신한다. 설계 파이프라인은 요구사항
+    분석 전체가 끝난 뒤 시작하므로 중간 버전이 설계 입력으로 소비되지는 않는다.
 
     STAGE_ARTIFACTS(app/repositories/artifact_repository.py)에 이미 자리가 있어
     스키마 변경은 필요 없다. resource_spec은 **2026-07-28부터 이 에이전트가 만든다**
@@ -54,17 +55,21 @@ def persist_analysis(app_id: str, payload: dict) -> list[str]:
         saved.append(stage)
 
     save("refined_requirements", "refined_requirements", payload.get("requirements"))
+    save("capability_contract", "capability_contract", payload.get("capability_contract"))
+    save("resource_intake", "resource_intake", payload.get("resource_intake"))
 
-    use_case_specs = payload.get("use_case_specs")
-    if use_case_specs:
-        # 설계 에이전트는 usecase_spec 하나를 통째로 프롬프트에 넣는다
-        # (usecase_spec_text). 액터·유스케이스 목록이 있어야 명세가 읽히므로 함께 담는다.
+    actors = payload.get("actors") or []
+    use_cases = payload.get("use_cases") or []
+    use_case_specs = payload.get("use_case_specs") or []
+    if actors or use_cases or use_case_specs:
+        # 이 객체는 유스케이스 분석과 상세 명세의 누적 산출물이다. 먼저 분석 결과를
+        # 리뷰하고, 다음 게이트에서는 상세 명세가 더해진 같은 객체를 리뷰한다.
         save(
             "usecase_spec",
             "usecase_spec",
             {
-                "actors": payload.get("actors") or [],
-                "use_cases": payload.get("use_cases") or [],
+                "actors": actors,
+                "use_cases": use_cases,
                 "use_case_specs": use_case_specs,
             },
         )
@@ -91,10 +96,17 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     # 재개 값은 **하나**다. 둘 이상 오면 무엇을 따를지가 모호하므로 거절한다 —
     # 골라서 쓰면 화면이 보낸 것과 서버가 쓴 것이 조용히 갈린다.
     given = [
-        name for name, value in (
-            ("answer", req.answer), ("edit", req.edit),
+        name
+        for name, value in (
+            ("answer", req.answer),
+            ("edit", req.edit),
             ("resource_answers", req.resource_answers),
-        ) if value is not None
+            (
+                "deployment_preferences",
+                req.deployment_preferences if not req.requirements else None,
+            ),
+        )
+        if value is not None
     ]
     if len(given) > 1:
         raise HTTPException(
@@ -106,6 +118,8 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
     resume: object | None = req.answer if req.answer is not None else req.edit
     if resume is None and req.resource_answers is not None:
         resume = ResourceAnswer(answers=req.resource_answers)
+    if resume is None and req.deployment_preferences is not None and not req.requirements:
+        resume = req.deployment_preferences
     if resume is not None:
         if not req.thread_id:
             raise HTTPException(
@@ -129,6 +143,15 @@ def analyze_endpoint(req: AnalyzeRequest) -> AnalyzeResponse:
             req.feedback_gates,
             persist=settings.enable_session_persistence,
             constraints_text=req.resource_constraints_text or "",
+            cloud_constraints=(
+                req.deployment_preferences.model_dump(mode="json", exclude_unset=True)
+                if req.deployment_preferences is not None
+                else (
+                    req.cloud_constraints.model_dump(mode="json")
+                    if req.cloud_constraints is not None
+                    else None
+                )
+            ),
         )
 
     if req.app_id:

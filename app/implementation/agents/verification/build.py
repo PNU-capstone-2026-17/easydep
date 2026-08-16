@@ -33,6 +33,14 @@ class WorkspaceVerificationError(RuntimeError):
         super().__init__("Agent workspace verification failed: " + output[-1000:])
 
 
+def verification_timeout_seconds() -> int:
+    """느린 로컬 환경에서도 검증 병목을 관측할 수 있도록 제한 시간을 구성한다."""
+    return max(
+        60,
+        int(os.getenv("IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS", "900")),
+    )
+
+
 def verify_run_workspace(run_root: Path) -> dict[str, object]:
     """Verify all promoted sources from a short ASCII-safe workspace."""
     sandbox = prepare_agent_workspace(
@@ -69,7 +77,7 @@ def verify_agent_workspace(
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=300,
+        timeout=verification_timeout_seconds(),
         check=False,
     )
     evidence = {

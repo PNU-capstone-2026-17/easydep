@@ -1,0 +1,129 @@
+{
+  "schemaVersion": "easydep-tls-input-gate/v1",
+  "observedAt": "2026-08-15T03:39:51.717517+00:00",
+  "scope": "deterministic ResourcePlan and pre-IaC boundary; no DNS, certificate issuance, or cloud apply",
+  "rows": [
+    {
+      "provider": "aws",
+      "mode": "direct",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "aws",
+      "mode": "managed",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "aws",
+      "mode": "direct",
+      "input": "explicit",
+      "hostname": "api.example.test",
+      "certificateInputRef": "secret://evaluation/tls-certificate",
+      "sourceRefs": [
+        "NFR-TLS-001"
+      ],
+      "unresolvedFields": [],
+      "passed": true
+    },
+    {
+      "provider": "azure",
+      "mode": "direct",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "azure",
+      "mode": "managed",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "azure",
+      "mode": "direct",
+      "input": "explicit",
+      "hostname": "api.example.test",
+      "certificateInputRef": "secret://evaluation/tls-certificate",
+      "sourceRefs": [
+        "NFR-TLS-001"
+      ],
+      "unresolvedFields": [],
+      "passed": true
+    },
+    {
+      "provider": "gcp",
+      "mode": "direct",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "gcp",
+      "mode": "managed",
+      "input": "missing",
+      "unresolvedFields": [
+        "endpoints.endpoint-service-runtime-https.certificateInputRef",
+        "endpoints.endpoint-service-runtime-https.hostname"
+      ],
+      "iacLlmCalls": 0,
+      "blockedBeforeIac": true,
+      "errorCode": "RESOURCE-PLAN-UNRESOLVED",
+      "passed": true
+    },
+    {
+      "provider": "gcp",
+      "mode": "direct",
+      "input": "explicit",
+      "hostname": "api.example.test",
+      "certificateInputRef": "secret://evaluation/tls-certificate",
+      "sourceRefs": [
+        "NFR-TLS-001"
+      ],
+      "unresolvedFields": [],
+      "passed": true
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "missingInputCellsBlockedBeforeIac": 6,
+    "missingInputIacLlmCalls": 0
+  },
+  "rowsSha256": "ff2060d847aea3ccbe5130878edd056ca70cf6d7e6ccff447bf9ca082a152a44"
+}

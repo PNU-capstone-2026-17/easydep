@@ -25,6 +25,21 @@ DEBIAN = "projects/debian-cloud/global/images/family/debian-12"
 NET, SUB = "depkbf2-net", "depkbf2-sub"
 
 
+def find_default_route(items: list[dict], network_name: str) -> dict | None:
+    """API endpoint host와 무관하게 network의 IPv4 default route를 찾는다."""
+
+    suffix = f"/networks/{network_name}"
+    return next(
+        (
+            item
+            for item in items
+            if item.get("destRange") == "0.0.0.0/0"
+            and item.get("network", "").rstrip("/").endswith(suffix)
+        ),
+        None,
+    )
+
+
 def tcp_ok(ip: str) -> bool:
     try:
         with socket.create_connection((ip, 22), timeout=5):
@@ -116,15 +131,20 @@ def main() -> None:
     step("M2.recreate-fw-rule", mutate("POST", f"{g}/firewalls", fw_body, tok))
     step("F3.reachable-again", probe(ip, True, 300))
     # ── 셀 2: 기본 라우트 삭제 → 복원(우리 이름)
-    _, routes = call("GET", f"{g}/routes?filter=network=\"{net}\"", None, tok)
-    default = next((x for x in routes.get("items", [])
-                    if x.get("destRange") == "0.0.0.0/0"), None)
+    # Compute API filter 문자열의 URL quoting 차이로 빈 목록이 된 적이 있어,
+    # 전체 route를 받은 뒤 정확한 network selfLink와 목적 CIDR을 함께 비교한다.
+    _, routes = call("GET", f"{g}/routes", None, tok)
+    # API 응답은 www.googleapis.com, 요청은 compute.googleapis.com을 쓸 수
+    # 있어 host까지 비교하지 않는다.
+    default = find_default_route(routes.get("items", []), NET)
     step("M3a.find-default-route", {
         "ok": default is not None, "errorCodes": [],
         "excerpt": json.dumps({"name": default and default["name"],
                                "nextHop": default and default.get(
                                    "nextHopGateway", "")[-40:]},
                               ensure_ascii=False)})
+    if default is None:
+        raise RuntimeError("default route for the experiment network was not found")
     step("M3b.delete-default-route", mutate(
         "DELETE", f"{g}/routes/{default['name']}", None, tok))
     step("F4.unreachable-no-route", probe(ip, False, 180, confirm=2))

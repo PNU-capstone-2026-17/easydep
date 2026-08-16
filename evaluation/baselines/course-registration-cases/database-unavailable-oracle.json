@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-database-unavailable-health-v1",
+  "sourceRefs": [
+    "NFR-09"
+  ],
+  "requestTimeoutSeconds": 15,
+  "phases": [
+    {
+      "id": "health-reports-database-unavailable",
+      "kind": "request",
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "expect": {
+        "status": 503,
+        "jsonContains": {
+          "status": "DOWN"
+        }
+      }
+    }
+  ]
+}

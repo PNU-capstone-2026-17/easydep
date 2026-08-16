@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "easydep-resource-plan-iac-adjudication/v2",
+  "observedAt": "2026-08-15",
+  "purpose": "development",
+  "inputPolicy": {
+    "sameLogicalInput": true,
+    "applicationShape": "public API workload connected to a private persistent state workload",
+    "endpointProtocol": "http",
+    "providerSpecificProjectionAllowed": true
+  },
+  "finalCells": {
+    "aws": {
+      "runId": "resource-plan-iac-aws-20260814T214245Z",
+      "generationLlmCalls": 1,
+      "generationSeconds": 41.074338,
+      "checkpointPlanRecheckLlmCalls": 0,
+      "terraformPlan": "available",
+      "resourcePlanPlanConformance": "passed",
+      "resourceCounts": {
+        "aws_instance": 2,
+        "aws_ebs_volume": 1,
+        "aws_volume_attachment": 1,
+        "aws_vpc": 1,
+        "aws_subnet": 1,
+        "aws_security_group": 2,
+        "aws_eip": 1
+      },
+      "endpointProtocolConformance": "passed"
+    },
+    "azure": {
+      "runId": "resource-plan-iac-azure-20260814T222326Z",
+      "generationLlmCalls": 1,
+      "generationSeconds": 33.810008,
+      "generationResponseCharacters": 9951,
+      "checkpointPlanRecheckLlmCalls": 0,
+      "terraformPlan": "available",
+      "resourcePlanPlanConformance": "passed",
+      "resourceCounts": {
+        "azurerm_linux_virtual_machine": 2,
+        "azurerm_managed_disk": 1,
+        "azurerm_virtual_machine_data_disk_attachment": 1,
+        "azurerm_network_interface": 2,
+        "azurerm_network_security_group": 2,
+        "azurerm_public_ip": 1,
+        "azurerm_virtual_network": 1,
+        "azurerm_subnet": 1
+      },
+      "endpointProtocolConformance": "passed"
+    },
+    "gcp": {
+      "runId": "resource-plan-iac-gcp-20260814T221850Z",
+      "generationLlmCalls": 2,
+      "generationSeconds": 36.008677,
+      "generationResponseCharacters": 7001,
+      "repairSeconds": 18.989942,
+      "repairResponseCharacters": 6683,
+      "checkpointPlanRecheckLlmCalls": 0,
+      "terraformPlan": "available",
+      "resourcePlanPlanConformance": "passed",
+      "resourceCounts": {
+        "google_compute_instance": 2,
+        "google_compute_disk": 1,
+        "google_compute_firewall": 2,
+        "google_compute_network": 1,
+        "google_compute_subnetwork": 1,
+        "google_compute_address": 1
+      },
+      "diskAttachment": {
+        "status": "not-observed",
+        "reason": "The generated plan embeds the attached disk in the instance instead of using google_compute_attached_disk.",
+        "nextGate": "cloud-runtime-mount"
+      },
+      "endpointProtocolConformance": "passed"
+    }
+  },
+  "developmentHistory": [
+    {
+      "runId": "resource-plan-iac-azure-20260814T215550Z",
+      "classification": "subjectFailure",
+      "reason": "The generated output wrote provider configuration into a reserved system-managed file."
+    },
+    {
+      "runId": "resource-plan-iac-azure-20260814T215857Z",
+      "classification": "environmentFailure",
+      "reason": "A transient Windows provider process lock prevented validation workspace cleanup."
+    },
+    {
+      "runId": "resource-plan-iac-azure-20260814T220437Z",
+      "classification": "subjectFailure",
+      "reason": "The IaC added HTTPS termination to an HTTP ResourcePlan endpoint."
+    },
+    {
+      "runId": "resource-plan-iac-gcp-20260814T221137Z",
+      "classification": "subjectFailure",
+      "reason": "The IaC added HTTPS termination to an HTTP ResourcePlan endpoint."
+    }
+  ],
+  "decision": "All three final cells produced provider plans whose resource counts and HTTP endpoint declarations conform to the same ResourcePlan. This establishes static projection and plan conformance only.",
+  "notMeasured": [
+    "cloud apply",
+    "guest filesystem format and mount",
+    "runtime workload-to-workload reachability",
+    "business behavior",
+    "non-functional requirements"
+  ],
+  "cleanup": {
+    "cloudResourcesCreated": false,
+    "providerValidationTemporaryDirectories": 0
+  }
+}

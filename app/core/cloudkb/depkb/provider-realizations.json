@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "easydep-provider-realizations/v1",
+  "principle": "A capability is realized directly as the selected provider's native components. No cross-provider resource identity is assumed.",
+  "providers": {
+    "aws": {
+      "components": [
+        {"id":"alb","nativePath":"load-balancer","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["aws_lb","aws_alb"]}},
+        {"id":"listener","nativePath":"listener","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["aws_lb_listener"]}},
+        {"id":"target-group","nativePath":"backend-group","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["aws_lb_target_group"]}},
+        {"id":"target-group-health","nativePath":"backend-group.healthCheckSettings","representation":"embedded","ownerResourceId":"target-group","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["aws_lb_target_group"]}},
+        {"id":"certificate","nativePath":"certificate","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["aws_acm_certificate"]}}
+      ],
+      "realizations": [
+        {"id":"http-alb","variant":"public-http-application-load-balancer","capabilityIds":["load-balanced-ingress"],"composition":"multi-resource","componentIds":["alb","listener","target-group","target-group-health"]},
+        {"id":"https-alb","variant":"public-https-application-load-balancer","capabilityIds":["https-load-balanced-ingress"],"composition":"multi-resource","componentIds":["alb","listener","target-group","target-group-health","certificate"]}
+      ]
+    },
+    "azure": {
+      "components": [
+        {"id":"gateway","nativePath":"application-gateway","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["azurerm_application_gateway"]}},
+        {"id":"listener","nativePath":"application-gateway.http-listener","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"http_listener"}},
+        {"id":"backend-pool","nativePath":"application-gateway.backend-address-pool","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"backend_address_pool"}},
+        {"id":"backend-settings","nativePath":"application-gateway.backend-http-settings","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"backend_http_settings"}},
+        {"id":"probe","nativePath":"application-gateway.probe","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"probe"}},
+        {"id":"routing-rule","nativePath":"application-gateway.request-routing-rule","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"request_routing_rule"}},
+        {"id":"certificate","nativePath":"application-gateway.ssl-certificate","representation":"embedded","ownerResourceId":"gateway","boundaryStatus":"confirmed","terraformEvidence":{"ownerType":"azurerm_application_gateway","ownerBlock":"ssl_certificate"}},
+        {"id":"backend-membership","nativePath":"nic.application-gateway-backend-membership","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["azurerm_network_interface_application_gateway_backend_address_pool_association"]}}
+      ],
+      "realizations": [
+        {"id":"http-application-gateway","variant":"public-http-application-gateway","capabilityIds":["load-balanced-ingress"],"composition":"multi-resource","componentIds":["gateway","listener","backend-pool","backend-settings","probe","routing-rule","backend-membership"]},
+        {"id":"https-application-gateway","variant":"public-https-application-gateway","capabilityIds":["https-load-balanced-ingress"],"composition":"multi-resource","componentIds":["gateway","listener","backend-pool","backend-settings","probe","routing-rule","certificate","backend-membership"]}
+      ]
+    },
+    "gcp": {
+      "components": [
+        {"id":"forwarding-rule","nativePath":"forwarding-rule","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_global_forwarding_rule"]}},
+        {"id":"target-http-proxy","nativePath":"target-http-proxy","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_target_http_proxy"]}},
+        {"id":"target-https-proxy","nativePath":"target-https-proxy","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_target_https_proxy"]}},
+        {"id":"url-map","nativePath":"url-map","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_url_map"]}},
+        {"id":"backend-service","nativePath":"backend-service","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_backend_service"]}},
+        {"id":"instance-group","nativePath":"backend-group","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_instance_group"]}},
+        {"id":"health-check","nativePath":"health-check","representation":"independent","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_health_check"]}},
+        {"id":"certificate","nativePath":"ssl-certificate","representation":"composite-member","boundaryStatus":"confirmed","terraformEvidence":{"resourceTypes":["google_compute_ssl_certificate","google_compute_managed_ssl_certificate"]}}
+      ],
+      "realizations": [
+        {"id":"global-http-alb","variant":"global-public-http-application-load-balancer","capabilityIds":["load-balanced-ingress"],"composition":"multi-resource","componentIds":["forwarding-rule","target-http-proxy","url-map","backend-service","instance-group","health-check"]},
+        {"id":"global-https-alb","variant":"global-public-https-application-load-balancer","capabilityIds":["https-load-balanced-ingress"],"composition":"multi-resource","componentIds":["forwarding-rule","target-https-proxy","url-map","backend-service","instance-group","health-check","certificate"]}
+      ]
+    }
+  }
+}

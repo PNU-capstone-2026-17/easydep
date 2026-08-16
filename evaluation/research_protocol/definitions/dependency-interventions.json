@@ -1,11 +1,11 @@
 {
   "schemaVersion": "easydep-dependency-interventions/v1",
   "planSha256": "eb703358bce8106c323fe5006593caa3088346eaf3c940bc28798e85e30e7b69",
-  "projectionSha256": "896c3ae8d8e2cdf5cd6ef1d185288fae0704a0b9678283591eff7fa9d743a3a3",
+  "providerRealizationsSha256": "24e66bccd51cc0d7a2cbcb65fa4acfb73a87c8b12d8394e9f249fa45479b1076",
   "modelFreezeSha256": {
-    "aws": "940cc0738d25c348b4f238ab4cffb0a2bb4c25fa5c8619778c6e7d18f41f83ef",
-    "azure": "d0c986b9f989c7a502b3884c67de88f704888423d21080f65e09b90273eef6ce",
-    "gcp": "9756ca79aedfa3632a634325f97d31ee0e95f74a4b6ad201a14d475427118671"
+    "aws": "e9207d3cf2decd4486fb356550bc47ea99cf3a362d405fa2d19e297af3512b72",
+    "azure": "78bd3662fc5437d64dda402244b5eec58db0b6eea0d7ba80c5baaf4c977f1938",
+    "gcp": "12564ed48fb72c4a0ab04362b3eaca14967f2eef2af04f4c037029a19c22a492"
   },
   "cases": [
     {
@@ -23,8 +23,8 @@
       },
       "replications": 3,
       "status": "completed-confirmed",
-      "resultSha256": "76f3f35af18530d354e8b30b24aa8cb142668800fafdcf01ba2666f8bd832324"
+      "resultSha256": "7339ac30dc7b55fa4fc21b42a23a40823158a0c7f9f841bfc7c27c1449ebce74"
     }
   ],
-  "manifestSha256": "c18753c73461699e03da07ec1f5ce6ee09a7cbd369e6ee6f0f96af93733f0bf9"
+  "manifestSha256": "7fe091e8c859ed3ec8e9c3fc0c1fe7c5d56fafa2a4ec0c19d900420c943af2a6"
 }

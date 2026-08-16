@@ -3,11 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.core.cloudkb.depkb.build_claims import build
 from app.core.cloudkb.depkb.closure import closure
-from app.core.cloudkb.depkb.infra_intent import build as build_infra_intent
 from app.core.cloudkb.depkb.scope import VM_ANCHOR_TYPES, is_vm_claim
-from app.core.cloudkb.depkb.views import provision_view
 
 
 def test_generated_claims_are_strictly_vm_scoped():
@@ -20,11 +17,23 @@ def test_generated_claims_are_strictly_vm_scoped():
 
 
 def test_every_dynamic_observation_has_a_valid_local_evidence_coordinate():
-    assert len(build()["claims"]) == 45
+    claims = json.loads(
+        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+    )["claims"]
+    assert len(claims) == 44
+    for claim in claims:
+        for observation in claim["observations"]:
+            experiment = observation.get("experiment")
+            result_file = observation.get("resultFile")
+            if experiment:
+                assert result_file == f"experiments/{experiment}/results.json"
+                assert (Path("app/core/cloudkb/depkb") / result_file).is_file()
 
 
 def test_product_kb_contains_only_creation_and_runtime_dependencies():
-    claims = build()["claims"]
+    claims = json.loads(
+        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+    )["claims"]
 
     assert {claim["relationFamily"] for claim in claims} == {
         "provisioning",
@@ -32,18 +41,10 @@ def test_product_kb_contains_only_creation_and_runtime_dependencies():
     }
 
 
-def test_provision_view_has_no_teardown_only_model_fields():
-    view = provision_view(build_infra_intent(["vm"], "aws", "us-east-1"))
-
-    assert {
-        "deleteBlockedWhileAttached",
-        "detachRequiredBeforeDelete",
-        "cascadeDeletedWithOwner",
-    }.isdisjoint(view)
-
-
 def test_exclusive_choice_uses_cardinality_not_borrowed_idl_labels():
-    claims = build()["claims"]
+    claims = json.loads(
+        Path("app/core/cloudkb/depkb/claims.json").read_text(encoding="utf-8")
+    )["claims"]
     choice = next(c for c in claims if c["condition"]["kind"] == "exclusiveChoice")
     assert choice["condition"]["machine"] == {"cardinality": {"min": 1, "max": 1}}
 

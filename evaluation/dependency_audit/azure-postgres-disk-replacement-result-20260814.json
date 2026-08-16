@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "easydep-azure-postgres-disk-intervention/v1",
+  "runId": "easydep-pg-dfced84d",
+  "provider": "azure",
+  "location": "koreacentral",
+  "vmSize": "Standard_B2ats_v2",
+  "vmImage": "Ubuntu2204",
+  "postgresImage": "postgres:17-bookworm",
+  "rootControlSkipped": true,
+  "startedAt": "2026-08-14T10:53:56.694826+00:00",
+  "finishedAt": "2026-08-14T10:59:41.551708+00:00",
+  "outcome": "passed",
+  "error": null,
+  "observations": {
+    "postgresRunsWithBootDiskOnly": false,
+    "additionalDataDiskIsNotProvisioningRequired": false,
+    "retainedDataDiskSurvivesVmReplacement": true
+  },
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 5.792,
+      "detail": "easydep-pg-dfced84d"
+    },
+    {
+      "name": "data-vm.create",
+      "status": "passed",
+      "durationSeconds": 41.076,
+      "detail": null
+    },
+    {
+      "name": "data-disk.create-and-attach",
+      "status": "passed",
+      "durationSeconds": 7.824,
+      "detail": "attached-new-data-disk"
+    },
+    {
+      "name": "data-vm.data-disk-count",
+      "status": "passed",
+      "durationSeconds": 3.309,
+      "detail": 1
+    },
+    {
+      "name": "data-vm.postgres-write",
+      "status": "passed",
+      "durationSeconds": 32.798,
+      "detail": "Enable succeeded: \n[stdout]\n\n[stderr]\n"
+    },
+    {
+      "name": "data-vm.delete",
+      "status": "passed",
+      "durationSeconds": 32.607,
+      "detail": null
+    },
+    {
+      "name": "data-disk.wait-detached",
+      "status": "passed",
+      "durationSeconds": 1.879,
+      "detail": null
+    },
+    {
+      "name": "replacement-vm.create",
+      "status": "passed",
+      "durationSeconds": 42.914,
+      "detail": null
+    },
+    {
+      "name": "replacement-vm.attach-existing-disk",
+      "status": "passed",
+      "durationSeconds": 7.567,
+      "detail": "attached-existing-data-disk"
+    },
+    {
+      "name": "replacement-vm.postgres-read",
+      "status": "passed",
+      "durationSeconds": 32.908,
+      "detail": "Enable succeeded: \n[stdout]\n\n[stderr]\n"
+    }
+  ],
+  "cleanup": {
+    "passed": true,
+    "resourceGroupExists": false
+  },
+  "interpretationLimits": [
+    "Both variants have an Azure OS disk; the comparison concerns an additional data disk.",
+    "The replacement observation supports independent data lifecycle, not high availability.",
+    "This is one development run in one Azure region and does not establish a cross-provider rate."
+  ]
+}

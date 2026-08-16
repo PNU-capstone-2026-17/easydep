@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.design.services.deployment_diagram.topology import derive_deployment_topology
+
 
 class ModelProvenance(BaseModel):
     """Make proposal ownership explicit; this is not a standards claim."""
@@ -16,9 +18,7 @@ class ModelProvenance(BaseModel):
 
     owner: Literal["EasyDep"] = "EasyDep"
     status: Literal["research-proposal"] = "research-proposal"
-    standards_compliant: list[str] = Field(
-        default_factory=list, alias="standardsCompliant"
-    )
+    standards_compliant: list[str] = Field(default_factory=list, alias="standardsCompliant")
     inspired_by: list[str] = Field(default_factory=list, alias="inspiredBy")
 
 
@@ -140,9 +140,18 @@ _DEPENDENCY_RULES = (
         "dependencies": (("implementation", "org.flywaydb:flyway-core"),),
     },
     {
+        "id": "java.flyway-postgresql",
+        "allMarkers": ("flyway:\n", "jdbc:postgresql:"),
+        "dependencies": (
+            ("runtimeOnly", "org.flywaydb:flyway-database-postgresql"),
+        ),
+    },
+    {
         "id": "java.spring-data-jpa",
         "markers": ("jakarta.persistence.", "org.springframework.data."),
-        "dependencies": (("implementation", "org.springframework.boot:spring-boot-starter-data-jpa"),),
+        "dependencies": (
+            ("implementation", "org.springframework.boot:spring-boot-starter-data-jpa"),
+        ),
     },
     {
         "id": "java.sqlite-jdbc",
@@ -163,7 +172,20 @@ _DEPENDENCY_RULES = (
         # or datasource classes instead of loading them only through configuration.
         "dependencies": (("implementation", "com.h2database:h2"),),
     },
+    {
+        "id": "java.postgresql",
+        "markers": ("jdbc:postgresql:", "org.postgresql."),
+        "dependencies": (("runtimeOnly", "org.postgresql:postgresql"),),
+    },
 )
+
+
+def _dependency_rule_matches(text: str, rule: dict[str, Any]) -> bool:
+    any_markers = tuple(rule.get("markers") or ())
+    all_markers = tuple(rule.get("allMarkers") or ())
+    return (not any_markers or any(marker in text for marker in any_markers)) and all(
+        marker in text for marker in all_markers
+    )
 
 # Cross-layer runtime requirements are registry data so another database/ORM pair can be
 # added without changing the contract schema or tying validation to a benchmark case.
@@ -190,6 +212,33 @@ _DATABASE_DIALECT_RULES = (
     },
 )
 
+_DATABASE_ENGINE_ALIASES = {
+    "postgres": "postgresql",
+    "postgresql": "postgresql",
+    "h2": "h2",
+    "sqlite": "sqlite",
+    "mysql": "mysql",
+    "mariadb": "mariadb",
+}
+
+_DATABASE_ENGINE_MARKERS = {
+    "postgresql": ("jdbc:postgresql:", "org.postgresql.Driver", "PostgreSQLDialect"),
+    "h2": ("jdbc:h2:", "org.h2.Driver", "H2Dialect"),
+    "sqlite": ("jdbc:sqlite:", "org.sqlite.JDBC", "SQLiteDialect"),
+    "mysql": ("jdbc:mysql:", "com.mysql.cj.jdbc.Driver", "MySQLDialect"),
+    "mariadb": ("jdbc:mariadb:", "org.mariadb.jdbc.Driver", "MariaDBDialect"),
+}
+
+_DATABASE_DRIVER_COORDINATES = {
+    "postgresql": ("org.postgresql:postgresql",),
+    "h2": ("com.h2database:h2",),
+    "sqlite": ("org.xerial:sqlite-jdbc",),
+    "mysql": ("com.mysql:mysql-connector-j", "mysql:mysql-connector-java"),
+    "mariadb": ("org.mariadb.jdbc:mariadb-java-client",),
+}
+
+_JDBC_NETWORK_URL_PREFIX = re.compile(r"^(jdbc:[a-z0-9]+://)", re.IGNORECASE)
+
 _FILE_IO_MARKERS = (
     "java.nio.file.Files",
     "Files.newInputStream(",
@@ -208,6 +257,10 @@ _STATE_PATH_NAME = re.compile(
     r"(?:^|_)(?:STATE|DATA|STORAGE|DB|DATABASE|UPLOAD|CONTENT)(?:_|$)",
     re.IGNORECASE,
 )
+_SECRET_CONFIGURATION_NAME = re.compile(
+    r"(?:^|_)(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)(?:_|$)",
+    re.IGNORECASE,
+)
 
 
 def _application_text(application: Path) -> tuple[str, list[str]]:
@@ -216,7 +269,8 @@ def _application_text(application: Path) -> tuple[str, list[str]]:
     files = [
         path
         for path in observation_root.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".java", ".kt", ".yaml", ".yml", ".properties"}
+        if path.is_file()
+        and path.suffix.lower() in {".java", ".kt", ".yaml", ".yml", ".properties"}
     ]
     chunks = [path.read_text(encoding="utf-8", errors="replace") for path in files]
     return "\n".join(chunks), [path.relative_to(application).as_posix() for path in files]
@@ -238,13 +292,9 @@ def infer_application_contract(
         }
     )
     text, files = _application_text(application)
-    facts = {
-        fact.id: fact
-        for fact in contract.facts
-        if not fact.id.startswith("observed.")
-    }
+    facts = {fact.id: fact for fact in contract.facts if not fact.id.startswith("observed.")}
     for rule in _DEPENDENCY_RULES:
-        if any(marker in text for marker in rule["markers"]):
+        if _dependency_rule_matches(text, rule):
             fact_id = f"observed.{rule['id']}"
             facts.setdefault(
                 fact_id,
@@ -264,27 +314,43 @@ def infer_application_contract(
             )
     for match in re.finditer(r"\$\{([A-Z][A-Z0-9_]+):([^}]+)\}", text):
         name, default_value = match.groups()
+        value_prefix = None
         if default_value.startswith("jdbc:sqlite:"):
             test_template = "jdbc:sqlite:{temp}/database.db"
         elif default_value.startswith("jdbc:h2:file:"):
             test_template = "jdbc:h2:file:{temp}/database"
         else:
-            continue
+            test_template = None
+            prefix_match = _JDBC_NETWORK_URL_PREFIX.match(default_value)
+            if prefix_match:
+                value_prefix = prefix_match.group(1)
+            else:
+                continue
         fact_id = f"observed.environment.{name.lower()}"
+        attributes = {
+            "name": name,
+            "required": False,
+            "default": default_value,
+        }
+        if test_template:
+            attributes["testValueTemplate"] = test_template
+        if value_prefix:
+            attributes["valuePrefix"] = value_prefix
         facts.setdefault(
             fact_id,
             ContractFact(
                 id=fact_id,
                 kind="runtime.environment",
-                attributes={
-                    "name": name,
-                    "required": False,
-                    "default": default_value,
-                    "testValueTemplate": test_template,
-                },
+                attributes=attributes,
                 sourceRefs=files,
                 provenanceClass="hypothesis",
-                extensions={"detector": "placeholder.file-database"},
+                extensions={
+                    "detector": (
+                        "placeholder.file-database"
+                        if test_template
+                        else "placeholder.jdbc-network-url"
+                    )
+                },
             ),
         )
         file_path = _file_database_path(default_value)
@@ -306,9 +372,8 @@ def infer_application_contract(
             )
     # JDBC 이름에 묶이지 않은 일반 파일 상태도 관측한다. 파일 I/O API와 외부설정의
     # 절대 기본 경로가 함께 있어야 하므로 단순 PATH 문자열만으로 상태를 지어내지 않는다.
-    if (
-        "observed.runtime.storage.primary" not in facts
-        and any(marker in text for marker in _FILE_IO_MARKERS)
+    if "observed.runtime.storage.primary" not in facts and any(
+        marker in text for marker in _FILE_IO_MARKERS
     ):
         configured_path = next(
             (
@@ -340,17 +405,13 @@ def infer_application_contract(
                 extensions={"detector": "file-io.external-path"},
             )
     if "observed.runtime.storage.primary" not in facts:
-        direct_path = re.search(
-            r"(?:jdbc:sqlite:|jdbc:h2:file:)(/[^\s}'\"]+)", text
-        )
+        direct_path = re.search(r"(?:jdbc:sqlite:|jdbc:h2:file:)(/[^\s}'\"]+)", text)
         if direct_path:
             facts["observed.runtime.storage.primary"] = ContractFact(
                 id="observed.runtime.storage.primary",
                 kind="runtime.storage",
                 attributes={
-                    "accessPath": str(Path(direct_path.group(1)).parent).replace(
-                        "\\", "/"
-                    ),
+                    "accessPath": str(Path(direct_path.group(1)).parent).replace("\\", "/"),
                     "durability": "persistent",
                     "accessScope": "node-filesystem",
                 },
@@ -383,9 +444,7 @@ def _file_database_path(value: str) -> str | None:
 
 def _observed_server_port(text: str) -> int:
     value = r"(?:\$\{[A-Z][A-Z0-9_]*:)?(\d+)(?:\})?"
-    property_match = re.search(
-        rf"(?m)^\s*server\.port\s*=\s*{value}\s*$", text
-    )
+    property_match = re.search(rf"(?m)^\s*server\.port\s*=\s*{value}\s*$", text)
     if property_match:
         return int(property_match.group(1))
 
@@ -414,14 +473,8 @@ def derive_deployment_bindings(
 ) -> tuple[CloudCapabilityContract, DeploymentBindingContract]:
     """Choose deployment-side values from app consumers without fixing technologies in schema."""
     binding = DeploymentBindingContract.model_validate(declared or {})
-    cloud_facts = {
-        fact.id: fact for fact in cloud.facts if not fact.id.startswith("planned.")
-    }
-    bindings = {
-        item.id: item
-        for item in binding.bindings
-        if not item.id.startswith("planned.")
-    }
+    cloud_facts = {fact.id: fact for fact in cloud.facts if not fact.id.startswith("planned.")}
+    bindings = {item.id: item for item in binding.bindings if not item.id.startswith("planned.")}
     app_port = next((fact for fact in application.facts if fact.kind == "runtime.port"), None)
     if app_port is not None:
         cloud_facts["planned.cloud.network.backend"] = ContractFact(
@@ -438,9 +491,7 @@ def derive_deployment_bindings(
         bindings["planned.binding.http"] = ContractBinding(
             id="planned.binding.http",
             kind="network",
-            consumes=BindingEndpoint(
-                contract="application", factId=app_port.id, attribute="port"
-            ),
+            consumes=BindingEndpoint(contract="application", factId=app_port.id, attribute="port"),
             provides=BindingEndpoint(
                 contract="cloud",
                 factId="planned.cloud.network.backend",
@@ -462,8 +513,7 @@ def derive_deployment_bindings(
             or (
                 fact.kind.startswith("cloud.capability.")
                 and isinstance(fact.attributes.get("applicationState"), dict)
-                and fact.attributes["applicationState"].get("durability")
-                == "persistent"
+                and fact.attributes["applicationState"].get("durability") == "persistent"
             )
         )
         for fact in cloud.facts
@@ -472,8 +522,7 @@ def derive_deployment_bindings(
         (
             fact
             for fact in application.facts
-            if fact.kind == "runtime.storage.intent"
-            and fact.attributes.get("accessPath")
+            if fact.kind == "runtime.storage.intent" and fact.attributes.get("accessPath")
         ),
         None,
     )
@@ -536,9 +585,7 @@ def test_environment(
         # Agent-authored contracts must not override PATH, JAVA_TOOL_OPTIONS, or other
         # inherited process controls. The testing adapter owns this namespace.
         if name.startswith("EASYDEP_") and template:
-            environment[name] = template.replace(
-                "{temp}", temporary_directory.as_posix()
-            )
+            environment[name] = template.replace("{temp}", temporary_directory.as_posix())
     return environment
 
 
@@ -552,9 +599,7 @@ def dependency_declarations(
         "compileOnly",
         "annotationProcessor",
     }
-    coordinate_pattern = re.compile(
-        r"^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.+\-]+)?$"
-    )
+    coordinate_pattern = re.compile(r"^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.+\-]+)?$")
     for fact in contract.facts:
         if fact.kind != "build.dependency":
             continue
@@ -596,24 +641,37 @@ def cloud_contract_from_legacy(requirements_result: dict[str, Any]) -> CloudCapa
                 extensions={
                     key: value
                     for key, value in need.items()
-                    if key not in {"required", "metadata", "requirementIds", "requirement_ids", "evidenceSpans", "evidence_spans"}
+                    if key
+                    not in {
+                        "required",
+                        "metadata",
+                        "requirementIds",
+                        "requirement_ids",
+                        "evidenceSpans",
+                        "evidence_spans",
+                    }
                 },
             )
         )
     resource_spec = requirements_result.get("resource_spec") or {}
-    if isinstance(resource_spec, dict) and isinstance(
-        resource_spec.get("multiZone"), bool
-    ):
-        facts.append(
-            ContractFact(
-                id="resource.availability",
-                kind="cloud.availability",
-                attributes={"multiZone": resource_spec["multiZone"]},
-                sourceRefs=["RESOURCE_SPEC.multiZone"],
-                provenanceClass="adapted",
-                extensions={"adapter": "resource-spec/v2"},
-            )
+    topology = derive_deployment_topology(
+        provider=(
+            str(resource_spec.get("provider") or "")
+            if isinstance(resource_spec, dict)
+            else ""
+        ),
+        resource_spec=resource_spec if isinstance(resource_spec, dict) else {},
+    )
+    facts.append(
+        ContractFact(
+            id="policy.deployment-topology",
+            kind="cloud.deploymentTopology",
+            attributes=topology,
+            sourceRefs=["easydep-default:deployment-topology"],
+            provenanceClass="adapted",
+            extensions={"adapter": "deployment-topology/v1"},
         )
+    )
     return CloudCapabilityContract(facts=facts)
 
 
@@ -625,8 +683,73 @@ def application_intent_contract_from_requirements(
 
     facts: list[ContractFact] = []
     needs = accepted_needs(requirements_result.get("deployment_needs") or {})
+    database_values: dict[str, set[Any]] = {
+        "engine": set(),
+        "version": set(),
+        "deploymentMode": set(),
+        "embedded": set(),
+        "managedServiceAllowed": set(),
+    }
+    database_source_refs: set[str] = set()
+    database_evidence_refs: set[str] = set()
+    required_configuration: set[str] = set()
+    configuration_source_refs: set[str] = set()
+    configuration_evidence_refs: set[str] = set()
     for name, need in sorted(needs.items()):
         metadata = need.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            continue
+        source_refs = {
+            str(item)
+            for item in (need.get("requirementIds") or need.get("requirement_ids") or [])
+        }
+        evidence_refs = {
+            str(item)
+            for item in (need.get("evidenceSpans") or need.get("evidence_spans") or [])
+        }
+
+        raw_database_values = {
+            "engine": metadata.get("databaseEngine") or metadata.get("database_engine"),
+            "version": metadata.get("databaseVersion") or metadata.get("database_version"),
+            "deploymentMode": metadata.get("deploymentMode")
+            or metadata.get("deployment_mode"),
+            "embedded": metadata.get("embedded"),
+            "managedServiceAllowed": (
+                metadata.get("managedServiceAllowed")
+                if "managedServiceAllowed" in metadata
+                else metadata.get("managed_service_allowed")
+            ),
+        }
+        if metadata.get("managed_service_prohibited") is True:
+            raw_database_values["managedServiceAllowed"] = False
+        contributed_database = False
+        for key, value in raw_database_values.items():
+            if not isinstance(value, (str, int, float, bool)):
+                continue
+            if value == "":
+                continue
+            if key == "engine":
+                value = _normalize_database_engine(str(value))
+            database_values[key].add(value)
+            contributed_database = True
+        if contributed_database:
+            database_source_refs.update(source_refs)
+            database_evidence_refs.update(evidence_refs)
+
+        names = metadata.get("environment_variables") or metadata.get(
+            "environmentVariables"
+        )
+        if isinstance(names, list):
+            accepted_names = {
+                str(item)
+                for item in names
+                if re.fullmatch(r"[A-Z_][A-Z0-9_]*", str(item))
+            }
+            if accepted_names:
+                required_configuration.update(accepted_names)
+                configuration_source_refs.update(source_refs)
+                configuration_evidence_refs.update(evidence_refs)
+
         state = metadata.get("applicationState") or metadata.get("application_state")
         if not isinstance(state, dict) or not state:
             continue
@@ -642,12 +765,8 @@ def application_intent_contract_from_requirements(
                 id=f"intent.{name}.state",
                 kind="runtime.storage.intent",
                 attributes={"required": bool(need.get("required")), **attributes},
-                sourceRefs=list(
-                    need.get("requirementIds") or need.get("requirement_ids") or []
-                ),
-                evidenceRefs=list(
-                    need.get("evidenceSpans") or need.get("evidence_spans") or []
-                ),
+                sourceRefs=list(need.get("requirementIds") or need.get("requirement_ids") or []),
+                evidenceRefs=list(need.get("evidenceSpans") or need.get("evidence_spans") or []),
                 provenanceClass="adapted",
                 extensions={
                     "source": "accepted-deployment-need",
@@ -656,7 +775,49 @@ def application_intent_contract_from_requirements(
                 },
             )
         )
+
+    database_attributes: dict[str, Any] = {"required": True}
+    database_conflicts: dict[str, list[Any]] = {}
+    for key, values in database_values.items():
+        if len(values) == 1:
+            database_attributes[key] = next(iter(values))
+        elif len(values) > 1:
+            database_conflicts[key] = sorted(values, key=str)
+    if database_conflicts:
+        database_attributes["conflicts"] = database_conflicts
+    if len(database_attributes) > 1:
+        facts.append(
+            ContractFact(
+                id="intent.database",
+                kind="runtime.database.intent",
+                attributes=database_attributes,
+                sourceRefs=sorted(database_source_refs),
+                evidenceRefs=sorted(database_evidence_refs),
+                provenanceClass="adapted",
+                extensions={"source": "accepted-deployment-needs"},
+            )
+        )
+    if required_configuration:
+        facts.append(
+            ContractFact(
+                id="intent.configuration",
+                kind="runtime.configuration.intent",
+                attributes={
+                    "required": True,
+                    "requiredKeys": sorted(required_configuration),
+                },
+                sourceRefs=sorted(configuration_source_refs),
+                evidenceRefs=sorted(configuration_evidence_refs),
+                provenanceClass="adapted",
+                extensions={"source": "accepted-deployment-needs"},
+            )
+        )
     return ApplicationRuntimeContract(facts=facts)
+
+
+def _normalize_database_engine(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]", "", value.lower())
+    return _DATABASE_ENGINE_ALIASES.get(normalized, normalized)
 
 
 def merge_application_contracts(
@@ -665,9 +826,7 @@ def merge_application_contracts(
 ) -> ApplicationRuntimeContract:
     """요구사항 소유 intent가 생성 에이전트 선언으로 덮이지 않게 합친다."""
     agent = ApplicationRuntimeContract.model_validate(declared or {})
-    facts = {
-        fact.id: fact for fact in agent.facts if not fact.id.startswith("intent.")
-    }
+    facts = {fact.id: fact for fact in agent.facts if not fact.id.startswith("intent.")}
     facts.update({fact.id: fact for fact in requirement_intent.facts})
     return agent.model_copy(update={"facts": list(facts.values())})
 
@@ -676,13 +835,17 @@ def validate_application_consistency(
     application: Path, contract: ApplicationRuntimeContract
 ) -> list[ConsistencyDiagnostic]:
     text, files = _application_text(application)
-    build_files = [path for path in (application / "build.gradle", application / "build.gradle.kts") if path.is_file()]
+    build_files = [
+        path
+        for path in (application / "build.gradle", application / "build.gradle.kts")
+        if path.is_file()
+    ]
     build_text = "\n".join(
         path.read_text(encoding="utf-8", errors="replace") for path in build_files
     )
     diagnostics: list[ConsistencyDiagnostic] = []
     for rule in _DEPENDENCY_RULES:
-        if not any(marker in text for marker in rule["markers"]):
+        if not _dependency_rule_matches(text, rule):
             continue
         missing = [
             coordinate
@@ -699,43 +862,178 @@ def validate_application_consistency(
                 )
             )
 
-    engine_markers = {
-        "sqlite": ("jdbc:sqlite:", "org.sqlite.JDBC", "SQLiteDialect"),
-        "h2": ("jdbc:h2:", "org.h2.Driver", "H2Dialect"),
-    }
-    observed = {
+    configured_engines = {
         engine: {marker for marker in markers if marker in text}
-        for engine, markers in engine_markers.items()
+        for engine, markers in _DATABASE_ENGINE_MARKERS.items()
     }
-    active = [engine for engine, markers in observed.items() if markers]
-    if len(active) > 1:
+    active_configured = [
+        engine for engine, markers in configured_engines.items() if markers
+    ]
+    available_drivers = {
+        engine
+        for engine, coordinates in _DATABASE_DRIVER_COORDINATES.items()
+        if any(coordinate in build_text for coordinate in coordinates)
+    }
+    if len(active_configured) > 1:
         diagnostics.append(
             ConsistencyDiagnostic(
                 code="APP-DB-001",
                 message="Database URL, driver, or dialect markers select conflicting engines.",
                 locations=files,
-                details={"observed": {key: sorted(value) for key, value in observed.items()}},
+                details={
+                    "configured": {
+                        key: sorted(value) for key, value in configured_engines.items()
+                    }
+                },
             )
         )
     for fact in contract.facts:
-        if fact.kind != "runtime.database":
+        if fact.kind not in {"runtime.database", "runtime.database.intent"}:
             continue
-        declared_engine = str(fact.attributes.get("engine") or "").lower()
-        if declared_engine and active and declared_engine not in active:
+        conflicts = fact.attributes.get("conflicts")
+        if isinstance(conflicts, dict) and conflicts:
             diagnostics.append(
                 ConsistencyDiagnostic(
-                    code="APP-DB-001",
-                    message="Declared database engine conflicts with generated configuration.",
+                    code="APP-DB-INTENT-001",
+                    message="Accepted requirements contain conflicting database intentions.",
                     locations=files,
-                    details={"declared": declared_engine, "observed": active},
+                    details={"conflicts": conflicts, "sourceRefs": fact.source_refs},
+                )
+            )
+        declared_engine = _normalize_database_engine(
+            str(fact.attributes.get("engine") or "")
+        )
+        if declared_engine:
+            configured_mismatch = (
+                bool(active_configured) and declared_engine not in active_configured
+            )
+            driver_mismatch = (
+                not active_configured
+                and declared_engine not in available_drivers
+            )
+            if configured_mismatch or driver_mismatch:
+                diagnostics.append(
+                    ConsistencyDiagnostic(
+                        code=(
+                            "APP-DB-ENGINE-001"
+                            if fact.kind == "runtime.database.intent"
+                            else "APP-DB-001"
+                        ),
+                        message=(
+                            "Required database engine is absent or conflicts with generated "
+                            "runtime configuration."
+                        ),
+                        locations=files,
+                        details={
+                            "required": declared_engine,
+                            "configured": active_configured,
+                            "availableDrivers": sorted(available_drivers),
+                            "sourceRefs": fact.source_refs,
+                        },
+                    )
+                )
+
+        deployment_mode = re.sub(
+            r"[^a-z0-9]+",
+            " ",
+            str(fact.attributes.get("deploymentMode") or "").lower(),
+        ).strip()
+        requires_separate_process = (
+            fact.attributes.get("embedded") is False
+            or any(
+                token in deployment_mode
+                for token in ("separate", "container", "self hosted", "external")
+            )
+        )
+        embedded_runtime = (
+            "jdbc:h2:mem:" in text
+            or "jdbc:sqlite:" in text
+        )
+        if requires_separate_process and embedded_runtime:
+            diagnostics.append(
+                ConsistencyDiagnostic(
+                    code="APP-DB-MODE-001",
+                    message=(
+                        "A separate database process was required, but generated "
+                        "configuration selects an embedded database."
+                    ),
+                    locations=files,
+                    details={
+                        "deploymentMode": fact.attributes.get("deploymentMode"),
+                        "embeddedRequired": fact.attributes.get("embedded"),
+                        "configured": active_configured,
+                        "sourceRefs": fact.source_refs,
+                    },
+                )
+            )
+
+    persistent_intent = any(
+        fact.kind == "runtime.storage.intent"
+        and fact.attributes.get("required") is True
+        and fact.attributes.get("durability") == "persistent"
+        for fact in contract.facts
+    )
+    if persistent_intent and "jdbc:h2:mem:" in text:
+        diagnostics.append(
+            ConsistencyDiagnostic(
+                code="APP-STORAGE-001",
+                message=(
+                    "Persistent application state was required, but generated "
+                    "configuration uses an in-memory database."
+                ),
+                locations=files,
+                details={"configured": "jdbc:h2:mem:"},
+            )
+        )
+
+    for fact in contract.facts:
+        if fact.kind != "runtime.configuration.intent":
+            continue
+        required_keys = {
+            str(item)
+            for item in (fact.attributes.get("requiredKeys") or [])
+            if re.fullmatch(r"[A-Z_][A-Z0-9_]*", str(item))
+        }
+        missing_keys = sorted(key for key in required_keys if key not in text)
+        if missing_keys:
+            diagnostics.append(
+                ConsistencyDiagnostic(
+                    code="APP-CONFIG-001",
+                    message="Required runtime configuration inputs are not consumed by the app.",
+                    locations=files,
+                    details={
+                        "requiredKeys": sorted(required_keys),
+                        "missingKeys": missing_keys,
+                        "sourceRefs": fact.source_refs,
+                    },
+                )
+            )
+        secret_defaults: dict[str, str] = {}
+        for key in sorted(required_keys):
+            if _SECRET_CONFIGURATION_NAME.search(key) is None:
+                continue
+            match = re.search(rf"\$\{{{re.escape(key)}:([^}}]+)\}}", text)
+            if match is not None and match.group(1).strip():
+                secret_defaults[key] = match.group(1).strip()
+        if secret_defaults:
+            diagnostics.append(
+                ConsistencyDiagnostic(
+                    code="APP-CONFIG-SECRET-001",
+                    message=(
+                        "Required secret configuration contains a source-controlled "
+                        "non-empty default value."
+                    ),
+                    locations=files,
+                    details={
+                        "keysWithDefaults": sorted(secret_defaults),
+                        "sourceRefs": fact.source_refs,
+                    },
                 )
             )
     for rule in _DATABASE_ORM_RULES:
         database_present = any(marker in text for marker in rule["databaseMarkers"])
         orm_present = any(marker in text for marker in rule["ormMarkers"])
-        has_runtime_integration = any(
-            marker in text for marker in rule["requiredAnyMarkers"]
-        )
+        has_runtime_integration = any(marker in text for marker in rule["requiredAnyMarkers"])
         if database_present and orm_present and not has_runtime_integration:
             diagnostics.append(
                 ConsistencyDiagnostic(
@@ -752,9 +1050,7 @@ def validate_application_consistency(
         if not any(marker in text for marker in rule["databaseMarkers"]):
             continue
         configured_invalid = [
-            class_name
-            for class_name in rule["invalidClasses"]
-            if class_name in text
+            class_name for class_name in rule["invalidClasses"] if class_name in text
         ]
         if configured_invalid:
             diagnostics.append(
@@ -827,9 +1123,9 @@ def validate_binding_consistency(
                         details={"consumes": left_value, "provides": right_value},
                     )
                 )
-    multi_zone = any(
-        fact.kind == "cloud.availability"
-        and fact.attributes.get("multiZone") is True
+    managed_group = any(
+        fact.kind == "cloud.deploymentTopology"
+        and fact.attributes.get("computeManagement") == "managedGroup"
         for fact in cloud.facts
     )
     observed_node_scoped_state = [
@@ -846,7 +1142,7 @@ def validate_binding_consistency(
         and fact.attributes.get("accessScope") == "node-filesystem"
     ]
     node_scoped_state = [*required_node_scoped_intent, *observed_node_scoped_state]
-    if multi_zone and node_scoped_state:
+    if managed_group and node_scoped_state:
         intent_mandates_node_scope = bool(required_node_scoped_intent)
         alternatives = (
             [
@@ -855,7 +1151,7 @@ def validate_binding_consistency(
                     "repairOwner": "requirements.analysis",
                 },
                 {
-                    "id": "revise-availability-requirement",
+                    "id": "revise-compute-topology",
                     "repairOwner": "requirements.analysis",
                 },
             ]
@@ -866,34 +1162,30 @@ def validate_binding_consistency(
                     "repairOwner": "implementation.logic",
                 },
                 {
-                    "id": "revise-availability-requirement",
+                    "id": "revise-compute-topology",
                     "repairOwner": "requirements.analysis",
                 },
             ]
         )
         diagnostics.append(
             ConsistencyDiagnostic(
-                code="BIND-STATE-HA-001",
+                code="BIND-STATE-GROUP-001",
                 message=(
-                    "Multi-zone availability does not define how node-filesystem "
-                    "state remains consistent or available across instances."
+                    "A managed compute group requires node-filesystem "
+                    "state to be externalized or replicated."
                 ),
-                locations=[
-                    location
-                    for fact in node_scoped_state
-                    for location in fact.source_refs
-                ],
+                locations=[location for fact in node_scoped_state for location in fact.source_refs],
                 details={
                     "decision": "needsUserInput",
                     "question": (
-                        "Should the application externalize or replicate its state, "
-                        "or should the multi-zone requirement be revised?"
+                        "Should the application externalize or replicate its node-filesystem "
+                        "state, or should the compute topology be revised?"
                     ),
                     "alternatives": alternatives,
                     "automaticRepair": False,
                     "intentMandatesNodeScope": intent_mandates_node_scope,
                     "applicationFactIds": [fact.id for fact in node_scoped_state],
-                    "cloudFactId": "resource.availability",
+                    "cloudFactId": "policy.deployment-topology",
                 },
             )
         )

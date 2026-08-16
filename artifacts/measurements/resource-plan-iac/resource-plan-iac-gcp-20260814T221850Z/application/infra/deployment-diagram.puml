@@ -1,0 +1,39 @@
+@startuml
+!theme plain
+skinparam shadowing false
+title Docker-on-VM deployment - gcp / asia-northeast3
+cloud "GCP (asia-northeast3)" as cloud_provider
+node "Compute Engine VM" as resource_compute_instance <<compute>>
+node "Compute Engine VM" as resource_compute_state_store <<compute>>
+database "Persistent Disk" as resource_disk <<storage>>
+node "Public HTTP endpoint" as resource_endpoint_api_runtime_http <<endpoint>>
+node "Firewall Rule" as resource_firewall <<network>>
+node "Firewall Rule" as resource_firewall_state_store <<network>>
+node "VPC Network" as resource_network <<network>>
+node "VM Network Interface (embedded)" as resource_network_interface <<network>>
+node "External IP Address" as resource_public_ip <<network>>
+node "Subnetwork" as resource_subnet <<network>>
+node "API Runtime" as resource_workload_api_runtime <<runtime>>
+node "State Store" as resource_workload_state_store <<runtime>>
+resource_compute_instance --> resource_network_interface : uses
+resource_compute_state_store --> resource_disk : attaches
+resource_compute_state_store --> resource_subnet : is placed in
+resource_endpoint_api_runtime_http --> resource_public_ip : enters through
+resource_endpoint_api_runtime_http --> resource_workload_api_runtime : routes to
+resource_firewall --> resource_compute_instance : allows traffic to
+resource_firewall --> resource_network : belongs to
+resource_firewall_state_store --> resource_compute_state_store : allows traffic to
+resource_firewall_state_store --> resource_network : belongs to
+resource_network_interface --> resource_subnet : is attached to
+resource_public_ip --> resource_compute_instance : exposes
+resource_subnet --> resource_network : belongs to
+resource_workload_api_runtime --> resource_compute_instance : runs on
+resource_workload_api_runtime --> resource_workload_state_store : TCP
+resource_workload_state_store --> resource_compute_state_store : runs on
+cloud_provider o-- resource_compute_instance : contains
+cloud_provider o-- resource_compute_state_store : contains
+note bottom
+  No high-availability objective was supplied; one instance is planned.
+  Performance, price, VM family, and traffic autoscaling are deferred.
+end note
+@enduml

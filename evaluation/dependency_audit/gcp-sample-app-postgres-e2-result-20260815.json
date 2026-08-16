@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "easydep-gcp-sample-app-postgres-e2/v1",
+  "provider": "gcp",
+  "runId": "easydep-e2-ea5d285e",
+  "startedAt": "2026-08-14T15:29:30.222011+00:00",
+  "transportUnderTest": "public HTTP forwarding rule to a managed instance group of app VM containers, then private PostgreSQL",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 29.788,
+      "detail": "easydep-e2-ea5d285e-net"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 78.157,
+      "detail": "easydep-e2-ea5d285e-subnet"
+    },
+    {
+      "name": "firewall.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 23.087,
+      "detail": "state tcp/5432 from app source tag"
+    },
+    {
+      "name": "firewall.allow-google-health",
+      "status": "passed",
+      "durationSeconds": 10.737,
+      "detail": "NAME                          NETWORK                  DIRECTION  PRIORITY  ALLOW     DENY  DISABLED\neasydep-e2-ea5d285e-allow-lb  easydep-e2-ea5d285e-net  INGRESS    1000      tcp:8080        False"
+    },
+    {
+      "name": "state-disk.create",
+      "status": "passed",
+      "durationSeconds": 5.513,
+      "detail": "easydep-e2-ea5d285e-data"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 21.453,
+      "detail": "easydep-e2-ea5d285e-state"
+    },
+    {
+      "name": "state-vm.postgres-ready",
+      "status": "passed",
+      "durationSeconds": 95.97,
+      "detail": "EASYDEP_E1 state-ready passed"
+    },
+    {
+      "name": "app-group.template",
+      "status": "failed",
+      "durationSeconds": 7.179,
+      "detail": "WARNING: You have selected a disk size of under [200GB]. This may result in poor I/O performance. For more information, see: https://developers.google.com/compute/docs/disks#performance.\nERROR: (gcloud.compute.instance-templates.create) Underspecified resource [easydep-e2-ea5d285e-subnet]. Specify the [--region] flag.\n"
+    }
+  ],
+  "outcome": "failed",
+  "pathUnderTest": "forwarding rule -> target HTTP proxy -> URL map -> backend service health -> managed app VM group (2) -> state VM private IPv4:5432 -> persistent disk",
+  "scope": "domain-neutral app-tier availability pilot; state tier remains singleton",
+  "error": "WARNING: You have selected a disk size of under [200GB]. This may result in poor I/O performance. For more information, see: https://developers.google.com/compute/docs/disks#performance.\nERROR: (gcloud.compute.instance-templates.create) Underspecified resource [easydep-e2-ea5d285e-subnet]. Specify the [--region] flag.\n",
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T15:36:16.092522+00:00",
+  "interpretationLimits": [
+    "The test validates app-tier managed autohealing, not state-tier high availability.",
+    "Public HTTP is used; trusted HTTPS, DNS ownership, and certificates are not tested.",
+    "One zonal development run does not establish a GCP-wide success rate or an SLA.",
+    "Sequential probes are a functional continuity signal, not a performance load test."
+  ]
+}

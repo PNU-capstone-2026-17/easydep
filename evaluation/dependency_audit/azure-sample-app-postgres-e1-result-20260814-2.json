@@ -1,0 +1,144 @@
+{
+  "schemaVersion": "easydep-azure-sample-app-postgres-e1/v1",
+  "provider": "azure",
+  "runId": "easydep-e1-4c71f6d7",
+  "startedAt": "2026-08-14T13:19:16.272478+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 4.633,
+      "detail": "easydep-e1-4c71f6d7"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 14.107,
+      "detail": "10.79.0.0/16"
+    },
+    {
+      "name": "app-nsg.create",
+      "status": "passed",
+      "durationSeconds": 5.056,
+      "detail": "app-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.734,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "state-nsg.deny-vnet-postgres",
+      "status": "passed",
+      "durationSeconds": 2.967,
+      "detail": "explicit deny keeps the blocked condition observable"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 42.847,
+      "detail": "state"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 44.407,
+      "detail": "app"
+    },
+    {
+      "name": "state-nsg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 3.786,
+      "detail": "state tcp/5432 from app private IPv4"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 7.693,
+      "detail": "managed data disk attached as LUN 0"
+    },
+    {
+      "name": "state-volume.mount-and-postgres",
+      "status": "passed",
+      "durationSeconds": 33.157,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-image.build",
+      "status": "passed",
+      "durationSeconds": 93.498,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-container.start",
+      "status": "passed",
+      "durationSeconds": 33.626,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "baseline.app-write-read",
+      "status": "passed",
+      "durationSeconds": 32.957,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "intervention.delete-postgres-allow",
+      "status": "passed",
+      "durationSeconds": 3.641,
+      "detail": "explicit app-to-state allow removed"
+    },
+    {
+      "name": "intervention.app-observes-state-loss",
+      "status": "passed",
+      "durationSeconds": 32.974,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 3.99,
+      "detail": "state tcp/5432 from app private IPv4"
+    },
+    {
+      "name": "restore.app-reads-existing-value",
+      "status": "passed",
+      "durationSeconds": 33.557,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "persistence.state-vm-restart",
+      "status": "passed",
+      "durationSeconds": 72.988,
+      "detail": "state VM restarted"
+    },
+    {
+      "name": "persistence.app-reads-existing-value",
+      "status": "passed",
+      "durationSeconds": 33.647,
+      "detail": "guest command passed"
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "app VM/container local HTTP -> state VM private IPv4:5432 -> PostgreSQL data path -> Azure managed data disk",
+  "scope": "domain-neutral dependency pilot; not course-registration behavior",
+  "networkObservation": {
+    "applicationOracle": "app VM localhost:8080 through Azure Run Command",
+    "databaseEndpointUsedByApp": "10.79.1.4:5432",
+    "databaseIngressSource": "10.79.1.5/32",
+    "publicAddresses": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T13:32:51.373520+00:00",
+  "interpretationLimits": [
+    "The test app validates resource bindings, not course-registration rules.",
+    "The application endpoint is checked locally; public ingress and HTTPS are not tested.",
+    "A same-instance reboot is not state-VM replacement or state-tier high availability.",
+    "One development run does not establish an Azure-wide success rate."
+  ]
+}

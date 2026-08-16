@@ -11,18 +11,14 @@
 
 | 주장 | 자동 승인 근거 | 승인하지 않는 근거 |
 |---|---|---|
-| 리소스 경계 | 공식 스키마의 독립 식별자와 create/read/delete 수명주기 | 이름 유사성, LLM 분류 |
-| 의존성 존재 | 공식 참조 필드·공식 매뉴얼·제어면 관측 | 중립 모델의 관계만 존재 |
+| 리소스 경계 | 공식 스키마의 독립 식별자와 create/read 연산 | 이름 유사성, LLM 분류 |
+| 의존성 존재 | 공식 참조 필드·공식 매뉴얼·제어면 관측 | 출처 없는 공통 이름만 존재 |
 | 필수 의존성 | 공식 규범적 선행조건 또는 3회 제거–실패–복구 | 스키마 참조만 존재 |
-| 중립 매핑 | 중립 모델 후보와 CSP 공식 근거가 모두 존재 | Cloud-Barista 단독 주장 |
 
 AWS는 Cloud Control API/CloudFormation resource type schema의 identifier와 CRUD-L handler를,
 Azure는 Resource Provider REST/OpenAPI의 resource ID·경로·연산을, GCP는 Config Connector
 CRD의 리소스 종류와 `*Ref` 필드를 우선 사용한다. 현재 Botocore와 Compute Discovery
 관측은 공식 보조 근거지만 독립 리소스 경계를 단독 확정하지 않는다.
-
-Cloud-Barista, TOSCA, OCCI는 공통 개념 후보와 의미 손실 반례를 찾는 데 사용한다.
-Cloud-Barista가 여러 CSP를 지원한다는 사실은 개별 CSP의 필수 의존성을 증명하지 않는다.
 
 ## 사람과 LLM의 역할
 
@@ -37,16 +33,16 @@ LLM은 공식 문서에서 후보 문장과 source locator를 추출할 수 있�
 
 ## 재현 명령과 현재 범위
 
-다음 명령은 중립 크로스워크의 Docker-on-VM 경계 가설마다 세 CSP 공식 모델의
-create/read/delete 연산을 대조하고 동결 모델을 다시 만든다.
+다음 명령은 Docker-on-VM 범위에서 선택한 CSP의 공식 모델이 제공하는 독립 식별자와
+create/read 연산을 대조하고 동결 모델을 다시 만든다.
 
 ```powershell
 python -m evaluation.research_protocol.commands.build_evidence_models
 ```
 
 현재 자동 확정된 경계는 AWS 8개, Azure 7개, GCP 12개다. Azure의 로드 밸런서 하위
-구성처럼 별도 create/read/delete를 모두 갖추지 않은 요소는 독립 경계로 억지로 분리하지
-않고 `embedded` projection으로 보존한다. 반대로 GCP 글로벌 외부 HTTPS 로드밸런서는
+구성처럼 별도 create/read를 모두 갖추지 않은 요소는 독립 경계로 억지로 분리하지
+않고 `embedded` 실현으로 보존한다. 반대로 GCP 글로벌 외부 HTTPS 로드밸런서는
 forwarding rule, target HTTPS proxy, URL map, backend service, instance group, health check,
 certificate가 함께 기능을 실현하는 `composite-member`로 기록한다. 참조 관계의 필수성은
 공식 규범 문장이나 앱 기능을 포함한 제거–복구 실험 없이는 확정하지 않는다.

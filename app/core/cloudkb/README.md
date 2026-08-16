@@ -44,14 +44,13 @@ application requirements
 
 - `data/*.json.gz`는 검증 후 커밋한 런타임 데이터이며 기본 실행에서 우선한다.
 - `output/`과 `.cache/`는 로컬 재빌드 작업공간이다. 현행 모델의 일부가 아니며 커밋하지 않는다.
-- `depkb/native/`와 `depkb/neutral_candidates/`는 현행 모델의 근거와 교차 감사를 보존한다.
+- `depkb/native/`는 CSP별 공식 원천에서 추출한 경계와 관계 검토 자료를 보존한다.
 - `depkb/experiments/`, `depkb/replications/`, 저장소의 `evaluation/`은 연구 증거다.
   제품 런타임 입력으로 직접 읽지 않는다.
 - `document/archive/`는 비권위 과거 기록이다.
 
-Cloud-Barista 중립 모델은 검색·비교·감사에 사용한다. 실제 프로비저닝 계획은 검토된
-provider-native DepKB를 사용하며, 중립 모델만으로 provider별 연결 리소스나 수명 주기를
-추론하지 않는다.
+실제 프로비저닝 계획은 선택된 CSP의 provider-native DepKB와 capability 실현 카탈로그를
+사용한다. CSP 사이에 같은 리소스 ID가 존재한다고 가정하지 않는다.
 
 ## 아직 구현하지 않은 부분
 

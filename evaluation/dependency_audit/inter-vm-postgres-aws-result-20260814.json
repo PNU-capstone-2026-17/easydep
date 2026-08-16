@@ -1,0 +1,128 @@
+{
+  "schemaVersion": "easydep-inter-vm-postgres-intervention/v1",
+  "provider": "aws",
+  "runId": "easydep-ivm-8448dde2",
+  "startedAt": "2026-08-14T11:40:29.088179+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 1.723,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.subnet",
+      "status": "passed",
+      "durationSeconds": 1.614,
+      "detail": "subnet-062eadd5b5b60354c"
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 1.516,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "probe-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.36,
+      "detail": "sg-000fe64ca72a9eb3c"
+    },
+    {
+      "name": "state-sg.create",
+      "status": "passed",
+      "durationSeconds": 2.26,
+      "detail": "sg-0e2745f6281dc9d49"
+    },
+    {
+      "name": "probe-sg.allow-ssh",
+      "status": "passed",
+      "durationSeconds": 2.313,
+      "detail": "{\n    \"Return\": true,\n    \"SecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0400844bc652e1758\",\n            \"GroupId\": \"sg-000fe64ca72a9eb3c\",\n            \"GroupOwnerId\": \"<redacted-account>\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 22,\n            \"ToPort\": 22,\n            \"CidrIpv4\": \"0.0.0.0/0\",\n            \"SecurityGroupRuleArn\": \"arn:aws:<redacted>\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "state-sg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 2.649,
+      "detail": "state tcp/5432 from probe security group"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 1.935,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 3.529,
+      "detail": "i-05a6fc182c081e2bf"
+    },
+    {
+      "name": "probe-vm.create",
+      "status": "passed",
+      "durationSeconds": 2.718,
+      "detail": "i-02aa57f82a9a22c73"
+    },
+    {
+      "name": "vms.running",
+      "status": "passed",
+      "durationSeconds": 17.68,
+      "detail": "both running"
+    },
+    {
+      "name": "probe-vm.tools-ready",
+      "status": "passed",
+      "durationSeconds": 75.682,
+      "detail": "cloud-init and Docker ready"
+    },
+    {
+      "name": "baseline.private-postgres-write-read",
+      "status": "passed",
+      "durationSeconds": 2.632,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "intervention.revoke-postgres",
+      "status": "passed",
+      "durationSeconds": 1.751,
+      "detail": "{\n    \"Return\": true,\n    \"RevokedSecurityGroupRules\": [\n        {\n            \"SecurityGroupRuleId\": \"sgr-0d56917e2cbc1743a\",\n            \"GroupId\": \"sg-0e2745f6281dc9d49\",\n            \"IsEgress\": false,\n            \"IpProtocol\": \"tcp\",\n            \"FromPort\": 5432,\n            \"ToPort\": 5432,\n            \"ReferencedGroupId\": \"sg-000fe64ca72a9eb3c\"\n        }\n    ]\n}"
+    },
+    {
+      "name": "intervention.connection-blocked",
+      "status": "passed",
+      "durationSeconds": 6.309,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 1.542,
+      "detail": "state tcp/5432 from probe security group"
+    },
+    {
+      "name": "restore.private-postgres-read",
+      "status": "passed",
+      "durationSeconds": 1.218,
+      "detail": "guest command passed"
+    }
+  ],
+  "outcome": "passed",
+  "networkObservation": {
+    "stateAddressUsedByProbe": "172.31.43.132",
+    "probeHadPublicManagementAddress": true,
+    "stateHadPublicBootstrapAddress": true
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T11:43:42.031195+00:00",
+  "interpretationLimits": [
+    "The experiment verifies private-address transport, not absence of a public address.",
+    "One development run does not establish a provider-wide success rate.",
+    "PostgreSQL connectivity does not establish high availability or performance."
+  ]
+}

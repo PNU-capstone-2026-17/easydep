@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
 from app.core.orchestration.adapters.vm_delivery import SYSTEM_PROMPT, VmDeliveryAdapter
 from app.core.orchestration.app_cloud_contracts import (
     ApplicationRuntimeContract,
@@ -43,11 +44,243 @@ def test_multiple_explicit_cloud_targets_are_rejected():
         resolve_resource_spec({}, "Deploy to AWS and Google Cloud.")
 
 
+def test_provider_target_requires_selecting_one_saved_alternative():
+    with pytest.raises(ValueError, match="Select one provider and region"):
+        resolve_resource_spec(
+            {
+                "deploymentTargets": [
+                    {"provider": "aws", "region": "ap-northeast-2"},
+                    {"provider": "gcp", "region": "asia-northeast3"},
+                ]
+            }
+        )
+
+
+def test_runtime_bootstrap_preserves_application_owned_migrations_and_url_format():
+    contract = ApplicationRuntimeContract(
+        facts=[
+            ContractFact(
+                id="observed.java.flyway",
+                kind="build.dependency",
+                attributes={
+                    "declarations": [
+                        {
+                            "configuration": "implementation",
+                            "coordinate": "org.flywaydb:flyway-core",
+                        }
+                    ]
+                },
+            ),
+            ContractFact(
+                id="intent.configuration",
+                kind="runtime.configuration.intent",
+                attributes={
+                    "requiredKeys": [
+                        "DATABASE_URL",
+                        "DATABASE_USER",
+                        "DATABASE_PASSWORD",
+                    ]
+                },
+            ),
+            ContractFact(
+                id="observed.environment.database_url",
+                kind="runtime.environment",
+                attributes={
+                    "name": "DATABASE_URL",
+                    "valuePrefix": "jdbc:postgresql://",
+                },
+            ),
+        ]
+    )
+
+    errors = VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "user_data.sh.tftpl": (
+                'docker run -e DATABASE_URL="postgresql://db:5432/app" '
+                "-e DATABASE_USER=user -e DATABASE_PASSWORD=password app\n"
+                "CREATE TABLE courses (id VARCHAR PRIMARY KEY);\n"
+                "INSERT INTO courses VALUES ('C-1');\n"
+            )
+        },
+        contract,
+    )
+
+    assert any("application schema or seed-data migration" in error for error in errors)
+    assert any("jdbc:postgresql://" in error for error in errors)
+    assert not VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "user_data.sh.tftpl": (
+                'docker run -e DATABASE_URL="jdbc:postgresql://db:5432/app" '
+                "-e DATABASE_USER=user -e DATABASE_PASSWORD=password app\n"
+            )
+        },
+        contract,
+    )
+
+
+def test_templatefile_inputs_must_not_be_escaped_as_shell_literals():
+    files = {
+        "main.tf": (
+            'resource "aws_instance" "app" { user_data = '
+            'templatefile("bootstrap.tftpl", { image = var.image, port = 8080 }) }'
+        ),
+        "bootstrap.tftpl": (
+            "docker run $${image}\n"
+            "echo $${RUNTIME_ONLY}\n"
+        ),
+    }
+
+    errors = VmDeliveryAdapter._templatefile_binding_errors(files)
+
+    assert errors == [
+        "bootstrap.tftpl: templatefile input keys are escaped into literal shell "
+        "placeholders: image"
+    ]
+    files["bootstrap.tftpl"] = "docker run ${image}\necho $${RUNTIME_ONLY}\n"
+    assert VmDeliveryAdapter._templatefile_binding_errors(files) == []
+
+
+def test_runtime_bootstrap_rejects_service_reload_before_start():
+    errors = VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "proxy.sh.tftpl": (
+                "sudo systemctl enable nginx\n"
+                "sudo systemctl reload nginx\n"
+            )
+        },
+        ApplicationRuntimeContract(),
+    )
+
+    assert errors == [
+        "proxy.sh.tftpl: systemd service nginx is reloaded before it is started."
+    ]
+    assert VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "proxy.sh.tftpl": (
+                "sudo systemctl enable --now nginx\n"
+                "sudo systemctl reload nginx\n"
+            )
+        },
+        ApplicationRuntimeContract(),
+    ) == []
+
+
+def test_aws_runtime_bootstrap_requires_egress_and_stable_ebs_identity():
+    contract = ApplicationRuntimeContract()
+    invalid = {
+        "main.tf": (
+            'resource "aws_vpc" "main" {}\n'
+            'resource "aws_instance" "state" { '
+            "associate_public_ip_address = false }\n"
+            'resource "aws_volume_attachment" "state" {}\n'
+        ),
+        "state.sh.tftpl": (
+            "dnf -y install docker\n"
+            "docker run postgres:16\n"
+            'DEVICE="/dev/sdf"\n'
+        ),
+    }
+
+    errors = VmDeliveryAdapter._runtime_bootstrap_errors(
+        invalid,
+        contract,
+        "aws",
+    )
+
+    assert any("internet gateway" in error for error in errors)
+    assert any("no NAT gateway" in error for error in errors)
+    assert any("stable identity" in error for error in errors)
+
+    invented_linux_symlink = {
+        **invalid,
+        "state.sh.tftpl": (
+            invalid["state.sh.tftpl"]
+            + 'VOLUME_ID="vol-123"\n'
+            + 'DEVICE="/dev/disk/by-id/aws-${VOLUME_ID}"\n'
+        ),
+    }
+    assert any(
+        "/dev/disk/by-id/aws-*" in error
+        for error in VmDeliveryAdapter._runtime_bootstrap_errors(
+            invented_linux_symlink,
+            contract,
+            "aws",
+        )
+    )
+
+    valid = {
+        **invalid,
+        "main.tf": (
+            invalid["main.tf"]
+            + 'resource "aws_internet_gateway" "main" {}\n'
+            + 'resource "aws_route_table" "public" { '
+            + 'route { cidr_block = "0.0.0.0/0" } }\n'
+            + 'resource "aws_route_table_association" "public" { '
+            + "route_table_id = aws_route_table.public.id }\n"
+            + 'resource "aws_nat_gateway" "egress" {}\n'
+        ),
+        "state.sh.tftpl": (
+            invalid["state.sh.tftpl"]
+            + 'for device in /dev/nvme*n1; do nvme id-ctrl --vendor-specific "$device"; done\n'
+            + 'echo "UUID=example /var/lib/postgresql/data ext4 defaults,nofail 0 2" '
+            + ">> /etc/fstab\n"
+            + "docker run -d --restart unless-stopped postgres:16\n"
+        ),
+    }
+    assert not VmDeliveryAdapter._runtime_bootstrap_errors(valid, contract, "aws")
+
+
+def test_runtime_bootstrap_rejects_container_binding_of_filesystem_mount_root():
+    contract = ApplicationRuntimeContract()
+    common = 'MOUNT_ROOT="/mnt/state"\nmount "$${MOUNT_ROOT}"\n'
+
+    errors = VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "state.sh.tftpl": (
+                common
+                + 'docker run -d --restart unless-stopped '
+                + '-v "$${MOUNT_ROOT}":/var/lib/service/data state-image\n'
+            )
+        },
+        contract,
+    )
+
+    assert errors == [
+        "state.sh.tftpl: container data bind uses the filesystem mount root "
+        "$${MOUNT_ROOT} without a dedicated runtime data child directory."
+    ]
+    assert not VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "state.sh.tftpl": (
+                common
+                + 'mkdir -p "$${MOUNT_ROOT}/runtime-data"\n'
+                + 'docker run -d --restart unless-stopped '
+                + '-v "$${MOUNT_ROOT}/runtime-data":/var/lib/service/data state-image\n'
+            )
+        },
+        contract,
+    )
+    assert not VmDeliveryAdapter._runtime_bootstrap_errors(
+        {
+            "state.sh.tftpl": (
+                common
+                + 'docker run -d --restart unless-stopped '
+                + '-e DATA_PATH="$${MOUNT_ROOT}/runtime-data" '
+                + '-v "$${MOUNT_ROOT}":/var/lib/service/data state-image\n'
+            )
+        },
+        contract,
+    )
+
+
 def test_provider_validation_reuses_cache_and_captures_lock(tmp_path, monkeypatch):
     cache = tmp_path / "plugin-cache"
     observed_environments = []
 
-    monkeypatch.setenv("EASYDEP_TOFU_PLUGIN_CACHE", str(cache))
+    monkeypatch.setattr(
+        "app.core.orchestration.adapters.vm_delivery.settings.easydep_tofu_plugin_cache",
+        str(cache),
+    )
     monkeypatch.setattr(
         "app.core.orchestration.adapters.vm_delivery.shutil.which", lambda _name: "tofu"
     )
@@ -64,6 +297,19 @@ def test_provider_validation_reuses_cache_and_captures_lock(tmp_path, monkeypatc
                 'provider "registry.opentofu.org/hashicorp/azurerm" {\n  version = "5.0.1"\n}\n',
                 encoding="utf-8",
             )
+        if command[1] == "show":
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps(
+                    {
+                        "format_version": "1.2",
+                        "terraform_version": "1.9.0",
+                        "planned_values": {"root_module": {"resources": []}},
+                    }
+                ),
+                "",
+            )
         return subprocess.CompletedProcess(command, 0, "ok", "")
 
     monkeypatch.setattr("app.core.orchestration.adapters.vm_delivery.run_process_tree", run)
@@ -78,6 +324,41 @@ def test_provider_validation_reuses_cache_and_captures_lock(tmp_path, monkeypatc
     ]
     assert result["providerLock"]["sha256"]
     assert result["_lockFileContent"].startswith("provider")
+    assert result["terraformPlan"]["status"] == "available"
+    assert result["terraformPlan"]["resourceCounts"] == {}
+    assert [item["command"] for item in result["reports"]] == [
+        "init",
+        "validate",
+        "plan",
+        "show-json",
+    ]
+    assert all(item["stdout"] != "ok" for item in result["reports"] if item["command"] == "plan")
+
+
+def test_provider_validation_fails_when_plan_json_cannot_be_observed(tmp_path, monkeypatch):
+    cache = tmp_path / "plugin-cache"
+    monkeypatch.setattr(
+        "app.core.orchestration.adapters.vm_delivery.settings.easydep_tofu_plugin_cache",
+        str(cache),
+    )
+    monkeypatch.setattr(
+        "app.core.orchestration.adapters.vm_delivery.shutil.which", lambda _name: "tofu"
+    )
+
+    def run(command, *, cwd, **_kwargs):
+        if command[1] == "init":
+            (cwd / ".terraform.lock.hcl").write_text("", encoding="utf-8")
+        if command[1] == "plan":
+            return subprocess.CompletedProcess(command, 1, "", "invalid AMI query")
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    monkeypatch.setattr("app.core.orchestration.adapters.vm_delivery.run_process_tree", run)
+
+    result = VmDeliveryAdapter()._provider_validation({"main.tf": "terraform {}"})
+
+    assert result["status"] == "failed"
+    assert result["stage"] == "terraformPlan"
+    assert result["errors"] == ["invalid AMI query"]
 
 
 def test_provider_contract_rejects_unpinned_or_foreign_provider_before_init(tmp_path, monkeypatch):
@@ -85,7 +366,10 @@ def test_provider_contract_rejects_unpinned_or_foreign_provider_before_init(tmp_
     unexpected = cache / "registry.opentofu.org/hashicorp/aws/5.100.0/windows_amd64"
     unexpected.mkdir(parents=True)
     invoked = []
-    monkeypatch.setenv("EASYDEP_TOFU_PLUGIN_CACHE", str(cache))
+    monkeypatch.setattr(
+        "app.core.orchestration.adapters.vm_delivery.settings.easydep_tofu_plugin_cache",
+        str(cache),
+    )
     monkeypatch.setattr(
         "app.core.orchestration.adapters.vm_delivery.shutil.which", lambda _name: "tofu"
     )
@@ -179,6 +463,79 @@ def test_provider_contract_allows_language_builtin_templatefile():
     assert errors == []
 
 
+def test_generated_provider_blocks_are_replaced_by_the_system_owned_contract():
+    normalized, events = VmDeliveryAdapter._normalize_provider_ownership(
+        {
+            "main.tf": (
+                'terraform { required_providers { aws = { source = "hashicorp/aws" '
+                'version = "~> 5.100" } } }\n'
+                'provider "aws" { region = var.region }\n'
+                'resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }\n'
+            )
+        }
+    )
+    files = VmDeliveryAdapter._ensure_provider_contract(
+        normalized,
+        "aws",
+        "ap-northeast-2",
+    )
+
+    assert 'terraform {' not in files["main.tf"]
+    assert 'provider "aws"' not in files["main.tf"]
+    assert 'resource "aws_vpc" "main"' in files["main.tf"]
+    assert 'version = "= 5.100.0"' in files["easydep-provider.tf"]
+    assert events == [
+        {
+            "kind": "systemProviderOwnership",
+            "file": "main.tf",
+            "removedBlocks": ["provider.aws", "terraform"],
+        }
+    ]
+
+
+def test_standard_template_provider_shape_is_lowered_to_builtin_templatefile():
+    normalized, events = VmDeliveryAdapter._normalize_native_templatefiles(
+        {
+            "main.tf": (
+                'data "template_file" "bootstrap" {\n'
+                '  template = file("bootstrap.tftpl")\n'
+                '  vars = { image = var.image }\n'
+                '}\n'
+                'resource "aws_instance" "app" {\n'
+                '  user_data = data.template_file.bootstrap.rendered\n'
+                '}\n'
+            ),
+            "bootstrap.tftpl": "docker run $${image}\n",
+        }
+    )
+
+    assert 'data "template_file"' not in normalized["main.tf"]
+    assert 'user_data = templatefile("bootstrap.tftpl", { image = var.image })' in normalized[
+        "main.tf"
+    ]
+    assert events == [
+        {
+            "kind": "nativeTemplatefileLowering",
+            "file": "main.tf",
+            "dataSource": "data.template_file.bootstrap",
+        }
+    ]
+
+
+def test_non_file_template_provider_shape_is_not_rewritten():
+    original = {
+        "main.tf": (
+            'data "template_file" "inline" { template = "hello $${name}" }\n'
+            'output "rendered" { value = data.template_file.inline.rendered }\n'
+        )
+    }
+
+    normalized, events = VmDeliveryAdapter._normalize_native_templatefiles(original)
+
+    assert normalized == original
+    assert events == []
+
+
 @pytest.mark.parametrize(
     ("provider", "source", "version", "alias"),
     [
@@ -200,6 +557,76 @@ def test_missing_provider_contract_is_added_from_the_pinned_system_policy(
     assert VmDeliveryAdapter._provider_contract_errors(files, provider) == []
 
 
+@pytest.mark.parametrize(
+    ("provider", "region", "expected"),
+    [
+        ("aws", "ap-northeast-2", 'provider "aws"'),
+        ("azure", "koreacentral", 'provider "azurerm"'),
+        ("gcp", "asia-northeast3", 'provider "google"'),
+    ],
+)
+def test_system_managed_provider_configuration_uses_the_selected_target(
+    provider, region, expected
+):
+    files = VmDeliveryAdapter._ensure_provider_contract(
+        {"main.tf": "locals {}"}, provider, region
+    )
+
+    managed = files["easydep-provider.tf"]
+    assert expected in managed
+    if provider != "azure":
+        assert region in managed
+
+
+def test_existing_provider_configuration_is_not_duplicated_by_managed_file():
+    files = VmDeliveryAdapter._ensure_provider_contract(
+        {
+            "main.tf": (
+                'provider "aws" { region = var.region }\n'
+                'variable "region" { type = string }\n'
+                'resource "aws_vpc" "main" { cidr_block = "10.0.0.0/16" }'
+            )
+        },
+        "aws",
+        "ap-northeast-2",
+    )
+
+    assert 'provider "aws"' in files["main.tf"]
+    assert 'provider "aws"' not in files["easydep-provider.tf"]
+    assert 'source  = "hashicorp/aws"' in files["easydep-provider.tf"]
+
+
+def test_system_managed_gcp_provider_binds_a_declared_project_variable():
+    files = VmDeliveryAdapter._ensure_provider_contract(
+        {
+            "main.tf": (
+                'variable "project_id" { type = string }\n'
+                'resource "google_compute_network" "main" { name = "main" }'
+            )
+        },
+        "gcp",
+        "asia-northeast3",
+    )
+
+    assert "project = var.project_id" in files["easydep-provider.tf"]
+
+
+def test_plan_only_required_ssh_key_uses_a_valid_public_key_shape():
+    environment = VmDeliveryAdapter._plan_variable_environment(
+        {
+            "main.tf": (
+                'variable "admin_ssh_public_key" { type = string }\n'
+                'variable "password" { type = string }\n'
+                'variable "ami_id" { type = string }'
+            )
+        }
+    )
+
+    assert environment["TF_VAR_admin_ssh_public_key"].startswith("ssh-ed25519 ")
+    assert environment["TF_VAR_password"].startswith("easydep-plan-only")
+    assert environment["TF_VAR_ami_id"] == "ami-00000000000000000"
+
+
 def test_existing_wrong_provider_contract_is_not_silently_replaced():
     original = {
         "main.tf": (
@@ -218,7 +645,7 @@ def test_existing_wrong_provider_contract_is_not_silently_replaced():
 
 
 def test_generator_cannot_claim_the_system_managed_provider_file_name():
-    with pytest.raises(ValueError, match="system-managed file name"):
+    with pytest.raises(ValueError, match="system-managed provider file"):
         VmDeliveryAdapter._ensure_provider_contract(
             {
                 "main.tf": 'resource "aws_instance" "app" {}',
@@ -226,6 +653,22 @@ def test_generator_cannot_claim_the_system_managed_provider_file_name():
             },
             "aws",
         )
+
+
+def test_provider_only_managed_name_collision_is_canonicalized():
+    files = VmDeliveryAdapter._ensure_provider_contract(
+        {
+            "main.tf": 'resource "aws_instance" "app" {}',
+            "easydep-provider.tf": (
+                'terraform { required_providers { aws = { source = "hashicorp/aws" } } }'
+            ),
+        },
+        "aws",
+        "ap-northeast-2",
+    )
+
+    assert 'version = "= 5.100.0"' in files["easydep-provider.tf"]
+    assert 'region = "ap-northeast-2"' in files["easydep-provider.tf"]
 
 
 def test_iac_agent_prompt_does_not_promote_candidate_necessity():
@@ -280,6 +723,18 @@ def test_vm_delivery_writes_only_returned_terraform(tmp_path):
                 ],
             },
             "kb_used": ["depkb"],
+            "resource_plan": {
+                "schemaVersion": "easydep-resource-plan/v1",
+                "provider": "aws",
+                "nodes": [
+                    {
+                        "id": "workload-api",
+                        "entityClass": "runtimeElement",
+                        "handling": "runtimeDerived",
+                    }
+                ],
+                "edges": [],
+            },
         },
         implementation_result={"run_root": str(tmp_path / "run")},
         application_runtime_contract={
@@ -307,6 +762,8 @@ def test_vm_delivery_writes_only_returned_terraform(tmp_path):
     assert captured["dependencyPlan"]["evidencePolicy"]["legacyClaimsExcluded"] is True
     assert captured["dependencyPlan"]["coverage"]["unmodeledAcceptedNeeds"] == ["https_ingress"]
     assert captured["dependencyPlan"]["capabilityRealizations"] == []
+    assert captured["resourcePlan"]["schemaVersion"] == "easydep-resource-plan/v1"
+    assert captured["resourcePlan"]["nodes"][0]["id"] == "workload-api"
     assert all(
         len(value) == 64 for value in captured["dependencyPlan"]["knowledgeSnapshot"].values()
     )
@@ -314,11 +771,10 @@ def test_vm_delivery_writes_only_returned_terraform(tmp_path):
     assert (application / "Dockerfile").is_file()
     assert "EXPOSE 8181" in (application / "Dockerfile").read_text(encoding="utf-8")
     assert captured["applicationPort"] == 8181
-    assert "exactly\napplicationMountPath" in captured["persistenceBoundary"]
-    assert "format the disk only when no filesystem exists" in captured[
-        "persistenceBoundary"
-    ]
-    assert "stable\nprovider device identity" in captured["persistenceBoundary"]
+    assert "ResourcePlan attachment and allocation" in captured["persistenceBoundary"]
+    assert "applicationMountPath only when" in captured["persistenceBoundary"]
+    assert "Format only\nwhen no filesystem exists" in captured["persistenceBoundary"]
+    assert "stable provider device identity" in captured["persistenceBoundary"]
     assert "$${NAME}" in SYSTEM_PROMPT
     assert (application / ".dockerignore").is_file()
     assert result["containerFilesCreated"] == ["Dockerfile", ".dockerignore"]
@@ -346,6 +802,114 @@ def test_vm_delivery_preserves_existing_container_files(tmp_path):
         "FROM custom\nEXPOSE 8080\n"
     )
     assert result["containerFilesCreated"] == [".dockerignore"]
+
+
+def test_vm_delivery_stops_before_llm_when_resource_plan_is_unresolved(tmp_path):
+    calls = []
+    adapter = VmDeliveryAdapter(lambda prompt: calls.append(prompt) or "{}")
+
+    with pytest.raises(ValueError, match="persistenceOwner"):
+        adapter.generate(
+            requirements_result={"resource_spec": {"provider": "aws"}},
+            cloud_design_result={
+                "resource_plan": {
+                    "schemaVersion": "easydep-resource-plan/v1",
+                    "provider": "aws",
+                    "unresolved": [
+                        {
+                            "field": "persistenceOwner",
+                            "reason": "more than one deployable workload",
+                        }
+                    ],
+                }
+            },
+            implementation_result={"run_root": str(tmp_path / "run")},
+        )
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
+def test_direct_endpoint_is_normalized_to_http_before_iac_generation(provider, tmp_path):
+    cloud_design = CloudDesignAdapter().finalize(
+        requirements_result={
+            "resource_spec": {"provider": provider, "region": "test-region"},
+            "deployment_needs": {},
+        },
+        design_result={
+            "deployment_diagram_model": {
+                "Nodes": [
+                    {"name": "Client", "kind": "device"},
+                    {"name": "Service Runtime", "kind": "executionEnvironment"},
+                ],
+                "Connections": [
+                    {"source": "Client", "target": "Service Runtime", "protocol": "HTTPS"}
+                ],
+            }
+        },
+    )
+    calls = []
+
+    with pytest.raises(ValueError, match=r"returned no terraformFiles"):
+        VmDeliveryAdapter(lambda prompt: calls.append(prompt) or "{}").generate(
+            requirements_result={
+                "resource_spec": {"provider": provider, "region": "test-region"}
+            },
+            cloud_design_result=cloud_design,
+            implementation_result={"run_root": str(tmp_path / "run")},
+        )
+
+    assert len(calls) == 2
+    assert '"protocol": "http"' in calls[0]
+    assert "letsEncryptShortLivedIp" not in calls[0]
+
+
+def test_separate_persistent_workload_does_not_reuse_application_mount_contract(tmp_path):
+    application = tmp_path / "run" / "application"
+    application.mkdir(parents=True)
+    captured = {}
+
+    def invoke(prompt: str) -> str:
+        captured.update(json.loads(prompt))
+        return json.dumps(
+            {"terraformFiles": {"main.tf": 'resource "aws_instance" "app" {}'}}
+        )
+
+    VmDeliveryAdapter(invoke).generate(
+        requirements_result={"resource_spec": {"provider": "aws"}},
+        cloud_design_result={
+            "resource_plan": {
+                "schemaVersion": "easydep-resource-plan/v1",
+                "provider": "aws",
+                "computeNodeId": "compute-instance",
+                "nodes": [{"id": "workload-state", "handling": "runtimeDerived"}],
+                "allocations": [
+                    {
+                        "workloadRef": "workload-state",
+                        "computeRef": "compute-state",
+                    }
+                ],
+                "decisions": [
+                    {"field": "persistenceOwner", "value": "workload-state"}
+                ],
+                "edges": [],
+                "unresolved": [],
+            }
+        },
+        implementation_result={"run_root": str(tmp_path / "run")},
+        cloud_capability_contract={
+            "facts": [
+                {
+                    "id": "mount",
+                    "kind": "cloud.storage.mount",
+                    "attributes": {"mountPath": "/srv/application-state"},
+                }
+            ]
+        },
+    )
+
+    assert captured["persistenceOwner"] == "workload-state"
+    assert captured["applicationMountPath"] is None
 
 
 def test_vm_delivery_replaces_owned_infra_snapshot_without_stale_files(tmp_path):
@@ -567,6 +1131,23 @@ def test_vm_delivery_rejects_invalid_hcl_after_one_repair_call(tmp_path):
     repair = json.loads(calls[1])
     assert repair["validationStage"] == "hclPreflight"
     assert repair["validationErrors"] == ['duplicate output "url"']
+
+
+def test_hcl_preflight_rejects_variable_defaults_that_reference_other_objects():
+    errors = VmDeliveryAdapter._validate_files(
+        {
+            "variables.tf": (
+                'variable "database_url" { '
+                'default = "jdbc:postgresql://${aws_instance.db.private_ip}:5432/app" }\n'
+                'variable "database_user" { default = var.db_user }\n'
+            )
+        }
+    )
+
+    assert errors == [
+        'variable "database_url" default references another Terraform object',
+        'variable "database_user" default references another Terraform object',
+    ]
 
 
 def test_vm_delivery_repairs_hcl_preflight_before_promotion(tmp_path):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -13,25 +13,31 @@ from app.db.models import (
     FORMAT_PUML,
     ORIGIN_GENERATED,
     TYPE_API_SPEC,
+    TYPE_CAPABILITY_CONTRACT,
     TYPE_CLASS,
     TYPE_DEPLOYMENT,
     TYPE_ERD,
     TYPE_REFINE_REQ,
+    TYPE_RESOURCE_INTAKE,
     TYPE_RESOURCE_SPEC,
     TYPE_SEQUENCE,
     TYPE_USECASE_DIAGRAM,
     TYPE_USECASE_SPEC,
     App,
     Artifact,
-    ArtifactVersion,
     ArtifactFile,
+    ArtifactVersion,
 )
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.deployment_diagram.plantuml import (
-    generate_deployment_from_model,
+from app.design.services.deployment_diagram.bundle import (
+    hydrate_deployment_diagram_bundle,
+)
+from app.design.services.deployment_diagram.provider_plantuml import (
+    deployment_bundle_provisioning_puml,
+    deployment_bundle_runtime_puml,
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
@@ -58,6 +64,20 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "artifact_type": TYPE_REFINE_REQ,
         "format": FORMAT_JSON,
         "state_key": "refined_requirements",
+        "valid_key": None,
+        "errors_key": None,
+    },
+    "capability_contract": {
+        "artifact_type": TYPE_CAPABILITY_CONTRACT,
+        "format": FORMAT_JSON,
+        "state_key": "capability_contract",
+        "valid_key": None,
+        "errors_key": None,
+    },
+    "resource_intake": {
+        "artifact_type": TYPE_RESOURCE_INTAKE,
+        "format": FORMAT_JSON,
+        "state_key": "resource_intake",
         "valid_key": None,
         "errors_key": None,
     },
@@ -141,10 +161,18 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "deployment_diagram_puml",
         "valid_key": "deployment_diagram_syntax_valid",
         "errors_key": "deployment_diagram_syntax_errors",
-        # Stored as its deployment topology model; the PlantUML is derived from this.
-        "source_key": "deployment_diagram_model",
+        # Store the editable logical model together with the deterministic provider
+        # projection.  Both runtime and provisioning views are derived from this
+        # one bundle, so refresh cannot fall back to the old logical-only picture.
+        "source_key": "deployment_diagram_bundle",
         "source_format": FORMAT_JSON,
-        "derive": generate_deployment_from_model,
+        "derive_state": lambda bundle: {
+            "deployment_diagram_puml": deployment_bundle_runtime_puml(bundle),
+            "deployment_diagram_provisioning_puml": (
+                deployment_bundle_provisioning_puml(bundle)
+            ),
+        },
+        "hydrate": hydrate_deployment_diagram_bundle,
     },
 }
 
@@ -235,9 +263,15 @@ def load_state(app_id: str) -> ArchitectureState:
             source_key = config.get("source_key")
             if source_key:
                 source_value = _decode_content(version.content, config["source_format"])
-                state[source_key] = source_value
-                # PlantUML is a pure projection of the stored model.
-                state[config["state_key"]] = config["derive"](source_value)
+                if config.get("hydrate"):
+                    state.update(config["hydrate"](source_value))
+                else:
+                    state[source_key] = source_value
+                if config.get("derive_state"):
+                    state.update(config["derive_state"](source_value))
+                else:
+                    # PlantUML is a pure projection of the stored model.
+                    state[config["state_key"]] = config["derive"](source_value)
             else:
                 state[config["state_key"]] = _decode_content(
                     version.content,
@@ -320,7 +354,10 @@ def get_version_content(app_id: str, stage: str, version_no: int) -> Any:
         ).first()
         if version is None:
             return None
-        return _decode_content(version.content, config["format"])
+        return _decode_content(
+            version.content,
+            config.get("source_format") or config["format"],
+        )
 
 
 def save_file_snapshot(

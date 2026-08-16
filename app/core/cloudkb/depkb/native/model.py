@@ -62,4 +62,4 @@ def validate_inventory(inventory: dict[str, Any]) -> None:
         if not candidate.get("subjectNativeId") or not candidate.get("sourceLocator"):
             raise ValueError("native candidate requires subjectNativeId and sourceLocator")
         if "neutralSubject" in candidate or "neutralObject" in candidate:
-            raise ValueError("native discovery candidate contains a neutral projection")
+            raise ValueError("native discovery candidate contains a cross-provider projection")

@@ -63,6 +63,10 @@ EasyDep의 평가 대상은 기계 판독 계약, 요구사항–설계–code/t
 | E2 | E1과 동일 | CSP 관리형 앱 VM 그룹 replica 2개 + LB + 같은 상태 Workload | 공유 상태 연결, 앱 VM 장애 중 업무와 자동 교체 |
 | D1 | 제한 수량 예약으로 용어만 변경 | E2와 같은 불변식 | 수강신청 문자열 오버피팅 탐지 |
 
+첫 PoC의 상세 요구사항과 실행 입력은
+[`evaluation/baselines/course-registration-cases/README.md`](../evaluation/baselines/course-registration-cases/README.md)에
+둔다. 아직 기존 동결 suite에는 포함하지 않는다.
+
 E2는 App 계층의 장애 대응만 평가한다. 단일 상태 Workload가 있으므로 종단 HA나 Zone
 전체 장애 무중단을 주장하지 않는다. D1은 가까운 용어 전이일 뿐 모든 도메인 일반화를
 증명하지 않는다.

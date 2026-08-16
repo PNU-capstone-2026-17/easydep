@@ -1,7 +1,7 @@
 {
   "name": "dev_checkout_gateway",
   "description": "Stateful checkout service with a genuine supporting payment actor.",
-  "resource_constraints_text": "Deploy Docker containers on Azure Linux VMs in Korea Central. Keep monthly infrastructure cost below 450 USD. A single availability zone is acceptable.",
+  "resource_constraints_text": "Deploy Docker containers on Azure Linux VMs in Korea Central. Keep monthly infrastructure cost below 450 USD.",
   "classified": [
     {"id":"FR1","type":"FR","text":"Shoppers create a cart and add, change, or remove catalog items."},
     {"id":"FR2","type":"FR","text":"Shoppers submit a delivery address and review the final order total before checkout."},

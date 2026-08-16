@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "easydep-sample-app-postgres-e3/v1",
+  "provider": "gcp",
+  "runId": "easydep-e3-3f4c1a9a",
+  "startedAt": "2026-08-14T19:42:19.058187+00:00",
+  "transportUnderTest": "app VM/container to replacement state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 16.139,
+      "detail": "easydep-e3-3f4c1a9a-net"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 16.417,
+      "detail": "easydep-e3-3f4c1a9a-subnet"
+    },
+    {
+      "name": "firewall.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 9.758,
+      "detail": "NAME                          NETWORK                  DIRECTION  PRIORITY  ALLOW     DENY  DISABLED\neasydep-e3-3f4c1a9a-allow-pg  easydep-e3-3f4c1a9a-net  INGRESS    1000      tcp:5432        False"
+    },
+    {
+      "name": "state-volume.create",
+      "status": "passed",
+      "durationSeconds": 3.561,
+      "detail": "easydep-e3-3f4c1a9a-data"
+    },
+    {
+      "name": "initial.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 16.965,
+      "detail": "easydep-e3-3f4c1a9a-state-a"
+    },
+    {
+      "name": "initial.state-ready",
+      "status": "passed",
+      "durationSeconds": 108.669,
+      "detail": "PostgreSQL accepted connections and the startup script completed"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 18.418,
+      "detail": "easydep-e3-3f4c1a9a-app"
+    },
+    {
+      "name": "baseline.app-write-read",
+      "status": "passed",
+      "durationSeconds": 129.282,
+      "detail": "EASYDEP_E3 baseline passed"
+    },
+    {
+      "name": "initial.state-vm.delete",
+      "status": "passed",
+      "durationSeconds": 21.856,
+      "detail": "easydep-e3-3f4c1a9a-state-a"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 8.177,
+      "detail": "persistent disk detached and reusable"
+    },
+    {
+      "name": "replacement.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 20.309,
+      "detail": "easydep-e3-3f4c1a9a-state-b"
+    },
+    {
+      "name": "replacement.state-volume.attach-existing",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "same disk supplied to replacement create command"
+    },
+    {
+      "name": "replacement.state-ready",
+      "status": "passed",
+      "durationSeconds": 98.872,
+      "detail": "PostgreSQL accepted connections and the startup script completed"
+    },
+    {
+      "name": "replacement.app-rebind-signal",
+      "status": "passed",
+      "durationSeconds": 12.081,
+      "detail": "runtime endpoint metadata updated"
+    },
+    {
+      "name": "replacement.app-rebind-without-rebuild",
+      "status": "passed",
+      "durationSeconds": 8.713,
+      "detail": "EASYDEP_E3 rebind-read passed"
+    },
+    {
+      "name": "replacement.app-read-existing-value",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "same-image rebind oracle read the pre-replacement value"
+    }
+  ],
+  "outcome": "passed",
+  "scope": "domain-neutral state-VM replacement and runtime-endpoint rebinding",
+  "pathUnderTest": "unchanged app VM/image -> replacement state VM private endpoint -> reattached provider data disk -> PostgreSQL data path",
+  "runtimeEndpointObservation": {
+    "initialStatePrivateIp": "10.83.1.2",
+    "replacementStatePrivateIp": "10.83.1.4",
+    "appVmRecreated": false,
+    "appImageRebuilt": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T19:52:39.414171+00:00",
+  "observations": {
+    "baselineWriteReadPassed": true,
+    "stateVmWasReplaced": true,
+    "sameDataDiskWasReattached": true,
+    "appImageWasNotRebuilt": true,
+    "existingValueReadAfterReplacement": true
+  },
+  "interpretationLimits": [
+    "This is a recoverability test, not automatic failover or high availability.",
+    "The application container is restarted to inject the replacement endpoint.",
+    "The state workload is unavailable during replacement.",
+    "One development run per provider does not establish a success rate.",
+    "The generic key-value oracle does not validate course-registration rules."
+  ]
+}

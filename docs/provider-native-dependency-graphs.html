@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EasyDep 배포 리소스 그래프</title>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.33.4/dist/cytoscape.min.js"></script>
+  <style>
+    :root{--ink:#172033;--muted:#687386;--line:#d9e0ea;--panel:#fff;--soft:#f5f7fb;--blue:#2458d3;--green:#23835c;--orange:#b96a12;--purple:#7b4bb7;--red:#c54258}
+    *{box-sizing:border-box}html,body{height:100%;margin:0}body{font-family:Inter,"Noto Sans KR",system-ui,sans-serif;color:var(--ink);background:var(--soft);overflow:hidden}
+    button,select,input{font:inherit}button,select{border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}button{cursor:pointer;padding:7px 11px}button:hover{border-color:#9babc3}button[aria-pressed="true"]{background:#e9f0ff;border-color:var(--blue);color:#183f9e;font-weight:750}
+    .app{height:100%;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:0}
+    header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 18px;background:#fff;border-bottom:1px solid var(--line)}
+    h1{font-size:19px;margin:0}header p{margin:3px 0 0;color:var(--muted);font-size:12px}.status{font-size:12px;color:var(--green);white-space:nowrap}.status.error{color:var(--red)}
+    .controls{display:flex;align-items:end;gap:10px;padding:10px 18px;background:#fff;border-bottom:1px solid var(--line);overflow-x:auto}
+    .control{display:grid;gap:4px;min-width:150px}.control>span,.control-label{font-size:11px;font-weight:750;color:#566176}.control select{height:35px;padding:0 30px 0 9px}
+    .provider-tabs{display:flex;gap:5px}.provider-tabs button{height:35px;min-width:58px}.toggles{display:flex;align-items:center;gap:14px;min-width:max-content;padding:0 6px 7px}.toggles label{font-size:12px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+    .summary{margin-left:auto;display:flex;gap:5px;align-items:center;padding-bottom:7px}.pill{font-size:11px;padding:4px 7px;border-radius:999px;background:#eef2f8;color:#48556a;white-space:nowrap}.pill.warning{background:#fff1dc;color:#8a4f0d}
+    .workspace{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:10px;padding:10px}
+    .graph-panel,.detail-panel{min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+    .graph-panel{display:grid;grid-template-rows:auto minmax(0,1fr)}.graph-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .graph-title{min-width:0}.graph-title h2{font-size:15px;margin:0}.graph-title p{font-size:11px;color:var(--muted);margin:3px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.graph-actions{display:flex;gap:5px;white-space:nowrap}
+    #cy{width:100%;height:100%;min-height:0;background:linear-gradient(#fff,#fbfcff)}
+    .detail-panel{display:grid;grid-template-rows:auto minmax(0,1fr)}.detail-tabs{display:flex;border-bottom:1px solid var(--line);padding:8px 8px 0;gap:3px}.detail-tabs button{border:0;border-radius:8px 8px 0 0;padding:8px 12px;background:transparent}.detail-tabs button[aria-selected="true"]{color:var(--blue);background:#eef3ff;font-weight:800}
+    .detail-body{overflow:auto;padding:14px}.detail-body h2{font-size:17px;margin:0 0 12px}.detail-body h3{font-size:12px;margin:17px 0 6px;color:#536078;text-transform:none}.detail-body p{font-size:13px;line-height:1.55;margin:0;color:#37445a}.detail-body ul{margin:6px 0;padding-left:18px}.detail-body li{font-size:12px;line-height:1.5;margin:4px 0}.detail-body code{font-size:11px;background:#f0f3f8;padding:2px 4px;border-radius:4px;overflow-wrap:anywhere}
+    .decision-list{display:grid;gap:7px}.decision-row{display:grid;grid-template-columns:92px 1fr;gap:8px;padding:8px 0;border-bottom:1px solid #edf0f5;font-size:12px}.decision-row strong{color:#59667a}.notice{padding:10px;border-radius:9px;background:#fff6e8;color:#70450f;font-size:12px;line-height:1.5;margin-top:12px}
+    .legend{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.legend span{font-size:10px;color:#566176}.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}
+    .iac-list{display:grid;gap:8px}.iac-item{border:1px solid #e2e7ef;border-radius:9px;padding:9px}.iac-item strong{display:block;font-size:12px;margin-bottom:5px}.iac-item code{display:block;margin-top:3px}.empty{color:var(--muted);font-size:13px;padding:20px 0}
+    @media(max-width:900px){body{overflow:auto}.app{height:auto;min-height:100%;grid-template-rows:auto auto auto}.controls{align-items:start;flex-wrap:wrap}.summary{margin-left:0}.workspace{grid-template-columns:1fr;grid-template-rows:650px 520px}.detail-panel{min-height:520px}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div><h1>EasyDep 배포 리소스 그래프</h1><p>현재 선택을 구현하기 위해 IaC에 작성·참조하는 요소만 표시합니다.</p></div>
+      <div id="validation-status" class="status">원장 검사 중</div>
+    </header>
+
+    <section class="controls" aria-label="배포 선택">
+      <div class="control"><span>CSP</span><div id="provider-tabs" class="provider-tabs"></div></div>
+      <div class="control"><span>그래프</span><div id="dependency-tabs" class="provider-tabs"></div></div>
+      <label class="control"><span>공개 HTTP 진입</span><select id="endpoint-select" aria-label="공개 HTTP 진입">
+        <option value="direct">VM 직접</option><option value="loadBalanced">L7 Load Balancer</option>
+      </select></label>
+      <label class="control"><span>App Compute</span><select id="compute-select" aria-label="App Compute">
+        <option value="standaloneOne">Standalone · 1대 · 1 Zone</option>
+        <option value="managedGroupOne">Managed Group · 1대 · 1 Zone</option>
+        <option value="managedGroupManySingleZone">Managed Group · 여러 대 · 1 Zone</option>
+        <option value="managedGroupManyMultiZone">Managed Group · 여러 대 · Multi-Zone</option>
+      </select></label>
+      <label class="control"><span>PostgreSQL 배치</span><select id="database-select" aria-label="PostgreSQL 배치">
+        <option value="none">없음</option><option value="colocated">App VM에 함께 배치</option><option value="dedicated">별도 State VM + 영속 Disk</option>
+      </select></label>
+      <div id="selection-summary" class="summary"></div>
+    </section>
+
+    <main class="workspace">
+      <section class="graph-panel">
+        <div class="graph-head">
+          <div class="graph-title"><h2 id="graph-title"></h2><p id="graph-subtitle"></p></div>
+          <div class="graph-actions"><button id="fit-graph" type="button">화면 맞춤</button></div>
+        </div>
+        <div id="cy" role="img" aria-label="선택한 CSP의 IaC 리소스 의존성 그래프"></div>
+      </section>
+      <aside class="detail-panel" aria-label="그래프 설명">
+        <nav id="detail-tabs" class="detail-tabs">
+          <button type="button" data-tab="overview" aria-selected="true">선택 설명</button>
+          <button type="button" data-tab="selection" aria-selected="false">요소 설명</button>
+          <button type="button" data-tab="iac" aria-selected="false">IaC 목록</button>
+        </nav>
+        <div id="detail-content" class="detail-body"></div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="./assets/provider-native-dependency-graphs/provider-native-dependencies-v2.js"></script>
+  <script src="./assets/provider-native-dependency-graphs/application-deployment-bindings-v1.js"></script>
+  <script>
+  "use strict";
+  const ledger=globalThis.EASYDEP_PROVIDER_DEPENDENCIES;
+  const bindings=globalThis.EASYDEP_APPLICATION_DEPLOYMENT_BINDINGS;
+  const PROVIDERS=["aws","azure","gcp"];
+  const RELATIONS={
+    provision:{label:"생성 선행",color:"#2864dc"},reference:{label:"리소스 참조",color:"#16845b"},contains:{label:"내부 구성",color:"#78869c"},
+    materialize:{label:"자동 실체화",color:"#47728f"},association:{label:"Attachment·Association",color:"#c47713"},policy:{label:"보안 정책",color:"#8a5b20"},
+    health:{label:"상태 확인",color:"#c43d56"},traffic:{label:"요청",color:"#9b3fc7"}
+  };
+  const BINDING_RELATIONS={prerequisite:{label:"준비 선행",color:"#2864dc"},configuration:{label:"설정 전달",color:"#16845b"},runtimeTraffic:{label:"실행 요청",color:"#9b3fc7"},healthSignal:{label:"상태 신호",color:"#c43d56"}};
+  const KIND_COLORS={network:["#e7f1ff","#3477cb"],compute:["#e9f8ef","#28865a"],ingress:["#fff0dc","#c27418"],state:["#f3eaff","#8154b7"],security:["#ffe9ed","#c54a60"],config:["#edf0f4","#68768a"],runtime:["#eef7f2","#337a59"],endpoint:["#fff5e7","#a96816"]};
+  const ENDPOINT_LABELS={direct:"공개 HTTP · VM 직접",loadBalanced:"공개 HTTP · L7 Load Balancer"};
+  const COMPUTE_LABELS={standaloneOne:"Standalone · 1대 · 1 Zone",managedGroupOne:"Managed Group · 1대 · 1 Zone",managedGroupManySingleZone:"Managed Group · 여러 대 · 1 Zone",managedGroupManyMultiZone:"Managed Group · 여러 대 · Multi-Zone"};
+  const DATABASE_LABELS={none:"PostgreSQL 없음",colocated:"App VM에 PostgreSQL + 영속 Disk",dedicated:"별도 State VM에 PostgreSQL + 영속 Disk"};
+  const GRAPH_LABELS={creation:"생성 의존성",functional:"기능 의존성"};
+  const COMPONENT_OWNERS={
+    "aws.route":"Route Table",
+    "azure.agwGatewayIp":"Application Gateway","azure.agwFrontendIp":"Application Gateway","azure.agwFrontendPort":"Application Gateway","azure.agwListener":"Application Gateway","azure.agwBackendPool":"Application Gateway","azure.agwBackendSettings":"Application Gateway","azure.agwProbe":"Application Gateway","azure.agwRoutingRule":"Application Gateway","azure.vmssHealthExtension":"Virtual Machine Scale Set","azure.vmssRepairPolicy":"Virtual Machine Scale Set",
+    "gcp.networkInterface":"VM Instance","gcp.accessConfig":"VM Instance / Network Interface","gcp.autoHealingPolicy":"Regional Managed Instance Group","gcp.nat":"Cloud Router"
+  };
+  const PARTS={
+    base:{
+      aws:["aws.vpc","aws.subnet","aws.defaultSecurityGroup","aws.defaultNetworkAcl","aws.mainRouteTable","aws.localRoute","aws.ami","aws.ec2","aws.primaryEni","aws.rootVolume"],
+      azure:["azure.resourceGroup","azure.vnet","azure.subnet","azure.image","azure.nic","azure.vm","azure.osDisk"],
+      gcp:["gcp.network","gcp.subnetwork","gcp.image","gcp.instance","gcp.networkInterface","gcp.bootDisk","gcp.defaultRoute","gcp.subnetRoute"]
+    },
+    registry:{
+      aws:["aws.ecrRepository","aws.registryPullRole","aws.registryPullPolicy","aws.registryPullPolicyAttachment","aws.registryInstanceProfile"],
+      azure:["azure.containerRegistry","azure.registryPullIdentity","azure.registryPullRoleAssignment"],
+      gcp:["gcp.artifactRegistryRepository","gcp.registryPullServiceAccount","gcp.registryPullIamMember"]
+    },
+    security:{aws:{add:["aws.securityGroup"],remove:["aws.defaultSecurityGroup"]},azure:{add:["azure.nsg","azure.nicNsgAssociation"],remove:[]},gcp:{add:["gcp.firewall"],remove:[]}},
+    publicNetwork:{aws:["aws.internetGateway","aws.routeTable","aws.localRoute","aws.route","aws.routeTableAssociation"],azure:[],gcp:[]},
+    directAddress:{aws:["aws.eip","aws.eipAssociation"],azure:["azure.publicIp"],gcp:["gcp.accessConfig","gcp.regionalAddress"]},
+    group:{
+      aws:{add:["aws.launchTemplate","aws.autoScalingGroup","aws.asgInstance"],remove:["aws.ec2"]},
+      azure:{add:["azure.vmss","azure.vmssInstance","azure.vmssNic","azure.vmssOsDisk","azure.vmssHealthExtension","azure.vmssRepairPolicy"],remove:["azure.nic","azure.vm","azure.osDisk"]},
+      gcp:{add:["gcp.instanceTemplate","gcp.mig","gcp.migInstanceGroup","gcp.migInstance","gcp.autoHealingPolicy"],remove:["gcp.instance"]}
+    },
+    loadBalancer:{
+      aws:["aws.alb","aws.albEni","aws.albPublicAddress","aws.listener","aws.targetGroup"],
+      azure:["azure.publicIp","azure.applicationGateway","azure.agwGatewayIp","azure.agwFrontendIp","azure.agwFrontendPort","azure.agwListener","azure.agwBackendPool","azure.agwBackendSettings","azure.agwProbe","azure.agwRoutingRule"],
+      gcp:["gcp.globalAddress","gcp.forwardingRule","gcp.httpProxy","gcp.urlMap","gcp.backendService","gcp.healthCheck"]
+    },
+    persistence:{aws:["aws.ebs","aws.volumeAttachment"],azure:["azure.disk","azure.diskAttachment"],gcp:["gcp.disk","gcp.diskAttachment"]},
+    stateVm:{aws:["aws.ec2"],azure:["azure.nic","azure.vm","azure.osDisk"],gcp:["gcp.instance"]},
+    outbound:{
+      aws:["aws.internetGateway","aws.routeTable","aws.localRoute","aws.route","aws.routeTableAssociation","aws.eip","aws.natGateway","aws.natEni"],
+      azure:["azure.publicIp","azure.natGateway","azure.subnetNatAssociation","azure.natPublicIpAssociation"],gcp:["gcp.router","gcp.nat"]
+    }
+  };
+  const GENERATED_OWNERS={
+    aws:{"aws.defaultSecurityGroup":["aws.vpc"],"aws.asgInstance":["aws.autoScalingGroup"],"aws.primaryEni":["aws.ec2","aws.autoScalingGroup"],"aws.rootVolume":["aws.ec2","aws.launchTemplate"],"aws.mainRouteTable":["aws.vpc"],"aws.defaultNetworkAcl":["aws.vpc"],"aws.albEni":["aws.alb"],"aws.albPublicAddress":["aws.alb"],"aws.natEni":["aws.natGateway"]},
+    azure:{"azure.osDisk":["azure.vm"],"azure.vmssInstance":["azure.vmss"],"azure.vmssNic":["azure.vmss"],"azure.vmssOsDisk":["azure.vmss"]},
+    gcp:{"gcp.migInstance":["gcp.mig"],"gcp.bootDisk":["gcp.instance","gcp.instanceTemplate"],"gcp.migInstanceGroup":["gcp.mig"],"gcp.defaultRoute":["gcp.network"],"gcp.subnetRoute":["gcp.subnetwork"]}
+  };
+  const FEATURE_BUNDLES={
+    loadBalancer:{
+      aws:{label:"[화면 묶음] Application Load Balancer 경로",members:PARTS.loadBalancer.aws},azure:{label:"[화면 묶음] Application Gateway 경로",members:PARTS.loadBalancer.azure},gcp:{label:"[화면 묶음] Global external Application Load Balancer 경로",members:PARTS.loadBalancer.gcp}
+    },
+    outbound:{
+      aws:{label:"[화면 묶음] VM image/package pull outbound 경로",members:PARTS.outbound.aws},azure:{label:"[화면 묶음] VM image/package pull outbound 경로",members:PARTS.outbound.azure},gcp:{label:"[화면 묶음] VM image/package pull outbound 경로",members:PARTS.outbound.gcp}
+    },
+    registry:{
+      aws:{label:"[화면 묶음] ECR 앱 image 경로",members:PARTS.registry.aws},azure:{label:"[화면 묶음] Container Registry 앱 image 경로",members:PARTS.registry.azure},gcp:{label:"[화면 묶음] Artifact Registry 앱 image 경로",members:PARTS.registry.gcp}
+    }
+  };
+  const state={provider:"aws",graphMode:"creation",endpoint:"direct",computeProfile:"standaloneOne",databasePlacement:"none",activeTab:"overview",selection:null,adjustment:""};
+  let cy,lastElements=[];
+
+  function assert(condition,message){if(!condition)throw new Error(message)}
+  function topologyFamilies(){const profiles=Object.keys(COMPUTE_LABELS),databases=Object.keys(DATABASE_LABELS),ingress=Object.keys(ENDPOINT_LABELS),families=[];profiles.forEach(computeProfile=>databases.forEach(databasePlacement=>ingress.forEach(endpoint=>{const grouped=computeProfile!=="standaloneOne";if(grouped&&(endpoint==="direct"||databasePlacement==="colocated"))return;families.push({computeProfile,databasePlacement,endpoint})})));return families}
+  function addPart(ids,part){if(Array.isArray(part)){part.forEach(id=>ids.add(id));return}(part?.remove||[]).forEach(id=>ids.delete(id));(part?.add||[]).forEach(id=>ids.add(id))}
+  function providerNodeLabel(node){
+    if(node.entityClass==="association")return `Terraform: ${node.implementationName}`;
+    if(node.entityClass==="providerComponent")return `${COMPONENT_OWNERS[node.id]||"상위 리소스"} / ${node.displayName}`;
+    return node.displayName;
+  }
+  function computeMode(){return state.computeProfile==="standaloneOne"?"single":"group"}
+  function normalizeState(changed=""){
+    state.adjustment="";
+    if(computeMode()==="group"&&state.endpoint==="direct"){state.endpoint="loadBalanced";state.adjustment="관리형 VM 그룹에는 단일 VM 고정 공인 주소 대신 하나의 L7 Load Balancer 진입을 사용합니다."}
+    if(computeMode()==="group"&&state.databasePlacement==="colocated"){state.databasePlacement="dedicated";state.adjustment="교체 가능한 App VM 그룹 안에는 PostgreSQL을 함께 두지 않으므로 별도 State VM 배치로 바꿨습니다."}
+  }
+  function deriveFeatures(){
+    const features=new Set(["security"]);
+    if(computeMode()==="group")features.add("group");
+    if(state.endpoint==="direct"){features.add("publicNetwork");features.add("directAddress")}
+    if(state.endpoint==="loadBalanced"){features.add("publicNetwork");features.add("loadBalancer")}
+    if(state.databasePlacement!=="none")features.add("persistence");
+    if(state.databasePlacement==="dedicated")features.add("stateVm");
+    const publicSingleBuild=state.endpoint==="direct"&&computeMode()==="single"&&state.databasePlacement==="none";
+    if(!publicSingleBuild)features.add("outbound");
+    return features;
+  }
+  function selectedResourceIds(providerName=state.provider){
+    const ids=new Set(PARTS.base[providerName]),features=deriveFeatures();
+    addPart(ids,PARTS.registry[providerName]);
+    addPart(ids,PARTS.security[providerName]);
+    if(features.has("group"))addPart(ids,PARTS.group[providerName]);
+    if(features.has("publicNetwork"))addPart(ids,PARTS.publicNetwork[providerName]);
+    if(features.has("directAddress"))addPart(ids,PARTS.directAddress[providerName]);
+    if(features.has("loadBalancer"))addPart(ids,PARTS.loadBalancer[providerName]);
+    if(features.has("persistence"))addPart(ids,PARTS.persistence[providerName]);
+    if(features.has("stateVm"))addPart(ids,PARTS.stateVm[providerName]);
+    if(features.has("outbound"))addPart(ids,PARTS.outbound[providerName]);
+    return ids;
+  }
+  function resourceElements(providerName=state.provider){
+    const provider=ledger.providers[providerName],ids=selectedResourceIds(providerName),runtimeRelations=new Set(["traffic","health"]),functional=state.graphMode==="functional";
+    return [
+      ...provider.nodes.filter(node=>ids.has(node.id)).map(node=>({group:"nodes",data:{...node,display:providerNodeLabel(node),resourceProjection:true},classes:`resource ${node.kind} entity-${node.entityClass}`})),
+      ...provider.edges.filter(edge=>ids.has(edge.source)&&ids.has(edge.target)&&edge.visualPriority!=="context"&&(!edge.appComputeMode||edge.appComputeMode===computeMode())&&(functional?runtimeRelations.has(edge.relationType):!runtimeRelations.has(edge.relationType))).map(edge=>({group:"edges",data:{...edge,displayLabel:edge.label,resourceProjection:true},classes:`relation-${edge.relationType}`}))
+    ];
+  }
+  function activeBindingViews(){
+    const views=["build"],request={direct:"requestDirect",loadBalanced:"requestLoadBalanced"}[state.endpoint];
+    if(request)views.push(request);if(state.databasePlacement!=="none")views.push("postgres");if(computeMode()==="group"||state.endpoint==="loadBalanced")views.push("health");return views;
+  }
+  function bindingViewElements(providerName,view){
+    const config=bindings.providers[providerName],provider=ledger.providers[providerName];
+    const commonNodes=bindings.nodes.filter(node=>node.views.includes(view)).map(node=>({group:"nodes",data:{...node,display:node.displayName,bindingNode:true},classes:`binding binding-${node.nodeClass}`}));
+    const providerNodes=config.nodeRefs.filter(([,views])=>views.includes(view)).map(([id])=>{const node=provider.nodes.find(item=>item.id===id);return {group:"nodes",data:{...node,display:providerNodeLabel(node),providerRef:id,resourceProjection:false},classes:`resource ${node.kind} entity-${node.entityClass}`}});
+    const relation={build:"prerequisite",requestInternal:"runtimeTraffic",requestDirect:"runtimeTraffic",requestLoadBalanced:"runtimeTraffic",postgres:"prerequisite",health:"healthSignal"}[view];
+    const commonEdges=bindings.edges.filter(edge=>edge.views.includes(view));
+    const referenced=(config.edgeRefs[view]||[]).map(id=>{const edge=provider.edges.find(item=>item.id===id);return {...edge,id:`binding.ref.${edge.id}`,views:[view],relationType:relation,sourceRefs:edge.evidenceRefs}});
+    const custom=config.edges.filter(edge=>edge.views.includes(view)&&(!edge.appComputeMode||edge.appComputeMode===computeMode()));
+    const nodeIds=new Set([...commonNodes,...providerNodes].map(item=>item.data.id));
+    const edges=[...commonEdges,...referenced,...custom].filter(edge=>nodeIds.has(edge.source)&&nodeIds.has(edge.target)).map(edge=>({group:"edges",data:{...edge,displayLabel:edge.label,bindingEdge:true},classes:`binding-relation-${edge.relationType}`}));
+    return [...commonNodes,...providerNodes,...edges];
+  }
+  function mergeElements(sets){const map=new Map();sets.flat().forEach(item=>{const key=`${item.group}:${item.data.id}`,old=map.get(key);if(!old){map.set(key,item);return}if(item.group==="nodes")map.set(key,{...old,data:{...item.data,...old.data,bindingOverlay:true},classes:`${old.classes} ${item.classes}`})});return [...map.values()]}
+  function buildBindingElements(providerName=state.provider){
+    if(state.graphMode!=="functional")return [];
+    const features=deriveFeatures(),elements=mergeElements(activeBindingViews().map(view=>bindingViewElements(providerName,view)));
+    return elements.filter(item=>{
+      if(!features.has("loadBalancer")&&(item.data.id==="app.readiness"||item.data.source==="app.readiness"||item.data.target==="app.readiness"))return false;
+      if(!features.has("group")&&(item.data.id==="app.liveness"||item.data.source==="app.liveness"||item.data.target==="app.liveness"))return false;
+      return true;
+    });
+  }
+  function projectIacAuthoredElements(elements,providerName=state.provider){
+    const nodes=elements.filter(item=>item.group==="nodes"),visible=nodes.filter(item=>item.data.handling!=="providerCreated"),visibleIds=new Set(visible.map(item=>item.data.id));
+    const hidden=new Set(nodes.filter(item=>item.data.handling==="providerCreated").map(item=>item.data.id)),owners=GENERATED_OWNERS[providerName]||{};
+    const endpoint=id=>visibleIds.has(id)?id:hidden.has(id)?(owners[id]||[]).find(candidate=>visibleIds.has(candidate))||null:null;
+    const edges=[],seen=new Set();
+    elements.filter(item=>item.group==="edges").forEach((item,index)=>{const source=endpoint(item.data.source),target=endpoint(item.data.target);if(!source||!target||source===target)return;const omitted=[item.data.source,item.data.target].filter(id=>hidden.has(id)),key=`${source}|${target}|${item.data.relationType}|${Boolean(item.data.bindingEdge)}`;if(seen.has(key))return;seen.add(key);edges.push(omitted.length?{...item,data:{...item.data,id:`visual.iac.${index}.${item.data.id}`,source,target,visualIacProjection:true,omittedProviderCreated:omitted}}:item)});
+    return [...visible,...edges];
+  }
+  function pruneFunctionalGraph(elements){
+    if(state.graphMode!=="functional")return elements;
+    const edges=elements.filter(item=>item.group==="edges"),incident=new Set(edges.flatMap(item=>[item.data.source,item.data.target]));
+    return elements.filter(item=>item.group==="edges"||incident.has(item.data.id));
+  }
+  function collapseFeatureBundle(elements,definition,key){
+    const members=new Set(definition.members),nodes=elements.filter(item=>item.group==="nodes"&&members.has(item.data.id));if(nodes.length<2)return elements;
+    const present=new Set(nodes.map(item=>item.data.id)),id=`visual.bundle.${key}`,kind=key==="loadBalancer"?"ingress":key==="registry"?"config":"network",bundle={group:"nodes",data:{id,display:definition.label,displayName:definition.label,visualBundle:true,bundleMembers:nodes.map(item=>item.data),resourceProjection:true,kind},classes:`visual-bundle ${kind}`};
+    const edges=new Map();elements.filter(item=>item.group==="edges").forEach((item,index)=>{const source=present.has(item.data.source)?id:item.data.source,target=present.has(item.data.target)?id:item.data.target;if(source===target)return;const edgeKey=`${source}|${target}|${item.data.relationType}|${Boolean(item.data.bindingEdge)}`;if(!edges.has(edgeKey))edges.set(edgeKey,{...item,data:{...item.data,id:`visual.bundle.edge.${key}.${index}`,source,target,visualAggregate:true}})});
+    return [...elements.filter(item=>item.group==="nodes"&&!present.has(item.data.id)),bundle,...edges.values()];
+  }
+  function boundaryKey(item){if(item.data.resourceProjection||item.data.providerRef||item.data.visualBundle)return "iac";if(item.data.id?.startsWith("build.")||["externalActor","externalDependency"].includes(item.data.nodeClass))return "input";return "runtime"}
+  const BOUNDARIES={input:{label:"배포 입력 · 외부 image · 호출자",description:"EasyDep 배포 번들, 1회 앱 image build, 정확히 고정한 Docker Hub base·PostgreSQL image와 서비스 호출자입니다."},iac:{label:"IaC 작성 요소",description:"현재 선택을 구현하기 위해 IaC에 직접 작성·참조·내부 설정하는 요소입니다."},runtime:{label:"배포 artifact · VM · 애플리케이션",description:"Registry digest, guest 구성과 실행 중 workload입니다. 기능 의존성 그래프에서만 표시합니다."}};
+  function addBoundaries(elements){const used=new Set(),children=elements.map(item=>{if(item.group!=="nodes")return item;const key=boundaryKey(item);used.add(key);return {...item,data:{...item.data,parent:`boundary.${key}`}}});return [...[...used].map(key=>({group:"nodes",data:{id:`boundary.${key}`,display:BOUNDARIES[key].label,displayName:BOUNDARIES[key].label,boundaryNode:true,boundaryKey:key,description:BOUNDARIES[key].description},classes:`boundary boundary-${key}`})),...children]}
+  function buildIacGraph(providerName=state.provider){
+    const resources=resourceElements(providerName),resourceIds=new Set(resources.filter(item=>item.group==="nodes").map(item=>item.data.id)),rawBinding=buildBindingElements(providerName);
+    const allowed=new Set(rawBinding.filter(item=>item.group==="nodes"&&(item.data.bindingNode||resourceIds.has(item.data.id))).map(item=>item.data.id));
+    const binding=rawBinding.filter(item=>item.group==="nodes"?allowed.has(item.data.id):allowed.has(item.data.source)&&allowed.has(item.data.target));
+    let elements=projectIacAuthoredElements(mergeElements([resources,binding]),providerName);
+    elements=collapseFeatureBundle(elements,FEATURE_BUNDLES.registry[providerName],"registry");
+    if(deriveFeatures().has("loadBalancer"))elements=collapseFeatureBundle(elements,FEATURE_BUNDLES.loadBalancer[providerName],"loadBalancer");
+    if(deriveFeatures().has("outbound"))elements=collapseFeatureBundle(elements,FEATURE_BUNDLES.outbound[providerName],"outbound");
+    return addBoundaries(pruneFunctionalGraph(elements));
+  }
+  function layoutPositions(elements){
+    const positions={},groups={input:[],iac:[],runtime:[]};elements.filter(item=>item.group==="nodes"&&!item.data.boundaryNode).forEach(item=>groups[boundaryKey(item)].push(item));
+    const edges=elements.filter(item=>item.group==="edges"),depth=new Map(Object.values(groups).flat().map(item=>[item.data.id,0]));for(let pass=0;pass<7;pass++)edges.forEach(edge=>{const a=depth.get(edge.data.source),b=depth.get(edge.data.target);if(a!==undefined&&b!==undefined&&b<=a&&a<6)depth.set(edge.data.target,a+1)});
+    const sort=(a,b)=>(depth.get(a.data.id)||0)-(depth.get(b.data.id)||0)||a.data.displayName.localeCompare(b.data.displayName,"ko");
+    const place=(key,x,y,columns)=>groups[key].sort(sort).forEach((item,index)=>positions[item.data.id]={x:x+(index%columns)*260,y:y+Math.floor(index/columns)*135});
+    if(state.graphMode==="functional"){place("input",110,120,1);place("iac",470,120,3);place("runtime",1370,120,2)}else place("iac",180,120,3);
+    return positions;
+  }
+  function graphStyles(){
+    const styles=[
+      {selector:"node",style:{label:"data(display)",shape:"round-rectangle",width:205,height:72,"font-size":10,"font-weight":700,color:"#172033","text-wrap":"wrap","text-max-width":185,"text-valign":"center","text-halign":"center","border-width":2,"overlay-opacity":0}},
+      {selector:"node.entity-providerComponent",style:{shape:"tag"}},{selector:"node.entity-association",style:{shape:"diamond",width:165,height:102,"text-max-width":125}},
+      {selector:"node.binding-applicationRuntime",style:{shape:"round-hexagon","background-color":"#e9f8ef","border-color":"#28865a"}},{selector:"node.binding-runtimeConfiguration",style:{shape:"tag","background-color":"#edf0f4","border-color":"#68768a"}},
+      {selector:"node.binding-applicationContract",style:{"background-color":"#e7f1ff","border-color":"#3477cb"}},{selector:"node.binding-externalActor, node.binding-externalDependency",style:{shape:"ellipse","background-color":"#fff3df","border-color":"#b96a12"}},
+      {selector:"node.visual-bundle",style:{width:230,height:88,"border-width":4,"font-size":11}},{selector:"node:selected",style:{"border-width":5,"shadow-blur":12,"shadow-opacity":.18}},
+      {selector:"edge",style:{width:2.2,"curve-style":"bezier","target-arrow-shape":"triangle","arrow-scale":1,label:"",opacity:.78,"overlay-opacity":0}},{selector:"edge:selected",style:{width:5,label:"data(displayLabel)","font-size":9,"text-background-color":"#fff","text-background-opacity":.94,"text-background-padding":3,"text-rotation":"autorotate"}},
+      {selector:"node.boundary",style:{shape:"round-rectangle","background-opacity":.17,"border-width":2,"border-style":"dashed",padding:"28px","font-size":12,"font-weight":800,"text-valign":"top","text-margin-y":-14,"z-compound-depth":"bottom"}},
+      {selector:"node.boundary-input",style:{"background-color":"#fff3df","border-color":"#b96a12"}},{selector:"node.boundary-iac",style:{"background-color":"#e9f0ff","border-color":"#3477cb"}},{selector:"node.boundary-runtime",style:{"background-color":"#edf7f1","border-color":"#28865a"}}
+    ];
+    Object.entries(KIND_COLORS).forEach(([kind,[fill,line]])=>styles.push({selector:`node.${kind}`,style:{"background-color":fill,"border-color":line}}));
+    Object.entries(RELATIONS).forEach(([name,def])=>styles.push({selector:`edge.relation-${name}`,style:{"line-color":def.color,"target-arrow-color":def.color}}));
+    Object.entries(BINDING_RELATIONS).forEach(([name,def])=>styles.push({selector:`edge.binding-relation-${name}`,style:{"line-color":def.color,"target-arrow-color":def.color}}));return styles;
+  }
+  function section(title,value){const box=document.createElement("section"),heading=document.createElement("h3");heading.textContent=title;box.append(heading);if(Array.isArray(value)){const ul=document.createElement("ul");value.forEach(text=>{const li=document.createElement("li");li.textContent=text;ul.append(li)});box.append(ul)}else{const p=document.createElement("p");p.textContent=value;box.append(p)}return box}
+  function decisionRow(label,value){const row=document.createElement("div"),strong=document.createElement("strong"),span=document.createElement("span");row.className="decision-row";strong.textContent=label;span.textContent=value;row.append(strong,span);return row}
+  function renderOverview(){
+    const provider=ledger.providers[state.provider],features=deriveFeatures(),wrap=document.createElement("div"),list=document.createElement("div"),family=`${state.computeProfile}.${state.databasePlacement}.${state.endpoint}`;list.className="decision-list";list.append(decisionRow("그래프",GRAPH_LABELS[state.graphMode]),decisionRow("CSP",provider.label),decisionRow("토폴로지 계열",family),decisionRow("공개 진입",ENDPOINT_LABELS[state.endpoint]),decisionRow("App Compute",COMPUTE_LABELS[state.computeProfile]),decisionRow("상태",DATABASE_LABELS[state.databasePlacement]),decisionRow("가용성 주장","없음 · 선택한 수량과 Zone 배치만 표현"));wrap.append(list);
+    if(state.adjustment){const note=document.createElement("div");note.className="notice";note.textContent=state.adjustment;wrap.append(note)}
+    const labels=["provider-native 앱 image Registry + pull 권한","공개 HTTP"];if(state.endpoint==="direct")labels.push("고정 공인 주소 + 앱 HTTP port");if(features.has("loadBalancer"))labels.push("공개 L7 Load Balancer + HTTP Listener");if(features.has("group"))labels.push("관리형 VM 그룹");if(features.has("outbound"))labels.push("Registry/PostgreSQL pull outbound");if(features.has("persistence"))labels.push("영속 Disk + Attachment");labels.push("명시적 보안 정책");
+    const scope=state.graphMode==="creation"?"IaC 생성 순서와 ID 참조, 내부 구성, Attachment·Association만 표시합니다. Registry도 실제 CSP 리소스와 pull identity로 생성합니다. 요청·health·앱 실행 관계는 기능 의존성 그래프에만 나타납니다.":"배포 번들 → 1회 build·Registry push → digest 고정 → VM pull·실행과 실제 요청, mount·DataSource, health 경로를 표시합니다. 생성 순서 간선은 섞지 않습니다.";
+    const phases=bindings.setupScenario.phases.map(phase=>`${phase.order}. ${phase.title} — ${phase.gate}`);
+    wrap.append(section("파생된 IaC 기능",labels),section("사용자 배포 흐름",phases),section("그래프 범위",scope),section("이름 표시 규칙","독립 CSP 리소스는 공식 명칭을, 내부 구성은 ‘상위 리소스 / 구성명’을, 독립 Terraform 연결 객체는 ‘Terraform: 정확한 type’을 표시합니다. [화면 묶음]은 실제 리소스가 아닙니다."));
+    const legend=document.createElement("div");legend.className="legend";[["#3477cb","Network"],["#28865a","Compute"],["#c27418","Ingress"],["#8154b7","State"],["#c54a60","Security"]].forEach(([color,label])=>{const span=document.createElement("span"),i=document.createElement("i");i.style.background=color;span.append(i,document.createTextNode(label));legend.append(span)});wrap.append(legend);return wrap;
+  }
+  function renderSelection(){
+    const selected=state.selection;if(!selected){const p=document.createElement("p");p.className="empty";p.textContent="그래프의 노드나 화살표를 선택하면 여기에서 역할과 IaC 표현을 설명합니다.";return p}
+    const d=selected.data,wrap=document.createElement("div"),title=document.createElement("h2");title.textContent=selected.title;wrap.append(title);
+    if(selected.kind==="node"){
+      if(d.boundaryNode){wrap.append(section("경계",d.description));return wrap}
+      if(d.visualBundle){wrap.append(section("화면 묶음","여러 IaC 요소를 읽기 쉽게 접어 표시한 화면 전용 표현입니다. CSP나 Terraform에 이 이름의 리소스는 없습니다."),section("포함된 IaC 요소",d.bundleMembers.map(item=>`${providerNodeLabel(item)} — ${item.implementationName}`)));return wrap}
+      if(d.bindingNode){wrap.append(section("역할",d.description),section("준비 주체",d.preparedBy),section("필요한 경우",d.requiredWhen),section("누락되면",d.missingEffect),section("근거",d.sourceRefs));return wrap}
+      wrap.append(section("역할",d.easyExplanation),section("CSP 서비스",d.serviceName),section("IaC 표현",d.terraformTypes),section("처리 방식",d.handling==="create"?"이번 IaC가 직접 생성":d.handling==="referenceExisting"?"기존 요소를 조회·참조":"상위 리소스 안에 설정"),section("공식 근거",d.officialDocs.map(item=>item.title)));return wrap;
+    }
+    const relation=selected.binding?(BINDING_RELATIONS[d.relationType]||{label:d.relationType}):(RELATIONS[d.relationType]||{label:d.relationType});wrap.append(section("관계",relation.label),section("방향",`${selected.source} → ${selected.target}`),section("설명",d.easyExplanation||d.boundary||d.label));if(d.referenceValues)wrap.append(section("IaC 참조값",d.referenceValues));if(d.validationGate)wrap.append(section("완료 조건",d.validationGate));if(d.omittedProviderCreated?.length)wrap.append(section("화면에서 숨긴 자동 생성 요소",d.omittedProviderCreated));return wrap;
+  }
+  function iacItems(){const items=new Map();lastElements.filter(item=>item.group==="nodes"&&!item.data.boundaryNode).forEach(item=>{if(item.data.visualBundle)item.data.bundleMembers.forEach(member=>items.set(member.id,member));else if(item.data.resourceProjection&&!item.data.bindingNode)items.set(item.data.id,item.data)});return [...items.values()].sort((a,b)=>a.displayName.localeCompare(b.displayName,"ko"))}
+  function renderIacList(){const wrap=document.createElement("div");wrap.className="iac-list";iacItems().forEach(item=>{const box=document.createElement("div"),name=document.createElement("strong");name.textContent=providerNodeLabel(item);box.className="iac-item";box.append(name);(item.terraformTypes||[item.implementationName]).filter(Boolean).forEach(value=>{const code=document.createElement("code");code.textContent=value;box.append(code)});wrap.append(box)});return wrap}
+  function renderDetailTabs(){document.querySelectorAll("#detail-tabs button").forEach(button=>button.setAttribute("aria-selected",String(button.dataset.tab===state.activeTab)));const body=document.querySelector("#detail-content");body.replaceChildren(state.activeTab==="overview"?renderOverview():state.activeTab==="selection"?renderSelection():renderIacList())}
+  function updateControls(){
+    document.querySelector("#endpoint-select").value=state.endpoint;document.querySelector("#compute-select").value=state.computeProfile;document.querySelector("#database-select").value=state.databasePlacement;
+    document.querySelector("#provider-tabs").replaceChildren(...PROVIDERS.map(provider=>{const button=document.createElement("button");button.type="button";button.textContent=provider.toUpperCase();button.setAttribute("aria-pressed",String(provider===state.provider));button.onclick=()=>{state.provider=provider;normalizeState("provider");state.selection=null;renderAll()};return button}));
+    document.querySelector("#dependency-tabs").replaceChildren(...Object.entries(GRAPH_LABELS).map(([mode,label])=>{const button=document.createElement("button");button.type="button";button.textContent=label;button.setAttribute("aria-pressed",String(mode===state.graphMode));button.onclick=()=>{state.graphMode=mode;state.selection=null;state.activeTab="overview";renderAll()};return button}));
+    const summary=document.querySelector("#selection-summary"),features=deriveFeatures(),pills=["HTTP","App Registry"];if(features.has("loadBalancer"))pills.push("LB");if(features.has("group"))pills.push("VM Group");if(state.databasePlacement!=="none")pills.push("PostgreSQL");if(state.computeProfile==="managedGroupManyMultiZone")pills.push("Multi-Zone spread");if(features.has("outbound"))pills.push("Pull outbound");summary.replaceChildren(...pills.map(text=>{const span=document.createElement("span");span.className="pill";span.textContent=text;return span}));
+  }
+  function renderGraph(){
+    lastElements=buildIacGraph();assert(!lastElements.some(item=>item.group==="nodes"&&item.data.handling==="providerCreated"),"자동 생성 요소가 그래프에 노출됨");const nodeIds=new Set(lastElements.filter(item=>item.group==="nodes").map(item=>item.data.id));assert(lastElements.filter(item=>item.group==="edges").every(item=>nodeIds.has(item.data.source)&&nodeIds.has(item.data.target)),"그래프 간선 끝점 오류");
+    const providerRelationTypes=lastElements.filter(item=>item.group==="edges"&&!item.data.bindingEdge).map(item=>item.data.relationType),runtimeRelations=new Set(["traffic","health"]);assert(state.graphMode==="functional"?providerRelationTypes.every(type=>runtimeRelations.has(type)):!lastElements.some(item=>item.data.bindingNode),"생성·기능 의존성 분리 오류");assert(state.graphMode==="functional"||providerRelationTypes.every(type=>!runtimeRelations.has(type)),"생성 그래프에 기능 관계가 섞임");
+    const authored=iacItems(),functional=state.graphMode==="functional";document.querySelector("#graph-title").textContent=`${ledger.providers[state.provider].label} · ${GRAPH_LABELS[state.graphMode]}`;document.querySelector("#graph-subtitle").textContent=`${COMPUTE_LABELS[state.computeProfile]} · ${ENDPOINT_LABELS[state.endpoint]} · ${functional?`기능 참여 IaC 요소 ${authored.length}개 · 요청·실행·health 관계`:`IaC 작성 요소 ${authored.length}개 · 생성·참조 관계`}`;
+    if(cy)cy.destroy();cy=cytoscape({container:document.querySelector("#cy"),elements:lastElements,style:graphStyles(),minZoom:.24,maxZoom:2.2,wheelSensitivity:1.1});
+    cy.on("tap","node",event=>{const d=event.target.data();state.selection={kind:"node",data:d,title:d.display||d.displayName};state.activeTab="selection";renderDetailTabs()});
+    cy.on("tap","edge",event=>{const d=event.target.data(),sourceNode=cy.getElementById(d.source).data(),targetNode=cy.getElementById(d.target).data(),source=sourceNode.display||sourceNode.displayName,target=targetNode.display||targetNode.displayName;state.selection={kind:"edge",data:d,title:`${source} → ${target}`,source,target,binding:Boolean(d.bindingEdge)};state.activeTab="selection";renderDetailTabs()});
+    cy.on("tap",event=>{if(event.target===cy){state.selection=null;state.activeTab="overview";renderDetailTabs()}});
+    const positions=layoutPositions(lastElements),layout=cy.layout({name:"preset",fit:false,positions:node=>positions[node.id()]||{x:0,y:0}});layout.on("layoutstop",()=>requestAnimationFrame(()=>requestAnimationFrame(()=>cy.fit(cy.elements(),70))));layout.run();
+  }
+  function renderAll(){updateControls();renderGraph();renderDetailTabs()}
+  function bindControls(){
+    document.querySelector("#endpoint-select").onchange=event=>{state.endpoint=event.target.value;normalizeState("endpoint");state.selection=null;renderAll()};
+    document.querySelector("#compute-select").onchange=event=>{state.computeProfile=event.target.value;normalizeState("compute");state.selection=null;renderAll()};
+    document.querySelector("#database-select").onchange=event=>{state.databasePlacement=event.target.value;normalizeState("database");state.selection=null;renderAll()};
+    document.querySelector("#fit-graph").onclick=()=>cy.fit(cy.elements(),70);
+    document.querySelectorAll("#detail-tabs button").forEach(button=>button.onclick=()=>{state.activeTab=button.dataset.tab;renderDetailTabs()});
+  }
+  function validateData(){assert(typeof cytoscape==="function","Cytoscape를 불러오지 못했습니다.");assert(ledger?.schemaVersion==="3.3"&&ledger?.modelKind==="providerNativeResourceDependencyLedger","provider 원장 버전 오류");assert(bindings?.schemaVersion==="ApplicationDeploymentBindingGraph/v2","앱 바인딩 원장 버전 오류");assert(topologyFamilies().length===12,"지원 토폴로지 계열은 정확히 12개여야 합니다.");PROVIDERS.forEach(provider=>assert(ledger.providers[provider]?.nodes.length&&ledger.providers[provider]?.edges.length,`${provider} 원장 누락`))}
+  try{validateData();bindControls();normalizeState();renderAll();document.querySelector("#validation-status").textContent="원장 구조 확인됨"}catch(error){const status=document.querySelector("#validation-status");status.className="status error";status.textContent=`화면 구성 실패: ${error.message}`;console.error(error)}
+  </script>
+</body>
+</html>

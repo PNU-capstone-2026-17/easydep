@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "easydep-domain-neutral-direct-tls/v1",
+  "scope": "process-level VM-side TLS termination and application forwarding",
+  "startedAt": "2026-08-15T08:13:50+00:00",
+  "steps": [
+    {
+      "name": "baseline.https-business-path",
+      "status": "passed",
+      "certificateSha256": "a48e3453487f0769e6c13d23108bc130739f5dc9a4752549834cd59379490945",
+      "plaintextRejected": true
+    },
+    {
+      "name": "intervention.tls-terminator-removed",
+      "status": "passed"
+    },
+    {
+      "name": "restoration.https-business-path",
+      "status": "passed"
+    }
+  ],
+  "limitations": [
+    "The certificate is a one-day self-signed test certificate.",
+    "DNS ownership and public CA trust are not measured.",
+    "Provider public-address, route, and traffic-filter paths are separate gates."
+  ],
+  "outcome": "passed",
+  "cleanup": {
+    "passed": true,
+    "temporaryDirectoryRemoved": true,
+    "listeningPortClosed": true
+  },
+  "finishedAt": "2026-08-15T08:13:57+00:00",
+  "elapsedSeconds": 6.725
+}

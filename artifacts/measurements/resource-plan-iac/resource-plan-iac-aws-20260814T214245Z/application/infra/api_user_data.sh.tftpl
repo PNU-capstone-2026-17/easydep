@@ -1,0 +1,15 @@
+#!/bin/bash
+set -e
+
+# Install Docker
+apt-get update -y
+apt-get install -y docker.io
+systemctl enable docker
+systemctl start docker
+
+# Run API container
+docker run -d \
+  -p 8080:8080 \
+  -e DATABASE_URL="${db_url}" \
+  --restart unless-stopped \
+  "${api_image}"

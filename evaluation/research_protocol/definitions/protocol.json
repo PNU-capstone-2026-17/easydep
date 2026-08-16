@@ -18,16 +18,12 @@
   "review": {
     "method": "official-evidence-rule-adjudication",
     "humanReview": "conflicting-high-impact-exceptions-only",
-    "resourceBoundaryRule": "vendor-identity-plus-create-read-delete",
+    "resourceBoundaryRule": "vendor-identity-plus-create-read",
     "dependencyNecessityRule": "vendor-normative-prerequisite-or-three-removal-recovery-replications",
-    "neutralModelsAreHypothesisOnly": true,
     "llmMayProposeButCannotApprove": true
   },
-  "projection": {
-    "neutralLayerRole": "comparison-coordinates-not-complete-ontology",
-    "cardinality": "many-to-many",
+  "providerRealization": {
     "representations": ["independent", "embedded", "composite-member"],
-    "coverage": ["full", "partial"],
     "providerExtensionsPreserved": true
   },
   "dependencyValidation": {

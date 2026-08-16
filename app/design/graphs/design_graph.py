@@ -150,6 +150,20 @@ def resume_design(app_id: str, feedback: str) -> dict[str, Any]:
     return _result_payload(dict(graph.invoke(Command(resume=feedback), config)), app_id)
 
 
+def retry_design(app_id: str) -> dict[str, Any]:
+    """실패한 설계 노드부터 다시 실행한다.
+
+    게이트의 사용자 입력을 재개하는 ``resume_design``과 달리, 실패 체크포인트에는
+    전달할 interrupt 응답이 없다. ``None`` 입력으로 남아 있는 다음 노드만 실행해
+    이미 완료·저장된 상위 설계 산출물을 보존한다.
+    """
+    status = session_status(app_id)
+    if not status["retryable"]:
+        raise ValueError("The design session has no failed stage to retry.")
+    config: RunnableConfig = {"configurable": {"thread_id": app_id}}
+    return _result_payload(dict(graph.invoke(None, config)), app_id)
+
+
 def rewind_design(app_id: str, stage: str) -> dict[str, Any]:
     """실행 위치를 stage 앞으로 되감고, 거기서부터 다시 만든다.
 
@@ -188,10 +202,13 @@ def rewind_design(app_id: str, stage: str) -> dict[str, Any]:
 def session_status(app_id: str) -> dict[str, Any]:
     """이 앱의 설계 실행이 지금 어떤 상태인가.
 
-    반환 {"exists": bool, "active": bool, "stage": str|None}
+    반환 {"exists": bool, "active": bool, "retryable": bool,
+          "stage": str|None, "node": str|None}
       exists — 체크포인트가 있다(한 번이라도 돌렸다). 되감을 수 있다는 뜻.
       active — 게이트에서 멈춰 있다. 재개할 수 있다는 뜻.
+      retryable — 실패한 생성·피드백·저장 노드부터 재시도할 수 있다는 뜻.
       stage  — 멈춰 있는 스테이지(멈춰 있지 않으면 None).
+      node   — 체크포인트가 가리키는 정확한 다음 노드(완료했으면 None).
 
     **두 상태를 구별해야 한다.** 파이프라인이 END까지 가면 active는 False가 되지만
     exists는 True다. 되감기가 가장 필요한 시점이 바로 그때(다 만들고 나서 "API 명세가
@@ -203,14 +220,19 @@ def session_status(app_id: str) -> dict[str, Any]:
     snapshot = graph.get_state(config)
     status: dict[str, Any] = {
         "exists": bool(snapshot.values),
-        "active": bool(snapshot.next),
+        "active": False,
+        "retryable": False,
         "stage": None,
+        "node": None,
     }
     if not snapshot.next:
         return status
 
     # 멈춰 있는 노드 이름에서 스테이지를 읽는다: gate_api_spec → api_spec.
     node = snapshot.next[0]
+    status["node"] = node
+    status["active"] = node.startswith("gate_")
+    status["retryable"] = node.startswith(("gen_", "fb_", "persist_"))
     for prefix in ("gate_", "gen_", "fb_", "persist_"):
         if node.startswith(prefix):
             status["stage"] = node[len(prefix) :]

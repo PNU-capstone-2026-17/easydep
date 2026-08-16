@@ -7,9 +7,10 @@ LLM 구조화 출력은 graph.py에서 ChatOpenAI.with_structured_output(...) �
 gpt-oss-120b가 스키마에 맞는 JSON을 반환하도록 강제하는 데 쓴다.
 (FR/NFR 분류는 LLM이 아니라 파인튜닝 BERT가 단독 수행한다 → step1 classify.)
 """
+
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # FR/NFR 라벨 타입 (BERT 매핑과 동일: 0=NFR, 1=FR)
 ReqType = Literal["FR", "NFR"]
@@ -23,6 +24,7 @@ class ConstraintLink(BaseModel):
 
     두 문자열은 refined_requirements에 나온 문장과 (공백 정규화 후) 일치해야 classify가 id로 해소한다.
     """
+
     constraint: str = Field(
         description="The non-functional / quality constraint sentence — MUST also appear "
         "verbatim in refined_requirements."
@@ -35,6 +37,7 @@ class ConstraintLink(BaseModel):
 
 class ClarifyOnlyResult(BaseModel):
     """요구사항 구체화 결과 출력."""
+
     refined_requirements: list[str] = Field(
         default_factory=list,
         description="The current best set of concrete, single-need (atomic) requirement "
@@ -160,9 +163,7 @@ class ConcernLink(BaseModel):
     )
     requirement_ids: list[str] = Field(
         default_factory=list,
-        description=(
-            "Ids of the requirements that address this concern. Empty when none do."
-        ),
+        description=("Ids of the requirements that address this concern. Empty when none do."),
     )
 
 
@@ -235,9 +236,7 @@ class CapabilityDecision(BaseModel):
         alias="calibratedConfidence", default=None, ge=0, le=1
     )
     threshold_version: str = Field(alias="thresholdVersion")
-    confirmation: Literal[
-        "notRequired", "pending", "userConfirmed", "reviewerConfirmed"
-    ]
+    confirmation: Literal["notRequired", "pending", "userConfirmed", "reviewerConfirmed"]
     alternatives: list[str] = Field(default_factory=list)
     unresolved_fields: list[str] = Field(alias="unresolvedFields", default_factory=list)
     dependency_capability_ids: list[str] = Field(
@@ -393,7 +392,9 @@ class GeneralizationRelation(BaseModel):
 
     parent: str = Field(description="General actor or use case name.")
     child: str = Field(description="Specialized actor or use case name.")
-    kind: Literal["actor", "use_case"] = Field(description="Whether this generalizes actors or use cases.")
+    kind: Literal["actor", "use_case"] = Field(
+        description="Whether this generalizes actors or use cases."
+    )
     rationale: str = Field(default="")
 
 
@@ -538,8 +539,6 @@ class CloudConstraintExtraction(BaseModel):
     min_memory_evidence: str = ""
     traffic_pattern: Literal["steady", "spiky"] | None = None
     traffic_pattern_evidence: str = ""
-    multi_zone: bool | None = None
-    multi_zone_evidence: str = ""
     scale_value: float | None = None
     scale_unit: Literal["concurrentUsers", "requestsPerSecond"] | None = None
     scale_evidence: str = ""
@@ -548,6 +547,110 @@ class CloudConstraintExtraction(BaseModel):
     ambiguous_fields: list[str] = Field(default_factory=list)
     understanding: str = ""
 
+
+class InitialCloudConstraints(BaseModel):
+    """사용자가 분석 시작 전에 직접 고르는 최소 클라우드 제약.
+
+    소프트웨어 요구사항과 섞지 않는다. 정확한 CSP, 사용자가 쓴 지역 표현, 예산을
+    구조화해서 받아 제약 추출 LLM이 이미 알려진 값을 다시 추측하지 않게 한다.
+    """
+
+    provider: Literal["aws", "azure", "gcp"]
+    region: str = Field(min_length=1)
+    monthly_budget_amount: float | None = Field(default=None, gt=0)
+    monthly_budget_currency: str = Field(default="USD", min_length=3, max_length=3)
+
+    @field_validator("region")
+    @classmethod
+    def _non_blank_region(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("region must not be blank")
+        return value
+
+    @field_validator("monthly_budget_currency")
+    @classmethod
+    def _currency_code(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value.isalpha() or len(value) != 3:
+            raise ValueError("monthly_budget_currency must be a three-letter code")
+        return value
+
+
+class DeploymentTarget(BaseModel):
+    """One provider-specific alternative selected from the deployment map."""
+
+    provider: Literal["aws", "azure", "gcp"]
+    region: str = Field(min_length=1, max_length=100)
+    zones: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("region")
+    @classmethod
+    def _target_region(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("region must not be blank")
+        return value
+
+    @field_validator("zones")
+    @classmethod
+    def _target_zones(cls, values: list[str]) -> list[str]:
+        normalized = [str(value).strip() for value in values if str(value).strip()]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("zones must not contain duplicates")
+        return normalized
+
+
+class DeploymentPreferences(BaseModel):
+    """Cloud alternatives entered independently from application requirements."""
+
+    mode: Literal["alternatives"] = "alternatives"
+    targets: list[DeploymentTarget] = Field(min_length=1, max_length=3)
+    monthly_budget_amount: float | None = Field(default=None, gt=0)
+    monthly_budget_currency: str = Field(default="USD", min_length=3, max_length=3)
+    compute_profile: Literal[
+        "standaloneOne",
+        "managedGroupOne",
+        "managedGroupManySingleZone",
+        "managedGroupManyMultiZone",
+    ] = "standaloneOne"
+    replica_count: int = Field(default=1, ge=1)
+    public_ingress: Literal["direct", "loadBalanced"] = "direct"
+    database_placement: Literal["colocated", "dedicated"] = "dedicated"
+    resource_constraints_text: str = Field(default="", max_length=12000)
+
+    @field_validator("monthly_budget_currency")
+    @classmethod
+    def _preference_currency(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not value.isalpha() or len(value) != 3:
+            raise ValueError("monthly_budget_currency must be a three-letter code")
+        return value
+
+    @model_validator(mode="after")
+    def _coherent_targets(self) -> "DeploymentPreferences":
+        providers = [target.provider for target in self.targets]
+        if len(providers) != len(set(providers)):
+            raise ValueError("select at most one region for each provider")
+        many = self.compute_profile in {
+            "managedGroupManySingleZone",
+            "managedGroupManyMultiZone",
+        }
+        spread = self.compute_profile == "managedGroupManyMultiZone"
+        grouped = self.compute_profile != "standaloneOne"
+        if many and self.replica_count < 2:
+            raise ValueError(
+                "many-replica compute profiles require replica_count >= 2"
+            )
+        if not many and self.replica_count != 1:
+            raise ValueError("one-replica compute profiles require replica_count = 1")
+        if grouped and self.public_ingress == "direct":
+            raise ValueError("managed groups require loadBalanced public ingress")
+        if spread and any(len(target.zones) < 2 for target in self.targets):
+            raise ValueError("multi-zone spread requires at least two zones per target")
+        if not spread and any(len(target.zones) > 1 for target in self.targets):
+            raise ValueError("single-zone profiles may select at most one zone per target")
+        return self
 
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
@@ -568,6 +671,11 @@ class AnalyzeRequest(BaseModel):
     """
 
     requirements: list[str] | None = None
+    # 최초 화면에서 받는 최소 클라우드 좌표. 신규 세션에만 사용한다.
+    cloud_constraints: InitialCloudConstraints | None = None
+    # 대화형 워크스페이스가 요구사항 분석 중 별도로 받은 복수 CSP 배포 대안.
+    # 신규 세션의 초기값 또는 요구사항 게이트의 구조화 재개 값으로 사용한다.
+    deployment_preferences: DeploymentPreferences | None = None
     # 클라우드 제약 원문(`apps.resource_constraints_text`). 요구사항과 **따로** 받는다 —
     # 여기서 `RESOURCE_SPEC`이 만들어진다(`steps/step_resource.py`). 없으면 필수 칸이
     # 비고, 그 사실이 되묻기 질문으로 나간다.
@@ -615,19 +723,19 @@ class AnalyzeResponse(BaseModel):
     # 클라우드 층 산출물 둘. **요구사항과 나란한 별도 산출물이지 명세의 일부가 아니다.**
     # 여기 적지 않으면 조용히 사라진다 — pydantic이 모르는 키를 버리므로, 파이프라인이
     # 만들어도 화면은 받을 수 없으므로 출력 필드로 명시한다.
-    deployment_needs: dict | None = None        # 요구사항 ID 기반 제네릭 배포 필요사항
-    capability_contract: dict | None = None     # CapabilityContract/v1 selective decisions
-    resource_spec: dict | None = None           # RESOURCE_SPEC — 계약을 만족할 때만 있다
-    resource_intake: dict | None = None         # 초안·질문·근거·버린 후보(A 트랙)
-    actors: list[dict] | None = None            # ActorItem
-    use_cases: list[dict] | None = None         # UseCaseItem
-    coverage: dict | None = None                # check_coverage 결과
-    model_review: dict | None = None            # review_model(독립 의미 검증자)의 판정
-    use_case_specs: list[dict] | None = None    # UseCaseSpecItem (Cockburn 명세)
-    spec_report: dict | None = None             # check_specs 검증 집계
-    relationships: dict | None = None           # associations/includes/extends/generalizations/derived
-    relationship_report: dict | None = None     # check_relationships 검증 집계
-    diagram: str | None = None                  # PlantUML 텍스트
+    deployment_needs: dict | None = None  # 요구사항 ID 기반 제네릭 배포 필요사항
+    capability_contract: dict | None = None  # CapabilityContract/v1 selective decisions
+    resource_spec: dict | None = None  # RESOURCE_SPEC — 계약을 만족할 때만 있다
+    resource_intake: dict | None = None  # 초안·질문·근거·버린 후보(A 트랙)
+    actors: list[dict] | None = None  # ActorItem
+    use_cases: list[dict] | None = None  # UseCaseItem
+    coverage: dict | None = None  # check_coverage 결과
+    model_review: dict | None = None  # review_model(독립 의미 검증자)의 판정
+    use_case_specs: list[dict] | None = None  # UseCaseSpecItem (Cockburn 명세)
+    spec_report: dict | None = None  # check_specs 검증 집계
+    relationships: dict | None = None  # associations/includes/extends/generalizations/derived
+    relationship_report: dict | None = None  # check_relationships 검증 집계
+    diagram: str | None = None  # PlantUML 텍스트
     # 이번 응답에서 산출물 저장소에 새 버전으로 기록된 stage 이름들.
     # app_id를 보냈을 때만 채워지며, 화면이 "무엇이 저장됐는지"를 표시하는 데 쓴다.
     # 내용이 이전과 같으면 저장하지 않으므로 빈 리스트일 수 있다.

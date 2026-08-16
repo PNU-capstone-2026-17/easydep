@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "easydep-course-registration-cloud-e1/v1",
+  "provider": "azure",
+  "runId": "easydep-course-1e92d65e",
+  "startedAt": "2026-08-15T09:15:51.231690+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "resource-group.create",
+      "status": "passed",
+      "durationSeconds": 6.043,
+      "detail": "easydep-course-1e92d65e"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 15.054,
+      "detail": "10.92.1.0/24"
+    },
+    {
+      "name": "app-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.802,
+      "detail": "app-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.822,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "app-nsg.allow-https",
+      "status": "passed",
+      "durationSeconds": 2.993,
+      "detail": "public tcp/443"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 74.288,
+      "detail": "state"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 44.413,
+      "detail": "app"
+    },
+    {
+      "name": "state-nsg.allow-postgres-from-app",
+      "status": "passed",
+      "durationSeconds": 3.171,
+      "detail": "tcp/5432 from 10.92.1.5/32"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 7.338,
+      "detail": "managed data disk LUN 0"
+    },
+    {
+      "name": "state-runtime.start",
+      "status": "passed",
+      "durationSeconds": 32.93,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "application-runtime.start",
+      "status": "passed",
+      "durationSeconds": 33.082,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "health.ready",
+      "status": "failed",
+      "durationSeconds": 908.657,
+      "detail": "application health did not become UP: {'schemaVersion': 'easydep-http-business-oracle/v1', 'oracleId': 'course-registration-health-up-v1', 'baseUrl': 'https://20.196.209.91', 'observedAt': '2026-08-15T09:34:48.374605+00:00', 'tlsVerification': 'disabled-for-synthetic-test', 'status': 'failed', 'passedPhases': 0, 'totalPhases': 1, 'executedPhases': 1, 'results': [{'id': 'application-and-database-ready', 'kind': 'request', 'status': 'failed', 'observed': {'httpStatus': None, 'json': None, 'transportError': 'URLError: <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했습니다>'}, 'expected': {'status': 200, 'jsonContains': {'status': 'UP'}}}]}"
+    }
+  ],
+  "outcome": "failed",
+  "scope": {
+    "applicationInstances": 1,
+    "stateInstances": 1,
+    "persistentDataVolumes": 1,
+    "managedLoadBalancer": false,
+    "performanceSloMeasured": false
+  },
+  "image": {
+    "reference": "public.ecr.aws/w3q5i0g7/easydep-course-campaign-20260815@sha256:ff0b634b5cbcf9a78099f1f4687acd2eb6cbae8ca12a900770abadcfd7a16adb",
+    "source": "same generated application artifact used for both providers"
+  },
+  "oracles": {
+    "business": "evaluation/baselines/course-registration-cases/business-oracle.json",
+    "databaseUnavailable": "evaluation/baselines/course-registration-cases/database-unavailable-oracle.json",
+    "persistence": "evaluation/baselines/course-registration-cases/persistence-oracle.json"
+  },
+  "pathUnderTest": "public test HTTPS -> App VM/container -> state VM private IPv4:5432 -> PostgreSQL PGDATA -> CSP data disk",
+  "networkObservation": {
+    "applicationEndpoint": "https://20.196.209.91",
+    "databaseEndpointUsedByApp": "10.92.1.4:5432",
+    "databaseIngressSource": "10.92.1.5/32",
+    "databasePublicAddress": false
+  },
+  "error": "application health did not become UP: {'schemaVersion': 'easydep-http-business-oracle/v1', 'oracleId': 'course-registration-health-up-v1', 'baseUrl': 'https://20.196.209.91', 'observedAt': '2026-08-15T09:34:48.374605+00:00', 'tlsVerification': 'disabled-for-synthetic-test', 'status': 'failed', 'passedPhases': 0, 'totalPhases': 1, 'executedPhases': 1, 'results': [{'id': 'application-and-database-ready', 'kind': 'request', 'status': 'failed', 'observed': {'httpStatus': None, 'json': None, 'transportError': 'URLError: <urlopen error [WinError 10061] 대상 컴퓨터에서 연결을 거부했으므로 연결하지 못했습니다>'}, 'expected': {'status': 200, 'jsonContains': {'status': 'UP'}}}]}",
+  "cleanup": {
+    "passed": true,
+    "residual": [],
+    "durationSeconds": 191.67
+  },
+  "finishedAt": "2026-08-15T09:38:10.046586+00:00",
+  "interpretationLimits": [
+    "This is one development run for one frozen generated application image.",
+    "The one-day self-signed certificate tests TLS wiring, not DNS ownership or public trust.",
+    "State VM restart and data preservation do not establish state-tier high availability.",
+    "No performance SLO, right-sizing, or cost optimality is measured.",
+    "The shared image registry location is not evidence about the target CSP."
+  ]
+}

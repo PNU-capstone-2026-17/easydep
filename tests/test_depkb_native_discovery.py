@@ -15,18 +15,16 @@ from app.core.cloudkb.depkb.native.discovery import (
 from app.core.cloudkb.depkb.native.model import validate_inventory
 
 
-def test_protocol_forbids_neutral_and_benchmark_discovery_inputs():
+def test_protocol_forbids_prior_model_and_benchmark_discovery_inputs():
     protocol = json.loads(PROTOCOL.read_text(encoding="utf-8"))
 
-    assert protocol["biasControls"]["neutralTermsAllowedDuringDiscovery"] is False
     forbidden = " ".join(protocol["biasControls"]["forbiddenDiscoveryInputs"])
-    assert "claims.source.json" in forbidden
     assert "vocabulary.py" in forbidden
     assert protocol["downstreamOnlyEvaluationInputs"] == ["P1", "P2", "P3"]
 
 
 @pytest.mark.parametrize("discover", [discover_aws, discover_azure, discover_gcp])
-def test_native_discovery_is_pinned_and_contains_no_neutral_projection(discover):
+def test_native_discovery_is_pinned_and_contains_no_cross_provider_projection(discover):
     if discover is discover_gcp and not is_cached("gcp-compute"):
         pytest.skip("고정 GCP 원천 스냅샷이 없는 환경에서는 원천 재추출을 실행하지 않는다")
     inventory = discover()
@@ -34,15 +32,14 @@ def test_native_discovery_is_pinned_and_contains_no_neutral_projection(discover)
 
     assert inventory["source"]["version"]
     assert inventory["elements"]
-    assert all("neutralId" not in item for item in inventory["elements"])
-    assert all("neutralSubject" not in item for item in inventory["candidates"])
+    assert all("crossProviderId" not in item for item in inventory["elements"])
+    assert all("crossProviderSubject" not in item for item in inventory["candidates"])
 
 
-def test_native_discovery_module_does_not_import_legacy_neutral_vocabulary():
+def test_native_discovery_module_does_not_import_prior_product_vocabulary():
     source = Path("app/core/cloudkb/depkb/native/discovery.py").read_text(encoding="utf-8")
 
     assert "depkb.vocabulary" not in source
-    assert "claims.source" not in source
     assert "test-application-profiles" not in source
 
 

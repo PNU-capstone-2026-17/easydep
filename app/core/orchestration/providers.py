@@ -796,7 +796,7 @@ tasks.named('test') { useJUnitPlatform() }
                                 {
                                     "resolution": item,
                                     "revisedRequirements": [
-                                        "전체 활성 요구사항을 사용자가 수정한 문장으로 입력"
+                                        "Provide the complete active requirements with the requested revisions."
                                     ],
                                 }
                                 for item in sorted(allowed_resolutions)
@@ -804,9 +804,9 @@ tasks.named('test') { useJUnitPlatform() }
                                 and item.endswith("-requirement")
                             ],
                             "note": (
-                                "상위 요구를 바꾸려면 전체 활성 요구사항을 사용자가 명시적으로 "
-                                "수정해야 하며, 구현 단계가 요구사항 소유 계약을 임의로 완화하지 "
-                                "않습니다."
+                                "Changing an upstream requirement requires the user to provide the "
+                                "complete revised active requirements. The implementation stage must "
+                                "not relax a requirement-owned contract on its own."
                             ),
                         },
                     )
@@ -979,7 +979,12 @@ complete file contents. Never edit tests, build scripts, Docker files, or infras
 Do not return null/default stubs or UnsupportedOperationException. Implement concrete normal
 paths and preserve public signatures. The build uses Spring Boot 3.3 and Spring Framework 6:
 never add `@Override` unless the exact inherited signature is known from the existing source
-contract. If the supplied production sources already implement every required behavior, return
+contract. When an OpenAPI boundary exposes a request body as `Object` or `Map`, never cast it
+directly to a generated DTO; perform explicit validated field extraction or use a configured
+object mapper. When requirements define atomic state changes under concurrent requests, a
+read-then-write precheck alone is insufficient; use transactional database constraints and an
+appropriate locking or conflict-detection strategy. If the supplied production sources already
+implement every required behavior, return
 an explicit empty `files` object; the immutable tests and build will verify that no-op decision.
 Return JSON only and keep all text in English."""
 
@@ -1109,6 +1114,7 @@ class LlmAcceptanceTestsProvider:
 
 class LlmLogicProvider:
     step = "implementation.logic"
+    _REPAIR_LOCATION_LIMIT = 12
 
     def __init__(self, invoke: Callable[[str], str] | None = None) -> None:
         self._invoke = invoke or self._invoke_llm
@@ -1150,6 +1156,78 @@ class LlmLogicProvider:
         return sources
 
     @staticmethod
+    def _requirements_context(result: dict[str, Any]) -> dict[str, Any]:
+        """Project the stable requirement products, excluding agent execution history."""
+        return {
+            key: result[key]
+            for key in ("requirements", "deployment_needs", "resource_spec")
+            if key in result
+        }
+
+    @staticmethod
+    def _design_context(result: dict[str, Any]) -> dict[str, Any]:
+        """Project application-facing design products rather than the whole design state."""
+        artifacts = result.get("artifacts") or {}
+        context = {
+            "apiSpec": artifacts.get("api_spec") or result.get("api_spec_model"),
+            "classDiagram": artifacts.get("class_diagram"),
+            "sequenceDiagram": artifacts.get("sequence_diagram"),
+            "erd": artifacts.get("erd"),
+        }
+        return {
+            key: value for key, value in context.items() if value is not None and value != ""
+        }
+
+    @classmethod
+    def _repair_feedback(cls, feedback: Any) -> list[dict[str, Any]]:
+        compact: list[dict[str, Any]] = []
+        for raw_item in feedback if isinstance(feedback, list) else []:
+            if not isinstance(raw_item, dict):
+                continue
+            item = {
+                key: raw_item[key]
+                for key in ("code", "message", "severity", "details")
+                if key in raw_item
+            }
+            locations = [str(value) for value in raw_item.get("locations") or []]
+            if locations:
+                item["locations"] = locations[: cls._REPAIR_LOCATION_LIMIT]
+                if len(locations) > cls._REPAIR_LOCATION_LIMIT:
+                    item["locationCount"] = len(locations)
+            compact.append(item)
+        return compact
+
+    @staticmethod
+    def _acceptance_tests(application: Path) -> dict[str, str]:
+        return {
+            path.relative_to(application).as_posix(): path.read_text(
+                encoding="utf-8", errors="replace"
+            )
+            for path in sorted((application / "src" / "test").rglob("*"))
+            if path.is_file()
+            and path.suffix in {".java", ".kt"}
+            and "acceptance" in {part.lower() for part in path.parts}
+        }
+
+    @staticmethod
+    def _close_build_dependencies(
+        application: Path,
+        contract: Any,
+        app_id: str,
+    ) -> tuple[Any, list[tuple[str, str]]]:
+        declarations = dependency_declarations(contract)
+        LlmScaffoldProvider._merge_build_dependencies(
+            application,
+            app_id,
+            dependencies=declarations,
+        )
+        refreshed = infer_application_contract(
+            application,
+            contract.model_dump(mode="json", by_alias=True),
+        )
+        return refreshed, declarations
+
+    @staticmethod
     def _apply(application: Path, files: Any) -> list[str]:
         if not isinstance(files, dict):
             raise TypeError("Logic completion must return a files object")
@@ -1176,12 +1254,45 @@ class LlmLogicProvider:
 
     def run(self, payload: dict[str, Any], context: StepContext) -> StepResult:  # noqa: ARG002
         try:
-            if payload.get("member_workflow_status") == "COMPLETE":
+            if (
+                payload.get("member_workflow_status") == "COMPLETE"
+                and not payload.get("repair_feedback")
+            ):
                 application = Path(payload["run_root"]) / "application"
-                contract = infer_application_contract(
-                    application,
+                requirement_intent = application_intent_contract_from_requirements(
+                    payload.get("requirements_result") or {}
+                )
+                declared_contract = merge_application_contracts(
+                    requirement_intent,
                     payload.get("application_runtime_contract"),
                 )
+                contract = infer_application_contract(
+                    application,
+                    declared_contract.model_dump(mode="json", by_alias=True),
+                )
+                contract, dependency_closure = self._close_build_dependencies(
+                    application,
+                    contract,
+                    context.app_id,
+                )
+                validator_enabled = bool(payload.get("enable_consistency_validator", True))
+                diagnostics = (
+                    validate_application_consistency(application, contract)
+                    if validator_enabled
+                    else []
+                )
+                if diagnostics:
+                    return _consistency_failure(
+                        self.step,
+                        ProviderKind.LLM,
+                        diagnostics,
+                        output={
+                            "run_root": payload["run_root"],
+                            "application_runtime_contract": contract.model_dump(
+                                mode="json", by_alias=True
+                            ),
+                        },
+                    )
                 cloud_contract = CloudCapabilityContract.model_validate(
                     payload.get("cloud_capability_contract") or {}
                 )
@@ -1210,32 +1321,36 @@ class LlmLogicProvider:
                             mode="json", by_alias=True
                         ),
                     },
-                    metrics={"llm_calls": 0, "member_workflow_complete": True},
+                    metrics={
+                        "llm_calls": 0,
+                        "member_workflow_complete": True,
+                        "dependency_closure": len(dependency_closure),
+                    },
                 )
             application = Path(payload["run_root"]) / "application"
             sources = self._sources(application)
-            prompt = json.dumps(
-                {
-                    "instruction": (
-                        "Resolve the supplied repairFeedback in production files before "
-                        "finishing. Do not edit immutable acceptance tests."
-                        if payload.get("repair_feedback")
-                        else "Implement the requested application logic."
-                    ),
-                    "requirements": payload.get("requirements_result") or {},
-                    "design": payload.get("design_result") or {},
-                    "sources": sources,
-                    "repairFeedback": payload.get("repair_feedback") or [],
-                    "immutableAcceptanceTests": {
-                        path.relative_to(application).as_posix(): path.read_text(
-                            encoding="utf-8", errors="replace"
-                        )
-                        for path in sorted((application / "src" / "test").rglob("*"))
-                        if path.is_file() and path.suffix in {".java", ".kt"}
-                    },
-                },
-                ensure_ascii=False,
-            )
+            prompt_payload = {
+                "instruction": (
+                    "Resolve every supplied repairFeedback item in production files before "
+                    "finishing. Do not edit immutable acceptance tests."
+                    if payload.get("repair_feedback")
+                    else "Implement the requested application logic."
+                ),
+                "requirements": self._requirements_context(
+                    payload.get("requirements_result") or {}
+                ),
+                "design": self._design_context(payload.get("design_result") or {}),
+                "sources": sources,
+                "repairFeedback": self._repair_feedback(payload.get("repair_feedback")),
+                "immutableAcceptanceTests": self._acceptance_tests(application),
+            }
+            prompt = json.dumps(prompt_payload, ensure_ascii=False)
+            prompt_metrics = {
+                "characters": len(prompt),
+                "sourceFiles": len(sources),
+                "acceptanceTestFiles": len(prompt_payload["immutableAcceptanceTests"]),
+                "repairDiagnostics": len(prompt_payload["repairFeedback"]),
+            }
             response = json.loads(self._invoke(prompt))
             if "files" not in response:
                 raise ValueError("Logic completion omitted the files object")
@@ -1244,17 +1359,22 @@ class LlmLogicProvider:
                 application,
                 payload.get("application_runtime_contract"),
             )
-            LlmScaffoldProvider._merge_build_dependencies(
+            contract, dependency_closure = self._close_build_dependencies(
                 application,
+                contract,
                 context.app_id,
-                dependencies=dependency_declarations(contract),
             )
             validator_enabled = bool(payload.get("enable_consistency_validator", True))
             diagnostics = (
                 validate_application_consistency(application, contract) if validator_enabled else []
             )
             if diagnostics:
-                return _consistency_failure(self.step, ProviderKind.LLM, diagnostics)
+                return _consistency_failure(
+                    self.step,
+                    ProviderKind.LLM,
+                    diagnostics,
+                    output={"run_root": payload["run_root"], "promptMetrics": prompt_metrics},
+                )
             cloud_contract = CloudCapabilityContract.model_validate(
                 payload.get("cloud_capability_contract") or {}
             )
@@ -1292,6 +1412,8 @@ class LlmLogicProvider:
                 metrics={
                     "llm_calls": 1,
                     "consistency_validator_enabled": validator_enabled,
+                    "prompt": prompt_metrics,
+                    "dependency_closure": len(dependency_closure),
                 },
             )
         except Exception as error:  # noqa: BLE001

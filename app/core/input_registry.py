@@ -17,7 +17,7 @@
 ## 새 규칙이 아니라 승격이다
 
 *"모든 칸에는 소비자(어느 조인·어느 판정이 읽는가)가 있어야 한다"* 는 이미
-`request.json`의 설명에 적혀 있었고(multiZone을 받아 놓고 안 읽던 결함의 일반화),
+`request.json`의 설명에 적혀 있었고(과거 사용자 입력을 받아 놓고 안 읽던 결함의 일반화),
 *"필수 칸을 지우면 이름 붙은 판정이 실제로 사라져야 한다"* 는
 `tests/test_required_fields.py`가 이미 검사하고 있었다. 둘 다 **산문과 테스트에
 흩어진 채로** 있었을 뿐이다. 여기서는 그것을 항목의 **칸**으로 만든다:
@@ -67,14 +67,14 @@ from app.core.cloudkb.depkb.closure import closure
 REQUIRED = "required"
 SUGGESTED = "suggested"
 CONTEXT = "context"
-DECISION = "decision"   # depkb에서 파생 — 앵커가 정해진 뒤에만 열린다
+DECISION = "decision"  # depkb에서 파생 — 앵커가 정해진 뒤에만 열린다
 
 _TIERS = (REQUIRED, SUGGESTED, CONTEXT, DECISION)
 
 #: 근거의 갈래. 접두사가 곧 검사 방법이라 문자열로 두지 않고 여기서 못 박는다.
-CONCERN = "concern"   # requirements/knowledge/concerns.py의 id
-CLAIM = "claim"       # depkb claims.json의 좌표
-CODE = "code"         # 우리 코드 — 파일#이름
+CONCERN = "concern"  # requirements/knowledge/concerns.py의 id
+CLAIM = "claim"  # depkb claims.json의 좌표
+CODE = "code"  # 우리 코드 — 파일#이름
 
 _BASIS_KINDS = (CONCERN, CLAIM, CODE)
 
@@ -129,11 +129,13 @@ class Ask:
         if not self.opens.strip():
             raise ValueError(
                 f"{self.id}: 소비자(`opens`)가 없다 — 무엇을 여는지 말할 수 없는 "
-                "칸은 받지 않는다(request.json이 적어 둔 규율)")
+                "칸은 받지 않는다(request.json이 적어 둔 규율)"
+            )
         if not self.basis:
             raise ValueError(
                 f"{self.id}: 근거가 없다 — 근거 없는 질문은 우리 취향이지 지식이 "
-                "아니다(cloudkb/CLAUDE.md §5)")
+                "아니다(cloudkb/CLAUDE.md §5)"
+            )
         if self.tier not in _TIERS:
             raise ValueError(f"{self.id}: 모르는 계층 {self.tier!r}")
 
@@ -149,9 +151,11 @@ ASKS: tuple[Ask, ...] = (
         tier=REQUIRED,
         question="Which cloud provider will host the deployment? (aws, azure, or gcp)",
         opens="This selects the provider-specific cost, performance, capacity, resource "
-              "type, and dependency data required to produce a deployment plan.",
-        basis=(Basis(CODE, "app/core/regions.py#providers"),
-               Basis(CODE, "app/core/cloudkb/depkb/closure.py#closure")),
+        "type, and dependency data required to produce a deployment plan.",
+        basis=(
+            Basis(CODE, "app/core/regions.py#providers"),
+            Basis(CODE, "app/core/cloudkb/depkb/closure.py#closure"),
+        ),
     ),
     Ask(
         id="join.region",
@@ -159,7 +163,7 @@ ASKS: tuple[Ask, ...] = (
         tier=REQUIRED,
         question="Which region should host the deployment? A place name is acceptable.",
         opens="Pricing and capacity data are indexed by provider region code; the place "
-              "name is resolved before those datasets are queried.",
+        "name is resolved before those datasets are queried.",
         basis=(Basis(CODE, "app/core/regions.py#resolve"),),
     ),
     # **existingResources는 2026-08-02에 계약에서 빠졌다 — 범위 결정(사용자).**
@@ -171,10 +175,10 @@ ASKS: tuple[Ask, ...] = (
     Ask(
         id="budget.monthly",
         spec_field="monthlyBudgetUSD",
-        tier=REQUIRED,
+        tier=CONTEXT,
         question="What is the monthly budget? Other currencies can be converted to USD.",
-        opens="The monthly budget is required to evaluate whether a deployment plan fits "
-              "the cost constraint.",
+        opens="When supplied, the monthly budget enables a cost-ceiling check. Without it, "
+        "the system leaves budget compliance unmeasured rather than inventing a limit.",
         # 2026-08-02 관심사 실측 재도출로 문헌 유래 관심사(cn.cost-ceiling)가
         # 죽었다 — 이 칸의 근거는 과제 원문(비용 기준 추천)과 판정 코드다.
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#estimate_monthly_cost"),),
@@ -184,10 +188,11 @@ ASKS: tuple[Ask, ...] = (
         id="spec.min_vcpu",
         spec_field="minVCpu",
         tier=SUGGESTED,
-        question=("If known, provide either the minimum vCPU or minimum memory required "
-                  "by this workload."),
+        question=(
+            "If known, provide either the minimum vCPU or minimum memory required by this workload."
+        ),
         opens="A sizing floor enables instance-spec selection. Without one, the system "
-              "does not assume that the cheapest or smallest instance is sufficient.",
+        "does not assume that the cheapest or smallest instance is sufficient.",
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
@@ -196,7 +201,7 @@ ASKS: tuple[Ask, ...] = (
         tier=SUGGESTED,
         question="What is the minimum memory requirement in GiB? This may be supplied instead of vCPU.",
         opens="Memory provides an alternative sizing floor; either memory or vCPU is "
-              "sufficient to enable instance-spec selection.",
+        "sufficient to enable instance-spec selection.",
         basis=(Basis(CODE, "app/core/cloudkb/costkb/agent_api.py#recommend_specs"),),
     ),
     Ask(
@@ -205,18 +210,11 @@ ASKS: tuple[Ask, ...] = (
         tier=SUGGESTED,
         question="Is the workload steady or does it have intermittent spikes?",
         opens="The traffic pattern determines whether burst-performance warnings conflict "
-              "with this workload.",
-        basis=(Basis(CONCERN, "cn.load-shape"),
-               Basis(CODE, "app/core/cloudkb/perfkb/agent_api.py#recommend_warning")),
-    ),
-    Ask(
-        id="avail.multi_zone",
-        spec_field="multiZone",
-        tier=SUGGESTED,
-        question="Must the service remain available if an entire availability zone fails?",
-        opens="This determines whether the deployment must span multiple availability zones.",
-        # 이 값은 특정 CSP 사실이 아니라 시스템이 가용성 배치를 결정하기 위한 입력이다.
-        basis=(Basis(CODE, "app/core/resource_spec.schema.json#multiZone"),),
+        "with this workload.",
+        basis=(
+            Basis(CONCERN, "cn.load-shape"),
+            Basis(CODE, "app/core/cloudkb/perfkb/agent_api.py#recommend_warning"),
+        ),
     ),
     # ── 맥락축 — 판정을 열진 않지만 계획에 실린다 ────────────────────────────
     Ask(
@@ -233,7 +231,7 @@ ASKS: tuple[Ask, ...] = (
         tier=CONTEXT,
         question="Must data remain within a specific country or geographic area?",
         opens="The deployment plan exposes the provider's region display name for a manual "
-              "residency check; the system does not infer legal compliance.",
+        "residency check; the system does not infer legal compliance.",
         basis=(Basis(CODE, "app/core/region_catalog.py#catalog"),),
     ),
 )
@@ -250,7 +248,12 @@ NOT_ASKED: dict[str, str] = {
     "schemaVersion": "계약 판 — 스키마가 const로 못 박았고 생산자가 옮겨 적는다",
     "workloads": "시스템 범위를 Docker 기반 VM 배포로 고정했으므로 ['vm']을 넣는다",
     "regionAsWritten": "사용자가 쓴 원문을 생산자가 그대로 남기는 것이라 "
-                       "물을 것이 없다(join.region의 부산물)",
+    "물을 것이 없다(join.region의 부산물)",
+    "computeProfile": "별도 질의가 아니라 배포 대안 UI의 구조화된 토폴로지 선택으로 받는다",
+    "replicaCount": "별도 질의가 아니라 many 프로필의 구조화된 VM 수로 받는다",
+    "publicIngress": "별도 질의가 아니라 공개 HTTPS 진입 방식 선택으로 받는다",
+    "databasePlacement": "논리 모델에 PostgreSQL이 있을 때 토폴로지 결정 단계에서 받는다",
+    "applicationStateless": "다중 VM을 선택했을 때 분석 근거로 검증하며 일반 사용자에게 선제 질문하지 않는다",
 }
 
 #: **요구사항 단계에서 안 받고 인계로 넘기는 것**과 그 이유(2026-08-01).
@@ -261,9 +264,9 @@ NOT_ASKED: dict[str, str] = {
 #: `_handoff`) — 침묵과 인계는 다르다.
 HANDOFF: dict[str, str] = {
     "containerRegistry": "컨테이너 이미지를 올릴 레지스트리. 이미지 태그와 같은 "
-                         "종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 "
-                         "받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 "
-                         "남고, 그 자리표시자가 곧 인계 표시다",
+    "종류이고 태그는 CI가 정한다 — 둘 중 하나만 요구사항에서 "
+    "받으면 선이 이상하다. 없으면 매니페스트에 자리표시자가 "
+    "남고, 그 자리표시자가 곧 인계 표시다",
     "tlsCertificate": "TLS 인증서·시크릿. 운영·보안 결정이다",
 }
 
@@ -294,7 +297,7 @@ def anchors_for(csp: str) -> tuple[str, ...]:
     import json
     from pathlib import Path
 
-    path = (Path(__file__).resolve().parent / "cloudkb" / "depkb" / "claims.json")
+    path = Path(__file__).resolve().parent / "cloudkb" / "depkb" / "claims.json"
     doc = json.loads(path.read_text(encoding="utf-8"))
     out = []
     for subject in sorted({c["subject"] for c in doc["claims"] if c["csp"] == csp}):
@@ -328,7 +331,7 @@ def _decision_asks(csp: str, workloads: tuple[str, ...]) -> tuple[Ask, ...]:
                 needs_resource=subject,
                 question=f"How should {obj} be selected for {subject}? {decision.detail}",
                 opens=f"The {subject} creation flow requires this control-plane decision "
-                      f"({decision.kind}).",
+                f"({decision.kind}).",
                 basis=(Basis(CLAIM, f"{csp}/{decision.about}/existence"),),
                 choices=tuple(obj.split("|")) if "|" in obj else (),
             )
@@ -388,10 +391,14 @@ def missing(spec: dict, tier: str = REQUIRED) -> tuple[Ask, ...]:
     for pair in PAIRS:
         if any(name in spec for name in pair):
             satisfied |= set(pair)
-    missing_asks = [a for a in ASKS
-                    if a.tier == tier and a.spec_field
-                    and a.spec_field not in spec
-                    and a.spec_field not in satisfied]
+    missing_asks = [
+        a
+        for a in ASKS
+        if a.tier == tier
+        and a.spec_field
+        and a.spec_field not in spec
+        and a.spec_field not in satisfied
+    ]
     # Alternative sizing fields open the same decision, so ask only once. The answer is
     # natural language and may contain either value; extraction decides which field it fills.
     for pair in PAIRS:
@@ -423,6 +430,13 @@ def gaps(spec: dict, csp: str = "") -> tuple[Gap, ...]:
     out: list[Gap] = []
     for tier in (REQUIRED, SUGGESTED, CONTEXT):
         for ask in missing(spec, tier):
-            out.append(Gap(ask=ask, tier=tier, question=ask.question,
-                           why=ask.opens, choices=choices_for(ask, csp)))
+            out.append(
+                Gap(
+                    ask=ask,
+                    tier=tier,
+                    question=ask.question,
+                    why=ask.opens,
+                    choices=choices_for(ask, csp),
+                )
+            )
     return tuple(out)

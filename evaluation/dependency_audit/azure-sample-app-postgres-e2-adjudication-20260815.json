@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "easydep-azure-sample-app-postgres-e2-adjudication/v1",
+  "date": "2026-08-15",
+  "scope": "도메인 중립 합성 앱의 Azure App 계층 관리형 교체 개발 관찰",
+  "attempts": [
+    {
+      "file": "azure-sample-app-postgres-e2-result-20260815.json",
+      "sha256": "d6068abb4afd7a77efdc0891bc970ae71eaaed8a272f7abcbaf1b110dbe3d4b5",
+      "runId": "easydep-e2-bdf42a16",
+      "classification": "harness-aborted",
+      "reason": "Standard Load Balancer 도입 뒤 State VM의 명시적 outbound가 없어 Docker bootstrap이 실행되지 않았다.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "azure-sample-app-postgres-e2-result-20260815-2.json",
+      "sha256": "9e8274131f9b12339498e22960f028126625733f051e31c1bd61666df1647d31",
+      "runId": "easydep-e2-bd703583",
+      "classification": "harness-failure",
+      "reason": "legacy Run Command가 빈 stdout·stderr와 Enable succeeded만 반환해 guest script 완료를 판정할 수 없었다.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "azure-sample-app-postgres-e2-result-20260815-3.json",
+      "sha256": "49d04523cffc1c77f8d0c975923a82c3bc01cb40f66bb400c7b5e5bd3092cde4",
+      "runId": "easydep-e2-1fc0afb6",
+      "classification": "evaluator-failure",
+      "reason": "Managed Run Command의 instanceView 중첩 구조를 최상위 필드로 읽어 성공 실행을 실패로 오인했다.",
+      "cleanupPassed": true
+    },
+    {
+      "file": "azure-sample-app-postgres-e2-result-20260815-4.json",
+      "sha256": "1032781343b07461f89741a57e8d6f43eb14765da427e86a2865cd9cf369a812",
+      "runId": "easydep-e2-bdfacbd3",
+      "classification": "unassisted-confirmation-pass",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "observation": {
+        "faultAcceptedSeconds": 0.043,
+        "managedReplacementObservedSeconds": 1982.756,
+        "managedReplacementHealthySeconds": 1982.86,
+        "automaticRepairGraceMinutes": 30,
+        "victimInstance": "appvm5116000000",
+        "replacementInstance": "appvm5116000002",
+        "probeCount": 1747,
+        "successCount": 1747,
+        "failureCount": 0,
+        "successRatio": 1.0,
+        "maxConsecutiveFailureSeconds": 0.0
+      }
+    }
+  ],
+  "independentResidualCheck": {
+    "resourceGroupExists": false,
+    "taggedResidual": []
+  },
+  "decision": "confirmed-for-azure-development-scope",
+  "claimsSupported": [
+    "이 구성에서는 Azure Load Balancer health probe와 automaticRepairsPolicy를 연결한 VMSS가 unhealthy App VM을 새 VM으로 교체했다.",
+    "최소 30분 grace와 교체 중에도 다른 healthy App VM이 기존 PostgreSQL 값을 반환했다.",
+    "공개 package와 container image로 bootstrap하는 private VM Subnet에는 명시적 outbound가 필요했다."
+  ],
+  "claimsNotSupported": [
+    "Azure 전체의 성공률 또는 SLA",
+    "Application Gateway 또는 HTTPS 경로",
+    "State 계층 또는 종단 고가용성",
+    "Zone·Region 장애 대응",
+    "성능·자동 확장·비용 최적성"
+  ]
+}

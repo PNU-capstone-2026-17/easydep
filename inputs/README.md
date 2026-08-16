@@ -20,7 +20,9 @@
 
 - `classified`는 step1 reconcile 산출물과 같은 형태다(개별 요구사항 + FR/NFR 라벨 + id).
 - id 규칙은 자유지만, FR/NFR을 구분 가능한 접두어(R*/N* 등)를 권장한다.
-- `resource_constraints_text`는 선택이며, 있으면 `RESOURCE_SPEC` 구조화 단계에 전달한다.
+- `resource_constraints_text`는 재현용 데이터셋의 선택 입력이며, 있으면 `RESOURCE_SPEC`
+  구조화 단계에 전달한다. 실제 사용자 요청 API는 CSP·리전·월 예산을 구조화된
+  `cloud_constraints`로 받는다.
 - 요구사항 항목은 `id`, `text`, `type`만 사용하므로 나머지 필드는 없어도 된다.
 
 ## 아티팩트로 실행 (러너)

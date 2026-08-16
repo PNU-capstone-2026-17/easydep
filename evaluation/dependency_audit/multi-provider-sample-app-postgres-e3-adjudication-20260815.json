@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "easydep-multi-provider-sample-app-postgres-e3-adjudication/v1",
+  "selectedAt": "2026-08-15",
+  "researchQuestion": "상태 VM을 교체하고 같은 독립 데이터 디스크를 재연결한 뒤, App 이미지를 다시 빌드하지 않고 새 사설 endpoint만 주입해 교체 전 값을 읽을 수 있는가?",
+  "providers": [
+    {
+      "provider": "aws",
+      "rawFile": "aws-sample-app-postgres-e3-result-20260815-2.json",
+      "sha256CanonicalLf": "39bfccb82e7f966329f87b946c6005365b90d2fa73e30f1a5062e3a07102bb93",
+      "elapsedSeconds": 479.661,
+      "initialStatePrivateIp": "172.31.33.90",
+      "replacementStatePrivateIp": "172.31.45.96"
+    },
+    {
+      "provider": "azure",
+      "rawFile": "azure-sample-app-postgres-e3-result-20260815.json",
+      "sha256CanonicalLf": "6497f3304e6a7f2659cc0b278129843a126f340f0e0b8bf8733afdeb2b2da57d",
+      "elapsedSeconds": 1157.535,
+      "initialStatePrivateIp": "10.84.1.4",
+      "replacementStatePrivateIp": "10.84.1.6"
+    },
+    {
+      "provider": "gcp",
+      "rawFile": "gcp-sample-app-postgres-e3-result-20260815-4.json",
+      "sha256CanonicalLf": "d9442a946552bbf817ffd50b1d34939e38f10572a5aba9a975ec6f8fc23aae22",
+      "elapsedSeconds": 620.356,
+      "initialStatePrivateIp": "10.83.1.2",
+      "replacementStatePrivateIp": "10.83.1.4"
+    }
+  ],
+  "decision": "development-evidence-passed-on-three-providers",
+  "supportedInterpretation": [
+    "VM 교체 뒤 데이터 보존 요구에는 VM과 수명이 분리된 데이터 디스크가 유효하다.",
+    "교체 VM에 디스크를 재연결하고 파일시스템을 마운트하며 PostgreSQL 데이터 경로에 연결해야 한다.",
+    "State endpoint가 바뀌면 App의 런타임 연결 계약을 갱신해야 하지만 App 이미지를 다시 빌드할 필요는 없다."
+  ],
+  "unsupportedInterpretation": [
+    "자동 장애조치 또는 고가용성",
+    "무중단 복구 또는 복구시간 보장",
+    "상태 복제나 다중 영역·다중 리전 내결함성",
+    "수강신청 업무 규칙 검증",
+    "한 번의 개발 실행을 공급자 전체 성공률로 일반화"
+  ]
+}

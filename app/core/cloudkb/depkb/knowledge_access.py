@@ -7,19 +7,19 @@ import json
 from typing import Any
 
 from .official_dependency_model import dependencies_for, load_official_dependencies
-from .projection_model import capability_realizations, load_projection
+from .provider_realizations import capability_realizations, load_realizations
 
 
 def knowledge_snapshot() -> dict[str, str]:
     """직접 프롬프트·도구·MCP가 공유할 동결 해시를 반환한다."""
     dependencies = load_official_dependencies()
-    projections = load_projection()
-    projection_digest = hashlib.sha256(json.dumps(
-        projections, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    realizations = load_realizations()
+    realization_digest = hashlib.sha256(json.dumps(
+        realizations, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")).hexdigest()
     return {
         "officialDependenciesSha256": dependencies["freeze"]["sha256"],
-        "providerProjectionsSha256": projection_digest,
+        "providerRealizationsSha256": realization_digest,
     }
 
 

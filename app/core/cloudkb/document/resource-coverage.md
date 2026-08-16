@@ -10,10 +10,10 @@
 
 claim의 주체는 `vm`, `nic`, `network`, `subnet`, `firewall`, `loadBalancer` 여섯 종류다.
 대상에는 `disk`, `sshKey`, `workloadIdentity`, `defaultRoute`, `publicIp` 등이 추가된다.
-`publicIPPrefix`는 Azure 원어이며 벤더 중립 `publicIp`와 동일한 자원이라고 간주하지 않는다.
+`publicIPPrefix`는 Azure 원어이며 일반 `publicIp`와 동일한 자원이라고 간주하지 않는다.
 
-이 어휘는 Cloud-Barista에서 복사한 것이 아니라 본 연구가 TOSCA와 CSP 원어를 대조하여
-정규화한 조작적 어휘다. CSP 원어→정규화 어휘 대응은 평가 결과에 함께 보존한다.
+이 어휘는 선택한 CSP의 공식 리소스와 배포 역할을 구분하기 위한 조작적 어휘다. 실제 IaC에는
+선택한 CSP의 원어와 리소스 구성을 그대로 보존한다.
 
 ## 아직 분석하지 않는 필수 후보
 
@@ -24,7 +24,7 @@ claim의 주체는 `vm`, `nic`, `network`, `subnet`, `firewall`, `loadBalancer` 
 | LB backend/attachment | VM을 LB 대상으로 연결 | 평가기에는 일부 개념이 있으나 DepKB 어휘에는 없음 |
 | listener | 요청 수신 포트·프로토콜 | DepKB 범위 밖 |
 | health check | LB가 정상 백엔드를 판정 | DepKB 범위 밖 |
-| DNS/TLS certificate | 공인 서비스 이름과 HTTPS | 현재 핵심 의존성 실험 범위 밖 |
+| DNS/TLS certificate | 공인 서비스 이름과 HTTPS | Docker-on-VM 생성 범위 밖; 산출물은 HTTP 전용 |
 
 이 후보를 측정하기 전에는 “모든 VM 배포 자원 의존성을 지원한다”, “생성된 그래프만으로
 서비스가 배포 가능하다”라고 주장하지 않는다. 구현물 평가는 최종 Terraform·Dockerfile·

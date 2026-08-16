@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from app.core.cloudkb.depkb.evidence_model import validate_frozen_model
-from app.core.cloudkb.depkb.projection_model import projection_gaps, validate_projection
+from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 from evaluation.research_protocol.core.paths import DEFINITION_ROOT, PROTOCOL_ROOT, REPOSITORY_ROOT
 
 HERE = PROTOCOL_ROOT
 NATIVE = HERE / "native-v2"
 PLAN = DEFINITION_ROOT / "dependency-experiment-plan.json"
-PROJECTIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-projections.json"
+REALIZATIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-realizations.json"
 RESULTS = HERE / "intervention-results"
 
 
@@ -28,11 +28,11 @@ def _digest(value: Any) -> str:
 
 def build() -> dict[str, Any]:
     plan = _read(PLAN)
-    projections = _read(PROJECTIONS)
-    validate_projection(projections)
-    gaps = projection_gaps(projections)
+    realizations = _read(REALIZATIONS)
+    validate_realizations(realizations)
+    gaps = realization_gaps(realizations)
     if gaps:
-        raise ValueError(f"provider projection has unresolved boundaries: {gaps}")
+        raise ValueError(f"provider realization has unresolved boundaries: {gaps}")
     cases = []
     model_hashes = {}
     for provider in ("aws", "azure", "gcp"):
@@ -67,7 +67,7 @@ def build() -> dict[str, Any]:
     manifest = {
         "schemaVersion": "easydep-dependency-interventions/v1",
         "planSha256": _digest(plan),
-        "projectionSha256": _digest(projections),
+        "providerRealizationsSha256": _digest(realizations),
         "modelFreezeSha256": model_hashes,
         "cases": cases,
     }

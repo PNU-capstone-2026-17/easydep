@@ -8,14 +8,18 @@ import pytest
 from fastapi import HTTPException
 
 from app.artifacts_api import (
-    get_stage_image,
     get_sequence_diagram_image,
+    get_stage_image,
     list_sequence_diagrams,
     sequence_diagrams_from_state,
     to_web_response,
 )
-from app.design.api import FeedbackRequest, resume_design_session
-
+from app.design.api import (
+    FeedbackRequest,
+    StageRequest,
+    resume_design_session,
+    retry_design_session,
+)
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -91,14 +95,16 @@ def test_sequence_diagram_image_renders_only_requested_use_case() -> None:
 
 
 def test_sequence_diagram_image_returns_404_for_unknown_use_case() -> None:
-    with patch("app.artifacts_api.require_app", return_value=_state()):
-        with pytest.raises(HTTPException) as error:
-            get_sequence_diagram_image(APP_ID, "UC-99", "png")
+    with (
+        patch("app.artifacts_api.require_app", return_value=_state()),
+        pytest.raises(HTTPException) as error,
+    ):
+        get_sequence_diagram_image(APP_ID, "UC-99", "png")
 
     assert error.value.status_code == 404
 
 
-def test_sequence_diagram_images_are_blocked_while_findings_remain() -> None:
+def test_sequence_diagram_draft_remains_visible_while_findings_block_advance() -> None:
     state = {
         **_state(),
         "sequence_diagram_puml": "@startuml\n@enduml",
@@ -108,18 +114,24 @@ def test_sequence_diagram_images_are_blocked_while_findings_remain() -> None:
         },
     }
     response = to_web_response(state)
-    assert response["artifacts"]["sequence_diagram"] == ""
+    assert response["artifacts"]["sequence_diagram"] == "@startuml\n@enduml"
+    assert response["artifact_status"]["sequence_diagram"] == "needs_review"
     assert response["validation"]["sequence_diagram"]["findings"]
 
-    with patch("app.artifacts_api.require_app", return_value=state):
-        with pytest.raises(HTTPException) as error:
-            get_sequence_diagram_image(APP_ID, "UC-01", "png")
-    assert error.value.status_code == 409
+    with (
+        patch("app.artifacts_api.require_app", return_value=state),
+        patch("app.artifacts_api.render_plantuml", return_value=b"draft") as render,
+    ):
+        image = get_sequence_diagram_image(APP_ID, "UC-01", "png")
+    assert image.body == b"draft"
+    assert render.called
 
-    with patch("app.artifacts_api.require_app", return_value=state):
-        with pytest.raises(HTTPException) as error:
-            get_stage_image(APP_ID, "sequence_diagram", "png")
-    assert error.value.status_code == 409
+    with (
+        patch("app.artifacts_api.require_app", return_value=state),
+        patch("app.artifacts_api.render_plantuml", return_value=b"draft"),
+    ):
+        image = get_stage_image(APP_ID, "sequence_diagram", "png")
+    assert image.body == b"draft"
 
 
 def test_design_cannot_advance_past_unresolved_sequence_findings() -> None:
@@ -149,13 +161,47 @@ def test_design_cannot_advance_past_unresolved_sequence_findings() -> None:
     resume.assert_not_called()
 
 
-def test_frontend_renders_sequence_diagrams_as_individual_image_cards() -> None:
-    source = (Path(__file__).parents[1] / "frontend" / "design" / "index.html").read_text(
-        encoding="utf-8"
-    )
+def test_retry_at_a_review_gate_restores_the_draft_without_rerunning() -> None:
+    state = {
+        **_state(),
+        "sequence_diagram_puml": "@startuml\n@enduml",
+        "sequence_diagram_check": {"findings": ["invalid receiver method"]},
+        "artifact_status": {"sequence_diagram": "implemented"},
+    }
+    with (
+        patch("app.design.api.require_app_exists"),
+        patch(
+            "app.design.api.session_status",
+            return_value={
+                "active": True,
+                "retryable": False,
+                "stage": "sequence_diagram",
+            },
+        ),
+        patch("app.design.api.require_app", return_value=state),
+        patch("app.design.api.retry_design") as retry,
+    ):
+        response = retry_design_session(APP_ID, StageRequest())
 
-    assert "renderSequenceDiagramGallery" in source
-    assert "/stages/sequence_diagram/diagrams`" in source
-    assert 'card.className = "sequence-diagram-card"' in source
-    assert 'image.className = "sequence-diagram-image"' in source
-    assert 'stageId === "sequence_diagram"' in source
+    payload = json.loads(response.body)
+    assert payload["status"] == "need_feedback"
+    assert payload["stage"] == "sequence_diagram"
+    assert payload["artifact_status"]["sequence_diagram"] == "needs_review"
+    retry.assert_not_called()
+
+
+def test_frontend_renders_sequence_diagrams_as_individual_image_cards() -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "frontend"
+        / "src"
+        / "lib"
+        / "components"
+        / "ArtifactPane.svelte"
+    ).read_text(encoding="utf-8")
+
+    assert "getSequenceDiagrams(currentAppId)" in source
+    assert 'class="sequence-diagram-gallery' in source
+    assert 'class="sequence-diagram-card' in source
+    assert 'class="sequence-diagram-image' in source
+    assert "selected === 'sequence_diagram'" in source

@@ -13,59 +13,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put | compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get | compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/delete",
+          "sourceLocator": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put | compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get",
           "operationLocators": {
             "create": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put",
-            "read": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get",
-            "delete": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/delete"
+            "read": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.vm.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "vm",
-      "conceptId": "neutral.compute",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put | compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get | compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/delete",
-          "operationLocators": {
-            "create": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/put",
-            "read": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/get",
-            "delete": "compute-ComputeRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/virtualMachines/{vmName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -78,59 +41,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put | compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get | compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/delete",
+          "sourceLocator": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put | compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get",
           "operationLocators": {
             "create": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put",
-            "read": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get",
-            "delete": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/delete"
+            "read": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.disk.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "disk",
-      "conceptId": "neutral.data-storage",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put | compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get | compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/delete",
-          "operationLocators": {
-            "create": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/put",
-            "read": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/get",
-            "delete": "compute-DiskRP#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute/disks/{diskName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.data-storage",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -143,59 +69,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/delete",
+          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get",
           "operationLocators": {
             "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/delete"
+            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.virtual-network.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "virtual-network",
-      "conceptId": "neutral.virtual-network",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/delete",
-          "operationLocators": {
-            "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.virtual-network",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -208,59 +97,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/delete",
+          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get",
           "operationLocators": {
             "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/delete"
+            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.subnet.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "subnet",
-      "conceptId": "neutral.ip-network-segment",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/delete",
-          "operationLocators": {
-            "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.ip-network-segment",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -273,59 +125,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/delete",
+          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get",
           "operationLocators": {
             "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/delete"
+            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.network-interface.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "network-interface",
-      "conceptId": "neutral.compute-network-attachment",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/delete",
-          "operationLocators": {
-            "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkInterfaces/{networkInterfaceName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute-network-attachment",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -338,59 +153,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/delete",
+          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get",
           "operationLocators": {
             "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/delete"
+            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.security-group.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "security-group",
-      "conceptId": "neutral.network-security-policy-group",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get | network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/delete",
-          "operationLocators": {
-            "create": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/put",
-            "read": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/get",
-            "delete": "network-virtualNetwork#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/networkSecurityGroups/{networkSecurityGroupName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-security-policy-group",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -404,59 +182,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put | network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get | network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/delete",
+          "sourceLocator": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put | network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get",
           "operationLocators": {
             "create": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put",
-            "read": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get",
-            "delete": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/delete"
+            "read": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get"
           },
           "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "azure.load-balancer.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "load-balancer",
-      "conceptId": "neutral.network-load-balancer",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put | network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get | network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/delete",
-          "operationLocators": {
-            "create": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/put",
-            "read": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/get",
-            "delete": "network-loadBalancer#/paths//subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/loadBalancers/{loadBalancerName}/delete"
-          },
-          "sourceSha256": "733bfe9ba8ec5155940aac85d60a201834d02e2e1421532d630d01ec69bcc4e5",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -601,6 +342,6 @@
   ],
   "exceptionClaimIds": [],
   "freeze": {
-    "sha256": "d0c986b9f989c7a502b3884c67de88f704888423d21080f65e09b90273eef6ce"
+    "sha256": "78bd3662fc5437d64dda402244b5eec58db0b6eea0d7ba80c5baaf4c977f1938"
   }
 }

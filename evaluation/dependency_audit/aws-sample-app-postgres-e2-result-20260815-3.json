@@ -1,0 +1,316 @@
+{
+  "schemaVersion": "easydep-aws-sample-app-postgres-e2/v1",
+  "provider": "aws",
+  "runId": "easydep-e2-b53649d9",
+  "startedAt": "2026-08-14T15:03:42.228109+00:00",
+  "transportUnderTest": "public HTTP ALB to an Auto Scaling group of app VM containers, then private PostgreSQL",
+  "steps": [
+    {
+      "name": "runner.public-ip",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "runner IPv4 /32 resolved"
+    },
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 2.445,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.two-az-subnets",
+      "status": "passed",
+      "durationSeconds": 2.245,
+      "detail": [
+        {
+          "id": "subnet-062eadd5b5b60354c",
+          "az": "ap-northeast-2c"
+        },
+        {
+          "id": "subnet-01a74c0fa16437766",
+          "az": "ap-northeast-2d"
+        }
+      ]
+    },
+    {
+      "name": "security.alb.create",
+      "status": "passed",
+      "durationSeconds": 3.123,
+      "detail": "sg-0309a992f11a0c92c"
+    },
+    {
+      "name": "security.app.create",
+      "status": "passed",
+      "durationSeconds": 2.327,
+      "detail": "sg-0ff7c2c84ef6eccb8"
+    },
+    {
+      "name": "security.state.create",
+      "status": "passed",
+      "durationSeconds": 2.609,
+      "detail": "sg-04aafdaa909faf761"
+    },
+    {
+      "name": "security.alb-http",
+      "status": "passed",
+      "durationSeconds": 2.306,
+      "detail": "tcp/80 from runner /32"
+    },
+    {
+      "name": "security.app-ssh",
+      "status": "passed",
+      "durationSeconds": 2.571,
+      "detail": "tcp/22 from runner /32"
+    },
+    {
+      "name": "security.state-ssh",
+      "status": "passed",
+      "durationSeconds": 3.191,
+      "detail": "tcp/22 from runner /32"
+    },
+    {
+      "name": "security.alb-to-app",
+      "status": "passed",
+      "durationSeconds": 3.79,
+      "detail": "tcp/8080 from source security group"
+    },
+    {
+      "name": "security.app-to-state",
+      "status": "passed",
+      "durationSeconds": 2.91,
+      "detail": "tcp/5432 from source security group"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 2.674,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 2.734,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 3.515,
+      "detail": "i-0c01e3a0e43c4dd45"
+    },
+    {
+      "name": "state-vm.running",
+      "status": "passed",
+      "durationSeconds": 17.494,
+      "detail": "state VM running"
+    },
+    {
+      "name": "state-vm.tools-ready",
+      "status": "passed",
+      "durationSeconds": 76.203,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "state-volume.create",
+      "status": "passed",
+      "durationSeconds": 1.93,
+      "detail": "vol-0525af9a146e90dc9"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 1.538,
+      "detail": "data volume available"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 2.083,
+      "detail": "{\n    \"VolumeId\": \"vol-0525af9a146e90dc9\",\n    \"InstanceId\": \"i-0c01e3a0e43c4dd45\",\n    \"Device\": \"/dev/sdf\",\n    \"State\": \"attaching\",\n    \"AttachTime\": \"2026-08-14T15:05:59.113000+00:00\"\n}"
+    },
+    {
+      "name": "state-volume.in-use",
+      "status": "passed",
+      "durationSeconds": 1.709,
+      "detail": "attachment complete"
+    },
+    {
+      "name": "state-volume.mount-and-postgres",
+      "status": "passed",
+      "durationSeconds": 5.352,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "app-group.launch-template",
+      "status": "passed",
+      "durationSeconds": 1.818,
+      "detail": "easydep-e2-b53649d9-lt"
+    },
+    {
+      "name": "load-balancer.target-group",
+      "status": "passed",
+      "durationSeconds": 1.72,
+      "detail": "arn:aws:<redacted>"
+    },
+    {
+      "name": "load-balancer.create",
+      "status": "passed",
+      "durationSeconds": 1.669,
+      "detail": {
+        "LoadBalancers": [
+          {
+            "LoadBalancerArn": "arn:aws:<redacted>",
+            "DNSName": "e2-b53649d9-alb-1974189472.ap-northeast-2.elb.amazonaws.com",
+            "CanonicalHostedZoneId": "ZWKZPGTI48KDX",
+            "CreatedTime": "2026-08-14T15:06:11.637000+00:00",
+            "LoadBalancerName": "e2-b53649d9-alb",
+            "Scheme": "internet-facing",
+            "VpcId": "vpc-0adda64ece60b6311",
+            "State": {
+              "Code": "provisioning"
+            },
+            "Type": "application",
+            "AvailabilityZones": [
+              {
+                "ZoneName": "ap-northeast-2d",
+                "SubnetId": "subnet-01a74c0fa16437766",
+                "LoadBalancerAddresses": []
+              },
+              {
+                "ZoneName": "ap-northeast-2c",
+                "SubnetId": "subnet-062eadd5b5b60354c",
+                "LoadBalancerAddresses": []
+              }
+            ],
+            "SecurityGroups": [
+              "sg-0309a992f11a0c92c"
+            ],
+            "IpAddressType": "ipv4"
+          }
+        ]
+      }
+    },
+    {
+      "name": "load-balancer.available",
+      "status": "passed",
+      "durationSeconds": 151.666,
+      "detail": "ALB available"
+    },
+    {
+      "name": "load-balancer.listener",
+      "status": "passed",
+      "durationSeconds": 2.817,
+      "detail": "arn:aws:<redacted>"
+    },
+    {
+      "name": "app-group.create",
+      "status": "passed",
+      "durationSeconds": 5.604,
+      "detail": "Auto Scaling group desired capacity 2"
+    },
+    {
+      "name": "baseline.two-healthy-targets",
+      "status": "passed",
+      "durationSeconds": 131.139,
+      "detail": [
+        "i-074c0d06823fa3c93",
+        "i-01c48904d49341621"
+      ]
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 0.089,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "baseline.business-write",
+      "status": "passed",
+      "durationSeconds": 0.133,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "stored": true
+        }
+      }
+    },
+    {
+      "name": "baseline.business-read",
+      "status": "passed",
+      "durationSeconds": 0.126,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "fault.health-based-managed-replacement",
+      "status": "passed",
+      "durationSeconds": 245.028,
+      "detail": {
+        "victimInstance": "i-074c0d06823fa3c93",
+        "replacementInstance": "i-00de9ce0dd36ce388",
+        "milestonesSeconds": {
+          "appStopped": 11.216,
+          "victimUnhealthy": 37.972,
+          "replacementHealthy": 245.027
+        },
+        "healthDerivedRecoveryBudgetSeconds": 30,
+        "businessContinuity": {
+          "probeCount": 208,
+          "successCount": 201,
+          "failureCount": 7,
+          "successRatio": 0.966346,
+          "maxConsecutiveFailureSeconds": 2.087
+        },
+        "successesDuringReplacement": 174
+      }
+    },
+    {
+      "name": "recovery.business-read",
+      "status": "passed",
+      "durationSeconds": 0.13,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "ALB listener -> target-group health -> Auto Scaling app VM group (2) -> state VM private IPv4:5432 -> PostgreSQL data volume",
+  "scope": "domain-neutral app-tier availability pilot; state tier remains singleton",
+  "availabilityObservation": {
+    "scope": "application tier",
+    "stateTier": "single state VM; not highly available",
+    "failureInjection": "stop one app container and let ALB health feed ASG replacement"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T15:22:21.932425+00:00",
+  "interpretationLimits": [
+    "The test validates app-tier managed replacement, not state-tier high availability.",
+    "Public HTTP is used; trusted HTTPS, DNS ownership, and certificates are not tested.",
+    "One development run does not establish an AWS-wide success rate or an SLA.",
+    "Sequential probes are a functional continuity signal, not a performance load test."
+  ]
+}

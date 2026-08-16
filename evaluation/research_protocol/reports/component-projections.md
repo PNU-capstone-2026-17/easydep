@@ -18,13 +18,13 @@ HTTPS 쌍은 단일 VM의 HTTP와 HTTPS를 비교하지 않는다. 두 조건 �
 HTTP 실현을 선택하고, `https-load-balanced-ingress`는 같은 계열의 HTTPS listener·certificate
 결합을 포함한 실현을 선택한다. 일반적인 HTTPS 요구만으로 부하분산기를 강제하지 않는다.
 
-## 중립 개념과 벤더 구성의 표현
+## capability와 벤더 구성의 표현
 
-중립 개념은 공통 리소스 스키마가 아니라 비교 좌표다. 실제 결정에는 다음 세 층을 모두 보존한다.
+capability는 공통 리소스 정체성이 아니라 비교할 기능이다. 실제 결정에는 다음 정보를 보존한다.
 
-1. `neutralConcept`: CSP 사이에서 비교할 기능과 관계
+1. 구성요소 `id`: 해당 CSP 실현 안에서 구분하는 역할
 2. `terraformType`과 `terraformKind`: 독립 리소스, 데이터 소스, 중첩 블록 또는 게스트 설정
-3. `relations`: 일대일·일대다·다대다 연결과 벤더별 제약
+3. `relations`: 구성요소 사이의 참조와 벤더별 제약
 
 Azure Application Gateway의 listener, backend pool, probe, routing rule, certificate는 서로 독립된 최상위 리소스가 아니라 하나의 `azurerm_application_gateway` 안에 있는 중첩 블록이다. 반면 GCP 외부 애플리케이션 부하분산은 forwarding rule, proxy, URL map, backend service, instance group, health check 등 여러 최상위 리소스로 구성된다. 평가기는 이 차이를 없애지 않고 구성 요소 인스턴스와 연결 관계를 각각 기록한다.
 
@@ -62,8 +62,8 @@ Azure Application Gateway의 listener, backend pool, probe, routing rule, certif
 ## CNA 합성 사례의 출처 경계
 
 PURE 같은 일반 요구사항 코퍼스는 CNA 배포 capability의 후보 빈도나 대표성 근거로 사용하지
-않는다. 이 개발 사례의 입력 근거는 기존 CNA 애플리케이션 기능, 3사 공식 문서, 중립 개념
-교차표와 Provider 검증 자료로 제한한다. LLM은 근거 카드에 있는 capability를 자연어 요구사항
+않는다. 이 개발 사례의 입력 근거는 기존 CNA 애플리케이션 기능, 3사 공식 문서, CSP별
+리소스 실현표와 Provider 검증 자료로 제한한다. LLM은 근거 카드에 있는 capability를 자연어 요구사항
 문장으로 표현하는 역할만 맡으며, 리소스 의존성이나 oracle을 새로 결정하지 않는다.
 
 현재 18개 component case는 구성 요소 사영, 통제·처치 쌍, 기능 oracle에는 연결되지만 합성

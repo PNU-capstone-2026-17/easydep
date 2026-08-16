@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "easydep-resource-plan-checkpoint-replay/v1",
+  "observedAt": "2026-08-15",
+  "purpose": "development",
+  "input": {
+    "runId": "course-registration-e1-design-20260814-side-r2",
+    "requirementsStepSha256": "42244ee9188dda02435962ea790270fea1c3799bb42746b42f15c0313177d057",
+    "cloudDesignStepSha256": "a3ad9a7ded08cc7a9304e79380e76da05fcf14bef5498850aed133d45e6033f2",
+    "reusedStages": [
+      "requirements.classification",
+      "design.architecture"
+    ],
+    "rerunStages": [
+      "requirements.deployment_needs",
+      "design.cloud_enrichment"
+    ]
+  },
+  "llm": {
+    "model": "openai/gpt-oss-120b",
+    "sampleCount": 5,
+    "seedBase": 42,
+    "elapsedSeconds": 69.92,
+    "retryCount": 0
+  },
+  "persistenceExtraction": {
+    "acceptedNeedsWithCanonicalPersistentDurability": 2,
+    "acceptedNeedsWithSharedServiceScope": 2,
+    "stablePersistentBlockStorageIds": 0,
+    "interpretation": "재시작 후 유실 방지는 영속성 의도로 보존하되 VM 교체 독립 block storage 요구로 승격하지 않았다."
+  },
+  "providerPlans": {
+    "aws": {
+      "region": "ap-northeast-2",
+      "workloadCount": 2,
+      "allocationCount": 2,
+      "persistentOwnerCount": 1,
+      "separateDataDisk": true,
+      "danglingEdgeCount": 0,
+      "diagramContainsEveryPlanNode": true,
+      "unresolvedCount": 0
+    },
+    "azure": {
+      "region": "koreacentral",
+      "workloadCount": 2,
+      "allocationCount": 2,
+      "persistentOwnerCount": 1,
+      "separateDataDisk": true,
+      "danglingEdgeCount": 0,
+      "diagramContainsEveryPlanNode": true,
+      "unresolvedCount": 0
+    },
+    "gcp": {
+      "region": "asia-northeast3",
+      "workloadCount": 2,
+      "allocationCount": 2,
+      "persistentOwnerCount": 1,
+      "separateDataDisk": true,
+      "danglingEdgeCount": 0,
+      "diagramContainsEveryPlanNode": true,
+      "unresolvedCount": 0
+    }
+  },
+  "decisionBoundary": {
+    "persistenceOwnerBasis": "explicit-design-database-node",
+    "separateDataDiskBasis": "project-policy:self-hosted-persistent-workload",
+    "separateDataDiskEvidence": "experiment:E3",
+    "sourceRequirementIds": [
+      "FR12",
+      "NFR7"
+    ]
+  },
+  "notMeasured": [
+    "Terraform generation",
+    "Terraform Plan JSON conformance",
+    "generated application and state workload runtime binding",
+    "course-registration business behavior",
+    "cloud apply"
+  ]
+}

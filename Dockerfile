@@ -1,5 +1,12 @@
 FROM eclipse-temurin:21-jdk-jammy AS jdk
 
+FROM node:22-alpine AS frontend-build
+WORKDIR /src
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
 # BERT FR/NFR 검증 가중치를 되살리는 단계. 저장소에는 45MiB 조각으로 쪼개 들어 있어서
 # (GitHub 파일당 100MiB 한도) 한 번 이어 붙여야 한다.
 # 별도 stage에서 하고 결과만 가져와야 조각과 완성본이 이미지에 함께 남지 않는다.
@@ -30,7 +37,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 애플리케이션 코드 복사 (server.py가 두 에이전트를 함께 서빙하고, frontend/는 설계 UI)
 COPY app ./app
 COPY server.py ./server.py
-COPY frontend ./frontend
+COPY --from=frontend-build /src/build ./frontend/build
 COPY scripts/bootstrap-implementation-tools.sh ./scripts/bootstrap-implementation-tools.sh
 RUN sh ./scripts/bootstrap-implementation-tools.sh
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+
 from typing_extensions import TypedDict
 
 
@@ -14,6 +15,8 @@ class ArchitectureState(TypedDict, total=False):
 
     # Requirements analysis artifacts.
     refined_requirements: dict[str, Any]
+    capability_contract: dict[str, Any]
+    resource_intake: dict[str, Any]
     usecase_spec: dict[str, Any]
     usecase_diagram_puml: str
     usecase_diagram_syntax_valid: bool
@@ -76,8 +79,14 @@ class ArchitectureState(TypedDict, total=False):
     erd_check: dict[str, Any]
 
     deployment_diagram_model: dict[str, Any]
+    # Design-owned bundle: editable logical model + selected provider topology +
+    # deterministic ResourcePlan.  The two PlantUML views are projections of it.
+    deployment_diagram_bundle: dict[str, Any]
+    deployment_topology: dict[str, Any]
+    deployment_resource_plan: dict[str, Any]
     deployment_diagram_feedback: str
     deployment_diagram_puml: str
+    deployment_diagram_provisioning_puml: str
     deployment_diagram_syntax_valid: bool
     deployment_diagram_syntax_errors: list[str]
 

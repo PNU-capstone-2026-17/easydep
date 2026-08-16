@@ -307,8 +307,7 @@ def test_interactive_run_resumes_without_implicit_provider_switch(tmp_path, monk
 
 
 @pytest.mark.parametrize(
-    "resolution",
-    ["revise-availability-requirement", "revise-state-requirement"],
+    "resolution", ["revise-state-requirement", "revise-availability-requirement"]
 )
 def test_explicit_requirement_revision_restarts_upstream_in_same_run(
     tmp_path, monkeypatch, resolution
@@ -370,7 +369,7 @@ def test_requirement_revision_rejects_missing_or_unchanged_full_contract(
         orchestrator.resume(
             first.run_id,
             {
-                "resolution": "revise-availability-requirement",
+                "resolution": "revise-state-requirement",
                 "revisedRequirements": revised,
             },
         )
@@ -478,16 +477,10 @@ def test_member_sessions_are_isolated_by_requirement_revision():
         requirement_revision=2,
     )
 
-    MemberRequirementsProvider(adapter=requirements).run(
-        {"requirements": ["revised"]}, context
-    )
-    graph_module.MemberDesignProvider(adapter=design).run(
-        {"requirements_result": {}}, context
-    )
+    MemberRequirementsProvider(adapter=requirements).run({"requirements": ["revised"]}, context)
+    graph_module.MemberDesignProvider(adapter=design).run({"requirements_result": {}}, context)
 
-    assert requirements.thread_ids == [
-        "orchestration:same-run:requirements:revision-2"
-    ]
+    assert requirements.thread_ids == ["orchestration:same-run:requirements:revision-2"]
     assert design.session_ids == ["orchestration:same-run:design:revision-2"]
 
 
@@ -628,21 +621,21 @@ def test_retry_hands_verified_failed_scaffold_output_to_logic(tmp_path, monkeypa
     assert logic_calls[0][0]["repair_feedback"][0]["code"] == "APP-DB-003"
     retry = second.state["retryHistory"][0]
     assert retry["repairOwner"] == "implementation.logic"
-    assert retry["partialOutputHandoffs"] == [{
-        "step": "implementation.scaffold",
-        "fromStatus": "failed",
-        "toOwner": "implementation.logic",
-        "diagnosticCodes": ["APP-DB-003"],
-        "workspaceVerified": True,
-    }]
+    assert retry["partialOutputHandoffs"] == [
+        {
+            "step": "implementation.scaffold",
+            "fromStatus": "failed",
+            "toOwner": "implementation.logic",
+            "diagnosticCodes": ["APP-DB-003"],
+            "workspaceVerified": True,
+        }
+    ]
     scaffold_step = second.state["implementation"]["steps"][0]
     assert scaffold_step["status"] == "completed"
     assert scaffold_step["metrics"]["repairHandoff"]["workspaceVerified"] is True
 
 
-def test_retry_does_not_handoff_failed_scaffold_from_unexpected_workspace(
-    tmp_path, monkeypatch
-):
+def test_retry_does_not_handoff_failed_scaffold_from_unexpected_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     outside = tmp_path / "outside" / "application"
     outside.mkdir(parents=True)
@@ -783,14 +776,10 @@ def test_operator_can_route_testing_failure_to_acceptance_tests(tmp_path, monkey
     assert len(registry.resolve("implementation.acceptance_tests", ProviderKind.LLM).calls) == 2
 
 
-def test_completed_run_can_reopen_only_with_explicit_external_repair_owner(
-    tmp_path, monkeypatch
-):
+def test_completed_run_can_reopen_only_with_explicit_external_repair_owner(tmp_path, monkeypatch):
     registry = _registry(tmp_path)
     orchestrator = _orchestrator(tmp_path, monkeypatch, registry)
-    first = orchestrator.start(
-        RunRequest(requirements=["An application."], mode=RunMode.BATCH)
-    )
+    first = orchestrator.start(RunRequest(requirements=["An application."], mode=RunMode.BATCH))
 
     with pytest.raises(ValueError, match="explicit repair owner"):
         orchestrator.retry_failed(first.run_id, reason="external verification failed")
@@ -969,9 +958,7 @@ def test_requirement_revision_artifacts_do_not_overwrite_original(tmp_path, monk
         (root / "run-revision/manifest.json").read_text(encoding="utf-8")
     )
     revised_manifest = json.loads(
-        (root / "run-revision/revisions/revision-1/manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (root / "run-revision/revisions/revision-1/manifest.json").read_text(encoding="utf-8")
     )
     assert original_manifest["requirementRevision"] == 0
     assert original_manifest["status"] == "needs_input"
@@ -1132,9 +1119,7 @@ def test_llm_logic_preserves_member_build_contract_and_merges_dependencies(tmp_p
     LlmScaffoldProvider._merge_build_dependencies(
         application,
         "app",
-        dependencies=[
-            ("implementation", "org.springframework.boot:spring-boot-starter-data-jpa")
-        ],
+        dependencies=[("implementation", "org.springframework.boot:spring-boot-starter-data-jpa")],
     )
     merged = build.read_text(encoding="utf-8")
 
@@ -1188,6 +1173,66 @@ def test_llm_logic_receives_structured_retry_feedback(tmp_path):
 
     assert result.status == StepStatus.COMPLETED
     assert prompts[0]["repairFeedback"] == [{"code": "APP-DB-003", "message": "bad binding"}]
+
+
+def test_llm_logic_projects_stable_products_and_only_acceptance_tests(tmp_path):
+    application = tmp_path / "run" / "application"
+    source = application / "src/main/java/Example.java"
+    acceptance = application / "src/test/java/example/acceptance/ContractTest.java"
+    unit = application / "src/test/java/example/ExampleTest.java"
+    source.parent.mkdir(parents=True)
+    acceptance.parent.mkdir(parents=True)
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("class Example {}", encoding="utf-8")
+    acceptance.write_text("class ContractTest {}", encoding="utf-8")
+    unit.write_text("class ExampleTest {}", encoding="utf-8")
+    prompts = []
+    provider = LlmLogicProvider(
+        lambda prompt: prompts.append(json.loads(prompt)) or '{"files":{}}'
+    )
+
+    result = provider.run(
+        {
+            "run_root": str(application.parent),
+            "requirements_result": {
+                "requirements": ["observable behavior"],
+                "deployment_needs": {"state": {"required": True}},
+                "resource_spec": {"provider": "aws"},
+                "telemetry": {"large": "must not be exported"},
+            },
+            "design_result": {
+                "artifacts": {
+                    "api_spec": {"openapi": "3.0.3"},
+                    "erd": "@startuml\n@enduml",
+                },
+                "llm_timing_events": [{"raw": "must not be exported"}],
+            },
+            "repair_feedback": [
+                {
+                    "code": "APP-DB-003",
+                    "message": "bad binding",
+                    "locations": [f"src/main/java/F{index}.java" for index in range(20)],
+                    "details": {"required": "postgresql"},
+                }
+            ],
+        },
+        StepContext(run_id="run", app_id="app", mode=RunMode.BATCH),
+    )
+
+    prompt = prompts[0]
+    assert result.status == StepStatus.COMPLETED
+    assert set(prompt["requirements"]) == {
+        "requirements",
+        "deployment_needs",
+        "resource_spec",
+    }
+    assert "telemetry" not in prompt["requirements"]
+    assert set(prompt["design"]) == {"apiSpec", "erd"}
+    assert prompt["repairFeedback"][0]["locationCount"] == 20
+    assert len(prompt["repairFeedback"][0]["locations"]) == 12
+    assert list(prompt["immutableAcceptanceTests"]) == [
+        "src/test/java/example/acceptance/ContractTest.java"
+    ]
 
 
 def test_llm_logic_may_update_json_production_resources(tmp_path):
@@ -1259,9 +1304,7 @@ def test_llm_logic_may_update_production_sql_resources(tmp_path):
     )
 
     assert result.status == StepStatus.COMPLETED
-    assert (
-        application / "src/main/resources/db/migration/V1__init.sql"
-    ).is_file()
+    assert (application / "src/main/resources/db/migration/V1__init.sql").is_file()
 
 
 def test_acceptance_llm_may_write_tests_only(tmp_path):
@@ -1301,9 +1344,7 @@ def test_acceptance_repair_receives_existing_tests_and_feedback(tmp_path):
 
     def invoke(prompt):
         captured.update(json.loads(prompt))
-        return json.dumps(
-            {"files": {"src/test/java/ExistingTest.java": "class ExistingTest {}"}}
-        )
+        return json.dumps({"files": {"src/test/java/ExistingTest.java": "class ExistingTest {}"}})
 
     result = LlmAcceptanceTestsProvider(invoke).run(
         {
@@ -1317,9 +1358,7 @@ def test_acceptance_repair_receives_existing_tests_and_feedback(tmp_path):
 
     assert result.status == StepStatus.COMPLETED
     assert "correcting tests" in captured["instruction"]
-    assert captured["existingTests"] == {
-        "src/test/java/ExistingTest.java": "class ExistingTest {}"
-    }
+    assert captured["existingTests"] == {"src/test/java/ExistingTest.java": "class ExistingTest {}"}
     assert captured["repairFeedback"][0]["code"] == "EXTERNAL"
 
 
@@ -1495,7 +1534,7 @@ def test_llm_scaffold_derives_build_dependencies_from_generated_app_artifacts(
                         "import jakarta.persistence.Entity;\n@Entity class Note {}"
                     ),
                     "src/main/resources/application.properties": (
-                        "spring.datasource.url=${EASYDEP_DATASOURCE_URL:jdbc:sqlite:/data/notes.db}\n"
+                        "spring.datasource.url=${EASYDEP_DATASOURCE_URL:jdbc:sqlite::memory:}\n"
                         "spring.datasource.driver-class-name=org.sqlite.JDBC\n"
                         "spring.jpa.database-platform=org.hibernate.community.dialect.SQLiteDialect\n"
                     ),
@@ -1527,7 +1566,7 @@ def test_llm_scaffold_returns_structured_database_diagnostic_and_can_retry(tmp_p
                 "files": {
                     "src/main/java/com/example/Application.java": "class Application {}",
                     "src/main/resources/application.properties": (
-                        "spring.datasource.url=jdbc:sqlite:/data/app.db\n"
+                        "spring.datasource.url=jdbc:sqlite::memory:\n"
                     ),
                 },
                 "runtimeContract": {
@@ -1544,7 +1583,7 @@ def test_llm_scaffold_returns_structured_database_diagnostic_and_can_retry(tmp_p
                 "files": {
                     "src/main/java/com/example/Application.java": "class Application {}",
                     "src/main/resources/application.properties": (
-                        "spring.datasource.url=jdbc:sqlite:/data/app.db\n"
+                        "spring.datasource.url=jdbc:sqlite::memory:\n"
                     ),
                 },
                 "runtimeContract": {
@@ -1577,7 +1616,7 @@ def test_llm_scaffold_returns_structured_database_diagnostic_and_can_retry(tmp_p
     assert second.status == StepStatus.COMPLETED
 
 
-def test_llm_scaffold_asks_before_resolving_multi_zone_node_state(tmp_path, monkeypatch):
+def test_llm_scaffold_asks_before_resolving_managed_recovery_node_state(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     prompts: list[dict[str, Any]] = []
     responses = iter(
@@ -1609,8 +1648,17 @@ def test_llm_scaffold_asks_before_resolving_multi_zone_node_state(tmp_path, monk
     first = provider.run(
         {
             "requirements_result": {
-                "deployment_needs": {},
-                "resource_spec": {"multiZone": True},
+                "deployment_needs": {
+                    "availability_requirement": {
+                        "decision": "accepted",
+                        "metadata": {"high_availability": True},
+                    }
+                },
+                "resource_spec": {
+                    "computeProfile": "managedGroupOne",
+                    "replicaCount": 1,
+                    "publicIngress": "loadBalanced",
+                },
             },
             "design_result": {},
         },
@@ -1619,14 +1667,23 @@ def test_llm_scaffold_asks_before_resolving_multi_zone_node_state(tmp_path, monk
 
     assert first.status == StepStatus.NEEDS_INPUT
     assert first.prompt["kind"] == "app-cloud-consistency"
-    assert first.diagnostics[0].code == "BIND-STATE-HA-001"
+    assert first.diagnostics[0].code == "BIND-STATE-GROUP-001"
     assert prompts[0]["consistencyResolution"] is None
 
     second = provider.run(
         {
             "requirements_result": {
-                "deployment_needs": {},
-                "resource_spec": {"multiZone": True},
+                "deployment_needs": {
+                    "availability_requirement": {
+                        "decision": "accepted",
+                        "metadata": {"high_availability": True},
+                    }
+                },
+                "resource_spec": {
+                    "computeProfile": "managedGroupOne",
+                    "replicaCount": 1,
+                    "publicIngress": "loadBalanced",
+                },
             },
             "design_result": {},
             **first.output,
@@ -1675,9 +1732,19 @@ def test_requirement_owned_node_state_cannot_be_silently_externalized(tmp_path, 
                             "accessScope": "node-filesystem",
                         }
                     },
-                }
+                },
+                "availability_requirement": {
+                    "required": True,
+                    "decision": "accepted",
+                    "requirementIds": ["R-ha"],
+                    "metadata": {"high_availability": True},
+                },
             },
-            "resource_spec": {"multiZone": True},
+            "resource_spec": {
+                "computeProfile": "managedGroupOne",
+                "replicaCount": 1,
+                "publicIngress": "loadBalanced",
+            },
         },
         "design_result": {},
     }
@@ -1702,12 +1769,12 @@ def test_requirement_owned_node_state_cannot_be_silently_externalized(tmp_path, 
     assert first.status == StepStatus.NEEDS_INPUT
     assert alternatives == {
         "revise-state-requirement",
-        "revise-availability-requirement",
+        "revise-compute-topology",
     }
     assert second.status == StepStatus.NEEDS_INPUT
-    assert {
-        item["resolution"] for item in second.prompt["upstreamRevisionResponses"]
-    } == alternatives
+    assert {item["resolution"] for item in second.prompt["upstreamRevisionResponses"]} == {
+        "revise-state-requirement",
+    }
     assert calls == 1
 
 
@@ -1738,8 +1805,17 @@ def test_consistency_resolution_replaces_stale_production_sources(tmp_path, monk
     provider = LlmScaffoldProvider(lambda _prompt: json.dumps(next(responses)))
     payload = {
         "requirements_result": {
-            "deployment_needs": {},
-            "resource_spec": {"multiZone": True},
+            "deployment_needs": {
+                "availability_requirement": {
+                    "decision": "accepted",
+                    "metadata": {"high_availability": True},
+                }
+            },
+            "resource_spec": {
+                "computeProfile": "managedGroupOne",
+                "replicaCount": 1,
+                "publicIngress": "loadBalanced",
+            },
         },
         "design_result": {},
     }
@@ -1778,8 +1854,17 @@ def test_failed_consistency_resolution_restores_the_checkpoint_application(tmp_p
     }
     provider = LlmScaffoldProvider(lambda _prompt: json.dumps({"files": local_files}))
     requirements = {
-        "deployment_needs": {},
-        "resource_spec": {"multiZone": True},
+        "deployment_needs": {
+            "availability_requirement": {
+                "decision": "accepted",
+                "metadata": {"high_availability": True},
+            }
+        },
+        "resource_spec": {
+            "computeProfile": "managedGroupOne",
+            "replicaCount": 1,
+            "publicIngress": "loadBalanced",
+        },
     }
     first = provider.run(
         {"requirements_result": requirements, "design_result": {}},
@@ -1837,8 +1922,17 @@ def test_batch_scaffold_fails_instead_of_waiting_for_a_consistency_answer(tmp_pa
     result = provider.run(
         {
             "requirements_result": {
-                "deployment_needs": {},
-                "resource_spec": {"multiZone": True},
+                "deployment_needs": {
+                    "availability_requirement": {
+                        "decision": "accepted",
+                        "metadata": {"high_availability": True},
+                    }
+                },
+                "resource_spec": {
+                    "computeProfile": "managedGroupOne",
+                    "replicaCount": 1,
+                    "publicIngress": "loadBalanced",
+                },
             },
             "design_result": {},
         },
@@ -1847,7 +1941,7 @@ def test_batch_scaffold_fails_instead_of_waiting_for_a_consistency_answer(tmp_pa
 
     assert result.status == StepStatus.FAILED
     assert {item.code for item in result.diagnostics} == {
-        "BIND-STATE-HA-001",
+        "BIND-STATE-GROUP-001",
         "BATCH_INPUT_REQUIRED",
     }
 
@@ -2063,9 +2157,7 @@ def test_run_execution_lock_rejects_only_same_run(tmp_path):
             pass
 
 
-def test_member_scaffold_without_explicit_transmission_approval_only_plans(
-    tmp_path, monkeypatch
-):
+def test_member_scaffold_without_explicit_transmission_approval_only_plans(tmp_path, monkeypatch):
     from app.core.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
@@ -2110,9 +2202,7 @@ def test_member_scaffold_without_explicit_transmission_approval_only_plans(
     assert json.loads(job.read_text(encoding="utf-8"))["verification"]["compile"] is False
 
 
-def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(
-    tmp_path, monkeypatch
-):
+def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(tmp_path, monkeypatch):
     from app.core.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
@@ -2129,9 +2219,7 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(
             "command_timeout_seconds": 60,
         },
     )()
-    provider.client = type(
-        "Client", (), {"prepare_job": lambda *_args, **_kwargs: job}
-    )()
+    provider.client = type("Client", (), {"prepare_job": lambda *_args, **_kwargs: job})()
     commands = []
 
     def completed(command, **kwargs):
@@ -2142,11 +2230,13 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(
             (),
             {
                 "returncode": 0,
-                "stdout": json.dumps({
-                    "run_root": str(application.parent),
-                    "member_plan": {"status": "COMPLETE"},
-                    "member_workflow_status": "COMPLETE",
-                }),
+                "stdout": json.dumps(
+                    {
+                        "run_root": str(application.parent),
+                        "member_plan": {"status": "COMPLETE"},
+                        "member_workflow_status": "COMPLETE",
+                    }
+                ),
                 "stderr": "",
             },
         )()
@@ -2156,9 +2246,7 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_API_KEY", raising=False)
     monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
-    monkeypatch.setattr(
-        "app.core.orchestration.providers.run_process_tree", completed
-    )
+    monkeypatch.setattr("app.core.orchestration.providers.run_process_tree", completed)
 
     result = provider.run(
         {
@@ -2175,9 +2263,7 @@ def test_member_scaffold_runs_implemented_workflow_with_explicit_approval(
     assert result.output["member_workflow_status"] == "COMPLETE"
 
 
-def test_member_scaffold_checkpoint_retry_requests_failed_cache_recovery(
-    tmp_path, monkeypatch
-):
+def test_member_scaffold_checkpoint_retry_requests_failed_cache_recovery(tmp_path, monkeypatch):
     from app.core.orchestration.providers import MemberScaffoldProvider
 
     application = tmp_path / "generated" / "application"
@@ -2204,9 +2290,7 @@ def test_member_scaffold_checkpoint_retry_requests_failed_cache_recovery(
             (),
             {
                 "returncode": 0,
-                "stdout": json.dumps(
-                    {"run_root": str(application.parent), "member_plan": {}}
-                ),
+                "stdout": json.dumps({"run_root": str(application.parent), "member_plan": {}}),
                 "stderr": "",
             },
         )()
@@ -2250,31 +2334,151 @@ def test_completed_member_workflow_skips_temporary_application_llms(tmp_path):
     assert logic.metrics["llm_calls"] == 0
 
 
+def test_completed_member_workflow_uses_logic_llm_for_external_repair_feedback(tmp_path):
+    application = tmp_path / "run" / "application"
+    source = application / "src/main/java/example/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    invoked = []
+
+    def repair(prompt: str) -> str:
+        invoked.append(json.loads(prompt))
+        return json.dumps({"files": {}})
+
+    result = LlmLogicProvider(repair).run(
+        {
+            "run_root": str(tmp_path / "run"),
+            "member_workflow_status": "COMPLETE",
+            "repair_feedback": [
+                {
+                    "code": "APP-BUSINESS-001",
+                    "message": "The external business oracle observed an empty catalog.",
+                    "details": {"failedPhase": "course-catalog"},
+                }
+            ],
+            "cloud_capability_contract": {},
+            "deployment_binding_contract": {},
+        },
+        StepContext(run_id="run", app_id="app", mode=RunMode.BATCH),
+    )
+
+    assert result.status == StepStatus.COMPLETED
+    assert result.metrics["llm_calls"] == 1
+    assert invoked[0]["repairFeedback"][0]["code"] == "APP-BUSINESS-001"
+
+
+def test_completed_member_workflow_checks_requirement_runtime_contract(tmp_path):
+    application = tmp_path / "run" / "application"
+    resources = application / "src/main/resources/application.yml"
+    resources.parent.mkdir(parents=True)
+    resources.write_text(
+        "spring:\n  datasource:\n    url: jdbc:h2:mem:generated\n"
+        "    driver-class-name: org.h2.Driver\n",
+        encoding="utf-8",
+    )
+    (application / "build.gradle").write_text(
+        "dependencies { runtimeOnly 'com.h2database:h2' }",
+        encoding="utf-8",
+    )
+    payload = {
+        "run_root": str(tmp_path / "run"),
+        "member_workflow_status": "COMPLETE",
+        "requirements_result": {
+            "deployment_needs": {
+                "database": {
+                    "required": True,
+                    "decision": "accepted",
+                    "requirementIds": ["NFR-DB"],
+                    "metadata": {
+                        "databaseEngine": "PostgreSQL",
+                        "deploymentMode": "separate container",
+                        "embedded": False,
+                    },
+                }
+            }
+        },
+    }
+
+    logic = LlmLogicProvider(
+        lambda _prompt: pytest.fail("completed member output must not call the logic LLM")
+    ).run(payload, StepContext(run_id="run", app_id="app", mode=RunMode.BATCH))
+
+    assert logic.status == StepStatus.FAILED
+    assert {item.code for item in logic.diagnostics} == {
+        "APP-DB-ENGINE-001",
+        "APP-DB-MODE-001",
+    }
+    assert logic.output["run_root"] == str(tmp_path / "run")
+
+
+def test_completed_member_workflow_closes_observed_database_dependencies_without_llm(tmp_path):
+    application = tmp_path / "run" / "application"
+    resources = application / "src/main/resources/application.yml"
+    resources.parent.mkdir(parents=True)
+    resources.write_text(
+        "spring:\n"
+        "  datasource:\n"
+        "    url: ${DATABASE_URL:jdbc:postgresql://state:5432/app}\n"
+        "  flyway:\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+    build = application / "build.gradle"
+    build.write_text(
+        "plugins { id 'java' }\n\n"
+        "dependencies {\n"
+        "    implementation 'org.flywaydb:flyway-core'\n"
+        "    runtimeOnly 'org.postgresql:postgresql'\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = LlmLogicProvider(
+        lambda _prompt: pytest.fail("dependency closure must not call the logic LLM")
+    ).run(
+        {
+            "run_root": str(tmp_path / "run"),
+            "member_workflow_status": "COMPLETE",
+            "cloud_capability_contract": {},
+            "deployment_binding_contract": {},
+        },
+        StepContext(run_id="run", app_id="app", mode=RunMode.BATCH),
+    )
+
+    assert result.status == StepStatus.COMPLETED
+    assert "org.flywaydb:flyway-database-postgresql" in build.read_text(encoding="utf-8")
+    assert result.metrics["llm_calls"] == 0
+
+
 def test_retry_refreshes_legacy_generic_test_failure_with_file_ownership(tmp_path):
     application = tmp_path / "application"
     source = application / "src/main/java/example/Broken.java"
     source.parent.mkdir(parents=True)
     source.write_text("class Broken {}", encoding="utf-8")
     state = {
-        "implementation": {
-            "data": {"scaffold_files": ["src/main/java/example/Broken.java"]}
-        },
+        "implementation": {"data": {"scaffold_files": ["src/main/java/example/Broken.java"]}},
         "testing": {
-            "steps": [{
-                "status": "failed",
-                "diagnostics": [{
-                    "code": "APPLICATION_TESTS_FAILED",
-                    "message": "Generated application tests failed.",
-                }],
-                "output": {"testing_result": {
-                    "repository": str(application),
-                    "unitTests": {
-                        "status": "failed",
-                        "stdout": "> Task :compileJava FAILED\nCompilation failed",
-                        "stderr": f"{source}:3: error: invalid override",
+            "steps": [
+                {
+                    "status": "failed",
+                    "diagnostics": [
+                        {
+                            "code": "APPLICATION_TESTS_FAILED",
+                            "message": "Generated application tests failed.",
+                        }
+                    ],
+                    "output": {
+                        "testing_result": {
+                            "repository": str(application),
+                            "unitTests": {
+                                "status": "failed",
+                                "stdout": "> Task :compileJava FAILED\nCompilation failed",
+                                "stderr": f"{source}:3: error: invalid override",
+                            },
+                        }
                     },
-                }},
-            }]
+                }
+            ]
         },
     }
 

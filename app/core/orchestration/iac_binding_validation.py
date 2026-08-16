@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,9 +31,54 @@ _PORT_CONTEXT = {
 }
 
 _VM_SIZE_FIELDS = {
-    "aws": ("aws_instance", "instance_type"),
-    "azure": ("azurerm_linux_virtual_machine", "size"),
-    "gcp": ("google_compute_instance", "machine_type"),
+    "aws": (
+        ("aws_instance", "instance_type"),
+        ("aws_launch_template", "instance_type"),
+    ),
+    "azure": (
+        ("azurerm_linux_virtual_machine", "size"),
+        ("azurerm_linux_virtual_machine_scale_set", "sku"),
+    ),
+    "gcp": (
+        ("google_compute_instance", "machine_type"),
+        ("google_compute_instance_template", "machine_type"),
+    ),
+}
+
+_MANAGED_GROUP_RESOURCES = {
+    "aws": {"aws_autoscaling_group", "aws_launch_template"},
+    "azure": {"azurerm_linux_virtual_machine_scale_set"},
+    "gcp": {
+        "google_compute_region_instance_group_manager",
+        "google_compute_instance_template",
+    },
+}
+
+_DISK_ATTACHMENT_TYPES = {
+    "aws": {"aws_volume_attachment"},
+    "azure": {"azurerm_virtual_machine_data_disk_attachment"},
+    "gcp": {"google_compute_attached_disk"},
+}
+
+_EMBEDDED_REQUIRED_KEYS = {
+    "aws": {
+        "health-check": {"health_check"},
+    },
+    "azure": {
+        "network-interface": {"network_interface"},
+        "listener": {"http_listener"},
+        "frontend-ip-config": {"frontend_ip_configuration"},
+        "frontend-port": {"frontend_port"},
+        "backend-group": {"backend_address_pool"},
+        "backend-settings": {"backend_http_settings"},
+        "health-check": {"probe"},
+        "routing-rule": {"request_routing_rule"},
+        "backend-membership": {"application_gateway_backend_address_pool_ids"},
+    },
+    "gcp": {
+        "network-interface": {"network_interface"},
+        "named-port": {"named_port"},
+    },
 }
 
 
@@ -67,6 +113,15 @@ def _hcl_string(value: Any) -> str | None:
     return stripped
 
 
+def _without_comments(content: str) -> str:
+    without_blocks = re.sub(r"(?s)/\*.*?\*/", "", content)
+    return "\n".join(
+        line
+        for line in without_blocks.splitlines()
+        if not re.match(r"^\s*(?:#|//)", line)
+    )
+
+
 def validate_vm_selection_binding(
     files: dict[str, str], *, provider: str, expected_spec_name: str | None
 ) -> dict[str, Any]:
@@ -84,12 +139,14 @@ def validate_vm_selection_binding(
             "status": "failed",
             "expected": expected_spec_name,
             "observations": [],
-            "diagnostics": [{
-                "code": "BIND-VM-SIZE-001",
-                "message": f"No VM size observer is defined for provider {provider!r}.",
-            }],
+            "diagnostics": [
+                {
+                    "code": "BIND-VM-SIZE-001",
+                    "message": f"No VM size observer is defined for provider {provider!r}.",
+                }
+            ],
         }
-    resource_type, attribute = target
+    targets = set(target)
     variables: dict[str, str] = {}
     parsed_files: list[tuple[str, dict[str, Any]]] = []
     for name, content in sorted(files.items()):
@@ -110,8 +167,15 @@ def validate_vm_selection_binding(
     for name, parsed in parsed_files:
         for block in parsed.get("resource") or []:
             for raw_type, instances in block.items():
-                if raw_type.strip('"') != resource_type:
+                resource_type = raw_type.strip('"')
+                matching = [
+                    attribute
+                    for expected_type, attribute in targets
+                    if expected_type == resource_type
+                ]
+                if not matching:
                     continue
+                attribute = matching[0]
                 for raw_name, body in (instances or {}).items():
                     raw_value = _hcl_string((body or {}).get(attribute))
                     value = raw_value
@@ -120,25 +184,660 @@ def validate_vm_selection_binding(
                     if match:
                         variable = match.group(1)
                         value = variables.get(variable)
-                    observations.append({
-                        "source": f"{name}:{resource_type}.{raw_name.strip(chr(34))}.{attribute}",
-                        "raw": raw_value,
-                        "variable": variable,
-                        "value": value,
-                    })
+                    observations.append(
+                        {
+                            "source": f"{name}:{resource_type}.{raw_name.strip(chr(34))}.{attribute}",
+                            "raw": raw_value,
+                            "variable": variable,
+                            "value": value,
+                        }
+                    )
     matched = any(item.get("value") == expected_spec_name for item in observations)
-    diagnostics = [] if matched else [{
-        "code": "BIND-VM-SIZE-001",
-        "message": "Generated IaC does not bind the selected VM specification.",
-        "details": {
-            "expected": expected_spec_name,
-            "observed": [item.get("value") for item in observations],
-        },
-    }]
+    diagnostics = (
+        []
+        if matched
+        else [
+            {
+                "code": "BIND-VM-SIZE-001",
+                "message": "Generated IaC does not bind the selected VM specification.",
+                "details": {
+                    "expected": expected_spec_name,
+                    "observed": [item.get("value") for item in observations],
+                },
+            }
+        ]
+    )
     return {
         "status": "passed" if matched else "failed",
         "expected": expected_spec_name,
         "observations": observations,
+        "diagnostics": diagnostics,
+    }
+
+
+def validate_managed_group_binding(
+    files: dict[str, str], *, provider: str, required: bool
+) -> dict[str, Any]:
+    """Verify only that the selected provider-native managed compute group is present."""
+    if not required:
+        return {"status": "not-applicable", "observations": [], "diagnostics": []}
+    expected = _MANAGED_GROUP_RESOURCES.get(provider)
+    if expected is None:
+        return {
+            "status": "failed",
+            "observations": [],
+            "diagnostics": [
+                {
+                    "code": "BIND-GROUP-001",
+                    "message": f"No managed compute-group observer is defined for {provider!r}.",
+                }
+            ],
+        }
+
+    observed_types: set[str] = set()
+    for name, content in sorted(files.items()):
+        if not name.endswith(".tf"):
+            continue
+        try:
+            parsed = hcl2.load(io.StringIO(content))
+        except Exception:
+            continue
+        for block in parsed.get("resource") or []:
+            for raw_type, instances in block.items():
+                resource_type = raw_type.strip('"')
+                observed_types.add(resource_type)
+
+    missing_resources = sorted(expected - observed_types)
+    diagnostics: list[dict[str, Any]] = []
+    if missing_resources:
+        diagnostics.append(
+            {
+                "code": "BIND-GROUP-001",
+                "message": "Generated IaC does not use the required provider-managed compute group.",
+                "details": {"missingResourceTypes": missing_resources},
+            }
+        )
+    return {
+        "status": "failed" if diagnostics else "passed",
+        "observations": sorted(observed_types),
+        "diagnostics": diagnostics,
+    }
+
+
+def _terraform_resource_observations(
+    files: dict[str, str],
+) -> tuple[Counter[str], set[str], set[str]]:
+    counts: Counter[str] = Counter()
+    dynamic_count_types: set[str] = set()
+    observed_keys: set[str] = set()
+    for name, content in sorted(files.items()):
+        if not name.endswith(".tf"):
+            continue
+        try:
+            parsed = hcl2.load(io.StringIO(content))
+        except Exception:
+            continue
+        for block in parsed.get("resource") or []:
+            for raw_type, instances in block.items():
+                resource_type = raw_type.strip('"')
+                for _raw_name, body in (instances or {}).items():
+                    body = body or {}
+                    count = body.get("count", 1)
+                    if isinstance(count, int) and count >= 0:
+                        counts[resource_type] += count
+                    else:
+                        counts[resource_type] += 1
+                        dynamic_count_types.add(resource_type)
+                    if "for_each" in body:
+                        dynamic_count_types.add(resource_type)
+                    for path, _value in _walk(body):
+                        observed_keys.update(path)
+    return counts, dynamic_count_types, observed_keys
+
+
+def _terraform_reference_pairs(files: dict[str, str]) -> set[tuple[str, str]]:
+    """Return source-type -> referenced-resource-type pairs from parsed HCL."""
+    resources: list[tuple[str, str, Any]] = []
+    for name, content in sorted(files.items()):
+        if not name.endswith(".tf"):
+            continue
+        try:
+            parsed = hcl2.load(io.StringIO(content))
+        except Exception:
+            continue
+        for block in parsed.get("resource") or []:
+            for raw_type, instances in block.items():
+                resource_type = raw_type.strip('"')
+                for raw_name, body in (instances or {}).items():
+                    resources.append((resource_type, str(raw_name).strip('"'), body or {}))
+    addresses = {
+        f"{resource_type}.{resource_name}": resource_type
+        for resource_type, resource_name, _body in resources
+    }
+    pairs: set[tuple[str, str]] = set()
+    for source_type, _source_name, body in resources:
+        values = "\n".join(str(value) for _path, value in _walk(body))
+        for address, target_type in addresses.items():
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(address)}(?:\.|\[)", values):
+                pairs.add((source_type, target_type))
+    return pairs
+
+
+_GCP_REQUIRED_REFERENCE_IDS = {
+    ("forwarding-rule", "public-ip"),
+    ("forwarding-rule", "target-http-proxy"),
+    ("target-http-proxy", "url-map"),
+    ("url-map", "backend-service"),
+    ("backend-service", "health-check"),
+    ("backend-service", "backend-group"),
+    ("backend-service", "compute-group"),
+    ("backend-group", "compute-instance"),
+    ("compute-group", "compute-template"),
+    ("firewall", "network"),
+    ("subnet", "network"),
+    ("cloud-router", "network"),
+    ("cloud-nat", "cloud-router"),
+    ("cloud-nat", "subnet"),
+}
+
+
+def validate_resource_plan_binding(
+    files: dict[str, str], *, resource_plan: dict[str, Any]
+) -> dict[str, Any]:
+    """Check provider resources declared by the shared plan without guessing runtime success."""
+    if not resource_plan:
+        return {
+            "status": "not-applicable",
+            "observations": [],
+            "notObserved": [],
+            "diagnostics": [],
+        }
+    counts, dynamic_count_types, observed_keys = _terraform_resource_observations(files)
+    reference_pairs = _terraform_reference_pairs(files)
+    requirements: Counter[tuple[str, ...]] = Counter()
+    plan_ids: dict[tuple[str, ...], list[str]] = {}
+    not_observed: list[dict[str, Any]] = []
+    for node in resource_plan.get("nodes") or []:
+        if node.get("handling") != "create":
+            continue
+        alternatives = tuple(sorted(str(item) for item in node.get("terraformTypes") or []))
+        if not alternatives:
+            not_observed.append(
+                {
+                    "planId": node.get("id"),
+                    "reason": "No source-level Terraform observer is defined.",
+                    "nextGate": "terraform-plan-json-or-cloud-runtime",
+                }
+            )
+            continue
+        minimum_count = max(1, int(node.get("minimumCount") or 1))
+        requirements[alternatives] += minimum_count
+        plan_ids.setdefault(alternatives, []).extend(
+            [str(node.get("id") or "")] * minimum_count
+        )
+
+    diagnostics: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    provider = str(resource_plan.get("provider") or "")
+    for node in resource_plan.get("nodes") or []:
+        if node.get("handling") != "configureInsideOwner":
+            continue
+        provider_kind = str(node.get("providerKind") or "")
+        required_keys = _EMBEDDED_REQUIRED_KEYS.get(provider, {}).get(
+            provider_kind, set()
+        )
+        if not required_keys:
+            continue
+        embedded_observed = bool(required_keys & observed_keys)
+        observations.append(
+            {
+                "planId": node.get("id"),
+                "ownerRef": node.get("ownerRef"),
+                "embeddedKeys": sorted(required_keys),
+                "observed": embedded_observed,
+            }
+        )
+        if not embedded_observed:
+            diagnostics.append(
+                {
+                    "code": "BIND-RESOURCE-PLAN-EMBEDDED-001",
+                    "message": (
+                        "Generated IaC omits a ResourcePlan component that must be "
+                        "configured inside its owner resource."
+                    ),
+                    "details": observations[-1],
+                }
+            )
+    endpoint_protocols = {
+        str(node.get("protocol") or "").strip().lower()
+        for node in resource_plan.get("nodes") or []
+        if node.get("group") == "endpoint" and node.get("protocol")
+    }
+    tls_patterns = (
+        re.compile(r"(?i)\blisten\s+443\s+ssl\b"),
+        re.compile(r"(?i)\bssl_certificate(?:_key)?\b"),
+        re.compile(r"(?i)\btls_(?:cert|key)\b"),
+        re.compile(r"(?i)\bprotocol\s*=\s*[\"']HTTPS[\"']"),
+    )
+    tls_locations = sorted(
+        name
+        for name, content in files.items()
+        if any(pattern.search(_without_comments(content)) for pattern in tls_patterns)
+    )
+    if endpoint_protocols:
+        observations.append(
+            {
+                "kind": "externalEndpointProtocol",
+                "expected": sorted(endpoint_protocols),
+                "tlsTerminationObserved": bool(tls_locations),
+                "locations": tls_locations,
+            }
+        )
+    if endpoint_protocols == {"http"} and tls_locations:
+        diagnostics.append(
+            {
+                "code": "BIND-RESOURCE-PLAN-ENDPOINT-001",
+                "message": "Generated IaC upgrades an HTTP ResourcePlan endpoint to HTTPS.",
+                "details": observations[-1],
+            }
+        )
+    if "https" in endpoint_protocols and not tls_locations:
+        diagnostics.append(
+            {
+                "code": "BIND-RESOURCE-PLAN-ENDPOINT-002",
+                "message": "Generated IaC has no observable TLS termination for an HTTPS endpoint.",
+                "details": observations[-1],
+            }
+        )
+    for alternatives, expected in sorted(requirements.items()):
+        observed = sum(counts[item] for item in alternatives)
+        dynamic = bool(set(alternatives) & dynamic_count_types)
+        observations.append(
+            {
+                "planIds": plan_ids[alternatives],
+                "terraformTypes": list(alternatives),
+                "expectedCount": expected,
+                "observedMinimumCount": observed,
+                "dynamicCount": dynamic,
+            }
+        )
+        if observed >= expected:
+            continue
+        if dynamic:
+            not_observed.append(
+                {
+                    "planIds": plan_ids[alternatives],
+                    "reason": "A dynamic count or for_each prevents an exact source-level count.",
+                    "nextGate": "terraform-plan-json",
+                }
+            )
+            continue
+        diagnostics.append(
+            {
+                "code": "BIND-RESOURCE-PLAN-NODE-001",
+                "message": "Generated IaC omits a provider resource required by ResourcePlan.",
+                "details": {
+                    "planIds": plan_ids[alternatives],
+                    "terraformTypes": list(alternatives),
+                    "expectedCount": expected,
+                    "observedCount": observed,
+                },
+            }
+        )
+
+    requires_disk_attachment = any(
+        edge.get("label") == "attaches"
+        and str(edge.get("to") or "").startswith("disk")
+        for edge in resource_plan.get("edges") or []
+    )
+    if requires_disk_attachment:
+        attachment_types = _DISK_ATTACHMENT_TYPES.get(provider, set())
+        embedded_attachment = bool(
+            {"attached_disk", "data_disk", "storage_data_disk"} & observed_keys
+        )
+        observed_attachment = bool(attachment_types & set(counts)) or embedded_attachment
+        observations.append(
+            {
+                "relation": "attaches",
+                "terraformTypes": sorted(attachment_types),
+                "observed": observed_attachment,
+            }
+        )
+        if not observed_attachment:
+            diagnostics.append(
+                {
+                    "code": "BIND-RESOURCE-PLAN-EDGE-001",
+                    "message": "Generated IaC creates a persistent disk but does not attach it to compute.",
+                    "details": {"relation": "attaches", "provider": provider},
+                }
+            )
+
+    planned_types = {
+        resource_type
+        for alternatives in requirements
+        for resource_type in alternatives
+    }
+    allowed_unplanned_types = (
+        _DISK_ATTACHMENT_TYPES.get(provider, set())
+        if requires_disk_attachment
+        else set()
+    )
+    authoritative_plan = bool(
+        resource_plan.get("deploymentTopology")
+        and resource_plan.get("providerProjectionPolicy")
+    )
+    unexpected_types = (
+        sorted(set(counts) - planned_types - allowed_unplanned_types)
+        if authoritative_plan
+        else []
+    )
+    if unexpected_types:
+        diagnostics.append(
+            {
+                "code": "BIND-RESOURCE-PLAN-NODE-002",
+                "message": (
+                    "Generated IaC creates provider resources that are absent from "
+                    "ResourcePlan."
+                ),
+                "details": {"unexpectedTerraformTypes": unexpected_types},
+            }
+        )
+
+    for edge in resource_plan.get("edges") or []:
+        if edge.get("relation") == "connectsTo":
+            not_observed.append(
+                {
+                    "from": edge.get("from"),
+                    "to": edge.get("to"),
+                    "reason": "Runtime endpoint reachability is not proven by Terraform source.",
+                    "nextGate": "cloud-runtime-business-probe",
+                }
+            )
+    if str(resource_plan.get("provider") or "") == "gcp":
+        by_id = {
+            str(node.get("id") or ""): node
+            for node in resource_plan.get("nodes") or []
+        }
+        plan_edges = {
+            (str(edge.get("from") or ""), str(edge.get("to") or ""))
+            for edge in resource_plan.get("edges") or []
+        }
+        for source_id, target_id in sorted(
+            _GCP_REQUIRED_REFERENCE_IDS & plan_edges
+        ):
+            source_types = tuple(
+                str(item) for item in by_id[source_id].get("terraformTypes") or []
+            )
+            target_types = tuple(
+                str(item) for item in by_id[target_id].get("terraformTypes") or []
+            )
+            if not source_types or not target_types:
+                continue
+            observed = any(
+                (source_type, target_type) in reference_pairs
+                for source_type in source_types
+                for target_type in target_types
+            )
+            observations.append(
+                {
+                    "relation": f"{source_id}->{target_id}",
+                    "sourceTerraformTypes": list(source_types),
+                    "targetTerraformTypes": list(target_types),
+                    "observed": observed,
+                }
+            )
+            if not observed:
+                diagnostics.append(
+                    {
+                        "code": "BIND-RESOURCE-PLAN-EDGE-002",
+                        "message": (
+                            "Generated GCP IaC does not reference a required "
+                            "ResourcePlan dependency."
+                        ),
+                        "details": observations[-1],
+                    }
+                )
+
+    return {
+        "status": "failed" if diagnostics else "passed",
+        "observations": observations,
+        "notObserved": not_observed,
+        "diagnostics": diagnostics,
+    }
+
+
+def observe_terraform_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Reduce Plan JSON to non-sensitive resource counts, addresses, and references."""
+    resources: list[dict[str, str]] = []
+
+    def walk_module(module: dict[str, Any]) -> None:
+        for item in module.get("resources") or []:
+            resource_type = str(item.get("type") or "")
+            address = str(item.get("address") or "")
+            if resource_type and address:
+                resources.append({"address": address, "type": resource_type})
+        for child in module.get("child_modules") or []:
+            walk_module(child)
+
+    planned = plan.get("planned_values") or {}
+    root = planned.get("root_module") or {}
+    walk_module(root)
+    counts = Counter(item["type"] for item in resources)
+    address_types = {item["address"]: item["type"] for item in resources}
+    reference_pairs: set[tuple[str, str]] = set()
+
+    def expression_references(value: Any) -> set[str]:
+        found: set[str] = set()
+        if isinstance(value, dict):
+            found.update(str(item) for item in value.get("references") or [])
+            for child in value.values():
+                found.update(expression_references(child))
+        elif isinstance(value, list):
+            for child in value:
+                found.update(expression_references(child))
+        return found
+
+    def walk_configuration(module: dict[str, Any]) -> None:
+        for item in module.get("resources") or []:
+            source_address = str(item.get("address") or "")
+            source_type = str(item.get("type") or address_types.get(source_address) or "")
+            if not source_type:
+                continue
+            for reference in expression_references(item.get("expressions") or {}):
+                target_address = ".".join(reference.split(".")[:2])
+                target_type = address_types.get(target_address)
+                if target_type:
+                    reference_pairs.add((source_type, target_type))
+        for module_call in (module.get("module_calls") or {}).values():
+            child = (module_call or {}).get("module") or {}
+            if isinstance(child, dict):
+                walk_configuration(child)
+
+    configuration = (plan.get("configuration") or {}).get("root_module") or {}
+    walk_configuration(configuration)
+    return {
+        "status": "available",
+        "formatVersion": plan.get("format_version"),
+        "terraformVersion": plan.get("terraform_version"),
+        "resourceCounts": dict(sorted(counts.items())),
+        "addresses": sorted(item["address"] for item in resources),
+        "referencePairs": [
+            {"fromType": source, "toType": target}
+            for source, target in sorted(reference_pairs)
+        ],
+    }
+
+
+def validate_resource_plan_against_plan(
+    resource_plan: dict[str, Any], plan_observation: dict[str, Any]
+) -> dict[str, Any]:
+    """Use resolved Plan counts for the node and disk-attachment checks."""
+    if not resource_plan:
+        return {"status": "not-applicable", "checks": [], "diagnostics": []}
+    if plan_observation.get("status") != "available":
+        return {
+            "status": "not-observed",
+            "checks": [],
+            "diagnostics": [],
+            "reason": plan_observation.get("reason") or "Terraform Plan JSON is unavailable.",
+        }
+    counts = Counter(
+        {
+            str(key): int(value)
+            for key, value in (plan_observation.get("resourceCounts") or {}).items()
+        }
+    )
+    requirements: Counter[tuple[str, ...]] = Counter()
+    plan_ids: dict[tuple[str, ...], list[str]] = {}
+    for node in resource_plan.get("nodes") or []:
+        if node.get("handling") != "create":
+            continue
+        alternatives = tuple(sorted(str(item) for item in node.get("terraformTypes") or []))
+        if not alternatives:
+            continue
+        minimum_count = max(1, int(node.get("minimumCount") or 1))
+        requirements[alternatives] += minimum_count
+        plan_ids.setdefault(alternatives, []).extend(
+            [str(node.get("id") or "")] * minimum_count
+        )
+    checks: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
+    for alternatives, expected in sorted(requirements.items()):
+        observed = sum(counts[item] for item in alternatives)
+        status = "passed" if observed >= expected else "failed"
+        checks.append(
+            {
+                "kind": "resourceCount",
+                "planIds": plan_ids[alternatives],
+                "terraformTypes": list(alternatives),
+                "expectedCount": expected,
+                "observedCount": observed,
+                "status": status,
+            }
+        )
+        if status == "failed":
+            diagnostics.append(
+                {
+                    "code": "BIND-RESOURCE-PLAN-JSON-NODE-001",
+                    "message": "Terraform Plan omits a provider resource required by ResourcePlan.",
+                    "details": checks[-1],
+                }
+            )
+
+    provider = str(resource_plan.get("provider") or "")
+    requires_disk_attachment = any(
+        edge.get("label") == "attaches"
+        and str(edge.get("to") or "").startswith("disk")
+        for edge in resource_plan.get("edges") or []
+    )
+    planned_types = {
+        resource_type
+        for alternatives in requirements
+        for resource_type in alternatives
+    }
+    allowed_unplanned_types = (
+        _DISK_ATTACHMENT_TYPES.get(provider, set())
+        if requires_disk_attachment
+        else set()
+    )
+    authoritative_plan = bool(
+        resource_plan.get("deploymentTopology")
+        and resource_plan.get("providerProjectionPolicy")
+    )
+    unexpected_types = (
+        sorted(set(counts) - planned_types - allowed_unplanned_types)
+        if authoritative_plan
+        else []
+    )
+    if unexpected_types:
+        diagnostics.append(
+            {
+                "code": "BIND-RESOURCE-PLAN-JSON-NODE-002",
+                "message": (
+                    "Terraform Plan creates provider resources that are absent "
+                    "from ResourcePlan."
+                ),
+                "details": {"unexpectedTerraformTypes": unexpected_types},
+            }
+        )
+    if requires_disk_attachment:
+        attachment_types = _DISK_ATTACHMENT_TYPES.get(provider, set())
+        observed = sum(counts[item] for item in attachment_types)
+        # GCP may express the attachment inside google_compute_instance; source-level
+        # validation records that alternative, so Plan absence is not promoted to failure.
+        status = "not-observed" if provider == "gcp" and observed == 0 else (
+            "passed" if observed else "failed"
+        )
+        checks.append(
+            {
+                "kind": "diskAttachment",
+                "terraformTypes": sorted(attachment_types),
+                "observedCount": observed,
+                "status": status,
+                "nextGate": "cloud-runtime-mount" if status == "not-observed" else None,
+            }
+        )
+        if status == "failed":
+            diagnostics.append(
+                {
+                    "code": "BIND-RESOURCE-PLAN-JSON-EDGE-001",
+                    "message": "Terraform Plan has no separate disk attachment resource.",
+                    "details": checks[-1],
+                }
+            )
+    if str(resource_plan.get("provider") or "") == "gcp":
+        observed_reference_pairs = {
+            (str(item.get("fromType") or ""), str(item.get("toType") or ""))
+            for item in plan_observation.get("referencePairs") or []
+        }
+        by_id = {
+            str(node.get("id") or ""): node
+            for node in resource_plan.get("nodes") or []
+        }
+        plan_edges = {
+            (str(edge.get("from") or ""), str(edge.get("to") or ""))
+            for edge in resource_plan.get("edges") or []
+        }
+        for source_id, target_id in sorted(
+            _GCP_REQUIRED_REFERENCE_IDS & plan_edges
+        ):
+            source_types = tuple(
+                str(item) for item in by_id[source_id].get("terraformTypes") or []
+            )
+            target_types = tuple(
+                str(item) for item in by_id[target_id].get("terraformTypes") or []
+            )
+            if not source_types or not target_types:
+                continue
+            observed = any(
+                (source_type, target_type) in observed_reference_pairs
+                for source_type in source_types
+                for target_type in target_types
+            )
+            status = "passed" if observed else "failed"
+            checks.append(
+                {
+                    "kind": "resourceReference",
+                    "relation": f"{source_id}->{target_id}",
+                    "sourceTerraformTypes": list(source_types),
+                    "targetTerraformTypes": list(target_types),
+                    "status": status,
+                }
+            )
+            if not observed:
+                diagnostics.append(
+                    {
+                        "code": "BIND-RESOURCE-PLAN-JSON-EDGE-002",
+                        "message": (
+                            "Terraform Plan configuration omits a required GCP "
+                            "ResourcePlan reference."
+                        ),
+                        "details": checks[-1],
+                    }
+                )
+    return {
+        "status": "failed" if diagnostics else "passed",
+        "checks": checks,
         "diagnostics": diagnostics,
     }
 
@@ -187,9 +886,7 @@ def _port_observations(files: dict[str, str]) -> list[Observation]:
     return observations
 
 
-_GUEST_MOUNT_PATTERN = re.compile(
-    r"(?im)\bmount\s+(?:[^\r\n]+\s)?(?P<path>/[^\s;&|]+)"
-)
+_GUEST_MOUNT_PATTERN = re.compile(r"(?im)\bmount\s+(?:[^\r\n]+\s)?(?P<path>/[^\s;&|]+)")
 _CONTAINER_MOUNT_PATTERNS = (
     re.compile(r"(?i)(?:target|destination|dst)=(?P<path>/[^,\s'\"]+)"),
     re.compile(r"(?i)(?:-v|--volume)\s+[^\s:]+:(?P<path>/[^\s:]+)"),
@@ -272,9 +969,7 @@ def validate_iac_bindings(
     diagnostics: list[ConsistencyDiagnostic] = []
     unresolved: list[dict[str, Any]] = []
 
-    literal_ports = {
-        item.value for item in port_observations if isinstance(item.value, int)
-    }
+    literal_ports = {item.value for item in port_observations if isinstance(item.value, int)}
     if literal_ports and application_port not in literal_ports:
         diagnostics.append(
             ConsistencyDiagnostic(
@@ -288,11 +983,13 @@ def validate_iac_bindings(
             )
         )
     elif not literal_ports:
-        unresolved.append({
-            "code": "BIND-PORT-UNRESOLVED",
-            "expected": application_port,
-            "reason": "No literal backend/container port was statically observable.",
-        })
+        unresolved.append(
+            {
+                "code": "BIND-PORT-UNRESOLVED",
+                "expected": application_port,
+                "reason": "No literal backend/container port was statically observable.",
+            }
+        )
 
     if mount_path:
         container_observations = [
@@ -302,17 +999,17 @@ def validate_iac_bindings(
             item for item in mount_observations if item.kind == "guestMountPath"
         ]
         literal_mounts = {
-            str(item.value)
-            for item in relevant_observations
-            if isinstance(item.value, str)
+            str(item.value) for item in relevant_observations if isinstance(item.value, str)
         }
         if mount_path not in literal_mounts:
             if any(item.confidence == "unresolved" for item in relevant_observations):
-                unresolved.append({
-                    "code": "BIND-STORAGE-UNRESOLVED",
-                    "expected": mount_path,
-                    "reason": "A dynamic mount command exists but its target is not statically known.",
-                })
+                unresolved.append(
+                    {
+                        "code": "BIND-STORAGE-UNRESOLVED",
+                        "expected": mount_path,
+                        "reason": "A dynamic mount command exists but its target is not statically known.",
+                    }
+                )
             else:
                 diagnostics.append(
                     ConsistencyDiagnostic(

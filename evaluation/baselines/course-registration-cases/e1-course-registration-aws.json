@@ -1,0 +1,34 @@
+{
+  "caseId": "E1-course-registration-aws",
+  "requirements": [
+    "Students shall be able to view the courses being offered and the number of seats still available in each course.",
+    "Students shall be able to view course details including the course title, instructor, class time, capacity, and remaining seats.",
+    "Students shall be able to register for a course that has a seat available.",
+    "The system shall tell a student whether a registration succeeded and shall give a reason when it did not succeed.",
+    "The system shall not register the same student for the same course more than once.",
+    "The system shall not accept registrations beyond the capacity of a course.",
+    "Students shall be able to view the courses for which they are registered.",
+    "Students shall be able to cancel their own registration during the registration period.",
+    "When a registration is cancelled, the corresponding seat shall become available again.",
+    "If several students attempt to take the last available seat at the same time, the system shall not exceed the course capacity.",
+    "If one student submits several registration attempts for the same course at the same time, the system shall retain only one registration.",
+    "Course and registration information shall not be lost when the application or its server is restarted.",
+    "Connections used by students to access the service shall be encrypted.",
+    "The application shall be deployable as a container running on Linux virtual machines.",
+    "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
+    "The system that stores course registration information shall not be directly accessible from the Internet.",
+    "Environment-specific configuration and secrets shall be supplied when the service is run rather than included in the application artifact.",
+    "The operating environment shall be able to determine automatically whether an application instance is ready to process requests.",
+    "The cloud environment required by the service shall be reproducibly created and removed from a version-controlled infrastructure definition.",
+    "For the initial pilot, a temporary service interruption caused by an application server failure is acceptable."
+  ],
+  "cloudConstraints": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
+  "scope": {
+    "providers": ["aws"],
+    "region": "ap-northeast-2",
+    "workload": "docker-on-vm",
+    "webSearch": false,
+    "studyCase": "course-registration",
+    "deploymentProfile": "E1"
+  }
+}

@@ -160,6 +160,14 @@ def main() -> None:
              "--vnet-name", "depkb-lb2-vnet", "--subnet", "s",
              "--public-ip-address", "", "--admin-username", USER,
              "--ssh-key-values", KEY + ".pub", "-o", "json"], timeout=900))
+        # az vm create가 NIC에 별도 NSG를 자동 생성한다. Subnet NSG가 80을
+        # 허용해도 NIC NSG가 막으면 LB 기준선이 서지 않으므로 함께 허용한다.
+        step("R10b.vm-nsg-allow80", az(
+            ["network", "nsg", "rule", "create", "-g", rg,
+             "--nsg-name", "depkb-lb2-vmNSG", "-n", "allow-http-experiment",
+             "--priority", "120", "--access", "Allow", "--protocol", "Tcp",
+             "--direction", "Inbound", "--destination-port-ranges", "80",
+             "-o", "json"]))
         got = step("R11.lb-public-ip", az(
             ["network", "public-ip", "show", "-g", rg, "-n", "depkb-lb2-pip",
              "--query", "ipAddress", "-o", "tsv"]))
@@ -204,8 +212,7 @@ def main() -> None:
              "-o", "json"], timeout=600))
         step("M1b.lb-still-exists", az(
             ["network", "lb", "show", "-g", rg, "-n", "depkb-lb2",
-             "--query", "{name:name,rules:length(loadBalancingRules)}",
-             "-o", "json"]))
+             "--query", "name", "-o", "tsv"]))
         step("F2.serving-lost", serve_probe(ids["lbIp"], False, 420, confirm=2))
         step("M2.re-add-nic", az(
             ["network", "nic", "ip-config", "address-pool", "add", "-g", rg,

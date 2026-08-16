@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-persistence-after-database-recreate-v1",
+  "sourceRefs": [
+    "FR-07",
+    "NFR-03"
+  ],
+  "requestTimeoutSeconds": 15,
+  "phases": [
+    {
+      "id": "enrollment-survives-database-container-recreate",
+      "kind": "request",
+      "request": {
+        "method": "GET",
+        "path": "/students/S1/enrollments"
+      },
+      "expect": {
+        "status": 200,
+        "jsonContains": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "jsonLength": 1
+      }
+    },
+    {
+      "id": "course-seat-count-survives-database-container-recreate",
+      "kind": "request",
+      "request": {
+        "method": "GET",
+        "path": "/courses/C-DUP"
+      },
+      "expect": {
+        "status": 200,
+        "jsonContains": {
+          "courseId": "C-DUP",
+          "capacity": 10,
+          "remainingSeats": 9
+        }
+      }
+    }
+  ]
+}

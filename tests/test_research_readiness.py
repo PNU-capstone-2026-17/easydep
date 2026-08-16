@@ -11,8 +11,7 @@ def test_draft_protocol_and_missing_models_block_confirmatory_run(tmp_path, monk
     monkeypatch.setattr(module, "PROTOCOL", protocol)
     monkeypatch.setattr(module, "ANCHORS", anchors)
     monkeypatch.setattr(module, "NATIVE_DIR", tmp_path / "missing")
-    monkeypatch.setattr(module, "PROJECTIONS", tmp_path / "missing-projections.json")
-    monkeypatch.setattr(module, "NEUTRAL_EVIDENCE", tmp_path / "missing-neutral.json")
+    monkeypatch.setattr(module, "REALIZATIONS", tmp_path / "missing-realizations.json")
     monkeypatch.setattr(module, "INTERVENTIONS", tmp_path / "missing-interventions.json")
     monkeypatch.setattr(module, "RUNTIME_DEPENDENCIES", tmp_path / "missing-runtime.json")
     monkeypatch.setattr(module, "load_policy", lambda _path: {
@@ -24,6 +23,6 @@ def test_draft_protocol_and_missing_models_block_confirmatory_run(tmp_path, monk
     assert result["ready"] is False
     assert {item["kind"] for item in result["blockers"]} == {
         "protocol", "decisionAnchors", "capabilityCalibration", "nativeModelMissing",
-        "projectionInvalid", "neutralEvidenceInvalid", "interventionManifestInvalid",
+        "providerRealizationInvalid", "interventionManifestInvalid",
         "runtimeDependencyModelInvalid",
     }

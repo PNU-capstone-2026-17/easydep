@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "easydep-postgres-storage-adjudication/v1",
+  "provider": "azure",
+  "location": "koreacentral",
+  "configuration": {
+    "vmSize": "Standard_B2ats_v2",
+    "vmImage": "Ubuntu2204",
+    "postgresImage": "postgres:17-bookworm",
+    "postgresDataPath": "/var/lib/postgresql/data"
+  },
+  "claims": [
+    {
+      "id": "postgres-runs-without-additional-data-disk",
+      "decision": "confirmed-development-observation",
+      "source": "azure-postgres-disk-result-20260814.json",
+      "sourceSha256": "fc029f55ba95d77002476ba476876f5984ccccd245775d415cee0d6630349ebe",
+      "evidence": [
+        "root-vm.data-disk-count passed with detail 0",
+        "root-vm.postgres completed the PostgreSQL create, insert, select, restart, and select script"
+      ],
+      "adjudication": "The raw run was marked failed only because Azure Run Command returned no stdout to an outer string-count assertion. The guest command itself succeeded and used psql ON_ERROR_STOP."
+    },
+    {
+      "id": "additional-data-disk-retains-postgres-data-across-vm-replacement",
+      "decision": "confirmed-development-observation",
+      "source": "azure-postgres-disk-replacement-result-20260814.json",
+      "sourceSha256": "a2ba2d0b4df8c36727deeb03c0c25e21a2b8f286dcc4778d803eb71f3cca2cc8",
+      "evidence": [
+        "data-vm.data-disk-count passed with detail 1",
+        "data-vm.postgres-write passed with an in-guest SQL value assertion",
+        "the first VM was deleted before the retained disk was attached to the replacement VM",
+        "replacement-vm.postgres-read passed with the same in-guest SQL value assertion"
+      ]
+    }
+  ],
+  "combinedDecision": "an additional data disk is not required for PostgreSQL startup; a retained Azure data disk is one confirmed realization of storage that survives VM replacement",
+  "cleanup": {
+    "azureResourceGroupsWithPrefixAfterRuns": [],
+    "dockerContainersWithPrefixAfterRuns": [],
+    "dockerNamedVolumesWithPrefixAfterRuns": []
+  },
+  "limitations": [
+    "Every Azure VM still has an OS disk; diskless VM is not the tested condition.",
+    "This is one development observation in one provider and region.",
+    "Other CSPs and retained boot-disk policies require their own provider-specific interpretation.",
+    "The result does not establish high availability, backup, replication, or disk performance."
+  ]
+}

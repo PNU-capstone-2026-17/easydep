@@ -185,6 +185,16 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
         encoding="utf-8",
     )
 
+    public = ImplementationWorker.public_record(
+        ImplementationWorker._with_live_generation_progress(
+            {"status": "GENERATING", "job_path": str(job_path), "updated_at": "old"}
+        )
+    )
+
+    assert public["status"] == "VERIFYING"
+    assert public["progress"]["message"].startswith("생성된 백엔드")
+    assert "job_path" not in public
+
 
 def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: Path) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
@@ -206,17 +216,6 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
     report = tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
     assert report.is_file()
-
-    public = ImplementationWorker.public_record(
-        ImplementationWorker._with_live_generation_progress(
-            {"status": "GENERATING", "job_path": str(job_path), "updated_at": "old"}
-        )
-    )
-
-    assert public["status"] == "VERIFYING"
-    assert public["progress"]["message"].startswith("생성된 백엔드")
-    assert "job_path" not in public
-
 
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))

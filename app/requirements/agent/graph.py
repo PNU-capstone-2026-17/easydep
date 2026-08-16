@@ -4,12 +4,12 @@
 진입점이다. 세부 작업은 각 단계 서브그래프 안에 캡슐화돼 있다.
 
 전체 워크플로우(상위 그래프, 노드명 = 단계별 동작):
-  START → refine_requirements → derive_deployment_needs → model_use_cases
+  START → refine_requirements → analyze_cloud_inputs → structure_constraints → model_use_cases
       → write_specifications → draw_diagram → END
   (각 노드 = 컴파일된 스테이지 서브그래프. 세부 노드는 app/agent/subgraphs.py 참조)
 
 대화형 게이트는 gated 그래프에서만 스테이지 사이에 부모-레벨 노드로 삽입한다:
-  refine_requirements → derive_deployment_needs → gate_requirements → model_use_cases
+  refine_requirements → analyze_cloud_inputs → structure_constraints → gate_requirements → model_use_cases
       → gate_use_cases → write_specifications → gate_specs → draw_diagram
       → gate_relationships → END
 (게이트를 서브그래프 안이 아니라 부모 레벨에 두는 이유: LangGraph는 서브그래프가 interrupt로
@@ -21,6 +21,7 @@ advance(다음 스테이지)/loop(재생성 후 재질문)를 정적 선언한�
 그래프로 컴파일한다(런타임 settings 분기 없음). build_graph(None)만 빌드 타임에 settings를 1회
 읽어 토폴로지를 고른다(런타임 라우팅이 아니라 빌드 선택).
 """
+
 from __future__ import annotations
 
 from typing import cast
@@ -43,14 +44,15 @@ from app.requirements.agent.subgraphs import build_stage_subgraphs
 from app.requirements.agent.supervisor import route_redo, supervise_for
 from app.requirements.common import telemetry
 from app.requirements.config import settings
-from app.requirements.schemas import FeedbackEdit, ResourceAnswer
+from app.requirements.schemas import DeploymentPreferences, FeedbackEdit, ResourceAnswer
 from app.requirements.session_store import SqlCheckpointSaver
 
 
 def _build_plain_graph(saver):
     """게이트 없는 파이프라인 + **되돌아가기**.
 
-    START → refine_requirements → derive_deployment_needs → model_use_cases → supervise_model
+    START → refine_requirements → analyze_cloud_inputs → structure_constraints
+          → model_use_cases → supervise_model
           → write_specifications → supervise_specs → draw_diagram → supervise_diagram → END
 
     각 `supervise_*`는 남은 결함을 보고 **그 결함을 낸 단계의 그룹으로 되돌린다**
@@ -67,7 +69,7 @@ def _build_plain_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
-    builder.add_node("derive_deployment_needs", subs["derive_deployment_needs"])
+    builder.add_node("analyze_cloud_inputs", subs["analyze_cloud_inputs"])
     builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
@@ -82,9 +84,9 @@ def _build_plain_graph(saver):
 
     builder.add_edge(START, "refine_requirements")
     # 배포 필요사항은 `classified`에서 파생되는 인계 산출물이라 되돌아가기 대상이 아니다.
-    builder.add_edge("refine_requirements", "derive_deployment_needs")
+    builder.add_edge("refine_requirements", "analyze_cloud_inputs")
     # 제약 구조화도 같은 성격이다 — 결함을 내지 않고 `classified`·제약 원문에서만 파생된다.
-    builder.add_edge("derive_deployment_needs", "structure_constraints")
+    builder.add_edge("analyze_cloud_inputs", "structure_constraints")
     builder.add_edge("structure_constraints", "model_use_cases")
     builder.add_edge("model_use_cases", "supervise_model")
     builder.add_edge("write_specifications", "supervise_specs")
@@ -93,21 +95,28 @@ def _build_plain_graph(saver):
     # 되돌릴 수 있는 대상은 **이미 지나온 그룹**뿐이다. 아직 돌지 않은 그룹으로 "되돌리는"
     # 것은 되돌리기가 아니라 건너뛰기이고, 그러면 산출물이 없는 채로 아래가 돈다.
     builder.add_conditional_edges(
-        "supervise_model", route_redo,
+        "supervise_model",
+        route_redo,
         {"advance": "write_specifications", "model_use_cases": "model_use_cases"},
     )
     builder.add_conditional_edges(
-        "supervise_specs", route_redo,
-        {"advance": "draw_diagram",
-         "model_use_cases": "model_use_cases",
-         "write_specifications": "write_specifications"},
+        "supervise_specs",
+        route_redo,
+        {
+            "advance": "draw_diagram",
+            "model_use_cases": "model_use_cases",
+            "write_specifications": "write_specifications",
+        },
     )
     builder.add_conditional_edges(
-        "supervise_diagram", route_redo,
-        {"advance": END,
-         "model_use_cases": "model_use_cases",
-         "write_specifications": "write_specifications",
-         "draw_diagram": "draw_diagram"},
+        "supervise_diagram",
+        route_redo,
+        {
+            "advance": END,
+            "model_use_cases": "model_use_cases",
+            "write_specifications": "write_specifications",
+            "draw_diagram": "draw_diagram",
+        },
     )
 
     # 체크포인터는 상위 그래프에만 둔다 — 서브그래프의 interrupt도 상위로 전파돼 상위
@@ -124,7 +133,7 @@ def _build_gated_graph(saver):
     subs = build_stage_subgraphs()
     builder = StateGraph(AgentState)
     builder.add_node("refine_requirements", subs["refine_requirements"])
-    builder.add_node("derive_deployment_needs", subs["derive_deployment_needs"])
+    builder.add_node("analyze_cloud_inputs", subs["analyze_cloud_inputs"])
     builder.add_node("structure_constraints", subs["structure_constraints"])
     builder.add_node("model_use_cases", subs["model_use_cases"])
     builder.add_node("write_specifications", subs["write_specifications"])
@@ -136,34 +145,40 @@ def _build_gated_graph(saver):
 
     builder.add_edge(START, "refine_requirements")
     # 게이트 앞에 둬 사용자가 요구사항과 배포 필요사항을 함께 확인하게 한다.
-    builder.add_edge("refine_requirements", "derive_deployment_needs")
+    builder.add_edge("refine_requirements", "analyze_cloud_inputs")
     # 제약 구조화도 게이트 **앞**이다. 못 채운 필수 칸의 되묻기가 사용자가 요구사항을
     # 확인하는 바로 그 자리에서 함께 보여야 한다 — 뒤에 두면 이미 넘어간 뒤에 나온다.
-    builder.add_edge("derive_deployment_needs", "structure_constraints")
+    builder.add_edge("analyze_cloud_inputs", "structure_constraints")
     builder.add_edge("structure_constraints", "gate_requirements")
-    # loop가 게이트 자신이 아니라 `derive_deployment_needs`로 돌아간다. 이 게이트는 루프에서
-    # classify 결과가 바뀌었으므로 배포 필요사항도 새 RTM ID를 기준으로 다시 도출한다.
+    # loop가 게이트 자신이 아니라 `analyze_cloud_inputs`로 돌아간다. 이 게이트는 루프에서
+    # classify 결과가 바뀌었으므로 배포 capability와 자유문장 제약을 새 근거로 다시 읽는다.
     builder.add_conditional_edges(
-        "gate_requirements", route_gate,
-        {"advance": "model_use_cases",
-         "loop": "derive_deployment_needs",
-         # 되묻기의 답만 온 경우. 이 분기는 `classify`를 안 돌려 `classified`가 그대로이고,
-         # 제약 답변만 바뀌면 classified는 그대로이므로 배포 필요사항을 다시 부르지 않는다.
-         "answers": "structure_constraints"},
+        "gate_requirements",
+        route_gate,
+        {
+            "advance": "model_use_cases",
+            "loop": "analyze_cloud_inputs",
+            # 되묻기의 답만 온 경우. 이 분기는 `classify`를 안 돌려 `classified`가 그대로이고,
+            # 제약 답변만 바뀌면 classified는 그대로이므로 배포 필요사항을 다시 부르지 않는다.
+            "answers": "structure_constraints",
+        },
     )
     builder.add_edge("model_use_cases", "gate_use_cases")
     builder.add_conditional_edges(
-        "gate_use_cases", route_gate,
+        "gate_use_cases",
+        route_gate,
         {"advance": "write_specifications", "loop": "gate_use_cases"},
     )
     builder.add_edge("write_specifications", "gate_specs")
     builder.add_conditional_edges(
-        "gate_specs", route_gate,
+        "gate_specs",
+        route_gate,
         {"advance": "draw_diagram", "loop": "gate_specs"},
     )
     builder.add_edge("draw_diagram", "gate_relationships")
     builder.add_conditional_edges(
-        "gate_relationships", route_gate,
+        "gate_relationships",
+        route_gate,
         {"advance": END, "loop": "gate_relationships"},
     )
 
@@ -187,11 +202,7 @@ def build_graph(
     """
     gated = settings.enable_feedback_gates if feedback_gates is None else feedback_gates
     checkpoint_saver = saver or (SqlCheckpointSaver() if persistent else MemorySaver())
-    return (
-        _build_gated_graph(checkpoint_saver)
-        if gated
-        else _build_plain_graph(checkpoint_saver)
-    )
+    return _build_gated_graph(checkpoint_saver) if gated else _build_plain_graph(checkpoint_saver)
 
 
 # 앱 전역에서 재사용할 컴파일된 그래프 (모듈 로드 시 1회 생성)
@@ -232,9 +243,7 @@ def _remember_mode(thread_id: str, gated: bool, persistent: bool) -> None:
 def _recall_mode(thread_id: str, persistent: bool) -> bool:
     """이 세션이 시작된 토폴로지. 모르면 서버 기본값으로 떨어진다."""
     remembered = (
-        session_store.session_mode(thread_id)
-        if persistent
-        else _thread_gates.get(thread_id)
+        session_store.session_mode(thread_id) if persistent else _thread_gates.get(thread_id)
     )
     return settings.enable_feedback_gates if remembered is None else remembered
 
@@ -252,18 +261,29 @@ def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
 #: **한 곳에만 적는다** — 예전에는 게이트 응답과 완료 응답이 같은 목록을 따로 들고 있어서,
 #: 새 산출물을 추가하면 한쪽에만 들어가 화면에서 조용히 사라질 수 있었다.
 _ARTIFACT_KEYS = (
-    "deployment_needs", "capability_contract", "resource_spec", "resource_intake",
-    "actors", "use_cases", "model_review", "coverage", "use_case_specs", "spec_report",
-    "relationships", "relationship_report", "diagram",
+    "deployment_needs",
+    "capability_contract",
+    "resource_spec",
+    "resource_intake",
+    "actors",
+    "use_cases",
+    "model_review",
+    "coverage",
+    "use_case_specs",
+    "spec_report",
+    "relationships",
+    "relationship_report",
+    "diagram",
 )
-def _result_payload(
-    result: dict, thread_id: str, stats: telemetry.RunStats | None = None
-) -> dict:
+
+
+def _result_payload(result: dict, thread_id: str, stats: telemetry.RunStats | None = None) -> dict:
     """그래프 실행 결과를 API 응답 형태(dict)로 변환한다.
 
     stats를 주면 이번 호출의 계측(호출 수·토큰·저하 목록)을 함께 싣는다. 저하가 있으면
     산출물 일부가 검증을 못 거친 것이므로, 화면이 그 사실을 알 수 있어야 한다.
     """
+
     def _finish(payload: dict) -> dict:
         if stats is not None:
             payload["telemetry"] = stats.as_dict()
@@ -296,12 +316,14 @@ def _result_payload(
             return _finish(payload)
         # 요구사항 구체화(clarify)
         questions = value.get("questions", []) if isinstance(value, dict) else value
-        return _finish({
-            "thread_id": thread_id,
-            "phase": "clarify",
-            "status": "need_clarification",
-            "questions": questions,
-        })
+        return _finish(
+            {
+                "thread_id": thread_id,
+                "phase": "clarify",
+                "status": "need_clarification",
+                "questions": questions,
+            }
+        )
     payload = {
         "thread_id": thread_id,
         "phase": result.get("phase", "completed"),
@@ -323,6 +345,7 @@ def start_analysis(
     *,
     persist: bool = False,
     constraints_text: str = "",
+    cloud_constraints: dict | None = None,
 ) -> dict:
     """새 요구사항 분석 세션을 시작한다.
 
@@ -343,13 +366,18 @@ def start_analysis(
     initial: dict = {"raw_requirements": requirements}
     if constraints_text.strip():
         initial["resource_constraints_text"] = constraints_text
+    if cloud_constraints:
+        initial["initial_cloud_constraints"] = dict(cloud_constraints)
     with telemetry.run_scope(f"analyze:{thread_id}") as stats:
         result = _invoke(gates, thread_id, cast(AgentState, initial), persist)
         return _result_payload(result, thread_id, stats)
 
 
 def resume_analysis(
-    answer: str | FeedbackEdit | ResourceAnswer, thread_id: str, *, persist: bool = False
+    answer: str | FeedbackEdit | ResourceAnswer | DeploymentPreferences,
+    thread_id: str,
+    *,
+    persist: bool = False,
 ) -> dict:
     """clarifying question 또는 피드백 게이트에 대한 사용자 입력으로 세션을 재개한다.
 
@@ -359,6 +387,7 @@ def resume_analysis(
         (app/requirements/feedback.py: resolve_intent).
       - `ResourceAnswer` — **되묻기의 답**. 요구사항 피드백이 아니므로 재분류를 돌리지
         않고 `resource_answers`에 쌓인 뒤 제약 구조화만 다시 돈다.
+      - `DeploymentPreferences` — 실행 중 별도 카드에서 받은 CSP 대안을 그대로 합친다.
 
     persist는 start_analysis 때와 같아야 한다 — 체크포인트가 있는 곳에서 찾아야 한다.
     """

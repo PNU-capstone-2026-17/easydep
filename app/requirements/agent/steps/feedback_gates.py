@@ -24,7 +24,7 @@ from app.requirements.agent.state import AgentState
 from app.requirements.agent.steps.step1_requirements import classify
 from app.requirements.agent.steps.step3_specifications import check_specs
 from app.requirements.agent.steps.step4_diagram import check_relationships
-from app.requirements.schemas import FeedbackEdit, ResourceAnswer
+from app.requirements.schemas import DeploymentPreferences, FeedbackEdit, ResourceAnswer
 
 
 def apply_feedback_upto(state: dict, feedback: str, up_to: str):
@@ -71,7 +71,20 @@ def _empty(answer) -> bool:
     # 세션을 영원히 게이트에 묶어 둔다.
     if isinstance(answer, ResourceAnswer):
         return not any(str(v or "").strip() for v in answer.answers.values())
+    if isinstance(answer, DeploymentPreferences):
+        return not answer.targets
     return not str(answer or "").strip()
+
+
+def _has_blocking_resource_question(state: dict) -> bool:
+    """Return whether a resource question must be answered before advancing.
+
+    ``suggested`` questions improve a later recommendation but are not required to
+    complete the deployment contract. Every other question represents a missing or
+    ambiguous value whose answer changes the resource plan.
+    """
+    questions = (state.get("resource_intake") or {}).get("questions", [])
+    return any(question.get("kind") != "suggested" for question in questions)
 
 
 def _as_text(answer) -> str:
@@ -81,9 +94,9 @@ def _as_text(answer) -> str:
     `str(answer)`가 pydantic 표현을 만들어 그것이 자연어 피드백으로 흘러든다 — 사용자가
     쓰지도 않은 문장으로 산출물이 재생성된다. 조용히 넘기느니 여기서 멈춘다.
     """
-    if isinstance(answer, ResourceAnswer):
+    if isinstance(answer, (DeploymentPreferences, ResourceAnswer)):
         raise TypeError(
-            "되묻기의 답은 요구사항 게이트에서만 받는다 — 자연어 피드백으로 흘리지 않는다."
+            "구조화된 배포 입력은 요구사항 게이트에서만 받는다 — 자연어 피드백으로 흘리지 않는다."
         )
     return answer.instruction if isinstance(answer, FeedbackEdit) else str(answer)
 
@@ -115,12 +128,31 @@ def gate_requirements(state: AgentState) -> dict:
         questions=(state.get("resource_intake") or {}).get("questions", []),
     )
     if _empty(answer):
-        return {"gate_route": "advance"}
+        # A blank review acknowledgement must not silently discard a missing or
+        # ambiguous deployment input. Re-enter only the deterministic contract step;
+        # requirement refinement and deployment-capability extraction stay cached.
+        return {
+            "gate_route": (
+                "answers" if _has_blocking_resource_question(state) else "advance"
+            )
+        }
 
     # **되묻기의 답은 요구사항 피드백이 아니다.** 재분류를 돌리면 사용자는 질문에 답했을
     # 뿐인데 요구사항이 흔들린다. 답은 상태에 쌓고 루프백만 한다 — 루프가
     # `derive_deployment_needs → structure_constraints`를 다시 지나며 스펙이 새 답으로
     # 다시 조립된다(그 배선이 이미 있어서 여기서 단계를 부르지 않는다).
+    if isinstance(answer, DeploymentPreferences):
+        preferences = answer.model_dump(mode="json", exclude_unset=True)
+        return {
+            "initial_cloud_constraints": preferences,
+            "resource_constraints_text": answer.resource_constraints_text,
+            # 자유문장 제약이 새로 들어오면 해당 추출 분기도 갱신해야 한다. 전용 필드만
+            # 들어온 일반 경로는 LLM 분석을 반복하지 않고 계약 조립만 다시 수행한다.
+            "gate_route": (
+                "loop" if answer.resource_constraints_text.strip() else "answers"
+            ),
+        }
+
     if isinstance(answer, ResourceAnswer):
         merged = {**(state.get("resource_answers") or {}), **answer.answers}
         # **`answers` 경로로 돌아간다** — 일반 `loop`는 `derive_deployment_needs`부터 다시

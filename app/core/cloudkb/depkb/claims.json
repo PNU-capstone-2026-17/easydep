@@ -6,14 +6,14 @@
   "replicationProtocolTiming": "prospectiveAgainstFrozenHistoricalExpectations",
   "interpretation": "Replication reduces accidental execution error but does not turn the original exploratory study into a preregistered confirmatory study."
  },
- "_note": "Docker-on-VM creation and runtime dependency claims for AWS, Azure, and GCP. Teardown-only relationships are intentionally excluded.",
+ "_note": "Docker-on-VM provisioning and observable runtime dependency claims for AWS, Azure, and GCP.",
  "findingCounts": {
   "aws.notMandatoryForProvisioning": 9,
   "aws.mandatoryForProvisioning": 3,
   "aws.runtimeRequiredForSignal": 5,
   "azure.notMandatoryForProvisioning": 8,
   "azure.conditionalForProvisioning": 1,
-  "azure.runtimeRequiredForSignal": 4,
+  "azure.runtimeRequiredForSignal": 3,
   "azure.mandatoryForProvisioning": 3,
   "gcp.notMandatoryForProvisioning": 4,
   "gcp.conditionalForProvisioning": 2,
@@ -2358,112 +2358,6 @@
      "azure-apply3-2026-07-30"
     ],
     "reason": "All referenced dynamic experiments were rerun in the 2026-08-07 replication session."
-   }
-  },
-  {
-   "subject": "vm",
-   "object": "disk",
-   "csp": "azure",
-   "relationFamily": "runtime",
-   "finding": "runtimeRequiredForSignal",
-   "evidenceStatus": "confirmed",
-   "replicationStatus": "pending",
-   "studyDisposition": "included",
-   "condition": {
-    "kind": "always",
-    "description": "실행 중 VM에서 데이터 디스크 detach를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기"
-   },
-   "signal": "volume-write",
-   "decisionRule": "Finding is runtimeRequiredForSignal when the signal succeeds in the control state, fails after removing or disabling the target, and recovers after restoration.",
-   "observations": [
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "compute-ComputeRP.json#/definitions/DataDisk/properties/managedDisk"
-    },
-    {
-     "acquisitionMethod": "schemaDeclaration",
-     "cite": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk",
-     "form": "input-reference",
-     "requiredInSchema": false,
-     "expectedOutcome": "declaration recorded",
-     "actualOutcome": "compute-ComputeRP.json#/definitions/OSDisk/properties/managedDisk"
-    },
-    {
-     "acquisitionMethod": "runtimeProbe",
-     "experiment": "azure-sig4-2026-07-31",
-     "step": "F1d.write-bare-works",
-     "code": "ok",
-     "resultFile": "experiments/azure-sig4-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/azure-sig4-2026-07-31/results.json",
-      "line": 233,
-      "sourceKind": "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    },
-    {
-     "acquisitionMethod": "runtimeProbe",
-     "experiment": "azure-sig4-2026-07-31",
-     "step": "M1d.detach-third",
-     "code": "ok",
-     "resultFile": "experiments/azure-sig4-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/azure-sig4-2026-07-31/results.json",
-      "line": 238,
-      "sourceKind": "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    },
-    {
-     "acquisitionMethod": "runtimeProbe",
-     "experiment": "azure-sig4-2026-07-31",
-     "step": "F2d.write-bare-lost",
-     "code": "ok",
-     "resultFile": "experiments/azure-sig4-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/azure-sig4-2026-07-31/results.json",
-      "line": 243,
-      "sourceKind": "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    },
-    {
-     "acquisitionMethod": "runtimeProbe",
-     "experiment": "azure-sig4-2026-07-31",
-     "step": "F3d.write-bare-again",
-     "code": "ok",
-     "resultFile": "experiments/azure-sig4-2026-07-31/results.json",
-     "definition": {
-      "file": "experiments/azure-sig4-2026-07-31/results.json",
-      "line": 262,
-      "sourceKind": "결과 JSON에만 남은 이름 — 이 저장소에서 원래 요청 코드는 찾지 못함"
-     },
-     "observed": "이 단계가 성공했다",
-     "expectedOutcome": "operation or probe succeeds",
-     "actualOutcome": "succeeded"
-    }
-   ],
-   "provenance": {
-    "migrationSource": "depkb-claims/v1",
-    "migrationDate": "2026-08-07"
-   },
-   "note": "azure에서 `vm`와 `disk`의 기능 의존성(대상 변화로 실제 기능이 깨지는지)을 확인한 결과는 `관계 확인됨`이다. 조건: 기능상 주의: 실행 중 VM에서 데이터 디스크 detach를 컨트롤 플레인이 막지 않는다 — 기능 신호는 게스트의 direct 쓰기. 기능 확인 신호는 볼륨에 실제로 쓸 수 있는지이다.",
-   "replication": {
-    "session": "2026-08-07",
-    "experiments": [
-     "azure-sig4-2026-07-31"
-    ],
-    "reason": "At least one referenced experiment was not rerun in this session."
    }
   },
   {

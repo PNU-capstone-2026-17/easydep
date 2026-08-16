@@ -8,8 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.cloudkb.depkb.evidence_model import validate_frozen_model
-from app.core.cloudkb.depkb.neutral_evidence import validate_neutral_evidence
-from app.core.cloudkb.depkb.projection_model import projection_gaps, validate_projection
+from app.core.cloudkb.depkb.provider_realizations import realization_gaps, validate_realizations
 from app.requirements.capability_contract import DEFAULT_POLICY, load_policy
 from evaluation.dependency_audit.intervention_results import adjudicate_result
 from evaluation.research_protocol.commands.build_intervention_manifest import build as build_interventions
@@ -20,8 +19,7 @@ HERE = PROTOCOL_ROOT
 PROTOCOL = DEFINITION_ROOT / "protocol.json"
 ANCHORS = DEFINITION_ROOT / "decision-anchors.json"
 NATIVE_DIR = HERE / "native-v2"
-PROJECTIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-projections.json"
-NEUTRAL_EVIDENCE = DEFINITION_ROOT / "neutral-model-evidence.json"
+REALIZATIONS = REPOSITORY_ROOT / "app/core/cloudkb/depkb/provider-realizations.json"
 INTERVENTIONS = DEFINITION_ROOT / "dependency-interventions.json"
 INTERVENTION_RESULTS = HERE / "intervention-results"
 RUNTIME_DEPENDENCIES = (
@@ -69,17 +67,13 @@ def readiness() -> dict[str, Any]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         blockers.append({"kind": "runtimeDependencyModelInvalid", "detail": str(exc)})
     try:
-        projections = json.loads(PROJECTIONS.read_text(encoding="utf-8"))
-        validate_projection(projections)
-        gaps = projection_gaps(projections)
+        realizations = json.loads(REALIZATIONS.read_text(encoding="utf-8"))
+        validate_realizations(realizations)
+        gaps = realization_gaps(realizations)
         if gaps:
-            blockers.append({"kind": "projectionGap", "detail": json.dumps(gaps)})
+            blockers.append({"kind": "providerRealizationGap", "detail": json.dumps(gaps)})
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        blockers.append({"kind": "projectionInvalid", "detail": str(exc)})
-    try:
-        validate_neutral_evidence(json.loads(NEUTRAL_EVIDENCE.read_text(encoding="utf-8")))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        blockers.append({"kind": "neutralEvidenceInvalid", "detail": str(exc)})
+        blockers.append({"kind": "providerRealizationInvalid", "detail": str(exc)})
     try:
         stored = json.loads(INTERVENTIONS.read_text(encoding="utf-8"))
         expected = build_interventions()
@@ -105,11 +99,12 @@ def readiness() -> dict[str, Any]:
         "protocolSha256": _sha256(PROTOCOL),
         "decisionAnchorsSha256": _sha256(ANCHORS),
         "capabilityPolicyVersion": policy.get("version"),
-        "providerProjectionSha256": _sha256(PROJECTIONS) if PROJECTIONS.is_file() else None,
+        "providerRealizationsSha256": (
+            _sha256(REALIZATIONS) if REALIZATIONS.is_file() else None
+        ),
         "runtimeDependencyModelSha256": (
             _sha256(RUNTIME_DEPENDENCIES) if RUNTIME_DEPENDENCIES.is_file() else None
         ),
-        "neutralEvidenceSha256": _sha256(NEUTRAL_EVIDENCE) if NEUTRAL_EVIDENCE.is_file() else None,
         "interventionManifestSha256": _sha256(INTERVENTIONS) if INTERVENTIONS.is_file() else None,
     }
 

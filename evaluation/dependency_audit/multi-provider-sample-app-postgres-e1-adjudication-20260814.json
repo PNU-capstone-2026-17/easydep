@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "easydep-multi-provider-sample-app-postgres-e1-adjudication/v1",
+  "date": "2026-08-14",
+  "scope": "Domain-neutral application resource path; not course-registration behavior",
+  "rawMetadataNote": "The selected raw files inherited the older probe-oriented transportUnderTest label. Their provider-specific pathUnderTest fields and step records describe the actual app-to-state experiment. The recorder code was corrected after preserving the immutable raw files.",
+  "commonOracle": {
+    "baseline": "readiness 200 and business value write/read",
+    "networkIntervention": "remove the app-to-state TCP 5432 allowance",
+    "failureSignal": "readiness 503 and business read 502",
+    "restore": "restore the allowance and read the existing business value",
+    "persistence": "restart or reset the same state VM and read the existing business value",
+    "cleanup": "zero resources owned by the run remain"
+  },
+  "selectedRuns": [
+    {
+      "provider": "aws",
+      "file": "aws-sample-app-postgres-e1-result-20260814-3.json",
+      "sha256": "02fb815ada467005ea83765ae9d3c9ac39d2b8c1e2b1a31e7f11019ec1c6859b",
+      "runId": "easydep-e1-e5654dd2",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "elapsedSeconds": 247.148
+    },
+    {
+      "provider": "azure",
+      "file": "azure-sample-app-postgres-e1-result-20260814-2.json",
+      "sha256": "83942c8acb70f0b760482a756b303b6ba2bbab80ded898651495a843c26f8575",
+      "runId": "easydep-e1-4c71f6d7",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "elapsedSeconds": 815.101
+    },
+    {
+      "provider": "gcp",
+      "file": "gcp-sample-app-postgres-e1-result-20260814.json",
+      "sha256": "86c0db485bf8a3c72cccd6e6dd2b8a1aa0036eec65d8d5e087254ea5e77fa640",
+      "runId": "easydep-e1-3577182d",
+      "outcome": "passed",
+      "cleanupPassed": true,
+      "elapsedSeconds": 435.416
+    }
+  ],
+  "excludedHarnessFailures": [
+    {
+      "provider": "azure",
+      "file": "azure-sample-app-postgres-e1-result-20260814.json",
+      "sha256": "f5fdfe6afce306b7bbe2d79b0031c6cff20135bce4022b7b77cd6b1ffa2f8f83",
+      "classification": "harnessFailure",
+      "reason": "The Windows command line limit rejected an inline Azure Run Command script before the application build began.",
+      "cleanupPassed": true
+    }
+  ],
+  "claimsSupported": [
+    "A separated application workload needs both the state endpoint and an allowed private network path for the tested PostgreSQL-backed operation.",
+    "A separately attached and mounted provider data disk can hold the tested PostgreSQL value across a restart or reset of the same state VM.",
+    "The provider-specific security expression differs while the observed application-level failure and restoration signals can remain common."
+  ],
+  "claimsNotSupported": [
+    "Course-registration business correctness or concurrency safety",
+    "State VM replacement, database replication, or end-to-end high availability",
+    "Trusted public HTTPS, DNS, certificate, load balancing, performance, or sizing",
+    "Provider-wide success rates or a unique required topology"
+  ]
+}

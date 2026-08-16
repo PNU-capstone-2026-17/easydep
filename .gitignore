@@ -35,6 +35,11 @@ artifacts/*
 /app/implementation/tools/puml2code-bce/node_modules/
 # 공식 bootstrap이 SHA-256 검증 후 내려받는 재생성 가능한 로컬 도구 캐시
 /app/implementation/tools/openapi-generator/
+
+# EasyDep SvelteKit 작업대의 로컬 빌드·패키지 캐시
+/frontend/node_modules/
+/frontend/.svelte-kit/
+/frontend/build/
 # 모델 가중치. 원본 model.safetensors(417MiB)는 GitHub 파일당 100MiB 한도를 넘어
 # 커밋할 수 없다.
 *.safetensors
@@ -79,6 +84,9 @@ materials/PURE/
 
 # 데모 산출물 — 실행하면 다시 생긴다
 app/core/cloudkb/depkb/diagrams/
+
+# Generated deployment diagram examples (PUML/SVG)
+/docs/examples/
 
 # 실험 자격증명 — 절대 커밋하지 않는다(kubeconfig·SSH 키·인증서).
 app/core/cloudkb/depkb/experiments/**/kubeconfig

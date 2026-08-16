@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "easydep-app-resource-intervention/v1",
+  "runId": "3b0fa31ea6cd",
+  "mode": "process",
+  "startedAt": "2026-08-14T09:25:39.186+00:00",
+  "experiments": [
+    {
+      "experimentId": "app-port-binding",
+      "phase": "control",
+      "status": "passed",
+      "expected": "계약된 port에서 readiness 200",
+      "observed": {
+        "status": 200,
+        "body": "{\"ready\": true, \"role\": \"app\", \"stateReachable\": true}",
+        "error": null
+      },
+      "durationSeconds": 0.572
+    },
+    {
+      "experimentId": "app-port-binding",
+      "phase": "intervention",
+      "status": "passed",
+      "expected": "프로세스는 실행 중이지만 계약 port는 도달 불가",
+      "observed": {
+        "processRunning": true,
+        "contractPort": 14698,
+        "actualPort": 12619
+      },
+      "durationSeconds": 4.514
+    },
+    {
+      "experimentId": "app-port-binding",
+      "phase": "restoration",
+      "status": "passed",
+      "expected": "계약 port 복원 후 readiness 200",
+      "observed": {
+        "status": 200,
+        "body": "{\"ready\": true, \"role\": \"app\", \"stateReachable\": true}",
+        "error": null
+      },
+      "durationSeconds": 0.619
+    },
+    {
+      "experimentId": "app-state-endpoint-binding",
+      "phase": "intervention",
+      "status": "passed",
+      "expected": "잘못된 State endpoint에서 readiness 503",
+      "observed": {
+        "status": 503,
+        "body": "{\"ready\": false, \"role\": \"app\", \"stateReachable\": false}",
+        "error": null
+      },
+      "durationSeconds": 1.362
+    },
+    {
+      "experimentId": "app-state-endpoint-binding",
+      "phase": "restoration",
+      "status": "passed",
+      "expected": "State endpoint 복원 후 readiness 200",
+      "observed": {
+        "status": 200,
+        "body": "{\"ready\": true, \"role\": \"app\", \"stateReachable\": true}",
+        "error": null
+      },
+      "durationSeconds": 1.124
+    },
+    {
+      "experimentId": "state-resource-availability",
+      "phase": "intervention",
+      "status": "passed",
+      "expected": "State 중단 시 readiness 503과 업무 요청 실패",
+      "observed": {
+        "readiness": {
+          "status": 503,
+          "body": "{\"ready\": false, \"role\": \"app\", \"stateReachable\": false}",
+          "error": null
+        },
+        "business": {
+          "status": 502,
+          "body": "{\"error\": \"state-unavailable\"}",
+          "error": null
+        }
+      },
+      "durationSeconds": 3.07
+    },
+    {
+      "experimentId": "state-resource-availability",
+      "phase": "restoration",
+      "status": "passed",
+      "expected": "State 복원 후 readiness 200",
+      "observed": {
+        "status": 200,
+        "body": "{\"ready\": true, \"role\": \"app\", \"stateReachable\": true}",
+        "error": null
+      },
+      "durationSeconds": 0.016
+    },
+    {
+      "experimentId": "volume-state-persistence",
+      "phase": "control",
+      "status": "passed",
+      "expected": "영속 경로에 기록 성공",
+      "observed": {
+        "status": 200,
+        "body": "{\"key\": \"durable\", \"value\": \"kept\"}",
+        "error": null
+      },
+      "durationSeconds": 0.028
+    },
+    {
+      "experimentId": "volume-state-persistence",
+      "phase": "intervention",
+      "status": "passed",
+      "expected": "다른 비영속 경로로 재기동하면 기존 상태가 보이지 않음",
+      "observed": {
+        "status": 404,
+        "body": "{\"error\": \"missing-record\"}",
+        "error": null
+      },
+      "durationSeconds": 0.007
+    },
+    {
+      "experimentId": "volume-state-persistence",
+      "phase": "restoration",
+      "status": "passed",
+      "expected": "원래 영속 경로로 복원하면 기존 상태 조회 성공",
+      "observed": {
+        "status": 200,
+        "body": "{\"key\": \"durable\", \"value\": \"kept\"}",
+        "error": null
+      },
+      "durationSeconds": 0.029
+    }
+  ],
+  "cleanupVerified": true,
+  "residualResources": [],
+  "finishedAt": "2026-08-14T09:25:52.808+00:00",
+  "summary": {
+    "passedPhases": 10,
+    "totalPhases": 10,
+    "allPassed": true
+  }
+}

@@ -171,12 +171,16 @@ class DesignArtifactSpec:
     revise: Callable[[Any, str, ArchitectureState, set[str]], Any]
     #: 모델 → 산출물. 결정론적이어야 한다.
     render: Callable[[Any], Any]
+    #: Optional state-aware deterministic renderer.  Deployment diagrams need the
+    #: logical model plus RESOURCE_SPEC and the finalized provider ResourcePlan.
+    #: Other artifacts remain pure model -> document projections.
     #: 산출물 → {syntax_valid, syntax_errors}.
     validate: Callable[[Any], dict[str, Any]]
     #: 모델 안에서 개별 항목을 가리키는 법: {목록 필드 이름: 그 항목의 이름을 뽑는 함수}.
     #: 여기서 나오는 이름은 **추적표의 element 와 같아야 한다** — 그래야 "api_spec:Order 를
     #: 고쳐줘"가 모델의 어느 항목인지 통한다. 비어 있으면 지목 수정을 지원하지 않는다.
     elements: dict[str, Callable[[dict], str]] = field(default_factory=dict)
+    render_with_state: Callable[[Any, ArchitectureState], Any] | None = None
     #: (모델, 상태) → 규칙 위반 목록. 렌더 **전에**, 모델에 대해 돈다.
     #: 상태를 받는 이유는 그라운딩 검사(지어낸 유스케이스 id 등)가 상류 산출물을 봐야
     #: 해서다 — 모델만으로는 "지어낸 참조"와 "정당한 참조"를 구별할 수 없다.
@@ -502,7 +506,11 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     return node
 
 
-def render_and_validate(spec: DesignArtifactSpec, model: dict) -> dict[str, Any]:
+def render_and_validate(
+    spec: DesignArtifactSpec,
+    model: dict,
+    state: ArchitectureState | None = None,
+) -> dict[str, Any]:
     """모델 → `{content_key, valid_key, errors_key}`. **렌더와 그 자기검사는 한 벌이다.**
 
     따로 부를 일이 없어서 한 함수다. 문법 검증은 렌더러가 제 일을 했는지 확인하려고만
@@ -511,7 +519,11 @@ def render_and_validate(spec: DesignArtifactSpec, model: dict) -> dict[str, Any]
     순수 함수인 이유는 부르는 곳이 둘이라서다 — 그래프의 `render_node`와 지목 수정
     (`cascade.py`). 예전에는 이 네 줄이 세 곳에 흩어져 있었다.
     """
-    content = spec.render(model or {})
+    content = (
+        spec.render_with_state(model or {}, state)
+        if spec.render_with_state is not None and state is not None
+        else spec.render(model or {})
+    )
     validation = spec.validate(content)
     return {
         spec.content_key: content,
@@ -563,6 +575,6 @@ def render_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
                 spec.valid_key: None,
                 spec.errors_key: [],
             }
-        return render_and_validate(spec, state.get(spec.model_key) or {})
+        return render_and_validate(spec, state.get(spec.model_key) or {}, state)
 
     return node

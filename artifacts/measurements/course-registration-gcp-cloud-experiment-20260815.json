@@ -1,0 +1,609 @@
+{
+  "schemaVersion": "easydep-course-registration-cloud-e1/v1",
+  "provider": "gcp",
+  "runId": "easydep-course-60eefd88",
+  "startedAt": "2026-08-15T09:57:16.375865+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 16.277,
+      "detail": "easydep-course-60eefd88-net"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 19.68,
+      "detail": "easydep-course-60eefd88-subnet"
+    },
+    {
+      "name": "firewall.allow-https",
+      "status": "passed",
+      "durationSeconds": 10.142,
+      "detail": "NAME                                 NETWORK                      DIRECTION  PRIORITY  ALLOW    DENY  DISABLED\neasydep-course-60eefd88-allow-https  easydep-course-60eefd88-net  INGRESS    1000      tcp:443        False"
+    },
+    {
+      "name": "firewall.allow-postgres-from-app",
+      "status": "passed",
+      "durationSeconds": 9.722,
+      "detail": "NAME                                    NETWORK                      DIRECTION  PRIORITY  ALLOW     DENY  DISABLED\neasydep-course-60eefd88-allow-postgres  easydep-course-60eefd88-net  INGRESS    1000      tcp:5432        False"
+    },
+    {
+      "name": "state-disk.create",
+      "status": "passed",
+      "durationSeconds": 3.398,
+      "detail": "easydep-course-60eefd88-data"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 15.978,
+      "detail": "easydep-course-60eefd88-state"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 14.053,
+      "detail": "easydep-course-60eefd88-app"
+    },
+    {
+      "name": "health.ready",
+      "status": "passed",
+      "durationSeconds": 142.536,
+      "detail": {
+        "attempts": 12,
+        "observation": {
+          "schemaVersion": "easydep-http-business-oracle/v1",
+          "oracleId": "course-registration-health-up-v1",
+          "baseUrl": "https://34.64.189.141",
+          "observedAt": "2026-08-15T10:01:12.959100+00:00",
+          "tlsVerification": "disabled-for-synthetic-test",
+          "status": "passed",
+          "passedPhases": 1,
+          "totalPhases": 1,
+          "executedPhases": 1,
+          "results": [
+            {
+              "id": "application-and-database-ready",
+              "kind": "request",
+              "status": "passed",
+              "observed": {
+                "httpStatus": 200,
+                "json": {
+                  "status": "UP"
+                },
+                "transportError": null
+              },
+              "expected": {
+                "status": 200,
+                "jsonContains": {
+                  "status": "UP"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "business-and-concurrency",
+      "status": "passed",
+      "durationSeconds": 3.235,
+      "detail": {
+        "schemaVersion": "easydep-http-business-oracle/v1",
+        "oracleId": "course-registration-e1-e2-v1",
+        "baseUrl": "https://34.64.189.141",
+        "observedAt": "2026-08-15T10:01:16.194397+00:00",
+        "tlsVerification": "disabled-for-synthetic-test",
+        "status": "passed",
+        "passedPhases": 13,
+        "totalPhases": 13,
+        "executedPhases": 13,
+        "results": [
+          {
+            "id": "initialize-for-basic-flow",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": null,
+              "transportError": null
+            },
+            "expected": {
+              "status": 200
+            }
+          },
+          {
+            "id": "course-catalog",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": [
+                {
+                  "courseId": "C-RACE",
+                  "name": "Course Race",
+                  "capacity": 1,
+                  "remainingSeats": 1
+                },
+                {
+                  "courseId": "C-DUP",
+                  "name": "Course Dup",
+                  "capacity": 10,
+                  "remainingSeats": 10
+                }
+              ],
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContainsItems": [
+                {
+                  "courseId": "C-RACE",
+                  "capacity": 1,
+                  "remainingSeats": 1
+                },
+                {
+                  "courseId": "C-DUP",
+                  "capacity": 10,
+                  "remainingSeats": 10
+                }
+              ],
+              "jsonLength": 2
+            }
+          },
+          {
+            "id": "enroll",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 201,
+              "json": {
+                "studentId": "S1",
+                "courseId": "C-DUP"
+              },
+              "transportError": null
+            },
+            "expected": {
+              "status": 201,
+              "jsonContains": {
+                "studentId": "S1",
+                "courseId": "C-DUP"
+              }
+            }
+          },
+          {
+            "id": "duplicate-enrollment-rejected",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 409,
+              "json": null,
+              "transportError": null
+            },
+            "expected": {
+              "status": 409
+            }
+          },
+          {
+            "id": "student-enrollment-visible",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "jsonLength": 1
+            }
+          },
+          {
+            "id": "cancel-enrollment",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": null,
+              "transportError": null
+            },
+            "expected": {
+              "status": 200
+            }
+          },
+          {
+            "id": "seat-restored-after-cancel",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": {
+                "courseId": "C-DUP",
+                "name": "Course Dup",
+                "capacity": 10,
+                "remainingSeats": 10
+              },
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": {
+                "courseId": "C-DUP",
+                "remainingSeats": 10
+              }
+            }
+          },
+          {
+            "id": "initialize-for-last-seat-race",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": null,
+              "transportError": null
+            },
+            "expected": {
+              "status": 200
+            }
+          },
+          {
+            "id": "last-seat-race",
+            "kind": "concurrentRequests",
+            "status": "passed",
+            "observedStatusCounts": {
+              "201": 1,
+              "409": 4
+            },
+            "expectedStatusCounts": {
+              "201": 1,
+              "409": 4
+            },
+            "transportErrors": [],
+            "responses": [
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 201,
+                "json": {
+                  "studentId": "S6",
+                  "courseId": "C-RACE"
+                },
+                "transportError": null
+              }
+            ]
+          },
+          {
+            "id": "last-seat-not-oversold",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": {
+                "courseId": "C-RACE",
+                "name": "Course Race",
+                "capacity": 1,
+                "remainingSeats": 0
+              },
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": {
+                "courseId": "C-RACE",
+                "capacity": 1,
+                "remainingSeats": 0
+              }
+            }
+          },
+          {
+            "id": "initialize-for-duplicate-race",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": null,
+              "transportError": null
+            },
+            "expected": {
+              "status": 200
+            }
+          },
+          {
+            "id": "duplicate-race",
+            "kind": "concurrentRequests",
+            "status": "passed",
+            "observedStatusCounts": {
+              "201": 1,
+              "409": 4
+            },
+            "expectedStatusCounts": {
+              "201": 1,
+              "409": 4
+            },
+            "transportErrors": [],
+            "responses": [
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 201,
+                "json": {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                },
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              },
+              {
+                "httpStatus": 409,
+                "json": null,
+                "transportError": null
+              }
+            ]
+          },
+          {
+            "id": "duplicate-race-retains-one",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "jsonLength": 1
+            }
+          }
+        ],
+        "attemptsUntilPass": 1
+      }
+    },
+    {
+      "name": "state-vm.stop",
+      "status": "passed",
+      "durationSeconds": 19.49,
+      "detail": "state VM stopped"
+    },
+    {
+      "name": "database-unavailable-health",
+      "status": "passed",
+      "durationSeconds": 5.273,
+      "detail": {
+        "schemaVersion": "easydep-http-business-oracle/v1",
+        "oracleId": "course-registration-database-unavailable-health-v1",
+        "baseUrl": "https://34.64.189.141",
+        "observedAt": "2026-08-15T10:01:40.988535+00:00",
+        "tlsVerification": "disabled-for-synthetic-test",
+        "status": "passed",
+        "passedPhases": 1,
+        "totalPhases": 1,
+        "executedPhases": 1,
+        "results": [
+          {
+            "id": "health-reports-database-unavailable",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 503,
+              "json": {
+                "status": "DOWN"
+              },
+              "transportError": null
+            },
+            "expected": {
+              "status": 503,
+              "jsonContains": {
+                "status": "DOWN"
+              }
+            }
+          }
+        ],
+        "attemptsUntilPass": 1
+      }
+    },
+    {
+      "name": "state-vm.start",
+      "status": "passed",
+      "durationSeconds": 12.655,
+      "detail": "state VM started"
+    },
+    {
+      "name": "health.recovered",
+      "status": "passed",
+      "durationSeconds": 45.816,
+      "detail": {
+        "attempts": 4,
+        "observation": {
+          "schemaVersion": "easydep-http-business-oracle/v1",
+          "oracleId": "course-registration-health-up-v1",
+          "baseUrl": "https://34.64.189.141",
+          "observedAt": "2026-08-15T10:02:39.476472+00:00",
+          "tlsVerification": "disabled-for-synthetic-test",
+          "status": "passed",
+          "passedPhases": 1,
+          "totalPhases": 1,
+          "executedPhases": 1,
+          "results": [
+            {
+              "id": "application-and-database-ready",
+              "kind": "request",
+              "status": "passed",
+              "observed": {
+                "httpStatus": 200,
+                "json": {
+                  "status": "UP"
+                },
+                "transportError": null
+              },
+              "expected": {
+                "status": 200,
+                "jsonContains": {
+                  "status": "UP"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "persistence-after-state-restart",
+      "status": "passed",
+      "durationSeconds": 0.379,
+      "detail": {
+        "schemaVersion": "easydep-http-business-oracle/v1",
+        "oracleId": "course-registration-persistence-after-database-recreate-v1",
+        "baseUrl": "https://34.64.189.141",
+        "observedAt": "2026-08-15T10:02:39.855662+00:00",
+        "tlsVerification": "disabled-for-synthetic-test",
+        "status": "passed",
+        "passedPhases": 2,
+        "totalPhases": 2,
+        "executedPhases": 2,
+        "results": [
+          {
+            "id": "enrollment-survives-database-container-recreate",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": [
+                {
+                  "studentId": "S1",
+                  "courseId": "C-DUP"
+                }
+              ],
+              "jsonLength": 1
+            }
+          },
+          {
+            "id": "course-seat-count-survives-database-container-recreate",
+            "kind": "request",
+            "status": "passed",
+            "observed": {
+              "httpStatus": 200,
+              "json": {
+                "courseId": "C-DUP",
+                "name": "Course Dup",
+                "capacity": 10,
+                "remainingSeats": 9
+              },
+              "transportError": null
+            },
+            "expected": {
+              "status": 200,
+              "jsonContains": {
+                "courseId": "C-DUP",
+                "capacity": 10,
+                "remainingSeats": 9
+              }
+            }
+          }
+        ],
+        "attemptsUntilPass": 1
+      }
+    }
+  ],
+  "outcome": "passed",
+  "scope": {
+    "applicationInstances": 1,
+    "stateInstances": 1,
+    "persistentDataVolumes": 1,
+    "managedLoadBalancer": false,
+    "performanceSloMeasured": false
+  },
+  "image": {
+    "reference": "public.ecr.aws/w3q5i0g7/easydep-course-campaign-20260815@sha256:ff0b634b5cbcf9a78099f1f4687acd2eb6cbae8ca12a900770abadcfd7a16adb",
+    "source": "same generated application artifact used for both providers"
+  },
+  "oracles": {
+    "business": "evaluation/baselines/course-registration-cases/business-oracle.json",
+    "databaseUnavailable": "evaluation/baselines/course-registration-cases/database-unavailable-oracle.json",
+    "persistence": "evaluation/baselines/course-registration-cases/persistence-oracle.json"
+  },
+  "pathUnderTest": "public test HTTPS -> App VM/container -> state VM private IPv4:5432 -> PostgreSQL PGDATA -> CSP data disk",
+  "networkObservation": {
+    "applicationEndpoint": "https://34.64.189.141",
+    "databaseEndpointUsedByApp": "10.93.1.2:5432",
+    "databaseIngressSource": "easydep-course-app source tag",
+    "databasePortPubliclyAllowed": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": [],
+    "durationSeconds": 83.878
+  },
+  "finishedAt": "2026-08-15T10:04:03.748784+00:00",
+  "interpretationLimits": [
+    "This is one development run for one frozen generated application image.",
+    "The one-day self-signed certificate tests TLS wiring, not DNS ownership or public trust.",
+    "State VM restart and data preservation do not establish state-tier high availability.",
+    "No performance SLO, right-sizing, or cost optimality is measured.",
+    "The shared image registry location is not evidence about the target CSP."
+  ]
+}

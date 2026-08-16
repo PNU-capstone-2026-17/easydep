@@ -13,59 +13,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/RunInstances | ec2#/operations/DescribeInstances | ec2#/operations/TerminateInstances",
+          "sourceLocator": "ec2#/operations/RunInstances | ec2#/operations/DescribeInstances",
           "operationLocators": {
             "create": "ec2#/operations/RunInstances",
-            "read": "ec2#/operations/DescribeInstances",
-            "delete": "ec2#/operations/TerminateInstances"
+            "read": "ec2#/operations/DescribeInstances"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.vm.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "vm",
-      "conceptId": "neutral.compute",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/RunInstances | ec2#/operations/DescribeInstances | ec2#/operations/TerminateInstances",
-          "operationLocators": {
-            "create": "ec2#/operations/RunInstances",
-            "read": "ec2#/operations/DescribeInstances",
-            "delete": "ec2#/operations/TerminateInstances"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.compute",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -78,59 +41,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateVolume | ec2#/operations/DescribeVolumes | ec2#/operations/DeleteVolume",
+          "sourceLocator": "ec2#/operations/CreateVolume | ec2#/operations/DescribeVolumes",
           "operationLocators": {
             "create": "ec2#/operations/CreateVolume",
-            "read": "ec2#/operations/DescribeVolumes",
-            "delete": "ec2#/operations/DeleteVolume"
+            "read": "ec2#/operations/DescribeVolumes"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.disk.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "disk",
-      "conceptId": "neutral.data-storage",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateVolume | ec2#/operations/DescribeVolumes | ec2#/operations/DeleteVolume",
-          "operationLocators": {
-            "create": "ec2#/operations/CreateVolume",
-            "read": "ec2#/operations/DescribeVolumes",
-            "delete": "ec2#/operations/DeleteVolume"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.data-storage",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -143,59 +69,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateVpc | ec2#/operations/DescribeVpcs | ec2#/operations/DeleteVpc",
+          "sourceLocator": "ec2#/operations/CreateVpc | ec2#/operations/DescribeVpcs",
           "operationLocators": {
             "create": "ec2#/operations/CreateVpc",
-            "read": "ec2#/operations/DescribeVpcs",
-            "delete": "ec2#/operations/DeleteVpc"
+            "read": "ec2#/operations/DescribeVpcs"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.virtual-network.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "virtual-network",
-      "conceptId": "neutral.virtual-network",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateVpc | ec2#/operations/DescribeVpcs | ec2#/operations/DeleteVpc",
-          "operationLocators": {
-            "create": "ec2#/operations/CreateVpc",
-            "read": "ec2#/operations/DescribeVpcs",
-            "delete": "ec2#/operations/DeleteVpc"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.virtual-network",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -208,59 +97,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateSubnet | ec2#/operations/DescribeSubnets | ec2#/operations/DeleteSubnet",
+          "sourceLocator": "ec2#/operations/CreateSubnet | ec2#/operations/DescribeSubnets",
           "operationLocators": {
             "create": "ec2#/operations/CreateSubnet",
-            "read": "ec2#/operations/DescribeSubnets",
-            "delete": "ec2#/operations/DeleteSubnet"
+            "read": "ec2#/operations/DescribeSubnets"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.subnet.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "subnet",
-      "conceptId": "neutral.ip-network-segment",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateSubnet | ec2#/operations/DescribeSubnets | ec2#/operations/DeleteSubnet",
-          "operationLocators": {
-            "create": "ec2#/operations/CreateSubnet",
-            "read": "ec2#/operations/DescribeSubnets",
-            "delete": "ec2#/operations/DeleteSubnet"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.ip-network-segment",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -273,59 +125,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateSecurityGroup | ec2#/operations/DescribeSecurityGroups | ec2#/operations/DeleteSecurityGroup",
+          "sourceLocator": "ec2#/operations/CreateSecurityGroup | ec2#/operations/DescribeSecurityGroups",
           "operationLocators": {
             "create": "ec2#/operations/CreateSecurityGroup",
-            "read": "ec2#/operations/DescribeSecurityGroups",
-            "delete": "ec2#/operations/DeleteSecurityGroup"
+            "read": "ec2#/operations/DescribeSecurityGroups"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.security-group.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "security-group",
-      "conceptId": "neutral.network-security-policy-group",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "ec2#/operations/CreateSecurityGroup | ec2#/operations/DescribeSecurityGroups | ec2#/operations/DeleteSecurityGroup",
-          "operationLocators": {
-            "create": "ec2#/operations/CreateSecurityGroup",
-            "read": "ec2#/operations/DescribeSecurityGroups",
-            "delete": "ec2#/operations/DeleteSecurityGroup"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-security-policy-group",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -338,59 +153,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateLoadBalancer | elbv2#/operations/DescribeLoadBalancers | elbv2#/operations/DeleteLoadBalancer",
+          "sourceLocator": "elbv2#/operations/CreateLoadBalancer | elbv2#/operations/DescribeLoadBalancers",
           "operationLocators": {
             "create": "elbv2#/operations/CreateLoadBalancer",
-            "read": "elbv2#/operations/DescribeLoadBalancers",
-            "delete": "elbv2#/operations/DeleteLoadBalancer"
+            "read": "elbv2#/operations/DescribeLoadBalancers"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.load-balancer.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "load-balancer",
-      "conceptId": "neutral.network-load-balancer",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateLoadBalancer | elbv2#/operations/DescribeLoadBalancers | elbv2#/operations/DeleteLoadBalancer",
-          "operationLocators": {
-            "create": "elbv2#/operations/CreateLoadBalancer",
-            "read": "elbv2#/operations/DescribeLoadBalancers",
-            "delete": "elbv2#/operations/DeleteLoadBalancer"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.network-load-balancer",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -404,59 +182,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateListener | elbv2#/operations/DescribeListeners | elbv2#/operations/DeleteListener",
+          "sourceLocator": "elbv2#/operations/CreateListener | elbv2#/operations/DescribeListeners",
           "operationLocators": {
             "create": "elbv2#/operations/CreateListener",
-            "read": "elbv2#/operations/DescribeListeners",
-            "delete": "elbv2#/operations/DeleteListener"
+            "read": "elbv2#/operations/DescribeListeners"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.listener.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "listener",
-      "conceptId": "neutral.load-balancer-listener",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateListener | elbv2#/operations/DescribeListeners | elbv2#/operations/DeleteListener",
-          "operationLocators": {
-            "create": "elbv2#/operations/CreateListener",
-            "read": "elbv2#/operations/DescribeListeners",
-            "delete": "elbv2#/operations/DeleteListener"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-listener",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -469,59 +210,22 @@
       "observations": [
         {
           "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateTargetGroup | elbv2#/operations/DescribeTargetGroups | elbv2#/operations/DeleteTargetGroup",
+          "sourceLocator": "elbv2#/operations/CreateTargetGroup | elbv2#/operations/DescribeTargetGroups",
           "operationLocators": {
             "create": "elbv2#/operations/CreateTargetGroup",
-            "read": "elbv2#/operations/DescribeTargetGroups",
-            "delete": "elbv2#/operations/DeleteTargetGroup"
+            "read": "elbv2#/operations/DescribeTargetGroups"
           },
           "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
           "supports": true,
           "independentIdentity": true,
           "lifecycleOperations": [
             "create",
-            "delete",
             "read"
           ]
         }
       ],
       "decision": "confirmed",
       "decisionReason": "vendor-lifecycle-and-identity",
-      "humanReviewRequired": false
-    },
-    {
-      "claimId": "aws.backend-group.crosswalk",
-      "claimType": "neutralCrosswalk",
-      "resourceId": "backend-group",
-      "conceptId": "neutral.load-balancer-backend-group",
-      "mappingRelation": "partial",
-      "observations": [
-        {
-          "sourceRole": "vendorLifecycleSchema",
-          "sourceLocator": "elbv2#/operations/CreateTargetGroup | elbv2#/operations/DescribeTargetGroups | elbv2#/operations/DeleteTargetGroup",
-          "operationLocators": {
-            "create": "elbv2#/operations/CreateTargetGroup",
-            "read": "elbv2#/operations/DescribeTargetGroups",
-            "delete": "elbv2#/operations/DeleteTargetGroup"
-          },
-          "sourceSha256": "dd29f4ef86cadc7d9928cef2f9d5c4d0fb3a436fb5ef4820c8f9fe4ab76bc659",
-          "supports": true,
-          "independentIdentity": true,
-          "lifecycleOperations": [
-            "create",
-            "delete",
-            "read"
-          ]
-        },
-        {
-          "sourceRole": "neutralModel",
-          "sourceLocator": "app/core/cloudkb/depkb/neutral_candidates/crosswalk.json#neutral.load-balancer-backend-group",
-          "sourceSha256": "bbddfb7014593cb8ae9f2c71feff36e78796ff9d3ef10722d3887598624647db",
-          "supports": true
-        }
-      ],
-      "decision": "confirmed",
-      "decisionReason": "neutral-hypothesis-vendor-validated",
       "humanReviewRequired": false
     },
     {
@@ -755,6 +459,6 @@
   ],
   "exceptionClaimIds": [],
   "freeze": {
-    "sha256": "940cc0738d25c348b4f238ab4cffb0a2bb4c25fa5c8619778c6e7d18f41f83ef"
+    "sha256": "e9207d3cf2decd4486fb356550bc47ea99cf3a362d405fa2d19e297af3512b72"
   }
 }

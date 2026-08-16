@@ -1,4 +1,4 @@
-"""Provider-neutral VM deployment semantics from Terraform HCL.
+"""Terraform HCL에서 CSP별 VM 배포 의미를 관측한다.
 
 python-hcl2 owns HCL parsing. This module only maps the provider constructs that are
 inside the experiment's documented Docker-on-VM scope.
@@ -14,7 +14,7 @@ from typing import Any
 import hcl2
 from lark.exceptions import LarkError
 
-from app.core.cloudkb.depkb.projection_model import capability_realizations
+from app.core.cloudkb.depkb.provider_realizations import capability_realizations
 from evaluation.component_projection import analyze_component_projections
 
 TYPE_TO_CONCEPT = {

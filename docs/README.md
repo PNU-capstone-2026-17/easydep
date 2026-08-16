@@ -6,7 +6,7 @@
 | 순서 | 기준 문서 | 내용 |
 |---:|---|---|
 | 1 | [현재 시스템 상태](current-system-status.md) | 4단계 구조, 구현됨·미구현, 실행 경계와 다음 작업 |
-| 2 | [논리 배포 토폴로지와 CSP 의존성](logical-deployment-topology-decisions.md) | 앱–cloud 계약, 토폴로지, AWS·Azure·GCP 리소스, VM 추천과 검증 |
+| 2 | [배포 다이어그램과 리소스 의존성 통합 기준](logical-deployment-topology-decisions.md) | 범위, 토폴로지, ResourcePlan, 멀티 AZ·VM 그룹·LB, CSP 생성 의존성, 앱·guest 바인딩, 셋업과 검증 |
 | 3 | [비교평가 계획과 현재 결과](comparison-experiment-plan.md) | E1·E2·D1, 기준군, 공통 gate, 실행 규모와 주장 한계 |
 
 [연구 배경](research.md)은 이미 승인된 진실 원천으로 보존하며 수정하지 않는다.
@@ -16,6 +16,8 @@
 - `app/core/orchestration/README.md`: 오케스트레이터 명령과 provider 계약
 - `evaluation/README.md`: 평가 실행 명령
 - `evaluation/experiment-contract.md`: 실패·검열 분류
+- [의존성 실험의 배포 계획 반영](resource-plan-experiment-reflection.md): E1~E3 반영 경계와 3사 IaC 정적 실험 결과
+- [CSP 리소스 원장과 앱-배포 바인딩 시각화](provider-native-dependency-graphs.html): provider 생성 관계, 앱 runtime 관계와 8단계 셋업 gate를 분리한 대화형 자료
 - FastAPI `/docs`: 현재 HTTP API 계약
 
 ## 유지 원칙

@@ -1,0 +1,321 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-e1-e2-v1",
+  "baseUrl": "https://34.64.189.141",
+  "observedAt": "2026-08-15T10:01:16.194397+00:00",
+  "tlsVerification": "disabled-for-synthetic-test",
+  "status": "passed",
+  "passedPhases": 13,
+  "totalPhases": 13,
+  "executedPhases": 13,
+  "results": [
+    {
+      "id": "initialize-for-basic-flow",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "id": "course-catalog",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": [
+          {
+            "courseId": "C-RACE",
+            "name": "Course Race",
+            "capacity": 1,
+            "remainingSeats": 1
+          },
+          {
+            "courseId": "C-DUP",
+            "name": "Course Dup",
+            "capacity": 10,
+            "remainingSeats": 10
+          }
+        ],
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContainsItems": [
+          {
+            "courseId": "C-RACE",
+            "capacity": 1,
+            "remainingSeats": 1
+          },
+          {
+            "courseId": "C-DUP",
+            "capacity": 10,
+            "remainingSeats": 10
+          }
+        ],
+        "jsonLength": 2
+      }
+    },
+    {
+      "id": "enroll",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 201,
+        "json": {
+          "studentId": "S1",
+          "courseId": "C-DUP"
+        },
+        "transportError": null
+      },
+      "expected": {
+        "status": 201,
+        "jsonContains": {
+          "studentId": "S1",
+          "courseId": "C-DUP"
+        }
+      }
+    },
+    {
+      "id": "duplicate-enrollment-rejected",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 409,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 409
+      }
+    },
+    {
+      "id": "student-enrollment-visible",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "jsonLength": 1
+      }
+    },
+    {
+      "id": "cancel-enrollment",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "id": "seat-restored-after-cancel",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": {
+          "courseId": "C-DUP",
+          "name": "Course Dup",
+          "capacity": 10,
+          "remainingSeats": 10
+        },
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": {
+          "courseId": "C-DUP",
+          "remainingSeats": 10
+        }
+      }
+    },
+    {
+      "id": "initialize-for-last-seat-race",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "id": "last-seat-race",
+      "kind": "concurrentRequests",
+      "status": "passed",
+      "observedStatusCounts": {
+        "201": 1,
+        "409": 4
+      },
+      "expectedStatusCounts": {
+        "201": 1,
+        "409": 4
+      },
+      "transportErrors": [],
+      "responses": [
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 201,
+          "json": {
+            "studentId": "S6",
+            "courseId": "C-RACE"
+          },
+          "transportError": null
+        }
+      ]
+    },
+    {
+      "id": "last-seat-not-oversold",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": {
+          "courseId": "C-RACE",
+          "name": "Course Race",
+          "capacity": 1,
+          "remainingSeats": 0
+        },
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": {
+          "courseId": "C-RACE",
+          "capacity": 1,
+          "remainingSeats": 0
+        }
+      }
+    },
+    {
+      "id": "initialize-for-duplicate-race",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": null,
+        "transportError": null
+      },
+      "expected": {
+        "status": 200
+      }
+    },
+    {
+      "id": "duplicate-race",
+      "kind": "concurrentRequests",
+      "status": "passed",
+      "observedStatusCounts": {
+        "201": 1,
+        "409": 4
+      },
+      "expectedStatusCounts": {
+        "201": 1,
+        "409": 4
+      },
+      "transportErrors": [],
+      "responses": [
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 201,
+          "json": {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          },
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        },
+        {
+          "httpStatus": 409,
+          "json": null,
+          "transportError": null
+        }
+      ]
+    },
+    {
+      "id": "duplicate-race-retains-one",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "jsonLength": 1
+      }
+    }
+  ],
+  "attemptsUntilPass": 1
+}

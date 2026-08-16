@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "easydep-http-business-oracle/v1",
+  "oracleId": "course-registration-persistence-after-database-recreate-v1",
+  "baseUrl": "http://127.0.0.1:7228",
+  "observedAt": "2026-08-15T05:58:41.948020+00:00",
+  "status": "passed",
+  "passedPhases": 2,
+  "totalPhases": 2,
+  "executedPhases": 2,
+  "results": [
+    {
+      "id": "enrollment-survives-database-container-recreate",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": [
+          {
+            "studentId": "S1",
+            "courseId": "C-DUP"
+          }
+        ],
+        "jsonLength": 1
+      }
+    },
+    {
+      "id": "course-seat-count-survives-database-container-recreate",
+      "kind": "request",
+      "status": "passed",
+      "observed": {
+        "httpStatus": 200,
+        "json": {
+          "courseId": "C-DUP",
+          "name": "Course Dup",
+          "capacity": 10,
+          "remainingSeats": 9
+        },
+        "transportError": null
+      },
+      "expected": {
+        "status": 200,
+        "jsonContains": {
+          "courseId": "C-DUP",
+          "capacity": 10,
+          "remainingSeats": 9
+        }
+      }
+    }
+  ]
+}

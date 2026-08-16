@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "easydep-gcp-sample-app-postgres-e1/v1",
+  "provider": "gcp",
+  "runId": "easydep-e1-3577182d",
+  "startedAt": "2026-08-14T13:33:11.547621+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 38.534,
+      "detail": "NAME                     SUBNET_MODE  BGP_ROUTING_MODE  IPV4_RANGE  GATEWAY_IPV4  INTERNAL_IPV6_RANGE\neasydep-e1-3577182d-net  CUSTOM       REGIONAL"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 15.599,
+      "detail": "NAME                        REGION           NETWORK                  RANGE         STACK_TYPE  IPV6_ACCESS_TYPE  INTERNAL_IPV6_PREFIX  EXTERNAL_IPV6_PREFIX\neasydep-e1-3577182d-subnet  asia-northeast3  easydep-e1-3577182d-net  10.80.1.0/24  IPV4_ONLY"
+    },
+    {
+      "name": "firewall.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 10.2,
+      "detail": "state tcp/5432 from app source tag"
+    },
+    {
+      "name": "state-disk.create",
+      "status": "passed",
+      "durationSeconds": 3.986,
+      "detail": "NAME                      ZONE               SIZE_GB  TYPE         STATUS\neasydep-e1-3577182d-data  asia-northeast3-a  10       pd-balanced  READY"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 16.376,
+      "detail": "NAME                       ZONE               MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP   STATUS\neasydep-e1-3577182d-state  asia-northeast3-a  e2-small                   10.80.1.2    34.64.200.28  RUNNING"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 13.474,
+      "detail": "NAME                     ZONE               MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP    STATUS\neasydep-e1-3577182d-app  asia-northeast3-a  e2-small                   10.80.1.3    34.64.189.141  RUNNING"
+    },
+    {
+      "name": "baseline.app-write-read",
+      "status": "passed",
+      "durationSeconds": 123.26,
+      "detail": "EASYDEP_E1 baseline passed"
+    },
+    {
+      "name": "intervention.delete-postgres-allow",
+      "status": "passed",
+      "durationSeconds": 8.039,
+      "detail": "app-to-state tcp/5432 allow removed"
+    },
+    {
+      "name": "intervention.signal",
+      "status": "passed",
+      "durationSeconds": 5.455,
+      "detail": "app phase=block"
+    },
+    {
+      "name": "intervention.app-observes-state-loss",
+      "status": "passed",
+      "durationSeconds": 15.21,
+      "detail": "EASYDEP_E1 blocked passed"
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 8.184,
+      "detail": "state tcp/5432 from app source tag"
+    },
+    {
+      "name": "restore.signal",
+      "status": "passed",
+      "durationSeconds": 7.163,
+      "detail": "app phase=restore"
+    },
+    {
+      "name": "restore.app-reads-existing-value",
+      "status": "passed",
+      "durationSeconds": 4.856,
+      "detail": "EASYDEP_E1 restored passed"
+    },
+    {
+      "name": "persistence.signal-observer",
+      "status": "passed",
+      "durationSeconds": 10.895,
+      "detail": "app phase=reboot"
+    },
+    {
+      "name": "persistence.state-vm-reset",
+      "status": "passed",
+      "durationSeconds": 10.326,
+      "detail": "state VM reset"
+    },
+    {
+      "name": "persistence.app-observes-loss-and-existing-value",
+      "status": "passed",
+      "durationSeconds": 42.715,
+      "detail": "EASYDEP_E1 reboot-persistence passed"
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "app VM/container local HTTP -> state VM private IPv4:5432 -> PostgreSQL data path -> GCP persistent data disk",
+  "scope": "domain-neutral dependency pilot; not course-registration behavior",
+  "networkObservation": {
+    "applicationOracle": "app VM localhost:8080 through serial markers",
+    "databaseEndpointUsedByApp": "10.80.1.2:5432",
+    "databaseIngressSource": "easydep-app source tag",
+    "hostToVmManagementChannel": "none; guest serial markers and metadata phases"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T13:40:26.964090+00:00",
+  "interpretationLimits": [
+    "The test app validates resource bindings, not course-registration rules.",
+    "The application endpoint is checked locally; public ingress and HTTPS are not tested.",
+    "A same-instance reset is not state-VM replacement or state-tier high availability.",
+    "One development run does not establish a GCP-wide success rate."
+  ]
+}

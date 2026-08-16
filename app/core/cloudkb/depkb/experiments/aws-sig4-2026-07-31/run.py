@@ -89,6 +89,15 @@ def main() -> None:
                     if proc.returncode == 0 else "")
         PEM.write_text(material, encoding="utf-8")
         PEM.chmod(0o600)
+        if sys.platform == "win32":
+            # chmod는 Windows ACL을 제한하지 못해 OpenSSH가 키를 거부한다.
+            # 실험용 키 한 파일의 상속만 제거하고 현재 사용자 읽기만 남긴다.
+            import os as _os
+            _sp.run(["icacls", str(PEM), "/inheritance:r"],
+                    capture_output=True, text=True, check=False)
+            _sp.run(["icacls", str(PEM), "/grant:r",
+                     f"{_os.environ.get('USERNAME', '')}:R"],
+                    capture_output=True, text=True, check=False)
         ok = len(material) > 1000 and material.count("\n") > 10
         step("R1.create-key-pair", {
             "ok": ok, "errorCodes": [] if ok else ["KEY_TRUNCATED"],

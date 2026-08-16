@@ -22,11 +22,13 @@ def _positive_int(value: Any) -> int | None:
 
 
 def minimum_vm_count(
-    resource_spec: dict[str, Any], deployment_needs: dict[str, Any]
+    resource_spec: dict[str, Any],
+    deployment_needs: dict[str, Any],
+    projection_policy: dict[str, Any] | None = None,
 ) -> int:
     """Derive only a conservative floor, never a complete scaling decision."""
     explicit: list[int] = []
-    high_availability = bool(resource_spec.get("multiZone"))
+    policy_floor = _positive_int((projection_policy or {}).get("minimumInstances")) or 1
     for need in deployment_needs.values():
         if not isinstance(need, dict):
             continue
@@ -39,11 +41,9 @@ def minimum_vm_count(
             count = _positive_int(metadata.get(key))
             if count is not None:
                 explicit.append(count)
-        if metadata.get("high_availability") is True:
-            high_availability = True
     if explicit:
-        return max(explicit)
-    return 2 if high_availability else 1
+        return max([policy_floor, *explicit])
+    return policy_floor
 
 
 def _candidate(spec: dict[str, Any], vm_count: int) -> dict[str, Any]:
@@ -74,6 +74,7 @@ def select_vm_candidates(
     deployment_needs: dict[str, Any],
     *,
     limit: int = 5,
+    projection_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Select cost-feasible VM candidates without inventing a capacity floor."""
     provider = str(resource_spec.get("provider") or "").lower()
@@ -113,17 +114,13 @@ def select_vm_candidates(
             "matchedRegions": sorted(resolved_regions),
         }
 
-    vm_count = minimum_vm_count(resource_spec, deployment_needs)
+    vm_count = minimum_vm_count(resource_spec, deployment_needs, projection_policy)
     budget = resource_spec.get("monthlyBudgetUSD")
     budget = (
-        float(budget)
-        if isinstance(budget, (int, float)) and not isinstance(budget, bool)
-        else None
+        float(budget) if isinstance(budget, (int, float)) and not isinstance(budget, bool) else None
     )
     search_limit = (
-        max(limit, 100)
-        if resource_spec.get("trafficPattern") == "steady"
-        else max(limit, 1)
+        max(limit, 100) if resource_spec.get("trafficPattern") == "steady" else max(limit, 1)
     )
     specs = filter_specs(
         minimum_vcpu or 0,
@@ -136,7 +133,8 @@ def select_vm_candidates(
     )
     if budget is not None:
         specs = [
-            spec for spec in specs
+            spec
+            for spec in specs
             if float(spec["hourlyUSD"]) * HOURS_PER_MONTH * vm_count <= budget
         ]
     candidates = [_candidate(spec, vm_count) for spec in specs]
@@ -159,10 +157,7 @@ def select_vm_candidates(
     selection_basis = "lowest-on-demand-compute-list-price"
     if resource_spec.get("trafficPattern") == "steady":
         sustained = next(
-            (
-                item for item in candidates
-                if item["performanceEvidence"]["status"] == NOTE_OK
-            ),
+            (item for item in candidates if item["performanceEvidence"]["status"] == NOTE_OK),
             None,
         )
         if sustained is not None:

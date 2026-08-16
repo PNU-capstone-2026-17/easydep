@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "easydep-course-registration-cloud-e1/v1",
+  "provider": "azure",
+  "runId": "easydep-course-a9e710d2",
+  "startedAt": "2026-08-15T09:38:49.386902+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "resource-group.create",
+      "status": "passed",
+      "durationSeconds": 5.501,
+      "detail": "easydep-course-a9e710d2"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 13.79,
+      "detail": "10.92.1.0/24"
+    },
+    {
+      "name": "app-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.881,
+      "detail": "app-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.756,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "app-nsg.allow-https",
+      "status": "passed",
+      "durationSeconds": 3.487,
+      "detail": "public tcp/443"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 43.241,
+      "detail": "state"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 73.586,
+      "detail": "app"
+    },
+    {
+      "name": "state-nsg.allow-postgres-from-app",
+      "status": "passed",
+      "durationSeconds": 3.734,
+      "detail": "tcp/5432 from 10.92.1.5/32"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 8.728,
+      "detail": "managed data disk LUN 0"
+    },
+    {
+      "name": "state-runtime.start",
+      "status": "failed",
+      "durationSeconds": 63.085,
+      "detail": "Enable succeeded: \n[stdout]\nstatus: done\nEASYDEP_EXIT_CODE=100\n\n[stderr]\n+ export DEBIAN_FRONTEND=noninteractive\n+ DEBIAN_FRONTEND=noninteractive\n+ sudo apt-get update -qq\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy/InRelease  Could not connect to azure.archive.ubuntu.com:80 (20.196.152.132), connection timed out\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-updates/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-backports/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-security/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Some index files failed to download. They have been ignored, or old ones used instead.\n+ sudo apt-get install -y -qq docker.io\nE: Package 'docker.io' has no installation candidate\n"
+    }
+  ],
+  "outcome": "failed",
+  "scope": {
+    "applicationInstances": 1,
+    "stateInstances": 1,
+    "persistentDataVolumes": 1,
+    "managedLoadBalancer": false,
+    "performanceSloMeasured": false
+  },
+  "image": {
+    "reference": "public.ecr.aws/w3q5i0g7/easydep-course-campaign-20260815@sha256:ff0b634b5cbcf9a78099f1f4687acd2eb6cbae8ca12a900770abadcfd7a16adb",
+    "source": "same generated application artifact used for both providers"
+  },
+  "oracles": {
+    "business": "evaluation/baselines/course-registration-cases/business-oracle.json",
+    "databaseUnavailable": "evaluation/baselines/course-registration-cases/database-unavailable-oracle.json",
+    "persistence": "evaluation/baselines/course-registration-cases/persistence-oracle.json"
+  },
+  "pathUnderTest": "public test HTTPS -> App VM/container -> state VM private IPv4:5432 -> PostgreSQL PGDATA -> CSP data disk",
+  "error": "Enable succeeded: \n[stdout]\nstatus: done\nEASYDEP_EXIT_CODE=100\n\n[stderr]\n+ export DEBIAN_FRONTEND=noninteractive\n+ DEBIAN_FRONTEND=noninteractive\n+ sudo apt-get update -qq\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy/InRelease  Could not connect to azure.archive.ubuntu.com:80 (20.196.152.132), connection timed out\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-updates/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-backports/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Failed to fetch http://azure.archive.ubuntu.com/ubuntu/dists/jammy-security/InRelease  Unable to connect to azure.archive.ubuntu.com:http:\nW: Some index files failed to download. They have been ignored, or old ones used instead.\n+ sudo apt-get install -y -qq docker.io\nE: Package 'docker.io' has no installation candidate\n",
+  "cleanup": {
+    "passed": true,
+    "residual": [],
+    "durationSeconds": 192.33
+  },
+  "finishedAt": "2026-08-15T09:45:57.974230+00:00",
+  "interpretationLimits": [
+    "This is one development run for one frozen generated application image.",
+    "The one-day self-signed certificate tests TLS wiring, not DNS ownership or public trust.",
+    "State VM restart and data preservation do not establish state-tier high availability.",
+    "No performance SLO, right-sizing, or cost optimality is measured.",
+    "The shared image registry location is not evidence about the target CSP."
+  ]
+}

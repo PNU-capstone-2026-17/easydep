@@ -1,0 +1,206 @@
+{
+  "schemaVersion": "easydep-domain-neutral-managed-tls/v1",
+  "provider": "azure",
+  "runId": "easydep-tls-0843be4d",
+  "resourceGroup": "ed-tls-0843be4d-rg",
+  "location": "koreacentral",
+  "startedAt": "2026-08-15T08:34:44+00:00",
+  "pathUnderTest": "HTTPS listener -> Application Gateway -> backend pool -> health probe -> App VM port 8080",
+  "steps": [
+    {
+      "name": "baseline.managed-https-business-path",
+      "status": "passed",
+      "gatewayCreateSeconds": 548.407,
+      "probe": {
+        "matched": true,
+        "expectSuccess": true,
+        "observations": [
+          {
+            "observedAt": "2026-08-15T08:46:02+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:46:12+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:46:22+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "intervention.backend-membership-replaced-with-unreachable-address",
+      "status": "passed",
+      "probe": {
+        "matched": true,
+        "expectSuccess": false,
+        "observations": [
+          {
+            "observedAt": "2026-08-15T08:46:40+00:00",
+            "passed": false,
+            "responses": {
+              "/readyz": {
+                "error": "HTTPError"
+              },
+              "/business": {
+                "error": "HTTPError"
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:46:50+00:00",
+            "passed": false,
+            "responses": {
+              "/readyz": {
+                "error": "HTTPError"
+              },
+              "/business": {
+                "error": "HTTPError"
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:47:00+00:00",
+            "passed": false,
+            "responses": {
+              "/readyz": {
+                "error": "HTTPError"
+              },
+              "/business": {
+                "error": "HTTPError"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "restoration.managed-https-business-path",
+      "status": "passed",
+      "probe": {
+        "matched": true,
+        "expectSuccess": true,
+        "observations": [
+          {
+            "observedAt": "2026-08-15T08:47:14+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:47:24+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          },
+          {
+            "observedAt": "2026-08-15T08:47:34+00:00",
+            "passed": true,
+            "responses": {
+              "/readyz": {
+                "status": 200,
+                "body": {
+                  "status": "ready"
+                }
+              },
+              "/business": {
+                "status": 200,
+                "body": {
+                  "service": "easydep-neutral",
+                  "result": "ok"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "The certificate is a one-day self-signed PFX.",
+    "DNS ownership and public CA trust are not measured.",
+    "This is one development run and not an availability or SLA measurement."
+  ],
+  "outcome": "passed",
+  "cleanup": {
+    "passed": true,
+    "resourceGroupExists": false,
+    "deleteSeconds": 608.017,
+    "residualResources": []
+  },
+  "finishedAt": "2026-08-15T08:57:45+00:00",
+  "elapsedSeconds": 1380.696
+}

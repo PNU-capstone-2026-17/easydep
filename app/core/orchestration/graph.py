@@ -172,9 +172,7 @@ def _invalidate_implementation_from(
         handoff = _repair_handoff_step(state, step, owner)
         if handoff is not None:
             retained_steps.append(handoff)
-            handoffs.append(
-                {"step": step_name, **handoff["metrics"]["repairHandoff"]}
-            )
+            handoffs.append({"step": step_name, **handoff["metrics"]["repairHandoff"]})
     data: dict[str, Any] = {}
     for step in retained_steps:
         data.update(step.get("output") or {})
@@ -187,9 +185,7 @@ def _invalidate_implementation_from(
     return list(IMPLEMENTATION_STEP_ORDER[owner_index:]), handoffs
 
 
-def _apply_explicit_requirements_revision(
-    state: dict[str, Any], response: Any
-) -> bool:
+def _apply_explicit_requirements_revision(state: dict[str, Any], response: Any) -> bool:
     """사용자가 전체 활성 요구사항을 명시한 경우에만 상위 계약을 다시 연다."""
     if state.get("current_stage") != StageName.IMPLEMENTATION.value or not isinstance(
         response, dict
@@ -201,8 +197,10 @@ def _apply_explicit_requirements_revision(
     }:
         return False
     revised = response.get("revisedRequirements")
-    if not isinstance(revised, list) or not revised or not all(
-        isinstance(item, str) and item.strip() for item in revised
+    if (
+        not isinstance(revised, list)
+        or not revised
+        or not all(isinstance(item, str) and item.strip() for item in revised)
     ):
         raise ValueError(
             "revisedRequirements must contain the complete, non-empty active requirements"
@@ -754,9 +752,7 @@ class Orchestrator:
         }:
             raise ValueError(f"Run is neither failed nor interrupted: {run_id}")
         if prior_status == StepStatus.COMPLETED.value and repair_owner is None:
-            raise ValueError(
-                "A completed run may be reopened only with an explicit repair owner"
-            )
+            raise ValueError("A completed run may be reopened only with an explicit repair owner")
         stage = (
             StageName.TESTING
             if prior_status == StepStatus.COMPLETED.value
@@ -796,9 +792,7 @@ class Orchestrator:
                     run_id,
                     workspace,
                     checkpoint_attempt=len(state.get("retryHistory") or []),
-                    requirement_revision=len(
-                        state.get("requirementRevisionHistory") or []
-                    ),
+                    requirement_revision=len(state.get("requirementRevisionHistory") or []),
                     allow_prior_checkpoint=repair_owner is not None,
                     expected_app_id=str(state.get("app_id") or "") or None,
                 )

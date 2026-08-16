@@ -16,19 +16,32 @@ def test_packet_reads_only_development_and_records_provenance(tmp_path, monkeypa
     suite.write_text(json.dumps({
         "development": ["dev.json"], "holdout": ["secret.json"],
     }), encoding="utf-8")
-    monkeypatch.setattr(capability_packet, "derive_deployment_needs", lambda _state: {
-        "capability_contract": {"capabilities": [{
-            "id": "durability", "statement": "Preserve state", "requirementIds": ["N1"],
-            "evidenceSpans": ["durable"], "origin": "inferred", "rawConfidence": 0.8,
-            "decision": "needsQuestion", "decisionReason": "calibrated-threshold-not-met",
-        }]},
-    })
+    observed = {}
+
+    def derive(_state, **kwargs):
+        observed.update(kwargs)
+        return {
+            "capability_contract": {"capabilities": [{
+                "id": "durability",
+                "statement": "Preserve state",
+                "requirementIds": ["N1"],
+                "evidenceSpans": ["durable"],
+                "origin": "inferred",
+                "rawConfidence": 0.8,
+                "decision": "needsQuestion",
+                "decisionReason": "calibrated-threshold-not-met",
+            }]},
+        }
+
+    monkeypatch.setattr(capability_packet, "derive_deployment_needs", derive)
 
     packet = capability_packet.build_packet(suite)
 
     assert packet["holdoutAccessed"] is False
     assert packet["proposals"][0]["split"] == "development"
     assert len(packet["inputs"][0]["sha256"]) == 64
+    assert observed["sample_count"] == 5
+    assert packet["configuration"]["capabilitySamples"] == 5
 
 
 def test_packet_rejects_holdout_like_development_path(tmp_path):

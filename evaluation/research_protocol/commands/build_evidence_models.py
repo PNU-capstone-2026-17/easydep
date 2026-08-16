@@ -1,4 +1,4 @@
-"""중립 경계 가설을 세 CSP 공식 수명주기 모델로 검증해 동결한다."""
+"""CSP 공식 명세와 기능 개입 결과로 provider-native 의존성을 동결한다."""
 from __future__ import annotations
 
 import argparse
@@ -24,14 +24,6 @@ def _read(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def _canonical_digest(path: Path) -> str:
-    value = _read(path)
-    encoded = json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
 def build(provider: str, config_path: Path = CONFIG, native_dir: Path = NATIVE,
           dependency_path: Path = DEPENDENCIES,
           intervention_results: Path = INTERVENTION_RESULTS) -> dict[str, Any]:
@@ -44,15 +36,9 @@ def build(provider: str, config_path: Path = CONFIG, native_dir: Path = NATIVE,
             names.append(item["nativeId"].rsplit(".operation.", 1)[-1])
         for operation in names:
             operations[(item["serviceFamily"], operation)] = item
-    neutral_path = ROOT / config["neutralSource"]
-    neutral = _read(neutral_path)
-    neutral_ids = {item["id"] for item in neutral.get("concepts") or []}
-    neutral_sha = _canonical_digest(neutral_path)
     dependencies = _read(dependency_path)
     claims: list[dict[str, Any]] = []
     for hypothesis in config["providers"][provider]:
-        if hypothesis["conceptId"] not in neutral_ids:
-            raise ValueError(f"unknown neutral concept: {hypothesis['conceptId']}")
         locators: dict[str, str] = {}
         for lifecycle, operation in hypothesis["operations"].items():
             observed = operations.get((hypothesis["serviceFamily"], operation))
@@ -77,22 +63,6 @@ def build(provider: str, config_path: Path = CONFIG, native_dir: Path = NATIVE,
             "resourceId": hypothesis["id"],
             "capabilityIds": hypothesis["capabilityIds"],
             "observations": [lifecycle_evidence],
-        })
-        claims.append({
-            "claimId": f"{provider}.{hypothesis['id']}.crosswalk",
-            "claimType": "neutralCrosswalk",
-            "resourceId": hypothesis["id"],
-            "conceptId": hypothesis["conceptId"],
-            "mappingRelation": hypothesis.get("mappingRelation", "partial"),
-            "observations": [
-                lifecycle_evidence,
-                {
-                    "sourceRole": "neutralModel",
-                    "sourceLocator": f"{config['neutralSource']}#{hypothesis['conceptId']}",
-                    "sourceSha256": neutral_sha,
-                    "supports": True,
-                },
-            ],
         })
     for dependency in dependencies["providers"][provider]:
         manual = dependency["manual"]

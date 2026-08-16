@@ -1,0 +1,34 @@
+#!/bin/bash
+set -e
+
+# Install Docker
+apt-get update -y
+apt-get install -y docker.io
+systemctl enable docker
+systemctl start docker
+
+# Wait for the attached EBS volume to appear
+DEVICE="${data_device}"
+while [ ! -b "$DEVICE" ]; do
+  echo "Waiting for device $DEVICE..."
+  sleep 2
+done
+
+# Format the device if it has no filesystem
+if ! blkid -o value -s TYPE "$DEVICE" >/dev/null 2>&1; then
+  mkfs -t ext4 "$DEVICE"
+fi
+
+mkdir -p "${mount_point}"
+mount "$DEVICE" "${mount_point}"
+chmod 777 "${mount_point}"
+
+# Run PostgreSQL container with the mounted volume
+docker run -d \
+  -p 5432:5432 \
+  -e POSTGRES_DB="${postgres_db}" \
+  -e POSTGRES_USER="${postgres_user}" \
+  -e POSTGRES_PASSWORD="${postgres_password}" \
+  -v "${mount_point}:${container_data_path}" \
+  --restart unless-stopped \
+  "${postgres_image}"

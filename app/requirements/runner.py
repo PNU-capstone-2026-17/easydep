@@ -46,7 +46,7 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs  # noqa: F401
+from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
 from app.requirements.config import settings
 

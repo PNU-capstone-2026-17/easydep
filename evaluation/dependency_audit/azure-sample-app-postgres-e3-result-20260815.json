@@ -1,0 +1,170 @@
+{
+  "schemaVersion": "easydep-sample-app-postgres-e3/v1",
+  "provider": "azure",
+  "runId": "easydep-e3-98d7a7f7",
+  "startedAt": "2026-08-14T19:55:19.776518+00:00",
+  "transportUnderTest": "app VM/container to replacement state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 10.693,
+      "detail": "easydep-e3-98d7a7f7"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 17.785,
+      "detail": "10.84.0.0/16"
+    },
+    {
+      "name": "network.egress-public-ip",
+      "status": "passed",
+      "durationSeconds": 8.074,
+      "detail": "egress-pip"
+    },
+    {
+      "name": "network.nat-gateway",
+      "status": "passed",
+      "durationSeconds": 19.377,
+      "detail": "egress-nat"
+    },
+    {
+      "name": "network.subnet-egress",
+      "status": "passed",
+      "durationSeconds": 19.353,
+      "detail": "workloads subnet uses the NAT gateway"
+    },
+    {
+      "name": "app-nsg.create",
+      "status": "passed",
+      "durationSeconds": 7.543,
+      "detail": "app-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 7.251,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "state-nsg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 5.669,
+      "detail": "state tcp/5432 from workload subnet"
+    },
+    {
+      "name": "initial.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 50.94,
+      "detail": "state-a"
+    },
+    {
+      "name": "app-vm.create",
+      "status": "passed",
+      "durationSeconds": 46.649,
+      "detail": "app"
+    },
+    {
+      "name": "state-volume.create-and-attach",
+      "status": "passed",
+      "durationSeconds": 8.132,
+      "detail": "new managed disk attached to state-a"
+    },
+    {
+      "name": "initial.state-ready",
+      "status": "passed",
+      "durationSeconds": 129.542,
+      "detail": "EASYDEP_AZ_GUEST_OK_d06c7e410f404675969f63ef49eb115a"
+    },
+    {
+      "name": "app-image.build",
+      "status": "passed",
+      "durationSeconds": 135.093,
+      "detail": "EASYDEP_AZ_GUEST_OK_e96306cfdb7b496dad22e6a38e3093cf"
+    },
+    {
+      "name": "app-container.start",
+      "status": "passed",
+      "durationSeconds": 72.037,
+      "detail": "EASYDEP_AZ_GUEST_OK_324a39265e144353b30ed187c8db20f0"
+    },
+    {
+      "name": "baseline.app-write-read",
+      "status": "passed",
+      "durationSeconds": 83.467,
+      "detail": "EASYDEP_AZ_GUEST_OK_a3c30e70ade94b09b11d58453b5c7180"
+    },
+    {
+      "name": "initial.state-vm.delete",
+      "status": "passed",
+      "durationSeconds": 34.725,
+      "detail": "state-a deleted"
+    },
+    {
+      "name": "state-volume.available",
+      "status": "passed",
+      "durationSeconds": 3.855,
+      "detail": "managed disk detached and reusable"
+    },
+    {
+      "name": "replacement.state-vm.create",
+      "status": "passed",
+      "durationSeconds": 47.449,
+      "detail": "state-b"
+    },
+    {
+      "name": "replacement.state-volume.attach-existing",
+      "status": "passed",
+      "durationSeconds": 12.615,
+      "detail": "existing managed disk attached to state-b"
+    },
+    {
+      "name": "replacement.state-ready",
+      "status": "passed",
+      "durationSeconds": 101.897,
+      "detail": "EASYDEP_AZ_GUEST_OK_114cae0b1bbf4aba815f5778e44a39d3"
+    },
+    {
+      "name": "replacement.app-rebind-without-rebuild",
+      "status": "passed",
+      "durationSeconds": 71.303,
+      "detail": "EASYDEP_AZ_GUEST_OK_cdb4deb3bab94a2085131d53597d7a25"
+    },
+    {
+      "name": "replacement.app-read-existing-value",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "same-image rebind oracle read the pre-replacement value"
+    }
+  ],
+  "outcome": "passed",
+  "scope": "domain-neutral state-VM replacement and runtime-endpoint rebinding",
+  "pathUnderTest": "unchanged app VM/image -> replacement state VM private endpoint -> reattached provider data disk -> PostgreSQL data path",
+  "runtimeEndpointObservation": {
+    "initialStatePrivateIp": "10.84.1.4",
+    "replacementStatePrivateIp": "10.84.1.6",
+    "appVmRecreated": false,
+    "appImageRebuilt": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T20:14:37.311130+00:00",
+  "observations": {
+    "baselineWriteReadPassed": true,
+    "stateVmWasReplaced": true,
+    "sameDataDiskWasReattached": true,
+    "appImageWasNotRebuilt": true,
+    "existingValueReadAfterReplacement": true
+  },
+  "interpretationLimits": [
+    "This is a recoverability test, not automatic failover or high availability.",
+    "The application container is restarted to inject the replacement endpoint.",
+    "The state workload is unavailable during replacement.",
+    "One development run per provider does not establish a success rate.",
+    "The generic key-value oracle does not validate course-registration rules."
+  ]
+}

@@ -1,0 +1,21 @@
+#cloud-config
+runcmd:
+  - apt-get update && apt-get install -y docker.io
+  - systemctl enable docker
+  - |
+      #!/bin/bash
+      DISK_DEVICE=$(ls /dev/disk/azure/scsi1/lun0 2>/dev/null || echo /dev/sdc)
+      if ! blkid $DISK_DEVICE; then
+        mkfs.ext4 $DISK_DEVICE
+      fi
+      mkdir -p /var/lib/postgresql/data
+      mount $DISK_DEVICE /var/lib/postgresql/data
+      echo "$DISK_DEVICE /var/lib/postgresql/data ext4 defaults,nofail 0 2" >> /etc/fstab
+  - docker run -d \
+      -p ${postgres_port}:5432 \
+      -e POSTGRES_DB=${postgres_db} \
+      -e POSTGRES_USER=${postgres_user} \
+      -e POSTGRES_PASSWORD=${postgres_password} \
+      -v /var/lib/postgresql/data:/var/lib/postgresql/data \
+      --name state-store \
+      ${postgres_image}

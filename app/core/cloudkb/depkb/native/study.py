@@ -6,8 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-from app.core.cloudkb.depkb.alignment import validate_alignment
-
 from .adjudication import apply_adjudication, make_adjudication_template
 from .consensus import reconcile_reviews
 from .discovery import HERE, discover_all
@@ -126,12 +124,6 @@ def freeze() -> None:
         print(provider, graph["freeze"]["sha256"])
 
 
-def verify_alignment(path: Path) -> None:
-    document = _read(path)
-    validate_alignment(document)
-    print("alignment: ok", path)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -146,8 +138,6 @@ def main() -> None:
     reconcile_parser.add_argument("first_reviewer")
     reconcile_parser.add_argument("second_reviewer")
     subparsers.add_parser("freeze")
-    alignment_parser = subparsers.add_parser("verify-alignment")
-    alignment_parser.add_argument("path", type=Path)
     args = parser.parse_args()
 
     if args.command == "discover":
@@ -165,8 +155,6 @@ def main() -> None:
         reconcile(args.first_reviewer, args.second_reviewer)
     elif args.command == "freeze":
         freeze()
-    else:
-        verify_alignment(args.path)
 
 
 if __name__ == "__main__":

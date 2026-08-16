@@ -39,6 +39,7 @@ from app.design.graphs.design_graph import (
     has_design_run,
     reset_design,
     resume_design,
+    retry_design,
     rewind_design,
     session_status,
     start_design,
@@ -146,6 +147,42 @@ def resume_design_session(app_id: str, request: FeedbackRequest) -> JSONResponse
                 )
     try:
         return JSONResponse(content=resume_design(app_id, request.feedback))
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Design pipeline failed: {error}"
+        ) from error
+
+
+@router.post("/api/apps/{app_id}/design/retry")
+def retry_design_session(app_id: str, request: StageRequest) -> JSONResponse:
+    """Retry a failed node, or restore review when the graph already reached a gate."""
+    validate_app_id(app_id)
+    require_app_exists(app_id)
+    status = session_status(app_id)
+    if not status.get("retryable"):
+        # A command can fail because the user (or auto mode) tried to advance a
+        # draft with findings.  The graph itself is still safely paused at its
+        # review gate, so retry is an idempotent restore rather than another LLM
+        # run.  This also repairs the workspace command state after a refresh.
+        if status.get("active") and status.get("stage"):
+            state = require_app(app_id)
+            return JSONResponse(
+                content={
+                    "app_id": app_id,
+                    **to_web_response(state),
+                    "status": "need_feedback",
+                    "stage": status["stage"],
+                }
+            )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "No failed design stage is available to retry.",
+                "session": status,
+            },
+        )
+    try:
+        return JSONResponse(content=retry_design(app_id))
     except Exception as error:
         raise HTTPException(
             status_code=502, detail=f"Design pipeline failed: {error}"

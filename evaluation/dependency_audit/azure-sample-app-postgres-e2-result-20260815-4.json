@@ -1,0 +1,229 @@
+{
+  "schemaVersion": "easydep-azure-sample-app-postgres-e2/v1",
+  "provider": "azure",
+  "runId": "easydep-e2-bdfacbd3",
+  "startedAt": "2026-08-14T18:01:29.977542+00:00",
+  "transportUnderTest": "public Standard Load Balancer to a VM scale set of app containers, then private PostgreSQL",
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 5.383,
+      "detail": "easydep-e2-bdfacbd3"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 13.621,
+      "detail": "10.83.0.0/16"
+    },
+    {
+      "name": "network.egress-public-ip",
+      "status": "passed",
+      "durationSeconds": 3.487,
+      "detail": "egress-pip"
+    },
+    {
+      "name": "network.nat-gateway",
+      "status": "passed",
+      "durationSeconds": 14.521,
+      "detail": "egress-nat"
+    },
+    {
+      "name": "network.subnet-egress",
+      "status": "passed",
+      "durationSeconds": 13.469,
+      "detail": "workloads subnet uses the NAT gateway"
+    },
+    {
+      "name": "app-nsg.create",
+      "status": "passed",
+      "durationSeconds": 5.071,
+      "detail": "app-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 4.724,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "state-nsg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 3.046,
+      "detail": "state tcp/5432 from the workload subnet"
+    },
+    {
+      "name": "app-nsg.allow-http",
+      "status": "passed",
+      "durationSeconds": 3.632,
+      "detail": "public LB traffic to app tcp/8080"
+    },
+    {
+      "name": "app-nsg.allow-probe",
+      "status": "passed",
+      "durationSeconds": 4.263,
+      "detail": "Azure Load Balancer probe to app tcp/8080"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 42.41,
+      "detail": "state"
+    },
+    {
+      "name": "state-volume.attach",
+      "status": "passed",
+      "durationSeconds": 8.538,
+      "detail": "managed data disk attached as LUN 0"
+    },
+    {
+      "name": "state-volume.mount-and-postgres",
+      "status": "passed",
+      "durationSeconds": 99.797,
+      "detail": "EASYDEP_AZ_GUEST_OK_a54f774ee40147329f631315e1324e55"
+    },
+    {
+      "name": "load-balancer.public-ip",
+      "status": "passed",
+      "durationSeconds": 6.78,
+      "detail": "app-pip"
+    },
+    {
+      "name": "load-balancer.create",
+      "status": "passed",
+      "durationSeconds": 36.291,
+      "detail": "app-lb"
+    },
+    {
+      "name": "load-balancer.health-probe",
+      "status": "passed",
+      "durationSeconds": 3.623,
+      "detail": "HTTP /health/ready every 10 seconds, threshold 2"
+    },
+    {
+      "name": "load-balancer.rule",
+      "status": "passed",
+      "durationSeconds": 4.677,
+      "detail": "public tcp/80 to app tcp/8080"
+    },
+    {
+      "name": "app-group.create",
+      "status": "passed",
+      "durationSeconds": 93.073,
+      "detail": "VMSS size 2 with LB health and automatic Replace"
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 68.246,
+      "detail": {
+        "status": 200,
+        "body": {
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "baseline.business-write",
+      "status": "passed",
+      "durationSeconds": 0.121,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "stored": true
+        }
+      }
+    },
+    {
+      "name": "baseline.business-read",
+      "status": "passed",
+      "durationSeconds": 0.102,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    },
+    {
+      "name": "fault.health-based-managed-recovery",
+      "status": "passed",
+      "durationSeconds": 1982.922,
+      "detail": {
+        "victimInstance": "appvm5116000000",
+        "victimVmId": "479cb297-a510-4f76-97a2-45ff442e1e0e",
+        "managedRecovery": {
+          "instance": "appvm5116000002",
+          "instanceId": "2",
+          "vmId": "49800a50-6572-415c-86c9-5987e94f3cc6"
+        },
+        "faultRequest": {
+          "status": 202,
+          "body": {
+            "accepted": true,
+            "instance": "appvm5116000000"
+          }
+        },
+        "milestonesSeconds": {
+          "faultAccepted": 0.043,
+          "managedReplacementObserved": 1982.756,
+          "managedReplacementHealthy": 1982.86
+        },
+        "automaticRepairGraceMinutes": 30,
+        "healthDerivedFunctionalRecoveryBudgetSeconds": 30,
+        "businessContinuity": {
+          "probeCount": 1747,
+          "successCount": 1747,
+          "failureCount": 0,
+          "successRatio": 1.0,
+          "maxConsecutiveFailureSeconds": 0.0
+        },
+        "successfulRequestsDuringManagedRecovery": 1747
+      }
+    },
+    {
+      "name": "recovery.business-read",
+      "status": "passed",
+      "durationSeconds": 0.162,
+      "detail": {
+        "status": 200,
+        "body": {
+          "key": "evidence",
+          "value": {
+            "message": "kept"
+          }
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "public IP -> Load Balancer probe/rule -> VMSS app VM group (2) -> state VM private IPv4:5432 -> managed data disk",
+  "scope": "domain-neutral app-tier availability pilot; state tier remains singleton",
+  "availabilityObservation": {
+    "scope": "application tier",
+    "stateTier": "single state VM; not highly available",
+    "failureInjection": "stop one app process and let LB health feed VMSS auto repairs",
+    "groupScope": "single region; region failure is not tested",
+    "automaticRepairAction": "Replace",
+    "automaticRepairGraceMinutes": 30
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T18:46:09.102725+00:00",
+  "interpretationLimits": [
+    "The test validates app-tier managed replacement, not state-tier high availability.",
+    "Azure CLI enforces a 30-minute minimum automatic-repair grace period.",
+    "Public HTTP is used; trusted HTTPS, DNS ownership, and certificates are not tested.",
+    "One regional development run does not establish an Azure-wide success rate or SLA.",
+    "Sequential probes are a functional continuity signal, not a performance load test."
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "easydep-inter-vm-postgres-intervention/v1",
+  "provider": "azure",
+  "runId": "easydep-ivm-3e83db29",
+  "startedAt": "2026-08-14T11:44:05.521253+00:00",
+  "transportUnderTest": "probe VM to state VM private IPv4, TCP 5432",
+  "steps": [
+    {
+      "name": "group.create",
+      "status": "passed",
+      "durationSeconds": 7.166,
+      "detail": "easydep-ivm-3e83db29"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 16.987,
+      "detail": "10.77.0.0/16"
+    },
+    {
+      "name": "probe-nsg.create",
+      "status": "passed",
+      "durationSeconds": 7.301,
+      "detail": "probe-nsg"
+    },
+    {
+      "name": "state-nsg.create",
+      "status": "passed",
+      "durationSeconds": 5.939,
+      "detail": "state-nsg"
+    },
+    {
+      "name": "state-nsg.deny-vnet-postgres",
+      "status": "passed",
+      "durationSeconds": 4.086,
+      "detail": "deny tcp/5432 after explicit allow"
+    },
+    {
+      "name": "state-vm.create",
+      "status": "passed",
+      "durationSeconds": 46.587,
+      "detail": "state"
+    },
+    {
+      "name": "probe-vm.create",
+      "status": "passed",
+      "durationSeconds": 43.113,
+      "detail": "probe"
+    },
+    {
+      "name": "state-nsg.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 4.204,
+      "detail": "state tcp/5432 from probe private IPv4"
+    },
+    {
+      "name": "state-vm.postgres",
+      "status": "passed",
+      "durationSeconds": 33.333,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "probe-vm.tools",
+      "status": "passed",
+      "durationSeconds": 35.462,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "baseline.private-postgres-write-read",
+      "status": "passed",
+      "durationSeconds": 33.262,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "intervention.delete-allow",
+      "status": "passed",
+      "durationSeconds": 4.407,
+      "detail": "explicit allow removed; deny rule remains"
+    },
+    {
+      "name": "intervention.connection-blocked",
+      "status": "passed",
+      "durationSeconds": 33.475,
+      "detail": "guest command passed"
+    },
+    {
+      "name": "restore.allow-postgres",
+      "status": "passed",
+      "durationSeconds": 3.813,
+      "detail": "state tcp/5432 from probe private IPv4"
+    },
+    {
+      "name": "restore.private-postgres-read",
+      "status": "passed",
+      "durationSeconds": 33.26,
+      "detail": "guest command passed"
+    }
+  ],
+  "outcome": "passed",
+  "networkObservation": {
+    "stateAddressUsedByProbe": "10.77.1.4",
+    "probeAddressUsedByRule": "10.77.1.5",
+    "publicAddresses": false
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-14T11:54:28.847494+00:00",
+  "interpretationLimits": [
+    "The experiment verifies private-address transport, not absence of a public address.",
+    "One development run does not establish a provider-wide success rate.",
+    "PostgreSQL connectivity does not establish high availability or performance."
+  ]
+}

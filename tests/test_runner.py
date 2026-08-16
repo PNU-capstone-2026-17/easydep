@@ -1,9 +1,10 @@
 """러너 테스트 (파이프라인 배선 + 아티팩트 저장).
 
-  1. run_pipeline — 6개 스테이지를 목킹해 호출 순서/상태 병합 검증(LLM 없음).
-  2. persist_run — tmp_path에 실제 파일을 써서 산출물 구조/manifest 검증(순수 IO).
-  3. load_input — inputs/*.json 로드.
+1. run_pipeline — 6개 스테이지를 목킹해 호출 순서/상태 병합 검증(LLM 없음).
+2. persist_run — tmp_path에 실제 파일을 써서 산출물 구조/manifest 검증(순수 IO).
+3. load_input — inputs/*.json 로드.
 """
+
 import json
 
 from app.requirements import runner
@@ -19,6 +20,7 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
         def fn(state):
             calls.append(name)
             return {key: f"<{name}>" if value is None else value, "phase": name}
+
         return fn
 
     # 감독자(되돌아가기)가 읽는 세 키는 **실제 모양**이어야 한다. 여기 문자열을 넣으면
@@ -28,28 +30,43 @@ def test_run_pipeline_calls_stages_in_order(monkeypatch):
     empty_review = {"issues": [], "semantic_status": "ok", "unexamined_rules": []}
 
     monkeypatch.setattr(runner, "identify_actors", stage("actors", "actors"))
-    monkeypatch.setattr(runner, "derive_deployment_needs",
-                        stage("deployment_needs", "deployment_needs", {}))
-    monkeypatch.setattr(runner, "build_resource_spec",
-                        stage("resource_spec", "resource_intake", {"valid": False}))
+    monkeypatch.setattr(
+        runner,
+        "analyze_cloud_inputs",
+        stage(
+            "cloud_inputs",
+            "deployment_needs",
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        runner, "build_resource_spec", stage("resource_spec", "resource_intake", {"valid": False})
+    )
     monkeypatch.setattr(runner, "identify_use_cases", stage("use_cases", "use_cases"))
-    monkeypatch.setattr(runner, "review_model",
-                        stage("review_model", "model_review", empty_review))
+    monkeypatch.setattr(runner, "review_model", stage("review_model", "model_review", empty_review))
     monkeypatch.setattr(runner, "check_coverage", stage("coverage", "coverage"))
-    monkeypatch.setattr(runner, "generate_specs",
-                        stage("specs", "use_case_specs", empty_specs))
+    monkeypatch.setattr(runner, "generate_specs", stage("specs", "use_case_specs", empty_specs))
     monkeypatch.setattr(runner, "check_specs", stage("check_specs", "spec_report"))
-    monkeypatch.setattr(runner, "identify_relationships",
-                        stage("rel", "relationships", empty_rel))
+    monkeypatch.setattr(runner, "identify_relationships", stage("rel", "relationships", empty_rel))
     monkeypatch.setattr(runner, "check_relationships", stage("check_rel", "relationship_report"))
     monkeypatch.setattr(runner, "render_diagram", stage("diagram", "diagram"))
 
     state = runner.run_pipeline([{"id": "R1", "text": "x", "type": "FR"}])
 
-    assert calls == ["deployment_needs", "resource_spec", "actors", "use_cases",
-                     "review_model", "coverage", "specs",
-                     "check_specs", "rel", "check_rel", "diagram"]
-    assert state["classified"][0]["id"] == "R1"      # 원본 입력 유지
+    assert calls == [
+        "cloud_inputs",
+        "resource_spec",
+        "actors",
+        "use_cases",
+        "review_model",
+        "coverage",
+        "specs",
+        "check_specs",
+        "rel",
+        "check_rel",
+        "diagram",
+    ]
+    assert state["classified"][0]["id"] == "R1"  # 원본 입력 유지
     assert state["actors"] == "<actors>"
     assert state["diagram"] == "<diagram>"
 
@@ -71,19 +88,22 @@ def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch
         passes["specs"] += 1
         # 1회차엔 스스로 못 고친 결함이 남고, 되돌린 뒤(2회차)엔 깨끗하다.
         first = passes["specs"] == 1
-        return {"use_case_specs": [{
-            "use_case_id": "UC1",
-            "issues": [issue] if first else [],
-            "repair_stopped": "no_improvement" if first else "clean",
-        }]}
+        return {
+            "use_case_specs": [
+                {
+                    "use_case_id": "UC1",
+                    "issues": [issue] if first else [],
+                    "repair_stopped": "no_improvement" if first else "clean",
+                }
+            ]
+        }
 
     def noop(key, value):
         return lambda state: {key: value}
 
     monkeypatch.setattr(runner, "identify_actors", noop("actors", []))
-    monkeypatch.setattr(runner, "derive_deployment_needs", noop("deployment_needs", {}))
-    monkeypatch.setattr(runner, "build_resource_spec",
-                        noop("resource_intake", {"valid": False}))
+    monkeypatch.setattr(runner, "analyze_cloud_inputs", noop("deployment_needs", {}))
+    monkeypatch.setattr(runner, "build_resource_spec", noop("resource_intake", {"valid": False}))
     monkeypatch.setattr(runner, "identify_use_cases", noop("use_cases", []))
     monkeypatch.setattr(runner, "review_model", noop("model_review", {"issues": []}))
     monkeypatch.setattr(runner, "check_coverage", noop("coverage", {}))
@@ -95,15 +115,15 @@ def test_batch_runner_goes_back_when_a_stage_could_not_repair_itself(monkeypatch
 
     state = runner.run_pipeline([{"id": "FR1", "text": "x", "type": "FR"}])
 
-    assert passes["specs"] == 2                       # 되돌아가서 다시 만들었다
+    assert passes["specs"] == 2  # 되돌아가서 다시 만들었다
     assert state["redo_rounds"] == 1
     entry = state["redo_history"][0]
-    assert entry["owner"] == "use_cases"              # specs가 포기했으니 그 위로
+    assert entry["owner"] == "use_cases"  # specs가 포기했으니 그 위로
     assert entry["escalated"] is True
     # 되돌린 지점부터 끝까지 다시 돌았다(집계 노드 포함).
     assert entry["rerun"][0] == "identify_use_cases"
     assert entry["rerun"][-1] == "render_diagram"
-    assert state["stage_feedback"] == {}              # 낡은 지시는 남지 않는다
+    assert state["stage_feedback"] == {}  # 낡은 지시는 남지 않는다
 
 
 # ---------------------------------------------------------------------------
@@ -113,20 +133,37 @@ def _sample_state():
     return {
         "actors": [{"name": "User", "kind": "primary", "description": "d"}],
         "use_cases": [
-            {"id": "UC1", "name": "Log in", "primary_actor": "User",
-             "requirement_ids": ["R1"], "nfr_ids": []},
-            {"id": "UC2", "name": "Place order", "primary_actor": "User",
-             "requirement_ids": ["R2"], "nfr_ids": ["N1"]},
+            {
+                "id": "UC1",
+                "name": "Log in",
+                "primary_actor": "User",
+                "requirement_ids": ["R1"],
+                "nfr_ids": [],
+            },
+            {
+                "id": "UC2",
+                "name": "Place order",
+                "primary_actor": "User",
+                "requirement_ids": ["R2"],
+                "nfr_ids": ["N1"],
+            },
         ],
         "coverage": {"fr_total": 2, "orphan_fr_ids": [], "coverage_ratio": 1.0},
         "use_case_specs": [
             {"use_case_id": "UC1", "name": "Log in", "main_scenario": [], "issues": []},
-            {"use_case_id": "UC2", "name": "Place order", "main_scenario": [],
-             "issues": ["2a: branch_step 9가 주 시나리오에 없음"]},
+            {
+                "use_case_id": "UC2",
+                "name": "Place order",
+                "main_scenario": [],
+                "issues": ["2a: branch_step 9가 주 시나리오에 없음"],
+            },
         ],
         "relationships": {
             "associations": [{"actor": "User", "use_case": "Log in"}],
-            "includes": [], "extends": [], "generalizations": [], "derived_use_cases": [],
+            "includes": [],
+            "extends": [],
+            "generalizations": [],
+            "derived_use_cases": [],
         },
         "diagram": "@startuml\n@enduml",
     }
@@ -143,10 +180,19 @@ def test_persist_run_writes_expected_tree(tmp_path):
     )
 
     # 최상위 산출물
-    for f in ("input.json", "manifest.json", "actors.json", "use_cases.json",
-              "coverage.json", "deployment_needs.json", "resource_spec.json",
-              "resource_intake.json", "traceability.json", "relationships.json",
-              "diagram.puml"):
+    for f in (
+        "input.json",
+        "manifest.json",
+        "actors.json",
+        "use_cases.json",
+        "coverage.json",
+        "deployment_needs.json",
+        "resource_spec.json",
+        "resource_intake.json",
+        "traceability.json",
+        "relationships.json",
+        "diagram.puml",
+    ):
         assert (run_dir / f).exists(), f"{f} 누락"
 
     # UC별 디렉토리 + spec
@@ -172,7 +218,7 @@ def test_persist_run_writes_expected_tree(tmp_path):
     summ = manifest["summary"]
     assert summ["n_actors"] == 1 and summ["n_use_cases"] == 2 and summ["n_specs"] == 2
     assert summ["coverage"]["coverage_ratio"] == 1.0
-    assert list(summ["spec_issues"].keys()) == ["UC2"]     # UC1은 이슈 없어 제외
+    assert list(summ["spec_issues"].keys()) == ["UC2"]  # UC1은 이슈 없어 제외
     assert summ["relationships"]["associations"] == 1
     # config 스냅샷에 api_key는 없어야 함
     assert "api_key" not in manifest["config"]
@@ -192,7 +238,7 @@ def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
     input_obj = {"name": "demo", "classified": [{"id": "R1", "text": "x", "type": "FR"}]}
     state = _sample_state() | {
         "deployment_needs": {"https_ingress": {"requirementIds": ["R1"]}},
-        "resource_spec": {"schemaVersion": "2", "workloads": ["vm"]},
+        "resource_spec": {"schemaVersion": "3", "workloads": ["vm"]},
         "resource_intake": {"valid": True, "questions": []},
     }
     run_dir = runner.persist_run(input_obj, state, artifact_root=tmp_path)
@@ -202,9 +248,7 @@ def test_load_state_restores_cloud_requirement_artifacts(tmp_path):
     assert restored["deployment_needs"] == state["deployment_needs"]
     assert restored["resource_spec"] == state["resource_spec"]
     assert restored["resource_intake"] == state["resource_intake"]
-    assert restored["traceability"]["requirements"]["R1"]["deployment_needs"] == [
-        "https_ingress"
-    ]
+    assert restored["traceability"]["requirements"]["R1"]["deployment_needs"] == ["https_ingress"]
 
 
 # ---------------------------------------------------------------------------

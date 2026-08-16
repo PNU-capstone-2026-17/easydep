@@ -27,6 +27,16 @@ def resolve_resource_spec(
             + ", ".join(sorted(explicit))
         )
     resolved = dict(resource_spec)
+    targets = [
+        dict(item)
+        for item in resolved.get("deploymentTargets") or []
+        if isinstance(item, dict)
+    ]
+    if len(targets) > 1 and not resolved.get("selectedDeploymentTarget"):
+        raise ValueError(
+            "Multiple deployment alternatives are available. Select one provider and "
+            "region before VM selection and IaC generation."
+        )
     inferred = str(resolved.get("provider") or "").strip().lower()
     if explicit:
         resolved["provider"] = next(iter(explicit))

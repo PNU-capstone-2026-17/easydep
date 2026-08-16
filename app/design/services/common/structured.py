@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import queue
 import threading
 from contextlib import contextmanager
@@ -24,7 +23,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.core.config import settings
 from app.core.llm_stall_probe import start_stall_probe
@@ -264,13 +263,56 @@ def parse_structured(
         max_retries=settings.llm_max_retries,
     )
 
-    observation: dict[str, Any] = {}
-    parsed = run_with_wall_timeout(
-        lambda: _stream_structured(client, messages, schema, observation),
-        operation=schema.__name__,
-        observation=observation,
-    )
+    parsed = _parse_with_schema_repair(client, messages, schema)
     return parsed.model_dump()
+
+
+def _parse_with_schema_repair(
+    client,
+    messages: list[dict[str, str]],
+    schema: type[BaseModel],
+) -> BaseModel:
+    """로컬 스키마 검증 실패만 한 번 보정하고 나머지 오류는 그대로 올린다."""
+    observation: dict[str, Any] = {"schemaRepairAttempt": 0}
+    try:
+        return run_with_wall_timeout(
+            lambda: _stream_structured(client, messages, schema, observation),
+            operation=schema.__name__,
+            observation=observation,
+        )
+    except StructuredLlmError as error:
+        cause = error.__cause__
+        if not isinstance(cause, ValidationError):
+            raise
+        validation_errors = cause.errors(
+            include_url=False,
+            include_input=False,
+            # Pydantic keeps the original exception object in ``ctx.error``
+            # for value errors.  Repair prompts are JSON, so retaining that
+            # object masks the validation failure with a serialization error.
+            include_context=False,
+        )
+
+    repair_messages = [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "The previous response failed local schema validation. Regenerate the "
+                "entire object; do not return a patch and do not omit required values.\n\n"
+                "[Validation errors]\n"
+                + json.dumps(validation_errors, ensure_ascii=False)
+            ),
+        },
+    ]
+    repair_observation: dict[str, Any] = {"schemaRepairAttempt": 1}
+    return run_with_wall_timeout(
+        lambda: _stream_structured(
+            client, repair_messages, schema, repair_observation
+        ),
+        operation=f"{schema.__name__}:schema-repair",
+        observation=repair_observation,
+    )
 
 
 def focus_note(targets: set[str] | None) -> str:

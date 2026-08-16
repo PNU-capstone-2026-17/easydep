@@ -44,15 +44,6 @@ def test_replicated_removal_recovery_confirms_necessity():
     assert result["decision"] == "confirmed"
 
 
-def test_cloud_barista_alone_is_only_a_hypothesis():
-    result = adjudicate({
-        "claimType": "neutralCrosswalk",
-        "observations": [_evidence("neutralModel")],
-    })
-
-    assert result["decision"] == "candidate"
-
-
 def test_conflicting_pinned_sources_route_only_exception_to_human():
     contradiction = _evidence("vendorManual") | {"supports": False}
     result = adjudicate({

@@ -86,7 +86,7 @@ def _apply(
         working.update(finalized)
         merged = working.get(spec.model_key) or merged
 
-    patch.update(render_and_validate(spec, merged))
+    patch.update(render_and_validate(spec, merged, working))
     if spec.check_key:
         patch[spec.check_key] = _check_report(spec, merged, working)
     return patch
@@ -108,7 +108,10 @@ def _reproject_erd(state: ArchitectureState) -> dict[str, Any]:
     """
     spec = DESIGN_SPECS["erd"]
     model = spec.extract(state)
-    patch: dict[str, Any] = {spec.model_key: model, **render_and_validate(spec, model)}
+    patch: dict[str, Any] = {
+        spec.model_key: model,
+        **render_and_validate(spec, model, state),
+    }
     if spec.check_key:
         patch[spec.check_key] = _check_report(spec, model, state)
     return patch

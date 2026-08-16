@@ -97,6 +97,10 @@ class DesignAdapter:
             "api_spec_model",
             "erd_bce_classes",
             "deployment_diagram_model",
+            "deployment_diagram_bundle",
+            "deployment_topology",
+            "deployment_resource_plan",
+            "deployment_diagram_provisioning_puml",
         ):
             if result.get(key):
                 payload[key] = result[key]

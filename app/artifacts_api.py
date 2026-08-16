@@ -169,15 +169,19 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
     """
     artifacts: dict[str, Any] = {}
     validation: dict[str, Any] = {}
+    artifact_status = dict(result.get("artifact_status", {}))
 
     for stage, config in STAGE_ARTIFACTS.items():
         empty: Any = {} if config["format"] == FORMAT_JSON else ""
         check = result.get(config.get("check_key") or "") or {}
         findings = list(check.get("findings", []))
         artifact = result.get(config["state_key"], empty)
-        # Keep the invalid structured sequence model in storage for repair, but do
-        # not expose its PlantUML as an approved/renderable diagram.
-        artifacts[stage] = empty if stage == "sequence_diagram" and findings else artifact
+        # Findings make an artifact a draft, not an absent artifact.  Keep it
+        # visible so the user can review what must be repaired; advancement is
+        # still blocked by the design-readiness gate.
+        artifacts[stage] = artifact
+        if findings and artifact:
+            artifact_status[stage] = "needs_review"
         validation[stage] = {
             "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
             "errors": (
@@ -191,7 +195,7 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "artifacts": artifacts,
         "validation": validation,
-        "artifact_status": result.get("artifact_status", {}),
+        "artifact_status": artifact_status,
     }
 
 
@@ -241,8 +245,15 @@ def import_stage_content(app_id: str, stage: str, request: ImportRequest) -> JSO
     config = STAGE_ARTIFACTS[stage]
     source_key = config.get("source_key")
     if source_key:
-        puml = config["derive"](request.content)
-        state: ArchitectureState = {source_key: request.content, config["state_key"]: puml}
+        state: ArchitectureState = {source_key: request.content}
+        if config.get("hydrate"):
+            state.update(config["hydrate"](request.content))
+        if config.get("derive_state"):
+            state.update(config["derive_state"](request.content))
+            puml = state.get(config["state_key"], "")
+        else:
+            puml = config["derive"](request.content)
+            state[config["state_key"]] = puml
         validation = validate_puml_artifact(puml)
         state[config["valid_key"]] = validation["syntax_valid"]
         state[config["errors_key"]] = validation["syntax_errors"]
@@ -300,13 +311,6 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
         raise HTTPException(status_code=404, detail="Stage has no diagram image.")
 
     state = require_app(app_id)
-    if stage == "sequence_diagram":
-        findings = (state.get("sequence_diagram_check") or {}).get("findings") or []
-        if findings:
-            raise HTTPException(
-                status_code=409,
-                detail="Sequence diagram has unresolved design findings.",
-            )
     puml_text = state.get(PUML_FIELDS[stage]["code"], "")
     if not puml_text:
         raise HTTPException(status_code=404, detail="Artifact has not been generated.")
@@ -315,6 +319,35 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
     if not image:
         raise HTTPException(status_code=500, detail="Diagram rendering failed.")
 
+    return Response(
+        content=image,
+        media_type="image/svg+xml" if extension == "svg" else "image/png",
+    )
+
+
+@router.get(
+    "/api/apps/{app_id}/stages/deployment_diagram/views/{view}/image.{extension}"
+)
+def get_deployment_diagram_view_image(
+    app_id: str, view: str, extension: str
+) -> Response:
+    """Render one explicit deployment-diagram semantic view."""
+    validate_app_id(app_id)
+    if extension not in ("png", "svg"):
+        raise HTTPException(status_code=404, detail="Unsupported image format.")
+    fields = {
+        "runtime": "deployment_diagram_puml",
+        "provisioning": "deployment_diagram_provisioning_puml",
+    }
+    field = fields.get(view)
+    if field is None:
+        raise HTTPException(status_code=404, detail="Unknown deployment diagram view.")
+    puml_text = str(require_app(app_id).get(field) or "")
+    if not puml_text:
+        raise HTTPException(status_code=404, detail="Artifact has not been generated.")
+    image = render_plantuml(puml_text, extension)
+    if not image:
+        raise HTTPException(status_code=500, detail="Diagram rendering failed.")
     return Response(
         content=image,
         media_type="image/svg+xml" if extension == "svg" else "image/png",
@@ -350,12 +383,6 @@ def get_sequence_diagram_image(
     if extension not in ("png", "svg"):
         raise HTTPException(status_code=404, detail="Unsupported image format.")
     state = require_app(app_id)
-    findings = (state.get("sequence_diagram_check") or {}).get("findings") or []
-    if findings:
-        raise HTTPException(
-            status_code=409,
-            detail="Sequence diagram has unresolved design findings.",
-        )
     diagram = next(
         (
             item

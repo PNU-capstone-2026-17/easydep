@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "easydep-multi-provider-sample-app-postgres-e2-adjudication/v1",
+  "date": "2026-08-15",
+  "scope": "같은 도메인 중립 App·PostgreSQL 오라클을 사용한 세 CSP App 계층 관리형 복구 개발 관찰",
+  "providers": [
+    {
+      "provider": "aws",
+      "runId": "easydep-e2-b53649d9",
+      "rawFile": "aws-sample-app-postgres-e2-result-20260815-3.json",
+      "sha256": "b69075f9b57c866abca21d091a57cc49301ed06e247952e6c80f75d8d36b6a97",
+      "managedAction": "replacement",
+      "managedRecoveryHealthySeconds": 245.027,
+      "businessSuccess": "201/208",
+      "maxConsecutiveFailureSeconds": 2.087,
+      "cleanupPassed": true
+    },
+    {
+      "provider": "azure",
+      "runId": "easydep-e2-bdfacbd3",
+      "rawFile": "azure-sample-app-postgres-e2-result-20260815-4.json",
+      "sha256": "1032781343b07461f89741a57e8d6f43eb14765da427e86a2865cd9cf369a812",
+      "managedAction": "replacement-after-PT30M-grace",
+      "managedRecoveryHealthySeconds": 1982.86,
+      "businessSuccess": "1747/1747",
+      "maxConsecutiveFailureSeconds": 0.0,
+      "cleanupPassed": true
+    },
+    {
+      "provider": "gcp",
+      "runId": "easydep-e2-fe1bb9ac",
+      "rawFile": "gcp-sample-app-postgres-e2-result-20260815-6.json",
+      "sha256": "feac77c378ea3cfef7fbba1a68a56329827a379bf4d5707616dea0dea398a61d",
+      "managedAction": "restart-in-place",
+      "managedRecoveryHealthySeconds": 217.956,
+      "businessSuccess": "167/167",
+      "maxConsecutiveFailureSeconds": 0.0,
+      "cleanupPassed": true
+    }
+  ],
+  "commonObservation": {
+    "baseline": "healthy App VM 2대가 같은 단일 State VM의 사설 PostgreSQL 값을 읽고 썼다.",
+    "fault": "한 App 프로세스를 종료하고 LB health와 CSP 관리형 복구를 관찰했다.",
+    "result": "세 CSP 모두 다른 healthy App을 통해 업무 요청을 처리하고 App capacity를 2대로 복구했다.",
+    "cleanup": "각 실행 소유 리소스의 독립 잔여 조회가 0이었다."
+  },
+  "interpretationLimits": [
+    "세 값은 설정과 control-plane 정책이 다른 개발 실행이므로 CSP 성능 순위가 아니다.",
+    "AWS의 짧은 기능 실패를 근거로 다른 CSP보다 열등하다고 해석하지 않는다.",
+    "Azure의 긴 시간은 CLI가 강제한 최소 30분 repair grace가 대부분이며 앱 처리시간이 아니다.",
+    "모든 구성은 단일 State VM을 사용하므로 종단 고가용성, Zone·Region 장애 또는 SLA를 증명하지 않는다.",
+    "HTTP만 검증했으며 DNS·인증서·HTTPS는 별도 gate다."
+  ]
+}

@@ -37,7 +37,6 @@ AZURE_EXPERIMENTS = [
     ("azure-func-2026-07-31", []),
     ("azure-func2-2026-07-31", []),
     ("azure-lb-serve2-2026-08-01", ["build", "serve", "finish"]),
-    ("azure-sig4-2026-07-31", ["build", "dns", "disk", "finish"]),
     ("azure-disj2-2026-08-01", ["__hardcoded_group__"]),
 ]
 GCP_EXPERIMENTS = [
@@ -82,6 +81,9 @@ def _preserve_result(name: str, original: bytes | None) -> None:
         day = datetime.now(UTC).date().isoformat()
         destination = ROOT / "replications" / day / f"{name}.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists():
+            stamp = datetime.now(UTC).strftime("%H%M%S-%f")
+            destination = destination.with_name(f"{name}-{stamp}.json")
         shutil.copy2(result, destination)
     if original is None:
         result.unlink(missing_ok=True)
@@ -153,6 +155,8 @@ def _aws_cleanup(before: dict[str, set[str]], region: str) -> dict[str, list[str
 
 
 def run_aws(region: str, only_experiment: str | None = None) -> dict:
+    if only_experiment and only_experiment not in {name for name, _ in AWS_EXPERIMENTS}:
+        raise ValueError(f"unknown AWS experiment: {only_experiment}")
     before = _aws_snapshot(region)
     failures: list[str] = []
     try:
@@ -162,6 +166,8 @@ def run_aws(region: str, only_experiment: str | None = None) -> dict:
             result_path = EXPERIMENTS / name / "results.json"
             original = result_path.read_bytes() if result_path.is_file() else None
             try:
+                if CAPTURE_RESULTS:
+                    result_path.unlink(missing_ok=True)
                 commands = phases or [None]
                 for phase in commands:
                     args = [] if phase is None else [phase]
@@ -178,18 +184,25 @@ def run_aws(region: str, only_experiment: str | None = None) -> dict:
     return {"failures": failures, "residual": residual}
 
 
-def run_azure(location: str) -> dict:
+def run_azure(location: str, only_experiment: str | None = None) -> dict:
+    if only_experiment and only_experiment not in {name for name, _ in AZURE_EXPERIMENTS}:
+        raise ValueError(f"unknown Azure experiment: {only_experiment}")
     failures: list[str] = []
     residual: list[str] = []
     stamp = datetime.now(UTC).strftime("%m%d%H%M")
     for index, (name, phases) in enumerate(AZURE_EXPERIMENTS):
+        if only_experiment and name != only_experiment:
+            continue
         hardcoded = phases == ["__hardcoded_group__"]
         group = "depkb-disj2" if hardcoded else f"depkb-rm-{stamp}-{index}"
         result_path = EXPERIMENTS / name / "results.json"
         original = result_path.read_bytes() if result_path.is_file() else None
         try:
+            if CAPTURE_RESULTS:
+                result_path.unlink(missing_ok=True)
             _run(["az", "group", "create", "-n", group, "-l", location, "-o", "none"])
-            for phase in (phases or [None]):
+            selected_phases = phases or [None]
+            for phase in selected_phases:
                 args = [] if hardcoded else ([group] if phase is None else [phase, group])
                 _run([PYTHON, "run.py", *args], cwd=EXPERIMENTS / name)
         except Exception as exc:
@@ -219,12 +232,32 @@ def _gcloud_resources(kind: str, project: str, *, subnets: bool = False) -> list
     return list(json.loads(result.stdout or "[]"))
 
 
-def _gcp_cleanup(project: str) -> dict[str, list[str]]:
-    # All experiment-owned names reserve the depkb prefix.
-    kinds = ["instances", "forwarding-rules", "backend-services", "health-checks",
-             "firewall-rules", "routes", "disks"]
-    for kind in kinds:
-        for item in _gcloud_resources(kind, project):
+GCP_RESOURCE_KINDS = (
+    "instances", "forwarding-rules", "backend-services", "health-checks",
+    "firewall-rules", "routes", "disks", "networks", "subnets",
+)
+
+
+def _gcp_snapshot(project: str) -> dict[str, dict[str, dict]]:
+    snapshot: dict[str, dict[str, dict]] = {}
+    for kind in GCP_RESOURCE_KINDS:
+        items = _gcloud_resources(kind, project, subnets=kind == "subnets")
+        snapshot[kind] = {str(item["name"]): item for item in items}
+    return snapshot
+
+
+def _gcp_cleanup(
+    project: str, before: dict[str, dict[str, dict]]
+) -> dict[str, list[str]]:
+    """실행 전 snapshot에 없던 ``depkb`` 리소스만 정리한다."""
+
+    after = _gcp_snapshot(project)
+    created = {
+        kind: [item for name, item in after[kind].items() if name not in before[kind]]
+        for kind in GCP_RESOURCE_KINDS
+    }
+    for kind in GCP_RESOURCE_KINDS[:-2]:
+        for item in created[kind]:
             command = ["gcloud", "compute", kind, "delete", item["name"], "--project", project, "--quiet"]
             if item.get("zone"):
                 command.extend(["--zone", str(item["zone"]).rsplit("/", 1)[-1]])
@@ -233,42 +266,61 @@ def _gcp_cleanup(project: str) -> dict[str, list[str]]:
             elif kind in {"forwarding-rules", "backend-services"}:
                 command.append("--global")
             _run(command, timeout=900, check=False)
-    for item in _gcloud_resources("subnets", project, subnets=True):
+    for item in created["subnets"]:
         command = ["gcloud", "compute", "networks", "subnets", "delete", item["name"],
                    "--project", project, "--quiet"]
         if item.get("region"):
             command.extend(["--region", str(item["region"]).rsplit("/", 1)[-1]])
         _run(command, timeout=900, check=False)
-    for item in _gcloud_resources("networks", project):
+    for item in created["networks"]:
         _run(["gcloud", "compute", "networks", "delete", item["name"],
               "--project", project, "--quiet"], check=False)
-    residual: dict[str, list[str]] = {}
-    for kind in [*kinds, "networks"]:
-        names = [item["name"] for item in _gcloud_resources(kind, project)]
-        if names:
-            residual[kind] = names
-    subnet_names = [item["name"] for item in _gcloud_resources("subnets", project, subnets=True)]
-    if subnet_names:
-        residual["subnets"] = subnet_names
-    return residual
+    final = _gcp_snapshot(project)
+    return {
+        kind: sorted(name for name in final[kind] if name not in before[kind])
+        for kind in GCP_RESOURCE_KINDS
+        if any(name not in before[kind] for name in final[kind])
+    }
 
 
-def run_gcp(project: str, region: str, zone: str, zone_b: str) -> dict:
+def run_gcp(
+    project: str,
+    region: str,
+    zone: str,
+    zone_b: str,
+    only_experiment: str | None = None,
+) -> dict:
+    if only_experiment and only_experiment not in {name for name, _ in GCP_EXPERIMENTS}:
+        raise ValueError(f"unknown GCP experiment: {only_experiment}")
+    before = _gcp_snapshot(project)
+    preexisting = {kind: sorted(items) for kind, items in before.items() if items}
+    if preexisting:
+        return {
+            "failures": [
+                "pre-existing depkb-prefixed resources block a legacy fixed-name experiment"
+            ],
+            "residual": {},
+            "preexisting": preexisting,
+        }
     failures: list[str] = []
     try:
         for name, template in GCP_EXPERIMENTS:
+            if only_experiment and name != only_experiment:
+                continue
             values = {"project": project, "region": region, "zone": zone, "zone_b": zone_b}
             args = [part.format(**values) for part in template]
             result_path = EXPERIMENTS / name / "results.json"
             original = result_path.read_bytes() if result_path.is_file() else None
             try:
+                if CAPTURE_RESULTS:
+                    result_path.unlink(missing_ok=True)
                 _run([PYTHON, "run.py", *args], cwd=EXPERIMENTS / name)
             except Exception as exc:
                 failures.append(f"{name}: {exc}")
             finally:
                 _preserve_result(name, original)
     finally:
-        residual = _gcp_cleanup(project)
+        residual = _gcp_cleanup(project, before)
     return {"failures": failures, "residual": residual}
 
 
@@ -287,23 +339,26 @@ def main() -> None:
     args = parser.parse_args()
     if args.dry_run:
         selected = {"aws", "azure", "gcp"} if args.provider == "all" else {args.provider}
+        def chosen(items: list[tuple[str, list[str]]]) -> list[tuple[str, list[str]]]:
+            return [item for item in items if not args.experiment or item[0] == args.experiment]
+
         plan = {
             "providers": sorted(selected),
             "aws": {
                 "region": args.aws_region,
-                "experiments": AWS_EXPERIMENTS,
+                "experiments": chosen(AWS_EXPERIMENTS),
                 "guard": "delete only resource IDs absent from the pre-run snapshot",
             } if "aws" in selected else None,
             "azure": {
                 "location": args.azure_location,
-                "experiments": AZURE_EXPERIMENTS,
+                "experiments": chosen(AZURE_EXPERIMENTS),
                 "guard": "one disposable depkb resource group per experiment; delete and wait",
             } if "azure" in selected else None,
             "gcp": {
                 "project": args.gcp_project, "region": args.gcp_region,
                 "zone": args.gcp_zone, "zoneB": args.gcp_zone_b,
-                "experiments": GCP_EXPERIMENTS,
-                "guard": "delete only resources using the reserved depkb prefix",
+                "experiments": chosen(GCP_EXPERIMENTS),
+                "guard": "block on pre-existing depkb prefix; delete only post-snapshot IDs",
             } if "gcp" in selected else None,
         }
         print(json.dumps(plan, ensure_ascii=False, indent=2))
@@ -314,11 +369,19 @@ def main() -> None:
     if args.provider in {"aws", "all"}:
         report["aws"] = run_aws(args.aws_region, args.experiment)
     if args.provider in {"azure", "all"}:
-        report["azure"] = run_azure(args.azure_location)
+        report["azure"] = run_azure(args.azure_location, args.experiment)
     if args.provider in {"gcp", "all"}:
-        report["gcp"] = run_gcp(args.gcp_project, args.gcp_region, args.gcp_zone, args.gcp_zone_b)
+        report["gcp"] = run_gcp(
+            args.gcp_project, args.gcp_region, args.gcp_zone, args.gcp_zone_b,
+            args.experiment,
+        )
     report["finishedAt"] = datetime.now(UTC).isoformat(timespec="seconds")
-    output = ROOT / "replication-report.json"
+    if args.experiment:
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d/%H%M%S-%f")
+        output = ROOT / "replications" / f"{stamp}-{args.provider}-{args.experiment}.report.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output = ROOT / "replication-report.json"
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(output)
     if any(value.get("failures") or value.get("residual") for value in report.values() if isinstance(value, dict)):

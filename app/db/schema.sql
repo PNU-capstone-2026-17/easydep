@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS apps (
   PRIMARY KEY (app_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Deployment alternatives selected while application requirements are analyzed.
+CREATE TABLE IF NOT EXISTS deployment_preferences (
+  app_id       VARCHAR(36) NOT NULL,
+  selection    JSON        NOT NULL,
+  created_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
+                              ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (app_id),
+  CONSTRAINT fk_deployment_preferences_app FOREIGN KEY (app_id)
+    REFERENCES apps (app_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Current artifact of each type for an app.
 CREATE TABLE IF NOT EXISTS artifacts (
   id                    BIGINT      NOT NULL AUTO_INCREMENT,

@@ -47,7 +47,15 @@ from app.design.services.class_diagram.plantuml import generate_plantuml_from_bc
 from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_api_spec, validate_puml_artifact
 from app.design.services.deployment_diagram.extractor import extract_deployment_model
+from app.design.services.deployment_diagram.bundle import (
+    build_deployment_diagram_bundle,
+    hydrate_deployment_diagram_bundle,
+)
 from app.design.services.deployment_diagram.plantuml import generate_deployment_from_model
+from app.design.services.deployment_diagram.provider_plantuml import (
+    deployment_bundle_provisioning_puml,
+    deployment_bundle_runtime_puml,
+)
 from app.design.services.deployment_diagram.reviser import revise_deployment_model
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.erd.reviser import revise_erd_classes
@@ -229,6 +237,20 @@ ERD_SPEC = DesignArtifactSpec(
     check_key="erd_check",
 )
 
+
+def _finalize_deployment_diagram(state: ArchitectureState) -> dict[str, Any]:
+    bundle = build_deployment_diagram_bundle(
+        dict(state.get("deployment_diagram_model") or {}),
+        dict(state.get("resource_spec") or {}),
+    )
+    hydrated = hydrate_deployment_diagram_bundle(bundle)
+    return {
+        **hydrated,
+        "deployment_diagram_provisioning_puml": (
+            deployment_bundle_provisioning_puml(bundle)
+        ),
+    }
+
 DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
     stage="deployment_diagram",
     model_key="deployment_diagram_model",
@@ -248,11 +270,15 @@ DEPLOYMENT_DIAGRAM_SPEC = DesignArtifactSpec(
         current, feedback, _design_context(state), targets
     ),
     render=generate_deployment_from_model,
+    render_with_state=lambda _model, state: deployment_bundle_runtime_puml(
+        dict(state.get("deployment_diagram_bundle") or {})
+    ),
     validate=validate_puml_artifact,
     elements={
         "Nodes": lambda n: n.get("name", ""),
         "Artifacts": lambda a: a.get("name", ""),
     },
+    finalize=_finalize_deployment_diagram,
 )
 
 #: 스테이지 순서대로. 스펙 하나가 곧 한 산출물의 전부다.

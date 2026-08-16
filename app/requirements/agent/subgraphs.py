@@ -2,7 +2,7 @@
 
 각 단계를 독립 서브그래프로 컴파일한다. 상위 그래프의 노드명은 단계별 '동작'을 나타낸다:
   refine_requirements  — intake → clarify → classify        (구체화 + FR/NFR 분류)
-  derive_deployment_needs — derive_deployment_needs          (제네릭 배포 필요사항)
+  analyze_cloud_inputs — capability·클라우드 제약 추출 병렬 실행
   structure_constraints — build_resource_spec                (제약 → RESOURCE_SPEC 계약)
   model_use_cases      — identify_actors → identify_use_cases → review_model → check_coverage
   write_specifications — generate_specs → check_specs
@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import time
+from functools import wraps
 from itertools import pairwise
 
 from langgraph.graph import END, START, StateGraph
@@ -49,8 +51,41 @@ from app.requirements.agent.steps.step4_diagram import (  # noqa: F401
     identify_relationships,
     render_diagram,
 )
-from app.requirements.agent.steps.step_cloud import derive_deployment_needs  # noqa: F401
+from app.requirements.agent.steps.step_cloud_inputs import analyze_cloud_inputs  # noqa: F401
 from app.requirements.agent.steps.step_resource import build_resource_spec  # noqa: F401
+from app.requirements.common import telemetry
+
+
+def _observed_node(name: str, fn):
+    """Keep the graph unchanged while exposing real node boundaries to observers."""
+
+    if getattr(fn, "_easydep_emits_progress", False):
+        return fn
+
+    @wraps(fn)
+    def run(state):
+        started = time.perf_counter()
+        telemetry.emit_progress("analysisStepStarted", step=name)
+        try:
+            result = fn(state)
+        except BaseException as error:
+            telemetry.emit_progress(
+                "analysisStepFinished",
+                step=name,
+                status="failed",
+                errorType=type(error).__name__,
+                elapsedSeconds=round(time.perf_counter() - started, 6),
+            )
+            raise
+        telemetry.emit_progress(
+            "analysisStepFinished",
+            step=name,
+            status="completed",
+            elapsedSeconds=round(time.perf_counter() - started, 6),
+        )
+        return result
+
+    return run
 
 
 def build_stage(group: str):
@@ -65,7 +100,7 @@ def build_stage(group: str):
 
     b = StateGraph(AgentState)
     for name in nodes:
-        b.add_node(name, globals()[name])
+        b.add_node(name, _observed_node(name, globals()[name]))
     b.add_edge(START, nodes[0])
     for src, dst in pairwise(nodes):
         b.add_edge(src, dst)

@@ -3,6 +3,7 @@
 모든 노드가 공유하는 단일 상태. 마일스톤1 필드 + 2~4단계 필드가 함께 있어,
 단계가 늘어도 State는 이 파일 한 곳에서 확장한다.
 """
+
 from __future__ import annotations
 
 from typing import Annotated, Literal, NotRequired
@@ -30,7 +31,7 @@ class ActorItem(TypedDict):
 
     name: str
     description: str
-    parent_actor: str | None        # 일반화(상속) 부모 액터, 없으면 None
+    parent_actor: str | None  # 일반화(상속) 부모 액터, 없으면 None
 
 
 class UseCaseItem(TypedDict):
@@ -42,8 +43,8 @@ class UseCaseItem(TypedDict):
     supporting_actors: list[str]
     level: Literal["summary", "user_goal", "subfunction"]
     goal: str
-    requirement_ids: list[str]      # 커버하는 FR id (서브펑션 흡수 포함, 추적성)
-    nfr_ids: list[str]              # 이 UC를 한정하는 NFR id
+    requirement_ids: list[str]  # 커버하는 FR id (서브펑션 흡수 포함, 추적성)
+    nfr_ids: list[str]  # 이 UC를 한정하는 NFR id
     # 주 시나리오/확장(예외·대안)은 step3에서 생성한다 (여기서 만들지 않음).
 
 
@@ -54,12 +55,14 @@ class UseCaseSpecItem(TypedDict):
     name: str
     preconditions: list[str]
     trigger: str
-    main_scenario: list[dict]       # {step_number, sentence, covered_req_ids}
-    extensions: list[dict]          # {label, branch_step, condition, handling_steps, outcome, resume_at_step}
+    main_scenario: list[dict]  # {step_number, sentence, covered_req_ids}
+    extensions: list[
+        dict
+    ]  # {label, branch_step, condition, handling_steps, outcome, resume_at_step}
     success_guarantee: list[str]
     minimal_guarantee: list[str]
-    issues: list[str]               # 검증 위반(정적+의미). reflection 루프 후 남은 것.
-    repair_iters: int               # 반성 루프에서 재생성한 횟수
+    issues: list[str]  # 검증 위반(정적+의미). reflection 루프 후 남은 것.
+    repair_iters: int  # 반성 루프에서 재생성한 횟수
     # 의미 검증(LLM)을 실제로 거쳤는지.
     # "ok"|"disabled"|"failed"|"ungrounded"(지식베이스에 없는 규칙만 인용해 버렸다)|"pending".
     # issues가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없어서 둔다.
@@ -97,6 +100,12 @@ class AgentState(TypedDict):
     # **따로** 받는다 — 실측상 provider·region·예산은 요구사항 산문에 아예 없고(0건),
     # 없는 곳을 뒤지면 오탐만 남는다(`steps/step_resource.py`).
     resource_constraints_text: NotRequired[str]
+    # 최초 화면의 구조화 입력. provider·region·월 예산은 이 값을 결정론적으로
+    # 정규화하고, 자유문장 제약은 보조 추출 경로로만 사용한다.
+    initial_cloud_constraints: NotRequired[dict]
+    # capability 분석과 병렬로 만든 자유문장 제약 해석. 질문과 계약 확정은
+    # build_resource_spec이 담당하며 이 중간 객체는 사용자 산출물이 아니다.
+    resource_constraint_extraction: NotRequired[dict]
     # 되묻기의 답: 계약 칸 이름 → 사용자가 쓴 문자열. **값이 아니라 답이다** — 제약
     # 구조화 에이전트가 산문과 같은 규율로 해석한다("서울"은 여전히 카탈로그를 거쳐
     # 코드로 풀려야 하고, 후보가 여럿이면 여전히 모호하다).
@@ -110,18 +119,18 @@ class AgentState(TypedDict):
     # 2단계 — 액터/유스케이스 도출 + FR 커버리지 점검
     actors: list[ActorItem]
     use_cases: list[UseCaseItem]
-    coverage: dict                   # check_coverage의 결정론적 커버리지 결과
+    coverage: dict  # check_coverage의 결정론적 커버리지 결과
     # review_model(독립 의미 검증자)의 판정. {issues, semantic_status, unexamined_rules}.
     # 커버리지와 나란히 두는 이유: 하나는 "빠진 게 없나"(결정론), 다른 하나는 "모델이
     # 규칙을 지켰나"(의미)이고 둘은 서로를 대신하지 못한다.
     model_review: NotRequired[dict]
     # 3단계 — 유스케이스별 명세(병렬 생성) + 검증 요약
     use_case_specs: list[UseCaseSpecItem]
-    spec_report: dict                # check_specs의 명세 검증 집계
+    spec_report: dict  # check_specs의 명세 검증 집계
     # 4단계 — 관계 식별(LLM) + 검증 요약 + 다이어그램 렌더(결정론)
-    relationships: dict              # {associations, includes, extends, generalizations, derived_use_cases}
-    relationship_report: dict        # check_relationships의 관계 검증 집계
-    diagram: str                     # PlantUML 유스케이스 다이어그램 텍스트
+    relationships: dict  # {associations, includes, extends, generalizations, derived_use_cases}
+    relationship_report: dict  # check_relationships의 관계 검증 집계
+    diagram: str  # PlantUML 유스케이스 다이어그램 텍스트
     # 정적 라우팅 마커 — 피드백 게이트가 "advance"(다음 단계)/"loop"(재생성 후 재질문)를 써 두면
     # 서브그래프의 조건부 엣지(route_gate)가 이를 읽어 분기한다. Command(goto) 동적 라우팅 대체.
     gate_route: NotRequired[str]
