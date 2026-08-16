@@ -16,6 +16,7 @@ from app.db.models import (
     TYPE_TEST_CODE,
 )
 from app.repositories import artifact_repository
+from app.design.validation import design_readiness_report
 from ..config import ImplementationSettings
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
@@ -41,13 +42,29 @@ class ImplementationWorker:
         self.settings.work_root.mkdir(parents=True, exist_ok=True)
         self.client = PrototypeClient(self.settings)
         self.executor = ThreadPoolExecutor(max_workers=self.settings.max_workers, thread_name_prefix="easydep-implementation")
+        self.warmup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="easydep-warmup")
         self.lock = threading.RLock()
+        self._warmup_lock = threading.Lock()
+        self._warmup_started = False
         self._recover_pending_jobs()
 
     def create_job(self, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> dict[str, Any]:
         missing = [key for key in ("class_diagram_puml", "api_spec") if design.get(key) in (None, "", {})]
         if missing:
             raise InvalidJobState("Missing required design artifacts: " + ", ".join(missing))
+        missing_models = [
+            key for key in (
+                "extracted_bce_classes", "sequence_diagram_model", "api_spec_model",
+            )
+            if not isinstance(design.get(key), dict) or not design[key]
+        ]
+        if missing_models:
+            return self._create_design_blocked_job(
+                app_id, base_package, self._missing_design_model_report(missing_models)
+            )
+        readiness = design_readiness_report(design)
+        if readiness["status"] != "READY":
+            return self._create_design_blocked_job(app_id, base_package, readiness)
         job_id = uuid.uuid4().hex
         job_path = self.client.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         record = {
@@ -58,6 +75,68 @@ class ImplementationWorker:
         self._write(record)
         self.executor.submit(self._plan, job_id)
         return self.public_record(record)
+
+    def _create_design_blocked_job(
+        self, app_id: str, base_package: str, readiness: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Persist an actionable hand-off block without starting any generator."""
+        job_id = uuid.uuid4().hex
+        report_path = self.settings.work_root / job_id / "design-readiness.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(readiness, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        findings = readiness.get("findings", [])
+        summary = "; ".join(
+            str(item.get("finding", "")) for item in findings[:3]
+            if isinstance(item, dict)
+        )
+        record = {
+            "job_id": job_id,
+            "app_id": app_id,
+            "status": "NEEDS_INPUT",
+            "base_package": base_package,
+            "run_root": None,
+            "workflow": {
+                "schemaVersion": "implementation-workflow/v1alpha1",
+                "status": "NEEDS_INPUT",
+                "currentPhase": "design-validation",
+                "updatedAt": _now(),
+                "phases": [],
+                "tasks": [],
+                "nextRunnableTasks": [],
+                "blockingReason": "Resolve the design mismatches before implementation can start.",
+            },
+            "design_validation": readiness,
+            "transmission_request": None,
+            "error": "설계 불일치가 남아 구현 작업을 시작하지 않았습니다. " + summary,
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
+        self._write(record)
+        return self.public_record(record)
+
+    @staticmethod
+    def _missing_design_model_report(missing_models: list[str]) -> dict[str, Any]:
+        """Old rendered-only artifacts cannot prove the API-to-Control contract."""
+        findings = [
+            {
+                "stage": "api_spec",
+                "finding": (
+                    f"검증 가능한 설계 모델 '{name}'이 없어 API·Control·시퀀스 "
+                    "정합성을 증명할 수 없음 — 설계 단계를 다시 생성하거나 수정하세요."
+                ),
+            }
+            for name in missing_models
+        ]
+        return {
+            "schemaVersion": "easydep-design-readiness/v1alpha1",
+            "status": "NEEDS_INPUT",
+            "stages": [{"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [
+                item["finding"] for item in findings
+            ]}],
+            "findings": findings,
+        }
 
     def create_feedback_job(
         self,
@@ -162,7 +241,7 @@ class ImplementationWorker:
         return self.public_record(record)
 
     def get(self, job_id: str) -> dict[str, Any]:
-        return self.public_record(self._read(job_id))
+        return self.public_record(self._with_live_generation_progress(self._read(job_id)))
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
         """Return the minimum private execution context needed by the test adapter.
@@ -227,8 +306,16 @@ class ImplementationWorker:
     def _plan(self, job_id: str) -> None:
         record = self._read(job_id)
         try:
+            self._set_status(record, "GENERATING")
+            run_root = self.client.generate(Path(record["job_path"]))
+            # Generation runs in a separate process.  Do not revive a job the
+            # user cancelled while that process was finishing.
+            if self._read(job_id).get("status") == "CANCELLED":
+                return
             self._set_status(record, "PLANNING")
-            run_root, workflow = self.client.generate_and_plan(Path(record["job_path"]))
+            workflow = self.client.plan_workflow(run_root, Path(record["job_path"]))
+            if self._read(job_id).get("status") == "CANCELLED":
+                return
             record["run_root"] = str(run_root)
             self._apply_workflow(record, workflow)
         except Exception as error:
@@ -378,6 +465,25 @@ class ImplementationWorker:
     def _record_path(self, job_id: str) -> Path:
         return self.settings.work_root / job_id / "easydep-job-state.json"
 
+    def start_warmup(self) -> bool:
+        """Start best-effort warm-up without consuming a user-job worker slot."""
+        if not self.settings.startup_warmup:
+            return False
+        with self._warmup_lock:
+            if self._warmup_started:
+                return False
+            self._warmup_started = True
+            self.warmup_executor.submit(self._warmup)
+            return True
+
+    def _warmup(self) -> None:
+        try:
+            report = self.client.warmup_runtime()
+            print(f"[startup] 구현 런타임 워밍업: {report['status']}")
+        except Exception as error:
+            # Warming improves latency but must never make the service unhealthy.
+            print(f"[startup] 구현 런타임 워밍업 실패(요청 시 재시도): {error}")
+
     def _recover_pending_jobs(self) -> None:
         """Resume queued work after a server restart using only durable approvals."""
         for path in self.settings.work_root.glob("*/easydep-job-state.json"):
@@ -386,7 +492,7 @@ class ImplementationWorker:
             except (OSError, json.JSONDecodeError):
                 continue
             status = record.get("status")
-            if status not in {"QUEUED", "PLANNING", "RUNNING"}:
+            if status not in {"QUEUED", "GENERATING", "PLANNING", "RUNNING"}:
                 continue
             if record.get("run_root"):
                 approval = Path(record["job_path"]).parent / "approval.json"
@@ -405,6 +511,43 @@ class ImplementationWorker:
             raise JobNotFound(job_id)
         with self.lock:
             return json.loads(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _with_live_generation_progress(record: dict[str, Any]) -> dict[str, Any]:
+        """Overlay subprocess progress without exposing its host-side path."""
+        if record.get("status") not in {"GENERATING", "PLANNING"}:
+            return record
+        job_path = record.get("job_path")
+        if not isinstance(job_path, str):
+            return record
+        progress_path = Path(job_path).parent / "generation-progress.json"
+        try:
+            progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return record
+        status = progress.get("status")
+        if not isinstance(status, str):
+            return record
+        result = dict(record)
+        result["progress"] = {
+            key: progress[key]
+            for key in ("status", "message", "updatedAt")
+            if isinstance(progress.get(key), str)
+        }
+        # Once generation returns, the durable job status becomes PLANNING.
+        # Before then, expose the finer phase emitted by the child process.
+        if record.get("status") == "GENERATING" and status in {
+            "VALIDATING_INPUT",
+            "REUSING_GENERATED_RUN",
+            "PREPARING_FEEDBACK",
+            "GENERATING_SOURCES",
+            "PREPARING_BUILD",
+            "VERIFYING",
+            "PLANNING",
+        }:
+            result["status"] = status
+            result["updated_at"] = progress.get("updatedAt", record.get("updated_at"))
+        return result
 
     def _write(self, record: dict[str, Any]) -> None:
         path = self._record_path(record["job_id"])
@@ -433,6 +576,7 @@ class ImplementationWorker:
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)
+        self.warmup_executor.shutdown(wait=False, cancel_futures=True)
 
 
 worker = ImplementationWorker()

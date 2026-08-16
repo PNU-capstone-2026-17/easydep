@@ -16,6 +16,7 @@ class ImplementationSettings:
     model: str
     base_url: str
     command_timeout_seconds: int
+    startup_warmup: bool = True
 
     @classmethod
     def from_env(cls) -> "ImplementationSettings":
@@ -32,6 +33,7 @@ class ImplementationSettings:
             command_timeout_seconds=max(
                 60, settings.implementation_command_timeout_seconds
             ),
+            startup_warmup=settings.implementation_startup_warmup,
         )
 
 

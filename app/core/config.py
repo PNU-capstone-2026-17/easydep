@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"
     implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"
     implementation_command_timeout_seconds: int = 3600
+    implementation_startup_warmup: bool = True
     implementation_default_container_port: int = 8000
     implementation_docker_gradle_image: str = "gradle:8.14.2-jdk21"
     implementation_docker_jre_image: str = "eclipse-temurin:21-jre-alpine"

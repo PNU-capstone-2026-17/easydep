@@ -33,6 +33,7 @@ class PrototypeClient:
         root = self.settings.work_root / job_id
         context = root / "design-context"
         context.mkdir(parents=True, exist_ok=True)
+        progress_path = root / "generation-progress.json"
         inputs: dict[str, str] = {}
 
         def write(name: str, filename: str, value: Any) -> None:
@@ -59,6 +60,7 @@ class PrototypeClient:
             "outputRoot": (root / "generated" / "runs").relative_to(self.settings.repository_root).as_posix(),
             "generation": {"basePackage": base_package, "allowAssumptions": allow_assumptions},
             "verification": {"compile": True},
+            "progressPath": progress_path.relative_to(self.settings.repository_root).as_posix(),
             "tools": {
                 "puml2codeRoot": "app/implementation/tools/puml2code-bce",
             },
@@ -109,10 +111,17 @@ class PrototypeClient:
         )
         return path
 
-    def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
+    def generate(self, job_path: Path) -> Path:
         generated = self._call([str(job_path)])
-        run_root = Path(str(generated["output"])).resolve()
-        return run_root, self._call(["plan-workflow", str(run_root), str(job_path)])
+        return Path(str(generated["output"])).resolve()
+
+    def plan_workflow(self, run_root: Path, job_path: Path) -> dict[str, Any]:
+        return self._call(["plan-workflow", str(run_root), str(job_path)])
+
+    def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
+        """Compatibility helper for callers outside the web-worker boundary."""
+        run_root = self.generate(job_path)
+        return run_root, self.plan_workflow(run_root, job_path)
 
     def run_phase(self, run_root: Path, job_path: Path, approval_path: Path, retry_failed: bool) -> dict[str, Any]:
         args = ["run-workflow", str(run_root), str(job_path), "--approval", str(approval_path)]
@@ -126,6 +135,15 @@ class PrototypeClient:
             return None
         value = json.loads(path.read_text(encoding="utf-8"))
         return value if value.get("status") == "AWAITING_APPROVAL" else None
+
+    def warmup_runtime(self) -> dict[str, Any]:
+        """Preload tools and shared dependency caches before the first job."""
+        from ..generation.warmup import warmup_implementation_runtime
+
+        return warmup_implementation_runtime(
+            self.settings.repository_root,
+            self.settings.command_timeout_seconds,
+        )
 
     def _call(self, args: list[str]) -> dict[str, Any]:
         env = os.environ.copy()

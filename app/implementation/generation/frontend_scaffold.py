@@ -16,6 +16,51 @@ OPENAPI_GENERATOR_NAME = "typescript-fetch"
 OPENAPI_GENERATOR_IMAGE = (
     f"openapitools/openapi-generator-cli:v{OPENAPI_GENERATOR_VERSION}"
 )
+# The React scaffold pins every dependency to an exact version and the only
+# per-application value in package.json is `name`, so the resolved lock is
+# identical for every job.  Resolving it through the registry cost 7-46s per
+# run; the committed template makes it a file write.
+#
+# To refresh after changing `react_scaffold_files`: write that function's
+# package.json into an empty directory, run
+# `npm install --package-lock-only --ignore-scripts --no-audit --no-fund`,
+# and copy the resulting package-lock.json over the template.  Until then the
+# drift guard below routes generation back through npm, so a stale template
+# degrades speed rather than correctness.
+PACKAGE_LOCK_TEMPLATE = Path(__file__).resolve().parents[1] / "tools" / "frontend" / "package-lock.json"
+
+
+def _declared_dependencies(package_json: dict[str, Any]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for section in ("dependencies", "devDependencies"):
+        value = package_json.get(section)
+        if isinstance(value, dict):
+            merged.update({str(k): str(v) for k, v in value.items()})
+    return merged
+
+
+def render_package_lock(package_json_text: str) -> str | None:
+    """Return the template lock renamed for this app, or None if it has drifted.
+
+    Returning None is a signal to fall back to a real npm resolution rather
+    than an error: the template is a cache, never the source of truth.
+    """
+    try:
+        package_json = json.loads(package_json_text)
+        template = json.loads(PACKAGE_LOCK_TEMPLATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    root = template.get("packages", {}).get("")
+    if not isinstance(root, dict):
+        return None
+    if _declared_dependencies(root) != _declared_dependencies(package_json):
+        return None
+    name = package_json.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    template["name"] = name
+    root["name"] = name
+    return json.dumps(template, ensure_ascii=False, indent=2) + "\n"
 
 
 def validate_openapi(api_spec: dict[str, Any]) -> None:

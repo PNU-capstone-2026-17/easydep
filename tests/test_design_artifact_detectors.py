@@ -1,4 +1,6 @@
 from app.design.knowledge import detectors
+from app.design.services.api_spec.openapi import build_openapi_from_model
+from app.design.validation import design_readiness_report
 
 
 STATE = {
@@ -55,6 +57,98 @@ def test_api_detector_rejects_invalid_references_and_path_parameters():
     }
     found = {item.rule_id for item in detectors.api_spec_findings(model, STATE)}
     assert {"api.path-parameters-match", "api.schema-references-exist", "api.operation-ids-unique", "api.references-exist"} <= found
+
+
+def _cart_contract_state(binding: dict | None) -> tuple[dict, dict]:
+    state = {
+        "class_diagram_puml": (
+            "class CartPage <<Boundary>>\n"
+            "class ShoppingCartController <<Control>>\n"
+            "class CartLookupResult <<Entity>>\n"
+        ),
+        "usecase_spec": {"use_cases": [{"id": "UC_CART", "name": "View cart"}]},
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "CartPage", "stereotype": "Boundary", "methods": []},
+                {
+                    "className": "ShoppingCartController",
+                    "stereotype": "Control",
+                    "methods": ["getCart(cartId: String): CartLookupResult"],
+                },
+                {"className": "CartLookupResult", "stereotype": "Entity", "methods": []},
+            ]
+        },
+        "sequence_diagram_model": {
+            "Participants": [
+                {"name": "CartPage", "kind": "boundary", "source_class": "CartPage"},
+                {
+                    "name": "ShoppingCartController",
+                    "kind": "control",
+                    "source_class": "ShoppingCartController",
+                },
+            ],
+            "Messages": [
+                {
+                    "source": "CartPage",
+                    "target": "ShoppingCartController",
+                    "label": "getCart(cartId: String)",
+                    "type": "sync",
+                    "use_case_ids": ["UC_CART"],
+                }
+            ],
+        },
+    }
+    endpoint = {
+        "path": "/carts/{cartId}",
+        "method": "get",
+        "operation_id": "getCart",
+        "path_params": [{"name": "cartId", "type": "string", "required": True}],
+        "responses": [
+            {"status": 200, "schema_name": "CartResponse"},
+            {"status": 404, "description": "Cart not found"},
+        ],
+        "source_classes": ["CartPage", "ShoppingCartController"],
+        "use_case_ids": ["UC_CART"],
+    }
+    if binding is not None:
+        endpoint["control_binding"] = binding
+    model = {
+        "Endpoints": [endpoint],
+        "Schemas": [{"name": "CartResponse", "fields": []}],
+    }
+    return state, model
+
+
+def test_api_control_contract_detects_missing_binding_before_implementation():
+    state, model = _cart_contract_state(None)
+
+    found = {item.rule_id for item in detectors.api_spec_findings(model, state)}
+    report = design_readiness_report({**state, "api_spec_model": model}, ("api_spec",))
+
+    assert "api.control-binding-exists" in found
+    assert report["status"] == "NEEDS_INPUT"
+
+
+def test_api_control_contract_accepts_exact_mapping_and_projects_openapi_extension():
+    binding = {
+        "control": "ShoppingCartController",
+        "method": "getCart",
+        "arguments": [{"name": "cartId", "source": "$path.cartId"}],
+        "outcomes": [
+            {"status": 200, "outcome": "found"},
+            {"status": 404, "outcome": "not_found"},
+        ],
+    }
+    state, model = _cart_contract_state(binding)
+
+    assert detectors.api_spec_findings(model, state) == []
+    operation = build_openapi_from_model(model)["paths"]["/carts/{cartId}"]["get"]
+    assert operation["x-easydep-control"] == {
+        "control": "ShoppingCartController",
+        "method": "getCart",
+        "arguments": {"cartId": "$path.cartId"},
+        "outcomes": {"200": "found", "404": "not_found"},
+    }
 
 
 # ---------------------------------------------------------------------------

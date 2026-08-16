@@ -11,6 +11,7 @@ from .frontend_scaffold import (
     OPENAPI_GENERATOR_NAME,
     OPENAPI_GENERATOR_VERSION,
     openapi_typescript_fetch_command,
+    render_package_lock,
     resolve_api_base_url,
     validate_openapi,
     write_react_scaffold,
@@ -62,25 +63,31 @@ def generate_frontend_project(
         ),
         workspace_root,
     )
-    write_react_scaffold(
+    scaffold = write_react_scaffold(
         frontend_root,
         api_spec,
         application_name=application_name,
         api_base_url=effective_api_base_url,
     )
-    npm = "npm.cmd" if os.name == "nt" else "npm"
-    run_command(
-        "npm-package-lock",
-        [
-            npm,
-            "install",
-            "--package-lock-only",
-            "--ignore-scripts",
-            "--no-audit",
-            "--no-fund",
-        ],
-        frontend_root,
-    )
+    rendered_lock = render_package_lock(scaffold["package.json"])
+    if rendered_lock is not None:
+        (frontend_root / "package-lock.json").write_text(
+            rendered_lock, encoding="utf-8"
+        )
+    else:
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        run_command(
+            "npm-package-lock",
+            [
+                npm,
+                "install",
+                "--package-lock-only",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+            ],
+            frontend_root,
+        )
     if not (frontend_root / "package-lock.json").is_file():
         raise FrontendScaffoldError(
             "npm package-lock generation completed without package-lock.json"

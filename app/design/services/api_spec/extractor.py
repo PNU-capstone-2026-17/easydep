@@ -32,6 +32,36 @@ class ApiResponse(BaseModel):
     is_array: bool = Field(default=False)
 
 
+class ApiControlArgument(BaseModel):
+    """One explicit value flow from the HTTP request to a Control parameter."""
+
+    #: Exact parameter name in the BCE Control method.
+    name: str
+    #: ``$path.id``, ``$query.filter``, ``$body.field`` or ``$body``.
+    source: str
+
+
+class ApiControlOutcome(BaseModel):
+    """The named Control outcome that produces one documented HTTP status."""
+
+    status: int
+    outcome: str
+
+
+class ApiControlBinding(BaseModel):
+    """The executable application contract behind one HTTP operation.
+
+    This belongs in the API design model rather than an implementation prompt:
+    it is the single, reviewable answer to which Control operation receives an
+    endpoint and how every documented HTTP outcome is produced.
+    """
+
+    control: str
+    method: str
+    arguments: list[ApiControlArgument] = Field(default_factory=list)
+    outcomes: list[ApiControlOutcome] = Field(default_factory=list)
+
+
 class ApiEndpoint(BaseModel):
     #: "/orders/{orderId}" 처럼 중괄호로 경로 변수를 표기한다.
     path: str = Field(default="/")
@@ -47,6 +77,8 @@ class ApiEndpoint(BaseModel):
     source_classes: list[str] = Field(default_factory=list)
     #: 이 엔드포인트가 실현하는 유스케이스 id.
     use_case_ids: list[str] = Field(default_factory=list)
+    #: Endpoint-to-Control mapping used by design validation and implementation.
+    control_binding: ApiControlBinding | None = None
 
 
 class ApiSchema(BaseModel):
@@ -106,6 +138,13 @@ the inputs do not support.
   from the specification.
 - `source_class` on each schema: the Entity class it mirrors. Leave it empty for
   request-shaped schemas that do not correspond to one entity.
+- `control_binding` on every endpoint is mandatory. Set its `control` and
+  `method` to the exact BCE Control class and method that implement the endpoint.
+  Map every Control parameter once in `arguments`, using only `$path.<name>`,
+  `$query.<name>`, `$body.<field>`, or `$body`. Map every documented response
+  status once in `outcomes` with a meaningful named result such as `found`,
+  `not_found`, `created`, or `validation_error`. Do not use fabricated values,
+  implicit defaults, or an untyped `Object` result.
 - **Never invent a name or an id.** An empty list is honest; a made-up
   reference is a lie the trace matrix will believe.
 
@@ -117,6 +156,8 @@ the inputs do not support.
     through at least one endpoint,
 (e) every `source_classes` / `source_class` entry names a class in the given class
     diagram, and every `use_case_ids` entry appears in the given specification.
+(f) every endpoint has an exact Control binding; its argument sources and outcomes
+    cover the endpoint contract, and the same Control call appears in the sequence.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.

@@ -271,6 +271,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
     sequence = _read(spec.inputs.get("sequence"))
+    control_bindings = _openapi_control_bindings(_read(spec.inputs.get("openapi")))
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
     tasks: list[ImplementationTask] = []
@@ -305,6 +306,7 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
                     "path": operation.path,
                     "operationId": operation.operation_id,
                     "responses": [response.status for response in operation.responses],
+                    "controlBinding": control_bindings.get(operation.operation_id or ""),
                 }
                 for operation in api_port.operations
             ],
@@ -316,7 +318,15 @@ def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[Implementa
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         prompt = render_api_adapter_prompt(
-            spec, api_port, exact_contracts, sequence_context
+            spec,
+            api_port,
+            exact_contracts,
+            sequence_context,
+            {
+                operation.operation_id: control_bindings[operation.operation_id]
+                for operation in api_port.operations
+                if operation.operation_id in control_bindings
+            },
         ) + render_allowed_output_rules(allowed)
         prompt_path = output / f"{kebab}-api-adapter.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -968,8 +978,32 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
     return "\n\n".join(sections) or "// No Java contracts found"
 
 
+def _openapi_control_bindings(source: str) -> dict[str, dict[str, object]]:
+    """Read reviewed API-to-Control mappings carried by the OpenAPI extension."""
+    try:
+        document = json.loads(source)
+    except json.JSONDecodeError:
+        return {}
+    bindings: dict[str, dict[str, object]] = {}
+    for path_item in document.get("paths", {}).values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            operation_id = operation.get("operationId")
+            binding = operation.get("x-easydep-control")
+            if isinstance(operation_id, str) and isinstance(binding, dict):
+                bindings[operation_id] = binding
+    return bindings
+
+
 def render_api_adapter_prompt(
-    spec: JobSpec, api_port: ApiPortIR, contracts: str, sequence: str
+    spec: JobSpec,
+    api_port: ApiPortIR,
+    contracts: str,
+    sequence: str,
+    control_bindings: dict[str | None, dict[str, object]] | None = None,
 ) -> str:
     operations = "\n".join(
         f"- {operation.method} {operation.path}: "
@@ -993,6 +1027,9 @@ Rules:
 - Select Control operations only from the exact injected interfaces and sequence messages. Match
   request fields by name and compatible type; never fabricate domain values or silently drop a
   required input.
+- Follow the reviewed API-to-Control binding below when one is supplied. Its `arguments` map
+  is the only permitted HTTP-to-Control value flow and its `outcomes` map is the required
+  Control-result-to-HTTP-status mapping. Do not replace it with a resource-name guess.
 - Map every documented OpenAPI response status below to an explicit, observable Control outcome.
   A null result must not be assigned an arbitrary status. If the generated contracts cannot
   represent a documented response, fail compilation rather than concealing the design gap.
@@ -1011,6 +1048,12 @@ Rules:
 
 ```plantuml
 {sequence}
+```
+
+## Reviewed API-to-Control bindings
+
+```json
+{json.dumps(control_bindings or {}, ensure_ascii=False, indent=2)}
 ```
 
 ## Exact generated API and BCE contracts

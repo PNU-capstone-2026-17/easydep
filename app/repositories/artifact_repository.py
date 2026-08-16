@@ -35,6 +35,7 @@ from app.design.services.deployment_diagram.plantuml import (
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
+from app.design.validation import rehydrated_check_state
 
 
 class AppNotFound(Exception):
@@ -102,6 +103,7 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "sequence_diagram_puml",
         "valid_key": "sequence_diagram_syntax_valid",
         "errors_key": "sequence_diagram_syntax_errors",
+        "check_key": "sequence_diagram_check",
         # Stored as its interaction model; the PlantUML is derived from this.
         "source_key": "sequence_diagram_model",
         "source_format": FORMAT_JSON,
@@ -113,6 +115,7 @@ STAGE_ARTIFACTS: dict[str, dict[str, Any]] = {
         "state_key": "api_spec",
         "valid_key": "api_spec_syntax_valid",
         "errors_key": "api_spec_syntax_errors",
+        "check_key": "api_spec_check",
         # Stored as its endpoint model; the OpenAPI document is assembled from this.
         "source_key": "api_spec_model",
         "source_format": FORMAT_JSON,
@@ -248,6 +251,10 @@ def load_state(app_id: str) -> ArchitectureState:
             artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
+        # Check reports are derived evidence, not a second source of truth.
+        # Rebuild them from stored models so a page refresh cannot turn an
+        # unresolved mismatch into a deceptively clean implementation hand-off.
+        state.update(rehydrated_check_state(state))
         return state
 
 

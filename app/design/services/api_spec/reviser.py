@@ -30,6 +30,10 @@ same schema. Rules:
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is
   honest, a made-up one is a lie the trace matrix will believe.
+- Keep every endpoint's `control_binding` exact: it must name an existing BCE
+  Control method, map each Control argument from an explicit HTTP request source,
+  and name one outcome for every documented response status. Preserve an existing
+  binding unchanged unless the feedback or a reported contract issue requires it.
 Return the revised model strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.
 """

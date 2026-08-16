@@ -111,6 +111,37 @@ def _responses(endpoint: dict[str, Any], known: set[str]) -> dict[str, Any]:
     return responses or {"200": {"description": "Response"}}
 
 
+def _control_binding(endpoint: dict[str, Any]) -> dict[str, Any] | None:
+    """Project the reviewed design mapping into a portable OpenAPI extension."""
+    raw = endpoint.get("control_binding")
+    if not isinstance(raw, dict):
+        return None
+    control = str(raw.get("control", "")).strip()
+    method = str(raw.get("method", "")).strip()
+    if not control or not method:
+        return None
+    arguments = {
+        str(item.get("name", "")).strip(): str(item.get("source", "")).strip()
+        for item in raw.get("arguments", [])
+        if isinstance(item, dict)
+        and str(item.get("name", "")).strip()
+        and str(item.get("source", "")).strip()
+    }
+    outcomes = {
+        str(item.get("status")): str(item.get("outcome", "")).strip()
+        for item in raw.get("outcomes", [])
+        if isinstance(item, dict)
+        and str(item.get("status", "")).strip()
+        and str(item.get("outcome", "")).strip()
+    }
+    return {
+        "control": control,
+        "method": method,
+        "arguments": arguments,
+        "outcomes": outcomes,
+    }
+
+
 def build_openapi_from_model(model: dict[str, Any]) -> dict[str, Any]:
     """엔드포인트 모델을 OpenAPI 3.1 문서(dict)로 조립한다.
 
@@ -169,6 +200,10 @@ def build_openapi_from_model(model: dict[str, Any]) -> dict[str, Any]:
         operation_id = str(endpoint.get("operation_id", "")).strip()
         if operation_id:
             operation["operationId"] = operation_id
+
+        control_binding = _control_binding(endpoint)
+        if control_binding:
+            operation["x-easydep-control"] = control_binding
 
         parameters = _parameters(endpoint, known)
         if parameters:

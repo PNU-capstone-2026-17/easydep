@@ -1116,6 +1116,321 @@ def api_traceability(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def _api_location(endpoint: dict) -> str:
+    return f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
+
+
+def _control_method_contracts(state: dict) -> dict[str, dict[str, dict[str, object]]]:
+    """Return exact BCE Control method contracts keyed by class then method name."""
+    controls: dict[str, dict[str, dict[str, object]]] = {}
+    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+        stereotype = str(class_item.get("stereotype", "")).replace("<", "").replace(">", "").strip().lower()
+        if stereotype != "control":
+            continue
+        class_name = str(class_item.get("className") or "").strip()
+        if not class_name:
+            continue
+        methods: dict[str, dict[str, object]] = {}
+        for raw in class_item.get("methods") or []:
+            text = str(raw)
+            signature = method_call_signature(text)
+            if not signature:
+                continue
+            match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\((.*)\)$", signature)
+            if not match:
+                continue
+            parameters: list[tuple[str, str]] = []
+            raw_parameters = match.group(2).strip()
+            if raw_parameters:
+                for value in raw_parameters.split(","):
+                    parameter = value.strip()
+                    name, separator, type_name = parameter.partition(":")
+                    if not separator or not name.strip() or not type_name.strip():
+                        # The sequence/class contract validator reports the
+                        # malformed declaration itself. Do not pretend it is
+                        # a callable API target here.
+                        parameters = []
+                        break
+                    parameters.append((name.strip(), type_name.strip()))
+            methods[match.group(1)] = {
+                "signature": signature,
+                "parameters": tuple(parameters),
+                "returnType": method_return_type(text),
+            }
+        controls[class_name] = methods
+    return controls
+
+
+def _normalise_contract_type(value: str) -> str:
+    """Normalise the small type vocabulary shared by API and BCE models."""
+    token = re.sub(r"\s+", "", value or "").removesuffix("?").lower()
+    aliases = {
+        "string": "string", "str": "string",
+        "integer": "integer", "int": "integer", "long": "integer", "short": "integer",
+        "float": "number", "double": "number", "bigdecimal": "number", "number": "number",
+        "bool": "boolean", "boolean": "boolean",
+    }
+    return aliases.get(token, token)
+
+
+def _request_value_types(endpoint: dict, schemas: dict[str, dict]) -> dict[str, str]:
+    """Enumerate the only request values an API binding may consume."""
+    values: dict[str, str] = {}
+    for prefix, key in (("$path.", "path_params"), ("$query.", "query_params")):
+        for parameter in endpoint.get(key, []) or []:
+            if not isinstance(parameter, dict):
+                continue
+            name = str(parameter.get("name") or "").strip()
+            if name:
+                values[prefix + name] = str(parameter.get("type") or "string")
+    request_schema = str(endpoint.get("request_schema") or "").strip()
+    if request_schema:
+        values["$body"] = request_schema
+        for field in schemas.get(request_schema, {}).get("fields", []) or []:
+            if not isinstance(field, dict):
+                continue
+            name = str(field.get("name") or "").strip()
+            if name:
+                values[f"$body.{name}"] = str(field.get("type") or "string")
+    return values
+
+
+def _binding(endpoint: dict) -> dict | None:
+    value = endpoint.get("control_binding")
+    return value if isinstance(value, dict) else None
+
+
+def api_control_binding(model: dict, state: dict) -> list[Finding]:
+    """Ensure every API operation has a real, reviewable Control target."""
+    controls = _control_method_contracts(state)
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        location = _api_location(endpoint)
+        binding = _binding(endpoint)
+        if binding is None:
+            found.append(Finding(
+                "api.control-binding-exists",
+                "endpoint에 control_binding이 없음 — 구현할 BCE Control과 메서드를 명시해야 함",
+                location,
+            ))
+            continue
+        control = str(binding.get("control") or "").strip()
+        method = str(binding.get("method") or "").strip()
+        if not control or control not in controls:
+            found.append(Finding(
+                "api.control-binding-exists",
+                f"Control '{control or '<empty>'}'이 BCE의 <<Control>> 클래스로 존재하지 않음",
+                location,
+            ))
+            continue
+        if not method or method not in controls[control]:
+            found.append(Finding(
+                "api.control-binding-exists",
+                f"{control}에 '{method or '<empty>'}' 메서드가 정의되어 있지 않음",
+                location,
+            ))
+            continue
+        source_classes = {
+            str(item).strip() for item in endpoint.get("source_classes", []) or [] if str(item).strip()
+        }
+        if control not in source_classes:
+            found.append(Finding(
+                "api.control-binding-exists",
+                f"control_binding의 {control}이 source_classes에 추적되지 않음",
+                location,
+            ))
+    return found
+
+
+def api_control_arguments(model: dict, state: dict) -> list[Finding]:
+    """Reject implicit, missing, or type-incompatible HTTP-to-Control values."""
+    controls = _control_method_contracts(state)
+    schemas = {
+        str(item.get("name") or "").strip(): item
+        for item in model.get("Schemas", []) or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    }
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = _binding(endpoint)
+        if binding is None:
+            continue
+        control = str(binding.get("control") or "").strip()
+        method = str(binding.get("method") or "").strip()
+        contract = controls.get(control, {}).get(method)
+        if contract is None:
+            continue  # api_control_binding owns unknown targets.
+        location = _api_location(endpoint)
+        expected = dict(contract["parameters"])
+        supplied: dict[str, str] = {}
+        duplicate: set[str] = set()
+        for argument in binding.get("arguments", []) or []:
+            if not isinstance(argument, dict):
+                continue
+            name = str(argument.get("name") or "").strip()
+            source = str(argument.get("source") or "").strip()
+            if name in supplied:
+                duplicate.add(name)
+            elif name:
+                supplied[name] = source
+        if duplicate:
+            found.append(Finding(
+                "api.control-arguments-match",
+                f"Control 인자 {sorted(duplicate)}가 둘 이상 매핑됨",
+                location,
+            ))
+        if set(supplied) != set(expected):
+            found.append(Finding(
+                "api.control-arguments-match",
+                f"{control}.{method} 인자 {sorted(expected)}와 바인딩 인자 {sorted(supplied)}가 일치하지 않음",
+                location,
+            ))
+        available = _request_value_types(endpoint, schemas)
+        for name, source in supplied.items():
+            if source not in available:
+                found.append(Finding(
+                    "api.control-arguments-match",
+                    f"'{name}'의 원천 '{source or '<empty>'}'이 선언된 path/query/body 값이 아님",
+                    location,
+                ))
+                continue
+            if name not in expected:
+                continue
+            actual_type = _normalise_contract_type(available[source])
+            expected_type = _normalise_contract_type(expected[name])
+            if actual_type != expected_type:
+                found.append(Finding(
+                    "api.control-arguments-match",
+                    f"'{name}'의 원천 타입 {available[source]}이 Control 파라미터 타입 {expected[name]}과 호환되지 않음",
+                    location,
+                ))
+    return found
+
+
+def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
+    """Require a named Control result for every documented HTTP result."""
+    controls = _control_method_contracts(state)
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = _binding(endpoint)
+        if binding is None:
+            continue
+        control = str(binding.get("control") or "").strip()
+        method = str(binding.get("method") or "").strip()
+        contract = controls.get(control, {}).get(method)
+        if contract is None:
+            continue
+        location = _api_location(endpoint)
+        documented = {
+            int(item.get("status"))
+            for item in endpoint.get("responses", []) or []
+            if isinstance(item, dict) and str(item.get("status", "")).isdigit()
+        }
+        outcomes: dict[int, str] = {}
+        duplicate: set[int] = set()
+        for outcome in binding.get("outcomes", []) or []:
+            if not isinstance(outcome, dict) or not str(outcome.get("status", "")).isdigit():
+                continue
+            status = int(outcome["status"])
+            if status in outcomes:
+                duplicate.add(status)
+            outcomes[status] = str(outcome.get("outcome") or "").strip()
+        if documented != set(outcomes) or any(not value for value in outcomes.values()) or duplicate:
+            found.append(Finding(
+                "api.control-outcomes-cover-responses",
+                f"문서화한 응답 {sorted(documented)}과 Control outcome {sorted(outcomes)}이 일치하지 않거나 outcome 이름이 비어 있음",
+                location,
+            ))
+        for response in endpoint.get("responses", []) or []:
+            if not isinstance(response, dict):
+                continue
+            status = int(response.get("status", 0) or 0)
+            if 200 <= status < 300 and status != 204 and not str(response.get("schema_name") or "").strip():
+                found.append(Finding(
+                    "api.control-outcomes-cover-responses",
+                    f"{status} 성공 응답에 schema_name이 없어 생성 코드가 Object 응답으로 약화됨",
+                    location,
+                ))
+                break
+        needs_result = any(status != 204 for status in documented)
+        return_type = _normalise_contract_type(str(contract.get("returnType") or ""))
+        if needs_result and return_type in {"", "void", "object", "any", "map", "dict"}:
+            found.append(Finding(
+                "api.control-outcomes-cover-responses",
+                f"{control}.{method}의 반환 타입 '{contract.get('returnType') or '<none>'}'은 문서화한 결과를 구분할 수 없음",
+                location,
+            ))
+    return found
+
+
+def _sequence_diagrams_for_api(state: dict) -> list[dict]:
+    model = state.get("sequence_diagram_model") or {}
+    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+    if isinstance(diagrams, list):
+        return [item for item in diagrams if isinstance(item, dict)]
+    return [model] if isinstance(model, dict) else []
+
+
+def api_control_sequence(model: dict, state: dict) -> list[Finding]:
+    """Prove the claimed API target is present in an actual sequence path."""
+    controls = _control_method_contracts(state)
+    diagrams = _sequence_diagrams_for_api(state)
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = _binding(endpoint)
+        if binding is None:
+            continue
+        control = str(binding.get("control") or "").strip()
+        method = str(binding.get("method") or "").strip()
+        contract = controls.get(control, {}).get(method)
+        if contract is None:
+            continue
+        expected_signature = str(contract["signature"])
+        endpoint_use_cases = {
+            str(item).strip() for item in endpoint.get("use_case_ids", []) or [] if str(item).strip()
+        }
+        matches = False
+        for diagram in diagrams:
+            participant_classes = {
+                _participant_id(participant): str(
+                    participant.get("source_class") or participant.get("name") or ""
+                ).strip()
+                for participant in diagram.get("Participants", []) or []
+                if isinstance(participant, dict)
+            }
+            for message in diagram.get("Messages", []) or []:
+                if not isinstance(message, dict) or str(message.get("type", "sync")).lower() not in {"sync", "async", "self"}:
+                    continue
+                if participant_classes.get(str(message.get("target") or "").strip()) != control:
+                    continue
+                if method_call_signature(str(message.get("label") or "")) != expected_signature:
+                    continue
+                message_use_cases = {
+                    str(item).strip() for item in message.get("use_case_ids", []) or [] if str(item).strip()
+                }
+                if endpoint_use_cases and not (endpoint_use_cases & message_use_cases):
+                    continue
+                matches = True
+                break
+            if matches:
+                break
+        if not matches:
+            found.append(Finding(
+                "api.control-call-in-sequence",
+                f"{control}.{expected_signature} 호출이 이 endpoint의 시퀀스 흐름에 없음",
+                _api_location(endpoint),
+            ))
+    return found
+
+
 def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
     """첫 번째 메시지는 반드시 Actor → Boundary 호출이어야 함.
 
@@ -1673,6 +1988,10 @@ API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_schema_references": api_schema_references,
     "api_operation_ids": api_operation_ids,
     "api_traceability": api_traceability,
+    "api_control_binding": api_control_binding,
+    "api_control_arguments": api_control_arguments,
+    "api_control_outcomes": api_control_outcomes,
+    "api_control_sequence": api_control_sequence,
 }
 SPEC_DETECTORS = {**CLASS_DIAGRAM_DETECTORS, **SEQUENCE_DIAGRAM_DETECTORS, **API_SPEC_DETECTORS}
 

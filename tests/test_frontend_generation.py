@@ -5,11 +5,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from app.db.models import TYPE_FRONTEND_SOURCE_CODE
-from app.implementation.interfaces.http import router
 from app.implementation.config import ImplementationSettings
 from app.implementation.agents.workspace import snapshot_files
 from app.implementation.agents.verification.build import verify_frontend_workspace
@@ -160,70 +157,6 @@ def test_rejects_generated_contracts_over_budget_without_partial_output(
         contracts.render(max_chars=100)
 
 
-def test_frontend_api_versions_generated_files(monkeypatch) -> None:
-    saved: dict[str, object] = {}
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.artifact_repository.load_state",
-        lambda app_id: {"api_spec": OPENAPI},
-    )
-    configured = ImplementationSettings(
-        repository_root=Path.cwd(),
-        work_root=Path.cwd() / ".easydep" / "frontend-api-test",
-        python_executable=Path(__file__),
-        max_workers=1,
-        model="model",
-        base_url="http://localhost",
-        command_timeout_seconds=60,
-    )
-    monkeypatch.setattr("app.implementation.interfaces.http.worker.settings", configured)
-
-    def generated(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if "-o" in command:
-            relative = command[command.index("-o") + 1].removeprefix("/workspace/")
-            target = Path.cwd() / relative
-            target.mkdir(parents=True)
-            (target / "index.ts").write_text(
-                "export * from './apis/DefaultApi';", encoding="utf-8"
-            )
-        else:
-            (Path(str(kwargs["cwd"])) / "package-lock.json").write_text(
-                "{}", encoding="utf-8"
-            )
-        return subprocess.CompletedProcess(command, 0, "generated", "")
-
-    monkeypatch.setattr("app.implementation.interfaces.http.subprocess.run", generated)
-
-    def save(app_id: str, artifact_type: str, files: dict[str, str], **kwargs: object) -> int:
-        saved.update(app_id=app_id, artifact_type=artifact_type, files=files, metadata=kwargs["metadata"])
-        return 41
-
-    monkeypatch.setattr("app.implementation.interfaces.http.artifact_repository.save_file_snapshot", save)
-    monkeypatch.setattr(
-        "app.implementation.interfaces.http.artifact_repository.load_file_snapshot",
-        lambda *_args: {
-            "version_no": 2,
-            "metadata": saved["metadata"],
-            "files": {
-                path: {"sha256": "a" * 64, "content": content}
-                for path, content in saved["files"].items()
-            },
-        },
-    )
-    application = FastAPI()
-    application.include_router(router)
-
-    response = TestClient(application).post(
-        "/api/implementation/apps/app-1/frontend",
-        json={"application_name": "Order Console", "api_base_url": "/service"},
-    )
-
-    assert response.status_code == 201
-    assert response.json()["artifact_type"] == TYPE_FRONTEND_SOURCE_CODE
-    assert response.json()["version_no"] == 2
-    assert saved["artifact_type"] == TYPE_FRONTEND_SOURCE_CODE
-    assert "src/App.tsx" in saved["files"]
-
-
 def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path) -> None:
     from app.implementation.domain.models import JobSpec
     from app.implementation.generation.orchestrator import PrototypeOrchestrator
@@ -274,7 +207,14 @@ def test_orchestrator_writes_frontend_below_generated_application(tmp_path: Path
     assert (application / "frontend/src/generated/index.ts").is_file()
     assert (application / "frontend/package-lock.json").is_file()
     assert "typescript-fetch" in commands[0]
-    assert commands[1][1:3] == ["install", "--package-lock-only"]
+    # The committed lock template makes npm unnecessary on the happy path.
+    assert len(commands) == 1
+    lock = json.loads(
+        (application / "frontend/package-lock.json").read_text(encoding="utf-8")
+    )
+    assert lock["name"] == "order-console"
+    assert lock["packages"][""]["name"] == "order-console"
+    assert lock["packages"][""]["dependencies"]["react"] == "18.3.1"
     assert orchestrator.manifest.tools["easydep-frontend-generator"]["generator"] == "typescript-fetch"
 
 

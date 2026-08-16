@@ -35,6 +35,10 @@ def startup() -> None:
 
     load_dotenv()
     _ = OpenAI
+    # Docker images and dependency caches are warmed in their own executor.
+    # Startup/readiness and user-job workers stay available while it runs.
+    if implementation_worker.start_warmup():
+        print("[startup] 구현 런타임 워밍업 시작")
     init_db()
     # BERT 가중치를 1회 프리로드해 이후 요청은 캐시를 재사용한다.
     # (enable_bert_verify=False면 건너뛴다.)

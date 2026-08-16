@@ -87,11 +87,13 @@ def test_gradle_compile_uses_posix_workdir_and_workspace_volume(tmp_path: Path) 
     volume_indices = [index for index, value in enumerate(command) if value == "-v"]
     assert command[volume_indices[0] + 1] == f"{tmp_path.resolve()}:/workspace"
     assert command[command.index("-w") + 1] == "/workspace/.easydep/implementation-runs/orders/application"
+    # `bootJar` is deliberately absent: this pre-approval gate only proves the
+    # generated scaffold compiles, and packaging happens after approval.
     assert command[command.index(GRADLE_GENERATOR_IMAGE) + 1 :] == [
         "gradle",
         "compileJava",
-        "bootJar",
         "--no-daemon",
+        "--build-cache",
     ]
     assert jar.read_bytes() == b"boot jar"
     assert not local_gradle.exists()
@@ -120,3 +122,84 @@ def test_input_hash_tracks_bce_generator_source_changes(tmp_path: Path) -> None:
     source.write_text("updated generator grammar", encoding="utf-8")
 
     assert orchestrator._combined_input_hash() != first_hash
+
+
+def test_parallel_generators_record_evidence_in_declared_order(tmp_path: Path) -> None:
+    """A run directory is an immutable checkpoint, so evidence order must not
+    depend on which generator finishes first."""
+    import time
+
+    orchestrator = _orchestrator(tmp_path)
+    application = tmp_path / "application"
+    java_root = application / "src" / "main" / "java"
+    java_root.mkdir(parents=True)
+
+    # Finish in the exact reverse of the declared order.
+    delays = {"puml2code-bce": 0.25, "openapi-generator": 0.15}
+
+    def record(
+        name: str,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: int = 300,
+    ) -> CommandEvidence:
+        time.sleep(delays.get(name, 0.0))
+        evidence = CommandEvidence(name, command, str(cwd), 0, 0, "", "")
+        orchestrator._sink().commands.append(evidence)
+        return evidence
+
+    orchestrator._run_command = record  # type: ignore[method-assign]
+    orchestrator._generate_openapi = lambda app: record(  # type: ignore[method-assign]
+        "openapi-generator", ["openapi"], app
+    )
+    orchestrator._generate_frontend = lambda app: record(  # type: ignore[method-assign]
+        "easydep-frontend-generator", ["frontend"], app
+    )
+
+    orchestrator._generate_sources(application, java_root)
+
+    names = [item.name for item in orchestrator.manifest.commands]
+    assert names == [
+        "puml2code-bce-image",
+        "puml2code-bce",
+        "openapi-generator",
+        "easydep-frontend-generator",
+    ]
+
+
+def test_parallel_generator_failure_propagates(tmp_path: Path) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    application = tmp_path / "application"
+    java_root = application / "src" / "main" / "java"
+    java_root.mkdir(parents=True)
+
+    def boom(_application: Path) -> None:
+        raise RuntimeError("openapi generation failed")
+
+    def record(
+        name: str,
+        command: list[str],
+        cwd: Path,
+        timeout_seconds: int = 300,
+    ) -> CommandEvidence:
+        evidence = CommandEvidence(name, command, str(cwd), 0, 0, "", "")
+        orchestrator._sink().commands.append(evidence)
+        return evidence
+
+    orchestrator._run_command = record  # type: ignore[method-assign]
+    orchestrator._generate_openapi = boom  # type: ignore[method-assign]
+    orchestrator._generate_frontend = lambda app: record(  # type: ignore[method-assign]
+        "easydep-frontend-generator", ["frontend"], app
+    )
+
+    try:
+        orchestrator._generate_sources(application, java_root)
+    except RuntimeError as error:
+        assert "openapi generation failed" in str(error)
+    else:  # pragma: no cover - the failure must not be swallowed
+        raise AssertionError("a failing generator must surface to the caller")
+
+    # A failed run still has to report what the other generators did.
+    names = [item.name for item in orchestrator.manifest.commands]
+    assert "puml2code-bce" in names
+    assert "easydep-frontend-generator" in names

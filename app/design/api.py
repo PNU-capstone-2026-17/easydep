@@ -46,8 +46,15 @@ from app.design.graphs.design_graph import (
 )
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.rtm import build_design_rtm, render_design_rtm_md
+from app.design.validation import design_readiness_report
 
 router = APIRouter(tags=["design"])
+
+
+def _stage_has_findings(payload: dict, stage: str) -> bool:
+    validation = payload.get("validation") if isinstance(payload, dict) else None
+    item = validation.get(stage) if isinstance(validation, dict) else None
+    return bool(item.get("findings")) if isinstance(item, dict) else False
 
 
 class StageRequest(BaseModel):
@@ -65,6 +72,12 @@ class RewindRequest(BaseModel):
 class ReviseRequest(BaseModel):
     #: "{stage}:{element}" — 추적표의 change_plan 이 주는 ref 그대로.
     target: str
+    feedback: str = ""
+
+
+class ResolveIssuesRequest(BaseModel):
+    stage: str
+    #: Combined with the deterministic findings before the design agent revises.
     feedback: str = ""
 
 
@@ -199,6 +212,104 @@ def revise_design_element(app_id: str, request: ReviseRequest) -> JSONResponse:
             "touched": result["touched"],
         }
     )
+
+
+@router.post("/api/apps/{app_id}/design/resolve")
+def resolve_design_issues(app_id: str, request: ResolveIssuesRequest) -> JSONResponse:
+    """Repair a visible mismatch, then let the normal design checker re-run.
+
+    The user may add requirements in ``feedback``.  The deterministic findings
+    are always included, so the revision cannot silently address only the prose
+    request while leaving the blocking contract mismatch behind.
+    """
+    validate_app_id(app_id)
+    state = require_app(app_id)
+    if request.stage not in DESIGN_STAGES:
+        raise HTTPException(status_code=404, detail=f"Unknown design stage: {request.stage}")
+    report = design_readiness_report(state, (request.stage,))
+    findings = [
+        str(item.get("finding", ""))
+        for item in report.get("findings", [])
+        if isinstance(item, dict) and item.get("finding")
+    ]
+    if not findings:
+        return JSONResponse(
+            content={
+                "app_id": app_id,
+                **to_web_response(state),
+                "status": "ready",
+                "stage": request.stage,
+            }
+        )
+    directive = (
+        "Resolve every deterministic design-contract finding below. Preserve all "
+        "unrelated design decisions. Update the structured model so the endpoint, "
+        "BCE Control contract, sequence flow, argument sources, and documented HTTP "
+        "outcomes agree; do not hide a gap with Object, TODO, or a fabricated value.\n\n"
+        + "\n".join(f"- {finding}" for finding in findings)
+    )
+    if request.feedback.strip():
+        directive += "\n\nAdditional user requirements:\n" + request.feedback.strip()
+
+    try:
+        needs_upstream_repair = request.stage == "api_spec" and any(
+            rule in finding
+            for finding in findings
+            for rule in (
+                "api.control-binding-exists",
+                "api.control-call-in-sequence",
+            )
+        )
+        if needs_upstream_repair:
+            # A missing Control method or sequence call cannot be fixed by an
+            # OpenAPI-only edit. Rebuild the three dependent design stages in
+            # order, feeding the same explicit finding and user request into
+            # each model revision. The result pauses at API again, where its
+            # normal checker decides whether hand-off is now safe.
+            reset_design(app_id)
+            start_design(app_id, state)
+            result = resume_design(app_id, directive)  # Class/BCE repair.
+            if _stage_has_findings(result, "class_diagram"):
+                return JSONResponse(content=result)
+            result = resume_design(app_id, "")  # Generate sequence from BCE.
+            if _stage_has_findings(result, "sequence_diagram"):
+                return JSONResponse(content=result)
+            result = resume_design(app_id, directive)  # Sequence repair.
+            if _stage_has_findings(result, "sequence_diagram"):
+                return JSONResponse(content=result)
+            result = resume_design(app_id, "")  # Generate API from BCE + sequence.
+            if _stage_has_findings(result, "api_spec"):
+                return JSONResponse(content=result)
+            result = resume_design(app_id, directive)  # API repair + recheck.
+        else:
+            session = session_status(app_id)
+            if session["active"]:
+                if session.get("stage") != request.stage:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "message": "Resolve the active design stage first.",
+                            "activeStage": session.get("stage"),
+                            "requestedStage": request.stage,
+                        },
+                    )
+                result = resume_design(app_id, directive)
+            else:
+                # An older client could have advanced despite findings. Rewind
+                # only to the invalid stage, then apply the repair directive.
+                if request.stage == DESIGN_STAGES[0]:
+                    reset_design(app_id)
+                    start_design(app_id, state)
+                else:
+                    rewind_design(app_id, request.stage)
+                result = resume_design(app_id, directive)
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=502, detail=f"Design issue resolution failed: {error}"
+        ) from error
+    return JSONResponse(content=result)
 
 
 @router.get("/api/apps/{app_id}/design/session")

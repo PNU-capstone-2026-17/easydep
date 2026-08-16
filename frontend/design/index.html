@@ -217,6 +217,7 @@
     .impact strong { color: var(--text); }
     .impact ul { margin: 4px 0 8px; padding-left: 18px; }
     .impact li { word-break: break-all; }
+    .hidden { display: none !important; }
 
     .impact .warn {
       display: block;
@@ -486,41 +487,28 @@
         </div>
 
         <div class="field">
-          <label for="feedbackText">현재 산출물 피드백 — 비워두고 [다음 단계]를 누르면 그대로 진행합니다</label>
-          <textarea id="feedbackText" spellcheck="false" placeholder="예) 주문 클래스에 주문일시 필드를 추가해줘"></textarea>
+          <label id="revisionRequestLabel" for="feedbackText">설계 수정 요청 — 현재 산출물에 반영됩니다. 비워두고 다음 단계를 누르면 그대로 진행합니다</label>
+          <textarea id="feedbackText" spellcheck="false" placeholder="예) cartId 기준으로 장바구니를 조회하고, 없으면 404 결과를 명시해줘"></textarea>
         </div>
 
         <div class="actions">
           <button id="generateButton" type="button">설계 시작</button>
-          <button id="feedbackButton" type="button" class="secondary">피드백 반영</button>
+          <button id="feedbackButton" type="button" class="secondary">수정 요청 반영</button>
+          <button id="fixFindingsButton" type="button" class="secondary hidden">불일치 수정하기</button>
           <button id="nextButton" type="button" class="secondary">다음 단계</button>
-        </div>
-
-        <div class="field" id="frontendCard">
-          <label for="frontendName">프론트엔드 뼈대 생성 — OpenAPI Generator로 TypeScript client/model을 만듭니다</label>
-          <input id="frontendName" value="EasyDep Application" maxlength="120">
-          <label for="frontendBaseUrl">API 기본 주소 (선택 — 비우면 OpenAPI servers 사용)</label>
-          <input id="frontendBaseUrl" value="" placeholder="예: https://api.example.com" maxlength="500" spellcheck="false">
-          <button id="frontendButton" type="button" class="secondary" disabled>OpenAPI 뼈대 생성</button>
-          <div id="frontendResult" class="impact hidden"></div>
         </div>
 
         <!-- 버튼이 왜 안 눌리는지 말해준다. 막혀 있는데 이유가 없으면 고장으로 보인다. -->
         <div id="stateHint" class="impact hidden"></div>
 
-        <!-- 완성된 설계를 고치는 길. 무엇을 어떻게 고칠지 함께 받는다 —
-             고른 항목과 추적표가 알려준 하류 항목만 바뀌고 나머지는 그대로다. -->
+        <!-- 완성된 설계를 고치는 길. 위의 설계 수정 요청을 사용하며, 고른 항목과
+             추적표가 알려준 하류 항목만 바뀌고 나머지는 그대로다. -->
         <div class="field hidden" id="changeCard">
           <label for="changeTarget">수정할 대상 — 고르면 함께 바뀔 것을 알려줍니다</label>
           <select id="changeTarget"></select>
           <div id="changeImpact" class="impact hidden"></div>
-          <label for="changeFeedback" id="changeFeedbackLabel" class="hidden">
-            어떻게 고칠까요
-          </label>
-          <textarea id="changeFeedback" class="hidden" spellcheck="false"
-                    placeholder="예) 주문일시 필드를 추가해줘"></textarea>
           <button id="reviseButton" type="button" class="secondary" disabled>
-            수정하기
+            선택한 대상 수정
           </button>
         </div>
       </div>
@@ -598,8 +586,10 @@
     const stepsEl = document.getElementById("steps");
     const usecaseSpecText = document.getElementById("usecaseSpecText");
     const feedbackText = document.getElementById("feedbackText");
+    const revisionRequestLabel = document.getElementById("revisionRequestLabel");
     const generateButton = document.getElementById("generateButton");
     const feedbackButton = document.getElementById("feedbackButton");
+    const fixFindingsButton = document.getElementById("fixFindingsButton");
     const nextButton = document.getElementById("nextButton");
     const artifactTitle = document.getElementById("artifactTitle");
     const artifactBadge = document.getElementById("artifactBadge");
@@ -616,22 +606,16 @@
     const changeCard = document.getElementById("changeCard");
     const changeTarget = document.getElementById("changeTarget");
     const changeImpact = document.getElementById("changeImpact");
-    const changeFeedback = document.getElementById("changeFeedback");
-    const changeFeedbackLabel = document.getElementById("changeFeedbackLabel");
     const reviseButton = document.getElementById("reviseButton");
-    const frontendName = document.getElementById("frontendName");
-    const frontendBaseUrl = document.getElementById("frontendBaseUrl");
-    const frontendButton = document.getElementById("frontendButton");
-    const frontendResult = document.getElementById("frontendResult");
 
     appIdInput.value = workflow.appId;
 
     generateButton.addEventListener("click", () => startDesign());
     feedbackButton.addEventListener("click", () => resumeDesign(feedbackText.value));
+    fixFindingsButton.addEventListener("click", () => resolveDesignFindings());
     nextButton.addEventListener("click", advanceToImplementation);
     changeTarget.addEventListener("change", () => renderChangeImpact());
     reviseButton.addEventListener("click", () => applySelectedChange());
-    frontendButton.addEventListener("click", () => generateFrontend());
 
     // 보고 있는 단계. 파이프라인 위치(currentStage)와 다를 수 있다.
     function viewedStage() {
@@ -649,7 +633,9 @@
 
     // 볼 수 있는 단계 = 이미 만들어진 단계, 그리고 지금 진행 중인 단계.
     function isViewable(index) {
-      return workflow.completed.has(stages[index].id) || index === workflow.currentIndex;
+      // 불일치가 있는 산출물도 반드시 열어 수정할 수 있어야 한다. 완료 여부는
+      // "구현으로 넘길 수 있는가"의 기준이지, 사용자가 오류를 볼 권한의 기준이 아니다.
+      return hasArtifact(stages[index].id) || index === workflow.currentIndex;
     }
 
     function isCompleted(stageId) {
@@ -734,8 +720,26 @@
     // 마지막 설계 게이트를 통과한 뒤에는 구현 화면으로 바로 이어 준다. 이미 완료된
     // 설계라면 서버를 다시 호출하지 않고 곧바로 이동한다.
     async function advanceToImplementation() {
+      if (allDesignFindings().length) {
+        showError(new Error("설계 불일치가 남아 구현 단계로 이동할 수 없습니다. [불일치 수정하기]로 수정한 뒤 다시 검증하세요."));
+        render();
+        return;
+      }
       if (!workflow.finished) await resumeDesign("");
-      if (workflow.finished) window.location.assign("/implementation/");
+      if (workflow.finished && !allDesignFindings().length) window.location.assign("/implementation/");
+    }
+
+    // 설계 검증 결과와 사용자가 적은 요구사항을 한 요청으로 보낸다. 서버는 현재
+    // 모델을 고친 뒤 같은 결정론 검증을 다시 실행하므로, 버튼은 단순 경고 닫기가 아니다.
+    function resolveDesignFindings() {
+      const stage = viewedStage();
+      const findings = stageFindings(stage.id);
+      if (!findings.length) return;
+      return drive("/design/resolve", {
+        stage: stage.id,
+        feedback: feedbackText.value.trim()
+      }, `${stage.label} 불일치 수정 중: 피드백을 반영한 뒤 계약을 다시 검증합니다`
+      ).then(() => { feedbackText.value = ""; });
     }
 
     // 지난 단계 보기. **서버를 부르지 않는다** — 이미 받아둔 산출물을 보여줄 뿐이고,
@@ -775,6 +779,7 @@
     }
 
     function selectedChange() {
+      if (!workflow.finished) return null;
       return workflow.changePlan.find((item) => item.ref === changeTarget.value) || null;
     }
 
@@ -800,11 +805,11 @@
     function renderChangeImpact() {
       const item = selectedChange();
       const chosen = Boolean(item);
+      const hasFindings = allDesignFindings().length > 0;
 
       changeImpact.classList.toggle("hidden", !chosen);
-      changeFeedback.classList.toggle("hidden", !chosen);
-      changeFeedbackLabel.classList.toggle("hidden", !chosen);
-      reviseButton.disabled = !chosen;
+      reviseButton.disabled = !chosen || hasFindings;
+      renderRevisionRequestContext(item);
       if (!chosen) return;
 
       const list = item.affects.length
@@ -823,43 +828,35 @@
     // 알려준 하류 항목만 바뀐다.
     function applySelectedChange() {
       const item = selectedChange();
-      const instruction = changeFeedback.value.trim();
+      const instruction = feedbackText.value.trim();
       if (!item) return;
       if (!instruction) {
-        showError(new Error("어떻게 고칠지 적어주세요."));
+        showError(new Error("설계 수정 요청을 적어주세요."));
         render();
         return;
       }
 
       return drive("/design/revise", { target: item.ref, feedback: instruction },
         `${item.element} 수정 중: 영향받는 항목까지 함께 고칩니다`
-      ).then(() => { changeFeedback.value = ""; });
+      ).then(() => { feedbackText.value = ""; });
     }
 
-    async function generateFrontend() {
-      if (!workflow.appId || !hasArtifact("api_spec")) {
-        showError(new Error("API Specification을 먼저 생성하세요."));
-        render();
-        return;
-      }
-      frontendButton.disabled = true;
-      setStatus("OpenAPI Generator 실행 중", false);
-      try {
-        const result = await request(`/api/implementation/apps/${workflow.appId}/frontend`, {
-          method: "POST",
-          body: JSON.stringify({
-            application_name: frontendName.value.trim(),
-            api_base_url: frontendBaseUrl.value.trim() || null
-          })
-        });
-        const files = (result.files || []).map((item) => `<li><code>${escapeHtml(item.path)}</code></li>`).join("");
-        frontendResult.innerHTML = `<strong>FRONTEND_SOURCE_CODE v${result.version_no}</strong> 뼈대 생성 완료<ul>${files}</ul>`;
-        frontendResult.classList.remove("hidden");
-        setStatus("프론트엔드 뼈대 생성 완료", true);
-      } catch (error) {
-        showError(error);
-      } finally {
-        render();
+    // 수정 요청 입력은 하나다. 진행 중에는 현재 게이트를, 설계 완료 뒤에는 선택한
+    // 추적 대상과 그 영향 범위를 수정한다.
+    function renderRevisionRequestContext(item = selectedChange()) {
+      const findings = stageFindings(viewedStage().id);
+      if (findings.length) {
+        revisionRequestLabel.textContent = "설계 수정 요청 — 불일치 수정에 함께 반영됩니다";
+        feedbackText.placeholder = "예) cartId 기준으로 장바구니를 조회하고, 없으면 404 결과를 명시해줘";
+      } else if (item) {
+        revisionRequestLabel.textContent = `설계 수정 요청 — 선택한 ${item.element}과 영향 범위에 반영됩니다`;
+        feedbackText.placeholder = `예) ${item.element}에 필요한 필드나 동작을 추가해줘`;
+      } else if (workflow.finished) {
+        revisionRequestLabel.textContent = "설계 수정 요청 — 아래에서 수정할 대상을 고른 뒤 반영합니다";
+        feedbackText.placeholder = "예) 주문일시 필드를 추가해줘";
+      } else {
+        revisionRequestLabel.textContent = "설계 수정 요청 — 현재 산출물에 반영됩니다. 비워두고 다음 단계를 누르면 그대로 진행합니다";
+        feedbackText.placeholder = "예) cartId 기준으로 장바구니를 조회하고, 없으면 404 결과를 명시해줘";
       }
     }
 
@@ -934,13 +931,21 @@
     }
 
     function updateCompletion(stageId) {
-      if (hasArtifact(stageId) && getValidation(stageId).valid !== false) {
+      if (hasArtifact(stageId) && getValidation(stageId).valid !== false && !stageFindings(stageId).length) {
         workflow.completed.add(stageId);
       }
     }
 
     function getValidation(stageId) {
       return workflow.validation[stageId] || { valid: undefined, errors: [] };
+    }
+
+    function stageFindings(stageId) {
+      return getValidation(stageId).findings || [];
+    }
+
+    function allDesignFindings() {
+      return stages.flatMap((stage) => stageFindings(stage.id).map((finding) => ({ stage, finding })));
     }
 
     function render() {
@@ -952,13 +957,19 @@
       generateButton.disabled = !notStarted || !workflow.appId;
       // 피드백·다음은 게이트에서 멈춰 있을 때, 그리고 **그 단계를 보고 있을 때만**.
       const atGate = workflow.sessionActive && workflow.viewIndex === workflow.currentIndex;
+      feedbackButton.classList.toggle("hidden", workflow.finished);
       feedbackButton.disabled = !atGate;
-      nextButton.disabled = !(atGate || workflow.finished);
+      const viewedFindings = stageFindings(viewedStage().id);
+      const canResolve = viewedFindings.length && (workflow.finished || atGate);
+      fixFindingsButton.classList.toggle("hidden", !canResolve);
+      fixFindingsButton.disabled = !canResolve;
+      nextButton.disabled = !(workflow.finished || (atGate && !stageFindings(currentStage().id).length));
       nextButton.textContent = workflow.finished || workflow.currentIndex >= stages.length - 1
         ? "시스템 구현으로 이동" : "다음 단계";
-      // 수정 대상 고르기는 한 번이라도 돌린 뒤에만 의미가 있다.
-      changeCard.classList.toggle("hidden", !workflow.changePlan.length);
-      frontendButton.disabled = !workflow.appId || !hasArtifact("api_spec");
+      // 수정 대상 고르기는 설계가 완료된 뒤에만 의미가 있다. 진행 중 수정은 위의
+      // 단일 요청을 현재 게이트에 반영한다.
+      changeCard.classList.toggle("hidden", !(workflow.finished && workflow.changePlan.length));
+      renderChangeImpact();
       renderStateHint();
     }
 
@@ -969,11 +980,19 @@
         message = "App ID 가 없습니다. <strong>요구사항 분석을 먼저 진행하세요</strong> — "
                 + "분석을 시작할 때 발급되고, 이 화면이 그대로 이어받습니다.";
       } else if (workflow.finished) {
-        message = "이 앱은 설계가 <strong>이미 완료</strong>되어 있습니다. "
+        const findings = allDesignFindings();
+        message = findings.length
+          ? `설계 불일치가 <strong>${findings.length}건</strong> 남아 구현 단계로 이동할 수 없습니다. `
+            + `문제가 있는 단계를 열고 <strong>[불일치 수정하기]</strong>를 누르거나, 설계 수정 요청에 요구사항을 적어 수정하세요.`
+          : "이 앱은 설계가 <strong>이미 완료</strong>되어 있습니다. "
                 + "<a href=\"/implementation/\"><strong>시스템 구현으로 이동</strong></a>하거나, 고칠 것이 있으면 아래 <strong>[수정할 대상]</strong>에서 고르세요 — "
                 + "어느 단계부터 다시 만들어야 하는지 계산해 줍니다.<br>"
                 + "새 프로젝트로 시작하려면 요구사항 분석 화면에서 "
                 + "<strong>[새 App ID 발급]</strong>을 먼저 누르세요.";
+      } else if (workflow.sessionActive && stageFindings(currentStage().id).length) {
+        message = `현재 단계에 설계 불일치가 <strong>${stageFindings(currentStage().id).length}건</strong> 있습니다. `
+          + "설계 수정 요청에 요구사항을 적고 <strong>[수정 요청 반영]</strong>을 누르거나, "
+          + "<strong>[불일치 수정하기]</strong>로 검증 결과를 자동 수정 요청에 포함하세요.";
       }
       stateHint.innerHTML = message;
       stateHint.classList.toggle("hidden", !message);
@@ -1022,10 +1041,12 @@
         : workflow.sessionActive ? "확인 대기"
         : isCompleted(stage.id) ? "done" : "locked";
       stepMetric.textContent = `${workflow.viewIndex + 1} / ${stages.length}`;
-      validMetric.textContent = validation.valid === true ? "OK" : validation.valid === false ? "FAIL" : "N/A";
+      const findings = stageFindings(stage.id);
+      validMetric.textContent = findings.length ? `FIX ${findings.length}`
+        : validation.valid === true ? "OK" : validation.valid === false ? "FAIL" : "N/A";
       doneMetric.textContent = String(workflow.completed.size);
 
-      const errors = validation.errors || [];
+      const errors = [...(validation.errors || []), ...findings];
       errorOutput.classList.toggle("empty", errors.length === 0);
       errorOutput.textContent = errors.length ? errors.join("\n\n") : "검증 오류 없음";
 

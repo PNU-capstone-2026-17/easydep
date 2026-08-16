@@ -167,6 +167,55 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     assert sequence_path.read_text(encoding="utf-8").count("@startuml") == 2
     assert job["tools"]["puml2codeRoot"].startswith("app/implementation/tools/")
     assert "openapiGeneratorJar" not in job["tools"]
+    assert job["progressPath"].endswith("generation-progress.json")
+
+
+def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -> None:
+    job_path = tmp_path / "job" / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    (job_path.parent / "generation-progress.json").write_text(
+        json.dumps(
+            {
+                "status": "VERIFYING",
+                "message": "생성된 백엔드를 컴파일하고 패키징하고 있습니다.",
+                "updatedAt": "2026-08-16T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: Path) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
+        "An unresolved design must not prepare or run an implementation job"
+    )
+    try:
+        record = implementation_worker.create_job(
+            "app-1",
+            {"class_diagram_puml": "class Cart", "api_spec": {"openapi": "3.1.0", "paths": {}}},
+            "com.example",
+            False,
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "NEEDS_INPUT"
+    assert record["workflow"]["currentPhase"] == "design-validation"
+    assert record["design_validation"]["status"] == "NEEDS_INPUT"
+    report = tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
+    assert report.is_file()
+
+    public = ImplementationWorker.public_record(
+        ImplementationWorker._with_live_generation_progress(
+            {"status": "GENERATING", "job_path": str(job_path), "updated_at": "old"}
+        )
+    )
+
+    assert public["status"] == "VERIFYING"
+    assert public["progress"]["message"].startswith("생성된 백엔드")
+    assert "job_path" not in public
 
 
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:

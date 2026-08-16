@@ -7,7 +7,10 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
@@ -44,6 +47,7 @@ PROMOTION_INITIAL_DELAY_SECONDS = 0.25
 PROMOTION_MAX_DELAY_SECONDS = 2.0
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
 GRADLE_COMMAND_TIMEOUT_SECONDS = 900
+PROGRESS_SCHEMA = "easydep-implementation-progress/v1alpha1"
 # Docker Desktop accepts a Windows host path as the bind-mount source, but all
 # paths interpreted by the Linux container must be POSIX paths.  Mount every
 # implementation input below one fixed container root so BCE, OpenAPI, and
@@ -98,16 +102,75 @@ def load_job(path: Path) -> JobSpec:
         agent_top_p=float(agent.get("topP", 0.7)),
         agent_max_output_tokens=int(agent.get("maxOutputTokens", 4096)),
         agent_reasoning_budget=int(agent.get("reasoningBudget", 2048)),
+        progress_path=(
+            resolve(data["progressPath"])
+            if isinstance(data.get("progressPath"), str)
+            else None
+        ),
     )
+
+
+class _ManifestBuffer:
+    """Per-thread sink so parallel generators never interleave manifest writes.
+
+    A run directory is an immutable, reproducible checkpoint, so the evidence
+    it records must not depend on which generator happened to finish first.
+    """
+
+    def __init__(self) -> None:
+        self.commands: list[CommandEvidence] = []
+        self.diagnostics: list[Diagnostic] = []
+        self.tools: dict[str, object] = {}
 
 
 class PrototypeOrchestrator:
     def __init__(self, spec: JobSpec):
         self.spec = spec
         self.manifest = RunManifest(job_name=spec.name)
+        self._sinks = threading.local()
+
+    def _sink(self):
+        """Return the buffer for this thread, or the manifest when sequential."""
+        return getattr(self._sinks, "target", None) or self.manifest
+
+    def _generate_sources(self, application: Path, java_root: Path) -> None:
+        """Run the three independent generators concurrently.
+
+        They write to disjoint trees -- BCE to src/main/java/<pkg>/bce, OpenAPI
+        to src/main/java/<pkg>/api, and the frontend to application/frontend --
+        so only the shared manifest needs isolating.
+        """
+        lanes = (
+            (_ManifestBuffer(), lambda: self._generate_bce(java_root)),
+            (_ManifestBuffer(), lambda: self._generate_openapi(application)),
+            (_ManifestBuffer(), lambda: self._generate_frontend(application)),
+        )
+
+        def lane(buffer: _ManifestBuffer, call) -> None:
+            self._sinks.target = buffer
+            try:
+                call()
+            finally:
+                self._sinks.target = None
+
+        try:
+            with ThreadPoolExecutor(
+                max_workers=len(lanes), thread_name_prefix="easydep-generate"
+            ) as pool:
+                futures = [pool.submit(lane, buffer, call) for buffer, call in lanes]
+                for future in futures:
+                    future.result()
+        finally:
+            # Merge in declaration order, never completion order.  This runs even
+            # when a lane fails: a failed run still has to report the evidence
+            # from the generators that did execute.
+            for buffer, _ in lanes:
+                self.manifest.commands.extend(buffer.commands)
+                self.manifest.diagnostics.extend(buffer.diagnostics)
+                self.manifest.tools.update(buffer.tools)
 
     def run(self) -> Path:
-        self.manifest.status = "VALIDATING_INPUT"
+        self._set_status("VALIDATING_INPUT", "입력 산출물을 검증하고 있습니다.")
         self._validate_inputs()
         self.manifest.input_hash = self._combined_input_hash()
         staging, final = self._select_run_paths()
@@ -117,12 +180,13 @@ class PrototypeOrchestrator:
         # destination would correctly be rejected by _promote, but only after
         # spending time on every generator again.
         if final.exists():
+            self._set_status("REUSING_GENERATED_RUN", "동일 입력의 생성 결과를 재사용하고 있습니다.")
             return final
         self._reset_target(staging)
         staging.mkdir(parents=True, exist_ok=True)
 
         if any(item.severity == "ERROR" for item in self.manifest.diagnostics):
-            self.manifest.status = "NEEDS_INPUT"
+            self._set_status("NEEDS_INPUT", "생성 전에 입력 보완이 필요합니다.")
             self._write_reports(staging)
             self._promote(staging, final)
             return final
@@ -133,8 +197,9 @@ class PrototypeOrchestrator:
 
         try:
             if self.spec.job_type == "FEEDBACK_REVISION":
+                self._set_status("PREPARING_FEEDBACK", "기존 산출물과 피드백을 준비하고 있습니다.")
                 self._prepare_feedback_revision(staging)
-                self.manifest.status = "SUCCEEDED"
+                self._set_status("SUCCEEDED", "피드백 적용 준비가 완료되었습니다.")
                 self.manifest.generated_files = sorted(
                     str(path.relative_to(staging)).replace("\\", "/")
                     for path in staging.rglob("*")
@@ -143,10 +208,12 @@ class PrototypeOrchestrator:
                 self._write_reports(staging)
                 self._promote(staging, final)
                 return final
-            self.manifest.status = "GENERATING_CODE"
-            self._generate_bce(java_root)
-            self._generate_openapi(application)
-            self._generate_frontend(application)
+            self._set_status(
+                "GENERATING_SOURCES",
+                "BCE·OpenAPI·프런트엔드 코드를 생성하고 있습니다.",
+            )
+            self._generate_sources(application, java_root)
+            self._set_status("PREPARING_BUILD", "생성된 애플리케이션 프로젝트를 준비하고 있습니다.")
             self._write_gradle_project(application)
             self._write_application_entrypoint(java_root)
             self._write_runtime_configuration(application)
@@ -156,9 +223,10 @@ class PrototypeOrchestrator:
             capture_generated_contracts(staging, self.spec.base_package)
 
             if self.spec.verify_compile:
-                self.manifest.status = "VERIFYING"
+                self._set_status("VERIFYING", "생성된 백엔드를 컴파일하고 있습니다.")
                 self._compile(application)
 
+            self._set_status("PLANNING", "구현 작업과 의존 관계를 계획하고 있습니다.")
             tasks = generate_implementation_tasks(self.spec, staging)
             self.manifest.implementation_tasks = [task.to_dict() for task in tasks]
             self.manifest.agent_execution = write_execution_plan(
@@ -169,9 +237,9 @@ class PrototypeOrchestrator:
                 self.spec.agent_base_url,
             )
 
-            self.manifest.status = "SUCCEEDED"
+            self._set_status("SUCCEEDED", "초기 생성과 구현 계획 준비가 완료되었습니다.")
         except Exception as error:  # evidence is written before returning the failed run
-            self.manifest.status = "FAILED"
+            self._set_status("FAILED", "초기 생성 또는 검증에 실패했습니다.")
             self.manifest.diagnostics.append(
                 Diagnostic("GENERATION_FAILED", "ERROR", str(error))
             )
@@ -396,6 +464,23 @@ class PrototypeOrchestrator:
     def _workspace_volume(self) -> str:
         return f"{self.spec.workspace_root.resolve()}:{CONTAINER_WORKSPACE.as_posix()}"
 
+    def _set_status(self, status: str, message: str) -> None:
+        """Persist fine-grained progress for the parent web worker to poll."""
+        self.manifest.status = status
+        progress_path = getattr(self.spec, "progress_path", None)
+        if progress_path is None:
+            return
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schemaVersion": PROGRESS_SCHEMA,
+            "status": status,
+            "message": message,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        temporary = progress_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(progress_path)
+
     def _ensure_puml2code_image(self) -> None:
         """Build the BCE generator image with its npm dependencies included.
 
@@ -441,7 +526,7 @@ class PrototypeOrchestrator:
             self._container_path(java_root),
         ]
         self._run_command("puml2code-bce", command, self.spec.puml2code_root)
-        self.manifest.tools["puml2code-bce"] = {
+        self._sink().tools["puml2code-bce"] = {
             "upstream": "https://github.com/jupe/puml2code",
             "forkVersion": BCE_GENERATOR_VERSION,
             "image": PUML2CODE_IMAGE,
@@ -487,7 +572,7 @@ class PrototypeOrchestrator:
                     operation = line.strip()
                 missing_operation_ids.add(operation)
         for operation in sorted(missing_operation_ids):
-            self.manifest.diagnostics.append(
+            self._sink().diagnostics.append(
                 Diagnostic(
                     "OPENAPI_MISSING_OPERATION_ID",
                     "WARNING",
@@ -495,7 +580,7 @@ class PrototypeOrchestrator:
                     str(self.spec.inputs["openapi"]),
                 )
             )
-        self.manifest.tools["openapi-generator"] = {
+        self._sink().tools["openapi-generator"] = {
             "image": OPENAPI_GENERATOR_IMAGE,
         }
 
@@ -511,7 +596,7 @@ class PrototypeOrchestrator:
             api_base_url=None,
             run_command=self._run_command,
         )
-        self.manifest.tools["easydep-frontend-generator"] = generation.tool_metadata()
+        self._sink().tools["easydep-frontend-generator"] = generation.tool_metadata()
 
     def _write_gradle_project(self, application: Path) -> None:
         build = """plugins {
@@ -655,7 +740,9 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             )
 
     def _compile(self, application: Path) -> None:
-        gradle_home = (self.spec.output_root.parent.parent / ".cache" / "gradle").resolve()
+        # This cache must outlive individual jobs.  A per-job Gradle home made
+        # every new implementation request redownload the same Spring stack.
+        gradle_home = (self.spec.workspace_root / ".easydep" / "gradle-cache").resolve()
         self._run_command(
             "gradle-compile",
             [
@@ -666,15 +753,19 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
                 GRADLE_GENERATOR_IMAGE,
                 "gradle",
                 "compileJava",
-                "bootJar",
                 "--no-daemon",
+                "--build-cache",
             ],
             application,
             timeout_seconds=GRADLE_COMMAND_TIMEOUT_SECONDS,
         )
-        # `bootJar` is a user-facing deployment artifact.  Keep build/libs in
-        # the completed run; deleting the whole build directory here made a
-        # successful packaging step indistinguishable from compile-only output.
+        # Deliberately `compileJava` only.  This pre-approval gate proves the
+        # generated scaffold compiles; nothing consumes a jar yet.  `bootJar`
+        # resolves the runtime classpath and copies every dependency into
+        # BOOT-INF/lib through the bind mount, and the result is discarded:
+        # agents/verification/build.py repackages after approval, the delivery
+        # images build their own jar from source, and _persist_outputs skips
+        # every `build/` path.
         local_gradle = application / ".gradle"
         if local_gradle.exists():
             shutil.rmtree(local_gradle)
@@ -706,7 +797,7 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
             stdout=result.stdout[-20000:],
             stderr=result.stderr[-20000:],
         )
-        self.manifest.commands.append(evidence)
+        self._sink().commands.append(evidence)
         if result.returncode != 0:
             raise RuntimeError(f"{name} failed with exit code {result.returncode}: {result.stderr[-1000:]}")
         return evidence

@@ -9,13 +9,18 @@
   };
 
   const statusClass = (status) => ({
-    COMPLETED: "completed", RUNNING: "running", PLANNING: "planning", QUEUED: "queued",
+    COMPLETED: "completed", RUNNING: "running", GENERATING: "planning", PLANNING: "planning", QUEUED: "queued",
+    VALIDATING_INPUT: "planning", REUSING_GENERATED_RUN: "planning", PREPARING_FEEDBACK: "planning",
+    GENERATING_SOURCES: "planning", PREPARING_BUILD: "planning", VERIFYING: "running",
     AWAITING_APPROVAL: "input", NEEDS_INPUT: "input", NEEDS_PLANNER: "warning",
     FAILED: "failed", CANCELLED: "failed", REJECTED: "rejected", PASSED: "passed",
   }[status] || "");
 
   const implementationLabel = (status) => ({
-    QUEUED: "대기 중", PLANNING: "계획 생성 중", AWAITING_APPROVAL: "승인 대기",
+    QUEUED: "대기 중", GENERATING: "초기 산출물 생성 중", VALIDATING_INPUT: "입력 검증 중", REUSING_GENERATED_RUN: "기존 생성 결과 재사용 중",
+    PREPARING_FEEDBACK: "피드백 산출물 준비 중", GENERATING_SOURCES: "소스 코드 생성 중",
+    PREPARING_BUILD: "빌드 준비 중", VERIFYING: "생성 코드 컴파일 검증 중",
+    PLANNING: "구현 작업 계획 중", AWAITING_APPROVAL: "승인 대기",
     RUNNING: "구현 중", COMPLETED: "구현 완료", FAILED: "실패", CANCELLED: "취소됨",
     REJECTED: "거부됨", NEEDS_INPUT: "추가 입력 필요", NEEDS_PLANNER: "계획 보완 필요",
   }[status] || status || "대기");
@@ -103,7 +108,7 @@
       if (job.app_id !== state.appId) throw new Error("이 App ID에 속한 구현 작업이 아닙니다.");
       localStorage.setItem(implementationStorageKey(), job.job_id);
       renderImplementation(job);
-      if (["QUEUED", "PLANNING", "RUNNING", "AWAITING_APPROVAL"].includes(job.status)) {
+      if (["QUEUED", "GENERATING", "VALIDATING_INPUT", "REUSING_GENERATED_RUN", "PREPARING_FEEDBACK", "GENERATING_SOURCES", "PREPARING_BUILD", "VERIFYING", "PLANNING", "RUNNING", "AWAITING_APPROVAL"].includes(job.status)) {
         state.implementationPoller = window.setTimeout(loadImplementation, 2000);
       }
     } catch (error) {
@@ -123,7 +128,7 @@
     el("implementationJobSummaryId").textContent = job.job_id || "—";
     el("implementationUpdatedAt").textContent = job.updated_at ? new Date(job.updated_at).toLocaleString("ko-KR") : "—";
     el("implementationDetails").textContent = JSON.stringify({
-      status: job.status, error: job.error, workflow: job.workflow, artifact_versions: job.artifact_versions,
+      status: job.status, progress: job.progress, error: job.error, workflow: job.workflow, artifact_versions: job.artifact_versions,
     }, null, 2);
     if (completed) {
       setNotice("implementationMessage", "구현이 완료되었습니다. 테스트를 실행할 수 있습니다.", "success");

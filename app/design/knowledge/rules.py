@@ -612,6 +612,58 @@ RULES: tuple[Rule, ...] = (
         judged_by=JUDGED_DETECTOR,
         detector="api_traceability",
     ),
+    Rule(
+        id="api.control-binding-exists",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "Every API endpoint must explicitly bind to one existing BCE Control "
+            "method and list that Control in its source classes."
+        ),
+        citation="app/design/services/api_spec/extractor.py (ApiControlBinding)",
+        evidence="project-convention",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_control_binding",
+    ),
+    Rule(
+        id="api.control-arguments-match",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "An API Control binding must map every Control parameter exactly once "
+            "from a declared path, query, or request-body value of a compatible type."
+        ),
+        citation="app/design/services/api_spec/extractor.py (ApiControlArgument)",
+        evidence="project-convention",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_control_arguments",
+    ),
+    Rule(
+        id="api.control-outcomes-cover-responses",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "Every documented HTTP response status must have one explicit named "
+            "Control outcome, and non-empty responses must not rely on Object/void."
+        ),
+        citation="app/design/services/api_spec/extractor.py (ApiControlOutcome)",
+        evidence="project-convention",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_control_outcomes",
+    ),
+    Rule(
+        id="api.control-call-in-sequence",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "The Control method bound to an API endpoint must occur in the matching "
+            "sequence flow so the endpoint has an executable interaction path."
+        ),
+        citation="app/design/services/sequence_diagram/reconcile.py (call contracts)",
+        evidence="project-convention",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_control_sequence",
+    ),
     # --- 지침(지적하지 않는다) ----------------------------------------------
     Rule(
         id="class.control-per-use-case",

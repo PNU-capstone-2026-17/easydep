@@ -35,24 +35,3 @@ class ApprovalRequest(BaseModel):
     approved_by: str = Field(default="EasyDep user", max_length=200)
     retry_failed: bool = False
     delegate_repair_approvals: bool = True
-
-
-class GenerateFrontendRequest(BaseModel):
-    application_name: str = Field(default="EasyDep Application", min_length=1, max_length=120)
-    api_base_url: str | None = Field(default=None, max_length=500)
-
-    @field_validator("application_name")
-    @classmethod
-    def trim_application_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("value must not be blank")
-        return value
-
-    @field_validator("api_base_url")
-    @classmethod
-    def trim_api_base_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        value = value.strip()
-        return value or None
