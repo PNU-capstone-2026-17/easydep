@@ -1,6 +1,7 @@
 # 개발/테스트 의존성. 앱 런타임 의존성(requirements.txt)이 먼저 설치돼 있어야 한다.
 # BERT 검증(torch/transformers)은 테스트에서 목킹하므로 여기서는 불필요.
 pytest>=8.0
+playwright==1.58.0
 lizard==1.23.0
 python-hcl2==8.1.2
 # 무한 루프를 **매달리는 대신 떨어지게** 만든다. ERD 상속 순서잡기가 순환 밖에서
