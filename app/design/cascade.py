@@ -158,7 +158,12 @@ def revise_and_cascade(
     for next_stage in DESIGN_STAGES[DESIGN_STAGES.index(stage) + 1 :]:
         if next_stage == "erd":
             # ERD 는 투영이다. 영향 여부와 무관하게 클래스가 바뀌었으면 다시 그린다.
-            if "class_diagram" in changed:
+            #
+            # **다만 이미 있는 ERD 만 다시 그린다.** 지목 수정은 설계가 끝나기 전에도
+            # 부를 수 있고(화면이 파이프라인 진행 중에도 대상 고르기를 연다), 그때
+            # 없던 ERD 를 여기서 만들어 저장하면 파이프라인이 아직 도달하지 않은
+            # 단계가 완료된 것처럼 보인다. 하류를 맞추는 일이지 앞질러 만드는 일이 아니다.
+            if "class_diagram" in changed and working.get(DESIGN_SPECS["erd"].model_key):
                 working.update(_reproject_erd(working))
                 changed.append("erd")
                 touched["erd"] = ["(클래스 BCE 에서 재투영)"]

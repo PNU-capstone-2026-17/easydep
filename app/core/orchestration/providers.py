@@ -1392,43 +1392,37 @@ class BuiltinTestingProvider:
                 implementation_result=payload,
                 case_id=str(payload.get("case_id") or "adhoc"),
             )
-            # --- Start Testing Agent Graph Integration ---
+            # Static analysis and the dynamic checks run through the same shared
+            # verification pass the web testing API uses.  Its nodes read the
+            # implementation agent's stored snapshots by app id; the directories
+            # below are only the fallback for a run whose output was never
+            # persisted, so they come from the workspace the adapter just tested.
             try:
-                from app.testing.graphs.testing_graph import create_testing_graph
-                from app.core.orchestration.runner import workspace_root
-                
-                run_root = workspace_root() / ".easydep" / "orchestration" / "runs" / context.run_id / "candidate" / "application"
-                
-                testing_graph = create_testing_graph()
-                agent_state = {
-                    "run_id": context.run_id,
-                    "app_id": context.app_id,
-                    "manifests_dir": str(run_root / "k8s"),
-                    "iac_dir": str(run_root / "terraform"),
-                    "target_url": "http://localhost:8080",
-                    "current_node": "",
-                    "errors": [],
-                    "static_report": None,
-                    "dynamic_functional_report": None,
-                    "dynamic_nfr_report": None,
-                    "iac_report": None,
-                }
-                agent_result = testing_graph.invoke(agent_state)
-                result["agent_testing_report"] = agent_result.get("dynamic_functional_report")
-            except Exception as graph_error:
-                result["agent_testing_error"] = str(graph_error)
-            # --- End Testing Agent Graph Integration ---
+                from app.testing.runtime.verification import run_verification_graph
 
-            static_passed = bool(result.get("passed"))
-            dynamic_report = result.get("agent_testing_report") or {}
-            dynamic_status = dynamic_report.get("status")
-            has_graph_error = "agent_testing_error" in result
-            dynamic_passed = (not has_graph_error) and (dynamic_status != "FAILED")
-            
-            status = StepStatus.COMPLETED if static_passed and dynamic_passed else StepStatus.FAILED
-            
+                application = Path(str(payload.get("run_root") or "")) / "application"
+                verification = run_verification_graph(
+                    run_id=context.run_id,
+                    app_id=context.app_id,
+                    manifests_dir=str(application / "k8s"),
+                    iac_dir=str(application / "terraform"),
+                )
+                result["verification"] = verification
+            except Exception as graph_error:  # noqa: BLE001
+                verification = None
+                result["agent_testing_error"] = str(graph_error)
+
+            unit_passed = bool(result.get("passed"))
+            dynamic_passed = verification["passed"] if verification else False
+
+            status = (
+                StepStatus.COMPLETED
+                if unit_passed and dynamic_passed
+                else StepStatus.FAILED
+            )
+
             diagnostics = []
-            if not static_passed:
+            if not unit_passed:
                 diagnostics.extend(
                     Diagnostic.model_validate(item)
                     for item in result.get("diagnostics")
@@ -1439,21 +1433,28 @@ class BuiltinTestingProvider:
                         }
                     ]
                 )
-            if not dynamic_passed:
-                if has_graph_error:
-                    diagnostics.append(
-                        Diagnostic.model_validate({
-                            "code": "DYNAMIC_TESTS_CRASHED",
-                            "message": f"Testing Agent Graph crashed: {result['agent_testing_error']}"
-                        })
-                    )
-                else:
-                    diagnostics.append(
-                        Diagnostic.model_validate({
-                            "code": "DYNAMIC_TESTS_FAILED",
-                            "message": f"Dynamic functional tests failed: {dynamic_report.get('reason', 'Unknown reason')}"
-                        })
-                    )
+            if verification is None:
+                diagnostics.append(
+                    Diagnostic.model_validate({
+                        "code": "DYNAMIC_TESTS_CRASHED",
+                        "message": f"Testing Agent Graph crashed: {result['agent_testing_error']}"
+                    })
+                )
+            elif not dynamic_passed:
+                diagnostics.append(
+                    Diagnostic.model_validate({
+                        "code": "DYNAMIC_TESTS_FAILED",
+                        "message": f"Dynamic functional tests failed: {verification['blockingReason']}"
+                    })
+                )
+            # Misconfiguration findings are reported but do not gate the step:
+            # they describe the deployment artifacts, not whether the generated
+            # application works. Without this they were computed and discarded.
+            if verification:
+                diagnostics.extend(
+                    Diagnostic.model_validate(item)
+                    for item in verification["diagnostics"]
+                )
 
             return StepResult(
                 step=self.step,

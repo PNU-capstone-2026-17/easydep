@@ -1,33 +1,19 @@
-import os
-from typing import Any
-
+from app.db.models import TYPE_IAC_CODE
 from app.testing.schemas.testing_state import TestingState
-from app.testing.utils.docker_trivy import run_trivy_scan
+from app.testing.utils.static_analysis import scan_stage
+
 
 def iac_verification_node(state: TestingState) -> dict:
-    """
-    Performs static verification on IaC (Terraform) files using Trivy via Docker.
-    """
-    iac_dir = state.get("iac_dir", "")
-    
-    if not iac_dir or not os.path.exists(iac_dir):
-        return {
-            "current_node": "iac_verification",
-            "errors": [f"IaC directory not found: {iac_dir}"],
-            "iac_report": {"status": "FAILED", "message": "IaC directory missing"}
-        }
+    """Static verification of the IaC sources the implementation agent stored.
 
-    issues = run_trivy_scan(iac_dir)
-
-    status = "FAILED" if issues else "PASSED"
-    report = {
-        "status": status,
-        "issues": issues,
-        "message": f"Found {len(issues)} IaC misconfigurations via Trivy."
-    }
-    
-    return {
-        "current_node": "iac_verification",
-        "errors": issues,
-        "iac_report": report
-    }
+    Scans the ``IAC_CODE`` snapshot (Terraform, Pulumi) with Trivy's
+    misconfiguration rules.
+    """
+    return scan_stage(
+        node="iac_verification",
+        app_id=state.get("app_id"),
+        artifact_type=TYPE_IAC_CODE,
+        workspace_dir=state.get("iac_dir", ""),
+        subject="IaC",
+        report_key="iac_report",
+    )

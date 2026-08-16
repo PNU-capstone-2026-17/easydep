@@ -86,8 +86,10 @@ def run_dynamic_test(code: str, target_url: str, repository_root: Path) -> dict[
         return {
             "status": "passed" if completed.returncode == 0 else "failed",
             "exit_code": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            # Trimmed like every other captured run: this travels to the browser
+            # in the job record, and the image pull alone can dwarf the failure.
+            "stdout": completed.stdout[-4000:],
+            "stderr": completed.stderr[-4000:],
             "report": report_data,
         }
     finally:

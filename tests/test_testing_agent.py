@@ -1,161 +1,425 @@
-import os
+"""The testing agent reads its inputs from the database, not from a workspace.
+
+Static analysis scans the deployment/IaC snapshots the implementation agent
+stored, and the dynamic functional stage tests against the requirements the
+requirements agent stored. These tests pin both, because a scan that silently
+falls back to a stale directory reports a pass that means nothing.
+"""
+
 import pytest
+from contextlib import contextmanager
 from unittest.mock import patch
-from pathlib import Path
 
+from app.db.models import (
+    TYPE_DEPLOYMENT_FILE,
+    TYPE_FRONTEND_SOURCE_CODE,
+    TYPE_IAC_CODE,
+    TYPE_SOURCE_CODE,
+)
 from app.testing.graphs.testing_graph import create_testing_graph
-from app.testing.schemas.testing_state import TestingState
+from app.testing.utils.artifact_source import (
+    ArtifactSourceUnavailable,
+    materialize_artifact,
+)
+from app.testing.utils.requirements_source import (
+    RequirementsUnavailable,
+    functional_requirements,
+)
 
-@pytest.fixture
-def temp_manifests_dir(tmp_path):
-    d = tmp_path / "k8s"
-    d.mkdir()
-    
-    # Valid Deployment
-    valid_yaml = """
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: valid-app
-  labels:
-    app.kubernetes.io/name: valid-app
-spec:
-  template:
-    spec:
-      containers:
-      - name: main
-        resources:
-          limits:
-            cpu: "1"
-            memory: "1Gi"
-        livenessProbe:
-          httpGet:
-            path: /health
-        readinessProbe:
-          httpGet:
-            path: /ready
-"""
-    (d / "valid.yaml").write_text(valid_yaml, encoding="utf-8")
 
-    # Invalid Deployment (missing limits, missing labels)
-    invalid_yaml = """
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: invalid-app
-spec:
-  template:
-    spec:
-      containers:
-      - name: main
-        # missing resources
-        # missing livenessProbe/readinessProbe
-"""
-    (d / "invalid.yaml").write_text(invalid_yaml, encoding="utf-8")
-    
-    return str(d)
-
-@pytest.fixture
-def temp_iac_dir(tmp_path):
-    d = tmp_path / "terraform"
-    d.mkdir()
-    
-    # Valid Terraform
-    valid_tf = """
-resource "aws_security_group_rule" "allow_web" {
-  type        = "ingress"
-  from_port   = 443
-  to_port     = 443
-  protocol    = "tcp"
-  cidr_blocks = ["10.0.0.0/8"]
-}
-
-resource "aws_db_instance" "default" {
-  publicly_accessible = false
-}
-"""
-    (d / "valid.tf").write_text(valid_tf, encoding="utf-8")
-
-    # Invalid Terraform
-    invalid_tf = """
-resource "aws_security_group_rule" "allow_all" {
-  type        = "ingress"
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["0.0.0.0/0"]
-}
-
-provider "aws" {
-  access_key = "AKIAIOSFODNN7EXAMPLE"
-  secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-}
-
-resource "aws_db_instance" "bad_db" {
-  publicly_accessible = true
-}
-"""
-    (d / "invalid.tf").write_text(invalid_tf, encoding="utf-8")
-    
-    return str(d)
-
-def test_static_verification_node(temp_manifests_dir, temp_iac_dir):
-    graph = create_testing_graph()
-    
-    initial_state = {
-        "run_id": "test-123",
-        "manifests_dir": temp_manifests_dir,
-        "iac_dir": temp_iac_dir,
-        "errors": []
+def _snapshot(files: dict[str, str], version_no: int = 3) -> dict:
+    return {
+        "artifact_type": "any",
+        "version_no": version_no,
+        "metadata": {"implementation_job_id": "job-1"},
+        "files": {path: {"content": text, "sha256": "x"} for path, text in files.items()},
+        "created_at": "2026-08-16T00:00:00",
     }
-    
-    # We mock run_trivy_scan so we don't need a real Docker container during tests.
-    with patch('app.testing.nodes.static_verification.run_trivy_scan') as mock_k8s_trivy, \
-         patch('app.testing.nodes.iac_verification.run_trivy_scan') as mock_iac_trivy, \
-         patch('app.testing.nodes.dynamic_functional.RunStore') as mock_run_store:
-         
-        mock_run_store.return_value.load.return_value = {"requirements_result": {"requirements": []}}
-         
-        # Simulate Trivy findings for K8s
-        mock_k8s_trivy.return_value = [
-            "[invalid.yaml] missing recommended label 'app.kubernetes.io/name' (HIGH): ...",
-            "[invalid.yaml] missing 'resources' block (CRITICAL): ...",
-            "[invalid.yaml] missing 'livenessProbe' (HIGH): ..."
-        ]
-        
-        # Simulate Trivy findings for IaC
-        mock_iac_trivy.return_value = [
-            "[invalid.tf] allows ingress from 0.0.0.0/0 (CRITICAL): ...",
-            "[invalid.tf] Hardcoded 'access_key' detected (CRITICAL): ...",
-            "[invalid.tf] Hardcoded 'secret_key' detected (CRITICAL): ...",
-            "[invalid.tf] publicly accessible (HIGH): ..."
-        ]
-        
-        # Run the graph
-        result = graph.invoke(initial_state)
-    
-    # Assertions
-    assert "static_report" in result
-    static_report = result["static_report"]
-    
-    assert static_report["status"] == "FAILED"
-    
-    issues = static_report["issues"]
-    assert any("missing recommended label 'app.kubernetes.io/name'" in msg for msg in issues if "invalid" in msg)
-    assert any("missing 'resources' block" in msg for msg in issues if "invalid" in msg)
-    assert any("missing 'livenessProbe'" in msg for msg in issues if "invalid" in msg)
-    
-    # Check IaC report
-    assert "iac_report" in result
-    iac_report = result["iac_report"]
-    assert iac_report["status"] == "FAILED"
-    
-    iac_issues = iac_report["issues"]
-    assert any("allows ingress from 0.0.0.0/0" in msg for msg in iac_issues)
-    assert any("Hardcoded 'access_key' detected" in msg for msg in iac_issues)
-    assert any("Hardcoded 'secret_key' detected" in msg for msg in iac_issues)
-    assert any("publicly accessible" in msg for msg in iac_issues)
-    
-    # Ensure it skipped placeholders properly
-    assert "dynamic_functional_report" in result
+
+
+K8S_FILES = {
+    "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\n",
+    "Dockerfile": "FROM eclipse-temurin:21-jre\n",
+}
+IAC_FILES = {
+    "terraform/main.tf": 'resource "aws_db_instance" "bad" {\n  publicly_accessible = true\n}\n',
+}
+
+
+@pytest.fixture
+def stored_artifacts():
+    """Serve the two file snapshots the implementation agent writes."""
+    by_type = {
+        TYPE_DEPLOYMENT_FILE: _snapshot(K8S_FILES),
+        TYPE_IAC_CODE: _snapshot(IAC_FILES),
+    }
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot",
+        side_effect=lambda app_id, artifact_type: by_type.get(artifact_type),
+    ) as loader:
+        yield loader
+
+
+# ---------------------------------------------------------------------------
+# Materialisation
+# ---------------------------------------------------------------------------
+
+
+def test_materialize_artifact_writes_stored_tree(tmp_path, stored_artifacts):
+    info = materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
+
+    assert info["source"] == "db"
+    assert info["version_no"] == 3
+    assert info["implementation_job_id"] == "job-1"
+    assert (tmp_path / "k8s" / "deployment.yaml").read_text(encoding="utf-8") == (
+        K8S_FILES["k8s/deployment.yaml"]
+    )
+    assert (tmp_path / "Dockerfile").is_file()
+
+
+def test_materialize_artifact_rejects_traversal(tmp_path):
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot",
+        return_value=_snapshot({"../escaped.yaml": "kind: Deployment\n"}),
+    ):
+        with pytest.raises(ValueError):
+            materialize_artifact("app-1", TYPE_DEPLOYMENT_FILE, tmp_path)
+    assert not (tmp_path.parent / "escaped.yaml").exists()
+
+
+def test_materialize_artifact_without_snapshot(tmp_path):
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
+    ):
+        with pytest.raises(ArtifactSourceUnavailable):
+            materialize_artifact("app-1", TYPE_IAC_CODE, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Requirements
+# ---------------------------------------------------------------------------
+
+
+def test_functional_requirements_reads_stored_classified_list():
+    """The requirements agent stores a bare list, not a {"requirements": …} object."""
+    stored = [
+        {"id": "FR1", "text": "A user can register.", "type": "FR"},
+        {"id": "NFR1", "text": "Login responds within 200ms.", "type": "NFR"},
+        {"id": "FR2", "text": "A user can log in.", "type": "FR"},
+    ]
+    with patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": stored},
+    ):
+        items = functional_requirements("app-1")
+
+    assert [item["id"] for item in items] == ["FR1", "FR2"]
+
+
+def test_functional_requirements_accepts_wrapped_shape():
+    with patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={
+            "refined_requirements": {
+                "requirements": [{"id": "FR1", "text": "A user can register."}]
+            }
+        },
+    ):
+        assert len(functional_requirements("app-1")) == 1
+
+
+def test_functional_requirements_without_analysis():
+    with patch(
+        "app.testing.utils.requirements_source.load_state", return_value={}
+    ):
+        with pytest.raises(RequirementsUnavailable):
+            functional_requirements("app-1")
+
+
+# ---------------------------------------------------------------------------
+# Graph
+# ---------------------------------------------------------------------------
+
+
+def _initial_state(**overrides) -> dict:
+    state = {
+        "run_id": "test-123",
+        "app_id": "app-1",
+        "manifests_dir": "",
+        "iac_dir": "",
+        "target_url": "http://localhost:8080",
+        "current_node": "",
+        "errors": [],
+        "static_report": None,
+        "dynamic_functional_report": None,
+        "dynamic_nfr_report": None,
+        "iac_report": None,
+    }
+    state.update(overrides)
+    return state
+
+
+def test_static_stages_scan_the_stored_snapshots(stored_artifacts):
+    """Trivy must be pointed at the database snapshot, not at a workspace path."""
+    scanned: list[list[str]] = []
+
+    def fake_scan(target_dir):
+        from pathlib import Path
+
+        scanned.append(
+            sorted(
+                path.relative_to(target_dir).as_posix()
+                for path in Path(target_dir).rglob("*")
+                if path.is_file()
+            )
+        )
+        return [f"[{scanned[-1][0]}] Something (HIGH): ..."]
+
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", side_effect=fake_scan
+    ), patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": []},
+    ):
+        result = create_testing_graph().invoke(_initial_state())
+
+    assert scanned == [["Dockerfile", "k8s/deployment.yaml"], ["terraform/main.tf"]]
+
+    assert result["static_report"]["status"] == "FAILED"
+    assert result["static_report"]["source"]["source"] == "db"
+    assert result["static_report"]["source"]["version_no"] == 3
+    assert result["iac_report"]["status"] == "FAILED"
+    assert result["iac_report"]["source"]["artifact_type"] == TYPE_IAC_CODE
+
+    # No functional requirements were stored, so nothing is asserted about the app.
     assert result["dynamic_functional_report"]["status"] == "SKIPPED"
+    assert result["dynamic_nfr_report"]["status"] == "SKIPPED"
+
+
+def test_static_stage_falls_back_to_workspace_and_says_so(tmp_path):
+    """A run whose output was never persisted still scans, but is labelled."""
+    manifests = tmp_path / "k8s"
+    manifests.mkdir()
+    (manifests / "deployment.yaml").write_text("kind: Deployment\n", encoding="utf-8")
+
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
+    ), patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": []},
+    ):
+        result = create_testing_graph().invoke(
+            _initial_state(manifests_dir=str(manifests))
+        )
+
+    assert result["static_report"]["status"] == "PASSED"
+    assert result["static_report"]["source"]["source"] == "workspace"
+    # The IaC stage had neither a snapshot nor a directory: nothing was scanned,
+    # which is neither a pass nor a misconfiguration.
+    assert result["iac_report"]["status"] == "UNAVAILABLE"
+    assert result["iac_report"]["issues"] == []
+    assert result["iac_report"]["source"]["source"] == "none"
+
+
+def test_dynamic_functional_generates_from_stored_requirements(stored_artifacts):
+    stored = [
+        {"id": "FR1", "text": "A user can register.", "type": "FR"},
+        {"id": "NFR1", "text": "Login responds within 200ms.", "type": "NFR"},
+    ]
+    captured: dict = {}
+
+    def fake_generate(code, target_url, repository_root):
+        captured["code"] = code
+        return {"status": "passed", "exit_code": 0, "stdout": "", "stderr": "", "report": {}}
+
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": stored},
+    ), patch(
+        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
+    ), patch(
+        "app.testing.nodes.dynamic_functional.run_dynamic_test", side_effect=fake_generate
+    ), patch(
+        "app.testing.nodes.dynamic_functional.OpenAI"
+    ) as mock_openai:
+        completion = mock_openai.return_value.chat.completions.create.return_value
+        completion.choices[0].message.content = "def test_fr1(page): pass"
+        result = create_testing_graph().invoke(_initial_state())
+
+    report = result["dynamic_functional_report"]
+    assert report["status"] == "passed"
+    assert report["requirements"] == {
+        "source": "db",
+        "artifact_type": "REFINE_REQ",
+        "count": 1,
+        "ids": ["FR1"],
+    }
+
+    # The prompt carries the stored FR text and leaves the NFR to the NFR stage.
+    prompt = mock_openai.return_value.chat.completions.create.call_args.kwargs[
+        "messages"
+    ][0]["content"]
+    assert "A user can register." in prompt
+    assert "Login responds within 200ms." not in prompt
+
+
+def test_dynamic_functional_without_app_id_does_not_silently_pass():
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch("app.testing.utils.artifact_source.load_file_snapshot", return_value=None):
+        result = create_testing_graph().invoke(_initial_state(app_id=""))
+
+    assert result["dynamic_functional_report"]["status"] == "FAILED"
+    assert result["dynamic_functional_report"]["reason"] == "Missing app_id"
+
+
+# ---------------------------------------------------------------------------
+# Bringing the generated application up for the dynamic stages
+# ---------------------------------------------------------------------------
+
+
+def test_build_context_restores_the_frontend_prefix(tmp_path):
+    """``_persist_outputs`` strips ``frontend/`` on save; the build context needs it back."""
+    from app.testing.runtime.app_container import build_context
+
+    by_type = {
+        TYPE_SOURCE_CODE: _snapshot({"src/main/java/App.java": "class App {}"}),
+        TYPE_FRONTEND_SOURCE_CODE: _snapshot({"package.json": "{}"}),
+        TYPE_DEPLOYMENT_FILE: _snapshot(
+            {"Dockerfile": "FROM eclipse-temurin:21-jre\nEXPOSE 9090\n"}
+        ),
+    }
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot",
+        side_effect=lambda app_id, artifact_type: by_type.get(artifact_type),
+    ):
+        sources = build_context("app-1", tmp_path)
+
+    assert (tmp_path / "src" / "main" / "java" / "App.java").is_file()
+    assert (tmp_path / "frontend" / "package.json").is_file()
+    assert (tmp_path / "Dockerfile").is_file()
+    assert set(sources) == set(by_type)
+
+
+def test_build_context_requires_stored_source_and_dockerfile(tmp_path):
+    from app.testing.runtime.app_container import (
+        ApplicationLaunchError,
+        build_context,
+    )
+
+    with patch(
+        "app.testing.utils.artifact_source.load_file_snapshot", return_value=None
+    ):
+        with pytest.raises(ApplicationLaunchError):
+            build_context("app-1", tmp_path)
+
+
+def test_exposed_port_is_read_from_the_generated_dockerfile(tmp_path):
+    from app.testing.runtime.app_container import exposed_port
+
+    (tmp_path / "Dockerfile").write_text(
+        "FROM eclipse-temurin:21-jre\nEXPOSE 9090\nENTRYPOINT [\"java\"]\n",
+        encoding="utf-8",
+    )
+    assert exposed_port(tmp_path) == 9090
+
+
+# ---------------------------------------------------------------------------
+# The shared verification pass
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _fake_launch(app_id, **kwargs):
+    yield "http://localhost:54321", {"source": "db", "image": "img", "hostPort": 54321}
+
+
+def test_verification_runs_dynamic_tests_against_the_launched_app(stored_artifacts):
+    from app.testing.runtime import verification
+
+    captured: dict = {}
+
+    def fake_run(code, target_url, repository_root):
+        captured["target_url"] = target_url
+        return {"status": "passed", "exit_code": 0, "stdout": "", "stderr": "", "report": {}}
+
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch(
+        "app.testing.runtime.verification.running_application", _fake_launch
+    ), patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": [{"id": "FR1", "text": "Register.", "type": "FR"}]},
+    ), patch(
+        "app.testing.nodes.dynamic_functional.configured_api_key", return_value="key"
+    ), patch(
+        "app.testing.nodes.dynamic_functional.run_dynamic_test", side_effect=fake_run
+    ), patch(
+        "app.testing.nodes.dynamic_functional.OpenAI"
+    ) as mock_openai:
+        mock_openai.return_value.chat.completions.create.return_value.choices[
+            0
+        ].message.content = "def test_fr1(page): pass"
+        result = verification.run_verification_graph(run_id="r1", app_id="app-1")
+
+    assert captured["target_url"] == "http://localhost:54321"
+    assert result["passed"] is True
+    assert result["blockingReason"] is None
+    assert result["application"]["hostPort"] == 54321
+    assert result["reports"]["static"]["source"]["source"] == "db"
+    assert result["reports"]["dynamicFunctional"]["targetUrl"] == "http://localhost:54321"
+
+
+def test_verification_still_scans_when_the_app_cannot_be_launched(stored_artifacts):
+    """A build failure must not cost the static analysis of the same artifacts."""
+    from app.testing.runtime import verification
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    @contextmanager
+    def failing_launch(app_id, **kwargs):
+        raise ApplicationLaunchError("docker build failed")
+        yield  # pragma: no cover
+
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan",
+        return_value=["[k8s/deployment.yaml] No resource limits (HIGH): ..."],
+    ), patch(
+        "app.testing.runtime.verification.running_application", failing_launch
+    ), patch(
+        "app.testing.nodes.dynamic_functional.run_dynamic_test"
+    ) as never_run:
+        result = verification.run_verification_graph(run_id="r1", app_id="app-1")
+
+    never_run.assert_not_called()
+    assert result["applicationLaunchError"] == "docker build failed"
+    assert result["reports"]["static"]["status"] == "FAILED"
+    assert result["reports"]["dynamicFunctional"]["status"] == "SKIPPED"
+    # A skipped stage proved nothing, but it did not disprove anything either.
+    assert result["passed"] is True
+    assert [item["code"] for item in result["diagnostics"]] == [
+        "DEPLOYMENT_MISCONFIGURATION",
+        "IAC_MISCONFIGURATION",
+    ]
+
+
+def test_verification_reuses_a_caller_supplied_url(stored_artifacts):
+    from app.testing.runtime import verification
+
+    with patch(
+        "app.testing.utils.static_analysis.run_trivy_scan", return_value=[]
+    ), patch(
+        "app.testing.runtime.verification.running_application"
+    ) as launcher, patch(
+        "app.testing.utils.requirements_source.load_state",
+        return_value={"refined_requirements": []},
+    ):
+        result = verification.run_verification_graph(
+            run_id="r1", app_id="app-1", target_url="http://staging.example:8080"
+        )
+
+    launcher.assert_not_called()
+    assert result["application"] == {"source": "caller"}

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
 from app.testing.runtime.adapter import TestingAdapter
+from app.testing.runtime.verification import run_verification_graph
 
 router = APIRouter(prefix="/api/testing", tags=["testing"])
 
@@ -35,12 +36,28 @@ def _update(job_id: str, **changes: Any) -> None:
         _testing_jobs[job_id].update(changes)
 
 
-def _run_test(job_id: str, run_root: Path) -> None:
+def _run_test(job_id: str, app_id: str, run_root: Path) -> None:
     _update(job_id, status="RUNNING")
     try:
         # The web testing boundary owns its runner and does not invoke the
-        # legacy orchestration graph.
+        # legacy orchestration graph — but it does run the same verification
+        # stages: unit tests here, then static analysis and the dynamic checks
+        # against a live instance built from the stored artifacts.
         report = TestingAdapter().run(implementation_result={"run_root": str(run_root)})
+        unit_passed = bool(report.get("passed"))
+
+        verification = run_verification_graph(
+            run_id=job_id,
+            app_id=app_id,
+            manifests_dir=str(run_root / "application" / "k8s"),
+            iac_dir=str(run_root / "application" / "terraform"),
+        )
+        report["verification"] = verification
+        report["passed"] = unit_passed and verification["passed"]
+        report["diagnostics"] = [
+            *(report.get("diagnostics") or []),
+            *verification["diagnostics"],
+        ]
         _update(job_id, status="COMPLETED", result=report)
     except Exception as error:  # The job itself failed before a test report existed.
         _update(job_id, status="FAILED", error=str(error)[-4000:])
@@ -81,7 +98,9 @@ def create_testing_job(app_id: str, request: CreateTestingJobRequest) -> dict:
     }
     with _testing_jobs_lock:
         _testing_jobs[job_id] = record
-    threading.Thread(target=_run_test, args=(job_id, run_root), daemon=True).start()
+    threading.Thread(
+        target=_run_test, args=(job_id, app_id, run_root), daemon=True
+    ).start()
     return record
 
 
