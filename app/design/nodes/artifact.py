@@ -72,6 +72,7 @@ CLEAN = "clean"                    # 위반이 없다
 BUDGET = "budget"                  # 예산을 다 썼는데 위반이 남았다
 NO_IMPROVEMENT = "no_improvement"  # 재생성이 위반을 줄이지 못했다 → 직전본을 지켰다
 ERROR = "error"                    # 재생성 호출이 실패했다 → 직전본을 지켰다
+NEEDS_INPUT = "needs_input"        # 요구사항 결정이 필요해 LLM이 고칠 수 없다
 #: 검사는 했고 재생성은 **시도하지 않았다.** 지목 수정(`cascade.py`)의 값이다 — 그 경로는
 #: 사용자가 지목한 항목만 고치는 것이 보장인데, 재생성은 전체 수정으로 부르므로 그 보장을
 #: 스스로 깬다. 그래서 드러내기만 하고 고칠지는 사용자가 정한다.
@@ -80,7 +81,11 @@ ERROR = "error"                    # 재생성 호출이 실패했다 → 직전
 CHECKED_ONLY = "checked_only"
 #: 위반이 남아 있는 상태들. 원인은 다르지만 결과는 같다 — 남아 있는 findings가 결함의
 #: 전부라고 말할 수 없다.
-UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY)
+UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY, NEEDS_INPUT)
+
+# 산출물 LLM이 임의로 고치면 안 되는 결함. 수리 프롬프트에서 제외하되 findings와
+# 최종 게이트에는 그대로 남겨 사용자의 요구사항 결정을 기다린다.
+NON_REPAIRABLE_RULES = {"sequence.unresolved-usecase-step"}
 
 
 def repair_budget() -> int:
@@ -350,6 +355,10 @@ def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
     return unique
 
 
+def _repairable_findings(findings: list[Finding]) -> list[Finding]:
+    return [finding for finding in findings if finding.rule_id not in NON_REPAIRABLE_RULES]
+
+
 def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """모델이 규칙을 지켰는지 판정하고, 어겼으면 **유계로** 재생성한다.
 
@@ -374,16 +383,21 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         iterations = 0
         error: str | None = None
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
-        stopped = CLEAN if not findings else BUDGET
+        repairable = _repairable_findings(findings)
+        stopped = CLEAN if not findings else (BUDGET if repairable else NEEDS_INPUT)
 
         for _ in range(repair_budget()):
             if not findings:
+                break
+            repairable = _repairable_findings(findings)
+            if not repairable:
+                stopped = NEEDS_INPUT
                 break
             iterations += 1
             try:
                 # 전체 수정(targets=set())이다. 위반이 여러 클래스에 걸칠 수 있고,
                 # merge_model 은 targets 가 비면 revised 를 그대로 쓴다.
-                candidate = spec.revise(model, repair_directive(findings), state, set())
+                candidate = spec.revise(model, repair_directive(repairable), state, set())
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
                 stopped = ERROR
@@ -402,7 +416,10 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 stopped = NO_IMPROVEMENT
                 break
             model, findings = candidate, candidate_findings
-            stopped = CLEAN if not findings else BUDGET
+            remaining_repairable = _repairable_findings(findings)
+            stopped = (
+                CLEAN if not findings else (BUDGET if remaining_repairable else NEEDS_INPUT)
+            )
 
         report: dict[str, Any] = {
             "findings": [f.as_issue() for f in findings],

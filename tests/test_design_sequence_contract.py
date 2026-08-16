@@ -11,7 +11,13 @@ from app.design.knowledge.detectors import (
 from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
-from app.design.nodes.artifact import CLEAN, NO_IMPROVEMENT, check_node, merge_model
+from app.design.nodes.artifact import (
+    CLEAN,
+    NEEDS_INPUT,
+    NO_IMPROVEMENT,
+    check_node,
+    merge_model,
+)
 
 
 def _participant(name: str, kind: str, source_class: str = "") -> dict:
@@ -330,6 +336,44 @@ def test_sequence_check_allows_removing_hallucinated_trace_references(monkeypatc
 
     assert result["sequence_diagram_model"] == repaired
     assert result["sequence_diagram_check"]["stopped"] == CLEAN
+
+
+def test_sequence_check_does_not_ask_llm_to_invent_an_unresolved_requirement(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "2")
+    state = {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1"}],
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [],
+                "extensions": [{
+                    "label": "4a",
+                    "branch_step": 4,
+                    "handling_steps": [{
+                        "sub_step": "4a1",
+                        "sentence": "What do we do here?",
+                    }],
+                }],
+            }],
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [],
+            "Messages": [],
+        },
+    }
+    revisions: list[str] = []
+    spec = dataclasses.replace(
+        SEQUENCE_DIAGRAM_SPEC,
+        revise=lambda current, feedback, current_state, targets: revisions.append(feedback),
+    )
+
+    result = check_node(spec)(state)
+
+    assert revisions == []
+    assert result["sequence_diagram_check"]["repair_iters"] == 0
+    assert result["sequence_diagram_check"]["stopped"] == NEEDS_INPUT
+    assert "sequence.unresolved-usecase-step" in result["sequence_diagram_check"]["findings"][0]
 
 
 def test_receiver_must_already_own_the_called_method():

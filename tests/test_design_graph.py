@@ -322,6 +322,19 @@ def test_only_stages_with_rules_are_semantically_checked():
         assert f"check_{stage}" in feedback, stage
 
 
+def test_sequence_generation_repairs_before_final_gate_and_render():
+    """원시 추출 모델이 검증·수리를 건너뛰고 바로 렌더되는 경로를 금지한다."""
+    graph = DESIGN_SUBGRAPHS["sequence_diagram"]["generate"].get_graph()
+    edges = {(edge.source, edge.target) for edge in graph.edges}
+
+    assert ("extract_sequence_diagram", "reconcile_sequence_diagram") in edges
+    assert ("reconcile_sequence_diagram", "check_sequence_diagram") in edges
+    assert ("check_sequence_diagram", "finalize_sequence_diagram") in edges
+    assert ("finalize_sequence_diagram", "render_sequence_diagram") in edges
+    assert ("extract_sequence_diagram", "render_sequence_diagram") not in edges
+    assert ("reconcile_sequence_diagram", "render_sequence_diagram") not in edges
+
+
 def test_rendering_is_deterministic_and_valid_by_construction(graph):
     """모델 → 산출물 변환이 결정론적이고, 렌더 결과가 검증을 통과한다.
 
