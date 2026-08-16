@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Literal
 
@@ -45,6 +46,18 @@ class SequenceFragment(BaseModel):
     condition: str = Field(min_length=1)
 
 
+class SequenceArgumentBinding(BaseModel):
+    """호출 인자가 어디서 왔는지 기록하는 검증 가능한 데이터 흐름."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    parameter: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    type: str = Field(min_length=1)
+    source_kind: Literal["input", "call_result", "state", "literal"]
+    #: call_result이면 선행 call_id, input이면 step_id, 나머지는 설명 가능한 식별자.
+    source_ref: str = Field(min_length=1)
+
+
 class SequenceMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,6 +72,11 @@ class SequenceMessage(BaseModel):
     use_case_ids: list[str]
     #: ``UC1:main:2`` 또는 ``UC1:extension:3a:3a1`` 형태의 정확한 흐름 단계 참조.
     step_ids: list[str]
+    #: 새 모델의 호출/반환 연결 키. 호출만 call_id, 반환만 reply_to를 채운다.
+    call_id: str
+    reply_to: str
+    #: 호출 시그니처의 각 매개변수와 실제 값 출처. 호출 외 이벤트는 빈 목록이다.
+    arguments: list[SequenceArgumentBinding]
 
     @field_validator("use_case_ids")
     @classmethod
@@ -73,6 +91,14 @@ class SequenceMessage(BaseModel):
     def step_ids_are_set_like(cls, value: list[str]) -> list[str]:
         if len(value) != len(set(value)):
             raise ValueError("step_ids must not contain duplicates")
+        return value
+
+    @field_validator("fragments")
+    @classmethod
+    def fragment_path_ids_are_unique(cls, value: list[SequenceFragment]) -> list[SequenceFragment]:
+        identifiers = [fragment.id for fragment in value]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("fragment ids must be unique within one message path")
         return value
 
     @model_validator(mode="after")
@@ -90,6 +116,8 @@ class SequenceMessage(BaseModel):
                     "call message labels must be complete method calls with a parameter list"
                 )
             self.label = label
+            if not self.call_id.strip() or self.reply_to.strip():
+                raise ValueError("call messages require call_id and an empty reply_to")
         if self.type == "return":
             label = self.label.strip()
             if not label:
@@ -97,6 +125,14 @@ class SequenceMessage(BaseModel):
             if not is_return_value_label(label):
                 raise ValueError("return message labels must be return type identifiers")
             self.label = label
+            if self.call_id.strip() or not self.reply_to.strip():
+                raise ValueError("return messages require reply_to and an empty call_id")
+        if self.type in {"activate", "deactivate"} and (
+            self.call_id.strip() or self.reply_to.strip()
+        ):
+            raise ValueError("lifecycle events cannot carry call_id or reply_to")
+        if self.type not in {"sync", "async", "self"} and self.arguments:
+            raise ValueError("only call messages can carry argument bindings")
         return self
 
 
@@ -135,6 +171,8 @@ class SequenceDiagramCollection(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     Diagrams: list[UseCaseSequenceModel]
+    #: 이 시퀀스가 검증된 클래스 다이어그램 버전. 추출 뒤 코드가 주입한다.
+    class_diagram_hash: str = ""
 
     @model_validator(mode="after")
     def use_case_ids_are_unique(self) -> "SequenceDiagramCollection":
@@ -175,6 +213,9 @@ that the inputs do not support.
   Control<->Entity. Never Actor->Control, Boundary->Entity, or Entity-initiated calls.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
   fire-and-forget, and "self" for a call whose source and target are the same.
+- Give every sync, async, and self call a unique non-empty `call_id`. Set its
+  `reply_to` to "". A return sets `call_id` to "" and `reply_to` to the exact
+  preceding call_id it answers. Activation/deactivation set both fields to "".
 - For every sync, async, or self call, `label` MUST be a method that already exists
   on the receiver's class in the provided class diagram. Copy its complete call
   signature including the parameter declaration, but omit visibility and return type;
@@ -190,6 +231,12 @@ that the inputs do not support.
   no return message.
   Async calls are fire-and-forget and MUST NOT have a corresponding return; use
   sync instead when the caller consumes the declared result.
+- `arguments` must contain exactly one binding per parameter declared in the
+  call label, and [] for calls without parameters and for non-call events. Copy
+  the parameter name and type exactly. Set `source_kind` to input, call_result,
+  state, or literal. For call_result, `source_ref` is a preceding call_id whose
+  declared return type equals the parameter type. For input, it is an exact
+  step_id. Never claim a value source that the preceding interaction does not provide.
 - Use explicit `activate` and `deactivate` events only when an execution interval
   materially helps explain nested synchronous processing. Put the lifeline in both
   `source` and `target` for these events and leave `label` empty.
@@ -205,6 +252,11 @@ that the inputs do not support.
   one-sided alt, when there is only one conditional branch.
 - Each Extensions branch becomes an alt/else or opt branch with its trigger as
   `condition`. Repetition becomes loop. Do not use else for opt or loop.
+- Preserve MainSuccessScenario order. Place each extension immediately after
+  the main step identified by its `branch_step`, before any later main step.
+- If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
+  asking what behavior to perform), do not invent behavior for it. Leave it for
+  the validation gate to report as requiring clarification.
 
 ## Traceability
 - `source_class` on each participant: the class diagram class it stands for.
@@ -232,7 +284,9 @@ that the inputs do not support.
 (g) every non-actor message source has already been reached by an earlier call,
     so no Boundary, Control, Entity, or Database starts acting spontaneously,
 (h) every non-void sync/self call has exactly one matching return, and every alt
-    contains both main and else branches.
+    contains both main and else branches,
+(i) call_id/reply_to links are unique and exact, every parameter has a grounded
+    argument binding, and main/extension steps appear in specification order.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.
@@ -314,4 +368,8 @@ def extract_sequence_diagrams(
             }
         )
 
-    return SequenceDiagramCollection(Diagrams=diagrams).model_dump()
+    class_diagram_hash = hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest()
+    return SequenceDiagramCollection(
+        Diagrams=diagrams,
+        class_diagram_hash=class_diagram_hash,
+    ).model_dump()

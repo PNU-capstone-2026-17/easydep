@@ -893,4 +893,112 @@ def test_explicit_alt_requires_main_and_else_but_opt_can_be_one_sided():
     assert len(detectors.sequence_fragment_condition_consistency(alt, STATE)) == 1
 
 
+def test_explicit_return_link_rejects_wrong_direction_and_duplicate_reply():
+    model = _sequence_contract_model([
+        {
+            "source": "Boundary", "target": "Control", "type": "sync",
+            "label": "createOrder(items: List)", "call_id": "call-1", "reply_to": "",
+            "arguments": [{"parameter": "items", "type": "List", "source_kind": "state", "source_ref": "cart"}],
+        },
+        {
+            "source": "Control", "target": "Control", "type": "return",
+            "label": "Order", "call_id": "", "reply_to": "call-1", "arguments": [],
+        },
+        {
+            "source": "Control", "target": "Boundary", "type": "return",
+            "label": "Order", "call_id": "", "reply_to": "call-1", "arguments": [],
+        },
+    ])
+
+    findings = detectors.sequence_call_return_links(model, STATE)
+
+    assert {"호출 'call-1'과 반환 방향이 일치하지 않음", "호출 'call-1'에 반환이 둘 이상 연결됨"} <= {
+        finding.message for finding in findings
+    }
+
+
+def test_argument_data_flow_rejects_incompatible_preceding_result():
+    state = {
+        **STATE,
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderBoundary", "stereotype": "Boundary", "methods": []},
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "methods": ["capture(): String", "accept(order: Order): void"],
+                },
+            ]
+        },
+    }
+    model = _sequence_contract_model([
+        {
+            "source": "Boundary", "target": "Control", "type": "sync",
+            "label": "capture()", "call_id": "capture", "reply_to": "", "arguments": [],
+        },
+        {
+            "source": "Control", "target": "Boundary", "type": "return",
+            "label": "String", "call_id": "", "reply_to": "capture", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "Control", "type": "sync",
+            "label": "accept(order: Order)", "call_id": "accept", "reply_to": "",
+            "arguments": [{
+                "parameter": "order", "type": "Order",
+                "source_kind": "call_result", "source_ref": "capture",
+            }],
+        },
+    ])
+
+    findings = detectors.sequence_argument_data_flow(model, state)
+
+    assert any("타입 'String'" in finding.message for finding in findings)
+
+
+def test_flow_order_rejects_reversed_main_step_and_late_extension():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}, {"step_number": 3}],
+                "extensions": [{"label": "1a", "branch_step": 1, "handling_steps": [{"sub_step": "1a1"}]}],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [
+            {"source": "A", "target": "B", "label": "one()", "step_ids": ["UC1:main:1"]},
+            {"source": "A", "target": "B", "label": "three()", "step_ids": ["UC1:main:3"]},
+            {"source": "A", "target": "B", "label": "two()", "step_ids": ["UC1:main:2"]},
+            {"source": "A", "target": "B", "label": "extension()", "step_ids": ["UC1:extension:1a:1a1"]},
+        ],
+    }
+
+    findings = detectors.sequence_flow_order(model, state)
+
+    assert any("단계 2가 단계 3 뒤" in finding.message for finding in findings)
+    assert any("분기 단계 1 직후" in finding.message for finding in findings)
+
+
+def test_unresolved_flow_step_blocks_behavior_generation_and_is_not_coverage_debt():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [],
+                "extensions": [{
+                    "label": "4a", "branch_step": 4,
+                    "handling_steps": [{"sub_step": "4a1", "sentence": "What do we do here?"}],
+                }],
+            }]
+        }
+    }
+    model = {"use_case_id": "UC1", "Messages": []}
+
+    assert detectors.sequence_usecase_coverage(model, state) == []
+    findings = detectors.sequence_unresolved_steps(model, state)
+    assert [finding.location for finding in findings] == ["UC1:extension:4a:4a1"]
+
+
 

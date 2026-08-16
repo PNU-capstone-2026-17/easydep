@@ -866,6 +866,42 @@ def _known_flow_step_ids(state: dict) -> set[str]:
     return result
 
 
+def _flow_step_sentence(step: dict) -> str:
+    return str(step.get("sentence") or step.get("description") or "").strip()
+
+
+def _is_unresolved_step(step: dict) -> bool:
+    if str(step.get("status") or "").strip().lower() == "unresolved":
+        return True
+    sentence = _flow_step_sentence(step).lower()
+    return any(
+        marker in sentence
+        for marker in ("todo", "tbd", "what do we do", "to be decided", "미정", "결정 필요")
+    )
+
+
+def _unresolved_flow_step_ids(state: dict) -> set[str]:
+    result: set[str] = set()
+    spec = state.get("usecase_spec") or {}
+    if not isinstance(spec, dict):
+        return result
+    for use_case in spec.get("use_case_specs") or []:
+        if not isinstance(use_case, dict):
+            continue
+        use_case_id = str(use_case.get("use_case_id") or "").strip()
+        for step in use_case.get("main_scenario") or []:
+            if isinstance(step, dict) and _is_unresolved_step(step):
+                result.add(f"{use_case_id}:main:{step.get('step_number')}")
+        for extension in use_case.get("extensions") or []:
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "").strip()
+            for step in extension.get("handling_steps") or []:
+                if isinstance(step, dict) and _is_unresolved_step(step):
+                    result.add(f"{use_case_id}:extension:{label}:{step.get('sub_step')}")
+    return result
+
+
 def _message_fragments(message: dict) -> list[dict]:
     """새 fragment 경로를 읽고, 옛 group/condition 저장본도 한 레벨로 해석한다."""
     fragments = message.get("fragments")
@@ -1469,12 +1505,77 @@ def sequence_initial_entry(model: dict, state: dict) -> list[Finding]:
     return []
 
 
+def _uses_explicit_call_links(model: dict) -> bool:
+    return any(
+        "call_id" in message or "reply_to" in message
+        for message in model.get("Messages", [])
+        if isinstance(message, dict)
+    )
+
+
+def _explicit_calls(model: dict) -> dict[str, tuple[int, dict]]:
+    return {
+        str(message.get("call_id") or "").strip(): (index, message)
+        for index, message in enumerate(model.get("Messages", []))
+        if str(message.get("type", "sync")).lower() in {"sync", "async", "self"}
+        and str(message.get("call_id") or "").strip()
+    }
+
+
+def sequence_call_return_links(model: dict, state: dict) -> list[Finding]:
+    """새 모델의 호출 ID와 반환 reply_to가 정확히 한 호출을 연결하는가."""
+    if not _uses_explicit_call_links(model):
+        return []
+    rule_id = "sequence.call-return-links"
+    found: list[Finding] = []
+    calls: dict[str, tuple[int, dict]] = {}
+    reply_counts: dict[str, int] = {}
+    for index, message in enumerate(model.get("Messages", [])):
+        message_type = str(message.get("type", "sync")).strip().lower()
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        location = f"{source} -> {target} : {message.get('label', '')}"
+        if message_type in {"sync", "async", "self"}:
+            call_id = str(message.get("call_id") or "").strip()
+            if str(message.get("reply_to") or "").strip():
+                found.append(Finding(rule_id, "호출 메시지에는 reply_to를 지정할 수 없음", location))
+            if not call_id:
+                found.append(Finding(rule_id, "호출 메시지의 call_id가 비어 있음", location))
+            elif call_id in calls:
+                found.append(Finding(rule_id, f"call_id '{call_id}'가 중복됨", location))
+            else:
+                calls[call_id] = (index, message)
+        elif message_type == "return":
+            reply_to = str(message.get("reply_to") or "").strip()
+            if str(message.get("call_id") or "").strip():
+                found.append(Finding(rule_id, "return 메시지에는 call_id를 지정할 수 없음", location))
+            if not reply_to:
+                found.append(Finding(rule_id, "return 메시지의 reply_to가 비어 있음", location))
+                continue
+            linked = calls.get(reply_to)
+            if linked is None:
+                found.append(Finding(rule_id, f"선행 호출 ID '{reply_to}'가 존재하지 않음", location))
+                continue
+            _, call = linked
+            reply_counts[reply_to] = reply_counts.get(reply_to, 0) + 1
+            if reply_counts[reply_to] > 1:
+                found.append(Finding(rule_id, f"호출 '{reply_to}'에 반환이 둘 이상 연결됨", location))
+            if (
+                str(call.get("source") or "").strip() != target
+                or str(call.get("target") or "").strip() != source
+            ):
+                found.append(Finding(rule_id, f"호출 '{reply_to}'과 반환 방향이 일치하지 않음", location))
+    return found
+
+
 def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
     """소비할 선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
 
     하나의 호출은 최대 하나의 return만 소비할 수 있다. 호출을 반환 시점에 제거하여
     선행 호출 없는 반환뿐 아니라 한 호출에 여러 반환이 붙는 LLM 환각도 차단한다.
     """
+    if _uses_explicit_call_links(model):
+        return []
     rule_id = "sequence.unmatched-return-message"
     found: list[Finding] = []
     pending_calls: list[tuple[str, str]] = []
@@ -1513,6 +1614,25 @@ def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
 def sequence_async_returns(model: dict, state: dict) -> list[Finding]:
     """fire-and-forget 비동기 호출에 연결된 반환 메시지를 검출한다."""
     rule_id = "sequence.async-call-has-no-return"
+    if _uses_explicit_call_links(model):
+        calls = _explicit_calls(model)
+        found: list[Finding] = []
+        for message in model.get("Messages", []):
+            if str(message.get("type", "")).lower() != "return":
+                continue
+            linked = calls.get(str(message.get("reply_to") or "").strip())
+            if linked is None:
+                continue
+            call = linked[1]
+            if str(call.get("type", "sync")).lower() == "async":
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"비동기 호출 '{call.get('label', '')}'은 반환 메시지를 가질 수 없음",
+                        f"{message.get('source', '')} --> {message.get('target', '')}",
+                    )
+                )
+        return found
     pending_calls: list[dict] = []
     found: list[Finding] = []
     for message in model.get("Messages", []):
@@ -1574,13 +1694,15 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
                 by_method.setdefault(signature, set())
         signatures[class_name] = by_method
 
+    explicit = _uses_explicit_call_links(model)
+    calls_by_id = _explicit_calls(model) if explicit else {}
     pending_calls: list[dict] = []
     found: list[Finding] = []
     for message in model.get("Messages", []):
         message_type = str(message.get("type", "sync")).strip().lower()
         source = str(message.get("source") or "").strip()
         target = str(message.get("target") or "").strip()
-        if message_type in {"sync", "self"}:
+        if not explicit and message_type in {"sync", "self"}:
             pending_calls.append(message)
             continue
         if message_type != "return":
@@ -1592,19 +1714,25 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
             found.append(Finding(rule_id, "return 메시지의 결과 라벨이 비어 있음", location))
             continue
 
-        call_index = next(
-            (
-                index
-                for index in range(len(pending_calls) - 1, -1, -1)
-                if str(pending_calls[index].get("source") or "").strip() == target
-                and str(pending_calls[index].get("target") or "").strip() == source
-            ),
-            None,
-        )
-        if call_index is None:
-            continue  # 고립 반환은 sequence_unmatched_returns가 맡는다
-        call = pending_calls.pop(call_index)
-        class_name = participant_classes.get(source)
+        if explicit:
+            linked = calls_by_id.get(str(message.get("reply_to") or "").strip())
+            if linked is None:
+                continue
+            call = linked[1]
+        else:
+            call_index = next(
+                (
+                    index
+                    for index in range(len(pending_calls) - 1, -1, -1)
+                    if str(pending_calls[index].get("source") or "").strip() == target
+                    and str(pending_calls[index].get("target") or "").strip() == source
+                ),
+                None,
+            )
+            if call_index is None:
+                continue  # 고립 반환은 sequence_unmatched_returns가 맡는다
+            call = pending_calls.pop(call_index)
+        class_name = participant_classes.get(str(call.get("target") or "").strip())
         called_method = method_call_signature(str(call.get("label") or ""))
         if not class_name or not called_method:
             continue
@@ -1663,27 +1791,41 @@ def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Findin
             and (return_type := method_return_type(str(raw_method)))
         }
 
-    pending_calls: list[dict] = []
-    for message in model.get("Messages", []):
-        message_type = str(message.get("type", "sync")).strip().lower()
-        source = str(message.get("source") or "").strip()
-        target = str(message.get("target") or "").strip()
-        if message_type in {"sync", "self"}:
-            pending_calls.append(message)
-            continue
-        if message_type != "return":
-            continue
-        call_index = next(
-            (
-                index
-                for index in range(len(pending_calls) - 1, -1, -1)
-                if str(pending_calls[index].get("source") or "").strip() == target
-                and str(pending_calls[index].get("target") or "").strip() == source
-            ),
-            None,
-        )
-        if call_index is not None:
-            pending_calls.pop(call_index)
+    explicit = _uses_explicit_call_links(model)
+    if explicit:
+        returned_ids = {
+            str(message.get("reply_to") or "").strip()
+            for message in model.get("Messages", [])
+            if str(message.get("type", "")).lower() == "return"
+        }
+        pending_calls = [
+            message
+            for message in model.get("Messages", [])
+            if str(message.get("type", "sync")).lower() in {"sync", "self"}
+            and str(message.get("call_id") or "").strip() not in returned_ids
+        ]
+    else:
+        pending_calls = []
+        for message in model.get("Messages", []):
+            message_type = str(message.get("type", "sync")).strip().lower()
+            source = str(message.get("source") or "").strip()
+            target = str(message.get("target") or "").strip()
+            if message_type in {"sync", "self"}:
+                pending_calls.append(message)
+                continue
+            if message_type != "return":
+                continue
+            call_index = next(
+                (
+                    index
+                    for index in range(len(pending_calls) - 1, -1, -1)
+                    if str(pending_calls[index].get("source") or "").strip() == target
+                    and str(pending_calls[index].get("target") or "").strip() == source
+                ),
+                None,
+            )
+            if call_index is not None:
+                pending_calls.pop(call_index)
 
     found: list[Finding] = []
     for call in pending_calls:
@@ -1701,6 +1843,127 @@ def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Findin
                 f"{source} -> {target} : {call.get('label', '')}",
             )
         )
+    return found
+
+
+def _method_parameters(signature: str) -> dict[str, str]:
+    inside = signature.partition("(")[2].rpartition(")")[0]
+    if not inside:
+        return {}
+    values: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(inside):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            values.append(inside[start:index])
+            start = index + 1
+    values.append(inside[start:])
+    result: dict[str, str] = {}
+    for value in values:
+        name, separator, type_name = value.partition(":")
+        if separator and name and type_name:
+            result[name] = type_name
+    return result
+
+
+def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
+    """새 호출 모델의 매개변수 타입과 값 출처가 선행 데이터 흐름에 근거하는가."""
+    if not _uses_explicit_call_links(model):
+        return []
+    rule_id = "sequence.argument-data-flow"
+    participant_classes = {
+        _participant_id(participant): str(
+            participant.get("source_class") or participant.get("name") or ""
+        ).strip()
+        for participant in model.get("Participants", [])
+        if str(participant.get("kind", "")).strip().lower() != "actor"
+    }
+    contracts: dict[str, dict[str, tuple[dict[str, str], str | None]]] = {}
+    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+        class_name = str(class_item.get("className") or "").strip()
+        if not class_name:
+            continue
+        contracts[class_name] = {
+            signature: (_method_parameters(signature), method_return_type(str(raw_method)))
+            for raw_method in class_item.get("methods") or []
+            if (signature := method_call_signature(str(raw_method)))
+        }
+
+    calls = _explicit_calls(model)
+    known_steps = _known_flow_step_ids(state)
+    found: list[Finding] = []
+    for call_id, (call_index, call) in calls.items():
+        target = str(call.get("target") or "").strip()
+        class_name = participant_classes.get(target, "")
+        signature = method_call_signature(str(call.get("label") or ""))
+        contract = contracts.get(class_name, {}).get(signature)
+        if contract is None:
+            continue
+        expected, _ = contract
+        raw_bindings = [
+            binding for binding in call.get("arguments") or [] if isinstance(binding, dict)
+        ]
+        bindings = {
+            str(binding.get("parameter") or "").strip(): binding for binding in raw_bindings
+        }
+        location = f"{call.get('source', '')} -> {target} : {call.get('label', '')}"
+        binding_names = [str(binding.get("parameter") or "").strip() for binding in raw_bindings]
+        duplicates = sorted({name for name in binding_names if name and binding_names.count(name) > 1})
+        if duplicates:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"호출 '{call_id}'의 인자 {duplicates}가 둘 이상 바인딩됨",
+                    location,
+                )
+            )
+        if set(bindings) != set(expected):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"호출 '{call_id}'의 인자 {sorted(bindings)}가 메서드 매개변수 {sorted(expected)}와 일치하지 않음",
+                    location,
+                )
+            )
+        for parameter, binding in bindings.items():
+            if parameter not in expected:
+                continue
+            bound_type = str(binding.get("type") or "").strip()
+            if normalize_return_type(bound_type) != normalize_return_type(expected[parameter]):
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"인자 '{parameter}' 타입 '{bound_type}'이 선언 타입 '{expected[parameter]}'과 일치하지 않음",
+                        location,
+                    )
+                )
+            source_kind = str(binding.get("source_kind") or "").strip()
+            source_ref = str(binding.get("source_ref") or "").strip()
+            if source_kind == "input" and known_steps and source_ref not in known_steps:
+                found.append(Finding(rule_id, f"입력 원천 단계 '{source_ref}'가 명세에 없음", location))
+            if source_kind != "call_result":
+                continue
+            source_call = calls.get(source_ref)
+            if source_call is None or source_call[0] >= call_index:
+                found.append(Finding(rule_id, f"선행 호출 결과 '{source_ref}'가 존재하지 않음", location))
+                continue
+            result_call = source_call[1]
+            result_class = participant_classes.get(str(result_call.get("target") or "").strip(), "")
+            result_signature = method_call_signature(str(result_call.get("label") or ""))
+            result_contract = contracts.get(result_class, {}).get(result_signature)
+            result_type = result_contract[1] if result_contract else None
+            if not result_type or normalize_return_type(result_type) != normalize_return_type(bound_type):
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"호출 결과 '{source_ref}' 타입 '{result_type or '<none>'}'이 인자 '{parameter}' 타입 '{bound_type}'과 일치하지 않음",
+                        location,
+                    )
+                )
     return found
 
 
@@ -1741,8 +2004,14 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
     diagram_use_case_id = str(model.get("use_case_id") or "").strip()
-    flow_steps = _known_flow_step_ids(state)
+    all_flow_steps = _known_flow_step_ids(state)
+    flow_steps = all_flow_steps - _unresolved_flow_step_ids(state)
     if diagram_use_case_id:
+        all_flow_steps = {
+            step_id
+            for step_id in all_flow_steps
+            if step_id.startswith(f"{diagram_use_case_id}:")
+        }
         flow_steps = {
             step_id
             for step_id in flow_steps
@@ -1760,6 +2029,8 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
             Finding(rule_id, f"시퀀스 다이어그램에 반영되지 않은 흐름 단계 id '{step_id}'", step_id)
             for step_id in sorted(flow_steps - covered_steps)
         ]
+    if all_flow_steps:
+        return []  # 이 다이어그램의 알려진 단계가 모두 unresolved인 경우다.
 
     use_cases = _known_use_case_ids(state)
     if diagram_use_case_id:
@@ -1786,6 +2057,110 @@ def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
                 uc_id,
             )
         )
+    return found
+
+
+def sequence_unresolved_steps(model: dict, state: dict) -> list[Finding]:
+    """행동이 결정되지 않은 요구사항을 그럴듯한 메시지로 채우지 못하게 차단한다."""
+    rule_id = "sequence.unresolved-usecase-step"
+    diagram_use_case_id = str(model.get("use_case_id") or "").strip()
+    unresolved = _unresolved_flow_step_ids(state)
+    if diagram_use_case_id:
+        unresolved = {
+            step_id for step_id in unresolved if step_id.startswith(f"{diagram_use_case_id}:")
+        }
+    return [
+        Finding(
+            rule_id,
+            f"행동이 결정되지 않은 요구사항 단계 '{step_id}'는 시퀀스 생성 전에 보완해야 함",
+            step_id,
+        )
+        for step_id in sorted(unresolved)
+    ]
+
+
+def _main_step_number(step_id: str, use_case_id: str) -> int | None:
+    match = re.fullmatch(rf"{re.escape(use_case_id)}:main:(\d+)", step_id)
+    return int(match.group(1)) if match else None
+
+
+def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
+    """주 흐름 순서와 확장 흐름의 분기 위치가 명세와 일치하는가."""
+    rule_id = "sequence.flow-order"
+    use_case_id = str(model.get("use_case_id") or "").strip()
+    if not use_case_id:
+        return []
+    messages = model.get("Messages", [])
+    found: list[Finding] = []
+    last_main = -1
+    main_positions: dict[int, list[int]] = {}
+    for index, message in enumerate(messages):
+        numbers = [
+            number
+            for step_id in message.get("step_ids") or []
+            if (number := _main_step_number(str(step_id), use_case_id)) is not None
+        ]
+        for number in numbers:
+            main_positions.setdefault(number, []).append(index)
+            if number < last_main:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"주 흐름 단계 {number}가 단계 {last_main} 뒤에 배치됨",
+                        f"{message.get('source', '')} -> {message.get('target', '')} : {message.get('label', '')}",
+                    )
+                )
+            last_main = max(last_main, number)
+
+    use_case = next(
+        (
+            item
+            for item in (state.get("usecase_spec") or {}).get("use_case_specs") or []
+            if str(item.get("use_case_id") or "").strip() == use_case_id
+        ),
+        None,
+    )
+    if not isinstance(use_case, dict):
+        return found
+    extension_anchors: dict[str, int] = {}
+    for extension in use_case.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        label = str(extension.get("label") or "").strip()
+        branch_step = extension.get("branch_step")
+        if branch_step is None:
+            match = re.match(r"(\d+)", label)
+            branch_step = int(match.group(1)) if match else None
+        if label and isinstance(branch_step, int):
+            extension_anchors[label] = branch_step
+
+    for label, branch_step in extension_anchors.items():
+        positions = [
+            index
+            for index, message in enumerate(messages)
+            if any(
+                str(step_id).startswith(f"{use_case_id}:extension:{label}:")
+                for step_id in message.get("step_ids") or []
+            )
+        ]
+        if not positions or branch_step not in main_positions:
+            continue
+        branch_end = max(main_positions[branch_step])
+        later_main = [
+            index
+            for number, indexes in main_positions.items()
+            if number > branch_step
+            for index in indexes
+        ]
+        next_main = min(later_main) if later_main else len(messages)
+        if min(positions) <= branch_end or max(positions) >= next_main:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"확장 흐름 '{label}'가 분기 단계 {branch_step} 직후에 배치되지 않음",
+                    f"{use_case_id}:extension:{label}",
+                )
+            )
     return found
 
 
@@ -2085,12 +2460,16 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participant_classes": sequence_participant_classes,
     "sequence_message_methods": sequence_message_methods,
     "sequence_initial_entry": sequence_initial_entry,
+    "sequence_call_return_links": sequence_call_return_links,
     "sequence_unmatched_returns": sequence_unmatched_returns,
     "sequence_async_returns": sequence_async_returns,
     "sequence_return_values_match_methods": sequence_return_values_match_methods,
     "sequence_nonvoid_calls_have_returns": sequence_nonvoid_calls_have_returns,
     "sequence_causal_call_chain": sequence_causal_call_chain,
+    "sequence_argument_data_flow": sequence_argument_data_flow,
     "sequence_usecase_coverage": sequence_usecase_coverage,
+    "sequence_flow_order": sequence_flow_order,
+    "sequence_unresolved_steps": sequence_unresolved_steps,
     "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
     "sequence_database_access_discipline": sequence_database_access_discipline,
     "sequence_self_call_method_validation": sequence_self_call_method_validation,

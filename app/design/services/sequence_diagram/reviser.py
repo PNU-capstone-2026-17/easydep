@@ -22,7 +22,8 @@ and the user's natural-language feedback.
 Apply the feedback to the model and return the FULL revised model, following the
 same schema. Rules:
 - When the model contains `Diagrams`, preserve exactly one diagram for every
-  use case. Edit each diagram independently and never move messages between use cases.
+  use case and preserve `class_diagram_hash` exactly. Edit each diagram
+  independently and never move messages between use cases.
 - Change only what the feedback asks for; leave everything else intact.
 - Keep the model grounded in the specification and class diagram — do not invent
   participants or messages that the feedback and inputs do not support.
@@ -33,6 +34,8 @@ same schema. Rules:
 - Format a call label as `methodName(...)`, using an ASCII identifier for the
   method name and always including the parentheses. Never use a step or sequence
   number as a label; flow ordering belongs in `step_ids`.
+- Preserve or repair unique `call_id` values on calls and exact `reply_to` values
+  on returns. Never infer a return association from participant direction alone.
 - Every return message must have a non-empty result label equal to the return type
   declared on its corresponding receiver-class method. Remove a return for a void
   method; never invent a narrative result label. Each call can have at most one
@@ -53,6 +56,12 @@ same schema. Rules:
   for the alternative so the renderer produces one alt/else block.
 - Every alt must contain both main and else branches. Use opt for a single
   conditional branch; opt and loop never have an else branch.
+- Preserve main-scenario step order and keep each extension immediately after
+  its declared branch_step. Do not turn an unresolved/TODO/TBD/question step into
+  invented behavior.
+- Keep `arguments` exactly aligned with the receiver method parameters. A
+  call_result source_ref must name a preceding call_id with a compatible return
+  type; use input, state, or literal only when that source is grounded in the inputs.
 - Keep the traceability fields (source_class / use_case_ids / step_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is

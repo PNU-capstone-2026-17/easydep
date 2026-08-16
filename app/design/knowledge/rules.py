@@ -424,6 +424,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_unmatched_returns",
     ),
     Rule(
+        id="sequence.call-return-links",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every new sequence call must have a unique call_id, and every return must "
+            "reference exactly one preceding call through reply_to with the reverse direction."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (SequenceMessage call links)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_call_return_links",
+    ),
+    Rule(
         id="sequence.return-label-matches-method-return",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
@@ -478,6 +491,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_causal_call_chain",
     ),
     Rule(
+        id="sequence.argument-data-flow",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every argument binding must match the receiver method parameter and identify "
+            "a compatible input, state, literal, or preceding call result."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (SequenceArgumentBinding)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_argument_data_flow",
+    ),
+    Rule(
         id="sequence.usecase-step-coverage",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
@@ -490,6 +516,32 @@ RULES: tuple[Rule, ...] = (
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="sequence_usecase_coverage",
+    ),
+    Rule(
+        id="sequence.flow-order",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Main-scenario messages must preserve step order, and each extension must be "
+            "placed immediately after the main step from which it branches."
+        ),
+        citation="app/requirements/schemas.py (Extension.branch_step and ordered main_scenario)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_flow_order",
+    ),
+    Rule(
+        id="sequence.unresolved-usecase-step",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A use-case step marked or worded as unresolved must be clarified before a "
+            "sequence diagram assigns concrete behavior to it."
+        ),
+        citation="app/requirements/schemas.py (flow-step specification)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_unresolved_steps",
     ),
     Rule(
         id="sequence.fragment-condition-consistency",
