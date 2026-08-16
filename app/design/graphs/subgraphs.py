@@ -54,7 +54,7 @@ from app.design.services.erd.reviser import revise_erd_classes
 from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import (
-    ensure_sequence_class_methods,
+    finalize_sequence_class_methods,
     reconcile_class_methods,
 )
 from app.design.services.sequence_diagram.reviser import revise_sequence_model
@@ -174,7 +174,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     check=sequence_diagram_findings,
     check_key="sequence_diagram_check",
     reconcile=reconcile_class_methods,
-    finalize=ensure_sequence_class_methods,
+    finalize=finalize_sequence_class_methods,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(
@@ -285,8 +285,10 @@ def _add_stage_tail(
     **대사 노드는 `reconcile` 후크를 가진 스펙에만 생긴다.** 시퀀스 다이어그램이 이것으로
     클래스 다이어그램에 빠진 메서드를 보강한다.
 
-    **최종 강제 노드는 `finalize` 후크를 가진 스펙에만 생긴다.** 의미 수리에서 모델이
-    다시 바뀌어도 시퀀스 호출이 실제 수신 클래스 메서드라는 불변식을 렌더 직전에 보장한다.
+    **최종 판정 노드는 `finalize` 후크를 가진 스펙에만 생긴다.** 의미 수리에서 모델이
+    다시 바뀌어도 시퀀스 호출이 실제 수신 클래스 메서드인지 렌더 직전에 확인한다.
+    위반 모델은 버리지 않고 게이트 수리를 위해 보존하되 `renderable=false`로 표시하여
+    PlantUML 이미지가 정상 산출물처럼 노출되지 않게 한다.
 
     렌더가 문법 유효성을 보장하므로 **문법** 수리 루프는 여전히 없다. 검사 노드가 도는
     루프는 문법이 아니라 **의미**를 보고, 텍스트가 아니라 모델을 고치며, 위반 수가 줄지

@@ -383,6 +383,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_traceability",
     ),
     Rule(
+        id="sequence.class-diagram-version",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A sequence collection must retain the exact hash of the class diagram "
+            "whose receiver methods it was validated against."
+        ),
+        citation="app/design/services/sequence_diagram/reconcile.py (class diagram hash gate)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_class_diagram_version",
+    ),
+    Rule(
         id="sequence.participant-classes-exist",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,

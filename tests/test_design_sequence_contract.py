@@ -2,17 +2,21 @@ import dataclasses
 import hashlib
 from unittest.mock import patch
 
+import pytest
+
 from app.design.services.common.structured import StructuredLlmError
 
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC
 from app.design.knowledge.detectors import (
     Finding,
+    sequence_diagram_findings,
     sequence_message_methods,
     sequence_usecase_coverage,
 )
 from app.design.services.sequence_diagram.extractor import (
     SequenceModel,
     extract_sequence_diagrams,
+    normalize_sequence_usecase_spec,
     parse_sequence_structured,
 )
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
@@ -23,6 +27,7 @@ from app.design.nodes.artifact import (
     NO_IMPROVEMENT,
     check_node,
     merge_model,
+    render_node,
 )
 
 
@@ -82,6 +87,61 @@ def test_extracts_one_sequence_diagram_for_each_use_case():
         "Cancel order",
     ]
     assert result["class_diagram_hash"] == hashlib.sha256(b"class Order").hexdigest()
+
+
+def test_raw_cockburn_example_is_normalized_to_a_sequence_collection():
+    raw = {
+        "UseCase": {
+            "UseCaseName": "Place order",
+            "PrimaryActor": "Buyer",
+            "MainSuccessScenario": [
+                {"step": 1, "description": "Buyer places an order."}
+            ],
+            "Extensions": [],
+        }
+    }
+    with patch(
+        "app.design.services.sequence_diagram.extractor.extract_sequence_model",
+        return_value={"Participants": [], "Messages": []},
+    ) as extract:
+        result = extract_sequence_diagrams(raw, "class Order")
+
+    assert [item["use_case_id"] for item in result["Diagrams"]] == ["UC1"]
+    scenario = extract.call_args.args[0]
+    assert '"use_case_id": "UC1"' in scenario
+    assert '"step_number": 1' in scenario
+
+
+def test_use_case_summaries_without_specs_are_rejected_instead_of_collapsed():
+    with pytest.raises(ValueError, match="requires use_case_specs"):
+        normalize_sequence_usecase_spec(
+            {"use_cases": [{"id": "UC1"}, {"id": "UC2"}]}
+        )
+
+
+def test_invalid_sequence_is_retained_but_not_rendered():
+    model = {"Diagrams": [{"use_case_id": "UC1", "Participants": [], "Messages": []}]}
+    result = render_node(SEQUENCE_DIAGRAM_SPEC)(
+        {
+            "sequence_diagram_model": model,
+            "sequence_diagram_renderable": False,
+        }
+    )
+
+    assert result["sequence_diagram_puml"] == ""
+    assert result["sequence_diagram_syntax_valid"] is None
+    assert result["sequence_diagram_syntax_errors"] == []
+
+
+def test_sequence_collection_detects_stale_class_diagram_hash():
+    findings = sequence_diagram_findings(
+        {"Diagrams": [], "class_diagram_hash": "stale"},
+        {"class_diagram_puml": "class Current"},
+    )
+
+    assert "sequence.class-diagram-version" in {
+        finding.rule_id for finding in findings
+    }
 
 
 def test_sequence_structured_output_retries_with_schema_error(monkeypatch):

@@ -495,3 +495,40 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
             + "; ".join(finding.message for finding in contract_findings)
         )
     return {}
+
+
+def finalize_sequence_class_methods(state: ArchitectureState) -> dict:
+    """Turn the strict final contract into a render decision instead of a 502.
+
+    ``ensure_sequence_class_methods`` remains the strict reusable assertion.  The
+    graph-facing wrapper preserves an invalid structured model and its deterministic
+    findings so the gate can ask for repair, while preventing that model from being
+    rendered as if it were approved.
+    """
+    report = dict(state.get("sequence_diagram_check") or {})
+    findings = list(report.get("findings") or [])
+    try:
+        ensure_sequence_class_methods(state)
+    except ValueError as exc:
+        if not findings:
+            findings.append(f"{exc} [sequence.final-contract]")
+            report.update(
+                {
+                    "findings": findings,
+                    "repair_iters": int(report.get("repair_iters") or 0),
+                    "stopped": report.get("stopped") or "checked_only",
+                }
+            )
+        return {
+            "sequence_diagram_renderable": False,
+            "sequence_diagram_check": report,
+        }
+    if findings:
+        # Legacy models can pass the strict compatibility subset while the current
+        # deterministic checker still reports defects.  Findings, not model age,
+        # decide whether an image may be exposed.
+        return {
+            "sequence_diagram_renderable": False,
+            "sequence_diagram_check": report,
+        }
+    return {"sequence_diagram_renderable": True}

@@ -128,6 +128,22 @@ def resume_design_session(app_id: str, request: FeedbackRequest) -> JSONResponse
     # from out of the checkpoint, not out of the artifact store.
     require_app_exists(app_id)
     require_active_session(app_id)
+    if not request.feedback.strip():
+        active_stage = session_status(app_id).get("stage")
+        if active_stage:
+            readiness = design_readiness_report(
+                require_app(app_id), stages=[str(active_stage)]
+            )
+            findings = list(readiness.get("findings") or [])
+            if findings:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": "Resolve the active design findings before advancing.",
+                        "stage": active_stage,
+                        "findings": findings,
+                    },
+                )
     try:
         return JSONResponse(content=resume_design(app_id, request.feedback))
     except Exception as error:

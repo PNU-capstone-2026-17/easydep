@@ -5,6 +5,7 @@ import pytest
 
 from app.design.services.sequence_diagram.reconcile import (
     ensure_sequence_class_methods,
+    finalize_sequence_class_methods,
     reconcile_class_methods,
 )
 
@@ -36,7 +37,7 @@ def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
     }
 
     assert SEQUENCE_DIAGRAM_SPEC.reconcile is reconcile_class_methods
-    assert SEQUENCE_DIAGRAM_SPEC.finalize is ensure_sequence_class_methods
+    assert SEQUENCE_DIAGRAM_SPEC.finalize is finalize_sequence_class_methods
     revised_bce = {
         "Classes": [
             {
@@ -62,6 +63,40 @@ def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
         "createOrder()",
         "reserveOrder()",
     ]
+
+
+def test_graph_finalizer_keeps_invalid_model_for_repair_without_rendering():
+    state = {
+        "sequence_diagram_model": {"Participants": [], "Messages": []},
+        "sequence_diagram_check": {
+            "findings": ["receiver method is missing"],
+            "repair_iters": 2,
+            "stopped": "no_improvement",
+        },
+    }
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.ensure_sequence_class_methods",
+        side_effect=ValueError("invalid sequence contract"),
+    ):
+        result = finalize_sequence_class_methods(state)
+
+    assert result["sequence_diagram_renderable"] is False
+    assert result["sequence_diagram_check"] == state["sequence_diagram_check"]
+
+
+def test_graph_finalizer_blocks_legacy_model_when_current_checker_has_findings():
+    state = {
+        "sequence_diagram_model": {"Participants": [], "Messages": []},
+        "sequence_diagram_check": {
+            "findings": ["current semantic finding"],
+            "repair_iters": 0,
+            "stopped": "checked_only",
+        },
+    }
+
+    result = finalize_sequence_class_methods(state)
+
+    assert result["sequence_diagram_renderable"] is False
 
 
 def test_sequence_reconcile_does_not_duplicate_method_owned_by_another_class():

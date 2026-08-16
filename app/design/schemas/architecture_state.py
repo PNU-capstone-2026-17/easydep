@@ -51,6 +51,9 @@ class ArchitectureState(TypedDict, total=False):
     sequence_diagram_syntax_valid: bool
     sequence_diagram_syntax_errors: list[str]
     sequence_diagram_check: dict[str, Any]
+    # False means the structured model and findings are intentionally retained for
+    # user/LLM repair, but no PlantUML image may be exposed yet.
+    sequence_diagram_renderable: bool
 
     api_spec_model: dict[str, Any]
     api_spec_feedback: str

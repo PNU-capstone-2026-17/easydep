@@ -85,7 +85,10 @@ UNRESOLVED = (BUDGET, NO_IMPROVEMENT, ERROR, CHECKED_ONLY, NEEDS_INPUT)
 
 # 산출물 LLM이 임의로 고치면 안 되는 결함. 수리 프롬프트에서 제외하되 findings와
 # 최종 게이트에는 그대로 남겨 사용자의 요구사항 결정을 기다린다.
-NON_REPAIRABLE_RULES = {"sequence.unresolved-usecase-step"}
+NON_REPAIRABLE_RULES = {
+    "sequence.unresolved-usecase-step",
+    "sequence.class-diagram-version",
+}
 
 _SEQUENCE_REPAIR_RULE_GROUPS = (
     {
@@ -520,6 +523,9 @@ def render_and_validate(spec: DesignArtifactSpec, model: dict) -> dict[str, Any]
 def render_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """모델을 산출물로 렌더하고, **그 산출물이 성한지 스스로 확인한다.**
 
+    시퀀스 최종 판정이 `renderable=false`를 남긴 경우에는 모델과 findings만 수리 경로에
+    보존하고 렌더를 생략한다. 그 외 산출물과 승인된 시퀀스는 아래의 결정론 변환을 따른다.
+
     예전에는 노드가 둘이었다(`convert` → `validate`). 나눠 둔 값이 없었다 — 검증 노드는
     변환 노드의 출력만 보고, 변환이 sanitize로 구성에 의해 유효한 산출물을 내므로
     **원리상 실패할 수 없었다.** 그래서 그래프에 "절대 울리지 않는 노드"가 다섯 개
@@ -545,6 +551,18 @@ def render_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
     """
 
     def node(state: ArchitectureState) -> dict:
+        if (
+            spec.stage == "sequence_diagram"
+            and state.get("sequence_diagram_renderable") is False
+        ):
+            # The structured model is still persisted and shown with its findings so
+            # it can be repaired.  Emitting PlantUML here would make an invalid model
+            # appear approved and would let the generic image endpoint expose it.
+            return {
+                spec.content_key: spec.empty,
+                spec.valid_key: None,
+                spec.errors_key: [],
+            }
         return render_and_validate(spec, state.get(spec.model_key) or {})
 
     return node

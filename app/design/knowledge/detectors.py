@@ -40,6 +40,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -2711,11 +2712,32 @@ def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_class_diagram_version(model: dict, state: dict) -> list[Finding]:
+    """Reject a collection validated against a different class-method contract."""
+    rule_id = "sequence.class-diagram-version"
+    expected = str(model.get("class_diagram_hash") or "").strip()
+    if not expected:
+        return []  # legacy single-diagram models predate the version contract.
+    actual = hashlib.sha256(
+        str(state.get("class_diagram_puml") or "").encode("utf-8")
+    ).hexdigest()
+    if expected == actual:
+        return []
+    return [
+        Finding(
+            rule_id,
+            "시퀀스가 현재 클래스 다이어그램과 다른 메서드 계약 버전에서 생성됨",
+            "class_diagram_hash",
+        )
+    ]
+
+
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
     "sequence_boundary_operation_direction": sequence_boundary_operation_direction,
     "sequence_traceability": sequence_traceability,
+    "sequence_class_diagram_version": sequence_class_diagram_version,
     "sequence_participant_classes": sequence_participant_classes,
     "sequence_message_methods": sequence_message_methods,
     "sequence_initial_entry": sequence_initial_entry,
@@ -2762,7 +2784,7 @@ def _artifact_findings(model: dict, state: dict, stage: str) -> list[Finding]:
 def sequence_diagram_findings(model: dict, state: dict) -> list[Finding]:
     diagrams = model.get("Diagrams") if isinstance(model, dict) else None
     if isinstance(diagrams, list):
-        found: list[Finding] = []
+        found: list[Finding] = sequence_class_diagram_version(model, state)
         known = _known_use_case_ids(state)
         identifiers = [
             str(diagram.get("use_case_id") or "").strip()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -371,6 +372,163 @@ def extract_sequence_model(
     return parse_sequence_structured(messages, SequenceModel)
 
 
+def _raw_flow_step(text: Any, fallback: str) -> tuple[str, str]:
+    value = str(text or "").strip()
+    match = re.match(r"^([0-9]+[A-Za-z]?[0-9]*)\.?\s*(.*)$", value)
+    return (
+        (match.group(1), match.group(2).strip())
+        if match
+        else (fallback, value)
+    )
+
+
+def _normalize_raw_use_cases(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Convert the supported Cockburn example shape into the canonical collection.
+
+    This adapter changes only field names and stable identifiers.  It does not invent
+    behavior; unresolved prose remains unresolved and is caught by the normal detector.
+    """
+    summaries: list[dict[str, Any]] = []
+    specifications: list[dict[str, Any]] = []
+    for index, item in enumerate(items, 1):
+        use_case_id = str(
+            item.get("use_case_id")
+            or item.get("id")
+            or item.get("UseCaseId")
+            or item.get("UseCaseID")
+            or f"UC{index}"
+        ).strip()
+        name = str(
+            item.get("name")
+            or item.get("UseCaseName")
+            or item.get("Name")
+            or use_case_id
+        ).strip()
+        primary_actor = str(
+            item.get("primary_actor") or item.get("PrimaryActor") or ""
+        ).strip()
+        main_scenario: list[dict[str, Any]] = []
+        for step_index, raw_step in enumerate(item.get("MainSuccessScenario") or [], 1):
+            if isinstance(raw_step, dict):
+                number = raw_step.get("step", raw_step.get("step_number", step_index))
+                sentence = str(
+                    raw_step.get("description") or raw_step.get("sentence") or ""
+                ).strip()
+            else:
+                number_text, sentence = _raw_flow_step(raw_step, str(step_index))
+                number = int(number_text) if number_text.isdigit() else step_index
+            main_scenario.append({"step_number": number, "sentence": sentence})
+
+        extensions: list[dict[str, Any]] = []
+        for extension_index, raw_extension in enumerate(item.get("Extensions") or [], 1):
+            if not isinstance(raw_extension, dict):
+                continue
+            raw_condition = str(raw_extension.get("condition") or "").strip()
+            label_match = re.match(r"^([0-9]+[A-Za-z]?|\*[A-Za-z]?)\.?\s*(.*)$", raw_condition)
+            label = (
+                label_match.group(1)
+                if label_match
+                else str(raw_extension.get("label") or f"*{extension_index}").strip()
+            )
+            condition = (
+                label_match.group(2).strip().rstrip(":")
+                if label_match
+                else raw_condition.rstrip(":")
+            )
+            branch_match = re.match(r"^(\d+)", label)
+            handling_steps: list[dict[str, str]] = []
+            for action_index, action in enumerate(raw_extension.get("actions") or [], 1):
+                sub_step, sentence = _raw_flow_step(action, f"{label}{action_index}")
+                handling_steps.append({"sub_step": sub_step, "sentence": sentence})
+            extensions.append(
+                {
+                    "label": label,
+                    "branch_step": int(branch_match.group(1)) if branch_match else None,
+                    "condition": condition,
+                    "handling_steps": handling_steps,
+                }
+            )
+
+        summaries.append(
+            {
+                "id": use_case_id,
+                "name": name,
+                "primary_actor": primary_actor,
+            }
+        )
+        specifications.append(
+            {
+                "use_case_id": use_case_id,
+                "name": name,
+                "primary_actor": primary_actor,
+                "preconditions": item.get("Preconditions")
+                or ([item["Precondition"]] if item.get("Precondition") else []),
+                "trigger": item.get("Trigger", ""),
+                "main_scenario": main_scenario,
+                "extensions": extensions,
+                "success_guarantee": item.get("SuccessGuarantee", ""),
+                "minimal_guarantee": item.get("MinimalGuarantee", ""),
+            }
+        )
+    return {"use_cases": summaries, "use_case_specs": specifications}
+
+
+def normalize_sequence_usecase_spec(usecase_spec: Any) -> dict[str, Any]:
+    """Return a canonical, complete per-use-case collection or fail explicitly."""
+    if not isinstance(usecase_spec, dict):
+        raise ValueError(
+            "sequence generation requires a structured use-case collection, not free text"
+        )
+
+    raw_items: list[dict[str, Any]] = []
+    if isinstance(usecase_spec.get("UseCase"), dict):
+        raw_items = [usecase_spec["UseCase"]]
+    elif isinstance(usecase_spec.get("UseCases"), list):
+        raw_items = [item for item in usecase_spec["UseCases"] if isinstance(item, dict)]
+    elif "MainSuccessScenario" in usecase_spec:
+        raw_items = [usecase_spec]
+    if raw_items:
+        return normalize_sequence_usecase_spec(_normalize_raw_use_cases(raw_items))
+
+    use_cases = [
+        item for item in usecase_spec.get("use_cases") or [] if isinstance(item, dict)
+    ]
+    specifications = [
+        item
+        for item in usecase_spec.get("use_case_specs") or []
+        if isinstance(item, dict)
+    ]
+    if not specifications:
+        raise ValueError(
+            "sequence generation requires use_case_specs; use-case summaries alone "
+            "cannot produce one complete sequence diagram per use case"
+        )
+    identifiers = [str(item.get("use_case_id") or "").strip() for item in specifications]
+    if any(not identifier for identifier in identifiers):
+        raise ValueError("every use_case_spec requires a non-empty use_case_id")
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("use_case_specs contains duplicate use_case_id values")
+    failed = [
+        identifier
+        for identifier, item in zip(identifiers, specifications)
+        if item.get("generated") is False
+    ]
+    if failed:
+        raise ValueError(
+            "cannot generate sequences from use-case specifications that failed "
+            f"generation: {', '.join(failed)}"
+        )
+    summary_ids = {
+        str(item.get("id") or "").strip() for item in use_cases if item.get("id")
+    }
+    if summary_ids and summary_ids != set(identifiers):
+        raise ValueError(
+            "use_cases and use_case_specs must contain the same use-case ids: "
+            f"summaries={sorted(summary_ids)}, specifications={sorted(identifiers)}"
+        )
+    return {**usecase_spec, "use_cases": use_cases, "use_case_specs": specifications}
+
+
 def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
@@ -378,8 +536,7 @@ def extract_sequence_diagrams(
     """각 유스케이스 명세를 독립적으로 추출하여 다이어그램 모음으로 만든다."""
     if not usecase_spec:
         return {}
-    if isinstance(usecase_spec, str):
-        return extract_sequence_model(usecase_spec, class_diagram_puml)
+    usecase_spec = normalize_sequence_usecase_spec(usecase_spec)
 
     use_cases = {
         str(item.get("id") or "").strip(): item
@@ -391,17 +548,6 @@ def extract_sequence_diagrams(
         for item in usecase_spec.get("use_case_specs") or []
         if isinstance(item, dict) and item.get("use_case_id")
     ]
-    if not specifications:
-        specifications = [
-            {**item, "use_case_id": item.get("id")}
-            for item in use_cases.values()
-        ]
-    if not specifications:
-        return extract_sequence_model(
-            json.dumps(usecase_spec, ensure_ascii=False, indent=2),
-            class_diagram_puml,
-        )
-
     diagrams: list[dict[str, Any]] = []
     for specification in specifications:
         use_case_id = str(specification.get("use_case_id") or "").strip()
