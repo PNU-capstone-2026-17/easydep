@@ -5,6 +5,9 @@ from typing import Any
 
 from app.design.knowledge.detectors import (
     sequence_async_returns,
+    sequence_causal_call_chain,
+    sequence_fragment_condition_consistency,
+    sequence_nonvoid_calls_have_returns,
     sequence_return_values_match_methods,
     sequence_unmatched_returns,
     sequence_usecase_coverage,
@@ -252,7 +255,7 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
 
 
 def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
-    """렌더 직전 호출 소유권과 반환 타입 계약을 강제하는 최종 장벽."""
+    """렌더 직전 호출·반환·인과·fragment 계약을 강제하는 최종 장벽."""
     sequence = state.get("sequence_diagram_model") or {}
     bce = state.get("extracted_bce_classes") or {}
     if isinstance(sequence.get("Diagrams"), list):
@@ -298,11 +301,14 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
             *sequence_unmatched_returns(diagram, state),
             *sequence_async_returns(diagram, state),
             *sequence_return_values_match_methods(diagram, state),
+            *sequence_nonvoid_calls_have_returns(diagram, state),
+            *sequence_causal_call_chain(diagram, state),
+            *sequence_fragment_condition_consistency(diagram, state),
         )
     ]
     if contract_findings:
         raise ValueError(
-            "sequence call/return contracts remain invalid: "
+            "sequence call/return contracts remain invalid (including causal/fragment rules): "
             + "; ".join(finding.message for finding in contract_findings)
         )
     return {}

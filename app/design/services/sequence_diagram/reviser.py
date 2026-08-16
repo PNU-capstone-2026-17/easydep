@@ -37,15 +37,22 @@ same schema. Rules:
   declared on its corresponding receiver-class method. Remove a return for a void
   method; never invent a narrative result label. Each call can have at most one
   corresponding return; remove duplicate or hallucinated returns.
+- Every sync or self call whose receiver method declares a non-void return type
+  must have exactly one corresponding return. Do not delete the call merely to
+  avoid supplying its grounded return.
 - Async calls are fire-and-forget and cannot have return messages. If the caller
   consumes a result, change the grounded call to sync; otherwise remove the return.
 - Every message's source and target must exist among the returned Participants.
 - Preserve unique participant aliases and use aliases for every message endpoint.
 - Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,
   Control<->Entity; never Actor->Control, Boundary->Entity, or Entity-initiated calls).
+- Preserve a causal call chain: before a non-actor participant initiates a call,
+  it must already have been reached by an earlier call.
 - Preserve each message's outer-to-inner `fragments` path. Use the same fragment
   id for alt branches, `branch="main"` for the first branch and `branch="else"`
   for the alternative so the renderer produces one alt/else block.
+- Every alt must contain both main and else branches. Use opt for a single
+  conditional branch; opt and loop never have an else branch.
 - Keep the traceability fields (source_class / use_case_ids / step_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is

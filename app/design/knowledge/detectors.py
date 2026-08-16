@@ -1641,6 +1641,102 @@ def sequence_return_values_match_methods(model: dict, state: dict) -> list[Findi
     return found
 
 
+def sequence_nonvoid_calls_have_returns(model: dict, state: dict) -> list[Finding]:
+    """반환값이 선언된 동기 호출마다 정확히 하나의 반환 메시지가 있는가."""
+    rule_id = "sequence.nonvoid-call-requires-return"
+    participant_classes = {
+        _participant_id(participant): str(
+            participant.get("source_class") or participant.get("name") or ""
+        ).strip()
+        for participant in model.get("Participants", [])
+        if str(participant.get("kind", "")).strip().lower() != "actor"
+    }
+    contracts: dict[str, dict[str, str]] = {}
+    for class_item in (state.get("extracted_bce_classes") or {}).get("Classes", []):
+        class_name = str(class_item.get("className") or "").strip()
+        if not class_name:
+            continue
+        contracts[class_name] = {
+            signature: return_type
+            for raw_method in class_item.get("methods") or []
+            if (signature := method_call_signature(str(raw_method)))
+            and (return_type := method_return_type(str(raw_method)))
+        }
+
+    pending_calls: list[dict] = []
+    for message in model.get("Messages", []):
+        message_type = str(message.get("type", "sync")).strip().lower()
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if message_type in {"sync", "self"}:
+            pending_calls.append(message)
+            continue
+        if message_type != "return":
+            continue
+        call_index = next(
+            (
+                index
+                for index in range(len(pending_calls) - 1, -1, -1)
+                if str(pending_calls[index].get("source") or "").strip() == target
+                and str(pending_calls[index].get("target") or "").strip() == source
+            ),
+            None,
+        )
+        if call_index is not None:
+            pending_calls.pop(call_index)
+
+    found: list[Finding] = []
+    for call in pending_calls:
+        target = str(call.get("target") or "").strip()
+        class_name = participant_classes.get(target)
+        signature = method_call_signature(str(call.get("label") or ""))
+        return_type = contracts.get(class_name or "", {}).get(signature)
+        if not return_type or normalize_return_type(return_type) == "void":
+            continue  # 잘못된 클래스/메서드는 소유권 검출기가 맡는다.
+        source = str(call.get("source") or "").strip()
+        found.append(
+            Finding(
+                rule_id,
+                f"반환 타입 '{return_type}'을 선언한 호출 '{class_name}.{signature}'에 return 메시지가 없음",
+                f"{source} -> {target} : {call.get('label', '')}",
+            )
+        )
+    return found
+
+
+def sequence_causal_call_chain(model: dict, state: dict) -> list[Finding]:
+    """비-액터 호출 주체가 앞선 호출을 통해 먼저 도달 가능한 상태인가."""
+    rule_id = "sequence.causal-call-chain"
+    kinds = {
+        _participant_id(participant): str(participant.get("kind", "")).strip().lower()
+        for participant in model.get("Participants", [])
+    }
+    reached = {alias for alias, kind in kinds.items() if kind == "actor"}
+    if not reached:
+        return []  # 액터가 없는 부분 모델은 인과 시작점을 판정할 수 없다.
+
+    found: list[Finding] = []
+    reported: set[str] = set()
+    for message in model.get("Messages", []):
+        if str(message.get("type", "sync")).strip().lower() not in {"sync", "async", "self"}:
+            continue
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if source not in reached:
+            if source not in reported:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"'{source}'가 선행 호출로 활성화되기 전에 호출을 시작함",
+                        f"{source} -> {target} : {message.get('label', '')}",
+                    )
+                )
+                reported.add(source)
+            continue
+        reached.add(target)
+    return found
+
+
 def sequence_usecase_coverage(model: dict, state: dict) -> list[Finding]:
     """가능하면 모든 주·확장 단계를, 옛 입력이면 유스케이스 단위 커버리지를 검사한다."""
     rule_id = "sequence.usecase-step-coverage"
@@ -1703,6 +1799,8 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
     found: list[Finding] = []
 
     definitions: dict[str, tuple[str, str]] = {}
+    branches: dict[str, set[str]] = {}
+    explicit_fragment_ids: set[str] = set()
     main_branches_seen: set[str] = set()
     for msg in model.get("Messages", []):
         source = str(msg.get("source", "")).strip()
@@ -1717,6 +1815,9 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
             if not fragment_id or group not in {"alt", "opt", "loop"} or not condition:
                 found.append(Finding(rule_id, "fragment의 id/type/condition이 완전하지 않음", location))
                 continue
+            branches.setdefault(fragment_id, set()).add(branch)
+            if isinstance(msg.get("fragments"), list):
+                explicit_fragment_ids.add(fragment_id)
             if branch == "else" and group != "alt":
                 found.append(Finding(rule_id, "else branch는 alt fragment에서만 허용됨", location))
             if branch == "else" and fragment_id not in main_branches_seen:
@@ -1727,6 +1828,20 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
             if prior and prior[0] != group:
                 found.append(Finding(rule_id, f"fragment id '{fragment_id}'가 서로 다른 type을 사용함", location))
             definitions.setdefault(fragment_id, (group, condition))
+
+    for fragment_id, (group, _) in definitions.items():
+        if (
+            fragment_id in explicit_fragment_ids
+            and group == "alt"
+            and branches.get(fragment_id) != {"main", "else"}
+        ):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"alt fragment '{fragment_id}'는 main과 else branch를 모두 가져야 함; 단일 조건은 opt를 사용해야 함",
+                    fragment_id,
+                )
+            )
 
     return found
 
@@ -1973,6 +2088,8 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_unmatched_returns": sequence_unmatched_returns,
     "sequence_async_returns": sequence_async_returns,
     "sequence_return_values_match_methods": sequence_return_values_match_methods,
+    "sequence_nonvoid_calls_have_returns": sequence_nonvoid_calls_have_returns,
+    "sequence_causal_call_chain": sequence_causal_call_chain,
     "sequence_usecase_coverage": sequence_usecase_coverage,
     "sequence_fragment_condition_consistency": sequence_fragment_condition_consistency,
     "sequence_database_access_discipline": sequence_database_access_discipline,

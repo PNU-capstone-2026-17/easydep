@@ -806,4 +806,91 @@ def test_message_type_validity_rejects_invalid_type():
     assert findings[0].rule_id == "sequence.message-type-validity"
 
 
+def _sequence_contract_model(messages: list[dict]) -> dict:
+    return {
+        "Participants": [
+            {"name": "User", "alias": "User", "kind": "actor"},
+            {
+                "name": "OrderBoundary",
+                "alias": "Boundary",
+                "kind": "boundary",
+                "source_class": "OrderBoundary",
+            },
+            {
+                "name": "OrderControl",
+                "alias": "Control",
+                "kind": "control",
+                "source_class": "OrderControl",
+            },
+        ],
+        "Messages": messages,
+    }
+
+
+def test_nonvoid_sync_call_requires_matching_return_message():
+    model = _sequence_contract_model([
+        {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Boundary", "target": "Control", "type": "sync", "label": "createOrder(items: List)"},
+    ])
+
+    findings = detectors.sequence_nonvoid_calls_have_returns(model, STATE)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.nonvoid-call-requires-return"
+
+
+def test_nonvoid_sync_call_accepts_one_matching_return_and_void_needs_none():
+    model = _sequence_contract_model([
+        {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Boundary", "target": "Control", "type": "sync", "label": "createOrder(items: List)"},
+        {"source": "Control", "target": "Boundary", "type": "return", "label": "Order"},
+        {"source": "Boundary", "target": "Control", "type": "sync", "label": "validateOrder()"},
+    ])
+
+    assert detectors.sequence_nonvoid_calls_have_returns(model, STATE) == []
+
+
+def test_causal_chain_rejects_participant_that_acts_before_being_called():
+    model = _sequence_contract_model([
+        {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Control", "target": "Control", "type": "self", "label": "validateOrder()"},
+    ])
+
+    findings = detectors.sequence_causal_call_chain(model, STATE)
+
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.causal-call-chain"
+
+
+def test_causal_chain_accepts_reached_participants():
+    model = _sequence_contract_model([
+        {"source": "User", "target": "Boundary", "type": "sync", "label": "displayOrderForm()"},
+        {"source": "Boundary", "target": "Control", "type": "sync", "label": "validateOrder()"},
+    ])
+
+    assert detectors.sequence_causal_call_chain(model, STATE) == []
+
+
+def test_explicit_alt_requires_main_and_else_but_opt_can_be_one_sided():
+    alt = {
+        "Messages": [{
+            "source": "A",
+            "target": "B",
+            "label": "call()",
+            "fragments": [{"id": "choice", "type": "alt", "branch": "main", "condition": "ok"}],
+        }]
+    }
+    opt = {
+        "Messages": [{
+            "source": "A",
+            "target": "B",
+            "label": "call()",
+            "fragments": [{"id": "choice", "type": "opt", "branch": "main", "condition": "ok"}],
+        }]
+    }
+
+    assert detectors.sequence_fragment_condition_consistency(opt, STATE) == []
+    assert len(detectors.sequence_fragment_condition_consistency(alt, STATE)) == 1
+
+
 

@@ -183,10 +183,11 @@ that the inputs do not support.
   an ASCII letter or underscore and contain only ASCII letters, digits, or
   underscores in the method name, and the parentheses are mandatory. Never put a
   step number or sequence number in `label`; `step_ids` carries flow ordering separately.
-- Emit a return message only where the caller genuinely uses the result. Its
-  `label` is mandatory and MUST exactly match the return type declared after `:`
-  on the corresponding receiver-class method. Never use a narrative result label.
-  A call can have at most one corresponding return message.
+- Every sync or self call to a method with a non-void declared return type MUST
+  have exactly one corresponding return message. Its `label` is mandatory and
+  MUST exactly match the return type declared after `:` on the corresponding
+  receiver-class method. Never use a narrative result label. A void method has
+  no return message.
   Async calls are fire-and-forget and MUST NOT have a corresponding return; use
   sync instead when the caller consumes the declared result.
 - Use explicit `activate` and `deactivate` events only when an execution interval
@@ -200,6 +201,8 @@ that the inputs do not support.
   same id and type.
 - The first branch uses `branch="main"`; an alternative branch of the same alt
   uses `branch="else"`. This is rendered as PlantUML `else`, not a second alt.
+- An alt fragment MUST contain both main and else branches. Use opt, not a
+  one-sided alt, when there is only one conditional branch.
 - Each Extensions branch becomes an alt/else or opt branch with its trigger as
   `condition`. Repetition becomes loop. Do not use else for opt or loop.
 
@@ -225,7 +228,11 @@ that the inputs do not support.
 (e) every `source_class` names a class in the given class diagram, and every
     `use_case_ids` and `step_ids` entry appears in the given specification,
 (f) every call label already belongs to the receiver class; do not change or
-    extend the class diagram to make a message valid.
+    extend the class diagram to make a message valid,
+(g) every non-actor message source has already been reached by an earlier call,
+    so no Boundary, Control, Entity, or Database starts acting spontaneously,
+(h) every non-void sync/self call has exactly one matching return, and every alt
+    contains both main and else branches.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.

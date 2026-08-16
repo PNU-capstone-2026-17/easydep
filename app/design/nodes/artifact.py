@@ -60,7 +60,11 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.design.knowledge.detectors import Finding
+from app.design.knowledge.detectors import (
+    Finding,
+    _known_flow_step_ids,
+    _known_use_case_ids,
+)
 from app.design.schemas.architecture_state import ArchitectureState
 
 #: 왜 재생성을 멈췄는가. **"위반 0건"과 "예산이 끝났다"를 같은 값으로 두지 않기 위해 있다.**
@@ -278,6 +282,58 @@ def _is_degenerate(spec: DesignArtifactSpec, original: dict, candidate: dict) ->
     return bool(model_elements(spec, original)) and not model_elements(spec, candidate or {})
 
 
+def _sequence_trace_references(model: dict) -> tuple[set[str], set[str]]:
+    """시퀀스 모델이 이미 보존하고 있는 유스케이스/단계 참조를 모은다."""
+    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+    if not isinstance(diagrams, list):
+        diagrams = [model] if isinstance(model, dict) else []
+    use_case_ids: set[str] = set()
+    step_ids: set[str] = set()
+    for diagram in diagrams:
+        if not isinstance(diagram, dict):
+            continue
+        diagram_id = str(diagram.get("use_case_id") or "").strip()
+        if diagram_id:
+            use_case_ids.add(diagram_id)
+        for message in diagram.get("Messages") or []:
+            if not isinstance(message, dict):
+                continue
+            use_case_ids.update(
+                str(value).strip()
+                for value in message.get("use_case_ids") or []
+                if str(value).strip()
+            )
+            step_ids.update(
+                str(value).strip()
+                for value in message.get("step_ids") or []
+                if str(value).strip()
+            )
+    return use_case_ids, step_ids
+
+
+def _loses_sequence_traceability(
+    spec: DesignArtifactSpec,
+    original: dict,
+    candidate: dict,
+    state: dict,
+) -> bool:
+    """수리본이 기존 추적 정보를 삭제해 위반 수만 낮추는 것을 막는다."""
+    if spec.stage != "sequence_diagram":
+        return False
+    original_use_cases, original_steps = _sequence_trace_references(original)
+    candidate_use_cases, candidate_steps = _sequence_trace_references(candidate or {})
+    known_use_cases = _known_use_case_ids(state)
+    known_steps = _known_flow_step_ids(state)
+    if known_use_cases:
+        original_use_cases &= known_use_cases
+    if known_steps:
+        original_steps &= known_steps
+    return not (
+        original_use_cases <= candidate_use_cases
+        and original_steps <= candidate_steps
+    )
+
+
 def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """모델이 규칙을 지켰는지 판정하고, 어겼으면 **유계로** 재생성한다.
 
@@ -316,7 +372,9 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 stopped = ERROR
                 break
             candidate_findings = spec.check(candidate or {}, state)
-            if _is_degenerate(spec, model, candidate):
+            if _is_degenerate(spec, model, candidate) or _loses_sequence_traceability(
+                spec, model, candidate, state
+            ):
                 stopped = NO_IMPROVEMENT
                 break
             if len(candidate_findings) >= len(findings):

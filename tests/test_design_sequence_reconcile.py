@@ -322,3 +322,61 @@ def test_uncovered_flow_causes_class_method_augmentation_and_sequence_reextracti
     extract.assert_called_once()
     assert result["extracted_bce_classes"] == revised_bce
     assert result["sequence_diagram_model"] == revised_sequence
+
+
+def _finalizer_contract_state(messages: list[dict]) -> dict:
+    return {
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderBoundary", "methods": ["start(): View"]},
+                {"className": "OrderControl", "methods": ["process(): Result", "validate(): void"]},
+            ]
+        },
+        "sequence_diagram_model": {
+            "Participants": [
+                {"name": "User", "alias": "User", "kind": "actor"},
+                {"name": "OrderBoundary", "alias": "Boundary", "kind": "boundary", "source_class": "OrderBoundary"},
+                {"name": "OrderControl", "alias": "Control", "kind": "control", "source_class": "OrderControl"},
+            ],
+            "Messages": messages,
+        },
+    }
+
+
+def test_sequence_finalizer_rejects_missing_nonvoid_return():
+    state = _finalizer_contract_state([
+        {"source": "User", "target": "Boundary", "label": "start()", "type": "sync"},
+        {"source": "Boundary", "target": "User", "label": "View", "type": "return"},
+        {"source": "Boundary", "target": "Control", "label": "process()", "type": "sync"},
+    ])
+
+    with pytest.raises(ValueError, match="return 메시지가 없음"):
+        ensure_sequence_class_methods(state)
+
+
+def test_sequence_finalizer_rejects_disconnected_call_source():
+    state = _finalizer_contract_state([
+        {"source": "User", "target": "Boundary", "label": "start()", "type": "sync"},
+        {"source": "Boundary", "target": "User", "label": "View", "type": "return"},
+        {"source": "Control", "target": "Control", "label": "validate()", "type": "self"},
+    ])
+
+    with pytest.raises(ValueError, match="활성화되기 전에"):
+        ensure_sequence_class_methods(state)
+
+
+def test_sequence_finalizer_rejects_one_sided_alt():
+    state = _finalizer_contract_state([
+        {"source": "User", "target": "Boundary", "label": "start()", "type": "sync"},
+        {"source": "Boundary", "target": "User", "label": "View", "type": "return"},
+        {
+            "source": "Boundary",
+            "target": "Control",
+            "label": "validate()",
+            "type": "sync",
+            "fragments": [{"id": "choice", "type": "alt", "branch": "main", "condition": "valid"}],
+        },
+    ])
+
+    with pytest.raises(ValueError, match="main과 else"):
+        ensure_sequence_class_methods(state)

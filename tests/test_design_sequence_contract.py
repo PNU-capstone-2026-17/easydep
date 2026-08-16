@@ -9,7 +9,7 @@ from app.design.knowledge.detectors import (
 from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.reconcile import reconcile_class_methods
-from app.design.nodes.artifact import CLEAN, check_node, merge_model
+from app.design.nodes.artifact import CLEAN, NO_IMPROVEMENT, check_node, merge_model
 
 
 def _participant(name: str, kind: str, source_class: str = "") -> dict:
@@ -201,6 +201,105 @@ def test_sequence_check_repairs_a_return_attached_to_an_async_call(monkeypatch):
         "repair_iters": 1,
         "stopped": CLEAN,
     }
+
+
+def test_sequence_check_rejects_repair_that_drops_existing_step_trace(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "1")
+    participants = [
+        _participant("User", "actor"),
+        _participant("OrderBoundary", "boundary", "OrderBoundary"),
+    ]
+    async_call = _message(
+        "User",
+        "OrderBoundary",
+        "requestOrder()",
+        type="async",
+    )
+    returned = _message(
+        "OrderBoundary",
+        "User",
+        "Order",
+        type="return",
+    )
+    dirty = {"Participants": participants, "Messages": [async_call, returned]}
+    lossy_repair = {
+        "Participants": participants,
+        "Messages": [{**async_call, "step_ids": []}],
+    }
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderBoundary", "methods": ["requestOrder(): Order"]}
+            ]
+        },
+        "sequence_diagram_model": dirty,
+    }
+    spec = dataclasses.replace(
+        SEQUENCE_DIAGRAM_SPEC,
+        revise=lambda current, feedback, current_state, targets: lossy_repair,
+    )
+
+    result = check_node(spec)(state)
+
+    assert result["sequence_diagram_model"] == dirty
+    assert result["sequence_diagram_check"]["stopped"] == NO_IMPROVEMENT
+    assert result["sequence_diagram_check"]["findings"]
+
+
+def test_sequence_check_allows_removing_hallucinated_trace_references(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "1")
+    participants = [
+        _participant("User", "actor"),
+        _participant("OrderBoundary", "boundary", "OrderBoundary"),
+    ]
+    async_call = _message(
+        "User",
+        "OrderBoundary",
+        "requestOrder()",
+        type="async",
+        use_case_ids=["UC404"],
+        step_ids=["UC404:main:1"],
+    )
+    returned = _message(
+        "OrderBoundary",
+        "User",
+        "Order",
+        type="return",
+        use_case_ids=["UC404"],
+        step_ids=["UC404:main:1"],
+    )
+    repaired_call = {
+        **async_call,
+        "use_case_ids": ["UC1"],
+        "step_ids": ["UC1:main:1"],
+    }
+    dirty = {"Participants": participants, "Messages": [async_call, returned]}
+    repaired = {"Participants": participants, "Messages": [repaired_call]}
+    state = {
+        "class_diagram_puml": "class OrderBoundary <<Boundary>>",
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1"}],
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1, "description": "request"}],
+            }],
+        },
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderBoundary", "methods": ["requestOrder(): Order"]}
+            ]
+        },
+        "sequence_diagram_model": dirty,
+    }
+    spec = dataclasses.replace(
+        SEQUENCE_DIAGRAM_SPEC,
+        revise=lambda current, feedback, current_state, targets: repaired,
+    )
+
+    result = check_node(spec)(state)
+
+    assert result["sequence_diagram_model"] == repaired
+    assert result["sequence_diagram_check"]["stopped"] == CLEAN
 
 
 def test_receiver_must_already_own_the_called_method():

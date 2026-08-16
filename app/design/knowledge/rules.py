@@ -451,6 +451,33 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_async_returns",
     ),
     Rule(
+        id="sequence.nonvoid-call-requires-return",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every synchronous or self call whose receiver-class method declares "
+            "a non-void return type must have exactly one corresponding return message."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (BCEClass.methods)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_nonvoid_calls_have_returns",
+    ),
+    Rule(
+        id="sequence.causal-call-chain",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A non-actor participant may initiate a call only after it has been reached "
+            "by an earlier call in the interaction."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (interaction flow)",
+        evidence="project-convention",
+        caveat="메시지 목록이 하나의 시간 순 상호작용을 나타낸다는 프로젝트 모델 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_causal_call_chain",
+    ),
+    Rule(
         id="sequence.usecase-step-coverage",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
@@ -470,7 +497,8 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "Every fragment path entry must have a stable id, alt/loop/opt type and "
-            "condition. Else branches are valid only for alt and follow its main branch."
+            "condition. Else branches are valid only for alt and follow its main branch; "
+            "an alt has both main and else branches, while a single condition uses opt."
         ),
         citation="app/design/services/sequence_diagram/plantuml.py (Fragment rendering)",
         evidence="pipeline-invariant",
