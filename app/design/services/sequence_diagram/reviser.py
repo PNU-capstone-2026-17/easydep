@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.common.structured import parse_structured, revision_messages
+from app.design.services.common.structured import revision_messages
 from app.design.services.sequence_diagram.extractor import (
     SequenceDiagramCollection,
     SequenceModel,
+    parse_sequence_structured,
 )
 
 SEQUENCE_REVISION_SYSTEM_PROMPT = """
@@ -24,7 +25,16 @@ same schema. Rules:
 - When the model contains `Diagrams`, preserve exactly one diagram for every
   use case and preserve `class_diagram_hash` exactly. Edit each diagram
   independently and never move messages between use cases.
-- Change only what the feedback asks for; leave everything else intact.
+- Change only what the feedback asks for; leave everything else intact. Repairs
+  are accepted only when the remaining deterministic findings are an exact subset
+  of the reported findings. Prefer the smallest coherent repair; it is valid to
+  leave unrelated reported defects byte-for-byte unchanged for a later iteration.
+- Infer the repair scope from the reported rule ids. If they are only flow-order,
+  fragment, causal-chain, coverage, or orphan-participant findings, only reorder
+  existing messages, correct fragment metadata, add grounded coverage messages,
+  or remove inactive participants. Do not change otherwise valid call labels,
+  endpoints, call links, returns, or argument bindings. If they are only method,
+  return, or argument-contract findings, do not reorder scenario steps.
 - Keep the model grounded in the specification and class diagram — do not invent
   participants or messages that the feedback and inputs do not support.
 - For sync, async, and self calls, the label MUST name a method that already
@@ -48,14 +58,25 @@ same schema. Rules:
 - Every message's source and target must exist among the returned Participants.
 - Preserve unique participant aliases and use aliases for every message endpoint.
 - Preserve the BCE communication rules (Actor->Boundary, Boundary<->Control,
-  Control<->Entity; never Actor->Control, Boundary->Entity, or Entity-initiated calls).
+  Control->Entity/Database). Never call directly between distinct Boundaries,
+  never call Actor->Control/Entity/Database or Boundary->Entity/Database, and do
+  not let Entity or Database participants initiate application-layer calls.
+- Actor->Boundary calls are input/events. Never repair actor coverage with an
+  output method whose name begins display, show, render, prompt, or notify.
+  For a `sequence.boundary-operation-direction` finding, inspect the current
+  class diagram for a grounded input/event method on the receiver Boundary that
+  semantically matches the referenced use-case step (including a method newly
+  added by class reconciliation), and replace the output call with that exact
+  complete signature. Preserve the step_id and message position.
 - Preserve a causal call chain: before a non-actor participant initiates a call,
   it must already have been reached by an earlier call.
 - Preserve each message's outer-to-inner `fragments` path. Use the same fragment
   id for alt branches, `branch="main"` for the first branch and `branch="else"`
   for the alternative so the renderer produces one alt/else block.
-- Every alt must contain both main and else branches. Use opt for a single
-  conditional branch; opt and loop never have an else branch.
+- Every alt must contain both main and else branches. An extension represented
+  only by its conditional handling messages is an opt, not a one-sided alt. Use
+  alt only when normal/main and mutually exclusive else messages share one id;
+  opt and loop never have an else branch.
 - Preserve main-scenario step order and keep each extension immediately after
   its declared branch_step. Do not turn an unresolved/TODO/TBD/question step into
   invented behavior.
@@ -66,7 +87,8 @@ same schema. Rules:
   use input, state, or literal only when that source is grounded in the inputs.
 - Remove participants that send and receive no messages. For every resolved step
   whose subject is the PrimaryActor or user, preserve at least one actor-originated
-  call into a Boundary; do not claim coverage using only an unrelated system call.
+  call into a Boundary; do not claim coverage using only an unrelated system call
+  or by reusing an earlier Boundary operation for a different main actor action.
 - Keep the traceability fields (source_class / use_case_ids / step_ids) accurate. Carry them over unchanged for
   elements you did not touch; update them for elements you changed; fill them
   in for elements you added. Never invent a reference — an empty list is
@@ -91,7 +113,7 @@ def revise_sequence_model(
         if isinstance(current_model.get("Diagrams"), list)
         else SequenceModel
     )
-    return parse_structured(
+    return parse_sequence_structured(
         revision_messages(
             SEQUENCE_REVISION_SYSTEM_PROMPT,
             "Use Case Specification and Class Diagram",

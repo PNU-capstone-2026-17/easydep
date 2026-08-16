@@ -64,6 +64,86 @@ def test_sequence_reconcile_uses_llm_to_add_grounded_receiver_method():
     ]
 
 
+def test_sequence_reconcile_does_not_duplicate_method_owned_by_another_class():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "SelectionScreen", "methods": ["onSelected(site: string)"]},
+                {"className": "PurchaseControl", "methods": ["startPurchase()"]},
+            ]
+        },
+        "sequence_diagram_model": {
+            "Participants": [
+                {
+                    "name": "SelectionScreen",
+                    "alias": "screen",
+                    "kind": "boundary",
+                    "source_class": "SelectionScreen",
+                },
+                {
+                    "name": "PurchaseControl",
+                    "alias": "control",
+                    "kind": "control",
+                    "source_class": "PurchaseControl",
+                },
+            ],
+            "Messages": [{
+                "source": "screen",
+                "target": "control",
+                "label": "onSelected(site: string)",
+                "type": "sync",
+            }],
+        },
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+    ) as revise:
+        result = reconcile_class_methods(state)
+
+    revise.assert_not_called()
+    assert result == {}
+
+
+def test_sequence_reconcile_ignores_unrequested_methods_from_class_llm():
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{"className": "OrderControl", "methods": ["createOrder()"]}]
+        },
+        "sequence_diagram_model": {
+            "Participants": [{
+                "name": "OrderControl",
+                "alias": "control",
+                "kind": "control",
+                "source_class": "OrderControl",
+            }],
+            "Messages": [{
+                "source": "control",
+                "target": "control",
+                "label": "reserveOrder()",
+                "type": "self",
+            }],
+        },
+    }
+    proposed = {
+        "Classes": [{
+            "className": "OrderControl",
+            "methods": ["createOrder()", "reserveOrder()", "hallucinatedMethod()"],
+        }]
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ):
+        result = reconcile_class_methods(state)
+
+    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
+        "createOrder()",
+        "reserveOrder()",
+    ]
+
+
 def test_sequence_finalizer_rejects_call_without_a_receiver_class():
     state = {
         "extracted_bce_classes": {
@@ -165,6 +245,48 @@ def test_reconcile_declares_return_type_for_a_required_result():
     ]
 
 
+def test_reconcile_does_not_change_receiver_return_when_caller_owns_contract():
+    bce = {
+        "Classes": [
+            {"className": "SelectionScreen", "methods": ["getSiteName(): string"]},
+            {"className": "PurchaseControl", "methods": ["getSiteName()"]},
+        ]
+    }
+    state = {
+        "extracted_bce_classes": bce,
+        "sequence_diagram_model": {
+            "Participants": [
+                {
+                    "name": "SelectionScreen", "alias": "screen", "kind": "boundary",
+                    "source_class": "SelectionScreen",
+                },
+                {
+                    "name": "PurchaseControl", "alias": "control", "kind": "control",
+                    "source_class": "PurchaseControl",
+                },
+            ],
+            "Messages": [
+                {
+                    "source": "screen", "target": "control", "label": "getSiteName()",
+                    "type": "sync", "call_id": "c1",
+                },
+                {
+                    "source": "control", "target": "screen", "label": "string",
+                    "type": "return", "reply_to": "c1",
+                },
+            ],
+        },
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+    ) as revise:
+        result = reconcile_class_methods(state)
+
+    revise.assert_not_called()
+    assert result == {}
+
+
 def test_finalizer_rejects_return_label_different_from_declared_type():
     state = {
         "extracted_bce_classes": {
@@ -245,7 +367,7 @@ def test_finalizer_rejects_multiple_returns_for_one_call():
         ensure_sequence_class_methods(state)
 
 
-def test_uncovered_flow_is_left_for_sequence_repair_not_class_augmentation():
+def test_uncovered_flow_asks_class_llm_whether_a_method_is_missing():
     state = {
         "usecase_spec": {
             "use_case_specs": [
@@ -283,13 +405,103 @@ def test_uncovered_flow_is_left_for_sequence_repair_not_class_augmentation():
             ],
         },
     }
+    current_bce = state["extracted_bce_classes"]
     with patch(
         "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=current_bce,
     ) as revise:
         result = reconcile_class_methods(state)
 
-    revise.assert_not_called()
+    revise.assert_called_once()
+    assert "uncovered use-case step" in revise.call_args.kwargs["feedback"]
     assert result == {}
+
+
+def test_uncovered_flow_can_add_a_minimal_method_chosen_by_class_llm():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1, "sentence": "The user submits an order."}],
+                "extensions": [],
+            }]
+        },
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderScreen", "methods": ["display()"]},
+                {"className": "OrderControl", "methods": ["createOrder()"]},
+            ]
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [],
+            "Messages": [],
+        },
+    }
+    proposed = {
+        "Classes": [
+            {"className": "OrderScreen", "methods": ["display()", "submitOrder()"]},
+            {"className": "OrderControl", "methods": ["createOrder()"]},
+        ]
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ):
+        result = reconcile_class_methods(state)
+
+    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
+        "display()",
+        "submitOrder()",
+    ]
+
+
+def test_boundary_output_violation_requires_class_llm_to_consider_input_method():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{
+                    "step_number": 1,
+                    "sentence": "The user buys stock.",
+                }],
+                "extensions": [],
+            }]
+        },
+        "extracted_bce_classes": {
+            "Classes": [{"className": "BuyScreen", "methods": ["display()"]}]
+        },
+        "sequence_diagram_model": {
+            "use_case_id": "UC1",
+            "Participants": [
+                {"name": "User", "alias": "user", "kind": "actor"},
+                {
+                    "name": "BuyScreen", "alias": "screen", "kind": "boundary",
+                    "source_class": "BuyScreen",
+                },
+            ],
+            "Messages": [{
+                "source": "user", "target": "screen", "label": "display()", "type": "sync",
+                "step_ids": ["UC1:main:1"],
+            }],
+        },
+    }
+    proposed = {
+        "Classes": [{"className": "BuyScreen", "methods": ["display()", "buyStock()"]}]
+    }
+
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+        return_value=proposed,
+    ) as revise:
+        result = reconcile_class_methods(state)
+
+    assert "you MUST add the minimum grounded input method" in revise.call_args.kwargs["feedback"]
+    assert result["extracted_bce_classes"]["Classes"][0]["methods"] == [
+        "display()",
+        "buyStock()",
+    ]
 
 
 def _finalizer_contract_state(messages: list[dict]) -> dict:

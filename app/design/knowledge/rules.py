@@ -358,6 +358,21 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_bce_flow",
     ),
     Rule(
+        id="sequence.boundary-operation-direction",
+        stage=SEQUENCE_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Actor-to-Boundary calls must invoke input/event operations. Output-oriented "
+            "Boundary operations such as display, show, render, prompt, or notify are "
+            "initiated by system components, not by the actor."
+        ),
+        citation="app/design/services/sequence_diagram/extractor.py (BCE communication rules)",
+        evidence="project-convention",
+        caveat="Boundary 입출력 방향을 메서드 동사로 구분하는 프로젝트 규약이다.",
+        judged_by=JUDGED_DETECTOR,
+        detector="sequence_boundary_operation_direction",
+    ),
+    Rule(
         id="sequence.references-exist",
         stage=SEQUENCE_DIAGRAM,
         severity=DEFECT,
@@ -509,7 +524,9 @@ RULES: tuple[Rule, ...] = (
         severity=DEFECT,
         statement=(
             "A resolved flow step whose subject is an actor must contain at least one "
-            "actor-originated call instead of being covered only by unrelated system messages."
+            "actor-originated call instead of being covered only by unrelated system messages. "
+            "Distinct main-flow actor actions must not reuse one identical Boundary operation "
+            "merely to claim step coverage."
         ),
         citation="app/design/services/sequence_diagram/extractor.py (Flow analysis and traceability)",
         evidence="pipeline-invariant",

@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.design.services.common.structured import parse_structured
+from app.design.services.common.structured import StructuredLlmError, parse_structured
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     is_return_value_label,
@@ -212,7 +212,12 @@ that the inputs do not support.
 ## Messages and receiver ownership
 - `source` and `target` must both be participant aliases you listed.
 - Respect the BCE communication rules: Actor->Boundary, Boundary<->Control,
-  Control<->Entity. Never Actor->Control, Boundary->Entity, or Entity-initiated calls.
+  Control->Entity/Database. Never call directly between distinct Boundary objects,
+  never call Actor->Control/Entity/Database or Boundary->Entity/Database, and do
+  not let Entity or Database participants initiate application-layer calls.
+- Actor->Boundary calls represent actor input/events. An actor MUST NOT invoke
+  output-oriented Boundary methods such as display*, show*, render*, prompt*, or
+  notify*; those are called by a Control or another permitted system component.
 - `type`: "sync" for a call, "return" for a reply carrying a result, "async" for
   fire-and-forget, and "self" for a call whose source and target are the same.
 - Give every sync, async, and self call a unique non-empty `call_id`. Set its
@@ -255,8 +260,10 @@ that the inputs do not support.
   uses `branch="else"`. This is rendered as PlantUML `else`, not a second alt.
 - An alt fragment MUST contain both main and else branches. Use opt, not a
   one-sided alt, when there is only one conditional branch.
-- Each Extensions branch becomes an alt/else or opt branch with its trigger as
-  `condition`. Repetition becomes loop. Do not use else for opt or loop.
+- An extension shown by itself is a single conditional branch and MUST use opt.
+  Use alt only when both the normal/main branch and the mutually exclusive else
+  branch are represented by messages sharing the same fragment id. Repetition
+  becomes loop. Do not use else for opt or loop.
 - Preserve MainSuccessScenario order. Place each extension immediately after
   the main step identified by its `branch_step`, before any later main step.
 - If a step is explicitly unresolved (status unresolved, TODO/TBD, or a question
@@ -265,6 +272,9 @@ that the inputs do not support.
 - If a resolved step describes an action performed by the PrimaryActor or user,
   at least one call for that step must originate from that actor and enter through
   a Boundary. A traceability id on an unrelated system call is not step coverage.
+  Do not reuse a Boundary operation from an earlier, semantically different main
+  actor action merely to fill a later step_id. If no existing receiver method
+  represents the later action, leave it uncovered for class-method reconciliation.
 
 ## Traceability
 - `source_class` on each participant: the class diagram class it stands for.
@@ -302,6 +312,44 @@ markdown, code fences, or any prose outside the schema fields.
 """
 
 
+def parse_sequence_structured(
+    messages: list[dict[str, str]],
+    schema: type[BaseModel],
+) -> dict[str, Any]:
+    """스키마가 거부한 시퀀스 응답을 오류 근거와 함께 유계 재요청한다.
+
+    구조화 출력 provider도 필드 간 의미 제약까지 항상 만족시키지는 않는다. 빈 return
+    라벨처럼 Pydantic이 확정적으로 거부한 응답은 모델 산출물로 저장할 수 없으므로,
+    동일 입력과 정확한 검증 오류를 주고 전체 모델을 다시 생성하게 한다.
+    """
+    from app.core.config import settings
+
+    attempts = max(0, settings.design_max_repair_iters) + 1
+    last_error: StructuredLlmError | None = None
+    for attempt in range(attempts):
+        retry_messages = messages
+        if last_error is not None:
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "[YOUR PREVIOUS STRUCTURED OUTPUT FAILED SCHEMA VALIDATION]\n"
+                        f"{str(last_error)[:6000]}\n\n"
+                        "Regenerate the FULL model. Correct every listed validation "
+                        "error without relaxing the sequence/class/use-case contracts."
+                    ),
+                },
+            ]
+        try:
+            return parse_structured(retry_messages, schema)
+        except StructuredLlmError as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                raise
+    raise last_error  # pragma: no cover - attempts is always at least one
+
+
 def extract_sequence_model(
     scenario_text: str,
     class_diagram_puml: str,
@@ -320,7 +368,7 @@ def extract_sequence_model(
             ),
         },
     ]
-    return parse_structured(messages, SequenceModel)
+    return parse_sequence_structured(messages, SequenceModel)
 
 
 def extract_sequence_diagrams(

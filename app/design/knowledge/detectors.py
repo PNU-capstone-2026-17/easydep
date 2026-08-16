@@ -972,14 +972,26 @@ def sequence_participants(model: dict, state: dict) -> list[Finding]:
 
 def sequence_bce_flow(model: dict, state: dict) -> list[Finding]:
     kinds = {_participant_id(item): str(item.get("kind", "")).strip().lower() for item in model.get("Participants", [])}
-    forbidden = {("actor", "control"), ("boundary", "entity"), ("entity", "boundary"), ("entity", "control")}
+    allowed = {
+        ("actor", "boundary"),
+        ("boundary", "control"),
+        ("control", "boundary"),
+        ("control", "control"),
+        ("control", "entity"),
+        ("control", "database"),
+        ("entity", "entity"),
+        ("entity", "database"),
+    }
     found: list[Finding] = []
     for message in model.get("Messages", []):
         if str(message.get("type", "sync")).lower() in {"return", "activate", "deactivate"}:
             continue
         source, target = str(message.get("source", "")).strip(), str(message.get("target", "")).strip()
-        if (kinds.get(source), kinds.get(target)) in forbidden:
-            found.append(Finding("sequence.message-bce-flow", f"{kinds[source]} → {kinds[target]} 호출은 BCE 흐름을 위반함", f"{source} -> {target}"))
+        source_kind, target_kind = kinds.get(source), kinds.get(target)
+        if source == target and source_kind and source_kind != "actor":
+            continue
+        if source_kind and target_kind and (source_kind, target_kind) not in allowed:
+            found.append(Finding("sequence.message-bce-flow", f"{source_kind} → {target_kind} 호출은 BCE 흐름을 위반함", f"{source} -> {target}"))
     return found
 
 
@@ -1568,6 +1580,35 @@ def sequence_call_return_links(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def sequence_boundary_operation_direction(model: dict, state: dict) -> list[Finding]:
+    """Actor가 화면 출력용 Boundary 오퍼레이션을 입력 이벤트처럼 호출하지 못하게 한다."""
+    rule_id = "sequence.boundary-operation-direction"
+    kinds = {
+        _participant_id(item): str(item.get("kind", "")).strip().lower()
+        for item in model.get("Participants", [])
+    }
+    output_prefixes = ("display", "show", "render", "prompt", "notify")
+    found: list[Finding] = []
+    for message in model.get("Messages", []):
+        if str(message.get("type", "sync")).lower() not in {"sync", "async"}:
+            continue
+        source = str(message.get("source") or "").strip()
+        target = str(message.get("target") or "").strip()
+        if kinds.get(source) != "actor" or kinds.get(target) != "boundary":
+            continue
+        signature = method_call_signature(str(message.get("label") or ""))
+        method_name = signature.partition("(")[0].lower()
+        if method_name.startswith(output_prefixes):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"Actor가 Boundary 출력 오퍼레이션 '{signature}'을 입력 이벤트처럼 호출함",
+                    f"{source} -> {target} : {message.get('label', '')}",
+                )
+            )
+    return found
+
+
 def sequence_unmatched_returns(model: dict, state: dict) -> list[Finding]:
     """소비할 선행 호출 없이 독립적으로 존재하는 return 메시지 감지.
 
@@ -2024,6 +2065,7 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
     actor_subjects.update({"user", "the user"})
     unresolved = _unresolved_flow_step_ids(state)
     found: list[Finding] = []
+    claimed_main_calls: dict[tuple[str, str], tuple[str, str]] = {}
     for step_id, sentence in _flow_step_records(state):
         if step_id in unresolved or not sentence:
             continue
@@ -2043,15 +2085,42 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
         ]
         if not messages:
             continue  # coverage detector owns an entirely absent step.
-        if any(str(message.get("source") or "").strip() in actors for message in messages):
-            continue
-        found.append(
-            Finding(
-                rule_id,
-                f"액터가 수행하는 단계 '{sentence}'에 액터가 시작하는 호출이 없음",
-                step_id,
+        actor_messages = [
+            message
+            for message in messages
+            if str(message.get("source") or "").strip() in actors
+        ]
+        if not actor_messages:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"액터가 수행하는 단계 '{sentence}'에 액터가 시작하는 호출이 없음",
+                    step_id,
+                )
             )
-        )
+            continue
+        if ":main:" not in step_id:
+            continue
+        call_keys = {
+            (
+                str(message.get("target") or "").strip(),
+                method_call_signature(str(message.get("label") or "")),
+            )
+            for message in actor_messages
+            if method_call_signature(str(message.get("label") or ""))
+        }
+        if call_keys and all(key in claimed_main_calls for key in call_keys):
+            prior_steps = sorted({claimed_main_calls[key][0] for key in call_keys})
+            found.append(
+                Finding(
+                    rule_id,
+                    f"서로 다른 메인 액터 행동 '{sentence}'이 이미 단계 {prior_steps}에서 "
+                    "사용한 동일 Boundary 호출로 커버됨",
+                    step_id,
+                )
+            )
+        for key in call_keys:
+            claimed_main_calls.setdefault(key, (step_id, sentence))
     return found
 
 
@@ -2231,7 +2300,16 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
                 for step_id in message.get("step_ids") or []
             )
         ]
-        if not positions or branch_step not in main_positions:
+        if not positions:
+            continue
+        if branch_step not in main_positions:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"확장 흐름 '{label}'의 분기 기준인 주 흐름 단계 {branch_step}가 없어 배치 위치를 검증할 수 없음",
+                    f"{use_case_id}:extension:{label}",
+                )
+            )
             continue
         branch_end = max(main_positions[branch_step])
         later_main = [
@@ -2263,9 +2341,11 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
 
     definitions: dict[str, tuple[str, str]] = {}
     branches: dict[str, set[str]] = {}
+    branch_conditions: dict[str, dict[str, set[str]]] = {}
+    fragment_step_ids: dict[str, set[str]] = {}
     explicit_fragment_ids: set[str] = set()
-    main_branches_seen: set[str] = set()
-    for msg in model.get("Messages", []):
+    branch_positions: dict[str, dict[str, list[int]]] = {}
+    for message_index, msg in enumerate(model.get("Messages", [])):
         source = str(msg.get("source", "")).strip()
         target = str(msg.get("target", "")).strip()
         label = str(msg.get("label", "")).strip()
@@ -2279,14 +2359,21 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
                 found.append(Finding(rule_id, "fragment의 id/type/condition이 완전하지 않음", location))
                 continue
             branches.setdefault(fragment_id, set()).add(branch)
+            branch_conditions.setdefault(fragment_id, {}).setdefault(branch, set()).add(
+                " ".join(condition.lower().split())
+            )
+            fragment_step_ids.setdefault(fragment_id, set()).update(
+                str(step_id).strip()
+                for step_id in msg.get("step_ids") or []
+                if str(step_id).strip()
+            )
+            branch_positions.setdefault(fragment_id, {}).setdefault(branch, []).append(
+                message_index
+            )
             if isinstance(msg.get("fragments"), list):
                 explicit_fragment_ids.add(fragment_id)
             if branch == "else" and group != "alt":
                 found.append(Finding(rule_id, "else branch는 alt fragment에서만 허용됨", location))
-            if branch == "else" and fragment_id not in main_branches_seen:
-                found.append(Finding(rule_id, "alt의 else branch가 main branch보다 먼저 나타남", location))
-            if branch == "main":
-                main_branches_seen.add(fragment_id)
             prior = definitions.get(fragment_id)
             if prior and prior[0] != group:
                 found.append(Finding(rule_id, f"fragment id '{fragment_id}'가 서로 다른 type을 사용함", location))
@@ -2302,6 +2389,89 @@ def sequence_fragment_condition_consistency(model: dict, state: dict) -> list[Fi
                 Finding(
                     rule_id,
                     f"alt fragment '{fragment_id}'는 main과 else branch를 모두 가져야 함; 단일 조건은 opt를 사용해야 함",
+                    fragment_id,
+                )
+            )
+            continue
+        positions = branch_positions.get(fragment_id, {})
+        conditions = branch_conditions.get(fragment_id, {})
+        extension_refs = {
+            (match.group(1), match.group(2))
+            for step_id in fragment_step_ids.get(fragment_id, set())
+            if (
+                match := re.fullmatch(
+                    r"([^:]+):extension:([^:]+):[^:]+",
+                    step_id,
+                )
+            )
+        }
+        extension_conditions = {
+            " ".join(
+                str(extension.get("condition") or "").rstrip(":").lower().split()
+            )
+            for use_case in (state.get("usecase_spec") or {}).get("use_case_specs") or []
+            if isinstance(use_case, dict)
+            for extension in use_case.get("extensions") or []
+            if isinstance(extension, dict)
+            and (
+                str(use_case.get("use_case_id") or "").strip(),
+                str(extension.get("label") or "").strip(),
+            )
+            in extension_refs
+        }
+        all_conditions = {
+            value for values in conditions.values() for value in values
+        }
+        if (
+            group == "alt"
+            and len(extension_refs) == 1
+            and extension_conditions & all_conditions
+            and not any(
+                ":main:" in step_id
+                for step_id in fragment_step_ids.get(fragment_id, set())
+            )
+        ):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"extension trigger만 표현한 fragment '{fragment_id}'는 alt가 아니라 opt여야 함",
+                    fragment_id,
+                )
+            )
+        unstable_branches = [
+            branch for branch, values in conditions.items() if len(values) > 1
+        ]
+        if unstable_branches:
+            found.append(
+                Finding(
+                    rule_id,
+                    f"fragment '{fragment_id}'의 branch 조건이 메시지마다 달라짐: {sorted(unstable_branches)}",
+                    fragment_id,
+                )
+            )
+        if (
+            group == "alt"
+            and conditions.get("main")
+            and conditions.get("else")
+            and conditions["main"] & conditions["else"]
+        ):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"alt fragment '{fragment_id}'의 main과 else 조건이 동일해 상호 배타적이지 않음",
+                    fragment_id,
+                )
+            )
+        if (
+            group == "alt"
+            and positions.get("main")
+            and positions.get("else")
+            and min(positions["else"]) < min(positions["main"])
+        ):
+            found.append(
+                Finding(
+                    rule_id,
+                    f"alt fragment '{fragment_id}'의 else branch가 main branch보다 먼저 나타남",
                     fragment_id,
                 )
             )
@@ -2544,6 +2714,7 @@ def sequence_message_type_validity(model: dict, state: dict) -> list[Finding]:
 SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_participants": sequence_participants,
     "sequence_bce_flow": sequence_bce_flow,
+    "sequence_boundary_operation_direction": sequence_boundary_operation_direction,
     "sequence_traceability": sequence_traceability,
     "sequence_participant_classes": sequence_participant_classes,
     "sequence_message_methods": sequence_message_methods,

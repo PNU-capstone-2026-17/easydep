@@ -43,6 +43,53 @@ def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():
     assert {"sequence.message-participants-exist", "sequence.message-bce-flow", "sequence.references-exist"} <= found
 
 
+def test_sequence_bce_flow_rejects_distinct_boundary_to_boundary_call():
+    model = {
+        "Participants": [
+            {"name": "EntryScreen", "alias": "entry", "kind": "boundary"},
+            {"name": "SelectionScreen", "alias": "selection", "kind": "boundary"},
+        ],
+        "Messages": [
+            {"source": "entry", "target": "selection", "type": "sync", "label": "display()"},
+        ],
+    }
+
+    findings = detectors.sequence_bce_flow(model, STATE)
+
+    assert len(findings) == 1
+    assert "boundary → boundary" in findings[0].message
+
+
+def test_sequence_bce_flow_allows_boundary_self_call():
+    model = {
+        "Participants": [
+            {"name": "EntryScreen", "alias": "entry", "kind": "boundary"},
+        ],
+        "Messages": [
+            {"source": "entry", "target": "entry", "type": "self", "label": "refresh()"},
+        ],
+    }
+
+    assert detectors.sequence_bce_flow(model, STATE) == []
+
+
+def test_actor_cannot_invoke_boundary_display_operation():
+    model = {
+        "Participants": [
+            {"name": "User", "alias": "user", "kind": "actor"},
+            {"name": "OrderScreen", "alias": "screen", "kind": "boundary"},
+        ],
+        "Messages": [{
+            "source": "user", "target": "screen", "type": "sync", "label": "display()",
+        }],
+    }
+
+    findings = detectors.sequence_boundary_operation_direction(model, STATE)
+
+    assert len(findings) == 1
+    assert "출력 오퍼레이션" in findings[0].message
+
+
 def test_api_detector_rejects_invalid_references_and_path_parameters():
     model = {
         "Endpoints": [
@@ -1049,6 +1096,43 @@ def test_actor_led_step_accepts_actor_to_boundary_entry():
     assert detectors.sequence_actor_step_involvement(model, state) == []
 
 
+def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "The user requests a purchase."},
+                    {"step_number": 2, "sentence": "The user confirms the purchase."},
+                ],
+                "extensions": [],
+            }]
+        }
+    }
+    model = {
+        "Participants": [
+            {"name": "User", "alias": "user", "kind": "actor"},
+            {"name": "PurchaseScreen", "alias": "screen", "kind": "boundary"},
+        ],
+        "Messages": [
+            {
+                "source": "user", "target": "screen", "type": "sync",
+                "label": "requestPurchase()", "step_ids": ["UC1:main:1"],
+            },
+            {
+                "source": "user", "target": "screen", "type": "sync",
+                "label": "requestPurchase()", "step_ids": ["UC1:main:2"],
+            },
+        ],
+    }
+
+    findings = detectors.sequence_actor_step_involvement(model, state)
+
+    assert len(findings) == 1
+    assert findings[0].location == "UC1:main:2"
+    assert "동일 Boundary 호출" in findings[0].message
+
+
 def test_flow_order_rejects_reversed_main_step_and_late_extension():
     state = {
         "usecase_spec": {
@@ -1073,6 +1157,118 @@ def test_flow_order_rejects_reversed_main_step_and_late_extension():
 
     assert any("단계 2가 단계 3 뒤" in finding.message for finding in findings)
     assert any("분기 단계 1 직후" in finding.message for finding in findings)
+
+
+def test_flow_order_reports_extension_when_branch_main_step_is_missing():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 1}, {"step_number": 2}],
+                "extensions": [{
+                    "label": "2a",
+                    "branch_step": 2,
+                    "handling_steps": [{"sub_step": "2a1"}],
+                }],
+            }]
+        }
+    }
+    model = {
+        "use_case_id": "UC1",
+        "Messages": [{
+            "source": "A",
+            "target": "B",
+            "label": "extension()",
+            "step_ids": ["UC1:extension:2a:2a1"],
+        }],
+    }
+
+    findings = detectors.sequence_flow_order(model, state)
+
+    assert len(findings) == 1
+    assert "주 흐름 단계 2가 없어" in findings[0].message
+
+
+def test_fragment_reports_one_root_finding_for_one_sided_alt():
+    fragment = {"id": "failure", "type": "alt", "branch": "else", "condition": "failed"}
+    model = {
+        "Messages": [
+            {"source": "A", "target": "B", "label": "first()", "fragments": [fragment]},
+            {"source": "B", "target": "C", "label": "second()", "fragments": [fragment]},
+        ]
+    }
+
+    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+
+    assert len(findings) == 1
+    assert findings[0].location == "failure"
+
+
+def test_fragment_rejects_identical_alt_branch_conditions():
+    model = {
+        "Messages": [
+            {
+                "source": "A",
+                "target": "B",
+                "label": "success()",
+                "fragments": [{
+                    "id": "result", "type": "alt", "branch": "main", "condition": "failed",
+                }],
+            },
+            {
+                "source": "A",
+                "target": "B",
+                "label": "retry()",
+                "fragments": [{
+                    "id": "result", "type": "alt", "branch": "else", "condition": " failed ",
+                }],
+            },
+        ]
+    }
+
+    findings = detectors.sequence_fragment_condition_consistency(model, STATE)
+
+    assert len(findings) == 1
+    assert "상호 배타적이지 않음" in findings[0].message
+
+
+def test_extension_trigger_without_main_flow_uses_opt_not_alt():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "extensions": [{
+                    "label": "3a",
+                    "condition": "Web failure",
+                    "handling_steps": [{"sub_step": "3a1"}, {"sub_step": "3a2"}],
+                }],
+            }]
+        }
+    }
+    model = {
+        "Messages": [
+            {
+                "source": "A", "target": "B", "label": "report()",
+                "step_ids": ["UC1:extension:3a:3a1"],
+                "fragments": [{
+                    "id": "ext3a", "type": "alt", "branch": "main",
+                    "condition": "Web failure",
+                }],
+            },
+            {
+                "source": "B", "target": "A", "label": "retry()",
+                "step_ids": ["UC1:extension:3a:3a2"],
+                "fragments": [{
+                    "id": "ext3a", "type": "alt", "branch": "else",
+                    "condition": "Web setup succeeds",
+                }],
+            },
+        ]
+    }
+
+    findings = detectors.sequence_fragment_condition_consistency(model, state)
+
+    assert any("alt가 아니라 opt" in finding.message for finding in findings)
 
 
 def test_unresolved_flow_step_blocks_behavior_generation_and_is_not_coverage_debt():
