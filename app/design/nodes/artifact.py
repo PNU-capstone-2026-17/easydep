@@ -334,6 +334,22 @@ def _loses_sequence_traceability(
     )
 
 
+def _finding_key(finding: Finding) -> tuple[str, str, str]:
+    return finding.rule_id, finding.location, finding.message
+
+
+def _dedupe_findings(findings: list[Finding]) -> list[Finding]:
+    """같은 결함을 한 번만 수리 프롬프트와 수용 판단에 사용한다."""
+    unique: list[Finding] = []
+    seen: set[tuple[str, str, str]] = set()
+    for finding in findings:
+        key = _finding_key(finding)
+        if key not in seen:
+            seen.add(key)
+            unique.append(finding)
+    return unique
+
+
 def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     """모델이 규칙을 지켰는지 판정하고, 어겼으면 **유계로** 재생성한다.
 
@@ -341,10 +357,11 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     그래프 그림이 곧 실제 흐름"을 원칙으로 한다(`nodes/gates.py`). 반복 엣지를 넣으면
     그림과 흐름이 갈라진다. 반복은 스테이지 **내부의 세부**이므로 여기 있는 것이 맞다.
 
-    **수용 조건은 "위반 수가 줄어야 한다"이다.** 안 줄면 재생성본을 버리고 직전본을
-    지킨다. 이유가 둘이다. (1) 재생성이 다른 데를 망가뜨리면서 지적 하나를 고치는 일이
-    실제로 있다. (2) 이 조건이 **종료를 보장한다** — 위반 수는 자연수이고 매 회 반드시
-    줄어야 하므로 무한 루프가 원리상 불가능하다. 예전 문법 수리 루프에는 없던 성질이다.
+    **수용 조건은 "기존 위반의 엄격한 부분집합이어야 한다"이다.** 안 줄거나 새로운 위반을
+    만들면 재생성본을 버리고 직전본을 지킨다. 이유가 둘이다. (1) 재생성이 다른 데를
+    망가뜨리면서 지적 하나를 고치는 일이 실제로 있다. (2) 이 조건이 **종료를 보장한다** —
+    유한한 위반 집합이 매 회 반드시 작아지므로 무한 루프가 원리상 불가능하다. 예전 문법
+    수리 루프에는 없던 성질이다.
 
     **남은 위반을 숨기지 않는다.** 예산을 다 써도 고쳐지지 않은 것은 그대로 상태에 실려
     게이트에서 사람에게 간다. `stopped`가 왜 멈췄는지를 들고 가므로, 화면은 "위반 0건"과
@@ -353,7 +370,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
 
     def node(state: ArchitectureState) -> dict:
         model = state.get(spec.model_key) or {}
-        findings = spec.check(model, state)
+        findings = _dedupe_findings(spec.check(model, state))
         iterations = 0
         error: str | None = None
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
@@ -371,15 +388,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 error = f"{type(exc).__name__}: {exc}"
                 stopped = ERROR
                 break
-            candidate_findings = spec.check(candidate or {}, state)
+            candidate_findings = _dedupe_findings(spec.check(candidate or {}, state))
             if _is_degenerate(spec, model, candidate) or _loses_sequence_traceability(
                 spec, model, candidate, state
             ):
                 stopped = NO_IMPROVEMENT
                 break
-            if len(candidate_findings) >= len(findings):
-                # 재생성본을 **버린다.** 지적 하나를 고치면서 다른 데를 망가뜨린 것을
-                # 채택하면 다음 회차의 기준선이 더 나빠진다.
+            current_keys = {_finding_key(finding) for finding in findings}
+            candidate_keys = {_finding_key(finding) for finding in candidate_findings}
+            if not candidate_keys < current_keys:
+                # 기존 결함의 엄격한 부분집합일 때만 채택한다. 개수가 줄어도 새로운
+                # 결함을 만든 수정본은 다음 단계의 기준선으로 사용할 수 없다.
                 stopped = NO_IMPROVEMENT
                 break
             model, findings = candidate, candidate_findings

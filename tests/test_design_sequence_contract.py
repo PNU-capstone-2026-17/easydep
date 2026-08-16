@@ -1,8 +1,10 @@
 import dataclasses
+import hashlib
 from unittest.mock import patch
 
 from app.design.graphs.subgraphs import SEQUENCE_DIAGRAM_SPEC
 from app.design.knowledge.detectors import (
+    Finding,
     sequence_message_methods,
     sequence_usecase_coverage,
 )
@@ -67,6 +69,7 @@ def test_extracts_one_sequence_diagram_for_each_use_case():
         "Create order",
         "Cancel order",
     ]
+    assert result["class_diagram_hash"] == hashlib.sha256(b"class Order").hexdigest()
 
 
 def test_targeted_sequence_revision_preserves_other_use_case_diagrams():
@@ -244,6 +247,33 @@ def test_sequence_check_rejects_repair_that_drops_existing_step_trace(monkeypatc
     assert result["sequence_diagram_model"] == dirty
     assert result["sequence_diagram_check"]["stopped"] == NO_IMPROVEMENT
     assert result["sequence_diagram_check"]["findings"]
+
+
+def test_sequence_check_rejects_repair_that_replaces_a_finding_with_a_new_one(monkeypatch):
+    monkeypatch.setenv("DESIGN_MAX_REPAIR_ITERS", "1")
+    original = {
+        "phase": "original",
+        "Participants": [_participant("User", "actor")],
+        "Messages": [_message("User", "User", "requestOrder()")],
+    }
+    candidate = {**original, "phase": "candidate"}
+
+    def check(model, state):
+        if model.get("phase") == "candidate":
+            return [Finding("replacement.finding", "new defect", "candidate")]
+        return [Finding("original.finding", "old defect", "original")]
+
+    spec = dataclasses.replace(
+        SEQUENCE_DIAGRAM_SPEC,
+        check=check,
+        revise=lambda current, feedback, current_state, targets: candidate,
+    )
+
+    result = check_node(spec)({"sequence_diagram_model": original})
+
+    assert result["sequence_diagram_model"] == original
+    assert result["sequence_diagram_check"]["stopped"] == NO_IMPROVEMENT
+    assert "old defect" in result["sequence_diagram_check"]["findings"][0]
 
 
 def test_sequence_check_allows_removing_hallucinated_trace_references(monkeypatch):

@@ -1,22 +1,17 @@
 """시퀀스 호출과 클래스 메서드를 대사해 두 산출물의 일관성을 보장한다."""
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from app.design.knowledge.detectors import (
-    sequence_async_returns,
-    sequence_causal_call_chain,
-    sequence_fragment_condition_consistency,
-    sequence_nonvoid_calls_have_returns,
+    sequence_diagram_findings,
     sequence_return_values_match_methods,
-    sequence_unmatched_returns,
-    sequence_usecase_coverage,
 )
 from app.design.schemas.architecture_state import ArchitectureState, usecase_spec_text
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.reviser import revise_bce_classes
 from app.design.services.common.validation import validate_puml_artifact
-from app.design.services.sequence_diagram.extractor import extract_sequence_diagrams
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     method_call_signature,
@@ -24,10 +19,6 @@ from app.design.services.sequence_diagram.methods import (
 
 
 _CALL_TYPES = {"sync", "async", "self"}
-
-# 외부 패치 지점을 보존하면서 유스케이스별 복수 추출로 전환한다.
-extract_sequence_model = extract_sequence_diagrams
-
 
 def _sequence_diagrams(sequence: dict) -> list[dict]:
     diagrams = sequence.get("Diagrams") if isinstance(sequence, dict) else None
@@ -191,7 +182,6 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
     diagrams = _sequence_diagrams(sequence)
     missing: dict[str, list[str]] = {}
     return_findings = []
-    uncovered = []
     for diagram in diagrams:
         for class_name, labels in _missing_methods(
             diagram, bce, strict=False
@@ -199,8 +189,7 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
             target_labels = missing.setdefault(class_name, [])
             target_labels.extend(label for label in labels if label not in target_labels)
         return_findings.extend(sequence_return_values_match_methods(diagram, state))
-        uncovered.extend(sequence_usecase_coverage(diagram, state))
-    if not missing and not return_findings and not uncovered:
+    if not missing and not return_findings:
         return {}
 
     targets = set(missing)
@@ -223,7 +212,6 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
             for label in labels
         ),
         *(finding.as_issue() for finding in return_findings),
-        *(finding.as_issue() for finding in uncovered),
     ]
     feedback = (
         "Review these sequence-to-class contract issues against the use-case specification:\n- "
@@ -244,20 +232,31 @@ def reconcile_class_methods(state: ArchitectureState) -> dict:
     result: dict[str, Any] = {}
     if revised_bce != bce:
         result.update(_class_patch(revised_bce))
+        if isinstance(sequence.get("Diagrams"), list):
+            result["sequence_diagram_model"] = {
+                **sequence,
+                "class_diagram_hash": hashlib.sha256(
+                    result["class_diagram_puml"].encode("utf-8")
+                ).hexdigest(),
+            }
         _persist_class_diagram(state, result)
 
-    if uncovered:
-        class_puml = result.get("class_diagram_puml") or state.get("class_diagram_puml", "")
-        result["sequence_diagram_model"] = extract_sequence_model(
-            state.get("usecase_spec"), class_puml
-        )
     return result
 
 
 def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
-    """렌더 직전 호출·반환·인과·fragment 계약을 강제하는 최종 장벽."""
+    """렌더 직전 모든 시퀀스 의미 계약을 강제하는 최종 장벽."""
     sequence = state.get("sequence_diagram_model") or {}
     bce = state.get("extracted_bce_classes") or {}
+    expected_class_hash = str(sequence.get("class_diagram_hash") or "").strip()
+    if expected_class_hash:
+        actual_class_hash = hashlib.sha256(
+            str(state.get("class_diagram_puml") or "").encode("utf-8")
+        ).hexdigest()
+        if expected_class_hash != actual_class_hash:
+            raise ValueError(
+                "sequence diagram was generated from a different class diagram version"
+            )
     if isinstance(sequence.get("Diagrams"), list):
         expected = _expected_use_case_ids(state)
         actual = [
@@ -294,21 +293,28 @@ def ensure_sequence_class_methods(state: ArchitectureState) -> dict:
                 for class_name, labels in missing.items()
             )
         )
-    contract_findings = [
-        finding
+    contract_findings = sequence_diagram_findings(sequence, state)
+    is_new_contract = bool(expected_class_hash) or any(
+        "call_id" in message or "reply_to" in message
         for diagram in diagrams
-        for finding in (
-            *sequence_unmatched_returns(diagram, state),
-            *sequence_async_returns(diagram, state),
-            *sequence_return_values_match_methods(diagram, state),
-            *sequence_nonvoid_calls_have_returns(diagram, state),
-            *sequence_causal_call_chain(diagram, state),
-            *sequence_fragment_condition_consistency(diagram, state),
-        )
-    ]
+        for message in diagram.get("Messages") or []
+        if isinstance(message, dict)
+    )
+    if not is_new_contract:
+        legacy_final_rules = {
+            "sequence.unmatched-return-message",
+            "sequence.async-call-has-no-return",
+            "sequence.return-label-matches-method-return",
+            "sequence.nonvoid-call-requires-return",
+            "sequence.causal-call-chain",
+            "sequence.fragment-condition-consistency",
+        }
+        contract_findings = [
+            finding for finding in contract_findings if finding.rule_id in legacy_final_rules
+        ]
     if contract_findings:
         raise ValueError(
-            "sequence call/return contracts remain invalid (including causal/fragment rules): "
+            "sequence interaction contracts remain invalid: "
             + "; ".join(finding.message for finding in contract_findings)
         )
     return {}

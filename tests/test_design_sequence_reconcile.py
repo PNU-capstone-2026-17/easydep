@@ -192,7 +192,7 @@ def test_finalizer_rejects_return_label_different_from_declared_type():
         },
     }
 
-    with pytest.raises(ValueError, match="call/return contracts remain invalid"):
+    with pytest.raises(ValueError, match="sequence interaction contracts remain invalid"):
         ensure_sequence_class_methods(state)
 
 
@@ -245,7 +245,7 @@ def test_finalizer_rejects_multiple_returns_for_one_call():
         ensure_sequence_class_methods(state)
 
 
-def test_uncovered_flow_causes_class_method_augmentation_and_sequence_reextraction():
+def test_uncovered_flow_is_left_for_sequence_repair_not_class_augmentation():
     state = {
         "usecase_spec": {
             "use_case_specs": [
@@ -283,45 +283,13 @@ def test_uncovered_flow_causes_class_method_augmentation_and_sequence_reextracti
             ],
         },
     }
-    revised_bce = {
-        "Classes": [
-            {
-                "className": "OrderControl",
-                "methods": ["createOrder()", "reserveOrder()"],
-            }
-        ],
-        "Relationships": [],
-    }
-    revised_sequence = {
-        "Participants": state["sequence_diagram_model"]["Participants"],
-        "Messages": [
-            state["sequence_diagram_model"]["Messages"][0],
-            {
-                "source": "Control",
-                "target": "Control",
-                "label": "reserveOrder()",
-                "type": "self",
-                "step_ids": ["UC1:main:2"],
-            },
-        ],
-    }
-
-    with (
-        patch(
-            "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
-            return_value=revised_bce,
-        ) as revise,
-        patch(
-            "app.design.services.sequence_diagram.reconcile.extract_sequence_model",
-            return_value=revised_sequence,
-        ) as extract,
-    ):
+    with patch(
+        "app.design.services.sequence_diagram.reconcile.revise_bce_classes",
+    ) as revise:
         result = reconcile_class_methods(state)
 
-    revise.assert_called_once()
-    extract.assert_called_once()
-    assert result["extracted_bce_classes"] == revised_bce
-    assert result["sequence_diagram_model"] == revised_sequence
+    revise.assert_not_called()
+    assert result == {}
 
 
 def _finalizer_contract_state(messages: list[dict]) -> dict:
@@ -379,4 +347,42 @@ def test_sequence_finalizer_rejects_one_sided_alt():
     ])
 
     with pytest.raises(ValueError, match="main과 else"):
+        ensure_sequence_class_methods(state)
+
+
+def test_new_sequence_contract_finalizer_runs_all_registered_detectors():
+    state = _finalizer_contract_state([
+        {
+            "source": "User", "target": "Boundary", "label": "start()", "type": "sync",
+            "call_id": "call-1", "reply_to": "", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "User", "label": "View", "type": "return",
+            "call_id": "", "reply_to": "call-1", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "Control", "label": "validate()", "type": "sync",
+            "call_id": "call-2", "reply_to": "", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "Control", "label": "validate()", "type": "sync",
+            "call_id": "call-3", "reply_to": "", "arguments": [],
+        },
+    ])
+
+    with pytest.raises(ValueError, match="연달아 중복"):
+        ensure_sequence_class_methods(state)
+
+
+def test_sequence_finalizer_rejects_stale_class_diagram_version():
+    state = {
+        "class_diagram_puml": "class Current",
+        "extracted_bce_classes": {"Classes": []},
+        "sequence_diagram_model": {
+            "class_diagram_hash": "stale",
+            "Diagrams": [],
+        },
+    }
+
+    with pytest.raises(ValueError, match="different class diagram version"):
         ensure_sequence_class_methods(state)
