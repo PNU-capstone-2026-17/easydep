@@ -7,6 +7,11 @@ class TestingState(TypedDict):
     """
     # Inputs
     run_id: str
+    # 검사 대상 앱. 정적분석이 읽을 배포/IaC 스냅샷과 동적 검사가 읽을 기능
+    # 요구사항이 모두 이 id로 DB에서 조회된다. LangGraph는 스키마에 없는 키를
+    # 조용히 버리므로, 이 칸이 없으면 호출자가 넘겨도 노드에는 닿지 않는다.
+    app_id: str
+    # DB에 저장된 스냅샷이 없을 때만 쓰는 작업공간 대체 경로.
     manifests_dir: str # e.g. "application/k8s"
     iac_dir: str # e.g. "application/terraform"
     target_url: str # Target URL for dynamic testing, defaults to localhost:8080

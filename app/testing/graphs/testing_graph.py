@@ -21,8 +21,8 @@ def create_testing_graph():
     # Add edges
     # Standard flow: Static K8s -> Static IaC -> Dynamic Functional -> Dynamic NFR
     workflow.add_edge(START, "static_verification")
-    
-    # Simple linear flow for now. 
+
+    # Simple linear flow for now.
     # In the future, we could add conditional edges to halt if a stage fails.
     workflow.add_edge("static_verification", "iac_verification")
     workflow.add_edge("iac_verification", "dynamic_functional")
@@ -31,3 +31,33 @@ def create_testing_graph():
 
     # Compile the graph
     return workflow.compile()
+
+
+def initial_state(
+    *,
+    run_id: str,
+    app_id: str,
+    target_url: str = "",
+    manifests_dir: str = "",
+    iac_dir: str = "",
+) -> dict:
+    """A fully populated input for :func:`create_testing_graph`.
+
+    ``TestingState`` is a TypedDict, so LangGraph silently drops any key it does
+    not declare — an input assembled by hand loses ``app_id`` the moment the two
+    drift apart, and every database lookup in the graph is keyed on it.  Callers
+    build their input here so that cannot happen quietly.
+    """
+    return {
+        "run_id": run_id,
+        "app_id": app_id,
+        "manifests_dir": manifests_dir,
+        "iac_dir": iac_dir,
+        "target_url": target_url,
+        "current_node": "",
+        "errors": [],
+        "static_report": None,
+        "dynamic_functional_report": None,
+        "dynamic_nfr_report": None,
+        "iac_report": None,
+    }

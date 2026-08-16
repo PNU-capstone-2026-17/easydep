@@ -12,6 +12,10 @@ from app.testing.runtime.provider import (
     settings as provider_settings,
 )
 from app.testing.schemas.testing_state import TestingState
+from app.testing.utils.requirements_source import (
+    RequirementsUnavailable,
+    functional_requirements,
+)
 from app.testing.utils.test_runner import run_dynamic_test
 
 SYSTEM_PROMPT = """You are an expert QA automation engineer.
@@ -24,6 +28,7 @@ Requirements to test:
 Write ONLY the Python code. Do not include markdown formatting or explanations.
 Use synchronous playwright (`from playwright.sync_api import Page, expect`).
 Ensure that tests make assertions based on the requirements.
+Name each test after the requirement id it covers (e.g. `def test_fr1_...`).
 If a requirement cannot be fully tested via UI (e.g. backend processing without UI), write an API test using the `requests` or `httpx` module if applicable, or add a comment `# Skip: Cannot be tested via UI`.
 """
 
@@ -31,11 +36,15 @@ If a requirement cannot be fully tested via UI (e.g. backend processing without 
 def dynamic_functional_node(state: TestingState) -> dict:
     """
     Executes dynamic functional (acceptance) testing using LLM generated playwright/pytest tests.
+
+    The requirements come from the requirements agent's stored ``REFINE_REQ``
+    artifact, so the suite is written against what the user asked for rather
+    than against the generated code.
     """
     run_id = state.get("run_id")
-    target_url = state.get("target_url", "http://localhost:8080")
+    target_url = state.get("target_url") or ""
 
-    # 1. Fetch requirements from DB (ArtifactRepository)
+    # 1. Fetch the functional requirements the requirements agent stored.
     app_id = state.get("app_id")
     if not app_id:
         return {
@@ -43,25 +52,45 @@ def dynamic_functional_node(state: TestingState) -> dict:
             "errors": [f"Missing app_id in state for run {run_id}"],
             "dynamic_functional_report": {"status": "FAILED", "reason": "Missing app_id"},
         }
-
-    try:
-        from app.repositories.artifact_repository import load_state
-
-        arch_state = load_state(app_id)
-        refined = arch_state.get("refined_requirements") or {}
-        requirements = refined.get("requirements", [])
-    except Exception as e:
+    if not target_url:
+        # The caller owns the application's lifetime. Asserting against a URL
+        # nobody is serving would report failures that say nothing about the
+        # generated code.
         return {
             "current_node": "dynamic_functional",
-            "errors": [f"Failed to load requirements from DB for app {app_id}: {e}"],
+            "dynamic_functional_report": {
+                "status": "SKIPPED",
+                "reason": "No running application was available to test against.",
+            },
+        }
+
+    try:
+        requirements = functional_requirements(app_id)
+    except RequirementsUnavailable as error:
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {
+                "status": "SKIPPED",
+                "reason": str(error),
+            },
+        }
+    except Exception as error:  # Storage is reachable but did not answer.
+        return {
+            "current_node": "dynamic_functional",
+            "errors": [f"Failed to load requirements from DB for app {app_id}: {error}"],
             "dynamic_functional_report": {"status": "FAILED", "reason": "DB error"},
         }
 
     if not requirements:
         return {
             "current_node": "dynamic_functional",
-            "dynamic_functional_report": {"status": "SKIPPED", "reason": "No requirements found."},
+            "dynamic_functional_report": {
+                "status": "SKIPPED",
+                "reason": "The stored requirements analysis contains no functional requirements.",
+            },
         }
+
+    requirement_ids = [str(item.get("id")) for item in requirements if item.get("id")]
 
     # Format requirements for prompt
     req_text = json.dumps(requirements, ensure_ascii=False, indent=2)
@@ -97,5 +126,14 @@ def dynamic_functional_node(state: TestingState) -> dict:
     # Repository root is assumed to be the current working directory of the orchestrator
     repository_root = Path(os.getcwd())
     report = run_dynamic_test(test_code, target_url, repository_root)
+    report["targetUrl"] = target_url
+    # Which requirements this run claims to cover, so a passing report can be
+    # traced back to the analysis it was derived from.
+    report["requirements"] = {
+        "source": "db",
+        "artifact_type": "REFINE_REQ",
+        "count": len(requirements),
+        "ids": requirement_ids,
+    }
 
     return {"current_node": "dynamic_functional", "dynamic_functional_report": report}
