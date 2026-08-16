@@ -8,10 +8,13 @@ import pytest
 from fastapi import HTTPException
 
 from app.artifacts_api import (
+    get_stage_image,
     get_sequence_diagram_image,
     list_sequence_diagrams,
     sequence_diagrams_from_state,
+    to_web_response,
 )
+from app.design.api import FeedbackRequest, resume_design_session
 
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
@@ -95,12 +98,64 @@ def test_sequence_diagram_image_returns_404_for_unknown_use_case() -> None:
     assert error.value.status_code == 404
 
 
+def test_sequence_diagram_images_are_blocked_while_findings_remain() -> None:
+    state = {
+        **_state(),
+        "sequence_diagram_puml": "@startuml\n@enduml",
+        "sequence_diagram_check": {
+            "findings": ["invalid receiver method"],
+            "stopped": "no_improvement",
+        },
+    }
+    response = to_web_response(state)
+    assert response["artifacts"]["sequence_diagram"] == ""
+    assert response["validation"]["sequence_diagram"]["findings"]
+
+    with patch("app.artifacts_api.require_app", return_value=state):
+        with pytest.raises(HTTPException) as error:
+            get_sequence_diagram_image(APP_ID, "UC-01", "png")
+    assert error.value.status_code == 409
+
+    with patch("app.artifacts_api.require_app", return_value=state):
+        with pytest.raises(HTTPException) as error:
+            get_stage_image(APP_ID, "sequence_diagram", "png")
+    assert error.value.status_code == 409
+
+
+def test_design_cannot_advance_past_unresolved_sequence_findings() -> None:
+    state = {
+        **_state(),
+        "sequence_diagram_check": {"findings": ["invalid receiver method"]},
+    }
+    with (
+        patch("app.design.api.require_app_exists"),
+        patch("app.design.api.require_active_session"),
+        patch(
+            "app.design.api.session_status",
+            return_value={"active": True, "stage": "sequence_diagram"},
+        ),
+        patch("app.design.api.require_app", return_value=state),
+        patch("app.design.api.design_readiness_report") as readiness,
+        patch("app.design.api.resume_design") as resume,
+    ):
+        readiness.return_value = {
+            "status": "NEEDS_INPUT",
+            "findings": [{"stage": "sequence_diagram", "finding": "invalid"}],
+        }
+        with pytest.raises(HTTPException) as error:
+            resume_design_session(APP_ID, FeedbackRequest(feedback=""))
+
+    assert error.value.status_code == 409
+    resume.assert_not_called()
+
+
 def test_frontend_renders_sequence_diagrams_as_individual_image_cards() -> None:
-    source = (Path(__file__).parents[1] / "frontend" / "index.html").read_text(
+    source = (Path(__file__).parents[1] / "frontend" / "design" / "index.html").read_text(
         encoding="utf-8"
     )
 
     assert "renderSequenceDiagramGallery" in source
     assert "/stages/sequence_diagram/diagrams`" in source
-    assert 'class="sequence-diagram-card"' in source
-    assert 'class="sequence-diagram-image"' in source
+    assert 'card.className = "sequence-diagram-card"' in source
+    assert 'image.className = "sequence-diagram-image"' in source
+    assert 'stageId === "sequence_diagram"' in source

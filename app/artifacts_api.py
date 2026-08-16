@@ -172,14 +172,18 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
 
     for stage, config in STAGE_ARTIFACTS.items():
         empty: Any = {} if config["format"] == FORMAT_JSON else ""
-        artifacts[stage] = result.get(config["state_key"], empty)
         check = result.get(config.get("check_key") or "") or {}
+        findings = list(check.get("findings", []))
+        artifact = result.get(config["state_key"], empty)
+        # Keep the invalid structured sequence model in storage for repair, but do
+        # not expose its PlantUML as an approved/renderable diagram.
+        artifacts[stage] = empty if stage == "sequence_diagram" and findings else artifact
         validation[stage] = {
             "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
             "errors": (
                 result.get(config["errors_key"], []) if config["errors_key"] else []
             ),
-            "findings": check.get("findings", []),
+            "findings": findings,
             "check_status": check.get("stopped"),
             "repair_iters": check.get("repair_iters", 0),
         }
@@ -296,6 +300,13 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
         raise HTTPException(status_code=404, detail="Stage has no diagram image.")
 
     state = require_app(app_id)
+    if stage == "sequence_diagram":
+        findings = (state.get("sequence_diagram_check") or {}).get("findings") or []
+        if findings:
+            raise HTTPException(
+                status_code=409,
+                detail="Sequence diagram has unresolved design findings.",
+            )
     puml_text = state.get(PUML_FIELDS[stage]["code"], "")
     if not puml_text:
         raise HTTPException(status_code=404, detail="Artifact has not been generated.")
@@ -338,10 +349,17 @@ def get_sequence_diagram_image(
     validate_app_id(app_id)
     if extension not in ("png", "svg"):
         raise HTTPException(status_code=404, detail="Unsupported image format.")
+    state = require_app(app_id)
+    findings = (state.get("sequence_diagram_check") or {}).get("findings") or []
+    if findings:
+        raise HTTPException(
+            status_code=409,
+            detail="Sequence diagram has unresolved design findings.",
+        )
     diagram = next(
         (
             item
-            for item in sequence_diagrams_from_state(require_app(app_id))
+            for item in sequence_diagrams_from_state(state)
             if str(item.get("use_case_id") or "") == use_case_id
         ),
         None,
