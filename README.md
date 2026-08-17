@@ -57,8 +57,8 @@ MySQL 저장소를 사용한다.
 ### 통합 실행 스크립트
 
 최초 한 번 Python 가상환경과 구현 도구를 준비하고, `.env.example`을 복사해 사용할 LLM과
-데이터베이스 접속 정보를 설정한다. `MODEL`은 요구사항 분석과 공통 생성 경로에서,
-`DESIGN_AGENT_MODEL`은 설계 구조화 호출과 LLM 지연 진단에서 사용한다.
+데이터베이스 접속 정보를 설정한다. `MODEL`은 요구사항 분석, 설계 구조화 호출, 공통 생성 경로와
+LLM 지연 진단에서 함께 사용한다.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -67,7 +67,7 @@ python -m pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File scripts\bootstrap-implementation-tools.ps1
 
 Copy-Item .env.example .env
-# .env의 API_KEY, BASE_URL, MODEL, DESIGN_AGENT_MODEL 값을 사용할 엔드포인트에 맞게 수정한다.
+# .env의 API_KEY, BASE_URL, MODEL 값을 사용할 엔드포인트에 맞게 수정한다.
 ```
 
 Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령을 사용한다.

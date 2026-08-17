@@ -153,7 +153,7 @@ def _stream_structured(
     reasoning_characters = 0
     finish_reasons: list[str] = []
     request: dict[str, Any] = {
-        "model": settings.design_agent_model,
+        "model": settings.model,
         "messages": messages,
         "temperature": 0,
         "seed": 42,

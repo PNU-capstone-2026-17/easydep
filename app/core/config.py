@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     seed: int = 42
     
     # Specific Agent Models
-    design_agent_model: str = "openai/gpt-oss-120b"
     openhands_model: Optional[str] = None
     llm_model: Optional[str] = None
     

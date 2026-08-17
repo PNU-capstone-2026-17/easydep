@@ -89,7 +89,7 @@ def probe(
     try:
         if transport == "parse":
             response = client.chat.completions.parse(
-                model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+                model=os.getenv("MODEL", "openai/gpt-oss-120b"),
                 messages=messages,
                 temperature=0,
                 seed=42,
@@ -109,7 +109,7 @@ def probe(
             ]
             raise StopIteration
         stream = client.chat.completions.create(
-            model=os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+            model=os.getenv("MODEL", "openai/gpt-oss-120b"),
             messages=messages,
             temperature=0,
             seed=42,
@@ -157,7 +157,7 @@ def probe(
         "inputSource": "design-checkpoint" if design_thread_id else "probe-fixture",
         "inputCharacters": input_characters,
         "startedAt": started_at.isoformat(),
-        "model": os.getenv("DESIGN_AGENT_MODEL", "openai/gpt-oss-120b"),
+        "model": os.getenv("MODEL", "openai/gpt-oss-120b"),
         "timeoutSeconds": timeout_seconds,
         "responseEstablishedSeconds": (
             round(response_established, 6)

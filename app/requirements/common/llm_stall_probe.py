@@ -34,7 +34,7 @@ def _probe(operation: str, timeout_seconds: float) -> None:
             timeout=timeout_seconds,
         )
         stream = client.chat.completions.create(
-            model=settings.design_agent_model,
+            model=settings.model,
             messages=[{"role": "user", "content": "Reply with exactly: pong"}],
             temperature=0,
             seed=42,
