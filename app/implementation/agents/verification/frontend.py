@@ -123,6 +123,25 @@ def run_frontend_verification(
             "stderr": f"Frontend {missing} was not found",
             "testResults": "",
         }
+    main = frontend / "src" / "main.tsx"
+    main_source = main.read_text(encoding="utf-8") if main.is_file() else ""
+    has_hash_router = bool(
+        re.search(
+            r"import\s*\{[^}]*\bHashRouter\b[^}]*\}\s*from\s*['\"]react-router-dom['\"]",
+            main_source,
+        )
+        and re.search(r"<HashRouter(?:\s|>)", main_source)
+    )
+    if not has_hash_router:
+        return {
+            "command": ["npm", "run", "build"],
+            "commands": [],
+            "exitCode": 1,
+            "durationMs": 0,
+            "stdout": "",
+            "stderr": "Frontend static deployment requires HashRouter in src/main.tsx",
+            "testResults": "",
+        }
     executable = "npm.cmd" if os.name == "nt" else "npm"
     commands = [
         [executable, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],

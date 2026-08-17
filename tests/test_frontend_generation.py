@@ -89,6 +89,7 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
     } <= set(files)
     assert "getOrder" not in "\n".join(files.values())
     assert "OpenAPI Generator" in files["README.md"]
+    assert "HashRouter" in files["src/main.tsx"]
 
 
 def test_rejects_openapi_without_operations() -> None:
@@ -379,6 +380,11 @@ def test_frontend_verification_runs_install_then_production_build(
     frontend.mkdir(parents=True)
     (frontend / "package.json").write_text("{}", encoding="utf-8")
     (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "src").mkdir()
+    (frontend / "src/main.tsx").write_text(
+        "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+        encoding="utf-8",
+    )
     commands: list[list[str]] = []
 
     def completed(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
@@ -421,6 +427,19 @@ def test_frontend_verification_requires_dependency_lock(tmp_path: Path) -> None:
     (frontend / "package.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(RuntimeError, match="package-lock.json"):
+        verify_frontend_workspace(tmp_path)
+
+
+def test_frontend_verification_requires_static_hosting_router(tmp_path: Path) -> None:
+    frontend = tmp_path / "application/frontend"
+    (frontend / "src").mkdir(parents=True)
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "src/main.tsx").write_text(
+        "import { BrowserRouter } from 'react-router-dom';", encoding="utf-8"
+    )
+
+    with pytest.raises(RuntimeError, match="HashRouter"):
         verify_frontend_workspace(tmp_path)
 
 

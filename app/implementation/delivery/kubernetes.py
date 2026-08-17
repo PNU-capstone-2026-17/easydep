@@ -23,6 +23,215 @@ CAPABILITIES = {
 }
 
 
+def application_dockerfile(*, include_frontend: bool = True) -> str:
+    frontend_stage = ""
+    frontend_copy = ""
+    if include_frontend:
+        frontend_stage = """FROM node:20-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY frontend/ ./
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm run build
+
+"""
+        frontend_copy = (
+            "COPY --from=frontend-build /app/frontend/dist/ "
+            "src/main/resources/static/\n"
+        )
+    return f"""{frontend_stage}FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
+WORKDIR /app
+COPY . .
+{frontend_copy}RUN gradle bootJar --no-daemon \\
+    && jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print | sort | head -n 1)" \\
+    && test -n "$jar" \\
+    && cp "$jar" /tmp/app.jar
+
+FROM {DEFAULT_DOCKER_JRE_IMAGE}
+WORKDIR /app
+RUN addgroup -S app && adduser -S app -G app
+COPY --from=build /tmp/app.jar app.jar
+USER app
+EXPOSE {DEFAULT_CONTAINER_PORT}
+ENTRYPOINT ["java", "-jar", "app.jar"]"""
+
+
+def dockerignore() -> str:
+    return """.git
+.gradle
+build
+reports
+deployment-bundle
+.env
+.env.*
+*.pem
+*.key"""
+
+
+def frontend_dockerfile() -> str:
+    return """FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY . .
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN test -n "$VITE_API_BASE_URL" && npm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist/ /usr/share/nginx/html/
+EXPOSE 8080"""
+
+
+def frontend_nginx_config() -> str:
+    return """server {
+  listen 8080;
+  server_name _;
+  root /usr/share/nginx/html;
+  index index.html;
+  location / { try_files $uri $uri/ /index.html; }
+}"""
+
+
+def deployment_verifier_source() -> str:
+    return r'''#!/usr/bin/env python3
+import json
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+if sys.argv[1] == "--preflight":
+    release = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    if release.get("status") != "RELEASABLE":
+        raise SystemExit("release manifest is not RELEASABLE")
+    raise SystemExit(0)
+
+intent_path = Path(sys.argv[1])
+report_path = Path(sys.argv[2])
+intent = json.loads(intent_path.read_text(encoding="utf-8"))
+namespace = intent.get("namespace", "default")
+workloads = intent.get("workloads", [])
+evidence = []
+frontend_runtime = None
+forward = None
+
+def run(command):
+    return subprocess.run(command, capture_output=True, text=True, check=True)
+
+def get(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "EasyDep-deployment-verifier"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return response.status, response.headers.get("Content-Type", ""), response.read(2 * 1024 * 1024).decode("utf-8", "replace")
+
+try:
+    for workload in workloads:
+        kind = workload.get("kind")
+        name = workload["name"]
+        if kind not in {"Deployment", "StatefulSet"}:
+            continue
+        run(["kubectl", "rollout", "status", f"{kind.lower()}/{name}", "-n", namespace, "--timeout=5m"])
+        pods = json.loads(run(["kubectl", "get", "pods", "-n", namespace, "-l", f"app.kubernetes.io/name={name}", "-o", "json"]).stdout)
+        statuses = [status for pod in pods.get("items", []) for status in pod.get("status", {}).get("containerStatuses", [])]
+        if not statuses or not all(status.get("ready") for status in statuses):
+            raise RuntimeError(f"workload {name} has no ready containers")
+        image_ids = [str(status.get("imageID", "")) for status in statuses]
+        if not all(re.search(r"@sha256:[0-9a-f]{64}$", image_id) for image_id in image_ids):
+            raise RuntimeError(f"workload {name} is not running digest-pinned images")
+        evidence.append({"workload": name, "kind": kind, "ready": True, "imageIds": image_ids})
+
+    frontend = intent.get("frontend", {"mode": "integrated"})
+    candidates = [item for item in workloads if item.get("artifact") == "frontend"]
+    if not candidates:
+        candidates = [item for item in workloads if item.get("artifact", "application") == "application" and item.get("capabilities", {}).get("service")]
+    if candidates:
+        workload = candidates[0]
+        public_url = frontend.get("publicUrl") if isinstance(frontend, dict) else None
+        host = workload.get("ingress", {}).get("host")
+        if public_url or host:
+            origin = str(public_url or f"https://{host}").rstrip("/")
+            route = "ingress"
+        else:
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            local_port = listener.getsockname()[1]
+            listener.close()
+            service_port = workload.get("port", 8080) if workload.get("kind") == "StatefulSet" else 80
+            forward = subprocess.Popen(["kubectl", "port-forward", "-n", namespace, f"service/{workload['name']}", f"{local_port}:{service_port}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            origin = f"http://127.0.0.1:{local_port}"
+            route = "service-port-forward"
+            for _ in range(30):
+                if forward.poll() is not None:
+                    raise RuntimeError(forward.stderr.read())
+                try:
+                    get(origin + "/")
+                    break
+                except OSError:
+                    time.sleep(1)
+        status, content_type, body = get(origin + "/")
+        if status < 200 or status >= 300 or not re.search(r'<div[^>]+id=["\']root["\']', body, re.I):
+            raise RuntimeError("deployed frontend index was not served")
+        match = re.search(r'<script[^>]+src=["\']([^"\']+\.js(?:\?[^"\']*)?)["\']', body, re.I)
+        if not match:
+            raise RuntimeError("deployed frontend index has no JavaScript bundle")
+        asset = match.group(1)
+        asset_url = asset if asset.startswith("http") else origin + "/" + asset.lstrip("/")
+        asset_status, asset_type, asset_body = get(asset_url)
+        if asset_status < 200 or asset_status >= 300 or not asset_body or "javascript" not in asset_type.lower():
+            raise RuntimeError("deployed frontend JavaScript bundle was not served")
+        frontend_runtime = {"status": "SUCCEEDED", "route": route, "url": origin + "/", "assetUrl": asset_url, "contentType": content_type}
+    report = {"schemaVersion": "easydep-deployment-runtime/v1alpha1", "status": "SUCCEEDED", "workloads": evidence, "frontendRuntime": frontend_runtime}
+except Exception as error:
+    report = {"schemaVersion": "easydep-deployment-runtime/v1alpha1", "status": "FAILED", "error": str(error), "workloads": evidence, "frontendRuntime": frontend_runtime}
+finally:
+    if forward is not None:
+        forward.terminate()
+        try:
+            forward.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            forward.kill()
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+release_path = report_path.with_name("release-manifest.json")
+if report["status"] == "SUCCEEDED" and release_path.is_file():
+    release = json.loads(release_path.read_text(encoding="utf-8"))
+    if release.get("status") == "RELEASABLE":
+        release["deploymentStatus"] = "DEPLOYED"
+        release.setdefault("checks", {})["deploymentRuntime"] = True
+        release.setdefault("evidence", {})["deploymentRuntime"] = "reports/deployment-runtime.json"
+        release["status"] = "DEPLOYED"
+        release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
+if report["status"] != "SUCCEEDED":
+    raise SystemExit(report.get("error", "deployment runtime verification failed"))
+'''
+
+
+def render_local_container(run_root: Path) -> dict[str, object]:
+    """Create a locally runnable integrated image even without cloud inputs."""
+    application = run_root / "application"
+    frontend = application / "frontend" / "package.json"
+    application.mkdir(parents=True, exist_ok=True)
+    (application / "Dockerfile").write_text(
+        application_dockerfile(include_frontend=frontend.is_file()) + "\n",
+        encoding="utf-8",
+    )
+    (application / ".dockerignore").write_text(
+        dockerignore() + "\n", encoding="utf-8"
+    )
+    return {
+        "schemaVersion": "easydep-local-container/v1alpha1",
+        "frontendMode": "integrated" if frontend.is_file() else "absent",
+        "renderedFiles": ["application/.dockerignore", "application/Dockerfile"],
+    }
+
+
 def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
     cloud_path = spec.inputs.get("cloud")
     deployment_path = spec.inputs.get("deployment")
@@ -56,25 +265,26 @@ def render_deployment(run_root: Path, spec: Any) -> dict[str, object]:
         path = application / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content.rstrip() + "\n", encoding="utf-8")
-        rendered.append(f"application/{relative}")
+        rendered_path = f"application/{relative}"
+        if rendered_path not in rendered:
+            rendered.append(rendered_path)
 
     namespace = str(intent.get("namespace", "default"))
     write(
         "Dockerfile",
-        f"""FROM node:20-alpine AS frontend-base
-WORKDIR /app
-COPY . .
-RUN if [ -d frontend ]; then \\
-        cd frontend && \\
-        if [ -f package.json ]; then npm install && npm run build; else mkdir -p dist && cp -r * dist/; fi; \\
-    else \\
-        mkdir -p frontend/dist; \\
-    fi
+        f"""FROM node:20-alpine AS frontend-build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY frontend/ ./
+ARG VITE_API_BASE_URL=""
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+RUN npm run build
 
 FROM {DEFAULT_DOCKER_GRADLE_IMAGE} AS build
 WORKDIR /app
 COPY . .
-COPY --from=frontend-base /app/frontend/dist/ src/main/resources/static/
+COPY --from=frontend-build /app/frontend/dist/ src/main/resources/static/
 RUN gradle bootJar --no-daemon \\\
     && jar="$(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar' -print | sort | head -n 1)" \\
     && test -n "$jar" \\
@@ -100,6 +310,20 @@ deployment-bundle
 *.pem
 *.key""",
     )
+    separate_frontend = any(
+        workload.get("artifact") == "frontend" for workload in intent["workloads"]
+    )
+    write(
+        "Dockerfile",
+        application_dockerfile(
+            include_frontend=(application / "frontend/package.json").is_file()
+            and not separate_frontend
+        ),
+    )
+    if separate_frontend:
+        write("frontend/Dockerfile", frontend_dockerfile())
+        write("frontend/nginx.conf", frontend_nginx_config())
+        write("frontend/.dockerignore", "node_modules\ndist\n.env*\n")
     if any("__EASYDEP_REGISTRY_" in str(workload.get("image", "")) for workload in intent["workloads"]):
         write(
             "k8s/render-images.sh",
@@ -188,7 +412,10 @@ for workload in intent.get("workloads", []):
     target = image.replace(f"__EASYDEP_REGISTRY_{registry_ref}__", base).replace("<tag>", tag)
     if "__EASYDEP_REGISTRY_" in target or "<tag>" in target:
         raise SystemExit(f"unresolved image target for workload {name}")
-    lines.append(f"{name}\t{target}")
+    artifact = workload.get("artifact", "application")
+    if artifact not in {"application", "frontend"}:
+        raise SystemExit(f"unsupported workload artifact for {name}: {artifact}")
+    lines.append(f"{name}\t{target}\t{artifact}")
 Path(os.environ["TARGETS_FILE"]).write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 cut -f2 "$targets_file" | sed 's|/.*||' | sort -u > "$hosts_file"
@@ -208,9 +435,33 @@ case "$provider" in
     ;;
   *) echo "unsupported Terraform provider output: $provider" >&2; exit 2 ;;
 esac
-local_image="easydep-build:$image_tag"
-docker build -t "$local_image" -f "$app_root/Dockerfile" "$app_root"
-while IFS="$(printf '\t')" read -r workload target; do
+frontend_api_base_url=$(INTENT_PATH="$intent_path" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+intent = json.loads(Path(os.environ["INTENT_PATH"]).read_text(encoding="utf-8"))
+frontend = intent.get("frontend", {})
+configured = frontend.get("apiBaseUrl", "") if isinstance(frontend, dict) else ""
+print(os.environ.get("EASYDEP_FRONTEND_API_BASE_URL") or configured)
+PY
+)
+built_dir=$(mktemp -d)
+trap 'rm -f "$targets_file" "$hosts_file"; rm -rf "$built_dir"' EXIT
+while IFS="$(printf '\t')" read -r workload target artifact; do
+  local_image="easydep-build:$image_tag-$artifact"
+  if [ ! -f "$built_dir/$artifact" ]; then
+    case "$artifact" in
+      application)
+        docker build --build-arg "VITE_API_BASE_URL=$frontend_api_base_url" -t "$local_image" -f "$app_root/Dockerfile" "$app_root"
+        ;;
+      frontend)
+        : "${frontend_api_base_url:?set frontend.apiBaseUrl or EASYDEP_FRONTEND_API_BASE_URL for a separate frontend}"
+        docker build --build-arg "VITE_API_BASE_URL=$frontend_api_base_url" -t "$local_image" -f "$app_root/frontend/Dockerfile" "$app_root/frontend"
+        ;;
+    esac
+    : > "$built_dir/$artifact"
+  fi
   docker tag "$local_image" "$target"
   docker push "$target"
 done < "$targets_file"
@@ -222,7 +473,7 @@ from pathlib import Path
 
 references = {}
 for line in Path(os.environ["TARGETS_FILE"]).read_text(encoding="utf-8").splitlines():
-    workload, target = line.split("\t", 1)
+    workload, target, _artifact = line.split("\t", 2)
     digests = json.loads(subprocess.check_output(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", target], text=True))
     digest = next((value for value in digests if value.startswith(target.rsplit(":", 1)[0] + "@sha256:")), None)
     if digest is None:
@@ -247,6 +498,7 @@ output_dir=${EASYDEP_MANIFEST_DIR:-"$script_dir/resolved"}
 references_file=${EASYDEP_IMAGE_REFERENCES_FILE:-"$script_dir/image-references.json"}
 terraform_bin=${EASYDEP_TERRAFORM_PATH:-terraform}
 : "${EASYDEP_IMAGE_TAG:?set EASYDEP_IMAGE_TAG to a release tag}"
+python3 "$script_dir/verify-deployment.py" --preflight "$script_dir/../../reports/release-manifest.json"
 "$terraform_bin" -chdir="$terraform_dir" init -input=false
 "$terraform_bin" -chdir="$terraform_dir" apply "$@"
 sh "$script_dir/build-push.sh" "$terraform_dir" "$references_file"
@@ -254,8 +506,10 @@ sh "$script_dir/render-images.sh" "$references_file" "$output_dir"
 find "$output_dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print | sort | while IFS= read -r manifest; do
   kubectl apply -f "$manifest"
 done
+python3 "$script_dir/verify-deployment.py" "$script_dir/deployment-intent.json" "$script_dir/../../reports/deployment-runtime.json"
 ''',
         )
+    write("k8s/verify-deployment.py", deployment_verifier_source())
     write(
         "k8s/deployment-intent.json",
         json.dumps(intent, ensure_ascii=False, indent=2),
@@ -418,6 +672,7 @@ def infer_intent(
             diagram_alias and diagram_alias in exposed_aliases
         )
         role = str(source.get("role", "")).lower()
+        artifact = "frontend" if role == "frontend" else "application"
         exposure = str(source.get("exposure", "")).lower()
         if exposure in {"none", "disabled"}:
             api_like = False
@@ -440,15 +695,30 @@ def infer_intent(
         workloads.append({
             "name": workload_name, "kind": "Deployment",
             "image": registry_image(provider, registry, workload_name),
+            "artifact": artifact,
             **({"registryRef": resource_reference(registry)} if registry else {}),
             **({"clusterRef": resource_reference(cluster)} if cluster else {}),
-            "port": int(networking.get("containerPort", DEFAULT_CONTAINER_PORT)),
+            "port": int(
+                source.get(
+                    "port",
+                    8080
+                    if artifact == "frontend"
+                    else networking.get("containerPort", DEFAULT_CONTAINER_PORT),
+                )
+            ),
             "replicas": replicas, "resources": source.get("resources", {}),
             "health": {
-                "readinessPath": source.get("probes", {}).get("readiness", "/healthz"),
+                "readinessPath": source.get("probes", {}).get(
+                    "readiness", "/" if artifact == "frontend" else "/healthz"
+                ),
                 "livenessPath": source.get(
                     "probes", {}
-                ).get("liveness", source.get("probes", {}).get("readiness", "/healthz")),
+                ).get(
+                    "liveness",
+                    source.get("probes", {}).get(
+                        "readiness", "/" if artifact == "frontend" else "/healthz"
+                    ),
+                ),
             },
             "service": {
                 "type": "ClusterIP" if use_ingress else networking.get("serviceExposure", "ClusterIP")
@@ -476,7 +746,15 @@ def infer_intent(
         })
     return {
         "schemaVersion": SCHEMA_VERSION, "namespace": dns_name(name),
-        "createNamespace": True, "workloads": workloads,
+        "createNamespace": True,
+        "frontend": {
+            "mode": (
+                "separate"
+                if any(item.get("artifact") == "frontend" for item in workloads)
+                else "integrated"
+            )
+        },
+        "workloads": workloads,
     }
 
 
@@ -496,6 +774,19 @@ def validate_intent(intent: dict[str, Any]) -> None:
     if not isinstance(workloads, list) or not workloads:
         errors.append("workloads must be a non-empty array")
         workloads = []
+    frontend = intent.get("frontend", {"mode": "integrated"})
+    frontend_mode = (
+        frontend.get("mode", "integrated")
+        if isinstance(frontend, dict)
+        else "integrated"
+    )
+    frontend_workloads = [
+        item for item in workloads if item.get("artifact") == "frontend"
+    ]
+    if frontend_mode == "separate" and len(frontend_workloads) != 1:
+        errors.append("frontend.mode=separate requires exactly one frontend workload")
+    if frontend_mode == "integrated" and frontend_workloads:
+        errors.append("frontend.mode=integrated cannot declare a frontend workload")
     names: set[str] = set()
     for index, workload in enumerate(workloads):
         at = f"workloads[{index}]"
@@ -521,6 +812,13 @@ def validate_intent(intent: dict[str, Any]) -> None:
             errors.append(f"{at}: ingress requires service")
         if cap.get("serviceMonitor") and not cap.get("service"):
             errors.append(f"{at}: serviceMonitor requires service")
+        if workload.get("artifact") == "frontend":
+            if kind != "Deployment":
+                errors.append(f"{at}: frontend artifact requires Deployment")
+            if not cap.get("service"):
+                errors.append(f"{at}: frontend artifact requires service")
+            if int(workload.get("port", 0)) != 8080:
+                errors.append(f"{at}: frontend artifact must listen on port 8080")
         if cap.get("hpa"):
             replicas = workload.get("replicas", {})
             if kind not in {"Deployment", "StatefulSet"}:
@@ -862,7 +1160,12 @@ def verify_cloud_resource_spec(
                     errors.append(
                         f"cloud workload {name} resources.{group}.{key} does not match deployment intent"
                     )
-        expected_port = networking.get("containerPort")
+        expected_port = source.get(
+            "port",
+            8080
+            if str(source.get("role", "")).lower() == "frontend"
+            else networking.get("containerPort"),
+        )
         if expected_port is not None and int(workload.get("port", DEFAULT_CONTAINER_PORT)) != int(expected_port):
             errors.append(f"cloud networking containerPort does not match workload {name}")
         health = workload.get("health", {})

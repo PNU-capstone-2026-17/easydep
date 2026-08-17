@@ -139,7 +139,6 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
     # 5. Infrastructure & IaC (Deployment Diagram / Cloud Spec)
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
-    intent = spec.inputs.get("deploymentIntent")
     if cloud and cloud.is_file():
         mappings.append({
             "target_file": "application/terraform/main.tf",
@@ -150,12 +149,17 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
             "allowed_edits": [],
             "description": "Main Terraform HCL infrastructure declaration",
         })
-    if any(path and path.is_file() for path in (deployment, cloud, intent)):
+    dockerfile = run_root / "application/Dockerfile"
+    if dockerfile.is_file():
         mappings.append({
             "target_file": "application/Dockerfile",
             "element_name": "Dockerfile",
-            "origin_artifact": "deployment" if deployment and deployment.is_file() else "cloud",
-            "origin_element": "deployment topology",
+            "origin_artifact": (
+                "deployment"
+                if deployment and deployment.is_file()
+                else "cloud" if cloud and cloud.is_file() else "generated-contracts"
+            ),
+            "origin_element": "deployment topology or local release container",
             "contract_level": "INFRASTRUCTURE_SPEC_BOUND",
             "allowed_edits": ["ENVIRONMENT_VARIABLES"],
             "description": "Container image build spec",

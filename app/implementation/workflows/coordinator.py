@@ -12,7 +12,7 @@ from ..agents.verification.build import (
     verify_run_workspace,
 )
 from ..agents.verification.release import verify_container_runtime
-from ..delivery.kubernetes import render_deployment
+from ..delivery.kubernetes import render_deployment, render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import build_implementation_ir, parse_erd_entities
 from ..domain.models import JobSpec
@@ -487,6 +487,8 @@ def _complete_release(
     state["sourceDesignConformance"] = conformance.get("status")
     try:
         deployment, iac = _render_deployment_if_configured(run_root, spec)
+        if deployment is None:
+            render_local_container(run_root)
         traceability = build_rtm_traceability_map(spec, run_root)
         container_smoke = verify_container_runtime(run_root)
         release = write_release_manifest(

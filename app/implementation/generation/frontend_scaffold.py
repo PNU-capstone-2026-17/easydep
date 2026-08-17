@@ -205,9 +205,10 @@ export default defineConfig({ plugins: [react()] });
         "src/vite-env.d.ts": "/// <reference types=\"vite/client\" />\n",
         "src/main.tsx": """import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { HashRouter } from 'react-router-dom';
 import App from './App';
 import './styles.css';
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><HashRouter><App /></HashRouter></React.StrictMode>);
 """,
         "src/config.ts": f"export const API_BASE_URL=(import.meta.env.VITE_API_BASE_URL??{base_url}).replace(/\\/$/,'');\n",
         "src/App.tsx": f"export default function App(){{return <main><h1>{{{title}}}</h1><p>Waiting for the frontend implementation agent.</p></main>;}}\n",

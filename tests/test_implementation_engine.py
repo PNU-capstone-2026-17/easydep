@@ -1853,6 +1853,85 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             self.assertIn("path: /readyz", deployment_source)
             self.assertIn("path: /livez", deployment_source)
 
+    def test_deployment_renderer_supports_separate_frontend_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            intent_path = root / "deployment-intent.json"
+            intent_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "easydep-deployment-intent/v1alpha1",
+                        "namespace": "orders",
+                        "frontend": {
+                            "mode": "separate",
+                            "apiBaseUrl": "https://api.orders.example.com",
+                        },
+                        "workloads": [
+                            {
+                                "name": "orders-api",
+                                "kind": "Deployment",
+                                "image": "__EASYDEP_REGISTRY_registry__/orders-api:<tag>",
+                                "registryRef": "registry",
+                                "artifact": "application",
+                                "port": 8000,
+                                "capabilities": {"service": True},
+                            },
+                            {
+                                "name": "orders-web",
+                                "kind": "Deployment",
+                                "image": "__EASYDEP_REGISTRY_registry__/orders-web:<tag>",
+                                "registryRef": "registry",
+                                "artifact": "frontend",
+                                "port": 8080,
+                                "capabilities": {
+                                    "service": True,
+                                    "ingress": True,
+                                },
+                                "ingress": {"host": "orders.example.com"},
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            run = root / "run"
+            frontend = run / "application/frontend"
+            frontend.mkdir(parents=True)
+            (frontend / "package.json").write_text("{}", encoding="utf-8")
+            (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+
+            report = render_deployment(
+                run,
+                SimpleNamespace(
+                    name="orders", inputs={"deploymentIntent": intent_path}
+                ),
+            )
+
+            files = set(report["renderedFiles"])
+            self.assertIn("application/frontend/Dockerfile", files)
+            self.assertIn("application/frontend/nginx.conf", files)
+            self.assertIn("application/k8s/verify-deployment.py", files)
+            backend_dockerfile = (run / "application/Dockerfile").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn("frontend-build", backend_dockerfile)
+            frontend_dockerfile = (
+                run / "application/frontend/Dockerfile"
+            ).read_text(encoding="utf-8")
+            self.assertIn("nginx-unprivileged", frontend_dockerfile)
+            build_push = (run / "application/k8s/build-push.sh").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("EASYDEP_FRONTEND_API_BASE_URL", build_push)
+            verifier = (
+                run / "application/k8s/verify-deployment.py"
+            ).read_text(encoding="utf-8")
+            compile(verifier, "verify-deployment.py", "exec")
+            deploy = (run / "application/k8s/deploy.sh").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("verify-deployment.py", deploy)
+
     @patch("app.implementation.delivery.terraform.validate_terraform", return_value={"status": "SUCCEEDED"})
     def test_deterministic_iac_renderer_matches_deployment_intent(self, _validation: object) -> None:
         with tempfile.TemporaryDirectory() as directory:

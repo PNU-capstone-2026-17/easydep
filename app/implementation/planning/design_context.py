@@ -670,8 +670,9 @@ Rules:
   `aria-live` region. Every `aria-describedby` token must reference an existing element ID,
   and data tables must remain usable on narrow screens (for example, an overflow container).
   Keep domain state inside React components; do not add dependencies.
-- `App.tsx` owns routing, `AppShell.tsx` owns shared navigation/layout, and every contracted
-  page must be reachable from the application.
+- `src/main.tsx` already provides the immutable `HashRouter` required for static hosting.
+  `App.tsx` owns route declarations without creating another router, `AppShell.tsx` owns shared
+  navigation/layout, and every contracted page must be reachable from the application.
 - Preserve all generated client/model files and project configuration exactly.
 - Create every contracted output and finish immediately. `npm run build` is the acceptance gate.
 

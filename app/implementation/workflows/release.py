@@ -38,15 +38,27 @@ def write_release_manifest(
         "containerRuntime": container_smoke.get("status")
         in {"SUCCEEDED", "NOT_APPLICABLE"},
     }
+    frontend_expected = (
+        run_root / "application" / "frontend" / "package.json"
+    ).is_file()
     frontend = verification.get("frontendVerification")
-    checks["frontendVerification"] = frontend is None or (
+    checks["frontendVerification"] = not frontend_expected or (
         isinstance(frontend, dict) and frontend.get("exitCode") == 0
+    )
+    frontend_runtime = container_smoke.get("frontendRuntime")
+    checks["frontendRuntime"] = not frontend_expected or (
+        container_smoke.get("status") == "SUCCEEDED"
+        and isinstance(frontend_runtime, dict)
+        and frontend_runtime.get("status") == "SUCCEEDED"
     )
     failed = sorted(name for name, passed in checks.items() if not passed)
     manifest = {
         "schemaVersion": "easydep-release-manifest/v1alpha1",
         "runId": run_root.name,
         "status": "RELEASABLE" if not failed else "BLOCKED",
+        "deploymentStatus": (
+            "READY_FOR_DEPLOYMENT" if deployment is not None else "NOT_CONFIGURED"
+        ),
         "createdAt": datetime.now(UTC).isoformat(),
         "checks": checks,
         "failedChecks": failed,
@@ -57,6 +69,8 @@ def write_release_manifest(
             "sourceDesignConformance": "reports/source-design-conformance.json",
             "traceability": "reports/rtm-traceability-map.json",
             "containerRuntime": "reports/container-runtime-smoke.json",
+            "frontendRuntime": "reports/container-runtime-smoke.json",
+            "deploymentRuntime": "reports/deployment-runtime.json",
         },
     }
     target = run_root / "reports" / "release-manifest.json"
