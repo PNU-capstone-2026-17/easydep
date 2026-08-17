@@ -60,7 +60,7 @@ class PrototypeClient:
             "name": f"easydep-{app_id[:8]}",
             "workspaceRoot": str(self.settings.repository_root),
             "inputs": inputs,
-            "requiredInputs": ["bceClass", "openapi"],
+            "requiredInputs": ["bceClass", "sequence", "openapi"],
             "outputRoot": (root / "generated" / "runs").relative_to(self.settings.repository_root).as_posix(),
             "generation": {"basePackage": base_package, "allowAssumptions": allow_assumptions},
             "verification": {"compile": True},

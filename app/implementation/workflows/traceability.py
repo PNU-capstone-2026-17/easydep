@@ -1,6 +1,7 @@
 """Requirements and Design Traceability Matrix (RTM) for EasyDep Implementation Agent."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -80,7 +81,7 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         })
 
     # 3. Persistence Entities & Repositories (ERD / BCE)
-    for entity in ir.entities:
+    for entity in ir.persistent_entities:
         entity_file = package_root / "persistence" / "entity" / f"{entity}Entity.java"
         repo_file = package_root / "persistence" / "repository" / f"{entity}Repository.java"
 
@@ -116,32 +117,113 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
             "allowed_edits": [],
             "description": f"Outbound Gateway contract interface for {gw_name}",
         })
+        adapter_name = (
+            f"{gw_name}Adapter"
+            if gateway.kind == "persistence"
+            else f"InMemory{gw_name}Adapter"
+        )
+        adapter_area = "persistence" if gateway.kind == "persistence" else "gateway"
+        mappings.append({
+            "target_file": _posix(
+                package_root / "adapter" / "out" / adapter_area / f"{adapter_name}.java",
+                run_root,
+            ),
+            "element_name": adapter_name,
+            "origin_artifact": "sequence",
+            "origin_element": f"gateway implementation {gw_name}",
+            "contract_level": "IMPLEMENTATION_INTERNAL",
+            "allowed_edits": ["METHOD_BODY_ONLY", "PRIVATE_HELPERS"],
+            "description": f"Outbound adapter implementing sequence gateway {gw_name}",
+        })
 
     # 5. Infrastructure & IaC (Deployment Diagram / Cloud Spec)
-    mappings.append({
-        "target_file": "application/terraform/main.tf",
-        "element_name": "TerraformMain",
-        "origin_artifact": "cloud",
-        "origin_element": "cloud resource specification",
-        "contract_level": "INFRASTRUCTURE_SPEC_BOUND",
-        "allowed_edits": [],
-        "description": "Main Terraform HCL infrastructure declaration",
-    })
-    mappings.append({
-        "target_file": "application/Dockerfile",
-        "element_name": "Dockerfile",
-        "origin_artifact": "deployment",
-        "origin_element": "deployment topology",
-        "contract_level": "INFRASTRUCTURE_SPEC_BOUND",
-        "allowed_edits": ["ENVIRONMENT_VARIABLES"],
-        "description": "Container image build spec",
-    })
+    cloud = spec.inputs.get("cloud")
+    deployment = spec.inputs.get("deployment")
+    intent = spec.inputs.get("deploymentIntent")
+    if cloud and cloud.is_file():
+        mappings.append({
+            "target_file": "application/terraform/main.tf",
+            "element_name": "TerraformMain",
+            "origin_artifact": "cloud",
+            "origin_element": "cloud resource specification",
+            "contract_level": "INFRASTRUCTURE_SPEC_BOUND",
+            "allowed_edits": [],
+            "description": "Main Terraform HCL infrastructure declaration",
+        })
+    if any(path and path.is_file() for path in (deployment, cloud, intent)):
+        mappings.append({
+            "target_file": "application/Dockerfile",
+            "element_name": "Dockerfile",
+            "origin_artifact": "deployment" if deployment and deployment.is_file() else "cloud",
+            "origin_element": "deployment topology",
+            "contract_level": "INFRASTRUCTURE_SPEC_BOUND",
+            "allowed_edits": ["ENVIRONMENT_VARIABLES"],
+            "description": "Container image build spec",
+        })
+
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
+    mapped_targets = {str(mapping["target_file"]) for mapping in mappings}
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict):
+            continue
+        task_sources = [
+            str(name)
+            for name in task.get("source_artifacts", {})
+            if str(name) in spec.inputs
+            and spec.inputs[str(name)].is_file()
+        ]
+        for relative in task.get("allowed_write_paths", []):
+            relative = str(relative).replace("\\", "/")
+            if relative in mapped_targets:
+                continue
+            mappings.append({
+                "target_file": relative,
+                "element_name": Path(relative).stem,
+                "origin_artifact": task_sources[0] if task_sources else "generated-contracts",
+                "originArtifacts": task_sources,
+                "origin_element": f"implementation task {task.get('task_id')}",
+                "contract_level": "IMPLEMENTATION_INTERNAL",
+                "allowed_edits": ["TASK_ALLOWLIST"],
+                "description": f"Output of {task.get('task_id')}",
+                "taskId": task.get("task_id"),
+            })
+            mapped_targets.add(relative)
+
+    for mapping in mappings:
+        target = run_root / str(mapping["target_file"])
+        origin_names = list(mapping.get("originArtifacts", [])) or [
+            str(mapping["origin_artifact"])
+        ]
+        origin_hashes = {
+            name: _sha256_file(spec.inputs[name])
+            for name in origin_names
+            if name in spec.inputs and spec.inputs[name].is_file()
+        }
+        mapping["verificationStatus"] = "VERIFIED" if target.is_file() else "MISSING"
+        mapping["targetSha256"] = _sha256_file(target) if target.is_file() else None
+        mapping["originSha256s"] = origin_hashes
+        mapping["originSha256"] = next(iter(origin_hashes.values()), None)
+
+    verified = sum(
+        1 for mapping in mappings if mapping["verificationStatus"] == "VERIFIED"
+    )
 
     rtm_map = {
         "schemaVersion": SCHEMA_VERSION,
         "applicationName": ir.application_name,
         "basePackage": spec.base_package,
         "mappings": mappings,
+        "summary": {
+            "expected": len(mappings),
+            "verified": verified,
+            "missing": len(mappings) - verified,
+            "coverage": 1.0 if not mappings else verified / len(mappings),
+        },
     }
 
     reports = run_root / "reports"
@@ -150,6 +232,14 @@ def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:
         json.dumps(rtm_map, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return rtm_map
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def evaluate_feedback_rtm_traceability(

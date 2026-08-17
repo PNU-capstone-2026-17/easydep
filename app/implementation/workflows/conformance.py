@@ -121,9 +121,19 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                 resolved_source = aliases.get(source, source)
                 resolved_target = aliases.get(target, target)
                 if resolved_source not in components or resolved_target not in components:
-                    warnings.append({"code": "UNMAPPABLE_SEQUENCE_CALL",
-                                     "diagram": diagram_id,
-                                     "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components."})
+                    finding = {
+                        "code": "UNMAPPABLE_SEQUENCE_CALL",
+                        "diagram": diagram_id,
+                        "message": f"Cannot map sequence call {source} -> {target}: {method} to BCE components.",
+                    }
+                    if resolved_source in components and resolved_target not in components:
+                        violations.append({
+                            **finding,
+                            "code": "UNMAPPABLE_SEQUENCE_TARGET",
+                            "path": "application/src/main/java",
+                        })
+                    else:
+                        warnings.append(finding)
                     continue
                 matched = any(
                     item["method"] == method and resolved_target in item["dependencies"]
@@ -168,7 +178,13 @@ def verify_source_design_conformance(run_root: Path, spec) -> dict[str, object]:
                                        "path": "application/src/main/java",
                                        "message": f"Sequence call order for {source} in {diagram_id} is not preserved in one implementation class."})
     else:
-        warnings.append({"code": "MISSING_SEQUENCE_INPUT", "message": "Sequence call verification was skipped because no sequence/BCE input is available."})
+        violations.append({
+            "code": "MISSING_SEQUENCE_INPUT",
+            "path": "design-context/sequence-diagrams.puml",
+            "message": "Sequence input is required for implementation conformance.",
+        })
+
+    _verify_erd_conformance(run_root, spec, checks, violations, warnings)
 
     report: dict[str, object] = {
         "schemaVersion": SCHEMA_VERSION,
@@ -215,6 +231,177 @@ class SourceDesignConformanceError(RuntimeError):
 
 def _sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _verify_erd_conformance(
+    run_root: Path,
+    spec,
+    checks: dict[str, object],
+    violations: list[dict[str, str]],
+    warnings: list[dict[str, str]],
+) -> None:
+    erd_path = spec.inputs.get("erd")
+    if erd_path is None or not erd_path.is_file():
+        return
+    entities, relations = _erd_contract(erd_path.read_text(encoding="utf-8"))
+    if not entities:
+        warnings.append({
+            "code": "UNPARSEABLE_ERD",
+            "message": "ERD input exists but no entity contracts could be parsed.",
+        })
+        return
+    package_root = (
+        run_root
+        / "application/src/main/java"
+        / Path(spec.base_package.replace(".", "/"))
+    )
+    migration_path = (
+        run_root / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+    )
+    migration = (
+        migration_path.read_text(encoding="utf-8") if migration_path.is_file() else ""
+    )
+    erd_checks: list[dict[str, object]] = []
+    entity_sources: dict[str, str] = {}
+    for entity, fields in entities.items():
+        entity_path = package_root / "persistence/entity" / f"{entity}Entity.java"
+        repository_path = (
+            package_root / "persistence/repository" / f"{entity}Repository.java"
+        )
+        source = entity_path.read_text(encoding="utf-8") if entity_path.is_file() else ""
+        entity_sources[entity] = source
+        entity_migration = _migration_entity_body(migration, entity)
+        migration_tokens = _normalized_identifiers(entity_migration)
+        missing_fields: list[str] = []
+        missing_columns: list[str] = []
+        type_mismatches: list[str] = []
+        source_tokens = _normalized_identifiers(source)
+        for field_name, field_type in fields.items():
+            normalized = _normalize_identifier(field_name)
+            if normalized not in source_tokens:
+                missing_fields.append(field_name)
+            is_collection = field_type.lower().startswith(("list", "set", "collection"))
+            if not is_collection and normalized not in migration_tokens:
+                missing_columns.append(field_name)
+            expected_java, expected_sql = _erd_type_families(field_type)
+            if expected_java and not any(token in source for token in expected_java):
+                type_mismatches.append(f"{field_name}: expected Java {expected_java[0]}")
+            if (
+                expected_sql
+                and not is_collection
+                and not any(token in entity_migration.upper() for token in expected_sql)
+            ):
+                type_mismatches.append(f"{field_name}: expected SQL {expected_sql[0]}")
+        status = "PASSED"
+        if not entity_path.is_file() or not repository_path.is_file() or not migration:
+            status = "FAILED"
+        if missing_fields or missing_columns or type_mismatches:
+            status = "FAILED"
+        check = {
+            "entity": entity,
+            "status": status,
+            "entityFile": entity_path.relative_to(run_root).as_posix(),
+            "repositoryFile": repository_path.relative_to(run_root).as_posix(),
+            "missingFields": missing_fields,
+            "missingColumns": missing_columns,
+            "typeMismatches": type_mismatches,
+        }
+        erd_checks.append(check)
+        if status == "FAILED":
+            violations.append({
+                "code": "ERD_ENTITY_NOT_IMPLEMENTED",
+                "path": entity_path.relative_to(run_root).as_posix(),
+                "message": (
+                    f"ERD entity {entity} is not structurally represented; "
+                    f"missing fields={missing_fields}, missing columns={missing_columns}, "
+                    f"type mismatches={type_mismatches}."
+                ),
+            })
+    for left, right in relations:
+        related = (
+            right in entity_sources.get(left, "")
+            and re.search(
+                r"@(OneToOne|OneToMany|ManyToOne|ManyToMany)",
+                entity_sources[left],
+            )
+        ) or (
+            left in entity_sources.get(right, "")
+            and re.search(r"@(OneToOne|OneToMany|ManyToOne|ManyToMany)", entity_sources[right])
+        )
+        if not related:
+            violations.append({
+                "code": "ERD_RELATION_NOT_IMPLEMENTED",
+                "path": "application/src/main/java",
+                "message": f"ERD relation {left} <-> {right} has no JPA association.",
+            })
+    checks["erdEntities"] = erd_checks
+
+
+def _erd_contract(source: str) -> tuple[dict[str, dict[str, str]], list[tuple[str, str]]]:
+    entities: dict[str, dict[str, str]] = {}
+    pattern = re.compile(
+        r'(?ms)^\s*entity\s+(?:"[^"]+"\s+as\s+)?([A-Za-z_]\w*)\s*\{(.*?)^\s*\}'
+    )
+    for match in pattern.finditer(source):
+        fields: dict[str, str] = {}
+        for raw_line in match.group(2).splitlines():
+            line = raw_line.strip().lstrip("*+#-").strip()
+            if not line or line == "--":
+                continue
+            if ":" in line:
+                name, field_type = line.split(":", 1)
+            else:
+                parts = line.split()
+                name, field_type = parts[0], "id"
+            fields[name.strip()] = field_type.strip()
+        entities[match.group(1)] = fields
+    names = set(entities)
+    relations: list[tuple[str, str]] = []
+    for line in source.splitlines():
+        mentioned = [name for name in names if re.search(rf"\b{re.escape(name)}\b", line)]
+        if len(mentioned) == 2 and re.search(
+            r"[|}{o*]+(?:--|\.\.)[|}{o*]+", line
+        ):
+            relations.append((mentioned[0], mentioned[1]))
+    return entities, relations
+
+
+def _normalize_identifier(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _normalized_identifiers(source: str) -> set[str]:
+    return {_normalize_identifier(token) for token in re.findall(r"[A-Za-z_]\w*", source)}
+
+
+def _migration_entity_body(source: str, entity: str) -> str:
+    candidates = {_normalize_identifier(entity), _normalize_identifier(entity + "s")}
+    if entity.lower().endswith("y"):
+        candidates.add(_normalize_identifier(entity[:-1] + "ies"))
+    for match in re.finditer(
+        r'(?is)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?([A-Za-z_]\w*)["`]?\s*\((.*?)\)\s*;',
+        source,
+    ):
+        if _normalize_identifier(match.group(1)) in candidates:
+            return match.group(2)
+    return ""
+
+
+def _erd_type_families(field_type: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    lowered = field_type.lower()
+    if lowered.startswith(("list", "set", "collection")):
+        return (("List<", "Set<", "Collection<"), ())
+    if "string" in lowered or lowered == "fk" or lowered == "id":
+        return (("String", "Long", "UUID"), ("VARCHAR", "BIGINT", "UUID"))
+    if lowered in {"int", "integer", "long"}:
+        return (("Integer", "int", "Long", "long"), ("INTEGER", "BIGINT"))
+    if lowered in {"float", "double", "decimal"}:
+        return (("Double", "double", "Float", "BigDecimal"), ("DOUBLE", "REAL", "DECIMAL"))
+    if lowered in {"bool", "boolean"}:
+        return (("Boolean", "boolean"), ("BOOLEAN",))
+    if "date" in lowered or "time" in lowered:
+        return (("Instant", "LocalDateTime", "OffsetDateTime", "ZonedDateTime"), ("TIMESTAMP", "DATE"))
+    return ((), ())
 
 
 def _java_structure(source: str) -> dict[str, object]:

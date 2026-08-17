@@ -7,6 +7,7 @@ from app.implementation.workflows.repair import (
     apply_repair_directives,
     repair_rounds,
     schedule_cross_phase_repair,
+    schedule_source_conformance_repair,
 )
 
 
@@ -138,3 +139,22 @@ def test_repair_prompt_is_idempotent_and_uses_real_bounded_evidence(
     assert first.count("## Orchestrated repair and revalidation directives") == 1
     assert "OrderRepository.java:12" in first
     assert "{entry['evidence']}" not in first
+
+
+def test_erd_conformance_failure_targets_persistence_repair(tmp_path: Path) -> None:
+    _write_run(tmp_path, _tasks())
+
+    repair = schedule_source_conformance_repair(
+        tmp_path,
+        {
+            "violations": [
+                {
+                    "code": "ERD_ENTITY_NOT_IMPLEMENTED",
+                    "message": "Order.name is missing",
+                }
+            ]
+        },
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == ["implement-repositories"]

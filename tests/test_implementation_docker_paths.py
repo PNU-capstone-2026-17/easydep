@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from app.implementation.domain.models import CommandEvidence, JobSpec
@@ -122,6 +123,70 @@ def test_input_hash_tracks_bce_generator_source_changes(tmp_path: Path) -> None:
     source.write_text("updated generator grammar", encoding="utf-8")
 
     assert orchestrator._combined_input_hash() != first_hash
+
+
+def test_input_validation_requires_executable_sequence_and_operation_ids(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    sequence = tmp_path / "design/sequence.puml"
+    openapi = tmp_path / "design/openapi.json"
+    sequence.write_text("@startuml\nparticipant A\n@enduml", encoding="utf-8")
+    openapi.write_text(
+        json.dumps(
+            {
+                "paths": {
+                    "/orders": {
+                        "post": {"responses": {"201": {"description": "ok"}}}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    orchestrator.spec.inputs.update({"sequence": sequence, "openapi": openapi})
+    orchestrator.spec.required_inputs = ["bceClass", "sequence", "openapi"]
+
+    orchestrator._validate_inputs()
+
+    codes = {item.code for item in orchestrator.manifest.diagnostics}
+    assert "SEQUENCE_HAS_NO_CALLS" in codes
+    assert "OPENAPI_MISSING_OPERATION_ID" in codes
+
+
+def test_input_validation_rejects_bce_erd_entity_mismatch(tmp_path: Path) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    bce = orchestrator.spec.inputs["bceClass"]
+    erd = tmp_path / "design/erd.puml"
+    sequence = tmp_path / "design/sequence.puml"
+    openapi = tmp_path / "design/openapi.json"
+    bce.write_text("class Order <<Entity>> {}\n", encoding="utf-8")
+    erd.write_text('entity "Customer" as Customer {}\n', encoding="utf-8")
+    sequence.write_text("A -> B : createOrder()\n", encoding="utf-8")
+    openapi.write_text(
+        json.dumps(
+            {
+                "paths": {
+                    "/orders": {
+                        "post": {
+                            "operationId": "createOrder",
+                            "responses": {"201": {"description": "ok"}},
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    orchestrator.spec.inputs.update(
+        {"erd": erd, "sequence": sequence, "openapi": openapi}
+    )
+    orchestrator.spec.required_inputs = ["bceClass", "sequence", "openapi"]
+
+    orchestrator._validate_inputs()
+
+    codes = {item.code for item in orchestrator.manifest.diagnostics}
+    assert "BCE_ERD_ENTITY_MISMATCH" in codes
 
 
 def test_parallel_generators_record_evidence_in_declared_order(tmp_path: Path) -> None:

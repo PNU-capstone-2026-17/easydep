@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
-from app.core.config import settings
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+from app.core.config import settings
 
 
 REPAIR_SCHEMA = "implementation-repair-plan/v1alpha1"
@@ -120,19 +120,38 @@ def schedule_source_conformance_repair(
 ) -> dict[str, object] | None:
     """Re-plan bounded source repairs using deterministic conformance evidence."""
     violations = report.get("violations", [])
-    if not any(
-        isinstance(item, dict) and item.get("code") == "SEQUENCE_CALL_NOT_IMPLEMENTED"
+    codes = {
+        str(item.get("code"))
         for item in violations
-    ):
+        if isinstance(item, dict)
+    }
+    sequence_codes = {
+        "SEQUENCE_CALL_NOT_IMPLEMENTED",
+        "SEQUENCE_BRANCH_NOT_IMPLEMENTED",
+        "SEQUENCE_CALL_ORDER_NOT_IMPLEMENTED",
+        "UNMAPPABLE_SEQUENCE_TARGET",
+    }
+    erd_codes = {"ERD_ENTITY_NOT_IMPLEMENTED", "ERD_RELATION_NOT_IMPLEMENTED"}
+    if not (codes & (sequence_codes | erd_codes)):
         return None
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = list(manifest.get("implementation_tasks", []))
+    owner_types: set[str] = set()
+    if codes & sequence_codes:
+        owner_types.update({
+            "control", "api-adapter", "boundary-adapter", "gateway-adapter",
+            "configuration",
+        })
+    if codes & erd_codes:
+        owner_types.update({
+            "persistence-entities", "persistence-repositories",
+            "persistence-mapping", "persistence-schema", "gateway-adapter",
+        })
     owners = [
-        str(task["task_id"]) for task in tasks
-        if task.get("task_type") in {
-            "control", "api-adapter", "boundary-adapter", "gateway-adapter", "configuration"
-        }
+        str(task["task_id"])
+        for task in tasks
+        if task.get("task_type") in owner_types
     ]
     if not owners:
         return None

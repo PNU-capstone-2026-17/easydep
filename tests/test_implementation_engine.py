@@ -79,6 +79,7 @@ from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
     _implemented_interfaces,
     _method_call_sequences,
+    _verify_erd_conformance,
     _participant_aliases,
     _sequence_documents,
     capture_generated_contracts,
@@ -144,6 +145,50 @@ class SourceDesignConformanceTest(unittest.TestCase):
             [["charge", "save"], ["save", "charge"]],
             _method_call_sequences(source),
         )
+
+    def test_erd_conformance_requires_entity_repository_and_migration_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            erd = run / "erd.puml"
+            erd.write_text(
+                'entity "Order" as Order {\n  * order_id\n  name: string\n}\n',
+                encoding="utf-8",
+            )
+            package = run / "application/src/main/java/com/example/demo"
+            entity = package / "persistence/entity/OrderEntity.java"
+            repository = package / "persistence/repository/OrderRepository.java"
+            entity.parent.mkdir(parents=True)
+            repository.parent.mkdir(parents=True)
+            entity.write_text(
+                '@Entity class OrderEntity { @Column(name="order_id") Long id; String name; }',
+                encoding="utf-8",
+            )
+            repository.write_text("interface OrderRepository {}", encoding="utf-8")
+            migration = run / "application/src/main/resources/db/migration/V1__initial_schema.sql"
+            migration.parent.mkdir(parents=True)
+            migration.write_text(
+                "CREATE TABLE orders (order_id BIGINT, name VARCHAR);",
+                encoding="utf-8",
+            )
+            spec = SimpleNamespace(
+                base_package="com.example.demo", inputs={"erd": erd}
+            )
+            checks: dict[str, object] = {}
+            violations: list[dict[str, str]] = []
+
+            _verify_erd_conformance(run, spec, checks, violations, [])
+
+            self.assertEqual([], violations)
+            self.assertEqual("PASSED", checks["erdEntities"][0]["status"])
+
+            migration.write_text(
+                "CREATE TABLE orders (order_id BIGINT); "
+                "CREATE TABLE customers (name VARCHAR);",
+                encoding="utf-8",
+            )
+            violations = []
+            _verify_erd_conformance(run, spec, {}, violations, [])
+            self.assertEqual("ERD_ENTITY_NOT_IMPLEMENTED", violations[0]["code"])
 
     def test_preserves_generated_contracts_and_observable_sequence_calls(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2668,6 +2713,9 @@ class ApplicationConfiguration {
                 ),
             ):
                 result = verify_run_workspace(run)
+                phase_result = verify_run_workspace(
+                    run, report_name="phase-control-verification.json"
+                )
 
             self.assertEqual("SUCCEEDED", result["status"])
             self.assertEqual(verification, result["verification"])
@@ -2681,6 +2729,10 @@ class ApplicationConfiguration {
                 ).is_file()
             )
             self.assertTrue((run / "reports/final-verification.json").is_file())
+            self.assertEqual("SUCCEEDED", phase_result["status"])
+            self.assertTrue(
+                (run / "reports/phase-control-verification.json").is_file()
+            )
 
     def test_agent_workspace_uses_sibling_when_previous_workspace_is_locked(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

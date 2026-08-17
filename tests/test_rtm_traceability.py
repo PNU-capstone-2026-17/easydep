@@ -56,6 +56,10 @@ def test_rtm_traceability_map_building() -> None:
         assert "OrderController" in mappings
         assert mappings["OrderController"]["contract_level"] == "IMMUTABLE_CONTRACT"
         assert mappings["OrderController"]["origin_artifact"] == "bceClass"
+        assert mappings["OrderController"]["verificationStatus"] == "MISSING"
+        assert rtm_map["summary"]["missing"] == rtm_map["summary"]["expected"]
+        assert "TerraformMain" not in mappings
+        assert "Dockerfile" not in mappings
 
 
 def test_evaluate_feedback_with_rtm_rejects_design_contract_changes() -> None:

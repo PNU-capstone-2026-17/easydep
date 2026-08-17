@@ -41,7 +41,9 @@ def verification_timeout_seconds() -> int:
     )
 
 
-def verify_run_workspace(run_root: Path) -> dict[str, object]:
+def verify_run_workspace(
+    run_root: Path, report_name: str = "final-verification.json"
+) -> dict[str, object]:
     """Verify all promoted sources from a short ASCII-safe workspace."""
     sandbox = prepare_agent_workspace(
         run_root,
@@ -57,7 +59,9 @@ def verify_run_workspace(run_root: Path) -> dict[str, object]:
         "verification": verification,
         "frontendVerification": frontend_verification,
     }
-    report = run_root / "reports" / "final-verification.json"
+    if Path(report_name).name != report_name or not report_name.endswith(".json"):
+        raise ValueError(f"Invalid verification report name: {report_name}")
+    report = run_root / "reports" / report_name
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result

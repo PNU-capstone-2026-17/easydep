@@ -94,6 +94,7 @@ ENTRYPOINT ["java", "-jar", "app.jar"]""",
 .gradle
 build
 reports
+deployment-bundle
 .env
 .env.*
 *.pem

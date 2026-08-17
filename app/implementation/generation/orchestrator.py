@@ -13,9 +13,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..agents.runtime import write_execution_plan
-from ..workflows.conformance import capture_generated_contracts
+from ..domain.implementation_ir import (
+    parse_components,
+    parse_erd_entities,
+    parse_openapi_operations,
+    pascal_case,
+    remove_readonly,
+)
+from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
     ImplementationTask,
     generate_api_adapter_tasks,
@@ -27,13 +33,13 @@ from ..planning.design_context import (
     generate_persistence_tasks,
     generate_wiring_tasks,
 )
-from ..domain.implementation_ir import pascal_case, remove_readonly
+from ..workflows.conformance import capture_generated_contracts
 from .frontend import generate_frontend_project
 
 
-OPTIONAL_DESIGN_INPUTS = ("sequence", "erd", "deployment", "cloud")
+OPTIONAL_DESIGN_INPUTS = ("erd", "deployment", "cloud")
 BCE_GENERATOR_VERSION = "0.2.0"
-IMPLEMENTATION_PIPELINE_VERSION = "0.5.0-agent-frontend"
+IMPLEMENTATION_PIPELINE_VERSION = "0.6.0-strict-release"
 PUML2CODE_IMAGE = "easydep/puml2code-bce:0.2.0"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
@@ -81,7 +87,9 @@ def load_job(path: Path) -> JobSpec:
         name=data.get("name", job_path.stem),
         workspace_root=root,
         inputs=inputs,
-        required_inputs=list(data.get("requiredInputs", ["bceClass", "openapi"])),
+        required_inputs=list(
+            data.get("requiredInputs", ["bceClass", "sequence", "openapi"])
+        ),
         base_package=generation.get("basePackage", "com.example.generated"),
         allow_assumptions=bool(generation.get("allowAssumptions", False)),
         verify_compile=bool(data.get("verification", {}).get("compile", True)),
@@ -395,6 +403,92 @@ class PrototypeOrchestrator:
                 "sha256": digest,
                 "size": path.stat().st_size,
             }
+
+        if self.spec.job_type != "FEEDBACK_REVISION":
+            sequence = self.spec.inputs.get("sequence")
+            if sequence and sequence.is_file() and not re.search(
+                r"(?m)^\s*[A-Za-z_]\w*\s*(?:-|--)+>\s*[A-Za-z_]\w*\s*:",
+                sequence.read_text(encoding="utf-8"),
+            ):
+                self.manifest.diagnostics.append(
+                    Diagnostic(
+                        "SEQUENCE_HAS_NO_CALLS",
+                        "ERROR",
+                        "Sequence input contains no executable participant calls.",
+                        str(sequence),
+                    )
+                )
+            openapi = self.spec.inputs.get("openapi")
+            if openapi and openapi.is_file():
+                operations = parse_openapi_operations(
+                    openapi.read_text(encoding="utf-8")
+                )
+                missing = [
+                    f"{operation.method} {operation.path}"
+                    for operation in operations
+                    if not operation.operation_id
+                ]
+                for operation in missing:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "OPENAPI_MISSING_OPERATION_ID",
+                            "ERROR",
+                            f"OpenAPI operation requires operationId: {operation}",
+                            str(openapi),
+                        )
+                    )
+            deployment = self.spec.inputs.get("deployment")
+            cloud = self.spec.inputs.get("cloud")
+            intent = self.spec.inputs.get("deploymentIntent")
+            if (
+                deployment
+                and deployment.is_file()
+                and not (cloud and cloud.is_file())
+                and not (intent and intent.is_file())
+            ):
+                self.manifest.diagnostics.append(
+                    Diagnostic(
+                        "DEPLOYMENT_INTENT_SOURCE_MISSING",
+                        "ERROR",
+                        "Deployment diagram requires cloud or deploymentIntent input.",
+                        str(deployment),
+                    )
+                )
+            bce = self.spec.inputs.get("bceClass")
+            erd = self.spec.inputs.get("erd")
+            bce_entities = {
+                item.name
+                for item in (
+                    parse_components(bce.read_text(encoding="utf-8"))
+                    if bce and bce.is_file()
+                    else []
+                )
+                if item.stereotype.lower() == "entity"
+            }
+            erd_entities = (
+                parse_erd_entities(erd.read_text(encoding="utf-8"))
+                if erd and erd.is_file()
+                else set()
+            )
+            if bce_entities and not erd_entities:
+                self.manifest.diagnostics.append(
+                    Diagnostic(
+                        "ERD_REQUIRED_FOR_BCE_ENTITIES",
+                        "ERROR",
+                        "ERD input is required when BCE contains Entity components.",
+                        str(bce),
+                    )
+                )
+            elif bce_entities != erd_entities and erd_entities:
+                self.manifest.diagnostics.append(
+                    Diagnostic(
+                        "BCE_ERD_ENTITY_MISMATCH",
+                        "ERROR",
+                        "BCE and ERD entity aliases must match exactly: "
+                        f"BCE={sorted(bce_entities)}, ERD={sorted(erd_entities)}",
+                        str(erd),
+                    )
+                )
 
         required_tools = {} if self.spec.job_type == "FEEDBACK_REVISION" else {
             "puml2code": self.spec.puml2code_root / "bin" / "puml2code",

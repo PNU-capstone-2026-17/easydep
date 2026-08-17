@@ -11,9 +11,11 @@ from ..agents.verification.build import (
     WorkspaceVerificationError,
     verify_run_workspace,
 )
-from .completion import audit_run_completion
+from ..agents.verification.release import verify_container_runtime
+from ..delivery.kubernetes import render_deployment
+from ..delivery.terraform import render_iac
+from ..domain.implementation_ir import build_implementation_ir, parse_erd_entities
 from ..domain.models import JobSpec
-from ..domain.implementation_ir import build_implementation_ir
 from ..generation.orchestrator import (
     plan_api_adapter_tasks,
     plan_boundary_adapter_tasks,
@@ -23,18 +25,18 @@ from ..generation.orchestrator import (
     plan_persistence_tasks,
     plan_wiring_tasks,
 )
+from .completion import audit_run_completion
+from .conformance import (
+    SourceDesignConformanceError,
+    restore_generated_contracts,
+    verify_source_design_conformance,
+)
+from .release import write_release_manifest
 from .repair import (
     apply_repair_directives,
     repair_rounds,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
-)
-from ..delivery.kubernetes import render_deployment
-from ..delivery.terraform import render_iac
-from .conformance import (
-    SourceDesignConformanceError,
-    restore_generated_contracts,
-    verify_source_design_conformance,
 )
 from .traceability import build_rtm_traceability_map
 
@@ -65,11 +67,31 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         apply_repair_directives(run_root)
         return reconcile_workflow_state(run_root)
     ir = build_implementation_ir(spec, run_root)
-    needs_persistence = bool(ir.persistent_entities) or any(
+    erd_path = spec.inputs.get("erd")
+    erd_entities = (
+        parse_erd_entities(erd_path.read_text(encoding="utf-8"))
+        if erd_path is not None and erd_path.is_file()
+        else set()
+    )
+    bce_entities = set(ir.entities)
+    if bce_entities and not erd_entities:
+        raise ValueError(
+            "ERD input must contain Entity definitions matching the BCE Entity components"
+        )
+    if erd_entities != bce_entities:
+        missing_in_erd = sorted(bce_entities - erd_entities)
+        missing_in_bce = sorted(erd_entities - bce_entities)
+        details = []
+        if missing_in_erd:
+            details.append("missing in ERD: " + ", ".join(missing_in_erd))
+        if missing_in_bce:
+            details.append("missing in BCE: " + ", ".join(missing_in_bce))
+        raise ValueError("BCE/ERD entity mismatch; " + "; ".join(details))
+    needs_persistence = bool(bce_entities) or any(
         gateway.kind == "persistence" for gateway in ir.gateways
     )
     if needs_persistence:
-        erd = spec.inputs.get("erd")
+        erd = erd_path
         if erd is None or not erd.is_file():
             raise ValueError(
                 "ERD input is required because the BCE design contains persistent entities or Gateways"
@@ -234,9 +256,9 @@ def run_workflow(
                 conformance = verify_source_design_conformance(run_root, spec)
             except SourceDesignConformanceError as error:
                 return _handle_source_conformance_failure(run_root, spec, state, error)
-            state["status"] = "COMPLETE"
-            state["sourceDesignConformance"] = conformance["status"]
-            _render_deployment_if_configured(run_root, spec)
+            _complete_release(
+                run_root, spec, state, audit, verification, conformance
+            )
         elif state.get("status") != "NEEDS_INPUT":
             state["status"] = "NEEDS_PLANNER"
         state["verification"] = verification.get("status")
@@ -318,7 +340,7 @@ def run_workflow(
                 raise RuntimeError(f"Task returned non-success status: {task['taskId']}")
             state["updatedAt"] = _now()
             _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-        verifier(run_root)
+        _verify_phase(run_root, phase_id, verifier)
         auditor(run_root)
         next(
             phase for phase in state["phases"] if phase["phaseId"] == phase_id
@@ -331,13 +353,14 @@ def run_workflow(
     final_state = plan_workflow(run_root, spec)
     audit = auditor(run_root)
     if audit.get("status") == "COMPLETE":
+        verification = verifier(run_root)
         try:
             conformance = verify_source_design_conformance(run_root, spec)
         except SourceDesignConformanceError as error:
             return _handle_source_conformance_failure(run_root, spec, final_state, error)
-        final_state["status"] = "COMPLETE"
-        final_state["sourceDesignConformance"] = conformance["status"]
-        _render_deployment_if_configured(run_root, spec)
+        _complete_release(
+            run_root, spec, final_state, audit, verification, conformance
+        )
     elif final_state.get("status") != "NEEDS_INPUT":
         final_state["status"] = (
             "READY" if final_state.get("nextRunnableTasks") else "NEEDS_PLANNER"
@@ -353,6 +376,18 @@ def run_workflow(
         )
     _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
     return final_state
+
+
+def _verify_phase(
+    run_root: Path,
+    phase_id: str,
+    verifier: Callable[[Path], dict[str, object]],
+) -> dict[str, object]:
+    if verifier is verify_run_workspace:
+        return verify_run_workspace(
+            run_root, report_name=f"phase-{phase_id}-verification.json"
+        )
+    return verifier(run_root)
 
 
 def workflow_status(run_root: Path) -> dict[str, object]:
@@ -419,19 +454,63 @@ def run_workflow_to_completion(
     raise RuntimeError(f"Run-to-completion exceeded {max_cycles} workflow cycles")
 
 
-def _render_deployment_if_configured(run_root: Path, spec: JobSpec) -> None:
+def _render_deployment_if_configured(
+    run_root: Path, spec: JobSpec
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     intent = spec.inputs.get("deploymentIntent")
     cloud = spec.inputs.get("cloud")
     deployment = spec.inputs.get("deployment")
     if (intent and intent.is_file()) or (cloud and cloud.is_file()):
-        render_deployment(run_root, spec)
+        deployment_report = render_deployment(run_root, spec)
+        iac_report = None
         if cloud and cloud.is_file():
-            render_iac(run_root, spec)
+            iac_report = render_iac(run_root, spec)
+        return deployment_report, iac_report
     elif deployment and deployment.is_file():
         raise ValueError(
             "Deployment rendering requires deploymentIntent or a cloud resource "
             "specification"
         )
+    return None, None
+
+
+def _complete_release(
+    run_root: Path,
+    spec: JobSpec,
+    state: dict[str, object],
+    audit: dict[str, object],
+    verification: dict[str, object],
+    conformance: dict[str, object],
+) -> None:
+    state["status"] = "COMPLETE"
+    state["verification"] = verification.get("status")
+    state["sourceDesignConformance"] = conformance.get("status")
+    try:
+        deployment, iac = _render_deployment_if_configured(run_root, spec)
+        traceability = build_rtm_traceability_map(spec, run_root)
+        container_smoke = verify_container_runtime(run_root)
+        release = write_release_manifest(
+            run_root,
+            workflow=state,
+            audit=audit,
+            verification=verification,
+            conformance=conformance,
+            traceability=traceability,
+            deployment=deployment,
+            iac=iac,
+            container_smoke=container_smoke,
+        )
+        if release["status"] != "RELEASABLE":
+            raise RuntimeError(
+                "Release verification failed: "
+                + ", ".join(str(item) for item in release["failedChecks"])
+            )
+    except Exception as error:
+        state["status"] = "FAILED"
+        state["blockingReason"] = str(error)
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
+        raise
+    state["releaseManifest"] = "reports/release-manifest.json"
 
 
 def _handle_source_conformance_failure(
@@ -445,7 +524,7 @@ def _handle_source_conformance_failure(
     # local baseline, then prove the restored workspace still builds and now
     # conforms before exposing it as a completed artifact.
     if restored:
-        verify_run_workspace(run_root)
+        restored_verification = verify_run_workspace(run_root)
         restored_audit = audit_run_completion(run_root)
         try:
             restored_conformance = verify_source_design_conformance(run_root, spec)
@@ -453,11 +532,16 @@ def _handle_source_conformance_failure(
             error = restored_error
         else:
             if restored_audit.get("status") == "COMPLETE":
-                state["status"] = "COMPLETE"
-                state["sourceDesignConformance"] = restored_conformance["status"]
+                _complete_release(
+                    run_root,
+                    spec,
+                    state,
+                    restored_audit,
+                    restored_verification,
+                    restored_conformance,
+                )
                 state["restoredGeneratedContracts"] = restored
                 state["blockingReason"] = None
-                _render_deployment_if_configured(run_root, spec)
                 _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
                 return state
     repair = schedule_source_conformance_repair(run_root, error.report)
