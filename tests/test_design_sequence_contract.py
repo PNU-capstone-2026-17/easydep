@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 import hashlib
 from unittest.mock import patch
@@ -424,6 +425,121 @@ def test_sequence_check_retries_only_batch_with_remaining_budget(monkeypatch):
     assert all("sequence.flow-order" in feedback for feedback in attempts)
     assert result["sequence_diagram_model"] == repaired
     assert result["sequence_diagram_check"]["stopped"] == CLEAN
+
+
+def test_sequence_collection_repairs_each_use_case_with_its_own_budget(monkeypatch):
+    """최초 생성 컬렉션은 한 UC의 실패가 다른 UC의 수리 기회를 빼앗지 않는다."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "design_max_repair_iters", 2)
+    original = {
+        "class_diagram_hash": "same",
+        "Diagrams": [
+            {
+                "use_case_id": "UC1",
+                "phase": "dirty",
+                "Participants": [],
+                "Messages": [],
+            },
+            {
+                "use_case_id": "UC2",
+                "phase": "dirty",
+                "Participants": [],
+                "Messages": [],
+            },
+        ],
+    }
+
+    def check(model, state):
+        diagrams = model.get("Diagrams")
+        if isinstance(diagrams, list):
+            return [finding for diagram in diagrams for finding in check(diagram, state)]
+        if model.get("phase") == "dirty":
+            use_case_id = str(model.get("use_case_id"))
+            return [
+                Finding(
+                    "sequence.flow-order",
+                    "flow is still out of order",
+                    f"{use_case_id}:main:1",
+                )
+            ]
+        return []
+
+    attempts = {"UC1": 0, "UC2": 0}
+    targets_seen: list[set[str]] = []
+
+    def revise(current, feedback, state, targets):
+        targets_seen.append(set(targets))
+        target = next(iter(targets))
+        attempts[target] += 1
+        revised = copy.deepcopy(current)
+        for diagram in revised["Diagrams"]:
+            if diagram["use_case_id"] == target and attempts[target] >= 2:
+                diagram["phase"] = "clean"
+            elif diagram["use_case_id"] != target:
+                # LLM이 비대상 UC를 건드려도 merge_model이 버려야 한다.
+                diagram["phase"] = "corrupted-by-llm"
+        return revised
+
+    spec = dataclasses.replace(SEQUENCE_DIAGRAM_SPEC, check=check, revise=revise)
+    result = check_node(spec)({"sequence_diagram_model": original})
+
+    assert result["sequence_diagram_check"] == {
+        "findings": [],
+        "repair_iters": 4,
+        "stopped": CLEAN,
+    }
+    assert attempts == {"UC1": 2, "UC2": 2}
+    assert all(len(targets) == 1 for targets in targets_seen)
+    assert [
+        diagram["phase"]
+        for diagram in result["sequence_diagram_model"]["Diagrams"]
+    ] == ["clean", "clean"]
+
+
+def test_sequence_check_keeps_progress_when_a_later_contract_finding_is_revealed(
+    monkeypatch,
+):
+    """메서드 오류 수정 후 반환 오류가 보이는 정상적인 단계 진행을 롤백하지 않는다."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "design_max_repair_iters", 2)
+    original = {"phase": "method", "Participants": [], "Messages": []}
+
+    def check(model, state):
+        if model.get("phase") == "method":
+            return [
+                Finding(
+                    "sequence.message-labels-match-methods",
+                    "receiver method is missing",
+                    "A -> B",
+                )
+            ]
+        if model.get("phase") == "return":
+            return [
+                Finding(
+                    "sequence.nonvoid-call-requires-return",
+                    "return is missing",
+                    "A -> B",
+                )
+            ]
+        return []
+
+    def revise(current, feedback, state, targets):
+        return {
+            **current,
+            "phase": "return" if current["phase"] == "method" else "clean",
+        }
+
+    spec = dataclasses.replace(SEQUENCE_DIAGRAM_SPEC, check=check, revise=revise)
+    result = check_node(spec)({"sequence_diagram_model": original})
+
+    assert result["sequence_diagram_model"]["phase"] == "clean"
+    assert result["sequence_diagram_check"] == {
+        "findings": [],
+        "repair_iters": 2,
+        "stopped": CLEAN,
+    }
 
 
 def test_sequence_check_allows_removing_hallucinated_trace_references(monkeypatch):

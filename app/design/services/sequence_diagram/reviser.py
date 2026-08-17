@@ -26,9 +26,11 @@ same schema. Rules:
   use case and preserve `class_diagram_hash` exactly. Edit each diagram
   independently and never move messages between use cases.
 - Change only what the feedback asks for; leave everything else intact. Repairs
-  are accepted only when the remaining deterministic findings are an exact subset
-  of the reported findings. Prefer the smallest coherent repair; it is valid to
-  leave unrelated reported defects byte-for-byte unchanged for a later iteration.
+  must advance the validation order: participants/BCE, receiver methods,
+  call/return contracts, argument flow, then scenario flow. A later-phase finding
+  may become visible after an earlier defect is fixed; repair it in the next
+  iteration instead of undoing the earlier fix. Prefer the smallest coherent
+  repair; it is valid to leave unrelated reported defects byte-for-byte unchanged.
 - Infer the repair scope from the reported rule ids. If they are only flow-order,
   fragment, causal-chain, coverage, or orphan-participant findings, only reorder
   existing messages, correct fragment metadata, add grounded coverage messages,

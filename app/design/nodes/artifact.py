@@ -91,17 +91,7 @@ NON_REPAIRABLE_RULES = {
 }
 
 _SEQUENCE_REPAIR_RULE_GROUPS = (
-    {
-        "sequence.message-labels-match-methods",
-        "sequence.call-return-links",
-        "sequence.unmatched-return-message",
-        "sequence.return-label-matches-method-return",
-        "sequence.async-call-has-no-return",
-        "sequence.nonvoid-call-requires-return",
-        "sequence.argument-data-flow",
-        "sequence.self-call-method-validation",
-        "sequence.message-naming-convention",
-    },
+    # 먼저 모델을 안전하게 읽고 호출 방향을 판정할 수 있는 토대를 고친다.
     {
         "sequence.message-participants-exist",
         "sequence.message-bce-flow",
@@ -110,11 +100,33 @@ _SEQUENCE_REPAIR_RULE_GROUPS = (
         "sequence.participant-classes-exist",
         "sequence.initial-message-entry",
         "sequence.causal-call-chain",
+        "sequence.database-access-discipline",
+    },
+    # 그 다음 실제 수신 메서드를 확정한다. 이 단계가 고쳐져야 반환·인자 검사가
+    # 비로소 판정 가능해질 수 있다.
+    {
+        "sequence.message-labels-match-methods",
+        "sequence.self-call-method-validation",
+        "sequence.message-naming-convention",
+    },
+    # 호출이 확정된 뒤 call/return 계약을 맞춘다.
+    {
+        "sequence.call-return-links",
+        "sequence.unmatched-return-message",
+        "sequence.return-label-matches-method-return",
+        "sequence.async-call-has-no-return",
+        "sequence.nonvoid-call-requires-return",
+    },
+    # 반환값과 호출 연결이 확정된 뒤에야 인자 출처를 판정할 수 있다.
+    {
+        "sequence.argument-data-flow",
+    },
+    # 마지막으로 시나리오 표현과 표시 품질을 맞춘다.
+    {
         "sequence.actor-step-involvement",
         "sequence.usecase-step-coverage",
         "sequence.flow-order",
         "sequence.fragment-condition-consistency",
-        "sequence.database-access-discipline",
         "sequence.orphan-participant-detection",
         "sequence.duplicate-consecutive-messages",
     },
@@ -399,7 +411,7 @@ def _repairable_findings(findings: list[Finding]) -> list[Finding]:
 def _repair_batch(
     spec: DesignArtifactSpec,
     findings: list[Finding],
-    skipped_rule_ids: set[str],
+    skipped_findings: set[tuple[str, str, str]],
 ) -> list[Finding]:
     """시퀀스는 구조와 호출 계약을 나눠 최소 수정 후보를 만든다."""
     if spec.stage != "sequence_diagram":
@@ -408,11 +420,82 @@ def _repair_batch(
         batch = [
             finding
             for finding in findings
-            if finding.rule_id in rule_ids and finding.rule_id not in skipped_rule_ids
+            if finding.rule_id in rule_ids
+            and _finding_key(finding) not in skipped_findings
         ]
         if batch:
             return batch
-    return [finding for finding in findings if finding.rule_id not in skipped_rule_ids]
+    return [
+        finding
+        for finding in findings
+        if _finding_key(finding) not in skipped_findings
+    ]
+
+
+def _sequence_repair_score(findings: list[Finding]) -> tuple[int, ...]:
+    """시퀀스 결함의 단계별 점수. 앞 칸이 줄면 뒤 결함이 드러나도 진전이다.
+
+    검출기는 앞 결함 때문에 판정할 수 없는 후행 규칙을 의도적으로 건너뛴다. 따라서
+    메서드 결함을 고친 뒤 반환/인자 결함이 새로 나타나는 것은 회귀가 아니라 정상적인
+    검증 진행이다. 단순 finding 집합 부분집합 조건은 그 후보를 버렸으므로, 의존 순서에
+    따른 사전식 점수를 사용한다. 어느 단계에도 속하지 않은 규칙은 마지막 칸에서 세어
+    새 종류의 결함을 공짜로 허용하지 않는다.
+    """
+    counts = [0] * (len(_SEQUENCE_REPAIR_RULE_GROUPS) + 1)
+    phase_by_rule = {
+        rule_id: index
+        for index, rules in enumerate(_SEQUENCE_REPAIR_RULE_GROUPS)
+        for rule_id in rules
+    }
+    for finding in findings:
+        counts[phase_by_rule.get(finding.rule_id, len(counts) - 1)] += 1
+    return tuple(counts)
+
+
+def _repair_is_improvement(
+    spec: DesignArtifactSpec,
+    current: list[Finding],
+    candidate: list[Finding],
+) -> bool:
+    current_keys = {_finding_key(finding) for finding in current}
+    candidate_keys = {_finding_key(finding) for finding in candidate}
+    if candidate_keys < current_keys:
+        return True
+    if spec.stage != "sequence_diagram":
+        return False
+    return _sequence_repair_score(candidate) < _sequence_repair_score(current)
+
+
+def _sequence_repair_targets(
+    spec: DesignArtifactSpec,
+    model: dict,
+    state: ArchitectureState,
+    batch: list[Finding],
+) -> set[str]:
+    """현재 batch가 속한 유스케이스만 골라 다른 다이어그램을 코드로 보호한다."""
+    diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+    if not isinstance(diagrams, list):
+        return set()
+    wanted = {_finding_key(finding) for finding in batch}
+    targets: set[str] = set()
+    for diagram in diagrams:
+        if not isinstance(diagram, dict):
+            continue
+        use_case_id = str(diagram.get("use_case_id") or "").strip()
+        if not use_case_id:
+            continue
+        local = {_finding_key(finding) for finding in spec.check(diagram, state)}
+        if wanted & local:
+            targets.add(use_case_id)
+            continue
+        # 컬렉션 검출기가 만든 누락/중복 finding은 단일 다이어그램 검사에 나타나지
+        # 않을 수 있다. 위치가 유스케이스 id를 직접 가리키는 경우에는 그대로 좁힌다.
+        if any(
+            str(finding.location or "").startswith(use_case_id)
+            for finding in batch
+        ):
+            targets.add(use_case_id)
+    return targets
 
 
 def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
@@ -422,11 +505,11 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     그래프 그림이 곧 실제 흐름"을 원칙으로 한다(`nodes/gates.py`). 반복 엣지를 넣으면
     그림과 흐름이 갈라진다. 반복은 스테이지 **내부의 세부**이므로 여기 있는 것이 맞다.
 
-    **수용 조건은 "기존 위반의 엄격한 부분집합이어야 한다"이다.** 안 줄거나 새로운 위반을
-    만들면 재생성본을 버리고 직전본을 지킨다. 이유가 둘이다. (1) 재생성이 다른 데를
-    망가뜨리면서 지적 하나를 고치는 일이 실제로 있다. (2) 이 조건이 **종료를 보장한다** —
-    유한한 위반 집합이 매 회 반드시 작아지므로 무한 루프가 원리상 불가능하다. 예전 문법
-    수리 루프에는 없던 성질이다.
+    **수용 조건은 검증 단계가 전진해야 한다는 것이다.** 보통은 기존 위반의 엄격한
+    부분집합이어야 한다. 시퀀스만은 참가자 → 메서드 → 반환 → 인자 → 흐름의 의존 순서를
+    사용한다. 앞 결함을 고쳐서 전에 판정할 수 없던 후행 결함이 드러난 후보는 보존하고
+    다음 반복에서 이어 고친다. 단계 점수는 매번 엄격히 감소하고 예산도 유계이므로 종료
+    보장은 유지된다.
 
     **남은 위반을 숨기지 않는다.** 예산을 다 써도 고쳐지지 않은 것은 그대로 상태에 실려
     게이트에서 사람에게 간다. `stopped`가 왜 멈췄는지를 들고 가므로, 화면은 "위반 0건"과
@@ -441,29 +524,65 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         # 루프를 한 번도 안 돌 수 있다(위반이 없거나 예산이 0). 그때의 답을 먼저 적어 둔다.
         repairable = _repairable_findings(findings)
         stopped = CLEAN if not findings else (BUDGET if repairable else NEEDS_INPUT)
-        skipped_rule_ids: set[str] = set()
+        skipped_findings: set[tuple[str, str, str]] = set()
 
-        for _ in range(repair_budget()):
+        # 생성은 유스케이스별인데 예전에는 수리 예산만 컬렉션 전체에 2회였다. 컬렉션
+        # 모델에서는 같은 유계 예산을 각 유스케이스에 부여한다. 레거시 단일 모델과 다른
+        # 산출물의 호출 횟수는 그대로 유지한다.
+        diagrams = model.get("Diagrams") if isinstance(model, dict) else None
+        budget = repair_budget() * (
+            max(1, len(diagrams))
+            if spec.stage == "sequence_diagram" and isinstance(diagrams, list)
+            else 1
+        )
+
+        for _ in range(budget):
             if not findings:
                 break
             repairable = _repairable_findings(findings)
             if not repairable:
                 stopped = NEEDS_INPUT
                 break
-            batch = _repair_batch(spec, repairable, skipped_rule_ids)
-            if not batch and spec.stage == "sequence_diagram" and skipped_rule_ids:
+            batch = _repair_batch(spec, repairable, skipped_findings)
+            if not batch and spec.stage == "sequence_diagram" and skipped_findings:
                 # 다른 종류의 결함이 없으면 첫 확률적 응답 한 번으로 포기하지 않는다.
                 # 예산은 그대로 소비되므로 반복은 여전히 유계다.
-                skipped_rule_ids.clear()
-                batch = _repair_batch(spec, repairable, skipped_rule_ids)
+                skipped_findings.clear()
+                batch = _repair_batch(spec, repairable, skipped_findings)
             if not batch:
                 stopped = NO_IMPROVEMENT
                 break
             iterations += 1
             try:
-                # 전체 수정(targets=set())이다. 위반이 여러 클래스에 걸칠 수 있고,
-                # merge_model 은 targets 가 비면 revised 를 그대로 쓴다.
-                candidate = spec.revise(model, repair_directive(batch), state, set())
+                targets = _sequence_repair_targets(spec, model, state, batch)
+                if len(targets) > 1:
+                    # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
+                    # 그래야 큰 컬렉션을 전면 재작성하지 않고, 실패 예산도 유스케이스별로
+                    # 독립적으로 사용할 수 있다.
+                    target = sorted(targets)[0]
+                    diagram = next(
+                        (
+                            item
+                            for item in (model.get("Diagrams") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("use_case_id") or "").strip() == target
+                        ),
+                        {},
+                    )
+                    local_keys = {
+                        _finding_key(finding)
+                        for finding in spec.check(diagram, state)
+                    }
+                    batch = [
+                        finding
+                        for finding in batch
+                        if _finding_key(finding) in local_keys
+                    ]
+                    targets = {target}
+                revised = spec.revise(model, repair_directive(batch), state, targets)
+                # 컬렉션이면 finding이 속한 유스케이스만 LLM 출력을 받아들인다. 대상
+                # 추론이 불가능한 컬렉션 수준 결함만 기존처럼 전체 수정한다.
+                candidate = merge_model(spec, model, revised, targets)
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
                 stopped = ERROR
@@ -474,21 +593,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             ):
                 stopped = NO_IMPROVEMENT
                 if spec.stage == "sequence_diagram":
-                    skipped_rule_ids.update(finding.rule_id for finding in batch)
+                    skipped_findings.update(_finding_key(finding) for finding in batch)
                     continue
                 break
-            current_keys = {_finding_key(finding) for finding in findings}
-            candidate_keys = {_finding_key(finding) for finding in candidate_findings}
-            if not candidate_keys < current_keys:
-                # 기존 결함의 엄격한 부분집합일 때만 채택한다. 개수가 줄어도 새로운
-                # 결함을 만든 수정본은 다음 단계의 기준선으로 사용할 수 없다.
+            if not _repair_is_improvement(spec, findings, candidate_findings):
                 stopped = NO_IMPROVEMENT
                 if spec.stage == "sequence_diagram":
-                    skipped_rule_ids.update(finding.rule_id for finding in batch)
+                    skipped_findings.update(_finding_key(finding) for finding in batch)
                     continue
                 break
             model, findings = candidate, candidate_findings
-            skipped_rule_ids.clear()
+            skipped_findings.clear()
             remaining_repairable = _repairable_findings(findings)
             stopped = (
                 CLEAN if not findings else (BUDGET if remaining_repairable else NEEDS_INPUT)
