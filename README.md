@@ -50,14 +50,15 @@ MySQL 저장소를 사용한다.
 
 ## 실행
 
-필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, Docker Desktop이다. 일부 다이어그램
-생성에는 PlantUML JAR가 필요하다. 개발용 MySQL은 통합 실행 스크립트가 Docker 컨테이너로
-준비한다.
+필수 환경은 Python 3.11 이상, JDK 21, Node.js/npm, Docker Desktop이다. PlantUML 다이어그램은
+고정 버전의 Docker 이미지로 검사하고 렌더링한다. 개발용 MySQL은 통합 실행 스크립트가 Docker
+컨테이너로 준비한다.
 
 ### 통합 실행 스크립트
 
-최초 한 번 Python 가상환경과 구현 도구를 준비하고, 사용할 LLM과 PlantUML 환경 변수를
-설정한다.
+최초 한 번 Python 가상환경과 구현 도구를 준비하고, `.env.example`을 복사해 사용할 LLM과
+데이터베이스 접속 정보를 설정한다. `MODEL`은 요구사항 분석과 공통 생성 경로에서,
+`DESIGN_AGENT_MODEL`은 설계 구조화 호출과 LLM 지연 진단에서 사용한다.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -65,9 +66,8 @@ py -3.12 -m venv .venv
 python -m pip install -r requirements.txt
 powershell -ExecutionPolicy Bypass -File scripts\bootstrap-implementation-tools.ps1
 
-$env:NVIDIA_API_KEY="<NVIDIA NIM API key>"
-$env:API_KEY=$env:NVIDIA_API_KEY
-$env:PLANTUML_JAR_PATH="C:\tools\plantuml.jar"
+Copy-Item .env.example .env
+# .env의 API_KEY, BASE_URL, MODEL, DESIGN_AGENT_MODEL 값을 사용할 엔드포인트에 맞게 수정한다.
 ```
 
 Docker Desktop을 실행한 다음 저장소 루트에서 아래 명령을 사용한다.

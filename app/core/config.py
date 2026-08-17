@@ -1,6 +1,5 @@
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
@@ -49,10 +48,6 @@ class Settings(BaseSettings):
     # Stall probe
     easydep_llm_stall_probe_after_seconds: Optional[float] = None
     easydep_llm_stall_probe_timeout_seconds: float = 60.0
-    
-    # Tools / External
-    plantuml_jar_path: str = "plantuml.jar"
-    easydep_terraform_path: Optional[str] = None
     
     # Implementation Limits & Config
     implementation_max_cross_phase_repairs: int = 3
