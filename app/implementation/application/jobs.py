@@ -18,6 +18,7 @@ from app.db.models import (
 from app.repositories import artifact_repository
 from app.design.validation import design_readiness_report
 from ..config import ImplementationSettings
+from ..workflows.repair import repair_rounds
 from .feedback import assess_feedback_eligibility
 from .prototype import PrototypeClient
 
@@ -267,6 +268,7 @@ class ImplementationWorker:
         record["error"] = "Job execution was cancelled by user request."
         record["updated_at"] = _now()
         self._write(record)
+        self.client.cancel(job_id)
         return self.public_record(record)
 
     def approve(self, job_id: str, request_id: str, approved: bool, approved_by: str, retry_failed: bool, delegate_repair_approvals: bool = True) -> dict[str, Any]:
@@ -441,7 +443,7 @@ class ImplementationWorker:
                 for task in (record.get("workflow") or {}).get("tasks", [])
                 if isinstance(task, dict)
             )
-            rounds = max((int(entry.get("revision", 0)) for entry in entries), default=0)
+            rounds = repair_rounds(plan)
             return (
                 bool(request_ids)
                 and (request_ids.issubset(initial_ids) or request_ids.issubset(planned_ids))
@@ -457,6 +459,11 @@ class ImplementationWorker:
         self._write(record)
 
     def _fail(self, record: dict[str, Any], error: Exception) -> None:
+        try:
+            if self._read(str(record["job_id"])).get("status") == "CANCELLED":
+                return
+        except JobNotFound:
+            pass
         record["status"] = "FAILED"
         record["error"] = str(error)[-4000:]
         record["updated_at"] = _now()

@@ -18,7 +18,9 @@ from app.implementation.generation.orchestrator import (
 from app.implementation.agents.runtime import (
     EventJournal,
     break_configuration_cycles,
+    execution_attempt,
     select_repair_paths,
+    write_execution_result,
 )
 from app.implementation.agents.workspace import (
     changed_files,
@@ -39,6 +41,7 @@ from app.implementation.agents.verification.build import (
     production_placeholder_markers,
     read_gradle_test_failures,
     summarize_test_failure,
+    task_verification_command,
     verify_run_workspace,
 )
 from app.implementation.agents.prompts.feedback import (
@@ -74,6 +77,8 @@ from app.implementation.delivery.kubernetes import (
 from app.implementation.delivery.terraform import render_iac, validate_terraform
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
+    _implemented_interfaces,
+    _method_call_sequences,
     _participant_aliases,
     _sequence_documents,
     capture_generated_contracts,
@@ -122,6 +127,22 @@ class SourceDesignConformanceTest(unittest.TestCase):
             _participant_aliases(
                 documents[1][1], {"CreateBoundary", "CancelBoundary"}
             )["Boundary"],
+        )
+
+    def test_java_observation_handles_multiple_interfaces_and_method_scope(self) -> None:
+        source = """
+        class CheckoutServiceImpl implements Runnable, CheckoutService {
+            void first() { gateway.charge(); repository.save(); }
+            void second() { repository.save(); gateway.charge(); }
+        }
+        """
+
+        self.assertEqual(
+            {"Runnable", "CheckoutService"}, _implemented_interfaces(source)
+        )
+        self.assertEqual(
+            [["charge", "save"], ["save", "charge"]],
+            _method_call_sequences(source),
         )
 
     def test_preserves_generated_contracts_and_observable_sequence_calls(self) -> None:
@@ -289,6 +310,125 @@ class LoadJobTest(unittest.TestCase):
                 "regenerate and revalidate after an upstream repair",
                 (task_dir / "implement-end-to-end-flow.prompt.md").read_text(encoding="utf-8"),
             )
+            repository_prompt = (
+                task_dir / "implement-repositories.prompt.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("OrderRepository.java:12", repository_prompt)
+            apply_repair_directives(run)
+            self.assertEqual(
+                repository_prompt,
+                (task_dir / "implement-repositories.prompt.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertEqual(
+                1,
+                repository_prompt.count(
+                    "## Orchestrated repair and revalidation directives"
+                ),
+            )
+
+    def test_cross_phase_repair_budget_is_cumulative_across_changed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                {
+                    "task_id": "implement-repositories",
+                    "task_type": "persistence-repositories",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/OrderRepository.java"
+                    ],
+                },
+                {
+                    "task_id": "implement-application-wiring",
+                    "task_type": "configuration",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/Application.java"
+                    ],
+                },
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"implementation_tasks": tasks}), encoding="utf-8"
+            )
+
+            for attempt in range(1, 4):
+                repair = schedule_cross_phase_repair(
+                    run,
+                    "implement-application-wiring",
+                    {
+                        "stderr": (
+                            "C:/work/application/src/main/java/example/"
+                            f"OrderRepository.java:{attempt}: error: failure {attempt}"
+                        )
+                    },
+                )
+                self.assertIsNotNone(repair)
+                self.assertEqual(attempt, repair["revision"])
+
+            exhausted = schedule_cross_phase_repair(
+                run,
+                "implement-application-wiring",
+                {
+                    "stderr": (
+                        "C:/work/application/src/main/java/example/"
+                        "OrderRepository.java:99: error: another failure"
+                    )
+                },
+            )
+            self.assertIsNone(exhausted)
+            plan = json.loads(
+                (reports / "repair-plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(1, len(plan["entries"]))
+            self.assertEqual(3, plan["entries"][0]["revision"])
+
+    def test_warning_file_name_does_not_select_repair_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            reports.mkdir()
+            tasks = [
+                {
+                    "task_id": "implement-repositories",
+                    "task_type": "persistence-repositories",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/OrderRepository.java"
+                    ],
+                },
+                {
+                    "task_id": "implement-portfolio-api-adapter",
+                    "task_type": "api-adapter",
+                    "allowed_write_paths": [
+                        "application/src/test/java/example/PortfolioApiControllerTest.java"
+                    ],
+                },
+                {
+                    "task_id": "implement-application-wiring",
+                    "task_type": "configuration",
+                    "allowed_write_paths": [
+                        "application/src/main/java/example/Application.java"
+                    ],
+                },
+            ]
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"implementation_tasks": tasks}), encoding="utf-8"
+            )
+
+            repair = schedule_cross_phase_repair(
+                run,
+                "implement-application-wiring",
+                {
+                    "stderr": (
+                        "warning: application/src/test/java/example/"
+                        "PortfolioApiControllerTest.java uses unchecked operations\n"
+                        "NoSuchBeanDefinitionException: repository bean failed"
+                    )
+                },
+            )
+
+            self.assertEqual(["implement-repositories"], repair["ownerTaskIds"])
 
     def test_e2e_failure_without_source_path_selects_api_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -330,6 +470,66 @@ class LoadJobTest(unittest.TestCase):
              patch.object(settings, "openhands_provider_retry_max_seconds", 5):
             self.assertEqual(2, provider_retry_delay(1))
             self.assertEqual(5, provider_retry_delay(4))
+
+    def test_task_verification_avoids_full_packaging_and_targets_owned_tests(self) -> None:
+        command = task_verification_command(
+            ["gradlew"],
+            "configuration",
+            [
+                "application/src/main/java/example/Application.java",
+                "application/src/test/java/example/ApplicationContextTest.java",
+            ],
+        )
+        self.assertIn("compileJava", command)
+        self.assertIn("testClasses", command)
+        self.assertIn("test", command)
+        self.assertNotIn("bootJar", command)
+        self.assertEqual(
+            ["*ApplicationContextTest"],
+            [command[index + 1] for index, item in enumerate(command) if item == "--tests"],
+        )
+
+        final_command = task_verification_command(["gradlew"])
+        self.assertIn("bootJar", final_command)
+        self.assertIn("test", final_command)
+
+    def test_agent_execution_history_preserves_attempt_results(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            reports = run / "reports"
+            executions = reports / "agent-executions"
+            executions.mkdir(parents=True)
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"taskId": "implement-wiring", "attempts": 2}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(2, execution_attempt(run, "implement-wiring"))
+
+            write_execution_result(
+                executions, "implement-wiring", 1, {"status": "FAILED"}
+            )
+            write_execution_result(
+                executions, "implement-wiring", 2, {"status": "SUCCEEDED"}
+            )
+
+            self.assertTrue(
+                (executions / "implement-wiring.attempt-001.result.json").is_file()
+            )
+            self.assertTrue(
+                (executions / "implement-wiring.attempt-002.result.json").is_file()
+            )
+            latest = json.loads(
+                (executions / "implement-wiring.result.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual("SUCCEEDED", latest["status"])
 
     def test_verification_source_paths_normalize_windows_paths(self) -> None:
         self.assertEqual(

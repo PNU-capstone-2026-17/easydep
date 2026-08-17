@@ -365,16 +365,69 @@ def _implementation_invocations(run_root: Path, base_package: str) -> dict[str, 
         if relative.startswith("bce/") or relative.startswith("api/"):
             continue
         source = re.sub(r"/\*.*?\*/|//[^\n]*", "", path.read_text(encoding="utf-8"), flags=re.DOTALL)
-        implemented = set(re.findall(r"\bimplements\s+([A-Za-z_$]\w*)", source))
+        implemented = _implemented_interfaces(source)
         dependencies = set(re.findall(r"\b([A-Za-z_$]\w*)\s+[A-Za-z_$]\w*\s*[;,=)]", source))
-        dependencies.update(re.findall(r"\bimport\s+[\w.]*\.([A-Za-z_$]\w*)\s*;", source))
-        # Only qualified calls count. A declaration with the same name must
-        # not satisfy a sequence edge unless the source actually delegates to
-        # a collaborator.
-        methods = re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", source)
+        dependencies.update(_generic_dependency_types(source))
+        method_calls = _method_call_sequences(source)
         for component in implemented:
-            values.setdefault(component, []).extend(
-                {"method": method, "dependencies": dependencies, "calls": methods, "source": source}
-                for method in set(methods)
-            )
+            for calls in method_calls:
+                values.setdefault(component, []).extend(
+                    {
+                        "method": method,
+                        "dependencies": dependencies,
+                        "calls": calls,
+                        "source": source,
+                    }
+                    for method in set(calls)
+                )
     return values
+
+
+def _implemented_interfaces(source: str) -> set[str]:
+    interfaces: set[str] = set()
+    for match in re.finditer(r"\bimplements\s+([^\{]+)", source):
+        for candidate in match.group(1).split(","):
+            names = re.findall(r"[A-Za-z_$]\w*", re.sub(r"<.*>", "", candidate))
+            if names:
+                interfaces.add(names[-1])
+    return interfaces
+
+
+def _generic_dependency_types(source: str) -> set[str]:
+    dependencies: set[str] = set()
+    for match in re.finditer(
+        r"\b[A-Za-z_$]\w*\s*<([^;=(){}]+)>\s+[A-Za-z_$]\w*\s*[;,=)]",
+        source,
+    ):
+        dependencies.update(re.findall(r"\b[A-Z][A-Za-z_$0-9]*\b", match.group(1)))
+    return dependencies
+
+
+def _method_call_sequences(source: str) -> list[list[str]]:
+    """Return qualified calls scoped to individual Java method bodies."""
+    declaration = re.compile(
+        r"(?:^|[;}])\s*(?:@[A-Za-z_$][\w.$]*(?:\([^)]*\))?\s*)*"
+        r"(?:public|protected|private|static|final|synchronized|abstract|native|default|\s)+"
+        r"[A-Za-z_$][\w.$<>?,\[\] ]*\s+[A-Za-z_$]\w*\s*\([^;{}]*\)\s*\{",
+        re.MULTILINE,
+    )
+    sequences: list[list[str]] = []
+    for match in declaration.finditer(source):
+        opening = match.end() - 1
+        depth = 0
+        closing = None
+        for index in range(opening, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    closing = index
+                    break
+        if closing is None:
+            continue
+        body = source[opening + 1:closing]
+        calls = re.findall(r"\.\s*([A-Za-z_$]\w*)\s*\(", body)
+        if calls:
+            sequences.append(calls)
+    return sequences

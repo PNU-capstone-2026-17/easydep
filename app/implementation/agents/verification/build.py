@@ -64,14 +64,19 @@ def verify_run_workspace(run_root: Path) -> dict[str, object]:
 
 
 def verify_agent_workspace(
-    sandbox: Path, task_type: str = ""
+    sandbox: Path,
+    task_type: str = "",
+    allowed_write_paths: list[str] | None = None,
 ) -> dict[str, object]:
     if task_type == "frontend-implementation":
         return verify_frontend_workspace(sandbox)
     executable = gradle_command()
+    command = task_verification_command(
+        executable, task_type, allowed_write_paths
+    )
     started = time.monotonic()
     result = subprocess.run(
-        [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
+        command,
         cwd=sandbox / "application",
         capture_output=True,
         text=True,
@@ -81,7 +86,7 @@ def verify_agent_workspace(
         check=False,
     )
     evidence = {
-        "command": [*executable, "compileJava", "bootJar", "test", "--no-daemon"],
+        "command": command,
         "exitCode": result.returncode,
         "durationMs": int((time.monotonic() - started) * 1000),
         "stdout": result.stdout[-16000:],
@@ -91,6 +96,39 @@ def verify_agent_workspace(
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
+
+
+def task_verification_command(
+    executable: list[str],
+    task_type: str = "",
+    allowed_write_paths: list[str] | None = None,
+) -> list[str]:
+    """Use a narrow task gate; phase/final verification keeps the full gate."""
+    if not task_type or allowed_write_paths is None:
+        return [
+            *executable,
+            "compileJava",
+            "bootJar",
+            "test",
+            "--build-cache",
+            "--no-daemon",
+        ]
+
+    test_names = sorted(
+        {
+            Path(path).stem
+            for path in allowed_write_paths
+            if "/src/test/" in "/" + path.replace("\\", "/")
+            and path.endswith(".java")
+        }
+    )
+    command = [*executable, "compileJava"]
+    if test_names:
+        command.extend(["testClasses", "test"])
+        for test_name in test_names:
+            command.extend(["--tests", f"*{test_name}"])
+    command.extend(["--build-cache", "--no-daemon"])
+    return command
 
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:

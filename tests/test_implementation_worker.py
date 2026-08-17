@@ -106,6 +106,41 @@ def test_delegated_approval_covers_initial_and_cross_phase_repair(tmp_path: Path
     assert ImplementationWorker._delegated_execution_is_active(record, str(approval))
 
 
+def test_cancel_terminates_active_process_and_preserves_cancelled_status(
+    monkeypatch, tmp_path: Path
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    cancelled = []
+    monkeypatch.setattr(
+        implementation_worker.client,
+        "cancel",
+        lambda job_id: cancelled.append(job_id) or True,
+    )
+    record = {
+        "job_id": "job-cancel",
+        "app_id": "app-1",
+        "status": "RUNNING",
+        "job_path": str(tmp_path / "job.json"),
+        "run_root": None,
+        "workflow": None,
+        "transmission_request": None,
+        "error": None,
+        "created_at": "now",
+        "updated_at": "now",
+    }
+    implementation_worker._write(record)
+    try:
+        result = implementation_worker.cancel("job-cancel")
+        implementation_worker._fail(record, RuntimeError("terminated subprocess"))
+        persisted = implementation_worker._read("job-cancel")
+    finally:
+        implementation_worker.shutdown()
+
+    assert result["status"] == "CANCELLED"
+    assert cancelled == ["job-cancel"]
+    assert persisted["status"] == "CANCELLED"
+
+
 def test_settings_ignore_legacy_external_project_paths(monkeypatch) -> None:
     monkeypatch.setenv("IMPLEMENTATION_AGENT_ROOT", "C:/old/prototype")
     monkeypatch.setenv("IMPLEMENTATION_AGENT_PYTHON", "C:/old/python.exe")
@@ -286,21 +321,30 @@ def test_cli_parser_uses_last_json_line(monkeypatch, tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))
     captured = {}
 
+    class CompletedProcess:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            captured["timeout"] = timeout
+            return "OpenHands banner\n{\"status\": \"READY\"}\n", ""
+
+        def poll(self):
+            return self.returncode
+
     def completed(command, **kwargs):
         captured["command"] = command
         captured["cwd"] = kwargs["cwd"]
-        return subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="OpenHands banner\n{\"status\": \"READY\"}\n", stderr=""
-        )
+        return CompletedProcess()
 
     monkeypatch.setattr(
         subprocess,
-        "run",
+        "Popen",
         completed,
     )
     assert client._call(["workflow-status", "run"])["status"] == "READY"
     assert "app.implementation.interfaces.cli" in captured["command"]
     assert captured["cwd"] == tmp_path
+    assert captured["timeout"] == 60
 
 
 def test_public_job_record_hides_host_source_paths() -> None:

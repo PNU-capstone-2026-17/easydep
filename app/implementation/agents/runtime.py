@@ -159,7 +159,10 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     api_key = configured_api_key()
     assert api_key is not None
     execution_dir = run_root / "reports" / "agent-executions"
-    journal = EventJournal(execution_dir / f"{task_id}.events.jsonl")
+    attempt = execution_attempt(run_root, task_id)
+    journal = EventJournal(
+        execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl"
+    )
     started = time.monotonic()
     agent = None
     conversation_warning: str | None = None
@@ -307,7 +310,9 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                                 "testResults": "",
                             }
                         )
-                verification = verify_agent_workspace(sandbox, task_type)
+                verification = verify_agent_workspace(
+                    sandbox, task_type, list(task["allowed_write_paths"])
+                )
                 break
             except WorkspaceVerificationError as error:
                 referenced = referenced_source_paths(error.evidence)
@@ -356,9 +361,8 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
-        (execution_dir / f"{task_id}.result.json").write_text(
-            json.dumps(failure, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        write_execution_result(execution_dir, task_id, attempt, failure)
+        shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
     for relative in sorted(changed):
         source = sandbox / relative
@@ -382,10 +386,46 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     }
     if conversation_warning is not None:
         result["conversationWarning"] = conversation_warning
-    (execution_dir / f"{task_id}.result.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_execution_result(execution_dir, task_id, attempt, result)
+    shutil.copy2(journal.path, execution_dir / f"{task_id}.events.jsonl")
     return result
+
+
+def execution_attempt(run_root: Path, task_id: str) -> int:
+    state_path = run_root / "reports" / "workflow-state.json"
+    if not state_path.is_file():
+        return 1
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 1
+    return max(
+        1,
+        next(
+            (
+                int(task.get("attempts", 1))
+                for task in state.get("tasks", [])
+                if isinstance(task, dict) and task.get("taskId") == task_id
+            ),
+            1,
+        ),
+    )
+
+
+def write_execution_result(
+    execution_dir: Path,
+    task_id: str,
+    attempt: int,
+    result: dict[str, object],
+) -> None:
+    content = json.dumps(result, ensure_ascii=False, indent=2)
+    (execution_dir / f"{task_id}.attempt-{attempt:03d}.result.json").write_text(
+        content, encoding="utf-8"
+    )
+    # Keep the stable path as a latest-result compatibility pointer/copy.
+    (execution_dir / f"{task_id}.result.json").write_text(
+        content, encoding="utf-8"
+    )
 
 
 def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object]:

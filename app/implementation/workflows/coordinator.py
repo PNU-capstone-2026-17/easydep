@@ -25,6 +25,7 @@ from ..generation.orchestrator import (
 )
 from .repair import (
     apply_repair_directives,
+    repair_rounds,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
 )
@@ -643,7 +644,7 @@ def _valid_delegated_execution_approval(
 
 def _repair_rounds(run_root: Path) -> int:
     plan = _read_json(run_root / "reports" / "repair-plan.json") if (run_root / "reports" / "repair-plan.json").is_file() else {}
-    return max((int(item.get("revision", 0)) for item in plan.get("entries", []) if isinstance(item, dict)), default=0)
+    return repair_rounds(plan)
 
 
 def phase_for_task(task_type: str) -> str:

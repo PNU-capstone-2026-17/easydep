@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,8 @@ class PrototypeClient:
 
     def __init__(self, settings: ImplementationSettings):
         self.settings = settings
+        self._process_lock = threading.RLock()
+        self._processes: dict[str, subprocess.Popen[str]] = {}
 
     def prepare_job(self, job_id: str, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> Path:
         if not self.settings.python_executable.is_file():
@@ -112,11 +116,13 @@ class PrototypeClient:
         return path
 
     def generate(self, job_path: Path) -> Path:
-        generated = self._call([str(job_path)])
+        generated = self._call([str(job_path)], job_path.parent.name)
         return Path(str(generated["output"])).resolve()
 
     def plan_workflow(self, run_root: Path, job_path: Path) -> dict[str, Any]:
-        return self._call(["plan-workflow", str(run_root), str(job_path)])
+        return self._call(
+            ["plan-workflow", str(run_root), str(job_path)], job_path.parent.name
+        )
 
     def generate_and_plan(self, job_path: Path) -> tuple[Path, dict[str, Any]]:
         """Compatibility helper for callers outside the web-worker boundary."""
@@ -127,7 +133,7 @@ class PrototypeClient:
         args = ["run-workflow", str(run_root), str(job_path), "--approval", str(approval_path)]
         if retry_failed:
             args.append("--retry-failed")
-        return self._call(args)
+        return self._call(args, job_path.parent.name)
 
     def transmission_request(self, run_root: Path) -> dict[str, Any] | None:
         path = run_root / "reports" / "external-transmission-request.json"
@@ -145,31 +151,60 @@ class PrototypeClient:
             self.settings.command_timeout_seconds,
         )
 
-    def _call(self, args: list[str]) -> dict[str, Any]:
+    def cancel(self, job_id: str) -> bool:
+        with self._process_lock:
+            process = self._processes.get(job_id)
+        if process is None or process.poll() is not None:
+            return False
+        self._terminate_process_tree(process)
+        return True
+
+    def _call(
+        self, args: list[str], operation_id: str | None = None
+    ) -> dict[str, Any]:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env.setdefault(
             "GRADLE_USER_HOME",
             str(self.settings.repository_root / ".easydep" / "gradle-cache"),
         )
+        process: subprocess.Popen[str] | None = None
+        creationflags = (
+            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        )
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 [str(self.settings.python_executable), "-B", "-m", "app.implementation.interfaces.cli", *args],
                 cwd=self.settings.repository_root,
                 env=env,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=self.settings.command_timeout_seconds,
+                creationflags=creationflags,
+                start_new_session=os.name != "nt",
+            )
+            if operation_id:
+                with self._process_lock:
+                    self._processes[operation_id] = process
+            stdout, stderr = process.communicate(
+                timeout=self.settings.command_timeout_seconds
             )
         except subprocess.TimeoutExpired as error:
+            if process is not None:
+                self._terminate_process_tree(process)
             raise PrototypeExecutionError(
                 f"Implementation prototype exceeded {self.settings.command_timeout_seconds} seconds"
             ) from error
-        if result.returncode != 0:
-            evidence = (result.stderr or result.stdout)[-4000:]
-            for line in reversed(result.stdout.splitlines()):
+        finally:
+            if operation_id and process is not None:
+                with self._process_lock:
+                    if self._processes.get(operation_id) is process:
+                        self._processes.pop(operation_id, None)
+        if process.returncode != 0:
+            evidence = (stderr or stdout)[-4000:]
+            for line in reversed(stdout.splitlines()):
                 try:
                     failed = json.loads(line)
                 except json.JSONDecodeError:
@@ -186,8 +221,8 @@ class PrototypeClient:
                     if messages:
                         evidence = "; ".join(messages)[-4000:]
                 break
-            raise PrototypeExecutionError(f"Implementation prototype exited with {result.returncode}: {evidence}")
-        for line in reversed(result.stdout.splitlines()):
+            raise PrototypeExecutionError(f"Implementation prototype exited with {process.returncode}: {evidence}")
+        for line in reversed(stdout.splitlines()):
             try:
                 value = json.loads(line)
             except json.JSONDecodeError:
@@ -195,3 +230,30 @@ class PrototypeClient:
             if isinstance(value, dict):
                 return value
         raise PrototypeExecutionError("Implementation prototype returned no JSON result")
+
+    @staticmethod
+    def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, subprocess.SubprocessError):
+            process.kill()
+        finally:
+            try:
+                process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
