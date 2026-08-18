@@ -838,9 +838,6 @@ def build_resource_spec(state: AgentState) -> dict:
                 # 예전에는 이유만 있어서 영어 근거 문장이 그대로 화면에 나갔다.
                 "question": cloud_contract.question(name)
                 or f"A value for {name} is required: {cloud_contract.why(name)}",
-                "choices": list(
-                    cloud_contract.choices(name, str(session.draft.get("provider") or ""))
-                ),
                 "seen": [r for r in session.rejected if r["field"] == name],
             }
         )
@@ -862,9 +859,6 @@ def build_resource_spec(state: AgentState) -> dict:
                 "kind": SUGGESTED,
                 "why": cloud_contract.why(name),
                 "question": cloud_contract.question(name),
-                "choices": list(
-                    cloud_contract.choices(name, str(session.draft.get("provider") or ""))
-                ),
                 "seen": [],
             }
         )

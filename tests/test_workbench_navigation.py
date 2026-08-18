@@ -55,7 +55,7 @@ def test_resource_questions_are_rendered_and_answered_in_the_conversation() -> N
     composer = _source("src/lib/components/Composer.svelte")
 
     assert "event.metadata?.resource_question?.why" in timeline
-    assert "resourceQuestion.choices" in composer
+    assert "resourceQuestion.choices" not in composer
     assert "Reply to the question below." in composer
     assert "Continue without this optional input" in composer
 

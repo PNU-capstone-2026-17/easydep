@@ -9,6 +9,8 @@ from app.workspace import repository
 from app.workspace import service as workspace_module
 from app.workspace.service import WorkspaceService
 
+import json
+
 
 class RejectingExecutor:
     def submit(self, *_args, **_kwargs):
@@ -618,8 +620,96 @@ def test_workspace_replaces_internal_feedback_prompt_with_english_ui_copy() -> N
     assert result["kind"] == "question"
     assert result["message"] == (
         "I refined and classified 1 requirement (1 functional and 0 non-functional). "
-        "Before I continue, I need one deployment detail: What is the monthly budget?"
+        "What is the monthly budget?"
     )
     assert result["resource_question"]["field"] == "monthlyBudgetUSD"
     assert result["review_artifacts"] == ["Refined requirements"]
+    assert "Before I continue" not in result["message"]
+    assert "Waiting for deployment details." not in result["message"]
     assert not any("가" <= character <= "힣" for character in result["message"])
+
+
+def test_implementation_progress_snapshot_extracts_active_file_and_class(tmp_path) -> None:
+    run_root = tmp_path / "run-001"
+    events_dir = run_root / "reports" / "agent-executions"
+    events_dir.mkdir(parents=True)
+    journal = events_dir / "task-1.attempt-001.events.jsonl"
+    journal.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "tool": "restricted_file_editor",
+                        "event": {
+                            "command": "create",
+                            "path": "/workspace/application/src/main/java/com/example/OrderController.java",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "tool": "finish",
+                        "event": {"status": "completed"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "job_id": "job-1",
+                "app_id": "app-1",
+                "status": "RUNNING",
+                "run_root": str(run_root),
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert progress["current_file"].endswith("OrderController.java")
+    assert progress["current_class"] == "OrderController"
+    assert progress["progress_detail"] == "Editing OrderController.java"
+
+
+def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_create_job(app_id, design, base_package, allow_assumptions):
+        calls.append(
+            {
+                "app_id": app_id,
+                "design": design,
+                "base_package": base_package,
+                "allow_assumptions": allow_assumptions,
+            }
+        )
+        return {"job_id": "new-job", "app_id": app_id, "status": "QUEUED"}
+
+    monkeypatch.setattr(workspace_module, "create_job", fake_create_job)
+    monkeypatch.setattr(
+        workspace_module,
+        "artifact_repository",
+        SimpleNamespace(load_state=lambda _app_id: {"class_diagram_puml": "A", "api_spec": {"paths": {}}}),
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(
+            {
+                "action": "rerun_implementation",
+                "app_id": "app-1",
+                "command_id": "cmd-1",
+                "stage": "implementation",
+                "payload": {"base_package": "com.example.app", "allow_assumptions": True},
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert calls and calls[0]["app_id"] == "app-1"
+    assert result["job"]["job_id"] == "new-job"

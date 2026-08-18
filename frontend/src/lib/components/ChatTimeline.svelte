@@ -31,6 +31,14 @@
     onArtifactSelect: (stage: string) => void;
   } = $props();
   let latestProgress = $derived([...events].reverse().find((event) => event.kind === 'progress'));
+  let implementationFocus = $derived.by(() => {
+    const metadata = latestProgress?.metadata ?? {};
+    if (String(metadata.progress_event ?? '') !== 'implementationFileProgress') return null;
+    const file = String(metadata.current_file ?? '');
+    const className = String(metadata.current_class ?? '');
+    if (!file && !className) return null;
+    return { file, className };
+  });
   let activeSpecTasks = $derived(
     Array.isArray(latestProgress?.metadata?.active_spec_tasks)
       ? latestProgress.metadata.active_spec_tasks
@@ -149,6 +157,17 @@
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>
         </div>
         <div class="space-y-2">
+          {#if implementationFocus}
+            <div class="rounded-lg border border-[#dfe6dd] bg-[#f3f7f2] px-2.5 py-2 text-[10px] leading-5 text-[#3b453f]">
+              <div class="font-medium text-[#2f3d33]">Current implementation target</div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span class="font-mono text-[9px] text-[#57615d]">{implementationFocus.file}</span>
+                {#if implementationFocus.className}
+                  <span class="rounded bg-[#dfeee2] px-1.5 py-0.5 text-[9px] font-semibold text-[#2d7354]">{implementationFocus.className}</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
           {#if progressSteps.length === 0}
             <div class="flex items-center gap-2">
               <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
@@ -220,13 +239,6 @@
             <p class="mt-2 border-t border-[#ece8dc] pt-2 text-xs leading-5 text-[#777267]">
               {event.metadata.resource_question.why}
             </p>
-          {/if}
-          {#if event.metadata?.resource_question?.choices?.length}
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              {#each event.metadata.resource_question.choices as choice}
-                <Badge>{choice}</Badge>
-              {/each}
-            </div>
           {/if}
         </div>
         {#if relatedArtifacts.length}

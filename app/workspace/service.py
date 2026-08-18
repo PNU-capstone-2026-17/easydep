@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Lock
 from typing import Any
 
@@ -170,6 +171,7 @@ class WorkspaceService:
         required = {
             "advance": ("action_id",),
             "retry_design": ("action_id",),
+            "rerun_implementation": (),
             "confirm_change": ("action_id",),
             "dismiss_change": ("action_id",),
             "approve_implementation": ("action_id", "job_id", "request_id"),
@@ -211,6 +213,7 @@ class WorkspaceService:
             return "design"
         if action in {
             "start_implementation",
+            "rerun_implementation",
             "approve_implementation",
             "reject_implementation",
             "cancel_implementation",
@@ -335,7 +338,7 @@ class WorkspaceService:
             return self._confirm_change(command)
         if action == "dismiss_change":
             return {"message": "Kept the existing artifacts and dismissed the change request."}
-        if action == "start_implementation":
+        if action in {"start_implementation", "rerun_implementation"}:
             request = CreateImplementationJobRequest(
                 base_package=str(
                     command["payload"].get("base_package") or "com.easydep.app"
@@ -345,7 +348,7 @@ class WorkspaceService:
                 ),
             )
             job = create_job(str(command["app_id"]), request)
-            return self._monitor_implementation(job)
+            return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if action in {"approve_implementation", "reject_implementation"}:
             payload = command["payload"]
             job = approve_job(
@@ -360,7 +363,7 @@ class WorkspaceService:
                     ),
                 ),
             )
-            return self._monitor_implementation(job)
+            return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if action == "cancel_implementation":
             job = cancel_job(str(command["payload"]["job_id"]))
             return {"message": "Cancelled the implementation job.", "job": job}
@@ -805,16 +808,19 @@ class WorkspaceService:
                 resource_questions[0] if resource_questions else None,
             )
             if resource_question:
+                field = str(resource_question.get("field") or "")
+                question = str(
+                    resource_question.get("question")
+                    or "Please provide the missing deployment information."
+                )
+                if field == "provider":
+                    message = f"{lead} Waiting for deployment details."
+                else:
+                    message = f"{lead} {question}"
                 return {
                     "awaiting_input": True,
                     "kind": "question",
-                    "message": (
-                        f"{lead} Before I continue, I need one deployment detail: "
-                        + str(
-                            resource_question.get("question")
-                            or "Please provide the missing deployment information."
-                        )
-                    ),
+                    "message": message,
                     "phase": result.get("phase"),
                     "resource_question": resource_question,
                     "resource_questions": resource_questions,
@@ -923,11 +929,80 @@ class WorkspaceService:
             "design": _json_response(result),
         }
 
-    def _monitor_implementation(self, job: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _implementation_progress_snapshot(job: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            return {}
+        run_root = str(job.get("run_root") or "").strip()
+        if not run_root:
+            try:
+                run_root = str(implementation_worker._read(job_id).get("run_root") or "").strip()
+            except Exception:
+                return {}
+        if not run_root:
+            return {}
+
+        events_dir = Path(run_root) / "reports" / "agent-executions"
+        latest_path: Path | None = None
+        for candidate in sorted(events_dir.glob("*.events.jsonl")):
+            if latest_path is None or candidate.stat().st_mtime >= latest_path.stat().st_mtime:
+                latest_path = candidate
+        if latest_path is None:
+            return {}
+
+        current_file: str | None = None
+        for line in latest_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            event = payload.get("event") if isinstance(payload, dict) else None
+            tool_name = str(payload.get("tool") or "") if isinstance(payload, dict) else ""
+            if not isinstance(event, dict):
+                continue
+            path_value = event.get("path") or event.get("file_path") or event.get("filePath")
+            if not isinstance(path_value, str) or not path_value.strip():
+                continue
+            if "file_editor" not in tool_name and tool_name not in {"restricted_file_editor", "file_editor"}:
+                continue
+            current_file = path_value.strip()
+
+        if current_file is None:
+            return {}
+
+        file_name = Path(current_file).name
+        class_name = Path(file_name).stem
+        return {
+            "progress_event": "implementationFileProgress",
+            "progress_step_label": "Implementation generation",
+            "progress_detail": f"Editing {file_name}",
+            "progress_status": "running",
+            "current_file": current_file,
+            "current_class": class_name,
+            "text": f"Editing {file_name}",
+        }
+
+    def _monitor_implementation(self, job: dict[str, Any], *, command_id: str | None = None) -> dict[str, Any]:
         job_id = str(job["job_id"])
+        app_id = str(job.get("app_id") or "")
         while True:
             current = implementation_worker.get(job_id)
             status = str(current.get("status") or "")
+            if app_id and command_id:
+                progress = self._implementation_progress_snapshot(current)
+                if progress:
+                    repository.append_event(
+                        app_id,
+                        command_id=command_id,
+                        stage="implementation",
+                        kind="progress",
+                        actor="system",
+                        text=str(progress.get("text") or progress.get("progress_detail") or "Implementation in progress."),
+                        metadata=progress,
+                    )
             if status == "AWAITING_APPROVAL":
                 request = current.get("transmission_request") or {}
                 return {

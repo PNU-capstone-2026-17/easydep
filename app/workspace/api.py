@@ -47,6 +47,7 @@ class WorkspaceCommandRequest(BaseModel):
         "start_design",
         "retry_design",
         "start_implementation",
+        "rerun_implementation",
         "approve_implementation",
         "reject_implementation",
         "cancel_implementation",

@@ -56,15 +56,7 @@
           Keep current artifacts
         </Button>
       {:else if resourceQuestion}
-        {#if resourceQuestion.choices?.length}
-          {#each resourceQuestion.choices as choice}
-            <Button size="sm" variant="outline" onclick={() => onSend(String(choice))} disabled={busy}>
-              {choice}
-            </Button>
-          {/each}
-        {:else}
-          <span class="px-1 text-xs text-[#74520c]">Reply to the question below.</span>
-        {/if}
+        <span class="px-1 text-xs text-[#74520c]">Reply to the question below.</span>
         {#if resourceQuestion.kind === 'suggested'}
           <Button size="sm" variant="ghost" onclick={() => onAction('advance', { action_id: command?.command_id })} disabled={busy}>
             Continue without this optional input <ChevronRight size={13} />
@@ -99,12 +91,24 @@
       </Button>
       <span class="text-xs text-[#85524c]">Completed design artifacts will be kept.</span>
     </div>
+  {:else if command?.status === 'FAILED' && command.stage === 'implementation'}
+    <div class="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-[#eccbc7] bg-[#fff7f6] p-2.5">
+      <Button size="sm" onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}>
+        <RotateCcw size={13} /> Retry failed implementation
+      </Button>
+      <span class="text-xs text-[#85524c]">The app design context will be reused for a fresh implementation pass.</span>
+    </div>
   {:else if command?.status === 'COMPLETED' && command.stage === 'requirements'}
     <div class="mb-2"><Button size="sm" onclick={() => onAction('start_design')} disabled={busy}><Play size={13} /> Start design</Button></div>
   {:else if command?.status === 'COMPLETED' && command.stage === 'design'}
     <div class="mb-2"><Button size="sm" onclick={() => onAction('start_implementation')} disabled={busy}><Play size={13} /> Start implementation</Button></div>
-  {:else if command?.status === 'COMPLETED' && command.stage === 'implementation' && result?.job_id}
-    <div class="mb-2"><Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: result.job_id })} disabled={busy}><Play size={13} /> Start testing</Button></div>
+  {:else if command?.status === 'COMPLETED' && command.stage === 'implementation'}
+    <div class="mb-2 flex flex-wrap items-center gap-2">
+      <Button size="sm" onclick={() => onAction('rerun_implementation', { base_package: 'com.easydep.app', allow_assumptions: true })} disabled={busy}><RotateCcw size={13} /> Rerun implementation</Button>
+      {#if result?.job_id}
+        <Button size="sm" onclick={() => onAction('start_testing', { implementation_job_id: result.job_id })} disabled={busy}><Play size={13} /> Start testing</Button>
+      {/if}
+    </div>
   {/if}
 
   {#if context}
