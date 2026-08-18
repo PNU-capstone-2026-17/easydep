@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from typing import Any, Literal
 
@@ -17,7 +18,11 @@ from app.design.services.common.structured import StructuredLlmError, parse_stru
 from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     is_return_value_label,
+    method_call_signature,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class SequenceParticipant(BaseModel):
@@ -181,6 +186,22 @@ class SequenceDiagramCollection(BaseModel):
         if len(identifiers) != len(set(identifiers)):
             raise ValueError("sequence diagram use_case_ids must be unique")
         return self
+
+
+class SequenceElementSelection(BaseModel):
+    """LLM이 보완할 수 있는 최소 단위인 단계별 메서드 선택."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str = Field(min_length=1)
+    receiver_class: str = Field(min_length=1)
+    method: str = Field(min_length=1)
+
+
+class SequenceElementSelections(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selections: list[SequenceElementSelection]
 
 
 SEQUENCE_EXTRACTION_SYSTEM_PROMPT = """
@@ -529,11 +550,490 @@ def normalize_sequence_usecase_spec(usecase_spec: Any) -> dict[str, Any]:
     return {**usecase_spec, "use_cases": use_cases, "use_case_specs": specifications}
 
 
+_CLASS_BLOCK = re.compile(
+    r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?:<<\s*([^>]+?)\s*>>)?\s*\{(.*?)\}",
+    re.DOTALL,
+)
+_DEPENDENCY = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+(?:\.\.>|-->|\*--|o--)\s+"
+    r"(?:\"[^\"]*\"\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
+_OUTPUT_METHOD_PREFIXES = ("display", "show", "render", "prompt", "notify")
+_TOKEN_STOP_WORDS = {
+    "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or",
+    "the", "to", "with", "system", "request", "student", "user", "admin",
+}
+
+
+def _words(value: Any) -> set[str]:
+    """CamelCase와 일반 문장을 같은 비교 토큰 집합으로 정규화한다."""
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value or ""))
+    result: set[str] = set()
+    for token in re.findall(r"[A-Za-z0-9]+", text.lower()):
+        if len(token) <= 1 or token in _TOKEN_STOP_WORDS:
+            continue
+        if len(token) > 4 and token.endswith("ies"):
+            token = token[:-3] + "y"
+        elif len(token) > 4 and token.endswith("ing"):
+            token = token[:-3]
+        elif len(token) > 4 and token.endswith("es"):
+            token = token[:-2]
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        result.add(token)
+    return result
+
+
+def _parse_class_catalog(
+    class_diagram_puml: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[str]]]:
+    """렌더된 클래스 다이어그램에서 BCE 클래스와 실제 호출 가능한 메서드를 읽는다."""
+    classes: dict[str, dict[str, Any]] = {}
+    for match in _CLASS_BLOCK.finditer(class_diagram_puml or ""):
+        name, stereotype, body = match.groups()
+        kind = str(stereotype or "entity").strip().lower()
+        if kind not in {"boundary", "control", "entity", "database"}:
+            kind = "entity"
+        methods = [
+            signature
+            for line in body.splitlines()
+            if (signature := method_call_signature(line))
+        ]
+        classes[name] = {"name": name, "kind": kind, "methods": methods}
+
+    dependencies: dict[str, list[str]] = {}
+    for source, target in _DEPENDENCY.findall(class_diagram_puml or ""):
+        if source in classes and target in classes:
+            dependencies.setdefault(source, []).append(target)
+    return classes, dependencies
+
+
+def _alias(value: str) -> str:
+    alias = re.sub(r"[^A-Za-z0-9_]", "_", value.strip())
+    if not alias or not re.match(r"[A-Za-z_]", alias):
+        alias = f"Actor_{alias}"
+    return alias
+
+
+def _score_method(sentence: str, class_name: str, method: str) -> int:
+    wanted = _words(sentence)
+    method_words = _words(method.partition("(")[0])
+    class_words = _words(class_name)
+    return len(wanted & method_words) * 4 + len(wanted & class_words)
+
+
+def _best_class(
+    classes: dict[str, dict[str, Any]],
+    kind: str,
+    use_case_name: str,
+    index: int,
+) -> dict[str, Any] | None:
+    candidates = [item for item in classes.values() if item["kind"] == kind and item["methods"]]
+    if not candidates:
+        return None
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            len(_words(use_case_name) & _words(item["name"])),
+            -list(classes).index(item["name"]),
+        ),
+        reverse=True,
+    )
+    if len(_words(use_case_name) & _words(ranked[0]["name"])) == 0:
+        return candidates[index % len(candidates)]
+    return ranked[0]
+
+
+def _method_candidates(class_item: dict[str, Any], actor_led: bool) -> list[str]:
+    methods = list(class_item.get("methods") or [])
+    if actor_led and class_item.get("kind") == "boundary":
+        inputs = [
+            method for method in methods
+            if not method.lower().startswith(_OUTPUT_METHOD_PREFIXES)
+        ]
+        return inputs or methods
+    return methods
+
+
+def _pick_method(
+    sentence: str,
+    candidates: list[tuple[dict[str, Any], str]],
+    ordinal: int,
+) -> tuple[dict[str, Any], str, int]:
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            _score_method(sentence, item[0]["name"], item[1]),
+            -candidates.index(item),
+        ),
+        reverse=True,
+    )
+    if not ranked:
+        raise ValueError("sequence generation requires at least one callable BCE method")
+    best_score = _score_method(sentence, ranked[0][0]["name"], ranked[0][1])
+    if best_score:
+        return ranked[0][0], ranked[0][1], best_score
+    fallback = candidates[ordinal % len(candidates)]
+    return fallback[0], fallback[1], 0
+
+
+def _flow_records(specification: dict[str, Any]) -> list[dict[str, Any]]:
+    """주 흐름 직후에 해당 확장 흐름을 배치하여 검증기가 기대하는 순서를 만든다."""
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    by_anchor: dict[int, list[dict[str, Any]]] = {}
+    trailing: list[dict[str, Any]] = []
+    for extension in specification.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        anchor = extension.get("branch_step")
+        if not isinstance(anchor, int):
+            label_match = re.match(r"(\d+)", str(extension.get("label") or ""))
+            anchor = int(label_match.group(1)) if label_match else None
+        target = by_anchor.setdefault(anchor, []) if isinstance(anchor, int) else trailing
+        target.append(extension)
+
+    records: list[dict[str, Any]] = []
+    for step in specification.get("main_scenario") or []:
+        if not isinstance(step, dict) or step.get("step_number") is None:
+            continue
+        number = int(step["step_number"])
+        records.append({
+            "step_id": f"{use_case_id}:main:{number}",
+            "sentence": str(step.get("sentence") or step.get("description") or "").strip(),
+            "fragment": None,
+        })
+        for extension in by_anchor.get(number, []):
+            records.extend(_extension_records(use_case_id, extension))
+    for extension in trailing:
+        records.extend(_extension_records(use_case_id, extension))
+    return records
+
+
+def _extension_records(use_case_id: str, extension: dict[str, Any]) -> list[dict[str, Any]]:
+    label = str(extension.get("label") or "").strip()
+    condition = str(extension.get("condition") or "condition").strip().rstrip(":")
+    fragment = {
+        "id": f"{use_case_id}_{_alias(label)}",
+        "type": "opt",
+        "branch": "main",
+        "condition": condition or "condition",
+    }
+    return [
+        {
+            "step_id": f"{use_case_id}:extension:{label}:{step.get('sub_step')}",
+            "sentence": str(step.get("sentence") or step.get("description") or "").strip(),
+            "fragment": fragment,
+        }
+        for step in extension.get("handling_steps") or []
+        if isinstance(step, dict) and label and step.get("sub_step")
+    ]
+
+
+def _actor_led(sentence: str, actor_name: str) -> bool:
+    lowered = sentence.lower().lstrip(" '-\"")
+    subjects = {actor_name.lower().strip(), "user", "the user"}
+    return any(
+        subject
+        and (
+            lowered == subject
+            or lowered.startswith(subject + " ")
+            or lowered.startswith(subject + "'")
+        )
+        for subject in subjects
+    )
+
+
+def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+    """불확실한 단계의 메서드 선택만 한 번의 작은 LLM 요청으로 보완한다.
+
+    응답이 실패하거나 후보 밖의 값을 고르면 규칙 기반 기본 선택을 유지한다. 선택적
+    보완 때문에 전체 시퀀스 생성이 실패하거나 다시 오래 멈추지 않게 하는 경계다.
+    """
+    uncertain = [plan for plan in plans if plan["score"] == 0]
+    if not uncertain:
+        return {}
+    candidate_map = {
+        plan["step_id"]: {
+            (item["class_name"], item["method"])
+            for item in plan["candidates"]
+        }
+        for plan in uncertain
+    }
+    payload = [
+        {
+            "step_id": plan["step_id"],
+            "sentence": plan["sentence"],
+            "candidates": plan["candidates"],
+        }
+        for plan in uncertain
+    ]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Select the single best existing receiver class and method for each flow step. "
+                "Use only the supplied candidates, keep every step_id exact, and do not generate "
+                "participants, messages, UML, or prose."
+            ),
+        },
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+    ]
+    try:
+        selected = parse_structured(messages, SequenceElementSelections)
+    except Exception:  # optional enrichment must never prevent deterministic generation
+        logger.warning(
+            "optional sequence element selection failed; using deterministic defaults",
+            exc_info=True,
+        )
+        return {}
+
+    accepted: dict[str, tuple[str, str]] = {}
+    for item in selected.get("selections") or []:
+        step_id = str(item.get("step_id") or "").strip()
+        choice = (
+            str(item.get("receiver_class") or "").strip(),
+            method_call_signature(str(item.get("method") or "")),
+        )
+        if choice in candidate_map.get(step_id, set()):
+            accepted[step_id] = choice
+    return accepted
+
+
+def _participant(class_item: dict[str, Any]) -> dict[str, str]:
+    return {
+        "name": class_item["name"],
+        "alias": _alias(class_item["name"]),
+        "kind": class_item["kind"],
+        "description": "Derived from the class diagram",
+        "source_class": class_item["name"],
+    }
+
+
+def _message(
+    source: str,
+    target: str,
+    method: str,
+    use_case_id: str,
+    step_id: str,
+    fragment: dict[str, str] | None,
+    call_number: int,
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "target": target,
+        "label": method,
+        "type": "async",
+        "fragments": [fragment] if fragment else [],
+        "use_case_ids": [use_case_id],
+        "step_ids": [step_id],
+        "call_id": f"{use_case_id}-call-{call_number}",
+        "reply_to": "",
+        # `...` has no named contract; explicit typed parameters are added by the
+        # class generator and can be grounded in the originating use-case step.
+        "arguments": [
+            {
+                "parameter": name.strip(),
+                "type": type_name.strip(),
+                "source_kind": "input",
+                "source_ref": step_id,
+            }
+            for raw in method.partition("(")[2].rpartition(")")[0].split(",")
+            if (name := raw.partition(":")[0]).strip()
+            and (type_name := raw.partition(":")[2]).strip()
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name.strip())
+        ],
+    }
+
+
+def _build_sequence_plans(
+    specifications: list[dict[str, Any]],
+    summaries: dict[str, dict[str, Any]],
+    classes: dict[str, dict[str, Any]],
+    dependencies: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    plans: list[dict[str, Any]] = []
+    for use_case_index, specification in enumerate(specifications):
+        use_case_id = str(specification.get("use_case_id") or "").strip()
+        summary = summaries.get(use_case_id, {})
+        use_case_name = str(specification.get("name") or summary.get("name") or use_case_id)
+        actor = str(
+            specification.get("primary_actor")
+            or summary.get("primary_actor")
+            or "User"
+        ).strip()
+        boundary = _best_class(classes, "boundary", use_case_name, use_case_index)
+        if boundary is None:
+            raise ValueError("sequence generation requires a Boundary class with a method")
+        linked_controls = [
+            classes[name]
+            for name in dependencies.get(boundary["name"], [])
+            if name in classes and classes[name]["kind"] == "control" and classes[name]["methods"]
+        ]
+        control = linked_controls[0] if linked_controls else _best_class(
+            classes, "control", use_case_name, use_case_index
+        )
+
+        for ordinal, record in enumerate(_flow_records(specification)):
+            actor_step = _actor_led(record["sentence"], actor)
+            candidate_classes = [boundary] if actor_step or control is None else [boundary, control]
+            candidates = [
+                (class_item, method)
+                for class_item in candidate_classes
+                for method in _method_candidates(class_item, actor_step)
+            ]
+            selected_class, selected_method, score = _pick_method(
+                record["sentence"], candidates, ordinal
+            )
+            plans.append({
+                **record,
+                "use_case_id": use_case_id,
+                "use_case_name": use_case_name,
+                "actor": actor,
+                "actor_led": actor_step,
+                "boundary": boundary,
+                "control": control,
+                "selected_class": selected_class,
+                "selected_method": selected_method,
+                "score": score,
+                "candidates": [
+                    {"class_name": item[0]["name"], "method": item[1]}
+                    for item in candidates
+                ],
+            })
+    return plans
+
+
+def _assemble_deterministic_diagrams(
+    plans: list[dict[str, Any]],
+    selections: dict[str, tuple[str, str]],
+    classes: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    diagrams: list[dict[str, Any]] = []
+    for use_case_id in dict.fromkeys(plan["use_case_id"] for plan in plans):
+        use_case_plans = [plan for plan in plans if plan["use_case_id"] == use_case_id]
+        first = use_case_plans[0]
+        actor_alias = _alias(first["actor"])
+        if actor_alias in classes:
+            actor_alias += "Actor"
+        participants: dict[str, dict[str, str]] = {
+            actor_alias: {
+                "name": first["actor"],
+                "alias": actor_alias,
+                "kind": "actor",
+                "description": "Primary actor from the use-case specification",
+                "source_class": "",
+            }
+        }
+        messages: list[dict[str, Any]] = []
+        reached = {actor_alias}
+        used_actor_calls: set[tuple[str, str]] = set()
+        call_number = 0
+
+        for plan_index, plan in enumerate(use_case_plans):
+            selected_name, selected_method = selections.get(
+                plan["step_id"],
+                (plan["selected_class"]["name"], plan["selected_method"]),
+            )
+            selected_class = classes[selected_name]
+            boundary = plan["boundary"]
+            control = plan["control"]
+            participants.setdefault(_alias(boundary["name"]), _participant(boundary))
+            if control is not None:
+                participants.setdefault(_alias(control["name"]), _participant(control))
+
+            # The first observable interaction is always the use-case actor entering
+            # through its boundary. It also establishes the causal chain for later calls.
+            if plan_index == 0 or plan["actor_led"]:
+                entry_methods = _method_candidates(boundary, True)
+                entry_method = (
+                    selected_method
+                    if selected_class["kind"] == "boundary"
+                    else entry_methods[plan_index % len(entry_methods)]
+                )
+                entry_key = (boundary["name"], entry_method)
+                if plan["actor_led"] and entry_key in used_actor_calls:
+                    unused = [
+                        method
+                        for method in entry_methods
+                        if (boundary["name"], method) not in used_actor_calls
+                    ]
+                    if unused:
+                        entry_method = max(
+                            unused,
+                            key=lambda method: _score_method(
+                                plan["sentence"], boundary["name"], method
+                            ),
+                        )
+                        entry_key = (boundary["name"], entry_method)
+                call_number += 1
+                messages.append(_message(
+                    actor_alias, _alias(boundary["name"]), entry_method, use_case_id,
+                    plan["step_id"], plan["fragment"], call_number,
+                ))
+                used_actor_calls.add(entry_key)
+                reached.add(_alias(boundary["name"]))
+                if selected_class["kind"] == "boundary":
+                    continue
+
+            if selected_class["kind"] == "control":
+                source = _alias(boundary["name"])
+                target = _alias(selected_class["name"])
+            else:
+                if control is None:
+                    source = target = _alias(boundary["name"])
+                else:
+                    control_alias = _alias(control["name"])
+                    if control_alias not in reached:
+                        bridge = control["methods"][0]
+                        call_number += 1
+                        messages.append(_message(
+                            _alias(boundary["name"]), control_alias, bridge, use_case_id,
+                            plan["step_id"], plan["fragment"], call_number,
+                        ))
+                        reached.add(control_alias)
+                    source = control_alias
+                    target = _alias(selected_class["name"])
+            call_number += 1
+            messages.append(_message(
+                source, target, selected_method, use_case_id, plan["step_id"],
+                plan["fragment"], call_number,
+            ))
+            reached.add(target)
+
+        coalesced: list[dict[str, Any]] = []
+        for message in messages:
+            if coalesced and all(
+                coalesced[-1].get(field) == message.get(field)
+                for field in ("source", "target", "label", "type", "fragments")
+            ):
+                coalesced[-1]["step_ids"] = list(
+                    dict.fromkeys(
+                        [*coalesced[-1]["step_ids"], *message["step_ids"]]
+                    )
+                )
+                continue
+            coalesced.append(message)
+        messages = coalesced
+
+        # Only participants that actually occur in a message are emitted.
+        active = {value for message in messages for value in (message["source"], message["target"])}
+        ordered = [participant for alias, participant in participants.items() if alias in active]
+        diagrams.append({
+            "use_case_id": use_case_id,
+            "use_case_name": first["use_case_name"],
+            "Participants": ordered,
+            "Messages": messages,
+        })
+    return diagrams
+
+
 def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
 ) -> dict[str, Any]:
-    """각 유스케이스 명세를 독립적으로 추출하여 다이어그램 모음으로 만든다."""
+    """규칙 기반으로 전체 골격을 만들고 불확실한 메서드 선택만 LLM으로 보완한다."""
     if not usecase_spec:
         return {}
     usecase_spec = normalize_sequence_usecase_spec(usecase_spec)
@@ -548,28 +1048,69 @@ def extract_sequence_diagrams(
         for item in usecase_spec.get("use_case_specs") or []
         if isinstance(item, dict) and item.get("use_case_id")
     ]
-    diagrams: list[dict[str, Any]] = []
-    for specification in specifications:
-        use_case_id = str(specification.get("use_case_id") or "").strip()
-        summary = use_cases.get(use_case_id, {})
-        use_case_name = str(
-            specification.get("name") or summary.get("name") or ""
-        ).strip()
-        scenario = {
-            "use_case": summary,
-            "use_case_specification": specification,
-        }
-        extracted = extract_sequence_model(
-            json.dumps(scenario, ensure_ascii=False, indent=2),
-            class_diagram_puml,
-        )
-        diagrams.append(
+    classes, dependencies = _parse_class_catalog(class_diagram_puml)
+    # Legacy or externally supplied class text may not expose a parseable BCE method
+    # catalog. In that genuinely under-specified case the existing full-model LLM
+    # extractor remains the last resort instead of fabricating operations.
+    if not any(
+        item["kind"] == "boundary" and item["methods"]
+        for item in classes.values()
+    ):
+        diagrams = []
+        for specification in specifications:
+            use_case_id = str(specification.get("use_case_id") or "").strip()
+            summary = use_cases.get(use_case_id, {})
+            extracted = extract_sequence_model(
+                json.dumps(
+                    {
+                        "use_case": summary,
+                        "use_case_specification": specification,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                class_diagram_puml,
+            )
+            diagrams.append(
+                {
+                    "use_case_id": use_case_id,
+                    "use_case_name": str(
+                        specification.get("name") or summary.get("name") or ""
+                    ).strip(),
+                    **extracted,
+                }
+            )
+        return SequenceDiagramCollection(
+            Diagrams=diagrams,
+            class_diagram_hash=hashlib.sha256(
+                class_diagram_puml.encode("utf-8")
+            ).hexdigest(),
+        ).model_dump()
+
+    plans = _build_sequence_plans(specifications, use_cases, classes, dependencies)
+    selections = _select_uncertain_elements(plans)
+    generated = {
+        diagram["use_case_id"]: diagram
+        for diagram in _assemble_deterministic_diagrams(plans, selections, classes)
+    }
+    diagrams = [
+        generated.get(
+            str(specification.get("use_case_id") or "").strip(),
             {
-                "use_case_id": use_case_id,
-                "use_case_name": use_case_name,
-                **extracted,
-            }
+                "use_case_id": str(specification.get("use_case_id") or "").strip(),
+                "use_case_name": str(
+                    specification.get("name")
+                    or use_cases.get(
+                        str(specification.get("use_case_id") or "").strip(), {}
+                    ).get("name")
+                    or ""
+                ).strip(),
+                "Participants": [],
+                "Messages": [],
+            },
         )
+        for specification in specifications
+    ]
 
     class_diagram_hash = hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest()
     return SequenceDiagramCollection(

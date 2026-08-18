@@ -1133,6 +1133,47 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
     assert "동일 Boundary 호출" in findings[0].message
 
 
+def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "Monitor requests a health probe."},
+                    {"step_number": 2, "sentence": "Monitor requests the health probe again."},
+                ],
+                "extensions": [],
+            }]
+        },
+        "extracted_bce_classes": {
+            "Classes": [{"className": "HealthApi", "methods": ["healthProbe()"]}]
+        },
+    }
+    model = {
+        "Participants": [
+            {"name": "Monitor", "alias": "monitor", "kind": "actor"},
+            {
+                "name": "HealthApi",
+                "alias": "health",
+                "kind": "boundary",
+                "source_class": "HealthApi",
+            },
+        ],
+        "Messages": [
+            {
+                "source": "monitor", "target": "health", "type": "sync",
+                "label": "healthProbe()", "step_ids": ["UC1:main:1"],
+            },
+            {
+                "source": "monitor", "target": "health", "type": "sync",
+                "label": "healthProbe()", "step_ids": ["UC1:main:2"],
+            },
+        ],
+    }
+
+    assert detectors.sequence_actor_step_involvement(model, state) == []
+
+
 def test_flow_order_rejects_reversed_main_step_and_late_extension():
     state = {
         "usecase_spec": {

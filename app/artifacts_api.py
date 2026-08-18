@@ -176,9 +176,9 @@ def to_web_response(result: dict[str, Any]) -> dict[str, Any]:
         check = result.get(config.get("check_key") or "") or {}
         findings = list(check.get("findings", []))
         artifact = result.get(config["state_key"], empty)
-        # Findings make an artifact a draft, not an absent artifact.  Keep it
-        # visible so the user can review what must be repaired; advancement is
-        # still blocked by the design-readiness gate.
+        # Findings make an artifact a draft, not an absent artifact. Keep it
+        # visible as a review warning; a generated artifact may still feed the
+        # next design stage.
         artifacts[stage] = artifact
         if findings and artifact:
             artifact_status[stage] = "needs_review"

@@ -458,7 +458,7 @@ def test_design_feedback_status_remains_a_workspace_review_gate() -> None:
     assert result["current_stage"] == "deployment_diagram"
 
 
-def test_design_findings_require_revision_instead_of_offering_continue() -> None:
+def test_design_findings_without_an_artifact_require_revision() -> None:
     service = WorkspaceService()
     try:
         result = service._design_result(
@@ -477,6 +477,29 @@ def test_design_findings_require_revision_instead_of_offering_continue() -> None
     assert result["requires_revision"] is True
     assert result["blocking_findings"] == ["missing flow step"]
     assert "before continuing" in result["message"]
+
+
+def test_design_findings_with_a_generated_artifact_allow_continue() -> None:
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "status": "need_feedback",
+                "stage": "sequence_diagram",
+                "artifacts": {"sequence_diagram": "@startuml\n@enduml"},
+                "validation": {
+                    "sequence_diagram": {"findings": ["missing flow step"]}
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["awaiting_input"] is True
+    assert result["requires_revision"] is False
+    assert result["blocking_findings"] == []
+    assert result["findings"] == ["missing flow step"]
+    assert "continued to the next stage" in result["message"]
 
 
 def test_retry_design_accepts_only_a_failed_design_command(monkeypatch) -> None:
