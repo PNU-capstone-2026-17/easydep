@@ -48,6 +48,7 @@ from app.design.graphs.design_graph import (
 from app.design.graphs.subgraphs import DESIGN_STAGES
 from app.design.rtm import build_design_rtm, render_design_rtm_md
 from app.design.validation import design_readiness_report
+from app.repositories.artifact_repository import STAGE_ARTIFACTS
 
 router = APIRouter(tags=["design"])
 
@@ -56,6 +57,17 @@ def _stage_has_findings(payload: dict, stage: str) -> bool:
     validation = payload.get("validation") if isinstance(payload, dict) else None
     item = validation.get(stage) if isinstance(validation, dict) else None
     return bool(item.get("findings")) if isinstance(item, dict) else False
+
+
+def _stage_artifact_exists(state: dict, stage: str) -> bool:
+    """검증 결과와 별개로 다음 단계가 소비할 산출물이 실제 존재하는지 확인한다."""
+    config = STAGE_ARTIFACTS.get(stage)
+    if not config:
+        return False
+    artifact = state.get(config["state_key"])
+    if isinstance(artifact, str):
+        return bool(artifact.strip())
+    return bool(artifact)
 
 
 class StageRequest(BaseModel):
@@ -136,7 +148,9 @@ def resume_design_session(app_id: str, request: FeedbackRequest) -> JSONResponse
                 require_app(app_id), stages=[str(active_stage)]
             )
             findings = list(readiness.get("findings") or [])
-            if findings:
+            # 규칙 findings는 사용자에게 계속 보이지만, 렌더/저장된 산출물이 있으면
+            # 다음 설계 단계의 입력으로 사용할 수 있다. 산출물 자체가 없을 때만 멈춘다.
+            if findings and not _stage_artifact_exists(require_app(app_id), str(active_stage)):
                 raise HTTPException(
                     status_code=409,
                     detail={

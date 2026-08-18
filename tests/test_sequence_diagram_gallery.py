@@ -134,7 +134,33 @@ def test_sequence_diagram_draft_remains_visible_while_findings_block_advance() -
     assert image.body == b"draft"
 
 
-def test_design_cannot_advance_past_unresolved_sequence_findings() -> None:
+def test_design_advances_past_sequence_findings_when_an_artifact_exists() -> None:
+    state = {
+        **_state(),
+        "sequence_diagram_puml": "@startuml\n@enduml",
+        "sequence_diagram_check": {"findings": ["invalid receiver method"]},
+    }
+    with (
+        patch("app.design.api.require_app_exists"),
+        patch("app.design.api.require_active_session"),
+        patch(
+            "app.design.api.session_status",
+            return_value={"active": True, "stage": "sequence_diagram"},
+        ),
+        patch("app.design.api.require_app", return_value=state),
+        patch("app.design.api.design_readiness_report") as readiness,
+        patch("app.design.api.resume_design", return_value={}) as resume,
+    ):
+        readiness.return_value = {
+            "status": "NEEDS_INPUT",
+            "findings": [{"stage": "sequence_diagram", "finding": "invalid"}],
+        }
+        resume_design_session(APP_ID, FeedbackRequest(feedback=""))
+
+    resume.assert_called_once_with(APP_ID, "")
+
+
+def test_design_does_not_advance_when_findings_have_no_artifact() -> None:
     state = {
         **_state(),
         "sequence_diagram_check": {"findings": ["invalid receiver method"]},
@@ -148,7 +174,7 @@ def test_design_cannot_advance_past_unresolved_sequence_findings() -> None:
         ),
         patch("app.design.api.require_app", return_value=state),
         patch("app.design.api.design_readiness_report") as readiness,
-        patch("app.design.api.resume_design") as resume,
+        patch("app.design.api.resume_design", return_value={}) as resume,
     ):
         readiness.return_value = {
             "status": "NEEDS_INPUT",

@@ -857,25 +857,35 @@ class WorkspaceService:
             or result.get("stage")
         )
         stage_validation = (result.get("validation") or {}).get(stage) or {}
-        blocking_findings = [
+        findings = [
             *list(stage_validation.get("errors") or []),
             *list(stage_validation.get("findings") or []),
         ]
-        requires_revision = bool(blocking_findings)
+        artifact = (result.get("artifacts") or {}).get(stage)
+        if artifact is None:
+            config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
+            artifact = result.get(config.get("state_key", ""))
+        artifact_exists = bool(artifact.strip()) if isinstance(artifact, str) else bool(artifact)
+        requires_revision = bool(findings) and not artifact_exists
         return {
             "awaiting_input": True,
             "kind": "action_required",
             "message": (
                 f"The {str(stage or 'design').replace('_', ' ')} draft has "
-                f"{len(blocking_findings)} findings. Review the draft and send revision "
-                "feedback before continuing."
+                f"{len(findings)} findings. The generated artifact can still be reviewed "
+                "and continued to the next stage."
+                if findings and artifact_exists
+                else f"The {str(stage or 'design').replace('_', ' ')} draft has "
+                f"{len(findings)} findings. Review the draft and send revision feedback "
+                "before continuing."
                 if requires_revision
                 else "Review the current design artifacts, then send revision feedback "
                 "or continue to the next stage."
             ),
             "current_stage": stage,
             "requires_revision": requires_revision,
-            "blocking_findings": blocking_findings,
+            "blocking_findings": findings if requires_revision else [],
+            "findings": findings,
             "design": result,
         }
 
