@@ -158,6 +158,8 @@ the inputs do not support.
     diagram, and every `use_case_ids` entry appears in the given specification.
 (f) every endpoint has an exact Control binding; its argument sources and outcomes
     cover the endpoint contract, and the same Control call appears in the sequence.
+(g) when the inputs describe user-visible system behavior, Endpoints is not empty.
+    A schema-only API model is incomplete and cannot be implemented.
 
 Populate the response strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.
