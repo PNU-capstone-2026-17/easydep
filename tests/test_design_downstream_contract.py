@@ -59,6 +59,27 @@ ERD_PUML = generate_erd_from_bce_json(MODEL)
 # ---------------------------------------------------------------------------
 # 클래스 다이어그램 — 다중도가 끼어들어도 같은 것을 뽑는가
 # ---------------------------------------------------------------------------
+def test_java_scalar_aliases_are_rendered_in_one_bce_vocabulary():
+    """BCE에는 Java 표기만 보이고, ERD는 그에 대응하는 SQL 타입을 쓴다."""
+    model = {
+        "Classes": [{
+            "className": "Product", "stereotype": "Entity",
+            "fields": ["inventoryQuantity : Integer", "price : Decimal"],
+            "methods": [],
+        }],
+        "Relationships": [],
+    }
+
+    class_puml = generate_plantuml_from_bce_json(model)
+    erd_puml = generate_erd_from_bce_json(model)
+
+    assert "inventoryQuantity : int" in class_puml
+    assert "price : BigDecimal" in class_puml
+    assert " : Integer" not in class_puml and " : Decimal" not in class_puml
+    assert "inventoryQuantity : INT" in erd_puml
+    assert "price : DECIMAL(19,4)" in erd_puml
+
+
 def test_class_declarations_still_parse():
     parsed = {(c.name, c.stereotype) for c in parse_design_classes(CLASS_PUML)}
 

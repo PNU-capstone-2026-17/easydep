@@ -62,7 +62,8 @@ CONTAINER_WORKSPACE = PurePosixPath("/workspace")
 JAVA_BUILTIN_TYPES = {
     "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
     "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
-    "String", "string", "DateTime", "OffsetDateTime", "List", "Map", "Set", "Object",
+    "String", "string", "DateTime", "OffsetDateTime", "BigDecimal", "Decimal",
+    "List", "Map", "Set", "Object",
 }
 
 
@@ -785,44 +786,11 @@ tasks.withType(Test).configureEach { useJUnitPlatform() }
         target_dir = java_root / Path(package.replace(".", "/"))
         target_dir.mkdir(parents=True, exist_ok=True)
         for type_name in missing:
-            if type_name == "Decimal":
-                source = (
-                    f"package {package};\n\n"
-                    "import java.math.BigDecimal;\n"
-                    "import java.util.Objects;\n\n"
-                    "/** Assumed decimal value object for an undefined BCE type. */\n"
-                    "public final class Decimal {\n"
-                    "  private final BigDecimal value;\n\n"
-                    "  public Decimal() {\n"
-                    "    this(null);\n"
-                    "  }\n\n"
-                    "  public Decimal(BigDecimal value) {\n"
-                    "    this.value = value;\n"
-                    "  }\n\n"
-                    "  public BigDecimal getValue() {\n"
-                    "    return this.value;\n"
-                    "  }\n\n"
-                    "  @Override\n"
-                    "  public boolean equals(Object other) {\n"
-                    "    return other instanceof Decimal decimal\n"
-                    "        && Objects.equals(this.value, decimal.value);\n"
-                    "  }\n\n"
-                    "  @Override\n"
-                    "  public int hashCode() {\n"
-                    "    return Objects.hashCode(this.value);\n"
-                    "  }\n\n"
-                    "  @Override\n"
-                    "  public String toString() {\n"
-                    "    return this.value == null ? \"\" : this.value.toPlainString();\n"
-                    "  }\n"
-                    "}\n"
-                )
-            else:
-                source = (
-                    f"package {package};\n\n"
-                    f"/** Assumed placeholder for an undefined BCE type. */\n"
-                    f"public final class {type_name} {{}}\n"
-                )
+            source = (
+                f"package {package};\n\n"
+                f"/** Assumed placeholder for an undefined BCE type. */\n"
+                f"public final class {type_name} {{}}\n"
+            )
             (target_dir / f"{type_name}.java").write_text(
                 source,
                 encoding="utf-8",

@@ -17,7 +17,9 @@ class Parameter {
     return String(this.sReturnType)
       .replace(/\bstring\b/gi, 'String')
       .replace(/\bdatetime\b/gi, 'OffsetDateTime')
-      .replace(/\bfloat\b/gi, 'double');
+      .replace(/\bfloat\b/gi, 'double')
+      // Legacy BCE diagrams can still contain the old non-Java alias.
+      .replace(/\bdecimal\b/gi, 'BigDecimal');
   }
 
   getName() {

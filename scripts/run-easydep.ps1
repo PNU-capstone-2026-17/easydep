@@ -200,7 +200,10 @@ if ($Stop) {
 if (-not (Test-CommandAvailable "docker")) {
     throw "Docker Desktop and the docker CLI are required."
 }
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 & docker info *> $null
+$ErrorActionPreference = $prevEAP
 if ($LASTEXITCODE -ne 0) {
     throw "Docker Desktop is not running."
 }

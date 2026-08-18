@@ -27,8 +27,13 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-#: 언어 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면 원문 대문자,
-#: 타입이 아예 없으면 `None`.
+#: BCE에서 쓰는 Java 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면
+#: 원문 대문자, 타입이 아예 없으면 `None`.
+#:
+#: BCE는 Java 구현으로 이어지므로 SQL 이름(`INT`·`BIGINT`·`DECIMAL`)을 직접 적지 않는다.
+#: 정수는 Java `int`/`long`에서 각각 SQL `INT`/`BIGINT`로, 정확한 소수는 Java
+#: `BigDecimal`에서 SQL `DECIMAL(19,4)`로 간다. `decimal`은 Java 타입이 아니므로
+#: `canonical_java_type`가 `BigDecimal`로 정규화한다.
 SQL_TYPES: dict[str, str] = {
     "string": "VARCHAR(255)",
     "int": "INT",
@@ -40,6 +45,26 @@ SQL_TYPES: dict[str, str] = {
     "datetime": "DATETIME",
     "float": "FLOAT",
     "double": "DOUBLE",
+    "bigdecimal": "DECIMAL(19,4)",
+    # 이미 저장된 과거 BCE/외부 입력도 SQL 이름을 그대로 내보내지 않도록 방어한다.
+    "decimal": "DECIMAL(19,4)",
+}
+
+
+#: LLM이 흔히 쓰는 별칭을 BCE의 Java 타입 표기로 한 번만 모은다. 값이 아닌 도메인
+#: 클래스명은 건드리지 않기 위해 **전체 타입이 정확히 일치할 때만** 정규화한다.
+_JAVA_TYPE_ALIASES: dict[str, str] = {
+    "str": "String",
+    "string": "String",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "integer": "int",
+    "int": "int",
+    "long": "long",
+    "float": "float",
+    "double": "double",
+    "decimal": "BigDecimal",
+    "bigdecimal": "BigDecimal",
 }
 
 
@@ -82,11 +107,37 @@ def split_field(raw: str) -> tuple[str, str | None]:
     return clean, None
 
 
-def sql_type(raw_type: str | None) -> str | None:
-    """언어 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
+def canonical_java_type(raw_type: str | None) -> str | None:
+    """BCE 필드 타입의 흔한 별칭을 Java 표기로 정규화한다.
+
+    `decimal`은 Java의 타입이 아니어서 그대로 두면 클래스 다이어그램·코드 생성·ERD가
+    서로 다른 뜻으로 읽는다. 소수 값이라는 뜻은 보존해 `BigDecimal`로 바꾼다. 반대로
+    알 수 없는 이름은 Entity 또는 값 객체일 수 있으므로 건드리지 않는다.
+    """
     if not raw_type:
         return None
-    return SQL_TYPES.get(raw_type.strip().lower(), raw_type.strip().upper())
+    text = raw_type.strip()
+    return _JAVA_TYPE_ALIASES.get(text.lower(), text)
+
+
+def normalize_java_field(raw: str) -> str:
+    """`name : Type` 필드를 Java BCE 표기로 정규화한다.
+
+    타입이 생략된 필드는 그대로 둔다. 타입을 추정해서 채우지 않는다는 BCE 계약은 이
+    함수에서도 유지한다.
+    """
+    name, raw_type = split_field(raw)
+    if not raw_type:
+        return sanitize_text(raw)
+    return f"{name} : {canonical_java_type(raw_type)}"
+
+
+def sql_type(raw_type: str | None) -> str | None:
+    """Java BCE 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
+    if not raw_type:
+        return None
+    canonical = canonical_java_type(raw_type)
+    return SQL_TYPES.get(canonical.lower(), canonical.upper())
 
 
 def inner_type(raw_type: str) -> str | None:

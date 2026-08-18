@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.design.knowledge import rules
+from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
 
 
@@ -111,7 +112,11 @@ _PROCEDURE = """
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
    `name : Type` when the text tells you the type; leave the type off rather \
-   than guessing one.
+   than guessing one. This is a Java-targeted model: use `int` for ordinary \
+   integral counts and `long` for wide-range integral values/identifiers; use \
+   `BigDecimal` only when an exact fractional value is explicitly required. \
+   Never write SQL types (`INT`, `BIGINT`, `DECIMAL`) or the non-Java type \
+   `decimal` in a BCE field.
 7. Identifier derivation: for each Entity, if the text names a field that \
    already identifies it (an ISBN, an account number, an email used as the \
    login), list those field names in `identifier`. Leave `identifier` empty \
@@ -225,13 +230,31 @@ def rules_section(stage: str = rules.CLASS_DIAGRAM) -> str:
 BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = _PREAMBLE + rules_section() + _PROCEDURE
 
 
+def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep parsed BCE fields in the Java type vocabulary used downstream.
+
+    The schema deliberately leaves field strings open because they may name an
+    Entity or a domain value object.  That openness previously let an LLM's
+    `decimal` alias pass unchanged into the ERD fallback.  Normalize only the
+    known scalar aliases; unknown declared types remain untouched.
+    """
+    for class_item in result.get("Classes") or []:
+        if not isinstance(class_item, dict):
+            continue
+        class_item["fields"] = [
+            fields.normalize_java_field(str(field))
+            for field in class_item.get("fields") or []
+        ]
+    return result
+
+
 def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
     """BCE 구조화 완성. 클래스 다이어그램과 ERD의 추출·수정이 공유한다.
 
     LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
     호출 배관 자체는 다섯 산출물이 공유한다(common.structured.parse_structured).
     """
-    return parse_structured(messages, BCEExtractionResult)
+    return _normalize_field_types(parse_structured(messages, BCEExtractionResult))
 
 
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:

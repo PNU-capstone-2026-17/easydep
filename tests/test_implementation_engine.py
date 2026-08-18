@@ -2474,31 +2474,10 @@ TimerManager --> PurchaseRecord : Manager creates record
 """
         self.assertEqual(["TimerInfo"], find_undefined_bce_types(source))
 
-    def test_decimal_placeholder_exposes_a_lossless_value_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            bce = root / "classes.puml"
-            bce.write_text(
-                "@startuml\nclass Product <<Entity>> {\n  - price : Decimal\n}\n@enduml\n",
-                encoding="utf-8",
-            )
-            orchestrator = object.__new__(PrototypeOrchestrator)
-            orchestrator.spec = SimpleNamespace(
-                inputs={"bceClass": bce},
-                allow_assumptions=True,
-                base_package="com.example.demo",
-            )
-            orchestrator.manifest = SimpleNamespace(assumptions=[], diagnostics=[])
-            java_root = root / "java"
+    def test_decimal_alias_is_not_an_undefined_java_bce_type(self) -> None:
+        source = "@startuml\nclass Product <<Entity>> {\n  - price : Decimal\n}\n@enduml\n"
 
-            orchestrator._write_missing_type_placeholders(java_root)
-
-            decimal = (
-                java_root / "com/example/demo/bce/Decimal.java"
-            ).read_text(encoding="utf-8")
-            self.assertIn("Decimal(BigDecimal value)", decimal)
-            self.assertIn("BigDecimal getValue()", decimal)
-            self.assertIn("boolean equals(Object other)", decimal)
+        self.assertEqual([], find_undefined_bce_types(source))
 
     def test_rejects_input_outside_workspace_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -317,6 +317,26 @@ def test_an_untyped_field_stays_untyped():
     assert _column(_table(logical, "Order"), "note")["type"] is None
 
 
+@pytest.mark.parametrize(
+    "java_type, sql",
+    [
+        ("int", "INT"),
+        ("Integer", "INT"),
+        ("long", "BIGINT"),
+        ("BigDecimal", "DECIMAL(19,4)"),
+        # 과거/외부 BCE에 남은 별칭도 Java 소수 타입과 같은 SQL 타입으로 읽는다.
+        ("decimal", "DECIMAL(19,4)"),
+    ],
+)
+def test_java_scalar_types_have_explicit_sql_mappings(java_type, sql):
+    logical = build_logical_model({
+        "Classes": [_entity("Value", [f"value : {java_type}"])],
+        "Relationships": [],
+    })
+
+    assert _column(_table(logical, "Value"), "value")["type"] == sql
+
+
 def test_a_multivalued_field_becomes_a_child_table():
     logical = build_logical_model({
         "Classes": [_entity("Loan", ["tags : List<String>"])],
