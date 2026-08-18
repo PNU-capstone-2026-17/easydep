@@ -616,7 +616,7 @@ class DeploymentPreferences(BaseModel):
     ] = "standaloneOne"
     replica_count: int = Field(default=1, ge=1)
     public_ingress: Literal["direct", "loadBalanced"] = "direct"
-    database_placement: Literal["colocated", "dedicated"] = "dedicated"
+    persistent_workload_placement: Literal["colocate", "separateCompute"] = "separateCompute"
     resource_constraints_text: str = Field(default="", max_length=12000)
 
     @field_validator("monthly_budget_currency")
@@ -647,6 +647,8 @@ class DeploymentPreferences(BaseModel):
             raise ValueError("one-replica compute profiles require replica_count = 1")
         if self.public_ingress != expected_ingress:
             raise ValueError(f"{self.compute_profile} requires {expected_ingress} public ingress")
+        if grouped and self.persistent_workload_placement == "colocate":
+            raise ValueError("managed groups require separateCompute for persistent workloads")
         if spread and any(len(target.zones) < 2 for target in self.targets):
             raise ValueError("multi-zone spread requires at least two zones per target")
         if not spread and any(len(target.zones) > 1 for target in self.targets):

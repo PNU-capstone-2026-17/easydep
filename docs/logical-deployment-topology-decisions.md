@@ -29,25 +29,34 @@
 
 ## 2. 입력 결정과 유효한 조합
 
-`DeploymentTopology/v1`은 다음 세 결정을 조합한다.
+`DeploymentTopology/v1`은 다음 두 결정을 조합한다. 공개 진입은 compute에서 파생한다.
 
 | 결정 | 값 |
 |---|---|
 | App compute | `standaloneOne`, `managedGroupOne`, `managedGroupManySingleZone`, `managedGroupManyMultiZone` |
-| PostgreSQL 배치 | `none`, `colocated`, `dedicated` |
-| 공개 진입 | `direct`, `loadBalanced` |
+| workload 배치 | `primaryOnly`, `colocatedPersistent`, `isolatedPersistent` |
+| 공개 진입(파생) | standalone이면 `direct`, managed group이면 `loadBalanced` |
 
 제약은 다음과 같다.
 
 - `standaloneOne`은 `direct`만 사용한다. 단일 VM 앞의 Load Balancer는 지원하지 않는다.
 - 관리형 그룹은 `loadBalanced`만 사용한다.
-- `colocated` PostgreSQL은 `standaloneOne`에만 허용한다.
+- 영속 workload의 같은 compute 배치는 `standaloneOne`에만 허용한다.
 - 여러 App VM을 선택하면 App은 무상태여야 한다.
 - `managedGroupManyMultiZone`은 최소 두 VM과 최소 두 Zone을 요구한다.
 - VM 그룹, Multi-Zone, Load Balancer는 배치·운영 선택이지 고가용성 보장이 아니다.
 
-CSP, Region, 예산은 초기 요구사항에서 받을 수 있다. VM 수, Zone, DB 배치, 진입 방식은
-구체 설계 단계에서 확정해도 된다. 확정되지 않은 필드는 추측하지 않고 `needsInput`으로 남긴다.
+CSP, Region, 예산만 초기 요구사항에서 받는다. workload 목록과 연결은 설계 산출물에서 파생하며
+사용자에게 다시 입력시키지 않는다. 구체 설계에서는 다음 최소 제약만 받는다.
+
+- Primary compute profile
+- many profile을 선택한 경우 replica 수
+- multi-zone profile을 선택한 경우 Zone 목록
+- 영속 workload가 있고 primary가 `standaloneOne`인 경우에만 `colocate` 또는 `separateCompute`
+
+영속 workload 배치에 사용자 지시가 없으면 데이터 격리를 우선해 `separateCompute`를 기본으로
+제안하고 검토 가능하게 표시한다. managed group에서는 별도 compute가 강제된다. Public ingress,
+Disk, NAT, Secret binding은 묻지 않고 선택된 compute와 workload 계약에서 파생한다.
 
 ## 3. 정본과 생성 흐름
 
@@ -343,8 +352,8 @@ Git에서 제외한다.
 
 | 입력 | 확인하는 사실 | 다이어그램에 미치는 영향 |
 |---|---|---|
-| 논리 배포 모델 | 실행할 App workload, PostgreSQL workload, App→DB 연결 | 컨테이너, State VM, datasource 흐름 |
-| Resource Spec | CSP, Region, compute profile, replica 수, Zone, DB 배치, 공개 진입 | 실제 provider 리소스 종류와 수량·배치 |
+| 논리 배포 모델 | workload, 상태성, workload 간 연결 | 실행 단위와 통신 경계 |
+| Resource Spec | CSP, Region, primary compute profile, replica 수, Zone, 선택적 영속 workload 배치 제약 | compute pool과 allocation |
 | 앱 runtime 계약 | container port, health path, datasource 형식, mount path | LB backend/probe, firewall port, guest·container 설정 |
 | DepKB와 프로젝트 정책 | CSP 생성 참조, 선택한 L4 realization, OS/PostgreSQL image 정책 | ResourcePlan의 provider node·edge와 검증 규칙 |
 
@@ -357,10 +366,23 @@ computeProfile          standaloneOne | managedGroupOne |
                         managedGroupManySingleZone | managedGroupManyMultiZone
 replicaCount            one profile은 1, many profile은 2 이상
 selectedZones           single-zone은 최대 1개, multi-zone은 2개 이상
-databasePlacement       none | colocated | dedicated
-publicIngress           direct | loadBalanced
+persistentWorkloadPlacement  colocate | separateCompute
+                            영속 workload + standaloneOne일 때만 사용자 선택
 applicationStateless    replica가 여러 개면 true라는 분석 근거 필요
 ```
+
+ResourcePlan의 배치 정본은 다음 네 목록이다.
+
+```text
+workloads      실행 단위와 stateMode(none | ephemeral | persistent)
+connections    workload 간 프로토콜 연결
+computePools   CSP compute 경계와 profile·replica·Zone
+allocations    workloadRef → computePoolRef
+```
+
+v1은 primary workload 1개와 선택적 영속 workload 1개, compute pool 최대 2개만 지원한다.
+영속 workload의 runtime 계약은 현재 PostgreSQL만 지원한다. 임의의 worker·cache·queue를
+일반 스케줄링하거나 사용자에게 workload 목록을 작성하게 하는 기능은 범위 밖이다.
 
 사용자 credential, Secret 값, 자동 복구 또는 고가용성 희망 여부는 이 구조 입력에 넣지 않는다.
 credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider Secret reference만 배포 시
@@ -370,13 +392,14 @@ credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider
 
 ### 12.1 논리 workload를 먼저 찾는다
 
-1. `executionEnvironment` 노드를 App workload로 잡는다.
-2. `database` 노드가 있으면 PostgreSQL workload로 잡는다.
-3. App에서 Database로 향하는 논리 연결을 기록한다.
-4. controller, entity, repository 같은 코드 구조는 별도 VM으로 승격하지 않는다.
+1. 실제 배포 artifact를 소유한 `executionEnvironment`를 primary workload로 잡는다.
+2. `stateMode=persistent`인 실행 단위를 영속 workload로 잡는다.
+3. `Connections`의 source와 target이 workload이면 workload 연결로 기록한다.
+4. controller, entity, repository 같은 코드 구조는 별도 workload로 승격하지 않는다.
 
-예를 들어 `Application Runtime → PostgreSQL`이면 실행 workload는 둘이지만, DB 배치가
-`colocated`이면 같은 VM에 두고 `dedicated`이면 별도 State VM에 둔다.
+`kind`와 이름은 표시용이다. 영속성·Disk 생성·배치는 `stateMode`와 allocation으로 결정한다.
+두 workload가 같은 compute pool을 참조하면 함께 배치되고, 서로 다른 pool을 참조하면 별도
+VM에 배치된다.
 
 ### 12.2 토폴로지 조합을 확정한다
 
@@ -384,7 +407,7 @@ credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider
 
 1. `standaloneOne`은 `direct`만 허용하며 단일 VM 앞의 Load Balancer는 만들지 않는다.
 2. managed group은 하나의 고정 진입점이 필요하므로 `loadBalanced`만 사용한다.
-3. `colocated` PostgreSQL은 `standaloneOne`만 허용한다.
+3. `colocatedPersistent`는 `standaloneOne`만 허용한다.
 4. many profile은 replica가 2 이상이고 App이 무상태라는 근거가 있어야 한다.
 5. multi-zone profile은 서로 다른 Zone이 2개 이상이어야 한다.
 
@@ -407,7 +430,7 @@ credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider
 
 ### 12.4 DepKB에서 필요한 provider 관계를 가져온다
 
-기본 anchor는 `vm`이다. PostgreSQL이 있으면 `disk`, Load Balancer를 선택하면
+기본 anchor는 `vm`이다. 영속 workload가 있으면 `disk`, Load Balancer가 파생되면
 `loadBalancer`와 `load-balanced-ingress` realization을 추가한다. 여기서 얻는 것은 VPC와
 Subnet 같은 CSP 생성 참조 및 선택한 LB 구성요소다. Registry, Secret, guest 초기화처럼 현재
 DepKB 밖의 정책은 명시적인 프로젝트 정책으로 ResourcePlan에 더한다. 근거가 다른 두 종류를
@@ -1033,8 +1056,8 @@ provider=aws
 region=ap-northeast-2
 computeProfile=standaloneOne
 replicaCount=1
-databasePlacement=dedicated
-publicIngress=direct
+persistentWorkloadPlacement=separateCompute
+# publicIngress=direct는 computeProfile에서 파생
 app port=8080
 readiness=/actuator/health/readiness
 ```

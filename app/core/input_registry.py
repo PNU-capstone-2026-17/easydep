@@ -252,7 +252,7 @@ NOT_ASKED: dict[str, str] = {
     "computeProfile": "별도 질의가 아니라 배포 대안 UI의 구조화된 토폴로지 선택으로 받는다",
     "replicaCount": "별도 질의가 아니라 many 프로필의 구조화된 VM 수로 받는다",
     "publicIngress": "별도 질의하지 않고 computeProfile에서 direct 또는 loadBalanced로 결정한다",
-    "databasePlacement": "논리 모델에 PostgreSQL이 있을 때 토폴로지 결정 단계에서 받는다",
+    "persistentWorkloadPlacement": "영속 workload가 있고 단일 VM을 선택했을 때만 함께 배치할지 별도 VM에 둘지 받는다",
     "applicationStateless": "다중 VM을 선택했을 때 분석 근거로 검증하며 일반 사용자에게 선제 질문하지 않는다",
 }
 

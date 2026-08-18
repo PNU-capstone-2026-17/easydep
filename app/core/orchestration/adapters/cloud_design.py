@@ -21,6 +21,7 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 )
 from app.design.services.deployment_diagram.topology import (
     derive_deployment_topology,
+    logical_persistent_workload_present,
     provider_projection_policy,
 )
 from app.requirements.capability_contract import (
@@ -296,13 +297,9 @@ class CloudDesignAdapter:
             for capability_ids in capabilities_by_need.values()
             for capability_id in capability_ids
         }
-        database_present = any(
-            str(node.get("kind") or "").strip().lower() == "database"
-            for node in (logical_model.get("Nodes") or logical_model.get("nodes") or [])
-            if isinstance(node, dict)
-        )
+        persistent_workload_present = logical_persistent_workload_present(logical_model)
         persistent_storage_required = (
-            requires_persistent_storage(normalized_needs) or database_present
+            requires_persistent_storage(normalized_needs) or persistent_workload_present
         )
         multi_region_needs = [
             key

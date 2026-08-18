@@ -405,10 +405,28 @@ def _logical_workloads(logical_model: dict[str, Any] | None) -> list[dict[str, A
     """Select explicit deployable nodes; BCE classes alone never create a workload."""
     model = logical_model or {}
     nodes = list(model.get("Nodes") or model.get("nodes") or [])
+    artifacts = list(model.get("Artifacts") or model.get("artifacts") or [])
+
+    def state_mode(node: dict[str, Any]) -> str:
+        explicit = str(node.get("stateMode") or node.get("state_mode") or "").strip()
+        if explicit:
+            return explicit
+        # Compatibility for stored models produced before stateMode existed.
+        return "persistent" if str(node.get("kind") or "").strip().lower() == "database" else "none"
+
+    def owns_artifact(node: dict[str, Any]) -> bool:
+        name = str(node.get("name") or "")
+        return any(
+            str(item.get("deployed_on") or item.get("deployedOn") or "") == name
+            for item in artifacts
+        )
+
     candidates = [
         node
         for node in nodes
-        if str(node.get("kind") or "").strip().lower() in {"executionenvironment", "database"}
+        if owns_artifact(node)
+        or str(node.get("kind") or "").strip().lower() == "executionenvironment"
+        or state_mode(node) in {"ephemeral", "persistent"}
     ]
     names = {str(node.get("name") or "") for node in candidates}
     workloads: list[dict[str, Any]] = []
@@ -417,11 +435,7 @@ def _logical_workloads(logical_model: dict[str, Any] | None) -> list[dict[str, A
         name = str(node.get("name") or f"Workload {index}")
         parent = str(node.get("parent") or "")
         # A nested runtime is part of its deployable parent unless it owns an artifact.
-        owns_artifact = any(
-            str(item.get("deployed_on") or item.get("deployedOn") or "") == name
-            for item in (model.get("Artifacts") or model.get("artifacts") or [])
-        )
-        if parent in names and not owns_artifact:
+        if parent in names and not owns_artifact(node):
             continue
         base = f"workload-{_slug(name)}"
         workload_id = base
@@ -435,6 +449,7 @@ def _logical_workloads(logical_model: dict[str, Any] | None) -> list[dict[str, A
                 "id": workload_id,
                 "name": name,
                 "designKind": str(node.get("kind") or "node"),
+                "stateMode": state_mode(node),
                 "sourceRefs": sorted(str(item) for item in node.get("source_classes") or []),
             }
         )
@@ -445,6 +460,7 @@ def _logical_workloads(logical_model: dict[str, Any] | None) -> list[dict[str, A
             "id": "workload-application",
             "name": "Application workload",
             "designKind": "executionEnvironment",
+            "stateMode": "none",
             "sourceRefs": ["system-scope:docker-on-vm"],
         }
     ]
@@ -715,10 +731,28 @@ def validate_resource_plan_structure(plan: dict[str, Any]) -> None:
             + "."
         )
     workload_ids = {str(item.get("id") or "") for item in plan.get("workloads") or []}
+    for connection in plan.get("connections") or []:
+        if {
+            str(connection.get("from") or ""),
+            str(connection.get("to") or ""),
+        } - workload_ids:
+            raise ValueError("ResourcePlan connection has an invalid workload reference.")
+    compute_pools = list(plan.get("computePools") or [])
+    pool_ids = {str(item.get("id") or "") for item in compute_pools}
+    if not pool_ids or len(pool_ids) != len(compute_pools):
+        raise ValueError("ResourcePlan compute pool ids must be non-empty and unique.")
+    for pool in compute_pools:
+        if str(pool.get("computeRef") or "") not in known:
+            raise ValueError("ResourcePlan compute pool does not reference a compute node.")
     for allocation in plan.get("allocations") or []:
         workload_ref = str(allocation.get("workloadRef") or "")
         compute_ref = str(allocation.get("computeRef") or "")
-        if workload_ref not in workload_ids or compute_ref not in known:
+        compute_pool_ref = str(allocation.get("computePoolRef") or "")
+        if (
+            workload_ref not in workload_ids
+            or compute_ref not in known
+            or compute_pool_ref not in pool_ids
+        ):
             raise ValueError(
                 f"ResourcePlan allocation has an invalid reference: {workload_ref}->{compute_ref}."
             )
@@ -894,7 +928,9 @@ def build_provider_deployment_model(
             _add_edge(edges, source, target, "depends on", "dependency-plan")
 
     grouped_compute = compute_node == "compute-group"
-    database_placement = str(topology_policy.get("databasePlacement") or "dedicated")
+    workload_layout = str(topology_policy.get("workloadLayout") or "primaryOnly")
+    persistent_workload_present = workload_layout != "primaryOnly"
+    isolated_persistent = workload_layout == "isolatedPersistent"
     registry_nodes = {
         "boot-image",
         "app-registry",
@@ -959,7 +995,7 @@ def build_provider_deployment_model(
         "pulls image digest from",
         "registry-policy",
     )
-    if database_placement != "none":
+    if persistent_workload_present:
         selected.update({"secret-ref", "secret-access-binding"})
         _add_edge(
             edges,
@@ -982,7 +1018,7 @@ def build_provider_deployment_model(
             "uses secret identity",
             "secret-policy",
         )
-        if database_placement == "dedicated":
+        if isolated_persistent:
             selected.update({"state-secret-identity", "state-secret-access-binding"})
             _add_edge(
                 edges,
@@ -1018,7 +1054,7 @@ def build_provider_deployment_model(
             "topology-decision",
         )
     load_balanced_topology = topology_policy.get("publicIngress") == "loadBalanced"
-    private_egress_required = load_balanced_topology or database_placement == "dedicated"
+    private_egress_required = load_balanced_topology or isolated_persistent
     if provider == "aws":
         selected.update(
             {
@@ -1044,7 +1080,7 @@ def build_provider_deployment_model(
             )
             egress_public_subnet = "ingress-subnet" if load_balanced_topology else "subnet"
             egress_private_subnet = "subnet"
-            if not load_balanced_topology and database_placement == "dedicated":
+            if not load_balanced_topology and isolated_persistent:
                 selected.add("state-subnet")
                 egress_private_subnet = "state-subnet"
                 _add_edge(edges, "state-subnet", "network", "belongs to", "egress-policy")
@@ -1177,11 +1213,7 @@ def build_provider_deployment_model(
     runtime_hints = runtime_hints or {}
     application_hint = dict(runtime_hints.get("application") or {})
     state_hint = dict(runtime_hints.get("state") or {})
-    persistent_candidates = [
-        item
-        for item in workloads
-        if str(item.get("designKind") or "").strip().lower() == "database"
-    ]
+    persistent_candidates = [item for item in workloads if item.get("stateMode") == "persistent"]
     persistence_owner = (
         persistent_candidates[0]
         if persistent_storage_required and len(persistent_candidates) == 1
@@ -1190,14 +1222,10 @@ def build_provider_deployment_model(
         else None
     )
 
-    # The first non-database workload is the public/application tier. The selected
-    # compute topology applies to that tier only; explicit state remains singleton.
+    # The first non-persistent workload is the public tier. The selected compute
+    # topology applies to that tier only; explicit persistent state remains singleton.
     primary_workload = next(
-        (
-            item
-            for item in workloads
-            if str(item.get("designKind") or "").strip().lower() != "database"
-        ),
+        (item for item in workloads if item.get("stateMode") != "persistent"),
         workloads[0],
     )
     external_endpoints = _external_endpoints(
@@ -1227,7 +1255,7 @@ def build_provider_deployment_model(
     for workload in workloads:
         if workload is primary_workload:
             continue
-        if str(workload.get("designKind") or "").strip().lower() != "database":
+        if workload.get("stateMode") != "persistent":
             continue
         image = str(state_hint.get("image") or "").strip()
         supported = _supported_container_runtime(image) if image else None
@@ -1242,10 +1270,7 @@ def build_provider_deployment_model(
         if workload["id"] == primary_workload["id"]:
             target_compute = compute_node
             replicas = int(projection_policy.get("minimumInstances") or 1)
-        elif (
-            str(workload.get("designKind") or "").strip().lower() == "database"
-            and database_placement == "colocated"
-        ):
+        elif workload.get("stateMode") == "persistent" and workload_layout == "colocatedPersistent":
             target_compute = compute_node
             replicas = 1
         else:
@@ -1298,7 +1323,7 @@ def build_provider_deployment_model(
                             target_compute,
                             (
                                 "state-subnet"
-                                if not load_balanced_topology and database_placement == "dedicated"
+                                if not load_balanced_topology and isolated_persistent
                                 else "subnet"
                             ),
                             "is placed in",
@@ -1377,6 +1402,37 @@ def build_provider_deployment_model(
         )
         _add_edge(edges, workload["id"], target_compute, "runs on", "design-allocation")
 
+    compute_pools: list[dict[str, Any]] = []
+    pool_ref_by_compute: dict[str, str] = {}
+    for allocation in allocations:
+        compute_ref = str(allocation["computeRef"])
+        if compute_ref not in pool_ref_by_compute:
+            pool_id = (
+                "compute-pool-primary"
+                if compute_ref == compute_node
+                else f"compute-pool-{compute_ref.removeprefix('compute-')}"
+            )
+            pool_ref_by_compute[compute_ref] = pool_id
+            primary_pool = compute_ref == compute_node
+            compute_pools.append(
+                {
+                    "id": pool_id,
+                    "computeRef": compute_ref,
+                    "profile": (
+                        topology_policy.get("computeProfile") if primary_pool else "standaloneOne"
+                    ),
+                    "replicaCount": (
+                        int(projection_policy.get("minimumInstances") or 1) if primary_pool else 1
+                    ),
+                    "selectedZones": (
+                        list(topology_policy.get("selectedZones") or [])
+                        if primary_pool
+                        else list(topology_policy.get("selectedZones") or [])[:1]
+                    ),
+                }
+            )
+        allocation["computePoolRef"] = pool_ref_by_compute[compute_ref]
+
     for source, target, label in extra_provider_edges:
         _add_edge(edges, source, target, label, "runtime-path-realization")
     for node in extra_compute_nodes:
@@ -1396,7 +1452,7 @@ def build_provider_deployment_model(
             "public": False,
         }
 
-    if database_placement != "none" and persistence_owner is not None:
+    if persistent_workload_present and persistence_owner is not None:
         state_allocation = next(
             (item for item in allocations if item["workloadRef"] == persistence_owner["id"]),
             None,
@@ -1415,11 +1471,11 @@ def build_provider_deployment_model(
                 state_compute,
                 (
                     "state-secret-instance-profile"
-                    if provider == "aws" and database_placement == "dedicated"
+                    if provider == "aws" and isolated_persistent
                     else "registry-instance-profile"
                     if provider == "aws"
                     else "state-secret-identity"
-                    if database_placement == "dedicated"
+                    if isolated_persistent
                     else "registry-pull-identity"
                 ),
                 "uses secret identity",
@@ -1863,6 +1919,8 @@ def build_provider_deployment_model(
             "addressPlan": address_plan,
         },
         "workloads": workloads,
+        "connections": logical_connection_edges,
+        "computePools": compute_pools,
         "allocations": allocations,
         "nodes": [
             *provider_nodes,

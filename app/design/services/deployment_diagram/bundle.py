@@ -17,18 +17,11 @@ from app.core.orchestration.provider_deployment import (
 )
 from app.design.services.deployment_diagram.topology import (
     derive_deployment_topology,
+    logical_persistent_workload_present,
     provider_projection_policy,
 )
 
 _BLOCKING_ISSUE_CLASSES = {"invalid", "unsupported", "needsInput", "unjustified"}
-
-
-def _database_present(logical_model: dict[str, Any]) -> bool:
-    return any(
-        isinstance(node, dict)
-        and str(node.get("kind") or "").strip().lower() == "database"
-        for node in logical_model.get("Nodes") or logical_model.get("nodes") or []
-    )
 
 
 def _target_specs(resource_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -51,9 +44,7 @@ def _target_specs(resource_spec: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _projection(
-    logical_model: dict[str, Any], resource_spec: dict[str, Any]
-) -> dict[str, Any]:
+def _projection(logical_model: dict[str, Any], resource_spec: dict[str, Any]) -> dict[str, Any]:
     provider = str(resource_spec.get("provider") or "").strip().lower()
     region = str(resource_spec.get("region") or "").strip()
     if provider not in {"aws", "azure", "gcp"} or not region:
@@ -70,12 +61,12 @@ def _projection(
             ],
         }
 
-    database_present = _database_present(logical_model)
+    persistent_workload_present = logical_persistent_workload_present(logical_model)
     topology = derive_deployment_topology(
         provider=provider,
         resource_spec=resource_spec,
         logical_deployment_model=logical_model,
-        persistent_storage_required=database_present,
+        persistent_storage_required=persistent_workload_present,
     )
     blocking = [
         issue
@@ -93,7 +84,7 @@ def _projection(
 
     projection_policy = provider_projection_policy(topology)
     anchors = ["vm"]
-    if database_present:
+    if persistent_workload_present:
         anchors.append("disk")
     load_balanced = topology.get("publicIngress") == "loadBalanced"
     if load_balanced:
@@ -111,7 +102,7 @@ def _projection(
         projection_policy=projection_policy,
         topology_policy=topology,
         logical_deployment_model=logical_model,
-        persistent_storage_required=database_present,
+        persistent_storage_required=persistent_workload_present,
         runtime_hints={
             "application": {},
             "state": {

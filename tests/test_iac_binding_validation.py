@@ -133,7 +133,7 @@ def test_authoritative_resource_plan_requires_user_run_bundle_entrypoints():
 def test_gcp_cloud_nat_plan_cannot_delete_the_default_internet_route():
     plan = {
         "provider": "gcp",
-        "deploymentTopology": {"publicIngress": "direct", "databasePlacement": "none"},
+        "deploymentTopology": {"publicIngress": "direct", "workloadLayout": "primaryOnly"},
         "providerProjectionPolicy": {"mode": "standalone"},
         "nodes": [
             {

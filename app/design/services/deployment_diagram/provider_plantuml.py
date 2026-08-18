@@ -333,7 +333,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                     continue
                 alias = _replica_alias(workload, replica)
                 runtime_aliases.setdefault(workload_id, []).append(alias)
-                shape = "database" if workload.get("designKind") == "database" else "component"
+                shape = "database" if workload.get("stateMode") == "persistent" else "component"
                 lines.append(
                     f'            {shape} "{_text(workload.get("name") or "Application")}\\nreplica {replica}\\n<<Docker container>>" as {alias}'
                 )
@@ -345,7 +345,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 continue
             alias = _workload_alias(workload)
             runtime_aliases.setdefault(workload_id, []).append(alias)
-            shape = "database" if workload.get("designKind") == "database" else "component"
+            shape = "database" if workload.get("stateMode") == "persistent" else "component"
             lines.append(
                 f'          {shape} "{_text(workload.get("name") or "Application")}\\n<<Docker container>>" as {alias}'
             )
@@ -373,7 +373,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
             workload_id = str(workload.get("id") or "")
             alias = _workload_alias(workload)
             runtime_aliases.setdefault(workload_id, []).append(alias)
-            shape = "database" if workload.get("designKind") == "database" else "component"
+            shape = "database" if workload.get("stateMode") == "persistent" else "component"
             lines.append(
                 f'          {shape} "{_text(workload.get("name") or "State workload")}\\n<<Docker container>>" as {alias}'
             )
@@ -460,7 +460,9 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     secret_ref = nodes.get("secret-ref")
     app_secret_binding = nodes.get("secret-access-binding")
     state_secret_binding = nodes.get("state-secret-access-binding")
-    database_present = any(workload.get("designKind") == "database" for workload in workloads)
+    persistent_workload_present = any(
+        workload.get("stateMode") == "persistent" for workload in workloads
+    )
     if registry:
         lines.extend(
             [
@@ -490,7 +492,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
             f'artifact "{_text(item.get("name"))}" as application_source_artifact_{index}'
             for index, item in enumerate(logical_artifacts, start=1)
         )
-    if database_present:
+    if persistent_workload_present:
         lines.extend(
             [
                 'frame "Database runtime dependencies" as database_dependencies {',
@@ -563,7 +565,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
             item
             for item in workloads
             if str(item.get("id") or "") in primary_workload_ids
-            and item.get("designKind") != "database"
+            and item.get("stateMode") != "persistent"
         ),
         None,
     )
@@ -632,7 +634,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     database_aliases = [
         alias
         for workload in workloads
-        if workload.get("designKind") == "database"
+        if workload.get("stateMode") == "persistent"
         for alias in runtime_aliases.get(str(workload.get("id") or ""), [])
     ]
     application_aliases = (

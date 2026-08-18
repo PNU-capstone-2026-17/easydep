@@ -28,7 +28,7 @@ def test_supported_family_census_is_9_logical_and_27_provider_native():
         "managedGroupManyMultiZone",
     ],
 )
-def test_managed_group_families_never_include_direct_or_colocated_database(
+def test_managed_group_families_never_include_direct_or_colocated_persistence(
     compute_profile,
 ):
     families = [
@@ -37,20 +37,23 @@ def test_managed_group_families_never_include_direct_or_colocated_database(
 
     assert len(families) == 2
     assert {item.public_ingress for item in families} == {"loadBalanced"}
-    assert {item.database_placement for item in families} == {"none", "dedicated"}
+    assert {item.workload_layout for item in families} == {
+        "primaryOnly",
+        "isolatedPersistent",
+    }
 
 
-def test_standalone_family_uses_direct_ingress_for_all_database_placements():
+def test_standalone_family_uses_direct_ingress_for_all_workload_layouts():
     families = [
         item for item in enumerate_topology_families() if item.compute_profile == "standaloneOne"
     ]
 
     assert len(families) == 3
     assert {item.public_ingress for item in families} == {"direct"}
-    assert {item.database_placement for item in families} == {
-        "none",
-        "colocated",
-        "dedicated",
+    assert {item.workload_layout for item in families} == {
+        "primaryOnly",
+        "colocatedPersistent",
+        "isolatedPersistent",
     }
 
 
@@ -61,7 +64,6 @@ def test_many_single_zone_is_valid_but_requires_stateless_evidence():
             "computeProfile": "managedGroupManySingleZone",
             "replicaCount": 3,
             "publicIngress": "loadBalanced",
-            "databasePlacement": "none",
         },
     )
 
@@ -88,7 +90,6 @@ def test_multi_zone_spread_requires_two_selected_zones():
             "replicaCount": 2,
             "selectedZones": ["asia-northeast3-a"],
             "publicIngress": "loadBalanced",
-            "databasePlacement": "none",
             "applicationStateless": True,
         },
     )
@@ -99,27 +100,31 @@ def test_multi_zone_spread_requires_two_selected_zones():
     )
 
 
-def test_postgresql_defaults_to_a_dedicated_vm_for_compatibility():
+def test_persistent_workload_defaults_to_separate_compute():
     topology = derive_deployment_topology(
         provider="azure",
         logical_deployment_model={
             "Nodes": [
                 {"name": "Application", "kind": "executionEnvironment"},
-                {"name": "Database", "kind": "database"},
+                {
+                    "name": "Persistent Runtime",
+                    "kind": "executionEnvironment",
+                    "stateMode": "persistent",
+                },
             ]
         },
         persistent_storage_required=True,
     )
 
-    assert topology["databasePlacement"] == "dedicated"
-    assert topology["databasePolicy"] == {
-        "engine": "postgresql",
+    assert topology["workloadLayout"] == "isolatedPersistent"
+    assert topology["persistentWorkloadPolicy"] == {
+        "required": True,
         "instanceCount": 1,
         "publiclyReachable": False,
         "separatePersistentDisk": True,
-        "secretPolicy": "callerSuppliedSecretReference",
+        "secretPolicy": "runtimeContract",
     }
-    assert topology["stateDeletionPolicy"] == "retainPersistentDisk"
+    assert topology["persistentStorageDeletionPolicy"] == "retainPersistentDisk"
 
 
 def test_projection_adapter_does_not_make_an_availability_claim():
@@ -130,7 +135,6 @@ def test_projection_adapter_does_not_make_an_availability_claim():
             "replicaCount": 3,
             "selectedZones": ["ap-northeast-2a", "ap-northeast-2c"],
             "publicIngress": "loadBalanced",
-            "databasePlacement": "none",
             "applicationStateless": True,
         },
     )
@@ -157,7 +161,6 @@ def test_standalone_load_balancer_is_unsupported():
             "replicaCount": 1,
             "selectedZones": ["ap-northeast-2a"],
             "publicIngress": "loadBalanced",
-            "databasePlacement": "none",
         },
     )
 
@@ -173,11 +176,11 @@ def test_standalone_load_balancer_is_unsupported():
 def test_ingress_defaults_are_derived_from_compute_management():
     standalone = derive_deployment_topology(
         provider="aws",
-        resource_spec={"computeProfile": "standaloneOne", "databasePlacement": "none"},
+        resource_spec={"computeProfile": "standaloneOne"},
     )
     managed = derive_deployment_topology(
         provider="aws",
-        resource_spec={"computeProfile": "managedGroupOne", "databasePlacement": "none"},
+        resource_spec={"computeProfile": "managedGroupOne"},
     )
 
     assert standalone["publicIngress"] == "direct"
@@ -196,7 +199,9 @@ def test_all_27_provider_labelled_families_reach_resource_plan_projection():
             "computeProfile": family.compute_profile,
             "replicaCount": 2 if many else 1,
             "selectedZones": ["zone-a", "zone-b"] if spread else ["zone-a"],
-            "databasePlacement": family.database_placement,
+            "persistentWorkloadPlacement": (
+                "colocate" if family.workload_layout == "colocatedPersistent" else "separateCompute"
+            ),
             "publicIngress": family.public_ingress,
             "applicationStateless": True,
         }
@@ -206,8 +211,14 @@ def test_all_27_provider_labelled_families_reach_resource_plan_projection():
                 "certificateInputRef": "test:existing-certificate",
             }
         nodes = [{"name": "Application", "kind": "executionEnvironment"}]
-        if family.database_placement != "none":
-            nodes.append({"name": "Database", "kind": "database"})
+        if family.workload_layout != "primaryOnly":
+            nodes.append(
+                {
+                    "name": "Persistent Runtime",
+                    "kind": "executionEnvironment",
+                    "stateMode": "persistent",
+                }
+            )
 
         result = CloudDesignAdapter().finalize(
             requirements_result={
@@ -220,5 +231,5 @@ def test_all_27_provider_labelled_families_reach_resource_plan_projection():
         assert result["status"] == "completed", family.id
         assert result["topology_policy"]["familyId"] == family.id
         assert result["resource_plan"]["deploymentTopology"]["availabilityClaim"] == "none"
-        if family.database_placement != "none":
+        if family.workload_layout != "primaryOnly":
             assert "disk" in result["anchors"]

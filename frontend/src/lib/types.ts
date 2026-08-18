@@ -93,7 +93,7 @@ export interface DeploymentPreferences {
     | 'managedGroupManyMultiZone';
   replica_count?: number;
   public_ingress?: 'direct' | 'loadBalanced';
-  database_placement?: 'colocated' | 'dedicated';
+  persistent_workload_placement?: 'colocate' | 'separateCompute';
   resource_constraints_text?: string;
 }
 

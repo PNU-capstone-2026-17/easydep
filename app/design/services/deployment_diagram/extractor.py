@@ -4,6 +4,7 @@
 배포 모델(노드·아티팩트·연결)만 내놓고, 다이어그램은 plantuml.generate_deployment_from_model
 이 결정론적으로 렌더한다.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -24,6 +25,9 @@ class DeploymentNode(BaseModel):
     parent: str = Field(default="")
     #: 이 노드가 호스팅하는 클래스 이름. 외부 인프라(브라우저 등)는 비운다.
     source_classes: list[str] = Field(default_factory=list)
+    #: none | ephemeral | persistent. Resource planning depends on this contract,
+    #: not on the presentation-only kind.
+    stateMode: str = Field(default="none")
 
 
 class DeploymentArtifact(BaseModel):
@@ -71,6 +75,9 @@ something in the inputs calls for them.
   device or cloud that hosts it. Leave it empty for top-level nodes.
 - `stereotype` names the concrete technology when the inputs justify one; otherwise
   leave it empty rather than guessing a vendor.
+- `stateMode` is none, ephemeral, or persistent. Use persistent only when the
+  requirements and data design establish durable runtime state. Do not derive
+  persistence from the node name or `kind` alone.
 
 ## Artifacts
 - One artifact per deployable unit the design produces (a web bundle, a service jar,

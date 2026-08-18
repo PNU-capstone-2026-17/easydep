@@ -67,7 +67,7 @@ def test_cloud_design_projects_explicit_managed_multi_zone_topology(
     projection = result["provider_projection_policy"]
     assert topology["computeProfile"] == "managedGroupManyMultiZone"
     assert topology["availabilityClaim"] == "none"
-    assert topology["familyId"].endswith("managedGroupManyMultiZone.none.loadBalanced")
+    assert topology["familyId"].endswith("managedGroupManyMultiZone.primaryOnly.loadBalanced")
     assert projection["mode"] == "managedGroup"
     assert projection["nativeComputeGroup"] == native_group
     assert result["kb_used"] == ["depkb"]
@@ -117,7 +117,7 @@ def test_cloud_design_defaults_to_one_standalone_vm(provider, native_label):
         "source": "deployment-topology",
         "field": "topologyFamily",
         "requirementIds": [],
-        "outcome": f"{provider}.standaloneOne.none.direct",
+        "outcome": f"{provider}.standaloneOne.primaryOnly.direct",
     }
 
 
@@ -482,7 +482,7 @@ def test_cloud_design_reports_accepted_but_unmodeled_capabilities():
         "source": "deployment-topology",
         "field": "topologyFamily",
         "requirementIds": [],
-        "outcome": "gcp.standaloneOne.none.direct",
+        "outcome": "gcp.standaloneOne.primaryOnly.direct",
     }
 
 
@@ -524,7 +524,11 @@ def test_resource_plan_keeps_independent_workloads_and_persistent_owner(provider
                         "kind": "executionEnvironment",
                         "source_classes": ["RequestControl"],
                     },
-                    {"name": "Record Store", "kind": "database"},
+                    {
+                        "name": "Record Store",
+                        "kind": "executionEnvironment",
+                        "stateMode": "persistent",
+                    },
                 ],
                 "Connections": [
                     {
@@ -547,6 +551,9 @@ def test_resource_plan_keeps_independent_workloads_and_persistent_owner(provider
     state_allocation = next(
         item for item in plan["allocations"] if item["workloadRef"] == state["id"]
     )
+    pools = {item["id"]: item for item in plan["computePools"]}
+    assert len(pools) == 2
+    assert pools[state_allocation["computePoolRef"]]["profile"] == "standaloneOne"
     assert state["persistence"] == "persistent"
     assert state["runtime"]["image"] == "postgres:16"
     assert state["runtime"]["containerPort"] == 5432
@@ -638,7 +645,11 @@ def test_managed_group_applies_only_to_the_non_state_workload_tier(provider):
             "deployment_diagram_model": {
                 "Nodes": [
                     {"name": "API Runtime", "kind": "executionEnvironment"},
-                    {"name": "State Runtime", "kind": "database"},
+                    {
+                        "name": "State Runtime",
+                        "kind": "executionEnvironment",
+                        "stateMode": "persistent",
+                    },
                 ],
                 "Connections": [
                     {"source": "API Runtime", "target": "State Runtime", "protocol": "TCP"}
@@ -652,10 +663,45 @@ def test_managed_group_applies_only_to_the_non_state_workload_tier(provider):
     app = next(item for item in plan["workloads"] if item["name"] == "API Runtime")
     state = next(item for item in plan["workloads"] if item["name"] == "State Runtime")
     assert allocations[app["id"]]["computeRef"] == "compute-group"
+    assert allocations[app["id"]]["computePoolRef"] != allocations[state["id"]]["computePoolRef"]
     assert allocations[app["id"]]["replicas"] == 2
     assert allocations[state["id"]]["computeRef"] != "compute-group"
     assert allocations[state["id"]]["replicas"] == 1
     assert result["topology_policy"]["availabilityClaim"] == "none"
+
+
+def test_standalone_can_colocate_persistent_workload_in_one_compute_pool():
+    result = CloudDesignAdapter().finalize(
+        requirements_result={
+            "resource_spec": {
+                "provider": "aws",
+                "region": "test-region",
+                "computeProfile": "standaloneOne",
+                "persistentWorkloadPlacement": "colocate",
+            },
+            "deployment_needs": {},
+        },
+        design_result={
+            "deployment_diagram_model": {
+                "Nodes": [
+                    {"name": "API Runtime", "kind": "executionEnvironment"},
+                    {
+                        "name": "State Runtime",
+                        "kind": "executionEnvironment",
+                        "stateMode": "persistent",
+                    },
+                ],
+                "Connections": [
+                    {"source": "API Runtime", "target": "State Runtime", "protocol": "TCP"}
+                ],
+            }
+        },
+    )
+
+    plan = result["resource_plan"]
+    assert result["topology_policy"]["workloadLayout"] == "colocatedPersistent"
+    assert len(plan["computePools"]) == 1
+    assert len({item["computePoolRef"] for item in plan["allocations"]}) == 1
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])

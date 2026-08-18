@@ -7,9 +7,9 @@ without a flag day.
 
 from app.design.services.deployment_diagram.topology import (  # noqa: F401
     COMPUTE_PROFILES,
-    DATABASE_PLACEMENTS,
     PROVIDERS,
     PUBLIC_INGRESS_MODES,
+    WORKLOAD_LAYOUTS,
     TopologyFamily,
     derive_deployment_topology,
     enumerate_topology_families,
@@ -19,9 +19,9 @@ from app.design.services.deployment_diagram.topology import (  # noqa: F401
 
 __all__ = [
     "COMPUTE_PROFILES",
-    "DATABASE_PLACEMENTS",
     "PROVIDERS",
     "PUBLIC_INGRESS_MODES",
+    "WORKLOAD_LAYOUTS",
     "TopologyFamily",
     "derive_deployment_topology",
     "enumerate_topology_families",

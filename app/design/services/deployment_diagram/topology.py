@@ -18,7 +18,7 @@ ComputeProfile = Literal[
     "managedGroupManySingleZone",
     "managedGroupManyMultiZone",
 ]
-DatabasePlacement = Literal["none", "colocated", "dedicated"]
+WorkloadLayout = Literal["primaryOnly", "colocatedPersistent", "isolatedPersistent"]
 PublicIngress = Literal["direct", "loadBalanced"]
 
 PROVIDERS: tuple[Provider, ...] = ("aws", "azure", "gcp")
@@ -28,10 +28,10 @@ COMPUTE_PROFILES: tuple[ComputeProfile, ...] = (
     "managedGroupManySingleZone",
     "managedGroupManyMultiZone",
 )
-DATABASE_PLACEMENTS: tuple[DatabasePlacement, ...] = (
-    "none",
-    "colocated",
-    "dedicated",
+WORKLOAD_LAYOUTS: tuple[WorkloadLayout, ...] = (
+    "primaryOnly",
+    "colocatedPersistent",
+    "isolatedPersistent",
 )
 PUBLIC_INGRESS_MODES: tuple[PublicIngress, ...] = ("direct", "loadBalanced")
 
@@ -45,21 +45,21 @@ _NATIVE_GROUPS = {
 @dataclass(frozen=True)
 class TopologyFamily:
     compute_profile: ComputeProfile
-    database_placement: DatabasePlacement
+    workload_layout: WorkloadLayout
     public_ingress: PublicIngress
     provider: Provider | None = None
 
     @property
     def id(self) -> str:
         provider = f"{self.provider}." if self.provider else ""
-        return f"{provider}{self.compute_profile}.{self.database_placement}.{self.public_ingress}"
+        return f"{provider}{self.compute_profile}.{self.workload_layout}.{self.public_ingress}"
 
     def as_dict(self) -> dict[str, str | None]:
         return {
             "id": self.id,
             "provider": self.provider,
             "computeProfile": self.compute_profile,
-            "databasePlacement": self.database_placement,
+            "workloadLayout": self.workload_layout,
             "publicIngress": self.public_ingress,
         }
 
@@ -72,8 +72,8 @@ def family_errors(family: TopologyFamily) -> list[str]:
         errors.append("standalone-load-balanced-ingress-is-unsupported")
     if grouped and family.public_ingress == "direct":
         errors.append("managed-group-direct-ingress-is-unsupported")
-    if grouped and family.database_placement == "colocated":
-        errors.append("managed-group-colocated-postgresql-is-unsupported")
+    if grouped and family.workload_layout == "colocatedPersistent":
+        errors.append("managed-group-colocated-persistent-workload-is-unsupported")
     if family.provider is not None and family.provider not in PROVIDERS:
         errors.append("unsupported-provider")
     return errors
@@ -83,21 +83,31 @@ def enumerate_topology_families(*, include_providers: bool = False) -> list[Topo
     """Enumerate the 9 logical or 27 provider-labelled supported families."""
     providers: tuple[Provider | None, ...] = PROVIDERS if include_providers else (None,)
     candidates = (
-        TopologyFamily(compute, database, ingress, provider)
-        for provider, compute, database, ingress in product(
+        TopologyFamily(compute, layout, ingress, provider)
+        for provider, compute, layout, ingress in product(
             providers,
             COMPUTE_PROFILES,
-            DATABASE_PLACEMENTS,
+            WORKLOAD_LAYOUTS,
             PUBLIC_INGRESS_MODES,
         )
     )
     return [family for family in candidates if not family_errors(family)]
 
 
-def _logical_database_present(logical_model: dict[str, Any] | None) -> bool:
+def _node_state_mode(node: dict[str, Any]) -> str:
+    explicit = str(node.get("stateMode") or node.get("state_mode") or "").strip()
+    if explicit:
+        return explicit
+    # Compatibility for stored logical models created before stateMode existed.
+    if str(node.get("kind") or "").strip().lower() == "database":
+        return "persistent"
+    return "none"
+
+
+def logical_persistent_workload_present(logical_model: dict[str, Any] | None) -> bool:
     model = logical_model or {}
     return any(
-        str(node.get("kind") or "").strip().lower() == "database"
+        _node_state_mode(node) == "persistent"
         for node in (model.get("Nodes") or model.get("nodes") or [])
         if isinstance(node, dict)
     )
@@ -114,8 +124,8 @@ def derive_deployment_topology(
 
     Missing values use the least surprising compatibility defaults: one
     standalone VM, direct public ingress, and a dedicated PostgreSQL VM when an
-    explicit database workload already exists.  These defaults preserve current
-    deployments while allowing the full finite family to be selected explicitly.
+    explicit persistent workload already exists. These defaults preserve current
+    deployments while keeping the finite family bounded.
     """
     spec = resource_spec or {}
     normalized_provider = str(provider or "").strip().lower()
@@ -123,9 +133,10 @@ def derive_deployment_topology(
     selected_zones = [
         str(zone).strip() for zone in spec.get("selectedZones") or [] if str(zone).strip()
     ]
-    database_required = _logical_database_present(logical_deployment_model)
-    requested_database_placement = str(spec.get("databasePlacement") or "dedicated")
-    database_placement = requested_database_placement if database_required else "none"
+    persistent_workload_present = logical_persistent_workload_present(logical_deployment_model)
+    requested_persistent_placement = str(
+        spec.get("persistentWorkloadPlacement") or "separateCompute"
+    )
     selected_ingress_zones = [
         str(zone).strip()
         for zone in spec.get("ingressZones") or selected_zones
@@ -141,13 +152,13 @@ def derive_deployment_topology(
                 "classification": "invalid",
             }
         )
-    if persistent_storage_required and not database_required:
+    if persistent_storage_required and not persistent_workload_present:
         issues.append(
             {
                 "field": "applicationPersistence",
                 "reason": (
-                    "Writable application-local persistence is outside the v1 topology; "
-                    "only the self-hosted PostgreSQL workload owns a persistent disk."
+                    "Writable primary-workload persistence is outside v1; an explicit "
+                    "persistent workload must own the disk."
                 ),
                 "classification": "unsupported",
             }
@@ -162,6 +173,13 @@ def derive_deployment_topology(
         )
         compute_profile = "standaloneOne"
     grouped = compute_profile != "standaloneOne"
+    workload_layout = (
+        "primaryOnly"
+        if not persistent_workload_present
+        else "colocatedPersistent"
+        if requested_persistent_placement == "colocate"
+        else "isolatedPersistent"
+    )
     public_ingress = str(spec.get("publicIngress") or ("loadBalanced" if grouped else "direct"))
     many = compute_profile in {
         "managedGroupManySingleZone",
@@ -203,28 +221,21 @@ def derive_deployment_topology(
                 "classification": "invalid",
             }
         )
-    if database_placement not in DATABASE_PLACEMENTS:
+    if requested_persistent_placement not in {"colocate", "separateCompute"}:
         issues.append(
             {
-                "field": "databasePlacement",
-                "reason": f"Unsupported database placement: {database_placement}",
+                "field": "persistentWorkloadPlacement",
+                "reason": ("persistentWorkloadPlacement must be colocate or separateCompute."),
                 "classification": "invalid",
             }
         )
-        database_placement = "dedicated" if database_required else "none"
-    if database_required and database_placement == "none":
+        requested_persistent_placement = "separateCompute"
+        workload_layout = "isolatedPersistent" if persistent_workload_present else "primaryOnly"
+    if grouped and workload_layout == "colocatedPersistent":
         issues.append(
             {
-                "field": "databasePlacement",
-                "reason": "The application model requires PostgreSQL placement.",
-                "classification": "invalid",
-            }
-        )
-    if grouped and database_placement == "colocated":
-        issues.append(
-            {
-                "field": "databasePlacement",
-                "reason": "Colocated PostgreSQL is supported only on standaloneOne.",
+                "field": "persistentWorkloadPlacement",
+                "reason": "Persistent workloads cannot share a managed compute group in v1.",
                 "classification": "unsupported",
             }
         )
@@ -275,32 +286,30 @@ def derive_deployment_topology(
         "zoneLayout": "multiZoneSpread" if spread else "singleZone",
         "selectedZones": selected_zones,
         "selectedIngressZones": selected_ingress_zones,
-        "databasePlacement": database_placement,
+        "workloadLayout": workload_layout,
         "publicIngress": public_ingress,
         "publicEndpoint": {
             "required": True,
             "protocol": "http",
             "mode": public_ingress,
         },
-        "databasePolicy": {
-            "engine": "postgresql" if database_placement != "none" else None,
-            "instanceCount": 1 if database_placement != "none" else 0,
+        "persistentWorkloadPolicy": {
+            "required": persistent_workload_present,
+            "instanceCount": 1 if persistent_workload_present else 0,
             "publiclyReachable": False,
-            "separatePersistentDisk": database_placement != "none",
-            "secretPolicy": (
-                "callerSuppliedSecretReference" if database_placement != "none" else "notApplicable"
-            ),
+            "separatePersistentDisk": persistent_workload_present,
+            "secretPolicy": ("runtimeContract" if persistent_workload_present else "notApplicable"),
         },
         "egressPolicy": {
             "mode": (
                 "instancePublicAddress"
-                if public_ingress == "direct" and database_placement != "dedicated"
+                if public_ingress == "direct" and workload_layout != "isolatedPersistent"
                 else "hybridPublicAddressAndManagedNat"
-                if public_ingress == "direct" and database_placement == "dedicated"
+                if public_ingress == "direct" and workload_layout == "isolatedPersistent"
                 else "managedNat"
             ),
             "requiredFor": ["applicationImagePull"]
-            + (["postgresImagePull"] if database_placement != "none" else []),
+            + (["persistentWorkloadImagePull"] if persistent_workload_present else []),
         },
         "registryPolicy": {
             "mode": "providerNativePrivateRegistry",
@@ -312,12 +321,12 @@ def derive_deployment_topology(
             "resolvedAt": "userExecutedTerraformPlan",
             "recordResolvedImageId": True,
         },
-        "stateEndpointPolicy": {
+        "workloadEndpointPolicy": {
             "mode": (
                 "fixedPrivateAddress"
-                if database_placement == "dedicated"
+                if workload_layout == "isolatedPersistent"
                 else "containerLocal"
-                if database_placement == "colocated"
+                if workload_layout == "colocatedPersistent"
                 else "notApplicable"
             ),
             "applicationImageRebuildRequiredOnStateReplacement": False,
@@ -325,26 +334,26 @@ def derive_deployment_topology(
         "secretPolicy": {
             "mode": (
                 "callerManagedProviderSecretReference"
-                if database_placement != "none"
+                if persistent_workload_present
                 else "notApplicable"
             ),
             "credentialCollectionByEasyDep": False,
             "valueStoredByEasyDep": False,
             "requiredKeys": (
                 ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"]
-                if database_placement != "none"
+                if persistent_workload_present
                 else []
             ),
         },
         "ownershipPolicy": "createDeploymentResources",
-        "stateDeletionPolicy": "retainPersistentDisk",
+        "persistentStorageDeletionPolicy": "retainPersistentDisk",
         "autoscaling": False,
         "availabilityClaim": "none",
         "issues": issues,
     }
     topology["familyId"] = TopologyFamily(
         compute_profile=compute_profile,  # type: ignore[arg-type]
-        database_placement=database_placement,  # type: ignore[arg-type]
+        workload_layout=workload_layout,  # type: ignore[arg-type]
         public_ingress=public_ingress,  # type: ignore[arg-type]
         provider=(normalized_provider if normalized_provider in PROVIDERS else None),  # type: ignore[arg-type]
     ).id

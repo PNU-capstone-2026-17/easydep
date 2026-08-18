@@ -808,7 +808,7 @@ def validate_resource_plan_binding(
                         "details": {"bodyIndexes": unselected},
                     }
                 )
-        if (resource_plan.get("deploymentTopology") or {}).get("databasePlacement") != "none":
+        if (resource_plan.get("deploymentTopology") or {}).get("workloadLayout") != "primaryOnly":
             public_database_rules = [
                 index
                 for index, body in enumerate(traffic_bodies)

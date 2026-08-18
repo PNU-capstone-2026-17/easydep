@@ -223,6 +223,21 @@ def test_deployment_preferences_derive_ingress_from_compute_profile():
     assert preferences.public_ingress == "loadBalanced"
 
 
+def test_deployment_preferences_reject_colocation_with_managed_group():
+    from pydantic import ValidationError
+
+    from app.requirements.schemas import DeploymentPreferences
+
+    with pytest.raises(ValidationError, match="separateCompute"):
+        DeploymentPreferences.model_validate(
+            {
+                "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
+                "compute_profile": "managedGroupOne",
+                "persistent_workload_placement": "colocate",
+            }
+        )
+
+
 def test_deployment_preferences_reject_two_regions_for_one_provider():
     from pydantic import ValidationError
 

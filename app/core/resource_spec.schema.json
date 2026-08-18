@@ -94,9 +94,9 @@
       "enum": ["direct", "loadBalanced"],
       "description": "Public HTTP ingress realization. standaloneOne requires direct; managed groups require loadBalanced. HTTPS/TLS is outside v1."
     },
-    "databasePlacement": {
-      "enum": ["none", "colocated", "dedicated"],
-      "description": "Self-hosted PostgreSQL placement. Colocated is valid only for standaloneOne; dedicated uses one private state VM and a separate persistent disk."
+    "persistentWorkloadPlacement": {
+      "enum": ["colocate", "separateCompute"],
+      "description": "Placement constraint for the optional persistent workload. Colocate is valid only with standaloneOne; managed groups always use separateCompute."
     },
     "applicationStateless": {
       "type": "boolean",

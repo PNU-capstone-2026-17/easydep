@@ -733,7 +733,11 @@ def _record_initial_cloud_constraints(session: _Session, initial: dict) -> None:
             {
                 "provider": str(target.get("provider") or "").strip().lower(),
                 "region": str(target.get("region") or "").strip(),
-                "zones": list(dict.fromkeys(str(zone).strip() for zone in target.get("zones") or [] if str(zone).strip())),
+                "zones": list(
+                    dict.fromkeys(
+                        str(zone).strip() for zone in target.get("zones") or [] if str(zone).strip()
+                    )
+                ),
             }
             for target in targets
         ]
@@ -757,14 +761,18 @@ def _record_initial_cloud_constraints(session: _Session, initial: dict) -> None:
 
     compute_profile = str(initial.get("compute_profile") or "").strip()
     public_ingress = str(initial.get("public_ingress") or "").strip()
-    database_placement = str(initial.get("database_placement") or "").strip()
+    persistent_workload_placement = str(initial.get("persistent_workload_placement") or "").strip()
     replica_count = initial.get("replica_count")
     if compute_profile:
         session.record("computeProfile", compute_profile, compute_profile)
     if public_ingress:
         session.record("publicIngress", public_ingress, public_ingress)
-    if database_placement:
-        session.record("databasePlacement", database_placement, database_placement)
+    if persistent_workload_placement:
+        session.record(
+            "persistentWorkloadPlacement",
+            persistent_workload_placement,
+            persistent_workload_placement,
+        )
     if isinstance(replica_count, int) and not isinstance(replica_count, bool):
         session.record("replicaCount", replica_count, str(replica_count))
 

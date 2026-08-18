@@ -7,9 +7,9 @@ has two deliberately separate views:
 * runtime: placement plus request/data flow
 * provisioning: prerequisite -> dependent creation relationships
 
-PUML is the source artifact.  SVG is rendered with the exact PlantUML image
-digest used by the application.  ``--check`` renders into one system temporary
-directory and byte-compares the result with the checked-in corpus.
+PUML is the source artifact. SVG is rendered with the exact PlantUML image
+digest used by the application. ``--check`` renders into one system temporary
+directory and byte-compares the result with the existing generated corpus.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ TARGETS = {
 }
 
 
-def _logical_model(database_placement: str) -> dict[str, Any]:
+def _logical_model(workload_layout: str) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = [
         {
             "name": "Application Runtime",
@@ -55,11 +55,12 @@ def _logical_model(database_placement: str) -> dict[str, Any]:
         }
     ]
     connections: list[dict[str, Any]] = []
-    if database_placement != "none":
+    if workload_layout != "primaryOnly":
         nodes.append(
             {
                 "name": "PostgreSQL",
-                "kind": "database",
+                "kind": "executionEnvironment",
+                "stateMode": "persistent",
                 "source_classes": ["Database"],
             }
         )
@@ -111,7 +112,9 @@ def _resource_spec(family: TopologyFamily) -> dict[str, Any]:
             if family.provider == "aws" and family.public_ingress == "loadBalanced"
             else selected_zones
         ),
-        "databasePlacement": family.database_placement,
+        "persistentWorkloadPlacement": (
+            "colocate" if family.workload_layout == "colocatedPersistent" else "separateCompute"
+        ),
     }
 
 
@@ -122,7 +125,7 @@ def _relative_sources() -> dict[Path, str]:
         raise RuntimeError(f"Expected 27 provider-labelled families, got {len(families)}.")
     for family in families:
         assert family.provider is not None
-        logical_model = _logical_model(family.database_placement)
+        logical_model = _logical_model(family.workload_layout)
         resource_spec = _resource_spec(family)
         first = build_deployment_diagram_bundle(logical_model, resource_spec)
         second = build_deployment_diagram_bundle(logical_model, resource_spec)
