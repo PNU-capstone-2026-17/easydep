@@ -206,6 +206,40 @@ def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) ->
     assert job["progressPath"].endswith("generation-progress.json")
 
 
+def test_prepare_job_adds_missing_openapi_path_parameters(tmp_path: Path) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    path = client.prepare_job(
+        "job-path-parameters",
+        "12345678-0000-0000-0000-000000000000",
+        {
+            "class_diagram_puml": "@startuml\nclass Order\n@enduml",
+            "sequence_diagram_puml": "@startuml\nA -> B : get()\n@enduml",
+            "api_spec": {
+                "openapi": "3.0.3",
+                "paths": {
+                    "/sections/{sectionId}": {
+                        "get": {"responses": {"200": {"description": "OK"}}},
+                        "delete": {
+                            "parameters": [{"name": "sectionId", "in": "path", "required": True, "schema": {"type": "integer"}}],
+                            "responses": {"204": {"description": "Deleted"}},
+                        },
+                    }
+                },
+            },
+        },
+        "com.example.orders",
+        False,
+    )
+
+    job = json.loads(path.read_text(encoding="utf-8"))
+    openapi = json.loads((tmp_path / job["inputs"]["openapi"]).read_text(encoding="utf-8"))
+    get_parameters = openapi["paths"]["/sections/{sectionId}"]["get"]["parameters"]
+    assert get_parameters == [{"name": "sectionId", "in": "path", "required": True, "schema": {"type": "string"}}]
+    delete_parameters = openapi["paths"]["/sections/{sectionId}"]["delete"]["parameters"]
+    assert delete_parameters[0]["schema"] == {"type": "integer"}
+    assert len(delete_parameters) == 1
+
+
 def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -> None:
     job_path = tmp_path / "job" / "job.json"
     job_path.parent.mkdir(parents=True)
@@ -252,6 +286,39 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
     report = tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
     assert report.is_file()
+
+
+def test_initial_job_proceeds_with_complete_artifacts_and_design_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_path = tmp_path / "prepared" / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: job_path
+    monkeypatch.setattr(implementation_worker.executor, "submit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "app.implementation.application.jobs.design_readiness_report",
+        lambda _design: {"status": "NEEDS_INPUT", "findings": [{"finding": "warning"}]},
+    )
+    try:
+        record = implementation_worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": "class Cart",
+                "api_spec": {"openapi": "3.1.0", "paths": {}},
+                "extracted_bce_classes": {"Classes": [{"className": "Cart"}]},
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/carts"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "QUEUED"
+    assert record["design_validation"]["status"] == "NEEDS_INPUT"
 
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))

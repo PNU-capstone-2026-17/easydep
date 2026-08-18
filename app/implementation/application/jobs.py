@@ -64,13 +64,14 @@ class ImplementationWorker:
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
         readiness = design_readiness_report(design)
-        if readiness["status"] != "READY":
-            return self._create_design_blocked_job(app_id, base_package, readiness)
         job_id = uuid.uuid4().hex
         job_path = self.client.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         record = {
             "job_id": job_id, "app_id": app_id, "status": "QUEUED", "base_package": base_package,
             "job_path": str(job_path), "run_root": None, "workflow": None,
+            # Deterministic design findings remain visible to the implementation
+            # run, but a complete design artifact set is sufficient to proceed.
+            "design_validation": readiness,
             "transmission_request": None, "error": None, "created_at": _now(), "updated_at": _now(),
         }
         self._write(record)

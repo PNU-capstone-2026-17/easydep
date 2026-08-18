@@ -407,7 +407,7 @@ class PrototypeOrchestrator:
         if self.spec.job_type != "FEEDBACK_REVISION":
             sequence = self.spec.inputs.get("sequence")
             if sequence and sequence.is_file() and not re.search(
-                r"(?m)^\s*[A-Za-z_]\w*\s*(?:-|--)+>\s*[A-Za-z_]\w*\s*:",
+                r"(?m)^\s*[A-Za-z_]\w*\s*(?:-|--)+>+\s*[A-Za-z_]\w*\s*:",
                 sequence.read_text(encoding="utf-8"),
             ):
                 self.manifest.diagnostics.append(

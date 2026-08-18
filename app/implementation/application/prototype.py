@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -11,8 +12,58 @@ from typing import Any
 from ..config import ImplementationSettings
 
 
+_OPENAPI_PATH_PARAMETER = re.compile(r"\{([^{}]+)\}")
+_OPENAPI_OPERATIONS = frozenset({"delete", "get", "head", "options", "patch", "post", "put", "trace"})
+
+
 class PrototypeExecutionError(RuntimeError):
     pass
+
+
+def _normalize_openapi_path_parameters(api_spec: Any) -> Any:
+    """Supply missing OpenAPI path parameters required by code generators.
+
+    Design artifacts may describe a templated endpoint without repeating its path
+    parameter in every operation.  OpenAPI Generator rejects that otherwise useful
+    artifact, so add a conservative string parameter only where it is absent.
+    """
+    if not isinstance(api_spec, dict) or not isinstance(api_spec.get("paths"), dict):
+        return api_spec
+
+    normalized = json.loads(json.dumps(api_spec))
+    for path, path_item in normalized["paths"].items():
+        if not isinstance(path, str) or not isinstance(path_item, dict):
+            continue
+        required_names = set(_OPENAPI_PATH_PARAMETER.findall(path))
+        if not required_names:
+            continue
+
+        shared_parameters = path_item.get("parameters")
+        shared_names = {
+            parameter.get("name")
+            for parameter in shared_parameters if isinstance(parameter, dict)
+            and parameter.get("in") == "path"
+            and isinstance(parameter.get("name"), str)
+        } if isinstance(shared_parameters, list) else set()
+
+        for operation_name, operation in path_item.items():
+            if operation_name.lower() not in _OPENAPI_OPERATIONS or not isinstance(operation, dict):
+                continue
+            operation_parameters = operation.get("parameters")
+            if not isinstance(operation_parameters, list):
+                operation_parameters = []
+                operation["parameters"] = operation_parameters
+            declared_names = shared_names | {
+                parameter.get("name")
+                for parameter in operation_parameters if isinstance(parameter, dict)
+                and parameter.get("in") == "path"
+                and isinstance(parameter.get("name"), str)
+            }
+            for name in sorted(required_names - declared_names):
+                operation_parameters.append(
+                    {"name": name, "in": "path", "required": True, "schema": {"type": "string"}}
+                )
+    return normalized
 
 
 class PrototypeClient:
@@ -48,11 +99,12 @@ class PrototypeClient:
             path.write_text(text, encoding="utf-8")
             inputs[name] = path.relative_to(self.settings.repository_root).as_posix()
 
-        write("bceClass", "class-diagram.puml", design.get("class_diagram_puml"))
+        bce_puml = re.sub(r"\(\s*\.{3}\s*\)", "()", str(design.get("class_diagram_puml") or ""))
+        write("bceClass", "class-diagram.puml", bce_puml)
         # 하나의 파일에 유스케이스별 @startuml 블록을 모두 보존한다. 구현 계획·정합성
         # 검사는 이 입력 전체를 순회하므로 모든 유스케이스 호출 흐름이 소스 생성에 반영된다.
         write("sequence", "sequence-diagrams.puml", design.get("sequence_diagram_puml"))
-        write("openapi", "openapi.json", design.get("api_spec"))
+        write("openapi", "openapi.json", _normalize_openapi_path_parameters(design.get("api_spec")))
         write("erd", "erd.puml", design.get("erd_puml"))
         write("deployment", "deployment-diagram.puml", design.get("deployment_diagram_puml"))
         write("cloud", "resource-spec.json", design.get("resource_spec"))

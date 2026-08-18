@@ -19,6 +19,7 @@ from app.implementation.agents.runtime import (
     EventJournal,
     break_configuration_cycles,
     execution_attempt,
+    remove_placeholder_comments,
     select_repair_paths,
     write_execution_result,
 )
@@ -805,6 +806,31 @@ void use(String... value) {}
 
             self.assertEqual(1, len(evidence))
             self.assertIn(main, evidence[0])
+
+    def test_production_marker_gate_allows_placeholder_word_but_rejects_todo(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main = "application/src/main/java/com/example/Service.java"
+            path = root / main
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "class Example { // Return an empty string as a placeholder.\n"
+                "// TODO provide a real value\n}",
+                encoding="utf-8",
+            )
+
+            evidence = production_placeholder_markers(root, [main])
+
+            self.assertEqual(1, len(evidence))
+            self.assertIn("TODO", evidence[0])
+
+    def test_configuration_normalizer_removes_placeholder_line_comments(self) -> None:
+        normalized, changed = remove_placeholder_comments(
+            'return ""; // Return an empty string as a placeholder.\n'
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual('return ""; \n', normalized)
 
     def test_workflow_checkpoint_recovers_results_and_interrupted_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
