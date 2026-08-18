@@ -74,7 +74,6 @@ _FOLDED_RELATION_KINDS = {
         "registry-pull-binding",
         "secret-access-binding",
         "state-secret-access-binding",
-        "target-registration",
     },
     "azure": {
         "backend-membership",
@@ -108,7 +107,6 @@ _FOLDED_RELATION_LABELS = {
     "secret-access-binding": "grants Secret read",
     "security-group-association": "applies network security group",
     "state-secret-access-binding": "grants State Secret read",
-    "target-registration": "registered target",
 }
 
 

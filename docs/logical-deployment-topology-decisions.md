@@ -11,7 +11,7 @@
 - Spring Boot 애플리케이션 컨테이너
 - 선택적 PostgreSQL 컨테이너
 - 단일 VM 또는 CSP 관리형 VM 그룹
-- VM 직접 공개 또는 L4 Load Balancer 공개
+- 단일 VM의 직접 공개 또는 관리형 VM 그룹의 L4 Load Balancer 공개
 - 선택적 독립 영속 block disk
 - 사용자가 EasyDep 배포 번들로 앱 이미지를 한 번 build·push하고 digest로 pull하는 배포
 - HTTP 애플리케이션과 HTTP readiness endpoint
@@ -39,8 +39,8 @@
 
 제약은 다음과 같다.
 
-- `direct`는 `standaloneOne`에만 허용한다.
-- 관리형 그룹은 `loadBalanced`와 조합한다.
+- `standaloneOne`은 `direct`만 사용한다. 단일 VM 앞의 Load Balancer는 지원하지 않는다.
+- 관리형 그룹은 `loadBalanced`만 사용한다.
 - `colocated` PostgreSQL은 `standaloneOne`에만 허용한다.
 - 여러 App VM을 선택하면 App은 무상태여야 한다.
 - `managedGroupManyMultiZone`은 최소 두 VM과 최소 두 Zone을 요구한다.
@@ -382,14 +382,14 @@ credential은 사용자의 실행 환경에만 있고, Secret은 기존 provider
 
 다음 순서로 검사한다.
 
-1. `standaloneOne`만 `direct`를 허용한다.
-2. managed group은 하나의 고정 진입점이 필요하므로 `loadBalanced`를 사용한다.
+1. `standaloneOne`은 `direct`만 허용하며 단일 VM 앞의 Load Balancer는 만들지 않는다.
+2. managed group은 하나의 고정 진입점이 필요하므로 `loadBalanced`만 사용한다.
 3. `colocated` PostgreSQL은 `standaloneOne`만 허용한다.
 4. many profile은 replica가 2 이상이고 App이 무상태라는 근거가 있어야 한다.
 5. multi-zone profile은 서로 다른 Zone이 2개 이상이어야 한다.
 
 하나라도 충족하지 못하면 그림을 추측해서 완성하지 않고 `needsInput`으로 중단한다. 이 검사를
-통과하면 12개 논리 조합 중 하나가 되고, CSP를 곱하면 36개 provider 조합 중 하나가 된다.
+통과하면 9개 논리 조합 중 하나가 되고, CSP를 곱하면 27개 provider 조합 중 하나가 된다.
 
 ### 12.3 provider projection policy를 만든다
 

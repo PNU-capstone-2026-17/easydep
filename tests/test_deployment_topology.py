@@ -10,14 +10,14 @@ from app.design.services.deployment_diagram.topology import (
 )
 
 
-def test_supported_family_census_is_12_logical_and_36_provider_native():
+def test_supported_family_census_is_9_logical_and_27_provider_native():
     logical = enumerate_topology_families()
     native = enumerate_topology_families(include_providers=True)
 
-    assert len(logical) == 12
-    assert len(native) == 36
-    assert len({item.id for item in logical}) == 12
-    assert len({item.id for item in native}) == 36
+    assert len(logical) == 9
+    assert len(native) == 27
+    assert len({item.id for item in logical}) == 9
+    assert len({item.id for item in native}) == 27
 
 
 @pytest.mark.parametrize(
@@ -40,16 +40,13 @@ def test_managed_group_families_never_include_direct_or_colocated_database(
     assert {item.database_placement for item in families} == {"none", "dedicated"}
 
 
-def test_standalone_family_keeps_direct_lb_and_all_database_placements():
+def test_standalone_family_uses_direct_ingress_for_all_database_placements():
     families = [
         item for item in enumerate_topology_families() if item.compute_profile == "standaloneOne"
     ]
 
-    assert len(families) == 6
-    assert {item.public_ingress for item in families} == {
-        "direct",
-        "loadBalanced",
-    }
+    assert len(families) == 3
+    assert {item.public_ingress for item in families} == {"direct"}
     assert {item.database_placement for item in families} == {
         "none",
         "colocated",
@@ -152,7 +149,7 @@ def test_projection_adapter_does_not_make_an_availability_claim():
     assert "highAvailabilityRequired" not in projection
 
 
-def test_aws_network_load_balancer_uses_one_subnet_for_single_zone_plan():
+def test_standalone_load_balancer_is_unsupported():
     topology = derive_deployment_topology(
         provider="aws",
         resource_spec={
@@ -164,16 +161,32 @@ def test_aws_network_load_balancer_uses_one_subnet_for_single_zone_plan():
         },
     )
 
-    projection = provider_projection_policy(topology)
+    assert topology["issues"] == [
+        {
+            "field": "publicIngress",
+            "reason": "A standalone VM uses its reserved public address directly.",
+            "classification": "unsupported",
+        }
+    ]
 
-    assert projection["minimumZones"] == 1
-    assert projection["minimumIngressZones"] == 1
-    assert projection["minimumSubnets"] == 1
-    assert projection["minimumIngressSubnets"] == 1
-    assert projection["zoneSpreadRequired"] is False
+
+def test_ingress_defaults_are_derived_from_compute_management():
+    standalone = derive_deployment_topology(
+        provider="aws",
+        resource_spec={"computeProfile": "standaloneOne", "databasePlacement": "none"},
+    )
+    managed = derive_deployment_topology(
+        provider="aws",
+        resource_spec={"computeProfile": "managedGroupOne", "databasePlacement": "none"},
+    )
+
+    assert standalone["publicIngress"] == "direct"
+    assert managed["publicIngress"] == "loadBalanced"
+    assert standalone["issues"] == []
+    assert managed["issues"] == []
 
 
-def test_all_36_provider_labelled_families_reach_resource_plan_projection():
+def test_all_27_provider_labelled_families_reach_resource_plan_projection():
     for family in enumerate_topology_families(include_providers=True):
         many = "Many" in family.compute_profile
         spread = family.compute_profile == "managedGroupManyMultiZone"

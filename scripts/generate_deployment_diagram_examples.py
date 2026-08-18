@@ -1,7 +1,7 @@
 """Generate the complete deterministic Docker-on-VM deployment diagram corpus.
 
-The finite topology model has 12 logical families.  Projecting each family to
-AWS, Azure, and Google Cloud yields 36 provider-labelled families.  Each family
+The finite topology model has 9 logical families.  Projecting each family to
+AWS, Azure, and Google Cloud yields 27 provider-labelled families.  Each family
 has two deliberately separate views:
 
 * runtime: placement plus request/data flow
@@ -118,8 +118,8 @@ def _resource_spec(family: TopologyFamily) -> dict[str, Any]:
 def _relative_sources() -> dict[Path, str]:
     outputs: dict[Path, str] = {}
     families = enumerate_topology_families(include_providers=True)
-    if len(families) != 36:
-        raise RuntimeError(f"Expected 36 provider-labelled families, got {len(families)}.")
+    if len(families) != 27:
+        raise RuntimeError(f"Expected 27 provider-labelled families, got {len(families)}.")
     for family in families:
         assert family.provider is not None
         logical_model = _logical_model(family.database_placement)
@@ -144,8 +144,8 @@ def _relative_sources() -> dict[Path, str]:
         outputs[provider_dir / f"{stem}.provisioning.puml"] = (
             deployment_bundle_provisioning_puml(first).rstrip() + "\n"
         )
-    if len(outputs) != 72:
-        raise RuntimeError(f"Expected 72 semantic views, got {len(outputs)}.")
+    if len(outputs) != 54:
+        raise RuntimeError(f"Expected 54 semantic views, got {len(outputs)}.")
     return outputs
 
 
@@ -191,17 +191,12 @@ def generate() -> None:
     sources = _relative_sources()
     _write_sources(OUTPUT_ROOT, sources)
     _render_svgs(OUTPUT_ROOT, sources)
-    actual = {
-        path.relative_to(OUTPUT_ROOT)
-        for path in OUTPUT_ROOT.rglob("*")
-        if path.is_file()
-    }
+    actual = {path.relative_to(OUTPUT_ROOT) for path in OUTPUT_ROOT.rglob("*") if path.is_file()}
     unexpected = actual - _expected_files(sources)
     if unexpected:
         raise RuntimeError(f"Unexpected files in example corpus: {sorted(unexpected)}")
     print(
-        f"Generated {len(sources)} diagrams / {len(actual)} PUML+SVG files "
-        f"with {PLANTUML_IMAGE}."
+        f"Generated {len(sources)} diagrams / {len(actual)} PUML+SVG files with {PLANTUML_IMAGE}."
     )
 
 
@@ -209,9 +204,7 @@ def check() -> None:
     sources = _relative_sources()
     expected = _expected_files(sources)
     checked_in = {
-        path.relative_to(OUTPUT_ROOT)
-        for path in OUTPUT_ROOT.rglob("*")
-        if path.is_file()
+        path.relative_to(OUTPUT_ROOT) for path in OUTPUT_ROOT.rglob("*") if path.is_file()
     }
     if checked_in != expected:
         missing = sorted(expected - checked_in)
@@ -224,8 +217,7 @@ def check() -> None:
         mismatches = [
             relative
             for relative in sorted(expected)
-            if (OUTPUT_ROOT / relative).read_bytes()
-            != (temporary_root / relative).read_bytes()
+            if (OUTPUT_ROOT / relative).read_bytes() != (temporary_root / relative).read_bytes()
         ]
     if mismatches:
         raise RuntimeError(f"Non-reproducible checked-in diagrams: {mismatches}")

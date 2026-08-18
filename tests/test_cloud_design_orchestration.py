@@ -44,12 +44,12 @@ def test_cloud_design_projects_explicit_managed_multi_zone_topology(
                 "computeProfile": "managedGroupManyMultiZone",
                 "replicaCount": 2,
                 "selectedZones": ["zone-a", "zone-b"],
-                    "publicIngress": "loadBalanced",
-                    "applicationStateless": True,
-                    "tls": {
-                        "hostname": "app.example.test",
-                        "certificateInputRef": "test:existing-certificate",
-                    },
+                "publicIngress": "loadBalanced",
+                "applicationStateless": True,
+                "tls": {
+                    "hostname": "app.example.test",
+                    "certificateInputRef": "test:existing-certificate",
+                },
             },
             "deployment_needs": {},
         },
@@ -67,9 +67,7 @@ def test_cloud_design_projects_explicit_managed_multi_zone_topology(
     projection = result["provider_projection_policy"]
     assert topology["computeProfile"] == "managedGroupManyMultiZone"
     assert topology["availabilityClaim"] == "none"
-    assert topology["familyId"].endswith(
-        "managedGroupManyMultiZone.none.loadBalanced"
-    )
+    assert topology["familyId"].endswith("managedGroupManyMultiZone.none.loadBalanced")
     assert projection["mode"] == "managedGroup"
     assert projection["nativeComputeGroup"] == native_group
     assert result["kb_used"] == ["depkb"]
@@ -98,9 +96,7 @@ def test_cloud_design_projects_explicit_managed_multi_zone_topology(
         ("gcp", "Compute Engine VM"),
     ],
 )
-def test_cloud_design_defaults_to_one_standalone_vm(
-    provider, native_label
-):
+def test_cloud_design_defaults_to_one_standalone_vm(provider, native_label):
     result = CloudDesignAdapter().finalize(
         requirements_result={
             "resource_spec": {"provider": provider, "region": "test-region"},
@@ -198,9 +194,12 @@ def test_many_single_zone_is_a_valid_managed_group_family(provider):
     assert topology["zoneLayout"] == "singleZone"
     assert topology["replicaCount"] == 3
     assert topology["availabilityClaim"] == "none"
-    assert next(item for item in plan["allocations"] if item["computeRef"] == "compute-group")[
-        "replicas"
-    ] == 3
+    assert (
+        next(item for item in plan["allocations"] if item["computeRef"] == "compute-group")[
+            "replicas"
+        ]
+        == 3
+    )
 
 
 def test_managed_group_one_is_distinct_from_standalone_vm():
@@ -326,9 +325,7 @@ def test_stable_capability_id_does_not_depend_on_dynamic_need_key():
             },
         },
         design_result={
-            "deployment_diagram_model": {
-                "Nodes": [{"name": "Database", "kind": "database"}]
-            }
+            "deployment_diagram_model": {"Nodes": [{"name": "Database", "kind": "database"}]}
         },
     )
 
@@ -372,9 +369,7 @@ def test_persistent_state_semantics_drive_plan_without_a_fixed_need_key():
         for item in result["dependency_coverage"]["modeledInputs"]
     )
     disk_decision = next(
-        item
-        for item in result["resource_plan"]["decisions"]
-        if item["field"] == "separateDataDisk"
+        item for item in result["resource_plan"]["decisions"] if item["field"] == "separateDataDisk"
     )
     assert disk_decision["basis"] == "project-policy:self-hosted-persistent-workload"
     assert disk_decision["sourceRefs"] == ["NFR-DATA"]
@@ -404,7 +399,7 @@ def test_https_load_balanced_requirement_is_not_downgraded_to_http_lb():
     assert "resource_plan" not in result
 
 
-def test_azure_single_vm_load_balancer_has_a_backend_membership_path():
+def test_load_balancer_requirement_defaults_to_managed_group_one():
     result = CloudDesignAdapter().finalize(
         requirements_result={
             "resource_spec": {"provider": "azure", "region": "koreacentral"},
@@ -416,15 +411,13 @@ def test_azure_single_vm_load_balancer_has_a_backend_membership_path():
             },
         },
         design_result={
-            "deployment_diagram_model": {
-                "Nodes": [{"name": "Database", "kind": "database"}]
-            }
+            "deployment_diagram_model": {"Nodes": [{"name": "Database", "kind": "database"}]}
         },
     )
 
-    assert result["topology_policy"]["computeProfile"] == "standaloneOne"
+    assert result["topology_policy"]["computeProfile"] == "managedGroupOne"
     assert any(
-        edge["from"] == "network-interface" and edge["to"] == "backend-membership"
+        edge["from"] == "compute-group" and edge["to"] == "backend-group"
         for edge in result["deployment_diagram_model"]["edges"]
     )
 
@@ -564,9 +557,7 @@ def test_resource_plan_keeps_independent_workloads_and_persistent_owner(provider
         for edge in plan["edges"]
     )
     assert any(
-        edge["from"] == "disk-attachment"
-        and edge["to"] == "disk"
-        and edge["label"] == "binds"
+        edge["from"] == "disk-attachment" and edge["to"] == "disk" and edge["label"] == "binds"
         for edge in plan["edges"]
     )
     connection = next(edge for edge in plan["edges"] if edge.get("relation") == "connectsTo")
@@ -695,8 +686,9 @@ def test_external_connection_becomes_supported_direct_http_endpoint(provider):
     assert any(node.get("providerKind") == "public-ip" for node in plan["nodes"])
     assert not any(node.get("id") == "direct-tls-automation" for node in plan["nodes"])
     assert "public_endpoint" in result["deployment_diagram_puml"]
-    assert "public_address -[#2f6b50]-> runtime_workload_service_runtime : HTTP" in (
-        result["deployment_diagram_puml"]
+    assert (
+        "public_address -[#2f6b50]-> runtime_workload_service_runtime : HTTP"
+        in (result["deployment_diagram_puml"])
     )
     assert plan["unresolved"] == []
     assert plan["runtimeEvidence"]["managedL4Ingress"] == {
@@ -744,11 +736,14 @@ def test_explicit_load_balanced_topology_uses_managed_l4_ingress(provider):
     assert managed_l4["evidenceRefs"] == [
         f"evaluation/dependency_audit/{provider}-managed-l4-ingress-result-20260817.json"
     ]
-    assert managed_l4["selectedIngress"] == {
-        "aws": "Network Load Balancer",
-        "azure": "Load Balancer",
-        "gcp": "Regional External Passthrough Network Load Balancer",
-    }[provider]
+    assert (
+        managed_l4["selectedIngress"]
+        == {
+            "aws": "Network Load Balancer",
+            "azure": "Load Balancer",
+            "gcp": "Regional External Passthrough Network Load Balancer",
+        }[provider]
+    )
     assert managed_l4["observed"] == [
         "L4 forwarding",
         "HTTP health checks",
@@ -830,10 +825,10 @@ def test_multiple_cloud_targets_remain_separate_until_the_user_selects_one():
     assert result["status"] == "alternativesReady"
     assert result["requires_target_selection"] is True
     assert result["deployment_diagram_puml"] == logical_diagram
-    assert {
-        (item["provider"], item["region"])
-        for item in result["provider_deployments"]
-    } == {("aws", "ap-northeast-2"), ("azure", "koreacentral")}
+    assert {(item["provider"], item["region"]) for item in result["provider_deployments"]} == {
+        ("aws", "ap-northeast-2"),
+        ("azure", "koreacentral"),
+    }
     assert result["open_questions"][0]["choices"] == [
         "aws:ap-northeast-2",
         "azure:koreacentral",

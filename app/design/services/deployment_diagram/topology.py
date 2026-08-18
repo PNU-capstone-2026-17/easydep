@@ -68,6 +68,8 @@ def family_errors(family: TopologyFamily) -> list[str]:
     """Return hard structural errors for a proposed family."""
     errors: list[str] = []
     grouped = family.compute_profile != "standaloneOne"
+    if not grouped and family.public_ingress == "loadBalanced":
+        errors.append("standalone-load-balanced-ingress-is-unsupported")
     if grouped and family.public_ingress == "direct":
         errors.append("managed-group-direct-ingress-is-unsupported")
     if grouped and family.database_placement == "colocated":
@@ -78,7 +80,7 @@ def family_errors(family: TopologyFamily) -> list[str]:
 
 
 def enumerate_topology_families(*, include_providers: bool = False) -> list[TopologyFamily]:
-    """Enumerate the 12 logical or 36 provider-labelled supported families."""
+    """Enumerate the 9 logical or 27 provider-labelled supported families."""
     providers: tuple[Provider | None, ...] = PROVIDERS if include_providers else (None,)
     candidates = (
         TopologyFamily(compute, database, ingress, provider)
@@ -124,7 +126,6 @@ def derive_deployment_topology(
     database_required = _logical_database_present(logical_deployment_model)
     requested_database_placement = str(spec.get("databasePlacement") or "dedicated")
     database_placement = requested_database_placement if database_required else "none"
-    public_ingress = str(spec.get("publicIngress") or "direct")
     selected_ingress_zones = [
         str(zone).strip()
         for zone in spec.get("ingressZones") or selected_zones
@@ -161,6 +162,7 @@ def derive_deployment_topology(
         )
         compute_profile = "standaloneOne"
     grouped = compute_profile != "standaloneOne"
+    public_ingress = str(spec.get("publicIngress") or ("loadBalanced" if grouped else "direct"))
     many = compute_profile in {
         "managedGroupManySingleZone",
         "managedGroupManyMultiZone",
@@ -240,6 +242,14 @@ def derive_deployment_topology(
             {
                 "field": "publicIngress",
                 "reason": "Managed groups require one stable load-balanced endpoint.",
+                "classification": "unsupported",
+            }
+        )
+    if not grouped and public_ingress == "loadBalanced":
+        issues.append(
+            {
+                "field": "publicIngress",
+                "reason": "A standalone VM uses its reserved public address directly.",
                 "classification": "unsupported",
             }
         )

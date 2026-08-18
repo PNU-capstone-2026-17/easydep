@@ -145,10 +145,10 @@ standalone VM. managedGroupOne creates a CSP-native managed group with fixed des
 managedGroupManySingleZone creates a fixed-size managed group with replicaCount >= 2 in one
 occupied zone. managedGroupManyMultiZone creates a fixed-size managed group with replicaCount >=
 2 spread over the selected zones. A managed group does not imply traffic autoscaling, automatic
-repair, high availability, or an SLA. publicIngress=direct is valid only for standaloneOne and
-uses its reserved public address. publicIngress=loadBalanced uses the selected provider-native L4
-load balancer and private backend addresses: AWS Network Load Balancer, Azure Load Balancer, or
-GCP Regional External Passthrough Network Load Balancer. The public workload is still HTTP, while
+repair, high availability, or an SLA. standaloneOne always uses publicIngress=direct and its
+reserved public address. Managed groups always use publicIngress=loadBalanced with the selected
+provider-native L4 load balancer and private backend addresses: AWS Network Load Balancer, Azure
+Load Balancer, or GCP Regional External Passthrough Network Load Balancer. The public workload is still HTTP, while
 the load balancer forwards TCP and may use an HTTP readiness probe. HTTPS/TLS,
 certificates, domain validation, and TLS reverse proxies are explicitly out of scope.
 Never replace a managed group with duplicated standalone VMs or claim an availability outcome.
@@ -180,14 +180,6 @@ PROVIDER_COMPATIBILITY = {
                     "For the ResourcePlan load balancer set load_balancer_type=network. "
                     "Use a TCP port 80 listener and TCP backend target port; keep the "
                     "application readiness path as the target group's HTTP health check."
-                ),
-            },
-            {
-                "resourceType": "aws_lb_target_group_attachment",
-                "rule": (
-                    "For standaloneOne load-balanced ingress, explicitly register the "
-                    "EC2 instance with target_group_arn and target_id. For an Auto "
-                    "Scaling Group, use target_group_arns on the group instead."
                 ),
             },
             {

@@ -178,7 +178,7 @@ def test_deployment_preferences_normalize_currency_and_validate_multi_zone_profi
                 {
                     "provider": "azure",
                     "region": "koreacentral",
-                        "zones": ["1", "2"],
+                    "zones": ["1", "2"],
                 },
             ],
             "compute_profile": "managedGroupManyMultiZone",
@@ -208,6 +208,19 @@ def test_minimal_deployment_intake_does_not_invent_topology_choices():
         "monthly_budget_amount": 200.0,
         "monthly_budget_currency": "USD",
     }
+
+
+def test_deployment_preferences_derive_ingress_from_compute_profile():
+    from app.requirements.schemas import DeploymentPreferences
+
+    preferences = DeploymentPreferences.model_validate(
+        {
+            "targets": [{"provider": "aws", "region": "ap-northeast-2"}],
+            "compute_profile": "managedGroupOne",
+        }
+    )
+
+    assert preferences.public_ingress == "loadBalanced"
 
 
 def test_deployment_preferences_reject_two_regions_for_one_provider():

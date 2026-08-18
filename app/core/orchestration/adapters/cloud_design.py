@@ -49,8 +49,7 @@ def _recognized_capability_ids(key: str, need: dict[str, Any]) -> set[str]:
         need.get("evidenceSpans") or (),
     )
     return (
-        set(need.get("dependencyCapabilityIds") or [])
-        | ({linked} if linked else set())
+        set(need.get("dependencyCapabilityIds") or []) | ({linked} if linked else set())
     ) & RECOGNIZED_DEPENDENCY_CAPABILITY_IDS
 
 
@@ -156,8 +155,7 @@ class CloudDesignAdapter:
             key
             for key, need in all_needs.items()
             if isinstance(need, dict)
-            and _recognized_capability_ids(key, need)
-            & OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS
+            and _recognized_capability_ids(key, need) & OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS
         )
         if unsupported_https_needs:
             return {
@@ -170,9 +168,7 @@ class CloudDesignAdapter:
                 "logical_deployment_diagram_puml": logical_puml,
                 "deployment_diagram_puml": logical_puml,
                 "kb_used": [],
-                "deferred": [
-                    "dependencies", "capacity", "performance", "price", "vm_selection"
-                ],
+                "deferred": ["dependencies", "capacity", "performance", "price", "vm_selection"],
             }
         deployment_targets = [
             dict(item)
@@ -282,10 +278,7 @@ class CloudDesignAdapter:
             if isinstance(value, dict) and value.get("decision", "accepted") == "accepted"
         }
         capabilities_by_need = {
-            key: sorted(
-                _recognized_capability_ids(key, value)
-                & MODELED_DEPENDENCY_CAPABILITY_IDS
-            )
+            key: sorted(_recognized_capability_ids(key, value) & MODELED_DEPENDENCY_CAPABILITY_IDS)
             for key, value in accepted.items()
         }
         # Stored CapabilityContract/v1 development runs predate stable IDs.
@@ -336,6 +329,8 @@ class CloudDesignAdapter:
             and "load-balanced-ingress" in selected_capabilities
         ):
             effective_spec["publicIngress"] = "loadBalanced"
+            if "computeProfile" not in effective_spec:
+                effective_spec["computeProfile"] = "managedGroupOne"
         topology_policy = derive_deployment_topology(
             provider=provider,
             resource_spec=effective_spec,
@@ -449,9 +444,7 @@ class CloudDesignAdapter:
                     "kb_used": [],
                     "deferred": [],
                 }
-        projection_status = (
-            "needsInput" if deployment_model.get("unresolved") else "completed"
-        )
+        projection_status = "needsInput" if deployment_model.get("unresolved") else "completed"
         diagram_bundle = {
             "schemaVersion": "easydep-deployment-diagram/v1",
             "mode": "single",

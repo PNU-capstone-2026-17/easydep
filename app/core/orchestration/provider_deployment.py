@@ -37,10 +37,6 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             "load-balancer": ("Network Load Balancer", "network"),
             "listener": ("Network Load Balancer Listener", "network"),
             "backend-group": ("Target Group", "network"),
-            "target-registration": (
-                "Terraform: aws_lb_target_group_attachment",
-                "network",
-            ),
             "health-check": ("Target Group / Health Check", "network"),
             "network": ("VPC", "network"),
             "subnet": ("Application Subnet", "network"),
@@ -326,7 +322,6 @@ _TERRAFORM_TYPES: dict[str, dict[str, tuple[str, ...]]] = {
         "load-balancer": ("aws_lb",),
         "listener": ("aws_lb_listener",),
         "backend-group": ("aws_lb_target_group",),
-        "target-registration": ("aws_lb_target_group_attachment",),
         "network": ("aws_vpc",),
         "subnet": ("aws_subnet",),
         "state-subnet": ("aws_subnet",),
@@ -1157,22 +1152,6 @@ def build_provider_deployment_model(
         _add_edge(edges, "cloud-router", "network", "belongs to", "egress-policy")
         _add_edge(edges, "cloud-nat", "cloud-router", "uses", "egress-policy")
         _add_edge(edges, "cloud-nat", "subnet", "selects subnetwork", "egress-policy")
-    if provider == "aws" and load_balanced_topology and not grouped_compute:
-        selected.add("target-registration")
-        _add_edge(
-            edges,
-            "target-registration",
-            "backend-group",
-            "registers with",
-            "capability-realization",
-        )
-        _add_edge(
-            edges,
-            "target-registration",
-            "compute-instance",
-            "registers instance",
-            "capability-realization",
-        )
     if not grouped_compute:
         for source, target, label in spec["standaloneCapabilityEdges"]:
             if source in selected and target in selected:

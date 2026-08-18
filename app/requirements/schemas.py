@@ -638,19 +638,21 @@ class DeploymentPreferences(BaseModel):
         }
         spread = self.compute_profile == "managedGroupManyMultiZone"
         grouped = self.compute_profile != "standaloneOne"
+        expected_ingress = "loadBalanced" if grouped else "direct"
+        if "public_ingress" not in self.model_fields_set:
+            object.__setattr__(self, "public_ingress", expected_ingress)
         if many and self.replica_count < 2:
-            raise ValueError(
-                "many-replica compute profiles require replica_count >= 2"
-            )
+            raise ValueError("many-replica compute profiles require replica_count >= 2")
         if not many and self.replica_count != 1:
             raise ValueError("one-replica compute profiles require replica_count = 1")
-        if grouped and self.public_ingress == "direct":
-            raise ValueError("managed groups require loadBalanced public ingress")
+        if self.public_ingress != expected_ingress:
+            raise ValueError(f"{self.compute_profile} requires {expected_ingress} public ingress")
         if spread and any(len(target.zones) < 2 for target in self.targets):
             raise ValueError("multi-zone spread requires at least two zones per target")
         if not spread and any(len(target.zones) > 1 for target in self.targets):
             raise ValueError("single-zone profiles may select at most one zone per target")
         return self
+
 
 # ----------------------------------------------------------------------------
 # HTTP API 스키마
