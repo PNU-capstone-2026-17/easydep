@@ -113,6 +113,148 @@ def test_raw_cockburn_example_is_normalized_to_a_sequence_collection():
     assert '"step_number": 1' in scenario
 
 
+def test_sequence_elements_are_extracted_without_llm_when_methods_match_steps():
+    specification = {
+        "use_cases": [
+            {
+                "id": "UC1",
+                "name": "Create order",
+                "primary_actor": "Buyer",
+            }
+        ],
+        "use_case_specs": [
+            {
+                "use_case_id": "UC1",
+                "name": "Create order",
+                "primary_actor": "Buyer",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "Buyer creates an order"},
+                    {"step_number": 2, "sentence": "System processes the order"},
+                ],
+                "extensions": [],
+            }
+        ],
+    }
+    class_diagram = """@startuml
+class OrderApi <<Boundary>> {
+  + createOrder()
+}
+class OrderControl <<Control>> {
+  + processOrder()
+}
+OrderApi ..> OrderControl
+@enduml"""
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured"
+    ) as llm:
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    llm.assert_not_called()
+    diagram = result["Diagrams"][0]
+    assert [message["label"] for message in diagram["Messages"]] == [
+        "createOrder()",
+        "processOrder()",
+    ]
+    assert [message["step_ids"] for message in diagram["Messages"]] == [
+        ["UC1:main:1"],
+        ["UC1:main:2"],
+    ]
+
+
+def test_only_ambiguous_element_selection_is_sent_to_llm_once():
+    specification = {
+        "use_cases": [
+            {"id": "UC1", "name": "Order", "primary_actor": "Buyer"}
+        ],
+        "use_case_specs": [
+            {
+                "use_case_id": "UC1",
+                "name": "Order",
+                "primary_actor": "Buyer",
+                "main_scenario": [
+                    {"step_number": 1, "sentence": "Buyer initiates a workflow"},
+                    {"step_number": 2, "sentence": "System completes the workflow"},
+                ],
+                "extensions": [],
+            }
+        ],
+    }
+    class_diagram = """@startuml
+class OrderApi <<Boundary>> {
+  + submitOrder()
+}
+class OrderControl <<Control>> {
+  + persistOrder()
+}
+OrderApi ..> OrderControl
+@enduml"""
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        return_value={
+            "selections": [
+                {
+                    "step_id": "UC1:main:2",
+                    "receiver_class": "OrderControl",
+                    "method": "persistOrder()",
+                }
+            ]
+        },
+    ) as llm:
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    llm.assert_called_once()
+    assert llm.call_args.args[1].__name__ == "SequenceElementSelections"
+    assert "Participants" not in llm.call_args.args[0][1]["content"]
+    assert result["Diagrams"][0]["Messages"][-1]["label"] == "persistOrder()"
+
+
+def test_llm_selection_cannot_reuse_an_actor_operation_when_an_alternative_exists():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Action",
+            "primary_actor": "Buyer",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Buyer initiates an action"},
+                {"step_number": 2, "sentence": "Buyer confirms the action"},
+            ],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class GatewayApi <<Boundary>> {
+  + startFlow()
+  + confirmFlow()
+}
+class GatewayControl <<Control>> {
+  + processFlow()
+}
+GatewayApi ..> GatewayControl
+@enduml"""
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        return_value={
+            "selections": [
+                {
+                    "step_id": step_id,
+                    "receiver_class": "GatewayApi",
+                    "method": "startFlow()",
+                }
+                for step_id in ("UC1:main:1", "UC1:main:2")
+            ]
+        },
+    ):
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    assert [
+        message["label"] for message in result["Diagrams"][0]["Messages"]
+    ] == ["startFlow()", "confirmFlow()"]
+
+
 def test_use_case_summaries_without_specs_are_rejected_instead_of_collapsed():
     with pytest.raises(ValueError, match="requires use_case_specs"):
         normalize_sequence_usecase_spec(

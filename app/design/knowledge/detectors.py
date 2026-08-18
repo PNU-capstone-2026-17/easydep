@@ -2064,9 +2064,23 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
         return []
     actor_subjects = {name for name in actors.values() if name}
     actor_subjects.update({"user", "the user"})
+    participant_classes = {
+        _participant_id(participant): str(
+            participant.get("source_class") or participant.get("name") or ""
+        ).strip()
+        for participant in model.get("Participants", [])
+        if str(participant.get("kind") or "").strip().lower() != "actor"
+    }
+    class_method_counts = {
+        str(item.get("className") or "").strip(): len(
+            [method for method in item.get("methods") or [] if method_call_signature(str(method))]
+        )
+        for item in (state.get("extracted_bce_classes") or {}).get("Classes", [])
+        if str(item.get("className") or "").strip()
+    }
     unresolved = _unresolved_flow_step_ids(state)
     found: list[Finding] = []
-    claimed_main_calls: dict[tuple[str, str], tuple[str, str]] = {}
+    claimed_main_calls: dict[tuple[str, str], tuple[str, str, set[int]]] = {}
     for step_id, sentence in _flow_step_records(state):
         if step_id in unresolved or not sentence:
             continue
@@ -2078,17 +2092,17 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
             for subject in actor_subjects
         ):
             continue
-        messages = [
-            message
-            for message in model.get("Messages", [])
+        indexed_messages = [
+            (index, message)
+            for index, message in enumerate(model.get("Messages", []))
             if step_id in {str(value).strip() for value in message.get("step_ids") or []}
             and str(message.get("type", "sync")).lower() in {"sync", "async", "self"}
         ]
-        if not messages:
+        if not indexed_messages:
             continue  # coverage detector owns an entirely absent step.
         actor_messages = [
-            message
-            for message in messages
+            (index, message)
+            for index, message in indexed_messages
             if str(message.get("source") or "").strip() in actors
         ]
         if not actor_messages:
@@ -2102,15 +2116,30 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
             continue
         if ":main:" not in step_id:
             continue
-        call_keys = {
-            (
+        call_keys: dict[tuple[str, str], set[int]] = {}
+        for index, message in actor_messages:
+            key = (
                 str(message.get("target") or "").strip(),
                 method_call_signature(str(message.get("label") or "")),
             )
-            for message in actor_messages
-            if method_call_signature(str(message.get("label") or ""))
-        }
-        if call_keys and all(key in claimed_main_calls for key in call_keys):
+            if key[1]:
+                call_keys.setdefault(key, set()).add(index)
+        # One interaction may intentionally trace to multiple adjacent specification
+        # steps. Only separate messages that reuse the same operation are suspicious.
+        reused_by_distinct_messages = call_keys and all(
+            key in claimed_main_calls
+            and claimed_main_calls[key][2].isdisjoint(indexes)
+            for key, indexes in call_keys.items()
+        )
+        # Reusing the only operation exposed by a Boundary is not evidence of a
+        # fabricated trace. Health probes and metric collection are common examples.
+        has_alternative_operation = any(
+            class_method_counts.get(participant_classes.get(target, ""), 0) > 1
+            for target, _ in call_keys
+        )
+        if reused_by_distinct_messages and (
+            not class_method_counts or has_alternative_operation
+        ):
             prior_steps = sorted({claimed_main_calls[key][0] for key in call_keys})
             found.append(
                 Finding(
@@ -2120,8 +2149,8 @@ def sequence_actor_step_involvement(model: dict, state: dict) -> list[Finding]:
                     step_id,
                 )
             )
-        for key in call_keys:
-            claimed_main_calls.setdefault(key, (step_id, sentence))
+        for key, indexes in call_keys.items():
+            claimed_main_calls.setdefault(key, (step_id, sentence, indexes))
     return found
 
 
