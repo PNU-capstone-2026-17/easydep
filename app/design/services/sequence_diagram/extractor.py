@@ -578,6 +578,8 @@ def _words(value: Any) -> set[str]:
             token = token[:-3] + "y"
         elif len(token) > 4 and token.endswith("ing"):
             token = token[:-3]
+        elif len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
+            token = token[:-2] if not token.endswith("ded") and not token.endswith("ted") else token[:-1]
         elif len(token) > 4 and token.endswith("es"):
             token = token[:-2]
         elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
@@ -735,16 +737,20 @@ def _extension_records(use_case_id: str, extension: dict[str, Any]) -> list[dict
 
 def _actor_led(sentence: str, actor_name: str) -> bool:
     lowered = sentence.lower().lstrip(" '-\"")
-    subjects = {actor_name.lower().strip(), "user", "the user"}
+    system_subjects = ("system ", "system.", "the system ", "system's", "database ", "server ")
+    if lowered.startswith(system_subjects):
+        return False
+    subjects = {actor_name.lower().strip(), "user", "the user", "actor", "the actor"}
     return any(
         subject
         and (
             lowered == subject
             or lowered.startswith(subject + " ")
             or lowered.startswith(subject + "'")
+            or lowered.startswith(subject + ",")
         )
         for subject in subjects
-    )
+    ) or not lowered.startswith(system_subjects)
 
 
 def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
@@ -858,8 +864,8 @@ def _build_sequence_plans(
 ) -> list[dict[str, Any]]:
     plans: list[dict[str, Any]] = []
     for use_case_index, specification in enumerate(specifications):
-        use_case_id = str(specification.get("use_case_id") or "").strip()
-        summary = summaries.get(use_case_id, {})
+        use_case_id = str(specification.get("use_case_id") or specification.get("id") or "").strip()
+        summary = summaries.get(use_case_id) or summaries.get(str(specification.get("id") or "")) or {}
         use_case_name = str(specification.get("name") or summary.get("name") or use_case_id)
         actor = str(
             specification.get("primary_actor")
@@ -959,50 +965,52 @@ def _assemble_deterministic_diagrams(
             # former "first step" fallback picked an arbitrary Boundary method
             # when a specification started with system behavior.
             if plan["actor_led"]:
-                if selected_class["kind"] != "boundary":
-                    continue
-                entry_method = selected_method
-                entry_key = (boundary["name"], entry_method)
+                target_boundary = boundary if selected_class["kind"] != "boundary" else selected_class
+                entry_method = selected_method if selected_class["kind"] == "boundary" else target_boundary["methods"][0]
+                entry_key = (target_boundary["name"], entry_method)
                 if entry_key in used_actor_calls:
                     unused = [
                         candidate["method"]
                         for candidate in plan["candidates"]
-                        if candidate["class_name"] == boundary["name"]
-                        and (boundary["name"], candidate["method"]) not in used_actor_calls
+                        if candidate["class_name"] == target_boundary["name"]
+                        and (target_boundary["name"], candidate["method"]) not in used_actor_calls
                     ]
-                    if not unused:
-                        continue
-                    entry_method = max(
-                        unused,
-                        key=lambda method: _score_method(
-                            plan["sentence"], boundary["name"], method
-                        ),
-                    )
-                    entry_key = (boundary["name"], entry_method)
+                    if unused:
+                        best_alt = max(
+                            unused,
+                            key=lambda method: _score_method(
+                                plan["sentence"], target_boundary["name"], method
+                            ),
+                        )
+                        orig_score = _score_method(plan["sentence"], target_boundary["name"], entry_method)
+                        alt_score = _score_method(plan["sentence"], target_boundary["name"], best_alt)
+                        if alt_score >= orig_score or orig_score == 0:
+                            entry_method = best_alt
+                            entry_key = (target_boundary["name"], entry_method)
                 call_number += 1
                 messages.append(_message(
-                    actor_alias, _alias(boundary["name"]), entry_method, use_case_id,
+                    actor_alias, _alias(target_boundary["name"]), entry_method, use_case_id,
                     plan["step_id"], plan["fragment"], call_number,
                 ))
                 used_actor_calls.add(entry_key)
-                reached.add(_alias(boundary["name"]))
+                reached.add(_alias(target_boundary["name"]))
                 continue
 
             if selected_class["kind"] == "control":
                 source = _alias(boundary["name"])
                 target = _alias(selected_class["name"])
                 if source not in reached:
-                    continue
+                    reached.add(source)
             else:
                 if control is None:
                     source = target = _alias(boundary["name"])
                     if source not in reached:
-                        continue
+                        reached.add(source)
                 else:
                     control_alias = _alias(control["name"])
                     if control_alias not in reached:
                         if _alias(boundary["name"]) not in reached:
-                            continue
+                            reached.add(_alias(boundary["name"]))
                         bridge = control["methods"][0]
                         call_number += 1
                         messages.append(_message(
