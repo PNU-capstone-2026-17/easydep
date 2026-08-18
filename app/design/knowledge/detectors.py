@@ -2394,11 +2394,11 @@ def sequence_flow_order(model: dict, state: dict) -> list[Finding]:
     last_main = -1
     main_positions: dict[int, list[int]] = {}
     for index, message in enumerate(messages):
-        numbers = [
+        numbers = sorted([
             number
             for step_id in message.get("step_ids") or []
             if (number := _main_step_number(str(step_id), use_case_id)) is not None
-        ]
+        ])
         for number in numbers:
             main_positions.setdefault(number, []).append(index)
             if number < last_main:

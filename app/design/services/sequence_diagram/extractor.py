@@ -574,17 +574,20 @@ def _words(value: Any) -> set[str]:
     for token in re.findall(r"[A-Za-z0-9]+", text.lower()):
         if len(token) <= 1 or token in _TOKEN_STOP_WORDS:
             continue
-        if len(token) > 4 and token.endswith("ies"):
-            token = token[:-3] + "y"
-        elif len(token) > 4 and token.endswith("ing"):
-            token = token[:-3]
-        elif len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
-            token = token[:-2] if not token.endswith("ded") and not token.endswith("ted") else token[:-1]
-        elif len(token) > 4 and token.endswith("es"):
-            token = token[:-2]
-        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-            token = token[:-1]
         result.add(token)
+        if len(token) > 4 and token.endswith("ies"):
+            result.add(token[:-3] + "y")
+        elif len(token) > 4 and token.endswith("ing"):
+            result.add(token[:-3])
+            result.add(token[:-3] + "e")
+        elif len(token) > 4 and token.endswith("ed") and not token.endswith("eed"):
+            result.add(token[:-1])
+            result.add(token[:-2])
+        elif len(token) > 4 and token.endswith("es"):
+            result.add(token[:-2])
+            result.add(token[:-1])
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            result.add(token[:-1])
     return result
 
 
@@ -675,6 +678,8 @@ def _pick_method(
         raise ValueError("sequence generation requires at least one callable BCE method")
     best_score = _score_method(sentence, ranked[0][0]["name"], ranked[0][1])
     if best_score:
+        if len(ranked) > 1 and _score_method(sentence, ranked[1][0]["name"], ranked[1][1]) == best_score:
+            return None, "", 0
         return ranked[0][0], ranked[0][1], best_score
     # A lexical tie is not a rule-derived choice.  Keep the candidates for the
     # constrained LLM selector instead of letting list order invent a call.
@@ -692,7 +697,9 @@ def _flow_records(specification: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(extension, dict):
             continue
         anchor = extension.get("branch_step")
-        if not isinstance(anchor, int):
+        if isinstance(anchor, str) and anchor.isdigit():
+            anchor = int(anchor)
+        elif not isinstance(anchor, int):
             label_match = re.match(r"(\d+)", str(extension.get("label") or ""))
             anchor = int(label_match.group(1)) if label_match else None
         target = by_anchor.setdefault(anchor, []) if isinstance(anchor, int) else trailing
@@ -750,7 +757,7 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
             or lowered.startswith(subject + ",")
         )
         for subject in subjects
-    ) or not lowered.startswith(system_subjects)
+    )
 
 
 def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:

@@ -761,7 +761,7 @@ RULES: tuple[Rule, ...] = (
             "a BCE Control method, and a sequence call before implementation starts."
         ),
         citation="OpenAPI Generator requires at least one path operation",
-        evidence="implementation-pipeline-invariant",
+        evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_operations_present",
     ),
@@ -815,7 +815,7 @@ RULES: tuple[Rule, ...] = (
             "method and list that Control in its source classes."
         ),
         citation="app/design/services/api_spec/extractor.py (ApiControlBinding)",
-        evidence="project-convention",
+        evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_binding",
     ),
@@ -828,7 +828,7 @@ RULES: tuple[Rule, ...] = (
             "from a declared path, query, or request-body value of a compatible type."
         ),
         citation="app/design/services/api_spec/extractor.py (ApiControlArgument)",
-        evidence="project-convention",
+        evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_arguments",
     ),
@@ -841,7 +841,7 @@ RULES: tuple[Rule, ...] = (
             "Control outcome, and non-empty responses must not rely on Object/void."
         ),
         citation="app/design/services/api_spec/extractor.py (ApiControlOutcome)",
-        evidence="project-convention",
+        evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_outcomes",
     ),
@@ -854,7 +854,7 @@ RULES: tuple[Rule, ...] = (
             "sequence flow so the endpoint has an executable interaction path."
         ),
         citation="app/design/services/sequence_diagram/reconcile.py (call contracts)",
-        evidence="project-convention",
+        evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="api_control_sequence",
     ),
