@@ -34,6 +34,10 @@ same schema. Rules:
   Control method, map each Control argument from an explicit HTTP request source,
   and name one outcome for every documented response status. Preserve an existing
   binding unchanged unless the feedback or a reported contract issue requires it.
+- If the reported issue says that no API operation exists, add the missing
+  requirement-grounded endpoints. Derive them from actor-to-system use-case
+  behavior and the exact BCE Control calls in the sequence diagram; do not add
+  infrastructure-only or placeholder endpoints.
 Return the revised model strictly according to the provided schema. Do not include
 markdown, code fences, or any prose outside the schema fields.
 """

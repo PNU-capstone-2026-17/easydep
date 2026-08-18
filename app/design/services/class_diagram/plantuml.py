@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from app.design.services.common import multiplicity
+from app.design.services.common import fields
 
 
 # PlantUML 구조 문자: 멤버/라벨 텍스트에 그대로 들어가면 class 본문을 조기에 닫거나
@@ -92,12 +93,17 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         puml_lines.append(f"class {class_name}{stereo_tag} {{")
 
         for field in class_item.get("fields", []):
-            clean_field = sanitize_text(field)
+            # 기존에 저장된 BCE도 다시 열었을 때 `decimal`을 그대로 보이지 않게 한다.
+            # 새 BCE는 extractor에서 이미 정규화되지만, 렌더러는 외부/과거 모델도 받는다.
+            clean_field = sanitize_text(fields.normalize_java_field(str(field)))
             if clean_field:
                 puml_lines.append(f"  - {clean_field}")
 
         for method in class_item.get("methods", []):
-            clean_method = sanitize_text(method)
+            # 과거/외부 BCE도 `Integer`·`Decimal` 매개변수나 반환형을 그대로 보이지
+            # 않게 한다. 새 BCE는 extractor에서 이미 정규화되지만, 렌더러가 마지막
+            # 방어선이다.
+            clean_method = sanitize_text(fields.normalize_java_method(str(method)))
             if clean_method:
                 puml_lines.append(f"  + {clean_method}")
 

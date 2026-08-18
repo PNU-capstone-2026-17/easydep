@@ -65,7 +65,7 @@ CLEAN: dict[str, Any] = {
             "stereotype": "Boundary",
             "description": "Collects the order request from the member.",
             "fields": [],
-            "methods": ["submitOrder()"],
+            "methods": ["submitOrder(orderRequest : OrderRequest)"],
             "use_case_ids": ["UC1"],
         },
         {
@@ -73,7 +73,10 @@ CLEAN: dict[str, Any] = {
             "stereotype": "Control",
             "description": "Coordinates availability check and order recording.",
             "fields": [],
-            "methods": ["placeOrder()", "checkAvailability()"],
+            "methods": [
+                "placeOrder(orderRequest : OrderRequest): void",
+                "checkAvailability(productId : String): boolean",
+            ],
             "use_case_ids": ["UC1"],
         },
         {
@@ -225,6 +228,18 @@ def _entity_link_without_multiplicity() -> dict[str, Any]:
     return model
 
 
+def _untyped_method_parameter() -> dict[str, Any]:
+    model = _clean_model()
+    model["Classes"][1]["methods"][1] = "checkAvailability(productId): boolean"
+    return model
+
+
+def _control_outcome_without_return_contract() -> dict[str, Any]:
+    model = _clean_model()
+    model["Classes"][1]["methods"][1] = "checkAvailability(productId : String)"
+    return model
+
+
 def _uncovered_use_case() -> dict[str, Any]:
     # 모델은 그대로 두고 **상류에 유스케이스를 하나 더** 둔다. 모델이 UC2를 아예 모르므로
     # 커버리지만 깨지고, 지어낸 id는 없으므로 `class.usecase-ids-exist`는 성립한다.
@@ -300,6 +315,18 @@ SEEDED: tuple[Seeded, ...] = (
         "class.entity-association-multiplicity",
         "Order와 OrderLine을 구조적으로 이었는데 다중도가 없다",
         _entity_link_without_multiplicity(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.method-parameters-typed",
+        "checkAvailability의 productId 매개변수에 타입이 없다",
+        _untyped_method_parameter(),
+        _clean_state(),
+    ),
+    Seeded(
+        "class.control-outcome-return-contract",
+        "결과를 확인하는 checkAvailability에 반환 계약이 없다",
+        _control_outcome_without_return_contract(),
         _clean_state(),
     ),
 )

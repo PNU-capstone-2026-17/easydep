@@ -53,6 +53,7 @@ from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.sequence_diagram.methods import (
     method_call_signature,
+    method_name,
     method_return_type,
     normalize_return_type,
 )
@@ -324,6 +325,95 @@ def entity_association_multiplicity(model: dict, state: dict) -> list[Finding]:
                     label,
                 )
             )
+    return found
+
+
+def _parameter_items(signature: str) -> list[str]:
+    """Read comma-separated parameters while preserving generic type commas."""
+    inside = signature.partition("(")[2].rpartition(")")[0]
+    if not inside:
+        return []
+    values: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(inside):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            values.append(inside[start:index])
+            start = index + 1
+    values.append(inside[start:])
+    return values
+
+
+def method_parameters_typed(model: dict, state: dict) -> list[Finding]:
+    """BCE methods that declare inputs make their names and types usable downstream."""
+    rule_id = "class.method-parameters-typed"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        class_name = str(class_item.get("className") or "?")
+        for raw_method in class_item.get("methods") or []:
+            raw_text = str(raw_method)
+            signature = method_call_signature(raw_text)
+            if not signature:
+                continue
+            seen: set[str] = set()
+            invalid = False
+            for item in _parameter_items(signature):
+                name, separator, type_name = item.partition(":")
+                name = name.strip()
+                if (
+                    not separator
+                    or not name
+                    or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                    or not type_name.strip()
+                    or name in seen
+                ):
+                    invalid = True
+                    break
+                seen.add(name)
+            if invalid:
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"메서드 '{raw_text}'의 매개변수는 중복 없이 'name : Type' 형식이어야 함",
+                        class_name,
+                    )
+                )
+    return found
+
+
+_CONTROL_OUTCOME_PREFIXES = (
+    "authenticate", "authorize", "calculate", "check", "create", "find", "generate",
+    "get", "initiate", "list", "process", "register", "search", "select", "show",
+    "validate", "view",
+)
+
+
+def control_outcome_return_contract(model: dict, state: dict) -> list[Finding]:
+    """Result-like Control verbs must state whether they return a value or are void."""
+    rule_id = "class.control-outcome-return-contract"
+    found: list[Finding] = []
+    for class_item in _classes(model):
+        if _stereotype_of(class_item) != CONTROL:
+            continue
+        class_name = str(class_item.get("className") or "?")
+        for raw_method in class_item.get("methods") or []:
+            raw_text = str(raw_method)
+            name = method_name(raw_text)
+            if (
+                name.startswith(_CONTROL_OUTCOME_PREFIXES)
+                and method_return_type(raw_text) is None
+            ):
+                found.append(
+                    Finding(
+                        rule_id,
+                        f"결과·판정 성격의 Control 메서드 '{raw_text}'에 ': ReturnType' 또는 ': void' 계약이 없음",
+                        class_name,
+                    )
+                )
     return found
 
 
@@ -811,6 +901,8 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "communication_rules": communication_rules,
     "relationship_type_known": relationship_type_known,
     "entity_association_multiplicity": entity_association_multiplicity,
+    "method_parameters_typed": method_parameters_typed,
+    "control_outcome_return_contract": control_outcome_return_contract,
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,
     "usecase_coverage": usecase_coverage,
@@ -1122,6 +1214,26 @@ def api_path_parameters(model: dict, state: dict) -> list[Finding]:
         if expected != actual:
             found.append(Finding("api.path-parameters-match", f"경로 변수 {sorted(expected)}와 path_params {sorted(actual)}가 일치하지 않음", f"{endpoint.get('method', 'get').upper()} {path}"))
     return found
+
+
+def api_operations_present(model: dict, state: dict) -> list[Finding]:
+    """Require a generated API model to contain an implementable operation.
+
+    The implementation pipeline always runs OpenAPI Generator, which rejects a
+    schema-only document.  More importantly, a schema without an operation does
+    not realize any user-visible system behaviour.  Treat this as a design-model
+    defect so the normal API repair loop can regenerate grounded endpoints before
+    implementation starts.
+    """
+    endpoints = model.get("Endpoints") if isinstance(model, dict) else None
+    if isinstance(endpoints, list) and any(isinstance(endpoint, dict) for endpoint in endpoints):
+        return []
+    return [
+        Finding(
+            "api.operations-present",
+            "구현 가능한 API operation이 없음 — 유스케이스·BCE Control·시퀀스 호출에 근거한 endpoint를 생성해야 함",
+        )
+    ]
 
 
 def api_schema_references(model: dict, state: dict) -> list[Finding]:
@@ -2791,6 +2903,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_type_validity": sequence_message_type_validity,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
+    "api_operations_present": api_operations_present,
     "api_path_parameters": api_path_parameters,
     "api_schema_references": api_schema_references,
     "api_operation_ids": api_operation_ids,

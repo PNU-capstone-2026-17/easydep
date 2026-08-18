@@ -1,4 +1,8 @@
+import dataclasses
+
+from app.design.graphs.subgraphs import API_SPEC_SPEC
 from app.design.knowledge import detectors
+from app.design.nodes.artifact import check_node
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.validation import design_readiness_report
 
@@ -104,6 +108,45 @@ def test_api_detector_rejects_invalid_references_and_path_parameters():
     }
     found = {item.rule_id for item in detectors.api_spec_findings(model, STATE)}
     assert {"api.path-parameters-match", "api.schema-references-exist", "api.operation-ids-unique", "api.references-exist"} <= found
+
+
+def test_api_detector_rejects_schema_only_model():
+    model = {"Endpoints": [], "Schemas": [{"name": "Order", "fields": []}]}
+
+    found = {item.rule_id for item in detectors.api_spec_findings(model, STATE)}
+
+    assert "api.operations-present" in found
+
+
+def test_schema_only_api_model_is_repaired_before_rendering(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "design_max_repair_iters", 1)
+    state, repaired = _cart_contract_state(
+        {
+            "control": "ShoppingCartController",
+            "method": "getCart",
+            "arguments": [{"name": "cartId", "source": "$path.cartId"}],
+            "outcomes": [
+                {"status": 200, "outcome": "found"},
+                {"status": 404, "outcome": "not_found"},
+            ],
+        }
+    )
+    feedback_seen: list[str] = []
+
+    def revise(_current, feedback, _state, _targets):
+        feedback_seen.append(feedback)
+        return repaired
+
+    spec = dataclasses.replace(API_SPEC_SPEC, revise=revise)
+    result = check_node(spec)(
+        {**state, "api_spec_model": {"Endpoints": [], "Schemas": [{"name": "CartResponse"}]}}
+    )
+
+    assert "api.operations-present" in feedback_seen[0]
+    assert result["api_spec_model"] == repaired
+    assert result["api_spec_check"]["findings"] == []
 
 
 def _cart_contract_state(binding: dict | None) -> tuple[dict, dict]:

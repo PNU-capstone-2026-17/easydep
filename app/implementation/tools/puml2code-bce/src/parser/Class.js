@@ -137,6 +137,9 @@ class Class {
       imports.push('java.util.HashSet');
     }
     if (types.some(type => String(type).includes('DateTime'))) imports.push('java.time.OffsetDateTime');
+    if (types.some(type => /\b(?:BigDecimal|Decimal)\b/i.test(String(type)))) {
+      imports.push('java.math.BigDecimal');
+    }
     return imports;
   }
 

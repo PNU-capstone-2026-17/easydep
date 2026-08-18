@@ -290,6 +290,64 @@ RULES: tuple[Rule, ...] = (
             "판정은 ERD 쪽에서 좁은 조건으로만 한다(`erd.field-looks-like-reference`)."
         ),
     ),
+    Rule(
+        id="class.method-parameters-typed",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "Every declared method parameter must be a unique named, typed value in "
+            "the form `parameterName : Type`; an empty parameter list is written `()`."
+        ),
+        citation=(
+            "app/design/services/sequence_diagram/extractor.py "
+            "(SequenceArgumentBinding requires the receiver parameter name and type)"
+        ),
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="method_parameters_typed",
+        generation_note=(
+            "Use `methodName()` only when no new value crosses into the receiver. "
+            "Do not use `...` as a placeholder parameter."
+        ),
+    ),
+    Rule(
+        id="class.control-outcome-return-contract",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "A Control operation named as a query, check, validation, authentication, "
+            "authorization, calculation, processing, creation, registration, selection, "
+            "initiation, or generation must explicitly declare `: ReturnType` or `: void`."
+        ),
+        citation=(
+            "app/design/services/sequence_diagram/extractor.py "
+            "(non-void Control calls have a matching typed return)"
+        ),
+        evidence="project-convention",
+        caveat=(
+            "동사만으로 실제 결과 사용 여부를 완전히 판정할 수 없으므로, 이 규칙은 "
+            "반환값 자체를 추측하지 않고 명시적 계약(`ReturnType` 또는 `void`)만 요구한다."
+        ),
+        judged_by=JUDGED_DETECTOR,
+        detector="control_outcome_return_contract",
+    ),
+    Rule(
+        id="class.operation-inputs-explicit",
+        stage=CLASS_DIAGRAM,
+        severity=GUIDANCE,
+        statement=(
+            "When the use-case text says a caller submits, selects, filters, searches "
+            "by, identifies, or supplies a value to an operation, declare that value as "
+            "a named, typed parameter rather than hiding it behind an empty `()`."
+        ),
+        citation="app/design/services/class_diagram/extractor.py (method signature derivation)",
+        evidence="project-convention",
+        caveat=(
+            "어떤 값이 실제로 경계를 넘어오는지는 유스케이스 문장의 의미를 읽어야 하므로, "
+            "이 프로젝트는 빈 괄호만 보고 자동 결함으로 단정하지 않고 생성·수정 단계의 "
+            "명시적 지침으로 둔다."
+        ),
+    ),
     # --- 형태 ---------------------------------------------------------------
     Rule(
         id="class.names-unique",
@@ -694,6 +752,19 @@ RULES: tuple[Rule, ...] = (
         detector="sequence_message_type_validity",
     ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
+    Rule(
+        id="api.operations-present",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "The API model must contain at least one operation grounded in a use case, "
+            "a BCE Control method, and a sequence call before implementation starts."
+        ),
+        citation="OpenAPI Generator requires at least one path operation",
+        evidence="implementation-pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_operations_present",
+    ),
     Rule(
         id="api.path-parameters-match",
         stage=API_SPEC,

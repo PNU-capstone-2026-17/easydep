@@ -27,8 +27,13 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-#: 언어 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면 원문 대문자,
-#: 타입이 아예 없으면 `None`.
+#: BCE에서 쓰는 Java 자료형 → RDBMS 자료형. **없는 것은 지어내지 않는다** — 표에 없으면
+#: 원문 대문자, 타입이 아예 없으면 `None`.
+#:
+#: BCE는 Java 구현으로 이어지므로 SQL 이름(`INT`·`BIGINT`·`DECIMAL`)을 직접 적지 않는다.
+#: 정수는 Java `int`/`long`에서 각각 SQL `INT`/`BIGINT`로, 정확한 소수는 Java
+#: `BigDecimal`에서 SQL `DECIMAL(19,4)`로 간다. `decimal`은 Java 타입이 아니므로
+#: `canonical_java_type`가 `BigDecimal`로 정규화한다.
 SQL_TYPES: dict[str, str] = {
     "string": "VARCHAR(255)",
     "int": "INT",
@@ -40,7 +45,50 @@ SQL_TYPES: dict[str, str] = {
     "datetime": "DATETIME",
     "float": "FLOAT",
     "double": "DOUBLE",
+    "bigdecimal": "DECIMAL(19,4)",
+    # 이미 저장된 과거 BCE/외부 입력도 SQL 이름을 그대로 내보내지 않도록 방어한다.
+    "decimal": "DECIMAL(19,4)",
 }
+
+
+#: LLM이 흔히 쓰는 별칭을 BCE의 Java 타입 표기로 한 번만 모은다. 값이 아닌 도메인
+#: 클래스명은 건드리지 않기 위해 **전체 타입이 정확히 일치할 때만** 정규화한다.
+_JAVA_TYPE_ALIASES: dict[str, str] = {
+    "str": "String",
+    "string": "String",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "integer": "int",
+    "int": "int",
+    "long": "long",
+    "float": "float",
+    "double": "double",
+    "decimal": "BigDecimal",
+    "bigdecimal": "BigDecimal",
+}
+
+
+def _split_top_level_items(text: str) -> list[str]:
+    """Split a comma-separated generic list without splitting ``Map<A, B>``.
+
+    BCE method parameters and Java generic types use the same comma syntax.
+    Keeping this small reader here means the class renderer normalizes
+    ``List<Decimal>`` and ``method(values : List<Decimal>)`` consistently.
+    It deliberately does not try to interpret arbitrary Java syntax.
+    """
+    items: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(text):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return items
 
 
 def sanitize_entity_name(name: str) -> str:
@@ -82,11 +130,88 @@ def split_field(raw: str) -> tuple[str, str | None]:
     return clean, None
 
 
-def sql_type(raw_type: str | None) -> str | None:
-    """언어 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
+def canonical_java_type(raw_type: str | None) -> str | None:
+    """BCE 필드 타입의 흔한 별칭을 Java 표기로 정규화한다.
+
+    `decimal`은 Java의 타입이 아니어서 그대로 두면 클래스 다이어그램·코드 생성·ERD가
+    서로 다른 뜻으로 읽는다. 소수 값이라는 뜻은 보존해 `BigDecimal`로 바꾼다. 반대로
+    알 수 없는 이름은 Entity 또는 값 객체일 수 있으므로 건드리지 않는다.
+    """
     if not raw_type:
         return None
-    return SQL_TYPES.get(raw_type.strip().lower(), raw_type.strip().upper())
+    text = raw_type.strip()
+    if text.endswith("[]"):
+        item_type = canonical_java_type(text[:-2])
+        return f"{item_type}[]" if item_type else text
+
+    generic = re.fullmatch(r"([^<>]+)<(.*)>", text)
+    if generic:
+        head, raw_items = generic.groups()
+        items = _split_top_level_items(raw_items)
+        normalized_items = [canonical_java_type(item.strip()) or item.strip() for item in items]
+        return f"{head.strip()}<{', '.join(normalized_items)}>"
+    return _JAVA_TYPE_ALIASES.get(text.lower(), text)
+
+
+def normalize_java_field(raw: str) -> str:
+    """`name : Type` 필드를 Java BCE 표기로 정규화한다.
+
+    타입이 생략된 필드는 그대로 둔다. 타입을 추정해서 채우지 않는다는 BCE 계약은 이
+    함수에서도 유지한다.
+    """
+    name, raw_type = split_field(raw)
+    if not raw_type:
+        return sanitize_text(raw)
+    return f"{name} : {canonical_java_type(raw_type)}"
+
+
+def normalize_java_method(raw: str) -> str:
+    """Normalize declared parameter and return types in a BCE method signature.
+
+    Method strings remain deliberately open because they are analysis-model text,
+    not Java source.  We only rewrite the scalar aliases after a ``:`` in an
+    otherwise conventional ``method(name : Type): ReturnType`` declaration.
+    A malformed or domain-specific signature is returned unchanged for the
+    class-diagram validation gate to report rather than silently guessing.
+    """
+    clean = sanitize_text(raw)
+    match = re.fullmatch(
+        r"(?P<visibility>[+\-#~]\s*)?"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\((?P<parameters>[^()]*)\)"
+        r"(?P<return>\s*:\s*(?P<return_type>.+))?",
+        clean,
+    )
+    if not match:
+        return clean
+
+    normalized_parameters: list[str] = []
+    raw_parameters = match.group("parameters").strip()
+    if raw_parameters:
+        for raw_parameter in _split_top_level_items(raw_parameters):
+            name, separator, raw_type = raw_parameter.partition(":")
+            if separator and name.strip() and raw_type.strip():
+                normalized_parameters.append(
+                    f"{name.strip()} : {canonical_java_type(raw_type) or raw_type.strip()}"
+                )
+            else:
+                normalized_parameters.append(raw_parameter.strip())
+
+    visibility = (match.group("visibility") or "").strip()
+    prefix = f"{visibility} " if visibility else ""
+    rendered = f"{prefix}{match.group('name')}({', '.join(normalized_parameters)})"
+    raw_return_type = match.group("return_type")
+    if raw_return_type:
+        rendered += f": {canonical_java_type(raw_return_type) or raw_return_type.strip()}"
+    return rendered
+
+
+def sql_type(raw_type: str | None) -> str | None:
+    """Java BCE 자료형 → RDBMS 자료형. 모르면 원문 대문자, 없으면 `None`."""
+    if not raw_type:
+        return None
+    canonical = canonical_java_type(raw_type)
+    return SQL_TYPES.get(canonical.lower(), canonical.upper())
 
 
 def inner_type(raw_type: str) -> str | None:

@@ -34,9 +34,16 @@ the same schema. How to edit:
 - Change only what the feedback asks for; leave everything else intact.
 - Keep the model grounded in the use-case specification — do not invent classes,
   fields, methods, or relationships that the feedback and spec do not support.
-- Write methods as `methodName(...)`. If a caller uses a method's result, declare
-  its return type as `methodName(...): ReturnType`; sequence return labels are
-  validated against this declaration.
+- Write methods as `methodName()` or `methodName(parameterName : Type, ...)`; `...`
+  itself is not a parameter. Add a named, typed parameter for each value the
+  specification says a caller submits, selects, searches by, identifies, or supplies
+  to the receiver. Do not leave such a method parameterless, and do not invent
+  parameters for Entity state the receiver already has. If a caller uses a method's
+  result, declare its return type as `methodName(...): ReturnType`; sequence return
+  labels are validated against this declaration. Use `: void` for commands with no
+  result. Control operations that query, validate, authenticate, authorize,
+  calculate, process, create, register, select, initiate, or generate an outcome
+  must explicitly say either `: ReturnType` or `: void`.
 - Carry `use_case_ids` over unchanged for elements you did not touch; update them
   for elements you changed; fill them in for elements you added.
 - Behavioural links (through a Boundary or Control) carry no multiplicity.

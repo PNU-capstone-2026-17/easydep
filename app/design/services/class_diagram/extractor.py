@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.design.knowledge import rules
+from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
 
 
@@ -103,15 +104,31 @@ _PROCEDURE = """
 4. Entity derivation: promote a noun to Entity only if it is created, read, \
    updated, deleted, or otherwise persists beyond the use case. Do not \
    promote one-off values or pure modifiers.
-5. Method signature derivation: write operations as `methodName(...)`. When the \
-   use-case flow says the caller uses a produced result, declare its type as \
+5. Method signature derivation: write every operation as either `methodName()` or \
+   `methodName(parameterName : Type, ...)`; the literal `...` is not a parameter. \
+   Derive parameters from values the scenario says a caller submits, selects, \
+   searches by, identifies, or supplies to the receiver. For example, email and \
+   password, a keyword, a selected product id, an address, a quantity, or payment \
+   information are parameters when the receiver must receive those values. Do not \
+   leave a parameterless method when the scenario explicitly supplies data to it, \
+   but do not turn long-lived Entity state into parameters merely because the \
+   receiver can already read it. Every declared parameter needs both a name and a \
+   Java/domain type. When the caller uses a produced result, declare \
    `methodName(...): ReturnType`; that declaration is the contract used by return \
-   messages in the sequence diagram. Omit the return type rather than guessing it. \
+   messages in the sequence diagram. Use `: void` for a command with no result. \
+   In particular, Control operations that query, validate, authenticate, authorize, \
+   calculate, process, create, register, select, initiate, or generate an outcome \
+   must declare an explicit `: ReturnType` or `: void`; choose a non-void type when \
+   the caller uses the outcome. \
 6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
    `name : Type` when the text tells you the type; leave the type off rather \
-   than guessing one.
+   than guessing one. This is a Java-targeted model: use `int` for ordinary \
+   integral counts and `long` for wide-range integral values/identifiers; use \
+   `BigDecimal` only when an exact fractional value is explicitly required. \
+   Never write SQL types (`INT`, `BIGINT`, `DECIMAL`) or the non-Java type \
+   `decimal` in a BCE field.
 7. Identifier derivation: for each Entity, if the text names a field that \
    already identifies it (an ISBN, an account number, an email used as the \
    login), list those field names in `identifier`. Leave `identifier` empty \
@@ -156,10 +173,12 @@ Input (excerpt):
 Expected extraction (excerpt, illustrating granularity and naming only —
 your actual output must follow the response schema, not this JSON text):
 - SignUpForm <<Boundary>> — collects email/password from the Visitor.
-  methods: submitSignUpForm()
+  methods: submitSignUpForm(email : String, password : String)
 - SignUpController <<Control>> — coordinates duplicate check, account
   creation, history recording, and confirmation email.
-  methods: registerMember(), checkDuplicateEmail(), sendConfirmationEmail()
+  methods: registerMember(email : String, password : String): Member,
+           checkDuplicateEmail(email : String): boolean,
+           sendConfirmationEmail(member : Member): void
 - Member <<Entity>> — persistent account record.
   fields: email : String, password : String, registeredAt : DateTime
   identifier: email          (the text says the email identifies the account)
@@ -225,13 +244,35 @@ def rules_section(stage: str = rules.CLASS_DIAGRAM) -> str:
 BCE_CLASS_EXTRACTION_SYSTEM_PROMPT = _PREAMBLE + rules_section() + _PROCEDURE
 
 
+def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep parsed BCE fields in the Java type vocabulary used downstream.
+
+    The schema deliberately leaves field strings open because they may name an
+    Entity or a domain value object.  That openness previously let an LLM's
+    `decimal` alias pass unchanged into the ERD fallback.  Normalize only the
+    known scalar aliases; unknown declared types remain untouched.
+    """
+    for class_item in result.get("Classes") or []:
+        if not isinstance(class_item, dict):
+            continue
+        class_item["fields"] = [
+            fields.normalize_java_field(str(field))
+            for field in class_item.get("fields") or []
+        ]
+        class_item["methods"] = [
+            fields.normalize_java_method(str(method))
+            for method in class_item.get("methods") or []
+        ]
+    return result
+
+
 def run_bce_parse(messages: list[dict[str, str]]) -> dict[str, Any]:
     """BCE 구조화 완성. 클래스 다이어그램과 ERD의 추출·수정이 공유한다.
 
     LLM은 항상 BCEExtractionResult 스키마로만 답하므로, 반환은 검증된 BCE dict다.
     호출 배관 자체는 다섯 산출물이 공유한다(common.structured.parse_structured).
     """
-    return parse_structured(messages, BCEExtractionResult)
+    return _normalize_field_types(parse_structured(messages, BCEExtractionResult))
 
 
 def extract_bce_classes_from_scenario(scenario_text: str) -> dict[str, Any]:
