@@ -102,7 +102,6 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
         for method in class_item.get("methods", []):
             clean_method = sanitize_text(method)
             if clean_method:
-                clean_method = re.sub(r"\(\s*\.{3}\s*\)", "()", clean_method)
                 puml_lines.append(f"  + {clean_method}")
 
         puml_lines.append("}")

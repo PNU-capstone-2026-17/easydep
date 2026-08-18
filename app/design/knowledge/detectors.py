@@ -1124,6 +1124,26 @@ def api_path_parameters(model: dict, state: dict) -> list[Finding]:
     return found
 
 
+def api_operations_present(model: dict, state: dict) -> list[Finding]:
+    """Require a generated API model to contain an implementable operation.
+
+    The implementation pipeline always runs OpenAPI Generator, which rejects a
+    schema-only document.  More importantly, a schema without an operation does
+    not realize any user-visible system behaviour.  Treat this as a design-model
+    defect so the normal API repair loop can regenerate grounded endpoints before
+    implementation starts.
+    """
+    endpoints = model.get("Endpoints") if isinstance(model, dict) else None
+    if isinstance(endpoints, list) and any(isinstance(endpoint, dict) for endpoint in endpoints):
+        return []
+    return [
+        Finding(
+            "api.operations-present",
+            "구현 가능한 API operation이 없음 — 유스케이스·BCE Control·시퀀스 호출에 근거한 endpoint를 생성해야 함",
+        )
+    ]
+
+
 def api_schema_references(model: dict, state: dict) -> list[Finding]:
     schemas = {str(item.get("name", "")).strip() for item in model.get("Schemas", []) if item.get("name")}
     found: list[Finding] = []
@@ -2791,6 +2811,7 @@ SEQUENCE_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "sequence_message_type_validity": sequence_message_type_validity,
 }
 API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
+    "api_operations_present": api_operations_present,
     "api_path_parameters": api_path_parameters,
     "api_schema_references": api_schema_references,
     "api_operation_ids": api_operation_ids,

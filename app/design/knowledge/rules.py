@@ -695,6 +695,19 @@ RULES: tuple[Rule, ...] = (
     ),
     # --- API 명세: 모델 참조 무결성 -----------------------------------------
     Rule(
+        id="api.operations-present",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "The API model must contain at least one operation grounded in a use case, "
+            "a BCE Control method, and a sequence call before implementation starts."
+        ),
+        citation="OpenAPI Generator requires at least one path operation",
+        evidence="implementation-pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_operations_present",
+    ),
+    Rule(
         id="api.path-parameters-match",
         stage=API_SPEC,
         severity=DEFECT,
