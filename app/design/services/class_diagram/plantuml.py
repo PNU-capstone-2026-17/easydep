@@ -100,7 +100,10 @@ def generate_plantuml_from_bce_json(json_data: dict[str, Any]) -> str:
                 puml_lines.append(f"  - {clean_field}")
 
         for method in class_item.get("methods", []):
-            clean_method = sanitize_text(method)
+            # 과거/외부 BCE도 `Integer`·`Decimal` 매개변수나 반환형을 그대로 보이지
+            # 않게 한다. 새 BCE는 extractor에서 이미 정규화되지만, 렌더러가 마지막
+            # 방어선이다.
+            clean_method = sanitize_text(fields.normalize_java_method(str(method)))
             if clean_method:
                 puml_lines.append(f"  + {clean_method}")
 

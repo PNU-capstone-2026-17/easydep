@@ -68,6 +68,29 @@ _JAVA_TYPE_ALIASES: dict[str, str] = {
 }
 
 
+def _split_top_level_items(text: str) -> list[str]:
+    """Split a comma-separated generic list without splitting ``Map<A, B>``.
+
+    BCE method parameters and Java generic types use the same comma syntax.
+    Keeping this small reader here means the class renderer normalizes
+    ``List<Decimal>`` and ``method(values : List<Decimal>)`` consistently.
+    It deliberately does not try to interpret arbitrary Java syntax.
+    """
+    items: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(text):
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return items
+
+
 def sanitize_entity_name(name: str) -> str:
     """테이블 식별자에 안전한 단어 문자만 남긴다."""
     if not name:
@@ -117,6 +140,16 @@ def canonical_java_type(raw_type: str | None) -> str | None:
     if not raw_type:
         return None
     text = raw_type.strip()
+    if text.endswith("[]"):
+        item_type = canonical_java_type(text[:-2])
+        return f"{item_type}[]" if item_type else text
+
+    generic = re.fullmatch(r"([^<>]+)<(.*)>", text)
+    if generic:
+        head, raw_items = generic.groups()
+        items = _split_top_level_items(raw_items)
+        normalized_items = [canonical_java_type(item.strip()) or item.strip() for item in items]
+        return f"{head.strip()}<{', '.join(normalized_items)}>"
     return _JAVA_TYPE_ALIASES.get(text.lower(), text)
 
 
@@ -130,6 +163,47 @@ def normalize_java_field(raw: str) -> str:
     if not raw_type:
         return sanitize_text(raw)
     return f"{name} : {canonical_java_type(raw_type)}"
+
+
+def normalize_java_method(raw: str) -> str:
+    """Normalize declared parameter and return types in a BCE method signature.
+
+    Method strings remain deliberately open because they are analysis-model text,
+    not Java source.  We only rewrite the scalar aliases after a ``:`` in an
+    otherwise conventional ``method(name : Type): ReturnType`` declaration.
+    A malformed or domain-specific signature is returned unchanged for the
+    class-diagram validation gate to report rather than silently guessing.
+    """
+    clean = sanitize_text(raw)
+    match = re.fullmatch(
+        r"(?P<visibility>[+\-#~]\s*)?"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\((?P<parameters>[^()]*)\)"
+        r"(?P<return>\s*:\s*(?P<return_type>.+))?",
+        clean,
+    )
+    if not match:
+        return clean
+
+    normalized_parameters: list[str] = []
+    raw_parameters = match.group("parameters").strip()
+    if raw_parameters:
+        for raw_parameter in _split_top_level_items(raw_parameters):
+            name, separator, raw_type = raw_parameter.partition(":")
+            if separator and name.strip() and raw_type.strip():
+                normalized_parameters.append(
+                    f"{name.strip()} : {canonical_java_type(raw_type) or raw_type.strip()}"
+                )
+            else:
+                normalized_parameters.append(raw_parameter.strip())
+
+    visibility = (match.group("visibility") or "").strip()
+    prefix = f"{visibility} " if visibility else ""
+    rendered = f"{prefix}{match.group('name')}({', '.join(normalized_parameters)})"
+    raw_return_type = match.group("return_type")
+    if raw_return_type:
+        rendered += f": {canonical_java_type(raw_return_type) or raw_return_type.strip()}"
+    return rendered
 
 
 def sql_type(raw_type: str | None) -> str | None:

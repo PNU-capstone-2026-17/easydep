@@ -104,10 +104,22 @@ _PROCEDURE = """
 4. Entity derivation: promote a noun to Entity only if it is created, read, \
    updated, deleted, or otherwise persists beyond the use case. Do not \
    promote one-off values or pure modifiers.
-5. Method signature derivation: write operations as `methodName(...)`. When the \
-   use-case flow says the caller uses a produced result, declare its type as \
+5. Method signature derivation: write every operation as either `methodName()` or \
+   `methodName(parameterName : Type, ...)`; the literal `...` is not a parameter. \
+   Derive parameters from values the scenario says a caller submits, selects, \
+   searches by, identifies, or supplies to the receiver. For example, email and \
+   password, a keyword, a selected product id, an address, a quantity, or payment \
+   information are parameters when the receiver must receive those values. Do not \
+   leave a parameterless method when the scenario explicitly supplies data to it, \
+   but do not turn long-lived Entity state into parameters merely because the \
+   receiver can already read it. Every declared parameter needs both a name and a \
+   Java/domain type. When the caller uses a produced result, declare \
    `methodName(...): ReturnType`; that declaration is the contract used by return \
-   messages in the sequence diagram. Omit the return type rather than guessing it. \
+   messages in the sequence diagram. Use `: void` for a command with no result. \
+   In particular, Control operations that query, validate, authenticate, authorize, \
+   calculate, process, create, register, select, initiate, or generate an outcome \
+   must declare an explicit `: ReturnType` or `: void`; choose a non-void type when \
+   the caller uses the outcome. \
 6. Field derivation: assign fields to state a class must hold — Entities \
    first; give fields to a Control or Boundary only if it must hold state \
    across steps. Do not list getters/setters as methods. Write each field as \
@@ -161,10 +173,12 @@ Input (excerpt):
 Expected extraction (excerpt, illustrating granularity and naming only —
 your actual output must follow the response schema, not this JSON text):
 - SignUpForm <<Boundary>> — collects email/password from the Visitor.
-  methods: submitSignUpForm()
+  methods: submitSignUpForm(email : String, password : String)
 - SignUpController <<Control>> — coordinates duplicate check, account
   creation, history recording, and confirmation email.
-  methods: registerMember(), checkDuplicateEmail(), sendConfirmationEmail()
+  methods: registerMember(email : String, password : String): Member,
+           checkDuplicateEmail(email : String): boolean,
+           sendConfirmationEmail(member : Member): void
 - Member <<Entity>> — persistent account record.
   fields: email : String, password : String, registeredAt : DateTime
   identifier: email          (the text says the email identifies the account)
@@ -244,6 +258,10 @@ def _normalize_field_types(result: dict[str, Any]) -> dict[str, Any]:
         class_item["fields"] = [
             fields.normalize_java_field(str(field))
             for field in class_item.get("fields") or []
+        ]
+        class_item["methods"] = [
+            fields.normalize_java_method(str(method))
+            for method in class_item.get("methods") or []
         ]
     return result
 

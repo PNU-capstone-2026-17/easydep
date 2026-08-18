@@ -65,7 +65,9 @@ def test_java_scalar_aliases_are_rendered_in_one_bce_vocabulary():
         "Classes": [{
             "className": "Product", "stereotype": "Entity",
             "fields": ["inventoryQuantity : Integer", "price : Decimal"],
-            "methods": [],
+            "methods": [
+                "reserve(quantity : Integer, unitPrice : Decimal): Decimal"
+            ],
         }],
         "Relationships": [],
     }
@@ -75,6 +77,7 @@ def test_java_scalar_aliases_are_rendered_in_one_bce_vocabulary():
 
     assert "inventoryQuantity : int" in class_puml
     assert "price : BigDecimal" in class_puml
+    assert "reserve(quantity : int, unitPrice : BigDecimal): BigDecimal" in class_puml
     assert " : Integer" not in class_puml and " : Decimal" not in class_puml
     assert "inventoryQuantity : INT" in erd_puml
     assert "price : DECIMAL(19,4)" in erd_puml
