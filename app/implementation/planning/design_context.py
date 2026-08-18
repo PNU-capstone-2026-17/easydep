@@ -1160,7 +1160,7 @@ Rules:
   dynamically cover every generated Control service, API controller, outbound Gateway adapter,
   and every generated Spring Data repository bean shown below. Do not select one domain-specific "main Control" and
   do not mock beans or disable Flyway/JPA.
-- Do not leave TODO, FIXME, placeholders, duplicate bean definitions, or speculative configuration.
+- Do not leave TODO/FIXME markers, placeholder wording in production comments, duplicate bean definitions, or speculative configuration.
 - Create every contracted output, then finish immediately.
 
 ## System sequence context

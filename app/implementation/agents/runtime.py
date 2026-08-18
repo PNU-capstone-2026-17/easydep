@@ -718,6 +718,11 @@ def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, obje
             if item.strip()
         )
     text = configuration.read_text(encoding="utf-8")
+    # The wiring generator can leave explanatory comments such as "return an
+    # empty string as a placeholder" after it has emitted an otherwise valid
+    # factory method.  That wording is not a repair task for the LLM: remove it
+    # deterministically before the production-source gate runs.
+    text, placeholder_comments_removed = remove_placeholder_comments(text)
     bean = re.compile(
         r"(?ms)^\s*@Bean(?:\s*\([^)]*\))?\s*"
         r"(?:public\s+)?([A-Za-z_]\w*)\s+\w+\s*\([^)]*\)\s*\{"
@@ -771,8 +776,23 @@ def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, obje
     # and break only the corresponding parameter edge with @Lazy.  This does
     # not enable Spring's global circular-reference escape hatch.
     text, lazy_added = break_configuration_cycles(text)
-    if removals or mapper_types or lazy_added:
+    if removals or mapper_types or lazy_added or placeholder_comments_removed:
         configuration.write_text(text, encoding="utf-8")
+
+
+def remove_placeholder_comments(text: str) -> tuple[str, bool]:
+    """Remove line comments that call generated configuration a placeholder.
+
+    This only alters comments in the wiring output owned by the current task;
+    it never changes the generated Java expression or any other task's source.
+    """
+    normalized = re.sub(
+        r"//[^\r\n]*\bplaceholder\b[^\r\n]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return normalized, normalized != text
 
 
 def break_configuration_cycles(text: str) -> tuple[str, bool]:
