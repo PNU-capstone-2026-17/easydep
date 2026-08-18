@@ -660,8 +660,7 @@ def _method_candidates(class_item: dict[str, Any], actor_led: bool) -> list[str]
 def _pick_method(
     sentence: str,
     candidates: list[tuple[dict[str, Any], str]],
-    ordinal: int,
-) -> tuple[dict[str, Any], str, int]:
+) -> tuple[dict[str, Any] | None, str, int]:
     ranked = sorted(
         candidates,
         key=lambda item: (
@@ -675,8 +674,11 @@ def _pick_method(
     best_score = _score_method(sentence, ranked[0][0]["name"], ranked[0][1])
     if best_score:
         return ranked[0][0], ranked[0][1], best_score
-    fallback = candidates[ordinal % len(candidates)]
-    return fallback[0], fallback[1], 0
+    # A lexical tie is not a rule-derived choice.  Keep the candidates for the
+    # constrained LLM selector instead of letting list order invent a call.
+    if len(candidates) == 1:
+        return ranked[0][0], ranked[0][1], 1
+    return None, "", 0
 
 
 def _flow_records(specification: dict[str, Any]) -> list[dict[str, Any]]:
@@ -748,8 +750,9 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
 def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
     """불확실한 단계의 메서드 선택만 한 번의 작은 LLM 요청으로 보완한다.
 
-    응답이 실패하거나 후보 밖의 값을 고르면 규칙 기반 기본 선택을 유지한다. 선택적
-    보완 때문에 전체 시퀀스 생성이 실패하거나 다시 오래 멈추지 않게 하는 경계다.
+    응답이 실패하거나 후보 밖의 값을 고르면 그 단계는 생성하지 않는다. 선택적 보완
+    때문에 전체 시퀀스 생성이 실패하거나, 후보 순서가 근거 없는 호출을 만들지 않게
+    하는 경계다.
     """
     uncertain = [plan for plan in plans if plan["score"] == 0]
     if not uncertain:
@@ -784,7 +787,7 @@ def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[s
         selected = parse_structured(messages, SequenceElementSelections)
     except Exception:  # optional enrichment must never prevent deterministic generation
         logger.warning(
-            "optional sequence element selection failed; using deterministic defaults",
+            "optional sequence element selection failed; leaving uncertain steps uncovered",
             exc_info=True,
         )
         return {}
@@ -875,7 +878,7 @@ def _build_sequence_plans(
             classes, "control", use_case_name, use_case_index
         )
 
-        for ordinal, record in enumerate(_flow_records(specification)):
+        for record in _flow_records(specification):
             actor_step = _actor_led(record["sentence"], actor)
             candidate_classes = [boundary] if actor_step or control is None else [boundary, control]
             candidates = [
@@ -884,7 +887,7 @@ def _build_sequence_plans(
                 for method in _method_candidates(class_item, actor_step)
             ]
             selected_class, selected_method, score = _pick_method(
-                record["sentence"], candidates, ordinal
+                record["sentence"], candidates
             )
             plans.append({
                 **record,
@@ -931,11 +934,20 @@ def _assemble_deterministic_diagrams(
         used_actor_calls: set[tuple[str, str]] = set()
         call_number = 0
 
-        for plan_index, plan in enumerate(use_case_plans):
+        for plan in use_case_plans:
             selected_name, selected_method = selections.get(
                 plan["step_id"],
-                (plan["selected_class"]["name"], plan["selected_method"]),
+                (
+                    plan["selected_class"]["name"],
+                    plan["selected_method"],
+                ) if plan["selected_class"] is not None else ("", ""),
             )
+            # No deterministic rule and no valid constrained LLM choice means
+            # this step remains intentionally uncovered for the validation gate.
+            # Generating a call from candidate order would make a false sequence
+            # appear implementable.
+            if not selected_name or not selected_method:
+                continue
             selected_class = classes[selected_name]
             boundary = plan["boundary"]
             control = plan["control"]
@@ -943,30 +955,30 @@ def _assemble_deterministic_diagrams(
             if control is not None:
                 participants.setdefault(_alias(control["name"]), _participant(control))
 
-            # The first observable interaction is always the use-case actor entering
-            # through its boundary. It also establishes the causal chain for later calls.
-            if plan_index == 0 or plan["actor_led"]:
-                entry_methods = _method_candidates(boundary, True)
-                entry_method = (
-                    selected_method
-                    if selected_class["kind"] == "boundary"
-                    else entry_methods[plan_index % len(entry_methods)]
-                )
+            # An actor entry is emitted only for an actor-led use-case step.  The
+            # former "first step" fallback picked an arbitrary Boundary method
+            # when a specification started with system behavior.
+            if plan["actor_led"]:
+                if selected_class["kind"] != "boundary":
+                    continue
+                entry_method = selected_method
                 entry_key = (boundary["name"], entry_method)
-                if plan["actor_led"] and entry_key in used_actor_calls:
+                if entry_key in used_actor_calls:
                     unused = [
-                        method
-                        for method in entry_methods
-                        if (boundary["name"], method) not in used_actor_calls
+                        candidate["method"]
+                        for candidate in plan["candidates"]
+                        if candidate["class_name"] == boundary["name"]
+                        and (boundary["name"], candidate["method"]) not in used_actor_calls
                     ]
-                    if unused:
-                        entry_method = max(
-                            unused,
-                            key=lambda method: _score_method(
-                                plan["sentence"], boundary["name"], method
-                            ),
-                        )
-                        entry_key = (boundary["name"], entry_method)
+                    if not unused:
+                        continue
+                    entry_method = max(
+                        unused,
+                        key=lambda method: _score_method(
+                            plan["sentence"], boundary["name"], method
+                        ),
+                    )
+                    entry_key = (boundary["name"], entry_method)
                 call_number += 1
                 messages.append(_message(
                     actor_alias, _alias(boundary["name"]), entry_method, use_case_id,
@@ -974,18 +986,23 @@ def _assemble_deterministic_diagrams(
                 ))
                 used_actor_calls.add(entry_key)
                 reached.add(_alias(boundary["name"]))
-                if selected_class["kind"] == "boundary":
-                    continue
+                continue
 
             if selected_class["kind"] == "control":
                 source = _alias(boundary["name"])
                 target = _alias(selected_class["name"])
+                if source not in reached:
+                    continue
             else:
                 if control is None:
                     source = target = _alias(boundary["name"])
+                    if source not in reached:
+                        continue
                 else:
                     control_alias = _alias(control["name"])
                     if control_alias not in reached:
+                        if _alias(boundary["name"]) not in reached:
+                            continue
                         bridge = control["methods"][0]
                         call_number += 1
                         messages.append(_message(

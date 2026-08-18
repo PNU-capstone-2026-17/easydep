@@ -210,6 +210,33 @@ OrderApi ..> OrderControl
     assert result["Diagrams"][0]["Messages"][-1]["label"] == "persistOrder()"
 
 
+def test_uncertain_steps_are_not_filled_from_candidate_order_when_llm_fails():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Order", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Order",
+            "primary_actor": "Buyer",
+            "main_scenario": [{"step_number": 1, "sentence": "Buyer initiates a workflow"}],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class OrderApi <<Boundary>> {
+  + submitOrder()
+  + cancelOrder()
+}
+@enduml"""
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        side_effect=StructuredLlmError("selection unavailable"),
+    ):
+        result = extract_sequence_diagrams(specification, class_diagram)
+
+    assert result["Diagrams"][0]["Messages"] == []
+
+
 def test_llm_selection_cannot_reuse_an_actor_operation_when_an_alternative_exists():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],
