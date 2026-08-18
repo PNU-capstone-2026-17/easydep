@@ -13,21 +13,21 @@ from app.core.orchestration.adapters.cloud_design import CloudDesignAdapter
             "ap-northeast-2",
             "autoscaling-group",
             "EC2 Auto Scaling Group",
-            "Application Load Balancer",
+            "Network Load Balancer",
         ),
         (
             "azure",
             "koreacentral",
             "virtual-machine-scale-set",
             "Virtual Machine Scale Set",
-            "Application Gateway",
+            "Load Balancer",
         ),
         (
             "gcp",
             "asia-northeast3",
             "regional-managed-instance-group",
             "Regional Managed Instance Group",
-            "Global Forwarding Rule",
+            "Forwarding Rule",
         ),
     ],
 )
@@ -380,7 +380,7 @@ def test_persistent_state_semantics_drive_plan_without_a_fixed_need_key():
     assert disk_decision["sourceRefs"] == ["NFR-DATA"]
 
 
-def test_https_load_balanced_requirement_is_projected_to_supported_http_lb():
+def test_https_load_balanced_requirement_is_not_downgraded_to_http_lb():
     result = CloudDesignAdapter().finalize(
         requirements_result={
             "resource_spec": {
@@ -398,14 +398,10 @@ def test_https_load_balanced_requirement_is_projected_to_supported_http_lb():
         design_result={},
     )
 
-    assert result["anchors"] == ["vm", "loadBalancer"]
-    realizations = result["infra_intent"]["capabilityRealizations"]
-    assert [item["id"] for item in realizations] == ["http-alb"]
-    assert not any(component["id"] == "certificate" for component in realizations[0]["components"])
-    assert any(
-        edge["from"] == "compute-instance" and edge["to"] == "backend-group"
-        for edge in result["deployment_diagram_model"]["edges"]
-    )
+    assert result["status"] == "unsupported"
+    assert result["reason"] == "https-ingress-out-of-scope"
+    assert result["unsupportedNeeds"] == ["secure_public_entry"]
+    assert "resource_plan" not in result
 
 
 def test_azure_single_vm_load_balancer_has_a_backend_membership_path():
@@ -466,7 +462,7 @@ def test_cloud_design_reports_accepted_but_unmodeled_capabilities():
                 "region": "asia-northeast3",
             },
             "deployment_needs": {
-                "https_ingress": {
+                "audit_logging": {
                     "required": True,
                     "decision": "accepted",
                 },
@@ -486,8 +482,8 @@ def test_cloud_design_reports_accepted_but_unmodeled_capabilities():
 
     assert result["anchors"] == ["vm"]
     assert result["dependency_coverage"]["unmodeledAcceptedNeeds"] == [
+        "audit_logging",
         "availability_requirement",
-        "https_ingress",
     ]
     assert result["dependency_coverage"]["modeledInputs"][-1] == {
         "source": "deployment-topology",
@@ -703,14 +699,14 @@ def test_external_connection_becomes_supported_direct_http_endpoint(provider):
         result["deployment_diagram_puml"]
     )
     assert plan["unresolved"] == []
-    assert plan["runtimeEvidence"]["managedHttpIngress"] == {
+    assert plan["runtimeEvidence"]["managedL4Ingress"] == {
         "status": "notApplicable",
         "evidenceRefs": [],
     }
 
 
 @pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
-def test_explicit_load_balanced_topology_uses_managed_http_ingress(provider):
+def test_explicit_load_balanced_topology_uses_managed_l4_ingress(provider):
     result = CloudDesignAdapter().finalize(
         requirements_result={
             "resource_spec": {
@@ -743,21 +739,27 @@ def test_explicit_load_balanced_topology_uses_managed_http_ingress(provider):
     assert not any(node.get("providerKind") == "certificate" for node in plan["nodes"])
     assert result["status"] == "completed"
     assert plan["unresolved"] == []
-    managed_http = plan["runtimeEvidence"]["managedHttpIngress"]
-    assert managed_http["status"] == "observed"
-    assert managed_http["evidenceRefs"] == [
-        {
-            "aws": "experiment:E2/aws",
-            "azure": "experiment:managed-http/azure",
-            "gcp": "experiment:E2/gcp",
-        }[provider]
+    managed_l4 = plan["runtimeEvidence"]["managedL4Ingress"]
+    assert managed_l4["status"] == "observed"
+    assert managed_l4["evidenceRefs"] == [
+        f"evaluation/dependency_audit/{provider}-managed-l4-ingress-result-20260817.json"
     ]
-    assert "readiness and business probes" in managed_http["observedFunction"]
-    assert "observedIntervention" in managed_http
-    assert managed_http["notMeasured"] == [
-        "transport security",
+    assert managed_l4["selectedIngress"] == {
+        "aws": "Network Load Balancer",
+        "azure": "Load Balancer",
+        "gcp": "Regional External Passthrough Network Load Balancer",
+    }[provider]
+    assert managed_l4["observed"] == [
+        "L4 forwarding",
+        "HTTP health checks",
+        "two backend reachability",
+        "backend process fault exclusion and operator-triggered restoration",
+        "run-owned cleanup with zero residual resources",
+    ]
+    assert managed_l4["notMeasured"] == [
         "availability SLA",
         "performance",
+        "managed VM replacement",
     ]
 
 
@@ -770,6 +772,7 @@ def test_tls_inputs_do_not_expand_the_http_only_scope(provider):
                 "public_https": {
                     "required": True,
                     "decision": "accepted",
+                    "dependencyCapabilityIds": ["https-ingress"],
                     "requirementIds": ["NFR-TLS-001"],
                     "metadata": {
                         "tls": {
@@ -793,13 +796,10 @@ def test_tls_inputs_do_not_expand_the_http_only_scope(provider):
         },
     )
 
-    plan = result["resource_plan"]
-    endpoint = next(node for node in plan["nodes"] if node.get("group") == "endpoint")
-    assert endpoint["protocol"] == "http"
-    assert "tlsTermination" not in endpoint
-    assert "hostname" not in endpoint
-    assert "certificateInputRef" not in endpoint
-    assert plan["unresolved"] == []
+    assert result["status"] == "unsupported"
+    assert result["reason"] == "https-ingress-out-of-scope"
+    assert result["unsupportedNeeds"] == ["public_https"]
+    assert "resource_plan" not in result
 
 
 def test_multiple_cloud_targets_remain_separate_until_the_user_selects_one():

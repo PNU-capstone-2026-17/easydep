@@ -19,18 +19,24 @@ DEFAULT_POLICY = Path(__file__).with_name("knowledge") / "capability-threshold.j
 REALIZATION_CHANGING_FIELDS = frozenset({
     "provider", "region", "security", "availability", "scale", "budget"
 })
-SUPPORTED_DEPENDENCY_CAPABILITY_IDS = frozenset({
+MODELED_DEPENDENCY_CAPABILITY_IDS = frozenset({
     "persistent-block-storage",
     "load-balanced-ingress",
+})
+OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS = frozenset({
+    "https-ingress",
     "https-load-balanced-ingress",
 })
+RECOGNIZED_DEPENDENCY_CAPABILITY_IDS = (
+    MODELED_DEPENDENCY_CAPABILITY_IDS | OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS
+)
 _LINK_TOKEN = re.compile(r"[a-z0-9]+")
 
 
 def link_dependency_capability(
     key: str, role: str, evidence_spans: Iterable[str] = ()
 ) -> str | None:
-    """Conservatively link an open need to one supported stable ID or NIL.
+    """Conservatively link an open need to one recognized stable ID or NIL.
 
     Candidate tokens come only from the stable IDs themselves. A more specific
     matched ID wins only when its token set strictly contains the other match;
@@ -41,7 +47,7 @@ def link_dependency_capability(
     ))
     token_sets = {
         capability_id: set(_LINK_TOKEN.findall(capability_id))
-        for capability_id in SUPPORTED_DEPENDENCY_CAPABILITY_IDS
+        for capability_id in RECOGNIZED_DEPENDENCY_CAPABILITY_IDS
     }
     matched = {
         capability_id: tokens
@@ -240,9 +246,7 @@ def requires_load_balanced_ingress(needs: dict[str, Any]) -> bool:
     """Return whether an accepted need requests modeled load-balanced ingress."""
     for need in accepted_needs(needs).values():
         capability_ids = need.get("dependencyCapabilityIds") or []
-        if not ({
-            "load-balanced-ingress", "https-load-balanced-ingress"
-        } & set(capability_ids)):
+        if "load-balanced-ingress" not in set(capability_ids):
             continue
         if need.get("required") is not True:
             continue

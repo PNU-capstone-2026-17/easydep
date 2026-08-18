@@ -1,0 +1,254 @@
+{
+  "schemaVersion": "easydep-managed-l4-ingress/v1",
+  "provider": "aws",
+  "runId": "easydep-l4-4cc51e5b",
+  "startedAt": "2026-08-17T09:06:54.905575+00:00",
+  "transportUnderTest": "public TCP/80 L4 load balancer to two HTTP backends",
+  "steps": [
+    {
+      "name": "runner.public-ip",
+      "status": "passed",
+      "durationSeconds": 0.0,
+      "detail": "runner IPv4 /32 resolved"
+    },
+    {
+      "name": "network.default-vpc",
+      "status": "passed",
+      "durationSeconds": 1.76,
+      "detail": "vpc-0adda64ece60b6311"
+    },
+    {
+      "name": "network.two-az-subnets",
+      "status": "passed",
+      "durationSeconds": 1.335,
+      "detail": [
+        {
+          "id": "subnet-062eadd5b5b60354c",
+          "az": "ap-northeast-2c"
+        },
+        {
+          "id": "subnet-01a74c0fa16437766",
+          "az": "ap-northeast-2d"
+        }
+      ]
+    },
+    {
+      "name": "security.lb.create",
+      "status": "passed",
+      "durationSeconds": 1.631,
+      "detail": "sg-0fbea7ab844676191"
+    },
+    {
+      "name": "security.app.create",
+      "status": "passed",
+      "durationSeconds": 1.545,
+      "detail": "sg-0415be1dab2440f19"
+    },
+    {
+      "name": "security.client-to-lb",
+      "status": "passed",
+      "durationSeconds": 1.779,
+      "detail": "tcp/80 ingress rule created"
+    },
+    {
+      "name": "security.lb-to-app",
+      "status": "passed",
+      "durationSeconds": 2.607,
+      "detail": "tcp/8080 ingress rule created"
+    },
+    {
+      "name": "security.runner-ssh",
+      "status": "passed",
+      "durationSeconds": 1.957,
+      "detail": "tcp/22 ingress rule created"
+    },
+    {
+      "name": "key.create",
+      "status": "passed",
+      "durationSeconds": 1.322,
+      "detail": "<redacted-private-key>"
+    },
+    {
+      "name": "image.resolve",
+      "status": "passed",
+      "durationSeconds": 1.456,
+      "detail": "ami-00f6db7984ad32b20"
+    },
+    {
+      "name": "app-1.create",
+      "status": "passed",
+      "durationSeconds": 2.349,
+      "detail": "i-0077ec339f0e615ab"
+    },
+    {
+      "name": "app-2.create",
+      "status": "passed",
+      "durationSeconds": 2.355,
+      "detail": "i-0c75033407f634818"
+    },
+    {
+      "name": "backends.running",
+      "status": "passed",
+      "durationSeconds": 122.057,
+      "detail": "two EC2 instances passed status checks"
+    },
+    {
+      "name": "load-balancer.target-group",
+      "status": "passed",
+      "durationSeconds": 1.487,
+      "detail": "arn:aws:<redacted>"
+    },
+    {
+      "name": "load-balancer.register-backends",
+      "status": "passed",
+      "durationSeconds": 1.181,
+      "detail": "two instance targets"
+    },
+    {
+      "name": "load-balancer.create",
+      "status": "passed",
+      "durationSeconds": 1.558,
+      "detail": {
+        "LoadBalancers": [
+          {
+            "LoadBalancerArn": "arn:aws:<redacted>",
+            "DNSName": "l4-4cc51e5b-bace9aad9790cd76.elb.ap-northeast-2.amazonaws.com",
+            "CanonicalHostedZoneId": "ZIBE1TIR4HY56",
+            "CreatedTime": "2026-08-17T09:09:24.557000+00:00",
+            "LoadBalancerName": "l4-4cc51e5b",
+            "Scheme": "internet-facing",
+            "VpcId": "vpc-0adda64ece60b6311",
+            "State": {
+              "Code": "provisioning"
+            },
+            "Type": "network",
+            "AvailabilityZones": [
+              {
+                "ZoneName": "ap-northeast-2d",
+                "SubnetId": "subnet-01a74c0fa16437766",
+                "LoadBalancerAddresses": []
+              },
+              {
+                "ZoneName": "ap-northeast-2c",
+                "SubnetId": "subnet-062eadd5b5b60354c",
+                "LoadBalancerAddresses": []
+              }
+            ],
+            "SecurityGroups": [
+              "sg-0fbea7ab844676191"
+            ],
+            "IpAddressType": "ipv4",
+            "EnablePrefixForIpv6SourceNat": "off"
+          }
+        ]
+      }
+    },
+    {
+      "name": "load-balancer.available",
+      "status": "passed",
+      "durationSeconds": 136.415,
+      "detail": "NLB available"
+    },
+    {
+      "name": "load-balancer.listener",
+      "status": "passed",
+      "durationSeconds": 1.03,
+      "detail": "arn:aws:<redacted>"
+    },
+    {
+      "name": "baseline.two-healthy-targets",
+      "status": "passed",
+      "durationSeconds": 67.499,
+      "detail": [
+        "i-0077ec339f0e615ab",
+        "i-0c75033407f634818"
+      ]
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 1.055,
+      "detail": {
+        "status": 200,
+        "body": {
+          "instance": "app-1",
+          "ready": true
+        }
+      }
+    },
+    {
+      "name": "baseline.two-backends",
+      "status": "passed",
+      "durationSeconds": 59.07,
+      "detail": {
+        "expected": [
+          "app-1",
+          "app-2"
+        ],
+        "observed": [
+          "app-1",
+          "app-2"
+        ],
+        "attempts": 57
+      }
+    },
+    {
+      "name": "fault.exclude-and-restore",
+      "status": "passed",
+      "durationSeconds": 59.599,
+      "detail": {
+        "victim": "app-2",
+        "survivor": "app-1",
+        "faultAcceptedAtSeconds": 0,
+        "exclusionConfirmedAtSeconds": 31.388,
+        "restorationConfirmedAtSeconds": 59.599,
+        "probeCountBeforeRestore": 11,
+        "successfulProbesBeforeRestore": 11,
+        "failedProbesBeforeRestore": 0,
+        "restoreAction": "SSH restarted the app on app-2",
+        "restoredBackends": {
+          "expected": [
+            "app-1",
+            "app-2"
+          ],
+          "observed": [
+            "app-1",
+            "app-2"
+          ],
+          "attempts": 27
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "public IPv4 -> TCP listener/forwarding rule -> backend membership -> HTTP readiness probe -> VM application process",
+  "scope": "domain-neutral L4 ingress dependency experiment",
+  "application": {
+    "kind": "domain-neutral synthetic HTTP service",
+    "endpoints": [
+      "/health/ready",
+      "/instance",
+      "/__easydep_test/fault"
+    ],
+    "database": false,
+    "persistentStorage": false
+  },
+  "resourceObservation": {
+    "frontend": "AWS Network Load Balancer TCP/80",
+    "health": "target group HTTP /health/ready on tcp/8080",
+    "backends": "two EC2 instances in distinct default-VPC availability zones"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-17T09:15:35.474637+00:00",
+  "interpretationLimits": [
+    "One development run does not establish a provider-wide success rate or SLA.",
+    "HTTP is only the observable payload carried over the L4 TCP path.",
+    "The experiment does not test TLS, database, persistent storage, or region failure.",
+    "Backend process recovery is operator-triggered; managed VM replacement is separate.",
+    "Sequential requests demonstrate reachability, not traffic-share fairness or performance."
+  ]
+}

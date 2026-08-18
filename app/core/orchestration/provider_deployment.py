@@ -14,12 +14,37 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             "compute-instance": ("EC2 Instance", "compute"),
             "compute-group": ("EC2 Auto Scaling Group", "compute"),
             "compute-template": ("EC2 Launch Template", "compute"),
-            "load-balancer": ("Application Load Balancer", "network"),
-            "listener": ("ALB Listener", "network"),
+            "boot-image": ("Amazon Machine Image (AMI)", "compute"),
+            "app-registry": ("Amazon ECR Repository", "config"),
+            "registry-pull-identity": ("IAM Role / VM Registry Pull", "security"),
+            "registry-pull-policy": (
+                "AmazonEC2ContainerRegistryReadOnly Policy",
+                "security",
+            ),
+            "registry-pull-binding": ("IAM Role Policy Attachment", "security"),
+            "registry-instance-profile": ("IAM Instance Profile", "security"),
+            "secret-ref": ("Existing AWS Secret", "config"),
+            "secret-access-binding": ("IAM Role Policy / Secret Read", "security"),
+            "state-secret-identity": ("IAM Role / State Secret Read", "security"),
+            "state-secret-access-binding": (
+                "IAM Role Policy / State Secret Read",
+                "security",
+            ),
+            "state-secret-instance-profile": (
+                "IAM Instance Profile / State VM",
+                "security",
+            ),
+            "load-balancer": ("Network Load Balancer", "network"),
+            "listener": ("Network Load Balancer Listener", "network"),
             "backend-group": ("Target Group", "network"),
+            "target-registration": (
+                "Terraform: aws_lb_target_group_attachment",
+                "network",
+            ),
             "health-check": ("Target Group / Health Check", "network"),
             "network": ("VPC", "network"),
             "subnet": ("Application Subnet", "network"),
+            "state-subnet": ("State Subnet", "network"),
             "ingress-subnet": ("Ingress Subnet", "network"),
             "security-group": ("Security Group / Application", "network"),
             "load-balancer-security-group": ("Security Group / Load Balancer", "network"),
@@ -47,7 +72,7 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             "disk-attachment": ("Terraform: aws_volume_attachment", "storage"),
         },
         "componentIds": {
-            "alb": "load-balancer",
+            "nlb": "load-balancer",
             "listener": "listener",
             "target-group": "backend-group",
             "target-group-health": "health-check",
@@ -70,9 +95,7 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             ("subnet", "network", "belongs to"),
             ("security-group", "network", "belongs to"),
         ),
-        "standaloneCapabilityEdges": (
-            ("compute-instance", "backend-group", "registers with"),
-        ),
+        "standaloneCapabilityEdges": (),
         "capabilityEdges": (
             ("listener", "load-balancer", "belongs to"),
             ("listener", "backend-group", "forwards to"),
@@ -83,21 +106,35 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
         "resources": {
             "compute-instance": ("Linux Virtual Machine", "compute"),
             "compute-group": ("Virtual Machine Scale Set", "compute"),
-            "load-balancer": ("Application Gateway", "network"),
-            "listener": ("Application Gateway / HTTP Listener", "network"),
+            "resource-group": ("Resource Group", "config"),
+            "boot-image": ("Virtual Machine Image", "compute"),
+            "app-registry": ("Container Registry", "config"),
+            "registry-pull-identity": ("User-assigned Managed Identity", "security"),
+            "registry-pull-binding": ("AcrPull Role Assignment", "security"),
+            "secret-ref": ("Existing Key Vault Secret", "config"),
+            "secret-access-binding": ("Key Vault Secrets User Role Assignment", "security"),
+            "state-secret-identity": (
+                "User-assigned Managed Identity / State VM",
+                "security",
+            ),
+            "state-secret-access-binding": (
+                "Key Vault Secrets User Role Assignment / State VM",
+                "security",
+            ),
+            "load-balancer": ("Load Balancer", "network"),
             "frontend-ip-config": (
-                "Application Gateway / Frontend IP Configuration",
+                "Load Balancer / Frontend IP Configuration",
                 "network",
             ),
-            "frontend-port": ("Application Gateway / Frontend Port", "network"),
-            "backend-group": ("Application Gateway / Backend Address Pool", "network"),
-            "backend-settings": ("Application Gateway / Backend HTTP Settings", "network"),
-            "health-check": ("Application Gateway / Health Probe", "network"),
-            "routing-rule": ("Application Gateway / Request Routing Rule", "network"),
-            "backend-membership": ("Backend Pool Association", "network"),
+            "backend-group": ("Backend Address Pool", "network"),
+            "health-check": ("Probe", "network"),
+            "routing-rule": ("Load Balancing Rule", "network"),
+            "backend-membership": (
+                "Network Interface Backend Address Pool Association",
+                "network",
+            ),
             "network": ("Virtual Network", "network"),
             "subnet": ("Application Subnet", "network"),
-            "ingress-subnet": ("Application Gateway Subnet", "network"),
             "network-interface": ("Network Interface", "network"),
             "security-group": ("Network Security Group", "network"),
             "security-group-association": ("NIC Security Group Association", "network"),
@@ -108,6 +145,10 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
                 "Terraform: azurerm_subnet_nat_gateway_association",
                 "network",
             ),
+            "nat-public-ip-association": (
+                "Terraform: azurerm_nat_gateway_public_ip_association",
+                "network",
+            ),
             "disk": ("Managed Disk", "storage"),
             "disk-attachment": (
                 "Terraform: azurerm_virtual_machine_data_disk_attachment",
@@ -115,23 +156,16 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             ),
         },
         "componentIds": {
-            "gateway": "load-balancer",
-            "listener": "listener",
+            "load-balancer": "load-balancer",
+            "frontend-ip-config": "frontend-ip-config",
             "backend-pool": "backend-group",
-            "backend-settings": "backend-settings",
             "probe": "health-check",
-            "routing-rule": "routing-rule",
+            "load-balancing-rule": "routing-rule",
             "backend-membership": "backend-membership",
         },
         "officialAliases": {},
         "embeddedOwners": {
-            "listener": "load-balancer",
             "frontend-ip-config": "load-balancer",
-            "frontend-port": "load-balancer",
-            "backend-group": "load-balancer",
-            "backend-settings": "load-balancer",
-            "health-check": "load-balancer",
-            "routing-rule": "load-balancer",
         },
         "groupTopologyEdges": (
             ("compute-group", "network-interface", "uses"),
@@ -139,7 +173,6 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             ("network-interface", "security-group", "uses"),
             ("compute-group", "backend-membership", "joins"),
             ("subnet", "network", "belongs to"),
-            ("security-group", "network", "belongs to"),
         ),
         "standaloneEdges": (
             ("compute-instance", "network-interface", "uses"),
@@ -147,19 +180,18 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             ("security-group-association", "network-interface", "binds"),
             ("security-group-association", "security-group", "binds"),
             ("subnet", "network", "belongs to"),
-            ("security-group", "network", "belongs to"),
         ),
         "standaloneCapabilityEdges": (
             ("network-interface", "backend-membership", "joins through"),
         ),
         "capabilityEdges": (
-            ("listener", "load-balancer", "belongs to"),
-            ("listener", "frontend-ip-config", "uses"),
-            ("listener", "frontend-port", "uses"),
-            ("routing-rule", "listener", "matches"),
+            ("frontend-ip-config", "load-balancer", "belongs to"),
+            ("backend-group", "load-balancer", "belongs to"),
+            ("health-check", "load-balancer", "belongs to"),
+            ("routing-rule", "load-balancer", "belongs to"),
+            ("routing-rule", "frontend-ip-config", "uses"),
             ("routing-rule", "backend-group", "routes to"),
-            ("routing-rule", "backend-settings", "uses"),
-            ("backend-settings", "health-check", "uses"),
+            ("routing-rule", "health-check", "uses"),
             ("backend-membership", "backend-group", "registers instances with"),
         ),
     },
@@ -169,12 +201,26 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             "compute-group": ("Regional Managed Instance Group", "compute"),
             "backend-group": ("Unmanaged Instance Group", "compute"),
             "compute-template": ("Instance Template", "compute"),
-            "forwarding-rule": ("Global Forwarding Rule", "network"),
-            "target-http-proxy": ("Target HTTP Proxy", "network"),
-            "url-map": ("URL Map", "network"),
-            "backend-service": ("Backend Service", "network"),
-            "health-check": ("Health Check", "network"),
-            "named-port": ("Instance Group / Named Port", "network"),
+            "boot-image": ("Compute Engine OS Image", "compute"),
+            "app-registry": ("Artifact Registry Repository", "config"),
+            "registry-pull-identity": ("Service Account / VM Registry Pull", "security"),
+            "registry-pull-binding": (
+                "Artifact Registry Reader IAM Member",
+                "security",
+            ),
+            "secret-ref": ("Existing Secret Manager Secret", "config"),
+            "secret-access-binding": ("Secret Manager Secret Accessor IAM Member", "security"),
+            "state-secret-identity": (
+                "Service Account / State Secret Read",
+                "security",
+            ),
+            "state-secret-access-binding": (
+                "Secret Manager Secret Accessor IAM Member / State VM",
+                "security",
+            ),
+            "forwarding-rule": ("Forwarding Rule", "network"),
+            "backend-service": ("Region Backend Service", "network"),
+            "health-check": ("Region Health Check", "network"),
             "network": ("VPC Network", "network"),
             "subnet": ("Subnetwork", "network"),
             "cloud-router": ("Cloud Router", "network"),
@@ -187,8 +233,6 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
         },
         "componentIds": {
             "forwarding-rule": "forwarding-rule",
-            "target-http-proxy": "target-http-proxy",
-            "url-map": "url-map",
             "backend-service": "backend-service",
             "instance-group": "backend-group",
             "health-check": "health-check",
@@ -196,7 +240,6 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
         "officialAliases": {"backend-group": "backend-group"},
         "embeddedOwners": {
             "network-interface": "compute-instance",
-            "named-port": "backend-group",
         },
         "groupTopologyEdges": (
             ("compute-group", "compute-template", "creates instances from"),
@@ -213,13 +256,9 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
             ("firewall", "network", "belongs to"),
             ("firewall", "compute-instance", "allows traffic to"),
         ),
-        "standaloneCapabilityEdges": (
-            ("backend-group", "compute-instance", "contains instance"),
-        ),
+        "standaloneCapabilityEdges": (("backend-group", "compute-instance", "contains instance"),),
         "capabilityEdges": (
-            ("forwarding-rule", "target-http-proxy", "forwards to"),
-            ("target-http-proxy", "url-map", "uses"),
-            ("url-map", "backend-service", "routes to"),
+            ("forwarding-rule", "backend-service", "forwards to"),
             ("backend-service", "backend-group", "uses backend"),
             ("backend-service", "health-check", "checks with"),
         ),
@@ -227,39 +266,38 @@ _PROVIDER_MODELS: dict[str, dict[str, Any]] = {
 }
 
 
-def _managed_http_evidence(provider: str, enabled: bool) -> dict[str, Any]:
-    """연결된 관리형 HTTP 경로에서 실제 관찰한 범위만 보고한다."""
+def _managed_l4_evidence(provider: str, enabled: bool) -> dict[str, Any]:
+    """현재 선택한 관리형 L4 진입 경로에서 실제 관찰한 범위만 보고한다."""
 
     if not enabled:
         return {"status": "notApplicable", "evidenceRefs": []}
 
     selected_ingress = {
-        "aws": "Application Load Balancer",
-        "azure": "Application Gateway",
-        "gcp": "External Application Load Balancer",
+        "aws": "Network Load Balancer",
+        "azure": "Load Balancer",
+        "gcp": "Regional External Passthrough Network Load Balancer",
     }[provider]
-    evidence_ref = {
-        "aws": "experiment:E2/aws",
-        "azure": "experiment:managed-http/azure",
-        "gcp": "experiment:E2/gcp",
-    }[provider]
-    observed_intervention = {
-        "aws": "one app backend fault was excluded and managed replacement was observed",
-        "azure": (
-            "unreachable backend membership caused loss; restoring membership recovered "
-            "the probes"
-        ),
-        "gcp": "one app backend fault was excluded and managed restart was observed",
+    evidence_refs = {
+        "aws": ["evaluation/dependency_audit/aws-managed-l4-ingress-result-20260817.json"],
+        "azure": ["evaluation/dependency_audit/azure-managed-l4-ingress-result-20260817.json"],
+        "gcp": ["evaluation/dependency_audit/gcp-managed-l4-ingress-result-20260817.json"],
     }[provider]
     return {
         "status": "observed",
-        "evidenceRefs": [evidence_ref],
+        "evidenceRefs": evidence_refs,
         "selectedIngress": selected_ingress,
-        "observedFunction": (
-            "the managed HTTP listener routed readiness and business probes to provider backends"
-        ),
-        "observedIntervention": observed_intervention,
-        "notMeasured": ["transport security", "availability SLA", "performance"],
+        "observed": [
+            "L4 forwarding",
+            "HTTP health checks",
+            "two backend reachability",
+            "backend process fault exclusion and operator-triggered restoration",
+            "run-owned cleanup with zero residual resources",
+        ],
+        "notMeasured": [
+            "availability SLA",
+            "performance",
+            "managed VM replacement",
+        ],
     }
 
 
@@ -277,11 +315,21 @@ _TERRAFORM_TYPES: dict[str, dict[str, tuple[str, ...]]] = {
         "compute-instance": ("aws_instance",),
         "compute-group": ("aws_autoscaling_group",),
         "compute-template": ("aws_launch_template",),
+        "app-registry": ("aws_ecr_repository",),
+        "registry-pull-identity": ("aws_iam_role",),
+        "registry-pull-binding": ("aws_iam_role_policy_attachment",),
+        "registry-instance-profile": ("aws_iam_instance_profile",),
+        "secret-access-binding": ("aws_iam_role_policy",),
+        "state-secret-identity": ("aws_iam_role",),
+        "state-secret-access-binding": ("aws_iam_role_policy",),
+        "state-secret-instance-profile": ("aws_iam_instance_profile",),
         "load-balancer": ("aws_lb",),
         "listener": ("aws_lb_listener",),
         "backend-group": ("aws_lb_target_group",),
+        "target-registration": ("aws_lb_target_group_attachment",),
         "network": ("aws_vpc",),
         "subnet": ("aws_subnet",),
+        "state-subnet": ("aws_subnet",),
         "ingress-subnet": ("aws_subnet",),
         "security-group": ("aws_security_group",),
         "load-balancer-security-group": ("aws_security_group",),
@@ -302,22 +350,28 @@ _TERRAFORM_TYPES: dict[str, dict[str, tuple[str, ...]]] = {
     "azure": {
         "compute-instance": ("azurerm_linux_virtual_machine",),
         "compute-group": ("azurerm_linux_virtual_machine_scale_set",),
-        "load-balancer": ("azurerm_application_gateway",),
+        "resource-group": ("azurerm_resource_group",),
+        "app-registry": ("azurerm_container_registry",),
+        "registry-pull-identity": ("azurerm_user_assigned_identity",),
+        "registry-pull-binding": ("azurerm_role_assignment",),
+        "secret-access-binding": ("azurerm_role_assignment",),
+        "state-secret-identity": ("azurerm_user_assigned_identity",),
+        "state-secret-access-binding": ("azurerm_role_assignment",),
+        "load-balancer": ("azurerm_lb",),
+        "backend-group": ("azurerm_lb_backend_address_pool",),
+        "health-check": ("azurerm_lb_probe",),
+        "routing-rule": ("azurerm_lb_rule",),
         "network": ("azurerm_virtual_network",),
         "subnet": ("azurerm_subnet",),
-        "ingress-subnet": ("azurerm_subnet",),
         "network-interface": ("azurerm_network_interface",),
         "security-group": ("azurerm_network_security_group",),
-        "security-group-association": (
-            "azurerm_network_interface_security_group_association",
-        ),
-        "backend-membership": (
-            "azurerm_network_interface_application_gateway_backend_address_pool_association",
-        ),
+        "security-group-association": ("azurerm_network_interface_security_group_association",),
+        "backend-membership": ("azurerm_network_interface_backend_address_pool_association",),
         "public-ip": ("azurerm_public_ip",),
         "nat-public-ip": ("azurerm_public_ip",),
         "nat-gateway": ("azurerm_nat_gateway",),
         "nat-association": ("azurerm_subnet_nat_gateway_association",),
+        "nat-public-ip-association": ("azurerm_nat_gateway_public_ip_association",),
         "disk": ("azurerm_managed_disk",),
         "disk-attachment": ("azurerm_virtual_machine_data_disk_attachment",),
     },
@@ -326,17 +380,21 @@ _TERRAFORM_TYPES: dict[str, dict[str, tuple[str, ...]]] = {
         "compute-group": ("google_compute_region_instance_group_manager",),
         "backend-group": ("google_compute_instance_group",),
         "compute-template": ("google_compute_instance_template",),
-        "forwarding-rule": ("google_compute_global_forwarding_rule",),
-        "target-http-proxy": ("google_compute_target_http_proxy",),
-        "url-map": ("google_compute_url_map",),
-        "backend-service": ("google_compute_backend_service",),
-        "health-check": ("google_compute_health_check",),
+        "app-registry": ("google_artifact_registry_repository",),
+        "registry-pull-identity": ("google_service_account",),
+        "registry-pull-binding": ("google_artifact_registry_repository_iam_member",),
+        "secret-access-binding": ("google_secret_manager_secret_iam_member",),
+        "state-secret-identity": ("google_service_account",),
+        "state-secret-access-binding": ("google_secret_manager_secret_iam_member",),
+        "forwarding-rule": ("google_compute_forwarding_rule",),
+        "backend-service": ("google_compute_region_backend_service",),
+        "health-check": ("google_compute_region_health_check",),
         "network": ("google_compute_network",),
         "subnet": ("google_compute_subnetwork",),
         "cloud-router": ("google_compute_router",),
         "cloud-nat": ("google_compute_router_nat",),
         "firewall": ("google_compute_firewall",),
-        "public-ip": ("google_compute_global_address", "google_compute_address"),
+        "public-ip": ("google_compute_address",),
         "disk": ("google_compute_disk",),
         "disk-attachment": ("google_compute_attached_disk",),
     },
@@ -355,8 +413,7 @@ def _logical_workloads(logical_model: dict[str, Any] | None) -> list[dict[str, A
     candidates = [
         node
         for node in nodes
-        if str(node.get("kind") or "").strip().lower()
-        in {"executionenvironment", "database"}
+        if str(node.get("kind") or "").strip().lower() in {"executionenvironment", "database"}
     ]
     names = {str(node.get("name") or "") for node in candidates}
     workloads: list[dict[str, Any]] = []
@@ -427,12 +484,8 @@ def bind_application_runtime(
     """Resolve implementation-observed application values in a ResourcePlan copy."""
     plan = copy.deepcopy(resource_plan)
     facts = list(application_contract.get("facts") or [])
-    port_fact = next(
-        (item for item in facts if item.get("kind") == "runtime.port"), None
-    )
-    health_fact = next(
-        (item for item in facts if item.get("kind") == "runtime.health"), None
-    )
+    port_fact = next((item for item in facts if item.get("kind") == "runtime.port"), None)
+    health_fact = next((item for item in facts if item.get("kind") == "runtime.health"), None)
     port = (port_fact or {}).get("attributes", {}).get("port")
     health_path = (health_fact or {}).get("attributes", {}).get("path")
     primary_compute = plan.get("computeNodeId")
@@ -464,6 +517,23 @@ def bind_application_runtime(
         node = by_id.get(workload.get("id"))
         if node is not None:
             node["runtime"] = copy.deepcopy(workload.get("runtime") or {})
+    provider = str(plan.get("provider") or "")
+    load_balanced = (plan.get("deploymentTopology") or {}).get("publicIngress") == "loadBalanced"
+    host_port = 80 if provider == "gcp" and load_balanced else port
+    for node in plan.get("nodes") or []:
+        provider_kind = str(node.get("providerKind") or "")
+        if provider_kind in {"listener", "routing-rule", "forwarding-rule"}:
+            node["backendPort"] = host_port if host_port is not None else "runtimeDerived"
+            if provider_kind != "forwarding-rule":
+                node["frontendPort"] = 80
+        if provider_kind == "health-check":
+            node["port"] = host_port if host_port is not None else "runtimeDerived"
+            node["requestPath"] = health_path or "runtimeDerived"
+        if node.get("group") == "endpoint":
+            node["port"] = 80 if load_balanced else (port if port is not None else "runtimeDerived")
+        traffic_policy = node.get("trafficPolicy")
+        if isinstance(traffic_policy, dict) and node.get("id") != "load-balancer-security-group":
+            traffic_policy["port"] = host_port if host_port is not None else "runtimeDerived"
     unresolved = [
         item
         for item in plan.get("unresolved") or []
@@ -564,9 +634,7 @@ def _add_edge(
     key = (source, target, label)
     existing = edges.get(key)
     pair_keys = [
-        candidate
-        for candidate in edges
-        if candidate[0] == source and candidate[1] == target
+        candidate for candidate in edges if candidate[0] == source and candidate[1] == target
     ]
     if label == "depends on" and pair_keys:
         existing = edges[pair_keys[0]]
@@ -612,15 +680,11 @@ def validate_resource_plan_structure(plan: dict[str, Any]) -> None:
     for node in nodes:
         handling = str(node.get("handling") or "")
         if handling == "create" and not node.get("terraformTypes"):
-            raise ValueError(
-                f"Create node {node.get('id')} has no Terraform resource type."
-            )
+            raise ValueError(f"Create node {node.get('id')} has no Terraform resource type.")
         if handling == "configureInsideOwner":
             owner = str(node.get("ownerRef") or "")
             if owner not in known:
-                raise ValueError(
-                    f"Embedded node {node.get('id')} has no valid ownerRef."
-                )
+                raise ValueError(f"Embedded node {node.get('id')} has no valid ownerRef.")
         minimum_count = node.get("minimumCount", 1)
         if (
             isinstance(minimum_count, bool)
@@ -646,8 +710,7 @@ def validate_resource_plan_structure(plan: dict[str, Any]) -> None:
     disconnected_provider_nodes = sorted(
         str(node.get("id") or "")
         for node in nodes
-        if node.get("entityClass")
-        in {"providerResource", "providerComponent", "externalArtifact"}
+        if node.get("entityClass") in {"providerResource", "providerComponent", "externalArtifact"}
         and str(node.get("id") or "") not in connected_node_ids
     )
     if disconnected_provider_nodes:
@@ -717,8 +780,7 @@ def resource_plan_structure_digest(plan: dict[str, Any]) -> str:
             "label": edge.get("label"),
         }
         for edge in plan.get("edges") or []
-        if str(edge.get("from") or "") in node_ids
-        and str(edge.get("to") or "") in node_ids
+        if str(edge.get("from") or "") in node_ids and str(edge.get("to") or "") in node_ids
     ]
     structural = {
         "provider": plan.get("provider"),
@@ -784,30 +846,11 @@ def build_provider_deployment_model(
     if provider == "gcp" and managed and "backend-group" in selected:
         selected.discard("backend-group")
         selected.add("compute-group")
-    if provider == "gcp" and topology_policy.get("publicIngress") == "loadBalanced":
-        selected.add("named-port")
     for source, target, label in spec["capabilityEdges"]:
         if provider == "gcp" and managed and target == "backend-group":
             target = "compute-group"
         if source in selected and target in selected:
             _add_edge(edges, source, target, label, "capability-realization")
-    if provider == "gcp" and "named-port" in selected:
-        named_port_owner = "compute-group" if managed else "backend-group"
-        _add_edge(
-            edges,
-            "backend-service",
-            "named-port",
-            "uses",
-            "capability-realization",
-        )
-        _add_edge(
-            edges,
-            "named-port",
-            named_port_owner,
-            "configures",
-            "capability-realization",
-        )
-
     for dependency in dependency_plan.get("officialDependencies") or []:
         provider_aliases = spec["officialAliases"]
         from_id = str(dependency.get("from") or "")
@@ -856,9 +899,119 @@ def build_provider_deployment_model(
             _add_edge(edges, source, target, "depends on", "dependency-plan")
 
     grouped_compute = compute_node == "compute-group"
-    database_placement = str(
-        topology_policy.get("databasePlacement") or "dedicated"
+    database_placement = str(topology_policy.get("databasePlacement") or "dedicated")
+    registry_nodes = {
+        "boot-image",
+        "app-registry",
+        "registry-pull-identity",
+        "registry-pull-binding",
+    }
+    if provider == "aws":
+        registry_nodes.update({"registry-pull-policy", "registry-instance-profile"})
+    if provider == "azure":
+        registry_nodes.add("resource-group")
+    selected.update(registry_nodes)
+    image_owner = "compute-template" if provider in {"aws", "gcp"} and managed else compute_node
+    _add_edge(edges, image_owner, "boot-image", "uses image", "boot-image-policy")
+    _add_edge(
+        edges,
+        "registry-pull-binding",
+        "registry-pull-identity",
+        "grants pull access to",
+        "registry-policy",
     )
+    _add_edge(
+        edges,
+        "registry-pull-binding",
+        "app-registry",
+        "scopes pull access to",
+        "registry-policy",
+    )
+    if provider == "aws":
+        _add_edge(
+            edges,
+            "registry-pull-binding",
+            "registry-pull-policy",
+            "uses policy",
+            "registry-policy",
+        )
+        _add_edge(
+            edges,
+            "registry-instance-profile",
+            "registry-pull-identity",
+            "contains role",
+            "registry-policy",
+        )
+        _add_edge(
+            edges,
+            image_owner,
+            "registry-instance-profile",
+            "uses identity",
+            "registry-policy",
+        )
+    else:
+        _add_edge(
+            edges,
+            image_owner,
+            "registry-pull-identity",
+            "uses identity",
+            "registry-policy",
+        )
+    _add_edge(
+        edges,
+        image_owner,
+        "app-registry",
+        "pulls image digest from",
+        "registry-policy",
+    )
+    if database_placement != "none":
+        selected.update({"secret-ref", "secret-access-binding"})
+        _add_edge(
+            edges,
+            "secret-access-binding",
+            "secret-ref",
+            "scopes secret read to",
+            "secret-policy",
+        )
+        _add_edge(
+            edges,
+            "secret-access-binding",
+            "registry-pull-identity",
+            "grants secret read to",
+            "secret-policy",
+        )
+        _add_edge(
+            edges,
+            image_owner,
+            ("registry-instance-profile" if provider == "aws" else "registry-pull-identity"),
+            "uses secret identity",
+            "secret-policy",
+        )
+        if database_placement == "dedicated":
+            selected.update({"state-secret-identity", "state-secret-access-binding"})
+            _add_edge(
+                edges,
+                "state-secret-access-binding",
+                "secret-ref",
+                "scopes secret read to",
+                "secret-policy",
+            )
+            _add_edge(
+                edges,
+                "state-secret-access-binding",
+                "state-secret-identity",
+                "grants secret read to",
+                "secret-policy",
+            )
+            if provider == "aws":
+                selected.add("state-secret-instance-profile")
+                _add_edge(
+                    edges,
+                    "state-secret-instance-profile",
+                    "state-secret-identity",
+                    "contains role",
+                    "secret-policy",
+                )
     topology_edges = spec["groupTopologyEdges"] if grouped_compute else spec["standaloneEdges"]
     for source, target, label in topology_edges:
         selected.update((source, target))
@@ -870,6 +1023,7 @@ def build_provider_deployment_model(
             "topology-decision",
         )
     load_balanced_topology = topology_policy.get("publicIngress") == "loadBalanced"
+    private_egress_required = load_balanced_topology or database_placement == "dedicated"
     if provider == "aws":
         selected.update(
             {
@@ -883,12 +1037,9 @@ def build_provider_deployment_model(
         _add_edge(edges, "ingress-route-table", "network", "belongs to", "egress-policy")
         _add_edge(edges, "ingress-default-route", "ingress-route-table", "uses", "egress-policy")
         _add_edge(edges, "ingress-default-route", "internet-gateway", "routes to", "egress-policy")
-        if load_balanced_topology:
+        if private_egress_required:
             selected.update(
                 {
-                    "ingress-subnet",
-                    "load-balancer-security-group",
-                    "application-ingress-rule",
                     "application-route-table",
                     "application-default-route",
                     "application-route-association",
@@ -896,37 +1047,53 @@ def build_provider_deployment_model(
                     "nat-gateway",
                 }
             )
-            _add_edge(edges, "ingress-subnet", "network", "belongs to", "ingress-policy")
-            _add_edge(edges, "load-balancer", "ingress-subnet", "uses", "ingress-policy")
+            egress_public_subnet = "ingress-subnet" if load_balanced_topology else "subnet"
+            egress_private_subnet = "subnet"
+            if not load_balanced_topology and database_placement == "dedicated":
+                selected.add("state-subnet")
+                egress_private_subnet = "state-subnet"
+                _add_edge(edges, "state-subnet", "network", "belongs to", "egress-policy")
+            if load_balanced_topology:
+                selected.update(
+                    {
+                        "ingress-subnet",
+                        "load-balancer-security-group",
+                        "application-ingress-rule",
+                    }
+                )
+                _add_edge(edges, "ingress-subnet", "network", "belongs to", "ingress-policy")
+                _add_edge(edges, "load-balancer", "ingress-subnet", "uses", "ingress-policy")
+                _add_edge(
+                    edges,
+                    "load-balancer",
+                    "load-balancer-security-group",
+                    "uses",
+                    "ingress-policy",
+                )
+                _add_edge(
+                    edges,
+                    "load-balancer-security-group",
+                    "network",
+                    "belongs to",
+                    "ingress-policy",
+                )
+                _add_edge(
+                    edges,
+                    "application-ingress-rule",
+                    "security-group",
+                    "binds",
+                    "ingress-policy",
+                )
+                _add_edge(
+                    edges,
+                    "application-ingress-rule",
+                    "load-balancer-security-group",
+                    "uses",
+                    "ingress-policy",
+                )
             _add_edge(
-                edges,
-                "load-balancer",
-                "load-balancer-security-group",
-                "uses",
-                "ingress-policy",
+                edges, "ingress-route-association", egress_public_subnet, "binds", "egress-policy"
             )
-            _add_edge(
-                edges,
-                "load-balancer-security-group",
-                "network",
-                "belongs to",
-                "ingress-policy",
-            )
-            _add_edge(
-                edges,
-                "application-ingress-rule",
-                "security-group",
-                "binds",
-                "ingress-policy",
-            )
-            _add_edge(
-                edges,
-                "application-ingress-rule",
-                "load-balancer-security-group",
-                "uses",
-                "ingress-policy",
-            )
-            _add_edge(edges, "ingress-route-association", "ingress-subnet", "binds", "egress-policy")
             _add_edge(
                 edges,
                 "ingress-route-association",
@@ -934,7 +1101,7 @@ def build_provider_deployment_model(
                 "binds",
                 "egress-policy",
             )
-            _add_edge(edges, "nat-gateway", "ingress-subnet", "is placed in", "egress-policy")
+            _add_edge(edges, "nat-gateway", egress_public_subnet, "is placed in", "egress-policy")
             _add_edge(edges, "nat-gateway", "nat-public-ip", "uses address", "egress-policy")
             _add_edge(edges, "application-route-table", "network", "belongs to", "egress-policy")
             _add_edge(
@@ -944,8 +1111,16 @@ def build_provider_deployment_model(
                 "uses",
                 "egress-policy",
             )
-            _add_edge(edges, "application-default-route", "nat-gateway", "routes to", "egress-policy")
-            _add_edge(edges, "application-route-association", "subnet", "binds", "egress-policy")
+            _add_edge(
+                edges, "application-default-route", "nat-gateway", "routes to", "egress-policy"
+            )
+            _add_edge(
+                edges,
+                "application-route-association",
+                egress_private_subnet,
+                "binds",
+                "egress-policy",
+            )
             _add_edge(
                 edges,
                 "application-route-association",
@@ -962,33 +1137,62 @@ def build_provider_deployment_model(
                 "binds",
                 "egress-policy",
             )
-    elif provider == "azure" and load_balanced_topology:
+    elif provider == "azure" and private_egress_required:
         selected.update(
             {
-                "ingress-subnet",
-                "frontend-ip-config",
-                "frontend-port",
                 "nat-public-ip",
                 "nat-gateway",
                 "nat-association",
+                "nat-public-ip-association",
             }
         )
-        _add_edge(edges, "ingress-subnet", "network", "belongs to", "ingress-policy")
-        _add_edge(edges, "load-balancer", "ingress-subnet", "is placed in", "ingress-policy")
-        _add_edge(edges, "listener", "frontend-ip-config", "uses", "ingress-policy")
-        _add_edge(edges, "listener", "frontend-port", "uses", "ingress-policy")
-        _add_edge(edges, "nat-gateway", "nat-public-ip", "uses address", "egress-policy")
+        if load_balanced_topology:
+            selected.add("frontend-ip-config")
+        _add_edge(edges, "nat-public-ip-association", "nat-gateway", "binds", "egress-policy")
+        _add_edge(edges, "nat-public-ip-association", "nat-public-ip", "binds", "egress-policy")
         _add_edge(edges, "nat-association", "nat-gateway", "binds", "egress-policy")
         _add_edge(edges, "nat-association", "subnet", "binds", "egress-policy")
-    elif provider == "gcp" and load_balanced_topology:
+    elif provider == "gcp" and private_egress_required:
         selected.update({"cloud-router", "cloud-nat"})
         _add_edge(edges, "cloud-router", "network", "belongs to", "egress-policy")
         _add_edge(edges, "cloud-nat", "cloud-router", "uses", "egress-policy")
         _add_edge(edges, "cloud-nat", "subnet", "selects subnetwork", "egress-policy")
+    if provider == "aws" and load_balanced_topology and not grouped_compute:
+        selected.add("target-registration")
+        _add_edge(
+            edges,
+            "target-registration",
+            "backend-group",
+            "registers with",
+            "capability-realization",
+        )
+        _add_edge(
+            edges,
+            "target-registration",
+            "compute-instance",
+            "registers instance",
+            "capability-realization",
+        )
     if not grouped_compute:
         for source, target, label in spec["standaloneCapabilityEdges"]:
             if source in selected and target in selected:
                 _add_edge(edges, source, target, label, "capability-realization")
+    elif provider == "azure" and load_balanced_topology:
+        # VMSS NIC configuration references the backend pool directly. There is no
+        # standalone association resource for scale-set instances.
+        selected.discard("backend-membership")
+        edges = {
+            key: edge
+            for key, edge in edges.items()
+            if "backend-membership" not in {str(edge["from"]), str(edge["to"])}
+        }
+        _add_edge(
+            edges,
+            "compute-group",
+            "backend-group",
+            "joins through",
+            "capability-realization",
+        )
 
     workloads = _logical_workloads(logical_deployment_model)
     runtime_hints = runtime_hints or {}
@@ -1002,7 +1206,9 @@ def build_provider_deployment_model(
     persistence_owner = (
         persistent_candidates[0]
         if persistent_storage_required and len(persistent_candidates) == 1
-        else workloads[0] if persistent_storage_required and len(workloads) == 1 else None
+        else workloads[0]
+        if persistent_storage_required and len(workloads) == 1
+        else None
     )
 
     # The first non-database workload is the public/application tier. The selected
@@ -1020,10 +1226,7 @@ def build_provider_deployment_model(
         workloads,
         force_http=bool((topology_policy.get("publicEndpoint") or {}).get("required")),
     )
-    if (
-        not external_endpoints
-        and (topology_policy.get("publicEndpoint") or {}).get("required")
-    ):
+    if not external_endpoints and (topology_policy.get("publicEndpoint") or {}).get("required"):
         external_endpoints = [
             {
                 "id": f"endpoint-{_slug(primary_workload['name'])}-http",
@@ -1081,6 +1284,18 @@ def build_provider_deployment_model(
                         _TERRAFORM_TYPES.get(provider, {}).get("compute-instance", ())
                     ),
                     "logicalRef": workload["id"],
+                    "placement": {
+                        "region": region,
+                        "zonePolicy": "oneSelectedZone",
+                    },
+                    "privateAddressAllocation": "static",
+                    "privateAddress": (
+                        "10.80.30.10"
+                        if provider == "aws" and not load_balanced_topology
+                        else "10.80.10.20"
+                    ),
+                    "publicAddress": False,
+                    "bootImageRef": "boot-image",
                 }
             )
             suffix = workload["id"].removeprefix("workload-")
@@ -1100,7 +1315,15 @@ def build_provider_deployment_model(
                 )
                 extra_provider_edges.extend(
                     [
-                        (target_compute, "subnet", "is placed in"),
+                        (
+                            target_compute,
+                            (
+                                "state-subnet"
+                                if not load_balanced_topology and database_placement == "dedicated"
+                                else "subnet"
+                            ),
+                            "is placed in",
+                        ),
                         (target_compute, filter_id, "attaches"),
                         (filter_id, "network", "belongs to"),
                     ]
@@ -1122,10 +1345,16 @@ def build_provider_deployment_model(
                             "providerKind": provider_kind,
                             "entityClass": "providerResource",
                             "handling": "create",
-                            "terraformTypes": list(
-                                _TERRAFORM_TYPES[provider][provider_kind]
-                            ),
+                            "terraformTypes": list(_TERRAFORM_TYPES[provider][provider_kind]),
                             "logicalRef": workload["id"],
+                            **(
+                                {
+                                    "privateAddressAllocation": "static",
+                                    "privateAddress": "10.80.10.20",
+                                }
+                                if provider_kind == "network-interface"
+                                else {}
+                            ),
                         }
                     )
                 extra_provider_edges.extend(
@@ -1158,9 +1387,7 @@ def build_provider_deployment_model(
                     ]
                 )
         workload["replicas"] = replicas
-        workload["persistence"] = (
-            "persistent" if persistence_owner is workload else "unspecified"
-        )
+        workload["persistence"] = "persistent" if persistence_owner is workload else "unspecified"
         allocations.append(
             {
                 "id": f"allocation-{workload['id']}",
@@ -1173,6 +1400,52 @@ def build_provider_deployment_model(
 
     for source, target, label in extra_provider_edges:
         _add_edge(edges, source, target, label, "runtime-path-realization")
+    for node in extra_compute_nodes:
+        if node.get("providerKind") not in {"security-group", "firewall"}:
+            continue
+        node["trafficPolicy"] = {
+            "source": (
+                {"securityGroupRef": "security-group"}
+                if provider == "aws"
+                else {"applicationSubnetCidrRef": "subnet"}
+                if provider == "azure"
+                else {"sourceTag": "easydep-application"}
+            ),
+            "targetSelector": ({"targetTag": "easydep-state"} if provider == "gcp" else None),
+            "protocol": "TCP",
+            "port": 5432,
+            "public": False,
+        }
+
+    if database_placement != "none" and persistence_owner is not None:
+        state_allocation = next(
+            (item for item in allocations if item["workloadRef"] == persistence_owner["id"]),
+            None,
+        )
+        if state_allocation is not None:
+            state_compute = str(state_allocation["computeRef"])
+            _add_edge(
+                edges,
+                state_compute,
+                "boot-image",
+                "uses image",
+                "boot-image-policy",
+            )
+            _add_edge(
+                edges,
+                state_compute,
+                (
+                    "state-secret-instance-profile"
+                    if provider == "aws" and database_placement == "dedicated"
+                    else "registry-instance-profile"
+                    if provider == "aws"
+                    else "state-secret-identity"
+                    if database_placement == "dedicated"
+                    else "registry-pull-identity"
+                ),
+                "uses secret identity",
+                "secret-policy",
+            )
 
     planned_nodes = {str(item.get("id") or ""): item for item in dependency_plan.get("nodes") or []}
     # DepKB's VM -> disk prerequisite can describe an embedded boot-disk
@@ -1204,19 +1477,13 @@ def build_provider_deployment_model(
             "dependency-plan",
         )
 
-    logical_connection_edges = _connection_edges(
-        logical_deployment_model, workloads, provider
-    )
+    logical_connection_edges = _connection_edges(logical_deployment_model, workloads, provider)
     for edge in logical_connection_edges:
         edges[(edge["from"], edge["to"], edge["label"])] = edge
 
     endpoint_nodes: list[dict[str, Any]] = []
     load_balanced = "load-balancer" in selected or "forwarding-rule" in selected
-    entry_resource = (
-        "load-balancer"
-        if provider in {"aws", "azure"}
-        else "forwarding-rule"
-    )
+    entry_resource = "load-balancer" if provider in {"aws", "azure"} else "forwarding-rule"
     if external_endpoints:
         if not load_balanced or provider in {"azure", "gcp"}:
             selected.add("public-ip")
@@ -1253,9 +1520,7 @@ def build_provider_deployment_model(
                     # Azure and GCP network-interface configuration references an
                     # already allocated static public address.
                     address_owner = (
-                        "network-interface"
-                        if "network-interface" in selected
-                        else compute_node
+                        "network-interface" if "network-interface" in selected else compute_node
                     )
                     _add_edge(
                         edges,
@@ -1280,6 +1545,55 @@ def build_provider_deployment_model(
                 "provider-realization",
             )
 
+    if provider == "azure":
+        resource_group_scoped = {
+            "app-registry",
+            "compute-group",
+            "compute-instance",
+            "disk",
+            "load-balancer",
+            "nat-gateway",
+            "nat-public-ip",
+            "network",
+            "network-interface",
+            "public-ip",
+            "registry-pull-identity",
+            "security-group",
+            "state-secret-identity",
+            "subnet",
+        }
+        for node_id in sorted(selected & resource_group_scoped):
+            if _TERRAFORM_TYPES[provider].get(node_id):
+                _add_edge(
+                    edges,
+                    node_id,
+                    "resource-group",
+                    "is deployed in",
+                    "provider-realization",
+                )
+        for node in extra_compute_nodes:
+            _add_edge(
+                edges,
+                str(node["id"]),
+                "resource-group",
+                "is deployed in",
+                "provider-realization",
+            )
+
+    address_plan = {
+        "networkCidrs": ["10.80.0.0/16"],
+        "applicationSubnetCidrs": [
+            f"10.80.{10 + index}.0/24"
+            for index in range(int(projection_policy.get("minimumSubnets") or 1))
+        ],
+        "ingressSubnetCidrs": [
+            f"10.80.{20 + index}.0/24"
+            for index in range(int(projection_policy.get("minimumIngressSubnets") or 1))
+        ],
+        "stateSubnetCidrs": ["10.80.30.0/24"],
+        "overlapPolicy": "reject",
+    }
+
     resources = spec["resources"]
     provider_nodes = []
     for node_id in sorted(selected):
@@ -1296,10 +1610,12 @@ def build_provider_deployment_model(
         if provider == "azure" and provider_kind == "network-interface" and managed:
             terraform_types = ()
             embedded_owner = "compute-group"
-        if provider == "gcp" and provider_kind == "named-port" and managed:
-            embedded_owner = "compute-group"
         embedded = bool(embedded_owner) and not terraform_types
-        referenced = False
+        referenced = provider_kind in {
+            "boot-image",
+            "registry-pull-policy",
+            "secret-ref",
+        }
         node_name = resources[node_id][0]
         if provider == "gcp" and provider_kind == "compute-group":
             if topology_policy.get("zoneLayout") == "multiZoneSpread":
@@ -1309,12 +1625,8 @@ def build_provider_deployment_model(
                 node_name = "Zonal Managed Instance Group"
                 terraform_types = ("google_compute_instance_group_manager",)
         if provider == "gcp" and provider_kind == "public-ip":
-            if load_balanced:
-                node_name = "Global External IP Address"
-                terraform_types = ("google_compute_global_address",)
-            else:
-                node_name = "Regional External IP Address"
-                terraform_types = ("google_compute_address",)
+            node_name = "Regional External IP Address"
+            terraform_types = ("google_compute_address",)
         provider_nodes.append(
             {
                 "id": node_id,
@@ -1337,7 +1649,165 @@ def build_provider_deployment_model(
                 ),
                 "terraformTypes": [] if referenced else list(terraform_types),
                 "projectionRuleId": f"{provider}.{provider_kind}",
+                **(
+                    {
+                        "transportProtocol": "TCP",
+                        "frontendPort": 80,
+                        "backendPort": (
+                            80
+                            if provider == "gcp"
+                            else application_hint.get("hostPort", "runtimeDerived")
+                        ),
+                    }
+                    if provider_kind in {"listener", "routing-rule", "forwarding-rule"}
+                    else {}
+                ),
+                **(
+                    {
+                        "protocol": "HTTP",
+                        "port": (
+                            80
+                            if provider == "gcp"
+                            else application_hint.get("hostPort", "runtimeDerived")
+                        ),
+                        "requestPath": application_hint.get("healthPath", "runtimeDerived"),
+                    }
+                    if provider_kind == "health-check"
+                    else {}
+                ),
+                **(
+                    {
+                        "requiredHostPort": 80,
+                        "containerPort": application_hint.get("containerPort", "runtimeDerived"),
+                        "reason": "passthrough-load-balancer-does-not-translate-ports",
+                    }
+                    if provider == "gcp" and load_balanced and provider_kind == "forwarding-rule"
+                    else {}
+                ),
                 **({"ownerRef": embedded_owner} if embedded else {}),
+                **(
+                    {
+                        "inputVariable": "database_secret_ref",
+                        "valueOwner": "caller",
+                        "credentialCollectionByEasyDep": False,
+                        "valueFormat": "providerSecretContainingJsonObject",
+                        "requiredKeys": [
+                            "POSTGRES_DB",
+                            "POSTGRES_USER",
+                            "POSTGRES_PASSWORD",
+                        ],
+                    }
+                    if provider_kind == "secret-ref"
+                    else {}
+                ),
+                **(
+                    {
+                        "selectionPolicy": "providerDefaultLinuxImage",
+                        "resolvedIdMustBeRecorded": True,
+                    }
+                    if provider_kind == "boot-image"
+                    else {}
+                ),
+                **(
+                    {
+                        "imageReferencePolicy": "immutableDigest",
+                        "provisionedBy": "userExecutedGeneratedIaC",
+                    }
+                    if provider_kind == "app-registry"
+                    else {}
+                ),
+                **(
+                    {
+                        "desiredCapacity": int(projection_policy.get("minimumInstances") or 1),
+                        "autoscaling": False,
+                        "selectedZones": list(topology_policy.get("selectedZones") or []),
+                        "zoneSpreadRequired": bool(projection_policy.get("zoneSpreadRequired")),
+                    }
+                    if provider_kind == "compute-group"
+                    else {}
+                ),
+                **(
+                    {
+                        "bootImageRef": "boot-image",
+                        "placement": {
+                            "region": region,
+                            "selectedZones": list(topology_policy.get("selectedZones") or []),
+                        },
+                    }
+                    if provider_kind in {"compute-instance", "compute-template"}
+                    else {}
+                ),
+                **(
+                    {
+                        "deletionPolicy": "retain",
+                        "purgeRequiresExplicitOptIn": True,
+                    }
+                    if provider_kind == "disk"
+                    else {}
+                ),
+                **(
+                    {
+                        "natIpAllocateOption": "AUTO_ONLY",
+                        "sourceSubnetworkIpRangesToNat": "LIST_OF_SUBNETWORKS",
+                        "subnetworkSourceIpRanges": ["ALL_IP_RANGES"],
+                    }
+                    if provider == "gcp" and provider_kind == "cloud-nat"
+                    else {}
+                ),
+                **(
+                    {"preserveDefaultInternetRoute": True}
+                    if provider == "gcp" and provider_kind == "network"
+                    else {}
+                ),
+                **(
+                    {
+                        "sku": "Standard",
+                        "allocationMethod": "Static",
+                    }
+                    if provider == "azure" and provider_kind in {"public-ip", "nat-public-ip"}
+                    else {}
+                ),
+                **(
+                    {
+                        "trafficPolicy": {
+                            "clientSource": (
+                                {"securityGroupRef": "load-balancer-security-group"}
+                                if provider == "aws"
+                                and load_balanced_topology
+                                and node_id == "security-group"
+                                else "0.0.0.0/0"
+                            ),
+                            "protocol": "TCP",
+                            "port": (
+                                80
+                                if node_id == "load-balancer-security-group"
+                                or (provider == "gcp" and load_balanced_topology)
+                                else application_hint.get("hostPort", "runtimeDerived")
+                            ),
+                            "healthProbeRequired": load_balanced_topology,
+                            "targetSelectorRequired": provider == "gcp",
+                        }
+                    }
+                    if provider_kind
+                    in {"security-group", "firewall", "load-balancer-security-group"}
+                    else {}
+                ),
+                **(
+                    {
+                        "cidrBlocks": (
+                            address_plan["networkCidrs"]
+                            if node_id == "network"
+                            else address_plan["applicationSubnetCidrs"]
+                            if node_id == "subnet"
+                            else address_plan["ingressSubnetCidrs"]
+                            if node_id == "ingress-subnet"
+                            else address_plan["stateSubnetCidrs"]
+                        )
+                    }
+                    if node_id in {"network", "subnet", "ingress-subnet", "state-subnet"}
+                    and not (provider == "gcp" and node_id == "network")
+                    else {}
+                ),
                 **(
                     {
                         "scope": "zonal",
@@ -1347,37 +1817,18 @@ def build_provider_deployment_model(
                     else {}
                 ),
                 **(
-                    {
-                        "minimumCount": int(
-                            projection_policy.get("minimumSubnets") or 1
-                        )
-                    }
+                    {"minimumCount": int(projection_policy.get("minimumSubnets") or 1)}
                     if provider_kind == "subnet"
                     and int(projection_policy.get("minimumSubnets") or 1) > 1
-                    else {
-                        "minimumCount": int(
-                            projection_policy.get("minimumIngressSubnets") or 1
-                        )
-                    }
+                    else {"minimumCount": int(projection_policy.get("minimumIngressSubnets") or 1)}
                     if provider_kind == "ingress-subnet"
-                    and int(
-                        projection_policy.get("minimumIngressSubnets") or 1
-                    )
-                    > 1
+                    and int(projection_policy.get("minimumIngressSubnets") or 1) > 1
                     else {}
                 ),
                 **(
-                    {
-                        "minimumCount": int(
-                            projection_policy.get("minimumIngressSubnets") or 1
-                        )
-                    }
+                    {"minimumCount": int(projection_policy.get("minimumIngressSubnets") or 1)}
                     if provider_kind == "ingress-route-association"
-                    else {
-                        "minimumCount": int(
-                            projection_policy.get("minimumSubnets") or 1
-                        )
-                    }
+                    else {"minimumCount": int(projection_policy.get("minimumSubnets") or 1)}
                     if provider_kind == "application-route-association"
                     else {}
                 ),
@@ -1424,18 +1875,13 @@ def build_provider_deployment_model(
         "placementConstraints": {
             "regionCount": 1,
             "minimumZones": int(projection_policy.get("minimumZones") or 1),
-            "minimumIngressZones": int(
-                projection_policy.get("minimumIngressZones") or 1
-            ),
+            "minimumIngressZones": int(projection_policy.get("minimumIngressZones") or 1),
             "minimumSubnets": int(projection_policy.get("minimumSubnets") or 1),
-            "minimumIngressSubnets": int(
-                projection_policy.get("minimumIngressSubnets") or 1
-            ),
-            "selectedIngressZones": list(
-                projection_policy.get("selectedIngressZones") or []
-            ),
+            "minimumIngressSubnets": int(projection_policy.get("minimumIngressSubnets") or 1),
+            "selectedIngressZones": list(projection_policy.get("selectedIngressZones") or []),
             "subnetScope": "zonal" if provider == "aws" else "regional",
             "diskZoneAffinity": "sameZoneAsAttachedCompute",
+            "addressPlan": address_plan,
         },
         "workloads": workloads,
         "allocations": allocations,
@@ -1478,9 +1924,7 @@ def build_provider_deployment_model(
                             {
                                 "field": f"workloads.{persistence_owner['id']}.runtime",
                                 "value": persistence_owner.get("runtime"),
-                                "basis": (persistence_owner.get("runtime") or {}).get(
-                                    "basis"
-                                ),
+                                "basis": (persistence_owner.get("runtime") or {}).get("basis"),
                                 "sourceRefs": persistence_owner.get("sourceRefs") or [],
                             }
                         ]
@@ -1496,11 +1940,9 @@ def build_provider_deployment_model(
         "runtimeEvidence": {
             "appStatePrivatePath": {
                 "status": "observed" if logical_connection_edges else "notApplicable",
-                "evidenceRefs": (
-                    [f"experiment:E1/{provider}"] if logical_connection_edges else []
-                ),
+                "evidenceRefs": ([f"experiment:E1/{provider}"] if logical_connection_edges else []),
                 "observedFunction": (
-                    "private endpoint plus provider traffic filter supported state read/write"
+                    "State VM private address plus provider traffic filter supported state read/write"
                     if logical_connection_edges
                     else None
                 ),
@@ -1508,22 +1950,16 @@ def build_provider_deployment_model(
             "stateRestartPersistence": {
                 "status": "observed" if persistent_storage_required else "notApplicable",
                 "evidenceRefs": (
-                    [f"experiment:E1/{provider}"]
-                    if persistent_storage_required
-                    else []
+                    [f"experiment:E1/{provider}"] if persistent_storage_required else []
                 ),
                 "observedFault": (
-                    "state VM restart or reset"
-                    if persistent_storage_required
-                    else None
+                    "state VM restart or reset" if persistent_storage_required else None
                 ),
             },
             "stateReplacementRebind": {
                 "status": "observed" if persistent_storage_required else "notApplicable",
                 "evidenceRefs": (
-                    [f"experiment:E3/{provider}"]
-                    if persistent_storage_required
-                    else []
+                    [f"experiment:E3/{provider}"] if persistent_storage_required else []
                 ),
                 "observedFault": (
                     "state VM replacement, existing data-disk reattachment, and "
@@ -1532,11 +1968,10 @@ def build_provider_deployment_model(
                     else None
                 ),
             },
-            "managedHttpIngress": _managed_http_evidence(
+            "managedL4Ingress": _managed_l4_evidence(
                 provider,
                 any(
-                    node.get("protocol") == "http"
-                    and node.get("mode") == "loadBalanced"
+                    node.get("protocol") == "http" and node.get("mode") == "loadBalanced"
                     for node in endpoint_nodes
                 ),
             ),

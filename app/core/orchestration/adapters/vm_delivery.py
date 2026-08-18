@@ -74,10 +74,20 @@ dependency knowledge base. Do not claim that the dependency plan satisfies or ev
 use deploymentNeeds as their requirement source.
 Use cloud-init/user-data to install Docker, run the supplied container image on the requested
 port, expose the health path, and mount persistent storage when required. Never embed
-credentials. Prefer variables for image IDs, project/subscription identifiers, and container
-image. Return one JSON object with `terraformFiles`, a map from safe
-flat file names to complete contents. It must contain at least one .tf file and may include
-.tftpl, .tpl, or .sh files referenced by Terraform. Also return `deploymentNotes`, a short
+credentials. EasyDep does not receive or store CSP credentials: the caller runs the generated
+bundle with their locally configured AWS, Azure, or Google Cloud authentication. A database
+deployment receives only a caller-created provider Secret reference through the sensitive
+`database_secret_ref` variable. Never create the Secret or its value. Create only the VM identity
+and least-privilege read binding required by ResourcePlan. Prefer variables for image IDs,
+project/subscription identifiers, and container image. Return one JSON object with
+`terraformFiles`, a map from safe
+flat file names to complete contents. It must contain at least one .tf file plus doctor.sh,
+plan.sh, deploy.sh, status.sh, and destroy.sh; a retained data disk also requires purge.sh.
+It may include .tftpl or .tpl files referenced by Terraform. The caller runs these scripts
+with locally configured cloud and Registry authentication. deploy.sh must create the planned
+Registry first, build and push the application image once, resolve its sha256 digest, and only
+then create compute using that immutable digest. It must resume from a matching checkpoint
+instead of rebuilding an already recorded digest. Also return `deploymentNotes`, a short
 array. Do not
 return Markdown fences or any non-JSON text. All .tf files form one Terraform module: never
 declare the same resource, variable, output, data source, or module block more than once.
@@ -136,10 +146,20 @@ managedGroupManySingleZone creates a fixed-size managed group with replicaCount 
 occupied zone. managedGroupManyMultiZone creates a fixed-size managed group with replicaCount >=
 2 spread over the selected zones. A managed group does not imply traffic autoscaling, automatic
 repair, high availability, or an SLA. publicIngress=direct is valid only for standaloneOne and
-uses its reserved public address. publicIngress=loadBalanced uses the provider-native L7 load
-balancer and private backend addresses. All supported public endpoints use HTTP. HTTPS/TLS,
+uses its reserved public address. publicIngress=loadBalanced uses the selected provider-native L4
+load balancer and private backend addresses: AWS Network Load Balancer, Azure Load Balancer, or
+GCP Regional External Passthrough Network Load Balancer. The public workload is still HTTP, while
+the load balancer forwards TCP and may use an HTTP readiness probe. HTTPS/TLS,
 certificates, domain validation, and TLS reverse proxies are explicitly out of scope.
-Never replace a managed group with duplicated standalone VMs or claim an availability outcome."""
+Never replace a managed group with duplicated standalone VMs or claim an availability outcome.
+Use ResourcePlan's CIDR blocks exactly and reject overlap. Create the provider-native private
+application Registry and pull identity declared by ResourcePlan; VM bootstrap must consume an
+immutable `image@sha256` reference. Resolve every VM or template from the planned existing OS
+image and expose the resolved image ID as an output/checkpoint value. A dedicated state VM uses
+the planned static private address. Retained data disks require `lifecycle.prevent_destroy=true`.
+destroy.sh must detach the disk and remove it from Terraform state before destroying the other
+run-owned resources. Only purge.sh, after explicit confirmation, may remove the guard and delete
+the retained disk. Normal destroy must not delete application data."""
 
 PROVIDER_COMPATIBILITY = {
     "aws": {
@@ -155,6 +175,38 @@ PROVIDER_COMPATIBILITY = {
                 ),
             },
             {
+                "resourceType": "aws_lb",
+                "rule": (
+                    "For the ResourcePlan load balancer set load_balancer_type=network. "
+                    "Use a TCP port 80 listener and TCP backend target port; keep the "
+                    "application readiness path as the target group's HTTP health check."
+                ),
+            },
+            {
+                "resourceType": "aws_lb_target_group_attachment",
+                "rule": (
+                    "For standaloneOne load-balanced ingress, explicitly register the "
+                    "EC2 instance with target_group_arn and target_id. For an Auto "
+                    "Scaling Group, use target_group_arns on the group instead."
+                ),
+            },
+            {
+                "resourceType": "aws_ecr_repository",
+                "rule": (
+                    "Create the application repository and an EC2 IAM role, managed "
+                    "ECR read-only attachment, and instance profile. Attach the profile "
+                    "to the standalone instance or Launch Template."
+                ),
+            },
+            {
+                "resourceType": "aws_iam_role_policy",
+                "rule": (
+                    "For a dedicated State VM, use a separate EC2 role, inline Secret read "
+                    "policy, and instance profile. Do not attach the application's ECR read "
+                    "policy to the State VM role."
+                ),
+            },
+            {
                 "resourceType": "aws_volume_attachment",
                 "rule": (
                     "On Linux Nitro instances, enumerate /dev/nvme*n1 and call "
@@ -163,7 +215,7 @@ PROVIDER_COMPATIBILITY = {
                     "Do not infer the device from nvme list ordering or an invented "
                     "/dev/disk/by-id/aws-* path."
                 ),
-            }
+            },
         ],
     },
     "azure": {
@@ -174,10 +226,38 @@ PROVIDER_COMPATIBILITY = {
                 "rule": "Do not set network_security_group_id on the NIC resource.",
             },
             {
+                "resourceType": "azurerm_resource_group",
+                "rule": (
+                    "Create one deployment-owned Resource Group and reference its name "
+                    "and location from every generated Azure resource."
+                ),
+            },
+            {
+                "resourceType": "azurerm_nat_gateway_public_ip_association",
+                "rule": (
+                    "Bind the Standard Static NAT Public IP to the NAT Gateway, in "
+                    "addition to the separate Subnet-NAT Gateway association."
+                ),
+            },
+            {
+                "resourceType": "azurerm_role_assignment",
+                "rule": (
+                    "A dedicated State VM uses its own User-assigned Managed Identity and "
+                    "Key Vault Secrets User assignment. Do not grant it AcrPull."
+                ),
+            },
+            {
                 "resourceType": "azurerm_network_interface_security_group_association",
                 "rule": (
                     "Associate a NIC and NSG with network_interface_id and "
                     "network_security_group_id."
+                ),
+            },
+            {
+                "resourceType": "azurerm_lb_rule",
+                "rule": (
+                    "Use the Standard public Load Balancer frontend, TCP frontend port 80, "
+                    "the application backend port, the Backend Address Pool ID, and Probe ID."
                 ),
             },
             {
@@ -190,6 +270,58 @@ PROVIDER_COMPATIBILITY = {
                     "Attach a managed data disk to azurerm_linux_virtual_machine with this "
                     "separate resource using managed_disk_id, virtual_machine_id, lun, and "
                     "caching. Do not add a data_disk block inside azurerm_linux_virtual_machine."
+                ),
+            },
+        ],
+    },
+    "gcp": {
+        "providerConstraint": "hashicorp/google 7.8.0",
+        "rules": [
+            {
+                "resourceType": "google_compute_forwarding_rule",
+                "rule": (
+                    "Implement a regional external passthrough Network Load Balancer: use "
+                    "load_balancing_scheme=EXTERNAL, IP protocol TCP, port 80, the regional "
+                    "Address, and the Region Backend Service. Do not create a target proxy or URL map."
+                ),
+            },
+            {
+                "resourceType": "google_compute_region_backend_service",
+                "rule": (
+                    "Use protocol TCP and an EXTERNAL regional backend service with an HTTP "
+                    "Region Health Check. Passthrough does not translate ports, so publish the "
+                    "application container on host port 80."
+                ),
+            },
+            {
+                "resourceType": "google_compute_router_nat",
+                "rule": (
+                    "Use nat_ip_allocate_option=AUTO_ONLY, "
+                    "source_subnetwork_ip_ranges_to_nat=LIST_OF_SUBNETWORKS, and a "
+                    "subnetwork block selecting the planned Subnetwork with "
+                    "source_ip_ranges_to_nat=[ALL_IP_RANGES]."
+                ),
+            },
+            {
+                "resourceType": "google_compute_network",
+                "rule": (
+                    "Keep the VPC Network default internet route when Cloud NAT is selected; "
+                    "do not set delete_default_routes_on_create=true."
+                ),
+            },
+            {
+                "resourceType": "google_secret_manager_secret_iam_member",
+                "rule": (
+                    "A dedicated State VM uses a separate Service Account and Secret Accessor "
+                    "IAM member. Do not grant that account Artifact Registry Reader."
+                ),
+            },
+            {
+                "resourceType": "google_compute_firewall",
+                "rule": (
+                    "Select backend VMs with target tags or service accounts. Permit "
+                    "public TCP application traffic and the regional health probes on "
+                    "the planned host port; never expose PostgreSQL port 5432 publicly."
                 ),
             },
         ],
@@ -230,6 +362,7 @@ def _inheriting_temporary_directory(parent: Path, prefix: str):
                 sleep(0.25)
         if last_error is not None:
             raise last_error
+
 
 DOCKERFILE = """FROM gradle:8.14.2-jdk21 AS build
 WORKDIR /workspace
@@ -579,8 +712,7 @@ class VmDeliveryAdapter:
                         flags=re.IGNORECASE,
                     ):
                         errors.append(
-                            "variable "
-                            f"{raw_name} default references another Terraform object"
+                            f"variable {raw_name} default references another Terraform object"
                         )
         return sorted(set(errors))
 
@@ -613,9 +745,7 @@ class VmDeliveryAdapter:
                     value,
                     flags=re.DOTALL,
                 ):
-                    keys = set(
-                        re.findall(r"(?m)(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", match[2])
-                    )
+                    keys = set(re.findall(r"(?m)(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*)\s*=", match[2]))
                     calls.append((PurePosixPath(match[1]).name, keys))
         for template_name, supplied_keys in calls:
             template = files.get(template_name)
@@ -686,20 +816,13 @@ class VmDeliveryAdapter:
         if provider == "aws":
             lower = text.lower()
             bootstrap_needs_internet = any(
-                marker in lower
-                for marker in ("dnf ", "yum ", "docker pull", "docker run")
+                marker in lower for marker in ("dnf ", "yum ", "docker pull", "docker run")
             )
             creates_vpc = 'resource "aws_vpc"' in lower
             has_public_route = (
                 'resource "aws_internet_gateway"' in lower
-                and (
-                    'resource "aws_route"' in lower
-                    or 'resource "aws_route_table"' in lower
-                )
-                and (
-                    'resource "aws_route_table_association"' in lower
-                    or "route_table_id" in lower
-                )
+                and ('resource "aws_route"' in lower or 'resource "aws_route_table"' in lower)
+                and ('resource "aws_route_table_association"' in lower or "route_table_id" in lower)
                 and "0.0.0.0/0" in lower
             )
             if bootstrap_needs_internet and creates_vpc and not has_public_route:
@@ -756,9 +879,7 @@ class VmDeliveryAdapter:
             if re.search(r"(?im)^\s*docker\s+run\s+-d\b", content) and not re.search(
                 r"(?i)(?:^|\s)--restart(?:=|\s+)", content
             ):
-                errors.append(
-                    f"{name}: long-running Docker bootstrap has no restart policy."
-                )
+                errors.append(f"{name}: long-running Docker bootstrap has no restart policy.")
             mount_roots: set[str] = set()
             for line in content.splitlines():
                 try:
@@ -778,9 +899,7 @@ class VmDeliveryAdapter:
                 content,
             ):
                 source = bind_match.group(1).strip("\"'")
-                child_path_used = re.search(
-                    rf"{re.escape(source)}/[^\s:\"']+", content
-                )
+                child_path_used = re.search(rf"{re.escape(source)}/[^\s:\"']+", content)
                 if source in mount_roots and child_path_used is None:
                     errors.append(
                         f"{name}: container data bind uses the filesystem mount root "
@@ -913,9 +1032,7 @@ class VmDeliveryAdapter:
                 for raw_name in block
             )
             declared_variables.update(
-                raw_name.strip('"')
-                for block in parsed.get("variable") or []
-                for raw_name in block
+                raw_name.strip('"') for block in parsed.get("variable") or [] for raw_name in block
             )
         provider_block = ""
         if not provider_configuration_present:
@@ -925,16 +1042,10 @@ class VmDeliveryAdapter:
                 provider_block = 'provider "azurerm" {\n  features {}\n}\n'
             elif expected_provider == "gcp" and region:
                 project_variable = next(
-                    (
-                        name
-                        for name in ("project_id", "project")
-                        if name in declared_variables
-                    ),
+                    (name for name in ("project_id", "project") if name in declared_variables),
                     None,
                 )
-                project_line = (
-                    f"  project = var.{project_variable}\n" if project_variable else ""
-                )
+                project_line = f"  project = var.{project_variable}\n" if project_variable else ""
                 provider_block = (
                     'provider "google" {\n'
                     + project_line
@@ -1004,15 +1115,11 @@ class VmDeliveryAdapter:
             }
         validation_temp = plugin_cache_dir.parent / "provider-validation-temp"
         validation_temp.mkdir(parents=True, exist_ok=True)
-        with _inheriting_temporary_directory(
-            validation_temp, "easydep-iac-validation-"
-        ) as root:
+        with _inheriting_temporary_directory(validation_temp, "easydep-iac-validation-") as root:
             for name, content in files.items():
                 (root / name).write_text(content, encoding="utf-8")
             cli_config = root / "provider-mirror.tfrc"
-            cli_config.write_text(
-                provider_mirror_configuration(plugin_cache_dir), encoding="utf-8"
-            )
+            cli_config.write_text(provider_mirror_configuration(plugin_cache_dir), encoding="utf-8")
             environment.pop("TF_PLUGIN_CACHE_DIR", None)
             environment["TF_CLI_CONFIG_FILE"] = str(cli_config)
             commands = [
@@ -1091,9 +1198,7 @@ class VmDeliveryAdapter:
                             "stderr": credential.stderr[-1000:],
                             "startedAt": credential_started_at.isoformat(),
                             "finishedAt": datetime.now(UTC).isoformat(),
-                            "elapsedSeconds": round(
-                                perf_counter() - credential_started, 6
-                            ),
+                            "elapsedSeconds": round(perf_counter() - credential_started, 6),
                         }
                     )
                     access_token = credential.stdout.strip()
@@ -1212,8 +1317,7 @@ class VmDeliveryAdapter:
                     else [
                         plan_error
                         or str(
-                            terraform_plan.get("reason")
-                            or "Terraform Plan JSON was not observed."
+                            terraform_plan.get("reason") or "Terraform Plan JSON was not observed."
                         )
                     ]
                 ),
@@ -1351,8 +1455,7 @@ class VmDeliveryAdapter:
                 {
                     "code": "BIND-RESOURCE-PLAN-JSON-UNOBSERVED",
                     "message": (
-                        "Terraform Plan JSON is required before generated IaC can "
-                        "be promoted."
+                        "Terraform Plan JSON is required before generated IaC can be promoted."
                     ),
                     "details": {"reason": plan_report.get("reason")},
                 }
@@ -1662,9 +1765,7 @@ class VmDeliveryAdapter:
         except (TypeError, ValueError) as error:
             if not enable_repair_feedback:
                 raise
-            repair_events.append(
-                {"stage": "outputEnvelope", "errors": [str(error)]}
-            )
+            repair_events.append({"stage": "outputEnvelope", "errors": [str(error)]})
             repair_prompt = json.dumps(
                 {
                     "task": "repairTerraform",
@@ -1689,17 +1790,13 @@ class VmDeliveryAdapter:
             repaired = True
         hcl_errors = self._timed_hcl_validation(files)
         runtime_bootstrap_errors = (
-            []
-            if hcl_errors
-            else self._runtime_bootstrap_errors(files, app_contract, provider)
+            [] if hcl_errors else self._runtime_bootstrap_errors(files, app_contract, provider)
         )
         errors = [*hcl_errors, *runtime_bootstrap_errors]
         validation = (
             {
                 "status": "failed",
-                "stage": (
-                    "hclPreflight" if hcl_errors else "runtimeBootstrap"
-                ),
+                "stage": ("hclPreflight" if hcl_errors else "runtimeBootstrap"),
                 "errors": errors,
             }
             if errors
@@ -1710,14 +1807,10 @@ class VmDeliveryAdapter:
                 validation,
                 files,
                 application_port=application_port,
-                mount_path=(
-                    str(application_mount_path) if application_mount_path else None
-                ),
+                mount_path=(str(application_mount_path) if application_mount_path else None),
                 provider=provider,
                 expected_vm_spec=expected_vm_spec,
-                managed_group_required=(
-                    topology_policy.get("computeManagement") == "managedGroup"
-                ),
+                managed_group_required=(topology_policy.get("computeManagement") == "managedGroup"),
                 resource_plan=resource_plan,
             )
         if not errors:
@@ -1751,9 +1844,7 @@ class VmDeliveryAdapter:
             files = prepared_files(payload, attempt="validation-repair")
             hcl_errors = self._timed_hcl_validation(files)
             runtime_bootstrap_errors = (
-                []
-                if hcl_errors
-                else self._runtime_bootstrap_errors(files, app_contract, provider)
+                [] if hcl_errors else self._runtime_bootstrap_errors(files, app_contract, provider)
             )
             errors = [*hcl_errors, *runtime_bootstrap_errors]
             if errors:
@@ -1767,9 +1858,7 @@ class VmDeliveryAdapter:
                     validation,
                     files,
                     application_port=application_port,
-                    mount_path=(
-                        str(application_mount_path) if application_mount_path else None
-                    ),
+                    mount_path=(str(application_mount_path) if application_mount_path else None),
                     provider=provider,
                     expected_vm_spec=expected_vm_spec,
                     managed_group_required=(
@@ -1784,11 +1873,11 @@ class VmDeliveryAdapter:
             if stage == "deploymentBinding":
                 report_diagnostics: list[dict[str, Any]] = []
                 for report_name in (
-                        "bindingReport",
-                        "vmSelectionBindingReport",
-                        "managedGroupBindingReport",
-                        "resourcePlanBindingReport",
-                        "resourcePlanTerraformPlanReport",
+                    "bindingReport",
+                    "vmSelectionBindingReport",
+                    "managedGroupBindingReport",
+                    "resourcePlanBindingReport",
+                    "resourcePlanTerraformPlanReport",
                 ):
                     report = validation.get(report_name)
                     if isinstance(report, dict):
@@ -1852,9 +1941,7 @@ class VmDeliveryAdapter:
                                 "status": "completed",
                                 "provider": provider,
                                 "region": str(
-                                    resource_plan.get("region")
-                                    or resource_spec.get("region")
-                                    or ""
+                                    resource_plan.get("region") or resource_spec.get("region") or ""
                                 ),
                                 "topology": topology_policy,
                                 "resourcePlan": resource_plan,

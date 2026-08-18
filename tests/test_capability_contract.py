@@ -94,6 +94,13 @@ def test_more_specific_https_capability_wins_over_plain_load_balancing():
     ) == "https-load-balanced-ingress"
 
 
+def test_plain_https_need_links_to_recognized_out_of_scope_capability():
+    assert link_dependency_capability(
+        "secure_ingress",
+        "provide external HTTPS ingress",
+    ) == "https-ingress"
+
+
 def test_unrelated_or_incomplete_need_abstains():
     assert link_dependency_capability("durable_notes", "keep note data") is None
 

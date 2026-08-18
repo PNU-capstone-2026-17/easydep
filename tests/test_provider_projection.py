@@ -16,17 +16,17 @@ def test_provider_realization_preserves_embedded_native_components():
     model = _load()
     validate_realizations(model)
     azure = model["providers"]["azure"]["components"]
-    assert {item.get("ownerResourceId") for item in azure if item["representation"] == "embedded"} == {"gateway"}
+    assert {item.get("ownerResourceId") for item in azure if item["representation"] == "embedded"} == {"load-balancer"}
     assert [
         item["id"] for item in model["providers"]["azure"]["realizations"]
-    ] == ["http-application-gateway", "https-application-gateway"]
+    ] == ["standard-public-lb"]
 
 
 def test_provider_realization_can_use_multiple_native_resources():
     model = _load()
     gcp = model["providers"]["gcp"]["realizations"][0]
     assert gcp["composition"] == "multi-resource"
-    assert len(gcp["componentIds"]) == 6
+    assert len(gcp["componentIds"]) == 4
 
 
 def test_realization_catalog_exposes_missing_boundaries_instead_of_hiding_them():

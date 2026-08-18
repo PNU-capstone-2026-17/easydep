@@ -92,7 +92,7 @@
     },
     "publicIngress": {
       "enum": ["direct", "loadBalanced"],
-      "description": "Public HTTPS ingress realization. Direct is valid only for standaloneOne."
+      "description": "Public HTTP ingress realization. Direct is valid only for standaloneOne; HTTPS/TLS is outside v1."
     },
     "databasePlacement": {
       "enum": ["none", "colocated", "dedicated"],

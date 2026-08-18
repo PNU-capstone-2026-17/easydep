@@ -74,7 +74,7 @@ resource "google_compute_firewall" "https" {
 
 
 def test_gcp_load_balancer_is_not_reduced_to_backend_service_alone(tmp_path):
-    _write(tmp_path, "main.tf", 'resource "google_compute_backend_service" "app" {}')
+    _write(tmp_path, "main.tf", 'resource "google_compute_region_backend_service" "app" {}')
     actual = analyze_terraform_semantics(tmp_path)
     score = score_semantics(
         actual,
@@ -90,8 +90,6 @@ def test_gcp_load_balancer_is_not_reduced_to_backend_service_alone(tmp_path):
     }
     assert {item["componentId"] for item in projection if item["status"] == "failed"} == {
         "forwarding-rule",
-        "target-http-proxy",
-        "url-map",
         "instance-group",
         "health-check",
     }
@@ -151,9 +149,9 @@ resource "google_compute_ssl_certificate" "app" {}
         },
     )
     projection = [item for item in score["checks"] if item["kind"] == "providerProjection"]
-    assert len(projection) == 6
-    assert {item["componentId"] for item in projection if item["status"] == "failed"} == {
-        "target-http-proxy"
+    assert len(projection) == 4
+    assert {item["componentId"] for item in projection if item["status"] == "passed"} == {
+        "instance-group"
     }
 
 

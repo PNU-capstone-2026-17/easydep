@@ -25,8 +25,8 @@
       {
         "id": "load-balancer-subnet", "from": "load-balancer", "to": "subnet",
         "semantics": ["reference", "inputRequired"],
-        "condition": "Application Load Balancer는 서로 다른 가용 영역의 서브넷을 최소 두 개 명시한다.",
-        "manual": {"sourceLocator": "https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html", "sourceVersion": "Elastic Load Balancing API 2015-12-01/current", "retrievedOn": "2026-08-08", "documentSection": "CreateLoadBalancer / Subnets.member.N", "finding": "서브넷 또는 서브넷 매핑 중 하나를 명시해야 하며 Application Load Balancer는 최소 두 가용 영역의 서브넷을 요구한다."},
+        "condition": "Network Load Balancer는 하나 이상의 가용 영역을 활성화하며 각 가용 영역에서 서브넷 하나를 명시한다. 다중 Zone 최소 개수는 별도 배치 요구에서 결정한다.",
+        "manual": {"sourceLocator": "https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html", "sourceVersion": "Elastic Load Balancing API 2015-12-01/current", "retrievedOn": "2026-08-08", "documentSection": "CreateLoadBalancer / Subnets.member.N", "finding": "Network Load Balancer는 하나 이상의 가용 영역에 대해 영역별 서브넷 하나를 명시한다. Application Load Balancer의 최소 두 가용 영역 규칙은 현재 선택 제품에 적용하지 않는다."},
         "normativeRequirement": true
       },
       {

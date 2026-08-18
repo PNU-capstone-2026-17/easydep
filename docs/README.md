@@ -17,7 +17,6 @@
 - `evaluation/README.md`: 평가 실행 명령
 - `evaluation/experiment-contract.md`: 실패·검열 분류
 - [의존성 실험의 배포 계획 반영](resource-plan-experiment-reflection.md): E1~E3 반영 경계와 3사 IaC 정적 실험 결과
-- [CSP 리소스 원장과 앱-배포 바인딩 시각화](provider-native-dependency-graphs.html): provider 생성 관계, 앱 runtime 관계와 8단계 셋업 gate를 분리한 대화형 자료
 - FastAPI `/docs`: 현재 HTTP API 계약
 
 ## 유지 원칙

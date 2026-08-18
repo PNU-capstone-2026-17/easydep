@@ -120,6 +120,47 @@ resource "google_compute_health_check" "app" {
   }
 }
 
+resource "google_compute_address" "network_lb" {
+  name   = "easydep-component-audit-l4"
+  region = var.region
+}
+
+resource "google_compute_region_health_check" "network_lb" {
+  name   = "easydep-component-audit-l4"
+  region = var.region
+
+  http_health_check {
+    port         = 80
+    request_path = "/health"
+  }
+}
+
+resource "google_compute_region_backend_service" "network_lb" {
+  name                  = "easydep-component-audit-l4"
+  region                = var.region
+  protocol              = "TCP"
+  load_balancing_scheme = "EXTERNAL"
+  health_checks         = [google_compute_region_health_check.network_lb.id]
+
+  backend {
+    group = google_compute_instance_group.app_a.id
+  }
+
+  backend {
+    group = google_compute_instance_group.app_c.id
+  }
+}
+
+resource "google_compute_forwarding_rule" "network_lb" {
+  name                  = "easydep-component-audit-l4"
+  region                = var.region
+  ip_address            = google_compute_address.network_lb.id
+  ip_protocol           = "TCP"
+  ports                 = ["80"]
+  load_balancing_scheme = "EXTERNAL"
+  backend_service       = google_compute_region_backend_service.network_lb.id
+}
+
 resource "google_compute_backend_service" "app" {
   name          = "easydep-component-audit"
   protocol      = "HTTP"

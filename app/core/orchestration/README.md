@@ -103,7 +103,7 @@ artifacts/runs/<run-id>/repairs/attempt-<n>/
 | Docker-on-VM 시스템 범위 | `vm` 시작 리소스 | 지원 범위의 기본 전제 |
 | 승인된 `persistent-block-storage` stable ID | 값에 따라 `disk` 또는 `no_disk` | 자유로운 need 이름과 독립적으로 모델링됨 |
 | 승인된 `load-balanced-ingress` stable ID | CSP별 HTTP 부하분산 실현 | 명시적으로 모델링됨 |
-| `https-load-balanced-ingress` stable ID | 요구사항 분류에는 남지만 Docker-on-VM 생성 범위에서는 미지원 | HTTP로 자동 확장하지 않음 |
+| `https-ingress`, `https-load-balanced-ingress` stable ID | 요구사항 분류에는 남지만 Docker-on-VM 생성 범위에서는 미지원 | `unsupported`로 중단하며 HTTP로 자동 하향하지 않음 |
 | 승인된 필수 고가용성 요구 | CSP별 관리형 VM 그룹 + `loadBalancer` 앵커 | 사전 선호 질문 없이 필수 요구 근거가 있을 때만 적용 |
 | 그 밖의 승인된 동적 capability | 앵커 없음 | DepKB 미모델링, IaC 에이전트에는 요구사항으로만 전달 |
 

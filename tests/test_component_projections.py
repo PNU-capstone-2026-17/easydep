@@ -43,13 +43,13 @@ def test_component_projection_contract_is_complete_and_grounded():
                 }
 
 
-def test_azure_application_gateway_keeps_nested_components_distinct():
+def test_azure_load_balancer_keeps_native_resources_distinct():
     value = json.loads(PROJECTIONS.read_text(encoding="utf-8"))
     scale = next(item for item in value["deltas"] if item["id"] == "load-balanced-multi-vm")
     azure = scale["realizations"]["azure"]
 
-    nested = {item["id"] for item in azure["components"] if item["terraformKind"] == "nestedBlock"}
-    assert {"listener", "backendPool", "backendSettings", "routingRule", "probe"} <= nested
+    resource_types = {item["terraformType"] for item in azure["components"]}
+    assert {"azurerm_lb", "azurerm_lb_backend_address_pool", "azurerm_lb_probe", "azurerm_lb_rule"} <= resource_types
 
 
 def test_gcp_load_balancer_projection_is_not_collapsed_to_one_resource():
@@ -62,12 +62,10 @@ def test_gcp_load_balancer_projection_is_not_collapsed_to_one_resource():
     }
 
     assert {
-        "google_compute_global_forwarding_rule",
-        "google_compute_target_http_proxy",
-        "google_compute_url_map",
-        "google_compute_backend_service",
+        "google_compute_forwarding_rule",
+        "google_compute_region_backend_service",
         "google_compute_instance_group",
-        "google_compute_health_check",
+        "google_compute_region_health_check",
     } <= resource_types
 
 
@@ -81,12 +79,12 @@ def test_validated_provider_fixtures_expose_components_and_relations():
         },
         "azure": {
             "persistent-storage": (2, 2),
-            "load-balanced-multi-vm": (8, 7),
+            "load-balanced-multi-vm": (6, 7),
             "https-termination": (2, 2),
         },
         "gcp": {
             "persistent-storage": (2, 2),
-            "load-balanced-multi-vm": (6, 6),
+            "load-balanced-multi-vm": (4, 4),
             "https-termination": (2, 3),
         },
     }
@@ -120,7 +118,7 @@ def test_component_delta_is_part_of_semantic_score():
     )
     component_checks = [item for item in score["checks"] if item["kind"] == "componentProjection"]
     relation_checks = [item for item in score["checks"] if item["kind"] == "componentRelation"]
-    assert len(component_checks) == 8
+    assert len(component_checks) == 6
     assert len(relation_checks) == 7
     assert all(item["status"] == "passed" for item in component_checks)
     assert all(item["status"] == "observed-unverified" for item in relation_checks)
@@ -245,7 +243,7 @@ def test_derived_structural_dependency_is_scored_separately_from_cardinality():
         for item in broken_score["checks"]
     )
 
-def test_constraint_without_independent_observer_is_not_counted_as_passed():
+def test_azure_l4_projection_has_no_application_gateway_subnet_constraint():
     actual = analyze_terraform_semantics(
         ROOT / "evaluation/research_protocol/provider-fixtures/azure"
     )
@@ -260,14 +258,11 @@ def test_constraint_without_independent_observer_is_not_counted_as_passed():
         },
     )
 
-    dedicated_subnet = next(
-        item
-        for item in score["checks"]
-        if item["kind"] == "componentConstraintRequirement"
+    assert not any(
+        item["kind"] == "componentConstraintRequirement"
         and item["constraint"] == "dedicated-subnet"
+        for item in score["checks"]
     )
-    assert dedicated_subnet["status"] == "not-measured"
-    assert score["notMeasured"] > 0
 
 
 def test_cna_cases_are_grounded_but_legacy_synthesis_is_not_reproducible():

@@ -2,7 +2,7 @@
   "schemaVersion": "easydep-http-business-oracle/v1",
   "oracleId": "course-registration-database-unavailable-health-v1",
   "sourceRefs": [
-    "NFR-09"
+    "NFR-08"
   ],
   "requestTimeoutSeconds": 15,
   "phases": [

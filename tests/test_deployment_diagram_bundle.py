@@ -128,11 +128,7 @@ def test_checked_in_example_corpus_is_complete_and_matches_the_renderer() -> Non
     assert len(sources) == 72
     assert sources == _relative_sources()
 
-    actual = {
-        path.relative_to(OUTPUT_ROOT)
-        for path in OUTPUT_ROOT.rglob("*")
-        if path.is_file()
-    }
+    actual = {path.relative_to(OUTPUT_ROOT) for path in OUTPUT_ROOT.rglob("*") if path.is_file()}
     assert actual == _expected_files(sources)
     for relative, expected in sources.items():
         assert (OUTPUT_ROOT / relative).read_text(encoding="utf-8") == expected
@@ -155,73 +151,48 @@ def test_colocated_database_renders_inside_the_application_compute() -> None:
         }
     )
     spec = {**_resource_spec(), "databasePlacement": "colocated"}
-    runtime = deployment_bundle_runtime_puml(
-        build_deployment_diagram_bundle(logical, spec)
-    )
+    runtime = deployment_bundle_runtime_puml(build_deployment_diagram_bundle(logical, spec))
 
     assert 'database "PostgreSQL\\n<<Docker container>>"' in runtime
     assert "compute_compute_postgresql" not in runtime
     assert (
-        "primary_compute ..[#6f7c73]> persistent_disk : attached block device"
+        "primary_compute ..[#6f7c73]> persistent_disk : attach; format-if-empty; UUID mount; Docker bind"
         in runtime
     )
 
 
 def test_provider_examples_expose_subnet_quantity_and_address_creation_order() -> None:
     sources = _relative_sources()
-    aws_runtime = sources[
-        Path("aws/standaloneOne.none.loadBalanced.runtime.puml")
-    ]
-    aws_provisioning = sources[
-        Path("aws/standaloneOne.none.loadBalanced.provisioning.puml")
-    ]
-    gcp_provisioning = sources[
-        Path("gcp/standaloneOne.none.loadBalanced.provisioning.puml")
-    ]
+    aws_runtime = sources[Path("aws/standaloneOne.none.loadBalanced.runtime.puml")]
+    aws_provisioning = sources[Path("aws/standaloneOne.none.loadBalanced.provisioning.puml")]
+    gcp_provisioning = sources[Path("gcp/standaloneOne.none.loadBalanced.provisioning.puml")]
 
     assert "Ingress Subnet 1\\nap-northeast-2a" in aws_runtime
-    assert "Ingress Subnet 2\\nap-northeast-2b" in aws_runtime
-    assert "Ingress Subnet 1\\nap-northeast-2a" in aws_provisioning
-    assert "Ingress Subnet 2\\nap-northeast-2b" in aws_provisioning
+    assert 'node "Ingress Subnet" as provision_ingress_subnet' in aws_provisioning
     assert (
-        "provision_ingress_subnet_1 -[#6f7780,dashed]-> provision_load_balancer"
-        in aws_provisioning
+        "provision_ingress_subnet -[#6f7780,dashed]-> provision_load_balancer" in aws_provisioning
     )
+    assert "Ingress Subnet 2" not in aws_runtime
     assert (
-        "provision_ingress_subnet_2 -[#6f7780,dashed]-> provision_load_balancer"
-        in aws_provisioning
-    )
-    assert (
-        "provision_public_ip -[#6f7780,dashed]-> provision_forwarding_rule "
-        ": assign address"
+        "provision_public_ip -[#6f7780,dashed]-> provision_forwarding_rule : assign address"
     ) in gcp_provisioning
-    azure_runtime = sources[
-        Path("azure/standaloneOne.none.loadBalanced.runtime.puml")
-    ]
-    assert "Application Gateway Subnet\\n<<dedicated>>" in azure_runtime
-    assert (
-        "public_endpoint -[#2f6b50]-> public_address : accepts HTTP"
-        in azure_runtime
-    )
+    azure_runtime = sources[Path("azure/standaloneOne.none.loadBalanced.runtime.puml")]
+    assert "Application Gateway Subnet" not in azure_runtime
+    assert "public_endpoint -[#2f6b50]-> public_address : accepts HTTP" in azure_runtime
     assert (
         "public_address -[#2f6b50]-> ingress_frontend_ip_config : assigned frontend address"
         in azure_runtime
     )
     gcp_direct = sources[Path("gcp/standaloneOne.none.direct.provisioning.puml")]
     assert (
-        "provision_public_ip -[#6f7780,dashed]-> "
-        "provision_network_interface : assign address"
+        "provision_public_ip -[#6f7780,dashed]-> provision_network_interface : assign address"
     ) in gcp_direct
 
 
 def test_many_runtime_expands_the_minimum_two_vm_instances_and_flows() -> None:
     sources = _relative_sources()
-    multi_zone = sources[
-        Path("aws/managedGroupManyMultiZone.dedicated.loadBalanced.runtime.puml")
-    ]
-    single_zone = sources[
-        Path("aws/managedGroupManySingleZone.none.loadBalanced.runtime.puml")
-    ]
+    multi_zone = sources[Path("aws/managedGroupManyMultiZone.dedicated.loadBalanced.runtime.puml")]
+    single_zone = sources[Path("aws/managedGroupManySingleZone.none.loadBalanced.runtime.puml")]
 
     assert 'node "EC2 Instance 1\\nap-northeast-2a"' in multi_zone
     assert 'node "EC2 Instance 2\\nap-northeast-2b"' in multi_zone
@@ -235,9 +206,7 @@ def test_many_runtime_expands_the_minimum_two_vm_instances_and_flows() -> None:
 
 def test_provisioning_view_excludes_runtime_only_firewall_reachability() -> None:
     sources = _relative_sources()
-    gcp = sources[
-        Path("gcp/managedGroupManyMultiZone.dedicated.loadBalanced.provisioning.puml")
-    ]
+    gcp = sources[Path("gcp/managedGroupManyMultiZone.dedicated.loadBalanced.provisioning.puml")]
 
     assert "is reached through" not in gcp
     assert "allows traffic to" not in gcp
@@ -247,10 +216,7 @@ def test_database_free_families_never_project_an_independent_data_disk() -> None
     sources = _relative_sources()
     for provider in ("aws", "azure", "gcp"):
         for relative, source in sources.items():
-            if (
-                relative.parts[0] == provider
-                and ".none." in relative.name
-            ):
+            if relative.parts[0] == provider and ".none." in relative.name:
                 assert "Persistent Disk" not in source
                 assert "EBS Volume" not in source
                 assert "Managed Disk" not in source
@@ -305,42 +271,54 @@ def test_every_provider_creation_node_participates_in_provisioning_graph() -> No
         assert provider_nodes - connected == set(), family.id
 
 
-def test_every_rendered_provisioning_node_has_an_arrow() -> None:
+def test_every_rendered_provisioning_node_has_a_dependency_or_relation() -> None:
     node_pattern = re.compile(r'^node ".*" as ([A-Za-z0-9_]+)', re.MULTILINE)
     edge_pattern = re.compile(
-        r"^([A-Za-z0-9_]+) -\[[^\n]*\]-> ([A-Za-z0-9_]+)",
+        r"^([A-Za-z0-9_]+) -\[[^\n]*\](?:->|-) ([A-Za-z0-9_]+)",
         re.MULTILINE,
     )
     for relative, source in _relative_sources().items():
         if not relative.name.endswith(".provisioning.puml"):
             continue
         nodes = set(node_pattern.findall(source))
-        connected = {
-            endpoint
-            for edge in edge_pattern.findall(source)
-            for endpoint in edge
-        }
+        connected = {endpoint for edge in edge_pattern.findall(source) for endpoint in edge}
         assert nodes - connected == set(), str(relative)
+
+
+def test_iac_relation_objects_are_edges_but_remain_in_resource_plan() -> None:
+    sources = _relative_sources()
+    for relative, source in sources.items():
+        if relative.name.endswith(".provisioning.puml"):
+            assert 'node "Terraform:' not in source, str(relative)
+
+    family = next(
+        item
+        for item in enumerate_topology_families(include_providers=True)
+        if item.id == "aws.standaloneOne.dedicated.loadBalanced"
+    )
+    plan = build_deployment_diagram_bundle(
+        example_logical_model(family.database_placement),
+        example_resource_spec(family),
+    )["projections"][0]["resourcePlan"]
+    by_id = {str(node["id"]): node for node in plan["nodes"]}
+    assert by_id["disk-attachment"]["terraformTypes"] == ["aws_volume_attachment"]
+    assert by_id["target-registration"]["terraformTypes"] == ["aws_lb_target_group_attachment"]
 
 
 def test_every_rendered_edge_uses_declared_aliases() -> None:
     declaration_pattern = re.compile(
-        r'^\s*(?:actor|artifact|cloud|component|database|frame|interface|node) '
+        r"^\s*(?:actor|artifact|cloud|component|database|frame|interface|node) "
         r'".*" as ([A-Za-z0-9_]+)',
         re.MULTILINE,
     )
     edge_pattern = re.compile(
-        r"^([A-Za-z0-9_]+) (?:-|\.\.)\[[^\n]*\](?:-|\.)?> "
+        r"^([A-Za-z0-9_]+) (?:-|\.\.)\[[^\n]*\](?:(?:-|\.)?>|-) "
         r"([A-Za-z0-9_]+)",
         re.MULTILINE,
     )
     for relative, source in _relative_sources().items():
         declared = set(declaration_pattern.findall(source))
-        used = {
-            endpoint
-            for edge in edge_pattern.findall(source)
-            for endpoint in edge
-        }
+        used = {endpoint for edge in edge_pattern.findall(source) for endpoint in edge}
         assert used - declared == set(), f"{relative}: {sorted(used - declared)}"
 
 
@@ -359,32 +337,23 @@ def test_topology_profile_cannot_be_replaced_by_a_load_balancer_component() -> N
 
 
 def test_gcp_load_balancer_uses_the_selected_compute_topology() -> None:
-    families = {
-        family.id: family
-        for family in enumerate_topology_families(include_providers=True)
-    }
+    families = {family.id: family for family in enumerate_topology_families(include_providers=True)}
     standalone = build_deployment_diagram_bundle(
         example_logical_model("dedicated"),
-        example_resource_spec(
-            families["gcp.standaloneOne.dedicated.loadBalanced"]
-        ),
+        example_resource_spec(families["gcp.standaloneOne.dedicated.loadBalanced"]),
     )["projections"][0]["resourcePlan"]
     managed = build_deployment_diagram_bundle(
         example_logical_model("dedicated"),
-        example_resource_spec(
-            families["gcp.managedGroupOne.dedicated.loadBalanced"]
-        ),
+        example_resource_spec(families["gcp.managedGroupOne.dedicated.loadBalanced"]),
     )["projections"][0]["resourcePlan"]
 
     standalone_nodes = {str(node["id"]): node for node in standalone["nodes"]}
     managed_nodes = {str(node["id"]): node for node in managed["nodes"]}
     standalone_edges = {
-        (str(edge["from"]), str(edge["to"]), str(edge["label"]))
-        for edge in standalone["edges"]
+        (str(edge["from"]), str(edge["to"]), str(edge["label"])) for edge in standalone["edges"]
     }
     managed_edges = {
-        (str(edge["from"]), str(edge["to"]), str(edge["label"]))
-        for edge in managed["edges"]
+        (str(edge["from"]), str(edge["to"]), str(edge["label"])) for edge in managed["edges"]
     }
 
     assert standalone_nodes["compute-instance"]["name"] == "Compute Engine VM"
@@ -407,16 +376,37 @@ def test_runtime_views_preserve_provider_native_load_balancer_chains() -> None:
     assert "ingress_listener -[#2f6b50]-> ingress_backend_group" in aws
     assert "ingress_backend_group -[#2f6b50]-> runtime_workload" in aws
     assert "public_address -[#2f6b50]-> ingress_frontend_ip_config" in azure
-    assert "ingress_frontend_ip_config -[#2f6b50]-> ingress_listener" in azure
-    assert "ingress_frontend_port ..[#8a6d3b]> ingress_listener" in azure
-    assert "ingress_listener -[#2f6b50]-> ingress_routing_rule" in azure
+    assert "ingress_frontend_ip_config -[#2f6b50]-> ingress_routing_rule" in azure
     assert "ingress_routing_rule -[#2f6b50]-> ingress_backend_group" in azure
-    assert "public_ingress -[#2f6b50]-> ingress_target_proxy" in gcp
-    assert "ingress_target_proxy -[#2f6b50]-> ingress_url_map" in gcp
-    assert "ingress_url_map -[#2f6b50]-> ingress_backend_service" in gcp
+    assert "public_ingress -[#2f6b50]-> ingress_backend_service" in gcp
     assert "ingress_backend_service -[#2f6b50]-> ingress_backend_group" in gcp
-    assert "Global Forwarding Rule\\n<<global>>" in gcp
+    assert "Forwarding Rule\\n<<regional>>" in gcp
     assert "VPC Network\\n<<global>>" in gcp
+
+
+def test_runtime_views_include_application_delivery_and_database_contracts() -> None:
+    registry_names = {
+        "aws": "Amazon ECR Repository",
+        "azure": "Container Registry",
+        "gcp": "Artifact Registry Repository",
+    }
+    for family in enumerate_topology_families(include_providers=True):
+        bundle = build_deployment_diagram_bundle(
+            example_logical_model(family.database_placement),
+            example_resource_spec(family),
+        )
+        runtime = deployment_bundle_runtime_puml(bundle)
+        assert "User-run deploy.sh" in runtime, family.id
+        assert registry_names[str(family.provider)] in runtime, family.id
+        assert "Application image@sha256" in runtime, family.id
+        assert "VM outbound path" in runtime, family.id
+        if family.database_placement == "none":
+            assert "POSTGRES_PASSWORD" not in runtime, family.id
+            assert "postgres:17-bookworm" not in runtime, family.id
+        else:
+            assert "POSTGRES_DB · POSTGRES_USER · POSTGRES_PASSWORD" in runtime
+            assert "postgres:17-bookworm" in runtime
+            assert "injects DB credentials" in runtime
 
 
 def test_load_balanced_http_plan_has_no_tls_resources() -> None:
@@ -435,6 +425,54 @@ def test_load_balanced_http_plan_has_no_tls_resources() -> None:
         assert "tlsTermination" not in endpoint, family.id
 
 
+def test_load_balanced_plans_use_only_the_selected_provider_l4_resources() -> None:
+    expected = {
+        "aws": {"aws_lb", "aws_lb_listener", "aws_lb_target_group"},
+        "azure": {
+            "azurerm_lb",
+            "azurerm_lb_backend_address_pool",
+            "azurerm_lb_probe",
+            "azurerm_lb_rule",
+        },
+        "gcp": {
+            "google_compute_address",
+            "google_compute_forwarding_rule",
+            "google_compute_region_backend_service",
+            "google_compute_region_health_check",
+        },
+    }
+    forbidden = {
+        "azurerm_application_gateway",
+        "google_compute_global_forwarding_rule",
+        "google_compute_target_http_proxy",
+        "google_compute_url_map",
+        "google_compute_backend_service",
+    }
+    families = {family.id: family for family in enumerate_topology_families(include_providers=True)}
+    for provider in ("aws", "azure", "gcp"):
+        family = families[f"{provider}.managedGroupOne.none.loadBalanced"]
+        plan = build_deployment_diagram_bundle(
+            example_logical_model(family.database_placement),
+            example_resource_spec(family),
+        )["projections"][0]["resourcePlan"]
+        terraform_types = {
+            item for node in plan["nodes"] for item in node.get("terraformTypes") or []
+        }
+        assert expected[provider] <= terraform_types
+        assert terraform_types.isdisjoint(forbidden)
+        assert plan["runtimeEvidence"]["managedL4Ingress"]["status"] == "observed"
+
+    gcp_plan = build_deployment_diagram_bundle(
+        example_logical_model("none"),
+        example_resource_spec(families["gcp.managedGroupOne.none.loadBalanced"]),
+    )["projections"][0]["resourcePlan"]
+    forwarding_rule = next(node for node in gcp_plan["nodes"] if node["id"] == "forwarding-rule")
+    assert forwarding_rule["transportProtocol"] == "TCP"
+    assert forwarding_rule["frontendPort"] == 80
+    assert forwarding_rule["requiredHostPort"] == 80
+    assert forwarding_rule["reason"] == ("passthrough-load-balancer-does-not-translate-ports")
+
+
 def test_load_balanced_provisioning_includes_explicit_egress_path() -> None:
     sources = _relative_sources()
     aws = sources[Path("aws/standaloneOne.none.loadBalanced.provisioning.puml")]
@@ -450,10 +488,9 @@ def test_load_balanced_provisioning_includes_explicit_egress_path() -> None:
     ):
         assert label in aws
     for label in (
-        "Application Gateway Subnet",
         "NAT Gateway",
         "Public IP / NAT Gateway",
-        "azurerm_subnet_nat_gateway_association",
+        "uses NAT Gateway",
     ):
         assert label in azure
     assert "Cloud Router" in gcp
@@ -523,11 +560,105 @@ def test_provider_nodes_have_executable_or_owned_handling() -> None:
                 assert node.get("ownerRef") in ids, (family.id, node["id"])
 
 
-def test_managed_network_ownership_and_egress_edges_match_provider_models() -> None:
-    families = {
-        family.id: family
-        for family in enumerate_topology_families(include_providers=True)
+def test_all_36_resource_plans_close_boot_registry_secret_egress_and_state_invariants() -> None:
+    nat_kinds = {
+        "aws": {"nat-gateway", "nat-public-ip"},
+        "azure": {
+            "nat-gateway",
+            "nat-public-ip",
+            "nat-association",
+            "nat-public-ip-association",
+        },
+        "gcp": {"cloud-router", "cloud-nat"},
     }
+    for family in enumerate_topology_families(include_providers=True):
+        plan = build_deployment_diagram_bundle(
+            example_logical_model(family.database_placement),
+            example_resource_spec(family),
+        )["projections"][0]["resourcePlan"]
+        by_id = {str(node["id"]): node for node in plan["nodes"]}
+        kinds = {str(node.get("providerKind") or "") for node in plan["nodes"]}
+        edges = {(str(edge["from"]), str(edge["to"]), str(edge["label"])) for edge in plan["edges"]}
+
+        assert by_id["boot-image"]["handling"] == "referenceExisting", family.id
+        assert by_id["app-registry"]["handling"] == "create", family.id
+        assert by_id["app-registry"]["imageReferencePolicy"] == "immutableDigest"
+        assert "registry-pull-identity" in by_id, family.id
+        assert plan["placementConstraints"]["addressPlan"]["networkCidrs"] == ["10.80.0.0/16"]
+        if family.provider == "gcp":
+            assert by_id["network"]["preserveDefaultInternetRoute"] is True
+
+        database = family.database_placement != "none"
+        dedicated = family.database_placement == "dedicated"
+        if database:
+            assert by_id["secret-ref"]["handling"] == "referenceExisting"
+            assert by_id["secret-ref"]["credentialCollectionByEasyDep"] is False
+            assert by_id["secret-ref"]["requiredKeys"] == [
+                "POSTGRES_DB",
+                "POSTGRES_USER",
+                "POSTGRES_PASSWORD",
+            ]
+            assert by_id["disk"]["deletionPolicy"] == "retain"
+            assert by_id["disk"]["purgeRequiresExplicitOptIn"] is True
+        else:
+            assert "secret-ref" not in by_id
+            assert "disk" not in by_id
+
+        if dedicated:
+            assert "state-secret-identity" in by_id
+            assert "state-secret-access-binding" in by_id
+            state_compute = next(
+                node
+                for node in plan["nodes"]
+                if node.get("logicalRef") == "workload-postgresql"
+                and node.get("providerKind") == "compute-instance"
+            )
+            assert state_compute["privateAddressAllocation"] == "static"
+            state_filter = next(
+                node
+                for node in plan["nodes"]
+                if node.get("logicalRef") == "workload-postgresql"
+                and node.get("providerKind") in {"security-group", "firewall"}
+            )
+            assert state_filter["trafficPolicy"]["port"] == 5432
+            assert state_filter["trafficPolicy"]["public"] is False
+            assert any(
+                source == state_compute["id"]
+                and target
+                in {
+                    "state-secret-instance-profile",
+                    "state-secret-identity",
+                }
+                for source, target, _label in edges
+            )
+        else:
+            assert "state-secret-identity" not in by_id
+
+        needs_nat = family.public_ingress == "loadBalanced" or dedicated
+        assert (
+            nat_kinds[str(family.provider)] <= kinds
+            if needs_nat
+            else not (nat_kinds[str(family.provider)] & kinds)
+        ), family.id
+        if family.provider == "aws" and family.public_ingress == "direct" and dedicated:
+            assert "state-subnet" in by_id
+            assert ("compute-postgresql", "state-subnet", "is placed in") in edges
+        if family.provider == "aws" and family.public_ingress == "loadBalanced":
+            if family.compute_profile == "standaloneOne":
+                assert "target-registration" in by_id
+            else:
+                assert "target-registration" not in by_id
+
+        for node in plan["nodes"]:
+            traffic = node.get("trafficPolicy") or {}
+            assert not (traffic.get("port") == 5432 and traffic.get("public") is True), (
+                family.id,
+                node["id"],
+            )
+
+
+def test_managed_network_ownership_and_egress_edges_match_provider_models() -> None:
+    families = {family.id: family for family in enumerate_topology_families(include_providers=True)}
     plans = {}
     for provider in ("aws", "azure", "gcp"):
         family = families[f"{provider}.managedGroupOne.none.loadBalanced"]
@@ -536,33 +667,24 @@ def test_managed_network_ownership_and_egress_edges_match_provider_models() -> N
             example_resource_spec(family),
         )["projections"][0]["resourcePlan"]
 
-    aws_edges = {
-        (edge["from"], edge["to"], edge["label"])
-        for edge in plans["aws"]["edges"]
-    }
+    aws_edges = {(edge["from"], edge["to"], edge["label"]) for edge in plans["aws"]["edges"]}
     assert ("compute-template", "security-group", "uses") in aws_edges
     assert not any(
         source == "compute-group" and target == "security-group"
         for source, target, _label in aws_edges
     )
 
-    azure_nic = next(
-        node for node in plans["azure"]["nodes"] if node["id"] == "network-interface"
-    )
+    azure_nic = next(node for node in plans["azure"]["nodes"] if node["id"] == "network-interface")
     assert azure_nic["handling"] == "configureInsideOwner"
     assert azure_nic["ownerRef"] == "compute-group"
     assert azure_nic["terraformTypes"] == []
 
-    gcp_edges = {
-        (edge["from"], edge["to"], edge["label"])
-        for edge in plans["gcp"]["edges"]
-    }
+    gcp_edges = {(edge["from"], edge["to"], edge["label"]) for edge in plans["gcp"]["edges"]}
     assert ("cloud-router", "network", "belongs to") in gcp_edges
     assert ("cloud-nat", "cloud-router", "uses") in gcp_edges
     assert ("cloud-nat", "subnet", "selects subnetwork") in gcp_edges
     assert not any(
-        source == "cloud-router" and target == "subnet"
-        for source, target, _label in gcp_edges
+        source == "cloud-router" and target == "subnet" for source, target, _label in gcp_edges
     )
 
 
@@ -600,9 +722,7 @@ def test_deployment_view_endpoint_renders_requested_semantic_view() -> None:
         ),
         patch("app.artifacts_api.render_plantuml", return_value=b"<svg />") as render,
     ):
-        response = get_deployment_diagram_view_image(
-            APP_ID, "provisioning", "svg"
-        )
+        response = get_deployment_diagram_view_image(APP_ID, "provisioning", "svg")
 
     assert response.body == b"<svg />"
     assert response.media_type == "image/svg+xml"
@@ -631,14 +751,10 @@ def test_design_generation_subgraph_emits_provider_native_diagram(monkeypatch) -
         }
     )
 
-    assert result["deployment_diagram_bundle"]["schemaVersion"] == (
-        "easydep-deployment-diagram/v1"
-    )
+    assert result["deployment_diagram_bundle"]["schemaVersion"] == ("easydep-deployment-diagram/v1")
     assert result["deployment_resource_plan"]["provider"] == "aws"
     assert 'cloud "AWS"' in result["deployment_diagram_puml"]
-    assert "Every arrow means prerequisite -> dependent." in (
-        result["deployment_diagram_provisioning_puml"]
-    )
+    assert "Arrow: prerequisite -> dependent." in result["deployment_diagram_provisioning_puml"]
 
 
 def test_imported_deployment_bundle_uses_state_aware_derivations() -> None:
@@ -646,10 +762,13 @@ def test_imported_deployment_bundle_uses_state_aware_derivations() -> None:
     with (
         patch("app.artifacts_api.require_app_exists"),
         patch("app.artifacts_api.require_app", return_value={}),
-        patch("app.artifacts_api.validate_puml_artifact", return_value={
-            "syntax_valid": True,
-            "syntax_errors": [],
-        }),
+        patch(
+            "app.artifacts_api.validate_puml_artifact",
+            return_value={
+                "syntax_valid": True,
+                "syntax_errors": [],
+            },
+        ),
         patch("app.artifacts_api.artifact_repository.save_stage", return_value=1) as save,
     ):
         import_stage_content(

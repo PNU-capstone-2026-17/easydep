@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "easydep-managed-l4-ingress/v1",
+  "provider": "azure",
+  "runId": "easydep-l4-159e3be2",
+  "startedAt": "2026-08-17T08:55:16.681230+00:00",
+  "transportUnderTest": "public TCP/80 L4 load balancer to two HTTP backends",
+  "steps": [
+    {
+      "name": "resource-group.create",
+      "status": "passed",
+      "durationSeconds": 7.358,
+      "detail": "easydep-l4-159e3be2"
+    },
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 14.073,
+      "detail": "vnet/backends"
+    },
+    {
+      "name": "security.create",
+      "status": "passed",
+      "durationSeconds": 4.387,
+      "detail": "backend-nsg"
+    },
+    {
+      "name": "security.client-http",
+      "status": "passed",
+      "durationSeconds": 3.352,
+      "detail": "internet tcp/8080"
+    },
+    {
+      "name": "security.health-probe",
+      "status": "passed",
+      "durationSeconds": 2.972,
+      "detail": "AzureLoadBalancer tcp/8080"
+    },
+    {
+      "name": "load-balancer.public-ip",
+      "status": "passed",
+      "durationSeconds": 3.191,
+      "detail": "lb-pip"
+    },
+    {
+      "name": "load-balancer.create",
+      "status": "passed",
+      "durationSeconds": 35.235,
+      "detail": "l4-lb"
+    },
+    {
+      "name": "load-balancer.health-probe",
+      "status": "passed",
+      "durationSeconds": 2.657,
+      "detail": "HTTP /health/ready"
+    },
+    {
+      "name": "load-balancer.rule",
+      "status": "passed",
+      "durationSeconds": 3.237,
+      "detail": "tcp/80 -> tcp/8080"
+    },
+    {
+      "name": "app-1.nic",
+      "status": "passed",
+      "durationSeconds": 5.161,
+      "detail": "app-1-nic"
+    },
+    {
+      "name": "app-1.create",
+      "status": "passed",
+      "durationSeconds": 41.827,
+      "detail": "app-1"
+    },
+    {
+      "name": "app-2.nic",
+      "status": "passed",
+      "durationSeconds": 4.967,
+      "detail": "app-2-nic"
+    },
+    {
+      "name": "app-2.create",
+      "status": "passed",
+      "durationSeconds": 43.245,
+      "detail": "app-2"
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 7.15,
+      "detail": {
+        "status": 200,
+        "body": {
+          "instance": "app-1",
+          "ready": true,
+          "role": "app"
+        }
+      }
+    },
+    {
+      "name": "baseline.two-backends",
+      "status": "passed",
+      "durationSeconds": 39.193,
+      "detail": {
+        "expected": [
+          "app-1",
+          "app-2"
+        ],
+        "observed": [
+          "app-1",
+          "app-2"
+        ],
+        "attempts": 39
+      }
+    },
+    {
+      "name": "fault.exclude-and-restore",
+      "status": "passed",
+      "durationSeconds": 53.038,
+      "detail": {
+        "victim": "app-1",
+        "survivor": "app-2",
+        "faultAcceptedAtSeconds": 0,
+        "exclusionConfirmedAtSeconds": 17.044,
+        "restorationConfirmedAtSeconds": 53.038,
+        "probeCountBeforeRestore": 14,
+        "successfulProbesBeforeRestore": 13,
+        "failedProbesBeforeRestore": 1,
+        "restoreAction": "RunShellScript restarted the app on app-1",
+        "restoredBackends": {
+          "expected": [
+            "app-1",
+            "app-2"
+          ],
+          "observed": [
+            "app-1",
+            "app-2"
+          ],
+          "attempts": 3
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "public IPv4 -> TCP listener/forwarding rule -> backend membership -> HTTP readiness probe -> VM application process",
+  "scope": "domain-neutral L4 ingress dependency experiment",
+  "application": {
+    "kind": "domain-neutral synthetic HTTP service",
+    "endpoints": [
+      "/health/ready",
+      "/instance",
+      "/__easydep_test/fault"
+    ],
+    "database": false,
+    "persistentStorage": false
+  },
+  "resourceObservation": {
+    "frontend": "Azure Standard Load Balancer TCP/80",
+    "health": "HTTP /health/ready on tcp/8080",
+    "backends": "two zonal Linux VMs associated through NIC backend membership"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-17T09:03:04.190121+00:00",
+  "interpretationLimits": [
+    "One development run does not establish a provider-wide success rate or SLA.",
+    "HTTP is only the observable payload carried over the L4 TCP path.",
+    "The experiment does not test TLS, database, persistent storage, or region failure.",
+    "Backend process recovery is operator-triggered; managed VM replacement is separate.",
+    "Sequential requests demonstrate reachability, not traffic-share fairness or performance."
+  ]
+}

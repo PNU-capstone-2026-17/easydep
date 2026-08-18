@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.requirements.agent.llm import invoke_structured
 from app.requirements.agent.state import AgentState
 from app.requirements.capability_contract import (
+    OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS,
     decide,
     link_dependency_capability,
     load_policy,
@@ -39,9 +40,12 @@ Each value contains:
 - dependencyCapabilityIds: zero or more stable IDs selected only from this registry:
   `persistent-block-storage` for application data that must survive VM replacement;
   `load-balanced-ingress` for explicitly requested load-balanced ingress;
+  `https-ingress` for explicitly requested HTTPS or TLS ingress, which is recognized so
+  the system can report that it is outside the current generation scope;
   `https-load-balanced-ingress` only when both load balancing and HTTPS termination are
-  explicitly requested. Use an empty list when none matches. General HTTPS does not imply a
-  load balancer.
+  explicitly requested and is likewise outside the current generation scope. Use an empty
+  list when none matches. General HTTPS does not imply a load balancer, and an HTTPS need
+  must never be lowered to HTTP.
 
 Do not select or name concrete cloud resources, CSP products, VM counts, instance types,
 load balancers, disks, Kubernetes objects, or implementation products. For example,
@@ -316,6 +320,10 @@ def derive_deployment_needs(
             origin=need.origin,
             evidence_valid=evidence_valid,
             unresolved_fields=unresolved,
+            out_of_scope=bool(
+                set(dependency_capability_ids)
+                & OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS
+            ),
             policy=policy,
         )
         grounded_metadata, rejected_metadata = _ground_application_state_metadata(

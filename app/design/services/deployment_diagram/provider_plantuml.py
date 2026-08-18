@@ -23,6 +23,7 @@ _PROVISIONING_RELATIONSHIPS = {
     "binds",
     "checks with",
     "contains instance",
+    "contains role",
     "configures",
     "selects subnetwork",
     "creates instances from",
@@ -30,20 +31,84 @@ _PROVISIONING_RELATIONSHIPS = {
     "evaluates targets with",
     "exposes",
     "forwards to",
+    "grants pull access to",
+    "grants secret read to",
     "is attached to",
+    "is deployed in",
     "is placed in",
     "joins",
     "joins through",
     "matches",
     "places instances in",
     "provides egress for",
+    "pulls image digest from",
+    "registers instance",
     "registers instances with",
     "registers with",
     "routes to",
+    "scopes pull access to",
+    "scopes secret read to",
     "serves region of",
     "uses",
     "uses address",
     "uses backend",
+    "uses identity",
+    "uses image",
+    "uses policy",
+    "uses secret identity",
+}
+
+# These entries remain first-class ResourcePlan nodes because Terraform must
+# create or configure them explicitly.  In the reader-facing diagram they are
+# projected as labelled relationships between the cloud resources they join.
+# This keeps IaC validation exact without presenting provider implementation
+# objects such as aws_volume_attachment as if they were CSP resources.
+_FOLDED_RELATION_KINDS = {
+    "aws": {
+        "application-default-route",
+        "application-ingress-rule",
+        "application-route-association",
+        "disk-attachment",
+        "ingress-default-route",
+        "ingress-route-association",
+        "registry-pull-binding",
+        "secret-access-binding",
+        "state-secret-access-binding",
+        "target-registration",
+    },
+    "azure": {
+        "backend-membership",
+        "disk-attachment",
+        "nat-association",
+        "nat-public-ip-association",
+        "registry-pull-binding",
+        "secret-access-binding",
+        "security-group-association",
+        "state-secret-access-binding",
+    },
+    "gcp": {
+        "disk-attachment",
+        "registry-pull-binding",
+        "secret-access-binding",
+        "state-secret-access-binding",
+    },
+}
+
+_FOLDED_RELATION_LABELS = {
+    "application-default-route": "default route to NAT Gateway",
+    "application-ingress-rule": "allows application port",
+    "application-route-association": "uses route table",
+    "backend-membership": "registered in backend pool",
+    "disk-attachment": "attached",
+    "ingress-default-route": "default route to Internet Gateway",
+    "ingress-route-association": "uses route table",
+    "nat-association": "uses NAT Gateway",
+    "nat-public-ip-association": "uses public IP",
+    "registry-pull-binding": "grants Registry pull",
+    "secret-access-binding": "grants Secret read",
+    "security-group-association": "applies network security group",
+    "state-secret-access-binding": "grants State Secret read",
+    "target-registration": "registered target",
 }
 
 
@@ -64,11 +129,9 @@ def _fallback(bundle: dict[str, Any], message: str = "") -> str:
     logical = dict(bundle.get("logicalModel") or {})
     puml = generate_deployment_from_model(logical)
     if not puml:
-        puml = "@startuml\n!theme plain\nnode \"Deployment target unresolved\"\n@enduml"
+        puml = '@startuml\n!theme plain\nnode "Deployment target unresolved"\n@enduml'
     if message:
-        puml = puml.replace(
-            "@enduml", f'note bottom\n  {_text(message)}\nend note\n@enduml'
-        )
+        puml = puml.replace("@enduml", f"note bottom\n  {_text(message)}\nend note\n@enduml")
     return puml
 
 
@@ -125,6 +188,15 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     region = str(projection.get("region") or "")
     nodes = _node_by_kind(plan)
     workloads = list(plan.get("workloads") or [])
+    logical_artifacts = [
+        item
+        for item in (
+            (bundle.get("logicalModel") or {}).get("Artifacts")
+            or (bundle.get("logicalModel") or {}).get("artifacts")
+            or []
+        )
+        if isinstance(item, dict) and item.get("name")
+    ]
     allocations = {
         str(item.get("workloadRef") or ""): item for item in plan.get("allocations") or []
     }
@@ -149,7 +221,11 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         or "Public load balancer"
     )
 
-    compute_kind = "compute-group" if topology.get("computeManagement") == "managedGroup" else "compute-instance"
+    compute_kind = (
+        "compute-group"
+        if topology.get("computeManagement") == "managedGroup"
+        else "compute-instance"
+    )
     primary_compute_id = str(plan.get("computeNodeId") or "")
     compute = next(
         (
@@ -215,9 +291,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         for index in range(minimum_subnets):
             alias = f"provider_subnet_{index + 1}"
             zone = (
-                ingress_zones[index]
-                if index < len(ingress_zones)
-                else f"distinct AZ {index + 1}"
+                ingress_zones[index] if index < len(ingress_zones) else f"distinct AZ {index + 1}"
             )
             subnet_aliases.append(alias)
             lines.append(
@@ -233,9 +307,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     replicas = int(topology.get("replicaCount") or 1)
     managed_group = topology.get("computeManagement") == "managedGroup"
     compute_suffix = (
-        f"\\nfixed capacity: {replicas}"
-        if managed_group
-        else "\\n1 standalone instance"
+        f"\\nfixed capacity: {replicas}" if managed_group else "\\n1 standalone instance"
     )
     lines.append(f'        node "{compute_name}{compute_suffix}" as primary_compute {{')
     primary_workload_ids = [
@@ -263,11 +335,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                     continue
                 alias = _replica_alias(workload, replica)
                 runtime_aliases.setdefault(workload_id, []).append(alias)
-                shape = (
-                    "database"
-                    if workload.get("designKind") == "database"
-                    else "component"
-                )
+                shape = "database" if workload.get("designKind") == "database" else "component"
                 lines.append(
                     f'            {shape} "{_text(workload.get("name") or "Application")}\\nreplica {replica}\\n<<Docker container>>" as {alias}'
                 )
@@ -279,9 +347,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 continue
             alias = _workload_alias(workload)
             runtime_aliases.setdefault(workload_id, []).append(alias)
-            shape = (
-                "database" if workload.get("designKind") == "database" else "component"
-            )
+            shape = "database" if workload.get("designKind") == "database" else "component"
             lines.append(
                 f'          {shape} "{_text(workload.get("name") or "Application")}\\n<<Docker container>>" as {alias}'
             )
@@ -320,9 +386,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     public_ip = nodes.get("public-ip")
     if provider == "gcp":
         if public_ip and not load_balanced:
-            lines.append(
-                f'    node "{_text(public_ip.get("name"))}" as public_address'
-            )
+            lines.append(f'    node "{_text(public_ip.get("name"))}" as public_address')
         if disk:
             lines.append(
                 f'    database "{_text(disk.get("name"))}" as persistent_disk <<zonal; retained>>'
@@ -339,8 +403,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         filter_name = _text(traffic_filter.get("name"))
         display_name = (
             filter_name
-            if provider_kind
-            not in {"firewall", "security-group"}
+            if provider_kind not in {"firewall", "security-group"}
             or filter_role.lower() in filter_name.lower()
             else f"{filter_name}\\n{filter_role}"
         )
@@ -348,21 +411,17 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
             f'      node "{display_name}" as traffic_filter_{_id(filter_id)} <<traffic policy>>'
         )
     if load_balanced and provider == "aws":
-        minimum_ingress_subnets = int(
-            placement_constraints.get("minimumIngressSubnets") or 1
-        )
+        minimum_ingress_subnets = int(placement_constraints.get("minimumIngressSubnets") or 1)
         for index in range(minimum_ingress_subnets):
             zone = (
-                ingress_zones[index]
-                if index < len(ingress_zones)
-                else f"distinct AZ {index + 1}"
+                ingress_zones[index] if index < len(ingress_zones) else f"distinct AZ {index + 1}"
             )
             lines.append(
                 f'      node "Ingress Subnet {index + 1}\\n{_text(zone)}" as ingress_subnet_{index + 1}'
             )
         lines.extend(
             [
-                f'      node "{ingress_name}" as public_ingress <<HTTP ingress>>',
+                f'      node "{ingress_name}" as public_ingress <<TCP ingress>>',
                 f'      component "{_text(nodes.get("listener", {}).get("name"))}" as ingress_listener',
                 f'      node "{_text(nodes.get("backend-group", {}).get("name"))}" as ingress_backend_group',
                 f'      component "{_text(nodes.get("health-check", {}).get("name"))}" as ingress_health_check <<health policy>>',
@@ -371,17 +430,12 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     elif load_balanced and provider == "azure":
         lines.extend(
             [
-                f'      node "{_text(nodes.get("ingress-subnet", {}).get("name") or "Application Gateway Subnet")}\\n<<dedicated>>" as gateway_subnet {{',
-                f'        node "{ingress_name}" as public_ingress <<HTTP ingress>> {{',
-                f'          component "{_text(nodes.get("frontend-ip-config", {}).get("name"))}" as ingress_frontend_ip_config',
-                f'          component "{_text(nodes.get("frontend-port", {}).get("name"))}" as ingress_frontend_port',
-                f'          component "{_text(nodes.get("listener", {}).get("name"))}" as ingress_listener',
-                f'          component "{_text(nodes.get("routing-rule", {}).get("name"))}" as ingress_routing_rule',
-                f'          component "{_text(nodes.get("backend-group", {}).get("name"))}" as ingress_backend_group',
-                f'          component "{_text(nodes.get("backend-settings", {}).get("name"))}" as ingress_backend_settings',
-                f'          component "{_text(nodes.get("health-check", {}).get("name"))}" as ingress_health_check <<health policy>>',
-                "        }",
+                f'      node "{ingress_name}" as public_ingress <<TCP ingress>> {{',
+                f'        component "{_text(nodes.get("frontend-ip-config", {}).get("name"))}" as ingress_frontend_ip_config',
                 "      }",
+                f'      component "{_text(nodes.get("routing-rule", {}).get("name"))}" as ingress_routing_rule',
+                f'      node "{_text(nodes.get("backend-group", {}).get("name"))}" as ingress_backend_group',
+                f'      component "{_text(nodes.get("health-check", {}).get("name"))}" as ingress_health_check <<health policy>>',
             ]
         )
     if provider != "gcp":
@@ -396,19 +450,75 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
     elif load_balanced:
         lines.extend(
             [
-                f'  node "{_text(public_ip.get("name") if public_ip else "Global External IP Address")}\\n<<global>>" as public_address',
-                f'  node "{ingress_name}\\n<<global>>" as public_ingress <<HTTP ingress>>',
-                f'  node "{_text(nodes.get("target-http-proxy", {}).get("name"))}\\n<<global>>" as ingress_target_proxy',
-                f'  node "{_text(nodes.get("url-map", {}).get("name"))}\\n<<global>>" as ingress_url_map',
-                f'  node "{_text(nodes.get("backend-service", {}).get("name"))}\\n<<global>>" as ingress_backend_service',
-                f'  node "{_text(nodes.get("health-check", {}).get("name"))}\\n<<global>>" as ingress_health_check <<health policy>>',
+                f'  node "{_text(public_ip.get("name") if public_ip else "Regional External IP Address")}\\n<<regional>>" as public_address',
+                f'  node "{ingress_name}\\n<<regional>>" as public_ingress <<TCP ingress>>',
+                f'  node "{_text(nodes.get("backend-service", {}).get("name"))}\\n<<regional>>" as ingress_backend_service',
+                f'  node "{_text(nodes.get("health-check", {}).get("name"))}\\n<<regional>>" as ingress_health_check <<health policy>>',
             ]
         )
     lines.extend(["}", ""])
-    if provider == "gcp":
-        lines.append(
-            "provider_network ..[#6f7c73]> provider_subnet : contains regional subnetwork"
+    registry = nodes.get("app-registry")
+    app_identity = nodes.get("registry-pull-identity")
+    secret_ref = nodes.get("secret-ref")
+    app_secret_binding = nodes.get("secret-access-binding")
+    state_secret_binding = nodes.get("state-secret-access-binding")
+    database_present = any(workload.get("designKind") == "database" for workload in workloads)
+    if registry:
+        lines.extend(
+            [
+                'actor "User-run deploy.sh\\n<<local CSP authentication>>" as user_deploy',
+                'frame "Application delivery dependencies" as delivery_dependencies {',
+                f'  node "{_text(registry.get("name"))}" as application_registry_dependency',
+                f'  node "{_text(app_identity.get("name") if app_identity else "App runtime identity")}" as application_identity_dependency',
+                *[
+                    f'  artifact "{_text(item.get("name"))}" as application_source_artifact_{index}'
+                    for index, item in enumerate(logical_artifacts, start=1)
+                ],
+                '  artifact "Application image@sha256\\n<<immutable digest>>" as application_image_dependency',
+                '  cloud "VM outbound path\\n(public address or managed NAT)" as workload_outbound_dependency',
+                "}",
+                "user_deploy -[#2f6b50]-> application_registry_dependency : creates and authenticates push",
+                "user_deploy -[#2f6b50]-> application_image_dependency : builds and pushes once",
+                "application_registry_dependency -[#2f6b50]-> application_image_dependency : stores digest",
+                "application_identity_dependency ..[#8a6d3b]> application_image_dependency : authorizes pull",
+                *[
+                    f"application_source_artifact_{index} -[#2f6b50]-> application_image_dependency : packaged by Docker build"
+                    for index, _item in enumerate(logical_artifacts, start=1)
+                ],
+            ]
         )
+    elif logical_artifacts:
+        lines.extend(
+            f'artifact "{_text(item.get("name"))}" as application_source_artifact_{index}'
+            for index, item in enumerate(logical_artifacts, start=1)
+        )
+    if database_present:
+        lines.extend(
+            [
+                'frame "Database runtime dependencies" as database_dependencies {',
+                f'  artifact "{_text(secret_ref.get("name") if secret_ref else "Existing provider Secret")}\\nPOSTGRES_DB · POSTGRES_USER · POSTGRES_PASSWORD" as database_secret_dependency',
+                f'  node "{_text(app_secret_binding.get("name") if app_secret_binding else "App Secret read binding")}" as app_secret_binding_dependency',
+                *(
+                    [
+                        f'  node "{_text(state_secret_binding.get("name"))}" as state_secret_binding_dependency'
+                    ]
+                    if state_secret_binding
+                    else []
+                ),
+                '  artifact "docker.io/library/postgres:17-bookworm" as postgres_image_dependency',
+                "}",
+                "database_secret_dependency ..[#8a6d3b]> app_secret_binding_dependency : read scope",
+                *(
+                    [
+                        "database_secret_dependency ..[#8a6d3b]> state_secret_binding_dependency : read scope"
+                    ]
+                    if state_secret_binding
+                    else []
+                ),
+            ]
+        )
+    if provider == "gcp":
+        lines.append("provider_network ..[#6f7c73]> provider_subnet : contains regional subnetwork")
 
     if minimum_subnets > 1:
         for replica in range(1, replicas + 1):
@@ -417,9 +527,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 if topology.get("zoneLayout") == "multiZoneSpread"
                 else 0
             )
-            target_alias = (
-                f"primary_instance_{replica}" if managed_group else "primary_compute"
-            )
+            target_alias = f"primary_instance_{replica}" if managed_group else "primary_compute"
             lines.append(
                 f"{subnet_aliases[subnet_index]} ..[#6f7c73]> {target_alias} : places instance"
             )
@@ -430,9 +538,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 f"{subnet_aliases[0]} ..[#6f7c73]> compute_{_id(compute_ref)} : places state VM"
             )
     if load_balanced and provider == "aws":
-        minimum_ingress_subnets = int(
-            placement_constraints.get("minimumIngressSubnets") or 1
-        )
+        minimum_ingress_subnets = int(placement_constraints.get("minimumIngressSubnets") or 1)
         for index in range(minimum_ingress_subnets):
             lines.append(
                 f"ingress_subnet_{index + 1} ..[#6f7c73]> public_ingress : attaches frontend"
@@ -449,17 +555,11 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         )
         lines.append(f"internet_client -[#2f6b50]-> {endpoint_alias} : HTTP")
     if endpoint and public_ip:
-        lines.append(
-            f"{endpoint_alias} -[#2f6b50]-> public_address : accepts HTTP"
-        )
+        lines.append(f"{endpoint_alias} -[#2f6b50]-> public_address : accepts HTTP")
     elif endpoint and load_balanced:
-        lines.append(
-            f"{endpoint_alias} -[#2f6b50]-> public_ingress : accepts HTTP"
-        )
+        lines.append(f"{endpoint_alias} -[#2f6b50]-> public_ingress : accepts HTTP")
     if load_balanced and public_ip and provider != "azure":
-        lines.append(
-            "public_address -[#2f6b50]-> public_ingress : receives HTTP for"
-        )
+        lines.append("public_address -[#2f6b50]-> public_ingress : receives HTTP for")
     primary_application = next(
         (
             item
@@ -470,14 +570,12 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         None,
     )
     if primary_application:
-        application_aliases = runtime_aliases.get(
-            str(primary_application.get("id") or ""), []
-        )
+        application_aliases = runtime_aliases.get(str(primary_application.get("id") or ""), [])
         if load_balanced:
             if provider == "aws":
                 lines.extend(
                     [
-                        "public_ingress -[#2f6b50]-> ingress_listener : accepts HTTP on port 80",
+                        "public_ingress -[#2f6b50]-> ingress_listener : accepts TCP on port 80",
                         "ingress_listener -[#2f6b50]-> ingress_backend_group : selects target group",
                     ]
                 )
@@ -486,27 +584,18 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 lines.extend(
                     [
                         "public_address -[#2f6b50]-> ingress_frontend_ip_config : assigned frontend address",
-                        "ingress_frontend_ip_config -[#2f6b50]-> ingress_listener : accepts HTTP",
-                        "ingress_frontend_port ..[#8a6d3b]> ingress_listener : HTTP port 80",
-                        "ingress_listener -[#2f6b50]-> ingress_routing_rule : matches",
+                        "ingress_frontend_ip_config -[#2f6b50]-> ingress_routing_rule : accepts TCP on port 80",
                         "ingress_routing_rule -[#2f6b50]-> ingress_backend_group : selects backend pool",
-                        "ingress_backend_settings ..[#8a6d3b]> ingress_backend_group : connection settings",
                     ]
                 )
                 backend_alias = "ingress_backend_group"
             else:
                 lines.extend(
                     [
-                        "public_ingress -[#2f6b50]-> ingress_target_proxy : targets HTTP proxy",
-                        "ingress_target_proxy -[#2f6b50]-> ingress_url_map : applies URL map",
-                        "ingress_url_map -[#2f6b50]-> ingress_backend_service : selects backend service",
+                        "public_ingress -[#2f6b50]-> ingress_backend_service : forwards TCP packets",
                     ]
                 )
-                backend_alias = (
-                    "primary_compute"
-                    if managed_group
-                    else "ingress_backend_group"
-                )
+                backend_alias = "primary_compute" if managed_group else "ingress_backend_group"
                 lines.append(
                     f"ingress_backend_service -[#2f6b50]-> {backend_alias} : selects instance group"
                 )
@@ -514,13 +603,21 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 lines.append(
                     f"{backend_alias} -[#2f6b50]-> {alias} : forwards to replica {replica}"
                 )
-                lines.append(
-                    f"ingress_health_check ..[#8a6d3b]> {alias} : probes health"
-                )
+                lines.append(f"ingress_health_check ..[#8a6d3b]> {alias} : probes health")
         elif public_ip and application_aliases:
-            lines.append(
-                f"public_address -[#2f6b50]-> {application_aliases[0]} : HTTP"
-            )
+            lines.append(f"public_address -[#2f6b50]-> {application_aliases[0]} : HTTP")
+        for alias in application_aliases:
+            if registry:
+                lines.append(
+                    f"application_image_dependency -[#2f6b50]-> {alias} : runs immutable image"
+                )
+                lines.append(
+                    f"workload_outbound_dependency ..[#8a6d3b]> {alias} : reaches Registry"
+                )
+            if app_secret_binding:
+                lines.append(
+                    f"app_secret_binding_dependency ..[#8a6d3b]> {alias} : injects DB credentials"
+                )
     for edge in plan.get("edges") or []:
         if "design-connection" not in edge.get("evidence", []):
             continue
@@ -532,7 +629,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
             for source_alias in source_aliases:
                 for target_alias in target_aliases:
                     lines.append(
-                        f'{source_alias} -[#2f6b50]-> {target_alias} : {_text(edge.get("label") or "connects")}'
+                        f"{source_alias} -[#2f6b50]-> {target_alias} : {_text(edge.get('label') or 'connects')}"
                     )
     database_aliases = [
         alias
@@ -545,6 +642,17 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
         if primary_application
         else []
     )
+    for alias in database_aliases:
+        lines.append(f"postgres_image_dependency -[#2f6b50]-> {alias} : runs pinned image")
+        lines.append(f"workload_outbound_dependency ..[#8a6d3b]> {alias} : reaches Docker Hub")
+        if state_secret_binding:
+            lines.append(
+                f"state_secret_binding_dependency ..[#8a6d3b]> {alias} : injects DB credentials"
+            )
+        elif app_secret_binding:
+            lines.append(
+                f"app_secret_binding_dependency ..[#8a6d3b]> {alias} : injects DB credentials"
+            )
     for traffic_filter in traffic_filters:
         filter_id = str(traffic_filter.get("id") or "policy")
         provider_kind = str(traffic_filter.get("providerKind") or "")
@@ -563,9 +671,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 "traffic_filter_security_group : permits load-balancer source"
             )
             continue
-        targets = (
-            database_aliases if "postgresql" in filter_id else application_aliases
-        )
+        targets = database_aliases if "postgresql" in filter_id else application_aliases
         for target_alias in targets:
             lines.append(
                 f"traffic_filter_{_id(filter_id)} ..[#8a6d3b]> {target_alias} : allows required traffic"
@@ -589,7 +695,7 @@ def render_runtime_deployment(bundle: dict[str, Any]) -> str:
                 else f"compute_{_id(owner_ref)}"
             )
             lines.append(
-                f'{owner_alias} ..[#6f7c73]> persistent_disk : attached block device'
+                f"{owner_alias} ..[#6f7c73]> persistent_disk : attach; format-if-empty; UUID mount; Docker bind"
             )
     if plan.get("unresolved"):
         lines.extend(
@@ -633,11 +739,17 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
         or topology.get("selectedZones")
         or []
     )
-    included = {
+    projected_nodes = {
         str(node.get("id") or ""): node
         for node in plan.get("nodes") or []
         if node.get("entityClass") in {"providerResource", "providerComponent", "externalArtifact"}
     }
+    folded = {
+        node_id: node
+        for node_id, node in projected_nodes.items()
+        if str(node.get("providerKind") or "") in _FOLDED_RELATION_KINDS.get(provider, set())
+    }
+    included = {node_id: node for node_id, node in projected_nodes.items() if node_id not in folded}
     lines = [
         "@startuml",
         "!theme plain",
@@ -668,8 +780,7 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
             zones = list(topology.get("selectedZones") or [])
             placement = ", ".join(zones) if zones else "selected zone"
             node_name = (
-                f"{node_name}\\ndesired capacity: {replica_count}"
-                f"\\nplacement: {_text(placement)}"
+                f"{node_name}\\ndesired capacity: {replica_count}\\nplacement: {_text(placement)}"
             )
         if display_name_counts.get(node_name, 0) > 1:
             logical_ref = str(node.get("logicalRef") or "")
@@ -685,11 +796,7 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
             )
             for index in range(minimum_count):
                 alias = f"provision_{_id(node_id)}_{index + 1}"
-                zone = (
-                    node_zones[index]
-                    if index < len(node_zones)
-                    else f"distinct AZ {index + 1}"
-                )
+                zone = node_zones[index] if index < len(node_zones) else f"distinct AZ {index + 1}"
                 aliases.append(alias)
                 lines.append(
                     f'node "{node_name} {index + 1}\\n{_text(zone)}" as {alias} <<{_text(stereotype)}>>'
@@ -698,9 +805,7 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
         else:
             alias = f"provision_{_id(node_id)}"
             provision_aliases[node_id] = [alias]
-            lines.append(
-                f'node "{node_name}" as {alias} <<{_text(stereotype)}>>'
-            )
+            lines.append(f'node "{node_name}" as {alias} <<{_text(stereotype)}>>')
     for edge in plan.get("edges") or []:
         source = str(edge.get("from") or "")
         target = str(edge.get("to") or "")
@@ -719,24 +824,36 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
             "binds": "binding input for",
             "checks with": "health policy for",
             "contains instance": "add to group",
+            "contains role": "role for",
             "configures": "configuration input for",
             "creates instances from": "template for",
             "depends on": "required by",
             "evaluates targets with": "health policy for",
             "forwards to": "default target for",
+            "grants pull access to": "pull principal for",
+            "grants secret read to": "secret principal for",
             "is attached to": "attachment point for",
+            "is deployed in": "deployment container for",
             "is placed in": "placement for",
             "joins": "membership input for",
             "joins through": "membership input for",
             "matches": "listener input for",
             "places instances in": "placement input for",
             "provides egress for": "egress provider for",
+            "pulls image digest from": "image source for",
+            "registers instance": "instance input for",
             "registers instances with": "registration target for",
             "registers with": "registration target for",
             "routes to": "route target for",
+            "scopes pull access to": "pull scope for",
+            "scopes secret read to": "secret scope for",
             "serves region of": "regional network for",
             "selects subnetwork": "subnetwork input for",
             "uses backend": "backend for",
+            "uses identity": "runtime identity for",
+            "uses image": "boot image for",
+            "uses policy": "policy for",
+            "uses secret identity": "secret identity for",
             "exposes": "associate address",
             "addresses": "associate address",
             "uses": "referenced by",
@@ -761,8 +878,52 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
             ]
         for prerequisite_alias, dependent_alias in pairs:
             lines.append(
-                f'{prerequisite_alias} -[#6f7780,dashed]-> {dependent_alias} : {_text(relationship)}'
+                f"{prerequisite_alias} -[#6f7780,dashed]-> {dependent_alias} : {_text(relationship)}"
             )
+    folded_lines: set[tuple[str, str, str]] = set()
+    for relation_id, relation_node in sorted(folded.items()):
+        neighbors: list[str] = []
+        principal = ""
+        for edge in plan.get("edges") or []:
+            source = str(edge.get("from") or "")
+            target = str(edge.get("to") or "")
+            label = str(edge.get("label") or "")
+            if source == relation_id and target in included:
+                if label == "is deployed in":
+                    continue
+                neighbors.append(target)
+                if label in {"grants pull access to", "grants secret read to"}:
+                    principal = target
+            elif target == relation_id and source in included:
+                neighbors.append(source)
+        neighbors = list(dict.fromkeys(neighbors))
+        if len(neighbors) < 2:
+            continue
+        anchor = principal if principal in neighbors else neighbors[0]
+        relation_label = _FOLDED_RELATION_LABELS.get(
+            str(relation_node.get("providerKind") or ""), "associated"
+        )
+        for other in neighbors:
+            if other == anchor:
+                continue
+            anchor_aliases = provision_aliases.get(anchor, [])
+            other_aliases = provision_aliases.get(other, [])
+            if len(anchor_aliases) == len(other_aliases) and len(anchor_aliases) > 1:
+                relation_pairs = zip(anchor_aliases, other_aliases, strict=True)
+            else:
+                relation_pairs = (
+                    (anchor_alias, other_alias)
+                    for anchor_alias in anchor_aliases
+                    for other_alias in other_aliases
+                )
+            for anchor_alias, other_alias in relation_pairs:
+                key = tuple(sorted((anchor_alias, other_alias))) + (relation_label,)
+                if key in folded_lines:
+                    continue
+                folded_lines.add(key)
+                lines.append(
+                    f"{anchor_alias} -[#c47713,dashed]- {other_alias} : {_text(relation_label)}"
+                )
     if plan.get("unresolved"):
         lines.extend(
             [
@@ -774,7 +935,8 @@ def render_provisioning_dependencies(bundle: dict[str, Any]) -> str:
     lines.extend(
         [
             "legend bottom",
-            "  Every arrow means prerequisite -> dependent.",
+            "  Arrow: prerequisite -> dependent.",
+            "  Line: an IaC attachment, association, permission, or route applied between resources.",
             "  Runtime traffic is intentionally omitted.",
             "endlegend",
             "@enduml",

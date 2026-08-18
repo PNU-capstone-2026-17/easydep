@@ -202,8 +202,8 @@ class DeploymentNeed(BaseModel):
         alias="dependencyCapabilityIds",
         default_factory=list,
         description=(
-            "Stable dependency-model capability IDs supported by the supplied registry; "
-            "empty when no supported meaning matches."
+            "Stable dependency-model capability IDs recognized by the supplied registry; "
+            "a recognized ID may still be outside the current generation scope."
         ),
     )
 

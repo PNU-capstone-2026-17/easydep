@@ -99,14 +99,74 @@ def test_resource_plan_binding_rejects_unrequested_https_upgrade():
         ],
         "edges": [],
     }
-    files = {
-        "startup.sh.tpl": "listen 443 ssl;\nssl_certificate /run/tls.crt;\n"
-    }
+    files = {"startup.sh.tpl": "listen 443 ssl;\nssl_certificate /run/tls.crt;\n"}
 
     result = validate_resource_plan_binding(files, resource_plan=plan)
 
     assert result["status"] == "failed"
     assert result["diagnostics"][0]["code"] == "BIND-RESOURCE-PLAN-ENDPOINT-001"
+
+
+def test_authoritative_resource_plan_requires_user_run_bundle_entrypoints():
+    plan = {
+        "provider": "aws",
+        "deploymentTopology": {"publicIngress": "direct"},
+        "providerProjectionPolicy": {"mode": "standalone"},
+        "nodes": [],
+        "edges": [],
+    }
+
+    result = validate_resource_plan_binding({"main.tf": "terraform {}"}, resource_plan=plan)
+
+    diagnostic = next(
+        item for item in result["diagnostics"] if item["code"] == "BIND-DEPLOYMENT-BUNDLE-001"
+    )
+    assert diagnostic["details"]["missingFiles"] == [
+        "deploy.sh",
+        "destroy.sh",
+        "doctor.sh",
+        "plan.sh",
+        "status.sh",
+    ]
+
+
+def test_gcp_cloud_nat_plan_cannot_delete_the_default_internet_route():
+    plan = {
+        "provider": "gcp",
+        "deploymentTopology": {"publicIngress": "direct", "databasePlacement": "none"},
+        "providerProjectionPolicy": {"mode": "standalone"},
+        "nodes": [
+            {
+                "id": "network",
+                "providerKind": "network",
+                "handling": "create",
+                "terraformTypes": ["google_compute_network"],
+                "preserveDefaultInternetRoute": True,
+            }
+        ],
+        "edges": [],
+    }
+    files = {
+        "main.tf": """resource "google_compute_network" "app" {
+  name                            = "app"
+  delete_default_routes_on_create = true
+}
+""",
+        **dict.fromkeys(
+            (
+                "doctor.sh",
+                "plan.sh",
+                "deploy.sh",
+                "status.sh",
+                "destroy.sh",
+            ),
+            "#!/bin/sh\n",
+        ),
+    }
+
+    result = validate_resource_plan_binding(files, resource_plan=plan)
+
+    assert any(item["code"] == "BIND-GCP-DEFAULT-ROUTE-001" for item in result["diagnostics"])
 
 
 def test_resource_plan_binding_rejects_https_without_tls_termination():
@@ -138,35 +198,35 @@ def test_gcp_resource_plan_binding_rejects_disconnected_lb_resources():
             {
                 "id": "forwarding-rule",
                 "handling": "create",
-                "terraformTypes": ["google_compute_global_forwarding_rule"],
+                "terraformTypes": ["google_compute_forwarding_rule"],
             },
             {
-                "id": "target-http-proxy",
+                "id": "backend-service",
                 "handling": "create",
-                "terraformTypes": ["google_compute_target_http_proxy"],
+                "terraformTypes": ["google_compute_region_backend_service"],
             },
         ],
         "edges": [
             {
                 "from": "forwarding-rule",
-                "to": "target-http-proxy",
+                "to": "backend-service",
                 "label": "forwards to",
             }
         ],
     }
     disconnected = {
         "main.tf": """
-resource "google_compute_target_http_proxy" "app" {}
-resource "google_compute_global_forwarding_rule" "app" {
-  target = "not-a-resource-reference"
+resource "google_compute_region_backend_service" "app" {}
+resource "google_compute_forwarding_rule" "app" {
+  backend_service = "not-a-resource-reference"
 }
 """
     }
     connected = {
         "main.tf": """
-resource "google_compute_target_http_proxy" "app" {}
-resource "google_compute_global_forwarding_rule" "app" {
-  target = google_compute_target_http_proxy.app.id
+resource "google_compute_region_backend_service" "app" {}
+resource "google_compute_forwarding_rule" "app" {
+  backend_service = google_compute_region_backend_service.app.id
 }
 """
     }
@@ -175,10 +235,7 @@ resource "google_compute_global_forwarding_rule" "app" {
     passed = validate_resource_plan_binding(connected, resource_plan=plan)
 
     assert failed["status"] == "failed"
-    assert any(
-        item["code"] == "BIND-RESOURCE-PLAN-EDGE-002"
-        for item in failed["diagnostics"]
-    )
+    assert any(item["code"] == "BIND-RESOURCE-PLAN-EDGE-002" for item in failed["diagnostics"])
     assert passed["status"] == "passed"
 
 
@@ -191,12 +248,12 @@ def test_gcp_plan_json_observes_resource_reference_pairs():
                 "root_module": {
                     "resources": [
                         {
-                            "address": "google_compute_global_forwarding_rule.app",
-                            "type": "google_compute_global_forwarding_rule",
+                            "address": "google_compute_forwarding_rule.app",
+                            "type": "google_compute_forwarding_rule",
                         },
                         {
-                            "address": "google_compute_target_https_proxy.app",
-                            "type": "google_compute_target_https_proxy",
+                            "address": "google_compute_region_backend_service.app",
+                            "type": "google_compute_region_backend_service",
                         },
                     ]
                 }
@@ -205,19 +262,17 @@ def test_gcp_plan_json_observes_resource_reference_pairs():
                 "root_module": {
                     "resources": [
                         {
-                            "address": "google_compute_global_forwarding_rule.app",
-                            "type": "google_compute_global_forwarding_rule",
+                            "address": "google_compute_forwarding_rule.app",
+                            "type": "google_compute_forwarding_rule",
                             "expressions": {
                                 "target": {
-                                    "references": [
-                                        "google_compute_target_https_proxy.app.id"
-                                    ]
+                                    "references": ["google_compute_region_backend_service.app.id"]
                                 }
                             },
                         },
                         {
-                            "address": "google_compute_target_https_proxy.app",
-                            "type": "google_compute_target_https_proxy",
+                            "address": "google_compute_region_backend_service.app",
+                            "type": "google_compute_region_backend_service",
                             "expressions": {},
                         },
                     ]
@@ -228,8 +283,8 @@ def test_gcp_plan_json_observes_resource_reference_pairs():
 
     assert observation["referencePairs"] == [
         {
-            "fromType": "google_compute_global_forwarding_rule",
-            "toType": "google_compute_target_https_proxy",
+            "fromType": "google_compute_forwarding_rule",
+            "toType": "google_compute_region_backend_service",
         }
     ]
 

@@ -67,7 +67,7 @@ resource "aws_volume_attachment" "notes" {
 resource "aws_lb" "app" {
   name               = "easydep-component-audit"
   internal           = false
-  load_balancer_type = "application"
+  load_balancer_type = "network"
   security_groups    = [aws_security_group.lb.id]
   subnets            = [aws_subnet.zone_a.id, aws_subnet.zone_c.id]
 }
@@ -75,7 +75,7 @@ resource "aws_lb" "app" {
 resource "aws_lb_target_group" "app" {
   name        = "easydep-component-audit"
   port        = 8080
-  protocol    = "HTTP"
+  protocol    = "TCP"
   target_type = "instance"
   vpc_id      = aws_vpc.main.id
 
@@ -99,7 +99,7 @@ resource "aws_lb_target_group_attachment" "app_c" {
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.app.arn
   port              = 80
-  protocol          = "HTTP"
+  protocol          = "TCP"
 
   default_action {
     type             = "forward"
@@ -110,7 +110,7 @@ resource "aws_lb_listener" "http" {
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.app.arn
   port              = 443
-  protocol          = "HTTPS"
+  protocol          = "TLS"
   certificate_arn   = data.aws_acm_certificate.service.arn
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 

@@ -52,10 +52,7 @@ class TopologyFamily:
     @property
     def id(self) -> str:
         provider = f"{self.provider}." if self.provider else ""
-        return (
-            f"{provider}{self.compute_profile}."
-            f"{self.database_placement}.{self.public_ingress}"
-        )
+        return f"{provider}{self.compute_profile}.{self.database_placement}.{self.public_ingress}"
 
     def as_dict(self) -> dict[str, str | None]:
         return {
@@ -80,9 +77,7 @@ def family_errors(family: TopologyFamily) -> list[str]:
     return errors
 
 
-def enumerate_topology_families(
-    *, include_providers: bool = False
-) -> list[TopologyFamily]:
+def enumerate_topology_families(*, include_providers: bool = False) -> list[TopologyFamily]:
     """Enumerate the 12 logical or 36 provider-labelled supported families."""
     providers: tuple[Provider | None, ...] = PROVIDERS if include_providers else (None,)
     candidates = (
@@ -124,9 +119,7 @@ def derive_deployment_topology(
     normalized_provider = str(provider or "").strip().lower()
     compute_profile = str(spec.get("computeProfile") or "standaloneOne")
     selected_zones = [
-        str(zone).strip()
-        for zone in spec.get("selectedZones") or []
-        if str(zone).strip()
+        str(zone).strip() for zone in spec.get("selectedZones") or [] if str(zone).strip()
     ]
     database_required = _logical_database_present(logical_deployment_model)
     requested_database_placement = str(spec.get("databasePlacement") or "dedicated")
@@ -258,7 +251,7 @@ def derive_deployment_topology(
                     "Multiple replicas require evidence that local session, uploads, "
                     "singleton schedulers, and writable state are absent or externalized."
                 ),
-                "classification": "constraint",
+                "classification": "needsInput",
             }
         )
 
@@ -285,15 +278,53 @@ def derive_deployment_topology(
             "publiclyReachable": False,
             "separatePersistentDisk": database_placement != "none",
             "secretPolicy": (
-                "callerSuppliedSecretReference"
-                if database_placement != "none"
-                else "notApplicable"
+                "callerSuppliedSecretReference" if database_placement != "none" else "notApplicable"
             ),
         },
         "egressPolicy": {
-            "mode": "instancePublicAddress" if public_ingress == "direct" else "managedNat",
+            "mode": (
+                "instancePublicAddress"
+                if public_ingress == "direct" and database_placement != "dedicated"
+                else "hybridPublicAddressAndManagedNat"
+                if public_ingress == "direct" and database_placement == "dedicated"
+                else "managedNat"
+            ),
             "requiredFor": ["applicationImagePull"]
             + (["postgresImagePull"] if database_placement != "none" else []),
+        },
+        "registryPolicy": {
+            "mode": "providerNativePrivateRegistry",
+            "provisionedBy": "userExecutedGeneratedIaC",
+            "imageReference": "immutableDigest",
+        },
+        "bootImagePolicy": {
+            "mode": "providerDefaultLinuxImage",
+            "resolvedAt": "userExecutedTerraformPlan",
+            "recordResolvedImageId": True,
+        },
+        "stateEndpointPolicy": {
+            "mode": (
+                "fixedPrivateAddress"
+                if database_placement == "dedicated"
+                else "containerLocal"
+                if database_placement == "colocated"
+                else "notApplicable"
+            ),
+            "applicationImageRebuildRequiredOnStateReplacement": False,
+        },
+        "secretPolicy": {
+            "mode": (
+                "callerManagedProviderSecretReference"
+                if database_placement != "none"
+                else "notApplicable"
+            ),
+            "credentialCollectionByEasyDep": False,
+            "valueStoredByEasyDep": False,
+            "requiredKeys": (
+                ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"]
+                if database_placement != "none"
+                else []
+            ),
         },
         "ownershipPolicy": "createDeploymentResources",
         "stateDeletionPolicy": "retainPersistentDisk",
@@ -321,7 +352,7 @@ def provider_projection_policy(topology: dict[str, Any]) -> dict[str, Any]:
     spread = topology.get("zoneLayout") == "multiZoneSpread"
     replicas = int(topology.get("replicaCount") or 1)
     load_balanced = topology.get("publicIngress") == "loadBalanced"
-    aws_public_alb = provider == "aws" and load_balanced
+    aws_multi_zone_ingress = provider == "aws" and load_balanced and spread
     return {
         "schemaVersion": "easydep-provider-projection-policy/v1",
         "source": "deployment-topology",
@@ -331,9 +362,9 @@ def provider_projection_policy(topology: dict[str, Any]) -> dict[str, Any]:
         "nativeComputeGroup": _NATIVE_GROUPS.get(provider) if grouped else None,
         "minimumInstances": replicas,
         "minimumZones": 2 if spread else 1,
-        "minimumIngressZones": 2 if aws_public_alb else 1,
+        "minimumIngressZones": 2 if aws_multi_zone_ingress else 1,
         "minimumSubnets": 2 if provider == "aws" and spread else 1,
-        "minimumIngressSubnets": 2 if aws_public_alb else 1,
+        "minimumIngressSubnets": 2 if aws_multi_zone_ingress else 1,
         "selectedIngressZones": list(topology.get("selectedIngressZones") or []),
         "zoneSpreadRequired": spread,
         "loadBalancerRequired": load_balanced,

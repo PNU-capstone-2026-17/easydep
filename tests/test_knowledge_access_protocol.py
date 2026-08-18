@@ -19,7 +19,7 @@ def test_query_is_deterministic_and_carries_frozen_snapshot():
     )
 
     assert first == second
-    assert len(first["capabilityRealizations"][0]["components"]) == 6
+    assert len(first["capabilityRealizations"][0]["components"]) == 4
     assert all(len(value) == 64 for value in first["snapshot"].values())
 
 

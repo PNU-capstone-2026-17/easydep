@@ -24,7 +24,9 @@ from app.design.services.deployment_diagram.topology import (
     provider_projection_policy,
 )
 from app.requirements.capability_contract import (
-    SUPPORTED_DEPENDENCY_CAPABILITY_IDS,
+    MODELED_DEPENDENCY_CAPABILITY_IDS,
+    OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS,
+    RECOGNIZED_DEPENDENCY_CAPABILITY_IDS,
     link_dependency_capability,
     requires_persistent_storage,
 )
@@ -38,6 +40,18 @@ def _modeled_outcome(capability_ids: list[str], persistent: bool) -> str:
     if "persistent-block-storage" in capability_ids:
         return "disk" if persistent else "no_disk"
     return "load-balanced-ingress"
+
+
+def _recognized_capability_ids(key: str, need: dict[str, Any]) -> set[str]:
+    linked = link_dependency_capability(
+        key,
+        str(need.get("role") or ""),
+        need.get("evidenceSpans") or (),
+    )
+    return (
+        set(need.get("dependencyCapabilityIds") or [])
+        | ({linked} if linked else set())
+    ) & RECOGNIZED_DEPENDENCY_CAPABILITY_IDS
 
 
 def render_cloud_deployment(
@@ -131,6 +145,35 @@ class CloudDesignAdapter:
         use_cloud_kb: bool = True,
     ) -> dict[str, Any]:
         resource_spec = requirements_result.get("resource_spec") or {}
+        all_needs = requirements_result.get("deployment_needs") or {}
+        artifacts = design_result.get("artifacts") or {}
+        logical_puml = str(
+            design_result.get("deployment_diagram_puml")
+            or artifacts.get("deployment_diagram")
+            or ""
+        )
+        unsupported_https_needs = sorted(
+            key
+            for key, need in all_needs.items()
+            if isinstance(need, dict)
+            and _recognized_capability_ids(key, need)
+            & OUT_OF_SCOPE_DEPENDENCY_CAPABILITY_IDS
+        )
+        if unsupported_https_needs:
+            return {
+                "status": "unsupported",
+                "reason": "https-ingress-out-of-scope",
+                "provider": str(resource_spec.get("provider") or ""),
+                "region": str(resource_spec.get("region") or ""),
+                "open_questions": [],
+                "unsupportedNeeds": unsupported_https_needs,
+                "logical_deployment_diagram_puml": logical_puml,
+                "deployment_diagram_puml": logical_puml,
+                "kb_used": [],
+                "deferred": [
+                    "dependencies", "capacity", "performance", "price", "vm_selection"
+                ],
+            }
         deployment_targets = [
             dict(item)
             for item in resource_spec.get("deploymentTargets") or []
@@ -199,14 +242,7 @@ class CloudDesignAdapter:
             }
         provider = str(resource_spec.get("provider") or "")
         region = str(resource_spec.get("region") or "")
-        all_needs = requirements_result.get("deployment_needs") or {}
-        artifacts = design_result.get("artifacts") or {}
         logical_model = design_result.get("deployment_diagram_model") or {}
-        logical_puml = str(
-            design_result.get("deployment_diagram_puml")
-            or artifacts.get("deployment_diagram")
-            or ""
-        )
         if not use_cloud_kb:
             topology_policy = derive_deployment_topology(
                 provider=provider,
@@ -247,17 +283,8 @@ class CloudDesignAdapter:
         }
         capabilities_by_need = {
             key: sorted(
-                (
-                    set(value.get("dependencyCapabilityIds") or [])
-                    | {
-                        candidate
-                        for candidate in [
-                            link_dependency_capability(key, str(value.get("role") or ""))
-                        ]
-                        if candidate
-                    }
-                )
-                & SUPPORTED_DEPENDENCY_CAPABILITY_IDS
+                _recognized_capability_ids(key, value)
+                & MODELED_DEPENDENCY_CAPABILITY_IDS
             )
             for key, value in accepted.items()
         }
@@ -306,8 +333,7 @@ class CloudDesignAdapter:
         effective_spec = dict(resource_spec)
         if (
             "publicIngress" not in effective_spec
-            and selected_capabilities
-            & {"load-balanced-ingress", "https-load-balanced-ingress"}
+            and "load-balanced-ingress" in selected_capabilities
         ):
             effective_spec["publicIngress"] = "loadBalanced"
         topology_policy = derive_deployment_topology(

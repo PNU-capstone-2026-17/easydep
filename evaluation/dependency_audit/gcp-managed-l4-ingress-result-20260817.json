@@ -1,0 +1,194 @@
+{
+  "schemaVersion": "easydep-managed-l4-ingress/v1",
+  "provider": "gcp",
+  "runId": "easydep-l4-a044f345",
+  "startedAt": "2026-08-17T09:17:17.788289+00:00",
+  "transportUnderTest": "public TCP/80 L4 load balancer to two HTTP backends",
+  "steps": [
+    {
+      "name": "network.create",
+      "status": "passed",
+      "durationSeconds": 16.169,
+      "detail": "easydep-l4-a044f345-net"
+    },
+    {
+      "name": "subnet.create",
+      "status": "passed",
+      "durationSeconds": 21.219,
+      "detail": "easydep-l4-a044f345-subnet"
+    },
+    {
+      "name": "security.client-and-health",
+      "status": "passed",
+      "durationSeconds": 17.607,
+      "detail": "easydep-l4-a044f345-ingress"
+    },
+    {
+      "name": "easydep-l4-a044f345-app-1.create",
+      "status": "passed",
+      "durationSeconds": 14.331,
+      "detail": "easydep-l4-a044f345-app-1"
+    },
+    {
+      "name": "easydep-l4-a044f345-app-2.create",
+      "status": "passed",
+      "durationSeconds": 18.015,
+      "detail": "easydep-l4-a044f345-app-2"
+    },
+    {
+      "name": "easydep-l4-a044f345-group-1.create",
+      "status": "passed",
+      "durationSeconds": 9.19,
+      "detail": "easydep-l4-a044f345-group-1"
+    },
+    {
+      "name": "easydep-l4-a044f345-group-1.add-backend",
+      "status": "passed",
+      "durationSeconds": 3.272,
+      "detail": "easydep-l4-a044f345-app-1"
+    },
+    {
+      "name": "easydep-l4-a044f345-group-2.create",
+      "status": "passed",
+      "durationSeconds": 7.257,
+      "detail": "easydep-l4-a044f345-group-2"
+    },
+    {
+      "name": "easydep-l4-a044f345-group-2.add-backend",
+      "status": "passed",
+      "durationSeconds": 5.717,
+      "detail": "easydep-l4-a044f345-app-2"
+    },
+    {
+      "name": "load-balancer.health-check",
+      "status": "passed",
+      "durationSeconds": 5.059,
+      "detail": "NAME                        PROTOCOL\neasydep-l4-a044f345-health  HTTP"
+    },
+    {
+      "name": "load-balancer.backend-service",
+      "status": "passed",
+      "durationSeconds": 16.334,
+      "detail": "NAME                         BACKENDS  PROTOCOL\neasydep-l4-a044f345-backend            TCP"
+    },
+    {
+      "name": "load-balancer.attach-easydep-l4-a044f345-group-1",
+      "status": "passed",
+      "durationSeconds": 25.853,
+      "detail": "easydep-l4-a044f345-group-1"
+    },
+    {
+      "name": "load-balancer.attach-easydep-l4-a044f345-group-2",
+      "status": "passed",
+      "durationSeconds": 35.809,
+      "detail": "easydep-l4-a044f345-group-2"
+    },
+    {
+      "name": "load-balancer.address",
+      "status": "passed",
+      "durationSeconds": 2.751,
+      "detail": "easydep-l4-a044f345-address"
+    },
+    {
+      "name": "load-balancer.forwarding-rule",
+      "status": "passed",
+      "durationSeconds": 17.851,
+      "detail": "easydep-l4-a044f345-forwarding"
+    },
+    {
+      "name": "baseline.two-healthy-targets",
+      "status": "passed",
+      "durationSeconds": 2.477,
+      "detail": [
+        "easydep-l4-a044f345-app-1",
+        "easydep-l4-a044f345-app-2"
+      ]
+    },
+    {
+      "name": "baseline.readiness",
+      "status": "passed",
+      "durationSeconds": 0.133,
+      "detail": {
+        "status": 200,
+        "body": {
+          "instance": "easydep-l4-a044f345-app-2",
+          "ready": true
+        }
+      }
+    },
+    {
+      "name": "baseline.two-backends",
+      "status": "passed",
+      "durationSeconds": 4.46,
+      "detail": {
+        "expected": [
+          "easydep-l4-a044f345-app-1",
+          "easydep-l4-a044f345-app-2"
+        ],
+        "observed": [
+          "easydep-l4-a044f345-app-1",
+          "easydep-l4-a044f345-app-2"
+        ],
+        "attempts": 5
+      }
+    },
+    {
+      "name": "fault.exclude-and-restore",
+      "status": "passed",
+      "durationSeconds": 69.722,
+      "detail": {
+        "victim": "easydep-l4-a044f345-app-1",
+        "survivor": "easydep-l4-a044f345-app-2",
+        "faultAcceptedAtSeconds": 0,
+        "exclusionConfirmedAtSeconds": 24.955,
+        "restorationConfirmedAtSeconds": 69.722,
+        "probeCountBeforeRestore": 17,
+        "successfulProbesBeforeRestore": 15,
+        "failedProbesBeforeRestore": 2,
+        "restoreAction": "instance reset restarted the app on easydep-l4-a044f345-app-1",
+        "restoredBackends": {
+          "expected": [
+            "easydep-l4-a044f345-app-1",
+            "easydep-l4-a044f345-app-2"
+          ],
+          "observed": [
+            "easydep-l4-a044f345-app-1",
+            "easydep-l4-a044f345-app-2"
+          ],
+          "attempts": 38
+        }
+      }
+    }
+  ],
+  "outcome": "passed",
+  "pathUnderTest": "public IPv4 -> TCP listener/forwarding rule -> backend membership -> HTTP readiness probe -> VM application process",
+  "scope": "domain-neutral L4 ingress dependency experiment",
+  "application": {
+    "kind": "domain-neutral synthetic HTTP service",
+    "endpoints": [
+      "/health/ready",
+      "/instance",
+      "/__easydep_test/fault"
+    ],
+    "database": false,
+    "persistentStorage": false
+  },
+  "resourceObservation": {
+    "frontend": "GCP regional external passthrough Network Load Balancer TCP/80",
+    "health": "regional HTTP /health/ready check on tcp/80",
+    "backends": "two zonal unmanaged instance groups with one VM each"
+  },
+  "error": null,
+  "cleanup": {
+    "passed": true,
+    "residual": []
+  },
+  "finishedAt": "2026-08-17T09:24:29.368609+00:00",
+  "interpretationLimits": [
+    "One development run does not establish a provider-wide success rate or SLA.",
+    "HTTP is only the observable payload carried over the L4 TCP path.",
+    "The experiment does not test TLS, database, persistent storage, or region failure.",
+    "Backend process recovery is operator-triggered; managed VM replacement is separate.",
+    "Sequential requests demonstrate reachability, not traffic-share fairness or performance."
+  ]
+}

@@ -32,9 +32,7 @@ def test_managed_group_families_never_include_direct_or_colocated_database(
     compute_profile,
 ):
     families = [
-        item
-        for item in enumerate_topology_families()
-        if item.compute_profile == compute_profile
+        item for item in enumerate_topology_families() if item.compute_profile == compute_profile
     ]
 
     assert len(families) == 2
@@ -44,9 +42,7 @@ def test_managed_group_families_never_include_direct_or_colocated_database(
 
 def test_standalone_family_keeps_direct_lb_and_all_database_placements():
     families = [
-        item
-        for item in enumerate_topology_families()
-        if item.compute_profile == "standaloneOne"
+        item for item in enumerate_topology_families() if item.compute_profile == "standaloneOne"
     ]
 
     assert len(families) == 6
@@ -82,7 +78,7 @@ def test_many_single_zone_is_valid_but_requires_stateless_evidence():
                 "Multiple replicas require evidence that local session, uploads, "
                 "singleton schedulers, and writable state are absent or externalized."
             ),
-            "classification": "constraint",
+            "classification": "needsInput",
         }
     ]
 
@@ -156,7 +152,7 @@ def test_projection_adapter_does_not_make_an_availability_claim():
     assert "highAvailabilityRequired" not in projection
 
 
-def test_aws_load_balancer_requires_two_subnets_without_claiming_app_zone_spread():
+def test_aws_network_load_balancer_uses_one_subnet_for_single_zone_plan():
     topology = derive_deployment_topology(
         provider="aws",
         resource_spec={
@@ -171,9 +167,9 @@ def test_aws_load_balancer_requires_two_subnets_without_claiming_app_zone_spread
     projection = provider_projection_policy(topology)
 
     assert projection["minimumZones"] == 1
-    assert projection["minimumIngressZones"] == 2
+    assert projection["minimumIngressZones"] == 1
     assert projection["minimumSubnets"] == 1
-    assert projection["minimumIngressSubnets"] == 2
+    assert projection["minimumIngressSubnets"] == 1
     assert projection["zoneSpreadRequired"] is False
 
 

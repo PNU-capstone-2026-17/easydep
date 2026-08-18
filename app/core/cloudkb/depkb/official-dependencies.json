@@ -1,7 +1,7 @@
 {
   "schemaVersion": "easydep-official-dependencies/v1",
   "sourceModelSha256": {
-    "aws-evidence-model.json": "fac87557acc42f8c253e5acfb220eeefba0a974ca9944813106889333407577d",
+    "aws-evidence-model.json": "4517895d4772f3fc72b1022c36e81eb668ecb3aa125a44c58ac80d287ee559d8",
     "azure-evidence-model.json": "9b5a743e1b9db57391377bdb7147fda97a9e90ba71c0f20115a163c14bcb8275",
     "gcp-evidence-model.json": "53d6502afaa9514581f0dc920c76275cfd491f5f9fcf383c2866927e4f2a8159"
   },
@@ -145,6 +145,6 @@
     ]
   },
   "freeze": {
-    "sha256": "88f71562e5463223cada4db7b1524e0edae647b22fbf327e6d91273751835f50"
+    "sha256": "ee011fb3c41a72622c78beb3b4d5e85947fa1d032d6b6980661e1ad8686b89c4"
   }
 }

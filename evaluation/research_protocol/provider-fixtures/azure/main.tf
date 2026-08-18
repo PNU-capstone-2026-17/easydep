@@ -140,6 +140,54 @@ resource "azurerm_virtual_machine_data_disk_attachment" "notes" {
   caching            = "ReadWrite"
 }
 
+resource "azurerm_lb" "app" {
+  name                = "easydep-component-audit-l4"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "public"
+    public_ip_address_id = azurerm_public_ip.gateway.id
+  }
+}
+
+resource "azurerm_lb_backend_address_pool" "app" {
+  name            = "application"
+  loadbalancer_id = azurerm_lb.app.id
+}
+
+resource "azurerm_lb_probe" "app" {
+  name                = "health"
+  loadbalancer_id     = azurerm_lb.app.id
+  protocol            = "Http"
+  port                = 8080
+  request_path        = "/health"
+}
+
+resource "azurerm_lb_rule" "app" {
+  name                           = "http-over-tcp"
+  loadbalancer_id                = azurerm_lb.app.id
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 8080
+  frontend_ip_configuration_name = "public"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.app.id]
+  probe_id                       = azurerm_lb_probe.app.id
+}
+
+resource "azurerm_network_interface_backend_address_pool_association" "app_1_l4" {
+  network_interface_id    = azurerm_network_interface.app_1.id
+  ip_configuration_name   = "primary"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.app.id
+}
+
+resource "azurerm_network_interface_backend_address_pool_association" "app_2_l4" {
+  network_interface_id    = azurerm_network_interface.app_2.id
+  ip_configuration_name   = "primary"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.app.id
+}
+
 resource "azurerm_application_gateway" "app" {
   name                = "easydep-component-audit"
   resource_group_name = azurerm_resource_group.main.name

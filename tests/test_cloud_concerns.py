@@ -44,7 +44,7 @@ def test_grounded_generic_needs_are_preserved(monkeypatch):
     }
 
 
-def test_explicit_evidence_is_accepted_and_sample_seeds_are_distinct(monkeypatch):
+def test_explicit_out_of_scope_evidence_abstains_and_sample_seeds_are_distinct(monkeypatch):
     seeds = []
 
     def sample(*_args, **kwargs):
@@ -63,7 +63,8 @@ def test_explicit_evidence_is_accepted_and_sample_seeds_are_distinct(monkeypatch
     result = step_cloud.derive_deployment_needs({"classified": CLASSIFIED})
 
     capability = result["capability_contract"]["capabilities"][0]
-    assert capability["decision"] == "accepted"
+    assert capability["decision"] == "abstained"
+    assert capability["decisionReason"] == "model-out-of-scope"
     assert capability["rawConfidence"] == 1
     assert len(seeds) == step_cloud.settings.capability_samples
     assert len(set(seeds)) == len(seeds)
@@ -122,7 +123,7 @@ def test_ambiguous_multi_zone_metadata_produces_a_purpose_question(monkeypatch):
     assert "independent VM replicas" in question["question"]
 
 
-def test_supported_dependency_capability_id_is_preserved(monkeypatch):
+def test_out_of_scope_https_capability_id_is_preserved_and_abstained(monkeypatch):
     classified = [{
         "id": "NFR1",
         "text": "External clients use HTTPS through a load balancer.",
@@ -150,6 +151,10 @@ def test_supported_dependency_capability_id_is_preserved(monkeypatch):
     assert result["capability_contract"]["capabilities"][0][
         "dependencyCapabilityIds"
     ] == ["https-load-balanced-ingress"]
+    assert result["deployment_needs"]["secure_ingress"]["decision"] == "abstained"
+    assert result["capability_contract"]["capabilities"][0][
+        "decisionReason"
+    ] == "model-out-of-scope"
 
 
 def test_dependency_capability_id_requires_sample_agreement(monkeypatch):

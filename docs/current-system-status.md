@@ -165,14 +165,15 @@ P1-GCP 무상태 변환 API 사례에서 다음 로컬·정적 결과를 확인�
 추가로 도메인 중립 App–State 앱은 AWS·Azure·GCP에서 다음 경로를 각 1회 완료했다.
 
 - E1: 사설 PostgreSQL 연결, CSP traffic filter 개입·복원, 별도 data disk, State VM 재기동 뒤 보존
-- E2: AWS ALB–ASG, Azure Standard LB–VMSS, GCP Backend Service–MIG의 App 장애 감지·관리형 복구
+- E2: 과거 AWS ALB–ASG, Azure Standard LB–VMSS, GCP Application LB Backend Service–MIG의 App 장애 감지·관리형 복구
 - E3: State VM 교체, 기존 data disk 재연결, 새 사설 endpoint 주입, App image 재빌드 없이 기존 값 조회
 - 모든 실행: `apply → ready → 업무 probe → fault/restart → 재확인 → cleanup 잔여 0`
 
-현재 ResourcePlan이 선택하는 진입 경로와 E2의 관찰 경로는 AWS·GCP에서 일치한다. Azure의
-E2는 VMSS 복구와 Standard Load Balancer 경로를 관찰했지만 현재 ResourcePlan은 Application
-Gateway를 선택한다. 따라서 Azure에서는 VMSS 복구만 관찰됨으로 기록하고, 선택된 Application
-Gateway를 통한 연속성은 아직 측정되지 않은 것으로 남긴다.
+현재 ResourcePlan은 AWS Network Load Balancer, Azure Load Balancer, GCP Regional External
+Passthrough Network Load Balancer를 선택한다. 2026-08-17에 같은 중립 최소 앱과 동일 판정 규칙으로
+세 경로를 각각 1회 검증했다. TCP 전달, HTTP readiness, 두 backend 도달, backend 프로세스 장애
+제외·운영자 복원, 실행 소유 잔여 0은 `observed`다. SLA, 성능, 관리형 VM 자동교체는 여전히
+`notMeasured`다.
 
 수강신청 생성 앱의 과거 검증은 AWS에서 HTTPS health, 업무·동시성 13/13, DB 중지 시 503/DOWN,
 DB VM 재기동 뒤 영속성 2/2와 실행 소유 잔여 0을 확인했다. 다만 순수 생성 IaC의 EBS

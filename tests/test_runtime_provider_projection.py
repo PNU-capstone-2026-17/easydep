@@ -11,8 +11,8 @@ from app.core.orchestration.adapters.vm_delivery import VmDeliveryAdapter
 
 @pytest.mark.parametrize("provider,count,composition", [
     ("aws", 4, "multi-resource"),
-    ("azure", 7, "multi-resource"),
-    ("gcp", 6, "multi-resource"),
+    ("azure", 6, "multi-resource"),
+    ("gcp", 4, "multi-resource"),
 ])
 def test_load_balancer_plan_carries_provider_specific_realization(provider, count, composition):
     plan = plan_for_anchors(["vm", "loadBalancer"], provider, "test-region")
@@ -29,12 +29,8 @@ def test_load_balancer_plan_carries_provider_specific_realization(provider, coun
     assert agent_input["knowledgeSnapshot"]
 
 
-@pytest.mark.parametrize("provider,count", [
-    ("aws", 5),
-    ("azure", 8),
-    ("gcp", 7),
-])
-def test_https_load_balancer_is_a_distinct_realization(provider, count):
+@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
+def test_https_load_balancer_is_out_of_scope(provider):
     plan = plan_for_anchors(
         ["vm", "loadBalancer"],
         provider,
@@ -42,10 +38,7 @@ def test_https_load_balancer_is_a_distinct_realization(provider, count):
         capability_ids=("https-load-balanced-ingress",),
     )
 
-    realization = plan.intent.capabilityRealizations[0]
-    assert realization["capabilityIds"] == ["https-load-balanced-ingress"]
-    assert len(realization["components"]) == count
-    assert any(item["id"] == "certificate" for item in realization["components"])
+    assert plan.intent.capabilityRealizations == ()
 
 
 def test_plain_vm_plan_does_not_receive_unrequested_load_balancer_components():

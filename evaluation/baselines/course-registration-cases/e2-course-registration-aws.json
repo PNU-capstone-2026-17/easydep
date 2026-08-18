@@ -13,7 +13,6 @@
     "If several students attempt to take the last available seat at the same time, the system shall not exceed the course capacity.",
     "If one student submits several registration attempts for the same course at the same time, the system shall retain only one registration.",
     "Course and registration information shall not be lost when the application or its server is restarted.",
-    "Connections used by students to access the service shall be encrypted.",
     "The application shall be deployable as a container running on Linux virtual machines.",
     "Authoritative course registration state shall not be kept only in the local storage of one application instance, so that a replacement instance can process subsequent requests.",
     "The system that stores course registration information shall not be directly accessible from the Internet.",
@@ -22,7 +21,7 @@
     "The cloud environment required by the service shall be reproducibly created and removed from a version-controlled infrastructure definition.",
     "During the registration period, students shall still be able to view, register for, and cancel courses when one application server fails."
   ],
-  "cloudConstraints": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
+  "cloudConstraints": "The university will pilot the service in the AWS Seoul Region (ap-northeast-2), and the monthly cloud budget must not exceed 500 USD. The fixed research scope is Docker on Linux virtual machines with Terraform and temporary HTTP endpoints. HTTPS, TLS certificates, and domain management are outside this pilot. The pilot may not use a managed database service, Kubernetes, or serverless compute and must use synthetic data instead of real personal data. Recovery from a data-storage server failure is outside this pilot.",
   "scope": {
     "providers": ["aws"],
     "region": "ap-northeast-2",

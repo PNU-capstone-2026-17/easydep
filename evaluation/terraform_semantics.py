@@ -491,7 +491,7 @@ def _projection_checks(actual: dict[str, Any], provider: str) -> list[dict[str, 
                     "componentId": component["id"],
                     "nativePath": component["nativePath"],
                     "representation": component["representation"],
-                    "coverage": component["coverage"],
+                    "coverage": component.get("coverage", "required"),
                     "status": "passed" if present else "failed",
                 }
             )

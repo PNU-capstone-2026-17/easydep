@@ -190,6 +190,7 @@ def _external_instances(
         "gateway": "loadBalancer",
         "forwardingRule": "loadBalancer",
         "urlMap": "listenerRule",
+        "publicIp": "publicIp",
     }
     concept = concept_by_id.get(component_id)
     return (
