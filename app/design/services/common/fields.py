@@ -48,6 +48,11 @@ SQL_TYPES: dict[str, str] = {
     "bigdecimal": "DECIMAL(19,4)",
     # 이미 저장된 과거 BCE/외부 입력도 SQL 이름을 그대로 내보내지 않도록 방어한다.
     "decimal": "DECIMAL(19,4)",
+    "localdate": "DATE",
+    "localdatetime": "TIMESTAMP WITH TIME ZONE",
+    "instant": "TIMESTAMP WITH TIME ZONE",
+    "localtime": "TIME",
+    "timestamp": "TIMESTAMP WITH TIME ZONE",
 }
 
 
@@ -65,6 +70,10 @@ _JAVA_TYPE_ALIASES: dict[str, str] = {
     "double": "double",
     "decimal": "BigDecimal",
     "bigdecimal": "BigDecimal",
+    "date": "LocalDate",
+    "datetime": "LocalDateTime",
+    "time": "LocalTime",
+    "timestamp": "Instant",
 }
 
 

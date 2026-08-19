@@ -2612,7 +2612,7 @@ components: {}
         self.assertIn("void cannot be converted to boolean", feedback)
         self.assertIn("Generated contracts are authoritative", feedback)
         self.assertIn("use reflection", feedback)
-        self.assertIn("Use create to replace", feedback)
+        self.assertIn("to replace each affected allowlisted file completely", feedback)
         self.assertIn("remove the absent call", feedback)
         self.assertIn("void type not allowed here", feedback)
         self.assertIn("doAnswer", feedback)
@@ -2717,7 +2717,9 @@ class ApplicationConfiguration {
             "Wanted but not invoked\nvoid type not allowed here\n"
             "UnnecessaryStubbingException\nNotAMockException\n"
             "InvalidUseOfMatchersException: 2 matchers expected\n"
-            "testStartPurchase_ConnectionFails_HandlesFailure(): Wanted but not invoked"
+            "testStartPurchase_ConnectionFails_HandlesFailure(): Wanted but not invoked\n"
+            'expected "identifier"; SQL statement:\n'
+            "error: incompatible types: java.util.Date cannot be converted to com.easydep.app.bce.Date"
         )
         self.assertIn("exact argument", hints)
         self.assertIn("exact observed count", hints)
@@ -2727,6 +2729,8 @@ class ApplicationConfiguration {
         self.assertIn("real service", hints)
         self.assertIn("eq(30)", hints)
         self.assertIn("doThrow", hints)
+        self.assertIn("SQL Syntax / Reserved Keyword", hints)
+        self.assertIn("Incompatible types", hints)
 
     def test_event_journal_writes_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

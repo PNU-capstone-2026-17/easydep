@@ -23,10 +23,10 @@ For a cannot-find-symbol diagnostic, remove the absent call or field access. Do 
 For an already-defined-method diagnostic, keep one implementation of that signature and remove the duplicate.
 For Mockito negative verification, use verify(mock, never()).method(...); verifyNever does not exist.
 For a 'void type not allowed here' diagnostic, delete the unnecessary when(mock.voidMethod(...)) stub. If custom behavior is required, use Mockito doAnswer(...).when(mock).voidMethod(...).
-Use create to replace each affected allowlisted file completely. Do not call view or str_replace during this repair round; the current sources are included below.
+Use `restricted_file_editor` with `command: 'create'` to replace each affected allowlisted file completely. Do not call view or str_replace during this repair round; the current sources are included below.
 Write only the following repair targets; do not rewrite any other file:
 {target_text}
-Emit all required create calls in one response, then call finish immediately.
+Emit all required `restricted_file_editor` create calls in one response, then call finish immediately.
 
 Failure-specific guidance:
 {hints}
@@ -74,6 +74,17 @@ Current allowlisted sources:
 
 def verification_failure_hints(output: str) -> str:
     hints: list[str] = []
+    if 'expected "identifier"' in output or "Syntax error in SQL statement" in output or "JdbcSQLSyntaxErrorException" in output:
+        hints.append(
+            "- SQL Syntax / Reserved Keyword: H2/SQL query or table definition contains a reserved keyword "
+            "(such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). "
+            "Quote the identifier with backticks/quotes (e.g. `\"year\"` or ``` `year` ```) or rename the column/table in the schema and entity mapping."
+        )
+    if "incompatible types" in output:
+        hints.append(
+            "- Incompatible types: Check package imports and exact contract types (e.g. java.time types vs domain models). "
+            "Ensure constructor and method arguments match the exact declared parameter types in the contracts."
+        )
     if "TooManyActualInvocations" in output:
         hints.append(
             "- TooManyActualInvocations: do not verify a broad matcher once when the "

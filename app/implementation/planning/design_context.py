@@ -1341,6 +1341,7 @@ Rules:
   infinite recursion. Relationship ownership must remain consistent with the ERD.
 - Never use reflection or assume an accessor absent from the contracts.
 - Tests must cover scalar mapping, portfolio/holding mapping, and null handling. Do not mock value objects.
+- Ensure date/time values and constructors match the exact parameter types declared in the generated contracts (e.g. java.time types vs domain models).
 - Do not edit BCE or persistence entity files. Create both contracted files, then finish immediately.
 
 ## ERD
@@ -1367,6 +1368,7 @@ Rules:
 - Use BIGINT generated identity primary keys, VARCHAR for strings, INTEGER for quantity, DOUBLE PRECISION for prices, BOOLEAN, and TIMESTAMP WITH TIME ZONE.
 - Declare every ERD foreign key and useful indexes for foreign-key columns and explicit natural identifiers.
 - Match the exact `@Table`, `@Column`, and `@JoinColumn` names derived from the ERD.
+- Avoid unquoted SQL/H2 reserved words as identifiers (such as `year`, `order`, `group`, `user`, `status`, `key`, `value`, `offset`, `limit`, `check`, `date`). When a column or table name is a reserved keyword, quote it (e.g. `"year"` or `\"year\"`) or use safe column names consistent with JPA entity `@Column(name = ...)`.
 - The test must invoke `Flyway.configure().dataSource(...).locations("classpath:db/migration").load().migrate()` against an H2 in-memory JDBC URL, then use JDBC metadata to assert that every ERD table exists. Do not split or parse SQL manually and do not require a Spring application context.
 - Use package `{spec.base_package}.persistence` for the test.
 - Create both contracted files, then finish immediately.
