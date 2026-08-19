@@ -20,6 +20,7 @@ from .verification.frontend import (
 from .verification.build import (
     WorkspaceVerificationError,
     production_placeholder_markers,
+    production_test_library_markers,
     verify_agent_workspace,
 )
 from .verification.e2e import e2e_contract_violations
@@ -252,17 +253,28 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
-                if placeholders:
+                test_libraries = production_test_library_markers(
+                    sandbox, task["allowed_write_paths"]
+                )
+                if placeholders or test_libraries:
+                    violations = []
+                    if placeholders:
+                        violations.append(
+                            "Production outputs contain unresolved TODO/FIXME/placeholder markers:"
+                        )
+                        violations.extend(placeholders)
+                    if test_libraries:
+                        violations.append(
+                            "Production outputs must not import or call Mockito/JUnit:"
+                        )
+                        violations.extend(test_libraries)
                     raise WorkspaceVerificationError(
                         {
                             "command": ["production-placeholder-gate"],
                             "exitCode": 1,
                             "durationMs": 0,
                             "stdout": "",
-                            "stderr": (
-                                "Production outputs contain unresolved TODO/FIXME/placeholder "
-                                "markers:\n" + "\n".join(placeholders)
-                            ),
+                            "stderr": "\n".join(violations),
                             "testResults": "",
                         }
                     )

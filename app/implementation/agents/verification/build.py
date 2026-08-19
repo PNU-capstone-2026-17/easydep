@@ -167,6 +167,28 @@ def production_placeholder_markers(
     return evidence
 
 
+def production_test_library_markers(
+    sandbox: Path, relative_paths: list[str]
+) -> list[str]:
+    """Reject test-only Mockito/JUnit use in contracted production Java files."""
+    evidence: list[str] = []
+    pattern = re.compile(
+        r"^\s*import\s+(?:static\s+)?org\.(?:mockito|junit)\.|\bMockito\s*\.",
+        re.MULTILINE,
+    )
+    for relative in relative_paths:
+        normalized = relative.replace("\\", "/")
+        if "/src/main/java/" not in f"/{normalized}" or not normalized.endswith(".java"):
+            continue
+        path = sandbox / relative
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if pattern.search(line):
+                evidence.append(f"{normalized}:{number}: {line.strip()}")
+    return evidence
+
+
 def read_gradle_test_failures(sandbox: Path) -> str:
     result_dir = sandbox / "application" / "build" / "test-results" / "test"
     reports: list[str] = []

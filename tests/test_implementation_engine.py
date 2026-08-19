@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -40,6 +41,7 @@ from app.implementation.agents.provider import (
 )
 from app.implementation.agents.verification.build import (
     production_placeholder_markers,
+    production_test_library_markers,
     read_gradle_test_failures,
     summarize_test_failure,
     task_verification_command,
@@ -824,6 +826,24 @@ void use(String... value) {}
             self.assertEqual(1, len(evidence))
             self.assertIn("TODO", evidence[0])
 
+    def test_production_test_library_gate_rejects_mockito_only_in_main_java(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            main = "application/src/main/java/com/example/ApplicationConfiguration.java"
+            test = "application/src/test/java/com/example/ApplicationConfigurationTest.java"
+            for relative in (main, test):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    "import org.mockito.Mockito;\nclass Example { Object value = Mockito.mock(Object.class); }",
+                    encoding="utf-8",
+                )
+
+            evidence = production_test_library_markers(root, [main, test])
+
+            self.assertEqual(2, len(evidence))
+            self.assertTrue(all(main in item for item in evidence))
+
     def test_configuration_normalizer_removes_placeholder_line_comments(self) -> None:
         normalized, changed = remove_placeholder_comments(
             'return ""; // Return an empty string as a placeholder.\n'
@@ -922,6 +942,56 @@ void use(String... value) {}
             self.assertEqual("PENDING", changed["tasks"][0]["status"])
             still_changed = reconcile_workflow_state(run)
             self.assertEqual("PENDING", still_changed["tasks"][0]["status"])
+
+    def test_workflow_keeps_succeeded_task_when_replanning_changes_only_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_replanned"
+            reports = run / "reports"
+            reports.mkdir(parents=True)
+            relative = "application/src/Stable.java"
+            output = run / relative
+            output.parent.mkdir(parents=True)
+            output.write_text("class Stable {}", encoding="utf-8")
+            (reports / "run-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "implementation_tasks": [
+                            {
+                                "task_id": "implement-stable",
+                                "task_type": "control",
+                                "prompt_sha256": "replanned-prompt",
+                                "allowed_write_paths": [relative],
+                                "source_artifacts": {},
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            old_hashes = {
+                relative: hashlib.sha256(output.read_bytes()).hexdigest()
+            }
+            (reports / "workflow-state.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "taskId": "implement-stable",
+                                "status": "SUCCEEDED",
+                                "promptSha256": "original-prompt",
+                                "outputHashes": old_hashes,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            state = reconcile_workflow_state(run)
+
+            self.assertEqual("SUCCEEDED", state["tasks"][0]["status"])
+            self.assertEqual("replanned-prompt", state["tasks"][0]["promptSha256"])
+            self.assertEqual([], state["nextRunnableTasks"])
 
     def test_workflow_invalidates_failed_result_when_repair_prompt_changes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

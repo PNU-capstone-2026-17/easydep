@@ -1155,6 +1155,7 @@ Rules:
 - Existing adapters annotated with `@Component`, `@Service`, `@Repository`, or `@RestController` are component-scanned. Do not also create an `@Bean` for any of those adapter classes; inject their port interface into the dependent Control instead. Each port must have exactly one candidate bean unless an explicit qualifier is part of the generated contract.
 - Detect constructor cycles where a Boundary adapter delegates to a Control that itself consumes the Boundary. Break only that Control parameter with Spring `@Lazy`; never enable global circular references and never use field injection or `ApplicationContext.getBean`.
 - It is acceptable to expose standalone UI adapters as beans even when no service currently consumes them.
+- `ApplicationConfiguration` and every production file under `src/main/java` must use only real application beans. Never import, call, or create Mockito/JUnit mocks, spies, or test configuration there; test doubles belong only under `src/test/java`.
 - Configure an H2 in-memory datasource and Flyway migration in `application.yml`. Do not store secrets and do not invent deployment/cloud settings that were not provided.
 - The context test must use `@SpringBootTest`, assert that the application context loads, and
   dynamically cover every generated Control service, API controller, outbound Gateway adapter,

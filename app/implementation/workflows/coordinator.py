@@ -132,10 +132,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         result = _read_json(result_path) if result_path.is_file() else {}
         output_hashes = _output_hashes(run_root, task.get("allowed_write_paths", []))
         complete_outputs = len(output_hashes) == len(task.get("allowed_write_paths", []))
-        same_checkpoint = (
-            old.get("promptSha256") == prompt_sha
-            and old.get("outputHashes") == output_hashes
-        )
+        # A downstream task's prompt can legitimately change after an earlier
+        # phase completes because its context embeds the newly generated
+        # sources.  That must not replay an already successful task when the
+        # task's own outputs have not changed.  Output hashes are the durable
+        # checkpoint; the prompt hash remains relevant for failed attempts so
+        # a repair prompt can be retried.
+        same_output_checkpoint = old.get("outputHashes") == output_hashes
         result_matches = (
             result.get("status") == "SUCCEEDED"
             and complete_outputs
@@ -147,7 +150,11 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 if result_matches and result.get("promptSha256") == prompt_sha
                 else "INTERRUPTED"
             )
-        elif old.get("status") == "SUCCEEDED" and same_checkpoint and complete_outputs:
+        elif (
+            old.get("status") == "SUCCEEDED"
+            and same_output_checkpoint
+            and complete_outputs
+        ):
             status = "SUCCEEDED"
         elif result_matches and not old:
             status = "SUCCEEDED"
