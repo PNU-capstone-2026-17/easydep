@@ -136,7 +136,12 @@ class Class {
       && types.some(type => /(^|[<, ])Set</.test(type) || type === 'Set')) {
       imports.push('java.util.HashSet');
     }
-    if (types.some(type => String(type).includes('DateTime'))) imports.push('java.time.OffsetDateTime');
+    const hasType = name => types.some(type => new RegExp(`\\b${name}\\b`).test(String(type)));
+    if (hasType('Instant')) imports.push('java.time.Instant');
+    if (hasType('LocalDate')) imports.push('java.time.LocalDate');
+    if (hasType('LocalDateTime')) imports.push('java.time.LocalDateTime');
+    if (hasType('OffsetDateTime') || hasType('DateTime')) imports.push('java.time.OffsetDateTime');
+    if (hasType('ZonedDateTime')) imports.push('java.time.ZonedDateTime');
     if (types.some(type => /\b(?:BigDecimal|Decimal)\b/i.test(String(type)))) {
       imports.push('java.math.BigDecimal');
     }

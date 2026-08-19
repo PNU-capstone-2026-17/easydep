@@ -2490,6 +2490,17 @@ class Term <<Entity>> {
 
         self.assertEqual([], find_undefined_bce_types(source))
 
+    def test_java_date_types_do_not_create_bce_placeholders(self) -> None:
+        source = """@startuml
+class Term <<Entity>> {
+  - openedAt : LocalDate
+  - updatedAt : LocalDateTime
+}
+@enduml
+"""
+
+        self.assertEqual([], find_undefined_bce_types(source))
+
     def test_rejects_input_outside_workspace_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

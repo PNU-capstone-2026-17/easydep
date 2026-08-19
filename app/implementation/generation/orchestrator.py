@@ -62,7 +62,8 @@ CONTAINER_WORKSPACE = PurePosixPath("/workspace")
 JAVA_BUILTIN_TYPES = {
     "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
     "Boolean", "Byte", "Character", "Double", "Float", "Integer", "Long", "Short",
-    "String", "string", "DateTime", "OffsetDateTime", "BigDecimal", "Decimal",
+    "String", "string", "DateTime", "Instant", "LocalDate", "LocalDateTime",
+    "OffsetDateTime", "ZonedDateTime", "BigDecimal", "Decimal",
     "List", "Map", "Set", "Object",
 }
 
