@@ -1704,18 +1704,18 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
-            codes = {gap["code"] for gap in detect_e2e_design_gaps(spec, run)}
             self.assertEqual(
-                {"UNRESOLVED_PRODUCTION_PATH"},
-                codes,
+                ["implement-end-to-end-flow"],
+                [task.task_id for task in generate_e2e_tasks(spec, run)],
             )
+            codes = {gap["code"] for gap in detect_e2e_design_gaps(spec, run)}
+            self.assertEqual(set(), codes)
             report = json.loads(
                 (run / "reports/design-gaps/end-to-end-flow.json").read_text(
                     encoding="utf-8"
                 )
             )
-            self.assertEqual("NEEDS_INPUT", report["status"])
+            self.assertEqual("READY", report["status"])
 
             (run / "reports/run-manifest.json").write_text(
                 json.dumps(
@@ -1731,12 +1731,15 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 ),
                 encoding="utf-8",
             )
-            self.assertEqual([], plan_e2e_tasks(spec, run))
+            self.assertEqual(
+                ["implement-end-to-end-flow"],
+                [task["task_id"] for task in plan_e2e_tasks(spec, run)],
+            )
             manifest = json.loads(
                 (run / "reports/run-manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                ["implement-existing"],
+                ["implement-existing", "implement-end-to-end-flow"],
                 [task["task_id"] for task in manifest["implementation_tasks"]],
             )
 
@@ -1803,7 +1806,10 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
+            self.assertEqual(
+                ["implement-end-to-end-flow"],
+                [task.task_id for task in generate_e2e_tasks(spec, run)],
+            )
             gaps = detect_e2e_design_gaps(spec, run)
             self.assertEqual(
                 {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},
