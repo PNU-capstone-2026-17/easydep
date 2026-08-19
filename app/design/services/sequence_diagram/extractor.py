@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -805,7 +806,7 @@ def _actor_led(sentence: str, actor_name: str) -> bool:
     )
 
 
-def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+def _select_uncertain_group(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
     """불확실한 단계의 메서드 선택만 한 번의 작은 LLM 요청으로 보완한다.
 
     응답이 실패하거나 후보 밖의 값을 고르면 그 단계는 생성하지 않는다. 선택적 보완
@@ -859,6 +860,43 @@ def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[s
         )
         if choice in candidate_map.get(step_id, set()):
             accepted[step_id] = choice
+    return accepted
+
+
+def _select_uncertain_elements(plans: list[dict[str, Any]]) -> dict[str, tuple[str, str]]:
+    """유스케이스별 불확실한 메서드 선택을 병렬 보완한다.
+
+    각 작업은 하나의 유스케이스만 다루므로 LLM 응답이 서로 영향을 주지 않는다.
+    작업 수는 설정으로 제한하고, 실패한 작업은 해당 단계만 미확정으로 남긴다.
+    단일 유스케이스에서는 기존 호출 형태를 유지해 호출 오버헤드와 호환성을 보장한다.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for plan in plans:
+        if plan["score"] == 0:
+            groups.setdefault(str(plan["use_case_id"]), []).append(plan)
+    if not groups:
+        return {}
+    if len(groups) == 1:
+        return _select_uncertain_group(next(iter(groups.values())))
+
+    from app.core.config import settings
+
+    worker_limit = max(1, int(getattr(settings, "design_sequence_parallelism", 4)))
+    accepted: dict[str, tuple[str, str]] = {}
+    with ThreadPoolExecutor(max_workers=min(worker_limit, len(groups))) as executor:
+        futures = {
+            executor.submit(_select_uncertain_group, group): use_case_id
+            for use_case_id, group in groups.items()
+        }
+        for future in as_completed(futures):
+            try:
+                accepted.update(future.result())
+            except Exception:  # noqa: BLE001 - one use case must not cancel others
+                logger.warning(
+                    "parallel sequence element selection failed for use case %s",
+                    futures[future],
+                    exc_info=True,
+                )
     return accepted
 
 
@@ -1158,6 +1196,32 @@ def _assemble_deterministic_diagrams(
     return diagrams
 
 
+def _generate_use_case_diagram(
+    specification: dict[str, Any],
+    summaries: dict[str, dict[str, Any]],
+    classes: dict[str, dict[str, Any]],
+    dependencies: dict[str, list[str]],
+) -> dict[str, Any]:
+    """한 유스케이스의 계획·선택·조립을 독립적으로 수행한다."""
+    plans = _build_sequence_plans([specification], summaries, classes, dependencies)
+    selections = _select_uncertain_elements(plans)
+    diagrams = _assemble_deterministic_diagrams(plans, selections, classes)
+    use_case_id = str(specification.get("use_case_id") or "").strip()
+    return next(
+        (
+            diagram
+            for diagram in diagrams
+            if str(diagram.get("use_case_id") or "").strip() == use_case_id
+        ),
+        {
+            "use_case_id": use_case_id,
+            "use_case_name": str(specification.get("name") or "").strip(),
+            "Participants": [],
+            "Messages": [],
+        },
+    )
+
+
 def extract_sequence_diagrams(
     usecase_spec: Any,
     class_diagram_puml: str,
@@ -1216,30 +1280,55 @@ def extract_sequence_diagrams(
             ).hexdigest(),
         ).model_dump()
 
-    plans = _build_sequence_plans(specifications, use_cases, classes, dependencies)
-    selections = _select_uncertain_elements(plans)
-    generated = {
-        diagram["use_case_id"]: diagram
-        for diagram in _assemble_deterministic_diagrams(plans, selections, classes)
-    }
-    diagrams = [
-        generated.get(
-            str(specification.get("use_case_id") or "").strip(),
-            {
-                "use_case_id": str(specification.get("use_case_id") or "").strip(),
-                "use_case_name": str(
-                    specification.get("name")
-                    or use_cases.get(
-                        str(specification.get("use_case_id") or "").strip(), {}
-                    ).get("name")
-                    or ""
-                ).strip(),
-                "Participants": [],
-                "Messages": [],
-            },
+    # Each use case is independent until the final collection assembly. Keep
+    # the worker count bounded because a worker may perform one optional LLM
+    # selection call. Results are restored to specification order below.
+    from app.core.config import settings
+
+    worker_limit = max(1, int(getattr(settings, "design_sequence_parallelism", 4)))
+    generated: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(worker_limit, len(specifications)))) as executor:
+        futures = {
+            executor.submit(
+                _generate_use_case_diagram,
+                specification,
+                use_cases,
+                classes,
+                dependencies,
+            ): str(specification.get("use_case_id") or "").strip()
+            for specification in specifications
+        }
+        for future in as_completed(futures):
+            use_case_id = futures[future]
+            try:
+                generated[use_case_id] = future.result()
+            except Exception:
+                # A single malformed/under-specified use case must remain
+                # visible as an empty diagram instead of cancelling siblings.
+                logger.warning(
+                    "parallel sequence generation failed for use case %s",
+                    use_case_id,
+                    exc_info=True,
+                )
+
+    diagrams = []
+    for specification in specifications:
+        use_case_id = str(specification.get("use_case_id") or "").strip()
+        diagrams.append(
+            generated.get(
+                use_case_id,
+                {
+                    "use_case_id": use_case_id,
+                    "use_case_name": str(
+                        specification.get("name")
+                        or use_cases.get(use_case_id, {}).get("name")
+                        or ""
+                    ).strip(),
+                    "Participants": [],
+                    "Messages": [],
+                },
+            )
         )
-        for specification in specifications
-    ]
 
     class_diagram_hash = hashlib.sha256(class_diagram_puml.encode("utf-8")).hexdigest()
     return SequenceDiagramCollection(

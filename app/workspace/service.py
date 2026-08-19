@@ -197,8 +197,8 @@ class WorkspaceService:
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
         if action == "retry_design":
-            if prior["status"] != "FAILED" or prior["stage"] != "design":
-                raise ValueError("Only a failed design command can be retried.")
+            if prior["status"] not in {"FAILED", "INTERRUPTED"} or prior["stage"] != "design":
+                raise ValueError("Only a failed or interrupted design command can be retried.")
             return
         if prior["status"] != "AWAITING_INPUT":
             raise ValueError("The command was already handled or is not awaiting a response.")

@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     implementation_max_cross_phase_repairs: int = 3
     implementation_max_conformance_repairs: int = 3
     design_max_repair_iters: int = 2
+    design_max_sequence_repair_calls: int = 4
+    design_sequence_parallelism: int = 4
     implementation_max_workers: int = 1
     implementation_agent_model: str = "nvidia_nim/openai/gpt-oss-120b"
     implementation_agent_base_url: str = "https://integrate.api.nvidia.com/v1"

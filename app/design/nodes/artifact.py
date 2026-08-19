@@ -530,11 +530,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
         # 모델에서는 같은 유계 예산을 각 유스케이스에 부여한다. 레거시 단일 모델과 다른
         # 산출물의 호출 횟수는 그대로 유지한다.
         diagrams = model.get("Diagrams") if isinstance(model, dict) else None
-        budget = repair_budget() * (
-            max(1, len(diagrams))
-            if spec.stage == "sequence_diagram" and isinstance(diagrams, list)
-            else 1
-        )
+        if spec.stage == "sequence_diagram" and isinstance(diagrams, list):
+            # Bound the collection as a whole. Multiplying the per-use-case
+            # budget can turn a large model into dozens of serial LLM calls.
+            from app.core.config import settings
+
+            budget = min(
+                repair_budget() * max(1, len(diagrams)),
+                max(0, int(settings.design_max_sequence_repair_calls)),
+            )
+        else:
+            budget = repair_budget()
 
         for _ in range(budget):
             if not findings:
