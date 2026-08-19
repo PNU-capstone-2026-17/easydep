@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -25,9 +25,18 @@ DESIGN_ARTIFACT_STAGES = {
     "deployment_diagram",
 }
 
+KST = timezone(timedelta(hours=9), name="KST")
+
 
 def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _timestamp_in_kst(value: datetime | None) -> str | None:
+    """Serialize UTC database timestamps as explicit Korea Standard Time."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC).astimezone(KST).isoformat()
 
 
 def workflow_stage(stage: str | None) -> str:
@@ -50,9 +59,9 @@ def command_dict(row: WorkspaceCommand) -> dict[str, Any]:
         "payload": row.payload or {},
         "result": row.result,
         "error": row.error,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "started_at": row.started_at.isoformat() if row.started_at else None,
-        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "created_at": _timestamp_in_kst(row.created_at),
+        "started_at": _timestamp_in_kst(row.started_at),
+        "completed_at": _timestamp_in_kst(row.completed_at),
     }
 
 
@@ -66,7 +75,7 @@ def event_dict(row: WorkspaceEvent) -> dict[str, Any]:
         "actor": row.actor,
         "text": row.text,
         "metadata": row.event_data or {},
-        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "created_at": _timestamp_in_kst(row.created_at),
     }
 
 

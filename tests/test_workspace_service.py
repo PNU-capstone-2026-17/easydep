@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 
 from fastapi.responses import JSONResponse
@@ -26,6 +27,25 @@ def test_workspace_tables_are_part_of_the_shared_database_schema() -> None:
         "workspace_events",
         "deployment_preferences",
     } <= set(Base.metadata.tables)
+
+
+def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
+    event = repository.event_dict(
+        SimpleNamespace(
+            event_id=1,
+            app_id="app-1",
+            command_id=None,
+            stage="requirements",
+            kind="message",
+            actor="user",
+            text="hello",
+            event_data={},
+            # MySQL DATETIME values are stored as naive UTC values.
+            created_at=datetime(2026, 8, 19, 5, 30, 21),
+        )
+    )
+
+    assert event["created_at"] == "2026-08-19T14:30:21+09:00"
 
 
 def test_artifact_stage_is_normalized_to_the_user_visible_workflow_stage() -> None:
