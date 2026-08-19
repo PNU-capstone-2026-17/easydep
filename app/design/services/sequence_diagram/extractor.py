@@ -565,6 +565,16 @@ _TOKEN_STOP_WORDS = {
     "a", "an", "and", "at", "by", "for", "from", "in", "of", "on", "or",
     "the", "to", "with", "system", "request", "student", "user", "admin",
 }
+_DOMAIN_WORD_VARIANTS = {
+    "registration": "register",
+    "authentication": "authenticate",
+    "management": "manage",
+    "enrollment": "enroll",
+    "statistics": "statistic",
+    "information": "inform",
+    "details": "detail",
+    "maintain": "manage",
+}
 
 
 def _words(value: Any) -> set[str]:
@@ -575,6 +585,8 @@ def _words(value: Any) -> set[str]:
         if len(token) <= 1 or token in _TOKEN_STOP_WORDS:
             continue
         result.add(token)
+        if variant := _DOMAIN_WORD_VARIANTS.get(token):
+            result.add(variant)
         if len(token) > 4 and token.endswith("ies"):
             result.add(token[:-3] + "y")
         elif len(token) > 4 and token.endswith("ing"):
@@ -624,7 +636,9 @@ def _alias(value: str) -> str:
 
 def _score_method(sentence: str, class_name: str, method: str) -> int:
     wanted = _words(sentence)
-    method_words = _words(method.partition("(")[0])
+    # Parameter names are part of the contract and often disambiguate two
+    # operations with the same verb (for example createSection vs adjustCapacity).
+    method_words = _words(method)
     class_words = _words(class_name)
     return len(wanted & method_words) * 4 + len(wanted & class_words)
 
@@ -632,22 +646,53 @@ def _score_method(sentence: str, class_name: str, method: str) -> int:
 def _best_class(
     classes: dict[str, dict[str, Any]],
     kind: str,
-    use_case_name: str,
+    use_case_context: str,
     index: int,
+    focus_text: str = "",
 ) -> dict[str, Any] | None:
     candidates = [item for item in classes.values() if item["kind"] == kind and item["methods"]]
     if not candidates:
         return None
+    wanted = _words(use_case_context)
+    focus_source = focus_text or use_case_context
+    focus_tokens = [
+        token
+        for token in re.findall(r"[A-Za-z0-9]+", focus_source.lower())
+        if token not in _TOKEN_STOP_WORDS
+    ]
+    # The first verb identifies the use-case intent. Include a second verb for
+    # names such as "Search and view ...", but do not let a shared resource noun
+    # (course, section, student) decide which Boundary owns the interaction.
+    if focus_tokens and focus_tokens[0] in {"manage", "maintain", "generate", "view"}:
+        focus_tokens = focus_tokens[:5]
+    elif len(focus_tokens) > 1 and focus_tokens[1] == "and":
+        focus_tokens = focus_tokens[:3:2]
+    else:
+        focus_tokens = focus_tokens[:1]
+    focus = _words(" ".join(focus_tokens)) or wanted
     ranked = sorted(
         candidates,
         key=lambda item: (
-            len(_words(use_case_name) & _words(item["name"])),
+            len(focus & _words(item["name"])) * 50
+            + len(wanted & _words(item["name"])) * 4
+            + sum(sorted(
+                (_score_method(use_case_context, item["name"], method) for method in item["methods"]),
+                reverse=True,
+            )[:3]),
             -list(classes).index(item["name"]),
         ),
         reverse=True,
     )
-    if len(_words(use_case_name) & _words(ranked[0]["name"])) == 0:
-        return candidates[index % len(candidates)]
+    best_score = (
+        len(focus & _words(ranked[0]["name"])) * 50
+        + len(wanted & _words(ranked[0]["name"])) * 4
+        + sum(sorted(
+            (_score_method(use_case_context, ranked[0]["name"], method) for method in ranked[0]["methods"]),
+            reverse=True,
+        )[:3])
+    )
+    if best_score == 0:
+        return None
     return ranked[0]
 
 
@@ -874,12 +919,31 @@ def _build_sequence_plans(
         use_case_id = str(specification.get("use_case_id") or specification.get("id") or "").strip()
         summary = summaries.get(use_case_id) or summaries.get(str(specification.get("id") or "")) or {}
         use_case_name = str(specification.get("name") or summary.get("name") or use_case_id)
+        use_case_context = " ".join(
+            [
+                use_case_name,
+                *(
+                    str(step.get("sentence") or step.get("description") or "")
+                    for step in specification.get("main_scenario") or []
+                    if isinstance(step, dict)
+                ),
+                *(
+                    str(step.get("sentence") or step.get("description") or "")
+                    for extension in specification.get("extensions") or []
+                    if isinstance(extension, dict)
+                    for step in extension.get("handling_steps") or []
+                    if isinstance(step, dict)
+                ),
+            ]
+        )
         actor = str(
             specification.get("primary_actor")
             or summary.get("primary_actor")
             or "User"
         ).strip()
-        boundary = _best_class(classes, "boundary", use_case_name, use_case_index)
+        boundary = _best_class(
+            classes, "boundary", use_case_context, use_case_index, use_case_name
+        )
         if boundary is None:
             raise ValueError("sequence generation requires a Boundary class with a method")
         linked_controls = [
@@ -888,7 +952,7 @@ def _build_sequence_plans(
             if name in classes and classes[name]["kind"] == "control" and classes[name]["methods"]
         ]
         control = linked_controls[0] if linked_controls else _best_class(
-            classes, "control", use_case_name, use_case_index
+            classes, "control", use_case_context, use_case_index, use_case_name
         )
 
         for record in _flow_records(specification):
@@ -943,9 +1007,33 @@ def _assemble_deterministic_diagrams(
             }
         }
         messages: list[dict[str, Any]] = []
+        emitted_operations: set[tuple[str, str, str]] = set()
         reached = {actor_alias}
         used_actor_calls: set[tuple[str, str]] = set()
         call_number = 0
+
+        def emit_message(
+            source: str,
+            target: str,
+            method: str,
+            plan: dict[str, Any],
+        ) -> bool:
+            key = (source, target, method)
+            if key in emitted_operations:
+                return False
+            emitted_operations.add(key)
+            nonlocal call_number
+            call_number += 1
+            messages.append(_message(
+                source,
+                target,
+                method,
+                use_case_id,
+                plan["step_id"],
+                plan["fragment"],
+                call_number,
+            ))
+            return True
 
         for plan in use_case_plans:
             boundary = plan["boundary"]
@@ -994,56 +1082,33 @@ def _assemble_deterministic_diagrams(
                         if alt_score >= orig_score or orig_score == 0:
                             entry_method = best_alt
                             entry_key = (target_boundary["name"], entry_method)
-                call_number += 1
-                messages.append(_message(
-                    actor_alias, _alias(target_boundary["name"]), entry_method, use_case_id,
-                    plan["step_id"], plan["fragment"], call_number,
-                ))
+                emit_message(actor_alias, _alias(target_boundary["name"]), entry_method, plan)
                 used_actor_calls.add(entry_key)
                 reached.add(_alias(target_boundary["name"]))
                 continue
 
-            # Ensure boundary is reached for internal/system flows
             b_alias = _alias(boundary["name"])
-            if b_alias not in reached:
-                reached.add(b_alias)
 
             if selected_class["kind"] == "control":
                 # Boundary -> Control (BCE forward direction)
                 source = b_alias
                 target = _alias(selected_class["name"])
+                if source not in reached:
+                    continue
                 reached.add(target)
             elif selected_class["kind"] == "boundary":
                 # A non-actor-led step with a boundary-class selection can only be
                 # meaningful as Control -> Boundary (output/display direction).
-                # If the method is NOT an output method, the boundary scored higher
-                # than control only because the sentence matched the boundary
-                # method name — force the BCE-correct direction: Boundary -> Control.
+                # A boundary input method selected for a system step is not
+                # silently rerouted to an arbitrary Control method. It remains
+                # unresolved for validation/LLM repair.
                 if control is not None and not selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
-                    # Re-route: pick the best control method for this sentence instead
-                    ctrl_alias = _alias(control["name"])
-                    best_ctrl_method = max(
-                        control["methods"],
-                        key=lambda m: _score_method(plan["sentence"], control["name"], m),
-                        default=control["methods"][0] if control["methods"] else selected_method,
-                    )
-                    if ctrl_alias not in reached:
-                        reached.add(ctrl_alias)
-                    source = b_alias
-                    target = ctrl_alias
-                    selected_method = best_ctrl_method
-                    reached.add(target)
-                elif control is not None and selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
+                    continue
+                if control is not None and selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
                     # Control -> Boundary output direction
                     ctrl_alias = _alias(control["name"])
                     if ctrl_alias not in reached:
-                        bridge = control["methods"][0]
-                        call_number += 1
-                        messages.append(_message(
-                            b_alias, ctrl_alias, bridge, use_case_id,
-                            plan["step_id"], plan["fragment"], call_number,
-                        ))
-                        reached.add(ctrl_alias)
+                        continue
                     source = ctrl_alias
                     target = b_alias
                 else:
@@ -1054,24 +1119,16 @@ def _assemble_deterministic_diagrams(
                 if control is None:
                     source = b_alias
                     target = _alias(selected_class["name"])
+                    if source not in reached:
+                        continue
                 else:
                     control_alias = _alias(control["name"])
                     if control_alias not in reached:
-                        bridge = control["methods"][0]
-                        call_number += 1
-                        messages.append(_message(
-                            b_alias, control_alias, bridge, use_case_id,
-                            plan["step_id"], plan["fragment"], call_number,
-                        ))
-                        reached.add(control_alias)
+                        continue
                     source = control_alias
                     target = _alias(selected_class["name"])
                 reached.add(target)
-            call_number += 1
-            messages.append(_message(
-                source, target, selected_method, use_case_id, plan["step_id"],
-                plan["fragment"], call_number,
-            ))
+            emit_message(source, target, selected_method, plan)
             reached.add(target)
 
         coalesced: list[dict[str, Any]] = []

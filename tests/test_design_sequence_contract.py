@@ -237,6 +237,106 @@ class OrderApi <<Boundary>> {
     assert result["Diagrams"][0]["Messages"] == []
 
 
+def test_use_case_words_select_matching_boundary_and_control_instead_of_first_class():
+    specification = {
+        "use_cases": [{"id": "UC3", "name": "Register for a course section", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC3",
+            "name": "Register for a course section",
+            "primary_actor": "Student",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Student indicates the desired course section"},
+            ],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class CourseCatalogScreen <<Boundary>> { requestCatalog() }
+class RegistrationScreen <<Boundary>> { submitRegistration(studentId:String, sectionId:String) }
+class CourseSearchController <<Control>> { browseCatalog() }
+class RegistrationController <<Control>> { registerSection(studentId:String, sectionId:String) }
+RegistrationScreen ..> RegistrationController
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_diagram)
+    messages = result["Diagrams"][0]["Messages"]
+
+    assert [(message["source"], message["target"], message["label"]) for message in messages] == [
+        ("Student", "RegistrationScreen", "submitRegistration(studentId:String,sectionId:String)"),
+    ]
+
+
+def test_action_word_breaks_resource_word_tie_when_selecting_boundary():
+    specification = {
+        "use_cases": [{"id": "UC4", "name": "Drop a course section", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC4",
+            "name": "Drop a course section",
+            "primary_actor": "Student",
+            "main_scenario": [{"step_number": 1, "sentence": "Student requests to drop the target course section"}],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class CourseSearchScreen <<Boundary>> { selectCourse(courseId:String) }
+class DropScreen <<Boundary>> { submitDrop(studentId:String, sectionId:String) }
+class CourseSearchController <<Control>> { viewCourseDetails(courseId:String) }
+class DropController <<Control>> { dropSection(studentId:String, sectionId:String) }
+DropScreen ..> DropController
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_diagram)
+
+    assert result["Diagrams"][0]["Messages"][0]["target"] == "DropScreen"
+
+
+def test_duplicate_branch_operation_is_emitted_once_and_never_reaches_boundary_implicitly():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Authenticate student",
+            "primary_actor": "Student",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Student provides credentials"},
+                {"step_number": 2, "sentence": "System authenticates the student"},
+            ],
+            "extensions": [{
+                "label": "2a", "branch_step": 2, "condition": "credentials are invalid",
+                "handling_steps": [{"sub_step": "2a1", "sentence": "System reports authentication failure"}],
+            }],
+        }],
+    }
+    class_diagram = """@startuml
+class LoginScreen <<Boundary>> { submitCredentials(credentials:String) }
+class AuthenticationController <<Control>> { authenticate(credentials:String) }
+LoginScreen ..> AuthenticationController
+@enduml"""
+
+    with patch(
+        "app.design.services.sequence_diagram.extractor.parse_structured",
+        return_value={
+            "selections": [
+                {
+                    "step_id": step_id,
+                    "receiver_class": "AuthenticationController",
+                    "method": "authenticate(credentials:String)",
+                }
+                for step_id in ("UC1:main:2", "UC1:extension:2a:2a1")
+            ]
+        },
+    ):
+        result = extract_sequence_diagrams(specification, class_diagram)
+    messages = result["Diagrams"][0]["Messages"]
+    operations = [(message["source"], message["target"], message["label"]) for message in messages]
+
+    assert operations == [
+        ("Student", "LoginScreen", "submitCredentials(credentials:String)"),
+        ("LoginScreen", "AuthenticationController", "authenticate(credentials:String)"),
+    ]
+    assert all(message["source"] != "AuthenticationController" for message in messages)
+
+
 def test_llm_selection_cannot_reuse_an_actor_operation_when_an_alternative_exists():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],
