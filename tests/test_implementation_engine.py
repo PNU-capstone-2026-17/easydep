@@ -2479,6 +2479,17 @@ TimerManager --> PurchaseRecord : Manager creates record
 
         self.assertEqual([], find_undefined_bce_types(source))
 
+    def test_qualified_library_type_does_not_create_java_placeholder(self) -> None:
+        source = """@startuml
+class Term <<Entity>> {
+  - openedAt : java.time.LocalDate
+  - updatedAt : java.time.LocalDateTime
+}
+@enduml
+"""
+
+        self.assertEqual([], find_undefined_bce_types(source))
+
     def test_rejects_input_outside_workspace_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1125,9 +1125,21 @@ def find_undefined_bce_types(source: str) -> list[str]:
     type_fragments: list[str] = []
     for line in member_lines:
         type_fragments.extend(
-            re.findall(r":\s*([A-Za-z_]\w*(?:\s*<[^>]+>)?(?:\[\])?)", line)
+            re.findall(
+                r":\s*((?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*"
+                r"(?:\s*<[^>]+>)?(?:\[\])?)",
+                line,
+            )
         )
     referenced: set[str] = set()
+    # Keep qualified names intact.  Splitting ``java.time.LocalDate`` into
+    # ``java``, ``time`` and ``LocalDate`` makes the first segment look like an
+    # undefined BCE class; the placeholder writer then emits ``java.java`` and
+    # shadows the JDK's real ``java`` package during compilation.  Qualified
+    # names refer to external/library types, not BCE declarations, so they are
+    # deliberately excluded from placeholder generation below.
+    qualified_name = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
     for fragment in type_fragments:
-        referenced.update(re.findall(r"[A-Za-z_]\w*", fragment))
-    return sorted(referenced - declarations - JAVA_BUILTIN_TYPES)
+        referenced.update(re.findall(qualified_name, fragment))
+    external = {name for name in referenced if "." in name}
+    return sorted(referenced - declarations - JAVA_BUILTIN_TYPES - external)
