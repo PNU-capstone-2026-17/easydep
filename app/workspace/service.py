@@ -871,6 +871,19 @@ class WorkspaceService:
         if artifact is None:
             config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
             artifact = result.get(config.get("state_key", ""))
+        # The design response can omit derived artifacts when it crosses a
+        # checkpoint, even though persist_* has already stored the model. Use
+        # the repository as the final source of truth so a generated draft is
+        # never presented as a blocking, artifact-less failure.
+        if not artifact:
+            app_id = str(result.get("app_id") or "").strip()
+            if app_id:
+                try:
+                    persisted = artifact_repository.load_state(app_id)
+                    config = artifact_repository.STAGE_ARTIFACTS.get(str(stage), {})
+                    artifact = persisted.get(config.get("state_key", ""))
+                except Exception:  # noqa: BLE001 - response shaping must not fail
+                    artifact = None
         artifact_exists = bool(artifact.strip()) if isinstance(artifact, str) else bool(artifact)
         requires_revision = bool(findings) and not artifact_exists
         return {

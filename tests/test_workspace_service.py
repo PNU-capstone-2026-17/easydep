@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from fastapi.responses import JSONResponse
 
 from app.db.models import Base
+from app.repositories import artifact_repository
 from app.workspace import repository
 from app.workspace import service as workspace_module
 from app.workspace.service import WorkspaceService
@@ -521,6 +522,32 @@ def test_design_findings_with_a_generated_artifact_allow_continue() -> None:
     assert result["requires_revision"] is False
     assert result["blocking_findings"] == []
     assert result["findings"] == ["missing flow step"]
+    assert "continued to the next stage" in result["message"]
+
+
+def test_design_findings_use_persisted_artifact_when_response_omits_it(monkeypatch) -> None:
+    monkeypatch.setattr(
+        artifact_repository,
+        "load_state",
+        lambda _app_id: {"sequence_diagram_puml": "@startuml\n@enduml"},
+    )
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "app_id": "app-1",
+                "status": "need_feedback",
+                "stage": "sequence_diagram",
+                "validation": {
+                    "sequence_diagram": {"findings": ["missing flow step"]}
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["requires_revision"] is False
+    assert result["blocking_findings"] == []
     assert "continued to the next stage" in result["message"]
 
 
