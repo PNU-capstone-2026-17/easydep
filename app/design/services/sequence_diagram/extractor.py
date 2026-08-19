@@ -948,6 +948,12 @@ def _assemble_deterministic_diagrams(
         call_number = 0
 
         for plan in use_case_plans:
+            boundary = plan["boundary"]
+            control = plan["control"]
+            participants.setdefault(_alias(boundary["name"]), _participant(boundary))
+            if control is not None:
+                participants.setdefault(_alias(control["name"]), _participant(control))
+
             selected_name, selected_method = selections.get(
                 plan["step_id"],
                 (
@@ -962,12 +968,6 @@ def _assemble_deterministic_diagrams(
             if not selected_name or not selected_method:
                 continue
             selected_class = classes[selected_name]
-            boundary = plan["boundary"]
-            control = plan["control"]
-            participants.setdefault(_alias(boundary["name"]), _participant(boundary))
-            if control is not None:
-                participants.setdefault(_alias(control["name"]), _participant(control))
-
             # An actor entry is emitted only for an actor-led use-case step.  The
             # former "first step" fallback picked an arbitrary Boundary method
             # when a specification started with system behavior.
@@ -1003,30 +1003,70 @@ def _assemble_deterministic_diagrams(
                 reached.add(_alias(target_boundary["name"]))
                 continue
 
+            # Ensure boundary is reached for internal/system flows
+            b_alias = _alias(boundary["name"])
+            if b_alias not in reached:
+                reached.add(b_alias)
+
             if selected_class["kind"] == "control":
-                source = _alias(boundary["name"])
+                # Boundary -> Control (BCE forward direction)
+                source = b_alias
                 target = _alias(selected_class["name"])
-                if source not in reached:
-                    reached.add(source)
-            else:
-                if control is None:
-                    source = target = _alias(boundary["name"])
-                    if source not in reached:
-                        reached.add(source)
-                else:
-                    control_alias = _alias(control["name"])
-                    if control_alias not in reached:
-                        if _alias(boundary["name"]) not in reached:
-                            reached.add(_alias(boundary["name"]))
+                reached.add(target)
+            elif selected_class["kind"] == "boundary":
+                # A non-actor-led step with a boundary-class selection can only be
+                # meaningful as Control -> Boundary (output/display direction).
+                # If the method is NOT an output method, the boundary scored higher
+                # than control only because the sentence matched the boundary
+                # method name — force the BCE-correct direction: Boundary -> Control.
+                if control is not None and not selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
+                    # Re-route: pick the best control method for this sentence instead
+                    ctrl_alias = _alias(control["name"])
+                    best_ctrl_method = max(
+                        control["methods"],
+                        key=lambda m: _score_method(plan["sentence"], control["name"], m),
+                        default=control["methods"][0] if control["methods"] else selected_method,
+                    )
+                    if ctrl_alias not in reached:
+                        reached.add(ctrl_alias)
+                    source = b_alias
+                    target = ctrl_alias
+                    selected_method = best_ctrl_method
+                    reached.add(target)
+                elif control is not None and selected_method.lower().startswith(_OUTPUT_METHOD_PREFIXES):
+                    # Control -> Boundary output direction
+                    ctrl_alias = _alias(control["name"])
+                    if ctrl_alias not in reached:
                         bridge = control["methods"][0]
                         call_number += 1
                         messages.append(_message(
-                            _alias(boundary["name"]), control_alias, bridge, use_case_id,
+                            b_alias, ctrl_alias, bridge, use_case_id,
+                            plan["step_id"], plan["fragment"], call_number,
+                        ))
+                        reached.add(ctrl_alias)
+                    source = ctrl_alias
+                    target = b_alias
+                else:
+                    source = target = b_alias
+                reached.add(target)
+            else:
+                # Control -> Entity/Database (BCE forward direction)
+                if control is None:
+                    source = b_alias
+                    target = _alias(selected_class["name"])
+                else:
+                    control_alias = _alias(control["name"])
+                    if control_alias not in reached:
+                        bridge = control["methods"][0]
+                        call_number += 1
+                        messages.append(_message(
+                            b_alias, control_alias, bridge, use_case_id,
                             plan["step_id"], plan["fragment"], call_number,
                         ))
                         reached.add(control_alias)
                     source = control_alias
                     target = _alias(selected_class["name"])
+                reached.add(target)
             call_number += 1
             messages.append(_message(
                 source, target, selected_method, use_case_id, plan["step_id"],
