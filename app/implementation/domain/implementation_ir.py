@@ -251,6 +251,31 @@ def parse_erd_entities(source: str) -> set[str]:
     return set(quoted) | set(plain)
 
 
+def parse_erd_association_entities(source: str, base_entities: set[str]) -> set[str]:
+    """Find ERD join entities that connect at least two BCE entities.
+
+    ERDs commonly materialize many-to-many relationships as entities such as
+    ``CourseSection``.  These aliases are physical persistence details, not BCE
+    Entity components, so requiring exact BCE/ERD equality incorrectly rejects
+    otherwise valid designs.
+    """
+    entities = parse_erd_entities(source)
+    neighbors: dict[str, set[str]] = {name: set() for name in entities}
+    relation_pattern = re.compile(
+        r"(?m)^\s*(?P<left>[A-Za-z_]\w*)\s+[^\n]*(?:--|\.\.)[^\n]*\s+"
+        r"(?P<right>[A-Za-z_]\w*)\s*$"
+    )
+    for match in relation_pattern.finditer(source):
+        left, right = match.group("left"), match.group("right")
+        if left in entities and right in entities:
+            neighbors[left].add(right)
+            neighbors[right].add(left)
+    return {
+        name for name in entities - base_entities
+        if len(neighbors.get(name, set()) & base_entities) >= 2
+    }
+
+
 def derive_e2e_scenarios(
     operations: tuple[ApiOperationIR, ...], sequence: str
 ) -> list[E2EScenarioIR]:

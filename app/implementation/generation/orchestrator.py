@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
     parse_components,
+    parse_erd_association_entities,
     parse_erd_entities,
     parse_openapi_operations,
     pascal_case,
@@ -482,15 +483,23 @@ class PrototypeOrchestrator:
                     )
                 )
             elif bce_entities != erd_entities and erd_entities:
-                self.manifest.diagnostics.append(
-                    Diagnostic(
-                        "BCE_ERD_ENTITY_MISMATCH",
-                        "ERROR",
-                        "BCE and ERD entity aliases must match exactly: "
-                        f"BCE={sorted(bce_entities)}, ERD={sorted(erd_entities)}",
-                        str(erd),
-                    )
+                allowed_associations = parse_erd_association_entities(
+                    erd.read_text(encoding="utf-8"), bce_entities
                 )
+                unexpected_erd_entities = erd_entities - bce_entities - allowed_associations
+                missing_erd_entities = bce_entities - erd_entities
+                if missing_erd_entities or unexpected_erd_entities:
+                    self.manifest.diagnostics.append(
+                        Diagnostic(
+                            "BCE_ERD_ENTITY_MISMATCH",
+                            "ERROR",
+                            "BCE and ERD entity aliases must match (join entities are allowed): "
+                            f"BCE={sorted(bce_entities)}, ERD={sorted(erd_entities)}, "
+                            f"unmatched ERD={sorted(unexpected_erd_entities)}, "
+                            f"missing ERD={sorted(missing_erd_entities)}",
+                            str(erd),
+                        )
+                    )
 
         required_tools = {} if self.spec.job_type == "FEEDBACK_REVISION" else {
             "puml2code": self.spec.puml2code_root / "bin" / "puml2code",

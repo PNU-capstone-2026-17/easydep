@@ -14,7 +14,11 @@ from ..agents.verification.build import (
 from ..agents.verification.release import verify_container_runtime
 from ..delivery.kubernetes import render_deployment, render_local_container
 from ..delivery.terraform import render_iac
-from ..domain.implementation_ir import build_implementation_ir, parse_erd_entities
+from ..domain.implementation_ir import (
+    build_implementation_ir,
+    parse_erd_association_entities,
+    parse_erd_entities,
+)
 from ..domain.models import JobSpec
 from ..generation.orchestrator import (
     plan_api_adapter_tasks,
@@ -78,9 +82,15 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
         raise ValueError(
             "ERD input must contain Entity definitions matching the BCE Entity components"
         )
-    if erd_entities != bce_entities:
-        missing_in_erd = sorted(bce_entities - erd_entities)
-        missing_in_bce = sorted(erd_entities - bce_entities)
+    allowed_associations = parse_erd_association_entities(
+        erd_path.read_text(encoding="utf-8") if erd_path and erd_path.is_file() else "",
+        bce_entities,
+    )
+    unexpected_erd_entities = erd_entities - bce_entities - allowed_associations
+    missing_erd_entities = bce_entities - erd_entities
+    if missing_erd_entities or unexpected_erd_entities:
+        missing_in_erd = sorted(missing_erd_entities)
+        missing_in_bce = sorted(unexpected_erd_entities)
         details = []
         if missing_in_erd:
             details.append("missing in ERD: " + ", ".join(missing_in_erd))

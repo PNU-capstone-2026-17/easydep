@@ -95,6 +95,7 @@ from app.implementation.domain.implementation_ir import (
     ApiPortIR,
     ApiResponseIR,
     build_implementation_ir,
+    parse_erd_association_entities,
     parse_openapi_operations as parse_ir_openapi_operations,
 )
 from app.implementation.workflows.coordinator import (
@@ -2985,6 +2986,19 @@ class ApplicationConfiguration {
             self.assertIn("// bce/OrderController.java", contracts)
             self.assertIn("// api/model/OrderController.java", contracts)
             self.assertNotIn("Missing.java", contracts)
+
+    def test_classifies_erd_join_entities_without_relaxing_unknown_aliases(self) -> None:
+        source = """entity \"Course\" as Course {}
+entity \"Section\" as Section {}
+entity \"CourseSection\" as CourseSection {}
+entity \"Audit\" as Audit {}
+Course ||--|{ CourseSection
+Section ||--|{ CourseSection
+"""
+        self.assertEqual(
+            {"CourseSection"},
+            parse_erd_association_entities(source, {"Course", "Section"}),
+        )
 
     def test_detects_empty_generated_contract_without_inference(self) -> None:
         contracts = """// bce/CourseData.java
