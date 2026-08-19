@@ -102,6 +102,7 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
         generated_contracts = read_generated_java_contracts(
             run_root, spec.base_package, relevant_names, api_model_names
         )
+        empty_contracts = find_empty_java_contracts(generated_contracts)
 
         task_slug = camel_to_kebab(control)
         relative_java = (
@@ -124,6 +125,7 @@ def generate_implementation_tasks(spec: JobSpec, run_root: Path) -> list[Impleme
             "erd": erd_context,
             "openapi": openapi_context,
             "generatedJavaContracts": generated_contracts,
+            "emptyGeneratedContracts": empty_contracts,
         }
         context_path = output / f"{task_slug}.context.json"
         context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1511,6 +1513,12 @@ Rules:
 - Java has no import aliases. For duplicate simple names across API and BCE packages, use a fully qualified name; never invent a `Bce...` alias.
 - Do not access private generated fields or use reflection to bypass a contract.
 - Never assume conventional getters or setters; use only exact public accessors shown below.
+- Some generated contracts may intentionally be empty placeholders because the design omitted
+  their declaration. Those contracts are immutable: never infer fields, getters, setters, or
+  constructors from a similarly named entity/API schema, and never add members to them.
+- If an operation needs data that an empty contract cannot expose, record the limitation in the
+  implementation plan/report and keep the generated code compilable; do not fabricate accessor
+  calls in production code or Mockito tests.
 - The writable parent directories are already created and write-tested. Do not browse directories; create the two requested files directly using the enforced absolute paths appended to this prompt.
 - Do not invent public API operations or persistence fields. Do not leave TODO, FIXME, placeholders, or speculative comments; unresolved design gaps belong in the planner's structured report.
 - Prefer constructor injection and keep orchestration in the application implementation, not generated DTO/entity files.
@@ -1547,6 +1555,13 @@ Rules:
 ```java
 {context['generatedJavaContracts']}
 ```
+
+## Empty generated contracts (authoritative)
+
+{', '.join(context.get('emptyGeneratedContracts', [])) or 'None'}
+
+The list above is derived from the exact Java sources. An empty contract has no callable members.
+Any test that calls a getter on one is invalid and will fail compilation.
 """
 
 
@@ -1595,6 +1610,23 @@ def read_generated_java_contracts(
                 f"// api/model/{name}.java\n{path.read_text(encoding='utf-8').strip()}"
             )
     return "\n\n".join(contracts) or "// No generated Java contracts found"
+
+
+def find_empty_java_contracts(contracts: str) -> list[str]:
+    """Return generated contract names whose class body has no members.
+
+    This deliberately operates on the exact source block passed to the implementation agent,
+    rather than inferring a DTO shape from OpenAPI or a domain entity.  Empty BCE placeholders
+    are valid immutable contracts and must not be given speculative accessors by the agent.
+    """
+    names: list[str] = []
+    pattern = re.compile(
+        r"(?ms)\bpublic\s+(?:final\s+)?class\s+"
+        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b[^\{]*\{\s*\}"
+    )
+    for match in pattern.finditer(contracts):
+        names.append(match.group("name"))
+    return sorted(dict.fromkeys(names))
 
 
 def referenced_openapi_model_names(openapi_context: str) -> set[str]:

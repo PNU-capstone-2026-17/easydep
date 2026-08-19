@@ -58,6 +58,7 @@ from app.implementation.workflows.repair import (
 )
 from app.implementation.planning.design_context import (
     detect_e2e_design_gaps,
+    find_empty_java_contracts,
     generate_api_adapter_tasks,
     generate_boundary_adapter_tasks,
     generate_e2e_tasks,
@@ -2984,6 +2985,14 @@ class ApplicationConfiguration {
             self.assertIn("// bce/OrderController.java", contracts)
             self.assertIn("// api/model/OrderController.java", contracts)
             self.assertNotIn("Missing.java", contracts)
+
+    def test_detects_empty_generated_contract_without_inference(self) -> None:
+        contracts = """// bce/CourseData.java
+package com.example.bce;
+/** Assumed placeholder for an undefined BCE type. */
+public final class CourseData {}
+"""
+        self.assertEqual(["CourseData"], find_empty_java_contracts(contracts))
 
     def test_reads_exact_persistence_entity_contracts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
