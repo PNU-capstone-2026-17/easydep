@@ -78,6 +78,7 @@ def generate_sequence_from_model(model: dict[str, Any]) -> str:
     lines = [
         start,
         "!theme plain",
+        "hide footbox",
         "skinparam sequenceMessageAlign center",
     ]
     title = " - ".join(
