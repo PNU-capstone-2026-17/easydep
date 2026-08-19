@@ -320,6 +320,34 @@ def test_initial_job_proceeds_with_complete_artifacts_and_design_findings(
     assert record["status"] == "QUEUED"
     assert record["design_validation"]["status"] == "NEEDS_INPUT"
 
+
+def test_initial_job_proceeds_with_rendered_artifacts_when_derived_models_are_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_path = tmp_path / "prepared" / "job.json"
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    implementation_worker.client.prepare_job = lambda *_args, **_kwargs: job_path
+    monkeypatch.setattr(implementation_worker.executor, "submit", lambda *_args, **_kwargs: None)
+    try:
+        record = implementation_worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": "@startuml\nclass Cart <<Control>> {}\n@enduml",
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {"/carts": {"post": {"operationId": "createCart"}}},
+                },
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        implementation_worker.shutdown()
+
+    assert record["status"] == "QUEUED"
+
 def test_prepare_feedback_job_materializes_existing_application(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_feedback_job(
