@@ -337,6 +337,38 @@ LoginScreen ..> AuthenticationController
     assert all(message["source"] != "AuthenticationController" for message in messages)
 
 
+def test_main_flow_wins_when_an_earlier_extension_reuses_the_same_operation():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Authenticate student",
+            "primary_actor": "Student",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Student submits credentials"},
+                {"step_number": 2, "sentence": "System validates credentials"},
+            ],
+            "extensions": [{
+                "label": "1a", "branch_step": 1, "condition": "credentials are malformed",
+                "handling_steps": [{"sub_step": "1a1", "sentence": "System validates credentials"}],
+            }],
+        }],
+    }
+    class_diagram = """@startuml
+class LoginScreen <<Boundary>> { submitCredentials(credentials:String) }
+class AuthenticationController <<Control>> { validateCredentials(credentials:String) }
+LoginScreen ..> AuthenticationController
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_diagram)
+    messages = result["Diagrams"][0]["Messages"]
+
+    assert [message["step_ids"] for message in messages] == [
+        ["UC1:main:1"],
+        ["UC1:main:2"],
+    ]
+
+
 def test_llm_selection_cannot_reuse_an_actor_operation_when_an_alternative_exists():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Action", "primary_actor": "Buyer"}],

@@ -1056,11 +1056,53 @@ def _assemble_deterministic_diagrams(
             method: str,
             plan: dict[str, Any],
         ) -> bool:
+            nonlocal call_number
             key = (source, target, method)
             if key in emitted_operations:
+                # Flow records are interleaved at their extension anchor.  An
+                # extension anchored at step 1 can therefore select the same
+                # operation as the later main step 2.  The old de-duplication
+                # silently kept the extension call and dropped the main step,
+                # producing a false coverage finding and an incomplete happy
+                # path. Prefer the main-flow occurrence while retaining the
+                # historical de-duplication for equivalent branch calls.
+                existing_index = next(
+                    (
+                        index
+                        for index, message in enumerate(messages)
+                        if (
+                            message.get("source"),
+                            message.get("target"),
+                            message.get("label"),
+                        ) == key
+                    ),
+                    None,
+                )
+                current_step_id = str(plan.get("step_id") or "")
+                current_is_main = ":main:" in current_step_id
+                existing_is_main = bool(
+                    existing_index is not None
+                    and any(
+                        ":main:" in str(step_id)
+                        for step_id in messages[existing_index].get("step_ids") or []
+                    )
+                )
+                if current_is_main and not existing_is_main and existing_index is not None:
+                    # Replace the earlier extension-only call with the main
+                    # flow call at the same route.  Its branch fragment must
+                    # not leak into the happy path.
+                    call_number += 1
+                    messages[existing_index] = _message(
+                        source,
+                        target,
+                        method,
+                        use_case_id,
+                        current_step_id,
+                        None,
+                        call_number,
+                    )
                 return False
             emitted_operations.add(key)
-            nonlocal call_number
             call_number += 1
             messages.append(_message(
                 source,
