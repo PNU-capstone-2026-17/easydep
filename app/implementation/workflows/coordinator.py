@@ -193,11 +193,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         "FAILED" if any(task["status"] == "FAILED" for task in pending)
         else ("READY" if pending else "NEEDS_PLANNER")
     )
-    if (
-        status == "NEEDS_PLANNER"
-        and current == "end-to-end"
-        and gap_report.get("status") == "NEEDS_INPUT"
-    ):
+    # A blocked E2E planner intentionally emits no runnable task and persists
+    # its executable-contract gaps separately.  Empty optional phases (for
+    # example, outbound adapters when no Gateway exists) can make ``current``
+    # point at an earlier UNPLANNED phase, so gating this conversion on the
+    # current phase incorrectly reported NEEDS_PLANNER instead of the required
+    # user-actionable NEEDS_INPUT state.
+    if status == "NEEDS_PLANNER" and gap_report.get("status") == "NEEDS_INPUT":
         status = "NEEDS_INPUT"
     state: dict[str, object] = {
         "schemaVersion": WORKFLOW_SCHEMA,

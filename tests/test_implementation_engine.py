@@ -963,6 +963,24 @@ void use(String... value) {}
             self.assertEqual("PENDING", state["tasks"][0]["status"])
             self.assertEqual(["repair"], state["nextRunnableTasks"])
 
+    def test_workflow_reports_design_gap_as_needs_input_even_with_empty_optional_phase(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory) / "run_design_gap"
+            reports = run / "reports"
+            (reports / "design-gaps").mkdir(parents=True)
+            (reports / "run-manifest.json").write_text(
+                json.dumps({"implementation_tasks": []}), encoding="utf-8"
+            )
+            (reports / "design-gaps/end-to-end-flow.json").write_text(
+                json.dumps({"status": "NEEDS_INPUT", "gaps": [{"code": "UNRESOLVED_PRODUCTION_PATH"}]}),
+                encoding="utf-8",
+            )
+
+            state = reconcile_workflow_state(run)
+
+            self.assertEqual("NEEDS_INPUT", state["status"])
+            self.assertIn("unresolved design contracts", state["blockingReason"])
+
     def test_transmission_request_excludes_key_and_requires_matching_approval(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory) / "run_approval"
