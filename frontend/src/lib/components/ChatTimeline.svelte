@@ -13,7 +13,6 @@
     document,
     fileArtifacts,
     regions,
-    currencies,
     showDeploymentPreferences = false,
     preferenceSaving = false,
     onDeploymentPreferencesSave,
@@ -24,7 +23,6 @@
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     regions: Record<CloudProvider, CloudRegionOption[]>;
-    currencies: string[];
     showDeploymentPreferences?: boolean;
     preferenceSaving?: boolean;
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
@@ -262,7 +260,6 @@
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}
     <DeploymentPreferencesCard
       {regions}
-      {currencies}
       saving={preferenceSaving}
       onSave={onDeploymentPreferencesSave}
     />

@@ -149,23 +149,23 @@ def test_initial_cloud_constraints_do_not_require_an_optional_budget():
     assert request.cloud_constraints.monthly_budget_amount is None
 
 
-def test_deployment_preferences_normalize_currency_and_validate_multi_zone_profile():
-    from pydantic import ValidationError
-
+def test_deployment_preferences_preserve_selected_zones_without_deciding_topology():
     from app.requirements.schemas import DeploymentPreferences
 
-    with pytest.raises(ValidationError):
-        DeploymentPreferences.model_validate(
-            {
-                "targets": [
-                    {
-                        "provider": "aws",
-                        "region": "ap-northeast-2",
-                        "zones": ["ap-northeast-2a", "ap-northeast-2b"],
-                    }
-                ]
-            }
-        )
+    intake = DeploymentPreferences.model_validate(
+        {
+            "targets": [
+                {
+                    "provider": "aws",
+                    "region": "ap-northeast-2",
+                    "zones": ["ap-northeast-2a", "ap-northeast-2b"],
+                }
+            ]
+        }
+    )
+
+    assert intake.targets[0].zones == ["ap-northeast-2a", "ap-northeast-2b"]
+    assert intake.compute_profile == "standaloneOne"
 
     preferences = DeploymentPreferences.model_validate(
         {

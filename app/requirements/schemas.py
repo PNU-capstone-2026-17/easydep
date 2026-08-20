@@ -650,9 +650,7 @@ class DeploymentPreferences(BaseModel):
         if grouped and self.persistent_workload_placement == "colocate":
             raise ValueError("managed groups require separateCompute for persistent workloads")
         if spread and any(len(target.zones) < 2 for target in self.targets):
-            raise ValueError("multi-zone spread requires at least two zones per target")
-        if not spread and any(len(target.zones) > 1 for target in self.targets):
-            raise ValueError("single-zone profiles may select at most one zone per target")
+            raise ValueError("multi-zone spread requires at least two allowed zones per target")
         return self
 
 

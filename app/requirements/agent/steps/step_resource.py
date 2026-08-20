@@ -640,7 +640,12 @@ def extract_resource_constraints(state: AgentState) -> dict:
     }
 
 
-def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> None:
+def _record_extraction(
+    session: _Session,
+    found: CloudConstraintExtraction,
+    *,
+    protected_fields: frozenset[str] = frozenset(),
+) -> None:
     """Normalize and validate an LLM extraction using deterministic code."""
     direct = (
         ("provider", found.provider, found.provider_evidence),
@@ -650,10 +655,10 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
         ("dataResidency", found.data_residency, found.data_residency_evidence),
     )
     for field, value, evidence in direct:
-        if value is not None:
+        if field not in protected_fields and value is not None:
             session.record(field, value, evidence)
 
-    if found.region_as_written is not None:
+    if "region" not in protected_fields and found.region_as_written is not None:
         session.record("regionAsWritten", found.region_as_written, found.region_evidence)
         matches = regions.resolve(
             found.region_as_written,
@@ -700,7 +705,11 @@ def _record_extraction(session: _Session, found: CloudConstraintExtraction) -> N
         )
 
     for field in found.ambiguous_fields:
-        if field in cloud_contract.schema_fields() and field != "workloads":
+        if (
+            field not in protected_fields
+            and field in cloud_contract.schema_fields()
+            and field != "workloads"
+        ):
             session.ask(field, cloud_contract.question(field) or f"Please confirm {field}.")
     session.understanding = found.understanding.strip()
 
@@ -799,7 +808,13 @@ def build_resource_spec(state: AgentState) -> dict:
     """사용자의 클라우드 제약을 구체화·확인해 `RESOURCE_SPEC`으로 가져온다."""
     haystack, briefing = _perception(state)
     session = _Session(haystack)
-    _record_initial_cloud_constraints(session, dict(state.get("initial_cloud_constraints") or {}))
+    initial_cloud_constraints = dict(state.get("initial_cloud_constraints") or {})
+    _record_initial_cloud_constraints(session, initial_cloud_constraints)
+    protected_fields = (
+        frozenset({"provider", "region"})
+        if initial_cloud_constraints.get("targets")
+        else frozenset()
+    )
 
     degraded = ""
     cached = state.get("resource_constraint_extraction")
@@ -809,6 +824,7 @@ def build_resource_spec(state: AgentState) -> dict:
             _record_extraction(
                 session,
                 CloudConstraintExtraction.model_validate(cached.get("result") or {}),
+                protected_fields=protected_fields,
             )
         else:
             degraded = str(cached.get("degraded") or "Cloud constraint extraction failed.")
@@ -816,7 +832,11 @@ def build_resource_spec(state: AgentState) -> dict:
         degraded = "The resource constraint LLM is disabled; no constraints were extracted."
     else:
         try:
-            _record_extraction(session, _extract_once(briefing))
+            _record_extraction(
+                session,
+                _extract_once(briefing),
+                protected_fields=protected_fields,
+            )
         except Exception as exc:  # noqa: BLE001 — 못 읽었으면 못 읽었다고 남기고 되묻는다
             degraded = f"{type(exc).__name__}: {exc}"
     if degraded:

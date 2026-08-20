@@ -316,6 +316,37 @@ def test_structured_deployment_preferences_resume_the_waiting_requirements_gate(
     assert captured["request"].answer is None
 
 
+def test_saved_coordinates_do_not_answer_a_later_budget_question(monkeypatch) -> None:
+    monkeypatch.setattr(
+        repository,
+        "get_deployment_preferences",
+        lambda _app_id: {
+            "targets": [
+                {
+                    "provider": "aws",
+                    "region": "ap-northeast-2",
+                    "zones": ["ap-northeast-2a"],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        repository,
+        "latest_command",
+        lambda _app_id: {
+            "command_id": "budget-question",
+            "stage": "requirements",
+            "status": "AWAITING_INPUT",
+            "result": {"resource_questions": [{"field": "monthlyBudgetUSD"}]},
+        },
+    )
+    service = WorkspaceService()
+    try:
+        assert service.apply_saved_deployment_preferences("app-1") is None
+    finally:
+        service.shutdown()
+
+
 def test_initial_workspace_request_forwards_structured_monthly_budget(monkeypatch) -> None:
     captured = {}
 

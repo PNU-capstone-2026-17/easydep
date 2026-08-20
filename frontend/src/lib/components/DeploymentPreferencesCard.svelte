@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, Cloud, MapPinned, Search, WalletCards, X } from '@lucide/svelte';
+  import { Check, Cloud, MapPinned, Search, X } from '@lucide/svelte';
   import { Dialog } from 'bits-ui';
   import type {
     CloudProvider,
@@ -12,12 +12,10 @@
 
   let {
     regions,
-    currencies,
     saving = false,
     onSave
   }: {
     regions: Record<CloudProvider, CloudRegionOption[]>;
-    currencies: string[];
     saving?: boolean;
     onSave: (preferences: DeploymentPreferences) => Promise<void>;
   } = $props();
@@ -31,8 +29,7 @@
   let selectedProviders = $state<CloudProvider[]>([]);
   let activeProvider = $state<CloudProvider>('aws');
   let selectedRegions = $state<Record<CloudProvider, string>>({ aws: '', azure: '', gcp: '' });
-  let budget = $state<number | undefined>(undefined);
-  let currency = $state('KRW');
+  let selectedZones = $state<Record<CloudProvider, string[]>>({ aws: [], azure: [], gcp: [] });
   let query = $state('');
   let error = $state('');
   let RegionMap = $state<RegionMapComponent | null>(null);
@@ -50,7 +47,15 @@
   );
   let ready = $derived(
     selectedProviders.length > 0 &&
-      selectedProviders.every((provider) => Boolean(selectedRegions[provider]))
+      selectedProviders.every((provider) => {
+        const region = (regions[provider] ?? []).find(
+          (candidate) => candidate.code === selectedRegions[provider]
+        );
+        return Boolean(region) && (!region?.zones.length || selectedZones[provider].length > 0);
+      })
+  );
+  let selectedZoneCount = $derived(
+    selectedProviders.reduce((total, provider) => total + selectedZones[provider].length, 0)
   );
 
   $effect(() => {
@@ -73,6 +78,7 @@
     if (selectedProviders.includes(provider)) {
       selectedProviders = selectedProviders.filter((item) => item !== provider);
       selectedRegions = { ...selectedRegions, [provider]: '' };
+      selectedZones = { ...selectedZones, [provider]: [] };
       activeProvider = selectedProviders[0] ?? providers.find((item) => item.id !== provider)?.id ?? 'aws';
     } else {
       selectedProviders = [...selectedProviders, provider];
@@ -81,7 +87,20 @@
   }
 
   function selectRegion(provider: CloudProvider, region: CloudRegionOption) {
+    if (selectedRegions[provider] !== region.code) {
+      selectedZones = { ...selectedZones, [provider]: [] };
+    }
     selectedRegions = { ...selectedRegions, [provider]: region.code };
+  }
+
+  function toggleZone(provider: CloudProvider, zone: string) {
+    const current = selectedZones[provider];
+    selectedZones = {
+      ...selectedZones,
+      [provider]: current.includes(zone)
+        ? current.filter((candidate) => candidate !== zone)
+        : [...current, zone]
+    };
   }
 
   async function save() {
@@ -92,12 +111,9 @@
         mode: 'alternatives',
         targets: selectedProviders.map((provider) => ({
           provider,
-          region: selectedRegions[provider]
-        })),
-        ...(typeof budget === 'number' && Number.isFinite(budget) && budget > 0
-          ? { monthly_budget_amount: budget }
-          : {}),
-        monthly_budget_currency: currency
+          region: selectedRegions[provider],
+          zones: selectedZones[provider]
+        }))
       });
       open = false;
     } catch (reason) {
@@ -115,7 +131,7 @@
       <div class="min-w-0 flex-1">
         <h3 class="text-sm font-semibold text-[#30342e]">Choose deployment alternatives</h3>
         <p class="mt-1 max-w-xl text-xs leading-5 text-[#73776f]">
-          Choose CSP regions and an optional monthly budget while application analysis continues. Topology decisions are made during design.
+          Choose cloud providers, regions, and allowed availability zones while application analysis continues. Budget and topology decisions come later.
         </p>
       </div>
       <Dialog.Trigger class="focus-ring inline-flex h-9 shrink-0 items-center gap-2 rounded-xl bg-[#2d6b4d] px-3.5 text-xs font-semibold text-white hover:bg-[#245b41]">
@@ -134,7 +150,7 @@
         <div class="min-w-0 flex-1">
           <Dialog.Title class="text-sm font-semibold sm:text-base">Deployment alternatives</Dialog.Title>
           <Dialog.Description class="truncate text-[11px] text-[#777b73] sm:text-xs">
-            Choose one region per CSP. Regions are alternatives, not one multi-cloud runtime.
+            Choose one region and one or more allowed availability zones per CSP. CSP targets are alternatives, not one multi-cloud runtime.
           </Dialog.Description>
         </div>
         <Dialog.Close class="focus-ring flex size-9 items-center justify-center rounded-xl border border-[#dfe1db] bg-[#fafaf8] text-[#686c64] hover:bg-[#f0f2ed]" aria-label="Close deployment map">
@@ -236,17 +252,40 @@
             </section>
 
             <section class="border-t border-[#eceee9] pt-4">
-              <h3 class="flex items-center gap-2 text-xs font-bold uppercase tracking-[.12em] text-[#777b73]"><WalletCards size={14} /> Monthly budget <span class="font-normal normal-case tracking-normal">(optional)</span></h3>
-              <div class="mt-2 grid grid-cols-[1fr_100px] gap-2">
-                <input bind:value={budget} type="number" min="0.01" step="any" placeholder="Amount" class="focus-ring h-9 min-w-0 rounded-xl border border-[#d9dbd5] bg-white px-3 text-xs" />
-                <select bind:value={currency} class="focus-ring h-9 rounded-xl border border-[#d9dbd5] bg-white px-2 text-xs">
-                  {#each currencies as item}<option value={item}>{item}</option>{/each}
-                </select>
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-xs font-bold uppercase tracking-[.12em] text-[#777b73]">Availability zones</h3>
+                {#if activeRegion}<span class="text-[11px] text-[#777b73]">Multiple allowed</span>{/if}
               </div>
+              {#if activeRegion}
+                {#if activeRegion.zones.length}
+                  <div class="mt-2 grid grid-cols-2 gap-2">
+                    {#each activeRegion.zones as zone}
+                      <button
+                        type="button"
+                        aria-pressed={selectedZones[activeProvider].includes(zone)}
+                        class="focus-ring flex min-h-9 items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs transition-colors {selectedZones[activeProvider].includes(zone) ? 'border-[#91b09d] bg-[#eaf3ed] text-[#285b43]' : 'border-[#dfe1db] bg-[#fafaf8] text-[#686c64] hover:bg-[#f3f5f0]'}"
+                        onclick={() => toggleZone(activeProvider, zone)}
+                      >
+                        <span class="truncate">{zone}</span>
+                        <span class="flex size-4 shrink-0 items-center justify-center rounded border border-current/25">
+                          {#if selectedZones[activeProvider].includes(zone)}<Check size={11} />{/if}
+                        </span>
+                      </button>
+                    {/each}
+                  </div>
+                  <p class="mt-2 text-[11px] leading-4 text-[#858980]">
+                    These zones define where deployment may be placed. Replica count and high-availability behavior are decided during design.
+                  </p>
+                {:else}
+                  <p class="mt-2 rounded-xl bg-[#f5f6f2] p-3 text-xs text-[#7d8179]">This region does not publish selectable zones in the catalog.</p>
+                {/if}
+              {:else}
+                <p class="mt-2 rounded-xl bg-[#f5f6f2] p-3 text-xs text-[#7d8179]">Choose a region before selecting zones.</p>
+              {/if}
             </section>
 
             <p class="border-t border-[#eceee9] pt-4 text-[11px] leading-5 text-[#777b73]">
-              VM count, availability layout, ingress, workload placement, and resource sizing will be derived and reviewed during design.
+              Monthly budget, VM count, availability behavior, ingress, workload placement, and resource sizing will be handled in later stages.
             </p>
           </div>
         </aside>
@@ -255,9 +294,9 @@
       <footer class="flex min-h-16 shrink-0 items-center justify-between gap-3 border-t border-[#dfe2dc] bg-white px-4 py-3 sm:px-6">
         <div class="min-w-0 text-[11px] text-[#7d8179]">
           {#if selectedProviders.length}
-            {selectedProviders.length} provider{selectedProviders.length === 1 ? '' : 's'} selected · {selectedProviders.filter((provider) => selectedRegions[provider]).length} region{selectedProviders.filter((provider) => selectedRegions[provider]).length === 1 ? '' : 's'} ready
+            {selectedProviders.length} provider{selectedProviders.length === 1 ? '' : 's'} · {selectedProviders.filter((provider) => selectedRegions[provider]).length} region{selectedProviders.filter((provider) => selectedRegions[provider]).length === 1 ? '' : 's'} · {selectedZoneCount} zone{selectedZoneCount === 1 ? '' : 's'}
           {:else}
-            Select a provider and region to continue.
+            Select a provider, region, and availability zone to continue.
           {/if}
         </div>
         <div class="flex shrink-0 gap-2">

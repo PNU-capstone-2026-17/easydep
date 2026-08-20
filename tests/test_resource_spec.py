@@ -138,6 +138,44 @@ def test_structured_deployment_alternatives_are_preserved_without_budget(monkeyp
     assert "monthlyBudgetUSD" not in spec
 
 
+def test_structured_map_selection_prevents_duplicate_provider_and_region_questions(monkeypatch):
+    monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
+    extracted = CloudConstraintExtraction(
+        provider="azure",
+        provider_evidence="Azure",
+        region_as_written="West Europe",
+        region_evidence="West Europe",
+        ambiguous_fields=["provider", "region"],
+        understanding="The free text mentions Azure West Europe.",
+    )
+    result = sr.build_resource_spec(
+        {
+            "classified": [],
+            "resource_constraints_text": "Deploy to Azure in West Europe.",
+            "initial_cloud_constraints": {
+                "mode": "alternatives",
+                "targets": [
+                    {
+                        "provider": "aws",
+                        "region": "ap-northeast-2",
+                        "zones": ["ap-northeast-2a", "ap-northeast-2c"],
+                    }
+                ],
+            },
+            "resource_constraint_extraction": {
+                "status": "completed",
+                "result": extracted.model_dump(mode="json"),
+            },
+        }
+    )
+
+    assert result["resource_spec"]["provider"] == "aws"
+    assert result["resource_spec"]["region"] == "ap-northeast-2"
+    assert not {
+        question["field"] for question in result["resource_intake"]["questions"]
+    }.intersection({"provider", "region"})
+
+
 def test_unsupported_or_ungrounded_values_do_not_enter_the_spec(monkeypatch):
     result = _run(
         monkeypatch,

@@ -85,7 +85,7 @@ export interface DeploymentPreferences {
   mode: 'alternatives';
   targets: DeploymentTarget[];
   monthly_budget_amount?: number | null;
-  monthly_budget_currency: string;
+  monthly_budget_currency?: string;
   compute_profile?:
     | 'standaloneOne'
     | 'managedGroupOne'

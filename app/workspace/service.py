@@ -149,7 +149,7 @@ class WorkspaceService:
         if (
             latest.get("stage") != "requirements"
             or latest.get("status") != "AWAITING_INPUT"
-            or not fields.intersection({"provider", "region", "monthlyBudgetUSD"})
+            or not fields.intersection({"provider", "region"})
         ):
             return None
         try:

@@ -164,7 +164,10 @@ def save_deployment_preferences(
         )
     if previous != stored:
         summary = ", ".join(
-            f"{target.provider.upper()} {target.region}"
+            (
+                f"{target.provider.upper()} {target.region}"
+                + (f" [{', '.join(target.zones)}]" if target.zones else "")
+            )
             for target in request.targets
         )
         repository.append_event(

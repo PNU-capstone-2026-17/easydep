@@ -37,7 +37,6 @@
   let initialized = false;
   let artifactSignatures = $state<Record<string, string>>({});
   let cloudRegions = $state<Record<CloudProvider, CloudRegionOption[]>>({ aws: [], azure: [], gcp: [] });
-  let currencies = $state(['USD', 'KRW', 'EUR', 'JPY']);
   let deploymentPreferences = $state<DeploymentPreferences | null>(null);
   let preferenceSaving = $state(false);
   let autoMode = $state(false);
@@ -68,7 +67,6 @@
     getCloudOptions()
       .then((options) => {
         cloudRegions = options.regions;
-        currencies = options.currencies;
       })
       .catch(() => undefined);
     return () => {
@@ -331,7 +329,6 @@
                 document={artifacts}
                 {fileArtifacts}
                 regions={cloudRegions}
-                {currencies}
                 showDeploymentPreferences={currentStage === 'requirements' && !deploymentPreferences}
                 preferenceSaving={preferenceSaving}
                 onDeploymentPreferencesSave={saveCloudPreferences}

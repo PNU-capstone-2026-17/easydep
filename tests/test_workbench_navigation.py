@@ -60,16 +60,19 @@ def test_resource_questions_are_rendered_and_answered_in_the_conversation() -> N
     assert "Continue without this optional input" in composer
 
 
-def test_initial_deployment_card_collects_coordinates_and_budget_only() -> None:
+def test_initial_deployment_card_collects_provider_region_and_multiple_zones_only() -> None:
     source = _source("src/lib/components/DeploymentPreferencesCard.svelte")
 
-    assert "Monthly budget" in source
+    assert "Availability zones" in source
     assert "selectedProviders" in source
     assert "selectedRegions" in source
+    assert "selectedZones" in source
+    assert "zones: selectedZones[provider]" in source
+    assert "monthly_budget_amount" not in source
+    assert "WalletCards" not in source
     assert "Compute topology" not in source
     assert "Public HTTPS ingress" not in source
     assert "PostgreSQL placement" not in source
-    assert "Placement zones" not in source
     assert "bind:value={replicaCount}" not in source
     assert "compute_profile:" not in source
     assert "replica_count:" not in source
