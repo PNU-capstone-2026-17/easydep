@@ -754,9 +754,6 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     gap_path.write_text(
         json.dumps(gap_report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if gaps:
-        return []
-
     package_path = spec.base_package.replace(".", "/")
     package_root = run_root / "application" / "src" / "main" / "java" / package_path
     sources: list[Path] = []
@@ -809,6 +806,7 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
         "openapi": openapi,
         "generatedJavaContracts": contracts,
         "semanticContract": semantic_contract,
+        "designGaps": gaps,
     }
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
@@ -819,6 +817,11 @@ def generate_e2e_tasks(spec: JobSpec, run_root: Path) -> list[ImplementationTask
     prompt = render_e2e_prompt(
         spec, ir.application_name, semantic_contract, contracts, sequence, erd, openapi
     )
+    if gaps:
+        prompt += "\n\n## Existing production design gaps\n\n"
+        prompt += "The following gaps are evidence from production sources. Keep the test compilable and "
+        prompt += "exercise only behavior represented by the exact contracts; do not add mocks or modify production code.\n"
+        prompt += "\n".join(f"- {item['source']}: {item['evidence']}" for item in gaps)
     prompt += render_allowed_output_rules(allowed)
     prompt_path = output / "end-to-end-flow.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -854,7 +857,8 @@ def detect_e2e_design_gaps(spec: JobSpec, run_root: Path) -> list[dict[str, str]
     for root in (package_root / "application" / "impl", package_root / "adapter"):
         for path in sorted(root.rglob("*.java")) if root.is_dir() else []:
             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if re.search(r"\b(?:TODO|FIXME|UnsupportedOperationException)\b", line):
+                code_line = re.sub(r"//.*$", "", line).strip()
+                if re.search(r"\b(?:TODO|FIXME|UnsupportedOperationException)\b", code_line):
                     gaps.append({
                         "code": "UNRESOLVED_PRODUCTION_PATH",
                         "source": path.relative_to(run_root).as_posix(),

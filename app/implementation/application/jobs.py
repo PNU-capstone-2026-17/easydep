@@ -59,7 +59,7 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
-        if missing_models:
+        if missing_models and not self._has_substantial_rendered_design(design):
             return self._create_design_blocked_job(
                 app_id, base_package, self._missing_design_model_report(missing_models)
             )
@@ -77,6 +77,28 @@ class ImplementationWorker:
         self._write(record)
         self.executor.submit(self._plan, job_id)
         return self.public_record(record)
+
+    @staticmethod
+    def _has_substantial_rendered_design(design: dict[str, Any]) -> bool:
+        """Allow implementation to proceed when rendered artifacts are usable.
+
+        Derived design models are useful for readiness checks, but their absence
+        must not discard a complete class diagram/OpenAPI pair.  The generator
+        consumes those rendered artifacts directly and records any remaining
+        contract gaps in its reports.  Tiny placeholder inputs (or an OpenAPI
+        document with no operations) remain blocked.
+        """
+        class_diagram = design.get("class_diagram_puml")
+        api_spec = design.get("api_spec")
+        if not isinstance(class_diagram, str) or "@startuml" not in class_diagram:
+            return False
+        if not isinstance(api_spec, dict):
+            return False
+        paths = api_spec.get("paths")
+        return isinstance(paths, dict) and any(
+            isinstance(item, dict) and item
+            for item in paths.values()
+        )
 
     def _create_design_blocked_job(
         self, app_id: str, base_package: str, readiness: dict[str, Any]

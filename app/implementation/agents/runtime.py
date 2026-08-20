@@ -23,7 +23,7 @@ from .verification.build import (
     production_test_library_markers,
     verify_agent_workspace,
 )
-from .verification.e2e import e2e_contract_violations
+from .verification.e2e import e2e_contract_violations, repair_orphaned_java_test_statements
 from ..workflows.repair import referenced_source_paths
 from .provider import (
     MAX_PROVIDER_RETRIES,
@@ -280,6 +280,7 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     )
                 if str(task.get("task_type", "")) == "integration-test":
                     e2e_path = sandbox / str(task["allowed_write_paths"][0])
+                    repair_orphaned_java_test_statements(e2e_path)
                     context_path = run_root / str(task.get("context_file", ""))
                     semantic_contract = None
                     if context_path.is_file():

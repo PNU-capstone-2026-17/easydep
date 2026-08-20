@@ -73,6 +73,7 @@ from app.implementation.planning.design_context import (
 )
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.agents.verification.e2e import e2e_contract_violations
+from app.implementation.agents.verification.e2e import repair_orphaned_java_test_statements
 from app.implementation.delivery.kubernetes import (
     infer_intent,
     render_deployment,
@@ -1703,18 +1704,18 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
-            codes = {gap["code"] for gap in detect_e2e_design_gaps(spec, run)}
             self.assertEqual(
-                {"UNRESOLVED_PRODUCTION_PATH"},
-                codes,
+                ["implement-end-to-end-flow"],
+                [task.task_id for task in generate_e2e_tasks(spec, run)],
             )
+            codes = {gap["code"] for gap in detect_e2e_design_gaps(spec, run)}
+            self.assertEqual(set(), codes)
             report = json.loads(
                 (run / "reports/design-gaps/end-to-end-flow.json").read_text(
                     encoding="utf-8"
                 )
             )
-            self.assertEqual("NEEDS_INPUT", report["status"])
+            self.assertEqual("READY", report["status"])
 
             (run / "reports/run-manifest.json").write_text(
                 json.dumps(
@@ -1730,12 +1731,15 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
                 ),
                 encoding="utf-8",
             )
-            self.assertEqual([], plan_e2e_tasks(spec, run))
+            self.assertEqual(
+                ["implement-end-to-end-flow"],
+                [task["task_id"] for task in plan_e2e_tasks(spec, run)],
+            )
             manifest = json.loads(
                 (run / "reports/run-manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(
-                ["implement-existing"],
+                ["implement-existing", "implement-end-to-end-flow"],
                 [task["task_id"] for task in manifest["implementation_tasks"]],
             )
 
@@ -1802,7 +1806,10 @@ class PurchaseRecord <<Entity>> { - purchaseId: string }
             )
 
             spec = load_job(job)
-            self.assertEqual([], generate_e2e_tasks(spec, run))
+            self.assertEqual(
+                ["implement-end-to-end-flow"],
+                [task.task_id for task in generate_e2e_tasks(spec, run)],
+            )
             gaps = detect_e2e_design_gaps(spec, run)
             self.assertEqual(
                 {"OPENAPI_ERROR_OUTCOME_UNIMPLEMENTED"},
@@ -3007,6 +3014,23 @@ package com.example.bce;
 public final class CourseData {}
 """
         self.assertEqual(["CourseData"], find_empty_java_contracts(contracts))
+
+    def test_repairs_orphaned_e2e_statements_after_premature_method_close(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "FlowTest.java"
+            path.write_text(
+                "class FlowTest {\n"
+                "  @Test void first() { assertThat(true); }\n"
+                "  // trailing assertions\n"
+                "  assertThat(response.getStatusCode()).isEqualTo(201);\n"
+                "  enrollmentRepository.findAll();\n"
+                "}\n}\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(repair_orphaned_java_test_statements(path))
+            repaired = path.read_text(encoding="utf-8")
+            self.assertIn("generatedOrphanFlowAssertions", repaired)
+            self.assertEqual(2, repaired.count("@Test"))
 
     def test_reads_exact_persistence_entity_contracts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
