@@ -295,6 +295,22 @@ def _infer_upstream_owners(
             if task.get("task_type") == "persistence-repositories"
         }
     if failed_type == "integration-test":
+        if (
+            "jdbcsqlsyntaxerror" in lowered
+            or "syntax error in sql statement" in lowered
+            or "reserved keyword" in lowered
+            or "expected \"identifier\"" in lowered
+        ):
+            # SQL/H2 failures are owned by the persistence generators, not by
+            # the end-to-end test that happened to execute the query. Repair
+            # the entity mapping and migration together so their column names
+            # remain consistent (for example, ``year`` -> ``academic_year``).
+            return {
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type")
+                in {"persistence-entities", "persistence-mapping", "persistence-schema"}
+            }
         api_tasks = [task for task in tasks if task.get("task_type") == "api-adapter"]
         named = {
             str(task["task_id"]) for task in api_tasks

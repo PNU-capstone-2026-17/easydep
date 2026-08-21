@@ -60,6 +60,45 @@ def _tasks() -> list[dict[str, object]]:
     ]
 
 
+def test_h2_reserved_keyword_failure_targets_persistence_tasks(tmp_path: Path) -> None:
+    tasks = _tasks() + [
+        {
+            "task_id": "implement-entities",
+            "task_type": "persistence-entities",
+            "allowed_write_paths": ["application/src/main/java/example/AcademicTermEntity.java"],
+        },
+        {
+            "task_id": "implement-mapping",
+            "task_type": "persistence-mapping",
+            "allowed_write_paths": ["application/src/main/java/example/Mapper.java"],
+        },
+        {
+            "task_id": "implement-schema",
+            "task_type": "persistence-schema",
+            "allowed_write_paths": ["application/src/main/resources/db/migration/V1__init.sql"],
+        },
+        {
+            "task_id": "implement-e2e",
+            "task_type": "integration-test",
+            "allowed_write_paths": ["application/src/test/java/example/FlowTest.java"],
+        },
+    ]
+    _write_run(tmp_path, tasks)
+
+    repair = schedule_cross_phase_repair(
+        tmp_path,
+        "implement-e2e",
+        {"stderr": 'JdbcSQLSyntaxErrorException: expected "identifier" near year'},
+    )
+
+    assert repair is not None
+    assert repair["ownerTaskIds"] == [
+        "implement-entities",
+        "implement-mapping",
+        "implement-schema",
+    ]
+
+
 def test_repair_budget_is_cumulative_across_changed_evidence(tmp_path: Path) -> None:
     _write_run(tmp_path, _tasks())
     for attempt in range(1, 4):
