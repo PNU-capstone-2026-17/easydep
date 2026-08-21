@@ -32,6 +32,7 @@
   let actionBusy = $state(false);
   let error = $state('');
   let source: EventSource | null = null;
+  let artifactRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let timelineScroller = $state<HTMLDivElement>();
   let followTimeline = $state(true);
   let initialized = false;
@@ -71,6 +72,7 @@
       .catch(() => undefined);
     return () => {
       source?.close();
+      if (artifactRefreshTimer) clearTimeout(artifactRefreshTimer);
       window.removeEventListener('popstate', syncLocation);
     };
   });
@@ -108,6 +110,14 @@
     apps = await listApps();
   }
 
+  function scheduleArtifactRefresh(id: string) {
+    if (artifactRefreshTimer) return;
+    artifactRefreshTimer = setTimeout(() => {
+      artifactRefreshTimer = null;
+      void refreshState(id).catch(() => undefined);
+    }, 800);
+  }
+
   async function loadApp(id: string) {
     loading = true;
     error = '';
@@ -137,6 +147,7 @@
         connected = true;
         if (!events.some((item) => item.event_id === event.event_id)) events = [...events, event];
         if (event.kind !== 'progress') void refreshState(id);
+        else if (event.stage === 'implementation') scheduleArtifactRefresh(id);
       },
       () => (connected = false)
     );

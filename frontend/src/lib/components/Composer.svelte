@@ -71,7 +71,7 @@
           Continue to the next design step <ChevronRight size={13} />
         </Button>
       {:else if command?.stage === 'implementation' && result?.request_id}
-        <Button size="sm" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id })} disabled={busy}>
+        <Button size="sm" onclick={() => onAction('approve_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id, delegate_repair_approvals: true })} disabled={busy}>
           <Check size={13} /> Approve implementation
         </Button>
         <Button size="sm" variant="danger" onclick={() => onAction('reject_implementation', { action_id: command?.command_id, job_id: result.job_id, request_id: result.request_id })} disabled={busy}>

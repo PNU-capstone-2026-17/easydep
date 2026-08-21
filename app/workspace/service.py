@@ -351,11 +351,26 @@ class WorkspaceService:
             return self._monitor_implementation(job, command_id=str(command["command_id"]))
         if action in {"approve_implementation", "reject_implementation"}:
             payload = command["payload"]
+            app_id = str(command["app_id"])
+            approved = action == "approve_implementation"
+            repository.append_event(
+                app_id,
+                command_id=str(command["command_id"]),
+                stage="implementation",
+                kind="status",
+                actor="system",
+                text=(
+                    "Implementation approval received; resuming execution."
+                    if approved
+                    else "Implementation execution rejected."
+                ),
+                metadata={"status": "APPROVAL_RECEIVED" if approved else "REJECTED"},
+            )
             job = approve_job(
                 str(payload["job_id"]),
                 ApprovalRequest(
                     request_id=str(payload["request_id"]),
-                    approved=action == "approve_implementation",
+                    approved=approved,
                     approved_by="EasyDep Workspace",
                     retry_failed=bool(payload.get("retry_failed", False)),
                     delegate_repair_approvals=bool(
@@ -1001,12 +1016,26 @@ class WorkspaceService:
     def _monitor_implementation(self, job: dict[str, Any], *, command_id: str | None = None) -> dict[str, Any]:
         job_id = str(job["job_id"])
         app_id = str(job.get("app_id") or "")
+        last_status: str | None = None
+        last_progress: str | None = None
         while True:
             current = implementation_worker.get(job_id)
             status = str(current.get("status") or "")
             if app_id and command_id:
+                if status and status != last_status and status not in {"AWAITING_APPROVAL"}:
+                    repository.append_event(
+                        app_id,
+                        command_id=command_id,
+                        stage="implementation",
+                        kind="status",
+                        actor="system",
+                        text=f"Implementation job status: {status}.",
+                        metadata={"status": status, "job_id": job_id},
+                    )
+                    last_status = status
                 progress = self._implementation_progress_snapshot(current)
-                if progress:
+                progress_key = str(progress.get("current_file") or "") if progress else ""
+                if progress and progress_key != last_progress:
                     repository.append_event(
                         app_id,
                         command_id=command_id,
@@ -1016,6 +1045,7 @@ class WorkspaceService:
                         text=str(progress.get("text") or progress.get("progress_detail") or "Implementation in progress."),
                         metadata=progress,
                     )
+                    last_progress = progress_key
             if status == "AWAITING_APPROVAL":
                 request = current.get("transmission_request") or {}
                 return {
