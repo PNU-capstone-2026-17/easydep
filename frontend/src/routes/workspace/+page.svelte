@@ -43,6 +43,20 @@
   let autoMode = $state(false);
   let autoActionKey = '';
 
+  let implementationErrors = $derived.by(() => {
+    const messages = events
+      .filter((event) => event.stage === 'implementation' && event.kind === 'error')
+      .map((event) => event.text.trim())
+      .filter(Boolean);
+    if (command?.stage === 'implementation' && command.error?.trim()) {
+      messages.push(command.error.trim());
+    }
+    if (currentStage === 'implementation' && error.trim()) {
+      messages.push(error.trim());
+    }
+    return [...new Set(messages)];
+  });
+
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let selectedStage = $derived(
     fileArtifactTypes.includes(selectedArtifact)
@@ -339,6 +353,7 @@
                 {events}
                 document={artifacts}
                 {fileArtifacts}
+                implementationErrors={implementationErrors}
                 regions={cloudRegions}
                 showDeploymentPreferences={currentStage === 'requirements' && !deploymentPreferences}
                 preferenceSaving={preferenceSaving}

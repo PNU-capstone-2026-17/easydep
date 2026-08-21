@@ -47,7 +47,7 @@
       : implementationAction && command?.status === 'COMPLETED'
         ? String(result?.message ?? 'Implementation request completed.')
         : implementationAction && command?.status === 'FAILED'
-          ? String(command.error ?? 'The implementation request failed.')
+          ? null
           : null
   );
 

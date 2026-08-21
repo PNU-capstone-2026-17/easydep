@@ -6,12 +6,14 @@
   import ArtifactConversationCard from '$lib/components/ArtifactConversationCard.svelte';
   import { artifactPresent, fileArtifactTypes } from '$lib/artifacts';
   import DeploymentPreferencesCard from '$lib/components/DeploymentPreferencesCard.svelte';
+  import ImplementationErrorPanel from '$lib/components/ImplementationErrorPanel.svelte';
 
   let {
     appId,
     events,
     document,
     fileArtifacts,
+    implementationErrors = [],
     regions,
     showDeploymentPreferences = false,
     preferenceSaving = false,
@@ -22,6 +24,7 @@
     events: WorkspaceEvent[];
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
+    implementationErrors?: string[];
     regions: Record<CloudProvider, CloudRegionOption[]>;
     showDeploymentPreferences?: boolean;
     preferenceSaving?: boolean;
@@ -29,6 +32,11 @@
     onArtifactSelect: (stage: string) => void;
   } = $props();
   let latestProgress = $derived([...events].reverse().find((event) => event.kind === 'progress'));
+  let latestImplementationError = $derived(
+    [...events].reverse().find(
+      (event) => event.stage === 'implementation' && event.kind === 'error'
+    )?.event_id
+  );
   let implementationFocus = $derived.by(() => {
     const metadata = latestProgress?.metadata ?? {};
     if (String(metadata.progress_event ?? '') !== 'implementationFileProgress') return null;
@@ -133,6 +141,13 @@
       (stage) => available(stage) && artifactEventOwners.get(stage) === event.event_id
     );
   }
+
+  function eventText(event: WorkspaceEvent): string {
+    if (event.stage === 'implementation' && event.kind === 'error') {
+      return 'An implementation error occurred. Review the detailed error log below.';
+    }
+    return event.text;
+  }
 </script>
 
 <div class="mx-auto w-full max-w-3xl px-5 pb-8 pt-6">
@@ -227,13 +242,18 @@
           <time class="text-[10px] text-[#96988f]">{formatTime(event.created_at)}</time>
         </div>
         <div
-          class="whitespace-pre-wrap rounded-2xl border px-4 py-3 text-sm leading-6 shadow-[0_1px_2px_rgba(0,0,0,.02)] {event.actor === 'user'
-            ? 'border-[#d8e5dd] bg-[#edf5f0]'
-            : event.kind === 'error'
-              ? 'border-[#eccbc7] bg-[#fff7f6]'
-              : 'border-[#e3e3dd] bg-white'}"
+          class="whitespace-pre-wrap rounded-2xl border px-4 text-sm leading-6 shadow-[0_1px_2px_rgba(0,0,0,.02)] {event.actor === 'user'
+            ? 'py-3 border-[#d8e5dd] bg-[#edf5f0]'
+            : event.kind === 'error' && event.stage === 'implementation'
+              ? 'pb-1 pt-3 border-[#eccbc7] bg-[#fff7f6]'
+              : event.kind === 'error'
+                ? 'py-3 border-[#eccbc7] bg-[#fff7f6]'
+                : 'py-3 border-[#e3e3dd] bg-white'}"
         >
-          {event.text}
+          {eventText(event)}
+          {#if event.event_id === latestImplementationError && implementationErrors.length}
+            <ImplementationErrorPanel errors={implementationErrors} />
+          {/if}
           {#if event.metadata?.resource_question?.why}
             <p class="mt-2 border-t border-[#ece8dc] pt-2 text-xs leading-5 text-[#777267]">
               {event.metadata.resource_question.why}
