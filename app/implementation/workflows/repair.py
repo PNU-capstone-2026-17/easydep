@@ -296,6 +296,22 @@ def _infer_upstream_owners(
         }
     if failed_type == "integration-test":
         if (
+            "nosuchbeandefinitionexception" in lowered
+            or "no qualifying bean of type" in lowered
+            or "expected at least 1 bean which qualifies" in lowered
+        ):
+            # The E2E test can observe a missing repository bean but cannot
+            # repair it: its write allowlist contains only the test class.
+            # Re-plan the repository and wiring owners directly instead of
+            # spending local LLM repair rounds on an unrelated test rewrite.
+            return {
+                str(task["task_id"])
+                for task in tasks
+                if task.get("task_type") in {
+                    "persistence-repositories", "configuration"
+                }
+            }
+        if (
             "jdbcsqlsyntaxerror" in lowered
             or "syntax error in sql statement" in lowered
             or "reserved keyword" in lowered

@@ -473,6 +473,12 @@ def _requires_cross_phase_repair(
             "syntax error in sql statement",
             'expected "identifier"',
             "reserved keyword",
+            # An E2E test is allowed to create only its test source.  A missing
+            # Spring Data repository bean is owned by persistence discovery or
+            # application wiring, so retrying the test agent cannot resolve it.
+            "nosuchbeandefinitionexception",
+            "no qualifying bean of type",
+            "expected at least 1 bean which qualifies",
         )
     )
 

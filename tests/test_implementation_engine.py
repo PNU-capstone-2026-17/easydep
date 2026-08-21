@@ -1036,6 +1036,19 @@ void use(String... value) {}
             )
         )
 
+    def test_missing_repository_bean_in_integration_task_skips_local_llm_repair(self) -> None:
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {
+                    "testResults": (
+                        "NoSuchBeanDefinitionException: No qualifying bean of type "
+                        "'com.example.OrderRepository' available"
+                    )
+                },
+            )
+        )
+
     def test_configuration_normalizer_removes_placeholder_line_comments(self) -> None:
         normalized, changed = remove_placeholder_comments(
             'return ""; // Return an empty string as a placeholder.\n'
