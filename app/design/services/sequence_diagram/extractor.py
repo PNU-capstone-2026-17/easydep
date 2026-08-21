@@ -20,6 +20,7 @@ from app.design.services.sequence_diagram.methods import (
     is_complete_method_call,
     is_return_value_label,
     method_call_signature,
+    method_return_type,
 )
 
 
@@ -614,12 +615,19 @@ def _parse_class_catalog(
         kind = str(stereotype or "entity").strip().lower()
         if kind not in {"boundary", "control", "entity", "database"}:
             kind = "entity"
-        methods = [
-            signature
-            for line in body.splitlines()
-            if (signature := method_call_signature(line))
-        ]
-        classes[name] = {"name": name, "kind": kind, "methods": methods}
+        methods: list[str] = []
+        method_returns: dict[str, str | None] = {}
+        for line in body.splitlines():
+            signature = method_call_signature(line)
+            if signature:
+                methods.append(signature)
+                method_returns[signature] = method_return_type(line)
+        classes[name] = {
+            "name": name,
+            "kind": kind,
+            "methods": methods,
+            "method_returns": method_returns,
+        }
 
     dependencies: dict[str, list[str]] = {}
     for source, target in _DEPENDENCY.findall(class_diagram_puml or ""):
@@ -910,6 +918,21 @@ def _participant(class_item: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _return_message(call: dict[str, Any], return_type: str) -> dict[str, Any]:
+    """Build the deterministic reply for a synchronous non-void call."""
+    return {
+        "source": call["target"],
+        "target": call["source"],
+        "label": return_type.strip(),
+        "type": "return",
+        "fragments": list(call.get("fragments") or []),
+        "use_case_ids": list(call.get("use_case_ids") or []),
+        "step_ids": list(call.get("step_ids") or []),
+        "call_id": "",
+        "reply_to": call["call_id"],
+        "arguments": [],
+    }
+
 def _message(
     source: str,
     target: str,
@@ -918,12 +941,13 @@ def _message(
     step_id: str,
     fragment: dict[str, str] | None,
     call_number: int,
+    return_type: str | None = None,
 ) -> dict[str, Any]:
     return {
         "source": source,
         "target": target,
         "label": method,
-        "type": "async",
+        "type": "sync" if (return_type and return_type.strip().lower() != "void") else "async",
         "fragments": [fragment] if fragment else [],
         "use_case_ids": [use_case_id],
         "step_ids": [step_id],
@@ -1055,6 +1079,7 @@ def _assemble_deterministic_diagrams(
             target: str,
             method: str,
             plan: dict[str, Any],
+            return_type: str | None = None,
         ) -> bool:
             nonlocal call_number
             key = (source, target, method)
@@ -1092,7 +1117,7 @@ def _assemble_deterministic_diagrams(
                     # flow call at the same route.  Its branch fragment must
                     # not leak into the happy path.
                     call_number += 1
-                    messages[existing_index] = _message(
+                    replacement = _message(
                         source,
                         target,
                         method,
@@ -1100,11 +1125,23 @@ def _assemble_deterministic_diagrams(
                         current_step_id,
                         None,
                         call_number,
+                        return_type,
                     )
+                    old_call_id = messages[existing_index].get("call_id")
+                    messages[:] = [
+                        item for item in messages
+                        if item.get("reply_to") != old_call_id
+                    ]
+                    messages[existing_index] = replacement
+                    if return_type and return_type.strip().lower() != "void":
+                        messages.insert(
+                            existing_index + 1,
+                            _return_message(replacement, return_type),
+                        )
                 return False
             emitted_operations.add(key)
             call_number += 1
-            messages.append(_message(
+            call = _message(
                 source,
                 target,
                 method,
@@ -1112,7 +1149,11 @@ def _assemble_deterministic_diagrams(
                 plan["step_id"],
                 plan["fragment"],
                 call_number,
-            ))
+                return_type,
+            )
+            messages.append(call)
+            if return_type and return_type.strip().lower() != "void":
+                messages.append(_return_message(call, return_type))
             return True
 
         for plan in use_case_plans:
@@ -1162,7 +1203,7 @@ def _assemble_deterministic_diagrams(
                         if alt_score >= orig_score or orig_score == 0:
                             entry_method = best_alt
                             entry_key = (target_boundary["name"], entry_method)
-                emit_message(actor_alias, _alias(target_boundary["name"]), entry_method, plan)
+                emit_message(actor_alias, _alias(target_boundary["name"]), entry_method, plan, target_boundary.get("method_returns", {}).get(entry_method))
                 used_actor_calls.add(entry_key)
                 reached.add(_alias(target_boundary["name"]))
                 continue
@@ -1208,7 +1249,7 @@ def _assemble_deterministic_diagrams(
                     source = control_alias
                     target = _alias(selected_class["name"])
                 reached.add(target)
-            emit_message(source, target, selected_method, plan)
+            emit_message(source, target, selected_method, plan, selected_class.get("method_returns", {}).get(selected_method))
             reached.add(target)
 
         coalesced: list[dict[str, Any]] = []

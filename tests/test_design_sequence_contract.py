@@ -210,6 +210,33 @@ OrderApi ..> OrderControl
     assert result["Diagrams"][0]["Messages"][-1]["label"] == "persistOrder()"
 
 
+def test_rule_based_generation_emits_return_for_non_void_method():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Order", "primary_actor": "Buyer"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Order",
+            "primary_actor": "Buyer",
+            "main_scenario": [{"step_number": 1, "sentence": "Buyer creates an order"}],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class OrderApi <<Boundary>> {
+  + createOrder(): Order
+}
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_diagram)
+    messages = result["Diagrams"][0]["Messages"]
+
+    assert [(message["type"], message["label"]) for message in messages] == [
+        ("sync", "createOrder()"),
+        ("return", "Order"),
+    ]
+    assert messages[1]["reply_to"] == messages[0]["call_id"]
+
+
 def test_uncertain_steps_are_not_filled_from_candidate_order_when_llm_fails():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Order", "primary_actor": "Buyer"}],
