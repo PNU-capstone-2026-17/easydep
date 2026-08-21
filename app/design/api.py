@@ -325,6 +325,7 @@ def resolve_design_issues(app_id: str, request: ResolveIssuesRequest) -> JSONRes
             for rule in (
                 "api.control-binding-exists",
                 "api.control-call-in-sequence",
+                "api.control-outcomes-cover-responses",
             )
         )
         if needs_upstream_repair:

@@ -317,7 +317,34 @@ DropScreen ..> DropController
     assert result["Diagrams"][0]["Messages"][0]["target"] == "DropScreen"
 
 
-def test_duplicate_branch_operation_is_emitted_once_and_never_reaches_boundary_implicitly():
+def test_system_step_can_select_a_nonlinked_control_when_it_is_the_best_match():
+    specification = {
+        "use_cases": [{"id": "UC1", "name": "Maintain course", "primary_actor": "Registrar"}],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "name": "Maintain course",
+            "primary_actor": "Registrar",
+            "main_scenario": [
+                {"step_number": 1, "sentence": "Registrar submits course data"},
+                {"step_number": 2, "sentence": "System maintains the course record"},
+            ],
+            "extensions": [],
+        }],
+    }
+    class_diagram = """@startuml
+class CourseForm <<Boundary>> { submitCourse(courseData:CourseData) }
+class CatalogController <<Control>> { listCatalog() }
+class CourseController <<Control>> { maintainCourse(courseData:CourseData) }
+CourseForm ..> CatalogController
+@enduml"""
+
+    result = extract_sequence_diagrams(specification, class_diagram)
+
+    assert result["Diagrams"][0]["Messages"][-1]["target"] == "CourseController"
+    assert result["Diagrams"][0]["Messages"][-1]["label"] == "maintainCourse(courseData:CourseData)"
+
+
+def test_duplicate_branch_operation_keeps_each_flow_step_and_never_reaches_boundary_implicitly():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -360,11 +387,12 @@ LoginScreen ..> AuthenticationController
     assert operations == [
         ("Student", "LoginScreen", "submitCredentials(credentials:String)"),
         ("LoginScreen", "AuthenticationController", "authenticate(credentials:String)"),
+        ("LoginScreen", "AuthenticationController", "authenticate(credentials:String)"),
     ]
     assert all(message["source"] != "AuthenticationController" for message in messages)
 
 
-def test_main_flow_wins_when_an_earlier_extension_reuses_the_same_operation():
+def test_extension_and_main_flow_keep_distinct_traceability_when_reusing_operation():
     specification = {
         "use_cases": [{"id": "UC1", "name": "Authenticate student", "primary_actor": "Student"}],
         "use_case_specs": [{
@@ -392,6 +420,7 @@ LoginScreen ..> AuthenticationController
 
     assert [message["step_ids"] for message in messages] == [
         ["UC1:main:1"],
+        ["UC1:extension:1a:1a1"],
         ["UC1:main:2"],
     ]
 

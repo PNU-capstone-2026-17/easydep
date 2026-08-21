@@ -977,6 +977,10 @@ def _build_sequence_plans(
     dependencies: dict[str, list[str]],
 ) -> list[dict[str, Any]]:
     plans: list[dict[str, Any]] = []
+    controls = [
+        item for item in classes.values()
+        if item["kind"] == "control" and item["methods"]
+    ]
     for use_case_index, specification in enumerate(specifications):
         use_case_id = str(specification.get("use_case_id") or specification.get("id") or "").strip()
         summary = summaries.get(use_case_id) or summaries.get(str(specification.get("id") or "")) or {}
@@ -1019,7 +1023,19 @@ def _build_sequence_plans(
 
         for record in _flow_records(specification):
             actor_step = _actor_led(record["sentence"], actor)
-            candidate_classes = [boundary] if actor_step or control is None else [boundary, control]
+            # A Boundary dependency is a useful first choice, but it is not a
+            # complete index of the Controls that can realize a system step.
+            # In particular, maintenance use cases frequently share a generic
+            # form Boundary while their actual Control is resource-specific.
+            # Keep the linked Control first, then expose the remaining known
+            # Controls to deterministic scoring / constrained LLM selection.
+            if actor_step:
+                candidate_classes = [boundary]
+            else:
+                candidate_classes = []
+                for candidate in [boundary, *( [control] if control is not None else [] ), *controls]:
+                    if all(item["name"] != candidate["name"] for item in candidate_classes):
+                        candidate_classes.append(candidate)
             candidates = [
                 (class_item, method)
                 for class_item in candidate_classes
@@ -1069,7 +1085,6 @@ def _assemble_deterministic_diagrams(
             }
         }
         messages: list[dict[str, Any]] = []
-        emitted_operations: set[tuple[str, str, str]] = set()
         reached = {actor_alias}
         used_actor_calls: set[tuple[str, str]] = set()
         call_number = 0
@@ -1082,64 +1097,6 @@ def _assemble_deterministic_diagrams(
             return_type: str | None = None,
         ) -> bool:
             nonlocal call_number
-            key = (source, target, method)
-            if key in emitted_operations:
-                # Flow records are interleaved at their extension anchor.  An
-                # extension anchored at step 1 can therefore select the same
-                # operation as the later main step 2.  The old de-duplication
-                # silently kept the extension call and dropped the main step,
-                # producing a false coverage finding and an incomplete happy
-                # path. Prefer the main-flow occurrence while retaining the
-                # historical de-duplication for equivalent branch calls.
-                existing_index = next(
-                    (
-                        index
-                        for index, message in enumerate(messages)
-                        if (
-                            message.get("source"),
-                            message.get("target"),
-                            message.get("label"),
-                        ) == key
-                    ),
-                    None,
-                )
-                current_step_id = str(plan.get("step_id") or "")
-                current_is_main = ":main:" in current_step_id
-                existing_is_main = bool(
-                    existing_index is not None
-                    and any(
-                        ":main:" in str(step_id)
-                        for step_id in messages[existing_index].get("step_ids") or []
-                    )
-                )
-                if current_is_main and not existing_is_main and existing_index is not None:
-                    # Replace the earlier extension-only call with the main
-                    # flow call at the same route.  Its branch fragment must
-                    # not leak into the happy path.
-                    call_number += 1
-                    replacement = _message(
-                        source,
-                        target,
-                        method,
-                        use_case_id,
-                        current_step_id,
-                        None,
-                        call_number,
-                        return_type,
-                    )
-                    old_call_id = messages[existing_index].get("call_id")
-                    messages[:] = [
-                        item for item in messages
-                        if item.get("reply_to") != old_call_id
-                    ]
-                    messages[existing_index] = replacement
-                    if return_type and return_type.strip().lower() != "void":
-                        messages.insert(
-                            existing_index + 1,
-                            _return_message(replacement, return_type),
-                        )
-                return False
-            emitted_operations.add(key)
             call_number += 1
             call = _message(
                 source,
