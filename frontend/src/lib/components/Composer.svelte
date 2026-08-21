@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, Check, ChevronRight, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
+  import { ArrowUp, Check, ChevronRight, LoaderCircle, Paperclip, Play, RotateCcw, X, Zap } from '@lucide/svelte';
   import type { WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
 
@@ -77,7 +77,12 @@
       role="status"
       aria-live="polite"
     >
-      {implementationResponse}
+      <span class="flex items-center gap-2">
+        {#if ['QUEUED', 'RUNNING'].includes(command?.status ?? '')}
+          <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
+        {/if}
+        {implementationResponse}
+      </span>
     </div>
   {/if}
   {#if awaiting}

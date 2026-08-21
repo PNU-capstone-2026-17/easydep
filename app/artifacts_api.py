@@ -311,7 +311,16 @@ def get_stage_image(app_id: str, stage: str, extension: str) -> Response:
         raise HTTPException(status_code=404, detail="Stage has no diagram image.")
 
     state = require_app(app_id)
-    puml_text = state.get(PUML_FIELDS[stage]["code"], "")
+    if stage == "sequence_diagram":
+        # The stored sequence artifact is a multi-use-case model. Rendering
+        # that model's concatenated PlantUML as one image produces an invalid
+        # preview; the gallery endpoint renders each use case separately.
+        diagrams = sequence_diagrams_from_state(state)
+        puml_text = (
+            generate_sequence_from_model(diagrams[0]) if diagrams else ""
+        )
+    else:
+        puml_text = state.get(PUML_FIELDS[stage]["code"], "")
     if not puml_text:
         raise HTTPException(status_code=404, detail="Artifact has not been generated.")
 
