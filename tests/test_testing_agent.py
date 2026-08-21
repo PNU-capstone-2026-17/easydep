@@ -6,9 +6,12 @@ requirements agent stored. These tests pin both, because a scan that silently
 falls back to a stale directory reports a pass that means nothing.
 """
 
-import pytest
 from contextlib import contextmanager
+import threading
+import time
 from unittest.mock import patch
+
+import pytest
 
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
@@ -183,7 +186,9 @@ def test_static_stages_scan_the_stored_snapshots(stored_artifacts):
     ):
         result = create_testing_graph().invoke(_initial_state())
 
-    assert scanned == [["Dockerfile", "k8s/deployment.yaml"], ["terraform/main.tf"]]
+    assert sorted(scanned) == sorted(
+        [["Dockerfile", "k8s/deployment.yaml"], ["terraform/main.tf"]]
+    )
 
     assert result["static_report"]["status"] == "FAILED"
     assert result["static_report"]["source"]["source"] == "db"
@@ -194,6 +199,42 @@ def test_static_stages_scan_the_stored_snapshots(stored_artifacts):
     # No functional requirements were stored, so nothing is asserted about the app.
     assert result["dynamic_functional_report"]["status"] == "SKIPPED"
     assert result["dynamic_nfr_report"]["status"] == "SKIPPED"
+
+
+def test_static_stages_overlap_and_merge_results_in_stage_order():
+    """Independent scans overlap, while externally visible errors stay deterministic."""
+    barrier = threading.Barrier(2)
+
+    def scan(name, report_key):
+        def run(_state):
+            barrier.wait(timeout=1)
+            time.sleep(0.02 if name == "static_verification" else 0)
+            return {
+                "current_node": name,
+                "errors": [f"{name}-error"],
+                report_key: {"status": "FAILED"},
+            }
+
+        return run
+
+    with patch(
+        "app.testing.graphs.testing_graph.static_verification_node",
+        scan("static_verification", "static_report"),
+    ), patch(
+        "app.testing.graphs.testing_graph.iac_verification_node",
+        scan("iac_verification", "iac_report"),
+    ), patch(
+        "app.testing.graphs.testing_graph.dynamic_functional_node",
+        return_value={
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {"status": "SKIPPED"},
+        },
+    ):
+        result = create_testing_graph().invoke(_initial_state())
+
+    assert result["errors"] == ["static_verification-error", "iac_verification-error"]
+    assert result["static_report"]["status"] == "FAILED"
+    assert result["iac_report"]["status"] == "FAILED"
 
 
 def test_static_stage_falls_back_to_workspace_and_says_so(tmp_path):

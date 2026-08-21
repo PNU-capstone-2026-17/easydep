@@ -1,10 +1,39 @@
-from langgraph.graph import StateGraph, START, END
+from concurrent.futures import ThreadPoolExecutor
+
+from langgraph.graph import END, START, StateGraph
 
 from app.testing.schemas.testing_state import TestingState
 from app.testing.nodes.static_verification import static_verification_node
 from app.testing.nodes.iac_verification import iac_verification_node
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
 from app.testing.nodes.placeholders import dynamic_nfr_node
+
+
+def parallel_static_verification_node(state: TestingState) -> dict:
+    """Run the independent deployment and IaC scans with bounded concurrency.
+
+    Each scan materializes a different immutable artifact snapshot into its own
+    temporary directory and opens its own database session. Collect futures in
+    declaration order so the combined error list remains identical to the former
+    deployment-then-IaC graph order even when the IaC scan finishes first.
+    """
+    with ThreadPoolExecutor(
+        max_workers=2,
+        thread_name_prefix="easydep-static-verification",
+    ) as pool:
+        deployment_future = pool.submit(static_verification_node, state)
+        iac_future = pool.submit(iac_verification_node, state)
+        deployment = deployment_future.result()
+        iac = iac_future.result()
+
+    return {
+        **deployment,
+        **iac,
+        "current_node": iac.get(
+            "current_node", deployment.get("current_node", "static_verification")
+        ),
+        "errors": [*(deployment.get("errors") or []), *(iac.get("errors") or [])],
+    }
 
 def create_testing_graph():
     """
@@ -13,19 +42,16 @@ def create_testing_graph():
     workflow = StateGraph(TestingState)
 
     # Add nodes
-    workflow.add_node("static_verification", static_verification_node)
-    workflow.add_node("iac_verification", iac_verification_node)
+    workflow.add_node("static_verification", parallel_static_verification_node)
     workflow.add_node("dynamic_functional", dynamic_functional_node)
     workflow.add_node("dynamic_nfr", dynamic_nfr_node)
 
     # Add edges
-    # Standard flow: Static K8s -> Static IaC -> Dynamic Functional -> Dynamic NFR
+    # The two static scans overlap inside one bounded node. Dynamic checks remain
+    # outside that pool so Trivy cannot contend with the application under test.
     workflow.add_edge(START, "static_verification")
 
-    # Simple linear flow for now.
-    # In the future, we could add conditional edges to halt if a stage fails.
-    workflow.add_edge("static_verification", "iac_verification")
-    workflow.add_edge("iac_verification", "dynamic_functional")
+    workflow.add_edge("static_verification", "dynamic_functional")
     workflow.add_edge("dynamic_functional", "dynamic_nfr")
     workflow.add_edge("dynamic_nfr", END)
 
