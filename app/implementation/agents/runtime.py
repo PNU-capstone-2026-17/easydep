@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import warnings
@@ -59,6 +60,26 @@ MAX_VERIFICATION_REPAIRS = 6
 MAX_REASONING_BUDGET = 256
 _RESTRICTED_EDITOR_REGISTERED = False
 _RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
+
+
+def _configure_openhands_profile_store() -> None:
+    """Keep OpenHands' implicit profile lock out of the user's home directory.
+
+    OpenHands' built-in vision/switch tools instantiate ``LLMProfileStore()``
+    without a directory argument, which defaults to ``~/.openhands/profiles``.
+    On Windows that directory can be owned by another server/elevation context,
+    causing every agent to fail before it writes any task output.  A shared
+    process-local temporary directory is writable and still allows concurrent
+    tasks to coordinate through OpenHands' file lock.
+    """
+    from openhands.sdk.llm import llm_profile_store
+
+    profile_dir = (
+        Path(tempfile.gettempdir())
+        / f"easydep-openhands-profiles-{os.getpid()}"
+    )
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    llm_profile_store._DEFAULT_PROFILE_DIR = profile_dir
 
 
 class EventJournal:
@@ -228,7 +249,12 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         + ", ".join(missing_outputs)
                     )
                     if conversation_error is not None:
-                        raise missing_error from conversation_error
+                        raise RuntimeError(
+                            "OpenHands conversation failed before required task "
+                            "outputs were created (missing: "
+                            + ", ".join(missing_outputs)
+                            + f"): {conversation_error}"
+                        ) from conversation_error
                     raise missing_error
                 round_allowed = [
                     str((sandbox / path).resolve()) for path in missing_outputs
@@ -573,6 +599,8 @@ def create_openhands_conversation(
     from openhands.tools.file_editor import FileEditorAction, FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
     from openhands.tools.file_editor.impl import FileEditorExecutor
+
+    _configure_openhands_profile_store()
 
     class CompatibleFileEditorAction(FileEditorAction):
         """Accept the common file_path spelling without advertising it to the LLM."""
