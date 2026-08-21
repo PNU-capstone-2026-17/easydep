@@ -147,6 +147,12 @@ _PROCEDURE = """
    an Entity-to-Entity relationship with a missing multiplicity is worse than \
    useless. Never express such a relationship by naming a field `memberId` and \
    leaving the relationship out — write the relationship.
+   When a relationship has its own Entity, use that Entity as the relationship \
+   representation. Do not also emit a direct many-to-many relationship for the \
+   same fact; choose one representation so the ERD does not create a duplicate \
+   synthetic join table. This applies equally to self-referential relationships. \
+   The relationship Entity must carry the endpoint references and any \
+   relationship attributes explicitly required by the scenario.
 10. Traceability: set `use_case_ids` on every class to the id(s) of the use \
    case(s) it was derived from.
 11. Self-check before finalizing: read the Rules section again and check your \

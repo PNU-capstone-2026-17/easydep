@@ -270,10 +270,22 @@ def parse_erd_association_entities(source: str, base_entities: set[str]) -> set[
         if left in entities and right in entities:
             neighbors[left].add(right)
             neighbors[right].add(left)
-    return {
-        name for name in entities - base_entities
-        if len(neighbors.get(name, set()) & base_entities) >= 2
-    }
+    associations: set[str] = set()
+    for name in entities - base_entities:
+        base_neighbors = neighbors.get(name, set()) & base_entities
+        if len(base_neighbors) >= 2:
+            associations.add(name)
+            continue
+        # A self-referential many-to-many relation is materialized by the
+        # design exporter as a synthetic ``EntityEntity`` table with only one
+        # visible edge back to that Entity.  It is still a join entity, not an
+        # undeclared BCE domain entity.
+        if len(base_neighbors) == 1:
+            for base in base_neighbors:
+                if name == f"{base}{base}":
+                    associations.add(name)
+                    break
+    return associations
 
 
 def derive_e2e_scenarios(

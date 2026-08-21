@@ -3261,6 +3261,16 @@ Section ||--|{ CourseSection
             parse_erd_association_entities(source, {"Course", "Section"}),
         )
 
+    def test_classifies_self_referential_erd_join_entity(self) -> None:
+        source = """entity \"Node\" as Node {}
+entity \"NodeNode\" as NodeNode {}
+Node ||--|{ NodeNode
+"""
+        self.assertEqual(
+            {"NodeNode"},
+            parse_erd_association_entities(source, {"Node"}),
+        )
+
     def test_detects_empty_generated_contract_without_inference(self) -> None:
         contracts = """// bce/CourseData.java
 package com.example.bce;
