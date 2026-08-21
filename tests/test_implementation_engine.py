@@ -22,6 +22,7 @@ from app.implementation.agents.runtime import (
     _requires_cross_phase_repair,
     break_configuration_cycles,
     execution_attempt,
+    normalize_spring_boot_repository_discovery,
     remove_placeholder_comments,
     select_repair_paths,
     write_execution_result,
@@ -1067,6 +1068,38 @@ TestRestTemplate http; CourseRepository courseRepository;
                 },
             )
         )
+        self.assertTrue(
+            _requires_cross_phase_repair(
+                "integration-test",
+                {"stderr": "StudentRepository available: expected at least 1 bean which qualifies as autowire candidate"},
+            )
+        )
+
+    def test_wiring_normalizer_restores_spring_data_repository_discovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            sandbox = Path(directory)
+            entrypoint = (
+                sandbox
+                / "application/src/main/java/com/example/DemoApplication.java"
+            )
+            entrypoint.parent.mkdir(parents=True)
+            entrypoint.write_text(
+                "import org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration;\n"
+                "import org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration;\n"
+                "@SpringBootApplication(exclude = {HibernateJpaAutoConfiguration.class, JpaRepositoriesAutoConfiguration.class})\n"
+                "class DemoApplication {}\n",
+                encoding="utf-8",
+            )
+            normalize_spring_boot_repository_discovery(
+                sandbox,
+                {"allowed_write_paths": [
+                    "application/src/main/java/com/example/DemoApplication.java"
+                ]},
+            )
+            normalized = entrypoint.read_text(encoding="utf-8")
+            self.assertIn("@SpringBootApplication", normalized)
+            self.assertNotIn("exclude", normalized)
+            self.assertNotIn("JpaRepositoriesAutoConfiguration", normalized)
 
     def test_configuration_normalizer_removes_placeholder_line_comments(self) -> None:
         normalized, changed = remove_placeholder_comments(

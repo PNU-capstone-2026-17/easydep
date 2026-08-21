@@ -299,6 +299,7 @@ def _infer_upstream_owners(
             "nosuchbeandefinitionexception" in lowered
             or "no qualifying bean of type" in lowered
             or "expected at least 1 bean which qualifies" in lowered
+            or "qualifies as autowire candidate" in lowered
         ):
             # The E2E test can observe a missing repository bean but cannot
             # repair it: its write allowlist contains only the test class.

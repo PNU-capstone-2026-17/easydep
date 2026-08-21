@@ -279,6 +279,7 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             try:
                 if str(task.get("task_type", "")) == "configuration":
                     remove_duplicate_component_adapter_beans(sandbox, task)
+                    normalize_spring_boot_repository_discovery(sandbox, task)
                 placeholders = production_placeholder_markers(
                     sandbox, task["allowed_write_paths"]
                 )
@@ -479,6 +480,7 @@ def _requires_cross_phase_repair(
             "nosuchbeandefinitionexception",
             "no qualifying bean of type",
             "expected at least 1 bean which qualifies",
+            "qualifies as autowire candidate",
         )
     )
 
@@ -874,6 +876,55 @@ def remove_duplicate_component_adapter_beans(sandbox: Path, task: dict[str, obje
     text, lazy_added = break_configuration_cycles(text)
     if removals or mapper_types or lazy_added or placeholder_comments_removed:
         configuration.write_text(text, encoding="utf-8")
+
+
+def normalize_spring_boot_repository_discovery(
+    sandbox: Path, task: dict[str, object]
+) -> None:
+    """Keep Spring Data repositories enabled in the generated application.
+
+    The wiring agent occasionally adds ``exclude`` attributes for JPA
+    auto-configuration after being shown an earlier context failure.  That
+    makes every ``JpaRepository`` disappear from the application context, so
+    the end-to-end test fails before it can exercise the flow.  Repository
+    discovery is part of the generated contract and the wiring prompt already
+    forbids this workaround; normalize the entry point deterministically so a
+    transient LLM deviation cannot ship a broken context.
+    """
+    entrypoint = next(
+        (
+            sandbox / str(relative)
+            for relative in task.get("allowed_write_paths", [])
+            if str(relative).endswith("Application.java")
+        ),
+        None,
+    )
+    if entrypoint is None or not entrypoint.is_file():
+        return
+    text = entrypoint.read_text(encoding="utf-8")
+    original = text
+    text = re.sub(
+        r"(?m)^\s*import\s+org\.springframework\.boot\.autoconfigure\.(?:orm\.jpa\.HibernateJpaAutoConfiguration|data\.jpa\.JpaRepositoriesAutoConfiguration);\s*\n?",
+        "",
+        text,
+    )
+    def remove_jpa_exclusions(match: re.Match[str]) -> str:
+        annotation = match.group(0)
+        if re.search(
+            r"(?:HibernateJpaAutoConfiguration|JpaRepositoriesAutoConfiguration)",
+            annotation,
+        ):
+            return "@SpringBootApplication"
+        return annotation
+
+    text = re.sub(
+        r"@SpringBootApplication\s*\(\s*exclude\s*=\s*(?:\{[^}]*\}|[^)]*)\s*\)",
+        remove_jpa_exclusions,
+        text,
+        flags=re.DOTALL,
+    )
+    if text != original:
+        entrypoint.write_text(text, encoding="utf-8")
 
 
 def remove_placeholder_comments(text: str) -> tuple[str, bool]:
