@@ -61,8 +61,17 @@ def e2e_contract_violations(
         "real HTTP client": ("TestRestTemplate", "MockMvc"),
     }
     if contract is not None:
-        for repository in contract.get("repositories", []):
-            required_groups[f"repository evidence {repository}"] = (str(repository),)
+        repositories = tuple(
+            str(repository)
+            for repository in contract.get("repositories", [])
+            if str(repository).strip()
+        )
+        if repositories:
+            # The planner lists all generated repositories, but one E2E test
+            # cannot truthfully exercise every persistence aggregate. Require
+            # at least one concrete repository evidence and let scenario-level
+            # HTTP assertions cover the remaining aggregates.
+            required_groups["repository evidence"] = repositories
         for gateway in contract.get("gatewayAdapters", []):
             required_groups[f"concrete gateway {gateway}"] = (str(gateway),)
     else:

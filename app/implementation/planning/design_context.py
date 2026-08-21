@@ -1210,7 +1210,7 @@ Rules:
 - Do not mock application Controls, Boundary adapters, repositories, or the Spring context.
 - Use the production application graph exactly as wired. Never declare `@TestConfiguration`,
   `@Bean`, `@MockBean`, `@MockitoBean`, `@Primary`, or enable bean-definition overriding.
-- Autowire the concrete Gateway adapters and Spring Data repositories listed in the semantic
+- Autowire concrete Gateway adapters and at least one Spring Data repository listed in the semantic
   contract. Drive external outcomes only through their public deterministic seams; do not replace beans.
 - Declare Gateway fields as their concrete adapter classes. Never use reflection or reduce them
   to only the Gateway interface when a configuration seam is required.
@@ -1219,8 +1219,8 @@ Rules:
 - Implement every scenario in the generated semantic contract below with at least
   {minimum_tests} independent `@Test` methods. Use real HTTP through `TestRestTemplate` or
   `MockMvc`; assert the exact response status and relevant response fields for each scenario.
-- Autowire every listed repository and assert the stored state changed or remained unchanged as
-  required by the ERD and sequence. A test that only checks in-memory UI state is invalid.
+- Assert repository-backed persistence for the exercised flow. A test that only checks in-memory
+  UI state is invalid; unrelated repositories do not need to be injected into this single flow test.
 - Assert observable HTTP responses, Boundary state, and repository state; do not call private methods or reproduce service logic inside the test.
 - Do not weaken or disable Flyway/JPA and do not modify production sources.
 - Do not leave TODO, disabled tests, unconditional success assertions, or tests that merely check context loading.

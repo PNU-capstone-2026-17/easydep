@@ -927,6 +927,25 @@ void use(String... value) {}
 
             self.assertEqual([], e2e_contract_violations(path))
 
+    def test_e2e_semantic_gate_accepts_one_repository_from_generated_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CourseFlowTest.java"
+            path.write_text(
+                """class CourseFlowTest {
+TestRestTemplate http; CourseRepository courseRepository;
+@Test void success() { assertThat(response.getStatusCode()).isEqualTo(200); use("/courses"); }
+}""",
+                encoding="utf-8",
+            )
+            contract = {
+                "paths": ["/courses"],
+                "statuses": [200],
+                "repositories": ["CourseRepository", "InstructorRepository"],
+                "minimumTests": 1,
+            }
+
+            self.assertEqual([], e2e_contract_violations(path, contract))
+
     def test_purchases_adapter_prompt_requires_clarification_status_mapping(self) -> None:
         prompt = render_api_adapter_prompt(
             SimpleNamespace(base_package="com.example.demo"),
