@@ -1334,6 +1334,24 @@ def _normalise_contract_type(value: str) -> str:
     return aliases.get(token, token)
 
 
+def _contract_types_compatible(actual: str, expected: str) -> bool:
+    """Treat inbound request DTO wrappers as the represented domain type."""
+    actual_normalized = _normalise_contract_type(actual)
+    expected_normalized = _normalise_contract_type(expected)
+    if actual_normalized == expected_normalized:
+        return True
+    # Only inbound DTO conventions may stand in for a Control parameter.
+    # Accepting ``Response`` here would hide a directionally-invalid mapping.
+    suffixes = ("createrequest", "updaterequest", "request", "dto")
+    def base(value: str) -> str:
+        lowered = value.lower()
+        for suffix in suffixes:
+            if lowered.endswith(suffix) and len(lowered) > len(suffix):
+                return lowered[: -len(suffix)]
+        return lowered
+    return base(actual_normalized) == base(expected_normalized)
+
+
 def _request_value_types(endpoint: dict, schemas: dict[str, dict]) -> dict[str, str]:
     """Enumerate the only request values an API binding may consume."""
     values: dict[str, str] = {}
@@ -1463,7 +1481,7 @@ def api_control_arguments(model: dict, state: dict) -> list[Finding]:
                 continue
             actual_type = _normalise_contract_type(available[source])
             expected_type = _normalise_contract_type(expected[name])
-            if actual_type != expected_type:
+            if not _contract_types_compatible(actual_type, expected_type):
                 found.append(Finding(
                     "api.control-arguments-match",
                     f"'{name}'의 원천 타입 {available[source]}이 Control 파라미터 타입 {expected[name]}과 호환되지 않음",

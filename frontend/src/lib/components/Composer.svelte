@@ -73,7 +73,7 @@
         ? 'border-[#eccbc7] bg-[#fff7f6] text-[#85524c]'
         : command?.status === 'COMPLETED'
           ? 'border-[#cfe3d5] bg-[#f1f8f3] text-[#2d7354]'
-          : 'border-[#e5ddc9] bg-[#fffaf0] text-[#74520c]'}"
+          : 'border-[#cfe3d5] bg-[#f1f8f3] text-[#2d7354]'}"
       role="status"
       aria-live="polite"
     >

@@ -196,4 +196,57 @@ def extract_api_spec_model(
     messages = api_spec_messages(
         scenario_text, class_diagram_puml, sequence_diagram_puml
     )
-    return parse_structured(messages, ApiSpecModel)
+    model = parse_structured(messages, ApiSpecModel)
+    return normalize_api_spec_model(model)
+
+
+def normalize_api_spec_model(model: dict[str, Any]) -> dict[str, Any]:
+    """Repair mechanical traceability omissions without inventing API behavior.
+
+    The structured model frequently contains a correct ``control_binding`` but
+    omits the redundant ``source_classes`` entry, or leaves request DTO fields
+    empty even though the binding explicitly names ``$body.<field>``.  These
+    are representation omissions, not design decisions, so fill them
+    deterministically before validation and OpenAPI rendering.
+    """
+    if not isinstance(model, dict):
+        return model
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = endpoint.get("control_binding")
+        if isinstance(binding, dict):
+            control = str(binding.get("control") or "").strip()
+            source_classes = endpoint.setdefault("source_classes", [])
+            if control and isinstance(source_classes, list) and control not in source_classes:
+                source_classes.append(control)
+            request_schema = str(endpoint.get("request_schema") or "").strip()
+            if request_schema:
+                schema = next(
+                    (
+                        item for item in model.get("Schemas", []) or []
+                        if isinstance(item, dict) and item.get("name") == request_schema
+                    ),
+                    None,
+                )
+                if isinstance(schema, dict):
+                    fields = schema.setdefault("fields", [])
+                    known = {
+                        str(item.get("name") or "").strip()
+                        for item in fields if isinstance(item, dict)
+                    }
+                    for argument in binding.get("arguments", []) or []:
+                        if not isinstance(argument, dict):
+                            continue
+                        source = str(argument.get("source") or "")
+                        name = source.removeprefix("$body.").strip()
+                        if not name or name == source or name in known:
+                            continue
+                        fields.append({
+                            "name": name,
+                            "type": "string",
+                            "required": True,
+                            "description": "",
+                        })
+                        known.add(name)
+    return model

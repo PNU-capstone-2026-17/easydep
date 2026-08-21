@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.services.api_spec.extractor import ApiSpecModel
+from app.design.services.api_spec.extractor import ApiSpecModel, normalize_api_spec_model
 from app.design.services.common.structured import parse_structured, revision_messages
 
 API_SPEC_REVISION_SYSTEM_PROMPT = """
@@ -53,7 +53,7 @@ def revise_api_spec_model(
     if not current_model or not feedback:
         return current_model or {}
 
-    return parse_structured(
+    revised = parse_structured(
         revision_messages(
             API_SPEC_REVISION_SYSTEM_PROMPT,
             "Use Case Specification, Class Diagram and Sequence Diagram",
@@ -65,3 +65,4 @@ def revise_api_spec_model(
         ),
         ApiSpecModel,
     )
+    return normalize_api_spec_model(revised)
